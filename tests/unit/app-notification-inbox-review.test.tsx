@@ -3,22 +3,30 @@ import React from 'react';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { NotificationInboxSheet } from '../../apps/app/src/components/NotificationInboxSheet';
-import { subscribeToNotificationInbox } from '../../apps/app/src/lib/notificationInboxService';
+import { markAllNotificationsRead, subscribeToNotificationInbox } from '../../apps/app/src/lib/notificationInboxService';
+import type { NotificationInboxItem } from '../../apps/app/src/lib/notificationInboxService';
 
 const { navigateMock } = vi.hoisted(() => ({
     navigateMock: vi.fn(),
+}));
+
+const { callableMock } = vi.hoisted(() => ({
+    callableMock: vi.fn(),
 }));
 
 const firebaseMocks = vi.hoisted(() => ({
     collection: vi.fn((_db: unknown, path: string) => ({ path })),
     db: {},
     doc: vi.fn(),
+    functions: {},
+    httpsCallable: vi.fn(() => callableMock),
     limit: vi.fn((count: number) => ({ type: 'limit', count })),
     onSnapshot: vi.fn(() => vi.fn()),
     orderBy: vi.fn((field: string, direction: string) => ({ type: 'orderBy', field, direction })),
     query: vi.fn((...args: unknown[]) => ({ args })),
     serverTimestamp: vi.fn(),
     updateDoc: vi.fn(),
+    writeBatch: vi.fn(),
 }));
 
 vi.mock('react-router-dom', async () => {
@@ -30,6 +38,21 @@ vi.mock('react-router-dom', async () => {
 });
 
 vi.mock('../../js/firebase.js', () => firebaseMocks);
+
+function notificationItem(overrides: Partial<NotificationInboxItem> = {}): NotificationInboxItem {
+    return {
+        id: 'notif-1',
+        category: 'team_message',
+        type: 'team_message',
+        title: 'Team update',
+        body: 'New team message',
+        text: 'Team update: New team message',
+        appRoute: '/messages',
+        createdAt: null,
+        readAt: null,
+        ...overrides,
+    };
+}
 
 afterEach(() => {
     cleanup();
@@ -45,14 +68,7 @@ describe('Notification inbox review regressions', () => {
         render(
             <NotificationInboxSheet
                 items={[
-                    {
-                        id: 'notif-1',
-                        type: 'team_message',
-                        text: 'New team message',
-                        appRoute: '/messages',
-                        createdAt: null,
-                        readAt: null,
-                    },
+                    notificationItem(),
                 ]}
                 inboxState="ready"
                 uid="user-1"
@@ -79,14 +95,15 @@ describe('Notification inbox review regressions', () => {
         render(
             <NotificationInboxSheet
                 items={[
-                    {
+                    notificationItem({
                         id: 'notif-pending',
+                        category: 'live_score',
                         type: 'live_score',
+                        title: 'Live score',
+                        body: 'Live score update',
                         text: 'Live score update',
                         appRoute: '/games/game-1',
-                        createdAt: null,
-                        readAt: null,
-                    },
+                    }),
                 ]}
                 inboxState="ready"
                 uid="user-1"
@@ -113,14 +130,15 @@ describe('Notification inbox review regressions', () => {
         render(
             <NotificationInboxSheet
                 items={[
-                    {
+                    notificationItem({
                         id: 'notif-error',
+                        category: 'schedule',
                         type: 'schedule',
+                        title: 'Schedule changed',
+                        body: '',
                         text: 'Schedule changed',
                         appRoute: '/schedule/game-2',
-                        createdAt: null,
-                        readAt: null,
-                    },
+                    }),
                 ]}
                 inboxState="ready"
                 uid="user-1"
@@ -151,6 +169,72 @@ describe('Notification inbox review regressions', () => {
             'Failed to subscribe to notification inbox:',
             subscriptionError
         );
+    });
+
+    it('maps server-written category, title, and body fields to display text while preserving legacy type/text fallback', () => {
+        const callback = vi.fn();
+        subscribeToNotificationInbox('user-1', callback);
+
+        const nextHandler = firebaseMocks.onSnapshot.mock.calls[0][1] as (snapshot: { docs: Array<{ id: string; data: () => Record<string, unknown> }> }) => void;
+        nextHandler({
+            docs: [
+                {
+                    id: 'server-shape',
+                    data: () => ({
+                        category: 'schedule',
+                        title: 'Schedule update',
+                        body: 'Practice moved to Field 2.',
+                        appRoute: '/schedule/team-1/practice-1',
+                        createdAt: 'created-at',
+                        readAt: null,
+                    }),
+                },
+                {
+                    id: 'legacy-shape',
+                    data: () => ({
+                        type: 'team_message',
+                        text: 'Legacy team message',
+                        appRoute: '/messages/team-1',
+                        createdAt: 'legacy-created-at',
+                        readAt: 'read-at',
+                    }),
+                },
+            ],
+        });
+
+        expect(callback).toHaveBeenCalledWith([
+            expect.objectContaining({
+                id: 'server-shape',
+                category: 'schedule',
+                type: 'schedule',
+                title: 'Schedule update',
+                body: 'Practice moved to Field 2.',
+                text: 'Schedule update: Practice moved to Field 2.',
+                appRoute: '/schedule/team-1/practice-1',
+                readAt: null,
+            }),
+            expect.objectContaining({
+                id: 'legacy-shape',
+                category: 'team_message',
+                type: 'team_message',
+                text: 'Legacy team message',
+                readAt: 'read-at',
+            }),
+        ]);
+    });
+
+    it('marks visible unread notifications read through the backend callable path', async () => {
+        callableMock.mockResolvedValue({ data: { status: 'success', updatedCount: 2 } });
+
+        await markAllNotificationsRead('user-1', [
+            notificationItem({ id: 'unread-1', readAt: null }),
+            notificationItem({ id: 'read-1', readAt: 'already-read' }),
+            notificationItem({ id: 'unread-2', readAt: null }),
+        ]);
+
+        expect(firebaseMocks.httpsCallable).toHaveBeenCalledWith(firebaseMocks.functions, 'markAllNotificationInboxRead');
+        expect(callableMock).toHaveBeenCalledWith({});
+        expect(firebaseMocks.writeBatch).not.toHaveBeenCalled();
     });
 
     it('shows loading spinner when inboxState is loading and no items are present', () => {
@@ -188,14 +272,15 @@ describe('Notification inbox review regressions', () => {
         render(
             <NotificationInboxSheet
                 items={[
-                    {
+                    notificationItem({
                         id: 'notif-2',
+                        category: 'game_update',
                         type: 'game_update',
+                        title: 'Game rescheduled',
+                        body: '',
                         text: 'Game rescheduled',
                         appRoute: '/schedule',
-                        createdAt: null,
-                        readAt: null,
-                    },
+                    }),
                 ]}
                 inboxState="error"
                 uid="user-1"
@@ -223,5 +308,33 @@ describe('Notification inbox review regressions', () => {
         expect(screen.getByText('No notifications yet')).toBeTruthy();
         expect(screen.queryByTestId('notification-inbox-loading')).toBeNull();
         expect(screen.queryByTestId('notification-inbox-error')).toBeNull();
+    });
+
+    it('calls the mark-all callback with visible unread items', async () => {
+        const onMarkAllRead = vi.fn(() => Promise.resolve());
+
+        render(
+            <NotificationInboxSheet
+                items={[
+                    notificationItem({ id: 'unread-1', readAt: null }),
+                    notificationItem({ id: 'read-1', readAt: 'already-read' }),
+                    notificationItem({ id: 'unread-2', readAt: null }),
+                ]}
+                inboxState="ready"
+                uid="user-1"
+                onClose={vi.fn()}
+                onMarkRead={vi.fn(() => Promise.resolve())}
+                onMarkAllRead={onMarkAllRead}
+            />
+        );
+
+        fireEvent.click(screen.getByRole('button', { name: /mark all read/i }));
+
+        await waitFor(() => {
+            expect(onMarkAllRead).toHaveBeenCalledWith('user-1', [
+                expect.objectContaining({ id: 'unread-1' }),
+                expect.objectContaining({ id: 'unread-2' }),
+            ]);
+        });
     });
 });
