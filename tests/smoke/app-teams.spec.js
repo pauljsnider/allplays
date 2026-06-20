@@ -233,7 +233,13 @@ async function mockTeamsModules(page, { scenario = '' } = {}) {
                     return { playerId: 'player-new' };
                 }
 
+                export async function archiveTeamTrackingItemForApp() {}
+
                 export async function deactivateRosterPlayerForApp() {}
+
+                export async function loadTeamTrackingAdmin() {
+                    return [];
+                }
 
                 export async function grantScorekeeperAccessForApp() {
                     return { success: true };
@@ -255,6 +261,10 @@ async function mockTeamsModules(page, { scenario = '' } = {}) {
                     return { success: true };
                 }
 
+                export async function saveTeamTrackingItemForApp() {
+                    return 'tracking-item-1';
+                }
+
                 export async function saveTeamScheduleNotificationsForApp(teamId, settings = {}) {
                     return {
                         enabled: settings.enabled !== false,
@@ -264,6 +274,8 @@ async function mockTeamsModules(page, { scenario = '' } = {}) {
                         summary: 'Team default reminder window: 24 hours before event start.'
                     };
                 }
+
+                export async function setPlayerTrackingStatusForApp() {}
 
                 export async function updateStatTrackerConfigForApp() {}
 
