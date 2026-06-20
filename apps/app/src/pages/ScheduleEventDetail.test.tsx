@@ -18,6 +18,7 @@ const scheduleServiceMocks = vi.hoisted(() => ({
   loadStaffScheduleRsvpBreakdown: vi.fn(),
   loadStaffRsvpReminderPreview: vi.fn(),
   loadAutoFilledLineupDraftPreviewForApp: vi.fn<(...args: any[]) => Promise<any>>(() => Promise.resolve({ availablePlayers: [] as any[], goingPlayers: [] as any[], gamePlan: null as any })),
+  markLiveGameFinalForApp: vi.fn(),
   markParentPracticePacketComplete: vi.fn(),
   publishGamePlanForApp: vi.fn(),
   releaseParentScheduleAssignmentClaim: vi.fn(),

@@ -16,6 +16,7 @@ const scheduleMocks = vi.hoisted(() => ({
     loadHomeScoringPlayers: vi.fn().mockResolvedValue([]),
     loadAutoFilledLineupDraftPreviewForApp: vi.fn(),
     loadGameDayLiveEventsForApp: vi.fn().mockResolvedValue([]),
+    markLiveGameFinalForApp: vi.fn(),
     buildLiveGameClockPeriods: vi.fn((game) => {
         const activePeriod = String(game?.liveClockPeriod || game?.period || '').trim();
         return activePeriod ? [activePeriod] : ['H1', 'H2'];
@@ -225,6 +226,7 @@ beforeEach(() => {
     });
     scheduleMocks.updateGameScore.mockResolvedValue({ homeScore: 5, awayScore: 2, scoreUpdatedAt: new Date('2026-05-25T08:00:00Z'), scoreUpdatedBy: 'user-1' });
     scheduleMocks.publishLiveScoreUpdateEvent.mockResolvedValue({ type: 'score_update', homeScore: 5, awayScore: 2 });
+    scheduleMocks.markLiveGameFinalForApp.mockResolvedValue({ homeScore: 5, awayScore: 2, status: 'completed', liveStatus: 'completed', liveClockRunning: false });
     scheduleMocks.markParentPracticePacketComplete.mockResolvedValue({
         id: 'user-1__player-1',
         parentUserId: 'user-1',
@@ -824,6 +826,37 @@ describe('React app ScheduleEventDetail More tab integration', () => {
         await waitForText(container, 'Score saved. Live play-by-play post failed.');
         expect(container.textContent).toContain('4-3');
         expect(container.textContent).toContain('Saved score controls');
+    });
+
+    it('marks a live score final from the quick score controls', async () => {
+        scheduleMocks.markLiveGameFinalForApp.mockResolvedValue({ homeScore: 5, awayScore: 2, status: 'completed', liveStatus: 'completed', liveClockRunning: false });
+        scheduleMocks.loadParentSchedule.mockResolvedValue({
+            events: [event({ homeScore: 4, awayScore: 2, liveStatus: 'live', status: 'live', canUpdateScore: true })]
+        });
+
+        const { container } = await renderDetail('/schedule/team-1/game-1?childId=player-1');
+        await waitForText(container, 'vs. Falcons');
+        await clickButton(container, 'Game');
+        await waitForText(container, 'Live score');
+
+        await clickButton(container, 'Home score up');
+        await clickButton(container, 'Mark final');
+
+        expect(scheduleMocks.publishLiveScoreUpdateEvent).toHaveBeenCalledWith(
+            'team-1',
+            'game-1',
+            { homeScore: 5, awayScore: 2 },
+            auth.user,
+            { homeScore: 4, awayScore: 2 }
+        );
+        expect(scheduleMocks.markLiveGameFinalForApp).toHaveBeenCalledWith(
+            'team-1',
+            'game-1',
+            { homeScore: 5, awayScore: 2 },
+            auth.user
+        );
+        await waitForText(container, 'Final score saved and game marked complete.');
+        expect(buttonByText(container, 'Final').disabled).toBe(true);
     });
 
     it('disables undo while a live score save is in flight', async () => {

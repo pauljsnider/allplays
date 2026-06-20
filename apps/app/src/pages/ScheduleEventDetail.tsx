@@ -23,6 +23,7 @@ import {
   sendStaffRsvpReminder,
   submitStaffScheduleRsvpOverride,
   loadHomeScoringPlayers,
+  markLiveGameFinalForApp,
   publishLiveScoreUpdateEvent,
   recordPlayerGameStat,
   recordPlayerScoringStat,
@@ -154,6 +155,7 @@ export { getAvailabilityNoteSaveState } from '../components/schedule/Availabilit
 
 type EventDetailSectionId = ScheduleEventDetailSectionId;
 type GameReportSectionId = 'summary' | 'players' | 'plays' | 'opponent' | 'insights' | 'media';
+type ScoreUpdateMetadata = Partial<Pick<ParentScheduleEvent, 'status' | 'liveStatus' | 'liveClockRunning'>>;
 
 const eventDetailSectionIds = new Set<EventDetailSectionId>(['availability', 'rideshare', 'assignments', 'game']);
 
@@ -439,10 +441,10 @@ export function ScheduleEventDetail({ auth }: { auth: AuthState }) {
     )));
   }, [decodedEventId, decodedTeamId]);
 
-  const handleScoreUpdated = useCallback((homeScore: number, awayScore: number) => {
+  const handleScoreUpdated = useCallback((homeScore: number, awayScore: number, metadata: ScoreUpdateMetadata = {}) => {
     setEvents((current) => current.map((event) => (
       event.teamId === decodedTeamId && event.id === decodedEventId
-        ? { ...event, homeScore, awayScore }
+        ? { ...event, homeScore, awayScore, ...metadata }
         : event
     )));
   }, [decodedEventId, decodedTeamId]);
@@ -1997,7 +1999,7 @@ function LazyGameHubPanel({
   );
 }
 
-function GameHubSection({ auth, event, childEvents, onScoreUpdated, onLiveClockUpdated, onWrapupCompleted, onStatsheetImported, onGameCancelled, onPracticeOccurrenceCancelled, onGamePlanPublished }: { auth: AuthState; event: ParentScheduleEvent; childEvents: ParentScheduleEvent[]; onScoreUpdated: (homeScore: number, awayScore: number) => void; onLiveClockUpdated: (payload: Partial<ParentScheduleEvent> & { period?: string | null }) => void; onWrapupCompleted: (payload: { homeScore: number; awayScore: number; postGameNotes: string; summary: string; practiceFeedItems: PracticeFeedItem[] }) => void; onStatsheetImported: (payload: { homeScore: number; awayScore: number; statSheetPhotoUrl?: string | null }) => void; onGameCancelled: () => void; onPracticeOccurrenceCancelled: () => void; onGamePlanPublished: (gamePlan: Record<string, any>) => void }) {
+function GameHubSection({ auth, event, childEvents, onScoreUpdated, onLiveClockUpdated, onWrapupCompleted, onStatsheetImported, onGameCancelled, onPracticeOccurrenceCancelled, onGamePlanPublished }: { auth: AuthState; event: ParentScheduleEvent; childEvents: ParentScheduleEvent[]; onScoreUpdated: (homeScore: number, awayScore: number, metadata?: ScoreUpdateMetadata) => void; onLiveClockUpdated: (payload: Partial<ParentScheduleEvent> & { period?: string | null }) => void; onWrapupCompleted: (payload: { homeScore: number; awayScore: number; postGameNotes: string; summary: string; practiceFeedItems: PracticeFeedItem[] }) => void; onStatsheetImported: (payload: { homeScore: number; awayScore: number; statSheetPhotoUrl?: string | null }) => void; onGameCancelled: () => void; onPracticeOccurrenceCancelled: () => void; onGamePlanPublished: (gamePlan: Record<string, any>) => void }) {
   const [shareStatus, setShareStatus] = useState<string | null>(null);
   const [cancelStatus, setCancelStatus] = useState<{ tone: 'success' | 'error'; message: string } | null>(null);
   const [cancelling, setCancelling] = useState(false);
@@ -3453,7 +3455,7 @@ function getBonusState(teamFouls: number) {
   };
 }
 
-function LiveScoreEditor({ auth, event, onScoreUpdated }: { auth: AuthState; event: ParentScheduleEvent; onScoreUpdated: (homeScore: number, awayScore: number) => void }) {
+function LiveScoreEditor({ auth, event, onScoreUpdated }: { auth: AuthState; event: ParentScheduleEvent; onScoreUpdated: (homeScore: number, awayScore: number, metadata?: ScoreUpdateMetadata) => void }) {
   const savedHomeScore = Math.max(0, Number(event.homeScore ?? 0));
   const savedAwayScore = Math.max(0, Number(event.awayScore ?? 0));
   const [homeScore, setHomeScore] = useState(savedHomeScore);
@@ -3506,8 +3508,10 @@ function LiveScoreEditor({ auth, event, onScoreUpdated }: { auth: AuthState; eve
     };
   }, [event.teamId, event.id, event.eventKey]);
 
+  const isCompleted = String(event.liveStatus || event.status || '').trim().toLowerCase() === 'completed';
   const dirty = homeScore !== savedHomeScore || awayScore !== savedAwayScore;
   const adjust = (side: 'home' | 'away', delta: number) => {
+    if (isCompleted) return;
     const nextHomeScore = side === 'home' ? Math.max(0, homeScore + delta) : homeScore;
     const nextAwayScore = side === 'away' ? Math.max(0, awayScore + delta) : awayScore;
     if (nextHomeScore === homeScore && nextAwayScore === awayScore) return;
@@ -3557,8 +3561,48 @@ function LiveScoreEditor({ auth, event, onScoreUpdated }: { auth: AuthState; eve
     }
   };
 
+  const markFinalScore = async () => {
+    if (!auth.user) return;
+    const previousScore = { homeScore: savedHomeScore, awayScore: savedAwayScore };
+    setSaving(true);
+    setStatus(null);
+    let livePublishFailed = false;
+    try {
+      if (homeScore !== previousScore.homeScore || awayScore !== previousScore.awayScore) {
+        try {
+          await publishLiveScoreUpdateEvent(event.teamId, event.id, { homeScore, awayScore }, auth.user, previousScore);
+        } catch (publishError) {
+          livePublishFailed = true;
+          console.warn('[schedule-event-detail] Final score saved but live play-by-play posting failed:', publishError);
+        }
+      }
+      const payload = await markLiveGameFinalForApp(event.teamId, event.id, { homeScore, awayScore }, auth.user);
+      const nextHomeScore = Number(payload.homeScore ?? homeScore);
+      const nextAwayScore = Number(payload.awayScore ?? awayScore);
+      pendingLocalSaveRef.current = { homeScore: nextHomeScore, awayScore: nextAwayScore };
+      setHomeScore(nextHomeScore);
+      setAwayScore(nextAwayScore);
+      setPreviousScoreSnapshots([]);
+      onScoreUpdated(nextHomeScore, nextAwayScore, {
+        status: 'completed',
+        liveStatus: 'completed',
+        liveClockRunning: false
+      });
+      setStatus({
+        tone: 'success',
+        message: livePublishFailed
+          ? 'Final score saved. Live play-by-play post failed.'
+          : 'Final score saved and game marked complete.'
+      });
+    } catch (error: any) {
+      setStatus({ tone: 'error', message: error?.message || 'Unable to mark final score.' });
+    } finally {
+      setSaving(false);
+    }
+  };
+
   const recordPlayerTwo = async (player: ScheduleHomeScoringPlayer) => {
-    if (!auth.user || saving || playerScoringId || dirty) return;
+    if (!auth.user || saving || playerScoringId || dirty || isCompleted) return;
     setPlayerScoringId(player.id);
     setStatus(null);
     try {
@@ -3595,8 +3639,8 @@ function LiveScoreEditor({ auth, event, onScoreUpdated }: { auth: AuthState; eve
         <div className="rounded-full bg-white px-3 py-1 text-xl font-black tabular-nums text-gray-950 shadow-sm">{homeScore}-{awayScore}</div>
       </div>
       <div className="mt-3 grid gap-2 sm:grid-cols-2">
-        <ScoreStepper label="Home" value={homeScore} onDecrease={() => adjust('home', -1)} onIncrease={() => adjust('home', 1)} disabled={saving || Boolean(playerScoringId)} />
-        <ScoreStepper label="Away" value={awayScore} onDecrease={() => adjust('away', -1)} onIncrease={() => adjust('away', 1)} disabled={saving || Boolean(playerScoringId)} />
+        <ScoreStepper label="Home" value={homeScore} onDecrease={() => adjust('home', -1)} onIncrease={() => adjust('home', 1)} disabled={saving || Boolean(playerScoringId) || isCompleted} />
+        <ScoreStepper label="Away" value={awayScore} onDecrease={() => adjust('away', -1)} onIncrease={() => adjust('away', 1)} disabled={saving || Boolean(playerScoringId) || isCompleted} />
       </div>
       <div className="mt-3 rounded-xl border border-gray-200 bg-white p-3">
         <div className="flex items-center justify-between gap-2">
@@ -3617,7 +3661,7 @@ function LiveScoreEditor({ auth, event, onScoreUpdated }: { auth: AuthState; eve
                   type="button"
                   className="flex min-h-11 items-center justify-between gap-2 rounded-xl border border-gray-200 px-3 text-left text-sm font-black text-gray-900 disabled:opacity-50"
                   onClick={() => recordPlayerTwo(player)}
-                  disabled={saving || Boolean(playerScoringId) || dirty}
+                  disabled={saving || Boolean(playerScoringId) || dirty || isCompleted}
                   aria-label={`${label} plus 2 points`}
                 >
                   <span className="min-w-0 truncate">{label}</span>
@@ -3635,9 +3679,17 @@ function LiveScoreEditor({ auth, event, onScoreUpdated }: { auth: AuthState; eve
             type="button"
             className="primary-button min-h-11 px-4 text-sm"
             onClick={saveScore}
-            disabled={saving || Boolean(playerScoringId) || !dirty}
+            disabled={saving || Boolean(playerScoringId) || !dirty || isCompleted}
           >
             {saving ? 'Saving score' : 'Save score'}
+          </button>
+          <button
+            type="button"
+            className="secondary-button min-h-11 px-4 text-sm"
+            onClick={markFinalScore}
+            disabled={saving || Boolean(playerScoringId) || isCompleted}
+          >
+            {isCompleted ? 'Final' : saving ? 'Saving final' : 'Mark final'}
           </button>
           {previousScoreSnapshots.length ? (
             <button

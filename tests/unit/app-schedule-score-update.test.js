@@ -104,7 +104,7 @@ vi.mock('../../apps/app/src/lib/chatLogic.ts', () => ({
     DEFAULT_TEAM_CONVERSATION_ID: 'team'
 }));
 
-import { buildCancelScheduledGameChatMessage, cancelScheduledGameForApp, normalizeGameScoreValue, publishLiveScoreUpdateEvent, updateGameScore } from '../../apps/app/src/lib/scheduleService.ts';
+import { buildCancelScheduledGameChatMessage, cancelScheduledGameForApp, markLiveGameFinalForApp, normalizeGameScoreValue, publishLiveScoreUpdateEvent, updateGameScore } from '../../apps/app/src/lib/scheduleService.ts';
 
 const user = {
     uid: 'user-1',
@@ -202,6 +202,28 @@ describe('React app schedule score updates', () => {
             createdBy: 'user-1',
             createdByName: 'Coach Pat'
         });
+    });
+
+    it('marks a live score final so app-updated games do not stay live forever', async () => {
+        dbMocks.updateGame.mockResolvedValue(undefined);
+
+        const payload = await markLiveGameFinalForApp('team-1', 'game-1', {
+            homeScore: 8,
+            awayScore: 6
+        }, user);
+
+        expect(dbMocks.updateGame).toHaveBeenCalledWith('team-1', 'game-1', expect.objectContaining({
+            homeScore: 8,
+            awayScore: 6,
+            status: 'completed',
+            liveStatus: 'completed',
+            liveClockRunning: false,
+            scoreUpdatedBy: 'user-1',
+            liveEndedBy: 'user-1'
+        }));
+        expect(dbMocks.updateGame.mock.calls[0][2].scoreUpdatedAt).toBeInstanceOf(Date);
+        expect(dbMocks.updateGame.mock.calls[0][2].liveEndedAt).toBeInstanceOf(Date);
+        expect(payload).toEqual(dbMocks.updateGame.mock.calls[0][2]);
     });
 
     it('writes cancellation metadata and posts the legacy-style team chat notice', async () => {

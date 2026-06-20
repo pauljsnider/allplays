@@ -3101,6 +3101,38 @@ export async function updateGameScore(teamId: string, gameId: string, score: Gam
   return payload;
 }
 
+export async function markLiveGameFinalForApp(teamId: string, gameId: string, score: GameScoreInput, user: AuthUser) {
+  if (!teamId || !gameId) {
+    throw new Error('A scheduled game is required before marking a final score.');
+  }
+  if (!user?.uid) {
+    throw new Error('Sign in before marking a final score.');
+  }
+
+  const finalizedAt = new Date();
+  const payload: Record<string, unknown> = {
+    homeScore: normalizeGameScoreValue(score.homeScore),
+    awayScore: normalizeGameScoreValue(score.awayScore),
+    status: 'completed',
+    liveStatus: 'completed',
+    liveClockRunning: false,
+    scoreUpdatedAt: finalizedAt,
+    scoreUpdatedBy: user.uid,
+    liveEndedAt: finalizedAt,
+    liveEndedBy: user.uid
+  };
+
+  try {
+    await withTimeout(Promise.resolve(updateGame(teamId, gameId, payload)), 'Final score save');
+  } catch (error) {
+    if (!isNativeRuntime()) throw error;
+    logScheduleWarning('Falling back to REST final score save.', 'game-final-score-save', error, { fallback: 'rest', teamId, gameId });
+    await nativePatchDocument(`teams/${encodeURIComponent(teamId)}/games/${encodeURIComponent(gameId)}`, payload);
+  }
+
+  return payload;
+}
+
 export async function completeGameWrapupForApp(teamId: string, gameId: string, payload: Record<string, unknown>, user: AuthUser) {
   if (!teamId || !gameId) {
     throw new Error('A scheduled game is required before completing wrap-up.');
