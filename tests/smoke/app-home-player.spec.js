@@ -383,6 +383,10 @@ async function mockHomePlayerModules(page) {
                     return { code: 'ABCD1234', inviteUrl: 'https://allplays.ai/app#/accept-invite?code=ABCD1234&type=parent', status: 'pending', existingUser: false, autoLinked: false, teamName: 'Bears', playerName: 'Pat Star' };
                 }
 
+                export async function createStatTrackerConfigForApp() {
+                    return 'config-new';
+                }
+
                 export async function addRosterPlayerForApp() {
                     return { playerId: 'player-new' };
                 }
@@ -418,6 +422,8 @@ async function mockHomePlayerModules(page) {
                         summary: 'Team default reminder window: 24 hours before event start.'
                     };
                 }
+
+                export async function updateStatTrackerConfigForApp() {}
 
                 export async function loadTeamStaffPermissions() {
                     return null;

@@ -9,6 +9,7 @@ const teamDetailServiceMocks = vi.hoisted(() => ({
   addRosterPlayerForApp: vi.fn(),
   buildPublicTeamGamesIcsUrl: vi.fn(() => 'https://calendar.example.test/team.ics'),
   canExposePublicFanFeed: vi.fn(() => true),
+  createStatTrackerConfigForApp: vi.fn(),
   createRosterParentInviteForApp: vi.fn(),
   deactivateRosterPlayerForApp: vi.fn(),
   grantScorekeeperAccessForApp: vi.fn(),
@@ -24,7 +25,8 @@ const teamDetailServiceMocks = vi.hoisted(() => ({
   revokeScorekeeperAccessForApp: vi.fn(),
   revokeTeamAdminAccessForApp: vi.fn(),
   revokeVideographerAccessForApp: vi.fn(),
-  saveTeamScheduleNotificationsForApp: vi.fn()
+  saveTeamScheduleNotificationsForApp: vi.fn(),
+  updateStatTrackerConfigForApp: vi.fn()
 }));
 
 vi.mock('../lib/teamDetailService', () => teamDetailServiceMocks);
@@ -129,6 +131,7 @@ describe('TeamDetail', () => {
     teamDetailServiceMocks.loadTeamStaffPermissions.mockResolvedValue(null);
     teamDetailServiceMocks.inviteTeamAdminForApp.mockResolvedValue({ status: 'sent', email: 'coach@example.com' });
     teamDetailServiceMocks.addRosterPlayerForApp.mockResolvedValue({ playerId: 'player-2' });
+    teamDetailServiceMocks.createStatTrackerConfigForApp.mockResolvedValue('config-new');
     teamDetailServiceMocks.createRosterParentInviteForApp.mockResolvedValue({ code: 'ABCD1234', inviteUrl: 'https://allplays.ai/app#/accept-invite?code=ABCD1234&type=parent', status: 'pending', existingUser: false, autoLinked: false, teamName: 'Bears', playerName: 'Pat Star' });
     teamDetailServiceMocks.deactivateRosterPlayerForApp.mockResolvedValue(undefined);
     teamDetailServiceMocks.reactivateRosterPlayerForApp.mockResolvedValue(undefined);
@@ -138,6 +141,7 @@ describe('TeamDetail', () => {
     teamDetailServiceMocks.grantVideographerAccessForApp.mockResolvedValue({ success: true });
     teamDetailServiceMocks.revokeVideographerAccessForApp.mockResolvedValue({ success: true });
     teamDetailServiceMocks.saveTeamScheduleNotificationsForApp.mockResolvedValue(model.team.scheduleNotifications);
+    teamDetailServiceMocks.updateStatTrackerConfigForApp.mockResolvedValue(undefined);
   });
 
   afterEach(() => {
@@ -359,6 +363,67 @@ describe('TeamDetail', () => {
     fireEvent.click(screen.getByRole('button', { name: /more/i }));
 
     expect((await screen.findByText('Drill library')).closest('a')?.getAttribute('href')).toBe('/teams/team-1/drills');
+  });
+
+  it('lets staff create a stat config from a preset and edit an existing config in the app', async () => {
+    const managedModel = {
+      ...model,
+      canManageTeam: true,
+      statTrackerConfigs: [{
+        id: 'config-1',
+        name: 'Soccer Standard',
+        baseType: 'Soccer',
+        isBasketball: false,
+        columnCount: 5,
+        columnNames: ['GOALS', 'SHOTS', 'SHOTS_ON_TARGET', 'ASSISTS', 'SAVES'],
+        columns: ['GOALS', 'SHOTS', 'SHOTS_ON_TARGET', 'ASSISTS', 'SAVES'],
+        statDefinitions: [
+          { id: 'goals', label: 'GOALS', acronym: 'GOALS', type: 'base', group: 'Attack', scope: 'player', visibility: 'public', format: 'number', precision: 0, rankingOrder: 'desc', topStat: true },
+          { id: 'shots', label: 'SHOTS', acronym: 'SHOTS', type: 'base', group: 'General', scope: 'player', visibility: 'public', format: 'number', precision: 0, rankingOrder: 'desc', topStat: false }
+        ],
+        assignedUpcomingGames: []
+      }]
+    };
+    teamDetailServiceMocks.loadParentTeamDetail
+      .mockResolvedValueOnce({ ...managedModel, statTrackerConfigs: [] })
+      .mockResolvedValueOnce(managedModel)
+      .mockResolvedValueOnce(managedModel);
+
+    render(
+      <MemoryRouter initialEntries={['/teams/team-1?tab=more']}>
+        <Routes>
+          <Route path="/teams/:teamId" element={<TeamDetail auth={auth} />} />
+        </Routes>
+      </MemoryRouter>
+    );
+
+    expect(await screen.findByRole('heading', { name: 'Bears' })).toBeTruthy();
+    expect(await screen.findByRole('button', { name: 'Create config' })).toBeTruthy();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Create config' }));
+    fireEvent.change(screen.getByLabelText('Preset library'), { target: { value: 'basketball' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Apply preset' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Create config' }));
+
+    await waitFor(() => expect(teamDetailServiceMocks.createStatTrackerConfigForApp).toHaveBeenCalledWith('team-1', auth.user, expect.objectContaining({
+      name: 'Basketball Standard',
+      baseType: 'Basketball',
+      columns: ['PTS', 'REB', 'AST', 'FGM', 'FGA', 'TO']
+    })));
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Edit' }));
+    const labelInputs = screen.getAllByPlaceholderText('PTS');
+    fireEvent.change(labelInputs[0], { target: { value: 'Goals' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save config' }));
+
+    await waitFor(() => expect(teamDetailServiceMocks.updateStatTrackerConfigForApp).toHaveBeenCalledWith('team-1', 'config-1', auth.user, expect.objectContaining({
+      name: 'Soccer Standard',
+      baseType: 'Soccer',
+      columns: ['Goals', 'SHOTS', 'SHOTS_ON_TARGET', 'ASSISTS', 'SAVES'],
+      statDefinitions: expect.arrayContaining([
+        expect.objectContaining({ id: 'goals', label: 'Goals', acronym: 'Goals' })
+      ])
+    })));
   });
 
   it('loads roster invite summaries only once per roster visit when the result is empty', async () => {

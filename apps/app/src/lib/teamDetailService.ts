@@ -1,5 +1,6 @@
 import {
   addPlayer,
+  createConfig,
   getAggregatedStatsForGames,
   getAdSpaceSponsors,
   getConfigs,
@@ -21,6 +22,7 @@ import {
   deactivatePlayer,
   reactivatePlayer,
   setPlayerPrivateRosterProfileFields,
+  updateConfig,
   uploadPlayerPhoto,
   uploadTeamPhoto
 } from '../../../../js/db.js';
@@ -119,6 +121,8 @@ export type TeamDetailStatTrackerConfig = {
   isBasketball: boolean;
   columnCount: number;
   columnNames: string[];
+  columns: string[];
+  statDefinitions: Array<Record<string, unknown>>;
   assignedUpcomingGames: Array<{
     gameId: string;
     title: string;
@@ -208,6 +212,13 @@ export type UpdateTeamSettingsForAppInput = {
   zip?: string;
   isPublic?: boolean;
   photoFile?: File | null;
+};
+
+export type UpsertStatTrackerConfigForAppInput = {
+  name: string;
+  baseType: string;
+  columns: string[];
+  statDefinitions: Array<Record<string, unknown>>;
 };
 
 export type TeamDetailModel = {
@@ -448,6 +459,51 @@ async function nativeListCollection(path: string) {
     .filter(Boolean) as FirestoreDocument[];
 }
 
+function encodeFirestoreValue(value: any): Record<string, unknown> {
+  if (value === null || value === undefined) return { nullValue: 'NULL_VALUE' };
+  if (typeof value === 'string') return { stringValue: value };
+  if (typeof value === 'boolean') return { booleanValue: value };
+  if (typeof value === 'number') return Number.isInteger(value) ? { integerValue: String(value) } : { doubleValue: value };
+  if (value instanceof Date) return { timestampValue: value.toISOString() };
+  if (Array.isArray(value)) return { arrayValue: { values: value.map((entry) => encodeFirestoreValue(entry)) } };
+  if (typeof value === 'object') {
+    return {
+      mapValue: {
+        fields: Object.keys(value).reduce<Record<string, Record<string, unknown>>>((acc, key) => {
+          acc[key] = encodeFirestoreValue(value[key]);
+          return acc;
+        }, {})
+      }
+    };
+  }
+  return { stringValue: String(value) };
+}
+
+async function nativePatchDocument(path: string, data: Record<string, unknown>) {
+  const fields = Object.keys(data).reduce<Record<string, Record<string, unknown>>>((acc, key) => {
+    acc[key] = encodeFirestoreValue(data[key]);
+    return acc;
+  }, {});
+  const params = new URLSearchParams();
+  Object.keys(data).forEach((key) => params.append('updateMask.fieldPaths', key));
+  const suffix = params.toString() ? `?${params.toString()}` : '';
+  await nativeFirestoreRequest(`/${path}${suffix}`, {
+    method: 'PATCH',
+    body: JSON.stringify({ fields })
+  });
+}
+
+async function nativeCreateDocument(path: string, data: Record<string, unknown>) {
+  const fields = Object.keys(data).reduce<Record<string, Record<string, unknown>>>((acc, key) => {
+    acc[key] = encodeFirestoreValue(data[key]);
+    return acc;
+  }, {});
+  return decodeFirestoreDocument(await nativeFirestoreRequest(`/${path}`, {
+    method: 'POST',
+    body: JSON.stringify({ fields })
+  }));
+}
+
 async function nativeRunQuery(collectionId: string, fieldPath: string, op: 'EQUAL' | 'ARRAY_CONTAINS', value: string) {
   const payload = await nativeFirestoreRequest(':runQuery', {
     method: 'POST',
@@ -471,6 +527,16 @@ async function nativeRunQuery(collectionId: string, fieldPath: string, op: 'EQUA
 }
 
 async function readWithNativeFallback<T>(label: string, primary: () => Promise<T>, fallback: () => Promise<T>): Promise<T> {
+  try {
+    return await withTimeout(Promise.resolve(primary()), label);
+  } catch (error) {
+    if (!isNativeRuntime()) throw error;
+    console.warn(`[team-detail-service] Falling back to REST for ${label}:`, sanitizeErrorForLogging(error));
+    return fallback();
+  }
+}
+
+async function writeWithNativeFallback<T>(label: string, primary: () => Promise<T>, fallback: () => Promise<T>): Promise<T> {
   try {
     return await withTimeout(Promise.resolve(primary()), label);
   } catch (error) {
@@ -1027,6 +1093,62 @@ export async function updateTeamSettingsForApp(teamId: string, user: AuthUser | 
   invalidateTeamDetailBaseSnapshotCache(normalizedTeamId);
 }
 
+export async function createStatTrackerConfigForApp(teamId: string, user: AuthUser | null, input: UpsertStatTrackerConfigForAppInput) {
+  const normalizedTeamId = cleanString(teamId);
+  if (!normalizedTeamId) throw new Error('Team ID is required.');
+
+  const { team } = await loadTeamDetailBaseSnapshot(normalizedTeamId);
+  if (!team || !hasFullTeamAccess(user, team)) {
+    throw new Error('You do not have permission to edit this team.');
+  }
+
+  const normalizedConfig = normalizeStatTrackerConfig(input || {});
+  normalizedConfig.createdAt = new Date();
+
+  const label = `create stat tracker config ${normalizedTeamId}`;
+  const createPromise = Promise.resolve(createConfig(normalizedTeamId, normalizedConfig));
+
+  let created: { id?: string } | FirestoreDocument | null = null;
+  try {
+    const id = await withTimeout(createPromise, label);
+    created = { id };
+  } catch (error) {
+    if (!isNativeRuntime()) throw error;
+    if (error instanceof Error && error.message === `${label} timed out.`) {
+      created = { id: await createPromise };
+    } else {
+      console.warn(`[team-detail-service] Falling back to REST for ${label}:`, sanitizeErrorForLogging(error));
+      created = await nativeCreateDocument(`teams/${encodeURIComponent(normalizedTeamId)}/statTrackerConfigs`, normalizedConfig);
+    }
+  }
+
+  invalidateTeamDetailBaseSnapshotCache(normalizedTeamId);
+  return cleanString((created as any)?.id);
+}
+
+export async function updateStatTrackerConfigForApp(teamId: string, configId: string, user: AuthUser | null, input: UpsertStatTrackerConfigForAppInput) {
+  const normalizedTeamId = cleanString(teamId);
+  const normalizedConfigId = cleanString(configId);
+  if (!normalizedTeamId) throw new Error('Team ID is required.');
+  if (!normalizedConfigId) throw new Error('Config ID is required.');
+
+  const { team } = await loadTeamDetailBaseSnapshot(normalizedTeamId);
+  if (!team || !hasFullTeamAccess(user, team)) {
+    throw new Error('You do not have permission to edit this team.');
+  }
+
+  const normalizedConfig = normalizeStatTrackerConfig(input || {});
+  normalizedConfig.updatedAt = new Date();
+
+  await writeWithNativeFallback(
+    `update stat tracker config ${normalizedTeamId}:${normalizedConfigId}`,
+    async () => updateConfig(normalizedTeamId, normalizedConfigId, normalizedConfig),
+    async () => nativePatchDocument(`teams/${encodeURIComponent(normalizedTeamId)}/statTrackerConfigs/${encodeURIComponent(normalizedConfigId)}`, normalizedConfig)
+  );
+
+  invalidateTeamDetailBaseSnapshotCache(normalizedTeamId);
+}
+
 export function buildAdminAcceptInviteUrl(code: string, baseUrl = getPublicBaseUrl()) {
   return buildAppAcceptInviteUrl(code, 'admin', baseUrl) || null;
 }
@@ -1548,6 +1670,8 @@ function normalizeTeamStatTrackerConfig(config: any): TeamDetailStatTrackerConfi
     isBasketball: baseType.toLowerCase() === 'basketball',
     columnCount: columnNames.length,
     columnNames,
+    columns: normalized.columns || [],
+    statDefinitions: Array.isArray(normalized.statDefinitions) ? normalized.statDefinitions.map((definition: Record<string, unknown>) => ({ ...definition })) : [],
     assignedUpcomingGames: []
   };
 }

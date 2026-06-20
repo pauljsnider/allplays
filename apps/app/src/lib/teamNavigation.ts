@@ -160,8 +160,8 @@ export function buildTeamNavigation(team: ParentHomeTeam): TeamNavigationSection
       id: 'stats-config',
       label: 'Stats config',
       detail: 'Tracker columns, sport presets, access checks',
-      href: getTeamWebsiteHashHref('edit-config.html', teamId),
-      kind: 'website'
+      href: `/teams/${encodeURIComponent(teamId)}?tab=more`,
+      kind: 'native'
     },
     {
       id: 'certificates',
