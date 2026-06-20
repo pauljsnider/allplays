@@ -92,6 +92,7 @@ import {
 import { sharePublicUrl } from '../lib/publicActions';
 import { markTeamChatReadAndRefreshBadge, updateAppIconBadge } from '../lib/badgeService';
 import { useShellLayout } from '../lib/useShellLayout';
+import { useRefreshOnResume } from '../lib/useRefreshOnResume';
 import type { AuthState } from '../lib/types';
 import { voiceRecognition, type VoiceListenerHandle } from '../lib/voiceService';
 import { useChatSheets } from './messages/hooks/useChatSheets';
@@ -174,6 +175,13 @@ export function Messages({ auth }: { auth: AuthState }) {
     refreshInbox();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [auth.user?.uid, shouldLoadInbox]);
+
+  useRefreshOnResume(
+    () => {
+      if (shouldLoadInbox) void refreshInbox();
+    },
+    { enabled: Boolean(auth.user?.uid) && shouldLoadInbox }
+  );
 
   // Keep the desktop selection in sync with the current inbox contents.
   useEffect(() => {
