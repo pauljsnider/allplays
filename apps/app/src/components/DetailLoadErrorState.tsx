@@ -1,6 +1,6 @@
 import { Link } from 'react-router-dom';
 import { RefreshCw, type LucideIcon } from 'lucide-react';
-import type { AppServiceError } from '../lib/appErrors';
+import { getAppServiceErrorMessage, type AppServiceError } from '../lib/appErrors';
 
 type DetailLoadErrorStateProps = {
   icon: LucideIcon;
@@ -30,7 +30,7 @@ export function DetailLoadErrorState({
           <Icon className="mt-0.5 h-5 w-5 flex-none text-rose-600" aria-hidden="true" />
           <div className="min-w-0 flex-1">
             <div className="text-sm font-black text-gray-950">{title}</div>
-            <div className="mt-1 text-sm font-semibold text-gray-600">{error?.message || fallbackMessage}</div>
+            <div className="mt-1 text-sm font-semibold text-gray-600">{getAppServiceErrorMessage(error, fallbackMessage)}</div>
             <div className="mt-3 flex flex-wrap gap-2">
               <button type="button" className="primary-button !min-h-9 text-xs" onClick={onRetry} disabled={retrying}>
                 <RefreshCw className={`h-4 w-4 ${retrying ? 'animate-spin' : ''}`} aria-hidden="true" />
