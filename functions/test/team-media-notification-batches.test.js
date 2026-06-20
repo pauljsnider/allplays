@@ -72,3 +72,38 @@ test('team media notification payload summarizes the album and total batch count
             cleanup();
         }
 });
+
+test('team media notification batch writes keep itemCount aligned with unique item ids', () => {
+        const { internals, cleanup } = loadNotificationInternals();
+
+        try {
+            const metadata = internals.buildTeamMediaNotificationBatchMetadata({
+                teamId: 'team-1',
+                itemId: 'photo-1',
+                item: {
+                    folderId: 'folder-1',
+                    title: 'Warmups',
+                    type: 'photo',
+                    createdAt: '2026-06-20T15:42:12.000Z'
+                },
+                folder: {
+                    id: 'folder-1',
+                    name: 'Game Highlights',
+                    visibility: 'team'
+                },
+                now: new Date('2026-06-20T15:45:00.000Z')
+            });
+
+            const nextBatch = internals.buildTeamMediaNotificationBatchWrite({
+                itemCount: 2,
+                itemIds: ['photo-1'],
+                itemTypes: ['photo']
+            }, metadata);
+
+            assert.equal(nextBatch.itemCount, 1);
+            assert.deepEqual(nextBatch.itemIds, ['photo-1']);
+            assert.deepEqual(nextBatch.itemTypes, ['photo']);
+        } finally {
+            cleanup();
+        }
+});

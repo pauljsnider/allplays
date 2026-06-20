@@ -3909,6 +3909,40 @@ function buildTeamMediaNotificationPayload(batch = {}) {
   };
 }
 
+function buildTeamMediaNotificationBatchWrite(batch = {}, metadata = {}) {
+  const existingItemIds = Array.from(new Set(
+    (Array.isArray(batch.itemIds) ? batch.itemIds : [])
+      .map((itemId) => normalizeTeamMediaNotificationText(itemId))
+      .filter(Boolean)
+  ));
+  const existingItemTypes = Array.from(new Set(
+    (Array.isArray(batch.itemTypes) ? batch.itemTypes : [])
+      .map((itemType) => normalizeTeamMediaNotificationItemType(itemType))
+      .filter(Boolean)
+  ));
+  const nextItemIds = existingItemIds.includes(metadata.itemId)
+    ? existingItemIds
+    : [...existingItemIds, metadata.itemId];
+  const nextItemTypes = metadata.itemType && !existingItemTypes.includes(metadata.itemType)
+    ? [...existingItemTypes, metadata.itemType]
+    : existingItemTypes;
+
+  return {
+    teamId: metadata.teamId,
+    folderId: metadata.folderId,
+    albumName: metadata.albumName,
+    albumVisibility: metadata.albumVisibility,
+    windowStartAt: admin.firestore.Timestamp.fromDate(metadata.windowStartAt),
+    dueAt: admin.firestore.Timestamp.fromDate(metadata.dueAt),
+    status: 'pending',
+    itemCount: nextItemIds.length,
+    itemIds: nextItemIds,
+    itemTypes: nextItemTypes,
+    latestItemTitle: metadata.itemTitle || null,
+    updatedAt: admin.firestore.FieldValue.serverTimestamp()
+  };
+}
+
 async function queueTeamMediaNotificationBatch({ teamId, itemId, item, now = new Date() } = {}) {
   const folderId = normalizeTeamMediaNotificationText(item?.folderId);
   if (!teamId || !itemId || !folderId || item?.deleted === true) return null;
@@ -3929,23 +3963,11 @@ async function queueTeamMediaNotificationBatch({ teamId, itemId, item, now = new
   const batchRef = firestore.doc(`teamMediaNotificationBatches/${metadata.batchId}`);
   await firestore.runTransaction(async (transaction) => {
     const batchSnap = await transaction.get(batchRef);
-    const currentStatus = batchSnap.exists ? String(batchSnap.data()?.status || '') : '';
+    const batch = batchSnap.exists ? (batchSnap.data() || {}) : {};
+    const currentStatus = batchSnap.exists ? String(batch.status || '') : '';
     if (['sent', 'sending', 'skipped'].includes(currentStatus)) return;
 
-    transaction.set(batchRef, {
-      teamId: metadata.teamId,
-      folderId: metadata.folderId,
-      albumName: metadata.albumName,
-      albumVisibility: metadata.albumVisibility,
-      windowStartAt: admin.firestore.Timestamp.fromDate(metadata.windowStartAt),
-      dueAt: admin.firestore.Timestamp.fromDate(metadata.dueAt),
-      status: 'pending',
-      itemCount: admin.firestore.FieldValue.increment(1),
-      itemIds: admin.firestore.FieldValue.arrayUnion(metadata.itemId),
-      itemTypes: admin.firestore.FieldValue.arrayUnion(metadata.itemType),
-      latestItemTitle: metadata.itemTitle || null,
-      updatedAt: admin.firestore.FieldValue.serverTimestamp()
-    }, { merge: true });
+    transaction.set(batchRef, buildTeamMediaNotificationBatchWrite(batch, metadata), { merge: true });
   });
 
   return metadata;
@@ -4889,6 +4911,7 @@ async function sendDirectTargetsNotification({
 exports._internal = {
   buildTeamMediaNotificationBatchId,
   buildTeamMediaNotificationBatchMetadata,
+  buildTeamMediaNotificationBatchWrite,
   buildTeamMediaNotificationPayload,
   dispatchDueTeamMediaNotificationBatches,
   getTargetsForCategory,
