@@ -4028,10 +4028,27 @@ async function writeNotificationAuditRecord({
 
 const NOTIFICATION_DEDUP_WINDOW_MS = 5 * 60 * 1000; // 5 minutes
 
-async function checkAndSetNotificationDedup(teamId, category, gameId) {
-  const key = [teamId, category, gameId || ''].join('::');
+function buildNotificationDedupRef(teamId, category, dedupIdentity = '') {
+  const key = [teamId, category, dedupIdentity || ''].join('::');
   const hash = crypto.createHash('sha256').update(key).digest('hex').slice(0, 16);
-  const dedupRef = firestore.doc(`teams/${teamId}/notificationSendLog/${hash}`);
+  return firestore.doc(`teams/${teamId}/notificationSendLog/${hash}`);
+}
+
+async function markNotificationDedupSent(teamId, category, gameId, dedupKey = null) {
+  const dedupIdentity = String(dedupKey || gameId || '').trim();
+  const dedupRef = buildNotificationDedupRef(teamId, category, dedupIdentity);
+  await dedupRef.set({
+    teamId,
+    category,
+    gameId: gameId || null,
+    dedupKey: dedupKey || null,
+    sentAt: admin.firestore.FieldValue.serverTimestamp()
+  }, { merge: true });
+}
+
+async function checkAndSetNotificationDedup(teamId, category, gameId, dedupKey = null) {
+  const dedupIdentity = String(dedupKey || gameId || '').trim();
+  const dedupRef = buildNotificationDedupRef(teamId, category, dedupIdentity);
 
   const result = await firestore.runTransaction(async (txn) => {
     const snap = await txn.get(dedupRef);
@@ -4045,6 +4062,7 @@ async function checkAndSetNotificationDedup(teamId, category, gameId) {
       teamId,
       category,
       gameId: gameId || null,
+      dedupKey: dedupKey || null,
       sentAt: admin.firestore.FieldValue.serverTimestamp()
     });
     return true;
@@ -4080,6 +4098,7 @@ async function sendCategoryNotification({
   body,
   actorUid = null,
   linkOverride = null,
+  dedupKey = null,
   excludeUids = [],
   audienceContext = {}
 }) {
@@ -4087,9 +4106,9 @@ async function sendCategoryNotification({
 
   const ALWAYS_SEND_CATEGORIES = new Set(['liveScore', 'mentions', 'liveChat']);
   if (!ALWAYS_SEND_CATEGORIES.has(category)) {
-    const canSend = await checkAndSetNotificationDedup(teamId, category, gameId);
+    const canSend = await checkAndSetNotificationDedup(teamId, category, gameId, dedupKey);
     if (!canSend) {
-      functions.logger.info('Notification dedup: skipping duplicate send', { teamId, category, gameId });
+      functions.logger.info('Notification dedup: skipping duplicate send', { teamId, category, gameId, dedupKey });
       return null;
     }
   }
@@ -4190,6 +4209,153 @@ async function sendCategoryNotification({
     inboxCleanupCount: inboxResult.cleanupCount,
     inboxFailureCount: inboxResult.failureCount
   };
+}
+
+function normalizeScheduleImportBatch(batch = {}) {
+  const batchId = String(batch?.batchId || '').trim();
+  const totalCount = Math.max(0, Number.parseInt(String(batch?.totalCount ?? 0), 10) || 0);
+  const rowNumber = Math.max(0, Number.parseInt(String(batch?.rowNumber ?? 0), 10) || 0);
+  if (!batchId || totalCount <= 0 || rowNumber <= 0) {
+    return null;
+  }
+  return { batchId, totalCount, rowNumber };
+}
+
+function buildScheduleImportSummaryPayload({ totalCount, gameCount, practiceCount }) {
+  const safeTotalCount = Math.max(0, Number(totalCount || 0));
+  const safeGameCount = Math.max(0, Number(gameCount || 0));
+  const safePracticeCount = Math.max(0, Number(practiceCount || 0));
+  const parts = [];
+  if (safeGameCount > 0) parts.push(`${safeGameCount} game${safeGameCount === 1 ? '' : 's'}`);
+  if (safePracticeCount > 0) parts.push(`${safePracticeCount} practice${safePracticeCount === 1 ? '' : 's'}`);
+  const detail = parts.length ? ` (${parts.join(', ')})` : '';
+  return {
+    title: 'Schedule import complete',
+    body: `Imported ${safeTotalCount} schedule events${detail}.`
+  };
+}
+
+async function sendCreatedScheduleEventNotification({ teamId, gameId, game }) {
+  if (game.source || game.sourceMetadata) return null;
+
+  const isPractice = String(game.type || '').toLowerCase() === 'practice';
+  const category = isPractice ? 'practice' : 'schedule';
+  const eventTitle = getEventTitle(game);
+  const dateValue = coerceDate(game.date);
+  const timeZone = String(game.timeZone || game.timezone || '').trim() || 'America/Chicago';
+  const dateLabel = dateValue ? formatScheduleUpdateDate(dateValue, timeZone) : '';
+  const title = isPractice ? `New practice: ${eventTitle}` : `New game: ${eventTitle}`;
+  const body = dateLabel || (isPractice ? 'Practice scheduled' : 'Game scheduled');
+
+  return sendCategoryNotification({
+    teamId,
+    gameId,
+    category,
+    title,
+    body,
+    actorUid: game.createdBy || null
+  });
+}
+
+async function sendScheduleImportBatchNotifications({ teamId, batchId, batch }) {
+  const batchRef = firestore.doc(`teams/${teamId}/scheduleImportNotificationBatches/${batchId}`);
+  const eventIds = Array.isArray(batch?.eventIds)
+    ? batch.eventIds.map((value) => String(value || '').trim()).filter(Boolean)
+    : [];
+  const totalCount = Math.max(0, Number(batch?.totalCount || 0));
+  const gameCount = Math.max(0, Number(batch?.gameCount || 0));
+  const practiceCount = Math.max(0, Number(batch?.practiceCount || 0));
+
+  if (!eventIds.length || totalCount <= 0 || eventIds.length < totalCount) {
+    return null;
+  }
+
+  if (totalCount > 3) {
+    const payload = buildScheduleImportSummaryPayload({ totalCount, gameCount, practiceCount });
+    await sendCategoryNotification({
+      teamId,
+      category: 'schedule',
+      title: payload.title,
+      body: payload.body,
+      actorUid: batch?.finalizedBy || null,
+      dedupKey: `import-batch:${batchId}`
+    });
+    await Promise.all(eventIds.map((eventId) => markNotificationDedupSent(teamId, 'schedule', eventId)));
+    await batchRef.set({
+      sentAt: admin.firestore.FieldValue.serverTimestamp(),
+      summaryTitle: payload.title,
+      summaryBody: payload.body
+    }, { merge: true });
+    return payload;
+  }
+
+  const sentEventIds = [];
+  for (const eventId of eventIds) {
+    const gameSnap = await firestore.doc(`teams/${teamId}/games/${eventId}`).get();
+    if (!gameSnap.exists) continue;
+    await sendCreatedScheduleEventNotification({ teamId, gameId: eventId, game: gameSnap.data() || {} });
+    sentEventIds.push(eventId);
+  }
+
+  await Promise.all(sentEventIds.map((eventId) => markNotificationDedupSent(teamId, 'schedule', eventId)));
+  await batchRef.set({
+    sentAt: admin.firestore.FieldValue.serverTimestamp(),
+    summaryTitle: null,
+    summaryBody: null
+  }, { merge: true });
+  return { totalCount, eventIds: sentEventIds };
+}
+
+async function registerScheduleImportBatchEvent({ teamId, gameId, game, batch }) {
+  const batchRef = firestore.doc(`teams/${teamId}/scheduleImportNotificationBatches/${batch.batchId}`);
+  const batchState = await firestore.runTransaction(async (txn) => {
+    const snap = await txn.get(batchRef);
+    const current = snap.exists ? (snap.data() || {}) : {};
+    const currentEventIds = Array.isArray(current.eventIds)
+      ? current.eventIds.map((value) => String(value || '').trim()).filter(Boolean)
+      : [];
+    const nextEventIds = currentEventIds.includes(gameId) ? currentEventIds : [...currentEventIds, gameId];
+    const alreadyCounted = currentEventIds.includes(gameId);
+    const nextGameCount = Math.max(0, Number(current.gameCount || 0)) + (!alreadyCounted && String(game?.type || '').toLowerCase() !== 'practice' ? 1 : 0);
+    const nextPracticeCount = Math.max(0, Number(current.practiceCount || 0)) + (!alreadyCounted && String(game?.type || '').toLowerCase() === 'practice' ? 1 : 0);
+    const totalCount = Math.max(batch.totalCount, Number(current.totalCount || 0));
+    const shouldSendSummary = !current.sentAt && !current.notificationClaimedAt && nextEventIds.length >= totalCount;
+
+    txn.set(batchRef, {
+      batchId: batch.batchId,
+      totalCount,
+      eventIds: nextEventIds,
+      gameCount: nextGameCount,
+      practiceCount: nextPracticeCount,
+      lastGameId: gameId,
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      ...(shouldSendSummary ? {
+        notificationClaimedAt: admin.firestore.FieldValue.serverTimestamp(),
+        notificationClaimedByGameId: gameId
+      } : {})
+    }, { merge: true });
+
+    return {
+      shouldSendSummary,
+      totalCount,
+      eventIds: nextEventIds,
+      gameCount: nextGameCount,
+      practiceCount: nextPracticeCount
+    };
+  });
+
+  if (!batchState.shouldSendSummary) {
+    return null;
+  }
+
+  return sendScheduleImportBatchNotifications({
+    teamId,
+    batchId: batch.batchId,
+    batch: {
+      ...batchState,
+      finalizedBy: game.createdBy || null
+    }
+  });
 }
 
 async function sendDirectTargetsNotification({
@@ -5562,35 +5728,43 @@ exports.notifyGameUpdated = functions.firestore
     });
   });
 
-exports.notifyGameCreated = functions.firestore
+const notifyGameCreated = functions.firestore
   .document('teams/{teamId}/games/{gameId}')
   .onCreate(async (snapshot, context) => {
     const game = snapshot.data() || {};
     const teamId = context.params.teamId;
     const gameId = context.params.gameId;
+    const importBatch = normalizeScheduleImportBatch(game.importBatch);
 
     const status = String(game.status || '').trim().toLowerCase();
     if (status === 'draft') return null;
-    if (game.source || game.sourceMetadata) return null;
+    if (importBatch && importBatch.totalCount > 3) {
+      return registerScheduleImportBatchEvent({ teamId, gameId, game, batch: importBatch });
+    }
 
-    const isPractice = String(game.type || '').toLowerCase() === 'practice';
-    const category = isPractice ? 'practice' : 'schedule';
-    const eventTitle = getEventTitle(game);
-    const dateValue = coerceDate(game.date);
-    const timeZone = String(game.timeZone || game.timezone || '').trim() || 'America/Chicago';
-    const dateLabel = dateValue ? formatScheduleUpdateDate(dateValue, timeZone) : '';
-    const title = isPractice ? `New practice: ${eventTitle}` : `New game: ${eventTitle}`;
-    const body = dateLabel || (isPractice ? 'Practice scheduled' : 'Game scheduled');
+    return sendCreatedScheduleEventNotification({ teamId, gameId, game });
+  });
 
-    return sendCategoryNotification({
-      teamId,
-      gameId,
-      category,
-      title,
-      body,
-      actorUid: game.createdBy || null
+exports.notifyGameCreated = notifyGameCreated;
+exports._internal.notifyGameCreated = notifyGameCreated;
+
+const notifyScheduleImportBatchCompleted = functions.firestore
+  .document('teams/{teamId}/scheduleImportNotificationBatches/{batchId}')
+  .onWrite(async (change, context) => {
+    const after = change.after.exists ? (change.after.data() || {}) : null;
+    if (!after || !after.importCompletedAt || after.sentAt || after.notificationClaimedAt) {
+      return null;
+    }
+
+    return sendScheduleImportBatchNotifications({
+      teamId: context.params.teamId,
+      batchId: context.params.batchId,
+      batch: after
     });
   });
+
+exports.notifyScheduleImportBatchCompleted = notifyScheduleImportBatchCompleted;
+exports._internal.notifyScheduleImportBatchCompleted = notifyScheduleImportBatchCompleted;
 
 exports.notifyFeeMarkedPaid = functions.firestore
   .document('teams/{teamId}/feeBatches/{batchId}/feeRecipients/{recipientId}')

@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } 
 import { AlertCircle, CalendarDays, CheckCircle2, ChevronDown, ChevronLeft, ChevronRight, ClipboardCheck, Copy, Download, Filter, Link as LinkIcon, ListChecks, MapPin, RefreshCw } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { SchedulePageSkeleton } from '../components/PageSkeletons';
-import { addTeamCalendarUrl, createScheduledPracticeForApp, createScheduleImportGame, createScheduleImportPractice, loadParentSchedule, removeTeamCalendarUrl, type ParentScheduleChild, type SchedulePracticeFormInput, type PracticeRecurrenceFormInput } from '../lib/scheduleService';
+import { addTeamCalendarUrl, createScheduledPracticeForApp, createScheduleImportGame, createScheduleImportPractice, finalizeScheduleImportBatch, loadParentSchedule, removeTeamCalendarUrl, type ParentScheduleChild, type SchedulePracticeFormInput, type PracticeRecurrenceFormInput } from '../lib/scheduleService';
 import { getCachedAppData, getParentScheduleSummaryCacheKey, loadCachedAppData } from '../lib/appDataCache';
 import { toAppServiceError, type AppServiceError } from '../lib/appErrors';
 import { startUxTimer } from '../lib/uxTiming';
@@ -475,13 +475,28 @@ export function Schedule({ auth }: { auth: AuthState }) {
     setStatusMessage(null);
     clearError();
     const failedRows: ScheduleCsvImportPreviewRow[] = [];
+    const importBatchId = `app-schedule-import-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+    const importBatchTimestamp = new Date().toISOString();
+    const totalCount = csvPreviewRows.length;
     let importedCount = 0;
-    for (const row of csvPreviewRows) {
+    const successfulImportIds: string[] = [];
+    for (const [index, row] of csvPreviewRows.entries()) {
+      const normalizedRow = {
+        ...row.normalized,
+        importBatch: {
+          batchId: importBatchId,
+          totalCount,
+          rowNumber: row.normalized.rowNumber || row.rowNumber || index + 1,
+          importedAt: importBatchTimestamp,
+          importedBy: auth.user.uid
+        }
+      };
       try {
-        if (row.normalized.eventType === 'game') {
-          await createScheduleImportGame(selectedCalendarTeam.teamId, row.normalized, auth.user);
-        } else {
-          await createScheduleImportPractice(selectedCalendarTeam.teamId, row.normalized, auth.user);
+        const createdId = row.normalized.eventType === 'game'
+          ? await createScheduleImportGame(selectedCalendarTeam.teamId, normalizedRow, auth.user)
+          : await createScheduleImportPractice(selectedCalendarTeam.teamId, normalizedRow, auth.user);
+        if (createdId) {
+          successfulImportIds.push(createdId);
         }
         importedCount += 1;
       } catch (importError: any) {
@@ -489,6 +504,14 @@ export function Schedule({ auth }: { auth: AuthState }) {
           ...row,
           errors: [importError?.message || 'Import failed for this row.']
         });
+      }
+    }
+
+    if (totalCount > 3 && importedCount > 0) {
+      try {
+        await finalizeScheduleImportBatch(selectedCalendarTeam.teamId, importBatchId, successfulImportIds.length || importedCount, auth.user);
+      } catch {
+        // Ignore notification finalization errors so successful imports still complete.
       }
     }
 

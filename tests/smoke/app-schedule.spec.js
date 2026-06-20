@@ -294,6 +294,10 @@ async function mockScheduleModules(page, options = {}) {
                     return 'imported-practice';
                 }
 
+                export async function finalizeScheduleImportBatch() {
+                    return { ok: true };
+                }
+
                 export async function createScheduledPracticeForApp(teamId, form, user) {
                     window.__scheduleCalls.practiceCreates = (window.__scheduleCalls.practiceCreates || []).concat({ teamId, form, userId: user?.uid || null });
                     return { id: 'practice-created' };
