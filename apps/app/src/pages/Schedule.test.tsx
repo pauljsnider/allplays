@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+import { readFileSync } from 'node:fs';
 import { cleanup, render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -137,5 +138,12 @@ describe('Schedule', () => {
     screen.getByRole('button', { name: 'Refresh schedule' }).click();
 
     expect(await screen.findByText('Unable to refresh schedule because access was denied. Showing the last loaded schedule.')).toBeTruthy();
+  });
+
+  it('keeps a dedicated labeled close control alongside the text close action in the calendar picker', () => {
+    const source = readFileSync(new URL('./Schedule.tsx', import.meta.url), 'utf8');
+
+    expect(source).toContain('aria-label="Close calendar events"');
+    expect(source).toContain('>\n              Close\n            </button>');
   });
 });

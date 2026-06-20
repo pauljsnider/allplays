@@ -2221,9 +2221,19 @@ function CalendarEventPicker({ day, entries, onClose }: {
             <h2 id="calendar-event-picker-title" className="mt-1 truncate text-lg font-black text-gray-950">{dayLabel}</h2>
             <div className="mt-0.5 text-xs font-semibold text-gray-500">{eventCountLabel}</div>
           </div>
-          <button type="button" className="ghost-button !min-h-9 !px-3 !py-2 !text-xs" onClick={onClose}>
-            Close
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-gray-200 bg-white text-lg font-black leading-none text-gray-500 transition hover:border-gray-300 hover:text-gray-700"
+              aria-label="Close calendar events"
+              onClick={onClose}
+            >
+              <span aria-hidden="true">×</span>
+            </button>
+            <button type="button" className="ghost-button !min-h-9 !px-3 !py-2 !text-xs" onClick={onClose}>
+              Close
+            </button>
+          </div>
         </div>
 
         {entries.length ? (
