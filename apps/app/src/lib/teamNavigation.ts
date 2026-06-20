@@ -153,8 +153,8 @@ export function buildTeamNavigation(team: ParentHomeTeam): TeamNavigationSection
       id: 'tracking',
       label: 'Tracking',
       detail: 'Roster tracking statuses and stat controls',
-      href: getTeamWebsiteHashHref('tracking-items.html', teamId),
-      kind: 'website'
+      href: `/teams/${encodeURIComponent(teamId)}?tab=roster`,
+      kind: 'native'
     },
     {
       id: 'stats-config',

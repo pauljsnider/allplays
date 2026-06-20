@@ -12,6 +12,7 @@ import {
   getPublicTrackingItems,
   getRosterFieldDefinitions,
   getTeam,
+  setTeamTrackingStatus,
   updateTeam,
   grantScorekeeperAccess,
   grantVideographerAccess,
@@ -28,15 +29,16 @@ import {
 } from '../../../../js/db.js';
 import { sendInviteEmail } from '../../../../js/auth.js';
 import { inviteExistingTeamAdmin } from '../../../../js/edit-team-admin-invites.js';
-import { collection, db, doc, getDoc, getDocs, query, where } from '../../../../js/firebase.js';
+import { collection, db, doc, getDoc, getDocs, query, serverTimestamp, setDoc, updateDoc, where } from '../../../../js/firebase.js';
 import { normalizeRosterFieldDefinitions, splitRosterProfileValuesByVisibility, validateRosterProfileValues } from '../../../../js/roster-profile-fields.js';
 import { describeScheduleReminderWindow, normalizeScheduleNotificationSettings } from '../../../../js/schedule-notifications.js';
 import { calculateSeasonRecord, listSeasonLabels } from '../../../../js/season-record.js';
 import { computeNativeStandings } from '../../../../js/native-standings.js';
 import { buildPlayerLeaderboardSnapshot, normalizeStatTrackerConfig, selectAnalyticsConfig } from '../../../../js/stat-leaderboards.js';
-import { getVisiblePlayerTrackingSummary } from '../../../../js/player-tracking-summary.js';
+import { getVisiblePlayerTrackingSummary, normalizeTrackingStatus } from '../../../../js/player-tracking-summary.js';
 import { hasFullTeamAccess, normalizeAdminEmailList } from '../../../../js/team-access.js';
 import { buildTeamStaffPermissionsViewModel } from '../../../../js/team-staff-permissions.js';
+import { buildTrackingStatusPayload, summarizeTrackingStatus } from '../../../../js/tracking-status-admin.js';
 import { firebaseAuth, getNativeAuthIdToken } from './authService';
 import { buildAppAcceptInviteUrl } from './inviteUrls';
 import { sanitizeErrorForLogging } from './nativeRestLogging';
@@ -276,6 +278,37 @@ export type TeamDetailModel = {
     practices: number;
     completedGames: number;
   };
+};
+
+export type TeamTrackingAdminPlayerStatus = {
+  playerId: string;
+  playerName: string;
+  playerNumber: string;
+  photoUrl: string | null;
+  complete: boolean;
+};
+
+export type TeamTrackingAdminItem = {
+  id: string;
+  name: string;
+  description: string;
+  visibility: 'private' | 'public';
+  status: 'active' | 'archived';
+  active: boolean;
+  archived: boolean;
+  playerStatuses: TeamTrackingAdminPlayerStatus[];
+  completionSummary: {
+    total: number;
+    complete: number;
+    incomplete: number;
+  };
+};
+
+export type TeamTrackingItemForAppInput = {
+  name: string;
+  description?: string;
+  visibility?: 'private' | 'public';
+  status?: 'active' | 'archived';
 };
 
 export type TeamDetailInsightsPayload = {
@@ -1334,6 +1367,113 @@ export async function loadTeamRosterParentInvites(teamId: string, user: AuthUser
   });
 }
 
+export async function loadTeamTrackingAdmin(teamId: string, user: AuthUser | null): Promise<TeamTrackingAdminItem[]> {
+  const { team, players } = await loadTeamDetailBaseSnapshot(teamId);
+
+  if (!team || !hasFullTeamAccess(user, team)) {
+    throw new Error('Only team staff can manage tracking items.');
+  }
+
+  const itemSnapshot = await getDocs(collection(db, `teams/${cleanString(teamId)}/trackingItems`));
+  const trackingItems = (itemSnapshot.docs as any[])
+    .map((itemDoc) => normalizeTeamTrackingItem({ id: itemDoc.id, ...itemDoc.data() }))
+    .filter((item): item is ReturnType<typeof normalizeTeamTrackingItem> => Boolean(item.id))
+    .sort((a, b) => a.name.localeCompare(b.name));
+
+  const activePlayers = normalizePlayers(players, []);
+  const trackingStatusesByItemId = new Map<string, any[]>();
+
+  await Promise.all(trackingItems.map(async (item) => {
+    const statusSnapshot = await getDocs(collection(db, `teams/${cleanString(teamId)}/trackingItems/${item.id}/memberTracking`));
+    trackingStatusesByItemId.set(item.id, (statusSnapshot.docs as any[]).map((statusDoc) => normalizeTrackingStatus({
+      id: statusDoc.id,
+      trackingItemId: item.id,
+      ...statusDoc.data()
+    })));
+  }));
+
+  return trackingItems.map((item) => buildTeamTrackingAdminItem(item, activePlayers, trackingStatusesByItemId.get(item.id) || []));
+}
+
+export async function saveTeamTrackingItemForApp(
+  teamId: string,
+  user: AuthUser | null,
+  input: TeamTrackingItemForAppInput,
+  options: { itemId?: string } = {}
+): Promise<string> {
+  const normalizedTeamId = cleanString(teamId);
+  const normalizedItemId = cleanString(options.itemId);
+  await assertTrackingAdminAccess(normalizedTeamId, user);
+  const itemPayload = normalizeTeamTrackingItemDraft(input);
+  const actorId = cleanString(user?.uid);
+
+  if (normalizedItemId) {
+    await updateDoc(doc(db, `teams/${normalizedTeamId}/trackingItems`, normalizedItemId), {
+      ...itemPayload,
+      teamId: normalizedTeamId,
+      updatedAt: serverTimestamp(),
+      updatedBy: actorId || null
+    });
+  } else {
+    const itemRef = doc(collection(db, `teams/${normalizedTeamId}/trackingItems`));
+    await setDoc(itemRef, {
+      ...itemPayload,
+      teamId: normalizedTeamId,
+      createdAt: serverTimestamp(),
+      createdBy: actorId || null,
+      updatedAt: serverTimestamp(),
+      updatedBy: actorId || null
+    });
+    invalidateTeamDetailBaseSnapshotCache(normalizedTeamId);
+    return itemRef.id;
+  }
+
+  invalidateTeamDetailBaseSnapshotCache(normalizedTeamId);
+  return normalizedItemId;
+}
+
+export async function archiveTeamTrackingItemForApp(teamId: string, user: AuthUser | null, itemId: string) {
+  const normalizedTeamId = cleanString(teamId);
+  const normalizedItemId = cleanString(itemId);
+  await assertTrackingAdminAccess(normalizedTeamId, user);
+
+  await updateDoc(doc(db, `teams/${normalizedTeamId}/trackingItems`, normalizedItemId), {
+    status: 'archived',
+    archived: true,
+    active: false,
+    updatedAt: serverTimestamp(),
+    updatedBy: cleanString(user?.uid) || null
+  });
+
+  invalidateTeamDetailBaseSnapshotCache(normalizedTeamId);
+}
+
+export async function setPlayerTrackingStatusForApp(
+  teamId: string,
+  user: AuthUser | null,
+  itemId: string,
+  player: TeamDetailPlayer,
+  complete: boolean
+) {
+  const normalizedTeamId = cleanString(teamId);
+  await assertTrackingAdminAccess(normalizedTeamId, user);
+
+  await setTeamTrackingStatus(normalizedTeamId, cleanString(itemId), cleanString(player.id), {
+    ...buildTrackingStatusPayload({
+      teamId: normalizedTeamId,
+      itemId: cleanString(itemId),
+      player: {
+        id: cleanString(player.id),
+        name: player.name,
+        number: player.number
+      },
+      complete,
+      actorId: cleanString(user?.uid) || null,
+      actorEmail: cleanString(user?.email || (user as any)?.profileEmail) || null
+    })
+  });
+}
+
 export function buildTeamDetailModel({
   teamId,
   team,
@@ -1538,6 +1678,72 @@ function normalizeTeamScheduleNotifications(settings: any): TeamScheduleNotifica
     hasExplicitReminderHours: Object.prototype.hasOwnProperty.call(settings || {}, 'reminderHours')
       && [24, 48, 72].includes(Number.parseInt(settings?.reminderHours, 10)),
     summary: describeScheduleReminderWindow(settings || {})
+  };
+}
+
+async function assertTrackingAdminAccess(teamId: string, user: AuthUser | null) {
+  const { team } = await loadTeamDetailBaseSnapshot(teamId);
+  if (!team || !hasFullTeamAccess(user, team)) {
+    throw new Error('Only team staff can manage tracking items.');
+  }
+  return team;
+}
+
+function normalizeTeamTrackingItemDraft(input: TeamTrackingItemForAppInput) {
+  const name = cleanString(input?.name);
+  const description = cleanString(input?.description);
+  const visibility = input?.visibility === 'public' ? 'public' : 'private';
+  const status = input?.status === 'archived' ? 'archived' : 'active';
+
+  if (!name) {
+    throw new Error('Tracking item name is required.');
+  }
+
+  return {
+    name,
+    description,
+    visibility,
+    status,
+    active: status === 'active',
+    archived: status === 'archived'
+  };
+}
+
+function normalizeTeamTrackingItem(item: any): Omit<TeamTrackingAdminItem, 'playerStatuses' | 'completionSummary'> {
+  const status: 'active' | 'archived' = item?.status === 'archived' || item?.archived === true || item?.active === false ? 'archived' : 'active';
+  return {
+    id: cleanString(item?.id),
+    name: cleanString(item?.name || item?.title || item?.label),
+    description: cleanString(item?.description || item?.note),
+    visibility: item?.visibility === 'public' ? 'public' as const : 'private' as const,
+    status,
+    active: status === 'active',
+    archived: status === 'archived'
+  };
+}
+
+function buildTeamTrackingAdminItem(item: ReturnType<typeof normalizeTeamTrackingItem>, players: TeamDetailPlayer[], statuses: any[] = []): TeamTrackingAdminItem {
+  const statusByPlayerId = new Map<string, any>();
+  (Array.isArray(statuses) ? statuses : []).forEach((status) => {
+    const playerId = cleanString(status?.playerId || status?.id);
+    if (playerId) statusByPlayerId.set(playerId, status);
+  });
+
+  const playerStatuses = players.map((player) => {
+    const status = statusByPlayerId.get(player.id) || {};
+    return {
+      playerId: player.id,
+      playerName: player.name,
+      playerNumber: player.number,
+      photoUrl: player.photoUrl,
+      complete: status.complete === true || status.isComplete === true || cleanString(status.status).toLowerCase() === 'complete'
+    };
+  });
+
+  return {
+    ...item,
+    playerStatuses,
+    completionSummary: summarizeTrackingStatus(playerStatuses.map((playerStatus) => ({ complete: playerStatus.complete })))
   };
 }
 

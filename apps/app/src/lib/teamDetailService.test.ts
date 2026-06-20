@@ -15,6 +15,7 @@ const dbMocks = vi.hoisted(() => ({
   getPublicTrackingItems: vi.fn(),
   getRosterFieldDefinitions: vi.fn(),
   getTeam: vi.fn(),
+  setTeamTrackingStatus: vi.fn(),
   updateTeam: vi.fn(),
   grantScorekeeperAccess: vi.fn(),
   grantVideographerAccess: vi.fn(),
@@ -37,6 +38,9 @@ const firebaseMocks = vi.hoisted(() => ({
   getDoc: vi.fn(),
   getDocs: vi.fn(),
   query: vi.fn(),
+  serverTimestamp: vi.fn(() => 'server-timestamp'),
+  setDoc: vi.fn(),
+  updateDoc: vi.fn(),
   where: vi.fn()
 }));
 
@@ -71,7 +75,15 @@ vi.mock('../../../../js/stat-leaderboards.js', async () => {
     selectAnalyticsConfig: vi.fn(() => null)
   };
 });
-vi.mock('../../../../js/player-tracking-summary.js', () => ({ getVisiblePlayerTrackingSummary: vi.fn(() => []) }));
+vi.mock('../../../../js/player-tracking-summary.js', () => ({
+  getVisiblePlayerTrackingSummary: vi.fn(() => []),
+  normalizeTrackingStatus: vi.fn((status) => ({
+    ...status,
+    itemId: status.itemId || status.trackingItemId || status.id || '',
+    playerId: status.playerId || status.childId || status.memberId || '',
+    isComplete: status.complete === true || status.isComplete === true || status.status === 'complete'
+  }))
+}));
 vi.mock('../../../../js/team-access.js', () => ({
   hasFullTeamAccess: vi.fn(() => true),
   normalizeAdminEmailList: vi.fn(() => [])
@@ -81,7 +93,14 @@ vi.mock('./authService', () => authServiceMocks);
 vi.mock('./inviteUrls', () => ({ buildAppAcceptInviteUrl: vi.fn(() => 'https://allplays.ai/app#/accept-invite') }));
 vi.mock('./nativeRestLogging', () => ({ sanitizeErrorForLogging: vi.fn((error) => error) }));
 
-import { __resetTeamDetailBaseSnapshotCacheForTests, createStatTrackerConfigForApp, updateTeamSettingsForApp } from './teamDetailService';
+import {
+  __resetTeamDetailBaseSnapshotCacheForTests,
+  createStatTrackerConfigForApp,
+  loadTeamTrackingAdmin,
+  saveTeamTrackingItemForApp,
+  setPlayerTrackingStatusForApp,
+  updateTeamSettingsForApp
+} from './teamDetailService';
 
 describe('createStatTrackerConfigForApp', () => {
   beforeEach(() => {
@@ -171,5 +190,107 @@ describe('updateTeamSettingsForApp', () => {
     })).rejects.toThrow('Livestream link must be a valid YouTube or Twitch URL.');
 
     expect(dbMocks.updateTeam).not.toHaveBeenCalled();
+  });
+});
+
+describe('tracking admin helpers', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    dbMocks.getTeam.mockResolvedValue({ id: 'team-1', ownerId: 'owner-1', adminEmails: ['coach@example.com'] });
+    dbMocks.getPlayers.mockResolvedValue([
+      { id: 'player-1', name: 'Pat Star', number: '9', active: true },
+      { id: 'player-2', name: 'Sam Bench', number: '12', active: false }
+    ]);
+    dbMocks.getGames.mockResolvedValue([]);
+    dbMocks.getConfigs.mockResolvedValue([]);
+    firebaseMocks.collection.mockImplementation((...parts) => parts.join('/'));
+    firebaseMocks.doc.mockImplementation((...parts) => ({ path: parts.join('/') }));
+    __resetTeamDetailBaseSnapshotCacheForTests();
+  });
+
+  it('loads legacy tracking docs, excludes inactive players, and summarizes completion by item', async () => {
+    firebaseMocks.getDocs.mockImplementation(async (path) => {
+      if (String(path).endsWith('/trackingItems')) {
+        return {
+          docs: [
+            { id: 'item-1', data: () => ({ name: 'Waiver', visibility: 'public', status: 'active', active: true, archived: false }) },
+            { id: 'item-2', data: () => ({ name: 'Jersey', visibility: 'private', status: 'archived', active: false, archived: true }) }
+          ]
+        };
+      }
+      if (String(path).includes('/trackingItems/item-1/memberTracking')) {
+        return {
+          docs: [
+            { id: 'player-1', data: () => ({ playerId: 'player-1', status: 'complete', complete: true }) }
+          ]
+        };
+      }
+      return { docs: [] };
+    });
+
+    const items = await loadTeamTrackingAdmin('team-1', { uid: 'owner-1', email: 'owner@example.com' } as any);
+
+    expect(items).toEqual([
+      expect.objectContaining({
+        id: 'item-2',
+        status: 'archived',
+        completionSummary: { total: 1, complete: 0, incomplete: 1 }
+      }),
+      expect.objectContaining({
+        id: 'item-1',
+        visibility: 'public',
+        completionSummary: { total: 1, complete: 1, incomplete: 0 },
+        playerStatuses: [expect.objectContaining({ playerId: 'player-1', complete: true })]
+      })
+    ]);
+    expect(items[0].playerStatuses.some((player) => player.playerId === 'player-2')).toBe(false);
+  });
+
+  it('writes legacy-compatible tracking item docs when saving in the app', async () => {
+    await saveTeamTrackingItemForApp('team-1', { uid: 'coach-1', email: 'coach@example.com' } as any, {
+      name: 'Medical release form',
+      description: 'Bring signed copies',
+      visibility: 'public',
+      status: 'archived'
+    }, { itemId: 'item-1' });
+
+    expect(firebaseMocks.updateDoc).toHaveBeenCalledWith(
+      { path: '[object Object]/teams/team-1/trackingItems/item-1' },
+      expect.objectContaining({
+        name: 'Medical release form',
+        description: 'Bring signed copies',
+        visibility: 'public',
+        status: 'archived',
+        active: false,
+        archived: true,
+        teamId: 'team-1',
+        updatedBy: 'coach-1'
+      })
+    );
+  });
+
+  it('writes per-player tracking statuses with the legacy nested payload', async () => {
+    await setPlayerTrackingStatusForApp('team-1', { uid: 'coach-1', email: 'coach@example.com' } as any, 'item-1', {
+      id: 'player-1',
+      name: 'Pat Star',
+      number: '9',
+      photoUrl: null,
+      position: '',
+      isLinked: false,
+      active: true
+    }, true);
+
+    expect(dbMocks.setTeamTrackingStatus).toHaveBeenCalledWith('team-1', 'item-1', 'player-1', expect.objectContaining({
+      teamId: 'team-1',
+      trackingItemId: 'item-1',
+      playerId: 'player-1',
+      playerName: 'Pat Star',
+      playerNumber: '9',
+      memberType: 'player',
+      status: 'complete',
+      complete: true,
+      updatedBy: 'coach-1',
+      updatedByEmail: 'coach@example.com'
+    }));
   });
 });

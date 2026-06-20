@@ -33,7 +33,7 @@ import { getEventDetailPath } from '../lib/homeLogic';
 import { buildPrivateTeamCalendarFeedUrl, getAppleCalendarFeedUrl, getGoogleCalendarFeedUrl } from '../lib/parentToolsService';
 import { createStaffRsvpReminderPreviewLoader, sendStaffRsvpReminder, type StaffRsvpReminderSendResult } from '../lib/scheduleService';
 import type { ParentScheduleEvent, StaffRsvpReminderPreview } from '../lib/scheduleLogic';
-import { addRosterPlayerForApp, buildPublicTeamGamesIcsUrl, canExposePublicFanFeed, createRosterParentInviteForApp, createStatTrackerConfigForApp, deactivateRosterPlayerForApp, grantScorekeeperAccessForApp, grantVideographerAccessForApp, inviteTeamAdminForApp, loadParentTeamDetail, loadRosterFieldDefinitionsForApp, loadTeamDetailInsights, loadTeamDetailSponsors, loadTeamRosterParentInvites, loadTeamStaffPermissions, reactivateRosterPlayerForApp, revokeScorekeeperAccessForApp, revokeTeamAdminAccessForApp, revokeVideographerAccessForApp, saveTeamScheduleNotificationsForApp, updateStatTrackerConfigForApp, type CreateRosterParentInviteForAppResult, type InviteTeamAdminForAppResult, type TeamDetailEvent, type TeamDetailModel, type TeamDetailPlayer, type TeamRosterFieldDefinition, type TeamRosterParentInviteSummary, type TeamScorekeeperGrantTarget } from '../lib/teamDetailService';
+import { addRosterPlayerForApp, archiveTeamTrackingItemForApp, buildPublicTeamGamesIcsUrl, canExposePublicFanFeed, createRosterParentInviteForApp, createStatTrackerConfigForApp, deactivateRosterPlayerForApp, grantScorekeeperAccessForApp, grantVideographerAccessForApp, inviteTeamAdminForApp, loadParentTeamDetail, loadRosterFieldDefinitionsForApp, loadTeamDetailInsights, loadTeamDetailSponsors, loadTeamRosterParentInvites, loadTeamStaffPermissions, loadTeamTrackingAdmin, reactivateRosterPlayerForApp, revokeScorekeeperAccessForApp, revokeTeamAdminAccessForApp, revokeVideographerAccessForApp, saveTeamScheduleNotificationsForApp, saveTeamTrackingItemForApp, setPlayerTrackingStatusForApp, updateStatTrackerConfigForApp, type CreateRosterParentInviteForAppResult, type InviteTeamAdminForAppResult, type TeamDetailEvent, type TeamDetailModel, type TeamDetailPlayer, type TeamRosterFieldDefinition, type TeamRosterParentInviteSummary, type TeamScorekeeperGrantTarget, type TeamTrackingAdminItem } from '../lib/teamDetailService';
 import { buildStatTrackerConfigPayload, createBlankStatTrackerConfigColumnDraft, createEmptyStatTrackerConfigDraft, createStatTrackerConfigDraft, createStatTrackerConfigDraftFromPreset, getStatTrackerConfigPresetCatalog, validateStatTrackerConfigDraft, type StatTrackerConfigDraft } from '../lib/statTrackerConfigEditor';
 import type { AuthState } from '../lib/types';
 
@@ -67,6 +67,10 @@ export function TeamDetail({ auth }: { auth: AuthState }) {
   const [rosterInviteError, setRosterInviteError] = useState('');
   const [rosterInviteAttempted, setRosterInviteAttempted] = useState(false);
   const [rosterInviteSummaries, setRosterInviteSummaries] = useState<Record<string, TeamRosterParentInviteSummary>>({});
+  const [trackingLoading, setTrackingLoading] = useState(false);
+  const [trackingError, setTrackingError] = useState('');
+  const [trackingAttempted, setTrackingAttempted] = useState(false);
+  const [trackingItems, setTrackingItems] = useState<TeamTrackingAdminItem[]>([]);
 
   useEffect(() => {
     const nextTab = new URLSearchParams(location.search).get('tab');
@@ -97,6 +101,10 @@ export function TeamDetail({ auth }: { auth: AuthState }) {
           setRosterInviteError('');
           setRosterInviteAttempted(false);
           setRosterInviteSummaries({});
+          setTrackingLoading(false);
+          setTrackingError('');
+          setTrackingAttempted(false);
+          setTrackingItems([]);
         }
       } catch (loadError: any) {
         if (!cancelled) {
@@ -114,6 +122,10 @@ export function TeamDetail({ auth }: { auth: AuthState }) {
           setRosterInviteError('');
           setRosterInviteAttempted(false);
           setRosterInviteSummaries({});
+          setTrackingLoading(false);
+          setTrackingError('');
+          setTrackingAttempted(false);
+          setTrackingItems([]);
         }
       } finally {
         if (!cancelled) setLoading(false);
@@ -228,6 +240,34 @@ export function TeamDetail({ auth }: { auth: AuthState }) {
   }, [activeTab, authUserId, model?.canManageTeam, teamId, rosterInviteLoading, rosterInviteAttempted, auth.user]);
 
   useEffect(() => {
+    let cancelled = false;
+    async function loadTrackingForRosterTab() {
+      if (!teamId || activeTab !== 'roster' || !model?.canManageTeam || trackingLoading || trackingAttempted) return;
+      setTrackingLoading(true);
+      setTrackingError('');
+      try {
+        const nextItems = await loadTeamTrackingAdmin(teamId, auth.user);
+        if (!cancelled) {
+          setTrackingItems(nextItems);
+          setTrackingAttempted(true);
+        }
+      } catch (loadError: any) {
+        if (!cancelled) {
+          setTrackingError(loadError?.message || 'Unable to load tracking items.');
+          setTrackingAttempted(true);
+        }
+      } finally {
+        if (!cancelled) setTrackingLoading(false);
+      }
+    }
+
+    void loadTrackingForRosterTab();
+    return () => {
+      cancelled = true;
+    };
+  }, [activeTab, authUserId, auth.user, model?.canManageTeam, teamId, trackingAttempted, trackingLoading]);
+
+  useEffect(() => {
     const scroll = () => {
       try {
         window.scrollTo({ top: 0, behavior: 'smooth' });
@@ -275,6 +315,20 @@ export function TeamDetail({ auth }: { auth: AuthState }) {
       setRosterInviteError(loadError?.message || 'Unable to load parent invite status.');
     } finally {
       setRosterInviteLoading(false);
+    }
+  }
+
+  async function refreshTrackingItems() {
+    if (!teamId || !model?.canManageTeam) return;
+    setTrackingLoading(true);
+    setTrackingError('');
+    setTrackingAttempted(true);
+    try {
+      setTrackingItems(await loadTeamTrackingAdmin(teamId, auth.user));
+    } catch (loadError: any) {
+      setTrackingError(loadError?.message || 'Unable to load tracking items.');
+    } finally {
+      setTrackingLoading(false);
     }
   }
 
@@ -340,7 +394,7 @@ export function TeamDetail({ auth }: { auth: AuthState }) {
 
       {activeTab === 'overview' ? <OverviewTab model={model} /> : null}
       {activeTab === 'schedule' ? <ScheduleTab model={model} auth={auth} onOpenStatTrackerConfigs={() => setActiveTab('more')} /> : null}
-      {activeTab === 'roster' ? <RosterTab model={model} authUser={auth.user} onRefresh={refreshTeamDetail} rosterInviteLoading={rosterInviteLoading} rosterInviteError={rosterInviteError} rosterInviteSummaries={rosterInviteSummaries} onInviteCreated={refreshRosterInvites} /> : null}
+      {activeTab === 'roster' ? <RosterTab model={model} authUser={auth.user} onRefresh={refreshTeamDetail} rosterInviteLoading={rosterInviteLoading} rosterInviteError={rosterInviteError} rosterInviteSummaries={rosterInviteSummaries} onInviteCreated={refreshRosterInvites} trackingLoading={trackingLoading} trackingError={trackingError} trackingItems={trackingItems} onTrackingChanged={refreshTrackingItems} /> : null}
       {activeTab === 'insights' ? <InsightsTab model={model} loading={insightsLoading} error={insightsError} /> : null}
       {activeTab === 'more' ? <MoreTab model={model} auth={auth} staffPermissionsLoading={staffPermissionsLoading} staffPermissionsError={staffPermissionsError} sponsorsLoading={sponsorsLoading} sponsorsError={sponsorsError} onTeamDetailRefresh={refreshTeamDetail} /> : null}
     </div>
@@ -448,7 +502,11 @@ function RosterTab({
   rosterInviteLoading,
   rosterInviteError,
   rosterInviteSummaries,
-  onInviteCreated
+  onInviteCreated,
+  trackingLoading,
+  trackingError,
+  trackingItems,
+  onTrackingChanged
 }: {
   model: TeamDetailModel;
   authUser: AuthState['user'];
@@ -457,6 +515,10 @@ function RosterTab({
   rosterInviteError: string;
   rosterInviteSummaries: Record<string, TeamRosterParentInviteSummary>;
   onInviteCreated: () => Promise<void>;
+  trackingLoading: boolean;
+  trackingError: string;
+  trackingItems: TeamTrackingAdminItem[];
+  onTrackingChanged: () => Promise<void>;
 }) {
   const [pendingPlayerId, setPendingPlayerId] = useState('');
   const [status, setStatus] = useState<{ success: boolean; message: string } | null>(null);
@@ -504,6 +566,7 @@ function RosterTab({
           <div className="rounded-xl border border-gray-200 bg-gray-50 p-4 text-sm font-semibold text-gray-500">No players have been added yet.</div>
         )}
       </div>
+      {model.canManageTeam ? <TrackingAdminCard teamId={model.team.id} authUser={authUser} players={model.players} trackingLoading={trackingLoading} trackingError={trackingError} trackingItems={trackingItems} onTrackingChanged={onTrackingChanged} /> : null}
       {model.canManageTeam && model.inactivePlayers.length ? (
         <div className="mt-4 border-t border-gray-200 pt-4">
           <div className="flex items-center justify-between gap-3">
@@ -705,6 +768,192 @@ function RosterFieldInput({
       )}
       {field.description ? <span className="mt-1 block text-[11px] font-semibold text-gray-500">{field.description}</span> : null}
     </label>
+  );
+}
+
+function TrackingAdminCard({
+  teamId,
+  authUser,
+  players,
+  trackingLoading,
+  trackingError,
+  trackingItems,
+  onTrackingChanged
+}: {
+  teamId: string;
+  authUser: AuthState['user'];
+  players: TeamDetailPlayer[];
+  trackingLoading: boolean;
+  trackingError: string;
+  trackingItems: TeamTrackingAdminItem[];
+  onTrackingChanged: () => Promise<void>;
+}) {
+  const [showArchived, setShowArchived] = useState(false);
+  const [editingItemId, setEditingItemId] = useState('');
+  const [name, setName] = useState('');
+  const [description, setDescription] = useState('');
+  const [visibility, setVisibility] = useState<'private' | 'public'>('private');
+  const [status, setStatus] = useState<'active' | 'archived'>('active');
+  const [submitting, setSubmitting] = useState(false);
+  const [busyKey, setBusyKey] = useState('');
+  const [statusMessage, setStatusMessage] = useState<{ success: boolean; message: string } | null>(null);
+
+  const visibleItems = trackingItems.filter((item) => showArchived || item.status !== 'archived');
+
+  function resetForm() {
+    setEditingItemId('');
+    setName('');
+    setDescription('');
+    setVisibility('private');
+    setStatus('active');
+  }
+
+  function beginEdit(item: TeamTrackingAdminItem) {
+    setEditingItemId(item.id);
+    setName(item.name);
+    setDescription(item.description);
+    setVisibility(item.visibility);
+    setStatus(item.status);
+    setStatusMessage(null);
+  }
+
+  async function submitItem(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (submitting) return;
+    setSubmitting(true);
+    setStatusMessage(null);
+    try {
+      await saveTeamTrackingItemForApp(teamId, authUser || null, { name, description, visibility, status }, editingItemId ? { itemId: editingItemId } : undefined);
+      await onTrackingChanged();
+      setStatusMessage({ success: true, message: editingItemId ? 'Tracking item updated.' : 'Tracking item created.' });
+      resetForm();
+    } catch (error: any) {
+      setStatusMessage({ success: false, message: error?.message || 'Unable to save tracking item.' });
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  async function archiveItem(item: TeamTrackingAdminItem) {
+    if (busyKey || !window.confirm(`Archive ${item.name || 'this item'}?`)) return;
+    setBusyKey(`archive:${item.id}`);
+    setStatusMessage(null);
+    try {
+      await archiveTeamTrackingItemForApp(teamId, authUser || null, item.id);
+      await onTrackingChanged();
+      setStatusMessage({ success: true, message: 'Tracking item archived.' });
+      if (editingItemId === item.id) resetForm();
+    } catch (error: any) {
+      setStatusMessage({ success: false, message: error?.message || 'Unable to archive tracking item.' });
+    } finally {
+      setBusyKey('');
+    }
+  }
+
+  async function togglePlayerStatus(item: TeamTrackingAdminItem, playerId: string, complete: boolean) {
+    if (busyKey) return;
+    const player = players.find((candidate) => candidate.id === playerId);
+    if (!player) return;
+    setBusyKey(`status:${item.id}:${playerId}`);
+    setStatusMessage(null);
+    try {
+      await setPlayerTrackingStatusForApp(teamId, authUser || null, item.id, player, !complete);
+      await onTrackingChanged();
+      setStatusMessage({ success: true, message: `${player.name} marked ${complete ? 'open' : 'done'} for ${item.name}.` });
+    } catch (error: any) {
+      setStatusMessage({ success: false, message: error?.message || 'Unable to update player tracking status.' });
+    } finally {
+      setBusyKey('');
+    }
+  }
+
+  return (
+    <div className="mt-4 rounded-xl border border-primary-100 bg-primary-50 p-3">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <div className="text-sm font-black text-gray-950">Tracking items</div>
+          <div className="mt-1 text-xs font-semibold text-gray-600">Manage legacy-compatible checklist items and each active player&apos;s completion status without leaving the app.</div>
+        </div>
+        <label className="flex items-center gap-2 text-xs font-semibold text-gray-600">
+          <input type="checkbox" className="rounded border-gray-300 text-primary-600 focus:ring-primary-500" checked={showArchived} onChange={(event) => setShowArchived(event.target.checked)} />
+          Show archived
+        </label>
+      </div>
+      {statusMessage ? <div className={`mt-3 text-xs font-black ${statusMessage.success ? 'text-emerald-700' : 'text-rose-700'}`} role="status">{statusMessage.message}</div> : null}
+      <form className="mt-3 space-y-3 rounded-xl border border-white/80 bg-white p-3" onSubmit={submitItem}>
+        <div className="text-sm font-black text-gray-950">{editingItemId ? 'Edit tracking item' : 'Add tracking item'}</div>
+        <label className="block">
+          <span className="text-[11px] font-black uppercase tracking-[0.04em] text-primary-700">Name</span>
+          <input type="text" value={name} onChange={(event) => setName(event.target.value)} className="mt-2 min-h-10 w-full rounded-xl border border-primary-200 bg-white px-3 text-sm font-semibold text-gray-950 outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-100" placeholder="Medical release form" disabled={submitting} required />
+        </label>
+        <label className="block">
+          <span className="text-[11px] font-black uppercase tracking-[0.04em] text-primary-700">Description</span>
+          <textarea value={description} onChange={(event) => setDescription(event.target.value)} className="mt-2 min-h-24 w-full rounded-xl border border-primary-200 bg-white px-3 py-2 text-sm font-semibold text-gray-950 outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-100" placeholder="Optional instructions" disabled={submitting} />
+        </label>
+        <div className="grid gap-3 sm:grid-cols-2">
+          <label className="block">
+            <span className="text-[11px] font-black uppercase tracking-[0.04em] text-primary-700">Visibility</span>
+            <select value={visibility} onChange={(event) => setVisibility(event.target.value === 'public' ? 'public' : 'private')} className="mt-2 min-h-10 w-full rounded-xl border border-primary-200 bg-white px-3 text-sm font-semibold text-gray-950 outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-100" disabled={submitting}>
+              <option value="private">Private admin-only</option>
+              <option value="public">Public to team members</option>
+            </select>
+          </label>
+          <label className="block">
+            <span className="text-[11px] font-black uppercase tracking-[0.04em] text-primary-700">Status</span>
+            <select value={status} onChange={(event) => setStatus(event.target.value === 'archived' ? 'archived' : 'active')} className="mt-2 min-h-10 w-full rounded-xl border border-primary-200 bg-white px-3 text-sm font-semibold text-gray-950 outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-100" disabled={submitting}>
+              <option value="active">Active</option>
+              <option value="archived">Archived</option>
+            </select>
+          </label>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <button type="submit" className="primary-button !min-h-10 text-xs" disabled={submitting}>
+            {submitting ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <Save className="h-4 w-4" aria-hidden="true" />}
+            {editingItemId ? 'Save item' : 'Create item'}
+          </button>
+          {editingItemId ? <button type="button" className="secondary-button !min-h-10 text-xs" onClick={resetForm} disabled={submitting}>Reset</button> : null}
+        </div>
+      </form>
+      {trackingLoading ? <div className="mt-3 text-xs font-semibold text-gray-500">Loading tracking items…</div> : null}
+      {trackingError ? <div className="mt-3 text-xs font-black text-rose-700">{trackingError}</div> : null}
+      <div className="mt-3 space-y-3">
+        {visibleItems.length ? visibleItems.map((item) => (
+          <div key={item.id} className="rounded-xl border border-white/80 bg-white p-3">
+            <div className="flex flex-wrap items-start justify-between gap-2">
+              <div>
+                <div className="text-sm font-black text-gray-950">{item.name || 'Untitled item'}</div>
+                {item.description ? <div className="mt-1 text-xs font-semibold text-gray-500">{item.description}</div> : null}
+                <div className="mt-2 flex flex-wrap gap-2">
+                  <span className="rounded-full bg-primary-50 px-2 py-0.5 text-[10px] font-black uppercase tracking-[0.04em] text-primary-700">{item.visibility}</span>
+                  <span className={`rounded-full px-2 py-0.5 text-[10px] font-black uppercase tracking-[0.04em] ${item.status === 'archived' ? 'bg-gray-100 text-gray-700' : 'bg-emerald-50 text-emerald-700'}`}>{item.status}</span>
+                  <span className="rounded-full bg-gray-100 px-2 py-0.5 text-[10px] font-black text-gray-700">{item.completionSummary.complete}/{item.completionSummary.total} done</span>
+                </div>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <button type="button" className="secondary-button !min-h-8 text-xs" onClick={() => beginEdit(item)} disabled={submitting || Boolean(busyKey)}>Edit</button>
+                {item.status === 'active' ? <button type="button" className="secondary-button !min-h-8 text-xs !border-rose-200 !bg-rose-50 !text-rose-700" onClick={() => void archiveItem(item)} disabled={submitting || Boolean(busyKey)}>{busyKey === `archive:${item.id}` ? 'Archiving…' : 'Archive'}</button> : null}
+              </div>
+            </div>
+            <div className="mt-3 grid gap-2 sm:grid-cols-2">
+              {item.playerStatuses.length ? item.playerStatuses.map((playerStatus) => (
+                <div key={`${item.id}:${playerStatus.playerId}`} className="flex items-center justify-between gap-3 rounded-lg border border-gray-200 bg-gray-50 px-3 py-2">
+                  <div className="min-w-0 flex items-center gap-3">
+                    <PlayerPhoto name={playerStatus.playerName} photoUrl={playerStatus.photoUrl} small />
+                    <div className="min-w-0">
+                      <div className="truncate text-xs font-black text-gray-950">{playerStatus.playerNumber ? `#${playerStatus.playerNumber} ` : ''}{playerStatus.playerName}</div>
+                    </div>
+                  </div>
+                  <button type="button" className={`secondary-button !min-h-8 text-xs ${playerStatus.complete ? '!border-emerald-200 !bg-emerald-50 !text-emerald-700' : '!border-amber-200 !bg-amber-50 !text-amber-700'}`} onClick={() => void togglePlayerStatus(item, playerStatus.playerId, playerStatus.complete)} disabled={Boolean(busyKey)}>
+                    {busyKey === `status:${item.id}:${playerStatus.playerId}` ? <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" /> : null}
+                    {playerStatus.complete ? 'Done' : 'Open'}
+                  </button>
+                </div>
+              )) : <div className="rounded-xl border border-dashed border-gray-300 bg-gray-50 p-3 text-xs font-semibold text-gray-500">Add active roster players to manage statuses here.</div>}
+            </div>
+          </div>
+        )) : !trackingLoading ? <div className="rounded-xl border border-gray-200 bg-gray-50 p-4 text-sm font-semibold text-gray-500">No tracking items found.</div> : null}
+      </div>
+    </div>
   );
 }
 
