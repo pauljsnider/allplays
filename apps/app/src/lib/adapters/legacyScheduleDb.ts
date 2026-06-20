@@ -33,9 +33,11 @@ import {
     updateGame as legacyUpdateGame,
     updateOccurrence as legacyUpdateOccurrence,
     updatePracticeAttendance as legacyUpdatePracticeAttendance,
+    updatePracticeSession as legacyUpdatePracticeSession,
     updateRideRequestStatus as legacyUpdateRideRequestStatus,
     updateSeries as legacyUpdateSeries,
     updateTeam as legacyUpdateTeam,
+    upsertPracticeSessionForEvent as legacyUpsertPracticeSessionForEvent,
     upsertPracticePacketCompletion as legacyUpsertPracticePacketCompletion,
     listRideOffersForEvent as legacyListRideOffersForEvent
 } from '../../../../../js/db.js';
@@ -99,6 +101,14 @@ export async function getPracticeSessionByEvent(teamId: string, eventId: string)
 
 export async function getPracticeSessions(teamId: string) {
     return await Promise.resolve(legacyGetPracticeSessions(teamId));
+}
+
+export async function updatePracticeSession(teamId: string, sessionId: string, payload: Record<string, unknown>) {
+    return await Promise.resolve(legacyUpdatePracticeSession(teamId, sessionId, payload));
+}
+
+export async function upsertPracticeSessionForEvent(teamId: string, eventId: string, payload: Record<string, unknown>) {
+    return await Promise.resolve(legacyUpsertPracticeSessionForEvent(teamId, eventId, payload));
 }
 
 export async function getPlayers(teamId: string, options?: { includeInactive?: boolean }) {

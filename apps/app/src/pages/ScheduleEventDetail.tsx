@@ -11,6 +11,7 @@ import {
   type PracticeRecurrenceFormInput,
   claimParentScheduleAssignmentSlot,
   loadParentPracticePacket,
+  loadStaffPracticePacket,
   loadStaffPracticeAttendance,
   loadParentScheduleEventDetail,
   loadParentScheduleAssignments,
@@ -29,6 +30,7 @@ import {
   undoRecordedPlayerGameStat,
   saveScheduledGameLineupDraftForApp,
   saveStaffPracticeAttendance,
+  saveStaffPracticePacket,
   completeGameWrapupForApp,
   loadGameDayLiveEventsForApp,
   saveGameDaySubstitutionForApp,
@@ -39,6 +41,8 @@ import {
   type RideRequestChildInput,
   type PracticeAttendancePlayer,
   type StaffPracticeAttendance,
+  type StaffPracticePacket,
+  type StaffPracticePacketBlock,
   type ParentPracticePacket,
   type ParentPracticePacketChild,
   type StaffScheduleRsvpBreakdown,
@@ -2098,6 +2102,7 @@ function GameHubSection({ auth, event, childEvents, onScoreUpdated, onLiveClockU
       {showNonAdminPracticePacketFirst ? <PracticePacketSection auth={auth} event={event} childEvents={childEvents} /> : null}
       {showAdminPracticeTimeline ? <PracticeTimelineSection auth={auth} event={event} /> : null}
       {isPractice && event.isTeamAdmin && event.isDbGame && !event.isCancelled ? <PracticeScheduleEditPanel auth={auth} event={event} /> : null}
+      {isPractice && event.isTeamAdmin && event.isDbGame && !event.isCancelled ? <StaffPracticePacketEditor auth={auth} event={event} childEvents={childEvents} /> : null}
       {isPractice && !showNonAdminPracticePacketFirst ? <PracticePacketSection auth={auth} event={event} childEvents={childEvents} /> : null}
       <div className="app-card overflow-hidden p-0">
         <div className="border-b border-gray-100 px-3 py-3 sm:px-4">
@@ -4124,6 +4129,131 @@ function PracticeTimelineSection({ auth, event }: { auth: AuthState; event: Pare
   );
 }
 
+function StaffPracticePacketEditor({ auth, event, childEvents }: { auth: AuthState; event: ParentScheduleEvent; childEvents: ParentScheduleEvent[] }) {
+  const [packet, setPacket] = useState<StaffPracticePacket | null>(null);
+  const [packetTitle, setPacketTitle] = useState('');
+  const [dueDate, setDueDate] = useState('');
+  const [blocks, setBlocks] = useState<StaffPracticePacketBlock[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [status, setStatus] = useState<{ tone: 'success' | 'error'; message: string } | null>(null);
+
+  useEffect(() => {
+    if (!auth.user) return;
+    let cancelled = false;
+    setLoading(true);
+    setStatus(null);
+    loadStaffPracticePacket(event, childEvents, auth.user)
+      .then((loaded) => {
+        if (cancelled) return;
+        setPacket(loaded);
+        setPacketTitle(loaded.packetTitle || `${event.title || 'Practice'} home packet`);
+        setDueDate(toDateInputValue(loaded.dueDate));
+        setBlocks(getPracticePacketBlocks(loaded).map((block, index) => ({
+          drillId: block.drillId || null,
+          drillTitle: block.drillTitle || block.title || `Home Drill ${index + 1}`,
+          type: block.type || 'Technical',
+          duration: Number.parseInt(String(block.duration || 10), 10) || 10,
+          description: block.description || '',
+          notes: block.notes || ''
+        })));
+      })
+      .catch((error: any) => {
+        if (!cancelled) setStatus({ tone: 'error', message: error?.message || 'Unable to load practice packet.' });
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [auth.user, childEvents, event.eventKey]);
+
+  const updateBlock = (index: number, patch: Partial<StaffPracticePacketBlock>) => {
+    setBlocks((current) => current.map((block, blockIndex) => blockIndex === index ? { ...block, ...patch } : block));
+  };
+
+  const addBlock = () => {
+    setBlocks((current) => ([
+      ...current,
+      { drillTitle: `Home Drill ${current.length + 1}`, type: 'Technical', duration: 10, description: '', notes: '' }
+    ]));
+  };
+
+  const removeBlock = (index: number) => {
+    setBlocks((current) => current.filter((_block, blockIndex) => blockIndex !== index));
+  };
+
+  const savePacket = async (submitEvent: FormEvent<HTMLFormElement>) => {
+    submitEvent.preventDefault();
+    if (!auth.user) return;
+    setSaving(true);
+    setStatus(null);
+    try {
+      const saved = await saveStaffPracticePacket(event, auth.user, { packetTitle, dueDate: dueDate || null, blocks }, childEvents);
+      setPacket(saved);
+      setPacketTitle(saved.packetTitle);
+      setDueDate(toDateInputValue(saved.dueDate));
+      setBlocks(getPracticePacketBlocks(saved).map((block, index) => ({
+        drillId: block.drillId || null,
+        drillTitle: block.drillTitle || block.title || `Home Drill ${index + 1}`,
+        type: block.type || 'Technical',
+        duration: Number.parseInt(String(block.duration || 10), 10) || 10,
+        description: block.description || '',
+        notes: block.notes || ''
+      })));
+      setStatus({ tone: 'success', message: 'Practice packet saved.' });
+    } catch (error: any) {
+      setStatus({ tone: 'error', message: error?.message || 'Unable to save practice packet.' });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const completedChildIds = getCompletedPacketChildIds(packet?.completions || []);
+  const childCount = packet?.children.length || childEvents.length || 0;
+  const totalMinutes = blocks.reduce((sum, block) => sum + (Number.parseInt(String(block.duration || 0), 10) || 0), 0);
+
+  return (
+    <section className="app-card p-3 sm:p-4" aria-label="Manage practice packet">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <div className="text-xs font-black uppercase tracking-[0.04em] text-blue-700">Home packet</div>
+          <h2 className="mt-1 text-base font-black text-gray-950">Assign practice packet</h2>
+          <p className="mt-1 text-sm font-semibold text-gray-500">{completedChildIds.size}/{Math.max(childCount, completedChildIds.size)} completions · {totalMinutes} min</p>
+        </div>
+        <button type="button" className="secondary-button" onClick={addBlock}>Add packet drill</button>
+      </div>
+      <form className="mt-3 space-y-3" onSubmit={savePacket}>
+        <div className="grid gap-3 sm:grid-cols-2">
+          <label className="text-xs font-bold uppercase tracking-wide text-gray-600">Packet title<input className="auth-input mt-1" value={packetTitle} onChange={(e) => setPacketTitle(e.target.value)} /></label>
+          <label className="text-xs font-bold uppercase tracking-wide text-gray-600">Due date<input type="date" className="auth-input mt-1" value={dueDate} onChange={(e) => setDueDate(e.target.value)} /></label>
+        </div>
+        <div className="space-y-2">
+          {blocks.length ? blocks.map((block, index) => (
+            <div key={`staff-packet-block-${index}`} className="rounded-2xl border border-blue-100 bg-blue-50/70 p-3">
+              <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_7rem]">
+                <label className="text-xs font-bold uppercase tracking-wide text-blue-700">Drill<input className="auth-input mt-1" value={block.drillTitle} onChange={(e) => updateBlock(index, { drillTitle: e.target.value })} /></label>
+                <label className="text-xs font-bold uppercase tracking-wide text-blue-700">Minutes<input type="number" min="1" className="auth-input mt-1" value={block.duration} onChange={(e) => updateBlock(index, { duration: Number.parseInt(e.target.value, 10) || 1 })} /></label>
+              </div>
+              <div className="mt-2 grid gap-3 sm:grid-cols-2">
+                <label className="text-xs font-bold uppercase tracking-wide text-blue-700">Type<input className="auth-input mt-1" value={block.type || ''} onChange={(e) => updateBlock(index, { type: e.target.value })} /></label>
+                <label className="text-xs font-bold uppercase tracking-wide text-blue-700">Notes<input className="auth-input mt-1" value={block.notes || ''} onChange={(e) => updateBlock(index, { notes: e.target.value })} /></label>
+              </div>
+              <label className="mt-2 block text-xs font-bold uppercase tracking-wide text-blue-700">Description<textarea className="auth-input mt-1 min-h-16" value={block.description || ''} onChange={(e) => updateBlock(index, { description: e.target.value })} /></label>
+              <button type="button" className="secondary-button mt-2" onClick={() => removeBlock(index)}>Remove drill</button>
+            </div>
+          )) : (
+            <div className="rounded-2xl border border-gray-200 bg-gray-50 p-3 text-sm font-semibold text-gray-500">No home drills yet.</div>
+          )}
+        </div>
+        <button type="submit" className="primary-button" disabled={saving || loading}>{saving ? 'Saving packet' : 'Save packet'}</button>
+      </form>
+      {status ? <div className="mt-3"><Status tone={status.tone} message={status.message} /></div> : null}
+    </section>
+  );
+}
+
 function PracticePacketSection({ auth, event, childEvents }: { auth: AuthState; event: ParentScheduleEvent; childEvents: ParentScheduleEvent[] }) {
   const [packet, setPacket] = useState<ParentPracticePacket | null>(null);
   const [attendance, setAttendance] = useState<StaffPracticeAttendance | null>(null);
@@ -5133,6 +5263,13 @@ function getPracticePacketTotalMinutes(packet: ParentPracticePacket) {
 
 function formatPracticePacketDuration(duration: unknown) {
   return Number.parseInt(String(duration || 0), 10) || 0;
+}
+
+function toDateInputValue(value: Date | string | number | null | undefined) {
+  if (value === null || value === undefined || value === '') return '';
+  const date = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(date.getTime())) return '';
+  return `${date.getFullYear()}-${padDatePart(date.getMonth() + 1)}-${padDatePart(date.getDate())}`;
 }
 
 function getCompletedPacketChildIds(completions: PracticePacketCompletion[]) {
