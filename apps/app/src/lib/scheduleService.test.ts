@@ -249,8 +249,8 @@ describe('scheduled practice writes', () => {
   it('writes single-occurrence practice edits as overrides', async () => {
     await updateScheduledPracticeForApp('team-1', {
       title: 'Special Session',
-      startDate: new Date('2026-06-24T17:15:00.000Z'),
-      endDate: new Date('2026-06-24T18:45:00.000Z'),
+      startDate: new Date(2026, 5, 24, 17, 15),
+      endDate: new Date(2026, 5, 24, 18, 45),
       location: 'Indoor court',
       notes: 'Film first 15 minutes'
     }, coachUser, {
@@ -275,8 +275,8 @@ describe('scheduled practice writes', () => {
 
     await updateScheduledPracticeForApp('team-1', {
       title: 'Special Session',
-      startDate: new Date('2026-06-24T17:15:00.000Z'),
-      endDate: new Date('2026-06-24T18:45:00.000Z'),
+      startDate: new Date(2026, 5, 24, 17, 15),
+      endDate: new Date(2026, 5, 24, 18, 45),
       location: 'Indoor court',
       notes: 'Film first 15 minutes'
     }, coachUser, {
