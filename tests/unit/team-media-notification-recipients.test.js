@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
 
 const functionsSource = readFileSync(new URL('../../functions/index.js', import.meta.url), 'utf8');
+const firestoreIndexes = readFileSync(new URL('../../firestore.indexes.json', import.meta.url), 'utf8');
 
 function getSourceSlice(startMarker, endMarker) {
     const start = functionsSource.indexOf(startMarker);
@@ -116,6 +117,19 @@ function createHarness({ candidateUsers = [], indexedTargets = [], preferences =
 }
 
 describe('team media notification recipients', () => {
+    it('registers batched team media push notification queue and dispatcher functions', () => {
+        expect(functionsSource).toContain('exports.queueTeamMediaNotificationBatch = functions.firestore');
+        expect(functionsSource).toContain(".document('teams/{teamId}/mediaItems/{itemId}')");
+        expect(functionsSource).toContain('exports.dispatchDueTeamMediaNotificationBatches = functions.pubsub');
+        expect(functionsSource).toContain("firestore.collection('teamMediaNotificationBatches')");
+        expect(functionsSource).toContain("category: 'media'");
+        expect(functionsSource).toContain('dedupKey: `team-media:${batch.id}`');
+        expect(functionsSource).toContain("audienceContext: { albumVisibility }");
+        expect(functionsSource).toContain("['sent', 'sending', 'skipped'].includes(currentStatus)");
+        expect(firestoreIndexes).toContain('"collectionGroup": "teamMediaNotificationBatches"');
+        expect(firestoreIndexes).toContain('"fieldPath": "dueAt"');
+    });
+
     it.each([
         { albumVisibility: 'private' },
         { albumVisibility: 'staff-only' },
