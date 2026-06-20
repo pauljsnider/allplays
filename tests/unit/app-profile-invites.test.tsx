@@ -583,7 +583,8 @@ describe('Profile invites', () => {
     fireEvent.change(teamSelect, { target: { value: 'team-2' } });
 
     await waitFor(() => expect(profileServiceMocks.loadNotificationPreferences).toHaveBeenCalledTimes(2));
-    expect(await screen.findByText('Unable to load notification preferences.')).toBeTruthy();
+    expect(await screen.findByText('Alerts unavailable')).toBeTruthy();
+    expect(screen.getByText('temporary outage')).toBeTruthy();
     await waitFor(() => expect(screen.queryByText('Loading alerts for Gold Team…')).toBeNull());
     expect(screen.getByLabelText('Live Chat')).toBeTruthy();
     expect((screen.getByLabelText('Live Chat') as HTMLInputElement).checked).toBe(true);
@@ -601,14 +602,14 @@ describe('Profile invites', () => {
     }));
   });
 
-  it('retries selected team alert preferences after falling back to safe defaults', async () => {
+  it('reloads alert preferences for the selected team after tapping retry', async () => {
     profileServiceMocks.loadNotificationTeams.mockResolvedValue([
       { id: 'team-1', name: 'Blue Team' },
       { id: 'team-2', name: 'Gold Team' }
     ]);
     profileServiceMocks.loadNotificationPreferences
       .mockResolvedValueOnce({ liveChat: true, liveScore: false, schedule: false })
-      .mockRejectedValueOnce(new Error('preference timeout'))
+      .mockRejectedValueOnce(new Error('temporary outage'))
       .mockResolvedValueOnce({ liveChat: false, liveScore: true, schedule: false });
 
     renderProfile();
@@ -619,16 +620,17 @@ describe('Profile invites', () => {
     fireEvent.change(await screen.findByLabelText('Team'), { target: { value: 'team-2' } });
 
     await waitFor(() => expect(profileServiceMocks.loadNotificationPreferences).toHaveBeenCalledTimes(2));
-    expect(await screen.findByText('preference timeout')).toBeTruthy();
+    expect(await screen.findByText('temporary outage')).toBeTruthy();
     expect((screen.getByLabelText('Live Chat') as HTMLInputElement).checked).toBe(true);
     expect((screen.getByLabelText('Live Score') as HTMLInputElement).checked).toBe(false);
 
     fireEvent.click(screen.getByRole('button', { name: 'Retry alerts' }));
 
     await waitFor(() => expect(profileServiceMocks.loadNotificationPreferences).toHaveBeenCalledTimes(3));
-    await waitFor(() => expect(screen.queryByText('preference timeout')).toBeNull());
-    expect((screen.getByLabelText('Live Chat') as HTMLInputElement).checked).toBe(false);
+    await waitFor(() => expect(screen.queryByText('temporary outage')).toBeNull());
+    await waitFor(() => expect((screen.getByLabelText('Live Chat') as HTMLInputElement).checked).toBe(false));
     expect((screen.getByLabelText('Live Score') as HTMLInputElement).checked).toBe(true);
+    expect((screen.getByLabelText('Schedule Changes') as HTMLInputElement).checked).toBe(false);
   });
 
   it('shows blocked native push recovery and refreshes after returning from settings', async () => {
