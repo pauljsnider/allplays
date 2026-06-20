@@ -583,7 +583,8 @@ describe('Profile invites', () => {
     fireEvent.change(teamSelect, { target: { value: 'team-2' } });
 
     await waitFor(() => expect(profileServiceMocks.loadNotificationPreferences).toHaveBeenCalledTimes(2));
-    expect(await screen.findByText('Unable to load notification preferences.')).toBeTruthy();
+    expect(await screen.findByText('Alerts unavailable')).toBeTruthy();
+    expect(screen.getByText('We couldn’t load Gold Team’s alert preferences. Check your connection and try again.')).toBeTruthy();
     await waitFor(() => expect(screen.queryByText('Loading alerts for Gold Team…')).toBeNull());
     expect(screen.getByLabelText('Live Chat')).toBeTruthy();
     expect((screen.getByLabelText('Live Chat') as HTMLInputElement).checked).toBe(true);
