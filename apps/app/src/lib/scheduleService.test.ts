@@ -1793,23 +1793,17 @@ describe('team schedule game windowing (#2034)', () => {
         date: new Date('2026-06-25T18:00:00.000Z'),
         opponent: 'Tigers',
         location: 'Field 1'
+      },
+      {
+        id: 'practice-master',
+        type: 'practice',
+        isSeriesMaster: true,
+        recurrence: { freq: 'weekly', interval: 1 },
+        date: new Date('2025-01-08T18:00:00.000Z'),
+        location: 'North Field',
+        title: 'Weekly Practice'
       }
     ] as any);
-    vi.mocked(getDocs).mockResolvedValue({
-      docs: [
-        {
-          id: 'practice-master',
-          data: () => ({
-            type: 'practice',
-            isSeriesMaster: true,
-            recurrence: { freq: 'weekly', interval: 1 },
-            date: new Date('2025-01-08T18:00:00.000Z'),
-            location: 'North Field',
-            title: 'Weekly Practice'
-          })
-        }
-      ]
-    } as any);
     vi.mocked(expandRecurrence).mockReturnValue([
       {
         masterId: 'practice-master',
@@ -1824,7 +1818,7 @@ describe('team schedule game windowing (#2034)', () => {
     const result = await loadParentSchedule(parentUser, { hydrateDetails: false, expandStaffPlayers: false });
 
     expect(getGames).toHaveBeenCalledTimes(1);
-    expect(getDocs).toHaveBeenCalledTimes(1);
+    expect(getDocs).not.toHaveBeenCalled();
     expect(result.events).toEqual(expect.arrayContaining([
       expect.objectContaining({
         id: 'practice-master__2026-06-24',

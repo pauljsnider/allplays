@@ -2726,11 +2726,44 @@ function toComparableGameDate(value) {
 
 function isGameWithinDateRange(game, startDate, endDate) {
     if (!startDate && !endDate) return true;
+    if (recurringPracticeMasterMayOverlapDateRange(game, startDate, endDate)) return true;
     const date = toComparableGameDate(game?.date);
     if (!date) return true; // Keep undated/legacy games rather than silently dropping them.
     if (startDate && date < startDate) return false;
     if (endDate && date > endDate) return false;
     return true;
+}
+
+function isRecurringPracticeMasterGame(game) {
+    return game?.type === 'practice' && game?.isSeriesMaster === true && Boolean(game?.recurrence);
+}
+
+function recurringPracticeMasterMayOverlapDateRange(game, startDate, endDate) {
+    if (!isRecurringPracticeMasterGame(game) || (!startDate && !endDate)) return false;
+    const firstDate = toComparableGameDate(game?.date);
+    const untilDate = toComparableGameDate(game?.recurrence?.until || game?.recurrence?.endDate || game?.recurrence?.untilDate);
+    if (endDate && firstDate && firstDate > endDate) return false;
+    if (startDate && untilDate && untilDate < startDate) return false;
+    return true;
+}
+
+function mergeGamesById(primaryGames, supplementalGames = []) {
+    const gamesById = new Map();
+    [...(Array.isArray(primaryGames) ? primaryGames : []), ...(Array.isArray(supplementalGames) ? supplementalGames : [])]
+        .forEach(game => {
+            const id = String(game?.id || game?.gameId || '').trim();
+            if (!id || gamesById.has(id)) return;
+            gamesById.set(id, game);
+        });
+    return Array.from(gamesById.values());
+}
+
+async function getRecurringPracticeMastersForDateRange(gamesRef, startDate, endDate) {
+    if (!startDate && !endDate) return [];
+    const snapshot = await getDocs(query(gamesRef, where("isSeriesMaster", "==", true)));
+    return snapshot.docs
+        .map(doc => ({ id: doc.id, ...doc.data() }))
+        .filter(game => recurringPracticeMasterMayOverlapDateRange(game, startDate, endDate));
 }
 
 // Pass { startDate, endDate } (Date objects) to window the query and avoid loading
@@ -2755,6 +2788,14 @@ export async function getGames(teamId, options = {}) {
         teamGames = snapshot.docs
             .map(doc => ({ id: doc.id, ...doc.data() }))
             .filter(game => isGameWithinDateRange(game, startDate, endDate));
+    }
+    if (startDate || endDate) {
+        try {
+            const recurringMasters = await getRecurringPracticeMastersForDateRange(gamesRef, startDate, endDate);
+            teamGames = mergeGamesById(teamGames, recurringMasters);
+        } catch (error) {
+            console.warn('[getGames] Failed to load recurring practice masters for team', teamId, error);
+        }
     }
 
     let sharedGames = [];
