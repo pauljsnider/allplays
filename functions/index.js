@@ -3574,7 +3574,8 @@ function formatPracticePacketDueDate(value) {
   return date.toLocaleDateString('en-US', {
     month: 'short',
     day: 'numeric',
-    year: 'numeric'
+    year: 'numeric',
+    timeZone: 'UTC'
   });
 }
 

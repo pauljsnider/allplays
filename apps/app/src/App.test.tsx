@@ -59,7 +59,8 @@ vi.mock('@capacitor/app', () => ({
 vi.mock('@capacitor/core', () => ({
   Capacitor: {
     isNativePlatform: () => true,
-    isPluginAvailable: () => true
+    isPluginAvailable: () => true,
+    getPlatform: () => 'ios'
   }
 }));
 

@@ -15,6 +15,18 @@ import {
 import { getValidatedInviteCode, normalizeInviteCode, redeemSignedInInvite } from '../lib/inviteRedemption';
 import type { AuthState } from '../lib/types';
 
+function readEmailForSignIn() {
+  if (typeof window === 'undefined') {
+    return '';
+  }
+
+  try {
+    return window.localStorage.getItem('emailForSignIn') || '';
+  } catch {
+    return '';
+  }
+}
+
 export function AcceptInvite({ auth }: { auth: AuthState }) {
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
@@ -23,7 +35,7 @@ export function AcceptInvite({ auth }: { auth: AuthState }) {
   const code = urlCode || pendingInvite.code.trim().toUpperCase();
   const inviteType = (searchParams.get('type') || pendingInvite.type || 'parent').trim().toLowerCase();
   const [manualCode, setManualCode] = useState(code);
-  const [email, setEmail] = useState(window.localStorage.getItem('emailForSignIn') || '');
+  const [email, setEmail] = useState(readEmailForSignIn);
   const [state, setState] = useState<'idle' | 'processing' | 'email-link' | 'success' | 'error'>('idle');
   const [message, setMessage] = useState('');
   const [pendingRedirectPath, setPendingRedirectPath] = useState('');
