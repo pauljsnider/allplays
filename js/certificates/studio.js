@@ -21,7 +21,7 @@ import {
     getCertificate,
     canAccessCertificates,
     canViewSavedCertificate
-} from '../db.js?v=53';
+} from '../db.js?v=56';
 import { renderHeader, renderFooter, escapeHtml, shareOrCopy } from '../utils.js?v=8';
 import { renderTeamAdminBanner, getTeamAccessInfo } from '../team-admin-banner.js?v=4';
 import { TEMPLATES } from './templates.js?v=2';
