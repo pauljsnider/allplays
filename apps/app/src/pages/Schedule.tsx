@@ -170,6 +170,7 @@ export function Schedule({ auth }: { auth: AuthState }) {
   const [practiceFormError, setPracticeFormError] = useState<string | null>(null);
   const [loadedScheduleUserId, setLoadedScheduleUserId] = useState<string | null>(null);
   const hasLoadedScheduleRef = useRef(false);
+  const hasStartedInitialScheduleLoadRef = useRef(false);
 
   const applyScheduleResult = (data: { children: ParentScheduleChild[]; events: ParentScheduleEvent[]; }) => {
     setChildren(data.children);
@@ -251,11 +252,13 @@ export function Schedule({ auth }: { auth: AuthState }) {
 
   useEffect(() => {
     hasLoadedScheduleRef.current = false;
+    hasStartedInitialScheduleLoadRef.current = false;
     if (!auth.user?.uid) {
       setLoadedScheduleUserId(null);
       applyScheduleResult({ children: [], events: [] });
       return;
     }
+    hasStartedInitialScheduleLoadRef.current = true;
     void refreshSchedule();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [auth.user?.uid]);
@@ -263,10 +266,11 @@ export function Schedule({ auth }: { auth: AuthState }) {
   useRefreshOnResume(() => { void refreshSchedule(true); }, { enabled: Boolean(auth.user?.uid) });
 
   useEffect(() => {
-    if (!loading) {
-      recordFirstMeaningfulRender('schedule');
+    if (!hasStartedInitialScheduleLoadRef.current || loading || isInitialScheduleLoad) {
+      return;
     }
-  }, [loading]);
+    recordFirstMeaningfulRender('schedule');
+  }, [isInitialScheduleLoad, loading]);
 
   const visibleEvents = useMemo(() => (
     filterParentScheduleEvents(events, { filter, playerId: selectedPlayerId, teamId: selectedTeamId, timeRange })

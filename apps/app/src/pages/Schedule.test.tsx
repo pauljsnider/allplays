@@ -21,13 +21,15 @@ const appDataCacheMocks = vi.hoisted(() => ({
 }));
 
 const uxTimingMocks = vi.hoisted(() => ({
-  end: vi.fn()
+  end: vi.fn(),
+  recordFirstMeaningfulRender: vi.fn()
 }));
 
 vi.mock('../lib/scheduleService', () => scheduleServiceMocks);
 vi.mock('../lib/appDataCache', () => appDataCacheMocks);
 vi.mock('../lib/uxTiming', () => ({
-  startUxTimer: vi.fn(() => uxTimingMocks)
+  recordFirstMeaningfulRender: uxTimingMocks.recordFirstMeaningfulRender,
+  startUxTimer: vi.fn(() => ({ end: uxTimingMocks.end }))
 }));
 vi.mock('../lib/useShellLayout', () => ({
   useShellLayout: () => ({ isDesktopWeb: false })
@@ -74,6 +76,29 @@ describe('Schedule', () => {
 
   afterEach(() => {
     cleanup();
+  });
+
+  it('waits for the first schedule load to finish before recording first meaningful render', async () => {
+    let resolveSchedule: ((value: { children: Array<{ playerId: string; playerName: string; teamId: string; teamName: string }>; events: [] }) => void) | null = null;
+    scheduleServiceMocks.loadParentSchedule.mockImplementationOnce(() => new Promise((resolve) => {
+      resolveSchedule = resolve;
+    }));
+
+    renderSchedule();
+
+    expect(uxTimingMocks.recordFirstMeaningfulRender).not.toHaveBeenCalled();
+
+    resolveSchedule?.({
+      children: [
+        { playerId: 'player-1', playerName: 'Pat', teamId: 'team-1', teamName: 'Bears' }
+      ],
+      events: []
+    });
+
+    expect(await screen.findByText('No events in this filter')).toBeTruthy();
+    await waitFor(() => {
+      expect(uxTimingMocks.recordFirstMeaningfulRender).toHaveBeenCalledWith('schedule');
+    });
   });
 
   it.each([
