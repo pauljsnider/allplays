@@ -6,8 +6,9 @@ import { AppShell } from './AppShell';
 import type { AuthState } from '../lib/types';
 import { APP_BACK_DISMISS_EVENT } from '../lib/nativeBackButton';
 
-const { useShellLayoutMock } = vi.hoisted(() => ({
+const { useShellLayoutMock, subscribeToNotificationInboxMock } = vi.hoisted(() => ({
   useShellLayoutMock: vi.fn(() => ({ isDesktopWeb: true })),
+  subscribeToNotificationInboxMock: vi.fn(() => vi.fn()),
 }));
 
 vi.mock('../lib/useShellLayout', () => ({
@@ -16,6 +17,12 @@ vi.mock('../lib/useShellLayout', () => ({
 
 vi.mock('../lib/uxTiming', () => ({
   recordUxTiming: vi.fn(),
+}));
+
+vi.mock('../lib/notificationInboxService', () => ({
+  countUnread: (items: Array<{ readAt: unknown | null }>) => items.filter((item) => !item.readAt).length,
+  markNotificationRead: vi.fn(),
+  subscribeToNotificationInbox: subscribeToNotificationInboxMock,
 }));
 
 vi.mock('./AppSearchDialog', () => ({
@@ -36,6 +43,16 @@ const auth: AuthState = {
   signOut: vi.fn(),
 };
 
+const signedInAuth: AuthState = {
+  ...auth,
+  user: {
+    uid: 'user-123',
+    email: 'parent@example.com',
+    displayName: 'Parent User',
+    roles: ['parent'],
+  },
+};
+
 describe('AppShell', () => {
   beforeEach(() => {
     vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => {
@@ -44,6 +61,8 @@ describe('AppShell', () => {
     });
     vi.stubGlobal('cancelAnimationFrame', vi.fn());
     useShellLayoutMock.mockReturnValue({ isDesktopWeb: true });
+    subscribeToNotificationInboxMock.mockReset();
+    subscribeToNotificationInboxMock.mockReturnValue(vi.fn());
   });
 
   afterEach(() => {
@@ -77,6 +96,35 @@ describe('AppShell', () => {
     expect(notificationStatus.getAttribute('role')).toBe('status');
     expect(notificationStatus.getAttribute('aria-live')).toBe('polite');
     expect(notificationStatus.textContent).toBe('No unread notifications');
+  });
+
+  it('announces loading status until the signed-in inbox has loaded', () => {
+    render(
+      <MemoryRouter initialEntries={['/home']}>
+        <Routes>
+          <Route path="/home" element={<AppShell auth={signedInAuth}><div>Home</div></AppShell>} />
+        </Routes>
+      </MemoryRouter>
+    );
+
+    expect(screen.getByTestId('app-shell-notification-status').textContent).toBe('Loading notifications…');
+  });
+
+  it('announces load failures instead of a false empty inbox state', () => {
+    subscribeToNotificationInboxMock.mockImplementation((_uid, _onItems, onError) => {
+      onError?.(new Error('offline'));
+      return vi.fn();
+    });
+
+    render(
+      <MemoryRouter initialEntries={['/home']}>
+        <Routes>
+          <Route path="/home" element={<AppShell auth={signedInAuth}><div>Home</div></AppShell>} />
+        </Routes>
+      </MemoryRouter>
+    );
+
+    expect(screen.getByTestId('app-shell-notification-status').textContent).toBe('Could not load notifications');
   });
 
   it('keeps the mobile search trigger discoverable with a stable selector', () => {

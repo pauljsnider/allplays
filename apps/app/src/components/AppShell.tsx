@@ -79,8 +79,14 @@ export function AppShell({ auth, children }: AppShellProps) {
   // does not statically import the module (which pulls the vendored Firestore SDK
   // into the entry chunk). The module is dynamically imported on subscribe below.
   const unreadCount = inboxItems.filter((item) => !item.readAt).length;
-  const unreadNotificationStatus = unreadCount > 0
-    ? `${unreadCount} unread notification${unreadCount === 1 ? '' : 's'}`
+  const unreadNotificationStatus = auth.user
+    ? inboxState === 'loading' && inboxItems.length === 0
+      ? 'Loading notifications…'
+      : inboxState === 'error' && inboxItems.length === 0
+        ? 'Could not load notifications'
+        : unreadCount > 0
+          ? `${unreadCount} unread notification${unreadCount === 1 ? '' : 's'}`
+          : 'No unread notifications'
     : 'No unread notifications';
 
   useEffect(() => {
