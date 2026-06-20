@@ -57,5 +57,18 @@ export default defineConfig({
     setupFiles: './src/setupTests.ts',
     include: ['src/**/*.{test,spec}.{ts,tsx}'],
     css: false,
-  },
+    coverage: {
+      provider: 'v8',
+      reporter: ['text', 'json', 'lcov'],
+      reportsDirectory: './coverage',
+      all: true,
+      include: ['src/**/*.{ts,tsx}'],
+      exclude: [
+        'src/**/*.test.{ts,tsx}',
+        'src/**/*.spec.{ts,tsx}',
+        'src/setupTests.ts',
+        'src/**/*.d.ts'
+      ]
+    }
+  }
 });
