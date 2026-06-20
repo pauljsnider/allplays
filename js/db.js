@@ -2713,17 +2713,48 @@ export async function denyParentMembershipRequest(teamId, requestId, decisionNot
 }
 
 // Games
-export async function getGames(teamId) {
+function toComparableGameDate(value) {
+    if (!value) return null;
+    if (value instanceof Date) return Number.isNaN(value.getTime()) ? null : value;
+    if (typeof value?.toDate === 'function') {
+        const date = value.toDate();
+        return Number.isNaN(date?.getTime?.()) ? null : date;
+    }
+    const parsed = new Date(value);
+    return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
+function isGameWithinDateRange(game, startDate, endDate) {
+    if (!startDate && !endDate) return true;
+    const date = toComparableGameDate(game?.date);
+    if (!date) return true; // Keep undated/legacy games rather than silently dropping them.
+    if (startDate && date < startDate) return false;
+    if (endDate && date > endDate) return false;
+    return true;
+}
+
+// Pass { startDate, endDate } (Date objects) to window the query and avoid loading
+// a team's entire multi-season history when only a recent range is needed (#2034).
+// Called with no options it preserves the original full-collection behavior.
+export async function getGames(teamId, options = {}) {
+    const startDate = options?.startDate ?? null;
+    const endDate = options?.endDate ?? null;
     const gamesRef = getTeamGameCollectionRef(teamId);
     let teamGames = [];
+    const rangeConstraints = [];
+    if (startDate instanceof Date) rangeConstraints.push(where("date", ">=", Timestamp.fromDate(startDate)));
+    if (endDate instanceof Date) rangeConstraints.push(where("date", "<=", Timestamp.fromDate(endDate)));
     try {
-        const q = query(gamesRef, orderBy("date"));
+        const q = query(gamesRef, ...rangeConstraints, orderBy("date"));
         const snapshot = await getDocs(q);
         teamGames = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
     } catch (error) {
-        // Fallback when indexes are still building or unavailable.
+        // Fallback when indexes are still building or unavailable: read the
+        // collection and apply the range client-side so results stay correct.
         const snapshot = await getDocs(gamesRef);
-        teamGames = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+        teamGames = snapshot.docs
+            .map(doc => ({ id: doc.id, ...doc.data() }))
+            .filter(game => isGameWithinDateRange(game, startDate, endDate));
     }
 
     let sharedGames = [];
@@ -2733,7 +2764,10 @@ export async function getGames(teamId) {
         console.warn('[getGames] Failed to load shared games for team', teamId, error);
     }
 
-    return mergeGamesForTeam(teamGames, sharedGames, teamId);
+    const merged = mergeGamesForTeam(teamGames, sharedGames, teamId);
+    return (startDate || endDate)
+        ? merged.filter(game => isGameWithinDateRange(game, startDate, endDate))
+        : merged;
 }
 
 export async function getAggregatedStatsForGames(teamId, gameIds) {

@@ -1750,3 +1750,38 @@ describe('native parent schedule Firestore mapping', () => {
     expect(result.events).toEqual([]);
   });
 });
+
+describe('team schedule game windowing (#2034)', () => {
+  const parentUser = {
+    uid: 'parent-1',
+    email: 'parent@example.com',
+    parentOf: [{ teamId: 'team-1', playerId: 'p1', playerName: 'Kid One' }]
+  } as any;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(loadProfileDocument).mockResolvedValue({
+      parentOf: [{ teamId: 'team-1', playerId: 'p1', playerName: 'Kid One' }]
+    } as any);
+    vi.mocked(getTeam).mockResolvedValue({ id: 'team-1', name: 'Team One' } as any);
+    vi.mocked(getTeams).mockResolvedValue([] as any);
+    vi.mocked(getGames).mockResolvedValue([] as any);
+    vi.mocked(getPracticeSessions).mockResolvedValue([] as any);
+  });
+
+  it('windows games to a recent startDate by default', async () => {
+    await loadParentSchedule(parentUser, { hydrateDetails: false, expandStaffPlayers: false });
+    expect(getGames).toHaveBeenCalledTimes(1);
+    const [teamId, options] = vi.mocked(getGames).mock.calls[0] as [string, any];
+    expect(teamId).toBe('team-1');
+    expect(options?.startDate).toBeInstanceOf(Date);
+    expect(options?.endDate ?? null).toBeNull();
+  });
+
+  it('loads full history (no startDate) when includePastGames is set', async () => {
+    await loadParentSchedule(parentUser, { hydrateDetails: false, expandStaffPlayers: false, includePastGames: true });
+    expect(getGames).toHaveBeenCalledTimes(1);
+    const [, options] = vi.mocked(getGames).mock.calls[0] as [string, any];
+    expect(options?.startDate ?? null).toBeNull();
+  });
+});
