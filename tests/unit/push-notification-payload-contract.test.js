@@ -18,7 +18,7 @@ describe('push notification payload contract', () => {
     it('includes native app routing fields alongside the legacy web link', () => {
         expect(source).toContain('function buildNotificationAppRoute');
         expect(source).toContain('appRoute,');
-        expect(source).toContain("return `/schedule/${encodeURIComponent(teamId)}/${encodeURIComponent(gameId)}`;");
+        expect(source).toContain("return `/schedule/${encodeURIComponent(teamId)}/${encodeURIComponent(gameId)}?section=game`;");
         expect(source).toContain('eventId: String(eventId || gameId || \'\')');
         expect(source).toContain('conversationId: String(conversationId || \'\')');
         expect(source).toContain("if (category === 'liveChat' || category === 'mentions') {");

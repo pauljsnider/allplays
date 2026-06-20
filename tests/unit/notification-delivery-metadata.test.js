@@ -137,4 +137,12 @@ describe('notification delivery metadata', () => {
         expect(serviceWorkerSource).toContain('icon,');
         expect(serviceWorkerSource).toContain('badge,');
     });
+
+    it('normalizes web notification taps to native app hash routes when appRoute is present', () => {
+        expect(serviceWorkerSource).toContain('function buildAppRouteNotificationLink');
+        expect(serviceWorkerSource).toContain("new URL(`/app/#${appRoute}`, self.location.origin).toString()");
+        expect(serviceWorkerSource).toContain('buildAppRouteNotificationLink(payload?.data?.appRoute)');
+        expect(serviceWorkerSource).toContain('payload?.fcmOptions?.link');
+        expect(serviceWorkerSource).toContain('event.waitUntil(clients.openWindow(link));');
+    });
 });
