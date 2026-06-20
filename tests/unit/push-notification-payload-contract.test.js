@@ -44,6 +44,20 @@ describe('push notification payload contract', () => {
         })).toBe('/parent-tools/fees?teamId=team+1&batchId=batch%2F1&recipientId=recipient%3F1');
     });
 
+    it('builds RSVP notification routes to the event availability view', () => {
+        expect(buildNotificationLink({
+            category: 'rsvp',
+            teamId: 'team 1',
+            gameId: 'game/1'
+        })).toBe('https://allplays.ai/app/#/schedule/team%201/game%2F1?section=availability');
+
+        expect(buildNotificationAppRoute({
+            category: 'rsvp',
+            teamId: 'team 1',
+            gameId: 'game/1'
+        })).toBe('/schedule/team%201/game%2F1?section=availability');
+    });
+
     it('builds staff fee notification routes to the team fee management page', () => {
         expect(buildStaffFeeNotificationDestination({
             teamId: 'team 1',

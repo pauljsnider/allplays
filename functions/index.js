@@ -3781,6 +3781,15 @@ function buildNotificationLink({ category, teamId, gameId, batchId = null, recip
   if (category === 'liveScore' && gameId) {
     return `https://allplays.ai/live-game.html?teamId=${encodeURIComponent(teamId)}&gameId=${encodeURIComponent(gameId)}`;
   }
+  if (category === 'rsvp') {
+    if (teamId && gameId) {
+      return `https://allplays.ai/app/#/schedule/${encodeURIComponent(teamId)}/${encodeURIComponent(gameId)}?section=availability`;
+    }
+    if (teamId) {
+      return `https://allplays.ai/app/#/schedule?teamId=${encodeURIComponent(teamId)}`;
+    }
+    return 'https://allplays.ai/app/#/schedule';
+  }
   return `https://allplays.ai/team.html?teamId=${encodeURIComponent(teamId)}`;
 }
 
@@ -3815,6 +3824,16 @@ function buildNotificationAppRoute({ category, teamId, gameId, eventId, batchId 
   if (category === 'schedule') {
     if (teamId && eventId) {
       return `/schedule/${encodeURIComponent(teamId)}/${encodeURIComponent(eventId)}`;
+    }
+    if (teamId) {
+      return `/schedule?teamId=${encodeURIComponent(teamId)}`;
+    }
+    return '/schedule';
+  }
+  if (category === 'rsvp') {
+    const scheduleEventId = eventId || gameId;
+    if (teamId && scheduleEventId) {
+      return `/schedule/${encodeURIComponent(teamId)}/${encodeURIComponent(scheduleEventId)}?section=availability`;
     }
     if (teamId) {
       return `/schedule?teamId=${encodeURIComponent(teamId)}`;
@@ -4047,6 +4066,32 @@ async function getTargetsForCategory(teamId, category, actorUid = null, audience
 
   const fallbackTargets = await getLegacyTargetsForCategory(teamId, category, missingUsers, actorUid, audienceContext);
   return [...indexedTargets, ...fallbackTargets];
+}
+
+async function getTargetsForCategoryUserIds(teamId, category, userIds = [], actorUid = null, audienceContext = {}) {
+  const recipientUserIds = new Set(
+    (Array.isArray(userIds) ? userIds : [])
+      .map((uid) => String(uid || '').trim())
+      .filter(Boolean)
+  );
+  if (!recipientUserIds.size) return [];
+
+  const targets = await getTargetsForCategory(
+    teamId,
+    category,
+    actorUid,
+    audienceContext,
+    Array.from(recipientUserIds).map((uid) => ({ uid, roles: ['parent'] }))
+  );
+  const seenTargetIds = new Set();
+  return targets.filter((target) => {
+    const uid = String(target?.uid || '').trim();
+    if (!recipientUserIds.has(uid)) return false;
+    const key = `${uid}:${target?.deviceId || ''}:${target?.token || ''}`;
+    if (seenTargetIds.has(key)) return false;
+    seenTargetIds.add(key);
+    return true;
+  });
 }
 
 async function pruneInvalidTokens(sendResult, targets) {
@@ -4659,8 +4704,10 @@ async function sendDirectTargetsNotification({
 }
 
 exports._internal = {
+  getTargetsForCategoryUserIds,
   getTargetsForCategory,
   sendCategoryNotification,
+  sendRsvpReminderPushNotifications,
   sendPracticePacketDueTomorrowReminders,
   syncNotificationRecipientForTeamUser,
   syncNotificationRecipientsForUserChange,
@@ -4925,7 +4972,13 @@ async function markReminderSent(eventRef, claimId, sendResult) {
     'scheduleNotifications.chatMessageError': sendResult?.chatMessageError
       ? sendResult.chatMessageError
       : admin.firestore.FieldValue.delete(),
-    'scheduleNotifications.rsvpEmailCount': Number(sendResult?.rsvpEmailCount || 0)
+    'scheduleNotifications.rsvpEmailCount': Number(sendResult?.rsvpEmailCount || 0),
+    'scheduleNotifications.rsvpPushSuccessCount': Number(sendResult?.rsvpPushSuccessCount || 0),
+    'scheduleNotifications.rsvpPushFailureCount': Number(sendResult?.rsvpPushFailureCount || 0),
+    'scheduleNotifications.rsvpPushTargetCount': Number(sendResult?.rsvpPushTargetCount || 0),
+    'scheduleNotifications.rsvpPushError': sendResult?.rsvpPushError
+      ? sendResult.rsvpPushError
+      : admin.firestore.FieldValue.delete()
   });
 }
 
@@ -4994,12 +5047,29 @@ async function dispatchDuePreEventReminders(now = new Date()) {
           gameId,
           actorUid: 'scheduled-reminder'
         });
+        let rsvpPushResult = { successCount: 0, failureCount: 0, targetCount: 0 };
+        let rsvpPushError = null;
+        try {
+          rsvpPushResult = await sendRsvpReminderPushNotifications({
+            teamId,
+            gameId,
+            event: claimedEvent,
+            recipientUserIds: emailResult.recipientUserIds
+          });
+        } catch (pushError) {
+          rsvpPushError = pushError;
+          console.error('Failed to send RSVP reminder push notifications', { teamId, gameId, error: pushError });
+        }
         await markReminderSent(eventRef, claimId, {
           ...sendResult,
           chatMessageId: chatResult.messageId,
           chatMessageCreated: chatResult.created,
           chatMessageError: chatMessageError?.message || null,
-          rsvpEmailCount: emailResult.sentCount
+          rsvpEmailCount: emailResult.sentCount,
+          rsvpPushSuccessCount: rsvpPushResult.successCount,
+          rsvpPushFailureCount: rsvpPushResult.failureCount,
+          rsvpPushTargetCount: rsvpPushResult.targetCount,
+          rsvpPushError: rsvpPushError?.message || null
         });
         return {
           teamId,
@@ -5007,7 +5077,11 @@ async function dispatchDuePreEventReminders(now = new Date()) {
           sent: Number(sendResult?.successCount || 0),
           chatMessageId: chatResult.messageId,
           chatMessageCreated: chatResult.created,
-          rsvpEmailCount: emailResult.sentCount
+          rsvpEmailCount: emailResult.sentCount,
+          rsvpPushSuccessCount: rsvpPushResult.successCount,
+          rsvpPushFailureCount: rsvpPushResult.failureCount,
+          rsvpPushTargetCount: rsvpPushResult.targetCount,
+          rsvpPushError: rsvpPushError?.message || null
         };
       } catch (error) {
         await markReminderPendingAfterFailure(eventRef, claimId, error);
@@ -6340,6 +6414,42 @@ function publicRsvpIsResponded(response) {
   return PUBLIC_RSVP_RESPONSES.has(String(response || '').trim());
 }
 
+function buildRsvpReminderPushPayload(event) {
+  const eventTitle = getEventTitle(event || {});
+  return {
+    title: 'RSVP reminder',
+    body: truncateNotificationBody(`${eventTitle} needs your availability. Tap to RSVP.`)
+  };
+}
+
+async function sendRsvpReminderPushNotifications({ teamId, gameId, event = {}, recipientUserIds = [] } = {}) {
+  if (!teamId || !gameId) {
+    return { successCount: 0, failureCount: 0, targetCount: 0 };
+  }
+
+  const targets = await getTargetsForCategoryUserIds(teamId, 'rsvp', recipientUserIds);
+  if (!targets.length) {
+    return { successCount: 0, failureCount: 0, targetCount: 0 };
+  }
+
+  const payload = buildRsvpReminderPushPayload(event);
+  const sendResult = await sendDirectTargetsNotification({
+    targets,
+    category: 'rsvp',
+    title: payload.title,
+    body: payload.body,
+    teamId,
+    gameId,
+    eventId: gameId
+  });
+
+  return {
+    successCount: Number(sendResult?.successCount || 0),
+    failureCount: Number(sendResult?.failureCount || 0),
+    targetCount: targets.length
+  };
+}
+
 function getPublicRsvpResponseSortMs(rsvp, docSnap) {
   const respondedAt = coercePublicRsvpDate(rsvp?.respondedAt || rsvp?.updatedAt || rsvp?.createdAt);
   if (respondedAt) return respondedAt.getTime();
@@ -6489,6 +6599,8 @@ async function createPublicRsvpEmailDeliveries({ teamId, gameId, actorUid = null
   let batchWriteCount = 0;
   let sentCount = 0;
   let linkCount = 0;
+  const remindedPlayerIds = new Set();
+  const recipientUserIds = new Set();
 
   const ensurePublicRsvpEmailBatchCapacity = () => {
     if (batchWriteCount + 2 <= PUBLIC_RSVP_EMAIL_BATCH_WRITE_LIMIT) return;
@@ -6549,6 +6661,10 @@ async function createPublicRsvpEmailDeliveries({ teamId, gameId, actorUid = null
       batchWriteCount += 2;
       sentCount += 1;
       linkCount += 3;
+      remindedPlayerIds.add(String(player.id || '').trim());
+      if (contact.userId) {
+        recipientUserIds.add(contact.userId);
+      }
     });
   });
 
@@ -6558,7 +6674,13 @@ async function createPublicRsvpEmailDeliveries({ teamId, gameId, actorUid = null
   for (const publicRsvpEmailBatch of batches) {
     await publicRsvpEmailBatch.commit();
   }
-  return { sentCount, linkCount };
+  return {
+    sentCount,
+    linkCount,
+    playerIds: Array.from(remindedPlayerIds).filter(Boolean),
+    recipientUserIds: Array.from(recipientUserIds).filter(Boolean),
+    recipientCount: recipientUserIds.size
+  };
 }
 
 exports.sendPublicRsvpEmails = functions.https.onRequest(async (req, res) => {
@@ -6602,7 +6724,27 @@ exports.sendPublicRsvpEmails = functions.https.onRequest(async (req, res) => {
       gameId,
       actorUid: tokenData.uid
     });
-    res.status(200).json({ ok: true, ...result });
+    let rsvpPushResult = { successCount: 0, failureCount: 0, targetCount: 0 };
+    let rsvpPushError = null;
+    try {
+      rsvpPushResult = await sendRsvpReminderPushNotifications({
+        teamId,
+        gameId,
+        event: eventRecord.data,
+        recipientUserIds: result.recipientUserIds
+      });
+    } catch (pushError) {
+      rsvpPushError = pushError;
+      console.error('Failed to send staff-triggered RSVP reminder push notifications', { teamId, gameId, error: pushError });
+    }
+    res.status(200).json({
+      ok: true,
+      ...result,
+      rsvpPushSuccessCount: rsvpPushResult.successCount,
+      rsvpPushFailureCount: rsvpPushResult.failureCount,
+      rsvpPushTargetCount: rsvpPushResult.targetCount,
+      rsvpPushError: rsvpPushError?.message || null
+    });
   } catch (error) {
     console.error('Failed to send public RSVP emails:', error);
     publicRsvpJsonError(res, error?.code === 'auth/argument-error' ? 401 : 500, error?.message || 'RSVP email delivery failed.');
