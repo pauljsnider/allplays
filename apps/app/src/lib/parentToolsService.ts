@@ -3,6 +3,7 @@ import {
   createFamilyShareToken,
   createParentMembershipRequest,
   createRegistrationCheckoutSession,
+  extendTeamRegistrationOffer,
   createTeamMediaFolder,
   createTeamMediaLink,
   discoverPublicTeams,
@@ -723,6 +724,19 @@ export async function rejectTeamRegistrationForApp(
     throw new Error('Admin access is required to decline registrations.');
   }
   return rejectTeamRegistration(teamId, formId, registrationId, decisionNote);
+}
+
+export async function extendTeamRegistrationOfferForApp(
+  user: AuthUser | null,
+  teamId: string,
+  formId: string,
+  registrationId: string,
+  decisionNote = ''
+) {
+  if (!canManageTeamRegistrations(user, teamId)) {
+    throw new Error('Admin access is required to manage waitlist registrations.');
+  }
+  return extendTeamRegistrationOffer(teamId, formId, registrationId, decisionNote);
 }
 
 export async function loadParentCertificates(user: AuthUser | null): Promise<ParentCertificateCard[]> {

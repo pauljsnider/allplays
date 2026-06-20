@@ -7,6 +7,7 @@ const dbMocks = vi.hoisted(() => ({
     approveTeamRegistration: vi.fn(),
     createFamilyShareToken: vi.fn(),
     createParentMembershipRequest: vi.fn(),
+    extendTeamRegistrationOffer: vi.fn(),
     createTeamMediaFolder: vi.fn(),
     createTeamMediaLink: vi.fn(),
     db: { _is_mock_db_instance: true }, // Mock db instance for runTransaction
@@ -219,6 +220,7 @@ import {
     deleteTeamMediaItemForApp,
     updateTeamMediaItemForApp,
     approveTeamRegistrationForApp,
+    extendTeamRegistrationOfferForApp,
     rejectTeamRegistrationForApp,
     cancelRegistrationCheckout,
     initiateRegistrationCheckout,
@@ -820,6 +822,7 @@ describe('React app parent tools service', () => {
         ]);
         dbMocks.getPlayers.mockResolvedValue([{ id: 'player-9', name: 'Riley Runner', number: '12' }]);
         dbMocks.approveTeamRegistration.mockResolvedValue({ success: true });
+        dbMocks.extendTeamRegistrationOffer.mockResolvedValue({ success: true });
         dbMocks.rejectTeamRegistration.mockResolvedValue({ success: true });
 
         const queue = await loadTeamRegistrationQueue(user, 'team-coach', 'form-review');
@@ -843,6 +846,9 @@ describe('React app parent tools service', () => {
 
         await approveTeamRegistrationForApp(user, 'team-coach', 'form-review', 'reg-1', { playerId: 'player-9' });
         expect(dbMocks.approveTeamRegistration).toHaveBeenCalledWith('team-coach', 'form-review', 'reg-1', { playerId: 'player-9' });
+
+        await extendTeamRegistrationOfferForApp(user, 'team-coach', 'form-review', 'reg-1');
+        expect(dbMocks.extendTeamRegistrationOffer).toHaveBeenCalledWith('team-coach', 'form-review', 'reg-1', '');
 
         await rejectTeamRegistrationForApp(user, 'team-coach', 'form-review', 'reg-1', 'Not eligible');
         expect(dbMocks.rejectTeamRegistration).toHaveBeenCalledWith('team-coach', 'form-review', 'reg-1', 'Not eligible');
