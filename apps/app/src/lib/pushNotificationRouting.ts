@@ -149,6 +149,15 @@ export function resolvePushNotificationRoute(input: unknown) {
             return `/schedule?teamId=${encodeRouteParam(teamId)}&section=game`;
         }
     }
+    if (category === 'media') {
+        if (appRoute) {
+            return appRoute;
+        }
+        if (teamId) {
+            return `/teams/${encodeRouteParam(teamId)}/media`;
+        }
+        return '/teams';
+    }
     if (category === 'liveChat' && teamId && conversationId) {
         return buildMessagesRoute(teamId, conversationId);
     }

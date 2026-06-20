@@ -302,6 +302,14 @@
       ]
     },
     {
+      "collectionGroup": "teamMediaNotificationBatches",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "status", "order": "ASCENDING" },
+        { "fieldPath": "dueAt", "order": "ASCENDING" }
+      ]
+    },
+    {
       "collectionGroup": "chatMessages",
       "queryScope": "COLLECTION",
       "fields": [

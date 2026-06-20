@@ -7,22 +7,22 @@ import {
     resolvePushNotificationRoute
 } from '../../apps/app/src/lib/pushNotificationRouting.ts';
 
-function installLocalStorageMock() {
-    const store = new Map<string, string>();
+function installMemoryLocalStorage() {
+    const values = new Map<string, string>();
     Object.defineProperty(window, 'localStorage', {
         configurable: true,
         value: {
-            getItem: (key: string) => store.get(key) ?? null,
-            setItem: (key: string, value: string) => store.set(key, String(value)),
-            removeItem: (key: string) => store.delete(key),
-            clear: () => store.clear()
+            clear: () => values.clear(),
+            getItem: (key: string) => values.get(String(key)) ?? null,
+            removeItem: (key: string) => values.delete(String(key)),
+            setItem: (key: string, value: string) => values.set(String(key), String(value))
         }
     });
 }
 
 describe('app push notification routing', () => {
     beforeEach(() => {
-        installLocalStorageMock();
+        installMemoryLocalStorage();
         window.localStorage.clear();
     });
 
@@ -35,6 +35,7 @@ describe('app push notification routing', () => {
         expect(resolvePushNotificationRoute({ category: 'liveScore', gameId: 'game-7' })).toBe('/games/game-7');
         expect(resolvePushNotificationRoute({ category: 'practice', teamId: 'team-1', eventId: 'practice-4' })).toBe('/schedule/team-1/practice-4?section=game');
         expect(resolvePushNotificationRoute({ category: 'practice', teamId: 'team-1', eventId: 'session-4', appRoute: '/schedule/team-1/practice-4?section=game' })).toBe('/schedule/team-1/practice-4?section=game');
+        expect(resolvePushNotificationRoute({ category: 'media', teamId: 'team-1' })).toBe('/teams/team-1/media');
         expect(resolvePushNotificationRoute({ category: 'schedule', teamId: 'team-1', eventId: 'event-9' })).toBe('/schedule/team-1/event-9');
     });
 

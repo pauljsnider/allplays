@@ -107,6 +107,8 @@ if (admin.apps.length === 0) {
 }
 
 const firestore = admin.firestore();
+const TEAM_MEDIA_NOTIFICATION_BATCH_WINDOW_MS = 60 * 60 * 1000;
+const TEAM_MEDIA_NOTIFICATION_DISPATCH_LIMIT = 50;
 const checkStripeWebhookRateLimit = createInMemoryRateLimiter({
   windowMs: 60_000,
   maxRequests: 120,
@@ -3781,6 +3783,12 @@ function buildNotificationLink({ category, teamId, gameId, batchId = null, recip
   if (category === 'liveScore' && gameId) {
     return `https://allplays.ai/live-game.html?teamId=${encodeURIComponent(teamId)}&gameId=${encodeURIComponent(gameId)}`;
   }
+  if (category === 'media') {
+    if (teamId) {
+      return `https://allplays.ai/app/#/teams/${encodeURIComponent(teamId)}/media`;
+    }
+    return 'https://allplays.ai/app/#/teams';
+  }
   return `https://allplays.ai/team.html?teamId=${encodeURIComponent(teamId)}`;
 }
 
@@ -3821,10 +3829,252 @@ function buildNotificationAppRoute({ category, teamId, gameId, eventId, batchId 
     }
     return '/schedule';
   }
+  if (category === 'media') {
+    if (teamId) {
+      return `/teams/${encodeURIComponent(teamId)}/media`;
+    }
+    return '/teams';
+  }
   if (category === 'practice') {
     return buildPracticePacketNotificationDestination({ teamId, eventId }).appRoute;
   }
   return '/home';
+}
+
+function normalizeTeamMediaNotificationText(value) {
+  return String(value || '').replace(/\s+/g, ' ').trim();
+}
+
+function normalizeTeamMediaNotificationVisibility(value) {
+  return normalizeNotificationAlbumVisibility(value);
+}
+
+function normalizeTeamMediaNotificationItemType(value) {
+  const normalized = String(value || '').trim().toLowerCase().replace(/[\s-]+/g, '_');
+  if (['photo', 'image', 'team_photo'].includes(normalized)) return 'photo';
+  if (['file', 'document', 'doc'].includes(normalized)) return 'file';
+  if (['video', 'video_link', 'link'].includes(normalized)) return 'video';
+  return 'item';
+}
+
+function getTeamMediaNotificationWindowStart(date) {
+  const timestamp = date instanceof Date && !Number.isNaN(date.getTime()) ? date.getTime() : Date.now();
+  return new Date(Math.floor(timestamp / TEAM_MEDIA_NOTIFICATION_BATCH_WINDOW_MS) * TEAM_MEDIA_NOTIFICATION_BATCH_WINDOW_MS);
+}
+
+function buildTeamMediaNotificationBatchId(teamId, folderId, windowStartAt) {
+  const startedAt = windowStartAt instanceof Date && !Number.isNaN(windowStartAt.getTime())
+    ? windowStartAt
+    : getTeamMediaNotificationWindowStart(new Date());
+  return [teamId, folderId, startedAt.toISOString()]
+    .map((part) => String(part || '').trim().replace(/[^A-Za-z0-9_-]+/g, '_').replace(/^_+|_+$/g, ''))
+    .filter(Boolean)
+    .join('__')
+    .slice(0, 220);
+}
+
+function buildTeamMediaNotificationBatchMetadata({ teamId, itemId, item = {}, folder = {}, now = new Date() } = {}) {
+  const normalizedTeamId = normalizeTeamMediaNotificationText(teamId);
+  const normalizedItemId = normalizeTeamMediaNotificationText(itemId);
+  const folderId = normalizeTeamMediaNotificationText(item.folderId || folder.id);
+  if (!normalizedTeamId || !normalizedItemId || !folderId || item.deleted === true) return null;
+
+  const albumVisibility = normalizeTeamMediaNotificationVisibility(folder.visibility);
+  if (albumVisibility !== 'team') return null;
+
+  const createdAt = coerceDate(item.createdAt) || (now instanceof Date ? now : new Date(now));
+  const windowStartAt = getTeamMediaNotificationWindowStart(createdAt);
+  const dueAt = new Date(windowStartAt.getTime() + TEAM_MEDIA_NOTIFICATION_BATCH_WINDOW_MS);
+  return {
+    batchId: buildTeamMediaNotificationBatchId(normalizedTeamId, folderId, windowStartAt),
+    teamId: normalizedTeamId,
+    folderId,
+    albumName: normalizeTeamMediaNotificationText(folder.name) || 'Team media',
+    albumVisibility,
+    itemId: normalizedItemId,
+    itemType: normalizeTeamMediaNotificationItemType(item.type || item.mediaType),
+    itemTitle: normalizeTeamMediaNotificationText(item.title || item.fileName || item.name),
+    windowStartAt,
+    dueAt
+  };
+}
+
+function buildTeamMediaNotificationPayload(batch = {}) {
+  const itemCount = Math.max(1, Number(batch.itemCount || 0));
+  const albumName = normalizeTeamMediaNotificationText(batch.albumName) || 'Team media';
+  const itemLabel = `${itemCount} new media item${itemCount === 1 ? '' : 's'}`;
+  return {
+    title: 'New team media',
+    body: truncateNotificationBody(`${albumName} has ${itemLabel}.`)
+  };
+}
+
+function buildTeamMediaNotificationBatchWrite(batch = {}, metadata = {}) {
+  const existingItemIds = Array.from(new Set(
+    (Array.isArray(batch.itemIds) ? batch.itemIds : [])
+      .map((itemId) => normalizeTeamMediaNotificationText(itemId))
+      .filter(Boolean)
+  ));
+  const existingItemTypes = Array.from(new Set(
+    (Array.isArray(batch.itemTypes) ? batch.itemTypes : [])
+      .map((itemType) => normalizeTeamMediaNotificationItemType(itemType))
+      .filter(Boolean)
+  ));
+  const nextItemIds = existingItemIds.includes(metadata.itemId)
+    ? existingItemIds
+    : [...existingItemIds, metadata.itemId];
+  const nextItemTypes = metadata.itemType && !existingItemTypes.includes(metadata.itemType)
+    ? [...existingItemTypes, metadata.itemType]
+    : existingItemTypes;
+
+  return {
+    teamId: metadata.teamId,
+    folderId: metadata.folderId,
+    albumName: metadata.albumName,
+    albumVisibility: metadata.albumVisibility,
+    windowStartAt: admin.firestore.Timestamp.fromDate(metadata.windowStartAt),
+    dueAt: admin.firestore.Timestamp.fromDate(metadata.dueAt),
+    status: 'pending',
+    itemCount: nextItemIds.length,
+    itemIds: nextItemIds,
+    itemTypes: nextItemTypes,
+    latestItemTitle: metadata.itemTitle || null,
+    updatedAt: admin.firestore.FieldValue.serverTimestamp()
+  };
+}
+
+async function queueTeamMediaNotificationBatch({ teamId, itemId, item, now = new Date() } = {}) {
+  const folderId = normalizeTeamMediaNotificationText(item?.folderId);
+  if (!teamId || !itemId || !folderId || item?.deleted === true) return null;
+
+  const folderRef = firestore.doc(`teams/${teamId}/mediaFolders/${folderId}`);
+  const folderSnap = await folderRef.get();
+  if (!folderSnap.exists) return null;
+
+  const metadata = buildTeamMediaNotificationBatchMetadata({
+    teamId,
+    itemId,
+    item,
+    folder: { id: folderId, ...(folderSnap.data() || {}) },
+    now
+  });
+  if (!metadata) return null;
+
+  const batchRef = firestore.doc(`teamMediaNotificationBatches/${metadata.batchId}`);
+  await firestore.runTransaction(async (transaction) => {
+    const batchSnap = await transaction.get(batchRef);
+    const batch = batchSnap.exists ? (batchSnap.data() || {}) : {};
+    const currentStatus = batchSnap.exists ? String(batch.status || '') : '';
+    if (['sent', 'sending', 'skipped'].includes(currentStatus)) return;
+
+    transaction.set(batchRef, buildTeamMediaNotificationBatchWrite(batch, metadata), { merge: true });
+  });
+
+  return metadata;
+}
+
+async function claimTeamMediaNotificationBatch(batchRef, claimId, now = new Date()) {
+  return firestore.runTransaction(async (transaction) => {
+    const snap = await transaction.get(batchRef);
+    if (!snap.exists) return null;
+    const batch = snap.data() || {};
+    const dueAt = coerceDate(batch.dueAt);
+    if (batch.status !== 'pending' || (dueAt && dueAt > now)) return null;
+
+    transaction.update(batchRef, {
+      status: 'sending',
+      claimId,
+      lastAttemptAt: admin.firestore.FieldValue.serverTimestamp()
+    });
+    return { id: snap.id, ...batch };
+  });
+}
+
+async function markTeamMediaNotificationBatchSkipped(batchRef, claimId, reason) {
+  await batchRef.update({
+    status: 'skipped',
+    claimId,
+    skippedReason: reason || null,
+    finishedAt: admin.firestore.FieldValue.serverTimestamp()
+  });
+}
+
+async function markTeamMediaNotificationBatchSent(batchRef, claimId, sendResult) {
+  await batchRef.update({
+    status: 'sent',
+    claimId,
+    sentAt: admin.firestore.FieldValue.serverTimestamp(),
+    successCount: Number(sendResult?.successCount || 0),
+    failureCount: Number(sendResult?.failureCount || 0),
+    inboxWriteCount: Number(sendResult?.inboxWriteCount || 0)
+  });
+}
+
+async function releaseTeamMediaNotificationBatchAfterFailure(batchRef, claimId, error) {
+  await batchRef.update({
+    status: 'pending',
+    claimId,
+    lastError: error?.message || 'Unknown team media notification error',
+    lastAttemptAt: admin.firestore.FieldValue.serverTimestamp()
+  });
+}
+
+async function dispatchDueTeamMediaNotificationBatches(now = new Date()) {
+  const dueSnap = await firestore.collection('teamMediaNotificationBatches')
+    .where('status', '==', 'pending')
+    .where('dueAt', '<=', admin.firestore.Timestamp.fromDate(now))
+    .limit(TEAM_MEDIA_NOTIFICATION_DISPATCH_LIMIT)
+    .get();
+  const results = [];
+
+  for (const docSnap of dueSnap.docs) {
+    const batchRef = docSnap.ref;
+    const claimId = `team-media-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    const batch = await claimTeamMediaNotificationBatch(batchRef, claimId, now);
+    if (!batch) continue;
+
+    try {
+      const folderSnap = await firestore.doc(`teams/${batch.teamId}/mediaFolders/${batch.folderId}`).get();
+      if (!folderSnap.exists) {
+        await markTeamMediaNotificationBatchSkipped(batchRef, claimId, 'album_not_found');
+        continue;
+      }
+
+      const folder = folderSnap.data() || {};
+      const albumVisibility = normalizeTeamMediaNotificationVisibility(folder.visibility || batch.albumVisibility);
+      if (albumVisibility !== 'team') {
+        await markTeamMediaNotificationBatchSkipped(batchRef, claimId, 'album_not_team_visible');
+        continue;
+      }
+
+      const payload = buildTeamMediaNotificationPayload({
+        ...batch,
+        albumName: normalizeTeamMediaNotificationText(folder.name || batch.albumName),
+        albumVisibility
+      });
+      const sendResult = await sendCategoryNotification({
+        teamId: batch.teamId,
+        category: 'media',
+        title: payload.title,
+        body: payload.body,
+        dedupKey: `team-media:${batch.id}`,
+        audienceContext: { albumVisibility }
+      });
+      await markTeamMediaNotificationBatchSent(batchRef, claimId, sendResult);
+      results.push({
+        teamId: batch.teamId,
+        folderId: batch.folderId,
+        itemCount: Number(batch.itemCount || 0),
+        successCount: Number(sendResult?.successCount || 0),
+        failureCount: Number(sendResult?.failureCount || 0)
+      });
+    } catch (error) {
+      await releaseTeamMediaNotificationBatchAfterFailure(batchRef, claimId, error);
+      console.error('Failed to dispatch team media notification batch', { batchId: batch.id, error });
+    }
+  }
+
+  return results;
 }
 
 async function getUserIdsByEmails(emails) {
@@ -4659,6 +4909,11 @@ async function sendDirectTargetsNotification({
 }
 
 exports._internal = {
+  buildTeamMediaNotificationBatchId,
+  buildTeamMediaNotificationBatchMetadata,
+  buildTeamMediaNotificationBatchWrite,
+  buildTeamMediaNotificationPayload,
+  dispatchDueTeamMediaNotificationBatches,
   getTargetsForCategory,
   sendCategoryNotification,
   sendPracticePacketDueTomorrowReminders,
@@ -4666,6 +4921,26 @@ exports._internal = {
   syncNotificationRecipientsForUserChange,
   syncNotificationRecipientsForTeamChange
 };
+
+exports.queueTeamMediaNotificationBatch = functions.firestore
+  .document('teams/{teamId}/mediaItems/{itemId}')
+  .onCreate(async (snap, context) => {
+    const teamId = String(context.params.teamId || '').trim();
+    const itemId = String(context.params.itemId || '').trim();
+    const timestamp = context.timestamp ? new Date(context.timestamp) : new Date();
+    await queueTeamMediaNotificationBatch({
+      teamId,
+      itemId,
+      item: snap.data() || {},
+      now: timestamp
+    });
+    return null;
+  });
+
+exports.dispatchDueTeamMediaNotificationBatches = functions.pubsub
+  .schedule('every 15 minutes')
+  .timeZone('America/Chicago')
+  .onRun(() => dispatchDueTeamMediaNotificationBatches());
 
 exports.markNotificationInboxItemRead = functions.https.onCall(async (data, context) => {
   if (!context.auth?.uid) {
