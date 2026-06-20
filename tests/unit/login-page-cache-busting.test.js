@@ -10,7 +10,7 @@ describe('login page cache busting', () => {
             "import { getPostAuthRedirectUrl } from './js/invite-redirect.js?v=2';"
         );
         expect(source).toContain(
-            "import * as loginPageModule from './js/login-page.js?v=5';"
+            "import * as loginPageModule from './js/login-page.js?v=6';"
         );
     });
 });

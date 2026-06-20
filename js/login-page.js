@@ -79,7 +79,8 @@ export function createLoginRedirectCoordinator({
     const urlInviteType = typeof urlParams.get('type') === 'string'
         ? urlParams.get('type').trim().toLowerCase()
         : '';
-    const shouldRedeemInviteFromLogin = Boolean(urlCodeParam) && REDEEMABLE_INVITE_TYPES.has(urlInviteType);
+    const hasRedeemableInviteLink = Boolean(urlCodeParam) && REDEEMABLE_INVITE_TYPES.has(urlInviteType);
+    const shouldRedeemInviteFromLogin = false;
     let inviteRedemptionOverride = null;
 
     function getPostAuthRedirect(userWithRoles, shouldRedeemInvite = false) {
@@ -90,8 +91,7 @@ export function createLoginRedirectCoordinator({
     function getGoogleRedirectUrl(userWithRoles) {
         const googleAuthMode = windowObject.sessionStorage.getItem('postGoogleAuthMode');
         windowObject.sessionStorage.removeItem('postGoogleAuthMode');
-        const shouldRedeemInvite = shouldRedeemInviteFromLogin &&
-            (googleAuthMode === 'login' || googleAuthMode === 'invite');
+        const shouldRedeemInvite = hasRedeemableInviteLink && googleAuthMode === 'invite';
         inviteRedemptionOverride = shouldRedeemInvite;
         return getPostAuthRedirect(userWithRoles, shouldRedeemInvite);
     }
@@ -103,6 +103,7 @@ export function createLoginRedirectCoordinator({
 
     return {
         urlCodeParam,
+        hasRedeemableInviteLink,
         shouldRedeemInviteFromLogin,
         getPostAuthRedirect,
         getGoogleRedirectUrl,

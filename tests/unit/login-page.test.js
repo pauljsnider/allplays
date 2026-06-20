@@ -78,31 +78,44 @@ describe('login page redirect coordination', () => {
             defaultRedirect: 'dashboard.html'
         });
 
-        expect(coordinator.shouldRedeemInviteFromLogin).toBe(true);
-        expect(coordinator.getPostAuthRedirect({ isAdmin: true }, coordinator.shouldRedeemInviteFromLogin))
+        expect(coordinator.hasRedeemableInviteLink).toBe(true);
+        expect(coordinator.shouldRedeemInviteFromLogin).toBe(false);
+        expect(coordinator.getPostAuthRedirect({ isAdmin: true }, true))
             .toBe('accept-invite.html?code=AB12CD34&type=admin');
     });
 
-    it('redeems household invite links after login', () => {
+    it('keeps stale invite links out of ordinary login redirects', () => {
         const { coordinator } = createCoordinator({
             search: '?code=ab12cd34&type=household',
             defaultRedirect: 'parent-dashboard.html'
         });
 
-        expect(coordinator.shouldRedeemInviteFromLogin).toBe(true);
+        expect(coordinator.hasRedeemableInviteLink).toBe(true);
+        expect(coordinator.shouldRedeemInviteFromLogin).toBe(false);
         expect(coordinator.getPostAuthRedirect({ uid: 'user-1' }, coordinator.shouldRedeemInviteFromLogin))
+            .toBe('parent-dashboard.html');
+        expect(coordinator.getAutoRedirectUrl({ uid: 'user-1' })).toBe('parent-dashboard.html');
+    });
+
+    it('still supports explicit household invite redemption redirects', () => {
+        const { coordinator } = createCoordinator({
+            search: '?code=ab12cd34&type=household',
+            defaultRedirect: 'parent-dashboard.html'
+        });
+
+        expect(coordinator.getPostAuthRedirect({ uid: 'user-1' }, true))
             .toBe('accept-invite.html?code=AB12CD34&type=household');
     });
 
-    it('redeems type-less 8-character invite links after login', () => {
+    it('still supports explicit type-less invite redemption redirects', () => {
         const { coordinator } = createCoordinator({
             search: '?code=ab12cd34',
             defaultRedirect: 'dashboard.html'
         });
 
-        expect(coordinator.shouldRedeemInviteFromLogin).toBe(true);
-        expect(coordinator.getPostAuthRedirect({ uid: 'user-1' }, coordinator.shouldRedeemInviteFromLogin))
-            .toBe('accept-invite.html?code=AB12CD34');
+        expect(coordinator.hasRedeemableInviteLink).toBe(true);
+        expect(coordinator.shouldRedeemInviteFromLogin).toBe(false);
+        expect(coordinator.getPostAuthRedirect({ uid: 'user-1' }, true)).toBe('accept-invite.html?code=AB12CD34');
     });
 
     it('does not redeem invite redirects when the invite code is missing', () => {
@@ -115,11 +128,11 @@ describe('login page redirect coordination', () => {
         expect(coordinator.getAutoRedirectUrl({ parentOf: [{ teamId: 'team-1' }] })).toBe('parent-dashboard.html');
     });
 
-    it('redeems the invite after Google redirect when the stored mode is login', () => {
+    it('does not redeem stale invite links after Google redirect when the stored mode is login', () => {
         const { coordinator, windowObject } = createCoordinator({ postGoogleAuthMode: 'login' });
 
         expect(coordinator.getGoogleRedirectUrl({ parentOf: [{ teamId: 'team-1' }] }))
-            .toBe('accept-invite.html?code=AB12CD34&type=parent');
+            .toBe('parent-dashboard.html');
         expect(windowObject.sessionStorage.removeItem).toHaveBeenCalledWith('postGoogleAuthMode');
     });
 
@@ -140,10 +153,11 @@ describe('login page redirect coordination', () => {
         expect(coordinator.getAutoRedirectUrl(user)).toBe('parent-dashboard.html');
     });
 
-    it('still redeems the invite for authenticated users who directly open an invite link', () => {
+    it('sends already-authenticated users who directly open an invite link to their dashboard', () => {
         const { coordinator } = createCoordinator({ search: '?code=ab12cd34&type=admin', defaultRedirect: 'dashboard.html' });
 
-        expect(coordinator.getAutoRedirectUrl({ isAdmin: true })).toBe('accept-invite.html?code=AB12CD34&type=admin');
+        expect(coordinator.hasRedeemableInviteLink).toBe(true);
+        expect(coordinator.getAutoRedirectUrl({ isAdmin: true })).toBe('dashboard.html');
     });
 });
 
