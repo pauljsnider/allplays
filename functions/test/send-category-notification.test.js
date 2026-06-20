@@ -281,6 +281,45 @@ test('getTargetsForCategoryUserIds limits legacy RSVP fallback to requested reci
         }
 });
 
+test('getTargetsForCategoryUserIds accepts legacy recipient docs without category maps', async () => {
+        const { internals, env, cleanup } = loadNotificationInternals({
+            teamDoc: {
+                ownerId: 'coach-1',
+                adminEmails: []
+            },
+            parentUserIds: ['parent-1'],
+            notificationRecipientDocs: [
+                {
+                    id: 'parent-1',
+                    data: {
+                        uid: 'parent-1',
+                        teamId: 'team-1',
+                        roles: ['parent'],
+                        tokens: [
+                            {
+                                deviceId: 'parent-1-device',
+                                token: 'parent-1-token',
+                                platform: 'ios',
+                                userAgent: ''
+                            }
+                        ]
+                    }
+                }
+            ]
+        });
+
+        try {
+            const targets = await internals.getTargetsForCategoryUserIds('team-1', 'rsvp', ['parent-1']);
+
+            assert.deepEqual(targets.map((target) => target.token), ['parent-1-token']);
+            assert.equal(env.counts.recipientDocGets, 1);
+            assert.equal(env.counts.preferenceGets, 0);
+            assert.equal(env.counts.deviceGets, 0);
+        } finally {
+            cleanup();
+        }
+});
+
 test('sendRsvpReminderPushNotifications sends availability pushes only to email recipient user ids', async () => {
         const { internals, env, cleanup } = loadNotificationInternals({
             teamDoc: {

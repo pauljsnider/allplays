@@ -97,6 +97,7 @@ function buildNotificationTestEnv({
     privateProfileDocs = {},
     indexedRecipients = [],
     indexedTargets = [],
+    notificationRecipientDocs = null,
     preferenceDocs = {},
     deviceDocs = {},
     invalidTokenResponses = []
@@ -124,7 +125,7 @@ function buildNotificationTestEnv({
         deleteCalls: 0
     };
 
-    const notificationRecipientDocs = Array.from(
+    const notificationRecipientDocsList = notificationRecipientDocs || Array.from(
         (indexedRecipients.length ? indexedRecipients : indexedTargets).reduce((docsByUid, target, index) => {
             const uid = String(target.uid || `user-${index}`).trim();
             const existing = docsByUid.get(uid) || {
@@ -247,7 +248,7 @@ function buildNotificationTestEnv({
                 if (path.startsWith(`teams/${teamId}/notificationRecipients/`)) {
                     counts.recipientDocGets += 1;
                     const docId = String(path).split('/').pop();
-                    const entry = notificationRecipientDocs.find((recipientDoc) => recipientDoc.id === docId);
+                    const entry = notificationRecipientDocsList.find((recipientDoc) => recipientDoc.id === docId);
                     return makeDocSnapshot({
                         id: docId,
                         ref: this,
@@ -317,7 +318,7 @@ function buildNotificationTestEnv({
                         async get() {
                             counts.recipientQueries += 1;
                             const category = String(field || '').replace(/^categories\./, '');
-                            const docs = notificationRecipientDocs.filter((entry) => op === '==' && value === true && entry.data.categories?.[category] === true)
+                            const docs = notificationRecipientDocsList.filter((entry) => op === '==' && value === true && entry.data.categories?.[category] === true)
                                 .map((entry) => makeDocSnapshot({
                                     id: entry.id,
                                     ref: doc(`${path}/${entry.id}`),
@@ -332,7 +333,7 @@ function buildNotificationTestEnv({
                     return {
                         async get() {
                             counts.recipientCollectionGets += 1;
-                            return makeQuerySnapshot(notificationRecipientDocs.slice(0, 1).map((entry) => makeDocSnapshot({
+                            return makeQuerySnapshot(notificationRecipientDocsList.slice(0, 1).map((entry) => makeDocSnapshot({
                                 id: entry.id,
                                 ref: doc(`${path}/${entry.id}`),
                                 data: entry.data,
@@ -343,7 +344,7 @@ function buildNotificationTestEnv({
                 },
                 async get() {
                     counts.recipientCollectionGets += 1;
-                    return makeQuerySnapshot(notificationRecipientDocs.map((entry) => makeDocSnapshot({
+                    return makeQuerySnapshot(notificationRecipientDocsList.map((entry) => makeDocSnapshot({
                         id: entry.id,
                         ref: doc(`${path}/${entry.id}`),
                         data: entry.data,
