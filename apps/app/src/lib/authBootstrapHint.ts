@@ -9,14 +9,12 @@ export type AuthBootstrapHint = {
   updatedAt: number;
 };
 
-function canUseStorage() {
-  return typeof window !== 'undefined' && typeof window.localStorage !== 'undefined';
-}
-
 export function readAuthBootstrapHint(): AuthBootstrapHint | null {
-  if (!canUseStorage()) return null;
+  if (typeof window === 'undefined') return null;
   try {
-    const raw = window.localStorage.getItem(authBootstrapHintKey);
+    const storage = window.localStorage;
+    if (typeof storage === 'undefined') return null;
+    const raw = storage.getItem(authBootstrapHintKey);
     if (!raw) return null;
     const parsed = JSON.parse(raw) as Partial<AuthBootstrapHint>;
     if (!parsed.uid || typeof parsed.uid !== 'string') return null;
@@ -32,13 +30,15 @@ export function readAuthBootstrapHint(): AuthBootstrapHint | null {
 }
 
 export function writeAuthBootstrapHint(user: AuthUser | null) {
-  if (!canUseStorage()) return;
+  if (typeof window === 'undefined') return;
   if (!user?.uid) {
     clearAuthBootstrapHint();
     return;
   }
   try {
-    window.localStorage.setItem(authBootstrapHintKey, JSON.stringify({
+    const storage = window.localStorage;
+    if (typeof storage === 'undefined') return;
+    storage.setItem(authBootstrapHintKey, JSON.stringify({
       uid: user.uid,
       email: user.email || null,
       roles: Array.isArray(user.roles) ? user.roles : [],
@@ -50,9 +50,11 @@ export function writeAuthBootstrapHint(user: AuthUser | null) {
 }
 
 export function clearAuthBootstrapHint() {
-  if (!canUseStorage()) return;
+  if (typeof window === 'undefined') return;
   try {
-    window.localStorage.removeItem(authBootstrapHintKey);
+    const storage = window.localStorage;
+    if (typeof storage === 'undefined') return;
+    storage.removeItem(authBootstrapHintKey);
   } catch {
     // Ignore storage failures.
   }
