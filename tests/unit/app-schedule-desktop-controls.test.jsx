@@ -505,11 +505,23 @@ describe('React app desktop Schedule controls', () => {
         await clickButton(container, 'Import rows');
         expect(scheduleMocks.createScheduleImportGame).toHaveBeenCalledWith('team-1', expect.objectContaining({
             eventType: 'game',
-            opponent: 'Tigers'
+            opponent: 'Tigers',
+            importBatch: expect.objectContaining({
+                batchId: expect.any(String),
+                totalCount: 2,
+                rowNumber: expect.any(Number),
+                importedBy: auth.user.uid
+            })
         }), auth.user);
         expect(scheduleMocks.createScheduleImportPractice).toHaveBeenCalledWith('team-1', expect.objectContaining({
             eventType: 'practice',
-            title: 'Speed Session'
+            title: 'Speed Session',
+            importBatch: expect.objectContaining({
+                batchId: expect.any(String),
+                totalCount: 2,
+                rowNumber: expect.any(Number),
+                importedBy: auth.user.uid
+            })
         }), auth.user);
         expect(scheduleMocks.loadParentSchedule).toHaveBeenCalledTimes(3);
         expect(scheduleMocks.loadParentSchedule).toHaveBeenLastCalledWith(auth.user, { hydrateDetails: false, expandStaffPlayers: false });

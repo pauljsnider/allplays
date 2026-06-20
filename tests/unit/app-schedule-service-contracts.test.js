@@ -762,7 +762,14 @@ describe('React app schedule service contract integration', () => {
             location: 'Field 1',
             arrivalTime: '2026-04-02T17:45',
             isHome: false,
-            notes: 'Bring white kit'
+            notes: 'Bring white kit',
+            importBatch: {
+                batchId: 'batch-1',
+                totalCount: 4,
+                rowNumber: 1,
+                importedAt: '2026-06-20T02:30:00.000Z',
+                importedBy: 'coach-1'
+            }
         }, coach)).resolves.toBe('game-new');
 
         expect(dbMocks.addGame).toHaveBeenCalledWith('team-1', expect.objectContaining({
@@ -773,7 +780,14 @@ describe('React app schedule service contract integration', () => {
             status: 'scheduled',
             homeScore: 0,
             awayScore: 0,
-            createdBy: 'coach-1'
+            createdBy: 'coach-1',
+            importBatch: {
+                batchId: 'batch-1',
+                totalCount: 4,
+                rowNumber: 1,
+                importedAt: '2026-06-20T02:30:00.000Z',
+                importedBy: 'coach-1'
+            }
         }));
         expect(dbMocks.addGame.mock.calls[0][1].date).toBeInstanceOf(Date);
         expect(dbMocks.addGame.mock.calls[0][1].arrivalTime).toBeInstanceOf(Date);
@@ -785,7 +799,14 @@ describe('React app schedule service contract integration', () => {
             title: 'Speed Session',
             location: 'Field 2',
             arrivalTime: null,
-            notes: 'Bring water'
+            notes: 'Bring water',
+            importBatch: {
+                batchId: 'batch-1',
+                totalCount: 4,
+                rowNumber: 2,
+                importedAt: '2026-06-20T02:30:00.000Z',
+                importedBy: 'coach-1'
+            }
         }, coach)).resolves.toBe('practice-new');
 
         expect(dbMocks.addPractice).toHaveBeenCalledWith('team-1', expect.objectContaining({
@@ -793,7 +814,14 @@ describe('React app schedule service contract integration', () => {
             title: 'Speed Session',
             opponent: null,
             status: 'scheduled',
-            createdBy: 'coach-1'
+            createdBy: 'coach-1',
+            importBatch: {
+                batchId: 'batch-1',
+                totalCount: 4,
+                rowNumber: 2,
+                importedAt: '2026-06-20T02:30:00.000Z',
+                importedBy: 'coach-1'
+            }
         }));
 
         dbMocks.getTeam.mockResolvedValue({ id: 'team-1', ownerId: 'other-user', adminEmails: [] });

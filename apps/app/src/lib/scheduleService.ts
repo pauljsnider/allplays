@@ -1253,7 +1253,30 @@ export type ScheduleImportNormalizedRow = {
   arrivalTime?: string | null;
   isHome?: boolean | null;
   notes?: string | null;
+  importBatch?: {
+    batchId: string;
+    totalCount: number;
+    rowNumber: number;
+    importedAt?: string | null;
+    importedBy?: string | null;
+  } | null;
 };
+
+function normalizeScheduleImportBatch(input: ScheduleImportNormalizedRow['importBatch']) {
+  const batchId = compactString(input?.batchId);
+  const totalCount = Math.max(0, Number.parseInt(String(input?.totalCount ?? 0), 10) || 0);
+  const rowNumber = Math.max(0, Number.parseInt(String(input?.rowNumber ?? 0), 10) || 0);
+  if (!batchId || totalCount <= 0 || rowNumber <= 0) {
+    return null;
+  }
+  return {
+    batchId,
+    totalCount,
+    rowNumber,
+    importedAt: compactString(input?.importedAt) || new Date().toISOString(),
+    importedBy: compactString(input?.importedBy) || null
+  };
+}
 
 function requireScheduleImportStaff(teamId: string, user: AuthUser | null) {
   if (!user?.uid) {
@@ -1278,6 +1301,7 @@ function parseScheduleImportDate(value: string | null | undefined, label: string
 
 function buildScheduleImportGamePayload(row: ScheduleImportNormalizedRow, user: AuthUser) {
   const startDate = parseScheduleImportDate(row.startsAt, 'Start time');
+  const importBatch = normalizeScheduleImportBatch(row.importBatch);
   return {
     type: 'game',
     date: startDate,
@@ -1295,12 +1319,14 @@ function buildScheduleImportGamePayload(row: ScheduleImportNormalizedRow, user: 
     competitionType: 'league',
     countsTowardSeasonRecord: true,
     statTrackerConfigId: null,
-    createdBy: user.uid
+    createdBy: user.uid,
+    ...(importBatch ? { importBatch } : {})
   };
 }
 
 function buildScheduleImportPracticePayload(row: ScheduleImportNormalizedRow, user: AuthUser) {
   const startDate = parseScheduleImportDate(row.startsAt, 'Start time');
+  const importBatch = normalizeScheduleImportBatch(row.importBatch);
   return {
     type: 'practice',
     title: compactString(row.title) || 'Practice',
@@ -1314,7 +1340,8 @@ function buildScheduleImportPracticePayload(row: ScheduleImportNormalizedRow, us
     homeScore: 0,
     awayScore: 0,
     statTrackerConfigId: null,
-    createdBy: user.uid
+    createdBy: user.uid,
+    ...(importBatch ? { importBatch } : {})
   };
 }
 

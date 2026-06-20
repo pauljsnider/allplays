@@ -475,13 +475,26 @@ export function Schedule({ auth }: { auth: AuthState }) {
     setStatusMessage(null);
     clearError();
     const failedRows: ScheduleCsvImportPreviewRow[] = [];
+    const importBatchId = `app-schedule-import-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+    const importBatchTimestamp = new Date().toISOString();
+    const totalCount = csvPreviewRows.length;
     let importedCount = 0;
-    for (const row of csvPreviewRows) {
+    for (const [index, row] of csvPreviewRows.entries()) {
+      const normalizedRow = {
+        ...row.normalized,
+        importBatch: {
+          batchId: importBatchId,
+          totalCount,
+          rowNumber: row.normalized.rowNumber || row.rowNumber || index + 1,
+          importedAt: importBatchTimestamp,
+          importedBy: auth.user.uid
+        }
+      };
       try {
         if (row.normalized.eventType === 'game') {
-          await createScheduleImportGame(selectedCalendarTeam.teamId, row.normalized, auth.user);
+          await createScheduleImportGame(selectedCalendarTeam.teamId, normalizedRow, auth.user);
         } else {
-          await createScheduleImportPractice(selectedCalendarTeam.teamId, row.normalized, auth.user);
+          await createScheduleImportPractice(selectedCalendarTeam.teamId, normalizedRow, auth.user);
         }
         importedCount += 1;
       } catch (importError: any) {

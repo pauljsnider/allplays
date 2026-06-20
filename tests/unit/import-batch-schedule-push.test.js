@@ -1,0 +1,108 @@
+import { describe, expect, it } from 'vitest';
+import { createRequire } from 'node:module';
+
+const require = createRequire(import.meta.url);
+const { loadNotificationInternals } = require('../../functions/test/send-category-notification-test-helpers');
+
+function createSnapshot(data) {
+    return {
+        data: () => data
+    };
+}
+
+describe('schedule import batch push notifications', () => {
+    it('sends one schedule summary push for app imports larger than three events and suppresses follow-on updates', async () => {
+        const harness = loadNotificationInternals({
+            teamDoc: { ownerId: 'user-1' },
+            indexedTargets: [{
+                uid: 'user-1',
+                deviceId: 'device-1',
+                token: 'token-1',
+                categories: { schedule: true }
+            }]
+        });
+
+        try {
+            const batch = {
+                batchId: 'batch-large',
+                totalCount: 4
+            };
+            for (let index = 0; index < 4; index += 1) {
+                await harness.internals.notifyGameCreated(
+                    createSnapshot({
+                        type: index % 2 === 0 ? 'game' : 'practice',
+                        title: index % 2 === 0 ? null : `Practice ${index + 1}`,
+                        opponent: index % 2 === 0 ? `Opponent ${index + 1}` : null,
+                        status: 'scheduled',
+                        createdBy: 'coach-1',
+                        importBatch: {
+                            ...batch,
+                            rowNumber: index + 1
+                        }
+                    }),
+                    { params: { teamId: 'team-1', gameId: `game-${index + 1}` } }
+                );
+            }
+
+            expect(harness.env.messagingCalls).toHaveLength(1);
+            expect(harness.env.messagingCalls[0]).toMatchObject({
+                title: 'Schedule import complete',
+                body: 'Imported 4 schedule events (2 games, 2 practices).'
+            });
+
+            const duplicateUpdate = await harness.internals.sendCategoryNotification({
+                teamId: 'team-1',
+                category: 'schedule',
+                gameId: 'game-1',
+                title: 'Schedule update',
+                body: 'Practice moved.'
+            });
+
+            expect(duplicateUpdate).toBeNull();
+            expect(harness.env.messagingCalls).toHaveLength(1);
+        } finally {
+            harness.cleanup();
+        }
+    });
+
+    it('keeps per-event create pushes for app imports of three or fewer events', async () => {
+        const harness = loadNotificationInternals({
+            teamDoc: { ownerId: 'user-1' },
+            indexedTargets: [{
+                uid: 'user-1',
+                deviceId: 'device-1',
+                token: 'token-1',
+                categories: { schedule: true, practice: true }
+            }]
+        });
+
+        try {
+            const batch = {
+                batchId: 'batch-small',
+                totalCount: 3
+            };
+            for (let index = 0; index < 3; index += 1) {
+                await harness.internals.notifyGameCreated(
+                    createSnapshot({
+                        type: index === 2 ? 'practice' : 'game',
+                        title: index === 2 ? 'Speed Session' : null,
+                        opponent: index === 2 ? null : `Opponent ${index + 1}`,
+                        status: 'scheduled',
+                        createdBy: 'coach-1',
+                        importBatch: {
+                            ...batch,
+                            rowNumber: index + 1
+                        }
+                    }),
+                    { params: { teamId: 'team-1', gameId: `game-${index + 1}` } }
+                );
+            }
+
+            expect(harness.env.messagingCalls).toHaveLength(3);
+            expect(harness.env.messagingCalls[0].title).toContain('New game:');
+            expect(harness.env.messagingCalls[2].title).toContain('New practice:');
+        } finally {
+            harness.cleanup();
+        }
+    });
+});
