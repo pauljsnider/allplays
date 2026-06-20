@@ -85,9 +85,9 @@ const emptyHome = {
   }
 };
 
-function renderTeams({ strictMode = false }: { strictMode?: boolean } = {}) {
+function renderTeams({ strictMode = false, initialEntry = '/teams' }: { strictMode?: boolean; initialEntry?: string } = {}) {
   const tree = (
-    <MemoryRouter initialEntries={["/teams"]}>
+    <MemoryRouter initialEntries={[initialEntry]}>
       <Routes>
         <Route path="/teams" element={<Teams auth={auth} />} />
         <Route path="/accept-invite" element={<div>Accept invite route</div>} />
@@ -187,12 +187,12 @@ describe('Teams empty state', () => {
     homeServiceMocks.loadParentTeamsSummary.mockResolvedValueOnce(fastTeamHome);
     homeServiceMocks.loadParentHomeSummary.mockRejectedValueOnce(new Error('Enrichment outage'));
 
-    renderTeams();
+    renderTeams({ initialEntry: '/teams?selectedTeamId=team-fast&from=home' });
 
     expect(await screen.findByRole('heading', { name: '1 team ready' })).toBeInTheDocument();
     expect(screen.getByText('Choose a team')).toBeInTheDocument();
     expect(screen.getByText('Unable to refresh teams. Showing the last loaded teams. Try again.')).toBeInTheDocument();
-    expect(screen.getByText('Fast Falcons')).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Open Fast Falcons' })).toHaveAttribute('href', '/teams/team-fast');
     expect(screen.queryByText('Teams could not load')).toBeNull();
     expect(screen.queryByText('No teams available')).toBeNull();
   });
@@ -218,6 +218,64 @@ describe('Teams empty state', () => {
     expect(await screen.findByText('Teams could not load')).toBeTruthy();
     expect(screen.getByText('Try loading teams again to restore your team dashboard.')).toBeTruthy();
     expect(screen.queryByText('Loading teams')).toBeNull();
+  });
+});
+
+describe('Teams launcher navigation', () => {
+  const twoTeamHome = {
+    players: [],
+    teams: [
+      {
+        teamId: 'team-fast',
+        teamName: 'Fast Falcons',
+        role: 'Parent' as const,
+        sport: 'Basketball',
+        photoUrl: null,
+        players: [{ teamId: 'team-fast', teamName: 'Fast Falcons', playerId: 'player-1', playerName: 'Avery Ace' }],
+        nextEvent: null,
+        eventCount: 2,
+        unreadCount: 1,
+        openActions: 0
+      },
+      {
+        teamId: 'team-slow',
+        teamName: 'Slow Sharks',
+        role: 'Coach' as const,
+        sport: 'Soccer',
+        photoUrl: null,
+        players: [],
+        nextEvent: null,
+        eventCount: 0,
+        unreadCount: 0,
+        openActions: 0
+      }
+    ],
+    upcomingEvents: [],
+    actionItems: [],
+    fees: [],
+    metrics: { players: 1, teams: 2, rsvpNeeded: 0, unreadMessages: 1, packetsReady: 0 }
+  };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    Object.defineProperty(window, 'scrollTo', { value: vi.fn(), writable: true });
+    homeServiceMocks.loadParentTeamsSummary.mockResolvedValue(twoTeamHome);
+    homeServiceMocks.loadParentHomeSummary.mockResolvedValue(twoTeamHome);
+  });
+
+  afterEach(() => {
+    cleanup();
+  });
+
+  it('opens the team hub when a launcher team is clicked', async () => {
+    renderTeamsWithNav();
+
+    const fastFalcons = await screen.findByRole('link', { name: 'Open Fast Falcons' });
+    expect(fastFalcons).toHaveAttribute('href', '/teams/team-fast');
+
+    fireEvent.click(fastFalcons);
+
+    expect(await screen.findByTestId('team-hub')).toHaveTextContent('Team hub: team-fast');
   });
 });
 
