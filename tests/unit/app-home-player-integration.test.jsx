@@ -7,7 +7,12 @@ import { MemoryRouter, Route, Routes } from 'react-router-dom';
 const mountedRoots = [];
 
 const homeMocks = vi.hoisted(() => ({
+    __currentHome: null,
+    buildParentHomeFromSecondarySnapshot: vi.fn(),
+    hydrateParentHomeScheduleSlice: vi.fn(),
     loadParentHome: vi.fn(),
+    loadParentHomeFeesSlice: vi.fn(),
+    loadParentHomeInboxSlice: vi.fn(),
     loadParentHomeSummary: vi.fn(),
     loadParentHomeSummaryBootstrap: vi.fn(),
     loadParentHomeWithSecondaryData: vi.fn()
@@ -267,12 +272,80 @@ beforeEach(() => {
     window.URL.createObjectURL = vi.fn((file) => `blob:${file.name}`);
     window.URL.revokeObjectURL = vi.fn();
     window.scrollTo = vi.fn();
+    homeMocks.__currentHome = null;
     homeMocks.loadParentHomeSummary.mockImplementation((user) => homeMocks.loadParentHome(user));
-    homeMocks.loadParentHomeSummaryBootstrap.mockImplementation(async (user) => ({
-        home: await homeMocks.loadParentHome(user),
-        schedule: { children: [], events: [] }
-    }));
-    homeMocks.loadParentHomeWithSecondaryData.mockImplementation((user) => homeMocks.loadParentHome(user));
+    homeMocks.buildParentHomeFromSecondarySnapshot.mockImplementation(({ schedule, inboxTeams = [], fees = [] }) => {
+        const baseHome = homeMocks.__currentHome || {
+            players: [],
+            teams: [],
+            upcomingEvents: [],
+            actionItems: [],
+            fees: [],
+            metrics: {
+                players: 0,
+                teams: 0,
+                rsvpNeeded: 0,
+                unreadMessages: 0,
+                packetsReady: 0
+            }
+        };
+        const teams = inboxTeams.length
+            ? inboxTeams.map((team) => {
+                const matchingTeam = (baseHome.teams || []).find((candidate) => candidate.teamId === team.id || candidate.teamId === team.teamId);
+                return matchingTeam
+                    ? { ...matchingTeam, unreadCount: team.unreadCount ?? matchingTeam.unreadCount ?? 0 }
+                    : {
+                        teamId: team.id || team.teamId,
+                        teamName: team.name || team.teamName || 'Team',
+                        role: team.role || 'Parent',
+                        sport: team.sport || null,
+                        players: [],
+                        nextEvent: null,
+                        eventCount: 0,
+                        unreadCount: team.unreadCount || 0,
+                        openActions: 0
+                    };
+            })
+            : (baseHome.teams || []);
+        return {
+            ...baseHome,
+            players: schedule.children || [],
+            teams,
+            upcomingEvents: schedule.events || [],
+            fees,
+            metrics: {
+                ...baseHome.metrics,
+                players: Array.isArray(schedule.children) ? schedule.children.length : 0,
+                teams: teams.length,
+                unreadMessages: teams.reduce((sum, team) => sum + Number(team.unreadCount || 0), 0)
+            }
+        };
+    });
+    homeMocks.hydrateParentHomeScheduleSlice.mockImplementation(async (_user, schedule) => schedule);
+    homeMocks.loadParentHomeInboxSlice.mockImplementation(async () => (homeMocks.__currentHome?.teams || []).map((team) => ({
+        id: team.teamId,
+        name: team.teamName,
+        role: team.role,
+        sport: team.sport,
+        unreadCount: team.unreadCount || 0
+    })));
+    homeMocks.loadParentHomeFeesSlice.mockImplementation(async () => homeMocks.__currentHome?.fees || []);
+    homeMocks.loadParentHomeSummaryBootstrap.mockImplementation(async (user) => {
+        const home = await homeMocks.loadParentHome(user);
+        homeMocks.__currentHome = home;
+        return {
+            home,
+            schedule: {
+                children: home.players || [],
+                events: home.upcomingEvents || []
+            }
+        };
+    });
+    homeMocks.loadParentHomeWithSecondaryData.mockImplementation(async (user) => {
+        const home = await homeMocks.loadParentHome(user);
+        homeMocks.__currentHome = home;
+        return home;
+    });
 
     const nextEvent = event({ id: 'game-next', opponent: 'Falcons' });
     const practice = event({
@@ -918,7 +991,7 @@ describe('React app Home and player drill-in integration', () => {
 
         await waitForText(container, 'Pat Star highlight');
         expect(container.textContent).toContain('Team chats');
-        expect(homeMocks.loadParentHome).toHaveBeenCalledTimes(3);
+        expect(homeMocks.loadParentHome).toHaveBeenCalledTimes(2);
     });
 
     it('keeps the last loaded Home visible when a refresh fails', async () => {
