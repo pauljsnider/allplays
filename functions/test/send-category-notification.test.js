@@ -192,6 +192,176 @@ test('getTargetsForCategory falls back to legacy resolution and backfills recipi
         }
 });
 
+test('getTargetsForCategoryUserIds restricts RSVP targets to requested recipients with enabled preferences', async () => {
+        const { internals, cleanup } = loadNotificationInternals({
+            teamDoc: {
+                ownerId: 'coach-1',
+                adminEmails: []
+            },
+            parentUserIds: ['parent-1', 'parent-2', 'parent-3'],
+            indexedTargets: [
+                {
+                    uid: 'parent-1',
+                    deviceId: 'parent-1-device',
+                    token: 'parent-1-token',
+                    categories: { rsvp: true }
+                },
+                {
+                    uid: 'parent-2',
+                    deviceId: 'parent-2-device',
+                    token: 'parent-2-token',
+                    categories: { rsvp: false }
+                },
+                {
+                    uid: 'parent-3',
+                    deviceId: 'parent-3-device',
+                    token: 'parent-3-token',
+                    categories: { rsvp: true }
+                }
+            ],
+            preferenceDocs: {
+                'users/parent-2/notificationPreferences/team-1': { rsvp: false }
+            },
+            deviceDocs: {
+                'parent-2': [
+                    { id: 'parent-2-device', token: 'parent-2-token' }
+                ]
+            }
+        });
+
+        try {
+            const targets = await internals.getTargetsForCategoryUserIds('team-1', 'rsvp', ['parent-1', 'parent-2']);
+
+            assert.deepEqual(targets.map((target) => target.token), ['parent-1-token']);
+        } finally {
+            cleanup();
+        }
+});
+
+test('getTargetsForCategoryUserIds limits legacy RSVP fallback to requested recipients', async () => {
+        const { internals, env, cleanup } = loadNotificationInternals({
+            teamDoc: {
+                ownerId: 'coach-1',
+                adminEmails: []
+            },
+            parentUserIds: ['parent-1', 'parent-2', 'parent-3'],
+            indexedTargets: [
+                {
+                    uid: 'parent-1',
+                    deviceId: 'parent-1-device',
+                    token: 'parent-1-token',
+                    categories: { rsvp: true }
+                }
+            ],
+            preferenceDocs: {
+                'users/parent-2/notificationPreferences/team-1': { rsvp: true },
+                'users/parent-3/notificationPreferences/team-1': { rsvp: true }
+            },
+            deviceDocs: {
+                'parent-2': [
+                    { id: 'parent-2-device', token: 'parent-2-token' }
+                ],
+                'parent-3': [
+                    { id: 'parent-3-device', token: 'parent-3-token' }
+                ]
+            }
+        });
+
+        try {
+            const targets = await internals.getTargetsForCategoryUserIds('team-1', 'rsvp', ['parent-1', 'parent-2']);
+
+            assert.deepEqual(targets.map((target) => target.token).sort(), ['parent-1-token', 'parent-2-token']);
+            assert.equal(env.counts.recipientQueries, 0);
+            assert.equal(env.counts.recipientDocGets, 2);
+            assert.equal(env.counts.parentQueries, 0);
+            assert.equal(env.counts.preferenceGets, 1);
+            assert.equal(env.counts.deviceGets, 1);
+        } finally {
+            cleanup();
+        }
+});
+
+test('getTargetsForCategoryUserIds accepts legacy recipient docs without category maps', async () => {
+        const { internals, env, cleanup } = loadNotificationInternals({
+            teamDoc: {
+                ownerId: 'coach-1',
+                adminEmails: []
+            },
+            parentUserIds: ['parent-1'],
+            notificationRecipientDocs: [
+                {
+                    id: 'parent-1',
+                    data: {
+                        uid: 'parent-1',
+                        teamId: 'team-1',
+                        roles: ['parent'],
+                        tokens: [
+                            {
+                                deviceId: 'parent-1-device',
+                                token: 'parent-1-token',
+                                platform: 'ios',
+                                userAgent: ''
+                            }
+                        ]
+                    }
+                }
+            ]
+        });
+
+        try {
+            const targets = await internals.getTargetsForCategoryUserIds('team-1', 'rsvp', ['parent-1']);
+
+            assert.deepEqual(targets.map((target) => target.token), ['parent-1-token']);
+            assert.equal(env.counts.recipientDocGets, 1);
+            assert.equal(env.counts.preferenceGets, 0);
+            assert.equal(env.counts.deviceGets, 0);
+        } finally {
+            cleanup();
+        }
+});
+
+test('sendRsvpReminderPushNotifications sends availability pushes only to email recipient user ids', async () => {
+        const { internals, env, cleanup } = loadNotificationInternals({
+            teamDoc: {
+                ownerId: 'coach-1',
+                adminEmails: []
+            },
+            parentUserIds: ['parent-1', 'parent-2'],
+            indexedTargets: [
+                {
+                    uid: 'parent-1',
+                    deviceId: 'parent-1-device',
+                    token: 'parent-1-token',
+                    categories: { rsvp: true }
+                },
+                {
+                    uid: 'parent-2',
+                    deviceId: 'parent-2-device',
+                    token: 'parent-2-token',
+                    categories: { rsvp: true }
+                }
+            ]
+        });
+
+        try {
+            const result = await internals.sendRsvpReminderPushNotifications({
+                teamId: 'team-1',
+                gameId: 'game-9',
+                event: { opponent: 'Wildcats' },
+                recipientUserIds: ['parent-1']
+            });
+
+            assert.deepEqual(result, { successCount: 1, failureCount: 0, targetCount: 1 });
+            assert.equal(env.messagingCalls.length, 1);
+            assert.deepEqual(env.messagingCalls[0].tokens, ['parent-1-token']);
+            assert.equal(env.messagingCalls[0].data.category, 'rsvp');
+            assert.equal(env.messagingCalls[0].data.appRoute, '/schedule/team-1/game-9?section=availability');
+            assert.equal(env.messagingCalls[0].webLink, 'https://allplays.ai/app/#/schedule/team-1/game-9?section=availability');
+        } finally {
+            cleanup();
+        }
+});
+
 for (const [category, categories] of [
     ['liveChat', { liveChat: true }],
     ['mentions', { mentions: true }]

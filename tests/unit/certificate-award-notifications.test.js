@@ -237,7 +237,8 @@ describe('getTargetsForCategory', () => {
                                 data: () => ({
                                     uid: 'parent-1',
                                     deviceId: 'device-1',
-                                    token: 'token-1'
+                                    token: 'token-1',
+                                    categories: { awards: true }
                                 })
                             }]
                         }))
