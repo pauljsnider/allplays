@@ -64,6 +64,7 @@ import {
   type RsvpResponse
 } from '../lib/scheduleLogic';
 import { loadOfficialAssignmentsAccess } from '../lib/scheduleService';
+import { recordFirstMeaningfulRender } from '../lib/uxTiming';
 import { useAsyncOperation } from '../lib/useAsyncOperation';
 import { useRefreshOnResume } from '../lib/useRefreshOnResume';
 import {
@@ -209,6 +210,12 @@ export function Home({ auth }: { auth: AuthState }) {
   }, [auth.user?.uid]);
 
   useRefreshOnResume(() => { void refreshHome({ force: true }); }, { enabled: Boolean(auth.user?.uid) });
+
+  useEffect(() => {
+    if (!loading) {
+      recordFirstMeaningfulRender('home');
+    }
+  }, [loading]);
 
   useEffect(() => {
     let cancelled = false;

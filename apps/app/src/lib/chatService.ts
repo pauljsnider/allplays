@@ -53,6 +53,7 @@ import {
   type ChatTargetType
 } from './chatLogic';
 import { sanitizeErrorForLogging } from './nativeRestLogging';
+import { startInteractionTimer, UX_TIMING } from './uxTiming';
 import { mapChatConversationRecord, mapChatMessageRecord, mapFirestoreDocument } from './firestore/mappers';
 import type {
   ChatAttachmentFirestoreRecord,
@@ -994,6 +995,10 @@ export async function sendTeamChatMessage({
     throw new Error('Choose at least one selected member before sending.');
   }
 
+  const interaction = startInteractionTimer(UX_TIMING.chatSend, {
+    attachments: files.length,
+    target: selectedRecipientTarget
+  });
   const uploadedAttachments: ChatAttachment[] = [];
   try {
     for (const file of files) {
@@ -1046,12 +1051,14 @@ export async function sendTeamChatMessage({
       await withTimeout(Promise.resolve(postChatMessage(teamId, payload)), 'Chat message send');
     }
 
+    interaction.end({ path: isNativeRuntime() ? 'native' : 'sdk' });
     return {
       conversationId,
       createdConversation,
       wantsAi: hasAllPlaysMention(text)
     };
   } catch (error) {
+    interaction.end({ error: (error as Error)?.message || 'Chat send failed' });
     if (uploadedAttachments.length > 0) {
       try {
         await deleteUploadedChatAttachments(uploadedAttachments);

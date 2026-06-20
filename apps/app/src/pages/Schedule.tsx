@@ -5,7 +5,7 @@ import { SchedulePageSkeleton } from '../components/PageSkeletons';
 import { addTeamCalendarUrl, createScheduledPracticeForApp, createScheduleImportGame, createScheduleImportPractice, finalizeScheduleImportBatch, loadParentSchedule, removeTeamCalendarUrl, type ParentScheduleChild, type SchedulePracticeFormInput, type PracticeRecurrenceFormInput } from '../lib/scheduleService';
 import { getCachedAppData, getParentScheduleSummaryCacheKey, loadCachedAppData } from '../lib/appDataCache';
 import { toAppServiceError, type AppServiceError } from '../lib/appErrors';
-import { startUxTimer } from '../lib/uxTiming';
+import { recordFirstMeaningfulRender, startUxTimer } from '../lib/uxTiming';
 import { useAsyncOperation } from '../lib/useAsyncOperation';
 import { useRefreshOnResume } from '../lib/useRefreshOnResume';
 import { useShellLayout } from '../lib/useShellLayout';
@@ -261,6 +261,12 @@ export function Schedule({ auth }: { auth: AuthState }) {
   }, [auth.user?.uid]);
 
   useRefreshOnResume(() => { void refreshSchedule(true); }, { enabled: Boolean(auth.user?.uid) });
+
+  useEffect(() => {
+    if (!loading) {
+      recordFirstMeaningfulRender('schedule');
+    }
+  }, [loading]);
 
   const visibleEvents = useMemo(() => (
     filterParentScheduleEvents(events, { filter, playerId: selectedPlayerId, teamId: selectedTeamId, timeRange })
