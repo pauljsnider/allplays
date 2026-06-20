@@ -34,6 +34,7 @@ import {
   postChatMessage,
   postSharedGameCancellationNotification,
   cancelOccurrence,
+  clearOccurrenceOverride,
   db,
   doc,
   collection,
@@ -41,9 +42,14 @@ import {
   getDocs,
   query,
   runTransaction,
+  updateEvent,
+  updateOccurrence,
+  updateSeries,
   where,
   increment,
-  serverTimestamp
+  serverTimestamp,
+  deleteField,
+  Timestamp
 } from './adapters/legacyScheduleDb';
 import {
   sendPublicRsvpReminderEmails,
@@ -60,7 +66,9 @@ import {
   filterVisiblePracticeSessions,
   buildPracticePacketCompletionPayload,
   resolveMyRsvpByChildForGame,
+  applyPracticeRecurrenceFields,
   buildGameDayRsvpBreakdown,
+  generateSeriesId,
   getPeriodsForFormation,
   getEventRideshareSummary,
   mergeAssignmentsWithClaims,
@@ -776,13 +784,53 @@ async function nativeListScheduleEventDocuments(path: string) {
   return mapScheduleEventDocuments((payload.documents || []) as NativeFirestoreDocument[]);
 }
 
+const nativeDeleteFieldSentinel = { __deleteField: true };
+
+function escapeFirestoreFieldPathSegment(segment: string) {
+  return /^[A-Za-z_][A-Za-z0-9_]*$/.test(segment)
+    ? segment
+    : `\`${segment.replace(/`/g, '\\`')}\``;
+}
+
+function buildFirestoreUpdateMaskPath(path: string) {
+  return path
+    .split('.')
+    .filter(Boolean)
+    .map((segment) => escapeFirestoreFieldPathSegment(segment))
+    .join('.');
+}
+
+function assignNestedFirestoreValue(target: Record<string, unknown>, path: string, value: unknown) {
+  const segments = path.split('.').filter(Boolean);
+  if (!segments.length) return;
+  let cursor: Record<string, unknown> = target;
+  segments.forEach((segment, index) => {
+    if (index === segments.length - 1) {
+      cursor[segment] = value;
+      return;
+    }
+    const next = cursor[segment];
+    if (!next || typeof next !== 'object' || Array.isArray(next)) {
+      cursor[segment] = {};
+    }
+    cursor = cursor[segment] as Record<string, unknown>;
+  });
+}
+
 async function nativePatchDocument(path: string, data: Record<string, unknown>) {
-  const fields = Object.keys(data).reduce<Record<string, Record<string, unknown>>>((acc, key) => {
-    acc[key] = encodeFirestoreValue(data[key]);
+  const nestedData = Object.keys(data).reduce<Record<string, unknown>>((acc, key) => {
+    if (data[key] === nativeDeleteFieldSentinel) {
+      return acc;
+    }
+    assignNestedFirestoreValue(acc, key, data[key]);
+    return acc;
+  }, {});
+  const fields = Object.keys(nestedData).reduce<Record<string, Record<string, unknown>>>((acc, key) => {
+    acc[key] = encodeFirestoreValue(nestedData[key]);
     return acc;
   }, {});
   const params = new URLSearchParams();
-  Object.keys(data).forEach((key) => params.append('updateMask.fieldPaths', key));
+  Object.keys(data).forEach((key) => params.append('updateMask.fieldPaths', buildFirestoreUpdateMaskPath(key)));
   const suffix = params.toString() ? `?${params.toString()}` : '';
   await nativeFirestoreRequest(`/${path}${suffix}`, {
     method: 'PATCH',
@@ -1267,6 +1315,252 @@ function buildScheduleImportPracticePayload(row: ScheduleImportNormalizedRow, us
     awayScore: 0,
     statTrackerConfigId: null,
     createdBy: user.uid
+  };
+}
+
+export type PracticeRecurrenceFormInput = {
+  isRecurring: boolean;
+  freq?: 'weekly' | 'daily';
+  interval?: number;
+  byDays?: string[];
+  endType?: 'never' | 'until' | 'count';
+  untilValue?: string;
+  countValue?: number;
+};
+
+export type SchedulePracticeFormInput = {
+  title: string;
+  startDate: Date;
+  endDate: Date;
+  location?: string | null;
+  notes?: string | null;
+  scheduleNotifications?: Record<string, unknown> | null;
+  recurrence?: PracticeRecurrenceFormInput | null;
+};
+
+export type SchedulePracticeEditScope = 'series' | 'occurrence';
+
+export type UpdateScheduledPracticeOptions = {
+  eventId: string;
+  seriesId?: string | null;
+  scope?: SchedulePracticeEditScope;
+  instanceDate?: string | null;
+};
+
+function sanitizePracticeRecurrenceInput(input?: PracticeRecurrenceFormInput | null) {
+  const byDays = Array.isArray(input?.byDays) ? input?.byDays.map((value) => compactString(value).toUpperCase()).filter(Boolean) : [];
+  return {
+    isRecurring: input?.isRecurring === true,
+    freq: input?.freq === 'daily' ? 'daily' : 'weekly',
+    interval: Math.max(1, Number(input?.interval || 1)),
+    byDays,
+    endType: input?.endType === 'until' || input?.endType === 'count' ? input.endType : 'never',
+    untilValue: compactString(input?.untilValue),
+    countValue: Math.max(1, Number(input?.countValue || 10))
+  };
+}
+
+function buildScheduledPracticePayload(input: SchedulePracticeFormInput, user: AuthUser, options?: { editingPracticeId?: string | null; editingSeriesId?: string | null }) {
+  const title = compactString(input.title) || 'Practice';
+  const startDate = new Date(input.startDate);
+  const endDate = new Date(input.endDate);
+  if (Number.isNaN(startDate.getTime())) throw new Error('Practice start time is invalid.');
+  if (Number.isNaN(endDate.getTime())) throw new Error('Practice end time is invalid.');
+  if (endDate.getTime() <= startDate.getTime()) throw new Error('Practice end time must be after the start time.');
+
+  const practiceData: Record<string, unknown> = {
+    type: 'practice',
+    title,
+    date: startDate,
+    end: endDate,
+    opponent: null,
+    location: compactString(input.location),
+    notes: compactString(input.notes),
+    scheduleNotifications: input.scheduleNotifications || {},
+    status: 'scheduled',
+    homeScore: 0,
+    awayScore: 0,
+    statTrackerConfigId: null,
+    createdBy: user.uid
+  };
+
+  const recurrence = sanitizePracticeRecurrenceInput(input.recurrence);
+  applyPracticeRecurrenceFields({
+    practiceData,
+    isRecurring: recurrence.isRecurring,
+    editingPracticeId: options?.editingPracticeId || null,
+    editingSeriesId: options?.editingSeriesId || null,
+    recurrenceConfig: recurrence,
+    startDate,
+    endDate,
+    Timestamp,
+    deleteField,
+    generateSeriesId
+  });
+
+  return practiceData;
+}
+
+function buildNativePracticePatchPayload(input: SchedulePracticeFormInput, user: AuthUser, options?: { editingPracticeId?: string | null; editingSeriesId?: string | null }) {
+  const payload = buildScheduledPracticePayload(input, user, options) as Record<string, unknown>;
+  const recurrence = sanitizePracticeRecurrenceInput(input.recurrence);
+  const recurrenceFieldNames = ['isSeriesMaster', 'recurrence', 'seriesId', 'startTime', 'endTime', 'endDayOffset', 'exDates', 'overrides'];
+  Object.keys(payload).forEach((key) => {
+    if (payload[key] === undefined || (options?.editingPracticeId && !recurrence.isRecurring && recurrenceFieldNames.includes(key))) {
+      payload[key] = nativeDeleteFieldSentinel;
+    }
+  });
+  return payload;
+}
+
+function buildOccurrenceOverridePayload(input: SchedulePracticeFormInput) {
+  const title = compactString(input.title) || 'Practice';
+  const startDate = new Date(input.startDate);
+  const endDate = new Date(input.endDate);
+  if (Number.isNaN(startDate.getTime())) throw new Error('Practice start time is invalid.');
+  if (Number.isNaN(endDate.getTime())) throw new Error('Practice end time is invalid.');
+  if (endDate.getTime() <= startDate.getTime()) throw new Error('Practice end time must be after the start time.');
+  return {
+    title,
+    startTime: startDate.toTimeString().slice(0, 5),
+    endTime: endDate.toTimeString().slice(0, 5),
+    location: compactString(input.location),
+    notes: compactString(input.notes)
+  };
+}
+
+export async function createScheduledPracticeForApp(teamId: string, input: SchedulePracticeFormInput, user: AuthUser | null) {
+  const normalizedTeamId = compactString(teamId);
+  if (!normalizedTeamId) throw new Error('Team is required.');
+  await requireScheduleImportStaff(normalizedTeamId, user);
+  const payload = buildScheduledPracticePayload(input, user as AuthUser);
+
+  try {
+    return await withTimeout(Promise.resolve(addPractice(normalizedTeamId, payload)), 'Scheduled practice create');
+  } catch (error) {
+    if (!isNativeRuntime()) throw error;
+    logScheduleWarning('Falling back to REST scheduled practice create.', 'scheduled-practice-create', error, { fallback: 'rest', teamId: normalizedTeamId });
+    const doc = await nativeCreateDocument(`teams/${encodeURIComponent(normalizedTeamId)}/games`, {
+      ...buildNativePracticePatchPayload(input, user as AuthUser),
+      createdAt: new Date()
+    });
+    return doc?.id || '';
+  }
+}
+
+export async function updateScheduledPracticeForApp(teamId: string, input: SchedulePracticeFormInput, user: AuthUser | null, options: UpdateScheduledPracticeOptions) {
+  const normalizedTeamId = compactString(teamId);
+  const normalizedEventId = compactString(options?.eventId);
+  if (!normalizedTeamId) throw new Error('Team is required.');
+  if (!normalizedEventId) throw new Error('Practice is required.');
+  await requireScheduleImportStaff(normalizedTeamId, user);
+  const scope = options?.scope === 'occurrence' ? 'occurrence' : 'series';
+  const occurrence = scope === 'occurrence'
+    ? (options?.instanceDate ? { masterId: normalizedEventId, instanceDate: compactString(options.instanceDate) } : parseRecurringPracticeOccurrenceId(normalizedEventId))
+    : null;
+
+  if (scope === 'occurrence') {
+    if (!occurrence?.masterId || !occurrence?.instanceDate) throw new Error('A recurring practice occurrence is required.');
+    const payload = buildOccurrenceOverridePayload(input);
+    try {
+      await withTimeout(Promise.resolve(updateOccurrence(normalizedTeamId, occurrence.masterId, occurrence.instanceDate, payload)), 'Scheduled practice occurrence update');
+    } catch (error) {
+      if (!isNativeRuntime()) throw error;
+      logScheduleWarning('Falling back to REST scheduled practice occurrence update.', 'scheduled-practice-occurrence-update', error, { fallback: 'rest', teamId: normalizedTeamId, masterId: occurrence.masterId, instanceDate: occurrence.instanceDate });
+      const dotPayload = Object.keys(payload).reduce<Record<string, unknown>>((acc, key) => {
+        acc[`overrides.${occurrence.instanceDate}.${key}`] = payload[key as keyof typeof payload];
+        return acc;
+      }, {});
+      await nativePatchDocument(`teams/${encodeURIComponent(normalizedTeamId)}/games/${encodeURIComponent(occurrence.masterId)}`, {
+        ...dotPayload,
+        updatedAt: new Date(),
+        updatedBy: (user as AuthUser).uid
+      });
+    }
+    return { updated: true, scope, eventId: occurrence.masterId, instanceDate: occurrence.instanceDate };
+  }
+
+  const payload = buildScheduledPracticePayload(input, user as AuthUser, {
+    editingPracticeId: normalizedEventId,
+    editingSeriesId: options?.seriesId || null
+  });
+  try {
+    await withTimeout(Promise.resolve(updateEvent(normalizedTeamId, normalizedEventId, payload)), 'Scheduled practice series update');
+  } catch (error) {
+    if (!isNativeRuntime()) throw error;
+    logScheduleWarning('Falling back to REST scheduled practice series update.', 'scheduled-practice-series-update', error, { fallback: 'rest', teamId: normalizedTeamId, eventId: normalizedEventId });
+    await nativePatchDocument(`teams/${encodeURIComponent(normalizedTeamId)}/games/${encodeURIComponent(normalizedEventId)}`, {
+      ...buildNativePracticePatchPayload(input, user as AuthUser, {
+        editingPracticeId: normalizedEventId,
+        editingSeriesId: options?.seriesId || null
+      }),
+      updatedAt: new Date(),
+      updatedBy: (user as AuthUser).uid
+    });
+  }
+  return { updated: true, scope, eventId: normalizedEventId };
+}
+
+export async function revertScheduledPracticeOccurrenceForApp(teamId: string, eventId: string, user: AuthUser | null) {
+  const normalizedTeamId = compactString(teamId);
+  if (!normalizedTeamId) throw new Error('Team is required.');
+  await requireScheduleImportStaff(normalizedTeamId, user);
+  const occurrence = parseRecurringPracticeOccurrenceId(eventId);
+  if (!occurrence) throw new Error('A recurring practice occurrence is required.');
+
+  try {
+    await withTimeout(Promise.resolve(clearOccurrenceOverride(normalizedTeamId, occurrence.masterId, occurrence.instanceDate)), 'Scheduled practice occurrence revert');
+  } catch (error) {
+    if (!isNativeRuntime()) throw error;
+    logScheduleWarning('Falling back to REST scheduled practice occurrence revert.', 'scheduled-practice-occurrence-revert', error, { fallback: 'rest', teamId: normalizedTeamId, masterId: occurrence.masterId, instanceDate: occurrence.instanceDate });
+    await nativePatchDocument(`teams/${encodeURIComponent(normalizedTeamId)}/games/${encodeURIComponent(occurrence.masterId)}`, {
+      [`overrides.${occurrence.instanceDate}`]: nativeDeleteFieldSentinel,
+      updatedAt: new Date(),
+      updatedBy: (user as AuthUser).uid
+    });
+  }
+  return { reverted: true, eventId: occurrence.masterId, instanceDate: occurrence.instanceDate };
+}
+
+export async function loadScheduledPracticeSeriesForEdit(teamId: string, eventId: string, user: AuthUser | null) {
+  const normalizedTeamId = compactString(teamId);
+  if (!normalizedTeamId) throw new Error('Team is required.');
+  await requireScheduleImportStaff(normalizedTeamId, user);
+  const occurrence = parseRecurringPracticeOccurrenceId(eventId);
+  const sourceEventId = occurrence?.masterId || compactString(eventId);
+  if (!sourceEventId) throw new Error('Practice is required.');
+
+  const game = await readWithNativeFallback(
+    `scheduled practice master ${sourceEventId}`,
+    () => Promise.resolve(getGame(normalizedTeamId, sourceEventId)),
+    () => nativeGetDocument(`teams/${encodeURIComponent(normalizedTeamId)}/games/${encodeURIComponent(sourceEventId)}`)
+  );
+  if (!game || game.type !== 'practice') throw new Error('Practice series not found.');
+
+  const startDate = toEventDate(game.date) || new Date();
+  const endDate = toEventDate(game.end) || new Date(startDate.getTime() + 90 * 60000);
+  const recurrence = sanitizePracticeRecurrenceInput({
+    isRecurring: Boolean(game.isSeriesMaster && game.recurrence),
+    freq: game.recurrence?.freq,
+    interval: game.recurrence?.interval,
+    byDays: Array.isArray(game.recurrence?.byDays) ? game.recurrence.byDays : [],
+    endType: game.recurrence?.until ? 'until' : (game.recurrence?.count ? 'count' : 'never'),
+    untilValue: game.recurrence?.until ? (normalizeScheduleDate(game.recurrence.until)?.toISOString().slice(0, 10) || '') : '',
+    countValue: Number(game.recurrence?.count || 10)
+  });
+
+  return {
+    eventId: sourceEventId,
+    seriesId: compactString(game.seriesId) || null,
+    input: {
+      title: compactString(game.title) || 'Practice',
+      startDate,
+      endDate,
+      location: compactString(game.location),
+      notes: compactString(game.notes),
+      scheduleNotifications: game.scheduleNotifications && typeof game.scheduleNotifications === 'object' ? game.scheduleNotifications : {},
+      recurrence
+    } as SchedulePracticeFormInput
   };
 }
 

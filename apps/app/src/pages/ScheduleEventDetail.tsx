@@ -4,6 +4,11 @@ import { AlertCircle, CalendarDays, Car, CheckCircle2, ChevronDown, ChevronLeft,
 import {
   cancelPracticeOccurrenceForApp,
   cancelScheduledGameForApp,
+  loadScheduledPracticeSeriesForEdit,
+  updateScheduledPracticeForApp,
+  revertScheduledPracticeOccurrenceForApp,
+  type SchedulePracticeFormInput,
+  type PracticeRecurrenceFormInput,
   claimParentScheduleAssignmentSlot,
   loadParentPracticePacket,
   loadStaffPracticeAttendance,
@@ -928,6 +933,169 @@ function PlayerSwitcher({ events, selectedChildId, onSelect, compact = false }: 
           </button>
         );
       })}
+    </div>
+  );
+}
+
+
+function padDatePart(value: number) {
+  return String(value).padStart(2, '0');
+}
+
+function toDatetimeLocalInputValue(value: Date | string | number | null | undefined) {
+  const date = value instanceof Date ? value : new Date(value || Date.now());
+  if (Number.isNaN(date.getTime())) return '';
+  return `${date.getFullYear()}-${padDatePart(date.getMonth() + 1)}-${padDatePart(date.getDate())}T${padDatePart(date.getHours())}:${padDatePart(date.getMinutes())}`;
+}
+function getDefaultPracticeEndDate(startDate: Date) {
+  return new Date(startDate.getTime() + 90 * 60000);
+}
+
+function buildPracticeFormFromEvent(event: ParentScheduleEvent): SchedulePracticeFormInput {
+  const startDate = event.date instanceof Date ? event.date : new Date(event.date);
+  const endDate = event.endDate instanceof Date ? event.endDate : (event.endDate ? new Date(event.endDate) : getDefaultPracticeEndDate(startDate));
+  return {
+    title: event.title || 'Practice',
+    startDate,
+    endDate,
+    location: event.location || '',
+    notes: event.notes || '',
+    recurrence: { isRecurring: event.id.includes('__') }
+  };
+}
+
+function PracticeScheduleEditPanel({ auth, event }: { auth: AuthState; event: ParentScheduleEvent }) {
+  const [open, setOpen] = useState(false);
+  const [scope, setScope] = useState<'occurrence' | 'series'>(event.id.includes('__') ? 'occurrence' : 'series');
+  const [form, setForm] = useState<SchedulePracticeFormInput>(() => buildPracticeFormFromEvent(event));
+  const [seriesId, setSeriesId] = useState<string | null>(null);
+  const [seriesEventId, setSeriesEventId] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [status, setStatus] = useState<{ tone: 'success' | 'error'; message: string } | null>(null);
+
+  useEffect(() => {
+    setForm(buildPracticeFormFromEvent(event));
+    setScope(event.id.includes('__') ? 'occurrence' : 'series');
+    setSeriesId(null);
+    setSeriesEventId(null);
+    setStatus(null);
+  }, [event.eventKey]);
+
+  const updateField = (field: keyof SchedulePracticeFormInput, value: string | Date | PracticeRecurrenceFormInput) => {
+    setForm((current) => ({ ...current, [field]: value }));
+  };
+
+  const loadSeries = async () => {
+    if (!auth.user) return;
+    setSaving(true);
+    setStatus(null);
+    try {
+      const loaded = await loadScheduledPracticeSeriesForEdit(event.teamId, event.id, auth.user);
+      setForm(loaded.input);
+      setSeriesId(loaded.seriesId || null);
+      setSeriesEventId(loaded.eventId);
+      setScope('series');
+      setOpen(true);
+    } catch (error: any) {
+      setStatus({ tone: 'error', message: error?.message || 'Unable to load practice series.' });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const savePractice = async (submitEvent: FormEvent<HTMLFormElement>) => {
+    submitEvent.preventDefault();
+    if (!auth.user) return;
+    setSaving(true);
+    setStatus(null);
+    try {
+      await updateScheduledPracticeForApp(event.teamId, form, auth.user, {
+        eventId: scope === 'series' ? (seriesEventId || event.id) : event.id,
+        seriesId,
+        scope
+      });
+      setStatus({ tone: 'success', message: scope === 'occurrence' ? 'This practice occurrence was updated.' : 'Practice series was updated.' });
+    } catch (error: any) {
+      setStatus({ tone: 'error', message: error?.message || 'Unable to update practice.' });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const revertOccurrence = async () => {
+    if (!auth.user) return;
+    setSaving(true);
+    setStatus(null);
+    try {
+      await revertScheduledPracticeOccurrenceForApp(event.teamId, event.id, auth.user);
+      setStatus({ tone: 'success', message: 'This occurrence now follows the series again.' });
+    } catch (error: any) {
+      setStatus({ tone: 'error', message: error?.message || 'Unable to revert this occurrence.' });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <section className="app-card p-3 sm:p-4" aria-label="Edit practice schedule">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <div className="text-xs font-black uppercase tracking-[0.04em] text-primary-700">Schedule management</div>
+          <h2 className="mt-1 text-base font-black text-gray-950">Edit practice</h2>
+          <p className="mt-1 text-sm font-semibold text-gray-500">Update this occurrence or the full recurring series using the same backend semantics as the website.</p>
+        </div>
+        <button type="button" className="secondary-button" onClick={() => setOpen((current) => !current)}>{open ? 'Hide editor' : 'Edit practice'}</button>
+      </div>
+      {open ? (
+        <form className="mt-3 space-y-3" onSubmit={savePractice}>
+          {event.id.includes('__') ? (
+            <div className="grid gap-2 sm:grid-cols-2">
+              <button type="button" className={scope === 'occurrence' ? 'primary-button' : 'secondary-button'} onClick={() => { setScope('occurrence'); setForm(buildPracticeFormFromEvent(event)); }}>This occurrence</button>
+              <button type="button" className={scope === 'series' ? 'primary-button' : 'secondary-button'} onClick={loadSeries} disabled={saving}>Entire series</button>
+            </div>
+          ) : null}
+          <div className="grid gap-3 sm:grid-cols-2">
+            <label className="text-xs font-bold uppercase tracking-wide text-gray-600">Title<input className="auth-input mt-1" value={form.title} onChange={(e) => updateField('title', e.target.value)} /></label>
+            <label className="text-xs font-bold uppercase tracking-wide text-gray-600">Location<input className="auth-input mt-1" value={form.location || ''} onChange={(e) => updateField('location', e.target.value)} /></label>
+            <label className="text-xs font-bold uppercase tracking-wide text-gray-600">Starts<input type="datetime-local" className="auth-input mt-1" value={toDatetimeLocalInputValue(form.startDate)} onChange={(e) => updateField('startDate', new Date(e.target.value))} /></label>
+            <label className="text-xs font-bold uppercase tracking-wide text-gray-600">Ends<input type="datetime-local" className="auth-input mt-1" value={toDatetimeLocalInputValue(form.endDate)} onChange={(e) => updateField('endDate', new Date(e.target.value))} /></label>
+          </div>
+          <label className="text-xs font-bold uppercase tracking-wide text-gray-600">Notes<textarea className="auth-input mt-1 min-h-20" value={form.notes || ''} onChange={(e) => updateField('notes', e.target.value)} /></label>
+          {scope === 'series' ? <PracticeRecurrenceFields form={form} onChange={setForm} /> : null}
+          <div className="flex flex-wrap gap-2">
+            <button type="submit" className="primary-button" disabled={saving}>{saving ? 'Saving' : 'Save practice'}</button>
+            {event.id.includes('__') ? <button type="button" className="secondary-button" disabled={saving} onClick={revertOccurrence}>Revert occurrence</button> : null}
+          </div>
+        </form>
+      ) : null}
+      {status ? <div className={`mt-3 rounded-2xl border px-3 py-2 text-sm font-bold ${status.tone === 'success' ? 'border-emerald-200 bg-emerald-50 text-emerald-700' : 'border-rose-200 bg-rose-50 text-rose-700'}`}>{status.message}</div> : null}
+    </section>
+  );
+}
+
+function PracticeRecurrenceFields({ form, onChange }: { form: SchedulePracticeFormInput; onChange: (form: SchedulePracticeFormInput) => void }) {
+  const recurrence = form.recurrence || { isRecurring: false };
+  const byDays = new Set(recurrence.byDays || []);
+  const setRecurrence = (next: Partial<PracticeRecurrenceFormInput>) => onChange({ ...form, recurrence: { ...recurrence, ...next } });
+  const days = [['MO', 'Mon'], ['TU', 'Tue'], ['WE', 'Wed'], ['TH', 'Thu'], ['FR', 'Fri'], ['SA', 'Sat'], ['SU', 'Sun']];
+  return (
+    <div className="rounded-2xl border border-gray-200 bg-gray-50 p-3">
+      <label className="flex items-center gap-2 text-sm font-black text-gray-800"><input type="checkbox" checked={recurrence.isRecurring === true} onChange={(e) => setRecurrence({ isRecurring: e.target.checked })} /> Weekly recurrence</label>
+      {recurrence.isRecurring ? (
+        <div className="mt-3 space-y-3">
+          <div className="flex flex-wrap gap-2">
+            {days.map(([value, label]) => (
+              <label key={value} className="rounded-full border border-gray-200 bg-white px-3 py-1 text-xs font-black text-gray-700"><input className="mr-1" type="checkbox" checked={byDays.has(value)} onChange={(e) => { const next = new Set(byDays); if (e.target.checked) next.add(value); else next.delete(value); setRecurrence({ byDays: Array.from(next) }); }} />{label}</label>
+            ))}
+          </div>
+          <div className="grid gap-3 sm:grid-cols-3">
+            <label className="text-xs font-bold uppercase tracking-wide text-gray-600">Every<input type="number" min="1" className="auth-input mt-1" value={recurrence.interval || 1} onChange={(e) => setRecurrence({ interval: Number(e.target.value) || 1 })} /></label>
+            <label className="text-xs font-bold uppercase tracking-wide text-gray-600">Ends<select className="auth-input mt-1" value={recurrence.endType || 'never'} onChange={(e) => setRecurrence({ endType: e.target.value as PracticeRecurrenceFormInput['endType'] })}><option value="never">Never</option><option value="until">On date</option><option value="count">After count</option></select></label>
+            {recurrence.endType === 'until' ? <label className="text-xs font-bold uppercase tracking-wide text-gray-600">Until<input type="date" className="auth-input mt-1" value={recurrence.untilValue || ''} onChange={(e) => setRecurrence({ untilValue: e.target.value })} /></label> : null}
+            {recurrence.endType === 'count' ? <label className="text-xs font-bold uppercase tracking-wide text-gray-600">Count<input type="number" min="1" className="auth-input mt-1" value={recurrence.countValue || 10} onChange={(e) => setRecurrence({ countValue: Number(e.target.value) || 10 })} /></label> : null}
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -2101,6 +2269,7 @@ function GameHubSection({ auth, event, childEvents, onScoreUpdated, onLiveClockU
     <section className="space-y-3">
       {showNonAdminPracticePacketFirst ? <PracticePacketSection auth={auth} event={event} childEvents={childEvents} /> : null}
       {showAdminPracticeTimeline ? <PracticeTimelineSection auth={auth} event={event} /> : null}
+      {isPractice && event.isTeamAdmin && event.isDbGame && !event.isCancelled ? <PracticeScheduleEditPanel auth={auth} event={event} /> : null}
       {isPractice && !showNonAdminPracticePacketFirst ? <PracticePacketSection auth={auth} event={event} childEvents={childEvents} /> : null}
       <div className="app-card overflow-hidden p-0">
         <div className="border-b border-gray-100 px-3 py-3 sm:px-4">

@@ -294,6 +294,37 @@ async function mockScheduleModules(page, options = {}) {
                     return 'imported-practice';
                 }
 
+                export async function createScheduledPracticeForApp(teamId, form, user) {
+                    window.__scheduleCalls.practiceCreates = (window.__scheduleCalls.practiceCreates || []).concat({ teamId, form, userId: user?.uid || null });
+                    return { id: 'practice-created' };
+                }
+
+                export async function loadScheduledPracticeSeriesForEdit(teamId, eventId, user) {
+                    window.__scheduleCalls.practiceSeriesLoads = (window.__scheduleCalls.practiceSeriesLoads || []).concat({ teamId, eventId, userId: user?.uid || null });
+                    return {
+                        seriesId: 'series-1',
+                        eventId,
+                        input: {
+                            title: 'Practice',
+                            startDate: new Date(${JSON.stringify(practiceDate)}),
+                            endDate: new Date(new Date(${JSON.stringify(practiceDate)}).getTime() + 90 * 60 * 1000),
+                            location: 'Main Gym',
+                            notes: '',
+                            recurrence: { isRecurring: true, byDays: ['WE'], interval: 1, endType: 'never' }
+                        }
+                    };
+                }
+
+                export async function updateScheduledPracticeForApp(teamId, input, user, options) {
+                    window.__scheduleCalls.practiceUpdates = (window.__scheduleCalls.practiceUpdates || []).concat({ teamId, input, userId: user?.uid || null, options });
+                    return { success: true };
+                }
+
+                export async function revertScheduledPracticeOccurrenceForApp(teamId, eventId, user) {
+                    window.__scheduleCalls.practiceReverts = (window.__scheduleCalls.practiceReverts || []).concat({ teamId, eventId, userId: user?.uid || null });
+                    return { success: true };
+                }
+
                 export async function loadHomeScoringPlayers() {
                     return [
                         { id: 'player-1', name: 'Pat', number: '7', points: 12 },

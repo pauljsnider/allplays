@@ -7,6 +7,7 @@ import type { AuthState } from '../lib/types';
 
 const scheduleServiceMocks = vi.hoisted(() => ({
   addTeamCalendarUrl: vi.fn(),
+  createScheduledPracticeForApp: vi.fn(),
   createScheduleImportGame: vi.fn(),
   createScheduleImportPractice: vi.fn(),
   loadParentSchedule: vi.fn(),
