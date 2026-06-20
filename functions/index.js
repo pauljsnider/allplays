@@ -5215,7 +5215,25 @@ function getOfficiatingNotificationCopy(record = {}) {
   };
 }
 
-async function resolveOfficiatingRecordRecipientUserIds(record = {}) {
+async function getOfficiatingAssignerRecipientUserIds(teamId) {
+  const normalizedTeamId = String(teamId || '').trim();
+  if (!normalizedTeamId) return [];
+
+  const teamSnap = await firestore.doc(`teams/${normalizedTeamId}`).get();
+  if (!teamSnap.exists) return [];
+
+  const team = teamSnap.data() || {};
+  const userIds = new Set([String(team.ownerId || '').trim()].filter(Boolean));
+  const adminUserIds = await getUserIdsByEmails(team.adminEmails || []);
+  adminUserIds.forEach((uid) => userIds.add(uid));
+  return Array.from(userIds);
+}
+
+async function resolveOfficiatingRecordRecipientUserIds(teamId, record = {}) {
+  if (String(record.recipientType || '').trim().toLowerCase() === 'assigner') {
+    return getOfficiatingAssignerRecipientUserIds(teamId);
+  }
+
   const userIds = new Set([
     record.recipientOfficialUserId,
     record.officialUserId,
@@ -5276,12 +5294,14 @@ function isOpenOfficiatingSlotForNotification(slot = {}) {
 
 function getNewOpenOfficiatingSlots(beforeGame = {}, afterGame = {}) {
   if (afterGame.officiatingSelfAssignmentEnabled !== true) return [];
-  const beforeOpenIds = new Set(
-    (Array.isArray(beforeGame.officiatingSlots) ? beforeGame.officiatingSlots : [])
-      .filter(isOpenOfficiatingSlotForNotification)
-      .map((slot) => normalizeOfficiatingSlotForNotification(slot).id)
-      .filter(Boolean)
-  );
+  const beforeOpenIds = beforeGame.officiatingSelfAssignmentEnabled === true
+    ? new Set(
+      (Array.isArray(beforeGame.officiatingSlots) ? beforeGame.officiatingSlots : [])
+        .filter(isOpenOfficiatingSlotForNotification)
+        .map((slot) => normalizeOfficiatingSlotForNotification(slot).id)
+        .filter(Boolean)
+    )
+    : new Set();
   return (Array.isArray(afterGame.officiatingSlots) ? afterGame.officiatingSlots : [])
     .map(normalizeOfficiatingSlotForNotification)
     .filter((slot) => slot.id && isOpenOfficiatingSlotForNotification(slot) && !beforeOpenIds.has(slot.id));
@@ -5315,7 +5335,7 @@ exports.notifyOfficiatingNotificationCreated = functions.firestore
     if (record.type && record.type !== 'officiating_assignment') return null;
 
     const { teamId } = context.params;
-    const recipientUserIds = await resolveOfficiatingRecordRecipientUserIds(record);
+    const recipientUserIds = await resolveOfficiatingRecordRecipientUserIds(teamId, record);
     if (!recipientUserIds.length) return null;
 
     const actorUid = String(record.actorUserId || record.actor?.userId || '').trim() || null;
@@ -5334,8 +5354,10 @@ exports.notifyOfficiatingNotificationCreated = functions.firestore
 
 exports.notifyOpenOfficiatingSlots = functions.firestore
   .document('teams/{teamId}/games/{gameId}')
-  .onUpdate(async (change, context) => {
-    const beforeGame = change.before.data() || {};
+  .onWrite(async (change, context) => {
+    if (!change.after?.exists) return null;
+
+    const beforeGame = change.before?.exists ? (change.before.data() || {}) : {};
     const afterGame = change.after.data() || {};
     const openSlots = getNewOpenOfficiatingSlots(beforeGame, afterGame);
     if (!openSlots.length) return null;

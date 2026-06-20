@@ -259,6 +259,43 @@ test('notifyOfficiatingNotificationCreated resolves official recipients by email
     }
 });
 
+test('notifyOfficiatingNotificationCreated routes assigner records to staff recipients', async () => {
+    const { moduleExports, env, cleanup } = loadNotificationInternals({
+        teamDoc: { ownerId: 'coach-1', adminEmails: ['assistant@example.com'] },
+        authUsersByEmail: { 'assistant@example.com': 'coach-2' },
+        indexedTargets: [
+            { uid: 'coach-1', deviceId: 'coach-device', token: 'coach-token', categories: { officiating: true } },
+            { uid: 'coach-2', deviceId: 'assistant-device', token: 'assistant-token', categories: { officiating: true } },
+            { uid: 'official-1', deviceId: 'official-device', token: 'official-token', categories: { officiating: true } }
+        ]
+    });
+
+    try {
+        const ref = env.firestoreState.doc('teams/team-1/officiatingNotifications/notification-assigner');
+        const snapshot = makeSnapshot(ref, {
+            type: 'officiating_assignment',
+            event: 'declined',
+            position: 'Line Judge',
+            gameId: 'game-2',
+            gameReference: { gameId: 'game-2', title: 'Cup semifinal' },
+            recipientType: 'assigner',
+            recipientOfficialUserId: 'official-1',
+            actorUserId: 'official-1'
+        });
+        const context = { params: { teamId: 'team-1', notificationId: 'notification-assigner' } };
+
+        const result = await moduleExports.notifyOfficiatingNotificationCreated(snapshot, context);
+
+        assert.equal(result?.successCount, 2);
+        assert.equal(env.messagingCalls.length, 1);
+        assert.deepEqual(env.messagingCalls[0].tokens.sort(), ['assistant-token', 'coach-token']);
+        assert.equal(env.messagingCalls[0].title, 'Officiating assignment declined: Line Judge');
+        assert.equal(env.messagingCalls[0].body, 'Cup semifinal needs coverage.');
+    } finally {
+        cleanup();
+    }
+});
+
 test('notifyOpenOfficiatingSlots sends open-slot pushes only for newly posted slots', async () => {
     const { moduleExports, env, cleanup } = loadNotificationInternals({
         teamDoc: { ownerId: 'coach-1', adminEmails: [] },
@@ -295,6 +332,75 @@ test('notifyOpenOfficiatingSlots sends open-slot pushes only for newly posted sl
         assert.deepEqual(env.messagingCalls[0].tokens, ['official-token']);
         assert.equal(env.messagingCalls[0].title, 'Open assignment: Line Judge');
         assert.equal(env.messagingCalls[0].body, 'Cup final needs an official. Claim it before someone else does.');
+    } finally {
+        cleanup();
+    }
+});
+
+test('notifyOpenOfficiatingSlots sends notifications when self-assignment is enabled for existing open slots', async () => {
+    const { moduleExports, env, cleanup } = loadNotificationInternals({
+        teamDoc: { ownerId: 'coach-1', adminEmails: [] },
+        parentUserIds: ['official-1'],
+        indexedTargets: [
+            { uid: 'official-1', deviceId: 'official-device', token: 'official-token', categories: { officiating: true } }
+        ]
+    });
+
+    try {
+        const ref = env.firestoreState.doc('teams/team-1/games/game-4');
+        const context = { params: { teamId: 'team-1', gameId: 'game-4' } };
+        const change = makeChange(ref, {
+            title: 'Semifinal',
+            officiatingSelfAssignmentEnabled: false,
+            officiatingSlots: [
+                { id: 'center', position: 'Center Referee', status: 'open' }
+            ]
+        }, {
+            title: 'Semifinal',
+            updatedBy: 'coach-1',
+            officiatingSelfAssignmentEnabled: true,
+            officiatingSlots: [
+                { id: 'center', position: 'Center Referee', status: 'open' }
+            ]
+        });
+
+        const result = await moduleExports.notifyOpenOfficiatingSlots(change, context);
+
+        assert.equal(result?.successCount, 1);
+        assert.equal(env.messagingCalls.length, 1);
+        assert.equal(env.messagingCalls[0].title, 'Open assignment: Center Referee');
+    } finally {
+        cleanup();
+    }
+});
+
+test('notifyOpenOfficiatingSlots sends notifications when a game is created with open self-assignment slots', async () => {
+    const { moduleExports, env, cleanup } = loadNotificationInternals({
+        teamDoc: { ownerId: 'coach-1', adminEmails: [] },
+        parentUserIds: ['official-1'],
+        indexedTargets: [
+            { uid: 'official-1', deviceId: 'official-device', token: 'official-token', categories: { officiating: true } }
+        ]
+    });
+
+    try {
+        const ref = env.firestoreState.doc('teams/team-1/games/game-5');
+        const context = { params: { teamId: 'team-1', gameId: 'game-5' } };
+        const change = makeChange(ref, null, {
+            title: 'Championship',
+            createdBy: 'coach-1',
+            officiatingSelfAssignmentEnabled: true,
+            officiatingSlots: [
+                { id: 'line', position: 'Line Judge', status: 'open' }
+            ]
+        });
+
+        const result = await moduleExports.notifyOpenOfficiatingSlots(change, context);
+
+        assert.equal(result?.successCount, 1);
+        assert.equal(env.messagingCalls.length, 1);
+        assert.equal(env.messagingCalls[0].title, 'Open assignment: Line Judge');
+        assert.equal(env.messagingCalls[0].body, 'Championship needs an official. Claim it before someone else does.');
     } finally {
         cleanup();
     }
