@@ -135,6 +135,10 @@ describe('App protected route loading', () => {
     homeRenderMode = 'suspend';
     authMock.state = { ...authMock.signedInAuth, refresh: vi.fn(), signOut: vi.fn() };
     window.localStorage.clear();
+    Object.defineProperty(window, 'scrollTo', {
+      configurable: true,
+      value: vi.fn()
+    });
     nativeBackMock.listeners.length = 0;
     nativeBackMock.addListener.mockClear();
     nativeBackMock.exitApp.mockClear();

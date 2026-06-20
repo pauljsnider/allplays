@@ -3,6 +3,7 @@ import { Navigate, Route, Routes, useLocation, useNavigate } from 'react-router-
 import { AppShell } from './components/AppShell';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { ProtectedRouteSkeleton } from './components/PageSkeletons';
+import { ScrollRestoration } from './components/ScrollRestoration';
 import {
   addNativeBackButtonListener,
   dispatchNativeBackDismissEvent,
@@ -181,6 +182,7 @@ export default function App() {
 
   return (
     <Suspense fallback={<LoadingScreen />}>
+      <ScrollRestoration />
       <Routes>
         <Route path="/auth" element={<AuthPage auth={auth} />} />
         <Route path="/accept-invite" element={<AcceptInvite auth={auth} />} />
