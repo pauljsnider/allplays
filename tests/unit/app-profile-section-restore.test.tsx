@@ -33,7 +33,8 @@ const publicActionsMocks = vi.hoisted(() => ({
 const pushServiceMocks = vi.hoisted(() => ({
   enablePushNotificationsForUser: vi.fn(),
   getPushNotificationPermissionStatus: vi.fn(),
-  openPushNotificationSettings: vi.fn()
+  openPushNotificationSettings: vi.fn(),
+  runPushNotificationPrimer: vi.fn()
 }));
 
 const shellLayoutState = vi.hoisted(() => ({
@@ -156,6 +157,7 @@ describe('Profile section restore from URL', () => {
     });
     pushServiceMocks.openPushNotificationSettings.mockResolvedValue(undefined);
     pushServiceMocks.enablePushNotificationsForUser.mockResolvedValue(undefined);
+    pushServiceMocks.runPushNotificationPrimer.mockResolvedValue(true);
     publicActionsMocks.sharePublicUrl.mockResolvedValue('shared');
     shellLayoutState.isDesktopWeb = false;
     shellLayoutState.isNative = false;
