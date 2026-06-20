@@ -161,6 +161,15 @@ export function resolvePushNotificationRoute(input: unknown) {
         }
         return '/schedule';
     }
+    if (category === 'media') {
+        if (appRoute) {
+            return appRoute;
+        }
+        if (teamId) {
+            return `/teams/${encodeRouteParam(teamId)}/media`;
+        }
+        return '/teams';
+    }
     if (category === 'liveChat' && teamId && conversationId) {
         return buildMessagesRoute(teamId, conversationId);
     }
@@ -182,9 +191,6 @@ export function resolvePushNotificationRoute(input: unknown) {
             return buildScheduleEventRoute(teamId, eventId, 'rideshare');
         }
         return teamId ? `/schedule?teamId=${encodeRouteParam(teamId)}&section=rideshare` : '/schedule?section=rideshare';
-    }
-    if (category === 'media' && teamId) {
-        return `/teams/${encodeRouteParam(teamId)}/media`;
     }
     if (category === 'awards') {
         return appendQuery('/parent-tools/certificates', { teamId, certificateId });

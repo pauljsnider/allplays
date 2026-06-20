@@ -58,6 +58,18 @@ describe('push notification payload contract', () => {
         })).toBe('/schedule/team%201/game%2F1?section=availability');
     });
 
+    it('builds media notification routes to the team media page', () => {
+        expect(buildNotificationLink({
+            category: 'media',
+            teamId: 'team 1'
+        })).toBe('https://allplays.ai/app/#/teams/team%201/media');
+
+        expect(buildNotificationAppRoute({
+            category: 'media',
+            teamId: 'team 1'
+        })).toBe('/teams/team%201/media');
+    });
+
     it('builds staff fee notification routes to the team fee management page', () => {
         expect(buildStaffFeeNotificationDestination({
             teamId: 'team 1',

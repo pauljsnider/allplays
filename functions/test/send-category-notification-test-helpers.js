@@ -468,6 +468,12 @@ function buildNotificationTestEnv({
         FieldValue: {
             serverTimestamp: () => ({ __serverTimestamp: true }),
             increment: (amount) => ({ __increment: amount })
+        },
+        Timestamp: {
+            fromDate: (date) => ({
+                toDate: () => new Date(date),
+                toMillis: () => new Date(date).getTime()
+            })
         }
     });
 
