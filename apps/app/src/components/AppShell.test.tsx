@@ -3,12 +3,19 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-libra
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { AppShell } from './AppShell';
+import type { NotificationInboxItem } from '../lib/notificationInboxService';
 import type { AuthState } from '../lib/types';
 import { APP_BACK_DISMISS_EVENT } from '../lib/nativeBackButton';
 
+type SubscribeToNotificationInbox = (
+  uid: string,
+  onItems: (items: NotificationInboxItem[]) => void,
+  onError?: (error: unknown) => void
+) => () => void;
+
 const { useShellLayoutMock, subscribeToNotificationInboxMock } = vi.hoisted(() => ({
   useShellLayoutMock: vi.fn(() => ({ isDesktopWeb: true })),
-  subscribeToNotificationInboxMock: vi.fn(() => vi.fn()),
+  subscribeToNotificationInboxMock: vi.fn<SubscribeToNotificationInbox>(() => vi.fn()),
 }));
 
 vi.mock('../lib/useShellLayout', () => ({
