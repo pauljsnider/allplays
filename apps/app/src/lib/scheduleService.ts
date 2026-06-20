@@ -1,6 +1,7 @@
 import {
   getAssignmentClaims,
   claimOpenOfficiatingSlot,
+  getConfigs,
   getGame,
   getGames,
   getPracticePacketCompletions,
@@ -1313,6 +1314,29 @@ export type ScheduleImportNormalizedRow = {
   } | null;
 };
 
+export type ScheduleGameFormInput = {
+  opponent: string;
+  startDate: Date;
+  endDate?: Date | null;
+  location?: string | null;
+  arrivalTime?: Date | null;
+  isHome?: boolean | null;
+  notes?: string | null;
+  statTrackerConfigId?: string | null;
+  competitionType?: string | null;
+  countsTowardSeasonRecord?: boolean;
+  opponentTeamId?: string | null;
+  opponentTeamName?: string | null;
+  opponentTeamPhoto?: string | null;
+};
+
+export type ScheduleStatTrackerConfigOption = {
+  id: string;
+  name: string;
+  baseType?: string | null;
+  isBasketball?: boolean;
+};
+
 function normalizeScheduleImportBatch(input: ScheduleImportNormalizedRow['importBatch']) {
   const batchId = compactString(input?.batchId);
   const totalCount = Math.max(0, Number.parseInt(String(input?.totalCount ?? 0), 10) || 0);
@@ -1375,6 +1399,60 @@ function buildScheduleImportGamePayload(row: ScheduleImportNormalizedRow, user: 
   };
 }
 
+function parseScheduleGameFormDate(value: Date | string | number | null | undefined, label: string) {
+  const date = value instanceof Date ? new Date(value) : new Date(value || '');
+  if (Number.isNaN(date.getTime())) {
+    throw new Error(`${label} is invalid.`);
+  }
+  return date;
+}
+
+function buildScheduledGamePayload(input: ScheduleGameFormInput, user: AuthUser) {
+  const opponent = compactString(input.opponent);
+  if (!opponent) throw new Error('Games require an opponent.');
+  const startDate = parseScheduleGameFormDate(input.startDate, 'Game start time');
+  const endDate = input.endDate ? parseScheduleGameFormDate(input.endDate, 'Game end time') : null;
+  const arrivalTime = input.arrivalTime ? parseScheduleGameFormDate(input.arrivalTime, 'Arrival time') : null;
+  if (endDate && endDate.getTime() <= startDate.getTime()) {
+    throw new Error('Game end time must be after the start time.');
+  }
+  return {
+    type: 'game',
+    date: startDate,
+    end: endDate,
+    opponent,
+    title: null,
+    location: compactString(input.location),
+    isHome: input.isHome === null || input.isHome === undefined ? null : input.isHome === true,
+    arrivalTime,
+    notes: compactString(input.notes),
+    assignments: [],
+    status: 'scheduled',
+    homeScore: 0,
+    awayScore: 0,
+    competitionType: compactString(input.competitionType) || 'league',
+    countsTowardSeasonRecord: input.countsTowardSeasonRecord === false ? false : true,
+    statTrackerConfigId: compactString(input.statTrackerConfigId) || null,
+    opponentTeamId: compactString(input.opponentTeamId) || null,
+    opponentTeamName: compactString(input.opponentTeamName) || null,
+    opponentTeamPhoto: compactString(input.opponentTeamPhoto) || null,
+    createdBy: user.uid
+  };
+}
+
+function buildScheduledGameUpdatePayload(input: ScheduleGameFormInput, user: AuthUser) {
+  const { assignments, homeScore, awayScore, createdBy, ...payload } = buildScheduledGamePayload(input, user) as Record<string, unknown>;
+  void assignments;
+  void homeScore;
+  void awayScore;
+  void createdBy;
+  return {
+    ...payload,
+    updatedAt: new Date(),
+    updatedBy: user.uid
+  };
+}
+
 function buildScheduleImportPracticePayload(row: ScheduleImportNormalizedRow, user: AuthUser) {
   const startDate = parseScheduleImportDate(row.startsAt, 'Start time');
   const importBatch = normalizeScheduleImportBatch(row.importBatch);
@@ -1424,6 +1502,63 @@ export type UpdateScheduledPracticeOptions = {
   scope?: SchedulePracticeEditScope;
   instanceDate?: string | null;
 };
+
+export async function loadScheduleStatTrackerConfigsForApp(teamId: string, user: AuthUser | null): Promise<ScheduleStatTrackerConfigOption[]> {
+  const normalizedTeamId = compactString(teamId);
+  if (!normalizedTeamId) throw new Error('Team is required.');
+  await requireScheduleImportStaff(normalizedTeamId, user);
+  const configs = await readWithNativeFallback(
+    `schedule stat tracker configs ${normalizedTeamId}`,
+    () => Promise.resolve(getConfigs(normalizedTeamId)),
+    () => nativeListCollection(`teams/${encodeURIComponent(normalizedTeamId)}/statTrackerConfigs`)
+  ).catch(() => []);
+  return (Array.isArray(configs) ? configs : [])
+    .map((config: any) => ({
+      id: compactString(config?.id),
+      name: compactString(config?.name) || compactString(config?.label) || compactString(config?.baseType) || 'Tracker config',
+      baseType: compactString(config?.baseType) || null,
+      isBasketball: config?.isBasketball === true || compactString(config?.baseType).toLowerCase() === 'basketball'
+    }))
+    .filter((config) => config.id)
+    .sort((first, second) => first.name.localeCompare(second.name));
+}
+
+export async function createScheduledGameForApp(teamId: string, input: ScheduleGameFormInput, user: AuthUser | null) {
+  const normalizedTeamId = compactString(teamId);
+  if (!normalizedTeamId) throw new Error('Team is required.');
+  await requireScheduleImportStaff(normalizedTeamId, user);
+  const payload = buildScheduledGamePayload(input, user as AuthUser);
+
+  try {
+    return await withTimeout(Promise.resolve(addGame(normalizedTeamId, payload)), 'Scheduled game create');
+  } catch (error) {
+    if (!isNativeRuntime()) throw error;
+    logScheduleWarning('Falling back to REST scheduled game create.', 'scheduled-game-create', error, { fallback: 'rest', teamId: normalizedTeamId });
+    const doc = await nativeCreateDocument(`teams/${encodeURIComponent(normalizedTeamId)}/games`, {
+      ...payload,
+      createdAt: new Date()
+    });
+    return doc?.id || '';
+  }
+}
+
+export async function updateScheduledGameForApp(teamId: string, gameId: string, input: ScheduleGameFormInput, user: AuthUser | null) {
+  const normalizedTeamId = compactString(teamId);
+  const normalizedGameId = compactString(gameId);
+  if (!normalizedTeamId) throw new Error('Team is required.');
+  if (!normalizedGameId) throw new Error('Game is required.');
+  await requireScheduleImportStaff(normalizedTeamId, user);
+  const payload = buildScheduledGameUpdatePayload(input, user as AuthUser);
+
+  try {
+    await withTimeout(Promise.resolve(updateGame(normalizedTeamId, normalizedGameId, payload)), 'Scheduled game update');
+  } catch (error) {
+    if (!isNativeRuntime()) throw error;
+    logScheduleWarning('Falling back to REST scheduled game update.', 'scheduled-game-update', error, { fallback: 'rest', teamId: normalizedTeamId, gameId: normalizedGameId });
+    await nativePatchDocument(`teams/${encodeURIComponent(normalizedTeamId)}/games/${encodeURIComponent(normalizedGameId)}`, payload);
+  }
+  return { updated: true, eventId: normalizedGameId };
+}
 
 function sanitizePracticeRecurrenceInput(input?: PracticeRecurrenceFormInput | null) {
   const byDays = Array.isArray(input?.byDays) ? input?.byDays.map((value) => compactString(value).toUpperCase()).filter(Boolean) : [];
@@ -2283,6 +2418,7 @@ function createScheduleEvent(input: {
   seasonLabel?: string | null;
   competitionType?: string | null;
   countsTowardSeasonRecord?: boolean | null;
+  statTrackerConfigId?: string | null;
   sourceType?: string | null;
   sourceLabel?: string | null;
   isImported?: boolean;
@@ -2349,6 +2485,7 @@ function createScheduleEvent(input: {
     seasonLabel: input.seasonLabel || null,
     competitionType: input.competitionType || null,
     countsTowardSeasonRecord: input.countsTowardSeasonRecord ?? null,
+    statTrackerConfigId: input.statTrackerConfigId || null,
     sourceType: input.sourceType || (input.isDbGame ? 'db' : 'calendar'),
     sourceLabel: input.sourceLabel || (input.isDbGame ? 'ALL PLAYS schedule' : 'Team calendar'),
     isImported: input.isImported === true || !input.isDbGame,
@@ -2688,6 +2825,7 @@ async function buildTargetedTeamScheduleEvent(teamId: string, eventId: string, t
     seasonLabel: game.seasonLabel || null,
     competitionType: game.competitionType || null,
     countsTowardSeasonRecord: game.countsTowardSeasonRecord ?? null,
+    statTrackerConfigId: game.statTrackerConfigId || null,
     sourceType: game.sourceMetadata?.sourceType || game.source || 'db',
     sourceLabel: getScheduleSourceLabel(game),
     isImported: Boolean(game.sourceMetadata || game.source === 'calendar' || game.source === 'registration'),

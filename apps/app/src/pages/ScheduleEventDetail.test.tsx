@@ -10,6 +10,7 @@ const scheduleServiceMocks = vi.hoisted(() => ({
   cancelScheduledGameForApp: vi.fn(),
   claimParentScheduleAssignmentSlot: vi.fn(),
   createParentScheduleRideOffer: vi.fn(),
+  loadScheduleStatTrackerConfigsForApp: vi.fn<(...args: any[]) => Promise<any[]>>(() => Promise.resolve([{ id: 'cfg-basketball', name: 'Basketball' }])),
   loadParentPracticePacket: vi.fn(),
   loadStaffPracticePacket: vi.fn<(...args: any[]) => Promise<any>>(() => Promise.resolve({
     sessionId: 'session-1',
@@ -66,6 +67,7 @@ const scheduleServiceMocks = vi.hoisted(() => ({
   loadGameDayLiveEventsForApp: vi.fn<(...args: any[]) => Promise<any[]>>(() => Promise.resolve([] as any[])),
   saveGameDaySubstitutionForApp: vi.fn((_teamId, _gameId, _user, payload) => Promise.resolve(payload)),
   updateGameScore: vi.fn(),
+  updateScheduledGameForApp: vi.fn<(...args: any[]) => Promise<any>>(() => Promise.resolve({ updated: true, eventId: 'game-1' })),
   updateLiveGameClockState: vi.fn(),
   buildLiveGameClockPeriods: vi.fn((game: any) => game?.gamePlan?.numPeriods === 4 ? ['Q1', 'Q2', 'Q3', 'Q4'] : ['H1', 'H2']),
   resolveLiveGameClockSnapshot: vi.fn((game: any, now = new Date()) => {

@@ -4,7 +4,7 @@ import { Link } from 'react-router-dom';
 import { Modal } from '../components/Modal';
 import { SchedulePageSkeleton } from '../components/PageSkeletons';
 import { PullToRefresh } from '../components/PullToRefresh';
-import { addTeamCalendarUrl, createScheduledPracticeForApp, createScheduleImportGame, createScheduleImportPractice, finalizeScheduleImportBatch, loadParentSchedule, removeTeamCalendarUrl, type ParentScheduleChild, type SchedulePracticeFormInput, type PracticeRecurrenceFormInput } from '../lib/scheduleService';
+import { addTeamCalendarUrl, createScheduledGameForApp, createScheduledPracticeForApp, createScheduleImportGame, createScheduleImportPractice, finalizeScheduleImportBatch, loadParentSchedule, loadScheduleStatTrackerConfigsForApp, removeTeamCalendarUrl, type ParentScheduleChild, type ScheduleGameFormInput, type SchedulePracticeFormInput, type PracticeRecurrenceFormInput, type ScheduleStatTrackerConfigOption } from '../lib/scheduleService';
 import { getCachedAppData, getParentScheduleSummaryCacheKey, loadCachedAppData } from '../lib/appDataCache';
 import { toAppServiceError, type AppServiceError } from '../lib/appErrors';
 import { recordFirstMeaningfulRender, startScreenMountTimer } from '../lib/uxTiming';
@@ -167,6 +167,11 @@ export function Schedule({ auth }: { auth: AuthState }) {
   const [importingCsv, setImportingCsv] = useState(false);
   const [removingCalendarUrl, setRemovingCalendarUrl] = useState<string | null>(null);
   const [mobileStaffToolsOpen, setMobileStaffToolsOpen] = useState(false);
+  const [gameForm, setGameForm] = useState<ScheduleGameFormInput>(() => getDefaultScheduleGameForm());
+  const [savingGame, setSavingGame] = useState(false);
+  const [gameFormError, setGameFormError] = useState<string | null>(null);
+  const [gameTrackerConfigs, setGameTrackerConfigs] = useState<ScheduleStatTrackerConfigOption[]>([]);
+  const [gameTrackerConfigError, setGameTrackerConfigError] = useState<string | null>(null);
   const [practiceForm, setPracticeForm] = useState<SchedulePracticeFormInput>(() => getDefaultSchedulePracticeForm());
   const [savingPractice, setSavingPractice] = useState(false);
   const [practiceFormError, setPracticeFormError] = useState<string | null>(null);
@@ -360,6 +365,42 @@ export function Schedule({ auth }: { auth: AuthState }) {
     }
   }, [isDesktopWeb, selectedCalendarTeam]);
 
+
+  useEffect(() => {
+    let cancelled = false;
+    setGameTrackerConfigs([]);
+    setGameTrackerConfigError(null);
+    if (!selectedCalendarTeam || !auth.user) return;
+    loadScheduleStatTrackerConfigsForApp(selectedCalendarTeam.teamId, auth.user)
+      .then((configs) => {
+        if (!cancelled) setGameTrackerConfigs(configs);
+      })
+      .catch((configError: any) => {
+        if (!cancelled) setGameTrackerConfigError(configError?.message || 'Unable to load tracker configs.');
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [auth.user, selectedCalendarTeam]);
+
+  const handleCreateGame = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!selectedCalendarTeam || !auth.user || savingGame) return;
+    setSavingGame(true);
+    setGameFormError(null);
+    setStatusMessage(null);
+    clearError();
+    try {
+      await createScheduledGameForApp(selectedCalendarTeam.teamId, gameForm, auth.user);
+      setGameForm(getDefaultScheduleGameForm());
+      await refreshSchedule(true);
+      setStatusMessage('Game created and schedule refreshed.');
+    } catch (gameError: any) {
+      setGameFormError(gameError?.message || 'Unable to create game.');
+    } finally {
+      setSavingGame(false);
+    }
+  };
 
   const handleCreatePractice = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -888,6 +929,19 @@ export function Schedule({ auth }: { auth: AuthState }) {
 
           {isDesktopWeb && selectedCalendarTeam ? (
             <>
+              <ScheduleGameCreatePanel
+                teamName={selectedCalendarTeam.teamName}
+                form={gameForm}
+                configs={gameTrackerConfigs}
+                saving={savingGame}
+                error={gameFormError}
+                configError={gameTrackerConfigError}
+                onChange={(nextForm) => {
+                  setGameForm(nextForm);
+                  if (gameFormError) setGameFormError(null);
+                }}
+                onSubmit={handleCreateGame}
+              />
               <SchedulePracticeCreatePanel
                 teamName={selectedCalendarTeam.teamName}
                 form={practiceForm}
@@ -979,6 +1033,19 @@ export function Schedule({ auth }: { auth: AuthState }) {
               teamName={selectedCalendarTeam.teamName}
               onToggle={() => setMobileStaffToolsOpen((current) => !current)}
             >
+              <ScheduleGameCreatePanel
+                teamName={selectedCalendarTeam.teamName}
+                form={gameForm}
+                configs={gameTrackerConfigs}
+                saving={savingGame}
+                error={gameFormError}
+                configError={gameTrackerConfigError}
+                onChange={(nextForm) => {
+                  setGameForm(nextForm);
+                  if (gameFormError) setGameFormError(null);
+                }}
+                onSubmit={handleCreateGame}
+              />
               <SchedulePracticeCreatePanel
                 teamName={selectedCalendarTeam.teamName}
                 form={practiceForm}
@@ -1043,9 +1110,28 @@ function padDatePart(value: number) {
 }
 
 function toDatetimeLocalInputValue(value: Date | string | number | null | undefined) {
+  if (value === null || value === undefined || value === '') return '';
   const date = value instanceof Date ? value : new Date(value || Date.now());
   if (Number.isNaN(date.getTime())) return '';
   return `${date.getFullYear()}-${padDatePart(date.getMonth() + 1)}-${padDatePart(date.getDate())}T${padDatePart(date.getHours())}:${padDatePart(date.getMinutes())}`;
+}
+
+function getDefaultScheduleGameForm(): ScheduleGameFormInput {
+  const startDate = new Date();
+  startDate.setDate(startDate.getDate() + 1);
+  startDate.setHours(18, 30, 0, 0);
+  return {
+    opponent: '',
+    startDate,
+    endDate: new Date(startDate.getTime() + 90 * 60000),
+    location: '',
+    arrivalTime: new Date(startDate.getTime() - 30 * 60000),
+    isHome: true,
+    notes: '',
+    statTrackerConfigId: '',
+    competitionType: 'league',
+    countsTowardSeasonRecord: true
+  };
 }
 
 function getDefaultSchedulePracticeForm(): SchedulePracticeFormInput {
@@ -1062,6 +1148,33 @@ function getDefaultSchedulePracticeForm(): SchedulePracticeFormInput {
     notes: '',
     recurrence: { isRecurring: false, freq: 'weekly', interval: 1, byDays: [dayCodes[startDate.getDay()]], endType: 'never', countValue: 10 }
   };
+}
+
+function ScheduleGameCreatePanel({ teamName, form, configs, saving, error, configError, onChange, onSubmit }: { teamName: string; form: ScheduleGameFormInput; configs: ScheduleStatTrackerConfigOption[]; saving: boolean; error: string | null; configError: string | null; onChange: (form: ScheduleGameFormInput) => void; onSubmit: (event: FormEvent<HTMLFormElement>) => void }) {
+  const updateField = (field: keyof ScheduleGameFormInput, value: string | Date | boolean | null) => onChange({ ...form, [field]: value });
+  return (
+    <section className="app-card p-3 sm:p-4" aria-label="Create game">
+      <div className="app-label">Game scheduling</div>
+      <h2 className="mt-1 text-base font-black text-gray-950">Add game for {teamName}</h2>
+      <form className="mt-3 space-y-3" onSubmit={onSubmit}>
+        <div className="grid gap-3 sm:grid-cols-2">
+          <label className="text-xs font-bold uppercase tracking-wide text-gray-600">Opponent<input className="auth-input mt-1" value={form.opponent} onChange={(event) => updateField('opponent', event.target.value)} /></label>
+          <label className="text-xs font-bold uppercase tracking-wide text-gray-600">Location<input className="auth-input mt-1" value={form.location || ''} onChange={(event) => updateField('location', event.target.value)} /></label>
+          <label className="text-xs font-bold uppercase tracking-wide text-gray-600">Starts<input type="datetime-local" className="auth-input mt-1" value={toDatetimeLocalInputValue(form.startDate)} onChange={(event) => updateField('startDate', new Date(event.target.value))} /></label>
+          <label className="text-xs font-bold uppercase tracking-wide text-gray-600">Ends<input type="datetime-local" className="auth-input mt-1" value={toDatetimeLocalInputValue(form.endDate)} onChange={(event) => updateField('endDate', event.target.value ? new Date(event.target.value) : null)} /></label>
+          <label className="text-xs font-bold uppercase tracking-wide text-gray-600">Arrival<input type="datetime-local" className="auth-input mt-1" value={toDatetimeLocalInputValue(form.arrivalTime)} onChange={(event) => updateField('arrivalTime', event.target.value ? new Date(event.target.value) : null)} /></label>
+          <label className="text-xs font-bold uppercase tracking-wide text-gray-600">Home / away<select className="auth-input mt-1" value={form.isHome === false ? 'away' : form.isHome === true ? 'home' : 'neutral'} onChange={(event) => updateField('isHome', event.target.value === 'neutral' ? null : event.target.value === 'home')}><option value="home">Home</option><option value="away">Away</option><option value="neutral">Neutral</option></select></label>
+          <label className="text-xs font-bold uppercase tracking-wide text-gray-600">Tracker config<select className="auth-input mt-1" value={form.statTrackerConfigId || ''} onChange={(event) => updateField('statTrackerConfigId', event.target.value)}><option value="">No tracker config</option>{configs.map((config) => <option key={config.id} value={config.id}>{config.name}</option>)}</select></label>
+          <label className="text-xs font-bold uppercase tracking-wide text-gray-600">Competition<select className="auth-input mt-1" value={form.competitionType || 'league'} onChange={(event) => updateField('competitionType', event.target.value)}><option value="league">League</option><option value="tournament">Tournament</option><option value="scrimmage">Scrimmage</option><option value="friendly">Friendly</option></select></label>
+        </div>
+        <label className="flex items-center gap-2 text-sm font-black text-gray-800"><input type="checkbox" checked={form.countsTowardSeasonRecord !== false} onChange={(event) => updateField('countsTowardSeasonRecord', event.target.checked)} /> Counts toward season record</label>
+        <label className="text-xs font-bold uppercase tracking-wide text-gray-600">Notes<textarea className="auth-input mt-1 min-h-20" value={form.notes || ''} onChange={(event) => updateField('notes', event.target.value)} /></label>
+        <button type="submit" className="primary-button" disabled={saving}>{saving ? 'Creating game' : 'Create game'}</button>
+        {configError ? <div className="rounded-2xl border border-amber-200 bg-amber-50 px-3 py-2 text-sm font-bold text-amber-700">{configError}</div> : null}
+        {error ? <div className="rounded-2xl border border-rose-200 bg-rose-50 px-3 py-2 text-sm font-bold text-rose-700">{error}</div> : null}
+      </form>
+    </section>
+  );
 }
 
 function SchedulePracticeCreatePanel({ teamName, form, saving, error, onChange, onSubmit }: { teamName: string; form: SchedulePracticeFormInput; saving: boolean; error: string | null; onChange: (form: SchedulePracticeFormInput) => void; onSubmit: (event: FormEvent<HTMLFormElement>) => void }) {

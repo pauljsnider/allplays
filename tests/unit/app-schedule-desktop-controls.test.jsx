@@ -6,10 +6,13 @@ import { MemoryRouter } from 'react-router-dom';
 
 const scheduleMocks = vi.hoisted(() => ({
     addTeamCalendarUrl: vi.fn(),
+    createScheduledGameForApp: vi.fn(),
+    createScheduledPracticeForApp: vi.fn(),
     createScheduleImportGame: vi.fn(),
     createScheduleImportPractice: vi.fn(),
     finalizeScheduleImportBatch: vi.fn(),
     loadParentSchedule: vi.fn(),
+    loadScheduleStatTrackerConfigsForApp: vi.fn(),
     removeTeamCalendarUrl: vi.fn(),
     generateScheduleAiImportRows: vi.fn(),
     aiModuleLoads: 0,
@@ -168,9 +171,12 @@ beforeEach(() => {
     layoutState.isNative = false;
     layoutState.isMobileWeb = false;
     scheduleMocks.addTeamCalendarUrl.mockResolvedValue({ added: true, calendarUrls: ['https://example.com/team.ics'] });
+    scheduleMocks.createScheduledGameForApp.mockResolvedValue('game-new');
+    scheduleMocks.createScheduledPracticeForApp.mockResolvedValue('practice-new');
     scheduleMocks.createScheduleImportGame.mockResolvedValue('game-new');
     scheduleMocks.createScheduleImportPractice.mockResolvedValue('practice-new');
     scheduleMocks.finalizeScheduleImportBatch.mockResolvedValue(undefined);
+    scheduleMocks.loadScheduleStatTrackerConfigsForApp.mockResolvedValue([{ id: 'cfg-basketball', name: 'Basketball' }]);
     scheduleMocks.removeTeamCalendarUrl.mockResolvedValue({ removed: true, calendarUrls: [] });
     scheduleMocks.generateScheduleAiImportRows.mockResolvedValue({ rows: [], errors: [] });
     vi.spyOn(window, 'confirm').mockReturnValue(true);
