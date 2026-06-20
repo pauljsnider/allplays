@@ -173,9 +173,30 @@ export function Schedule({ auth }: { auth: AuthState }) {
   const hasLoadedScheduleRef = useRef(false);
   const hasStartedInitialScheduleLoadRef = useRef(false);
 
+  const fullHistoryLoadedRef = useRef(false);
+
   const applyScheduleResult = (data: { children: ParentScheduleChild[]; events: ParentScheduleEvent[]; }) => {
     setChildren(data.children);
     setEvents(data.events);
+  };
+
+  // The default schedule load is windowed to recent games (#2034). When the user
+  // opens the "Past Events" filter, load the full history once and merge it in.
+  const loadFullScheduleHistory = async (force = false) => {
+    const user = auth.user;
+    if (!user) return;
+    if (fullHistoryLoadedRef.current && !force) return;
+    fullHistoryLoadedRef.current = true;
+    try {
+      const result = await loadCachedAppData(
+        `${getParentScheduleSummaryCacheKey(user.uid)}:full-history`,
+        () => loadParentSchedule(user, { hydrateDetails: false, expandStaffPlayers: false, includePastGames: true }),
+        { ttlMs: 60 * 1000 * 5, force }
+      );
+      applyScheduleResult(result);
+    } catch {
+      fullHistoryLoadedRef.current = false; // allow a retry on the next attempt
+    }
   };
 
   const hasLoadedSchedule = Boolean(auth.user?.uid) && loadedScheduleUserId === auth.user?.uid && hasLoadedScheduleRef.current;
@@ -216,6 +237,12 @@ export function Schedule({ auth }: { auth: AuthState }) {
           setScheduleLoadError(null);
           applyScheduleResult(result);
 
+          // A forced refresh re-fetches the windowed set; if the user is viewing
+          // past events, reload the full history so older games don't disappear.
+          if (filter === 'past-all') {
+            void loadFullScheduleHistory(force);
+          }
+
           if (selectedPlayerId && !result.children.some((child) => child.playerId === selectedPlayerId)) {
             setSelectedPlayerId('');
           }
@@ -254,6 +281,7 @@ export function Schedule({ auth }: { auth: AuthState }) {
   useEffect(() => {
     hasLoadedScheduleRef.current = false;
     hasStartedInitialScheduleLoadRef.current = false;
+    fullHistoryLoadedRef.current = false;
     if (!auth.user?.uid) {
       setLoadedScheduleUserId(null);
       applyScheduleResult({ children: [], events: [] });
@@ -263,6 +291,13 @@ export function Schedule({ auth }: { auth: AuthState }) {
     void refreshSchedule();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [auth.user?.uid]);
+
+  useEffect(() => {
+    if (filter === 'past-all' && hasLoadedSchedule) {
+      void loadFullScheduleHistory();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [filter, hasLoadedSchedule]);
 
   useRefreshOnResume(() => { void refreshSchedule(true); }, { enabled: Boolean(auth.user?.uid) });
 
