@@ -18,4 +18,13 @@ describe('app Vite config', () => {
         expect(manualChunks?.(reactModule)).toBe('vendor-react');
         expect(manualChunks?.(scopedModule)).toBe('vendor-@capacitor-core');
     });
+
+    it('enables app coverage reports across source files', () => {
+        expect(appViteConfig.test?.coverage).toEqual(expect.objectContaining({
+            provider: 'v8',
+            all: true,
+            reporter: ['text', 'json', 'lcov'],
+            include: ['src/**/*.{ts,tsx}']
+        }));
+    });
 });
