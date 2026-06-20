@@ -170,6 +170,11 @@ export function AppShell({ auth, children }: AppShellProps) {
     await mod.markNotificationRead(uid, itemId);
   };
 
+  const handleMarkAllNotificationsRead = async (uid: string, items: NotificationInboxItem[]) => {
+    const mod = await loadNotificationInboxService();
+    await mod.markAllNotificationsRead(uid, items);
+  };
+
   const addWorkflows = buildAddWorkflows();
 
   const handleAddWorkflow = async (workflow: AddWorkflow) => {
@@ -406,6 +411,7 @@ export function AppShell({ auth, children }: AppShellProps) {
             uid={auth.user?.uid ?? ''}
             onClose={() => setInboxOpen(false)}
             onMarkRead={handleMarkNotificationRead}
+            onMarkAllRead={handleMarkAllNotificationsRead}
           />
         </Suspense>
       ) : null}

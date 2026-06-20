@@ -8,17 +8,31 @@ import {
     orderBy,
     query,
     updateDoc,
-    serverTimestamp
+    serverTimestamp,
+    writeBatch
 } from '../../../../js/firebase.js';
 
 export type NotificationInboxItem = {
     id: string;
+    category: string;
     type: string;
+    title: string;
+    body: string;
     text: string;
     appRoute: string;
     createdAt: unknown;
     readAt: unknown | null;
 };
+
+function getStringField(data: DocumentData, key: string): string {
+    const value = data[key];
+    return typeof value === 'string' ? value : '';
+}
+
+function buildNotificationText(title: string, body: string, legacyText: string): string {
+    if (title && body) return `${title}: ${body}`;
+    return title || body || legacyText;
+}
 
 /**
  * Subscribe to the user's notification inbox (newest first, limit 50).
@@ -40,11 +54,18 @@ export function subscribeToNotificationInbox(
         (snapshot: QuerySnapshot<DocumentData>) => {
             const items: NotificationInboxItem[] = snapshot.docs.map((docSnap) => {
                 const data = docSnap.data();
+                const category = getStringField(data, 'category') || getStringField(data, 'type');
+                const title = getStringField(data, 'title');
+                const body = getStringField(data, 'body');
+                const legacyText = getStringField(data, 'text');
                 return {
                     id: docSnap.id,
-                    type: typeof data['type'] === 'string' ? data['type'] : '',
-                    text: typeof data['text'] === 'string' ? data['text'] : '',
-                    appRoute: typeof data['appRoute'] === 'string' ? data['appRoute'] : '',
+                    category,
+                    type: category,
+                    title,
+                    body,
+                    text: buildNotificationText(title, body, legacyText),
+                    appRoute: getStringField(data, 'appRoute'),
                     createdAt: data['createdAt'] ?? null,
                     readAt: data['readAt'] ?? null
                 };
@@ -74,4 +95,23 @@ export function countUnread(items: NotificationInboxItem[]): number {
 export async function markNotificationRead(uid: string, itemId: string): Promise<void> {
     const docRef = doc(db, `users/${uid}/notificationInbox`, itemId);
     await updateDoc(docRef, { readAt: serverTimestamp() });
+}
+
+export async function markAllNotificationsRead(uid: string, items: NotificationInboxItem[]): Promise<void> {
+    const unreadItemIds = Array.from(new Set(
+        (Array.isArray(items) ? items : [])
+            .filter((item) => item && !item.readAt)
+            .map((item) => String(item.id || '').trim())
+            .filter(Boolean)
+    ));
+    if (!uid || unreadItemIds.length === 0) {
+        return;
+    }
+
+    const batch = writeBatch(db);
+    const readAt = serverTimestamp();
+    unreadItemIds.forEach((itemId) => {
+        batch.update(doc(db, `users/${uid}/notificationInbox`, itemId), { readAt });
+    });
+    await batch.commit();
 }
