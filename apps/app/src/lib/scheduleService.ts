@@ -244,6 +244,10 @@ type FirestoreDocument = FirestoreDecodedDocument;
 
 export type StaffRsvpReminderSendResult = StaffRsvpReminderPreview & {
   emailSentCount: number;
+  rsvpPushSuccessCount: number;
+  rsvpPushFailureCount: number;
+  rsvpPushTargetCount: number;
+  rsvpPushError: string | null;
 };
 
 export type ParentPracticePacketChild = {
@@ -4252,9 +4256,25 @@ async function sendPublicRsvpReminderEmailsNativeSafe(event: ParentScheduleEvent
   return payload;
 }
 
-async function updateRsvpReminderMetadata(event: ParentScheduleEvent, user: AuthUser, missingCount: number, emailCount: number) {
+function normalizeStaffRsvpReminderPushMetrics(source: Record<string, any> | null | undefined) {
+  const normalizeCount = (value: unknown) => Math.max(0, Number.parseInt(String(value || 0), 10) || 0);
+  return {
+    rsvpPushSuccessCount: normalizeCount(source?.rsvpPushSuccessCount),
+    rsvpPushFailureCount: normalizeCount(source?.rsvpPushFailureCount),
+    rsvpPushTargetCount: normalizeCount(source?.rsvpPushTargetCount),
+    rsvpPushError: compactString(source?.rsvpPushError) || null
+  };
+}
+
+async function updateRsvpReminderMetadata(
+  event: ParentScheduleEvent,
+  user: AuthUser,
+  missingCount: number,
+  emailCount: number,
+  pushMetrics = normalizeStaffRsvpReminderPushMetrics(null)
+) {
   const sentAt = new Date().toISOString();
-  const metadata = buildStaffRsvpReminderMetadata(user.uid, missingCount, emailCount, sentAt);
+  const metadata = buildStaffRsvpReminderMetadata(user.uid, missingCount, emailCount, sentAt, pushMetrics);
   const { persistedEventId, occurrenceKey } = getStaffRsvpReminderMetadataTarget(event.id);
 
   if (isNativeRuntime()) {
@@ -4284,7 +4304,11 @@ async function updateRsvpReminderMetadata(event: ParentScheduleEvent, user: Auth
     'scheduleNotifications.lastSentAt': sentAt,
     'scheduleNotifications.lastSentBy': user.uid || null,
     'scheduleNotifications.lastRsvpReminderCount': missingCount,
-    'scheduleNotifications.lastRsvpEmailCount': emailCount
+    'scheduleNotifications.lastRsvpEmailCount': emailCount,
+    'scheduleNotifications.lastRsvpPushSuccessCount': metadata.lastRsvpPushSuccessCount,
+    'scheduleNotifications.lastRsvpPushFailureCount': metadata.lastRsvpPushFailureCount,
+    'scheduleNotifications.lastRsvpPushTargetCount': metadata.lastRsvpPushTargetCount,
+    'scheduleNotifications.lastRsvpPushError': metadata.lastRsvpPushError
   };
   if (occurrenceKey) {
     updates[`scheduleNotifications.rsvpReminderOccurrences.${occurrenceKey}`] = metadata;
@@ -4317,10 +4341,12 @@ export async function sendStaffRsvpReminder(event: ParentScheduleEvent, user: Au
     selectedRecipientIds: []
   });
   const emailSentCount = resolveStaffRsvpReminderEmailSentCount(emailResult?.sentCount, preview.eligibleEmailCount);
-  await updateRsvpReminderMetadata(event, user, preview.missingPlayerCount, emailSentCount);
+  const rsvpPushMetrics = normalizeStaffRsvpReminderPushMetrics(emailResult);
+  await updateRsvpReminderMetadata(event, user, preview.missingPlayerCount, emailSentCount, rsvpPushMetrics);
   return {
     ...preview,
-    emailSentCount
+    emailSentCount,
+    ...rsvpPushMetrics
   };
 }
 
