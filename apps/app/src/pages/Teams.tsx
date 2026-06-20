@@ -29,6 +29,7 @@ import { toAppServiceError, type AppServiceError } from '../lib/appErrors';
 import { getEventDetailPath, getPlayerDetailPath, type ParentHomeModel, type ParentHomeTeam } from '../lib/homeLogic';
 import { loadParentHomeSummary, loadParentTeamsSummary } from '../lib/homeService';
 import { openPublicUrl } from '../lib/publicActions';
+import { useRefreshOnResume } from '../lib/useRefreshOnResume';
 import { useShellLayout } from '../lib/useShellLayout';
 import {
   buildTeamNavigation,
@@ -132,6 +133,8 @@ export function Teams({ auth }: { auth: AuthState }) {
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [auth.user?.uid]);
+
+  useRefreshOnResume(() => loadTeams(), { enabled: Boolean(auth.user?.uid) });
 
   useEffect(() => {
     if (loading || selectedTeamId) return;

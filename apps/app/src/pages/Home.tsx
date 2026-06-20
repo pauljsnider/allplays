@@ -65,6 +65,7 @@ import {
 } from '../lib/scheduleLogic';
 import { loadOfficialAssignmentsAccess } from '../lib/scheduleService';
 import { useAsyncOperation } from '../lib/useAsyncOperation';
+import { useRefreshOnResume } from '../lib/useRefreshOnResume';
 import {
   emptySocialHome,
   filterSocialFeedItems,
@@ -206,6 +207,8 @@ export function Home({ auth }: { auth: AuthState }) {
     refreshHome();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [auth.user?.uid]);
+
+  useRefreshOnResume(() => { void refreshHome({ force: true }); }, { enabled: Boolean(auth.user?.uid) });
 
   useEffect(() => {
     let cancelled = false;

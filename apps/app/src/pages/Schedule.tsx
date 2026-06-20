@@ -7,6 +7,7 @@ import { getCachedAppData, getParentScheduleSummaryCacheKey, loadCachedAppData }
 import { toAppServiceError, type AppServiceError } from '../lib/appErrors';
 import { startUxTimer } from '../lib/uxTiming';
 import { useAsyncOperation } from '../lib/useAsyncOperation';
+import { useRefreshOnResume } from '../lib/useRefreshOnResume';
 import { useShellLayout } from '../lib/useShellLayout';
 import {
   buildScheduleIcs,
@@ -258,6 +259,8 @@ export function Schedule({ auth }: { auth: AuthState }) {
     void refreshSchedule();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [auth.user?.uid]);
+
+  useRefreshOnResume(() => { void refreshSchedule(true); }, { enabled: Boolean(auth.user?.uid) });
 
   const visibleEvents = useMemo(() => (
     filterParentScheduleEvents(events, { filter, playerId: selectedPlayerId, teamId: selectedTeamId, timeRange })
