@@ -79,21 +79,21 @@ describe('login page redirect coordination', () => {
         });
 
         expect(coordinator.hasRedeemableInviteLink).toBe(true);
-        expect(coordinator.shouldRedeemInviteFromLogin).toBe(false);
-        expect(coordinator.getPostAuthRedirect({ isAdmin: true }, true))
+        expect(coordinator.shouldRedeemInviteFromLogin).toBe(true);
+        expect(coordinator.getPostAuthRedirect({ isAdmin: true }, coordinator.shouldRedeemInviteFromLogin))
             .toBe('accept-invite.html?code=AB12CD34&type=admin');
     });
 
-    it('keeps stale invite links out of ordinary login redirects', () => {
+    it('redeems valid invite links after an explicit login but not auto-redirects', () => {
         const { coordinator } = createCoordinator({
             search: '?code=ab12cd34&type=household',
             defaultRedirect: 'parent-dashboard.html'
         });
 
         expect(coordinator.hasRedeemableInviteLink).toBe(true);
-        expect(coordinator.shouldRedeemInviteFromLogin).toBe(false);
+        expect(coordinator.shouldRedeemInviteFromLogin).toBe(true);
         expect(coordinator.getPostAuthRedirect({ uid: 'user-1' }, coordinator.shouldRedeemInviteFromLogin))
-            .toBe('parent-dashboard.html');
+            .toBe('accept-invite.html?code=AB12CD34&type=household');
         expect(coordinator.getAutoRedirectUrl({ uid: 'user-1' })).toBe('parent-dashboard.html');
     });
 
@@ -114,8 +114,8 @@ describe('login page redirect coordination', () => {
         });
 
         expect(coordinator.hasRedeemableInviteLink).toBe(true);
-        expect(coordinator.shouldRedeemInviteFromLogin).toBe(false);
-        expect(coordinator.getPostAuthRedirect({ uid: 'user-1' }, true)).toBe('accept-invite.html?code=AB12CD34');
+        expect(coordinator.shouldRedeemInviteFromLogin).toBe(true);
+        expect(coordinator.getPostAuthRedirect({ uid: 'user-1' }, coordinator.shouldRedeemInviteFromLogin)).toBe('accept-invite.html?code=AB12CD34');
     });
 
     it('does not redeem invite redirects when the invite code is missing', () => {
@@ -128,11 +128,13 @@ describe('login page redirect coordination', () => {
         expect(coordinator.getAutoRedirectUrl({ parentOf: [{ teamId: 'team-1' }] })).toBe('parent-dashboard.html');
     });
 
-    it('does not redeem stale invite links after Google redirect when the stored mode is login', () => {
+    it('redeems invite links after Google redirect when the stored mode is login', () => {
         const { coordinator, windowObject } = createCoordinator({ postGoogleAuthMode: 'login' });
 
         expect(coordinator.getGoogleRedirectUrl({ parentOf: [{ teamId: 'team-1' }] }))
-            .toBe('parent-dashboard.html');
+            .toBe('accept-invite.html?code=AB12CD34&type=parent');
+        expect(coordinator.getAutoRedirectUrl({ parentOf: [{ teamId: 'team-1' }] }))
+            .toBe('accept-invite.html?code=AB12CD34&type=parent');
         expect(windowObject.sessionStorage.removeItem).toHaveBeenCalledWith('postGoogleAuthMode');
     });
 
