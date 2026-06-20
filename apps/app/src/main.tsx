@@ -9,10 +9,12 @@ import {
   installReactErrorTelemetry,
   startAppStartupTimer
 } from './lib/telemetry';
+import { hideNativeSplashScreen, initializeNativeAppearance } from './lib/nativeAppearance';
 import './styles/index.css';
 
 initializeAppErrorTracking();
 installReactErrorTelemetry();
+void initializeNativeAppearance();
 const startupTimer = startAppStartupTimer();
 
 try {
@@ -30,6 +32,7 @@ try {
     : (callback: FrameRequestCallback) => window.setTimeout(() => callback(performance.now()), 0);
   scheduleRenderTiming(() => {
     startupTimer.end({ phase: 'initial-render' });
+    void hideNativeSplashScreen();
   });
 } catch (error) {
   captureAppStartupFailure(error, { phase: 'initial-render' });

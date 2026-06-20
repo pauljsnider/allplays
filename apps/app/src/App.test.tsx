@@ -32,13 +32,18 @@ const authMock = vi.hoisted(() => {
 const nativeBackMock = vi.hoisted(() => {
   const state = {
     listeners: [] as Array<(event: { canGoBack: boolean }) => void>,
+    urlOpenListeners: [] as Array<(event: { url: string }) => void>,
     exitApp: vi.fn(),
     remove: vi.fn()
   };
   return {
     ...state,
-    addListener: vi.fn(async (_eventName: 'backButton', listener: (event: { canGoBack: boolean }) => void) => {
-      state.listeners.push(listener);
+    addListener: vi.fn(async (eventName: 'appUrlOpen' | 'backButton', listener: ((event: { canGoBack: boolean }) => void) | ((event: { url: string }) => void)) => {
+      if (eventName === 'appUrlOpen') {
+        state.urlOpenListeners.push(listener as (event: { url: string }) => void);
+      } else {
+        state.listeners.push(listener as (event: { canGoBack: boolean }) => void);
+      }
       return { remove: state.remove };
     })
   };
@@ -137,6 +142,7 @@ describe('App protected route loading', () => {
     authMock.state = { ...authMock.signedInAuth, refresh: vi.fn(), signOut: vi.fn() };
     window.localStorage.clear();
     nativeBackMock.listeners.length = 0;
+    nativeBackMock.urlOpenListeners.length = 0;
     nativeBackMock.addListener.mockClear();
     nativeBackMock.exitApp.mockClear();
     nativeBackMock.remove.mockClear();
@@ -253,6 +259,22 @@ describe('App protected route loading', () => {
 
     await act(async () => {
       nativeBackMock.listeners[0]({ canGoBack: true });
+    });
+
+    expect(await screen.findByText('Schedule page')).toBeTruthy();
+  });
+
+  it('routes native app links into the React app router', async () => {
+    render(
+      <MemoryRouter initialEntries={['/home']}>
+        <App />
+      </MemoryRouter>
+    );
+
+    await waitFor(() => expect(nativeBackMock.urlOpenListeners).toHaveLength(1));
+
+    await act(async () => {
+      nativeBackMock.urlOpenListeners[0]({ url: 'https://allplays.ai/app/schedule?range=week' });
     });
 
     expect(await screen.findByText('Schedule page')).toBeTruthy();
