@@ -89,7 +89,12 @@ vi.mock('./adapters/legacyScheduleHelpers', () => ({
   isTrackedCalendarEvent: vi.fn(),
   filterVisiblePracticeSessions: vi.fn((items) => items),
   buildPracticePacketCompletionPayload: vi.fn(),
-  resolveMyRsvpByChildForGame: vi.fn(),
+  resolveMyRsvpByChildForGame: vi.fn((_events: any[], _teamId: string, _gameId: string, rsvps: any[]) => (
+    (Array.isArray(rsvps) ? rsvps : []).reduce<Record<string, string>>((acc, rsvp) => {
+      if (rsvp?.playerId && rsvp?.response) acc[rsvp.playerId] = rsvp.response;
+      return acc;
+    }, {})
+  )),
   buildGameDayRsvpBreakdown: vi.fn(),
   getPeriodsForFormation: vi.fn(() => []),
   getEventRideshareSummary: vi.fn(),
@@ -148,17 +153,17 @@ vi.mock('./chatService', () => ({ sendTeamChatMessage: vi.fn() }));
 vi.mock('./chatLogic', () => ({ DEFAULT_TEAM_CONVERSATION_ID: 'team' }));
 vi.mock('./appDataCache', () => ({
   getCachedAppData: vi.fn(),
-  loadCachedAppData: vi.fn(),
+  loadCachedAppData: vi.fn((_key: string, loader: () => Promise<unknown>) => loader()),
   clearAppDataCache: vi.fn(),
   getParentScheduleSummaryCacheKey: (userId: string) => `app-schedule-summary:${userId}`
 }));
 
-import { addPractice, broadcastLiveEvent, claimOpenOfficiatingSlot, clearOccurrenceOverride, releaseAssignmentClaim, respondToOfficiatingAssignment, updateEvent, updateGame, updateOccurrence, getGame, getGames, getPlayers, getPracticeSession, getPracticeSessions, getRsvpBreakdownByPlayer, getRsvps, getTeam, getTeams, submitRsvpForPlayer, updatePracticeAttendance, getDocs } from './adapters/legacyScheduleDb';
+import { addPractice, broadcastLiveEvent, claimOpenOfficiatingSlot, clearOccurrenceOverride, releaseAssignmentClaim, respondToOfficiatingAssignment, updateEvent, updateGame, updateOccurrence, getAssignmentClaims, getGame, getGames, getPlayers, getPracticeSession, getPracticeSessions, getRsvpBreakdownByPlayer, getRsvpSummaries, getRsvps, getTeam, getTeams, listRideOffersForEvent, submitRsvpForPlayer, updatePracticeAttendance, getDocs } from './adapters/legacyScheduleDb';
 import { getNativeAuthIdToken } from './authService';
 import { fetchAndParseCalendar } from './adapters/legacyScheduleHelpers';
-import { getCachedAppData } from './appDataCache';
+import { getCachedAppData, loadCachedAppData } from './appDataCache';
 import { loadProfileDocument } from './profileService';
-import { buildPlayerScoringLiveEvent, claimOfficialAssignmentItem, createScheduledPracticeForApp, flushPendingLivePublishOperations, loadOfficialAssignments, loadParentSchedule, loadParentScheduleEventDetail, loadScheduledPracticeSeriesForEdit, loadStaffPracticeAttendance, loadStaffScheduleRsvpBreakdown, publishLiveScoreUpdateEvent, recordPlayerGameStat, recordPlayerScoringStat, releaseParentScheduleAssignmentClaim, resolveLiveGameClockSnapshot, resolveParentGameRoute, respondToOfficialAssignmentItem, revertScheduledPracticeOccurrenceForApp, saveScheduledGameLineupDraftForApp, saveStaffPracticeAttendance, submitStaffScheduleRsvpOverride, undoRecordedPlayerGameStat, updateLiveGameClockState, updateScheduledPracticeForApp } from './scheduleService';
+import { buildPlayerScoringLiveEvent, claimOfficialAssignmentItem, createScheduledPracticeForApp, flushPendingLivePublishOperations, hydrateParentScheduleDetails, loadOfficialAssignments, loadParentSchedule, loadParentScheduleEventDetail, loadScheduledPracticeSeriesForEdit, loadStaffPracticeAttendance, loadStaffScheduleRsvpBreakdown, publishLiveScoreUpdateEvent, recordPlayerGameStat, recordPlayerScoringStat, releaseParentScheduleAssignmentClaim, resolveLiveGameClockSnapshot, resolveParentGameRoute, respondToOfficialAssignmentItem, revertScheduledPracticeOccurrenceForApp, saveScheduledGameLineupDraftForApp, saveStaffPracticeAttendance, submitStaffScheduleRsvpOverride, undoRecordedPlayerGameStat, updateLiveGameClockState, updateScheduledPracticeForApp } from './scheduleService';
 
 it('keeps schedule workflows behind typed legacy adapters', () => {
   const scheduleServiceSource = readFileSync('src/lib/scheduleService.ts', 'utf8');
@@ -483,6 +488,84 @@ describe('parent game route resolution', () => {
     expect(getGames).not.toHaveBeenCalled();
     expect(getPracticeSessions).not.toHaveBeenCalled();
     expect(fetchAndParseCalendar).not.toHaveBeenCalled();
+  });
+});
+
+describe('parent schedule detail hydration', () => {
+  const user = { uid: 'parent-1', email: 'parent@example.com', roles: [] } as any;
+
+  function buildHydrationEvent(id: string, date: Date) {
+    return {
+      id,
+      teamId: 'team-1',
+      teamName: 'Bears',
+      type: 'game',
+      date,
+      location: 'Main Gym',
+      childId: 'player-1',
+      childName: 'Avery',
+      isDbGame: true,
+      isCancelled: false,
+      assignments: [],
+      availabilityPreferences: {},
+      myRsvp: 'not_responded',
+      myRsvpNote: null,
+      rsvpSummary: null,
+      rideshareSummary: null,
+      availabilityNotes: []
+    } as any;
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(loadCachedAppData).mockImplementation((_key: string, loader: () => Promise<unknown>) => loader());
+    vi.mocked(getRsvpSummaries).mockResolvedValue(new Map() as any);
+    vi.mocked(getRsvps).mockResolvedValue([
+      { userId: 'parent-1', playerId: 'player-1', response: 'going', note: 'Will be there.' }
+    ] as any);
+    vi.mocked(listRideOffersForEvent).mockResolvedValue([] as any);
+    vi.mocked(getAssignmentClaims).mockResolvedValue({} as any);
+  });
+
+  it('eagerly hydrates only near-term Home events', async () => {
+    const nearEvent = buildHydrationEvent('near-game', new Date(Date.now() + 24 * 60 * 60 * 1000));
+    const futureEvent = buildHydrationEvent('future-game', new Date(Date.now() + 30 * 24 * 60 * 60 * 1000));
+
+    await hydrateParentScheduleDetails({ children: [], events: [nearEvent, futureEvent] }, user);
+
+    expect(getRsvpSummaries).toHaveBeenCalledWith('team-1', ['near-game']);
+    expect(getRsvps).toHaveBeenCalledWith('team-1', 'near-game');
+    expect(getRsvps).not.toHaveBeenCalledWith('team-1', 'future-game');
+    expect(nearEvent.myRsvp).toBe('going');
+    expect(futureEvent.myRsvp).toBe('not_responded');
+  });
+
+  it('reuses cached per-event hydration details across repeated Home hydration passes', async () => {
+    const cached = new Map<string, Promise<unknown>>();
+    vi.mocked(loadCachedAppData).mockImplementation((key: string, loader: () => Promise<unknown>) => {
+      if (!cached.has(key)) {
+        cached.set(key, loader());
+      }
+      return cached.get(key) as Promise<unknown>;
+    });
+
+    await hydrateParentScheduleDetails({
+      children: [],
+      events: [buildHydrationEvent('game-1', new Date(Date.now() + 24 * 60 * 60 * 1000))]
+    }, user);
+    await hydrateParentScheduleDetails({
+      children: [],
+      events: [buildHydrationEvent('game-1', new Date(Date.now() + 24 * 60 * 60 * 1000))]
+    }, user);
+
+    expect(loadCachedAppData).toHaveBeenCalledWith(
+      'event-details:team-1:game-1',
+      expect.any(Function),
+      expect.objectContaining({ persist: false, ttlMs: 30000 })
+    );
+    expect(getRsvps).toHaveBeenCalledTimes(1);
+    expect(listRideOffersForEvent).toHaveBeenCalledTimes(1);
+    expect(getAssignmentClaims).toHaveBeenCalledTimes(1);
   });
 });
 
