@@ -2720,7 +2720,7 @@ function Composer({
 }) {
   const canSend = Boolean(text.trim() || filePreviews.length) && !sending && !aiThinking;
   const showMentionQuickAction = /(^|\s)@\w*$/i.test(text) && !hasAllPlaysMention(text);
-  const showMentionSuggestions = showMentionQuickAction && (mentionSuggestionsLoading || mentionSuggestions.length > 0);
+  const showMentionSuggestions = hasChatMentionTrigger(text) && !hasAllPlaysMention(text) && (mentionSuggestionsLoading || mentionSuggestions.length > 0);
   const placeholder = teamName.length > 16 ? 'Message' : `Message ${teamName}`;
   const attachmentSummary = filePreviews.length
     ? `${filePreviews.length} attachment${filePreviews.length === 1 ? '' : 's'} ready`

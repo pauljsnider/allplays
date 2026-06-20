@@ -943,6 +943,20 @@ describe('React app messages integration', () => {
         expect(composer.value).toBe('Can @Coach Jamie ');
     });
 
+    it('keeps mention suggestions visible for multi-word full-name queries', async () => {
+        const { container } = await renderMessages('/messages/team-1');
+        const composer = container.querySelector('.chat-composer-textarea');
+
+        await setFieldValue(composer, 'Can @Coach J');
+
+        expect(chatMocks.loadChatRecipientOptions).toHaveBeenCalledWith('team-1');
+        expect(container.textContent).toContain('@Coach Jamie');
+
+        await click(container, '@Coach Jamie');
+
+        expect(composer.value).toBe('Can @Coach Jamie ');
+    });
+
     it('does not recompute existing message html while the composer changes', async () => {
         const chatLogic = await import('../../apps/app/src/lib/chatLogic.ts');
         const formatSpy = vi.spyOn(chatLogic, 'formatChatMessageHtml');
