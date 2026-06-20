@@ -767,6 +767,27 @@ describe('React app search service', () => {
         }]);
     });
 
+    it('serves repeated scoped player searches from the session cache without new reads', async () => {
+        const visibleTeams = new Map([
+            ['team-1', { id: 'team-1', name: 'Bears', sport: 'Basketball', fromAppAccess: true }],
+            ['team-2', { id: 'team-2', name: 'Aces', sport: 'Soccer', fromAppAccess: true }]
+        ]);
+        firebaseMocks.getDocs.mockResolvedValue({
+            docs: [
+                firestorePlayer('teams/team-1/players/player-1', { name: 'Pat Star', number: '9' })
+            ]
+        });
+
+        await searchAppPlayers('smith', visibleTeams, auth.user);
+        const firstCallCount = firebaseMocks.getDocs.mock.calls.length;
+        expect(firstCallCount).toBeGreaterThan(0);
+
+        await searchAppPlayers('smith', visibleTeams, auth.user);
+
+        expect(firebaseMocks.getDocs.mock.calls.length).toBe(firstCallCount);
+        expect(firebaseMocks.collectionGroup).not.toHaveBeenCalled();
+    });
+
     it('reuses cached broader player prefixes for narrower refinements when local filtering is sufficient', async () => {
         const visibleTeams = new Map([
             ['team-1', { id: 'team-1', name: 'Bears', sport: 'Basketball', fromAppAccess: true }]
