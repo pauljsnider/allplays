@@ -435,15 +435,16 @@ export function Profile({ auth }: { auth: AuthState }) {
       } catch (error) {
         console.warn('[profile] Unable to load notification preferences:', error);
         if (!cancelled) {
-          // Do NOT cache emptyPreferences on failure — caching a failed load made
-          // the team look "hydrated" and silently showed empty toggles with no way
-          // to recover (#2042). Track the error so the section renders a Retry.
+          // Fall back to default preferences so the selected team still has editable
+          // toggles and game-day actions after a transient read failure, while
+          // still surfacing the load error and allowing an explicit retry.
           setNotificationPreferences(emptyPreferences);
+          setNotificationPreferencesByTeamId((current) => ({ ...current, [selectedTeamId]: emptyPreferences }));
           setNotificationPreferenceErrorsByTeamId((current) => ({
             ...current,
             [selectedTeamId]: getLoadErrorMessage(error, 'Unable to load notification preferences.')
           }));
-          setLoadedNotificationTeamId((current) => current === selectedTeamId ? '' : current);
+          setLoadedNotificationTeamId(selectedTeamId);
           setNotificationPreferencesErrorTeamId(selectedTeamId);
           setNotificationStatus({ message: 'Alerts unavailable — couldn’t load this team’s preferences.', tone: 'error' });
         }
@@ -1316,7 +1317,8 @@ export function Profile({ auth }: { auth: AuthState }) {
                     <span className="text-xs font-bold text-rose-700">Using safe defaults until saved preferences load.</span>
                   </div>
                 </div>
-              ) : selectedTeamPreferencesLoading ? (
+              ) : null}
+              {selectedTeamPreferencesLoading ? (
                 <div className="mt-3 rounded-2xl border border-gray-200 bg-gray-50 p-3" role="status" aria-live="polite">
                   <div className="flex items-center gap-2 text-sm font-black text-gray-900">
                     <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
