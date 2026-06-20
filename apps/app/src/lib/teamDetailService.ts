@@ -40,6 +40,7 @@ import { buildTeamStaffPermissionsViewModel } from '../../../../js/team-staff-pe
 import { firebaseAuth, getNativeAuthIdToken } from './authService';
 import { buildAppAcceptInviteUrl } from './inviteUrls';
 import { sanitizeErrorForLogging } from './nativeRestLogging';
+import { normalizeOptionalHttpUrl, parseTeamLivestreamInput } from './teamLinks';
 import type { AuthUser } from './types';
 
 const primaryDataTimeoutMs = 5000;
@@ -211,6 +212,8 @@ export type UpdateTeamSettingsForAppInput = {
   sport?: string;
   zip?: string;
   isPublic?: boolean;
+  leagueUrl?: string;
+  streamUrl?: string;
   photoFile?: File | null;
 };
 
@@ -1076,6 +1079,14 @@ export async function updateTeamSettingsForApp(teamId: string, user: AuthUser | 
   const name = cleanString(input?.name);
   if (!name) throw new Error('Team name is required.');
 
+  const rawLeagueUrl = cleanString(input?.leagueUrl);
+  const leagueUrl = rawLeagueUrl ? normalizeOptionalHttpUrl(rawLeagueUrl) : null;
+  if (rawLeagueUrl && !leagueUrl) throw new Error('League link must be a valid http:// or https:// URL.');
+
+  const rawStreamUrl = cleanString(input?.streamUrl);
+  const parsedLivestream = parseTeamLivestreamInput(rawStreamUrl);
+  if (rawStreamUrl && !parsedLivestream) throw new Error('Livestream link must be a valid YouTube or Twitch URL.');
+
   let photoUrl = getFirstUrl(team?.photoUrl, team?.teamPhotoUrl, team?.logoUrl, team?.imageUrl) || null;
   if (input?.photoFile) {
     photoUrl = await uploadTeamPhoto(input.photoFile);
@@ -1087,6 +1098,10 @@ export async function updateTeamSettingsForApp(teamId: string, user: AuthUser | 
     zip: normalizeTeamZip(input?.zip),
     isPublic: input?.isPublic === true,
     photoUrl,
+    leagueUrl,
+    twitchChannel: parsedLivestream?.twitchChannel ?? null,
+    streamEmbedUrl: parsedLivestream?.streamEmbedUrl ?? null,
+    youtubeEmbedUrl: null,
     updatedAt: new Date()
   });
 

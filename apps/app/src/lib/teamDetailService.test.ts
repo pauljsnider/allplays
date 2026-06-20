@@ -81,7 +81,7 @@ vi.mock('./authService', () => authServiceMocks);
 vi.mock('./inviteUrls', () => ({ buildAppAcceptInviteUrl: vi.fn(() => 'https://allplays.ai/app#/accept-invite') }));
 vi.mock('./nativeRestLogging', () => ({ sanitizeErrorForLogging: vi.fn((error) => error) }));
 
-import { __resetTeamDetailBaseSnapshotCacheForTests, createStatTrackerConfigForApp } from './teamDetailService';
+import { __resetTeamDetailBaseSnapshotCacheForTests, createStatTrackerConfigForApp, updateTeamSettingsForApp } from './teamDetailService';
 
 describe('createStatTrackerConfigForApp', () => {
   beforeEach(() => {
@@ -118,5 +118,58 @@ describe('createStatTrackerConfigForApp', () => {
     await expect(savePromise).resolves.toBe('config-1');
     expect(dbMocks.createConfig).toHaveBeenCalledTimes(1);
     expect(globalThis.fetch).not.toHaveBeenCalled();
+  });
+});
+
+describe('updateTeamSettingsForApp', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    dbMocks.getTeam.mockResolvedValue({ id: 'team-1', ownerId: 'owner-1', photoUrl: 'https://img.example.test/team.png' });
+    dbMocks.getPlayers.mockResolvedValue([]);
+    dbMocks.getGames.mockResolvedValue([]);
+    dbMocks.getConfigs.mockResolvedValue([]);
+    __resetTeamDetailBaseSnapshotCacheForTests();
+  });
+
+  it('writes only the normalized link fields when saving team links', async () => {
+    await updateTeamSettingsForApp('team-1', { uid: 'owner-1' } as any, {
+      name: 'Bears',
+      sport: 'Basketball',
+      zip: '66210',
+      isPublic: true,
+      leagueUrl: ' http://league.example.test/standings ',
+      streamUrl: 'https://youtu.be/LJNfHqRRhBI'
+    });
+
+    expect(dbMocks.updateTeam).toHaveBeenCalledWith('team-1', expect.objectContaining({
+      leagueUrl: 'http://league.example.test/standings',
+      twitchChannel: null,
+      streamEmbedUrl: 'https://www.youtube.com/embed/LJNfHqRRhBI?autoplay=1&mute=1',
+      youtubeEmbedUrl: null
+    }));
+  });
+
+  it('clears link fields with null values when a staff user removes them', async () => {
+    await updateTeamSettingsForApp('team-1', { uid: 'owner-1' } as any, {
+      name: 'Bears',
+      leagueUrl: '',
+      streamUrl: ''
+    });
+
+    expect(dbMocks.updateTeam).toHaveBeenCalledWith('team-1', expect.objectContaining({
+      leagueUrl: null,
+      twitchChannel: null,
+      streamEmbedUrl: null,
+      youtubeEmbedUrl: null
+    }));
+  });
+
+  it('rejects invalid livestream links before writing', async () => {
+    await expect(updateTeamSettingsForApp('team-1', { uid: 'owner-1' } as any, {
+      name: 'Bears',
+      streamUrl: 'not a stream url'
+    })).rejects.toThrow('Livestream link must be a valid YouTube or Twitch URL.');
+
+    expect(dbMocks.updateTeam).not.toHaveBeenCalled();
   });
 });
