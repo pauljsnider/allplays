@@ -18,6 +18,10 @@ const inboxServiceMocks = vi.hoisted(() => ({
     markNotificationRead: vi.fn(() => Promise.resolve()),
 }));
 
+const { loadNotificationInboxServiceMock } = vi.hoisted(() => ({
+    loadNotificationInboxServiceMock: vi.fn(() => Promise.resolve(inboxServiceMocks)),
+}));
+
 vi.mock('../../apps/app/src/lib/useShellLayout', () => ({
     useShellLayout: useShellLayoutMock,
 }));
@@ -31,7 +35,9 @@ vi.mock('../../apps/app/src/lib/nativeBackButton', () => ({
     addNativeBackListener: vi.fn(() => ({ remove: vi.fn() })),
 }));
 
-vi.mock('../../apps/app/src/lib/notificationInboxService', () => inboxServiceMocks);
+vi.mock('../../apps/app/src/lib/notificationInboxServiceLoader', () => ({
+    loadNotificationInboxService: loadNotificationInboxServiceMock,
+}));
 
 vi.mock('../../apps/app/src/components/AppSearchDialog', () => ({
     AppSearchDialog: ({ open }: { open: boolean }) =>
@@ -139,6 +145,7 @@ describe('Notification bell in AppShell', () => {
         vi.stubGlobal('cancelAnimationFrame', vi.fn());
         inboxServiceMocks.subscribeToNotificationInbox.mockReturnValue(vi.fn());
         inboxServiceMocks.markNotificationRead.mockResolvedValue(undefined);
+        loadNotificationInboxServiceMock.mockResolvedValue(inboxServiceMocks);
     });
 
     afterEach(() => {
@@ -159,13 +166,15 @@ describe('Notification bell in AppShell', () => {
         expect(bellButton.getAttribute('aria-label')).toBe('Notifications');
     });
 
-    it('subscribes to the notification inbox for the signed-in user', () => {
+    it('subscribes to the notification inbox for the signed-in user', async () => {
         renderShell(true);
-        expect(inboxServiceMocks.subscribeToNotificationInbox).toHaveBeenCalledWith(
-            'user-1',
-            expect.any(Function),
-            expect.any(Function)
-        );
+        await waitFor(() => {
+            expect(inboxServiceMocks.subscribeToNotificationInbox).toHaveBeenCalledWith(
+                'user-1',
+                expect.any(Function),
+                expect.any(Function)
+            );
+        });
     });
 
     it('does not show an unread badge when there are no unread items', () => {
@@ -244,7 +253,9 @@ describe('Notification bell in AppShell', () => {
         fireEvent.click(screen.getByTestId('notification-item-notif-slow'));
 
         expect(screen.queryByRole('dialog', { name: 'Notifications' })).toBeNull();
-        expect(inboxServiceMocks.markNotificationRead).toHaveBeenCalledWith('user-1', 'notif-slow');
+        await waitFor(() => {
+            expect(inboxServiceMocks.markNotificationRead).toHaveBeenCalledWith('user-1', 'notif-slow');
+        });
     });
 
     it('closes the mobile inbox immediately when mark-read rejects', async () => {
@@ -330,6 +341,10 @@ describe('Notification bell in AppShell', () => {
         );
 
         renderShell(true);
+
+        await waitFor(() => {
+            expect(capturedOnError).toBeTypeOf('function');
+        });
 
         // Trigger the error callback before any items arrive
         act(() => {
