@@ -1927,6 +1927,68 @@ describe('React app messages integration', () => {
         await flush();
     });
 
+    it('moves an optimistic selected-member send into the created conversation', async () => {
+        const directSend = createDeferred();
+        const teamConversation = { id: 'team', type: 'team', name: 'Bears Team Chat', participantIds: [], participantRoles: ['team'] };
+        const directConversation = { id: 'direct-conversation', type: 'direct', name: 'Coach Jamie', participantIds: ['user-1', 'coach-1'], participantRoles: [] };
+        let conversationLoadCount = 0;
+        chatMocks.loadChatConversations.mockImplementation(async () => {
+            conversationLoadCount += 1;
+            return conversationLoadCount === 1
+                ? [teamConversation]
+                : [teamConversation, directConversation];
+        });
+        chatMocks.subscribeToTeamChatMessages.mockImplementation((teamId, conversationId, onMessages) => {
+            onMessages([
+                chatMessage({
+                    id: `live-${conversationId}`,
+                    conversationId,
+                    text: conversationId === 'direct-conversation' ? 'Direct thread ready.' : 'Team thread ready.'
+                })
+            ], { id: `cursor-${teamId}-${conversationId}` });
+            return { unsubscribe: vi.fn() };
+        });
+        chatMocks.sendTeamChatMessage.mockImplementationOnce(() => directSend.promise);
+
+        const { container } = await renderMessages('/messages/team-1');
+
+        await click(container, 'Audience: Full team');
+        await click(container, 'Selected members');
+        const coachCheckbox = Array.from(container.querySelectorAll('label')).find((label) => label.textContent.includes('Coach Jamie'))?.querySelector('input[type="checkbox"]');
+        expect(coachCheckbox).toBeTruthy();
+        await act(async () => {
+            coachCheckbox.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+        });
+        await flush();
+        await click(container, 'Done');
+
+        const textarea = container.querySelector('textarea');
+        await setFieldValue(textarea, 'Private follow-up');
+        await click(container, 'Send message');
+
+        expect(container.textContent).toContain('Private follow-up');
+        expect(chatMocks.sendTeamChatMessage).toHaveBeenCalledWith(expect.objectContaining({
+            selectedRecipientTarget: 'individuals',
+            selectedRecipientIds: ['user:coach-1']
+        }));
+
+        await act(async () => {
+            directSend.resolve({ conversationId: 'direct-conversation', createdConversation: directConversation, wantsAi: false });
+        });
+        await flush();
+        await flush();
+
+        expect(chatMocks.subscribeToTeamChatMessages).toHaveBeenLastCalledWith(
+            'team-1',
+            'direct-conversation',
+            expect.any(Function),
+            expect.any(Function)
+        );
+        expect(container.textContent).toContain('Private follow-up');
+        expect(container.textContent).toContain('Direct thread ready.');
+        expect(container.textContent).not.toContain('Team thread ready.');
+    });
+
     it('marks failed optimistic sends retryable with the same client message id', async () => {
         chatMocks.sendTeamChatMessage
             .mockRejectedValueOnce(new Error('Callable down'))

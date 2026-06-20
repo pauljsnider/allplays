@@ -183,9 +183,21 @@ function createOptimisticChatMessage(request: PendingChatSendRequest): Optimisti
   };
 }
 
-function mergeVisibleChatMessages(liveMessages: ChatMessage[], optimisticMessages: OptimisticChatMessage[]) {
+function getMessageConversationId(message: Pick<ChatMessage, 'conversationId'>) {
+  return normalizeConversationId(message.conversationId);
+}
+
+function toStoredMessageConversationId(conversationId: string) {
+  return isDefaultTeamConversation(conversationId) ? null : conversationId;
+}
+
+export function mergeVisibleChatMessages(liveMessages: ChatMessage[], optimisticMessages: OptimisticChatMessage[], selectedConversationId: string) {
+  const activeConversationId = normalizeConversationId(selectedConversationId);
   const liveClientIds = new Set(liveMessages.map((message) => String(message.clientMessageId || message.id || '')).filter(Boolean));
-  const pendingOnly = optimisticMessages.filter((message) => !liveClientIds.has(message.clientMessageId || message.id));
+  const pendingOnly = optimisticMessages.filter((message) => (
+    getMessageConversationId(message) === activeConversationId &&
+    !liveClientIds.has(message.clientMessageId || message.id)
+  ));
   return mergeChatMessageLists(pendingOnly, liveMessages) as ChatMessage[];
 }
 
@@ -761,7 +773,10 @@ function ChatWindow({
     onMarkRead: handleMarkRead
   });
   const sending = pendingSendCount > 0;
-  const visibleMessages = useMemo(() => mergeVisibleChatMessages(messages, optimisticMessages), [messages, optimisticMessages]);
+  const visibleMessages = useMemo(
+    () => mergeVisibleChatMessages(messages, optimisticMessages, effectiveConversationId),
+    [effectiveConversationId, messages, optimisticMessages]
+  );
   const error = teamError || messagesError;
 
   useEffect(() => {
@@ -1222,8 +1237,14 @@ function ChatWindow({
       if (result.createdConversation) {
         await reloadConversations();
       }
-      if (result.conversationId !== effectiveConversationId) {
-        setSelectedConversationId(result.conversationId);
+      const resultConversationId = normalizeConversationId(result.conversationId);
+      setOptimisticMessages((current) => current.map((candidate) => (
+        candidate.clientMessageId === request.clientMessageId
+          ? { ...candidate, conversationId: toStoredMessageConversationId(resultConversationId) }
+          : candidate
+      )));
+      if (resultConversationId !== effectiveConversationId) {
+        setSelectedConversationId(resultConversationId);
       }
 
       if (result.wantsAi) {
