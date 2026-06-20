@@ -192,7 +192,7 @@ describe('Teams empty state', () => {
     expect(await screen.findByRole('heading', { name: '1 team ready' })).toBeInTheDocument();
     expect(screen.getByText('Choose a team')).toBeInTheDocument();
     expect(screen.getByText('Unable to refresh teams. Showing the last loaded teams. Try again.')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Open Fast Falcons' })).toHaveAttribute('aria-pressed', 'true');
+    expect(screen.getByRole('link', { name: 'Open Fast Falcons' })).toHaveAttribute('href', '/teams/team-fast');
     expect(screen.queryByText('Teams could not load')).toBeNull();
     expect(screen.queryByText('No teams available')).toBeNull();
   });
@@ -267,19 +267,15 @@ describe('Teams launcher navigation', () => {
     cleanup();
   });
 
-  it('updates the selected team in-place and keeps the team hub quick link available', async () => {
+  it('opens the team hub when a launcher team is clicked', async () => {
     renderTeamsWithNav();
 
-    const slowSharks = await screen.findByRole('button', { name: 'Open Slow Sharks' });
-    expect(slowSharks).toHaveAttribute('aria-pressed', 'false');
+    const fastFalcons = await screen.findByRole('link', { name: 'Open Fast Falcons' });
+    expect(fastFalcons).toHaveAttribute('href', '/teams/team-fast');
 
-    fireEvent.click(slowSharks);
+    fireEvent.click(fastFalcons);
 
-    await waitFor(() => {
-      expect(screen.getByRole('button', { name: 'Open Slow Sharks' })).toHaveAttribute('aria-pressed', 'true');
-    });
-    expect(screen.queryByTestId('team-hub')).toBeNull();
-    expect(screen.getByRole('link', { name: 'Slow Sharks team hub' })).toHaveAttribute('href', '/teams/team-slow');
+    expect(await screen.findByTestId('team-hub')).toHaveTextContent('Team hub: team-fast');
   });
 });
 
