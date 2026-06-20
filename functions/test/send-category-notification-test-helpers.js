@@ -100,7 +100,8 @@ function buildNotificationTestEnv({
     notificationRecipientDocs = null,
     preferenceDocs = {},
     deviceDocs = {},
-    invalidTokenResponses = []
+    invalidTokenResponses = [],
+    sendEachErrors = []
 } = {}) {
     const dedupWrites = [];
     const inboxWrites = [];
@@ -296,15 +297,29 @@ function buildNotificationTestEnv({
                     return {
                         async get() {
                             counts.parentQueries += 1;
-                            if (field !== 'parentTeamIds' || op !== 'array-contains' || value !== teamId) {
+                            if (op !== 'array-contains') {
                                 return makeQuerySnapshot([]);
                             }
-                            return makeQuerySnapshot(parentUserIds.map((uid) => makeDocSnapshot({
-                                id: uid,
-                                ref: doc(`users/${uid}`),
-                                data: { parentTeamIds: [teamId] },
-                                exists: true
-                            })));
+                            if (field === 'parentTeamIds' && value === teamId) {
+                                return makeQuerySnapshot(parentUserIds.map((uid) => makeDocSnapshot({
+                                    id: uid,
+                                    ref: doc(`users/${uid}`),
+                                    data: { parentTeamIds: [teamId] },
+                                    exists: true
+                                })));
+                            }
+                            if (field === 'parentPlayerKeys') {
+                                const docs = Object.entries(userDocs)
+                                    .filter(([, user]) => Array.isArray(user?.parentPlayerKeys) && user.parentPlayerKeys.includes(value))
+                                    .map(([uid, user]) => makeDocSnapshot({
+                                        id: uid,
+                                        ref: doc(`users/${uid}`),
+                                        data: user,
+                                        exists: true
+                                    }));
+                                return makeQuerySnapshot(docs);
+                            }
+                            return makeQuerySnapshot([]);
                         }
                     };
                 }
@@ -456,6 +471,8 @@ function buildNotificationTestEnv({
                     dedupWrites.push({ path: ref.path, value });
                 },
                 delete(ref) {
+                    counts.deleteCalls += 1;
+                    docStore.delete(ref.path);
                     deletedPaths.push(ref.path);
                 },
                 update() {},
@@ -497,6 +514,10 @@ function buildNotificationTestEnv({
                     data: { ...(message.data || {}) },
                     webLink: message.webpush?.fcmOptions?.link || ''
                 });
+                const sendError = sendEachErrors.length ? sendEachErrors.shift() : null;
+                if (sendError) {
+                    throw sendError;
+                }
                 const responses = message.tokens.map((token, index) => invalidTokenResponses[index] || { success: true, token });
                 const failureCount = responses.filter((response) => response?.success === false).length;
                 return {
