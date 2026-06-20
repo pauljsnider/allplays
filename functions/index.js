@@ -3247,6 +3247,22 @@ function buildNotificationRecipientTokens(devicesSnap) {
     }));
 }
 
+async function cleanupLegacyNotificationRecipientDocs(teamId, uid) {
+  const recipientRef = buildTeamNotificationRecipientRef(teamId, uid);
+  if (!recipientRef) return 0;
+
+  const recipientSnap = await firestore.collection(`teams/${teamId}/notificationRecipients`)
+    .where('uid', '==', String(uid || '').trim())
+    .get();
+  const legacyRefs = recipientSnap.docs
+    .map((docSnap) => docSnap.ref)
+    .filter((ref) => ref && ref.id !== recipientRef.id);
+
+  if (!legacyRefs.length) return 0;
+  await Promise.allSettled(legacyRefs.map((ref) => ref.delete()));
+  return legacyRefs.length;
+}
+
 async function syncNotificationRecipientForTeamUser(teamId, uid, options = {}) {
   const recipientRef = buildTeamNotificationRecipientRef(teamId, uid);
   if (!recipientRef) return null;
@@ -3261,6 +3277,7 @@ async function syncNotificationRecipientForTeamUser(teamId, uid, options = {}) {
   ]);
 
   if (!resolvedUser || !resolvedTeam) {
+    await cleanupLegacyNotificationRecipientDocs(teamId, normalizedUid);
     await recipientRef.delete();
     return null;
   }
@@ -3274,6 +3291,7 @@ async function syncNotificationRecipientForTeamUser(teamId, uid, options = {}) {
     email
   });
   if (!roles.length) {
+    await cleanupLegacyNotificationRecipientDocs(teamId, normalizedUid);
     await recipientRef.delete();
     return null;
   }
@@ -3287,9 +3305,12 @@ async function syncNotificationRecipientForTeamUser(teamId, uid, options = {}) {
     : DEFAULT_NOTIFICATION_PREFERENCES;
   const tokens = buildNotificationRecipientTokens(devicesSnap);
   if (!tokens.length || !hasEnabledNotificationCategory(preferences)) {
+    await cleanupLegacyNotificationRecipientDocs(teamId, normalizedUid);
     await recipientRef.delete();
     return null;
   }
+
+  await cleanupLegacyNotificationRecipientDocs(teamId, normalizedUid);
 
   await recipientRef.set({
     uid: normalizedUid,

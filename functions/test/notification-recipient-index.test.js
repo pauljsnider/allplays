@@ -260,9 +260,15 @@ function loadNotificationRecipientIndexEnv({
                 where(field, op, value) {
                     return {
                         async get() {
-                            const category = String(field || '').replace(/^categories\./, '');
                             const docs = recipientEntries
-                                .filter(({ value: recipient }) => op === '==' && value === true && recipient?.categories?.[category] === true)
+                                .filter(({ value: recipient }) => {
+                                    if (op !== '==') return false;
+                                    if (field === 'uid') {
+                                        return String(recipient?.uid || '').trim() === String(value || '').trim();
+                                    }
+                                    const category = String(field || '').replace(/^categories\./, '');
+                                    return value === true && recipient?.categories?.[category] === true;
+                                })
                                 .map(({ storedPath, value: recipient }) => makeDocSnapshot(doc(storedPath), recipient, true));
                             return makeQuerySnapshot(docs);
                         }
@@ -445,6 +451,15 @@ test('preference writes update the aggregated notificationRecipients doc', async
                 { id: 'device-a', token: 'token-a', platform: 'ios' },
                 { id: 'device-b', token: 'token-b', platform: 'web', userAgent: 'Safari' }
             ]
+        },
+        initialRecipientDocs: {
+            'teams/team-1/notificationRecipients/parent-1__device-a': {
+                uid: 'parent-1',
+                teamId: 'team-1',
+                deviceId: 'device-a',
+                token: 'token-a',
+                categories: { liveChat: true }
+            }
         }
     });
 
@@ -483,6 +498,8 @@ test('preference writes update the aggregated notificationRecipients doc', async
             ],
             updatedAt: { __serverTimestamp: true }
         });
+        assert.equal(env.getDoc('teams/team-1/notificationRecipients/parent-1__device-a'), undefined);
+        assert.ok(env.deletedPaths.includes('teams/team-1/notificationRecipients/parent-1__device-a'));
     } finally {
         env.cleanup();
     }
