@@ -46,6 +46,54 @@ const authMocks = vi.hoisted(() => ({
     getNativeAuthIdToken: vi.fn()
 }));
 
+const firebaseMocks = vi.hoisted(() => {
+    const makeMissingSnapshot = (id = '') => ({
+        id,
+        exists: () => false,
+        data: () => null
+    });
+
+    return {
+        db: {},
+        doc: vi.fn((...parts) => ({
+            path: parts.filter((part) => typeof part === 'string').join('/')
+        })),
+        collection: vi.fn((...parts) => ({
+            path: parts.filter((part) => typeof part === 'string').join('/')
+        })),
+        collectionGroup: vi.fn((_, name) => ({ id: name, path: name })),
+        getDoc: vi.fn(async (ref) => {
+            const pathParts = String(ref?.path || '').split('/').filter(Boolean);
+            const teamIndex = pathParts.indexOf('teams');
+            const playerIndex = pathParts.indexOf('players');
+            if (teamIndex >= 0 && playerIndex >= 0) {
+                const teamId = pathParts[teamIndex + 1];
+                const playerId = pathParts[playerIndex + 1];
+                const players = await dbMocks.getPlayers(teamId, { includeInactive: true });
+                const player = players.find((candidate) => String(candidate?.id || candidate?.playerId || '') === playerId);
+                if (!player) return makeMissingSnapshot(playerId);
+                return {
+                    id: playerId,
+                    exists: () => true,
+                    data: () => player
+                };
+            }
+            return makeMissingSnapshot();
+        }),
+        getDocs: vi.fn(async () => ({ docs: [] })),
+        query: vi.fn((...args) => args),
+        runTransaction: vi.fn(),
+        where: vi.fn((...args) => args),
+        increment: vi.fn((amount) => ({ __op: 'increment', amount })),
+        serverTimestamp: vi.fn(() => new Date('2026-05-20T12:00:00Z')),
+        deleteField: vi.fn(() => ({ __op: 'deleteField' })),
+        Timestamp: {
+            fromDate: vi.fn((date) => ({ toDate: () => date })),
+            now: vi.fn(() => ({ toDate: () => new Date('2026-05-20T12:00:00Z') }))
+        }
+    };
+});
+
 const utilsMocks = vi.hoisted(() => ({
     expandRecurrence: vi.fn(() => []),
     extractOpponent: vi.fn((summary) => String(summary || '').replace(/^.*vs\.?\s*/i, '') || 'TBD'),
@@ -60,6 +108,7 @@ const rsvpMocks = vi.hoisted(() => ({
 }));
 
 vi.mock('../../js/db.js', () => dbMocks);
+vi.mock('../../js/firebase.js', () => firebaseMocks);
 vi.mock('../../apps/app/src/lib/profileService.ts', () => profileMocks);
 vi.mock('../../apps/app/src/lib/authService.ts', () => authMocks);
 vi.mock('../../apps/app/src/lib/chatService.ts', () => ({
@@ -173,7 +222,11 @@ beforeEach(() => {
     });
     dbMocks.getGame.mockResolvedValue(null);
     dbMocks.getTeams.mockResolvedValue([]);
-    dbMocks.getPlayers.mockResolvedValue([]);
+    dbMocks.getPlayers.mockResolvedValue([
+        { id: 'player-1', name: 'Pat', active: true },
+        { id: 'player-2', name: 'Sam', active: true },
+        { id: 'player-from-user', name: 'User fallback', active: true }
+    ]);
     dbMocks.getGames.mockResolvedValue([
         {
             id: 'game-1',
