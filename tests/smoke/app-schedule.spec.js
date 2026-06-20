@@ -294,6 +294,11 @@ async function mockScheduleModules(page, options = {}) {
                     return 'imported-practice';
                 }
 
+                export async function createScheduledPracticeForApp(teamId, form, user) {
+                    window.__scheduleCalls.practiceCreates = (window.__scheduleCalls.practiceCreates || []).concat({ teamId, form, userId: user?.uid || null });
+                    return { id: 'practice-created' };
+                }
+
                 export async function loadHomeScoringPlayers() {
                     return [
                         { id: 'player-1', name: 'Pat', number: '7', points: 12 },
