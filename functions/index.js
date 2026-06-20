@@ -3813,6 +3813,11 @@ async function practicePacketAssignedNotification(beforeData = null, afterData =
 }
 
 function buildNotificationLink({ category, teamId, gameId, batchId = null, recipientId = null, conversationId = null }) {
+  if (category === 'officiating') {
+    return teamId
+      ? `https://allplays.ai/officials.html?teamId=${encodeURIComponent(teamId)}`
+      : 'https://allplays.ai/officials.html';
+  }
   if (category === 'fees') {
     const params = new URLSearchParams();
     if (teamId) {
@@ -3859,6 +3864,9 @@ function buildNotificationLink({ category, teamId, gameId, batchId = null, recip
 }
 
 function buildNotificationAppRoute({ category, teamId, gameId, eventId, batchId = null, recipientId = null, conversationId = null }) {
+  if (category === 'officiating') {
+    return teamId ? `/officials?teamId=${encodeURIComponent(teamId)}` : '/officials';
+  }
   if (category === 'fees') {
     const params = new URLSearchParams();
     if (teamId) {
@@ -5160,6 +5168,125 @@ async function sendDirectTargetsNotification({
   };
 }
 
+function getOfficiatingPositionLabel(record = {}) {
+  return String(record.position || record.assignmentType || 'Officiating assignment').trim() || 'Officiating assignment';
+}
+
+function getOfficiatingGameLabel(game = {}) {
+  return getEventTitle(game || {}) || 'the event';
+}
+
+function getOfficiatingDateLabel(game = {}) {
+  const date = coerceDate(game.date || game.startAt || game.startTime);
+  if (!date) return '';
+  const timeZone = String(game.timeZone || game.timezone || '').trim() || 'America/Chicago';
+  return formatScheduleUpdateDate(date, timeZone);
+}
+
+function getOfficiatingNotificationCopy(record = {}) {
+  const position = getOfficiatingPositionLabel(record);
+  const game = record.gameReference || {};
+  const gameLabel = getOfficiatingGameLabel(game);
+  const dateLabel = getOfficiatingDateLabel(game);
+  const suffix = dateLabel ? ` on ${dateLabel}` : '';
+  const event = String(record.event || '').trim().toLowerCase();
+
+  if (event === 'rescheduled') {
+    return {
+      title: `Officiating assignment updated: ${position}`,
+      body: `${gameLabel}${suffix} was rescheduled.`
+    };
+  }
+  if (event === 'cancelled' || event === 'canceled') {
+    return {
+      title: `Officiating assignment cancelled: ${position}`,
+      body: `${gameLabel}${suffix} was cancelled.`
+    };
+  }
+  if (event === 'declined') {
+    return {
+      title: `Officiating assignment declined: ${position}`,
+      body: `${gameLabel}${suffix} needs coverage.`
+    };
+  }
+  return {
+    title: `Officiating assignment: ${position}`,
+    body: `${gameLabel}${suffix} is ready for your response.`
+  };
+}
+
+async function resolveOfficiatingRecordRecipientUserIds(record = {}) {
+  const userIds = new Set([
+    record.recipientOfficialUserId,
+    record.officialUserId,
+    record.userId
+  ].map((value) => String(value || '').trim()).filter(Boolean));
+
+  const email = String(record.recipientOfficialEmail || record.officialEmail || '').trim().toLowerCase();
+  if (email) {
+    const emailUserIds = await getUserIdsByEmails([email]);
+    emailUserIds.forEach((uid) => userIds.add(uid));
+  }
+  return Array.from(userIds);
+}
+
+function buildOfficiatingDestination(teamId) {
+  return {
+    link: buildNotificationLink({ category: 'officiating', teamId }),
+    appRoute: buildNotificationAppRoute({ category: 'officiating', teamId })
+  };
+}
+
+async function sendOfficiatingTargetsNotification({ teamId, gameId = null, targets, title, body }) {
+  if (!targets.length) return null;
+  const destination = buildOfficiatingDestination(teamId);
+  return sendDirectTargetsNotification({
+    targets,
+    category: 'officiating',
+    title,
+    body,
+    teamId,
+    gameId,
+    eventId: gameId,
+    linkOverride: destination.link,
+    appRouteOverride: destination.appRoute
+  });
+}
+
+function normalizeOfficiatingSlotForNotification(slot = {}) {
+  const id = String(slot?.id || slot?.slotId || slot?.position || '').trim();
+  const status = String(slot?.status || '').trim().toLowerCase() || 'open';
+  return {
+    id,
+    position: String(slot?.position || slot?.role || 'Official').trim() || 'Official',
+    status,
+    officialUserId: String(slot?.officialUserId || '').trim(),
+    officialEmail: String(slot?.officialEmail || slot?.email || '').trim().toLowerCase(),
+    officialName: String(slot?.officialName || slot?.name || '').trim()
+  };
+}
+
+function isOpenOfficiatingSlotForNotification(slot = {}) {
+  const normalized = normalizeOfficiatingSlotForNotification(slot);
+  return normalized.status === 'open'
+    && !normalized.officialUserId
+    && !normalized.officialEmail
+    && !normalized.officialName;
+}
+
+function getNewOpenOfficiatingSlots(beforeGame = {}, afterGame = {}) {
+  if (afterGame.officiatingSelfAssignmentEnabled !== true) return [];
+  const beforeOpenIds = new Set(
+    (Array.isArray(beforeGame.officiatingSlots) ? beforeGame.officiatingSlots : [])
+      .filter(isOpenOfficiatingSlotForNotification)
+      .map((slot) => normalizeOfficiatingSlotForNotification(slot).id)
+      .filter(Boolean)
+  );
+  return (Array.isArray(afterGame.officiatingSlots) ? afterGame.officiatingSlots : [])
+    .map(normalizeOfficiatingSlotForNotification)
+    .filter((slot) => slot.id && isOpenOfficiatingSlotForNotification(slot) && !beforeOpenIds.has(slot.id));
+}
+
 exports._internal = {
   getTargetsForCategoryUserIds,
   buildTeamMediaNotificationBatchId,
@@ -5180,6 +5307,58 @@ exports._internal = {
 exports.sweepStaleNotificationDeviceTokens = functions.pubsub
   .schedule('every 24 hours')
   .onRun(() => sweepStaleNotificationDeviceTokens());
+
+exports.notifyOfficiatingNotificationCreated = functions.firestore
+  .document('teams/{teamId}/officiatingNotifications/{notificationId}')
+  .onCreate(async (snapshot, context) => {
+    const record = snapshot.data() || {};
+    if (record.type && record.type !== 'officiating_assignment') return null;
+
+    const { teamId } = context.params;
+    const recipientUserIds = await resolveOfficiatingRecordRecipientUserIds(record);
+    if (!recipientUserIds.length) return null;
+
+    const actorUid = String(record.actorUserId || record.actor?.userId || '').trim() || null;
+    const targets = await getTargetsForCategoryUserIds(teamId, 'officiating', recipientUserIds, actorUid);
+    if (!targets.length) return null;
+
+    const copy = getOfficiatingNotificationCopy(record);
+    return sendOfficiatingTargetsNotification({
+      teamId,
+      gameId: record.gameId || record.gameReference?.gameId || null,
+      targets,
+      title: copy.title,
+      body: copy.body
+    });
+  });
+
+exports.notifyOpenOfficiatingSlots = functions.firestore
+  .document('teams/{teamId}/games/{gameId}')
+  .onUpdate(async (change, context) => {
+    const beforeGame = change.before.data() || {};
+    const afterGame = change.after.data() || {};
+    const openSlots = getNewOpenOfficiatingSlots(beforeGame, afterGame);
+    if (!openSlots.length) return null;
+
+    const { teamId, gameId } = context.params;
+    const actorUid = String(afterGame.updatedBy || afterGame.createdBy || '').trim() || null;
+    const targets = await getTargetsForCategory(teamId, 'officiating', actorUid);
+    if (!targets.length) return null;
+
+    const gameLabel = getOfficiatingGameLabel(afterGame);
+    const dateLabel = getOfficiatingDateLabel(afterGame);
+    const position = openSlots.length === 1
+      ? openSlots[0].position
+      : `${openSlots.length} open assignments`;
+
+    return sendOfficiatingTargetsNotification({
+      teamId,
+      gameId,
+      targets,
+      title: `Open assignment: ${position}`,
+      body: `${gameLabel}${dateLabel ? ` on ${dateLabel}` : ''} needs an official. Claim it before someone else does.`
+    });
+  });
 
 exports.queueTeamMediaNotificationBatch = functions.firestore
   .document('teams/{teamId}/mediaItems/{itemId}')

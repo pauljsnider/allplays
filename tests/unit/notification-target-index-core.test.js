@@ -73,10 +73,11 @@ describe('notification target index core helpers', () => {
         });
     });
 
-    it('keeps access available to parents and staff while preserving staff-only categories', () => {
+    it('keeps access and officiating available to parents and staff', () => {
         expect(notificationAudienceAllowsRoles('access', ['parent'])).toBe(true);
         expect(notificationAudienceAllowsRoles('access', ['staff'])).toBe(true);
-        expect(notificationAudienceAllowsRoles('officiating', ['parent'])).toBe(false);
+        expect(notificationAudienceAllowsRoles('officiating', ['parent'])).toBe(true);
+        expect(notificationAudienceAllowsRoles('officiating', ['staff'])).toBe(true);
         expect(notificationAudienceAllowsRoles('fees', ['parent'])).toBe(true);
     });
 

@@ -190,6 +190,116 @@ test('notifyTeamChatMessageCreated sends mentions and liveChat only to enabled r
     }
 });
 
+test('notifyOfficiatingNotificationCreated mirrors assignment records to the linked official', async () => {
+    const { moduleExports, env, cleanup } = loadNotificationInternals({
+        teamDoc: { ownerId: 'coach-1', adminEmails: [] },
+        indexedTargets: [
+            { uid: 'official-1', deviceId: 'official-device', token: 'official-token', categories: { officiating: true } },
+            { uid: 'other-official', deviceId: 'other-device', token: 'other-token', categories: { officiating: true } }
+        ]
+    });
+
+    try {
+        const ref = env.firestoreState.doc('teams/team-1/officiatingNotifications/notification-1');
+        const snapshot = makeSnapshot(ref, {
+            type: 'officiating_assignment',
+            event: 'assigned',
+            position: 'Center Referee',
+            gameId: 'game-1',
+            gameReference: { gameId: 'game-1', opponent: 'Tigers' },
+            recipientOfficialUserId: 'official-1',
+            actorUserId: 'coach-1'
+        });
+        const context = { params: { teamId: 'team-1', notificationId: 'notification-1' } };
+
+        const result = await moduleExports.notifyOfficiatingNotificationCreated(snapshot, context);
+
+        assert.equal(result?.successCount, 1);
+        assert.equal(env.messagingCalls.length, 1);
+        assert.deepEqual(env.messagingCalls[0].tokens, ['official-token']);
+        assert.equal(env.messagingCalls[0].title, 'Officiating assignment: Center Referee');
+        assert.equal(env.messagingCalls[0].body, 'vs. Tigers is ready for your response.');
+        assert.equal(env.messagingCalls[0].data.category, 'officiating');
+        assert.equal(env.messagingCalls[0].data.appRoute, '/officials?teamId=team-1');
+    } finally {
+        cleanup();
+    }
+});
+
+test('notifyOfficiatingNotificationCreated resolves official recipients by email', async () => {
+    const { moduleExports, env, cleanup } = loadNotificationInternals({
+        teamDoc: { ownerId: 'coach-1', adminEmails: [] },
+        authUsersByEmail: { 'ref@example.com': 'official-2' },
+        indexedTargets: [
+            { uid: 'official-2', deviceId: 'official-device', token: 'official-token', categories: { officiating: true } }
+        ]
+    });
+
+    try {
+        const ref = env.firestoreState.doc('teams/team-1/officiatingNotifications/notification-2');
+        const snapshot = makeSnapshot(ref, {
+            type: 'officiating_assignment',
+            event: 'rescheduled',
+            position: 'Line Judge',
+            gameId: 'game-2',
+            gameReference: { gameId: 'game-2', title: 'Cup semifinal' },
+            recipientOfficialEmail: 'REF@example.com',
+            actorUserId: 'coach-1'
+        });
+        const context = { params: { teamId: 'team-1', notificationId: 'notification-2' } };
+
+        await moduleExports.notifyOfficiatingNotificationCreated(snapshot, context);
+
+        assert.equal(env.messagingCalls.length, 1);
+        assert.deepEqual(env.messagingCalls[0].tokens, ['official-token']);
+        assert.equal(env.messagingCalls[0].title, 'Officiating assignment updated: Line Judge');
+        assert.equal(env.messagingCalls[0].body, 'Cup semifinal was rescheduled.');
+    } finally {
+        cleanup();
+    }
+});
+
+test('notifyOpenOfficiatingSlots sends open-slot pushes only for newly posted slots', async () => {
+    const { moduleExports, env, cleanup } = loadNotificationInternals({
+        teamDoc: { ownerId: 'coach-1', adminEmails: [] },
+        parentUserIds: ['official-1'],
+        indexedTargets: [
+            { uid: 'official-1', deviceId: 'official-device', token: 'official-token', categories: { officiating: true } }
+        ]
+    });
+
+    try {
+        const ref = env.firestoreState.doc('teams/team-1/games/game-3');
+        const context = { params: { teamId: 'team-1', gameId: 'game-3' } };
+        const change = makeChange(ref, {
+            title: 'Cup final',
+            officiatingSelfAssignmentEnabled: true,
+            officiatingSlots: [
+                { id: 'center', position: 'Center Referee', status: 'open' }
+            ]
+        }, {
+            title: 'Cup final',
+            updatedBy: 'coach-1',
+            officiatingSelfAssignmentEnabled: true,
+            officiatingSlots: [
+                { id: 'center', position: 'Center Referee', status: 'open' },
+                { id: 'line', position: 'Line Judge', status: 'open' },
+                { id: 'claimed', position: 'Assistant Referee', status: 'accepted', officialUserId: 'official-2' }
+            ]
+        });
+
+        const result = await moduleExports.notifyOpenOfficiatingSlots(change, context);
+
+        assert.equal(result?.successCount, 1);
+        assert.equal(env.messagingCalls.length, 1);
+        assert.deepEqual(env.messagingCalls[0].tokens, ['official-token']);
+        assert.equal(env.messagingCalls[0].title, 'Open assignment: Line Judge');
+        assert.equal(env.messagingCalls[0].body, 'Cup final needs an official. Claim it before someone else does.');
+    } finally {
+        cleanup();
+    }
+});
+
 test('notifyFeeAssigned sends fees notifications only to opted-in payer targets', async () => {
     const { moduleExports, env, cleanup } = loadNotificationInternals({
         teamDoc: { ownerId: 'coach-1', adminEmails: [] },
