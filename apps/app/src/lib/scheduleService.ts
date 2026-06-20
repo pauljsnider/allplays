@@ -1875,23 +1875,57 @@ async function loadTeam(teamId: string) {
 
 type ScheduleDateRange = { startDate?: Date | null; endDate?: Date | null };
 
-function isEventDateWithinRange(rawDate: unknown, range: ScheduleDateRange) {
+function isRecurringPracticeMaster(game: any) {
+  return game?.type === 'practice' && game?.isSeriesMaster === true && Boolean(game?.recurrence);
+}
+
+function isEventWithinRange(game: any, range: ScheduleDateRange) {
+  if (isRecurringPracticeMaster(game)) return true;
   if (!range.startDate && !range.endDate) return true;
-  const date = toEventDate(rawDate);
+  const date = toEventDate(game?.date);
   if (Number.isNaN(date.getTime())) return true;
   if (range.startDate && date < range.startDate) return false;
   if (range.endDate && date > range.endDate) return false;
   return true;
 }
 
+function mergeScheduleGames(primaryGames: any[], supplementalGames: any[] = []) {
+  const merged = new Map<string, any>();
+  [...(Array.isArray(primaryGames) ? primaryGames : []), ...(Array.isArray(supplementalGames) ? supplementalGames : [])]
+    .forEach((game) => {
+      const id = compactString(game?.id || game?.gameId);
+      if (!id || merged.has(id)) return;
+      merged.set(id, game);
+    });
+  return [...merged.values()].sort((a, b) => toEventDate(a.date).getTime() - toEventDate(b.date).getTime());
+}
+
+async function loadRecurringPracticeMasters(teamId: string) {
+  const snapshot = await getDocs(query(
+    collection(db, `teams/${teamId}/games`),
+    where('type', '==', 'practice'),
+    where('isSeriesMaster', '==', true)
+  ));
+  return snapshot.docs
+    .map((docSnap: any) => ({ id: docSnap.id, ...(docSnap.data() || {}) }))
+    .filter((game: any) => isRecurringPracticeMaster(game));
+}
+
 async function loadGames(teamId: string, range: ScheduleDateRange = {}) {
   return readWithNativeFallback(
     `games ${teamId}`,
-    () => Promise.resolve(getGames(teamId, range)),
+    async () => {
+      const games = await Promise.resolve(getGames(teamId, range));
+      if (!range.startDate && !range.endDate) {
+        return games;
+      }
+      const recurringMasters = await loadRecurringPracticeMasters(teamId).catch(() => []);
+      return mergeScheduleGames(games, recurringMasters);
+    },
     async () => {
       const docs = await nativeListScheduleEventDocuments(`teams/${encodeURIComponent(teamId)}/games`);
       const windowed = (range.startDate || range.endDate)
-        ? docs.filter((doc) => isEventDateWithinRange(doc.date, range))
+        ? docs.filter((doc) => isEventWithinRange(doc, range))
         : docs;
       return windowed.sort((a, b) => toEventDate(a.date).getTime() - toEventDate(b.date).getTime());
     }
