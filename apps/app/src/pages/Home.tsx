@@ -64,6 +64,7 @@ import {
   type RsvpResponse
 } from '../lib/scheduleLogic';
 import { loadOfficialAssignmentsAccess } from '../lib/scheduleService';
+import { recordFirstMeaningfulRender } from '../lib/uxTiming';
 import { useAsyncOperation } from '../lib/useAsyncOperation';
 import { useRefreshOnResume } from '../lib/useRefreshOnResume';
 import {
@@ -145,6 +146,7 @@ export function Home({ auth }: { auth: AuthState }) {
   const [homeLoadError, setHomeLoadError] = useState<AppServiceError | null>(null);
   const { loading, error, clearError, run: runPrimaryLoad } = useAsyncOperation();
   const { loading: socialLoading, run: runSecondaryLoad } = useAsyncOperation();
+  const hasStartedInitialHomeLoadRef = useRef(false);
 
   const authUserId = auth.user?.uid || null;
   const hasLoadedHomeDetails = Boolean(authUserId) && authUserId === loadedHomeDetailsUserId;
@@ -204,11 +206,25 @@ export function Home({ auth }: { auth: AuthState }) {
   };
 
   useEffect(() => {
+    if (!auth.user?.uid) {
+      hasStartedInitialHomeLoadRef.current = false;
+      return;
+    }
+    hasStartedInitialHomeLoadRef.current = true;
     refreshHome();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [auth.user?.uid]);
 
   useRefreshOnResume(() => { void refreshHome({ force: true }); }, { enabled: Boolean(auth.user?.uid) });
+
+  useEffect(() => {
+    if (!hasStartedInitialHomeLoadRef.current || loading || socialLoading) {
+      return;
+    }
+    if (hasLoadedHomeDetails || homeLoadError) {
+      recordFirstMeaningfulRender('home');
+    }
+  }, [hasLoadedHomeDetails, homeLoadError, loading, socialLoading]);
 
   useEffect(() => {
     let cancelled = false;
