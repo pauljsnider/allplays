@@ -2661,6 +2661,12 @@ function loadCachedEventHydrationDetails(teamId: string, gameId: string) {
   );
 }
 
+// Home mount hydrates RSVP/rideshare/assignment subcollections per event, which
+// fanned out to ~180 reads for a 3-team x 20-event parent (#2033). Hydration is
+// bounded to events inside the look-ahead/look-behind window (the only ones whose
+// affordances render up front); the rest hydrate on demand when opened. Each
+// event's details are also cached (loadCachedEventHydrationDetails) so Home ->
+// Schedule -> detail doesn't repeat the same subcollection reads.
 export async function hydrateParentScheduleDetails(schedule: ParentScheduleLoadResult, user: AuthUser | null): Promise<ParentScheduleLoadResult> {
   if (!user?.uid || !schedule.events.length) {
     return schedule;
