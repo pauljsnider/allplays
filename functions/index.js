@@ -5922,6 +5922,91 @@ function formatMoneyFromCents(amountCents, currency = 'USD') {
   }
 }
 
+function resolveFeeRecipientPlayerId(teamId, recipient = {}) {
+  const explicitPlayerId = String(recipient.playerId || recipient.childId || '').trim();
+  if (explicitPlayerId) return explicitPlayerId;
+
+  const playerKey = String(recipient.playerKey || '').trim();
+  const prefix = `${String(teamId || recipient.teamId || '').trim()}::`;
+  if (prefix.length > 2 && playerKey.startsWith(prefix)) {
+    return playerKey.slice(prefix.length).trim();
+  }
+  return '';
+}
+
+function formatFeeAssignmentDueDate(value) {
+  const dueDate = coerceDate(value);
+  if (!dueDate) return '';
+  return new Intl.DateTimeFormat('en-US', {
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric'
+  }).format(dueDate);
+}
+
+function buildFeeAssignmentNotificationBody(recipient = {}, amountDisplay = '') {
+  const dueDateDisplay = formatFeeAssignmentDueDate(recipient.dueDate || recipient.dueAt || recipient.deadline);
+  const parts = [];
+  if (amountDisplay) {
+    parts.push(`${amountDisplay} has been assigned`);
+  } else {
+    parts.push('A new team fee has been assigned');
+  }
+  if (dueDateDisplay) {
+    parts.push(`due ${dueDateDisplay}`);
+  }
+  return `${parts.join(', ')}.`;
+}
+
+async function resolveFeeAssignmentPayerUserIds(teamId, recipient = {}) {
+  const playerId = resolveFeeRecipientPlayerId(teamId, recipient);
+  const playerRef = playerId ? firestore.doc(`teams/${teamId}/players/${playerId}`) : null;
+  const [playerSnap, privateProfileSnap] = playerRef
+    ? await Promise.all([
+      playerRef.get(),
+      playerRef.collection('private').doc('profile').get()
+    ])
+    : [null, null];
+  const playerData = playerSnap?.exists ? { id: playerSnap.id, ...(playerSnap.data() || {}) } : {};
+  const privateProfileData = privateProfileSnap?.exists ? (privateProfileSnap.data() || {}) : {};
+  const userIds = new Set(getTeamFeeRecipientTargetUserIds({
+    ...recipient,
+    playerId: playerId || recipient.playerId || recipient.childId
+  }, playerData, privateProfileData));
+  const playerKey = getFeeReminderPlayerKey({
+    ...recipient,
+    playerId: playerId || recipient.playerId || recipient.childId
+  }, teamId);
+  if (playerKey) {
+    const parentSnap = await firestore.collection('users')
+      .where('parentPlayerKeys', 'array-contains', playerKey)
+      .get();
+    parentSnap.docs
+      .map((docSnap) => String(docSnap.id || '').trim())
+      .filter(Boolean)
+      .forEach((uid) => userIds.add(uid));
+  }
+  return Array.from(userIds);
+}
+
+async function claimFeeAssignmentNotificationUser({ teamId, batchId, recipientId, uid }) {
+  const normalizedUid = String(uid || '').trim();
+  if (!teamId || !batchId || !normalizedUid) return false;
+  const claimRef = firestore.doc(`teams/${teamId}/feeBatches/${batchId}/assignmentNotificationClaims/${normalizedUid}`);
+  return firestore.runTransaction(async (transaction) => {
+    const claimSnap = await transaction.get(claimRef);
+    if (claimSnap.exists) return false;
+    transaction.set(claimRef, {
+      uid: normalizedUid,
+      teamId,
+      batchId,
+      firstRecipientId: recipientId || null,
+      createdAt: admin.firestore.FieldValue.serverTimestamp()
+    });
+    return true;
+  });
+}
+
 function getFeePaymentAmountCents(before = {}, after = {}) {
   const explicitAmount = Number(
     after.stripePaymentAmountCents
@@ -6878,36 +6963,34 @@ exports.notifyFeeAssigned = functions.firestore
       return null;
     }
 
-    const { teamId } = context.params;
-    const playerId = String(data.playerId || '').trim();
-    const playerRef = playerId ? firestore.doc(`teams/${teamId}/players/${playerId}`) : null;
-    const playerSnap = playerRef ? await playerRef.get() : null;
-    const playerData = playerSnap?.exists ? { id: playerSnap.id, ...(playerSnap.data() || {}) } : {};
-    let privateProfileData = {};
-    if (playerRef) {
-      const privateProfileSnap = await playerRef.collection('private').doc('profile').get();
-      privateProfileData = privateProfileSnap.exists ? (privateProfileSnap.data() || {}) : {};
-    }
-
-    const payerUserIds = getTeamFeeRecipientTargetUserIds(data, playerData, privateProfileData);
+    const { teamId, batchId, recipientId } = context.params;
+    const payerUserIds = await resolveFeeAssignmentPayerUserIds(teamId, data);
     if (!payerUserIds.length) return null;
 
-    const payerTargets = (await getTargetsForCategory(teamId, 'fees', null))
-      .filter((target) => payerUserIds.includes(target.uid));
+    const payerTargets = await getTargetsForCategoryUserIds(teamId, 'fees', payerUserIds, null);
     if (!payerTargets.length) return null;
 
+    const targetUserIds = Array.from(new Set(payerTargets.map((target) => String(target.uid || '').trim()).filter(Boolean)));
+    const claimResults = await Promise.all(targetUserIds.map(async (uid) => ({
+      uid,
+      claimed: await claimFeeAssignmentNotificationUser({ teamId, batchId, recipientId, uid })
+    })));
+    const claimedUserIds = new Set(claimResults.filter((result) => result.claimed).map((result) => result.uid));
+    if (!claimedUserIds.size) return null;
+    const claimedTargets = payerTargets.filter((target) => claimedUserIds.has(target.uid));
+
     const title = String(data.feeTitle || data.title || 'Team fee').trim();
-    const amountCents = Number(data.amountCents || data.feeAmountCents || 0);
+    const amountCents = getTeamFeeBalanceCents(data) || Number(data.amountCents || data.feeAmountCents || 0);
     const amountDisplay = amountCents > 0 ? ` (${formatMoneyFromCents(amountCents, data.currency || 'USD')})` : '';
 
-    await sendDirectTargetsNotification({
-      targets: payerTargets,
+    return sendDirectTargetsNotification({
+      targets: claimedTargets,
       category: 'fees',
       title: `New fee assigned: ${title}${amountDisplay}`,
-      body: 'A new team fee has been assigned to your account.',
+      body: buildFeeAssignmentNotificationBody(data, amountDisplay ? amountDisplay.slice(2, -1) : ''),
       teamId,
+      batchId
     });
-    return null;
   });
 
 exports.notifyPracticePacketCompleted = functions.firestore

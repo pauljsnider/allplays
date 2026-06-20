@@ -296,15 +296,29 @@ function buildNotificationTestEnv({
                     return {
                         async get() {
                             counts.parentQueries += 1;
-                            if (field !== 'parentTeamIds' || op !== 'array-contains' || value !== teamId) {
+                            if (op !== 'array-contains') {
                                 return makeQuerySnapshot([]);
                             }
-                            return makeQuerySnapshot(parentUserIds.map((uid) => makeDocSnapshot({
-                                id: uid,
-                                ref: doc(`users/${uid}`),
-                                data: { parentTeamIds: [teamId] },
-                                exists: true
-                            })));
+                            if (field === 'parentTeamIds' && value === teamId) {
+                                return makeQuerySnapshot(parentUserIds.map((uid) => makeDocSnapshot({
+                                    id: uid,
+                                    ref: doc(`users/${uid}`),
+                                    data: { parentTeamIds: [teamId] },
+                                    exists: true
+                                })));
+                            }
+                            if (field === 'parentPlayerKeys') {
+                                const docs = Object.entries(userDocs)
+                                    .filter(([, user]) => Array.isArray(user?.parentPlayerKeys) && user.parentPlayerKeys.includes(value))
+                                    .map(([uid, user]) => makeDocSnapshot({
+                                        id: uid,
+                                        ref: doc(`users/${uid}`),
+                                        data: user,
+                                        exists: true
+                                    }));
+                                return makeQuerySnapshot(docs);
+                            }
+                            return makeQuerySnapshot([]);
                         }
                     };
                 }

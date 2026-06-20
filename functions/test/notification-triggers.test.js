@@ -210,17 +210,116 @@ test('notifyFeeAssigned sends fees notifications only to opted-in payer targets'
         const snapshot = makeSnapshot(ref, {
             playerId: 'player-1',
             feeTitle: 'Tournament dues',
-            amountCents: 4500
+            amountCents: 4500,
+            dueDate: '2026-07-01T12:00:00.000Z'
         });
         const context = { params: { teamId: 'team-1', batchId: 'batch-1', recipientId: 'recipient-1' } };
 
         const result = await moduleExports.notifyFeeAssigned(snapshot, context);
 
-        assert.equal(result, null);
+        assert.equal(result?.successCount, 1);
         assert.equal(env.messagingCalls.length, 1);
+        assert.equal(env.messagingCalls[0].title, 'New fee assigned: Tournament dues ($45.00)');
+        assert.equal(env.messagingCalls[0].body, '$45.00 has been assigned, due Jul 1, 2026.');
         assert.equal(env.messagingCalls[0].data.category, 'fees');
+        assert.equal(env.messagingCalls[0].data.appRoute, '/parent-tools/fees?teamId=team-1&batchId=batch-1');
         assert.equal(env.auditWrites.length, 1);
         assert.equal(env.auditWrites[0].value.category, 'fees');
+    } finally {
+        cleanup();
+    }
+});
+
+test('notifyFeeAssigned resolves app-created child fee recipients through parentPlayerKeys', async () => {
+    const { moduleExports, env, cleanup } = loadNotificationInternals({
+        teamDoc: { ownerId: 'coach-1', adminEmails: [] },
+        userDocs: {
+            'parent-2': { parentPlayerKeys: ['team-1::player-2'] }
+        },
+        indexedTargets: [
+            { uid: 'parent-2', deviceId: 'parent-device', token: 'parent-token', categories: { fees: true } }
+        ]
+    });
+
+    try {
+        const ref = env.firestoreState.doc('teams/team-1/feeBatches/batch-2/feeRecipients/recipient-2');
+        const snapshot = makeSnapshot(ref, {
+            childId: 'player-2',
+            playerKey: 'team-1::player-2',
+            feeTitle: 'Winter dues',
+            balanceDueCents: 8000
+        });
+        const context = { params: { teamId: 'team-1', batchId: 'batch-2', recipientId: 'recipient-2' } };
+
+        const result = await moduleExports.notifyFeeAssigned(snapshot, context);
+
+        assert.equal(result?.successCount, 1);
+        assert.equal(env.messagingCalls.length, 1);
+        assert.deepEqual(env.messagingCalls[0].tokens, ['parent-token']);
+        assert.equal(env.messagingCalls[0].title, 'New fee assigned: Winter dues ($80.00)');
+    } finally {
+        cleanup();
+    }
+});
+
+test('notifyFeeAssigned sends one batch assignment push when a parent has multiple recipients', async () => {
+    const { moduleExports, env, cleanup } = loadNotificationInternals({
+        teamDoc: { ownerId: 'coach-1', adminEmails: [] },
+        userDocs: {
+            'parent-1': { parentPlayerKeys: ['team-1::player-1', 'team-1::player-2'] }
+        },
+        indexedTargets: [
+            { uid: 'parent-1', deviceId: 'parent-device', token: 'parent-token', categories: { fees: true } }
+        ]
+    });
+
+    try {
+        const contextA = { params: { teamId: 'team-1', batchId: 'batch-3', recipientId: 'recipient-a' } };
+        const contextB = { params: { teamId: 'team-1', batchId: 'batch-3', recipientId: 'recipient-b' } };
+
+        const firstResult = await moduleExports.notifyFeeAssigned(makeSnapshot(
+            env.firestoreState.doc('teams/team-1/feeBatches/batch-3/feeRecipients/recipient-a'),
+            { playerKey: 'team-1::player-1', feeTitle: 'Spring dues', amountCents: 2500 }
+        ), contextA);
+        const secondResult = await moduleExports.notifyFeeAssigned(makeSnapshot(
+            env.firestoreState.doc('teams/team-1/feeBatches/batch-3/feeRecipients/recipient-b'),
+            { playerKey: 'team-1::player-2', feeTitle: 'Spring dues', amountCents: 2500 }
+        ), contextB);
+
+        assert.equal(firstResult?.successCount, 1);
+        assert.equal(secondResult, null);
+        assert.equal(env.messagingCalls.length, 1);
+        assert.deepEqual(env.messagingCalls[0].tokens, ['parent-token']);
+    } finally {
+        cleanup();
+    }
+});
+
+test('notifyFeeAssigned stays silent when the payer disabled fee notifications', async () => {
+    const { moduleExports, env, cleanup } = loadNotificationInternals({
+        teamDoc: { ownerId: 'coach-1', adminEmails: [] },
+        userDocs: {
+            'parent-3': { parentPlayerKeys: ['team-1::player-3'] }
+        },
+        indexedTargets: [
+            { uid: 'parent-3', deviceId: 'parent-device', token: 'parent-token', categories: { fees: false } }
+        ]
+    });
+
+    try {
+        const ref = env.firestoreState.doc('teams/team-1/feeBatches/batch-4/feeRecipients/recipient-4');
+        const snapshot = makeSnapshot(ref, {
+            playerKey: 'team-1::player-3',
+            feeTitle: 'Silent dues',
+            amountCents: 2500
+        });
+        const context = { params: { teamId: 'team-1', batchId: 'batch-4', recipientId: 'recipient-4' } };
+
+        const result = await moduleExports.notifyFeeAssigned(snapshot, context);
+
+        assert.equal(result, null);
+        assert.equal(env.messagingCalls.length, 0);
+        assert.equal(env.auditWrites.length, 0);
     } finally {
         cleanup();
     }
