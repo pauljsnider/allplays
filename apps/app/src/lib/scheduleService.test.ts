@@ -890,6 +890,29 @@ describe('live score publishing', () => {
     await expect(publishLiveScoreUpdateEvent('team-1', 'game-1', { homeScore: 12, awayScore: 8 }, user)).rejects.toThrow('game is final');
     expect(mocks.transactionSet).not.toHaveBeenCalled();
   });
+
+  it('rejects live score broadcasts for games whose scheduled date is long past (#2022)', async () => {
+    mocks.transactionGet.mockReset();
+    const fiveDaysAgo = new Date(Date.now() - 5 * 24 * 60 * 60 * 1000);
+    mocks.transactionGet.mockResolvedValueOnce({
+      exists: () => true,
+      data: () => ({ id: 'game-1', status: 'scheduled', liveStatus: 'scheduled', date: fiveDaysAgo })
+    });
+
+    await expect(publishLiveScoreUpdateEvent('team-1', 'game-1', { homeScore: 12, awayScore: 8 }, user)).rejects.toThrow('past games');
+    expect(mocks.transactionSet).not.toHaveBeenCalled();
+  });
+
+  it('allows live score broadcasts for a game scheduled today', async () => {
+    mocks.transactionGet.mockReset();
+    mocks.transactionGet.mockResolvedValue({
+      exists: () => true,
+      data: () => ({ id: 'game-1', status: 'scheduled', liveStatus: 'scheduled', date: new Date(), liveHasData: false, period: 'Q1' })
+    });
+
+    await expect(publishLiveScoreUpdateEvent('team-1', 'game-1', { homeScore: 5, awayScore: 3 }, user)).resolves.toBeDefined();
+    expect(mocks.transactionSet).toHaveBeenCalled();
+  });
 });
 
 describe('native live publishing fallbacks', () => {

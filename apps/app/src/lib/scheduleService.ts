@@ -3236,9 +3236,21 @@ function isFinalLiveTrackingStatus(value: unknown) {
   return normalized === 'completed' || normalized === 'final';
 }
 
+// Games are only ever live for a few hours; reject live publishing once a game's
+// scheduled date is well past so a stray late score update can't flip a stale game
+// to liveStatus: 'live' and leave it stuck there (#2022). Finalizing still happens
+// through Game Wrapup (completeGameWrapupForApp writes liveStatus: 'completed').
+const liveTrackingMaxStalenessMs = 3 * 24 * 60 * 60 * 1000;
+
 function assertGameAllowsLivePublishing(game: Record<string, any> | null | undefined) {
   if (isFinalLiveTrackingStatus(game?.status) || isFinalLiveTrackingStatus(game?.liveStatus)) {
     throw new Error('Live play-by-play is unavailable after the game is final.');
+  }
+  if (game?.date) {
+    const scheduledDate = toEventDate(game.date);
+    if (!Number.isNaN(scheduledDate.getTime()) && Date.now() - scheduledDate.getTime() > liveTrackingMaxStalenessMs) {
+      throw new Error('Live play-by-play is unavailable for past games. Use Game Wrapup to set the final score.');
+    }
   }
 }
 
