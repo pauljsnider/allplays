@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import { useEffect, useRef } from 'react';
 import { useLocation, useNavigationType } from 'react-router-dom';
 
 const scrollPositions = new Map<string, number>();
@@ -7,8 +7,18 @@ export function ScrollRestoration() {
   const location = useLocation();
   const navigationType = useNavigationType();
   const scrollKey = getScrollKey(location);
+  const previousPathnameRef = useRef<string | null>(null);
 
   useEffect(() => {
+    const previousPathname = previousPathnameRef.current;
+    previousPathnameRef.current = location.pathname;
+
+    if (navigationType === 'REPLACE' && previousPathname === location.pathname) {
+      return () => {
+        scrollPositions.set(scrollKey, getWindowScrollY());
+      };
+    }
+
     const frame = window.requestAnimationFrame(() => {
       const top = navigationType === 'POP' ? scrollPositions.get(scrollKey) || 0 : 0;
       restoreWindowScroll(top);
@@ -18,7 +28,7 @@ export function ScrollRestoration() {
       window.cancelAnimationFrame(frame);
       scrollPositions.set(scrollKey, getWindowScrollY());
     };
-  }, [navigationType, scrollKey]);
+  }, [location.pathname, navigationType, scrollKey]);
 
   return null;
 }

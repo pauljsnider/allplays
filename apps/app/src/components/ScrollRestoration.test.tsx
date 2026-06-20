@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
-import { Link, MemoryRouter, Route, Routes, useNavigate } from 'react-router-dom';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { Link, MemoryRouter, Route, Routes, useLocation, useNavigate } from 'react-router-dom';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { clearScrollRestorationForTests, ScrollRestoration } from './ScrollRestoration';
 
 let scrollYValue = 0;
@@ -16,12 +16,24 @@ function BackButton() {
   return <button type="button" onClick={() => navigate(-1)}>Back</button>;
 }
 
+function HomeRoute() {
+  const location = useLocation();
+  const navigate = useNavigate();
+  return (
+    <>
+      <Link to="/detail">Open detail</Link>
+      <button type="button" onClick={() => navigate(`${location.pathname}?panel=filters`, { replace: true })}>Replace filters</button>
+      <span data-testid="current-search">{location.search}</span>
+    </>
+  );
+}
+
 function TestRoutes() {
   return (
     <>
       <ScrollRestoration />
       <Routes>
-        <Route path="/" element={<Link to="/detail">Open detail</Link>} />
+        <Route path="/" element={<HomeRoute />} />
         <Route path="/detail" element={<BackButton />} />
       </Routes>
     </>
@@ -29,6 +41,10 @@ function TestRoutes() {
 }
 
 describe('ScrollRestoration', () => {
+  afterEach(() => {
+    cleanup();
+  });
+
   beforeEach(() => {
     scrollYValue = 0;
     scrollToMock.mockClear();
@@ -67,5 +83,23 @@ describe('ScrollRestoration', () => {
 
     await waitFor(() => expect(screen.getByRole('link', { name: 'Open detail' })).toBeTruthy());
     await waitFor(() => expect(scrollToMock).toHaveBeenLastCalledWith({ top: 420, left: 0, behavior: 'auto' }));
+  });
+
+  it('preserves scroll when replacing query params on the same page', async () => {
+    render(
+      <MemoryRouter initialEntries={['/']}>
+        <TestRoutes />
+      </MemoryRouter>
+    );
+
+    await waitFor(() => expect(scrollToMock).toHaveBeenLastCalledWith({ top: 0, left: 0, behavior: 'auto' }));
+
+    scrollToMock.mockClear();
+    scrollYValue = 360;
+    fireEvent.click(screen.getByRole('button', { name: 'Replace filters' }));
+
+    await waitFor(() => expect(screen.getByTestId('current-search').textContent).toBe('?panel=filters'));
+    expect(scrollYValue).toBe(360);
+    expect(scrollToMock).not.toHaveBeenCalled();
   });
 });
