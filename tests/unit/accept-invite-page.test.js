@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
-import { createInviteProcessor } from '../../js/accept-invite-flow.js';
+import { createInviteProcessor, getInviteDashboardUrl, isInviteAlreadyRedeemedError } from '../../js/accept-invite-flow.js';
 
 const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
 const ACCEPT_INVITE_DB_IMPORT = "import { validateAccessCode, redeemParentInvite, redeemHouseholdInvite, redeemAdminInviteAtomically, updateUserProfile, updateTeam, getTeam, getUserProfile, markAccessCodeAsUsed } from './js/db.js?v=53';";
@@ -112,8 +112,8 @@ const setTimeout = deps.setTimeout;
             'const { validateAccessCode, redeemParentInvite, redeemHouseholdInvite, redeemAdminInviteAtomically, updateUserProfile, updateTeam, getTeam, getUserProfile, markAccessCodeAsUsed } = deps.db;'
         )
         .replace(
-            "import { createInviteProcessor } from './js/accept-invite-flow.js?v=6';",
-            'const { createInviteProcessor } = deps.acceptInviteFlow;'
+            "import { createInviteProcessor, getInviteDashboardUrl, isInviteAlreadyRedeemedError } from './js/accept-invite-flow.js?v=7';",
+            'const { createInviteProcessor, getInviteDashboardUrl, isInviteAlreadyRedeemedError } = deps.acceptInviteFlow;'
         )
         .replace(
             "import { renderHeader, renderFooter } from './js/utils.js?v=8';",
@@ -265,7 +265,9 @@ async function bootAcceptInvite({
                 renderFooter: vi.fn()
             },
             acceptInviteFlow: {
-                createInviteProcessor
+                createInviteProcessor,
+                getInviteDashboardUrl,
+                isInviteAlreadyRedeemedError
             }
         });
         await auth.pendingCheckAuth;
@@ -305,6 +307,21 @@ describe('accept-invite page parent flow', () => {
         expect(elements.get('success-state').classList.contains('hidden')).toBe(false);
         expect(elements.get('success-message').textContent).toContain("#22");
         expect(elements.get('success-message').textContent).toContain('Tigers');
+        expect(window.location.href).toBe('http://example.com/parent-dashboard.html');
+    });
+
+    it('routes an already-redeemed invite link to the dashboard instead of dead-ending (#1808)', async () => {
+        const { elements, window } = await bootAcceptInvite({
+            href: 'http://example.com/accept-invite.html?code=ab12cd34&type=parent',
+            authUser: { uid: 'parent-1', email: 'parent@example.com' },
+            authCallbackCount: 2,
+            dbOverrides: {
+                validateAccessCode: vi.fn().mockResolvedValue({ valid: false, message: 'Code already used' })
+            }
+        });
+
+        expect(elements.get('error-state').classList.contains('hidden')).toBe(true);
+        expect(elements.get('success-state').classList.contains('hidden')).toBe(false);
         expect(window.location.href).toBe('http://example.com/parent-dashboard.html');
     });
 
