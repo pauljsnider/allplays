@@ -1105,14 +1105,22 @@ export async function createStatTrackerConfigForApp(teamId: string, user: AuthUs
   const normalizedConfig = normalizeStatTrackerConfig(input || {});
   normalizedConfig.createdAt = new Date();
 
-  const created = await writeWithNativeFallback(
-    `create stat tracker config ${normalizedTeamId}`,
-    async () => {
-      const id = await createConfig(normalizedTeamId, normalizedConfig);
-      return { id };
-    },
-    async () => nativeCreateDocument(`teams/${encodeURIComponent(normalizedTeamId)}/statTrackerConfigs`, normalizedConfig)
-  );
+  const label = `create stat tracker config ${normalizedTeamId}`;
+  const createPromise = Promise.resolve(createConfig(normalizedTeamId, normalizedConfig));
+
+  let created: { id?: string } | FirestoreDocument | null = null;
+  try {
+    const id = await withTimeout(createPromise, label);
+    created = { id };
+  } catch (error) {
+    if (!isNativeRuntime()) throw error;
+    if (error instanceof Error && error.message === `${label} timed out.`) {
+      created = { id: await createPromise };
+    } else {
+      console.warn(`[team-detail-service] Falling back to REST for ${label}:`, sanitizeErrorForLogging(error));
+      created = await nativeCreateDocument(`teams/${encodeURIComponent(normalizedTeamId)}/statTrackerConfigs`, normalizedConfig);
+    }
+  }
 
   invalidateTeamDetailBaseSnapshotCache(normalizedTeamId);
   return cleanString((created as any)?.id);

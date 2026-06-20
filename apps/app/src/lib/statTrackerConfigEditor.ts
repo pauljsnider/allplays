@@ -160,7 +160,7 @@ export function buildStatTrackerConfigPayload(draft: StatTrackerConfigDraft): St
   return {
     name: String(draft.name || '').trim(),
     baseType: String(draft.baseType || 'Custom').trim() || 'Custom',
-    columns: normalizedColumns.map((column) => column.key.trim() || column.label),
+    columns: normalizedColumns.map((column) => column.label),
     statDefinitions: [
       ...normalizedColumns.map((column) => ({
         ...column.definition,

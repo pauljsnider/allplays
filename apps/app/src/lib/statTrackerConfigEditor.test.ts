@@ -38,7 +38,7 @@ describe('statTrackerConfigEditor', () => {
 
     const payload = buildStatTrackerConfigPayload(draft);
 
-    expect(payload.columns[0]).toBe('PTS');
+    expect(payload.columns[0]).toBe('Points');
     expect(payload.statDefinitions).toEqual(expect.arrayContaining([
       expect.objectContaining({ id: 'pts', label: 'Points', acronym: 'Points' })
     ]));

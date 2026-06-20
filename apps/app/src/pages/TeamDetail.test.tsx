@@ -419,7 +419,7 @@ describe('TeamDetail', () => {
     await waitFor(() => expect(teamDetailServiceMocks.updateStatTrackerConfigForApp).toHaveBeenCalledWith('team-1', 'config-1', auth.user, expect.objectContaining({
       name: 'Soccer Standard',
       baseType: 'Soccer',
-      columns: ['GOALS', 'SHOTS', 'SHOTS_ON_TARGET', 'ASSISTS', 'SAVES'],
+      columns: ['Goals', 'SHOTS', 'SHOTS_ON_TARGET', 'ASSISTS', 'SAVES'],
       statDefinitions: expect.arrayContaining([
         expect.objectContaining({ id: 'goals', label: 'Goals', acronym: 'Goals' })
       ])
