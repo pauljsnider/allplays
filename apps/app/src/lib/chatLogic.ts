@@ -57,6 +57,12 @@ export type ChatFormattedPart = {
   href?: string;
 };
 
+export type ChatMentionSuggestion = {
+  id: string;
+  label: string;
+  detail?: string;
+};
+
 export const chatReactions: Array<{ key: ChatReactionKey; emoji: string; label: string }> = [
   { key: 'thumbs_up', emoji: '👍', label: 'Like' },
   { key: 'heart', emoji: '❤️', label: 'Love' },
@@ -69,6 +75,8 @@ export const chatReactions: Array<{ key: ChatReactionKey; emoji: string; label: 
 export const chatReactionKeys = new Set(chatReactions.map((reaction) => reaction.key));
 
 const aiMentionRegex = /@all\s*plays/ig;
+const chatMentionTriggerRegex = /(^|\s)@([A-Za-z0-9 .'-]{0,40})$/;
+const chatMentionHighlightRegex = /(^|[\s([{"'])@([A-Za-z0-9][A-Za-z0-9.'-]*(?:\s+[A-Za-z0-9][A-Za-z0-9.'-]*){0,2})(?=$|[\s.,!?:;)\]}])/g;
 const urlRegex = /(\bhttps?:\/\/[^\s<]+[^\s<.,;:!?"'\])>]|\bwww\.[^\s<]+[^\s<.,;:!?"'\])>])/gi;
 const allowedChatHtmlTags = new Set(['strong', 'em', 'del', 'code', 'a', 'span']);
 const chatHtmlSanitizeConfig = {
@@ -322,6 +330,65 @@ export function extractAllPlaysQuestion(text: string) {
   return String(text || '').replace(aiMentionRegex, '').trim();
 }
 
+export function getChatMentionQuery(text: string) {
+  const match = String(text || '').match(chatMentionTriggerRegex);
+  if (!match) return null;
+  return String(match[2] || '').trim().toLowerCase();
+}
+
+export function hasChatMentionTrigger(text: string) {
+  return getChatMentionQuery(text) !== null;
+}
+
+export function buildChatMentionSuggestions(
+  recipientOptions: ChatRecipientOption[] = [],
+  text = '',
+  limit = 5
+): ChatMentionSuggestion[] {
+  const query = getChatMentionQuery(text);
+  if (query === null) return [];
+
+  const seen = new Set<string>();
+  const suggestions = recipientOptions.flatMap((option) => {
+    const label = String(option?.name || '').trim();
+    if (!label || isEmailLike(label)) return [];
+    const key = label.toLowerCase();
+    if (seen.has(key)) return [];
+    seen.add(key);
+    return [{
+      id: option.id || key,
+      label,
+      detail: option.detail
+    }];
+  });
+
+  return suggestions
+    .filter((suggestion) => {
+      if (!query) return true;
+      return suggestion.label.toLowerCase().includes(query)
+        || String(suggestion.detail || '').toLowerCase().includes(query);
+    })
+    .sort((a, b) => {
+      const aStarts = a.label.toLowerCase().startsWith(query) ? 0 : 1;
+      const bStarts = b.label.toLowerCase().startsWith(query) ? 0 : 1;
+      if (aStarts !== bStarts) return aStarts - bStarts;
+      return a.label.localeCompare(b.label);
+    })
+    .slice(0, limit);
+}
+
+export function insertChatMention(text: string, mentionLabel: string) {
+  const label = String(mentionLabel || '').replace(/^@+/, '').replace(/\s+/g, ' ').trim();
+  if (!label) return text;
+  const mention = `@${label} `;
+  const source = String(text || '');
+  if (chatMentionTriggerRegex.test(source)) {
+    return source.replace(chatMentionTriggerRegex, (_match, prefix) => `${prefix}${mention}`);
+  }
+  const spacer = source.trim() ? ' ' : '';
+  return `${source}${spacer}${mention}`;
+}
+
 export function getMessageSenderLabel(message: any, currentUserId = '') {
   if (message?.ai === true) return message.aiName || 'ALL PLAYS';
   if (message?.senderId && message.senderId === currentUserId) return 'You';
@@ -420,6 +487,10 @@ export function formatChatMessageHtml(text: string) {
   formatted = formatted.replace(
     /@all\s*plays/gi,
     '<span class="chat-mention">@ALL PLAYS</span>'
+  );
+  formatted = formatted.replace(
+    chatMentionHighlightRegex,
+    (_match, prefix, mentionLabel) => `${prefix}<span class="chat-mention">@${mentionLabel}</span>`
   );
   formatted = formatted.replace(urlRegex, (url) => {
     const href = url.startsWith('www.') ? `https://${url}` : url;
