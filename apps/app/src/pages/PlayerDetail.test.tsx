@@ -234,8 +234,22 @@ describe('PlayerDetail athlete profile season selection', () => {
     fireEvent.click(currentSeason);
     fireEvent.click(screen.getByRole('button', { name: 'Save Athlete Profile' }));
 
-    expect(await screen.findByText('Select at least one linked season to build an athlete profile.')).toBeTruthy();
+    const status = await screen.findByText('Select at least one linked season to build an athlete profile.');
+    expect(status.closest('[role="alert"]')?.getAttribute('aria-live')).toBe('assertive');
     expect(playerServiceMocks.saveParentAthleteProfileDraft).not.toHaveBeenCalled();
+  });
+
+  it('uses descriptive alt text for the player photo', async () => {
+    playerServiceMocks.loadParentPlayerDetail.mockResolvedValue(buildDetailData({
+      player: {
+        ...buildDetailData().player,
+        photoUrl: 'https://cdn.example.test/player.jpg'
+      }
+    }));
+
+    renderPlayerDetail();
+
+    expect(await screen.findByAltText('Sam Player profile photo')).toBeTruthy();
   });
 
   it('preselects saved seasons from older profile shapes without seasonKey', async () => {
