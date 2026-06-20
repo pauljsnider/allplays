@@ -65,7 +65,7 @@ import {
   type RsvpResponse
 } from '../lib/scheduleLogic';
 import { loadOfficialAssignmentsAccess } from '../lib/scheduleService';
-import { recordFirstMeaningfulRender } from '../lib/uxTiming';
+import { recordFirstMeaningfulRender, startScreenMountTimer } from '../lib/uxTiming';
 import { useAsyncOperation } from '../lib/useAsyncOperation';
 import { useRefreshOnResume } from '../lib/useRefreshOnResume';
 import {
@@ -159,6 +159,10 @@ export function Home({ auth }: { auth: AuthState }) {
     clearError();
     setHomeLoadError(null);
     setSocialStatus(null);
+    const timer = startScreenMountTimer('home', {
+      force,
+      hasExistingHome
+    });
     return runPrimaryLoad(
       async () => {
         const summary = await loadParentHomeSummaryBootstrap(user, { force });
@@ -169,15 +173,35 @@ export function Home({ auth }: { auth: AuthState }) {
           async () => {
             const secondaryHome = await loadParentHomeWithSecondaryData(user, { force, schedule: summary.schedule });
             setHome(secondaryHome);
-            setSocial(await loadSocialHome(user, secondaryHome));
             setLoadedHomeDetailsUserId(user.uid);
             setHomeLoadError(null);
+            const socialHome = await loadSocialHome(user, secondaryHome);
+            setSocial(socialHome);
+            timer.end({
+              hydrated: true,
+              playerCount: secondaryHome.players.length,
+              teamCount: secondaryHome.teams.length,
+              upcomingEventCount: secondaryHome.upcomingEvents.length,
+              actionItemCount: secondaryHome.actionItems.length,
+              feeCount: secondaryHome.fees.length,
+              socialFeedCount: socialHome.feedItems.length,
+              friendCount: socialHome.friends.length
+            });
           },
           {
             rethrow: false,
             getErrorMessage: (secondaryError) => getHomeSecondaryErrorMessage(toAppServiceError(secondaryError, 'Unable to refresh Home details.')),
             onError: (secondaryError) => {
               const appError = toAppServiceError(secondaryError, 'Unable to refresh Home details.');
+              timer.end({
+                hydrated: false,
+                playerCount: summary.home.players.length,
+                teamCount: summary.home.teams.length,
+                upcomingEventCount: summary.home.upcomingEvents.length,
+                actionItemCount: summary.home.actionItems.length,
+                feeCount: summary.home.fees.length,
+                error: appError.message
+              });
               if (!hasExistingHome) {
                 setHomeLoadError(appError);
                 setLoadedHomeDetailsUserId(null);
@@ -195,7 +219,12 @@ export function Home({ auth }: { auth: AuthState }) {
         getErrorMessage: (loadError) => getHomeLoadErrorMessage(toAppServiceError(loadError, 'Unable to load Home.'), hasExistingHome),
         rethrow: false,
         onError: (loadError) => {
-          setHomeLoadError(toAppServiceError(loadError, 'Unable to load Home.'));
+          const appError = toAppServiceError(loadError, 'Unable to load Home.');
+          setHomeLoadError(appError);
+          timer.end({
+            hydrated: false,
+            error: appError.message
+          });
           if (!hasExistingHome) {
             setHome(emptyHome());
             setSocial(emptySocialHome());
