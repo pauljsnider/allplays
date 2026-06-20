@@ -262,9 +262,71 @@ describe('scheduled practice writes', () => {
     });
   });
 
+  it('quotes Firestore override paths when native occurrence updates fall back to REST', async () => {
+    (globalThis as any).window = { location: { protocol: 'capacitor:' }, setTimeout, clearTimeout } as any;
+    (globalThis as any).fetch = vi.fn().mockResolvedValue({ ok: true, json: async () => ({}) } as any);
+    vi.mocked(getNativeAuthIdToken).mockResolvedValue('native-token' as any);
+    vi.mocked(updateOccurrence).mockRejectedValueOnce(new Error('timed out'));
+
+    await updateScheduledPracticeForApp('team-1', {
+      title: 'Special Session',
+      startDate: new Date('2026-06-24T17:15:00.000Z'),
+      endDate: new Date('2026-06-24T18:45:00.000Z'),
+      location: 'Indoor court',
+      notes: 'Film first 15 minutes'
+    }, coachUser, {
+      eventId: 'practice-master__2026-06-24',
+      scope: 'occurrence'
+    });
+
+    expect(globalThis.fetch).toHaveBeenCalledTimes(1);
+    const [requestUrl, requestInit] = vi.mocked(globalThis.fetch).mock.calls[0] as [string, RequestInit];
+    const payload = JSON.parse(String(requestInit.body || '{}'));
+
+    expect(requestUrl).toContain('updateMask.fieldPaths=overrides.%602026-06-24%60.title');
+    expect(requestUrl).toContain('updateMask.fieldPaths=overrides.%602026-06-24%60.startTime');
+    expect(requestInit.method).toBe('PATCH');
+    expect(payload.fields.overrides.mapValue.fields['2026-06-24']).toEqual({
+      mapValue: {
+        fields: {
+          title: { stringValue: 'Special Session' },
+          startTime: { stringValue: '17:15' },
+          endTime: { stringValue: '18:45' },
+          location: { stringValue: 'Indoor court' },
+          notes: { stringValue: 'Film first 15 minutes' }
+        }
+      }
+    });
+    expect(payload.fields.updatedBy).toEqual({ stringValue: 'coach-1' });
+    expect(typeof payload.fields.updatedAt.timestampValue).toBe('string');
+  });
+
   it('reverts occurrence overrides without touching the series master', async () => {
     await revertScheduledPracticeOccurrenceForApp('team-1', 'practice-master__2026-06-24', coachUser);
     expect(clearOccurrenceOverride).toHaveBeenCalledWith('team-1', 'practice-master', '2026-06-24');
+  });
+
+  it('quotes Firestore override paths when native occurrence reverts fall back to REST', async () => {
+    (globalThis as any).window = { location: { protocol: 'capacitor:' }, setTimeout, clearTimeout } as any;
+    (globalThis as any).fetch = vi.fn().mockResolvedValue({ ok: true, json: async () => ({}) } as any);
+    vi.mocked(getNativeAuthIdToken).mockResolvedValue('native-token' as any);
+    vi.mocked(clearOccurrenceOverride).mockRejectedValueOnce(new Error('timed out'));
+
+    await revertScheduledPracticeOccurrenceForApp('team-1', 'practice-master__2026-06-24', coachUser);
+
+    expect(globalThis.fetch).toHaveBeenCalledTimes(1);
+    const [requestUrl, requestInit] = vi.mocked(globalThis.fetch).mock.calls[0] as [string, RequestInit];
+    const payload = JSON.parse(String(requestInit.body || '{}'));
+
+    expect(requestUrl).toContain('updateMask.fieldPaths=overrides.%602026-06-24%60');
+    expect(requestInit.method).toBe('PATCH');
+    expect(payload).toEqual({
+      fields: {
+        updatedAt: { timestampValue: payload.fields.updatedAt.timestampValue },
+        updatedBy: { stringValue: 'coach-1' }
+      }
+    });
+    expect(typeof payload.fields.updatedAt.timestampValue).toBe('string');
   });
 
   it('loads the recurring series master when editing a single occurrence as a series', async () => {
@@ -299,6 +361,33 @@ describe('scheduled practice writes', () => {
           countValue: 8
         }
       }
+    });
+  });
+
+  it('loads recurrence until dates from Firestore Timestamp values', async () => {
+    vi.mocked(getGame).mockResolvedValue({
+      id: 'practice-master',
+      type: 'practice',
+      title: 'Weekly Practice',
+      date: new Date('2026-06-17T18:00:00.000Z'),
+      end: new Date('2026-06-17T19:30:00.000Z'),
+      location: 'Field 2',
+      notes: 'Master note',
+      seriesId: 'series-1',
+      isSeriesMaster: true,
+      recurrence: {
+        freq: 'weekly',
+        interval: 1,
+        byDays: ['WE'],
+        until: { toDate: () => new Date('2026-07-29T00:00:00.000Z') }
+      }
+    } as any);
+
+    const result = await loadScheduledPracticeSeriesForEdit('team-1', 'practice-master__2026-06-24', coachUser);
+
+    expect(result.input.recurrence).toMatchObject({
+      endType: 'until',
+      untilValue: '2026-07-29'
     });
   });
 

@@ -786,16 +786,51 @@ async function nativeListScheduleEventDocuments(path: string) {
 
 const nativeDeleteFieldSentinel = { __deleteField: true };
 
+function escapeFirestoreFieldPathSegment(segment: string) {
+  return /^[A-Za-z_][A-Za-z0-9_]*$/.test(segment)
+    ? segment
+    : `\`${segment.replace(/`/g, '\\`')}\``;
+}
+
+function buildFirestoreUpdateMaskPath(path: string) {
+  return path
+    .split('.')
+    .filter(Boolean)
+    .map((segment) => escapeFirestoreFieldPathSegment(segment))
+    .join('.');
+}
+
+function assignNestedFirestoreValue(target: Record<string, unknown>, path: string, value: unknown) {
+  const segments = path.split('.').filter(Boolean);
+  if (!segments.length) return;
+  let cursor: Record<string, unknown> = target;
+  segments.forEach((segment, index) => {
+    if (index === segments.length - 1) {
+      cursor[segment] = value;
+      return;
+    }
+    const next = cursor[segment];
+    if (!next || typeof next !== 'object' || Array.isArray(next)) {
+      cursor[segment] = {};
+    }
+    cursor = cursor[segment] as Record<string, unknown>;
+  });
+}
+
 async function nativePatchDocument(path: string, data: Record<string, unknown>) {
-  const fields = Object.keys(data).reduce<Record<string, Record<string, unknown>>>((acc, key) => {
+  const nestedData = Object.keys(data).reduce<Record<string, unknown>>((acc, key) => {
     if (data[key] === nativeDeleteFieldSentinel) {
       return acc;
     }
-    acc[key] = encodeFirestoreValue(data[key]);
+    assignNestedFirestoreValue(acc, key, data[key]);
+    return acc;
+  }, {});
+  const fields = Object.keys(nestedData).reduce<Record<string, Record<string, unknown>>>((acc, key) => {
+    acc[key] = encodeFirestoreValue(nestedData[key]);
     return acc;
   }, {});
   const params = new URLSearchParams();
-  Object.keys(data).forEach((key) => params.append('updateMask.fieldPaths', key));
+  Object.keys(data).forEach((key) => params.append('updateMask.fieldPaths', buildFirestoreUpdateMaskPath(key)));
   const suffix = params.toString() ? `?${params.toString()}` : '';
   await nativeFirestoreRequest(`/${path}${suffix}`, {
     method: 'PATCH',
@@ -1510,7 +1545,7 @@ export async function loadScheduledPracticeSeriesForEdit(teamId: string, eventId
     interval: game.recurrence?.interval,
     byDays: Array.isArray(game.recurrence?.byDays) ? game.recurrence.byDays : [],
     endType: game.recurrence?.until ? 'until' : (game.recurrence?.count ? 'count' : 'never'),
-    untilValue: game.recurrence?.until ? new Date(game.recurrence.until).toISOString().slice(0, 10) : '',
+    untilValue: game.recurrence?.until ? (normalizeScheduleDate(game.recurrence.until)?.toISOString().slice(0, 10) || '') : '',
     countValue: Number(game.recurrence?.count || 10)
   });
 
