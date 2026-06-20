@@ -3193,6 +3193,7 @@ export async function updateLiveGameClockState(teamId: string, gameId: string, c
     throw new Error('Sign in before updating the live clock.');
   }
 
+  assertGameAllowsLivePublishing(clock.currentGame);
   const now = new Date();
   const periods = buildLiveGameClockPeriods({ ...(clock.currentGame || {}), liveClockPeriod: clock.liveClockPeriod });
   const requestedPeriod = compactString(clock.liveClockPeriod) || compactString(clock.currentGame?.liveClockPeriod) || compactString(clock.currentGame?.period) || periods[0] || 'H1';
@@ -3204,12 +3205,8 @@ export async function updateLiveGameClockState(teamId: string, gameId: string, c
     liveClockUpdatedAt: now,
     liveClockUpdatedBy: user.uid,
     period,
-    liveStatus: 'live',
-    liveHasData: true
+    ...buildLiveTrackingGamePatch(clock.currentGame, user, now)
   };
-  if (!clock.currentGame?.liveStartedAt) {
-    payload.liveStartedAt = now;
-  }
 
   try {
     await withTimeout(Promise.resolve(updateGame(teamId, gameId, payload)), 'Live clock update');

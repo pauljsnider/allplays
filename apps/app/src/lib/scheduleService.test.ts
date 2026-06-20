@@ -771,6 +771,20 @@ describe('live game clock state', () => {
     }));
   });
 
+  it('rejects live clock updates for games whose scheduled date is long past (#2022)', async () => {
+    await expect(updateLiveGameClockState('team-1', 'game-1', {
+      liveClockMs: 135432,
+      liveClockRunning: true,
+      liveClockPeriod: 'Q2',
+      currentGame: {
+        liveStatus: 'scheduled',
+        date: new Date(Date.now() - 5 * 24 * 60 * 60 * 1000)
+      }
+    }, { uid: 'coach-1', email: 'coach@example.com' } as any)).rejects.toThrow('past games');
+
+    expect(updateGame).not.toHaveBeenCalled();
+  });
+
   it('stamps live score events with the resumed running game clock', async () => {
     (globalThis as any).window = { location: { protocol: 'https:' }, setTimeout, clearTimeout } as any;
     vi.useFakeTimers();
