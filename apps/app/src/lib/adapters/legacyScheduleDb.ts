@@ -79,8 +79,8 @@ export async function getGame(teamId: string, gameId: string) {
     return await Promise.resolve(legacyGetGame(teamId, gameId));
 }
 
-export async function getGames(teamId: string) {
-    return await Promise.resolve(legacyGetGames(teamId));
+export async function getGames(teamId: string, options?: { startDate?: Date | null; endDate?: Date | null }) {
+    return await Promise.resolve(legacyGetGames(teamId, options));
 }
 
 export async function getPracticePacketCompletions(teamId: string, sessionId: string) {
@@ -95,8 +95,8 @@ export async function getPracticeSessionByEvent(teamId: string, eventId: string)
     return await Promise.resolve(legacyGetPracticeSessionByEvent(teamId, eventId));
 }
 
-export async function getPracticeSessions(teamId: string) {
-    return await Promise.resolve(legacyGetPracticeSessions(teamId));
+export async function getPracticeSessions(teamId: string, options?: { startDate?: Date | null; endDate?: Date | null }) {
+    return await Promise.resolve(legacyGetPracticeSessions(teamId, options));
 }
 
 export async function getPlayers(teamId: string, options?: { includeInactive?: boolean }) {

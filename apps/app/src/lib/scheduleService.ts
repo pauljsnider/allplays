@@ -138,6 +138,7 @@ const parentScheduleTeamConcurrency = 3;
 const scheduleHydrationCacheTtlMs = 30 * 1000;
 const parentHomeHydrationLookAheadMs = 14 * 24 * 60 * 60 * 1000;
 const parentHomeHydrationLookBehindMs = 12 * 60 * 60 * 1000;
+const scheduleDefaultLookbackMs = 7 * 24 * 60 * 60 * 1000;
 const logger = createLogger('schedule-service');
 
 function logScheduleWarning(message: string, operation: string, error: unknown, context: Record<string, unknown> = {}) {
@@ -171,6 +172,11 @@ export type ParentScheduleLoadResult = {
 export type ParentScheduleLoadOptions = {
   hydrateDetails?: boolean;
   expandStaffPlayers?: boolean;
+};
+
+type ScheduleDateWindow = {
+  startDate?: Date | null;
+  endDate?: Date | null;
 };
 
 export type OfficialAssignmentsAccess = {
@@ -755,6 +761,62 @@ async function nativeListCollection(path: string) {
     .filter(Boolean) as FirestoreDocument[];
 }
 
+function buildDateWindowFilter(window: ScheduleDateWindow = {}) {
+  const filters = [];
+  if (window.startDate instanceof Date && !Number.isNaN(window.startDate.getTime())) {
+    filters.push({
+      fieldFilter: {
+        field: { fieldPath: 'date' },
+        op: 'GREATER_THAN_OR_EQUAL',
+        value: encodeFirestoreValue(window.startDate)
+      }
+    });
+  }
+  if (window.endDate instanceof Date && !Number.isNaN(window.endDate.getTime())) {
+    filters.push({
+      fieldFilter: {
+        field: { fieldPath: 'date' },
+        op: 'LESS_THAN_OR_EQUAL',
+        value: encodeFirestoreValue(window.endDate)
+      }
+    });
+  }
+  if (filters.length === 0) return null;
+  return filters.length === 1
+    ? filters[0]
+    : { compositeFilter: { op: 'AND', filters } };
+}
+
+async function nativeRunCollectionDateQuery(path: string, window: ScheduleDateWindow = {}, direction: 'ASCENDING' | 'DESCENDING' = 'ASCENDING') {
+  const segments = path.split('/').filter(Boolean);
+  const collectionId = segments.pop();
+  const parentPath = segments.join('/');
+  const dateFilter = buildDateWindowFilter(window);
+  if (!collectionId || !parentPath || !dateFilter) return null;
+
+  const payload = await nativeFirestoreRequest(`/${parentPath}:runQuery`, {
+    method: 'POST',
+    body: JSON.stringify({
+      structuredQuery: {
+        from: [{ collectionId }],
+        where: dateFilter,
+        orderBy: [{ field: { fieldPath: 'date' }, direction }]
+      }
+    })
+  });
+  return Array.isArray(payload)
+    ? payload.map((entry) => entry.document as NativeFirestoreDocument).filter(Boolean)
+    : [];
+}
+
+async function nativeListCollectionByDate(path: string, window: ScheduleDateWindow = {}, direction: 'ASCENDING' | 'DESCENDING' = 'ASCENDING') {
+  const documents = await nativeRunCollectionDateQuery(path, window, direction);
+  if (!documents) return nativeListCollection(path);
+  return documents
+    .map((document) => mapFirestoreDocument(document))
+    .filter(Boolean) as FirestoreDocument[];
+}
+
 async function nativeRunQuery(collectionId: string, fieldPath: string, op: 'EQUAL' | 'ARRAY_CONTAINS', value: string) {
   const payload = await nativeFirestoreRequest(':runQuery', {
     method: 'POST',
@@ -789,7 +851,9 @@ async function nativeGetScheduleEventDocument(path: string) {
   }
 }
 
-async function nativeListScheduleEventDocuments(path: string) {
+async function nativeListScheduleEventDocuments(path: string, window: ScheduleDateWindow = {}) {
+  const documents = await nativeRunCollectionDateQuery(path, window);
+  if (documents) return mapScheduleEventDocuments(documents);
   const payload = await nativeFirestoreRequest(`/${path}`);
   return mapScheduleEventDocuments((payload.documents || []) as NativeFirestoreDocument[]);
 }
@@ -1858,6 +1922,12 @@ function getTrackedCalendarEventUidsFromLoadedGames(games: any[] = []) {
     .filter(Boolean);
 }
 
+function getDefaultScheduleDateWindow(now = new Date()): ScheduleDateWindow {
+  return {
+    startDate: new Date(now.getTime() - scheduleDefaultLookbackMs)
+  };
+}
+
 async function loadTeam(teamId: string) {
   const team = await readWithNativeFallback(
     `team ${teamId}`,
@@ -1867,12 +1937,12 @@ async function loadTeam(teamId: string) {
   return isTeamActive(team as Record<string, any> | null) ? team : null;
 }
 
-async function loadGames(teamId: string) {
+async function loadGames(teamId: string, window: ScheduleDateWindow = getDefaultScheduleDateWindow()) {
   return readWithNativeFallback(
     `games ${teamId}`,
-    () => Promise.resolve(getGames(teamId)),
+    () => Promise.resolve(getGames(teamId, window)),
     async () => {
-      const docs = await nativeListScheduleEventDocuments(`teams/${encodeURIComponent(teamId)}/games`);
+      const docs = await nativeListScheduleEventDocuments(`teams/${encodeURIComponent(teamId)}/games`, window);
       return docs.sort((a, b) => toEventDate(a.date).getTime() - toEventDate(b.date).getTime());
     }
   );
@@ -1886,12 +1956,12 @@ async function loadGameById(teamId: string, gameId: string) {
   );
 }
 
-async function loadPracticeSessions(teamId: string) {
+async function loadPracticeSessions(teamId: string, window: ScheduleDateWindow = getDefaultScheduleDateWindow()) {
   return readWithNativeFallback(
     `practice sessions ${teamId}`,
-    () => Promise.resolve(getPracticeSessions(teamId)),
+    () => Promise.resolve(getPracticeSessions(teamId, window)),
     async () => {
-      const docs = await nativeListCollection(`teams/${encodeURIComponent(teamId)}/practiceSessions`);
+      const docs = await nativeListCollectionByDate(`teams/${encodeURIComponent(teamId)}/practiceSessions`, window, 'DESCENDING');
       return docs.sort((a, b) => toEventDate(b.date).getTime() - toEventDate(a.date).getTime());
     }
   );
@@ -2193,10 +2263,11 @@ function createScheduleEvent(input: {
 
 async function buildTeamSchedule(teamId: string, teamChildren: ParentScheduleChild[], user: AuthUser) {
   const events: ParentScheduleEvent[] = [];
+  const scheduleWindow = getDefaultScheduleDateWindow();
   const [team, dbGames, practiceSessions] = await Promise.all([
     loadTeam(teamId),
-    loadGames(teamId),
-    loadPracticeSessions(teamId)
+    loadGames(teamId, scheduleWindow),
+    loadPracticeSessions(teamId, scheduleWindow)
   ]);
   if (!team) return events;
   const trackedUids = getTrackedCalendarEventUidsFromLoadedGames(dbGames || []);

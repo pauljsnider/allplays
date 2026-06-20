@@ -2712,18 +2712,54 @@ export async function denyParentMembershipRequest(teamId, requestId, decisionNot
     return { success: true };
 }
 
+function normalizeDateWindowOptions(options = {}) {
+    const startDate = options?.startDate instanceof Date && !Number.isNaN(options.startDate.getTime())
+        ? options.startDate
+        : null;
+    const endDate = options?.endDate instanceof Date && !Number.isNaN(options.endDate.getTime())
+        ? options.endDate
+        : null;
+    return { startDate, endDate };
+}
+
+function buildDateWindowConstraints(options = {}) {
+    const { startDate, endDate } = normalizeDateWindowOptions(options);
+    const constraints = [];
+    if (startDate) constraints.push(where('date', '>=', Timestamp.fromDate(startDate)));
+    if (endDate) constraints.push(where('date', '<=', Timestamp.fromDate(endDate)));
+    return constraints;
+}
+
+function filterItemsByDateWindow(items = [], options = {}) {
+    const { startDate, endDate } = normalizeDateWindowOptions(options);
+    if (!startDate && !endDate) return items;
+    const startMs = startDate ? startDate.getTime() : Number.NEGATIVE_INFINITY;
+    const endMs = endDate ? endDate.getTime() : Number.POSITIVE_INFINITY;
+    return (Array.isArray(items) ? items : []).filter((item) => {
+        const value = item?.date;
+        const date = value instanceof Date
+            ? value
+            : value && typeof value.toDate === 'function'
+                ? value.toDate()
+                : new Date(value);
+        const time = date?.getTime?.();
+        return Number.isFinite(time) && time >= startMs && time <= endMs;
+    });
+}
+
 // Games
-export async function getGames(teamId) {
+export async function getGames(teamId, options = {}) {
     const gamesRef = getTeamGameCollectionRef(teamId);
     let teamGames = [];
+    const dateConstraints = buildDateWindowConstraints(options);
     try {
-        const q = query(gamesRef, orderBy("date"));
+        const q = query(gamesRef, ...dateConstraints, orderBy("date"));
         const snapshot = await getDocs(q);
         teamGames = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
     } catch (error) {
         // Fallback when indexes are still building or unavailable.
         const snapshot = await getDocs(gamesRef);
-        teamGames = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+        teamGames = filterItemsByDateWindow(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })), options);
     }
 
     let sharedGames = [];
@@ -2733,7 +2769,7 @@ export async function getGames(teamId) {
         console.warn('[getGames] Failed to load shared games for team', teamId, error);
     }
 
-    return mergeGamesForTeam(teamGames, sharedGames, teamId);
+    return filterItemsByDateWindow(mergeGamesForTeam(teamGames, sharedGames, teamId), options);
 }
 
 export async function getAggregatedStatsForGames(teamId, gameIds) {
@@ -6880,9 +6916,11 @@ export async function removeDrillFavorite(teamId, drillId) {
 /**
  * Get all practice sessions for a team
  */
-export async function getPracticeSessions(teamId) {
+export async function getPracticeSessions(teamId, options = {}) {
+    const dateConstraints = buildDateWindowConstraints(options);
     const q = query(
         collection(db, `teams/${teamId}/practiceSessions`),
+        ...dateConstraints,
         orderBy('date', 'desc')
     );
     const snapshot = await getDocs(q);
