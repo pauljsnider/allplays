@@ -26,6 +26,7 @@ import {
   Users,
   type LucideIcon
 } from 'lucide-react';
+import { Modal } from '../components/Modal';
 import { HomePageSkeleton } from '../components/PageSkeletons';
 import { loadParentHomeSummaryBootstrap, loadParentHomeWithSecondaryData } from '../lib/homeService';
 import { toAppServiceError, type AppServiceError } from '../lib/appErrors';
@@ -1513,7 +1514,7 @@ function SocialComposerModal({
   };
 
   return (
-    <div className="fixed inset-0 z-[70] flex items-end justify-center bg-gray-950/45 p-3 sm:items-center" role="dialog" aria-modal="true" aria-label="Create social post">
+    <Modal overlayClassName="z-[70] flex items-end justify-center bg-gray-950/45 p-3 sm:items-center" ariaLabel="Create social post" onClose={onClose}>
       <form className="social-composer-modal app-card w-full max-w-xl overflow-hidden" onSubmit={handleSubmit}>
         <div className="flex items-center justify-between gap-3 border-b border-gray-100 px-4 py-3">
           <div>
@@ -1676,7 +1677,7 @@ function SocialComposerModal({
           </button>
         </div>
       </form>
-    </div>
+    </Modal>
   );
 }
 
