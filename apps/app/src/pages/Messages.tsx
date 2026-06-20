@@ -93,6 +93,7 @@ import { sharePublicUrl } from '../lib/publicActions';
 import { markTeamChatReadAndRefreshBadge, updateAppIconBadge } from '../lib/badgeService';
 import { useShellLayout } from '../lib/useShellLayout';
 import { useRefreshOnResume } from '../lib/useRefreshOnResume';
+import { startScreenMountTimer } from '../lib/uxTiming';
 import type { AuthState } from '../lib/types';
 import { voiceRecognition, type VoiceListenerHandle } from '../lib/voiceService';
 import { useChatSheets } from './messages/hooks/useChatSheets';
@@ -128,12 +129,18 @@ export function Messages({ auth }: { auth: AuthState }) {
   const [query, setQuery] = useState('');
   const [selectedDesktopTeamId, setSelectedDesktopTeamId] = useState<string | undefined>(undefined);
   const shouldLoadInbox = isDesktopWeb || !teamId;
+  const inboxLoadRouteKey = getMessagesInboxLoadRouteKey(shouldLoadInbox, teamId);
   const inboxRequestIdRef = useRef(0);
+  const directThreadMountRecordedTeamIdRef = useRef<string | null>(null);
 
   const refreshInbox = useCallback(async () => {
     if (!auth.user) return;
     const requestId = inboxRequestIdRef.current + 1;
     const previewUpdates = new Map<string, ChatInboxPreviewUpdate>();
+    const timer = startScreenMountTimer('messages', {
+      mode: 'inbox',
+      hasTeamRoute: Boolean(teamId)
+    });
     inboxRequestIdRef.current = requestId;
     setLoading(true);
     setError(null);
@@ -150,31 +157,60 @@ export function Messages({ auth }: { auth: AuthState }) {
       setTeams(mergeInboxTeams(result.teams, previewUpdates));
       const totalUnread = result.teams.reduce((sum, team) => sum + team.unreadCount, 0);
       void updateAppIconBadge(totalUnread);
+      timer.end({
+        teamCount: result.teams.length,
+        unreadCount: totalUnread,
+        deferredPreviewTargetCount: result.teams.length,
+        deferredPreviewUpdateCount: previewUpdates.size
+      });
     } catch (loadError: any) {
       if (inboxRequestIdRef.current !== requestId) return;
-      setError(loadError?.message || 'Unable to load messages.');
+      const message = loadError?.message || 'Unable to load messages.';
+      setError(message);
       setTeams([]);
+      timer.end({
+        teamCount: 0,
+        unreadCount: 0,
+        deferredPreviewTargetCount: 0,
+        deferredPreviewUpdateCount: previewUpdates.size,
+        error: message
+      });
     } finally {
       if (inboxRequestIdRef.current === requestId) {
         setLoading(false);
       }
     }
-  }, [auth.user]);
+  }, [auth.user, teamId]);
 
   useEffect(() => {
     if (!shouldLoadInbox) {
       setLoading(false);
       setError(null);
       setTeams([]);
+      const directThreadTeamId = inboxLoadRouteKey;
+      if (auth.user && shouldRecordDirectThreadMount(directThreadMountRecordedTeamIdRef.current, directThreadTeamId)) {
+        directThreadMountRecordedTeamIdRef.current = directThreadTeamId;
+        const timer = startScreenMountTimer('messages', {
+          mode: 'direct_thread',
+          hasTeamRoute: Boolean(directThreadTeamId)
+        });
+        timer.end({
+          teamCount: 0,
+          unreadCount: 0,
+          deferredPreviewTargetCount: 0,
+          deferredPreviewUpdateCount: 0
+        });
+      }
       return;
     }
+    directThreadMountRecordedTeamIdRef.current = null;
     if (!auth.user) {
       void updateAppIconBadge(0);
       return;
     }
     refreshInbox();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [auth.user?.uid, shouldLoadInbox]);
+  }, [auth.user?.uid, shouldLoadInbox, inboxLoadRouteKey]);
 
   useRefreshOnResume(
     () => {
@@ -328,6 +364,18 @@ function InboxSearch({ query, onChange }: { query: string; onChange: (value: str
       />
     </label>
   );
+}
+
+export function getDirectThreadMountKey(teamId: string | null | undefined) {
+  return String(teamId || '').trim();
+}
+
+export function shouldRecordDirectThreadMount(recordedTeamId: string | null, teamId: string | null | undefined) {
+  return recordedTeamId !== getDirectThreadMountKey(teamId);
+}
+
+export function getMessagesInboxLoadRouteKey(shouldLoadInbox: boolean, teamId: string | null | undefined) {
+  return shouldLoadInbox ? '' : getDirectThreadMountKey(teamId);
 }
 
 function InboxList({
