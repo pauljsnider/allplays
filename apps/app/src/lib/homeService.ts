@@ -21,6 +21,14 @@ const homeSummaryTtlMs = 45 * 1000;
 const homeSecondaryTtlMs = 30 * 1000;
 const teamsSummaryTtlMs = 30 * 1000;
 
+function rethrowIfPermissionError(error: unknown, fallbackMessage: string) {
+  const appError = toAppServiceError(error, fallbackMessage);
+  if (appError.type === 'permission') {
+    throw appError;
+  }
+  return appError;
+}
+
 export async function loadParentHome(user: AuthUser | null): Promise<ParentHomeModel> {
   if (!user?.uid) {
     return buildParentHomeModel({ children: [], events: [], inboxTeams: [], fees: [] });
@@ -110,29 +118,79 @@ export async function loadParentTeamsSummary(user: AuthUser | null, options: { f
 
 export async function loadParentHomeWithSecondaryData(
   user: AuthUser | null,
-  options: { force?: boolean; schedule?: ParentScheduleLoadResult } = {}
+  options: {
+    force?: boolean;
+    schedule?: ParentScheduleLoadResult;
+    onPartial?: (model: ParentHomeModel) => void;
+  } = {}
 ): Promise<ParentHomeModel> {
   if (!user?.uid) {
     return buildParentHomeModel({ children: [], events: [], inboxTeams: [], fees: [] });
   }
 
+  const onPartial = typeof options.onPartial === 'function' ? options.onPartial : null;
   const cacheKey = `home-secondary:${user.uid}`;
   return loadCachedAppData(cacheKey, async () => {
     const schedule = options.schedule || await loadParentScheduleSummary(user, { force: options.force });
-    await hydrateParentScheduleDetails(schedule, user);
-    const [chatInbox, rawFees] = await Promise.all([
-      loadChatInbox(user).catch((error) => {
-        throw toAppServiceError(error, 'Unable to load Home chat.');
+    const { children, events } = schedule;
+    let partialState = {
+      children,
+      events,
+      inboxTeams: [] as ParentHomeInboxTeam[],
+      fees: [] as any[]
+    };
+
+    const emit = (patch: Partial<typeof partialState>) => {
+      partialState = { ...partialState, ...patch };
+      onPartial?.(buildParentHomeModel(partialState));
+    };
+
+    // Stream each secondary slice independently so Home renders schedule cards
+    // immediately and fills in chat badges / fee items / hydrated RSVP states as
+    // each arrives, instead of blocking on all of them before any update (#2037).
+    // A per-slice failure degrades that card rather than gating the whole page.
+    const results = await Promise.allSettled([
+      hydrateParentScheduleDetails(schedule, user).then((hydratedSchedule) => {
+        const nextSchedule = hydratedSchedule || schedule;
+        const patch = {
+          children: Array.isArray(nextSchedule.children) ? nextSchedule.children : children,
+          events: Array.isArray(nextSchedule.events) ? nextSchedule.events : events
+        };
+        emit(patch);
+        return patch;
+      }).catch((error) => {
+        console.warn('[home] Schedule hydration failed:', rethrowIfPermissionError(error, 'Unable to hydrate Home schedule.'));
+        return null;
       }),
-      Promise.resolve(listParentTeamFeeRecipients(user.uid, schedule.children)).catch((error) => {
-        throw toAppServiceError(error, 'Unable to load Home fees.');
+      loadChatInbox(user).then((chatInbox) => {
+        const nextInboxTeams = normalizeInboxTeams(chatInbox.teams || []);
+        emit({ inboxTeams: nextInboxTeams });
+        return nextInboxTeams;
+      }).catch((error) => {
+        console.warn('[home] Chat inbox failed:', rethrowIfPermissionError(error, 'Unable to load Home chat.'));
+        return [];
+      }),
+      Promise.resolve(listParentTeamFeeRecipients(user.uid, children)).then((rawFees) => {
+        const nextFees = (rawFees || []).map((fee: any) => normalizeParentFeeRecord(fee));
+        emit({ fees: nextFees });
+        return nextFees;
+      }).catch((error) => {
+        console.warn('[home] Fees failed:', rethrowIfPermissionError(error, 'Unable to load Home fees.'));
+        return [];
       })
     ]);
+
+    const permissionFailure = results.find((result) => result.status === 'rejected');
+    if (permissionFailure?.status === 'rejected') {
+      throw permissionFailure.reason;
+    }
+
+    const [scheduleResult, chatResult, feesResult] = results;
     return buildParentHomeModel({
-      children: schedule.children,
-      events: schedule.events,
-      inboxTeams: normalizeInboxTeams(chatInbox.teams || []),
-      fees: (rawFees || []).map((fee: any) => normalizeParentFeeRecord(fee))
+      children: scheduleResult.status === 'fulfilled' && scheduleResult.value ? scheduleResult.value.children : partialState.children,
+      events: scheduleResult.status === 'fulfilled' && scheduleResult.value ? scheduleResult.value.events : partialState.events,
+      inboxTeams: chatResult.status === 'fulfilled' ? chatResult.value : partialState.inboxTeams,
+      fees: feesResult.status === 'fulfilled' ? feesResult.value : partialState.fees
     });
   }, { ttlMs: homeSecondaryTtlMs, force: options.force });
 }
