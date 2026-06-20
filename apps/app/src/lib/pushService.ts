@@ -14,6 +14,33 @@ export type PushNotificationPermissionStatus = {
   canOpenSettings: boolean;
 };
 
+export type PushNotificationPrimerContext =
+  | 'profile_device_push'
+  | 'game_day_alerts'
+  | 'messages'
+  | 'team_join'
+  | 'rsvp';
+
+export type PushNotificationPrimerDecision = 'accepted' | 'declined';
+
+export type PushNotificationPrimerState = {
+  context: PushNotificationPrimerContext;
+  hasResponded: boolean;
+  accepted: boolean;
+  declined: boolean;
+  canAskAgain: boolean;
+  decidedAt: string | null;
+};
+
+type PushNotificationPrimerCopy = {
+  title: string;
+  body: string;
+};
+
+type PushNotificationPrimerOptions = {
+  confirm?: (copy: PushNotificationPrimerCopy, state: PushNotificationPrimerState) => boolean | Promise<boolean>;
+};
+
 type PushRegistrationResult = {
   token: string;
   platform: string;
@@ -23,6 +50,7 @@ const nativePushTimeoutMs = 15000;
 const iosNotificationSettingsUrl = 'app-settings:';
 const androidNotificationSettingsUrl = 'intent:#Intent;action=android.settings.APP_NOTIFICATION_SETTINGS;S.extra_app_package=ai.allplays.lite;end';
 const androidAppSettingsUrl = 'app-settings:';
+const pushPrimerStoragePrefix = 'allplays.pushPrimer.';
 export const androidNotificationChannels = [
   {
     id: 'allplays_messages',
@@ -157,6 +185,46 @@ export async function enablePushNotificationsForUser(userId: string): Promise<Pu
   };
 }
 
+export function getPushNotificationPrimerState(context: PushNotificationPrimerContext): PushNotificationPrimerState {
+  const raw = readPushPrimerDecision(context);
+  const accepted = raw?.decision === 'accepted';
+  const declined = raw?.decision === 'declined';
+  return {
+    context,
+    hasResponded: accepted || declined,
+    accepted,
+    declined,
+    canAskAgain: !accepted,
+    decidedAt: raw?.decidedAt || null
+  };
+}
+
+export function recordPushNotificationPrimerDecision(context: PushNotificationPrimerContext, decision: PushNotificationPrimerDecision) {
+  try {
+    getPushPrimerStorage()?.setItem(getPushPrimerStorageKey(context), JSON.stringify({
+      decision,
+      decidedAt: new Date().toISOString()
+    }));
+  } catch {
+    // Primer state is best-effort; permission flow must continue if storage is unavailable.
+  }
+}
+
+export async function runPushNotificationPrimer(
+  context: PushNotificationPrimerContext,
+  options: PushNotificationPrimerOptions = {}
+) {
+  const state = getPushNotificationPrimerState(context);
+  if (state.accepted) {
+    return true;
+  }
+
+  const copy = getPushNotificationPrimerCopy(context);
+  const accepted = await (options.confirm || confirmPushNotificationPrimer)(copy, state);
+  recordPushNotificationPrimerDecision(context, accepted ? 'accepted' : 'declined');
+  return accepted;
+}
+
 export async function getPushNotificationPermissionStatus(): Promise<PushNotificationPermissionStatus> {
   if (!Capacitor.isNativePlatform()) {
     return buildPushPermissionStatus('unsupported', 'web');
@@ -202,6 +270,67 @@ function buildPushPermissionStatus(state: PushNotificationPermissionState, platf
     canPrompt: state === 'prompt',
     canOpenSettings: state === 'blocked'
   };
+}
+
+function getPushNotificationPrimerCopy(context: PushNotificationPrimerContext): PushNotificationPrimerCopy {
+  if (context === 'game_day_alerts') {
+    return {
+      title: 'Turn on game-day notifications?',
+      body: 'ALL PLAYS will ask your device for permission before sending schedule changes, RSVP reminders, and live score updates.'
+    };
+  }
+  if (context === 'messages') {
+    return {
+      title: 'Turn on message notifications?',
+      body: 'ALL PLAYS will ask your device for permission so team chat and mention alerts can reach this device.'
+    };
+  }
+  if (context === 'team_join') {
+    return {
+      title: 'Turn on team notifications?',
+      body: 'ALL PLAYS will ask your device for permission so team updates can reach this device after you join.'
+    };
+  }
+  if (context === 'rsvp') {
+    return {
+      title: 'Turn on RSVP reminders?',
+      body: 'ALL PLAYS will ask your device for permission before sending schedule and RSVP reminders.'
+    };
+  }
+  return {
+    title: 'Turn on notifications?',
+    body: 'ALL PLAYS will ask your device for permission before registering this device for push notifications.'
+  };
+}
+
+function confirmPushNotificationPrimer(copy: PushNotificationPrimerCopy) {
+  if (typeof window === 'undefined' || typeof window.confirm !== 'function') {
+    return true;
+  }
+  return window.confirm(`${copy.title}\n\n${copy.body}`);
+}
+
+function readPushPrimerDecision(context: PushNotificationPrimerContext): { decision?: PushNotificationPrimerDecision; decidedAt?: string } | null {
+  try {
+    const raw = getPushPrimerStorage()?.getItem(getPushPrimerStorageKey(context));
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (parsed?.decision !== 'accepted' && parsed?.decision !== 'declined') return null;
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+function getPushPrimerStorage() {
+  if (typeof window === 'undefined') {
+    return null;
+  }
+  return window.localStorage || null;
+}
+
+function getPushPrimerStorageKey(context: PushNotificationPrimerContext) {
+  return `${pushPrimerStoragePrefix}${context}`;
 }
 
 async function getNativeMessagingToken(): Promise<string> {
