@@ -84,7 +84,7 @@ describe('login page redirect coordination', () => {
             .toBe('accept-invite.html?code=AB12CD34&type=admin');
     });
 
-    it('redeems valid invite links after an explicit login but not auto-redirects', () => {
+    it('redeems valid invite links after an explicit login and auto-redirects for already-authenticated users', () => {
         const { coordinator } = createCoordinator({
             search: '?code=ab12cd34&type=household',
             defaultRedirect: 'parent-dashboard.html'
@@ -94,7 +94,8 @@ describe('login page redirect coordination', () => {
         expect(coordinator.shouldRedeemInviteFromLogin).toBe(true);
         expect(coordinator.getPostAuthRedirect({ uid: 'user-1' }, coordinator.shouldRedeemInviteFromLogin))
             .toBe('accept-invite.html?code=AB12CD34&type=household');
-        expect(coordinator.getAutoRedirectUrl({ uid: 'user-1' })).toBe('parent-dashboard.html');
+        expect(coordinator.getAutoRedirectUrl({ uid: 'user-1' }))
+            .toBe('accept-invite.html?code=AB12CD34&type=household');
     });
 
     it('still supports explicit household invite redemption redirects', () => {
@@ -155,11 +156,12 @@ describe('login page redirect coordination', () => {
         expect(coordinator.getAutoRedirectUrl(user)).toBe('parent-dashboard.html');
     });
 
-    it('sends already-authenticated users who directly open an invite link to their dashboard', () => {
+    it('redeems the invite for already-authenticated users who directly open an invite link', () => {
         const { coordinator } = createCoordinator({ search: '?code=ab12cd34&type=admin', defaultRedirect: 'dashboard.html' });
 
         expect(coordinator.hasRedeemableInviteLink).toBe(true);
-        expect(coordinator.getAutoRedirectUrl({ isAdmin: true })).toBe('dashboard.html');
+        expect(coordinator.getAutoRedirectUrl({ isAdmin: true }))
+            .toBe('accept-invite.html?code=AB12CD34&type=admin');
     });
 });
 

@@ -81,7 +81,7 @@ export function createLoginRedirectCoordinator({
         : '';
     const hasRedeemableInviteLink = Boolean(urlCodeParam) && REDEEMABLE_INVITE_TYPES.has(urlInviteType);
     const shouldRedeemInviteFromLogin = hasRedeemableInviteLink;
-    const shouldRedeemInviteFromAutoRedirect = false;
+    const shouldRedeemInviteFromAutoRedirect = hasRedeemableInviteLink;
     let inviteRedemptionOverride = null;
 
     function getPostAuthRedirect(userWithRoles, shouldRedeemInvite = false) {
