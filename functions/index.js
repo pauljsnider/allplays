@@ -3572,6 +3572,7 @@ function formatPracticePacketDueDate(value) {
   const date = coercePracticePacketDate(value);
   if (!date) return '';
   return date.toLocaleDateString('en-US', {
+    timeZone: 'UTC',
     month: 'short',
     day: 'numeric',
     year: 'numeric'
