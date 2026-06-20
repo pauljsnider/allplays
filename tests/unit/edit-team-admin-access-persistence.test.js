@@ -351,8 +351,8 @@ function extractEditTeamModule() {
 
     return match[1]
         .replace(
-            /import\s+\{\s*createTeam,\s*updateTeam,\s*getTeam,\s*getUserProfile,\s*getUserTeamsWithAccess,\s*getPlayers,\s*copySelectedPlayersForTeamRollover,\s*uploadTeamPhoto,\s*addConfig,\s*getUnreadChatCount,\s*inviteAdmin,\s*addTeamAdminEmail,\s*getAllUsers,\s*getTeamAccessCodes(?:,\s*getConfigs,\s*getGames,\s*updateGame)?(?:,\s*getRegistrationSources)?\s*\}\s+from\s+'\.\/js\/db\.js\?v=\d+';/,
-            'const { createTeam, updateTeam, getTeam, getUserProfile, getUserTeamsWithAccess, getPlayers, copySelectedPlayersForTeamRollover, uploadTeamPhoto, addConfig, getUnreadChatCount, inviteAdmin, addTeamAdminEmail, getAllUsers, getTeamAccessCodes, getConfigs, getGames, updateGame, getRegistrationSources } = deps.db;'
+            /import\s+\{\s*createTeam,\s*updateTeam,\s*getTeam,\s*getUserProfile,\s*getUserTeamsWithAccess,\s*getPlayers,\s*copySelectedPlayersForTeamRollover,\s*uploadTeamPhoto,\s*addConfig,\s*getUnreadChatCount,\s*inviteAdmin,\s*addTeamAdminEmail,\s*getAllUsers,\s*getTeamAccessCodes(?:,\s*getConfigs,\s*getGames,\s*updateGame)?(?:,\s*getRegistrationSources)?(?:,\s*syncRegistrationProvider)?\s*\}\s+from\s+'\.\/js\/db\.js\?v=\d+';/,
+            'const { createTeam, updateTeam, getTeam, getUserProfile, getUserTeamsWithAccess, getPlayers, copySelectedPlayersForTeamRollover, uploadTeamPhoto, addConfig, getUnreadChatCount, inviteAdmin, addTeamAdminEmail, getAllUsers, getTeamAccessCodes, getConfigs, getGames, updateGame, getRegistrationSources, syncRegistrationProvider } = deps.db;'
         )
         .replace(
             "import { getDefaultStatConfigForSport } from './js/stat-config-presets.js?v=1';",
@@ -481,6 +481,9 @@ async function bootEditTeam(initialState, overrides = {}, dependencyOverrides = 
             },
             async getRegistrationSources() {
                 return [];
+            },
+            async syncRegistrationProvider() {
+                return { synced: false };
             }
         },
         utils: {
@@ -627,7 +630,7 @@ describe('edit team admin access persistence', () => {
         expect(html.indexOf('id="teamColorPrimary"')).toBeGreaterThan(advancedIndex);
         expect(html.indexOf('id="registrationProviderName"')).toBeGreaterThan(advancedIndex);
         expect(html).toContain('Registration Provider Connection');
-        expect(html).toContain('No provider login, sync job, or network call runs from these fields.');
+        expect(html).toContain('Saved Sports Connect mappings can run a backend manual sync that fetches a roster snapshot for import.');
         expect(html).toContain('id="team-create-mode-registration"');
         expect(html).toContain('No registration sources are configured yet. Start with a blank team or load provider data before using this import path.');
         expect(html).toContain('registrationMode.setAttribute(\'aria-disabled\', String(registrationMode.disabled));');
@@ -1108,11 +1111,11 @@ describe('edit team admin access persistence', () => {
             expect(env.elements.get('registrationProviderName').value).toBe('Sports Connect');
             expect(env.elements.get('registrationExternalTeamId').value).toBe('SC-123');
             expect(env.elements.get('registrationCopiedTeamId').value).toBe('team-1');
-            expect(env.elements.get('registrationLastSyncStatus').value).toBe('Sports Connect metadata only. No live sync.');
-            expect(env.elements.get('registration-connection-status').textContent).toBe('Sports Connect metadata only. No live sync.');
-            expect(env.elements.get('registration-sync-status').textContent).toBe('Sports Connect metadata only. No live sync.');
+            expect(env.elements.get('registrationLastSyncStatus').value).toBe('Ready for manual sync');
+            expect(env.elements.get('registration-connection-status').textContent).toBe('Ready for manual sync');
+            expect(env.elements.get('registration-sync-status').textContent).toBe('Ready for manual sync');
             expect(env.elements.get('registration-sync-time').textContent).toContain('2026');
-            expect(env.elements.get('registration-refresh-btn').disabled).toBe(true);
+            expect(env.elements.get('registration-refresh-btn').disabled).toBe(false);
 
             env.elements.get('registrationProviderName').value = 'League Apps';
             env.elements.get('registrationExternalTeamId').value = 'LA-456';
@@ -1170,11 +1173,11 @@ describe('edit team admin access persistence', () => {
             env.elements.get('registrationExternalTeamId').value = 'SC-987';
             await env.elements.get('registrationProviderName').dispatchEvent(new MockEvent('change'));
 
-            expect(env.elements.get('registrationLastSyncStatus').value).toBe('Sports Connect metadata only. No live sync.');
-            expect(env.elements.get('registration-connection-status').textContent).toBe('Sports Connect metadata only. No live sync.');
-            expect(env.elements.get('registration-sync-status').textContent).toBe('Sports Connect metadata only. No live sync.');
-            expect(env.elements.get('registration-connection-help').textContent).toContain('metadata only');
-            expect(env.elements.get('registration-refresh-btn').disabled).toBe(true);
+            expect(env.elements.get('registrationLastSyncStatus').value).toBe('Ready for manual sync');
+            expect(env.elements.get('registration-connection-status').textContent).toBe('Ready for manual sync');
+            expect(env.elements.get('registration-sync-status').textContent).toBe('Ready for manual sync');
+            expect(env.elements.get('registration-connection-help').textContent).toContain('backend');
+            expect(env.elements.get('registration-refresh-btn').disabled).toBe(false);
 
             await env.elements.get('team-form').requestSubmit();
 
@@ -1184,8 +1187,8 @@ describe('edit team admin access persistence', () => {
                 externalTeamId: 'SC-987',
                 teamId: 'team-1',
                 connectionStatus: 'metadata_configured',
-                syncEnabled: false,
-                lastSyncStatus: 'Sports Connect metadata only. No live sync.'
+                syncEnabled: true,
+                lastSyncStatus: 'Ready for manual sync'
             });
         } finally {
             env.cleanup();
