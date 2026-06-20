@@ -29,7 +29,7 @@ describe('edit team Sports Connect registration sync wiring', () => {
         expect(source).toContain('function handleRegistrationProviderSync()');
         expect(source).toContain('await syncRegistrationProvider(currentTeamId)');
         expect(source).toContain('function hasUnsavedRegistrationSyncChanges(provider, externalTeamId)');
-        expect(source).toContain('Save the updated Sports Connect mapping before running sync.');
+        expect(source).toContain('Save the updated Sports Connect mapping before running backend sync.');
         expect(source).toContain('const canSyncSportsConnect = Boolean(currentTeamId && isSportsConnectProvider(provider) && externalTeamId && !hasUnsavedSyncChanges);');
         expect(source).toContain('syncEnabled: isSportsConnectProvider(provider) && !!externalTeamId');
         expect(source).toContain('Open roster import to preview changes.');

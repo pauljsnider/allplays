@@ -1177,7 +1177,7 @@ describe('edit team admin access persistence', () => {
             expect(env.elements.get('registration-connection-status').textContent).toBe('Ready for manual sync');
             expect(env.elements.get('registration-sync-status').textContent).toBe('Ready for manual sync');
             expect(env.elements.get('registration-connection-help').textContent).toContain('backend');
-            expect(env.elements.get('registration-refresh-btn').disabled).toBe(false);
+            expect(env.elements.get('registration-refresh-btn').disabled).toBe(true);
 
             await env.elements.get('team-form').requestSubmit();
 
