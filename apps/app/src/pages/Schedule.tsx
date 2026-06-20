@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from 'react';
 import { AlertCircle, CalendarDays, CheckCircle2, ChevronDown, ChevronLeft, ChevronRight, ClipboardCheck, Copy, Download, Filter, Link as LinkIcon, ListChecks, MapPin, RefreshCw } from 'lucide-react';
 import { Link } from 'react-router-dom';
+import { Modal } from '../components/Modal';
 import { SchedulePageSkeleton } from '../components/PageSkeletons';
 import { addTeamCalendarUrl, createScheduledPracticeForApp, createScheduleImportGame, createScheduleImportPractice, finalizeScheduleImportBatch, loadParentSchedule, removeTeamCalendarUrl, type ParentScheduleChild, type SchedulePracticeFormInput, type PracticeRecurrenceFormInput } from '../lib/scheduleService';
 import { getCachedAppData, getParentScheduleSummaryCacheKey, loadCachedAppData } from '../lib/appDataCache';
@@ -2206,23 +2207,13 @@ function CalendarEventPicker({ day, entries, onClose }: {
   entries: CalendarScheduleEntry[];
   onClose: () => void;
 }) {
-  useEffect(() => {
-    if (!day) return;
-    const handleKeydown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') onClose();
-    };
-    window.addEventListener('keydown', handleKeydown);
-    return () => window.removeEventListener('keydown', handleKeydown);
-  }, [day, onClose]);
-
   if (!day) return null;
 
   const dayLabel = day.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' });
   const eventCountLabel = `${entries.length} ${entries.length === 1 ? 'event' : 'events'}`;
 
   return (
-    <div className="fixed inset-0 z-[70] flex items-end bg-gray-950/40 p-0 sm:items-center sm:p-6" role="dialog" aria-modal="true" aria-labelledby="calendar-event-picker-title">
-      <button type="button" className="absolute inset-0 h-full w-full cursor-default" onClick={onClose} aria-label="Close calendar events" />
+    <Modal overlayClassName="z-[70] flex items-end bg-gray-950/40 p-0 sm:items-center sm:p-6" ariaLabelledBy="calendar-event-picker-title" onClose={onClose}>
       <section className="relative w-full overflow-hidden rounded-t-3xl bg-white shadow-2xl sm:mx-auto sm:max-w-2xl sm:rounded-2xl">
         <div className="flex items-start justify-between gap-3 border-b border-gray-100 px-4 py-3">
           <div className="min-w-0">
@@ -2247,7 +2238,7 @@ function CalendarEventPicker({ day, entries, onClose }: {
           <div className="p-5 text-sm font-semibold text-gray-500">No events on this day.</div>
         )}
       </section>
-    </div>
+    </Modal>
   );
 }
 
