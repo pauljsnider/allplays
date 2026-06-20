@@ -100,7 +100,8 @@ function buildNotificationTestEnv({
     notificationRecipientDocs = null,
     preferenceDocs = {},
     deviceDocs = {},
-    invalidTokenResponses = []
+    invalidTokenResponses = [],
+    sendEachErrors = []
 } = {}) {
     const dedupWrites = [];
     const inboxWrites = [];
@@ -470,6 +471,8 @@ function buildNotificationTestEnv({
                     dedupWrites.push({ path: ref.path, value });
                 },
                 delete(ref) {
+                    counts.deleteCalls += 1;
+                    docStore.delete(ref.path);
                     deletedPaths.push(ref.path);
                 },
                 update() {},
@@ -511,6 +514,10 @@ function buildNotificationTestEnv({
                     data: { ...(message.data || {}) },
                     webLink: message.webpush?.fcmOptions?.link || ''
                 });
+                const sendError = sendEachErrors.length ? sendEachErrors.shift() : null;
+                if (sendError) {
+                    throw sendError;
+                }
                 const responses = message.tokens.map((token, index) => invalidTokenResponses[index] || { success: true, token });
                 const failureCount = responses.filter((response) => response?.success === false).length;
                 return {

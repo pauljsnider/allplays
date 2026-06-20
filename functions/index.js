@@ -5989,10 +5989,16 @@ async function resolveFeeAssignmentPayerUserIds(teamId, recipient = {}) {
   return Array.from(userIds);
 }
 
+function buildFeeAssignmentNotificationClaimRef({ teamId, batchId, uid }) {
+  const normalizedUid = String(uid || '').trim();
+  if (!teamId || !batchId || !normalizedUid) return null;
+  return firestore.doc(`teams/${teamId}/feeBatches/${batchId}/assignmentNotificationClaims/${normalizedUid}`);
+}
+
 async function claimFeeAssignmentNotificationUser({ teamId, batchId, recipientId, uid }) {
   const normalizedUid = String(uid || '').trim();
-  if (!teamId || !batchId || !normalizedUid) return false;
-  const claimRef = firestore.doc(`teams/${teamId}/feeBatches/${batchId}/assignmentNotificationClaims/${normalizedUid}`);
+  const claimRef = buildFeeAssignmentNotificationClaimRef({ teamId, batchId, uid: normalizedUid });
+  if (!claimRef) return false;
   return firestore.runTransaction(async (transaction) => {
     const claimSnap = await transaction.get(claimRef);
     if (claimSnap.exists) return false;
@@ -6005,6 +6011,21 @@ async function claimFeeAssignmentNotificationUser({ teamId, batchId, recipientId
     });
     return true;
   });
+}
+
+async function releaseFeeAssignmentNotificationClaims({ teamId, batchId, userIds = [] }) {
+  const uniqueUserIds = Array.from(new Set(
+    (Array.isArray(userIds) ? userIds : [])
+      .map((uid) => String(uid || '').trim())
+      .filter(Boolean)
+  ));
+  if (!teamId || !batchId || !uniqueUserIds.length) return;
+  const batch = firestore.batch();
+  uniqueUserIds.forEach((uid) => {
+    const claimRef = buildFeeAssignmentNotificationClaimRef({ teamId, batchId, uid });
+    if (claimRef) batch.delete(claimRef);
+  });
+  await batch.commit();
 }
 
 function getFeePaymentAmountCents(before = {}, after = {}) {
@@ -6983,14 +7004,23 @@ exports.notifyFeeAssigned = functions.firestore
     const amountCents = getTeamFeeBalanceCents(data) || Number(data.amountCents || data.feeAmountCents || 0);
     const amountDisplay = amountCents > 0 ? ` (${formatMoneyFromCents(amountCents, data.currency || 'USD')})` : '';
 
-    return sendDirectTargetsNotification({
-      targets: claimedTargets,
-      category: 'fees',
-      title: `New fee assigned: ${title}${amountDisplay}`,
-      body: buildFeeAssignmentNotificationBody(data, amountDisplay ? amountDisplay.slice(2, -1) : ''),
-      teamId,
-      batchId
-    });
+    try {
+      return await sendDirectTargetsNotification({
+        targets: claimedTargets,
+        category: 'fees',
+        title: `New fee assigned: ${title}${amountDisplay}`,
+        body: buildFeeAssignmentNotificationBody(data, amountDisplay ? amountDisplay.slice(2, -1) : ''),
+        teamId,
+        batchId
+      });
+    } catch (error) {
+      await releaseFeeAssignmentNotificationClaims({
+        teamId,
+        batchId,
+        userIds: Array.from(claimedUserIds)
+      });
+      throw error;
+    }
   });
 
 exports.notifyPracticePacketCompleted = functions.firestore

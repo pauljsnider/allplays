@@ -295,6 +295,39 @@ test('notifyFeeAssigned sends one batch assignment push when a parent has multip
     }
 });
 
+test('notifyFeeAssigned releases assignment claims when delivery fails so retries can resend', async () => {
+    const { moduleExports, env, cleanup } = loadNotificationInternals({
+        teamDoc: { ownerId: 'coach-1', adminEmails: [] },
+        userDocs: {
+            'parent-1': { parentPlayerKeys: ['team-1::player-1'] }
+        },
+        indexedTargets: [
+            { uid: 'parent-1', deviceId: 'parent-device', token: 'parent-token', categories: { fees: true } }
+        ],
+        sendEachErrors: [new Error('temporary FCM outage')]
+    });
+
+    try {
+        const ref = env.firestoreState.doc('teams/team-1/feeBatches/batch-5/feeRecipients/recipient-5');
+        const snapshot = makeSnapshot(ref, {
+            playerKey: 'team-1::player-1',
+            feeTitle: 'Retry dues',
+            amountCents: 2500
+        });
+        const context = { params: { teamId: 'team-1', batchId: 'batch-5', recipientId: 'recipient-5' } };
+
+        await assert.rejects(() => moduleExports.notifyFeeAssigned(snapshot, context), /temporary FCM outage/);
+        const retryResult = await moduleExports.notifyFeeAssigned(snapshot, context);
+
+        assert.equal(retryResult?.successCount, 1);
+        assert.equal(env.messagingCalls.length, 2);
+        assert.equal(env.deletedPaths.includes('teams/team-1/feeBatches/batch-5/assignmentNotificationClaims/parent-1'), true);
+        assert.equal(env.auditWrites.length, 1);
+    } finally {
+        cleanup();
+    }
+});
+
 test('notifyFeeAssigned stays silent when the payer disabled fee notifications', async () => {
     const { moduleExports, env, cleanup } = loadNotificationInternals({
         teamDoc: { ownerId: 'coach-1', adminEmails: [] },
