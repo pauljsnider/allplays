@@ -28,7 +28,9 @@ describe('edit team Sports Connect registration sync wiring', () => {
         expect(source).toContain('id="registration-refresh-btn"');
         expect(source).toContain('function handleRegistrationProviderSync()');
         expect(source).toContain('await syncRegistrationProvider(currentTeamId)');
-        expect(source).toContain('Sync now fetches Sports Connect data through the backend');
+        expect(source).toContain('function hasUnsavedRegistrationSyncChanges(provider, externalTeamId)');
+        expect(source).toContain('Save the updated Sports Connect mapping before running sync.');
+        expect(source).toContain('const canSyncSportsConnect = Boolean(currentTeamId && isSportsConnectProvider(provider) && externalTeamId && !hasUnsavedSyncChanges);');
         expect(source).toContain('syncEnabled: isSportsConnectProvider(provider) && !!externalTeamId');
         expect(source).toContain('Open roster import to preview changes.');
         expect(source).not.toContain('Manual refresh unavailable');
@@ -37,5 +39,6 @@ describe('edit team Sports Connect registration sync wiring', () => {
         expect(functionsSource).toContain('exports.syncRegistrationProvider = functions.https.onCall');
         expect(functionsSource).toContain('buildSportsConnectTeamUpdate');
         expect(coreSource).toContain('registrationRosterSnapshot');
+        expect(coreSource).not.toContain('source.syncUrl');
     });
 });

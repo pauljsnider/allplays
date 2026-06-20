@@ -770,6 +770,23 @@
             return isSportsConnectProvider(provider) ? 'sports-connect' : '';
         }
 
+        function getSavedRegistrationProvider() {
+            return String(
+                currentRegistrationSource?.provider ||
+                currentRegistrationSource?.providerName ||
+                currentRegistrationSource?.providerId ||
+                ''
+            ).trim();
+        }
+
+        function hasUnsavedRegistrationSyncChanges(provider, externalTeamId) {
+            if (!currentTeamId || !isSportsConnectProvider(provider)) {
+                return false;
+            }
+            return normalizeRegistrationProviderKey(provider) !== normalizeRegistrationProviderKey(getSavedRegistrationProvider())
+                || externalTeamId !== getRegistrationSourceValue({ registrationSource: currentRegistrationSource || {} }, 'externalTeamId');
+        }
+
         function getRegistrationMetadataStatus(provider, externalTeamId) {
             if (!provider) {
                 return 'Not configured';
@@ -814,20 +831,23 @@
             const metadataStatus = getRegistrationMetadataStatus(provider, externalTeamId);
             const lastSyncTime = getRegistrationLastSyncTime(source);
             const refreshButton = document.getElementById('registration-refresh-btn');
-            const canSyncSportsConnect = Boolean(currentTeamId && isSportsConnectProvider(provider) && externalTeamId);
+            const hasUnsavedSyncChanges = hasUnsavedRegistrationSyncChanges(provider, externalTeamId);
+            const canSyncSportsConnect = Boolean(currentTeamId && isSportsConnectProvider(provider) && externalTeamId && !hasUnsavedSyncChanges);
             let helpText = 'Choose a provider and team mapping to save registration metadata.';
 
             if (provider && externalTeamId) {
                 helpText = isSportsConnectProvider(provider)
                     ? (currentTeamId
-                        ? 'Sync now fetches Sports Connect data through the backend and stores the roster snapshot for import.'
+                        ? (hasUnsavedSyncChanges
+                            ? 'Save the updated Sports Connect mapping before running sync.'
+                            : 'Sync now fetches Sports Connect data through the backend and stores the roster snapshot for import.')
                         : 'Save the team before running a Sports Connect sync.')
                     : 'This provider mapping is saved as metadata only. Manual refresh stays unavailable until a live connector exists.';
             } else if (provider) {
                 helpText = 'Add the provider team ID or mapping to finish setup.';
             }
 
-            if (source.lastSyncStatus === 'error' && source.lastSyncError) {
+            if (!hasUnsavedSyncChanges && source.lastSyncStatus === 'error' && source.lastSyncError) {
                 helpText = `Last sync error: ${source.lastSyncError}`;
             }
 

@@ -66,12 +66,13 @@ describe('Sports Connect registration sync core', () => {
                 {
                     externalPlayerId: 'athlete-1',
                     name: 'Avery Lee',
-                    number: '4',
-                    guardians: [{ name: 'Pat Lee', email: 'pat@example.com', phone: '', relation: 'Parent' }],
-                    answers: { Grade: '6' }
+                    number: '4'
                 }
             ]
         });
+        expect(snapshot.players[0]).not.toHaveProperty('guardians');
+        expect(snapshot.players[0]).not.toHaveProperty('contacts');
+        expect(snapshot.players[0]).not.toHaveProperty('answers');
         expect(update).toMatchObject({
             registrationSource: {
                 provider: 'Sports Connect',
@@ -92,7 +93,13 @@ describe('Sports Connect registration sync core', () => {
 
     it('derives team config from saved Sports Connect metadata and requires backend credentials', () => {
         const config = getTeamSportsConnectConfig(
-            { registrationSource: { provider: 'Sports Connect', externalTeamId: 'league-team-9' } },
+            {
+                registrationSource: {
+                    provider: 'Sports Connect',
+                    externalTeamId: 'league-team-9',
+                    syncUrl: 'https://attacker.example.test/steal-token'
+                }
+            },
             { baseUrl: 'https://sports.example.test/export', accessToken: '' }
         );
 
@@ -103,6 +110,7 @@ describe('Sports Connect registration sync core', () => {
             endpointTemplate: 'https://sports.example.test/export',
             accessToken: ''
         });
+        expect(config.endpointTemplate).not.toContain('attacker.example.test');
         expect(() => assertSportsConnectSyncConfig(config)).toThrow('credentials are not configured');
     });
 
@@ -138,7 +146,7 @@ describe('Sports Connect registration sync core', () => {
             });
     });
 
-    it('ignores malformed payload and contact entries instead of crashing the sync snapshot builder', () => {
+    it('ignores malformed payload instead of crashing the sync snapshot builder', () => {
         expect(buildSportsConnectRegistrationSnapshot(null, {
             externalTeamId: 'sc-team-1',
             fetchedAt: '2026-06-20T12:00:00.000Z'
@@ -168,8 +176,7 @@ describe('Sports Connect registration sync core', () => {
             players: [
                 {
                     externalPlayerId: 'athlete-2',
-                    name: 'Jamie Fox',
-                    guardians: [{ name: '', email: 'guardian@example.com', phone: '', relation: '' }]
+                    name: 'Jamie Fox'
                 }
             ]
         });

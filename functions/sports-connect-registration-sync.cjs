@@ -33,9 +33,7 @@ function getTeamSportsConnectConfig(team = {}, config = {}) {
   const endpointTemplate = compactString(
     config.endpointTemplate ||
     config.registrationSnapshotUrl ||
-    config.baseUrl ||
-    source.registrationSnapshotUrl ||
-    source.syncUrl
+    config.baseUrl
   );
   const accessToken = compactString(config.accessToken || config.token);
 
@@ -221,22 +219,12 @@ function normalizeSportsConnectPlayer(record = {}) {
   const name = getName(merged);
   if (!externalPlayerId || !name) return null;
 
-  const output = {
+  return {
     externalPlayerId,
     name,
     number: compactString(merged.number || merged.jerseyNumber || merged.jersey || merged.uniformNumber),
     active: merged.active === false ? false : true
   };
-  const guardians = normalizeContacts(merged.guardians || merged.parents || merged.familyContacts);
-  const contacts = normalizeContacts(merged.contacts || merged.contactFields);
-  if (guardians.length) output.guardians = guardians;
-  if (contacts.length) output.contacts = contacts;
-
-  const answers = merged.answers || merged.customFields || merged.profileFields || merged.formData || merged.submittedData;
-  if (answers && typeof answers === 'object' && !Array.isArray(answers)) {
-    output.answers = answers;
-  }
-  return output;
 }
 
 function buildSportsConnectRegistrationSnapshot(payload = {}, { externalTeamId, fetchedAt = new Date().toISOString() } = {}) {
