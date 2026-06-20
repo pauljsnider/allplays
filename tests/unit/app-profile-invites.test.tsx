@@ -36,7 +36,8 @@ const publicActionsMocks = vi.hoisted(() => ({
 const pushServiceMocks = vi.hoisted(() => ({
   enablePushNotificationsForUser: vi.fn(),
   getPushNotificationPermissionStatus: vi.fn(),
-  openPushNotificationSettings: vi.fn()
+  openPushNotificationSettings: vi.fn(),
+  runPushNotificationPrimer: vi.fn()
 }));
 
 const shellLayoutState = vi.hoisted(() => ({
@@ -173,6 +174,7 @@ describe('Profile invites', () => {
       canOpenSettings: false
     });
     pushServiceMocks.openPushNotificationSettings.mockResolvedValue(undefined);
+    pushServiceMocks.runPushNotificationPrimer.mockResolvedValue(true);
     profileServiceMocks.loadNotificationPreferences.mockResolvedValue({ liveChat: true, liveScore: false, schedule: true });
     profileServiceMocks.loadParentTeams.mockResolvedValue([]);
     profileServiceMocks.requestAccountMerge.mockResolvedValue(undefined);
@@ -430,6 +432,25 @@ describe('Profile invites', () => {
       schedule: true
     });
     expect(await screen.findByText('Game-day alerts are on for this team.')).toBeTruthy();
+  });
+
+  it('does not request push or save alerts when the notification primer is declined', async () => {
+    profileServiceMocks.loadNotificationTeams.mockResolvedValue([{ id: 'team-1', name: 'Blue Team' }]);
+    profileServiceMocks.loadNotificationPreferences.mockResolvedValueOnce({ liveChat: true, liveScore: false, schedule: false });
+    pushServiceMocks.runPushNotificationPrimer.mockResolvedValueOnce(false);
+
+    renderProfile();
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Alerts' }));
+
+    await waitFor(() => expect((screen.getByLabelText('Team') as HTMLSelectElement).value).toBe('team-1'));
+    const gameDayButton = await screen.findByRole('button', { name: 'Turn on game-day alerts' });
+    fireEvent.click(gameDayButton);
+
+    await waitFor(() => expect(pushServiceMocks.runPushNotificationPrimer).toHaveBeenCalledWith('game_day_alerts'));
+    expect(pushServiceMocks.enablePushNotificationsForUser).not.toHaveBeenCalled();
+    expect(profileServiceMocks.saveNotificationPreferences).not.toHaveBeenCalled();
+    expect(await screen.findByText('Push setup was skipped. You can turn notifications on later from Alerts.')).toBeTruthy();
   });
 
   it('hides stale team toggles and disables team actions until the new team preferences finish hydrating', async () => {
