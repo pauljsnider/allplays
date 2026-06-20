@@ -166,7 +166,13 @@ export function Home({ auth }: { auth: AuthState }) {
 
         void runSecondaryLoad(
           async () => {
-            const secondaryHome = await loadParentHomeWithSecondaryData(user, { force, schedule: summary.schedule });
+            const secondaryHome = await loadParentHomeWithSecondaryData(user, {
+              force,
+              schedule: summary.schedule,
+              // Render each secondary slice (chat badges, fees, hydrated RSVP) as it
+              // arrives instead of waiting for all of them (#2037).
+              onPartial: (partial) => setHome(partial)
+            });
             setHome(secondaryHome);
             setSocial(await loadSocialHome(user, secondaryHome));
             setLoadedHomeDetailsUserId(user.uid);
