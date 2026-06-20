@@ -93,11 +93,26 @@ function normalizeNotificationLink(rawLink) {
     }
 }
 
+function normalizeAppRoute(rawRoute) {
+    const route = typeof rawRoute === 'string' ? rawRoute.trim() : '';
+    if (!route.startsWith('/') || route.startsWith('//')) return '';
+    return route;
+}
+
+function buildAppRouteNotificationLink(rawRoute) {
+    const appRoute = normalizeAppRoute(rawRoute);
+    if (!appRoute) return '';
+    return new URL(`/app/#${appRoute}`, self.location.origin).toString();
+}
+
 function registerBackgroundMessageHandler(messaging) {
     messaging.onBackgroundMessage((payload) => {
         const title = payload?.notification?.title || 'ALL PLAYS Update';
         const body = payload?.notification?.body || '';
-        const link = payload?.fcmOptions?.link || payload?.data?.link || '/';
+        const link = buildAppRouteNotificationLink(payload?.data?.appRoute)
+            || payload?.fcmOptions?.link
+            || payload?.data?.link
+            || '/';
         const icon = payload?.notification?.icon || payload?.data?.icon || WEB_PUSH_NOTIFICATION_ICON;
         const badge = payload?.notification?.badge || payload?.data?.badge || WEB_PUSH_NOTIFICATION_BADGE;
 

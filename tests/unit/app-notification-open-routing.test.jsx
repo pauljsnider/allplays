@@ -51,6 +51,9 @@ function NotificationOpenHarness() {
                 <Route path="/messages/:teamId" element={<div>Messages</div>} />
                 <Route path="/schedule/:teamId/:eventId" element={<div>Schedule Event</div>} />
                 <Route path="/games/:gameId" element={<div>Game Detail</div>} />
+                <Route path="/teams/:teamId/fees/:batchId" element={<div>Team Fees</div>} />
+                <Route path="/parent-tools/:toolId" element={<div>Parent Tools</div>} />
+                <Route path="/officials" element={<div>Officials</div>} />
             </Routes>
             <LocationProbe />
         </>
@@ -83,12 +86,26 @@ async function renderHarness(initialEntry = '/home') {
     return { container, root };
 }
 
+function installLocalStorageMock() {
+    const store = new Map();
+    Object.defineProperty(window, 'localStorage', {
+        configurable: true,
+        value: {
+            getItem: (key) => store.get(key) ?? null,
+            setItem: (key, value) => store.set(key, String(value)),
+            removeItem: (key) => store.delete(key),
+            clear: () => store.clear()
+        }
+    });
+}
+
 describe('app notification open routing', () => {
     afterEach(() => {
         document.body.innerHTML = '';
     });
 
     beforeEach(() => {
+        installLocalStorageMock();
         window.localStorage.clear();
         pushListenerState.listener = null;
         vi.clearAllMocks();
@@ -98,7 +115,11 @@ describe('app notification open routing', () => {
         [{ category: 'liveChat', teamId: 'team-1' }, '/messages/team-1'],
         [{ category: 'liveScore', teamId: 'team-1', gameId: 'game-7' }, '/schedule/team-1/game-7?section=game'],
         [{ category: 'liveScore', gameId: 'game-7' }, '/games/game-7'],
-        [{ category: 'schedule', teamId: 'team-1', eventId: 'event-9' }, '/schedule/team-1/event-9']
+        [{ category: 'schedule', teamId: 'team-1', eventId: 'event-9' }, '/schedule/team-1/event-9'],
+        [{ category: 'fees', teamId: 'team-1', batchId: 'batch-1', recipientId: 'recipient-1' }, '/teams/team-1/fees/batch-1?recipientId=recipient-1'],
+        [{ category: 'rideshare', teamId: 'team-1', eventId: 'game-7' }, '/schedule/team-1/game-7?section=rideshare'],
+        [{ category: 'awards', teamId: 'team-1', certificateId: 'cert-1' }, '/parent-tools/certificates?teamId=team-1&certificateId=cert-1'],
+        [{ category: 'officiating', teamId: 'team-1' }, '/officials?teamId=team-1']
     ])('navigates to the expected route when a notification is opened: %o', async (payload, expectedRoute) => {
         const { container, root } = await renderHarness();
 
