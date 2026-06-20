@@ -34,6 +34,8 @@ describe('pages bundle staging', () => {
         writeFile(path.join(rootDir, 'css', 'site.css'), 'body {}');
         writeFile(path.join(rootDir, 'js', 'site.js'), 'export const ok = true;');
         writeFile(path.join(rootDir, 'CNAME'), 'allplays.ai');
+        writeFile(path.join(rootDir, '.well-known', 'assetlinks.json'), '[]');
+        writeFile(path.join(rootDir, '.well-known', 'apple-app-site-association'), '{}');
         writeFile(path.join(rootDir, 'package.json'), '{}');
         writeFile(path.join(rootDir, 'firebase.json'), '{}');
         writeFile(path.join(rootDir, '.firebaserc'), '{}');
@@ -50,6 +52,8 @@ describe('pages bundle staging', () => {
         expect(fs.existsSync(path.join(destinationDir, 'css', 'site.css'))).toBe(true);
         expect(fs.existsSync(path.join(destinationDir, 'js', 'site.js'))).toBe(true);
         expect(fs.existsSync(path.join(destinationDir, 'CNAME'))).toBe(true);
+        expect(fs.existsSync(path.join(destinationDir, '.well-known', 'assetlinks.json'))).toBe(true);
+        expect(fs.existsSync(path.join(destinationDir, '.well-known', 'apple-app-site-association'))).toBe(true);
         expect(fs.existsSync(path.join(destinationDir, 'app', 'assets', 'index.js'))).toBe(true);
         expect(fs.existsSync(path.join(destinationDir, '.nojekyll'))).toBe(true);
 

@@ -28,6 +28,8 @@
 			<key>CFBundleURLSchemes</key>
 			<array>
 				<string>com.googleusercontent.apps.982493478258-94otj8a8ptke1avfdtviugsrj4nfgedg</string>
+				<string>allplays</string>
+				<string>ai.allplays.lite</string>
 			</array>
 		</dict>
 	</array>

@@ -48,7 +48,7 @@ function shouldExclude(rootDir, sourcePath, entry) {
     const relativePath = toRelativePath(rootDir, sourcePath);
     const parts = relativePath.split('/').filter(Boolean);
 
-    if (entry.name.startsWith('.')) {
+    if (entry.name.startsWith('.') && parts[0] !== '.well-known') {
         return true;
     }
 
