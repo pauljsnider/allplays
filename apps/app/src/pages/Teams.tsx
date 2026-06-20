@@ -25,6 +25,7 @@ import {
   WalletCards
 } from 'lucide-react';
 import { RoleBadge } from '../components/Badges';
+import { PullToRefresh } from '../components/PullToRefresh';
 import { toAppServiceError, type AppServiceError } from '../lib/appErrors';
 import { getEventDetailPath, getPlayerDetailPath, type ParentHomeModel, type ParentHomeTeam } from '../lib/homeLogic';
 import { loadParentHomeSummary, loadParentTeamsSummary } from '../lib/homeService';
@@ -161,7 +162,8 @@ export function Teams({ auth }: { auth: AuthState }) {
   };
 
   return (
-    <div className={`teams-page ${isDesktopWeb ? 'teams-page-web' : ''} space-y-4`}>
+    <PullToRefresh onRefresh={() => loadTeams()} disabled={!auth.user?.uid}>
+      <div className={`teams-page ${isDesktopWeb ? 'teams-page-web' : ''} space-y-4`}>
       <TeamsHeader
         loading={loading}
         refreshing={refreshing}
@@ -212,7 +214,8 @@ export function Teams({ auth }: { auth: AuthState }) {
           </Link>
         </div>
       </section>
-    </div>
+      </div>
+    </PullToRefresh>
   );
 }
 

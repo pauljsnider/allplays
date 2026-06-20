@@ -28,6 +28,7 @@ import {
 } from 'lucide-react';
 import { Modal } from '../components/Modal';
 import { HomePageSkeleton } from '../components/PageSkeletons';
+import { PullToRefresh } from '../components/PullToRefresh';
 import { loadParentHomeSummaryBootstrap, loadParentHomeWithSecondaryData } from '../lib/homeService';
 import { toAppServiceError, type AppServiceError } from '../lib/appErrors';
 import {
@@ -361,7 +362,8 @@ export function Home({ auth }: { auth: AuthState }) {
   };
 
   return (
-    <div className="home-page home-page-live home-page-social space-y-3">
+    <PullToRefresh onRefresh={() => refreshHome({ force: true })} disabled={!auth.user?.uid}>
+      <div className="home-page home-page-live home-page-social space-y-3">
       <section className="home-hero app-card overflow-hidden">
         <div className="flex items-center gap-3 px-3 py-3 sm:px-4">
           <div className="flex h-12 w-12 flex-none flex-col items-center justify-center rounded-2xl bg-gray-950 text-white shadow-sm">
@@ -467,7 +469,8 @@ export function Home({ auth }: { auth: AuthState }) {
           onSubmit={handleCreatePost}
         />
       ) : null}
-    </div>
+      </div>
+    </PullToRefresh>
   );
 }
 

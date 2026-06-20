@@ -3,6 +3,7 @@ import { AlertCircle, CalendarDays, CheckCircle2, ChevronDown, ChevronLeft, Chev
 import { Link } from 'react-router-dom';
 import { Modal } from '../components/Modal';
 import { SchedulePageSkeleton } from '../components/PageSkeletons';
+import { PullToRefresh } from '../components/PullToRefresh';
 import { addTeamCalendarUrl, createScheduledPracticeForApp, createScheduleImportGame, createScheduleImportPractice, finalizeScheduleImportBatch, loadParentSchedule, removeTeamCalendarUrl, type ParentScheduleChild, type SchedulePracticeFormInput, type PracticeRecurrenceFormInput } from '../lib/scheduleService';
 import { getCachedAppData, getParentScheduleSummaryCacheKey, loadCachedAppData } from '../lib/appDataCache';
 import { toAppServiceError, type AppServiceError } from '../lib/appErrors';
@@ -671,7 +672,8 @@ export function Schedule({ auth }: { auth: AuthState }) {
   };
 
   return (
-    <div className="schedule-page space-y-4">
+    <PullToRefresh onRefresh={() => refreshSchedule(true)} disabled={!auth.user?.uid}>
+      <div className="schedule-page space-y-4">
       <section className="schedule-header app-card p-3 sm:hidden">
         <div className="flex items-center justify-between gap-2">
           <div className="min-w-0">
@@ -1030,7 +1032,8 @@ export function Schedule({ auth }: { auth: AuthState }) {
           ) : null}
         </div>
       </div>
-    </div>
+      </div>
+    </PullToRefresh>
   );
 }
 

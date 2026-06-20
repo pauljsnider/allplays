@@ -16,6 +16,7 @@ type UseChatMessagesParams = {
   onLiveUpdateState?: (state: { isInitialSnapshot: boolean; wasNearBottom: boolean }) => void;
   onMessagesReset?: () => void;
   onMarkRead?: () => void;
+  refreshVersion?: number;
 };
 
 export function useChatMessages({
@@ -26,7 +27,8 @@ export function useChatMessages({
   onBeforeLiveUpdate,
   onLiveUpdateState,
   onMessagesReset,
-  onMarkRead
+  onMarkRead,
+  refreshVersion = 0
 }: UseChatMessagesParams) {
   const [liveMessages, setLiveMessages] = useState<ChatMessage[]>([]);
   const [olderMessages, setOlderMessages] = useState<ChatMessage[]>([]);
@@ -74,7 +76,7 @@ export function useChatMessages({
     return () => {
       subscription.unsubscribe();
     };
-  }, [onBeforeLiveUpdate, onLiveUpdateState, onMarkRead, onMessagesReset, selectedConversationId, team?.id, teamId, user?.uid]);
+  }, [onBeforeLiveUpdate, onLiveUpdateState, onMarkRead, onMessagesReset, refreshVersion, selectedConversationId, team?.id, teamId, user?.uid]);
 
   const loadOlderMessages = useCallback(async () => {
     if (loadingOlder || !hasMoreMessages) return;

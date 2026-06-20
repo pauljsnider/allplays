@@ -29,6 +29,7 @@ import {
 } from 'lucide-react';
 import { TeamDetailPageSkeleton } from '../components/PageSkeletons';
 import { DetailLoadErrorState } from '../components/DetailLoadErrorState';
+import { PullToRefresh } from '../components/PullToRefresh';
 import { copyPublicText, openPublicUrl, sharePublicUrl } from '../lib/publicActions';
 import { toAppServiceError, type AppServiceError } from '../lib/appErrors';
 import { getEventDetailPath } from '../lib/homeLogic';
@@ -365,7 +366,8 @@ export function TeamDetail({ auth }: { auth: AuthState }) {
   }
 
   return (
-    <div className="team-detail-page space-y-4">
+    <PullToRefresh onRefresh={refreshTeamDetail} disabled={!auth.user?.uid}>
+      <div className="team-detail-page space-y-4">
       <TeamHero model={model} />
 
       <section className="app-card p-2">
@@ -398,7 +400,8 @@ export function TeamDetail({ auth }: { auth: AuthState }) {
       {activeTab === 'roster' ? <RosterTab model={model} authUser={auth.user} onRefresh={refreshTeamDetail} rosterInviteLoading={rosterInviteLoading} rosterInviteError={rosterInviteError} rosterInviteSummaries={rosterInviteSummaries} onInviteCreated={refreshRosterInvites} trackingLoading={trackingLoading} trackingError={trackingError} trackingItems={trackingItems} onTrackingChanged={refreshTrackingItems} /> : null}
       {activeTab === 'insights' ? <InsightsTab model={model} loading={insightsLoading} error={insightsError} /> : null}
       {activeTab === 'more' ? <MoreTab model={model} auth={auth} staffPermissionsLoading={staffPermissionsLoading} staffPermissionsError={staffPermissionsError} sponsorsLoading={sponsorsLoading} sponsorsError={sponsorsError} onTeamDetailRefresh={refreshTeamDetail} /> : null}
-    </div>
+      </div>
+    </PullToRefresh>
   );
 }
 

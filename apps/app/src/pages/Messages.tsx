@@ -58,6 +58,7 @@ import {
   type ChatTeam
 } from '../lib/chatService';
 import { MessagesPageSkeleton } from '../components/PageSkeletons';
+import { PullToRefresh } from '../components/PullToRefresh';
 import {
   DEFAULT_TEAM_CONVERSATION_ID,
   MAX_CHAT_MEDIA_SIZE,
@@ -128,6 +129,7 @@ export function Messages({ auth }: { auth: AuthState }) {
   const [error, setError] = useState<string | null>(null);
   const [query, setQuery] = useState('');
   const [selectedDesktopTeamId, setSelectedDesktopTeamId] = useState<string | undefined>(undefined);
+  const [threadRefreshVersion, setThreadRefreshVersion] = useState(0);
   const shouldLoadInbox = isDesktopWeb || !teamId;
   const inboxLoadRouteKey = getMessagesInboxLoadRouteKey(shouldLoadInbox, teamId);
   const inboxRequestIdRef = useRef(0);
@@ -181,6 +183,13 @@ export function Messages({ auth }: { auth: AuthState }) {
       }
     }
   }, [auth.user, teamId]);
+
+  const refreshMessages = useCallback(async () => {
+    if (shouldLoadInbox) {
+      await refreshInbox();
+    }
+    setThreadRefreshVersion((current) => current + 1);
+  }, [refreshInbox, shouldLoadInbox]);
 
   useEffect(() => {
     if (!shouldLoadInbox) {
@@ -257,74 +266,82 @@ export function Messages({ auth }: { auth: AuthState }) {
 
   if (isDesktopWeb) {
     return (
-      <div className="messages-page messages-page-web">
-        <MessagesHeader teams={teams} loading={loading} onRefresh={refreshInbox} />
-        <section className="messages-two-pane mt-4">
-          <aside className="messages-list-pane">
-            <InboxSearch query={query} onChange={setQuery} />
-            <div className="messages-list-scroll">
-              <InboxList
-                teams={filteredTeams}
-                loading={loading}
-                error={error}
-                activeTeamId={activeTeamId || ''}
-                searchQuery={query}
-                totalTeamsCount={teams.length}
-                onClearSearch={() => setQuery('')}
-                onSelect={setSelectedDesktopTeamId}
-                compact
-              />
+      <PullToRefresh onRefresh={refreshMessages} disabled={!auth.user?.uid}>
+        <div className="messages-page messages-page-web">
+          <MessagesHeader teams={teams} loading={loading} onRefresh={refreshMessages} />
+          <section className="messages-two-pane mt-4">
+            <aside className="messages-list-pane">
+              <InboxSearch query={query} onChange={setQuery} />
+              <div className="messages-list-scroll">
+                <InboxList
+                  teams={filteredTeams}
+                  loading={loading}
+                  error={error}
+                  activeTeamId={activeTeamId || ''}
+                  searchQuery={query}
+                  totalTeamsCount={teams.length}
+                  onClearSearch={() => setQuery('')}
+                  onSelect={setSelectedDesktopTeamId}
+                  compact
+                />
+              </div>
+            </aside>
+            <div className="messages-chat-pane min-w-0">
+              {activeTeamId ? (
+                <ChatWindow
+                  auth={auth}
+                  teamId={activeTeamId}
+                  inboxTeam={teams.find((team) => team.id === activeTeamId)}
+                  preferredConversationId={teamId === activeTeamId ? preferredConversationId : ''}
+                  refreshVersion={threadRefreshVersion}
+                  onInboxMuteChange={(nextConversationId, nextIsMuted) => {
+                    setTeams((current) => updateInboxTeamMuteState(current, activeTeamId, nextConversationId, nextIsMuted));
+                  }}
+                  embedded
+                />
+              ) : (
+                <EmptyChatSelection />
+              )}
             </div>
-          </aside>
-          <div className="messages-chat-pane min-w-0">
-            {activeTeamId ? (
-              <ChatWindow
-                auth={auth}
-                teamId={activeTeamId}
-                inboxTeam={teams.find((team) => team.id === activeTeamId)}
-                preferredConversationId={teamId === activeTeamId ? preferredConversationId : ''}
-                onInboxMuteChange={(nextConversationId, nextIsMuted) => {
-                  setTeams((current) => updateInboxTeamMuteState(current, activeTeamId, nextConversationId, nextIsMuted));
-                }}
-                embedded
-              />
-            ) : (
-              <EmptyChatSelection />
-            )}
-          </div>
-        </section>
-      </div>
+          </section>
+        </div>
+      </PullToRefresh>
     );
   }
 
   if (activeTeamId) {
     return (
-      <ChatWindow
-        auth={auth}
-        teamId={activeTeamId}
-        inboxTeam={teams.find((team) => team.id === activeTeamId)}
-        preferredConversationId={preferredConversationId}
-        onInboxMuteChange={(nextConversationId, nextIsMuted) => {
-          setTeams((current) => updateInboxTeamMuteState(current, activeTeamId, nextConversationId, nextIsMuted));
-        }}
-      />
+      <PullToRefresh onRefresh={refreshMessages} disabled={!auth.user?.uid}>
+        <ChatWindow
+          auth={auth}
+          teamId={activeTeamId}
+          inboxTeam={teams.find((team) => team.id === activeTeamId)}
+          preferredConversationId={preferredConversationId}
+          refreshVersion={threadRefreshVersion}
+          onInboxMuteChange={(nextConversationId, nextIsMuted) => {
+            setTeams((current) => updateInboxTeamMuteState(current, activeTeamId, nextConversationId, nextIsMuted));
+          }}
+        />
+      </PullToRefresh>
     );
   }
 
   return (
-    <div className="messages-page space-y-4">
-      <MessagesHeader teams={teams} loading={loading} onRefresh={refreshInbox} />
-      <InboxSearch query={query} onChange={setQuery} />
-      <InboxList
-        teams={filteredTeams}
-        loading={loading}
-        error={error}
-        activeTeamId=""
-        searchQuery={query}
-        totalTeamsCount={teams.length}
-        onClearSearch={() => setQuery('')}
-      />
-    </div>
+    <PullToRefresh onRefresh={refreshMessages} disabled={!auth.user?.uid}>
+      <div className="messages-page space-y-4">
+        <MessagesHeader teams={teams} loading={loading} onRefresh={refreshMessages} />
+        <InboxSearch query={query} onChange={setQuery} />
+        <InboxList
+          teams={filteredTeams}
+          loading={loading}
+          error={error}
+          activeTeamId=""
+          searchQuery={query}
+          totalTeamsCount={teams.length}
+          onClearSearch={() => setQuery('')}
+        />
+      </div>
+    </PullToRefresh>
   );
 }
 
@@ -516,6 +533,7 @@ function ChatWindow({
   teamId,
   inboxTeam,
   preferredConversationId = '',
+  refreshVersion = 0,
   onInboxMuteChange,
   embedded = false
 }: {
@@ -523,6 +541,7 @@ function ChatWindow({
   teamId: string;
   inboxTeam?: ChatTeam;
   preferredConversationId?: string;
+  refreshVersion?: number;
   onInboxMuteChange?: (conversationId: string, isMuted: boolean) => void;
   embedded?: boolean;
 }) {
@@ -674,7 +693,8 @@ function ChatWindow({
     onBeforeLiveUpdate: handleBeforeLiveUpdate,
     onLiveUpdateState: handleLiveUpdateState,
     onMessagesReset: handleMessagesReset,
-    onMarkRead: handleMarkRead
+    onMarkRead: handleMarkRead,
+    refreshVersion
   });
   const error = teamError || messagesError;
 
