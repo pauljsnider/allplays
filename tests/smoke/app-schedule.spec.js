@@ -473,6 +473,18 @@ async function mockScheduleModules(page, options = {}) {
                     return { type: 'score_update', ...payload };
                 }
 
+                export async function markLiveGameFinalForApp(teamId, gameId, score, user) {
+                    const payload = {
+                        homeScore: Number(score?.homeScore ?? 0),
+                        awayScore: Number(score?.awayScore ?? 0),
+                        status: 'completed',
+                        liveStatus: 'completed',
+                        finalizedBy: user?.uid || null
+                    };
+                    window.__scheduleCalls.finalScoreUpdates = (window.__scheduleCalls.finalScoreUpdates || []).concat({ teamId, gameId, payload });
+                    return payload;
+                }
+
                 export function buildLiveGameClockPeriods(game = {}) {
                     const requested = String(game?.liveClockPeriod || game?.period || '').trim();
                     return requested ? [requested, 'H2'].filter((period, index, list) => list.indexOf(period) === index) : ['H1', 'H2'];
