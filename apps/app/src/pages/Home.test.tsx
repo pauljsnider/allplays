@@ -30,7 +30,8 @@ const scheduleServiceMocks = vi.hoisted(() => ({
 }));
 
 const uxTimingMocks = vi.hoisted(() => ({
-  recordFirstMeaningfulRender: vi.fn()
+  recordFirstMeaningfulRender: vi.fn(),
+  startScreenMountTimer: vi.fn(() => ({ end: vi.fn() }))
 }));
 
 vi.mock('../components/PageSkeletons', () => ({
@@ -370,6 +371,27 @@ describe('Home', () => {
     expect(await screen.findByText('Home could not connect')).toBeTruthy();
     expect(screen.getByText('Check your connection and try loading Home again.')).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Retry loading Home' })).toBeTruthy();
+  });
+
+  it('renders secondary Home details before social data finishes loading', async () => {
+    const largeHome = buildLargeHomeModel();
+    let resolveSocial!: (value: typeof baseSocial) => void;
+    homeServiceMocks.loadParentHomeWithSecondaryData.mockResolvedValueOnce(largeHome);
+    socialServiceMocks.loadSocialHome.mockImplementationOnce(() => new Promise((resolve) => {
+      resolveSocial = resolve;
+    }));
+
+    renderHome(signedInAuth);
+
+    expect(await screen.findByText('Falcons')).toBeTruthy();
+    expect(socialServiceMocks.loadSocialHome).toHaveBeenCalledWith(signedInAuth.user, largeHome);
+    expect(uxTimingMocks.recordFirstMeaningfulRender).not.toHaveBeenCalled();
+
+    resolveSocial(baseSocial);
+
+    await waitFor(() => {
+      expect(uxTimingMocks.recordFirstMeaningfulRender).toHaveBeenCalledWith('home');
+    });
   });
 
   it('refreshes the social feed with the async loading helper', async () => {

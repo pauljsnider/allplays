@@ -11,6 +11,7 @@ import {
   hasRecordedFirstMeaningfulRender,
   resetFirstMeaningfulRenderForTests,
   startInteractionTimer,
+  startScreenMountTimer,
   startUxTimer
 } from './uxTiming';
 
@@ -41,6 +42,18 @@ describe('uxTiming', () => {
       category: 'interaction',
       response: 'going',
       path: 'sdk'
+    });
+  });
+
+  it('startScreenMountTimer uses stable labels and bounded screen metadata', () => {
+    const timer = startScreenMountTimer('messages', { mode: 'inbox' });
+    timer.end({ teamCount: 3, unreadCount: 5 });
+    expect(recordAppUxTiming).toHaveBeenCalledWith(UX_TIMING.messagesMount, expect.any(Number), {
+      category: 'screen_mount',
+      route: 'messages',
+      mode: 'inbox',
+      teamCount: 3,
+      unreadCount: 5
     });
   });
 
