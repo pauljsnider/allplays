@@ -102,6 +102,8 @@ export function Profile({ auth }: { auth: AuthState }) {
   const [selectedTeamId, setSelectedTeamId] = useState('');
   const [notificationPreferences, setNotificationPreferences] = useState<NotificationPreferences>(emptyPreferences);
   const [notificationPreferencesByTeamId, setNotificationPreferencesByTeamId] = useState<Record<string, NotificationPreferences>>({});
+  const [notificationPreferencesErrorTeamId, setNotificationPreferencesErrorTeamId] = useState<string | null>(null);
+  const [notificationPreferencesReloadNonce, setNotificationPreferencesReloadNonce] = useState(0);
   const [accessCodes, setAccessCodes] = useState<AccessCodeRecord[]>([]);
   const [inviteEmail, setInviteEmail] = useState('');
   const [invitePhone, setInvitePhone] = useState('');
@@ -162,8 +164,8 @@ export function Profile({ auth }: { auth: AuthState }) {
   const alertsEmpty = activeProfileSection === 'alerts' && notificationTeamsLoaded && !notificationTeamsError && notificationTeams.length === 0;
   const alertsReady = activeProfileSection === 'alerts' && notificationTeamsLoaded && !notificationTeamsError && Boolean(selectedNotificationTeam);
   const selectedTeamPreferencesHydrated = Boolean(selectedTeamId) && Object.prototype.hasOwnProperty.call(notificationPreferencesByTeamId, selectedTeamId);
-  const selectedTeamPreferencesLoading = alertsReady && Boolean(selectedTeamId) && !selectedTeamPreferencesHydrated;
   const selectedTeamPreferencesError = selectedTeamId ? notificationPreferenceErrorsByTeamId[selectedTeamId] || '' : '';
+  const selectedTeamPreferencesLoading = alertsReady && Boolean(selectedTeamId) && !selectedTeamPreferencesHydrated && !selectedTeamPreferencesError;
   const nativePushEnabled = isNative && pushPermissionStatus?.state === 'enabled';
   const nativePushBlocked = isNative && pushPermissionStatus?.state === 'blocked';
   const nativePushUnsupported = isNative && pushPermissionStatus?.state === 'unsupported';
@@ -428,18 +430,22 @@ export function Profile({ auth }: { auth: AuthState }) {
             return rest;
           });
           setLoadedNotificationTeamId(selectedTeamId);
+          setNotificationPreferencesErrorTeamId((current) => (current === selectedTeamId ? null : current));
         }
       } catch (error) {
         console.warn('[profile] Unable to load notification preferences:', error);
         if (!cancelled) {
+          // Do NOT cache emptyPreferences on failure — caching a failed load made
+          // the team look "hydrated" and silently showed empty toggles with no way
+          // to recover (#2042). Track the error so the section renders a Retry.
           setNotificationPreferences(emptyPreferences);
-          setNotificationPreferencesByTeamId((current) => ({ ...current, [selectedTeamId]: emptyPreferences }));
           setNotificationPreferenceErrorsByTeamId((current) => ({
             ...current,
             [selectedTeamId]: getLoadErrorMessage(error, 'Unable to load notification preferences.')
           }));
-          setLoadedNotificationTeamId(selectedTeamId);
-          setNotificationStatus({ message: 'Unable to load notification preferences.', tone: 'error' });
+          setLoadedNotificationTeamId((current) => current === selectedTeamId ? '' : current);
+          setNotificationPreferencesErrorTeamId(selectedTeamId);
+          setNotificationStatus({ message: 'Alerts unavailable — couldn’t load this team’s preferences.', tone: 'error' });
         }
       }
     }
@@ -448,7 +454,8 @@ export function Profile({ auth }: { auth: AuthState }) {
     return () => {
       cancelled = true;
     };
-  }, [activeProfileSection, notificationPreferencesByTeamId, notificationTeamsLoaded, selectedTeamId, user]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeProfileSection, notificationPreferencesByTeamId, notificationTeamsLoaded, selectedTeamId, user, notificationPreferencesReloadNonce]);
 
   useEffect(() => {
     let cancelled = false;
@@ -694,6 +701,19 @@ export function Profile({ auth }: { auth: AuthState }) {
     } finally {
       setBusy('');
     }
+  };
+
+  const retryNotificationPreferences = () => {
+    if (!selectedTeamId) return;
+    setNotificationStatus(null);
+    setNotificationPreferencesErrorTeamId(null);
+    setNotificationPreferencesByTeamId((current) => {
+      if (!Object.prototype.hasOwnProperty.call(current, selectedTeamId)) return current;
+      const next = { ...current };
+      delete next[selectedTeamId];
+      return next;
+    });
+    setNotificationPreferencesReloadNonce((nonce) => nonce + 1);
   };
 
   const saveNotifications = async () => {
@@ -1296,8 +1316,7 @@ export function Profile({ auth }: { auth: AuthState }) {
                     <span className="text-xs font-bold text-rose-700">Using safe defaults until saved preferences load.</span>
                   </div>
                 </div>
-              ) : null}
-              {selectedTeamPreferencesLoading ? (
+              ) : selectedTeamPreferencesLoading ? (
                 <div className="mt-3 rounded-2xl border border-gray-200 bg-gray-50 p-3" role="status" aria-live="polite">
                   <div className="flex items-center gap-2 text-sm font-black text-gray-900">
                     <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
