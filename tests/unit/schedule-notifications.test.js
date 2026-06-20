@@ -271,6 +271,25 @@ describe('schedule notification helpers', () => {
         });
     });
 
+    it('keeps push parent IDs aligned with the email reminder audience for the same no-response fixture', () => {
+        const players = [
+            { id: 'p1', name: 'A', parents: [{ userId: 'u1', email: 'one@example.com' }] },
+            { id: 'p2', name: 'B', parents: [{ userId: 'u2', email: 'two@example.com' }] },
+            { id: 'p3', name: 'C', parents: [{ userId: 'u3', email: 'three@example.com' }] }
+        ];
+        const rsvps = [
+            { userId: 'u1', response: 'going' },
+            { userId: 'u3', playerIds: ['p3'], response: 'maybe' }
+        ];
+
+        const recipients = buildAvailabilityReminderRecipients(players, rsvps);
+        const preview = buildAvailabilityReminderEmailPreview(players, rsvps, new Set(recipients.playerIds));
+
+        expect(recipients.playerIds).toEqual(['p2']);
+        expect(recipients.parentIds).toEqual(['u2']);
+        expect(preview.eligibleEmails).toEqual(['two@example.com']);
+    });
+
     it('counts roster players without guardians as direct recipients', () => {
         const recipients = buildAvailabilityReminderRecipients([
             { id: 'p1', parents: [] },
