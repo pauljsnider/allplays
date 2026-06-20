@@ -39,6 +39,7 @@ import {
   doc,
   collection,
   collectionGroup,
+  getDoc,
   getDocs,
   query,
   runTransaction,
@@ -135,6 +136,7 @@ const buildPracticePacketCompletionPayloadBase = buildPracticePacketCompletionPa
 
 const primaryDataTimeoutMs = 5000;
 const parentScheduleTeamConcurrency = 3;
+const parentSchedulePlayerConcurrency = 8;
 const scheduleHydrationCacheTtlMs = 30 * 1000;
 const parentHomeHydrationLookAheadMs = 14 * 24 * 60 * 60 * 1000;
 const parentHomeHydrationLookBehindMs = 12 * 60 * 60 * 1000;
@@ -1747,6 +1749,18 @@ async function loadPlayers(teamId: string) {
   );
 }
 
+async function loadPlayer(teamId: string, playerId: string) {
+  return readWithNativeFallback(
+    `player ${teamId}/${playerId}`,
+    async () => {
+      const snapshot = await getDoc(doc(db, 'teams', teamId, 'players', playerId));
+      if (!snapshot.exists()) return null;
+      return { id: snapshot.id || playerId, ...(snapshot.data() || {}) };
+    },
+    () => nativeGetDocument(`teams/${encodeURIComponent(teamId)}/players/${encodeURIComponent(playerId)}`)
+  );
+}
+
 function normalizePlayerName(player: any) {
   return compactString(player?.name || player?.displayName || player?.playerName) || 'Player';
 }
@@ -1894,25 +1908,29 @@ async function resolveParentScheduleChildren(user: AuthUser, profile: Record<str
     if (rawTeam === null) return [];
     if (rawTeam && !isTeamActive(rawTeam as Record<string, any>)) return [];
 
-    const players = await loadPlayers(teamId).catch((error) => {
-      logScheduleWarning('Unable to validate parent-linked roster.', 'parent-player-scope-load', error, { teamId });
-      return null;
-    });
-    const rosterLoaded = Array.isArray(players);
-    const playersById = new Map<string, any>();
-    if (rosterLoaded) {
-      players.forEach((player: any) => {
-        const id = compactString(player?.id || player?.playerId);
-        if (id) playersById.set(id, player);
+    const linkedPlayers = await mapWithConcurrency(teamLinks, parentSchedulePlayerConcurrency, async (link) => {
+      const player = await loadPlayer(teamId, link.playerId).catch((error) => {
+        logScheduleWarning('Unable to validate parent-linked player.', 'parent-player-scope-load', error, {
+          teamId,
+          playerId: link.playerId
+        });
+        return null;
       });
-    }
+      return { playerId: link.playerId, player };
+    });
+    const playersById = new Map<string, any>();
+    linkedPlayers.forEach(({ playerId, player }) => {
+      if (player) {
+        const id = compactString(player?.id || player?.playerId);
+        playersById.set(id || playerId, player);
+      }
+    });
 
     const teamName = compactString((rawTeam as any)?.name) || compactString((rawTeam as any)?.teamName) || '';
     return teamLinks
       .map((link) => {
-        const player = rosterLoaded ? playersById.get(link.playerId) : null;
-        if (rosterLoaded && player && !isActiveRosterPlayer(player)) return null;
-        if (rosterLoaded && !player && !link.hasMetadata) return null;
+        const player = playersById.get(link.playerId) || null;
+        if (!player || !isActiveRosterPlayer(player)) return null;
         return {
           teamId: link.teamId,
           teamName: teamName || link.teamName,
