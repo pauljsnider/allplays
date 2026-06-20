@@ -5267,8 +5267,20 @@ function formatPracticePacketDuration(duration: unknown) {
 
 function toDateInputValue(value: Date | string | number | null | undefined) {
   if (value === null || value === undefined || value === '') return '';
+  if (typeof value === 'string') {
+    const normalized = value.trim();
+    const utcCalendarDateMatch = normalized.match(/^(\d{4}-\d{2}-\d{2})(?:T00:00:00(?:\.\d+)?Z)?$/i);
+    if (utcCalendarDateMatch) return utcCalendarDateMatch[1];
+  }
   const date = value instanceof Date ? value : new Date(value);
   if (Number.isNaN(date.getTime())) return '';
+  const useUtcCalendarDate = date.getUTCHours() === 0
+    && date.getUTCMinutes() === 0
+    && date.getUTCSeconds() === 0
+    && date.getUTCMilliseconds() === 0;
+  if (useUtcCalendarDate) {
+    return `${date.getUTCFullYear()}-${padDatePart(date.getUTCMonth() + 1)}-${padDatePart(date.getUTCDate())}`;
+  }
   return `${date.getFullYear()}-${padDatePart(date.getMonth() + 1)}-${padDatePart(date.getDate())}`;
 }
 

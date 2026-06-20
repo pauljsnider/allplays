@@ -1696,6 +1696,49 @@ describe('ScheduleEventDetail practice timeline', () => {
     });
   });
 
+  it('preserves UTC midnight packet due dates as calendar dates in the date input', async () => {
+    scheduleServiceMocks.loadParentScheduleEventDetail.mockResolvedValue({
+      events: [buildEvent({
+        id: 'practice-1',
+        type: 'practice',
+        title: 'Thursday Practice',
+        isTeamStaff: true,
+        isTeamAdmin: true,
+        practiceSessionId: 'session-1'
+      })],
+      children: []
+    });
+    scheduleServiceMocks.loadParentPracticePacket.mockResolvedValue(null);
+    scheduleServiceMocks.loadStaffPracticeAttendance.mockResolvedValue(null);
+    scheduleServiceMocks.loadStaffPracticePacket.mockResolvedValue({
+      sessionId: 'session-1',
+      teamId: 'team-1',
+      eventId: 'practice-1',
+      title: 'Practice',
+      date: new Date('2026-06-04T18:00:00Z'),
+      location: 'Main Gym',
+      packetTitle: 'Practice home packet',
+      dueDate: '2026-05-24T00:00:00.000Z',
+      totalMinutes: 0,
+      homePacket: { blocks: [], totalMinutes: 0 },
+      completions: [],
+      children: [{ id: 'player-1', name: 'Avery Smith' }]
+    });
+
+    renderScheduleEventDetail();
+
+    await waitFor(() => {
+      expect(screen.getAllByRole('button', { name: 'More' }).length).toBeGreaterThan(0);
+    });
+    fireEvent.click(screen.getAllByRole('button', { name: 'More' })[0]);
+
+    await waitFor(() => {
+      expect(screen.getByText('Assign practice packet')).toBeTruthy();
+    });
+
+    expect(screen.getByLabelText('Due date')).toHaveValue('2026-05-24');
+  });
+
   it('shows the practice packet first and hides the timeline for non-admin practice viewers', async () => {
     scheduleServiceMocks.loadParentScheduleEventDetail.mockResolvedValue({
       events: [buildEvent({
