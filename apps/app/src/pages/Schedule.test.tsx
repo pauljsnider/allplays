@@ -1,4 +1,6 @@
 // @vitest-environment jsdom
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { cleanup, render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -63,6 +65,14 @@ function renderSchedule() {
       </Routes>
     </MemoryRouter>
   );
+}
+
+function resolveAppSourcePath(relativePath: string) {
+  const cwd = process.cwd();
+  const appRoot = cwd.endsWith('/apps/app') || cwd.endsWith('\\apps\\app')
+    ? cwd
+    : resolve(cwd, 'apps/app');
+  return resolve(appRoot, relativePath);
 }
 
 describe('Schedule', () => {
@@ -162,5 +172,12 @@ describe('Schedule', () => {
     screen.getByRole('button', { name: 'Refresh schedule' }).click();
 
     expect(await screen.findByText('Unable to refresh schedule because access was denied. Showing the last loaded schedule.')).toBeTruthy();
+  });
+
+  it('keeps a dedicated labeled close control alongside the text close action in the calendar picker', () => {
+    const source = readFileSync(resolveAppSourcePath('src/pages/Schedule.tsx'), 'utf8');
+
+    expect(source).toContain('aria-label="Close calendar events"');
+    expect(source).toContain('>\n              Close\n            </button>');
   });
 });

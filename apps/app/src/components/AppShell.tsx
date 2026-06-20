@@ -34,6 +34,7 @@ import type { NotificationInboxItem } from '../lib/notificationInboxService';
 import { loadNotificationInboxService } from '../lib/notificationInboxServiceLoader';
 import type { AuthState, NavItem } from '../lib/types';
 import { RoleBadge } from './Badges';
+import { Modal } from './Modal';
 
 const AppSearchDialog = lazy(() => import('./AppSearchDialog').then((module) => ({ default: module.AppSearchDialog })));
 const NotificationInboxSheet = lazy(() => import('./NotificationInboxSheet').then((module) => ({ default: module.NotificationInboxSheet })));
@@ -416,7 +417,7 @@ export function AppShell({ auth, children }: AppShellProps) {
       ) : null}
 
       {addTeamOpen ? (
-        <div className="fixed inset-0 z-50 flex items-end bg-gray-950/40 p-3 backdrop-blur-sm sm:items-center sm:justify-center" role="dialog" aria-modal="true" aria-label="Add workflow">
+        <Modal overlayClassName="z-50 flex items-end bg-gray-950/40 p-3 backdrop-blur-sm sm:items-center sm:justify-center" ariaLabel="Add workflow" onClose={() => setAddTeamOpen(false)}>
           <div className="add-workflow-panel w-full max-w-3xl rounded-2xl bg-white shadow-app-lg">
             <div className="flex items-center justify-between border-b border-gray-200 p-4">
               <div>
@@ -477,7 +478,7 @@ export function AppShell({ auth, children }: AppShellProps) {
               </div>
             </div>
           </div>
-        </div>
+        </Modal>
       ) : null}
     </div>
   );
