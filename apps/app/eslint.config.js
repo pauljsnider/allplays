@@ -61,7 +61,7 @@ export default [
       'no-useless-escape': 'warn',
       'no-useless-catch': 'warn',
       'react-hooks/exhaustive-deps': 'warn',
-      'react-hooks/rules-of-hooks': 'warn',
+      'react-hooks/rules-of-hooks': 'error',
       'react/no-children-prop': 'warn',
       'react/no-unescaped-entities': 'warn',
       'react/prop-types': 'off',
