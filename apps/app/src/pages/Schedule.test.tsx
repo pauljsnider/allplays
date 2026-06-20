@@ -29,7 +29,7 @@ vi.mock('../lib/scheduleService', () => scheduleServiceMocks);
 vi.mock('../lib/appDataCache', () => appDataCacheMocks);
 vi.mock('../lib/uxTiming', () => ({
   recordFirstMeaningfulRender: uxTimingMocks.recordFirstMeaningfulRender,
-  startUxTimer: vi.fn(() => ({ end: uxTimingMocks.end }))
+  startScreenMountTimer: vi.fn(() => ({ end: uxTimingMocks.end }))
 }));
 vi.mock('../lib/useShellLayout', () => ({
   useShellLayout: () => ({ isDesktopWeb: false })
