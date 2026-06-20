@@ -9,6 +9,7 @@
     "test:functions:notifications": "npm run test:notifications --prefix functions",
     "test:smoke": "playwright test --config=playwright.smoke.config.js",
     "test:smoke:team-fallback": "playwright test tests/smoke/team-fallback-regressions.spec.js --config=playwright.smoke.config.js --reporter=line",
+    "ci:secret-scan": "node scripts/check-no-private-secrets.mjs",
     "ci:firebase-rules": "node scripts/validate-firebase-rules-ci.mjs",
     "stage:pages": "node scripts/stage-pages-bundle.mjs",
     "app:build-help-index": "node scripts/build-app-help-knowledge-index.mjs",
