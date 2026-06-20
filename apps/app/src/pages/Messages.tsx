@@ -62,6 +62,7 @@ import {
   DEFAULT_TEAM_CONVERSATION_ID,
   MAX_CHAT_MEDIA_SIZE,
   buildChatAudienceMetadata,
+  buildChatMentionSuggestions,
   buildEmailAudienceMetadata,
   buildChatMediaShareDetails,
   chatReactions,
@@ -77,7 +78,9 @@ import {
   getMessageAttachments,
   getMessageSenderLabel,
   getReactionNames,
+  hasChatMentionTrigger,
   hasAllPlaysMention,
+  insertChatMention,
   isChatComposerLinkSafe,
   isDefaultTeamConversation,
   isStaffConversation,
@@ -85,6 +88,7 @@ import {
   normalizeChatReactions,
   shouldRetryChatLastReadOnViewReturn,
   shouldUpdateChatLastRead,
+  type ChatMentionSuggestion,
   type ChatRecipientOption,
   type ChatAudienceMetadata,
   type ChatTargetType
@@ -695,6 +699,10 @@ function ChatWindow({
     recipientOptions
   }), [recipientOptions, selectedConversation, selectedConversationId, selectedRecipientIds, selectedRecipientTarget]);
   const audienceSummary = useMemo(() => getAudienceSummaryText(audienceMetadata, recipientOptions), [audienceMetadata, recipientOptions]);
+  const mentionSuggestions = useMemo(
+    () => buildChatMentionSuggestions(recipientOptions, text),
+    [recipientOptions, text]
+  );
   const mediaEntries = useMemo(() => collectThreadMedia(messages), [messages]);
   const teamName = team?.name || inboxTeam?.name || 'Team chat';
 
@@ -747,6 +755,11 @@ function ChatWindow({
     recipientOptionsPromiseRef.current = request;
     return request;
   }, [canModerate, recipientOptions, recipientOptionsLoaded, teamId]);
+
+  useEffect(() => {
+    if (!hasChatMentionTrigger(text)) return;
+    void ensureRecipientOptionsLoaded().catch(() => undefined);
+  }, [ensureRecipientOptionsLoaded, text]);
 
   const setVoiceDraftTranscript = useCallback((transcript: string) => {
     const normalizedTranscript = String(transcript || '').trim();
@@ -1501,6 +1514,10 @@ function ChatWindow({
     });
   };
 
+  const insertRecipientMention = (mentionLabel: string) => {
+    setText((current) => insertChatMention(current, mentionLabel));
+  };
+
   const handleToggleReaction = useCallback(async (messageId: string, reactionKey: string) => {
     if (!auth.user) return;
     try {
@@ -1701,6 +1718,8 @@ function ChatWindow({
         voiceSupported={voiceSupported}
         canModerate={canModerate && isDefaultTeamConversation(selectedConversationId)}
         canSendTeamEmail={canModerate}
+        mentionSuggestions={mentionSuggestions}
+        mentionSuggestionsLoading={hasChatMentionTrigger(text) && recipientOptionsLoading}
         audienceSummary={audienceSummary}
         onTextChange={setText}
         onSubmit={handleSend}
@@ -1713,6 +1732,7 @@ function ChatWindow({
         }}
         onTeamEmail={openEmailSheet}
         onMention={insertAllPlaysMention}
+        onRecipientMention={insertRecipientMention}
       />
 
       <input ref={photoInputRef} type="file" className="chat-file-input" accept="image/*" multiple onChange={handleFiles} aria-hidden="true" tabIndex={-1} />
@@ -2662,6 +2682,8 @@ function Composer({
   voiceSupported,
   canModerate,
   canSendTeamEmail,
+  mentionSuggestions,
+  mentionSuggestionsLoading,
   audienceSummary,
   onTextChange,
   onSubmit,
@@ -2670,7 +2692,8 @@ function Composer({
   onVoice,
   onAudience,
   onTeamEmail,
-  onMention
+  onMention,
+  onRecipientMention
 }: {
   teamName: string;
   text: string;
@@ -2682,6 +2705,8 @@ function Composer({
   voiceSupported: boolean;
   canModerate: boolean;
   canSendTeamEmail: boolean;
+  mentionSuggestions: ChatMentionSuggestion[];
+  mentionSuggestionsLoading: boolean;
   audienceSummary: string;
   onTextChange: (value: string) => void;
   onSubmit: (event?: FormEvent) => void;
@@ -2691,9 +2716,11 @@ function Composer({
   onAudience: () => void;
   onTeamEmail: () => void;
   onMention: () => void;
+  onRecipientMention: (mentionLabel: string) => void;
 }) {
   const canSend = Boolean(text.trim() || filePreviews.length) && !sending && !aiThinking;
   const showMentionQuickAction = /(^|\s)@\w*$/i.test(text) && !hasAllPlaysMention(text);
+  const showMentionSuggestions = showMentionQuickAction && (mentionSuggestionsLoading || mentionSuggestions.length > 0);
   const placeholder = teamName.length > 16 ? 'Message' : `Message ${teamName}`;
   const attachmentSummary = filePreviews.length
     ? `${filePreviews.length} attachment${filePreviews.length === 1 ? '' : 's'} ready`
@@ -2724,6 +2751,30 @@ function Composer({
           <Bot className="h-4 w-4" aria-hidden="true" />
           @ALL PLAYS
         </button>
+      ) : null}
+
+      {showMentionSuggestions ? (
+        <div className="mb-2 rounded-xl border border-gray-200 bg-white p-1 shadow-sm" aria-label="Mention suggestions">
+          {mentionSuggestionsLoading && mentionSuggestions.length === 0 ? (
+            <div className="px-3 py-2 text-xs font-bold text-gray-500">Loading teammates...</div>
+          ) : mentionSuggestions.map((suggestion) => (
+            <button
+              key={suggestion.id}
+              type="button"
+              className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left hover:bg-primary-50"
+              onMouseDown={(event) => event.preventDefault()}
+              onClick={() => onRecipientMention(suggestion.label)}
+            >
+              <span className="flex h-7 w-7 flex-none items-center justify-center rounded-full bg-primary-50 text-xs font-black text-primary-700">
+                {suggestion.label.slice(0, 1).toUpperCase()}
+              </span>
+              <span className="min-w-0 flex-1">
+                <span className="block truncate text-sm font-black text-gray-950">@{suggestion.label}</span>
+                {suggestion.detail ? <span className="block truncate text-xs font-semibold text-gray-500">{suggestion.detail}</span> : null}
+              </span>
+            </button>
+          ))}
+        </div>
       ) : null}
 
       <div className="chat-composer-input-shell">

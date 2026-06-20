@@ -4,14 +4,17 @@ import {
     DEFAULT_TEAM_CONVERSATION_ID,
     buildChatAudienceMetadata,
     buildEmailAudienceMetadata,
+    buildChatMentionSuggestions,
     extractAllPlaysQuestion,
     formatChatMessageHtml,
+    getChatMentionQuery,
     getChatMemberDisplayName,
     getAudienceSummaryText,
     getMessageSenderLabel,
     getReactionNames,
     getMessagePreviewText,
     getSortedChatMessages,
+    insertChatMention,
     isChatComposerLinkSafe,
     mergeChatMessageLists,
     normalizeChatReactions
@@ -46,6 +49,32 @@ describe('React app chat logic', () => {
         expect(html).toContain('<span class="chat-mention">@ALL PLAYS</span>');
         expect(html).toContain('target="_blank"');
         expect(html).toContain('rel="noopener noreferrer"');
+    });
+
+    it('highlights teammate mentions while keeping hostile mention-like input escaped', () => {
+        const html = formatChatMessageHtml('Thanks @Coach Jamie <img src=x onerror=alert(1)> and parent@example.com');
+
+        expect(html).toContain('<span class="chat-mention">@Coach Jamie</span>');
+        expect(html).not.toContain('<img');
+        expect(html).not.toMatch(/<[^>]+\sonerror=/i);
+        expect(html).toContain('&lt;img src=x onerror=alert(1)&gt;');
+        expect(html).toContain('parent@example.com');
+        expect(html).not.toContain('<span class="chat-mention">@example</span>');
+    });
+
+    it('filters mention suggestions from recipient options and inserts the selected mention', () => {
+        const options = [
+            { id: 'user:coach-1', name: 'Coach Jamie', detail: 'Staff' },
+            { id: 'player:player-1', name: 'Pat Star', detail: '#9' },
+            { id: 'email:parent@example.com', name: 'parent@example.com', detail: 'Email' }
+        ];
+
+        expect(getChatMentionQuery('Can @co')).toBe('co');
+        expect(buildChatMentionSuggestions(options, 'Can @co')).toEqual([
+            { id: 'user:coach-1', label: 'Coach Jamie', detail: 'Staff' }
+        ]);
+        expect(insertChatMention('Can @co', 'Coach Jamie')).toBe('Can @Coach Jamie ');
+        expect(insertChatMention('No trigger', 'Pat Star')).toBe('No trigger @Pat Star ');
     });
 
     it('strips malformed or unsafe anchors in the fallback chat sanitizer', () => {

@@ -929,6 +929,20 @@ describe('React app messages integration', () => {
         expect(chatMocks.deleteTeamChatMessage).toHaveBeenCalledWith('team-1', 'msg-2', 'team');
     });
 
+    it('suggests teammate mentions from recipient options and inserts the selected mention', async () => {
+        const { container } = await renderMessages('/messages/team-1');
+        const composer = container.querySelector('.chat-composer-textarea');
+
+        await setFieldValue(composer, 'Can @co');
+
+        expect(chatMocks.loadChatRecipientOptions).toHaveBeenCalledWith('team-1');
+        expect(container.textContent).toContain('@Coach Jamie');
+
+        await click(container, '@Coach Jamie');
+
+        expect(composer.value).toBe('Can @Coach Jamie ');
+    });
+
     it('does not recompute existing message html while the composer changes', async () => {
         const chatLogic = await import('../../apps/app/src/lib/chatLogic.ts');
         const formatSpy = vi.spyOn(chatLogic, 'formatChatMessageHtml');
