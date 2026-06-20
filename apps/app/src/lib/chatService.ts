@@ -564,7 +564,7 @@ async function getLatestMessagePreview(teamId: string, user: AuthUser, team: Rec
 
 function loadCachedMessagePreview(teamId: string, user: AuthUser, team: Record<string, any>, canModerate: boolean) {
   return loadCachedAppData(
-    `chat-preview:${user.uid}:${teamId}`,
+    `chat-preview:${user.uid}:${teamId}:${canModerate ? 'moderator' : 'member'}`,
     () => getLatestMessagePreview(teamId, user, team, canModerate),
     {
       ttlMs: chatPreviewCacheTtlMs,

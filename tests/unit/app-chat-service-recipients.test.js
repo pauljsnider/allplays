@@ -404,6 +404,64 @@ describe('React app chat recipient service', () => {
         expect(dbMocks.getChatMessages).toHaveBeenCalledTimes(1);
     });
 
+    it('separates preview cache entries when moderation visibility changes mid-session', async () => {
+        let canModerate = true;
+        dbMocks.canModerateChat.mockImplementation(() => canModerate);
+        dbMocks.getUserProfile.mockResolvedValue({
+            email: 'parent@example.com',
+            parentOf: [{ teamId: 'team-parent', playerId: 'player-1' }]
+        });
+        dbMocks.getUserTeamsWithAccess.mockResolvedValue([]);
+        dbMocks.getParentTeams.mockResolvedValue([
+            { id: 'team-parent', name: 'Zebras', sport: 'Soccer' }
+        ]);
+        dbMocks.getChatConversations.mockImplementation(async (_teamId, _user, options = {}) => (
+            options.canModerate
+                ? [
+                    { id: 'staff-conversation', type: 'group', updatedAt: new Date('2026-05-21T14:00:00Z') },
+                    { id: 'team', type: 'team', updatedAt: new Date('2026-05-21T13:00:00Z') }
+                ]
+                : [
+                    { id: 'team', type: 'team', updatedAt: new Date('2026-05-21T13:00:00Z') }
+                ]
+        ));
+        dbMocks.getChatMessages.mockImplementation(async (_teamId, options = {}) => {
+            if (options.conversationId === 'staff-conversation') {
+                return [{
+                    id: 'staff-last',
+                    text: 'Staff only update',
+                    createdAt: new Date('2026-05-21T14:00:00Z')
+                }];
+            }
+            return [{
+                id: 'team-last',
+                text: 'Team update',
+                createdAt: new Date('2026-05-21T13:00:00Z')
+            }];
+        });
+        const user = {
+            uid: 'user-1',
+            email: 'parent@example.com',
+            displayName: 'Pat Parent',
+            roles: ['parent']
+        };
+
+        const { loadChatInbox } = await import('../../apps/app/src/lib/chatService.ts');
+        const moderatorInbox = await loadChatInbox(user);
+        canModerate = false;
+        const memberInbox = await loadChatInbox(user);
+
+        expect(dbMocks.getChatConversations).toHaveBeenCalledTimes(2);
+        expect(moderatorInbox.teams[0].lastMessage).toEqual(expect.objectContaining({
+            id: 'staff-last',
+            text: 'Staff only update'
+        }));
+        expect(memberInbox.teams[0].lastMessage).toEqual(expect.objectContaining({
+            id: 'team-last',
+            text: 'Team update'
+        }));
+    });
+
     it('returns teams immediately without preview lookups in fast inbox mode', async () => {
         dbMocks.getUserProfile.mockResolvedValue({ email: 'coach@example.com' });
         dbMocks.getUserTeamsWithAccess.mockResolvedValue([
