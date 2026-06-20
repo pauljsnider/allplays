@@ -80,6 +80,10 @@ const profileSections: Array<{ id: ProfileSectionId; label: string }> = [
   { id: 'security', label: 'Security' }
 ];
 
+function getLoadErrorMessage(error: unknown, fallback: string) {
+  return error instanceof Error && error.message ? error.message : fallback;
+}
+
 export function Profile({ auth }: { auth: AuthState }) {
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -112,6 +116,8 @@ export function Profile({ auth }: { auth: AuthState }) {
   const [profileStatus, setProfileStatus] = useState<Status | null>(null);
   const [verificationStatus, setVerificationStatus] = useState<Status | null>(null);
   const [notificationStatus, setNotificationStatus] = useState<Status | null>(null);
+  const [notificationTeamsError, setNotificationTeamsError] = useState('');
+  const [notificationPreferenceErrorsByTeamId, setNotificationPreferenceErrorsByTeamId] = useState<Record<string, string>>({});
   const [pushPermissionStatus, setPushPermissionStatus] = useState<PushNotificationPermissionStatus | null>(null);
   const [pushPermissionLoading, setPushPermissionLoading] = useState(false);
   const [passwordStatus, setPasswordStatus] = useState<Status | null>(null);
@@ -152,10 +158,12 @@ export function Profile({ auth }: { auth: AuthState }) {
   const canRequestAccountMerge = auth.isParent && (accountMergeExpanded || !parentLinkedTeamsLoaded || parentLinkedTeams.length > 0);
   const selectedNotificationTeam = notificationTeams.find((team) => team.id === selectedTeamId) || null;
   const alertsLoading = activeProfileSection === 'alerts' && !notificationTeamsLoaded;
-  const alertsEmpty = activeProfileSection === 'alerts' && notificationTeamsLoaded && notificationTeams.length === 0;
-  const alertsReady = activeProfileSection === 'alerts' && notificationTeamsLoaded && Boolean(selectedNotificationTeam);
+  const alertsUnavailable = activeProfileSection === 'alerts' && notificationTeamsLoaded && Boolean(notificationTeamsError);
+  const alertsEmpty = activeProfileSection === 'alerts' && notificationTeamsLoaded && !notificationTeamsError && notificationTeams.length === 0;
+  const alertsReady = activeProfileSection === 'alerts' && notificationTeamsLoaded && !notificationTeamsError && Boolean(selectedNotificationTeam);
   const selectedTeamPreferencesHydrated = Boolean(selectedTeamId) && Object.prototype.hasOwnProperty.call(notificationPreferencesByTeamId, selectedTeamId);
   const selectedTeamPreferencesLoading = alertsReady && Boolean(selectedTeamId) && !selectedTeamPreferencesHydrated;
+  const selectedTeamPreferencesError = selectedTeamId ? notificationPreferenceErrorsByTeamId[selectedTeamId] || '' : '';
   const nativePushEnabled = isNative && pushPermissionStatus?.state === 'enabled';
   const nativePushBlocked = isNative && pushPermissionStatus?.state === 'blocked';
   const nativePushUnsupported = isNative && pushPermissionStatus?.state === 'unsupported';
@@ -320,16 +328,13 @@ export function Profile({ auth }: { auth: AuthState }) {
       }
 
       try {
-        const teams = await loadNotificationTeams(user.uid, user.email).catch((error) => {
-          console.warn('[profile] Unable to load notification teams:', error);
-          setNotificationStatus({ message: 'Unable to load teams for notifications.', tone: 'error' });
-          return [];
-        });
+        const teams = await loadNotificationTeams(user.uid, user.email);
 
         if (cancelled) {
           return;
         }
 
+        setNotificationTeamsError('');
         const fallbackTeamId = teams[0]?.id || '';
         const preferredTeamId = initialUrlTeamId && teams.some((team) => team.id === initialUrlTeamId)
           ? initialUrlTeamId
@@ -354,11 +359,17 @@ export function Profile({ auth }: { auth: AuthState }) {
           if (!cancelled) {
             setNotificationPreferences(firstPrefs);
             setNotificationPreferencesByTeamId((current) => ({ ...current, [initialTeamId]: firstPrefs }));
+            setNotificationPreferenceErrorsByTeamId((current) => {
+              const { [initialTeamId]: _ignored, ...rest } = current;
+              return rest;
+            });
             setLoadedNotificationTeamId(initialTeamId);
           }
-        } catch {
+        } catch (error) {
           // Don't set loadedNotificationTeamId on error so loadPreferences effect can retry
           if (!cancelled) {
+            const message = getLoadErrorMessage(error, 'Unable to load notification preferences.');
+            setNotificationPreferenceErrorsByTeamId((current) => ({ ...current, [initialTeamId]: message }));
             setNotificationStatus({ message: 'Unable to load notification preferences.', tone: 'error' });
           }
         } finally {
@@ -366,8 +377,19 @@ export function Profile({ auth }: { auth: AuthState }) {
             setNotificationTeamsLoaded(true);
           }
         }
-      } catch {
-        // no-op: handled inline above
+      } catch (error) {
+        console.warn('[profile] Unable to load notification teams:', error);
+        if (!cancelled) {
+          setNotificationTeams([]);
+          setSelectedTeamId('');
+          setNotificationPreferences(emptyPreferences);
+          setNotificationPreferencesByTeamId({});
+          setNotificationPreferenceErrorsByTeamId({});
+          setLoadedNotificationTeamId('');
+          setNotificationTeamsError(getLoadErrorMessage(error, 'Unable to load teams for notifications.'));
+          setNotificationTeamsLoaded(true);
+          setNotificationStatus(null);
+        }
       }
     }
 
@@ -401,6 +423,10 @@ export function Profile({ auth }: { auth: AuthState }) {
         if (!cancelled) {
           setNotificationPreferences(preferences);
           setNotificationPreferencesByTeamId((current) => ({ ...current, [selectedTeamId]: preferences }));
+          setNotificationPreferenceErrorsByTeamId((current) => {
+            const { [selectedTeamId]: _ignored, ...rest } = current;
+            return rest;
+          });
           setLoadedNotificationTeamId(selectedTeamId);
         }
       } catch (error) {
@@ -408,6 +434,10 @@ export function Profile({ auth }: { auth: AuthState }) {
         if (!cancelled) {
           setNotificationPreferences(emptyPreferences);
           setNotificationPreferencesByTeamId((current) => ({ ...current, [selectedTeamId]: emptyPreferences }));
+          setNotificationPreferenceErrorsByTeamId((current) => ({
+            ...current,
+            [selectedTeamId]: getLoadErrorMessage(error, 'Unable to load notification preferences.')
+          }));
           setLoadedNotificationTeamId(selectedTeamId);
           setNotificationStatus({ message: 'Unable to load notification preferences.', tone: 'error' });
         }
@@ -683,6 +713,10 @@ export function Profile({ auth }: { auth: AuthState }) {
       const saved = await saveNotificationPreferences(user.uid, selectedTeamId, notificationPreferences);
       setNotificationPreferences(saved);
       setNotificationPreferencesByTeamId((current) => ({ ...current, [selectedTeamId]: saved }));
+      setNotificationPreferenceErrorsByTeamId((current) => {
+        const { [selectedTeamId]: _ignored, ...rest } = current;
+        return rest;
+      });
       setLoadedNotificationTeamId(selectedTeamId);
       setNotificationStatus({ message: 'Notification preferences saved.', tone: 'success' });
     } catch (error: any) {
@@ -690,6 +724,37 @@ export function Profile({ auth }: { auth: AuthState }) {
     } finally {
       setBusy('');
     }
+  };
+
+  const retryNotificationTeams = () => {
+    setNotificationStatus(null);
+    setNotificationTeamsError('');
+    setNotificationPreferenceErrorsByTeamId({});
+    setNotificationPreferencesByTeamId({});
+    setNotificationPreferences(emptyPreferences);
+    setLoadedNotificationTeamId('');
+    setSelectedTeamId('');
+    setNotificationTeams([]);
+    setNotificationTeamsLoaded(false);
+  };
+
+  const retrySelectedTeamPreferences = () => {
+    const teamId = selectedTeamId;
+    if (!teamId) {
+      return;
+    }
+
+    setNotificationStatus(null);
+    setNotificationPreferenceErrorsByTeamId((current) => {
+      const { [teamId]: _ignored, ...rest } = current;
+      return rest;
+    });
+    setNotificationPreferencesByTeamId((current) => {
+      const { [teamId]: _ignored, ...rest } = current;
+      return rest;
+    });
+    setNotificationPreferences(emptyPreferences);
+    setLoadedNotificationTeamId((current) => current === teamId ? '' : current);
   };
 
   const enablePushOnDevice = async () => {
@@ -790,6 +855,10 @@ export function Profile({ auth }: { auth: AuthState }) {
       const saved = await saveNotificationPreferences(user.uid, teamId, nextPreferences);
       setNotificationPreferences(saved);
       setNotificationPreferencesByTeamId((current) => ({ ...current, [teamId]: saved }));
+      setNotificationPreferenceErrorsByTeamId((current) => {
+        const { [teamId]: _ignored, ...rest } = current;
+        return rest;
+      });
       setLoadedNotificationTeamId(teamId);
       setNotificationStatus({ message: 'Game-day alerts are on for this team.', tone: 'success' });
     } catch (error: any) {
@@ -1126,6 +1195,20 @@ export function Profile({ auth }: { auth: AuthState }) {
           </div>
         ) : null}
 
+        {alertsUnavailable ? (
+          <div className="mt-4 rounded-2xl border border-rose-200 bg-rose-50 p-4" role="alert" aria-live="polite">
+            <div className="text-sm font-black text-rose-900">Alerts unavailable</div>
+            <p className="mt-2 text-sm font-semibold leading-6 text-rose-800">{notificationTeamsError || 'Unable to load teams for notifications.'}</p>
+            <div className="mt-3 flex flex-wrap items-center gap-2">
+              <button type="button" className="primary-button !min-h-9 text-xs" onClick={retryNotificationTeams}>
+                <RefreshCw className="h-4 w-4" aria-hidden="true" />
+                Retry alerts
+              </button>
+              <span className="text-xs font-bold text-rose-700">Still failing? Check your connection and try again.</span>
+            </div>
+          </div>
+        ) : null}
+
         {alertsEmpty ? (
           <div className="mt-4 rounded-2xl border border-dashed border-gray-300 bg-gray-50 p-4">
             <div className="text-sm font-black text-gray-900">No team alerts available yet</div>
@@ -1201,6 +1284,19 @@ export function Profile({ auth }: { auth: AuthState }) {
 
             <details className="mt-3 rounded-2xl border border-gray-200 bg-white p-3" open>
               <summary className="cursor-pointer text-sm font-black text-gray-700">Customize alerts</summary>
+              {selectedTeamPreferencesError ? (
+                <div className="mt-3 rounded-2xl border border-rose-200 bg-rose-50 p-3" role="alert" aria-live="polite">
+                  <div className="text-sm font-black text-rose-900">Alerts unavailable</div>
+                  <p className="mt-2 text-sm font-semibold leading-6 text-rose-800">{selectedTeamPreferencesError}</p>
+                  <div className="mt-3 flex flex-wrap items-center gap-2">
+                    <button type="button" className="primary-button !min-h-9 text-xs" onClick={retrySelectedTeamPreferences} disabled={selectedTeamPreferencesLoading}>
+                      <RefreshCw className={`h-4 w-4 ${selectedTeamPreferencesLoading ? 'animate-spin' : ''}`} aria-hidden="true" />
+                      Retry alerts
+                    </button>
+                    <span className="text-xs font-bold text-rose-700">Using safe defaults until saved preferences load.</span>
+                  </div>
+                </div>
+              ) : null}
               {selectedTeamPreferencesLoading ? (
                 <div className="mt-3 rounded-2xl border border-gray-200 bg-gray-50 p-3" role="status" aria-live="polite">
                   <div className="flex items-center gap-2 text-sm font-black text-gray-900">
