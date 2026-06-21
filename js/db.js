@@ -91,6 +91,7 @@ import {
 
 export async function normalizeParentScopeLinks(parentLinks = []) {
     const activeLinks = [];
+    const accessLinks = [];
     let blockedLinkCount = 0;
     let staleLinkCount = 0;
     const teamCache = new Map();
@@ -133,7 +134,7 @@ export async function normalizeParentScopeLinks(parentLinks = []) {
         }
 
         if (playerSnap?.blockedByPermissions) {
-            activeLinks.push({
+            const normalizedLink = {
                 ...link,
                 teamId,
                 playerId,
@@ -141,7 +142,9 @@ export async function normalizeParentScopeLinks(parentLinks = []) {
                 playerName: link.playerName || '',
                 playerNumber: link.playerNumber ?? '',
                 playerPhotoUrl: link.playerPhotoUrl || null
-            });
+            };
+            activeLinks.push(normalizedLink);
+            accessLinks.push(normalizedLink);
             continue;
         }
 
@@ -151,12 +154,7 @@ export async function normalizeParentScopeLinks(parentLinks = []) {
         }
 
         const player = { id: playerSnap.id, ...playerSnap.data() };
-        if (player.active === false) {
-            staleLinkCount += 1;
-            continue;
-        }
-
-        activeLinks.push({
+        const normalizedLink = {
             ...link,
             teamId,
             playerId,
@@ -164,13 +162,21 @@ export async function normalizeParentScopeLinks(parentLinks = []) {
             playerName: player.name || link.playerName || '',
             playerNumber: player.number ?? link.playerNumber ?? '',
             playerPhotoUrl: player.photoUrl || link.playerPhotoUrl || null
-        });
+        };
+
+        if (player.active === false) {
+            accessLinks.push(normalizedLink);
+            continue;
+        }
+
+        activeLinks.push(normalizedLink);
+        accessLinks.push(normalizedLink);
     }
 
     return {
         activeLinks,
-        parentTeamIds: [...new Set(activeLinks.map((link) => link.teamId))],
-        parentPlayerKeys: [...new Set(activeLinks.map((link) => `${link.teamId}::${link.playerId}`))],
+        parentTeamIds: [...new Set(accessLinks.map((link) => link.teamId))],
+        parentPlayerKeys: [...new Set(accessLinks.map((link) => `${link.teamId}::${link.playerId}`))],
         blockedLinkCount,
         staleLinkCount
     };

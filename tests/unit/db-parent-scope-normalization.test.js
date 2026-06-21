@@ -64,7 +64,7 @@ function makeSnap(id, data) {
 }
 
 describe('parent scope normalization', () => {
-    it('keeps only active team and player links in parent access scope fields', async () => {
+    it('keeps inactive players out of active children while preserving historical access keys', async () => {
         const getTeam = vi.fn(async (teamId) => ({
             'team-active': { id: 'team-active', name: 'Active Team', active: true },
             'team-inactive': { id: 'team-inactive', name: 'Inactive Team', active: false },
@@ -104,10 +104,10 @@ describe('parent scope normalization', () => {
                     playerPhotoUrl: null
                 }
             ],
-            parentTeamIds: ['team-active'],
-            parentPlayerKeys: ['team-active::player-active'],
+            parentTeamIds: ['team-active', 'team-inactive-player'],
+            parentPlayerKeys: ['team-active::player-active', 'team-inactive-player::player-inactive'],
             blockedLinkCount: 0,
-            staleLinkCount: 3
+            staleLinkCount: 2
         });
     });
 
