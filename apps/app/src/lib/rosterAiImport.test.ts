@@ -88,6 +88,33 @@ describe('rosterAiImport', () => {
     ]);
   });
 
+  it('preserves the current jersey number when an update only changes the name', () => {
+    const result = normalizeRosterAiImportResponse({
+      operations: [
+        { action: 'update', playerId: 'p1', changes: { name: 'Jane Doe' }, reason: 'fixed spelling' }
+      ]
+    }, {
+      currentPlayers: [{ id: 'p1', name: 'Jane Do', number: '23' }]
+    });
+
+    expect(result.errors).toEqual([]);
+    expect(result.rows).toEqual([
+      {
+        rowNumber: 1,
+        action: 'update',
+        playerId: 'p1',
+        name: 'Jane Doe',
+        number: '23',
+        changes: { name: 'Jane Doe' },
+        reason: 'fixed spelling',
+        errors: []
+      }
+    ]);
+
+    const plan = buildRosterAiImportCommitPlan(result.rows);
+    expect(plan.updatePlayers).toEqual([{ playerId: 'p1', changes: { name: 'Jane Doe' } }]);
+  });
+
   it('flags likely duplicate adds and excludes errored rows from the commit plan', () => {
     const result = normalizeRosterAiImportResponse({
       operations: [

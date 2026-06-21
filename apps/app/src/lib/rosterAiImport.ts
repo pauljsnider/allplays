@@ -263,10 +263,11 @@ function validateUpdatePlayer(playerId: string, changes: Record<string, string>,
 
 function buildUpdateChanges(changes: Record<string, unknown>, currentPlayer: NormalizedCurrentPlayer | undefined) {
   const nextName = compactText(changes.name || '');
-  const nextNumber = normalizeJerseyNumber(changes.number);
+  const hasNumberChange = Object.prototype.hasOwnProperty.call(changes, 'number');
+  const nextNumber = hasNumberChange ? normalizeJerseyNumber(changes.number) : currentPlayer?.number || '';
   const result: Record<string, string> = {};
   if (nextName && nextName !== currentPlayer?.name) result.name = nextName;
-  if (nextNumber !== (currentPlayer?.number || '')) result.number = nextNumber;
+  if (hasNumberChange && nextNumber !== (currentPlayer?.number || '')) result.number = nextNumber;
   return result;
 }
 
