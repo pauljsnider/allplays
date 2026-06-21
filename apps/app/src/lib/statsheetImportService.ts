@@ -1,10 +1,25 @@
 import { acquireProfilePhoto } from './profilePhotoService'
-import { getConfigs, getGame, getPlayers, getTeam, uploadStatSheetPhoto } from '../../../../js/db.js'
-import { collection, db, deleteDoc, doc, getDocs, writeBatch } from '../../../../js/firebase.js'
-import { buildTrackStatsheetApplyPlan, validateTrackStatsheetApplyRows } from '../../../../js/track-statsheet-apply.js'
-import { addAggregatedStatsWritesToBatch } from '../../../../js/live-tracker-save-complete.js'
-import { getApp } from '../../../../js/vendor/firebase-app.js'
-import { getAI, getGenerativeModel, GoogleAIBackend, Schema } from '../../../../js/vendor/firebase-ai.js'
+import {
+  addAggregatedStatsWritesToBatch,
+  buildTrackStatsheetApplyPlan,
+  collection,
+  db,
+  deleteDoc,
+  doc,
+  getAI,
+  getApp,
+  getConfigs,
+  getDocs,
+  getGame,
+  getGenerativeModel,
+  getPlayers,
+  getTeam,
+  GoogleAIBackend,
+  Schema,
+  uploadStatSheetPhoto,
+  validateTrackStatsheetApplyRows,
+  writeBatch
+} from './adapters/legacyStatsheetImport'
 
 export type TrackStatsheetReviewRow = {
   number: string;
