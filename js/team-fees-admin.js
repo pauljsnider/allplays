@@ -1171,8 +1171,8 @@ async function initTeamFeesAdminPage() {
     renderFooter(document.getElementById('footer-container'));
 
     const [{ getTeam, getPlayers, getUserProfile, createTeamFeeBatch, getTeamFeeBatch, listTeamFeeBatches, listTeamFeeRecipients, updateTeamFeeRecipient, canModerateChat }, { requireAuth }] = await Promise.all([
-        import('./db.js?v=56'),
-        import('./auth.js?v=25')
+        import('./db.js?v=57'),
+        import('./auth.js?v=28')
     ]);
 
     try {
