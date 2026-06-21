@@ -35,17 +35,28 @@ describe('workflow registration guide', () => {
 
     it('regenerates help index registration copy to match the metadata-only workflow', () => {
         const helpCenter = readRepoFile('help.html');
+        const teamSetup = readRepoFile('workflow-team-setup.html');
         const appIndex = readRepoFile('apps/app/src/lib/helpKnowledgeIndex.ts');
         const capabilities = readRepoFile('apps/app/src/data/capabilities.ts');
+
+        expect(teamSetup).toContain('Configure registration provider metadata');
+        expect(teamSetup).toContain('It does not create a live connection or verify provider health in real time.');
+        expect(teamSetup).toContain('only after a roster/schedule snapshot or other provider data has already been loaded into ALL PLAYS');
+        expect(teamSetup).not.toContain('Connect a registration provider (such as Sports Connect) to sync roster and schedule data.');
+        expect(teamSetup).not.toContain('Use the manual re-import entry point to trigger a fresh sync when needed.');
 
         expect(helpCenter).toContain('use stored Sports Connect metadata with manual imports');
         expect(helpCenter).not.toContain('sync with Sports Connect');
         expect(helpCenter).not.toContain('view connection and sync status');
 
         expect(appIndex).toContain('use stored Sports Connect metadata with manual imports');
-        expect(appIndex).toContain('The registration provider fields currently store metadata only.');
+        expect(appIndex).toContain('Configure registration provider metadata');
+        expect(appIndex).toContain('the registration provider fields currently store metadata only');
+        expect(appIndex).toContain('It does not create a live connection or verify provider health in real time.');
         expect(appIndex).not.toContain('connection status monitoring');
         expect(appIndex).not.toContain('pull the latest data immediately without waiting for any scheduled sync');
+        expect(appIndex).not.toContain('Connect a registration provider (such as Sports Connect) to sync roster and schedule data.');
+        expect(appIndex).not.toContain('trigger a fresh sync when needed.');
 
         expect(capabilities).toContain('Sports Connect metadata import workflow');
         expect(capabilities).not.toContain('Sports Connect sync workflow');
