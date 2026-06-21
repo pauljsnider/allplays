@@ -105,8 +105,8 @@
                     <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"></path></svg>
                     .ics Export
                 </button>
-                <button id="sync-calendar" class="inline-flex items-center gap-1 px-3 py-1.5 text-xs font-medium text-emerald-700 bg-emerald-50 rounded-lg hover:bg-emerald-100 transition border border-emerald-200">
-                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 002 2z"></path></svg>
+                <button id="sync-calendar" onclick="openSyncCalendarModal()" class="inline-flex items-center gap-1 px-3 py-1.5 text-xs font-medium text-emerald-700 bg-emerald-50 rounded-lg hover:bg-emerald-100 transition border border-emerald-200">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"></path></svg>
                     Sync Calendar
                 </button>
             </div>
@@ -143,7 +143,7 @@
     </div>
 
     <div id="sync-calendar-modal" class="hidden fixed inset-0 z-50">
-        <div id="sync-calendar-backdrop" class="absolute inset-0 bg-black/50"></div>
+        <div id="sync-calendar-backdrop" class="absolute inset-0 bg-black/50" onclick="closeSyncCalendarModal()"></div>
         <div class="relative z-10 min-h-full flex items-center justify-center p-4">
             <div class="bg-white rounded-2xl shadow-2xl max-w-lg w-full overflow-hidden">
                 <div class="flex items-center justify-between px-6 py-4 border-b border-gray-100">
@@ -151,7 +151,7 @@
                         <p class="text-xs uppercase tracking-wide text-emerald-600 font-semibold">Live schedule feed</p>
                         <h3 class="text-lg font-bold text-gray-900">Sync Calendar</h3>
                     </div>
-                    <button id="sync-calendar-close" class="text-gray-400 hover:text-gray-700">
+                    <button id="sync-calendar-close" onclick="closeSyncCalendarModal()" class="text-gray-400 hover:text-gray-700">
                         <span class="sr-only">Close</span>
                         <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
                     </button>
@@ -204,7 +204,7 @@
         let calendarYear = new Date().getFullYear();
         let activeDayDetail = null;
         let linkedPlayersByTeam = new Map();
-        let calendarTeamsById = new Map();
+        let calendarTeams = [];
         const teamColors = {};
         const colorPalette = ['#6366f1', '#ec4899', '#f59e0b', '#10b981', '#ef4444', '#8b5cf6', '#06b6d4', '#f97316'];
 
@@ -216,6 +216,8 @@
         window.printCurrentScheduleOptions = printCurrentScheduleOptions;
         window.navMonth = navMonth;
         window.exportIcs = exportIcs;
+        window.openSyncCalendarModal = openSyncCalendarModal;
+        window.closeSyncCalendarModal = closeSyncCalendarModal;
         window.openDayDetail = openDayDetail;
         window.closeDayModal = closeDayModal;
         window.submitCalendarRsvp = submitCalendarRsvp;
@@ -344,7 +346,7 @@
                 const teamsMap = new Map();
                 [...coachTeams, ...parentTeams].forEach(t => teamsMap.set(t.id, t));
                 const teams = Array.from(teamsMap.values());
-                calendarTeamsById = new Map(teams.map((team) => [team.id, team]));
+                calendarTeams = teams;
 
                 // Assign colors to teams
                 teams.forEach((team, i) => {
@@ -878,16 +880,16 @@
             });
         }
 
-        function getSelectedCalendarTeam() {
-            const selectedTeamId = document.getElementById('team-filter')?.value || currentTeamFilter || '';
-            if (selectedTeamId) {
-                return calendarTeamsById.get(selectedTeamId) || null;
+        function getSelectedSyncCalendarTeam() {
+            if (currentTeamFilter) {
+                return calendarTeams.find((team) => team.id === currentTeamFilter) || null;
             }
-            const teams = Array.from(calendarTeamsById.values());
-            return teams.length === 1 ? teams[0] : null;
+            const visibleTeamIds = new Set((allEvents || []).map((event) => event.teamId).filter(Boolean));
+            const candidateTeams = calendarTeams.filter((team) => visibleTeamIds.size === 0 || visibleTeamIds.has(team.id));
+            return candidateTeams.length === 1 ? candidateTeams[0] : null;
         }
 
-        function getPrivateCalendarFeedUrl(team = getSelectedCalendarTeam()) {
+        function getPrivateCalendarFeedUrl(team) {
             const directUrl = team?.privateCalendarFeedUrl ||
                 team?.calendarSubscriptionUrl ||
                 team?.calendarFeedUrl ||
@@ -896,12 +898,11 @@
                 return directUrl.trim().replace(/^webcal:\/\//i, 'https://');
             }
 
-            const teamId = team?.id || '';
             const token = team?.calendarSubscriptionToken ||
                 team?.privateCalendarToken ||
                 team?.calendarFeedToken ||
                 team?.teamCalendarToken;
-            if (!teamId || !token) return '';
+            if (!token || !team?.id) return '';
 
             const configuredUrl = window.__ALLPLAYS_CONFIG__?.teamCalendarFeedFunctionUrl || window.ALLPLAYS_TEAM_CALENDAR_FEED_URL;
             const fallbackUrl = window.__ALLPLAYS_CONFIG__?.calendarFetchFunctionUrl || window.ALLPLAYS_CALENDAR_FUNCTION_URL;
@@ -911,7 +912,7 @@
                     ? fallbackUrl.replace('fetchCalendarIcs', 'teamCalendarFeed')
                     : 'https://us-central1-all-plays-prod.cloudfunctions.net/teamCalendarFeed');
             const separator = baseUrl.includes('?') ? '&' : '?';
-            return `${baseUrl}${separator}teamId=${encodeURIComponent(teamId)}&token=${encodeURIComponent(token)}`;
+            return `${baseUrl}${separator}teamId=${encodeURIComponent(team.id)}&token=${encodeURIComponent(token)}`;
         }
 
         function getAppleCalendarFeedUrl(feedUrl) {
@@ -929,18 +930,20 @@
             feedback.className = `text-sm ${tone === 'error' ? 'text-red-600' : tone === 'success' ? 'text-emerald-700' : 'text-gray-600'}`;
         }
 
+        function getCurrentCalendarFeedUrl() {
+            const team = getSelectedSyncCalendarTeam();
+            return team ? getPrivateCalendarFeedUrl(team) : '';
+        }
+
         function openSyncCalendarModal() {
-            const selectedTeam = getSelectedCalendarTeam();
-            const feedUrl = getPrivateCalendarFeedUrl(selectedTeam);
+            const team = getSelectedSyncCalendarTeam();
+            const feedUrl = team ? getPrivateCalendarFeedUrl(team) : '';
             document.getElementById('sync-calendar-modal')?.classList.remove('hidden');
-            if (!selectedTeam) {
-                setSyncCalendarFeedback('Choose a team before syncing its calendar.', 'error');
+            if (!team) {
+                setSyncCalendarFeedback('Select a team before opening a live calendar subscription.', 'error');
                 return;
             }
-            setSyncCalendarFeedback(
-                feedUrl ? `Choose where to subscribe to ${selectedTeam.name || 'this team'} calendar.` : 'Calendar subscription link is not available yet.',
-                feedUrl ? 'neutral' : 'error'
-            );
+            setSyncCalendarFeedback(feedUrl ? `Choose where to subscribe to ${team.name || 'this team'} schedule.` : 'Calendar subscription link is not available yet.', feedUrl ? 'neutral' : 'error');
         }
 
         function closeSyncCalendarModal() {
@@ -949,7 +952,7 @@
 
         async function copyPrivateCalendarFeedUrl(feedUrl) {
             if (!feedUrl) {
-                setSyncCalendarFeedback(getSelectedCalendarTeam() ? 'Calendar subscription link is not available yet.' : 'Choose a team before syncing its calendar.', 'error');
+                setSyncCalendarFeedback('Calendar subscription link is not available yet.', 'error');
                 return;
             }
             try {
@@ -973,6 +976,28 @@
                 setSyncCalendarFeedback('Could not copy the link. Select Copy Link again or try manually.', 'error');
             }
         }
+
+        document.getElementById('sync-calendar-apple')?.addEventListener('click', () => {
+            const feedUrl = getCurrentCalendarFeedUrl();
+            if (!feedUrl) {
+                setSyncCalendarFeedback('Calendar subscription link is not available yet.', 'error');
+                return;
+            }
+            window.open(getAppleCalendarFeedUrl(feedUrl), '_blank', 'noopener');
+            setSyncCalendarFeedback('Opening Apple Calendar subscription.', 'success');
+        });
+        document.getElementById('sync-calendar-google')?.addEventListener('click', () => {
+            const feedUrl = getCurrentCalendarFeedUrl();
+            if (!feedUrl) {
+                setSyncCalendarFeedback('Calendar subscription link is not available yet.', 'error');
+                return;
+            }
+            window.open(getGoogleCalendarFeedUrl(feedUrl), '_blank', 'noopener');
+            setSyncCalendarFeedback('Opening Google Calendar subscription.', 'success');
+        });
+        document.getElementById('sync-calendar-copy')?.addEventListener('click', () => {
+            copyPrivateCalendarFeedUrl(getCurrentCalendarFeedUrl());
+        });
 
         // ===== ICS EXPORT =====
         function exportIcs() {
@@ -1042,31 +1067,6 @@
             a.click();
             URL.revokeObjectURL(a.href);
         }
-
-        document.getElementById('sync-calendar')?.addEventListener('click', openSyncCalendarModal);
-        document.getElementById('sync-calendar-close')?.addEventListener('click', closeSyncCalendarModal);
-        document.getElementById('sync-calendar-backdrop')?.addEventListener('click', closeSyncCalendarModal);
-        document.getElementById('sync-calendar-apple')?.addEventListener('click', () => {
-            const feedUrl = getPrivateCalendarFeedUrl();
-            if (!feedUrl) {
-                setSyncCalendarFeedback(getSelectedCalendarTeam() ? 'Calendar subscription link is not available yet.' : 'Choose a team before syncing its calendar.', 'error');
-                return;
-            }
-            window.open(getAppleCalendarFeedUrl(feedUrl), '_blank', 'noopener');
-            setSyncCalendarFeedback('Opening Apple Calendar subscription.', 'success');
-        });
-        document.getElementById('sync-calendar-google')?.addEventListener('click', () => {
-            const feedUrl = getPrivateCalendarFeedUrl();
-            if (!feedUrl) {
-                setSyncCalendarFeedback(getSelectedCalendarTeam() ? 'Calendar subscription link is not available yet.' : 'Choose a team before syncing its calendar.', 'error');
-                return;
-            }
-            window.open(getGoogleCalendarFeedUrl(feedUrl), '_blank', 'noopener');
-            setSyncCalendarFeedback('Opening Google Calendar subscription.', 'success');
-        });
-        document.getElementById('sync-calendar-copy')?.addEventListener('click', () => {
-            copyPrivateCalendarFeedUrl(getPrivateCalendarFeedUrl());
-        });
 
         init();
     </script>

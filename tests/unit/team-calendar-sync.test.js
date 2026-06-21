@@ -70,15 +70,15 @@ describe('all teams calendar sync controls', () => {
     it('builds selected-team private subscription links and wires modal actions', () => {
         const source = readCalendarPage();
 
-        expect(source).toContain('function getSelectedCalendarTeam()');
-        expect(source).toContain('function getPrivateCalendarFeedUrl(team = getSelectedCalendarTeam())');
+        expect(source).toContain('function getSelectedSyncCalendarTeam()');
+        expect(source).toContain('function getPrivateCalendarFeedUrl(team)');
         expect(source).toContain('team?.calendarSubscriptionUrl');
         expect(source).toContain('team?.calendarSubscriptionToken');
         expect(source).toContain('teamCalendarFeed');
         expect(source).toContain("return feedUrl.replace(/^https?:\\/\\//i, 'webcal://');");
         expect(source).toContain('https://calendar.google.com/calendar/render?cid=${encodeURIComponent(feedUrl)}');
         expect(source).toContain('navigator.clipboard.writeText(feedUrl)');
-        expect(source).toContain("document.getElementById('sync-calendar')?.addEventListener('click', openSyncCalendarModal);");
-        expect(source).toContain('Choose a team before syncing its calendar.');
+        expect(source).toContain('onclick="openSyncCalendarModal()"');
+        expect(source).toContain('Select a team before opening a live calendar subscription.');
     });
 });
