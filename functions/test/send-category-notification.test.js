@@ -398,6 +398,51 @@ test('sendRsvpReminderPushNotifications sends availability pushes only to email 
         }
 });
 
+test('sendCategoryNotification deep links rideshare notifications to the rideshare event section', async () => {
+        const { internals, env, cleanup } = loadNotificationInternals({
+            teamDoc: {
+                ownerId: 'coach-1',
+                adminEmails: []
+            },
+            parentUserIds: ['parent-1'],
+            indexedTargets: [
+                {
+                    uid: 'parent-1',
+                    deviceId: 'parent-device',
+                    token: 'parent-token',
+                    categories: { rideshare: true }
+                }
+            ]
+        });
+
+        try {
+            const result = await internals.sendCategoryNotification({
+                teamId: 'team-1',
+                gameId: 'game-9',
+                category: 'rideshare',
+                title: 'Ride request claimed',
+                body: 'Avery has a confirmed ride.'
+            });
+
+            assert.equal(result?.successCount, 1);
+            assert.equal(env.messagingCalls.length, 1);
+            assert.deepEqual(env.messagingCalls[0].data, {
+                category: 'rideshare',
+                teamId: 'team-1',
+                gameId: 'game-9',
+                eventId: 'game-9',
+                conversationId: '',
+                appRoute: '/schedule/team-1/game-9?section=rideshare',
+                link: 'https://allplays.ai/app/#/schedule/team-1/game-9?section=rideshare'
+            });
+            assert.equal(env.messagingCalls[0].webLink, 'https://allplays.ai/app/#/schedule/team-1/game-9?section=rideshare');
+            assert.equal(env.inboxWrites[0].value.appRoute, '/schedule/team-1/game-9?section=rideshare');
+            assert.equal(env.auditWrites[0].value.category, 'rideshare');
+        } finally {
+            cleanup();
+        }
+});
+
 for (const [category, categories] of [
     ['liveChat', { liveChat: true }],
     ['mentions', { mentions: true }]

@@ -4014,6 +4014,15 @@ function buildNotificationLink({ category, teamId, gameId, batchId = null, recip
     }
     return 'https://allplays.ai/app/#/schedule';
   }
+  if (category === 'rideshare') {
+    if (teamId && gameId) {
+      return `https://allplays.ai/app/#/schedule/${encodeURIComponent(teamId)}/${encodeURIComponent(gameId)}?section=rideshare`;
+    }
+    if (teamId) {
+      return `https://allplays.ai/app/#/schedule?teamId=${encodeURIComponent(teamId)}&section=rideshare`;
+    }
+    return 'https://allplays.ai/app/#/schedule?section=rideshare';
+  }
   if (category === 'media') {
     if (teamId) {
       return `https://allplays.ai/app/#/teams/${encodeURIComponent(teamId)}/media`;
@@ -4075,6 +4084,16 @@ function buildNotificationAppRoute({ category, teamId, gameId, eventId, batchId 
       return `/schedule?teamId=${encodeURIComponent(teamId)}`;
     }
     return '/schedule';
+  }
+  if (category === 'rideshare') {
+    const scheduleEventId = eventId || gameId;
+    if (teamId && scheduleEventId) {
+      return `/schedule/${encodeURIComponent(teamId)}/${encodeURIComponent(scheduleEventId)}?section=rideshare`;
+    }
+    if (teamId) {
+      return `/schedule?teamId=${encodeURIComponent(teamId)}&section=rideshare`;
+    }
+    return '/schedule?section=rideshare';
   }
   if (category === 'media') {
     if (teamId) {
