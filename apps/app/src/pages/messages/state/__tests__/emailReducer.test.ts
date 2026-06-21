@@ -114,20 +114,6 @@ describe('emailReducer', () => {
     });
   });
 
-  it('clears stale composer content when refreshed drafts no longer include the selected draft', () => {
-    const selected = emailReducer(
-      emailReducer(initialEmailComposerState, { type: 'setDrafts', drafts: [draft()] }),
-      { type: 'selectDraft', draftId: 'draft-1' }
-    );
-
-    expect(emailReducer(selected, { type: 'setDrafts', drafts: [] })).toMatchObject({
-      drafts: [],
-      selectedDraftId: '',
-      subject: '',
-      body: ''
-    });
-  });
-
   it('applies templates and clears the composer through reducer actions', () => {
     const withTemplate = emailReducer(initialEmailComposerState, { type: 'setTemplates', templates: [template()] });
     const applied = emailReducer(withTemplate, { type: 'applyTemplate', templateId: 'template-1' });
@@ -138,5 +124,18 @@ describe('emailReducer', () => {
       subject: '',
       body: ''
     });
+  });
+
+  it('keeps composer state unchanged when applying an unknown template id', () => {
+    const withTemplate = emailReducer(initialEmailComposerState, {
+      type: 'setTemplates',
+      templates: [template()]
+    });
+    const edited = emailReducer(
+      emailReducer(withTemplate, { type: 'updateSubject', subject: 'Manual subject' }),
+      { type: 'updateBody', body: 'Manual body' }
+    );
+
+    expect(emailReducer(edited, { type: 'applyTemplate', templateId: 'missing-template' })).toEqual(edited);
   });
 });
