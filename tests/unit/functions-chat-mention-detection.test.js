@@ -207,6 +207,7 @@ describe('notifyTeamChatMessageCreated source wiring', () => {
     });
 
     it('stores mentionedUids on the message document', () => {
+        expect(notifyTeamChatMessageCreatedSource).toContain('if (shouldResolveMentions) {');
         expect(notifyTeamChatMessageCreatedSource).toContain('snapshot.ref.update({ mentionedUids })');
     });
 
