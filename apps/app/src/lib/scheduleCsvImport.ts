@@ -5,7 +5,7 @@ import {
   normalizeScheduleImportDraft,
   parseCsvText,
   validateScheduleCsvMapping
-} from '../../../../js/schedule-csv-import.js';
+} from './adapters/legacyScheduleCsv';
 
 export type ScheduleCsvImportFieldKey = 'startDateTime' | 'date' | 'startTime' | 'endTime' | 'eventType' | 'opponent' | 'title' | 'location' | 'arrivalTime' | 'isHome' | 'notes';
 export type ScheduleCsvImportMapping = Partial<Record<ScheduleCsvImportFieldKey, string>>;
