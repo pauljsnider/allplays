@@ -104,6 +104,15 @@ const {
   getEventTitle,
   formatScheduleUpdateDate
 } = require('./schedule-notification-utils.cjs');
+const {
+  assertSportsConnectSyncConfig,
+  buildSportsConnectRegistrationSnapshot,
+  buildSportsConnectSyncErrorUpdate,
+  buildSportsConnectTeamUpdate,
+  fetchSportsConnectRegistrationPayload,
+  getRegistrationSource,
+  getTeamSportsConnectConfig
+} = require('./sports-connect-registration-sync.cjs');
 
 if (admin.apps.length === 0) {
   admin.initializeApp();
@@ -845,6 +854,90 @@ function hasTeamAdminAccess({ team, user = {}, uid, email }) {
   const adminEmails = Array.isArray(team?.adminEmails) ? team.adminEmails.map((entry) => String(entry || '').trim().toLowerCase()) : [];
   return Boolean(uid && team?.ownerId === uid) || Boolean(normalizedEmail && adminEmails.includes(normalizedEmail));
 }
+
+function getSportsConnectFunctionsConfig() {
+  const sportsConnectConfig = functions.config()?.sports_connect || {};
+  return {
+    endpointTemplate: process.env.SPORTS_CONNECT_REGISTRATION_SNAPSHOT_URL ||
+      process.env.SPORTS_CONNECT_REGISTRATION_BASE_URL ||
+      sportsConnectConfig.registration_snapshot_url ||
+      sportsConnectConfig.registration_base_url,
+    accessToken: process.env.SPORTS_CONNECT_API_TOKEN ||
+      sportsConnectConfig.api_token ||
+      sportsConnectConfig.token
+  };
+}
+
+function toHttpsError(error, fallbackCode = 'internal') {
+  if (error instanceof functions.https.HttpsError) return error;
+  const code = error?.code && typeof error.code === 'string' ? error.code : fallbackCode;
+  return new functions.https.HttpsError(code, error?.message || 'Request failed.');
+}
+
+exports.syncRegistrationProvider = functions.https.onCall(async (data, context) => {
+  if (!context.auth) {
+    throw new functions.https.HttpsError('unauthenticated', 'Sign in to sync registration data.');
+  }
+
+  const teamId = String(data?.teamId || '').trim();
+  if (!teamId) {
+    throw new functions.https.HttpsError('invalid-argument', 'Team ID is required.');
+  }
+
+  const teamRef = firestore.doc(`teams/${teamId}`);
+  const [teamSnap, userSnap] = await Promise.all([
+    teamRef.get(),
+    firestore.doc(`users/${context.auth.uid}`).get()
+  ]);
+  if (!teamSnap.exists) {
+    throw new functions.https.HttpsError('not-found', 'Team not found.');
+  }
+
+  const team = teamSnap.data() || {};
+  const user = userSnap.exists ? userSnap.data() || {} : {};
+  const callerEmail = String(context.auth.token?.email || '').trim().toLowerCase();
+  if (!hasTeamAdminAccess({ team, user, uid: context.auth.uid, email: callerEmail })) {
+    throw new functions.https.HttpsError('permission-denied', 'Only team owners and admins can sync registration data.');
+  }
+
+  const existingSource = getRegistrationSource(team);
+  const syncConfig = getTeamSportsConnectConfig(team, getSportsConnectFunctionsConfig());
+  try {
+    assertSportsConnectSyncConfig(syncConfig);
+    const payload = await fetchSportsConnectRegistrationPayload(syncConfig);
+    const nowIso = new Date().toISOString();
+    const snapshot = buildSportsConnectRegistrationSnapshot(payload, {
+      externalTeamId: syncConfig.externalTeamId,
+      fetchedAt: nowIso
+    });
+    const update = buildSportsConnectTeamUpdate({
+      existingSource,
+      snapshot,
+      nowIso
+    });
+    update.registrationSource.teamId = teamId;
+    update.registrationSource.lastSyncBy = context.auth.uid;
+    update.registrationSource.lastSyncByEmail = callerEmail || null;
+    await teamRef.set(update, { merge: true });
+    return {
+      success: true,
+      teamId,
+      provider: 'Sports Connect',
+      externalTeamId: snapshot.externalTeamId,
+      playerCount: snapshot.playerCount,
+      fetchedAt: snapshot.fetchedAt
+    };
+  } catch (error) {
+    const nowIso = new Date().toISOString();
+    await teamRef.set(buildSportsConnectSyncErrorUpdate(existingSource, error?.message, nowIso), { merge: true }).catch((writeError) => {
+      functions.logger.warn('Failed to record Sports Connect sync error state.', {
+        teamId,
+        error: writeError?.message || String(writeError)
+      });
+    });
+    throw toHttpsError(error, 'unavailable');
+  }
+});
 
 function normalizeOrganizationDraftSlot(slot = {}) {
   const homeTeamId = String(slot.homeTeamId || '').trim();
