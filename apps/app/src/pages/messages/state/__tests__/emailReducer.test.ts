@@ -77,6 +77,26 @@ describe('emailReducer', () => {
     });
   });
 
+  it('removes an unselected draft without disturbing the selected draft composer', () => {
+    const selected = emailReducer(
+      emailReducer(initialEmailComposerState, {
+        type: 'setDrafts',
+        drafts: [
+          draft({ id: 'draft-1', subject: 'Selected subject', body: 'Selected body' }),
+          draft({ id: 'draft-2', subject: 'Other subject', body: 'Other body' })
+        ]
+      }),
+      { type: 'selectDraft', draftId: 'draft-1' }
+    );
+
+    expect(emailReducer(selected, { type: 'deleteDraft', draftId: 'draft-2' })).toMatchObject({
+      drafts: [draft({ id: 'draft-1', subject: 'Selected subject', body: 'Selected body' })],
+      selectedDraftId: 'draft-1',
+      subject: 'Selected subject',
+      body: 'Selected body'
+    });
+  });
+
   it('preserves unsaved draft edits when refreshed drafts still include the selected draft', () => {
     const selected = emailReducer(
       emailReducer(initialEmailComposerState, { type: 'setDrafts', drafts: [draft()] }),
