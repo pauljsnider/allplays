@@ -48,8 +48,12 @@ test('notifyGameCreated sends a schedule notification once and records audit out
         assert.equal(secondResult, null);
         assert.equal(env.counts.dedupTransactions, 2);
         assert.equal(env.messagingCalls.length, 1);
+        assert.equal(env.messagingCalls[0].data.category, 'schedule');
+        assert.equal(env.messagingCalls[0].data.eventId, 'game-1');
+        assert.equal(env.messagingCalls[0].data.appRoute, '/schedule/team-1/game-1');
         assert.equal(env.auditWrites.length, 1);
         assert.equal(env.auditWrites[0].value.category, 'schedule');
+        assert.equal(env.auditWrites[0].value.appRoute, '/schedule/team-1/game-1');
         assert.equal(env.auditWrites[0].value.dedupGuardApplied, true);
     } finally {
         cleanup();
