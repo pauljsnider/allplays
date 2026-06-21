@@ -505,7 +505,8 @@ function buildNotificationTestEnv({
             counts.dedupTransactions += 1;
             return handler({
                 get: (ref) => ref.get(),
-                set: (ref, value) => ref.set(value)
+                set: (ref, value) => ref.set(value),
+                update: (ref, value) => ref.update(value)
             });
         },
         batch() {
@@ -527,7 +528,8 @@ function buildNotificationTestEnv({
     const firestoreFactory = Object.assign(() => firestoreState, {
         FieldValue: {
             serverTimestamp: () => ({ __serverTimestamp: true }),
-            increment: (amount) => ({ __increment: amount })
+            increment: (amount) => ({ __increment: amount }),
+            delete: () => ({ __delete: true })
         },
         Timestamp: {
             fromDate: (date) => ({
