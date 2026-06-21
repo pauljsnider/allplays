@@ -1,14 +1,12 @@
 import {
   buildAdminRegistrationFormPayload,
-  formatFieldLabels,
-  normalizeBackgroundCheckSettings,
-  validateAdminRegistrationFormPayload
-} from '../../../../js/admin-registration-forms.js';
-import {
   calculateRegistrationFeeSnapshot,
+  formatFieldLabels,
   getPaymentPlanChoices,
-  normalizeRegistrationForm
-} from '../../../../js/registration-flow.js';
+  normalizeBackgroundCheckSettings,
+  normalizeRegistrationForm,
+  validateAdminRegistrationFormPayload
+} from './adapters/legacyRegistrationFormAdmin';
 
 export type RegistrationFormEditorDraft = {
   teamId?: string;
