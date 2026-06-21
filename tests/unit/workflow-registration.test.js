@@ -40,8 +40,10 @@ describe('workflow registration guide', () => {
         const capabilities = readRepoFile('apps/app/src/data/capabilities.ts');
 
         expect(teamSetup).toContain('Configure registration provider metadata');
-        expect(teamSetup).toContain('It does not create a live connection or verify provider health in real time.');
-        expect(teamSetup).toContain('only after a roster/schedule snapshot or other provider data has already been loaded into ALL PLAYS');
+        expect(teamSetup).toContain('Enter the external Team ID / mapping field, then save the team so the provider card keeps that mapping.');
+        expect(teamSetup).toContain('use <strong>Sync now</strong> to fetch Sports Connect data through the backend and store the latest roster snapshot for import');
+        expect(teamSetup).toContain('After <strong>Sync now</strong> finishes, use the manual re-import entry point only when a roster/schedule snapshot or other provider data is already loaded into ALL PLAYS.');
+        expect(teamSetup).not.toContain('any sync notes you want stored with the team');
         expect(teamSetup).not.toContain('Connect a registration provider (such as Sports Connect) to sync roster and schedule data.');
         expect(teamSetup).not.toContain('Use the manual re-import entry point to trigger a fresh sync when needed.');
 
@@ -52,7 +54,8 @@ describe('workflow registration guide', () => {
         expect(appIndex).toContain('use stored Sports Connect metadata with manual imports');
         expect(appIndex).toContain('Configure registration provider metadata');
         expect(appIndex).toContain('the registration provider fields currently store metadata only');
-        expect(appIndex).toContain('It does not create a live connection or verify provider health in real time.');
+        expect(appIndex).toContain('On the provider card, use Sync now to fetch Sports Connect data through the backend and store the latest roster snapshot for import.');
+        expect(appIndex).toContain('After Sync now finishes, use the manual re-import entry point only when a roster/schedule snapshot or other provider data is already loaded into ALL PLAYS.');
         expect(appIndex).not.toContain('connection status monitoring');
         expect(appIndex).not.toContain('pull the latest data immediately without waiting for any scheduled sync');
         expect(appIndex).not.toContain('Connect a registration provider (such as Sports Connect) to sync roster and schedule data.');
