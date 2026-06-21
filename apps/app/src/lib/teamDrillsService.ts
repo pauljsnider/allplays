@@ -64,6 +64,23 @@ export type TeamFavoriteDrillsModel = {
   drills: TeamDrillSummary[];
 };
 
+export type PracticeAiCoachPromptInput = {
+  teamName?: string | null;
+  sport?: string | null;
+  ageGroup?: string | null;
+  availableMinutes?: string | number | null;
+  rosterSize?: string | number | null;
+  goals?: unknown[];
+  focusSkills?: unknown[];
+  constraints?: unknown[];
+  favoriteDrills?: TeamDrillSummary[];
+};
+
+export type PracticeAiCoachPrompt = {
+  system: string;
+  user: string;
+};
+
 type TeamDrillLibraryCursor = {
   communityCursor: unknown | null;
   pendingDrills: any[];
@@ -154,6 +171,59 @@ export function filterDrillSummaries(drills: TeamDrillSummary[], filters: TeamDr
       || drill.instructions.toLowerCase().includes(searchText)
       || drill.skills.some((skill) => skill.toLowerCase().includes(searchText));
   });
+}
+
+function normalizeCoachPromptList(values: unknown[] | undefined, fallback: string[]) {
+  const normalized = Array.from(new Set((Array.isArray(values) ? values : [])
+    .map((value) => normalizeString(value))
+    .filter(Boolean)));
+  return normalized.length ? normalized : fallback;
+}
+
+export function buildPracticeAiCoachPrompt({
+  teamName,
+  sport,
+  ageGroup,
+  availableMinutes,
+  rosterSize,
+  goals,
+  focusSkills,
+  constraints,
+  favoriteDrills
+}: PracticeAiCoachPromptInput): PracticeAiCoachPrompt {
+  const normalizedSport = normalizeString(sport) || 'youth sports';
+  const minutes = normalizeWholeNumber(availableMinutes, 60);
+  const playerCount = normalizeWholeNumber(rosterSize, 10);
+  const goalLines = normalizeCoachPromptList(goals, ['Build a balanced practice with warm-up, skill work, game-like reps, and a short wrap-up.']);
+  const skillLines = normalizeCoachPromptList(focusSkills, ['fundamentals', 'teamwork']);
+  const constraintLines = normalizeCoachPromptList(constraints, ['Keep instructions concise and age-appropriate.']);
+  const drillLines = (Array.isArray(favoriteDrills) ? favoriteDrills : [])
+    .slice(0, 5)
+    .map((drill) => {
+      const setupParts = [
+        drill.setup?.duration ? `${drill.setup.duration} min` : '',
+        drill.setup?.players ? `${drill.setup.players} players` : '',
+        drill.setup?.area ? drill.setup.area : ''
+      ].filter(Boolean).join(', ');
+      const skillsText = drill.skills.length ? ` Skills: ${drill.skills.join(', ')}.` : '';
+      return `- ${drill.title} (${drill.type || 'Drill'}${setupParts ? `; ${setupParts}` : ''}).${skillsText}`;
+    });
+
+  return {
+    system: `You are an assistant coach helping plan ${normalizedSport} practices. Return practical, safety-aware plans with clear timing, setup, and coaching cues.`,
+    user: [
+      `Team: ${normalizeString(teamName) || 'Team'}`,
+      `Sport: ${normalizedSport}`,
+      `Age group: ${normalizeString(ageGroup) || 'Not specified'}`,
+      `Available time: ${minutes} minutes`,
+      `Roster size: ${playerCount}`,
+      `Practice goals:\n${goalLines.map((goal) => `- ${goal}`).join('\n')}`,
+      `Focus skills:\n${skillLines.map((skill) => `- ${skill}`).join('\n')}`,
+      `Constraints:\n${constraintLines.map((constraint) => `- ${constraint}`).join('\n')}`,
+      `Favorite drills to prefer when they fit:\n${drillLines.length ? drillLines.join('\n') : '- No favorites supplied.'}`,
+      'Create a minute-by-minute practice plan with drill names, setup notes, coaching cues, and an adjustment for fewer players.'
+    ].join('\n\n')
+  };
 }
 
 export async function loadTeamDrillLibraryPage(

@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { filterDrillSummaries, loadFavoriteDrills, loadTeamDrillLibraryPage, setTeamDrillFavorite } from './teamDrillsService';
+import { buildPracticeAiCoachPrompt, filterDrillSummaries, loadFavoriteDrills, loadTeamDrillLibraryPage, setTeamDrillFavorite } from './teamDrillsService';
 
 const dbMocks = vi.hoisted(() => ({
   addDrillFavorite: vi.fn(),
@@ -106,6 +106,43 @@ describe('teamDrillsService', () => {
     expect(filterDrillSummaries(drills, { searchText: 'finish' }).map((drill) => drill.id)).toEqual(['drill-3']);
     expect(filterDrillSummaries(drills, { type: 'Technical', level: 'Intermediate' }).map((drill) => drill.id)).toEqual(['drill-1']);
     expect(filterDrillSummaries(drills, { type: 'Warm-up' }).map((drill) => drill.id)).toEqual(['drill-2']);
+  });
+
+  it('builds a practice AI coach prompt from team goals and favorite drills', () => {
+    const prompt = buildPracticeAiCoachPrompt({
+      teamName: 'Bears',
+      sport: 'Soccer',
+      ageGroup: 'U12',
+      availableMinutes: 75,
+      rosterSize: 14,
+      goals: ['Press after turnovers', 'Finish from wide service'],
+      focusSkills: ['first touch', 'finishing'],
+      constraints: ['Half field only', 'Two keepers unavailable'],
+      favoriteDrills: [{
+        id: 'drill-1',
+        title: 'Rondo 4v2',
+        sport: 'Soccer',
+        type: 'Technical',
+        level: 'Intermediate',
+        ageGroup: 'U12',
+        skills: ['passing', 'support'],
+        description: 'Keep the ball moving.',
+        instructions: 'Two-touch max.',
+        youtubeUrl: '',
+        diagramUrls: [],
+        attribution: null,
+        setup: { duration: 15, players: '8-10', cones: 6, balls: '2', area: '20x20', pinnies: '4' }
+      }]
+    });
+
+    expect(prompt.system).toContain('Soccer practices');
+    expect(prompt.user).toContain('Team: Bears');
+    expect(prompt.user).toContain('Available time: 75 minutes');
+    expect(prompt.user).toContain('- Press after turnovers');
+    expect(prompt.user).toContain('- first touch');
+    expect(prompt.user).toContain('- Half field only');
+    expect(prompt.user).toContain('- Rondo 4v2 (Technical; 15 min, 8-10 players, 20x20). Skills: passing, support.');
+    expect(prompt.user).toContain('minute-by-minute practice plan');
   });
 
   it('loads a bounded community drill page and merges team-published drills for staff users', async () => {
