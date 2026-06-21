@@ -21,6 +21,7 @@ export type NotificationInboxItem = {
     body: string;
     text: string;
     appRoute: string;
+    conversationId: string;
     createdAt: unknown;
     readAt: unknown | null;
 };
@@ -67,6 +68,7 @@ export function subscribeToNotificationInbox(
                     body,
                     text: buildNotificationText(title, body, legacyText),
                     appRoute: getStringField(data, 'appRoute'),
+                    conversationId: getStringField(data, 'conversationId'),
                     createdAt: data['createdAt'] ?? null,
                     readAt: data['readAt'] ?? null
                 };

@@ -30,6 +30,7 @@ function buildNotificationInboxPayload({
   teamId,
   gameId = null,
   eventId = null,
+  conversationId = null,
   createdAt = null,
   readAt = null
 } = {}) {
@@ -41,6 +42,7 @@ function buildNotificationInboxPayload({
     teamId: normalizeInboxId(teamId),
     gameId: gameId ? normalizeInboxId(gameId) : null,
     eventId: eventId ? normalizeInboxId(eventId) : null,
+    conversationId: conversationId ? normalizeInboxId(conversationId) : null,
     createdAt,
     readAt
   };
