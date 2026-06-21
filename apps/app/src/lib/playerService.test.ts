@@ -115,6 +115,122 @@ describe('saveParentAthleteProfileDraft', () => {
       { profileId: expect.any(String) }
     );
   });
+
+  it('uploads profile headshots and highlight clips into the athlete profile draft', async () => {
+    const headshot = new File(['headshot'], 'headshot.png', { type: 'image/png' });
+    const clip = new File(['clip-data'], 'buzzer-beater.mp4', { type: 'video/mp4' });
+    legacyPlayerDbMocks.uploadAthleteProfileMedia.mockImplementation(async (_userId, profileId, file, options) => ({
+      url: `https://cdn.example.com/${options.kind}/${file.name}`,
+      storagePath: `athleteProfiles/${profileId}/${options.kind}/${file.name}`,
+      mimeType: file.type,
+      sizeBytes: file.size,
+      uploadedAtMs: options.kind === 'profile-photo' ? 111 : 222,
+      mediaType: file.type.startsWith('video/') ? 'video' : 'image'
+    }));
+    legacyPlayerDbMocks.saveAthleteProfile.mockImplementation(async (_userId, draft, options) => ({
+      id: options.profileId,
+      ...draft
+    }));
+
+    const result = await saveParentAthleteProfileDraft({
+      user: {
+        uid: 'parent-1',
+        parentOf: [{ teamId: 'team-current', playerId: 'player-current' }]
+      } as any,
+      teamId: 'team-current',
+      playerId: 'player-current',
+      profileId: 'profile-uploads',
+      draft: {
+        athlete: { name: 'Sam Player' },
+        bio: {},
+        privacy: 'public',
+        profilePhoto: null,
+        clips: [{ id: 'existing-clip', title: 'Existing clip' }]
+      },
+      profilePhotoFile: headshot,
+      highlightClipFile: clip
+    });
+
+    expect(legacyPlayerDbMocks.uploadAthleteProfileMedia).toHaveBeenNthCalledWith(
+      1,
+      'parent-1',
+      'profile-uploads',
+      headshot,
+      { kind: 'profile-photo' }
+    );
+    expect(legacyPlayerDbMocks.uploadAthleteProfileMedia).toHaveBeenNthCalledWith(
+      2,
+      'parent-1',
+      'profile-uploads',
+      clip,
+      { kind: 'clip' }
+    );
+    expect(legacyPlayerDbMocks.saveAthleteProfile).toHaveBeenCalledWith(
+      'parent-1',
+      expect.objectContaining({
+        profilePhoto: expect.objectContaining({
+          url: 'https://cdn.example.com/profile-photo/headshot.png',
+          storagePath: 'athleteProfiles/profile-uploads/profile-photo/headshot.png',
+          mimeType: 'image/png',
+          mediaType: 'image'
+        }),
+        clips: [
+          { id: 'existing-clip', title: 'Existing clip' },
+          expect.objectContaining({
+            source: 'upload',
+            mediaType: 'video',
+            title: 'buzzer-beater',
+            url: 'https://cdn.example.com/clip/buzzer-beater.mp4',
+            storagePath: 'athleteProfiles/profile-uploads/clip/buzzer-beater.mp4',
+            mimeType: 'video/mp4'
+          })
+        ],
+        selectedSeasonKeys: ['team-current::player-current']
+      }),
+      { profileId: 'profile-uploads' }
+    );
+    expect(result.shareUrl).toBe('https://allplays.ai/athlete-profile.html?profileId=profile-1');
+    expect(result.builderUrl).toContain('athlete-profile-builder.html');
+  });
+
+  it('removes an uploaded headshot when the highlight clip upload fails', async () => {
+    const headshot = new File(['headshot'], 'headshot.png', { type: 'image/png' });
+    const clip = new File(['clip-data'], 'clip.mp4', { type: 'video/mp4' });
+    legacyPlayerDbMocks.deleteAthleteProfileMediaByPath.mockResolvedValue(undefined);
+    legacyPlayerDbMocks.uploadAthleteProfileMedia
+      .mockResolvedValueOnce({
+        url: 'https://cdn.example.com/headshot.png',
+        storagePath: 'athleteProfiles/profile-rollback/profile-photo/headshot.png',
+        mimeType: 'image/png',
+        sizeBytes: headshot.size,
+        uploadedAtMs: 111,
+        mediaType: 'image'
+      })
+      .mockRejectedValueOnce(new Error('clip upload failed'));
+
+    await expect(saveParentAthleteProfileDraft({
+      user: {
+        uid: 'parent-1',
+        parentOf: [{ teamId: 'team-current', playerId: 'player-current' }]
+      } as any,
+      teamId: 'team-current',
+      playerId: 'player-current',
+      profileId: 'profile-rollback',
+      draft: {
+        athlete: { name: 'Sam Player' },
+        bio: {},
+        privacy: 'public',
+        clips: []
+      },
+      profilePhotoFile: headshot,
+      highlightClipFile: clip
+    })).rejects.toThrow('clip upload failed');
+
+    expect(legacyPlayerDbMocks.deleteAthleteProfileMediaByPath).toHaveBeenCalledWith(
+      'athleteProfiles/profile-rollback/profile-photo/headshot.png'
+    );
+    expect(legacyPlayerDbMocks.saveAthleteProfile).not.toHaveBeenCalled();
+  });
 });
 
 
