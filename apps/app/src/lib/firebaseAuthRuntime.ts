@@ -1,15 +1,18 @@
-import { getApp, getApps, initializeApp } from '../../../../js/vendor/firebase-app.js';
 import {
   applyActionCode,
   confirmPasswordReset,
   createUserWithEmailAndPassword,
+  getApp,
+  getApps,
   getAuth,
   getRedirectResult,
   GoogleAuthProvider,
   indexedDBLocalPersistence,
+  initializeApp,
   initializeAuth,
   isSignInWithEmailLink,
   onAuthStateChanged,
+  resolvePrimaryFirebaseConfig,
   sendEmailVerification,
   sendPasswordResetEmail,
   signInWithEmailAndPassword,
@@ -19,8 +22,7 @@ import {
   signOut,
   updatePassword,
   verifyPasswordResetCode
-} from '../../../../js/vendor/firebase-auth.js';
-import { resolvePrimaryFirebaseConfig } from '../../../../js/firebase-runtime-config.js';
+} from './adapters/legacyFirebaseAuthSdk';
 
 const firebaseConfig = await resolvePrimaryFirebaseConfig();
 const app = getApps().length ? getApp() : initializeApp(firebaseConfig);
