@@ -197,7 +197,7 @@ test('notifyTeamChatMessageCreated sends mentions and liveChat only to enabled r
 test('notifyTeamChatMessageCreated honors conversation mutes while preserving direct mentions', async () => {
     const { moduleExports, env, cleanup } = loadNotificationInternals({
         teamDoc: { ownerId: 'coach-1', adminEmails: ['assistant@example.com'] },
-        parentUserIds: ['parent-1'],
+        parentUserIds: ['parent-1', 'parent-2'],
         authUsersByEmail: { 'assistant@example.com': 'coach-2' },
         userDocs: {
             'coach-1': { displayName: 'Coach Prime' },
@@ -211,12 +211,23 @@ test('notifyTeamChatMessageCreated honors conversation mutes while preserving di
                         }
                     }
                 }
+            },
+            'parent-2': {
+                displayName: 'Taylor Parent',
+                teamChatState: {
+                    'team-1': {
+                        mutedConversations: {
+                            'thread-7': true
+                        }
+                    }
+                }
             }
         },
         indexedTargets: [
             { uid: 'coach-1', deviceId: 'coach-device', token: 'coach-token', categories: { liveChat: true, mentions: true } },
             { uid: 'coach-2', deviceId: 'assistant-device', token: 'assistant-token', categories: { liveChat: true, mentions: true } },
-            { uid: 'parent-1', deviceId: 'parent-device', token: 'parent-token', categories: { liveChat: true, mentions: true } }
+            { uid: 'parent-1', deviceId: 'parent-device', token: 'parent-token', categories: { liveChat: true, mentions: true } },
+            { uid: 'parent-2', deviceId: 'parent-2-device', token: 'parent-2-token', categories: { liveChat: true, mentions: true } }
         ]
     });
 
@@ -238,6 +249,7 @@ test('notifyTeamChatMessageCreated honors conversation mutes while preserving di
             'liveChat:assistant-token',
             'mentions:parent-token'
         ]);
+        assert.equal(env.messagingCalls.some((call) => call.tokens.includes('parent-2-token')), false);
         assert.equal(env.messagingCalls.every((call) => call.data.conversationId === 'thread-7'), true);
         assert.deepEqual(env.updatedDocs, [{ path: 'teams/team-1/chatMessages/message-2', value: { mentionedUids: ['parent-1'] } }]);
     } finally {
