@@ -36,6 +36,7 @@ describe('app push notification routing', () => {
         expect(resolvePushNotificationRoute({ category: 'practice', teamId: 'team-1', eventId: 'practice-4' })).toBe('/schedule/team-1/practice-4?section=game');
         expect(resolvePushNotificationRoute({ category: 'practice', teamId: 'team-1', eventId: 'session-4', appRoute: '/schedule/team-1/practice-4?section=game' })).toBe('/schedule/team-1/practice-4?section=game');
         expect(resolvePushNotificationRoute({ category: 'rsvp', teamId: 'team-1', eventId: 'game-9' })).toBe('/schedule/team-1/game-9?section=availability');
+        expect(resolvePushNotificationRoute({ category: 'rsvp', teamId: 'team-1', eventId: 'game-9', childId: 'player-2' })).toBe('/schedule/team-1/game-9?childId=player-2&section=availability');
         expect(resolvePushNotificationRoute({ category: 'media', teamId: 'team-1' })).toBe('/teams/team-1/media');
         expect(resolvePushNotificationRoute({ category: 'schedule', teamId: 'team-1', eventId: 'event-9' })).toBe('/schedule/team-1/event-9');
     });
@@ -51,6 +52,7 @@ describe('app push notification routing', () => {
         expect(resolvePushNotificationRoute({ category: 'fees', teamId: 'team 1' })).toBe('/parent-tools/fees?teamId=team+1');
         expect(resolvePushNotificationRoute({ category: 'access', teamId: 'team 1' })).toBe('/parent-tools/access?teamId=team+1');
         expect(resolvePushNotificationRoute({ category: 'rideshare', teamId: 'team-1', eventId: 'game-7' })).toBe('/schedule/team-1/game-7?section=rideshare');
+        expect(resolvePushNotificationRoute({ category: 'rideshare', teamId: 'team-1', eventId: 'game-7', childId: 'player-2' })).toBe('/schedule/team-1/game-7?childId=player-2&section=rideshare');
         expect(resolvePushNotificationRoute({ category: 'media', teamId: 'team-1' })).toBe('/teams/team-1/media');
         expect(resolvePushNotificationRoute({ category: 'awards', teamId: 'team-1', certificateId: 'cert-9' })).toBe('/parent-tools/certificates?teamId=team-1&certificateId=cert-9');
         expect(resolvePushNotificationRoute({ category: 'mentions', teamId: 'team-1', conversationId: 'staff-2' })).toBe('/messages/team-1?conversationId=staff-2');
@@ -68,6 +70,11 @@ describe('app push notification routing', () => {
     it('returns the home route when notification data is missing', () => {
         expect(resolvePushNotificationRoute(undefined)).toBe('/home');
         expect(resolvePushNotificationRoute(null)).toBe('/home');
+        expect(resolvePushNotificationRoute({ data: undefined })).toBe('/home');
+    });
+
+    it('accepts Capacitor notification wrappers without requiring data to be dereferenced first', () => {
+        expect(resolvePushNotificationRoute({ data: { category: 'rsvp', teamId: 'team-1', eventId: 'game-9', childId: 'player-2' } })).toBe('/schedule/team-1/game-9?childId=player-2&section=availability');
     });
 
     it('keeps and clears pending notification routes for delayed auth hydration', () => {

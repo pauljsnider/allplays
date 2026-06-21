@@ -3975,7 +3975,19 @@ async function practicePacketAssignedNotification(beforeData = null, afterData =
   return null;
 }
 
-function buildNotificationLink({ category, teamId, gameId, eventId = null, batchId = null, recipientId = null, conversationId = null }) {
+function buildScheduleSectionQuery(section, childId = null) {
+  const params = new URLSearchParams();
+  if (childId) {
+    params.set('childId', childId);
+  }
+  if (section) {
+    params.set('section', section);
+  }
+  const query = params.toString();
+  return query ? `?${query}` : '';
+}
+
+function buildNotificationLink({ category, teamId, gameId, eventId = null, batchId = null, recipientId = null, conversationId = null, childId = null }) {
   if (category === 'officiating') {
     return teamId
       ? `https://allplays.ai/officials.html?teamId=${encodeURIComponent(teamId)}`
@@ -4007,7 +4019,7 @@ function buildNotificationLink({ category, teamId, gameId, eventId = null, batch
   }
   if (category === 'rsvp') {
     if (teamId && gameId) {
-      return `https://allplays.ai/app/#/schedule/${encodeURIComponent(teamId)}/${encodeURIComponent(gameId)}?section=availability`;
+      return `https://allplays.ai/app/#/schedule/${encodeURIComponent(teamId)}/${encodeURIComponent(gameId)}${buildScheduleSectionQuery('availability', childId)}`;
     }
     if (teamId) {
       return `https://allplays.ai/app/#/schedule?teamId=${encodeURIComponent(teamId)}`;
@@ -4017,7 +4029,7 @@ function buildNotificationLink({ category, teamId, gameId, eventId = null, batch
   if (category === 'rideshare') {
     const scheduleEventId = eventId || gameId;
     if (teamId && scheduleEventId) {
-      return `https://allplays.ai/app/#/schedule/${encodeURIComponent(teamId)}/${encodeURIComponent(scheduleEventId)}?section=rideshare`;
+      return `https://allplays.ai/app/#/schedule/${encodeURIComponent(teamId)}/${encodeURIComponent(scheduleEventId)}${buildScheduleSectionQuery('rideshare', childId)}`;
     }
     if (teamId) {
       return `https://allplays.ai/app/#/schedule?teamId=${encodeURIComponent(teamId)}&section=rideshare`;
@@ -4036,7 +4048,7 @@ function buildNotificationLink({ category, teamId, gameId, eventId = null, batch
   return `https://allplays.ai/team.html?teamId=${encodeURIComponent(teamId)}`;
 }
 
-function buildNotificationAppRoute({ category, teamId, gameId, eventId, batchId = null, recipientId = null, conversationId = null }) {
+function buildNotificationAppRoute({ category, teamId, gameId, eventId, batchId = null, recipientId = null, conversationId = null, childId = null }) {
   if (category === 'officiating') {
     return teamId ? `/officials?teamId=${encodeURIComponent(teamId)}` : '/officials';
   }
@@ -4079,7 +4091,7 @@ function buildNotificationAppRoute({ category, teamId, gameId, eventId, batchId 
   if (category === 'rsvp') {
     const scheduleEventId = eventId || gameId;
     if (teamId && scheduleEventId) {
-      return `/schedule/${encodeURIComponent(teamId)}/${encodeURIComponent(scheduleEventId)}?section=availability`;
+      return `/schedule/${encodeURIComponent(teamId)}/${encodeURIComponent(scheduleEventId)}${buildScheduleSectionQuery('availability', childId)}`;
     }
     if (teamId) {
       return `/schedule?teamId=${encodeURIComponent(teamId)}`;
@@ -4089,7 +4101,7 @@ function buildNotificationAppRoute({ category, teamId, gameId, eventId, batchId 
   if (category === 'rideshare') {
     const scheduleEventId = eventId || gameId;
     if (teamId && scheduleEventId) {
-      return `/schedule/${encodeURIComponent(teamId)}/${encodeURIComponent(scheduleEventId)}?section=rideshare`;
+      return `/schedule/${encodeURIComponent(teamId)}/${encodeURIComponent(scheduleEventId)}${buildScheduleSectionQuery('rideshare', childId)}`;
     }
     if (teamId) {
       return `/schedule?teamId=${encodeURIComponent(teamId)}&section=rideshare`;
@@ -4977,6 +4989,7 @@ async function sendCategoryNotification({
   gameId = null,
   eventId = null,
   conversationId = null,
+  childId = null,
   category,
   title,
   body,
@@ -5004,8 +5017,8 @@ async function sendCategoryNotification({
     : allTargets;
   if (!targets.length) return null;
 
-  const link = linkOverride || buildNotificationLink({ category, teamId, gameId, eventId: eventId || gameId, conversationId });
-  const appRoute = buildNotificationAppRoute({ category, teamId, gameId, eventId: eventId || gameId, conversationId });
+  const link = linkOverride || buildNotificationLink({ category, teamId, gameId, eventId: eventId || gameId, conversationId, childId });
+  const appRoute = buildNotificationAppRoute({ category, teamId, gameId, eventId: eventId || gameId, conversationId, childId });
   const deliveryOptions = typeof buildNotificationDeliveryOptions === 'function'
     ? buildNotificationDeliveryOptions({ category, teamId, gameId, eventId: eventId || gameId })
     : {};
@@ -5041,6 +5054,8 @@ async function sendCategoryNotification({
         gameId: String(gameId || ''),
         eventId: String(eventId || gameId || ''),
         conversationId: String(conversationId || ''),
+        childId: String(childId || ''),
+        rsvpId: String(childId || ''),
         category: String(category),
         appRoute,
         link
@@ -5253,13 +5268,14 @@ async function sendDirectTargetsNotification({
   batchId = null,
   recipientId = null,
   conversationId = null,
+  childId = null,
   linkOverride = null,
   appRouteOverride = null
 }) {
   if (!targets.length) return null;
 
-  const link = linkOverride || buildNotificationLink({ category, teamId, gameId, eventId: eventId || gameId, batchId, recipientId, conversationId });
-  const appRoute = appRouteOverride || buildNotificationAppRoute({ category, teamId, gameId, eventId: eventId || gameId, batchId, recipientId, conversationId });
+  const link = linkOverride || buildNotificationLink({ category, teamId, gameId, eventId: eventId || gameId, batchId, recipientId, conversationId, childId });
+  const appRoute = appRouteOverride || buildNotificationAppRoute({ category, teamId, gameId, eventId: eventId || gameId, batchId, recipientId, conversationId, childId });
   const deliveryOptions = typeof buildNotificationDeliveryOptions === 'function'
     ? buildNotificationDeliveryOptions({ category, teamId, gameId, eventId: eventId || gameId })
     : {};
@@ -5295,6 +5311,8 @@ async function sendDirectTargetsNotification({
         gameId: String(gameId || ''),
         eventId: String(eventId || gameId || ''),
         conversationId: String(conversationId || ''),
+        childId: String(childId || ''),
+        rsvpId: String(childId || ''),
         category: String(category),
         appRoute,
         link
@@ -5925,6 +5943,7 @@ async function dispatchDuePreEventReminders(now = new Date()) {
             teamId,
             gameId,
             event: claimedEvent,
+            recipientTargets: emailResult.recipientTargets,
             recipientUserIds: emailResult.recipientUserIds
           });
         } catch (pushError) {
@@ -7604,9 +7623,52 @@ function buildRsvpReminderPushPayload(event) {
   };
 }
 
-async function sendRsvpReminderPushNotifications({ teamId, gameId, event = {}, recipientUserIds = [] } = {}) {
+function getScheduleNotificationChildId(event = {}) {
+  return String(event.childId || event.playerId || event.recipientId || '').trim() || null;
+}
+
+async function sendRsvpReminderPushNotifications({ teamId, gameId, event = {}, recipientUserIds = [], recipientTargets = [] } = {}) {
   if (!teamId || !gameId) {
     return { successCount: 0, failureCount: 0, targetCount: 0 };
+  }
+
+  const payload = buildRsvpReminderPushPayload(event);
+  const childIdByRecipientGroup = new Map();
+  (Array.isArray(recipientTargets) ? recipientTargets : []).forEach((target) => {
+    const userId = String(target?.userId || '').trim();
+    const childId = String(target?.childId || '').trim();
+    if (!userId || !childId) return;
+    const groupUserIds = childIdByRecipientGroup.get(childId) || [];
+    if (!groupUserIds.includes(userId)) {
+      groupUserIds.push(userId);
+      childIdByRecipientGroup.set(childId, groupUserIds);
+    }
+  });
+
+  if (childIdByRecipientGroup.size > 0) {
+    let successCount = 0;
+    let failureCount = 0;
+    let targetCount = 0;
+
+    for (const [childId, userIds] of childIdByRecipientGroup.entries()) {
+      const targets = await getTargetsForCategoryUserIds(teamId, 'rsvp', userIds);
+      if (!targets.length) continue;
+      const sendResult = await sendDirectTargetsNotification({
+        targets,
+        category: 'rsvp',
+        title: payload.title,
+        body: payload.body,
+        teamId,
+        gameId,
+        eventId: gameId,
+        childId
+      });
+      successCount += Number(sendResult?.successCount || 0);
+      failureCount += Number(sendResult?.failureCount || 0);
+      targetCount += targets.length;
+    }
+
+    return { successCount, failureCount, targetCount };
   }
 
   const targets = await getTargetsForCategoryUserIds(teamId, 'rsvp', recipientUserIds);
@@ -7614,7 +7676,6 @@ async function sendRsvpReminderPushNotifications({ teamId, gameId, event = {}, r
     return { successCount: 0, failureCount: 0, targetCount: 0 };
   }
 
-  const payload = buildRsvpReminderPushPayload(event);
   const sendResult = await sendDirectTargetsNotification({
     targets,
     category: 'rsvp',
@@ -7622,7 +7683,8 @@ async function sendRsvpReminderPushNotifications({ teamId, gameId, event = {}, r
     body: payload.body,
     teamId,
     gameId,
-    eventId: gameId
+    eventId: gameId,
+    childId: getScheduleNotificationChildId(event)
   });
 
   return {
@@ -7783,6 +7845,7 @@ async function createPublicRsvpEmailDeliveries({ teamId, gameId, actorUid = null
   let linkCount = 0;
   const remindedPlayerIds = new Set();
   const recipientUserIds = new Set();
+  const recipientTargets = [];
 
   const ensurePublicRsvpEmailBatchCapacity = () => {
     if (batchWriteCount + 2 <= PUBLIC_RSVP_EMAIL_BATCH_WRITE_LIMIT) return;
@@ -7846,6 +7909,10 @@ async function createPublicRsvpEmailDeliveries({ teamId, gameId, actorUid = null
       remindedPlayerIds.add(String(player.id || '').trim());
       if (contact.userId) {
         recipientUserIds.add(contact.userId);
+        recipientTargets.push({
+          userId: contact.userId,
+          childId: player.id
+        });
       }
     });
   });
@@ -7861,6 +7928,7 @@ async function createPublicRsvpEmailDeliveries({ teamId, gameId, actorUid = null
     linkCount,
     playerIds: Array.from(remindedPlayerIds).filter(Boolean),
     recipientUserIds: Array.from(recipientUserIds).filter(Boolean),
+    recipientTargets,
     recipientCount: recipientUserIds.size
   };
 }
@@ -7913,6 +7981,7 @@ exports.sendPublicRsvpEmails = functions.https.onRequest(async (req, res) => {
         teamId,
         gameId,
         event: eventRecord.data,
+        recipientTargets: result.recipientTargets,
         recipientUserIds: result.recipientUserIds
       });
     } catch (pushError) {
