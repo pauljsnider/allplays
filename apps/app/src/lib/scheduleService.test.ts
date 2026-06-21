@@ -527,7 +527,7 @@ describe('parent game route resolution', () => {
     });
     vi.mocked(getGame).mockImplementation(async (teamId: string, gameId: string) => {
       if (teamId === 'team-bravo' && gameId === 'game-7') {
-        return { id: 'game-7', type: 'game' } as any;
+        return { id: 'game-7', type: 'game', date: new Date('2026-06-25T18:00:00.000Z') } as any;
       }
       return null as any;
     });
@@ -1916,6 +1916,36 @@ describe('team schedule game windowing (#2034)', () => {
     expect(getGames).toHaveBeenCalledTimes(1);
     const [, options] = vi.mocked(getGames).mock.calls[0] as [string, any];
     expect(options?.startDate ?? null).toBeNull();
+  });
+
+  it('maps legacy game reads through the schedule event mapper before building parent rows', async () => {
+    vi.mocked(getGames).mockResolvedValue([
+      {
+        id: 'game-1',
+        type: 'game',
+        date: new Date('2026-06-25T18:00:00.000Z'),
+        opponent: 'Tigers',
+        liveClockMs: '90000',
+        liveClockRunning: 'yes',
+        assignments: [{ role: 'Clock', value: 'Open' }]
+      },
+      {
+        id: 'bad-game',
+        type: 'game',
+        date: 'not-a-date',
+        opponent: 'Should drop'
+      }
+    ] as any);
+
+    const result = await loadParentSchedule(parentUser, { hydrateDetails: false, expandStaffPlayers: false });
+
+    expect(result.events.map((event) => event.id)).toEqual(['game-1']);
+    expect(result.events[0]).toMatchObject({
+      opponent: 'Tigers',
+      liveClockMs: 90000,
+      liveClockRunning: null,
+      assignments: [{ role: 'Clock', value: 'Open' }]
+    });
   });
 
   it('keeps recurring practice masters available during windowed schedule loads', async () => {

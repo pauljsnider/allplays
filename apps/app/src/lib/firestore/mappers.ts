@@ -94,6 +94,15 @@ function asObject(value: unknown): Record<string, unknown> | null {
     return value as Record<string, unknown>;
 }
 
+function asScheduleSourceMetadata(value: unknown): ScheduleEventFirestoreRecord['sourceMetadata'] {
+    const source = asObject(value);
+    if (!source) return null;
+    return {
+        ...source,
+        sourceType: asTrimmedString(source.sourceType)
+    };
+}
+
 function asTemporalValue(value: unknown): unknown {
     return asOptionalDate(value);
 }
@@ -314,9 +323,10 @@ export function mapGameReportTeamStatsRecord(value: unknown): GameReportTeamStat
     return asGameReportStatsRecord(value);
 }
 
-export function mapScheduleEventDocument(document: FirestoreDocument | null | undefined): ScheduleEventFirestoreRecord | null {
-    const decoded = mapFirestoreDocument(document);
-    if (!decoded?.id) return null;
+export function mapScheduleEventRecord(value: unknown, fallbackId = ''): ScheduleEventFirestoreRecord | null {
+    const decoded = asLooseObject(value);
+    const id = asTrimmedString(decoded.id) || fallbackId;
+    if (!id) return null;
 
     const type = asTrimmedString(decoded.type) || 'game';
     const date = asOptionalDate(decoded.date);
@@ -325,7 +335,7 @@ export function mapScheduleEventDocument(document: FirestoreDocument | null | un
     }
 
     return {
-        id: decoded.id,
+        id,
         type,
         date,
         calendarEventUid: asTrimmedString(decoded.calendarEventUid),
@@ -340,6 +350,7 @@ export function mapScheduleEventDocument(document: FirestoreDocument | null | un
         awayTeamName: asTrimmedString(decoded.awayTeamName),
         opponentTeamPhoto: asTrimmedString(decoded.opponentTeamPhoto),
         sharedScheduleOpponentTeamId: asTrimmedString(decoded.sharedScheduleOpponentTeamId),
+        gameId: asTrimmedString(decoded.gameId),
         status: asTrimmedString(decoded.status),
         liveStatus: asTrimmedString(decoded.liveStatus),
         liveClockMs: asOptionalNumber(decoded.liveClockMs),
@@ -358,8 +369,10 @@ export function mapScheduleEventDocument(document: FirestoreDocument | null | un
         seasonLabel: asTrimmedString(decoded.seasonLabel),
         competitionType: asTrimmedString(decoded.competitionType),
         countsTowardSeasonRecord: asOptionalBoolean(decoded.countsTowardSeasonRecord),
+        tournament: asObject(decoded.tournament),
+        statTrackerConfigId: asTrimmedString(decoded.statTrackerConfigId),
         source: asTrimmedString(decoded.source),
-        sourceMetadata: asObject(decoded.sourceMetadata),
+        sourceMetadata: asScheduleSourceMetadata(decoded.sourceMetadata),
         visibility: asTrimmedString(decoded.visibility),
         assignments: asObjectArray(decoded.assignments),
         rsvpSummary: asObject(decoded.rsvpSummary),
@@ -370,6 +383,20 @@ export function mapScheduleEventDocument(document: FirestoreDocument | null | un
         isSeriesMaster: decoded.isSeriesMaster === true,
         recurrence: asObject(decoded.recurrence)
     };
+}
+
+export function mapScheduleEventRecords(values: unknown): ScheduleEventFirestoreRecord[] {
+    return Array.isArray(values)
+        ? values.map((value) => {
+            const source = asLooseObject(value);
+            return mapScheduleEventRecord(source, asTrimmedString(source.id) || '');
+        }).filter((document): document is ScheduleEventFirestoreRecord => Boolean(document))
+        : [];
+}
+
+export function mapScheduleEventDocument(document: FirestoreDocument | null | undefined): ScheduleEventFirestoreRecord | null {
+    const decoded = mapFirestoreDocument(document);
+    return decoded ? mapScheduleEventRecord(decoded, decoded.id) : null;
 }
 
 export function mapScheduleEventDocuments(documents: FirestoreDocument[] | null | undefined): ScheduleEventFirestoreRecord[] {
