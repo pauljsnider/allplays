@@ -103,6 +103,7 @@ export type ScheduleEventFirestoreRecord = {
     awayTeamName?: string | null;
     opponentTeamPhoto?: string | null;
     sharedScheduleOpponentTeamId?: string | null;
+    gameId?: string | null;
     status?: string | null;
     liveStatus?: string | null;
     liveClockMs?: number | null;
@@ -121,8 +122,10 @@ export type ScheduleEventFirestoreRecord = {
     seasonLabel?: string | null;
     competitionType?: string | null;
     countsTowardSeasonRecord?: boolean | null;
+    tournament?: Record<string, unknown> | null;
+    statTrackerConfigId?: string | null;
     source?: string | null;
-    sourceMetadata?: Record<string, unknown> | null;
+    sourceMetadata?: (Record<string, unknown> & { sourceType?: string | null }) | null;
     visibility?: string | null;
     assignments?: Array<Record<string, unknown>>;
     rsvpSummary?: Record<string, unknown> | null;
@@ -132,6 +135,10 @@ export type ScheduleEventFirestoreRecord = {
     coachingNotes?: Array<Record<string, unknown>>;
     isSeriesMaster?: boolean;
     recurrence?: Record<string, unknown> | null;
+    startTime?: string | null;
+    endDayOffset?: number | null;
+    exDates?: string[];
+    overrides?: Record<string, Record<string, unknown>> | null;
 };
 
 export type GameReportStatValue = string | number | boolean | null;

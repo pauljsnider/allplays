@@ -164,6 +164,7 @@ import { addPractice, broadcastLiveEvent, claimOpenOfficiatingSlot, clearOccurre
 import { getNativeAuthIdToken } from './authService';
 import { expandRecurrence, fetchAndParseCalendar, isTeamActive } from './adapters/legacyScheduleHelpers';
 import { getCachedAppData, loadCachedAppData } from './appDataCache';
+import { mapScheduleEventRecord } from './firestore/mappers';
 import { loadProfileDocument } from './profileService';
 import { buildPlayerScoringLiveEvent, claimOfficialAssignmentItem, createScheduledPracticeForApp, flushPendingLivePublishOperations, hydrateParentScheduleDetails, loadOfficialAssignments, loadParentSchedule, loadParentScheduleChildren, loadParentScheduleEventDetail, loadScheduledPracticeSeriesForEdit, loadStaffPracticeAttendance, loadStaffScheduleRsvpBreakdown, publishLiveScoreUpdateEvent, recordPlayerGameStat, recordPlayerScoringStat, releaseParentScheduleAssignmentClaim, resolveLiveGameClockSnapshot, resolveParentGameRoute, respondToOfficialAssignmentItem, revertScheduledPracticeOccurrenceForApp, saveScheduledGameLineupDraftForApp, saveStaffPracticeAttendance, submitStaffScheduleRsvpOverride, undoRecordedPlayerGameStat, updateLiveGameClockState, updateScheduledPracticeForApp } from './scheduleService';
 
@@ -527,7 +528,7 @@ describe('parent game route resolution', () => {
     });
     vi.mocked(getGame).mockImplementation(async (teamId: string, gameId: string) => {
       if (teamId === 'team-bravo' && gameId === 'game-7') {
-        return { id: 'game-7', type: 'game' } as any;
+        return { id: 'game-7', type: 'game', date: new Date('2026-06-25T18:00:00.000Z') } as any;
       }
       return null as any;
     });
@@ -1918,6 +1919,36 @@ describe('team schedule game windowing (#2034)', () => {
     expect(options?.startDate ?? null).toBeNull();
   });
 
+  it('maps legacy game reads through the schedule event mapper before building parent rows', async () => {
+    vi.mocked(getGames).mockResolvedValue([
+      {
+        id: 'game-1',
+        type: 'game',
+        date: new Date('2026-06-25T18:00:00.000Z'),
+        opponent: 'Tigers',
+        liveClockMs: '90000',
+        liveClockRunning: 'yes',
+        assignments: [{ role: 'Clock', value: 'Open' }]
+      },
+      {
+        id: 'bad-game',
+        type: 'game',
+        date: 'not-a-date',
+        opponent: 'Should drop'
+      }
+    ] as any);
+
+    const result = await loadParentSchedule(parentUser, { hydrateDetails: false, expandStaffPlayers: false });
+
+    expect(result.events.map((event) => event.id)).toEqual(['game-1']);
+    expect(result.events[0]).toMatchObject({
+      opponent: 'Tigers',
+      liveClockMs: 90000,
+      liveClockRunning: null,
+      assignments: [{ role: 'Clock', value: 'Open' }]
+    });
+  });
+
   it('keeps recurring practice masters available during windowed schedule loads', async () => {
     vi.mocked(getGames).mockResolvedValue([
       {
@@ -1960,5 +1991,40 @@ describe('team schedule game windowing (#2034)', () => {
         location: 'North Field'
       })
     ]));
+  });
+
+  it('preserves recurrence exception fields when mapping legacy recurring practice masters', () => {
+    const mapped = mapScheduleEventRecord({
+      id: 'practice-master',
+      type: 'practice',
+      isSeriesMaster: true,
+      recurrence: { freq: 'weekly', interval: 1, byDays: ['WE'] },
+      date: new Date('2025-01-08T18:00:00.000Z'),
+      end: new Date('2025-01-08T19:30:00.000Z'),
+      location: 'North Field',
+      title: 'Weekly Practice',
+      startTime: '18:00',
+      endDayOffset: 1,
+      exDates: ['2026-06-17'],
+      overrides: {
+        '2026-06-24': {
+          title: 'Adjusted Practice',
+          location: 'South Field'
+        }
+      }
+    });
+
+    expect(mapped).toMatchObject({
+      id: 'practice-master',
+      startTime: '18:00',
+      endDayOffset: 1,
+      exDates: ['2026-06-17'],
+      overrides: {
+        '2026-06-24': {
+          title: 'Adjusted Practice',
+          location: 'South Field'
+        }
+      }
+    });
   });
 });

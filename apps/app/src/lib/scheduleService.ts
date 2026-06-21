@@ -131,7 +131,7 @@ import { getCachedAppData, getParentScheduleSummaryCacheKey, loadCachedAppData }
 import { toAppServiceError } from './appErrors';
 import { createLogger } from './logger';
 import { getNativeRestDedupKey, loadDedupedNativeRestRequest, shouldDedupNativeRestRequest } from './nativeRestDedup';
-import { mapFirestoreDocument, mapScheduleEventDocument, mapScheduleEventDocuments } from './firestore/mappers';
+import { mapFirestoreDocument, mapScheduleEventDocument, mapScheduleEventDocuments, mapScheduleEventRecord, mapScheduleEventRecords } from './firestore/mappers';
 import type { FirestoreDecodedDocument, FirestoreDocument as NativeFirestoreDocument } from './firestore/types';
 import type { AuthUser } from './types';
 
@@ -2192,7 +2192,7 @@ function isEventWithinRange(game: any, range: ScheduleDateRange) {
 async function loadGames(teamId: string, range: ScheduleDateRange = {}) {
   return readWithNativeFallback(
     `games ${teamId}`,
-    () => Promise.resolve(getGames(teamId, range)),
+    async () => mapScheduleEventRecords(await getGames(teamId, range)),
     async () => {
       const docs = await nativeListScheduleEventDocuments(`teams/${encodeURIComponent(teamId)}/games`);
       const windowed = (range.startDate || range.endDate)
@@ -2206,7 +2206,7 @@ async function loadGames(teamId: string, range: ScheduleDateRange = {}) {
 async function loadGameById(teamId: string, gameId: string) {
   return readWithNativeFallback(
     `game ${teamId}/${gameId}`,
-    () => Promise.resolve(getGame(teamId, gameId)),
+    async () => mapScheduleEventRecord(await getGame(teamId, gameId), gameId),
     () => nativeGetScheduleEventDocument(`teams/${encodeURIComponent(teamId)}/games/${encodeURIComponent(gameId)}`)
   );
 }
