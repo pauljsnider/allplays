@@ -42,7 +42,11 @@ describe('team media visibility notification contract', () => {
         expect(functionsSource).toContain('function canReceiveCategoryNotification(category, user, audienceContext = {}) {');
         expect(functionsSource).toContain("if (category !== 'media') return true;");
         expect(functionsSource).toContain("const albumVisibility = audienceContext?.staffOnly === true\n    ? 'private'\n    : normalizeNotificationAlbumVisibility(audienceContext.albumVisibility);");
-        expect(functionsSource).toContain("if (albumVisibility !== 'private') return true;");
+        expect(functionsSource).toContain('function normalizeNotificationAudienceUserIds(value) {');
+        expect(functionsSource).toContain('function normalizeNotificationAudienceRoles(value) {');
+        expect(functionsSource).toContain('function mediaAudienceAllowsUser(user, audienceContext = {}) {');
+        expect(functionsSource).toContain('function hasMediaAudienceConstraints(audienceContext = {}) {');
+        expect(functionsSource).toContain("if (hasMediaAudienceConstraints(audienceContext)) {\n      return mediaAudienceAllowsUser(user, audienceContext);\n    }");
         expect(functionsSource).toContain("return Array.isArray(user.roles) && user.roles.includes('staff');");
     });
 
@@ -53,5 +57,7 @@ describe('team media visibility notification contract', () => {
         expect(functionsSource).toContain('const eligibleUsers = new Map(users');
         expect(functionsSource).toContain('eligibleUsers.has(user.uid)');
         expect(functionsSource).toContain('const fallbackTargets = await getLegacyTargetsForCategory(teamId, category, missingUsers, actorUid, audienceContext);');
+        expect(functionsSource).toContain('audienceContext: metadata.audienceContext || { albumVisibility: metadata.albumVisibility }');
+        expect(functionsSource).toContain('const audienceContext = buildTeamMediaNotificationAudienceContext({');
     });
 });
