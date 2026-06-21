@@ -1,5 +1,4 @@
-import { getStatConfigPresetById, getStatConfigPresetOptions } from '../../../../js/stat-config-presets.js';
-import { normalizeStatTrackerConfig } from '../../../../js/stat-leaderboards.js';
+import { getStatConfigPresetById, getStatConfigPresetOptions, normalizeStatTrackerConfig } from './adapters/legacyStatConfig';
 
 type LegacyStatTrackerConfig = {
   id?: string;
