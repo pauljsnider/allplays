@@ -1,6 +1,4 @@
-import { addDrillFavorite, getDrill, getDrillFavorites, getDrills, getPublishedDrills, getTeam, removeDrillFavorite } from '../../../../js/db.js';
-import { DRILL_LEVELS, DRILL_TYPES } from '../../../../js/drill-constants.js';
-import { hasFullTeamAccess } from '../../../../js/team-access.js';
+import { addDrillFavorite, DRILL_LEVELS, DRILL_TYPES, getDrill, getDrillFavorites, getDrills, getPublishedDrills, getTeam, hasFullTeamAccess, removeDrillFavorite } from './adapters/legacyTeamDrills';
 import type { AuthUser } from './types';
 
 const drillLibraryPageSize = 12;
