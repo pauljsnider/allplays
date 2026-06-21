@@ -6004,6 +6004,12 @@ export async function sendTeamEmail(teamId, {
     return result.data;
 }
 
+export async function syncRegistrationProvider(teamId) {
+    const callable = httpsCallable(functions, 'syncRegistrationProvider');
+    const result = await callable({ teamId });
+    return result.data;
+}
+
 export async function postSharedGameCancellationNotification({
     teamId,
     gameId,
