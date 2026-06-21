@@ -26,6 +26,15 @@ describe('uxTiming', () => {
     vi.restoreAllMocks();
   });
 
+  it('declares stable app-start and core interaction spans', () => {
+    expect(UX_TIMING).toMatchObject({
+      appStartup: 'app startup',
+      firstMeaningfulRender: 'first meaningful render',
+      rsvpTap: 'rsvp tap latency',
+      chatSend: 'chat send latency'
+    });
+  });
+
   it('startUxTimer merges base meta and recorded meta', () => {
     const timer = startUxTimer('schedule load', { route: 'schedule' });
     timer.end({ eventRows: 12 });
