@@ -1,9 +1,9 @@
 /* Auto-generated typed adapter boundary for legacy js/ team-detail imports (#2066).
  * Bindings re-exported as-is so existing js/* test mocks apply via the @legacy alias. */
-import { addPlayer as legacy_addPlayer, createConfig as legacy_createConfig, getAggregatedStatsForGames as legacy_getAggregatedStatsForGames, getAdSpaceSponsors as legacy_getAdSpaceSponsors, getConfigs as legacy_getConfigs, getGames as legacy_getGames, inviteParent as legacy_inviteParent, getLocalAttractionSponsors as legacy_getLocalAttractionSponsors, getPlayers as legacy_getPlayers, getPlayerTrackingStatuses as legacy_getPlayerTrackingStatuses, getPublicTrackingItems as legacy_getPublicTrackingItems, getRosterFieldDefinitions as legacy_getRosterFieldDefinitions, getTeam as legacy_getTeam, setTeamTrackingStatus as legacy_setTeamTrackingStatus, updateTeam as legacy_updateTeam, grantScorekeeperAccess as legacy_grantScorekeeperAccess, grantVideographerAccess as legacy_grantVideographerAccess, inviteAdmin as legacy_inviteAdmin, addTeamAdminEmail as legacy_addTeamAdminEmail, revokeScorekeeperAccess as legacy_revokeScorekeeperAccess, revokeVideographerAccess as legacy_revokeVideographerAccess, deactivatePlayer as legacy_deactivatePlayer, reactivatePlayer as legacy_reactivatePlayer, setPlayerPrivateRosterProfileFields as legacy_setPlayerPrivateRosterProfileFields, updateConfig as legacy_updateConfig, uploadPlayerPhoto as legacy_uploadPlayerPhoto, uploadTeamPhoto as legacy_uploadTeamPhoto } from '@legacy/db.js';
+import * as legacyDb from '@legacy/db.js';
 import { sendInviteEmail as legacy_sendInviteEmail } from '@legacy/auth.js';
 import { inviteExistingTeamAdmin as legacy_inviteExistingTeamAdmin } from '@legacy/edit-team-admin-invites.js';
-import { collection as legacy_collection, db as legacy_db, doc as legacy_doc, getDoc as legacy_getDoc, getDocs as legacy_getDocs, query as legacy_query, serverTimestamp as legacy_serverTimestamp, setDoc as legacy_setDoc, updateDoc as legacy_updateDoc, where as legacy_where } from '@legacy/firebase.js';
+import * as legacyFirebase from '@legacy/firebase.js';
 import { normalizeRosterFieldDefinitions as legacy_normalizeRosterFieldDefinitions, splitRosterProfileValuesByVisibility as legacy_splitRosterProfileValuesByVisibility, validateRosterProfileValues as legacy_validateRosterProfileValues } from '@legacy/roster-profile-fields.js';
 import { describeScheduleReminderWindow as legacy_describeScheduleReminderWindow, normalizeScheduleNotificationSettings as legacy_normalizeScheduleNotificationSettings } from '@legacy/schedule-notifications.js';
 import { calculateSeasonRecord as legacy_calculateSeasonRecord, listSeasonLabels as legacy_listSeasonLabels } from '@legacy/season-record.js';
@@ -14,45 +14,61 @@ import { hasFullTeamAccess as legacy_hasFullTeamAccess, normalizeAdminEmailList 
 import { buildTeamStaffPermissionsViewModel as legacy_buildTeamStaffPermissionsViewModel } from '@legacy/team-staff-permissions.js';
 import { buildTrackingStatusPayload as legacy_buildTrackingStatusPayload, summarizeTrackingStatus as legacy_summarizeTrackingStatus } from '@legacy/tracking-status-admin.js';
 
-export const addPlayer = legacy_addPlayer as (...args: any[]) => any;
-export const createConfig = legacy_createConfig as (...args: any[]) => any;
-export const getAggregatedStatsForGames = legacy_getAggregatedStatsForGames as (...args: any[]) => any;
-export const getAdSpaceSponsors = legacy_getAdSpaceSponsors as (...args: any[]) => any;
-export const getConfigs = legacy_getConfigs as (...args: any[]) => any;
-export const getGames = legacy_getGames as (...args: any[]) => any;
-export const inviteParent = legacy_inviteParent as (...args: any[]) => any;
-export const getLocalAttractionSponsors = legacy_getLocalAttractionSponsors as (...args: any[]) => any;
-export const getPlayers = legacy_getPlayers as (...args: any[]) => any;
-export const getPlayerTrackingStatuses = legacy_getPlayerTrackingStatuses as (...args: any[]) => any;
-export const getPublicTrackingItems = legacy_getPublicTrackingItems as (...args: any[]) => any;
-export const getRosterFieldDefinitions = legacy_getRosterFieldDefinitions as (...args: any[]) => any;
-export const getTeam = legacy_getTeam as (...args: any[]) => any;
-export const setTeamTrackingStatus = legacy_setTeamTrackingStatus as (...args: any[]) => any;
-export const updateTeam = legacy_updateTeam as (...args: any[]) => any;
-export const grantScorekeeperAccess = legacy_grantScorekeeperAccess as (...args: any[]) => any;
-export const grantVideographerAccess = legacy_grantVideographerAccess as (...args: any[]) => any;
-export const inviteAdmin = legacy_inviteAdmin as (...args: any[]) => any;
-export const addTeamAdminEmail = legacy_addTeamAdminEmail as (...args: any[]) => any;
-export const revokeScorekeeperAccess = legacy_revokeScorekeeperAccess as (...args: any[]) => any;
-export const revokeVideographerAccess = legacy_revokeVideographerAccess as (...args: any[]) => any;
-export const deactivatePlayer = legacy_deactivatePlayer as (...args: any[]) => any;
-export const reactivatePlayer = legacy_reactivatePlayer as (...args: any[]) => any;
-export const setPlayerPrivateRosterProfileFields = legacy_setPlayerPrivateRosterProfileFields as (...args: any[]) => any;
-export const updateConfig = legacy_updateConfig as (...args: any[]) => any;
-export const uploadPlayerPhoto = legacy_uploadPlayerPhoto as (...args: any[]) => any;
-export const uploadTeamPhoto = legacy_uploadTeamPhoto as (...args: any[]) => any;
+function callLegacyDb(name: string, args: any[]) {
+  const fn = (legacyDb as Record<string, any>)[name];
+  if (typeof fn !== 'function') {
+    throw new TypeError(`Legacy db binding ${String(name)} is not available.`);
+  }
+  return fn(...args);
+}
+
+function callLegacyFirebase(name: string, args: any[]) {
+  const fn = (legacyFirebase as Record<string, any>)[name];
+  if (typeof fn !== 'function') {
+    throw new TypeError(`Legacy firebase binding ${String(name)} is not available.`);
+  }
+  return fn(...args);
+}
+
+export const addPlayer = (...args: any[]) => callLegacyDb('addPlayer', args);
+export const createConfig = (...args: any[]) => callLegacyDb('createConfig', args);
+export const getAggregatedStatsForGames = (...args: any[]) => callLegacyDb('getAggregatedStatsForGames', args);
+export const getAdSpaceSponsors = (...args: any[]) => callLegacyDb('getAdSpaceSponsors', args);
+export const getConfigs = (...args: any[]) => callLegacyDb('getConfigs', args);
+export const getGames = (...args: any[]) => callLegacyDb('getGames', args);
+export const inviteParent = (...args: any[]) => callLegacyDb('inviteParent', args);
+export const getLocalAttractionSponsors = (...args: any[]) => callLegacyDb('getLocalAttractionSponsors', args);
+export const getPlayers = (...args: any[]) => callLegacyDb('getPlayers', args);
+export const getPlayerTrackingStatuses = (...args: any[]) => callLegacyDb('getPlayerTrackingStatuses', args);
+export const getPublicTrackingItems = (...args: any[]) => callLegacyDb('getPublicTrackingItems', args);
+export const getRosterFieldDefinitions = (...args: any[]) => callLegacyDb('getRosterFieldDefinitions', args);
+export const getTeam = (...args: any[]) => callLegacyDb('getTeam', args);
+export const setTeamTrackingStatus = (...args: any[]) => callLegacyDb('setTeamTrackingStatus', args);
+export const updateTeam = (...args: any[]) => callLegacyDb('updateTeam', args);
+export const grantScorekeeperAccess = (...args: any[]) => callLegacyDb('grantScorekeeperAccess', args);
+export const grantVideographerAccess = (...args: any[]) => callLegacyDb('grantVideographerAccess', args);
+export const inviteAdmin = (...args: any[]) => callLegacyDb('inviteAdmin', args);
+export const addTeamAdminEmail = (...args: any[]) => callLegacyDb('addTeamAdminEmail', args);
+export const revokeScorekeeperAccess = (...args: any[]) => callLegacyDb('revokeScorekeeperAccess', args);
+export const revokeVideographerAccess = (...args: any[]) => callLegacyDb('revokeVideographerAccess', args);
+export const deactivatePlayer = (...args: any[]) => callLegacyDb('deactivatePlayer', args);
+export const reactivatePlayer = (...args: any[]) => callLegacyDb('reactivatePlayer', args);
+export const setPlayerPrivateRosterProfileFields = (...args: any[]) => callLegacyDb('setPlayerPrivateRosterProfileFields', args);
+export const updateConfig = (...args: any[]) => callLegacyDb('updateConfig', args);
+export const uploadPlayerPhoto = (...args: any[]) => callLegacyDb('uploadPlayerPhoto', args);
+export const uploadTeamPhoto = (...args: any[]) => callLegacyDb('uploadTeamPhoto', args);
 export const sendInviteEmail = legacy_sendInviteEmail as (...args: any[]) => any;
 export const inviteExistingTeamAdmin = legacy_inviteExistingTeamAdmin as (...args: any[]) => any;
-export const collection = legacy_collection as (...args: any[]) => any;
-export const db: unknown = legacy_db;
-export const doc = legacy_doc as (...args: any[]) => any;
-export const getDoc = legacy_getDoc as (...args: any[]) => any;
-export const getDocs = legacy_getDocs as (...args: any[]) => any;
-export const query = legacy_query as (...args: any[]) => any;
-export const serverTimestamp = legacy_serverTimestamp as (...args: any[]) => any;
-export const setDoc = legacy_setDoc as (...args: any[]) => any;
-export const updateDoc = legacy_updateDoc as (...args: any[]) => any;
-export const where = legacy_where as (...args: any[]) => any;
+export const collection = (...args: any[]) => callLegacyFirebase('collection', args);
+export const db: unknown = legacyFirebase.db;
+export const doc = (...args: any[]) => callLegacyFirebase('doc', args);
+export const getDoc = (...args: any[]) => callLegacyFirebase('getDoc', args);
+export const getDocs = (...args: any[]) => callLegacyFirebase('getDocs', args);
+export const query = (...args: any[]) => callLegacyFirebase('query', args);
+export const serverTimestamp = (...args: any[]) => callLegacyFirebase('serverTimestamp', args);
+export const setDoc = (...args: any[]) => callLegacyFirebase('setDoc', args);
+export const updateDoc = (...args: any[]) => callLegacyFirebase('updateDoc', args);
+export const where = (...args: any[]) => callLegacyFirebase('where', args);
 export const normalizeRosterFieldDefinitions = legacy_normalizeRosterFieldDefinitions as (...args: any[]) => any;
 export const splitRosterProfileValuesByVisibility = legacy_splitRosterProfileValuesByVisibility as (...args: any[]) => any;
 export const validateRosterProfileValues = legacy_validateRosterProfileValues as (...args: any[]) => any;
