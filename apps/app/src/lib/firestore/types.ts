@@ -187,3 +187,12 @@ export type GameReportAggregatedStatsFirestoreRecord = {
 };
 
 export type GameReportTeamStatsFirestoreRecord = GameReportStatsRecord;
+
+export type GameReportEventFirestoreRecord = {
+    id: string;
+    text: string;
+    period: string;
+    clock: string;
+    timestamp?: unknown;
+    [key: string]: unknown;
+};

@@ -6,6 +6,7 @@ import type {
     FirestoreDocument,
     FirestoreValue,
     GameReportAggregatedStatsFirestoreRecord,
+    GameReportEventFirestoreRecord,
     GameReportGameFirestoreRecord,
     GameReportOpponentFirestoreRecord,
     GameReportPlayerFirestoreRecord,
@@ -105,6 +106,13 @@ function asScheduleSourceMetadata(value: unknown): ScheduleEventFirestoreRecord[
 
 function asTemporalValue(value: unknown): unknown {
     return asOptionalDate(value);
+}
+
+function asEventTimestamp(value: unknown): unknown {
+    if (typeof value === 'number' && Number.isFinite(value)) {
+        return value;
+    }
+    return asTemporalValue(value);
 }
 
 function asLooseObject(value: unknown): Record<string, unknown> {
@@ -321,6 +329,30 @@ export function mapGameReportAggregatedStatsRecord(id: string, value: unknown): 
 
 export function mapGameReportTeamStatsRecord(value: unknown): GameReportTeamStatsFirestoreRecord {
     return asGameReportStatsRecord(value);
+}
+
+export function mapGameReportEventRecord(value: unknown, fallbackId = ''): GameReportEventFirestoreRecord | null {
+    const source = asLooseObject(value);
+    const id = asTrimmedString(source.id) || fallbackId;
+    if (!id) return null;
+
+    return {
+        ...source,
+        id,
+        text: asTrimmedString(source.text) || asTrimmedString(source.message) || 'Event logged',
+        period: asTrimmedString(source.period) || 'Q1',
+        clock: asTrimmedString(source.clock) || asTrimmedString(source.gameTime) || '',
+        timestamp: asEventTimestamp(source.timestamp)
+    };
+}
+
+export function mapGameReportEventRecords(value: unknown): GameReportEventFirestoreRecord[] {
+    return Array.isArray(value)
+        ? value.map((entry) => {
+            const source = asLooseObject(entry);
+            return mapGameReportEventRecord(source, asTrimmedString(source.id) || '');
+        }).filter((entry): entry is GameReportEventFirestoreRecord => Boolean(entry))
+        : [];
 }
 
 export function mapScheduleEventRecord(value: unknown, fallbackId = ''): ScheduleEventFirestoreRecord | null {

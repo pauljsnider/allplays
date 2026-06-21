@@ -19,6 +19,7 @@ import {
 } from './adapters/legacyGameReport';
 import {
   mapGameReportAggregatedStatsRecord,
+  mapGameReportEventRecords,
   mapGameReportGameRecord,
   mapGameReportPlayerRecords,
   mapGameReportTeamRecord,
@@ -26,6 +27,7 @@ import {
 } from './firestore/mappers';
 import type {
   GameReportGameFirestoreRecord,
+  GameReportEventFirestoreRecord,
   GameReportPlayerFirestoreRecord,
   GameReportStatsRecord,
   GameReportTeamFirestoreRecord,
@@ -160,12 +162,12 @@ async function loadAggregatedStats(teamId: string, gameId: string): Promise<Aggr
   return { statsMap, timeMap, didNotPlayMap, participatedMap, participationStatusMap, participationSourceMap, recordedPlayerIds };
 }
 
-function normalizePlay(entry: any): GameReportPlay {
+function normalizePlay(entry: GameReportEventFirestoreRecord): GameReportPlay {
   return {
     id: String(entry?.id || ''),
-    text: String(entry?.text || entry?.message || 'Event logged'),
+    text: String(entry?.text || 'Event logged'),
     period: String(entry?.period || 'Q1'),
-    clock: String(entry?.clock || entry?.gameTime || ''),
+    clock: String(entry?.clock || ''),
     timestamp: normalizeDate(entry?.timestamp)
   };
 }
@@ -267,11 +269,7 @@ export async function loadGameReportSections(teamId: string, gameId: string): Pr
     String(field.fieldName || '').trim(),
     String(field.label || field.fieldName || '').trim()
   ]));
-  const insightEvents = (Array.isArray(rawEvents) ? rawEvents : [])
-    .map((entry: any) => ({
-      ...entry,
-      clock: entry?.clock || entry?.gameTime || ''
-    }))
+  const insightEvents = mapGameReportEventRecords(rawEvents)
     .sort((a, b) => (normalizeDate(a.timestamp)?.getTime() || 0) - (normalizeDate(b.timestamp)?.getTime() || 0));
   const plays = insightEvents.map(normalizePlay);
   const insights = generateGameInsights({
