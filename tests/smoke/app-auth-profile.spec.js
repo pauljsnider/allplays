@@ -279,13 +279,22 @@ async function mockAppModules(page, { user = null, emailLink = false } = {}) {
                     return 'NEWMVP42';
                 }
 
+                const mockAccessCodes = [
+                    { id: 'code-1', code: 'ABCD1234', email: 'coach@example.com', phone: '', used: false, createdAt: { seconds: 1717200000 } },
+                    { id: 'code-2', code: 'EFGH5678', email: '', phone: '555-0101', used: false, createdAt: { seconds: 1717113600 } },
+                    { id: 'code-3', code: 'IJKL9012', email: 'parent@example.com', phone: '', used: true, createdAt: { seconds: 1717027200 }, usedAt: { seconds: 1717113600 } },
+                    { id: 'code-4', code: 'MNOP3456', email: '', phone: '', used: false, createdAt: { seconds: 1716940800 } }
+                ];
+
                 export async function loadProfileAccessCodes() {
-                    return [
-                        { id: 'code-1', code: 'ABCD1234', email: 'coach@example.com', phone: '', used: false, createdAt: { seconds: 1717200000 } },
-                        { id: 'code-2', code: 'EFGH5678', email: '', phone: '555-0101', used: false, createdAt: { seconds: 1717113600 } },
-                        { id: 'code-3', code: 'IJKL9012', email: 'parent@example.com', phone: '', used: true, createdAt: { seconds: 1717027200 }, usedAt: { seconds: 1717113600 } },
-                        { id: 'code-4', code: 'MNOP3456', email: '', phone: '', used: false, createdAt: { seconds: 1716940800 } }
-                    ];
+                    return mockAccessCodes;
+                }
+
+                export async function loadProfileAccessCodesPage(_userId, { cursor = null, pageSize = 10 } = {}) {
+                    const startIndex = Number.isInteger(cursor) ? cursor : 0;
+                    const codes = mockAccessCodes.slice(startIndex, startIndex + pageSize);
+                    const nextCursor = startIndex + pageSize < mockAccessCodes.length ? startIndex + pageSize : null;
+                    return { codes, nextCursor };
                 }
 
                 export async function loadParentTeams() {
