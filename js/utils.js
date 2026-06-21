@@ -181,10 +181,10 @@ export function renderHeader(container, user) {
       navProfile.classList.add('hidden');
     }
 
-    // Shared header logout intentionally stays pinned to auth.js?v=22.
-    // Broader auth consumer cache busting moved to auth.js?v=23.
+    // Shared header logout intentionally stays pinned to auth.js?v=28.
+    // Broader auth consumer cache busting moved to auth.js?v=28.
     navLogout.addEventListener('click', async () => {
-      const { logout } = await import('./auth.js?v=22');
+      const { logout } = await import('./auth.js?v=28');
       await logout();
       window.location.href = 'index.html';
     });
