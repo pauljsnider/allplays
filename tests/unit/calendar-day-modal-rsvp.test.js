@@ -62,6 +62,8 @@ class MockElement {
         return child;
     }
 
+    addEventListener() {}
+
     click() {}
 
     querySelectorAll() {
@@ -135,6 +137,14 @@ function createEnvironment() {
         'view-detailed',
         'view-compact',
         'view-calendar',
+        'sync-calendar',
+        'sync-calendar-modal',
+        'sync-calendar-backdrop',
+        'sync-calendar-close',
+        'sync-calendar-apple',
+        'sync-calendar-google',
+        'sync-calendar-copy',
+        'sync-calendar-feedback',
         'day-modal',
         'day-modal-title',
         'day-modal-content'
