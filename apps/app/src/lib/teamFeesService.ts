@@ -1,6 +1,4 @@
-import { createTeamFeeBatch, getPlayers, getTeam, listTeamFeeBatches, listTeamFeeRecipients, updateTeamFeeRecipient } from '../../../../js/db.js';
-import { initiateTeamFeeCheckout } from '../../../../js/stripe-service.js';
-import { hasFullTeamAccess } from '../../../../js/team-access.js';
+import { createTeamFeeBatch, getPlayers, getTeam, hasFullTeamAccess, initiateTeamFeeCheckout, listTeamFeeBatches, listTeamFeeRecipients, updateTeamFeeRecipient } from './adapters/legacyTeamFees';
 import type { AuthUser } from './types';
 
 export type TeamFeeBatchSummary = {
