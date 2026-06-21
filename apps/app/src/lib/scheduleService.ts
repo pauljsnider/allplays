@@ -3200,7 +3200,11 @@ export async function loadParentSchedule(user: AuthUser | null, options: ParentS
   if (!user?.uid) {
     return { children: [], events: [] };
   }
-  const timer = startUxTimer('parent schedule service load');
+  const timer = startUxTimer('parent schedule service load', {
+    category: 'service_load',
+    service: 'schedule',
+    operation: 'parent-schedule-load'
+  });
   const hydrateDetails = options.hydrateDetails !== false;
   const expandStaffPlayers = options.expandStaffPlayers !== false;
   const includePastGames = options.includePastGames === true;
