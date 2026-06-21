@@ -3975,7 +3975,7 @@ async function practicePacketAssignedNotification(beforeData = null, afterData =
   return null;
 }
 
-function buildNotificationLink({ category, teamId, gameId, batchId = null, recipientId = null, conversationId = null }) {
+function buildNotificationLink({ category, teamId, gameId, eventId = null, batchId = null, recipientId = null, conversationId = null }) {
   if (category === 'officiating') {
     return teamId
       ? `https://allplays.ai/officials.html?teamId=${encodeURIComponent(teamId)}`
@@ -4013,6 +4013,16 @@ function buildNotificationLink({ category, teamId, gameId, batchId = null, recip
       return `https://allplays.ai/app/#/schedule?teamId=${encodeURIComponent(teamId)}`;
     }
     return 'https://allplays.ai/app/#/schedule';
+  }
+  if (category === 'rideshare') {
+    const scheduleEventId = eventId || gameId;
+    if (teamId && scheduleEventId) {
+      return `https://allplays.ai/app/#/schedule/${encodeURIComponent(teamId)}/${encodeURIComponent(scheduleEventId)}?section=rideshare`;
+    }
+    if (teamId) {
+      return `https://allplays.ai/app/#/schedule?teamId=${encodeURIComponent(teamId)}&section=rideshare`;
+    }
+    return 'https://allplays.ai/app/#/schedule?section=rideshare';
   }
   if (category === 'media') {
     if (teamId) {
@@ -4075,6 +4085,16 @@ function buildNotificationAppRoute({ category, teamId, gameId, eventId, batchId 
       return `/schedule?teamId=${encodeURIComponent(teamId)}`;
     }
     return '/schedule';
+  }
+  if (category === 'rideshare') {
+    const scheduleEventId = eventId || gameId;
+    if (teamId && scheduleEventId) {
+      return `/schedule/${encodeURIComponent(teamId)}/${encodeURIComponent(scheduleEventId)}?section=rideshare`;
+    }
+    if (teamId) {
+      return `/schedule?teamId=${encodeURIComponent(teamId)}&section=rideshare`;
+    }
+    return '/schedule?section=rideshare';
   }
   if (category === 'media') {
     if (teamId) {
@@ -4984,7 +5004,7 @@ async function sendCategoryNotification({
     : allTargets;
   if (!targets.length) return null;
 
-  const link = linkOverride || buildNotificationLink({ category, teamId, gameId, conversationId });
+  const link = linkOverride || buildNotificationLink({ category, teamId, gameId, eventId: eventId || gameId, conversationId });
   const appRoute = buildNotificationAppRoute({ category, teamId, gameId, eventId: eventId || gameId, conversationId });
   const deliveryOptions = typeof buildNotificationDeliveryOptions === 'function'
     ? buildNotificationDeliveryOptions({ category, teamId, gameId, eventId: eventId || gameId })
@@ -5238,7 +5258,7 @@ async function sendDirectTargetsNotification({
 }) {
   if (!targets.length) return null;
 
-  const link = linkOverride || buildNotificationLink({ category, teamId, gameId, batchId, recipientId, conversationId });
+  const link = linkOverride || buildNotificationLink({ category, teamId, gameId, eventId: eventId || gameId, batchId, recipientId, conversationId });
   const appRoute = appRouteOverride || buildNotificationAppRoute({ category, teamId, gameId, eventId: eventId || gameId, batchId, recipientId, conversationId });
   const deliveryOptions = typeof buildNotificationDeliveryOptions === 'function'
     ? buildNotificationDeliveryOptions({ category, teamId, gameId, eventId: eventId || gameId })
