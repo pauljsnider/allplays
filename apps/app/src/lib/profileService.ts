@@ -8,15 +8,15 @@ import {
   getUserAccessCodesPage,
   getUserProfile,
   getUserTeamsWithAccess,
+  isTeamActive,
+  normalizeTeamNotificationPreferences,
   saveNotificationPreferencesForTeam,
   updateUserProfile,
   upsertNotificationDeviceToken
-} from '../../../../js/db.js';
-import { normalizeTeamNotificationPreferences } from '../../../../js/notification-preferences.js';
+} from './adapters/legacyProfileDb';
 import { firebaseAuth, getNativeAuthIdToken } from './authService';
 import { createLogger } from './logger';
 import { getNativeRestDedupKey, loadDedupedNativeRestRequest, shouldDedupNativeRestRequest } from './nativeRestDedup';
-import { isTeamActive } from '../../../../js/team-visibility.js';
 
 export {
   acquireProfilePhoto,
