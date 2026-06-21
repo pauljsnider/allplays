@@ -9,6 +9,7 @@ import {
     claimOpenOfficiatingSlot as legacyClaimOpenOfficiatingSlot,
     closeRideOffer as legacyCloseRideOffer,
     createRideOffer as legacyCreateRideOffer,
+    getConfigs as legacyGetConfigs,
     getAssignmentClaims as legacyGetAssignmentClaims,
     getGame as legacyGetGame,
     getGames as legacyGetGames,
@@ -87,6 +88,10 @@ export type GamesQueryOptions = { startDate?: Date | null; endDate?: Date | null
 
 export async function getGames(teamId: string, options: GamesQueryOptions = {}) {
     return await Promise.resolve(legacyGetGames(teamId, options));
+}
+
+export async function getConfigs(teamId: string) {
+    return await Promise.resolve(legacyGetConfigs(teamId));
 }
 
 export async function getPracticePacketCompletions(teamId: string, sessionId: string) {
