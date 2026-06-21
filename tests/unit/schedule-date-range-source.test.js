@@ -20,7 +20,7 @@ describe('schedule date range source contracts', () => {
         expect(dbSource).toContain('function recurringPracticeMasterMayOverlapDateRange');
         expect(getGamesSource).toContain('getRecurringPracticeMastersForDateRange(gamesRef, startDate, endDate)');
         expect(getGamesSource).toContain('teamGames = mergeGamesById(teamGames, recurringMasters);');
-        expect(appLoadGamesSource).toContain('() => Promise.resolve(getGames(teamId, range))');
-        expect(appSource).not.toContain('async function loadRecurringPracticeMasters');
+        expect(appLoadGamesSource).toContain('mapScheduleEventRecords(await getGames(teamId, range))');
+        expect(appLoadGamesSource).not.toContain('loadRecurringPracticeMasters');
     });
 });
