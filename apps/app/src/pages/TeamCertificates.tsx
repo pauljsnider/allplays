@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, Navigate, useParams } from 'react-router-dom';
 import { Award, ExternalLink, Loader2, RefreshCw, Sparkles } from 'lucide-react';
 import { renderCertificate } from '../lib/adapters/legacyCertificates';
-import { loadCertificateDraftComposer, saveCertificateDraftsForApp, type CertificateDraftComposerModel, type CertificateDraftPlayer, type CertificateDraftSharedState } from '../lib/certificateDraftService';
+import { getCertificateStudioUrl, loadCertificateDraftComposer, saveCertificateDraftsForApp, type CertificateDraftComposerModel, type CertificateDraftPlayer, type CertificateDraftSharedState } from '../lib/certificateDraftService';
 import { openPublicUrl } from '../lib/publicActions';
 import { useAsyncOperation } from '../lib/useAsyncOperation';
 import type { AuthState } from '../lib/types';
@@ -113,9 +113,7 @@ export function TeamCertificates({ auth }: { auth: AuthState }) {
 
   const onOpenWebsite = async () => {
     if (!teamId) return;
-    const url = new URL('certificates.html', 'https://allplays.ai');
-    url.hash = new URLSearchParams({ teamId }).toString();
-    await openPublicUrl(url.toString());
+    await openPublicUrl(getCertificateStudioUrl(teamId));
   };
 
   const onSaveDrafts = async () => {

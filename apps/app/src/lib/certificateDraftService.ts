@@ -232,9 +232,11 @@ export function buildCertificatePayloadForApp({
   };
 }
 
-export function getCertificateStudioUrl(teamId: string, batchId: string) {
+export function getCertificateStudioUrl(teamId: string, batchId = '') {
   const url = new URL('certificates.html', 'https://allplays.ai');
-  url.hash = new URLSearchParams({ teamId, batchId }).toString();
+  const params = new URLSearchParams({ teamId });
+  if (batchId) params.set('batchId', batchId);
+  url.hash = params.toString();
   return url.toString();
 }
 
