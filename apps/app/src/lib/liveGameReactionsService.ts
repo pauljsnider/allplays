@@ -1,5 +1,4 @@
-import { sendReaction, subscribeReactions } from '../../../../js/db.js';
-import { isViewerChatEnabled } from '../../../../js/live-game-chat.js';
+import { isViewerChatEnabled, sendReaction, subscribeReactions } from './adapters/legacyLiveGameReactions';
 import type { AuthUser } from './types';
 
 export const liveGameReactionOptions = [

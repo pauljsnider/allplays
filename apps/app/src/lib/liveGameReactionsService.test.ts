@@ -1,18 +1,14 @@
 import { describe, expect, it, vi } from 'vitest';
 
-const dbMocks = vi.hoisted(() => ({
+const adapterMocks = vi.hoisted(() => ({
   sendReaction: vi.fn(),
-  subscribeReactions: vi.fn(() => vi.fn())
-}));
-
-const legacyChatMocks = vi.hoisted(() => ({
+  subscribeReactions: vi.fn(() => vi.fn()),
   isViewerChatEnabled: vi.fn()
 }));
 
-vi.mock('../../../../js/db.js', () => dbMocks);
-vi.mock('../../../../js/live-game-chat.js', () => legacyChatMocks);
+vi.mock('./adapters/legacyLiveGameReactions', () => adapterMocks);
 
-import { sendReaction, subscribeReactions } from '../../../../js/db.js';
+import { sendReaction, subscribeReactions } from './adapters/legacyLiveGameReactions';
 import {
   buildLiveGameReactionPayload,
   canUseLiveGameReactions,
@@ -23,7 +19,7 @@ import {
 
 describe('liveGameReactionsService', () => {
   it('uses the legacy viewer gate for live, same-day, and replay decisions', () => {
-    vi.mocked(legacyChatMocks.isViewerChatEnabled)
+    vi.mocked(adapterMocks.isViewerChatEnabled)
       .mockReturnValueOnce(true)
       .mockReturnValueOnce(true)
       .mockReturnValueOnce(false);
@@ -32,9 +28,9 @@ describe('liveGameReactionsService', () => {
     expect(canUseLiveGameReactions({ date: '2026-06-03T09:00:00Z' }, { now: new Date('2026-06-03T12:00:00Z') })).toBe(true);
     expect(canUseLiveGameReactions({ date: '2026-06-03T09:00:00Z' }, { isReplay: true, now: new Date('2026-06-03T12:00:00Z') })).toBe(false);
 
-    expect(legacyChatMocks.isViewerChatEnabled).toHaveBeenNthCalledWith(1, { status: 'live', liveStatus: 'live' }, { now: new Date('2026-06-03T12:00:00Z') });
-    expect(legacyChatMocks.isViewerChatEnabled).toHaveBeenNthCalledWith(2, { date: '2026-06-03T09:00:00Z', liveStatus: null }, { now: new Date('2026-06-03T12:00:00Z') });
-    expect(legacyChatMocks.isViewerChatEnabled).toHaveBeenNthCalledWith(3, { date: '2026-06-03T09:00:00Z', liveStatus: null }, { isReplay: true, now: new Date('2026-06-03T12:00:00Z') });
+    expect(adapterMocks.isViewerChatEnabled).toHaveBeenNthCalledWith(1, { status: 'live', liveStatus: 'live' }, { now: new Date('2026-06-03T12:00:00Z') });
+    expect(adapterMocks.isViewerChatEnabled).toHaveBeenNthCalledWith(2, { date: '2026-06-03T09:00:00Z', liveStatus: null }, { now: new Date('2026-06-03T12:00:00Z') });
+    expect(adapterMocks.isViewerChatEnabled).toHaveBeenNthCalledWith(3, { date: '2026-06-03T09:00:00Z', liveStatus: null }, { isReplay: true, now: new Date('2026-06-03T12:00:00Z') });
   });
 
   it('builds web-parity live reaction payloads', () => {
