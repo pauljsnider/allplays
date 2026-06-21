@@ -29,7 +29,7 @@ import {
   loadParentTeams,
   loadNotificationPreferences,
   loadNotificationTeams,
-  loadProfileAccessCodes,
+  loadProfileAccessCodesPage,
   loadProfileDocument,
   normalizeNotificationPreferences,
   requestAccountMerge,
@@ -133,6 +133,9 @@ export function Profile({ auth }: { auth: AuthState }) {
   });
   const [notificationTeamsLoaded, setNotificationTeamsLoaded] = useState(false);
   const [accessCodesLoaded, setAccessCodesLoaded] = useState(false);
+  const [accessCodesLoadingMore, setAccessCodesLoadingMore] = useState(false);
+  const [accessCodesPageCursor, setAccessCodesPageCursor] = useState<unknown | null>(null);
+  const [accessCodesHasMore, setAccessCodesHasMore] = useState(false);
   const [parentLinkedTeamsLoaded, setParentLinkedTeamsLoaded] = useState(false);
   const [loadedNotificationTeamId, setLoadedNotificationTeamId] = useState('');
   const [generatedInviteMetadata, setGeneratedInviteMetadata] = useState<{ email: string; phone: string }>({ email: '', phone: '' });
@@ -244,6 +247,9 @@ export function Profile({ auth }: { auth: AuthState }) {
       setAccessCodes([]);
       setInviteActionStatus('');
       setAccessCodesLoaded(false);
+      setAccessCodesLoadingMore(false);
+      setAccessCodesPageCursor(null);
+      setAccessCodesHasMore(false);
       setParentLinkedTeams([]);
       setParentLinkedTeamsLoaded(false);
       setAccountMergeExpanded(false);
@@ -467,14 +473,16 @@ export function Profile({ auth }: { auth: AuthState }) {
       }
 
       try {
-        const codes = await loadProfileAccessCodes(user.uid).catch((error) => {
+        const page = await loadProfileAccessCodesPage(user.uid, { pageSize: collapsedInviteCount }).catch((error) => {
           console.warn('[profile] Unable to load access codes:', error);
           setInviteStatus({ message: 'Unable to load invite history.', tone: 'error' });
-          return [];
+          return { codes: [], nextCursor: null };
         });
 
         if (!cancelled) {
-          setAccessCodes(codes);
+          setAccessCodes(page.codes);
+          setAccessCodesPageCursor(page.nextCursor);
+          setAccessCodesHasMore(Boolean(page.nextCursor));
           setAccessCodesLoaded(true);
         }
       } catch {
@@ -487,6 +495,43 @@ export function Profile({ auth }: { auth: AuthState }) {
       cancelled = true;
     };
   }, [accessCodesLoaded, activeProfileSection, user]);
+
+  const loadMoreInviteHistory = useCallback(async () => {
+    if (!user || accessCodesLoadingMore) {
+      return;
+    }
+    if (inviteHistoryExpanded && !accessCodesHasMore) {
+      setInviteHistoryExpanded(false);
+      return;
+    }
+
+    setInviteHistoryExpanded(true);
+    if (!accessCodesHasMore) {
+      return;
+    }
+
+    setAccessCodesLoadingMore(true);
+    setInviteStatus(null);
+    try {
+      const page = await loadProfileAccessCodesPage(user.uid, {
+        cursor: accessCodesPageCursor,
+        pageSize: collapsedInviteCount
+      });
+      setAccessCodes((current) => {
+        const nextById = new Map(current.map((code) => [code.id || code.code, code]));
+        page.codes.forEach((code) => nextById.set(code.id || code.code, code));
+        return Array.from(nextById.values());
+      });
+      setAccessCodesPageCursor(page.nextCursor);
+      setAccessCodesHasMore(Boolean(page.nextCursor));
+      setAccessCodesLoaded(true);
+    } catch (error) {
+      console.warn('[profile] Unable to load more access codes:', error);
+      setInviteStatus({ message: 'Unable to load more invite history.', tone: 'error' });
+    } finally {
+      setAccessCodesLoadingMore(false);
+    }
+  }, [accessCodesHasMore, accessCodesLoadingMore, accessCodesPageCursor, inviteHistoryExpanded, user]);
 
   useEffect(() => {
     let cancelled = false;
@@ -957,7 +1002,14 @@ export function Profile({ auth }: { auth: AuthState }) {
       setGeneratedInviteMetadata({ email: nextInviteEmail, phone: nextInvitePhone });
       setInviteEmail('');
       setInvitePhone('');
-      setAccessCodes(await loadProfileAccessCodes(user.uid));
+      setAccessCodes((current) => [{
+        id: code,
+        code,
+        email: nextInviteEmail || null,
+        phone: nextInvitePhone || null,
+        used: false,
+        createdAt: new Date()
+      }, ...current.filter((entry) => entry.code !== code)]);
       setAccessCodesLoaded(true);
       setInviteHistoryExpanded(true);
       setInviteStatus({ message: 'Invite code generated.', tone: 'success' });
@@ -1504,10 +1556,10 @@ export function Profile({ auth }: { auth: AuthState }) {
 
         {!generatedCode && inviteActionStatus ? <div className="mt-3 text-sm font-black text-emerald-700">{inviteActionStatus}</div> : null}
 
-        {accessCodes.length > collapsedInviteCount ? (
-          <button type="button" className="ghost-button mt-3 w-full justify-center" onClick={() => setInviteHistoryExpanded((current) => !current)}>
-            {inviteHistoryExpanded ? <ChevronUp className="h-4 w-4" aria-hidden="true" /> : <ChevronDown className="h-4 w-4" aria-hidden="true" />}
-            {inviteHistoryExpanded ? 'Show fewer codes' : `Show ${hiddenAccessCodeCount} more`}
+        {accessCodesHasMore || accessCodes.length > collapsedInviteCount ? (
+          <button type="button" className="ghost-button mt-3 w-full justify-center" onClick={loadMoreInviteHistory} disabled={accessCodesLoadingMore}>
+            {accessCodesLoadingMore ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : inviteHistoryExpanded && !accessCodesHasMore ? <ChevronUp className="h-4 w-4" aria-hidden="true" /> : <ChevronDown className="h-4 w-4" aria-hidden="true" />}
+            {accessCodesLoadingMore ? 'Loading invite history...' : inviteHistoryExpanded ? (accessCodesHasMore ? 'Load more codes' : 'Show fewer codes') : `Show ${hiddenAccessCodeCount || 'more'} codes`}
           </button>
         ) : null}
       </section>

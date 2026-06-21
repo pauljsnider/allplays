@@ -19,6 +19,7 @@ const profileServiceMocks = vi.hoisted(() => ({
   loadNotificationTeams: vi.fn(async () => ([{ id: 'team-1', name: 'Blue Team' }])),
   loadParentTeams: vi.fn(async () => ([{ id: 'team-1', name: 'Blue Team' }])),
   loadProfileAccessCodes: vi.fn(async () => []),
+  loadProfileAccessCodesPage: vi.fn(async () => ({ codes: [], nextCursor: null })),
   loadProfileDocument: vi.fn(async () => ({
     fullName: 'Pat Parent',
     phone: '555-0100',
