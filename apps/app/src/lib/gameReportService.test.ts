@@ -91,6 +91,11 @@ describe('gameReportService', () => {
       }
     });
     dbMocks.getTeamStatsForGame.mockResolvedValue({ turnovers: 7, assists: '11', nested: { invalid: true } });
+    dbMocks.getGameEvents.mockResolvedValue([
+      { id: 'event-late', message: 'Late bucket', period: '', gameTime: '0:12', timestamp: { seconds: 1717200060 } },
+      { id: 'event-early', text: 'Opening tip', period: 'Q1', clock: '8:00', timestamp: { seconds: 1717200000 } },
+      { id: '', text: 'Missing id' }
+    ]);
     firebaseMocks.getDocs.mockResolvedValue({
       forEach(callback: (docSnap: any) => void) {
         callback({
@@ -137,5 +142,21 @@ describe('gameReportService', () => {
       }
     ]);
     expect(report.teamStats).toEqual({ turnovers: 7, assists: '11' });
+    expect(report.plays).toEqual([
+      {
+        id: 'event-early',
+        text: 'Opening tip',
+        period: 'Q1',
+        clock: '8:00',
+        timestamp: new Date(1717200000 * 1000)
+      },
+      {
+        id: 'event-late',
+        text: 'Late bucket',
+        period: 'Q1',
+        clock: '0:12',
+        timestamp: new Date(1717200060 * 1000)
+      }
+    ]);
   });
 });
