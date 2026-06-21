@@ -105,6 +105,10 @@
                     <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"></path></svg>
                     .ics Export
                 </button>
+                <button id="sync-calendar" onclick="openSyncCalendarModal()" class="inline-flex items-center gap-1 px-3 py-1.5 text-xs font-medium text-emerald-700 bg-emerald-50 rounded-lg hover:bg-emerald-100 transition border border-emerald-200">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"></path></svg>
+                    Sync Calendar
+                </button>
             </div>
         </div>
 
@@ -138,6 +142,42 @@
         </div>
     </div>
 
+    <div id="sync-calendar-modal" class="hidden fixed inset-0 z-50">
+        <div id="sync-calendar-backdrop" class="absolute inset-0 bg-black/50" onclick="closeSyncCalendarModal()"></div>
+        <div class="relative z-10 min-h-full flex items-center justify-center p-4">
+            <div class="bg-white rounded-2xl shadow-2xl max-w-lg w-full overflow-hidden">
+                <div class="flex items-center justify-between px-6 py-4 border-b border-gray-100">
+                    <div>
+                        <p class="text-xs uppercase tracking-wide text-emerald-600 font-semibold">Live schedule feed</p>
+                        <h3 class="text-lg font-bold text-gray-900">Sync Calendar</h3>
+                    </div>
+                    <button id="sync-calendar-close" onclick="closeSyncCalendarModal()" class="text-gray-400 hover:text-gray-700">
+                        <span class="sr-only">Close</span>
+                        <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
+                    </button>
+                </div>
+                <div class="px-6 py-5 space-y-4">
+                    <p class="text-sm text-gray-600">Subscribe once to keep the selected team schedule updated in your personal calendar.</p>
+                    <div class="grid gap-3">
+                        <button id="sync-calendar-apple" class="w-full text-left px-4 py-3 rounded-xl border border-gray-200 hover:border-emerald-300 hover:bg-emerald-50 transition">
+                            <span class="block text-sm font-semibold text-gray-900">Apple Calendar</span>
+                            <span class="block text-xs text-gray-500">Open a webcal subscription link.</span>
+                        </button>
+                        <button id="sync-calendar-google" class="w-full text-left px-4 py-3 rounded-xl border border-gray-200 hover:border-emerald-300 hover:bg-emerald-50 transition">
+                            <span class="block text-sm font-semibold text-gray-900">Google Calendar</span>
+                            <span class="block text-xs text-gray-500">Open Google Calendar add-calendar flow.</span>
+                        </button>
+                        <button id="sync-calendar-copy" class="w-full text-left px-4 py-3 rounded-xl border border-gray-200 hover:border-emerald-300 hover:bg-emerald-50 transition">
+                            <span class="block text-sm font-semibold text-gray-900">Copy Link</span>
+                            <span class="block text-xs text-gray-500">Copy the private HTTPS subscription URL.</span>
+                        </button>
+                    </div>
+                    <p id="sync-calendar-feedback" class="text-sm text-gray-600" aria-live="polite"></p>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <div id="footer-container"></div>
 
     <script type="module">
@@ -164,6 +204,7 @@
         let calendarYear = new Date().getFullYear();
         let activeDayDetail = null;
         let linkedPlayersByTeam = new Map();
+        let calendarTeams = [];
         const teamColors = {};
         const colorPalette = ['#6366f1', '#ec4899', '#f59e0b', '#10b981', '#ef4444', '#8b5cf6', '#06b6d4', '#f97316'];
 
@@ -175,6 +216,8 @@
         window.printCurrentScheduleOptions = printCurrentScheduleOptions;
         window.navMonth = navMonth;
         window.exportIcs = exportIcs;
+        window.openSyncCalendarModal = openSyncCalendarModal;
+        window.closeSyncCalendarModal = closeSyncCalendarModal;
         window.openDayDetail = openDayDetail;
         window.closeDayModal = closeDayModal;
         window.submitCalendarRsvp = submitCalendarRsvp;
@@ -303,6 +346,7 @@
                 const teamsMap = new Map();
                 [...coachTeams, ...parentTeams].forEach(t => teamsMap.set(t.id, t));
                 const teams = Array.from(teamsMap.values());
+                calendarTeams = teams;
 
                 // Assign colors to teams
                 teams.forEach((team, i) => {
@@ -835,6 +879,125 @@
                 teamName: selectedTeam || ''
             });
         }
+
+        function getSelectedSyncCalendarTeam() {
+            if (currentTeamFilter) {
+                return calendarTeams.find((team) => team.id === currentTeamFilter) || null;
+            }
+            const visibleTeamIds = new Set((allEvents || []).map((event) => event.teamId).filter(Boolean));
+            const candidateTeams = calendarTeams.filter((team) => visibleTeamIds.size === 0 || visibleTeamIds.has(team.id));
+            return candidateTeams.length === 1 ? candidateTeams[0] : null;
+        }
+
+        function getPrivateCalendarFeedUrl(team) {
+            const directUrl = team?.privateCalendarFeedUrl ||
+                team?.calendarSubscriptionUrl ||
+                team?.calendarFeedUrl ||
+                team?.teamCalendarFeedUrl;
+            if (typeof directUrl === 'string' && directUrl.trim()) {
+                return directUrl.trim().replace(/^webcal:\/\//i, 'https://');
+            }
+
+            const token = team?.calendarSubscriptionToken ||
+                team?.privateCalendarToken ||
+                team?.calendarFeedToken ||
+                team?.teamCalendarToken;
+            if (!token || !team?.id) return '';
+
+            const configuredUrl = window.__ALLPLAYS_CONFIG__?.privateTeamCalendarIcsFunctionUrl || window.ALLPLAYS_PRIVATE_TEAM_CALENDAR_ICS_URL;
+            const fallbackUrl = window.__ALLPLAYS_CONFIG__?.calendarFetchFunctionUrl || window.ALLPLAYS_CALENDAR_FUNCTION_URL;
+            const baseUrl = (typeof configuredUrl === 'string' && configuredUrl.trim())
+                ? configuredUrl.trim()
+                : (typeof fallbackUrl === 'string' && fallbackUrl.includes('fetchCalendarIcs')
+                    ? fallbackUrl.replace('fetchCalendarIcs', 'privateTeamCalendarIcs')
+                    : 'https://us-central1-all-plays-prod.cloudfunctions.net/privateTeamCalendarIcs');
+            const separator = baseUrl.includes('?') ? '&' : '?';
+            return `${baseUrl}${separator}teamId=${encodeURIComponent(team.id)}&token=${encodeURIComponent(token)}`;
+        }
+
+        function getAppleCalendarFeedUrl(feedUrl) {
+            return feedUrl.replace(/^https?:\/\//i, 'webcal://');
+        }
+
+        function getGoogleCalendarFeedUrl(feedUrl) {
+            return `https://calendar.google.com/calendar/render?cid=${encodeURIComponent(feedUrl)}`;
+        }
+
+        function setSyncCalendarFeedback(message, tone = 'neutral') {
+            const feedback = document.getElementById('sync-calendar-feedback');
+            if (!feedback) return;
+            feedback.textContent = message;
+            feedback.className = `text-sm ${tone === 'error' ? 'text-red-600' : tone === 'success' ? 'text-emerald-700' : 'text-gray-600'}`;
+        }
+
+        function getCurrentCalendarFeedUrl() {
+            const team = getSelectedSyncCalendarTeam();
+            return team ? getPrivateCalendarFeedUrl(team) : '';
+        }
+
+        function openSyncCalendarModal() {
+            const team = getSelectedSyncCalendarTeam();
+            const feedUrl = team ? getPrivateCalendarFeedUrl(team) : '';
+            document.getElementById('sync-calendar-modal')?.classList.remove('hidden');
+            if (!team) {
+                setSyncCalendarFeedback('Select a team before opening a live calendar subscription.', 'error');
+                return;
+            }
+            setSyncCalendarFeedback(feedUrl ? `Choose where to subscribe to ${team.name || 'this team'} schedule.` : 'Calendar subscription link is not available yet.', feedUrl ? 'neutral' : 'error');
+        }
+
+        function closeSyncCalendarModal() {
+            document.getElementById('sync-calendar-modal')?.classList.add('hidden');
+        }
+
+        async function copyPrivateCalendarFeedUrl(feedUrl) {
+            if (!feedUrl) {
+                setSyncCalendarFeedback('Calendar subscription link is not available yet.', 'error');
+                return;
+            }
+            try {
+                if (navigator.clipboard?.writeText) {
+                    await navigator.clipboard.writeText(feedUrl);
+                } else {
+                    const input = document.createElement('textarea');
+                    input.value = feedUrl;
+                    input.setAttribute('readonly', '');
+                    input.style.position = 'fixed';
+                    input.style.left = '-9999px';
+                    document.body.appendChild(input);
+                    input.select();
+                    const copied = document.execCommand('copy');
+                    document.body.removeChild(input);
+                    if (!copied) throw new Error('Copy command failed');
+                }
+                setSyncCalendarFeedback('Subscription link copied.', 'success');
+            } catch (error) {
+                console.error('Failed to copy calendar feed URL:', error);
+                setSyncCalendarFeedback('Could not copy the link. Select Copy Link again or try manually.', 'error');
+            }
+        }
+
+        document.getElementById('sync-calendar-apple')?.addEventListener('click', () => {
+            const feedUrl = getCurrentCalendarFeedUrl();
+            if (!feedUrl) {
+                setSyncCalendarFeedback('Calendar subscription link is not available yet.', 'error');
+                return;
+            }
+            window.open(getAppleCalendarFeedUrl(feedUrl), '_blank', 'noopener');
+            setSyncCalendarFeedback('Opening Apple Calendar subscription.', 'success');
+        });
+        document.getElementById('sync-calendar-google')?.addEventListener('click', () => {
+            const feedUrl = getCurrentCalendarFeedUrl();
+            if (!feedUrl) {
+                setSyncCalendarFeedback('Calendar subscription link is not available yet.', 'error');
+                return;
+            }
+            window.open(getGoogleCalendarFeedUrl(feedUrl), '_blank', 'noopener');
+            setSyncCalendarFeedback('Opening Google Calendar subscription.', 'success');
+        });
+        document.getElementById('sync-calendar-copy')?.addEventListener('click', () => {
+            copyPrivateCalendarFeedUrl(getCurrentCalendarFeedUrl());
+        });
 
         // ===== ICS EXPORT =====
         function exportIcs() {
