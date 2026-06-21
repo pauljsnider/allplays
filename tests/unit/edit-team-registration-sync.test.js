@@ -18,7 +18,7 @@ function readSportsConnectSyncCore() {
 }
 
 describe('edit team Sports Connect registration sync wiring', () => {
-    it('enables manual sync for saved Sports Connect mappings through a callable wrapper', () => {
+    it('keeps Sports Connect metadata wiring while manual sync remains disabled', () => {
         const source = readEditTeam();
         const dbSource = readDb();
         const functionsSource = readFunctions();
@@ -29,9 +29,9 @@ describe('edit team Sports Connect registration sync wiring', () => {
         expect(source).toContain('function handleRegistrationProviderSync()');
         expect(source).toContain('await syncRegistrationProvider(currentTeamId)');
         expect(source).toContain('function hasUnsavedRegistrationSyncChanges(provider, externalTeamId)');
-        expect(source).toContain('Save the updated Sports Connect mapping before running backend sync.');
-        expect(source).toContain('const canSyncSportsConnect = Boolean(currentTeamId && isSportsConnectProvider(provider) && externalTeamId && !hasUnsavedSyncChanges);');
-        expect(source).toContain('syncEnabled: isSportsConnectProvider(provider) && !!externalTeamId');
+        expect(source).toContain('Sports Connect live sync is unavailable until a connector is added.');
+        expect(source).toContain('const canSyncSportsConnect = false;');
+        expect(source).toContain('syncEnabled: false');
         expect(source).toContain('Open roster import to preview changes.');
         expect(source).not.toContain('Manual refresh unavailable');
 
