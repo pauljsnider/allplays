@@ -16,11 +16,8 @@ const aiMocks = vi.hoisted(() => {
   };
 });
 
-vi.mock('../../../../js/vendor/firebase-app.js', () => ({
-  getApp: vi.fn(() => ({}))
-}));
-
-vi.mock('../../../../js/vendor/firebase-ai.js', () => ({
+vi.mock('./adapters/legacyGenerativeAi', () => ({
+  getApp: vi.fn(() => ({})),
   getAI: vi.fn(() => ({})),
   getGenerativeModel: aiMocks.getGenerativeModel,
   GoogleAIBackend: vi.fn(),
