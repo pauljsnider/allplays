@@ -645,7 +645,7 @@ test('profile exposes account, notification, invite, verification, password, upl
 
     await page.getByRole('button', { name: 'Invites', exact: true }).click();
     await expect(page.getByText('Invite codes')).toBeVisible();
-    await expect(page.getByRole('button', { name: 'Show 1 more' })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Show more codes' })).toBeVisible();
     await expect(page.getByText('Advanced: add recipient label')).toBeVisible();
     await page.getByRole('button', { name: 'Generate invite link' }).click();
     await expect(page.getByText('Generated invite link')).toBeVisible();
@@ -656,7 +656,7 @@ test('profile exposes account, notification, invite, verification, password, upl
     await shareInviteLink.click();
     await expect(page.getByText('Share sheet opened.')).toBeVisible();
     await expect(page.getByText('Fallback code')).toBeVisible();
-    await expect(page.getByText('NEWMVP42', { exact: true })).toBeVisible();
+    await expect(page.getByText('NEWMVP42', { exact: true }).first()).toBeVisible();
     await expect(page.getByRole('button', { name: 'Copy code' })).toBeVisible();
 
     const sharedInviteUrl = await page.evaluate(() => window.__appShareCalls[0]?.url || '');
