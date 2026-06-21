@@ -34,7 +34,7 @@ describe('team calendar sync controls', () => {
         expect(source).toContain("function getPrivateCalendarFeedUrl()");
         expect(source).toContain("currentTeam?.calendarSubscriptionUrl");
         expect(source).toContain("currentTeam?.calendarSubscriptionToken");
-        expect(source).toContain("privateTeamCalendarIcs");
+        expect(source).toContain("teamCalendarFeed");
         expect(source).toContain("return feedUrl.replace(/^https?:\\/\\//i, 'webcal://');");
         expect(source).toContain("https://calendar.google.com/calendar/render?cid=${encodeURIComponent(feedUrl)}");
         expect(source).toContain("navigator.clipboard.writeText(feedUrl)");
@@ -74,7 +74,7 @@ describe('all teams calendar sync controls', () => {
         expect(source).toContain('function getPrivateCalendarFeedUrl(team = getSelectedCalendarTeam())');
         expect(source).toContain('team?.calendarSubscriptionUrl');
         expect(source).toContain('team?.calendarSubscriptionToken');
-        expect(source).toContain('privateTeamCalendarIcs');
+        expect(source).toContain('teamCalendarFeed');
         expect(source).toContain("return feedUrl.replace(/^https?:\\/\\//i, 'webcal://');");
         expect(source).toContain('https://calendar.google.com/calendar/render?cid=${encodeURIComponent(feedUrl)}');
         expect(source).toContain('navigator.clipboard.writeText(feedUrl)');
