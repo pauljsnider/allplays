@@ -155,6 +155,7 @@ export type ParentScheduleEvent = {
   seasonLabel?: string | null;
   competitionType?: string | null;
   countsTowardSeasonRecord?: boolean | null;
+  statTrackerConfigId?: string | null;
   sourceType?: ScheduleSourceType | string | null;
   sourceLabel?: string | null;
   isImported?: boolean;

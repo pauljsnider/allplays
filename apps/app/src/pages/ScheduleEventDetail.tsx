@@ -4,11 +4,15 @@ import { AlertCircle, CalendarDays, Car, CheckCircle2, ChevronDown, ChevronLeft,
 import {
   cancelPracticeOccurrenceForApp,
   cancelScheduledGameForApp,
+  loadScheduleStatTrackerConfigsForApp,
   loadScheduledPracticeSeriesForEdit,
+  updateScheduledGameForApp,
   updateScheduledPracticeForApp,
   revertScheduledPracticeOccurrenceForApp,
+  type ScheduleGameFormInput,
   type SchedulePracticeFormInput,
   type PracticeRecurrenceFormInput,
+  type ScheduleStatTrackerConfigOption,
   claimParentScheduleAssignmentSlot,
   loadParentPracticePacket,
   loadStaffPracticePacket,
@@ -775,6 +779,7 @@ function padDatePart(value: number) {
 }
 
 function toDatetimeLocalInputValue(value: Date | string | number | null | undefined) {
+  if (value === null || value === undefined || value === '') return '';
   const date = value instanceof Date ? value : new Date(value || Date.now());
   if (Number.isNaN(date.getTime())) return '';
   return `${date.getFullYear()}-${padDatePart(date.getMonth() + 1)}-${padDatePart(date.getDate())}T${padDatePart(date.getHours())}:${padDatePart(date.getMinutes())}`;
@@ -794,6 +799,108 @@ function buildPracticeFormFromEvent(event: ParentScheduleEvent): SchedulePractic
     notes: event.notes || '',
     recurrence: { isRecurring: event.id.includes('__') }
   };
+}
+
+function buildGameFormFromEvent(event: ParentScheduleEvent): ScheduleGameFormInput {
+  const startDate = event.date instanceof Date ? event.date : new Date(event.date);
+  const endDate = event.endDate instanceof Date ? event.endDate : (event.endDate ? new Date(event.endDate) : null);
+  const arrivalTime = event.arrivalTime instanceof Date ? event.arrivalTime : (event.arrivalTime ? new Date(event.arrivalTime) : null);
+  return {
+    opponent: event.opponent || event.title || '',
+    startDate,
+    endDate,
+    location: event.location || '',
+    arrivalTime,
+    isHome: event.isHome === false ? false : event.isHome === true ? true : null,
+    notes: event.notes || '',
+    statTrackerConfigId: event.statTrackerConfigId || '',
+    competitionType: event.competitionType || 'league',
+    countsTowardSeasonRecord: event.countsTowardSeasonRecord !== false,
+    opponentTeamId: event.opponentTeamId || null,
+    opponentTeamName: event.opponentTeamName || null,
+    opponentTeamPhoto: event.opponentTeamPhoto || null
+  };
+}
+
+function GameScheduleEditPanel({ auth, event }: { auth: AuthState; event: ParentScheduleEvent }) {
+  const [open, setOpen] = useState(false);
+  const [form, setForm] = useState<ScheduleGameFormInput>(() => buildGameFormFromEvent(event));
+  const [configs, setConfigs] = useState<ScheduleStatTrackerConfigOption[]>([]);
+  const [saving, setSaving] = useState(false);
+  const [status, setStatus] = useState<{ tone: 'success' | 'error'; message: string } | null>(null);
+  const [configError, setConfigError] = useState<string | null>(null);
+
+  useEffect(() => {
+    setForm(buildGameFormFromEvent(event));
+    setStatus(null);
+  }, [event.eventKey]);
+
+  useEffect(() => {
+    if (!open || !auth.user) return;
+    let cancelled = false;
+    setConfigError(null);
+    loadScheduleStatTrackerConfigsForApp(event.teamId, auth.user)
+      .then((nextConfigs) => {
+        if (!cancelled) setConfigs(nextConfigs);
+      })
+      .catch((error: any) => {
+        if (!cancelled) setConfigError(error?.message || 'Unable to load tracker configs.');
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [auth.user, event.teamId, open]);
+
+  const updateField = (field: keyof ScheduleGameFormInput, value: string | Date | boolean | null) => {
+    setForm((current) => ({ ...current, [field]: value }));
+  };
+
+  const saveGame = async (submitEvent: FormEvent<HTMLFormElement>) => {
+    submitEvent.preventDefault();
+    if (!auth.user) return;
+    setSaving(true);
+    setStatus(null);
+    try {
+      await updateScheduledGameForApp(event.teamId, event.id, form, auth.user);
+      setStatus({ tone: 'success', message: 'Game schedule was updated.' });
+    } catch (error: any) {
+      setStatus({ tone: 'error', message: error?.message || 'Unable to update game.' });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <section className="app-card p-3 sm:p-4" aria-label="Edit game schedule">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <div className="text-xs font-black uppercase tracking-[0.04em] text-primary-700">Schedule management</div>
+          <h2 className="mt-1 text-base font-black text-gray-950">Edit game</h2>
+          <p className="mt-1 text-sm font-semibold text-gray-500">Update opponent, timing, location, home/away, and tracker config without touching score data.</p>
+        </div>
+        <button type="button" className="secondary-button" onClick={() => setOpen((current) => !current)}>{open ? 'Hide editor' : 'Edit game'}</button>
+      </div>
+      {open ? (
+        <form className="mt-3 space-y-3" onSubmit={saveGame}>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <label className="text-xs font-bold uppercase tracking-wide text-gray-600">Opponent<input className="auth-input mt-1" value={form.opponent} onChange={(e) => updateField('opponent', e.target.value)} /></label>
+            <label className="text-xs font-bold uppercase tracking-wide text-gray-600">Location<input className="auth-input mt-1" value={form.location || ''} onChange={(e) => updateField('location', e.target.value)} /></label>
+            <label className="text-xs font-bold uppercase tracking-wide text-gray-600">Starts<input type="datetime-local" className="auth-input mt-1" value={toDatetimeLocalInputValue(form.startDate)} onChange={(e) => updateField('startDate', new Date(e.target.value))} /></label>
+            <label className="text-xs font-bold uppercase tracking-wide text-gray-600">Ends<input type="datetime-local" className="auth-input mt-1" value={toDatetimeLocalInputValue(form.endDate)} onChange={(e) => updateField('endDate', e.target.value ? new Date(e.target.value) : null)} /></label>
+            <label className="text-xs font-bold uppercase tracking-wide text-gray-600">Arrival<input type="datetime-local" className="auth-input mt-1" value={toDatetimeLocalInputValue(form.arrivalTime)} onChange={(e) => updateField('arrivalTime', e.target.value ? new Date(e.target.value) : null)} /></label>
+            <label className="text-xs font-bold uppercase tracking-wide text-gray-600">Home / away<select className="auth-input mt-1" value={form.isHome === false ? 'away' : form.isHome === true ? 'home' : 'neutral'} onChange={(e) => updateField('isHome', e.target.value === 'neutral' ? null : e.target.value === 'home')}><option value="home">Home</option><option value="away">Away</option><option value="neutral">Neutral</option></select></label>
+            <label className="text-xs font-bold uppercase tracking-wide text-gray-600">Tracker config<select className="auth-input mt-1" value={form.statTrackerConfigId || ''} onChange={(e) => updateField('statTrackerConfigId', e.target.value)}><option value="">No tracker config</option>{configs.map((config) => <option key={config.id} value={config.id}>{config.name}</option>)}</select></label>
+            <label className="text-xs font-bold uppercase tracking-wide text-gray-600">Competition<select className="auth-input mt-1" value={form.competitionType || 'league'} onChange={(e) => updateField('competitionType', e.target.value)}><option value="league">League</option><option value="tournament">Tournament</option><option value="scrimmage">Scrimmage</option><option value="friendly">Friendly</option></select></label>
+          </div>
+          <label className="flex items-center gap-2 text-sm font-black text-gray-800"><input type="checkbox" checked={form.countsTowardSeasonRecord !== false} onChange={(e) => updateField('countsTowardSeasonRecord', e.target.checked)} /> Counts toward season record</label>
+          <label className="text-xs font-bold uppercase tracking-wide text-gray-600">Notes<textarea className="auth-input mt-1 min-h-20" value={form.notes || ''} onChange={(e) => updateField('notes', e.target.value)} /></label>
+          <button type="submit" className="primary-button" disabled={saving}>{saving ? 'Saving' : 'Save game'}</button>
+          {configError ? <div className="rounded-2xl border border-amber-200 bg-amber-50 px-3 py-2 text-sm font-bold text-amber-700">{configError}</div> : null}
+        </form>
+      ) : null}
+      {status ? <div className={`mt-3 rounded-2xl border px-3 py-2 text-sm font-bold ${status.tone === 'success' ? 'border-emerald-200 bg-emerald-50 text-emerald-700' : 'border-rose-200 bg-rose-50 text-rose-700'}`}>{status.message}</div> : null}
+    </section>
+  );
 }
 
 function PracticeScheduleEditPanel({ auth, event }: { auth: AuthState; event: ParentScheduleEvent }) {
@@ -2101,6 +2208,7 @@ function GameHubSection({ auth, event, childEvents, onScoreUpdated, onLiveClockU
     <section className="space-y-3">
       {showNonAdminPracticePacketFirst ? <PracticePacketSection auth={auth} event={event} childEvents={childEvents} /> : null}
       {showAdminPracticeTimeline ? <PracticeTimelineSection auth={auth} event={event} /> : null}
+      {!isPractice && event.isTeamAdmin && event.isDbGame && !event.isCancelled ? <GameScheduleEditPanel auth={auth} event={event} /> : null}
       {isPractice && event.isTeamAdmin && event.isDbGame && !event.isCancelled ? <PracticeScheduleEditPanel auth={auth} event={event} /> : null}
       {isPractice && event.isTeamAdmin && event.isDbGame && !event.isCancelled ? <StaffPracticePacketEditor auth={auth} event={event} childEvents={childEvents} /> : null}
       {isPractice && !showNonAdminPracticePacketFirst ? <PracticePacketSection auth={auth} event={event} childEvents={childEvents} /> : null}

@@ -298,9 +298,20 @@ async function mockScheduleModules(page, options = {}) {
                     return { ok: true };
                 }
 
+                export async function createScheduledGameForApp(teamId, form, user) {
+                    window.__scheduleCalls.gameCreates = (window.__scheduleCalls.gameCreates || []).concat({ teamId, form, userId: user?.uid || null });
+                    return { id: 'game-created' };
+                }
+
                 export async function createScheduledPracticeForApp(teamId, form, user) {
                     window.__scheduleCalls.practiceCreates = (window.__scheduleCalls.practiceCreates || []).concat({ teamId, form, userId: user?.uid || null });
                     return { id: 'practice-created' };
+                }
+
+                export async function loadScheduleStatTrackerConfigsForApp() {
+                    return [
+                        { id: 'tracker-config-1', label: 'Basketball Standard', sport: 'basketball', defaultGameTitle: 'Game' }
+                    ];
                 }
 
                 export async function loadScheduledPracticeSeriesForEdit(teamId, eventId, user) {
@@ -317,6 +328,11 @@ async function mockScheduleModules(page, options = {}) {
                             recurrence: { isRecurring: true, byDays: ['WE'], interval: 1, endType: 'never' }
                         }
                     };
+                }
+
+                export async function updateScheduledGameForApp(teamId, gameId, input, user) {
+                    window.__scheduleCalls.gameUpdates = (window.__scheduleCalls.gameUpdates || []).concat({ teamId, gameId, input, userId: user?.uid || null });
+                    return { success: true };
                 }
 
                 export async function updateScheduledPracticeForApp(teamId, input, user, options) {

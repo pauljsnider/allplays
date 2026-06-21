@@ -8,6 +8,7 @@ const scheduleMocks = vi.hoisted(() => ({
     cancelParentScheduleRideRequest: vi.fn(),
     claimParentScheduleAssignmentSlot: vi.fn(),
     createParentScheduleRideOffer: vi.fn(),
+    loadScheduleStatTrackerConfigsForApp: vi.fn(),
     loadParentPracticePacket: vi.fn(),
     loadStaffPracticePacket: vi.fn(),
     loadParentSchedule: vi.fn(),
@@ -47,6 +48,7 @@ const scheduleMocks = vi.hoisted(() => ({
     saveScheduledGameLineupDraftForApp: vi.fn(),
     saveStaffPracticePacket: vi.fn(),
     updateGameScore: vi.fn(),
+    updateScheduledGameForApp: vi.fn(),
     updateParentScheduleRideRequestStatus: vi.fn()
 }));
 
@@ -187,6 +189,7 @@ beforeEach(() => {
     vi.clearAllMocks();
     scheduleMocks.loadParentSchedule.mockResolvedValue({ events: [] });
     scheduleMocks.loadParentScheduleEventDetail.mockImplementation(async () => scheduleMocks.loadParentSchedule());
+    scheduleMocks.loadScheduleStatTrackerConfigsForApp.mockResolvedValue([{ id: 'cfg-basketball', name: 'Basketball' }]);
     scheduleMocks.loadParentPracticePacket.mockResolvedValue(null);
     scheduleMocks.loadStaffPracticePacket.mockResolvedValue({
         sessionId: 'session-1',
@@ -254,6 +257,7 @@ beforeEach(() => {
         children: [{ id: 'player-1', name: 'Pat' }]
     });
     scheduleMocks.updateGameScore.mockResolvedValue({ homeScore: 5, awayScore: 2, scoreUpdatedAt: new Date('2026-05-25T08:00:00Z'), scoreUpdatedBy: 'user-1' });
+    scheduleMocks.updateScheduledGameForApp.mockResolvedValue({ updated: true, eventId: 'game-1' });
     scheduleMocks.publishLiveScoreUpdateEvent.mockResolvedValue({ type: 'score_update', homeScore: 5, awayScore: 2 });
     scheduleMocks.markParentPracticePacketComplete.mockResolvedValue({
         id: 'user-1__player-1',
