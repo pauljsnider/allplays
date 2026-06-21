@@ -782,7 +782,11 @@ function rolesFromProfile(profile: Record<string, unknown> = {}): UserRole[] {
     }
   });
 
-  if (Array.isArray(profile.parentOf) && profile.parentOf.length > 0) {
+  if (
+    (Array.isArray(profile.parentOf) && profile.parentOf.length > 0) ||
+    (Array.isArray(profile.parentTeamIds) && profile.parentTeamIds.length > 0) ||
+    (Array.isArray(profile.parentPlayerKeys) && profile.parentPlayerKeys.length > 0)
+  ) {
     roleSet.add('parent');
   }
 
@@ -818,6 +822,12 @@ function toAuthUser(user: FirebaseUser, profile: Record<string, unknown>): AuthU
     emailVerified: user.emailVerified === true,
     roles: rolesFromProfile(profile),
     parentOf: Array.isArray(profile.parentOf) ? profile.parentOf as Array<Record<string, unknown>> : [],
+    parentTeamIds: Array.isArray(profile.parentTeamIds)
+      ? profile.parentTeamIds.filter((teamId): teamId is string => typeof teamId === 'string')
+      : [],
+    parentPlayerKeys: Array.isArray(profile.parentPlayerKeys)
+      ? profile.parentPlayerKeys.filter((playerKey): playerKey is string => typeof playerKey === 'string')
+      : [],
     coachOf,
     isAdmin: profile.isAdmin === true,
     teamMediaUploadTeamIds: Array.isArray(profile.teamMediaUploadTeamIds)
