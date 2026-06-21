@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { readFileSync } from 'node:fs';
 import { planRosterCsvImport, splitRosterProfileValuesByVisibility } from '../../js/roster-profile-fields.js';
 
 describe('roster CSV import planning', () => {
@@ -65,9 +66,84 @@ describe('roster CSV import planning', () => {
 
         const invalid = planRosterCsvImport({ fields, csvText: 'Name,Favorite Snack\nAvery Lee,Crackers' });
         expect(invalid.errors).toEqual([
-            'Unknown CSV header "Favorite Snack". Use Name, Number, or a configured roster field label/key.'
+            'Unknown CSV header "Favorite Snack". Use Name, Number, a supported parent/guardian contact header, or a configured roster field label/key.'
         ]);
         expect(invalid.operations).toEqual([]);
+    });
+
+    it('imports parent, guardian, and contact columns with invite metadata', () => {
+        const plan = planRosterCsvImport({
+            fields,
+            csvText: [
+                'Name,Number,Parent Name,Parent Email,Parent Phone,Parent Relation,Contact Name,Contact Email,Contact Phone',
+                'Avery Lee,4,Pat Lee,PAT@example.com,555-0101,Mother,Aunt Kim,kim@example.com,555-0199'
+            ].join('\n')
+        });
+
+        expect(plan.errors).toEqual([]);
+        expect(plan.operations).toHaveLength(1);
+        expect(plan.operations[0]).toMatchObject({
+            type: 'add',
+            payload: {
+                name: 'Avery Lee',
+                number: '4',
+                guardians: [{
+                    name: 'Pat Lee',
+                    email: 'pat@example.com',
+                    phone: '555-0101',
+                    relation: 'Mother',
+                    source: 'roster-csv'
+                }],
+                contacts: [{
+                    name: 'Aunt Kim',
+                    email: 'kim@example.com',
+                    phone: '555-0199',
+                    relation: 'Contact',
+                    source: 'roster-csv'
+                }]
+            },
+            familyContacts: [
+                expect.objectContaining({ email: 'pat@example.com', relation: 'Mother' }),
+                expect.objectContaining({ email: 'kim@example.com', relation: 'Contact' })
+            ],
+            inviteRequests: [
+                { email: 'pat@example.com', displayName: 'Pat Lee', relation: 'Mother', phone: '555-0101' },
+                { email: 'kim@example.com', displayName: 'Aunt Kim', relation: 'Contact', phone: '555-0199' }
+            ]
+        });
+    });
+
+    it('merges imported guardian contacts onto existing player updates without duplicates', () => {
+        const plan = planRosterCsvImport({
+            fields,
+            existingPlayers: [{
+                id: 'p1',
+                name: 'Avery Lee',
+                number: '3',
+                guardians: [{ name: 'Pat Lee', email: 'pat@example.com', phone: '', relation: 'Parent' }]
+            }],
+            csvText: [
+                'Name,Parent Name,Parent Email,Guardian Name,Guardian Email',
+                'Avery Lee,Pat Lee,pat@example.com,Robin Lee,robin@example.com'
+            ].join('\n')
+        });
+
+        expect(plan.errors).toEqual([]);
+        expect(plan.operations).toHaveLength(1);
+        expect(plan.operations[0]).toMatchObject({
+            type: 'update',
+            playerId: 'p1',
+            payload: {
+                guardians: [
+                    expect.objectContaining({ email: 'pat@example.com', relation: 'Parent' }),
+                    expect.objectContaining({ email: 'robin@example.com', relation: 'Guardian' })
+                ]
+            },
+            inviteRequests: [
+                { email: 'pat@example.com', displayName: 'Pat Lee', relation: 'Parent', phone: '' },
+                { email: 'robin@example.com', displayName: 'Robin Lee', relation: 'Guardian', phone: '' }
+            ]
+        });
     });
 
     it('returns actionable row validation errors without producing operations', () => {
@@ -90,5 +166,12 @@ describe('roster CSV import planning', () => {
             publicValues: { grade: '6' },
             privateValues: { medicalNote: 'private' }
         });
+    });
+
+    it('describes parent and guardian contact columns in the roster CSV import UI', () => {
+        const page = readFileSync('edit-roster.html', 'utf8');
+
+        expect(page).toContain('parent/guardian/contact columns such as Parent Email or Guardian Phone');
+        expect(page).toContain('Name,Number,Parent Name,Parent Email,Grade');
     });
 });
