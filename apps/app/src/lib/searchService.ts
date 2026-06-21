@@ -1,20 +1,18 @@
-import { isTeamActive } from '../../../../js/team-visibility.js';
 import {
-  executeBoundedPlayerSearch,
-  playerSearchFirestoreQueryBudget,
-  playerSearchResultLimit
-} from '../../../../js/player-search-budget.js';
-import {
-  db,
   collection,
+  db,
   doc,
+  executeBoundedPlayerSearch,
   getDoc,
   getDocs,
-  query,
-  where,
+  isTeamActive,
+  limit,
   orderBy,
-  limit
-} from '../../../../js/firebase.js';
+  playerSearchFirestoreQueryBudget,
+  playerSearchResultLimit,
+  query,
+  where
+} from './adapters/legacySearchDb';
 import { loadParentHomeSummary } from './homeService';
 import { searchHelpKnowledge } from './helpKnowledgeService';
 import { getPublicTeamsPage } from './publicTeamsService';
