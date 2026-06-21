@@ -950,7 +950,7 @@
                 ? 'Preview players and guardian/contact records from the latest stored registration snapshot before importing. This uses saved provider data only and does not fetch Sports Connect live.'
                 : (hasConfiguredMetadata
                     ? 'Sports Connect metadata is saved for this team, but roster import is unavailable until a provider connector stores a roster snapshot. This page does not fetch provider data live.'
-                    : 'Roster import works from a stored registration snapshot. Connect a provider and save provider data before importing here.');
+                    : 'Roster import works from a stored registration snapshot. Connect a provider and save or load a registration roster snapshot for this team before importing here.');
 
             previewButton.classList.toggle('hidden', !hasImportableSnapshot);
             importButton.classList.toggle('hidden', !hasImportableSnapshot);
