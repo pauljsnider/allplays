@@ -93,7 +93,7 @@ describe('gameReportService', () => {
     dbMocks.getTeamStatsForGame.mockResolvedValue({ turnovers: 7, assists: '11', nested: { invalid: true } });
     dbMocks.getGameEvents.mockResolvedValue([
       { id: 'event-late', message: 'Late bucket', period: '', gameTime: '0:12', timestamp: { seconds: 1717200060 } },
-      { id: 'event-early', text: 'Opening tip', period: 'Q1', clock: '8:00', timestamp: { seconds: 1717200000 } },
+      { id: 'event-early', text: 'Opening tip', period: 'Q1', clock: '8:00', timestamp: 1717200000000 },
       { id: '', text: 'Missing id' }
     ]);
     firebaseMocks.getDocs.mockResolvedValue({

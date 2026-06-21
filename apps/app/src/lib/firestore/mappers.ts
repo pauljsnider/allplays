@@ -108,6 +108,13 @@ function asTemporalValue(value: unknown): unknown {
     return asOptionalDate(value);
 }
 
+function asEventTimestamp(value: unknown): unknown {
+    if (typeof value === 'number' && Number.isFinite(value)) {
+        return value;
+    }
+    return asTemporalValue(value);
+}
+
 function asLooseObject(value: unknown): Record<string, unknown> {
     return asObject(value) || {};
 }
@@ -335,7 +342,7 @@ export function mapGameReportEventRecord(value: unknown, fallbackId = ''): GameR
         text: asTrimmedString(source.text) || asTrimmedString(source.message) || 'Event logged',
         period: asTrimmedString(source.period) || 'Q1',
         clock: asTrimmedString(source.clock) || asTrimmedString(source.gameTime) || '',
-        timestamp: asTemporalValue(source.timestamp)
+        timestamp: asEventTimestamp(source.timestamp)
     };
 }
 
