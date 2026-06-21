@@ -145,7 +145,8 @@ export function buildTeamFeeInstallmentSchedule({
   const firstDate = parseInstallmentDate(firstDueDate);
   if (!firstDate) throw new Error('Enter a valid first installment due date.');
 
-  const interval = Number.parseInt(String(intervalDays ?? '').trim(), 10);
+  const normalizedIntervalDays = intervalDays == null ? '' : String(intervalDays).trim();
+  const interval = normalizedIntervalDays ? Number.parseInt(normalizedIntervalDays, 10) : 30;
   if (!Number.isInteger(interval) || interval < 1 || interval > 366) {
     throw new Error('Installment spacing must be between 1 and 366 days.');
   }

@@ -280,6 +280,22 @@ describe('React app team fee offline payment service', () => {
         });
     });
 
+    it('defaults null installment spacing to 30 days', () => {
+        const preview = buildTeamFeeInstallmentSchedule({
+            amount: '90.00',
+            installmentCount: 3,
+            firstDueDate: '2026-07-15',
+            intervalDays: null
+        });
+
+        expect(preview.intervalDays).toBe(30);
+        expect(preview.installments.map((installment) => installment.dueDate)).toEqual([
+            '2026-07-15',
+            '2026-08-14',
+            '2026-09-13'
+        ]);
+    });
+
     it('rejects invalid installment plan inputs', () => {
         expect(() => buildTeamFeeInstallmentSchedule({
             amount: '0',
