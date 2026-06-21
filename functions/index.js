@@ -4819,7 +4819,8 @@ async function writeNotificationInboxRecords({
   appRoute,
   teamId,
   gameId = null,
-  eventId = null
+  eventId = null,
+  conversationId = null
 }) {
   const uniqueTargets = getUniqueNotificationInboxTargets(targets);
   if (!uniqueTargets.length) {
@@ -4838,6 +4839,7 @@ async function writeNotificationInboxRecords({
       teamId,
       gameId,
       eventId,
+      conversationId,
       createdAt,
       readAt
     }));
@@ -5080,7 +5082,8 @@ async function sendCategoryNotification({
     appRoute,
     teamId,
     gameId,
-    eventId: eventId || gameId
+    eventId: eventId || gameId,
+    conversationId
   });
 
   await writeNotificationAuditRecord({
@@ -5337,7 +5340,8 @@ async function sendDirectTargetsNotification({
     appRoute,
     teamId,
     gameId,
-    eventId: eventId || gameId
+    eventId: eventId || gameId,
+    conversationId
   });
 
   await writeNotificationAuditRecord({
