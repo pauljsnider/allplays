@@ -159,6 +159,7 @@ export function Schedule({ auth }: { auth: AuthState }) {
   const [scheduleImportPreviewSource, setScheduleImportPreviewSource] = useState<'csv' | 'ai' | null>(null);
   const [csvImportErrors, setCsvImportErrors] = useState<string[]>([]);
   const [csvFileName, setCsvFileName] = useState('');
+  const [loadingCsvFile, setLoadingCsvFile] = useState(false);
   const [aiScheduleText, setAiScheduleText] = useState('');
   const [aiScheduleImage, setAiScheduleImage] = useState<File | null>(null);
   const [aiScheduleImageName, setAiScheduleImageName] = useState('');
@@ -444,6 +445,7 @@ export function Schedule({ auth }: { auth: AuthState }) {
     csvRowsRef.current = [];
     csvMappingRef.current = {};
     setCsvFileName(file?.name || '');
+    setLoadingCsvFile(Boolean(file));
     if (!file) {
       csvLoadPromiseRef.current = null;
       return;
@@ -471,6 +473,7 @@ export function Schedule({ auth }: { auth: AuthState }) {
       if (csvLoadPromiseRef.current === loadPromise) {
         csvLoadPromiseRef.current = null;
       }
+      setLoadingCsvFile(false);
     }
   };
 
@@ -500,6 +503,7 @@ export function Schedule({ auth }: { auth: AuthState }) {
     setCsvPreviewRows([]);
     setCsvImportErrors([]);
     setCsvFileName('');
+    setLoadingCsvFile(false);
     setScheduleImportPreviewSource(null);
   };
 
@@ -982,6 +986,7 @@ export function Schedule({ auth }: { auth: AuthState }) {
               csvPreviewRows={scheduleImportPreviewSource === 'csv' ? csvPreviewRows : []}
               csvImportErrors={csvImportErrors}
               csvFileName={csvFileName}
+              loadingCsvFile={loadingCsvFile}
               importingCsv={importingCsv}
               onCalendarUrlChange={(value) => {
                 setCalendarUrl(value);
@@ -1086,6 +1091,7 @@ export function Schedule({ auth }: { auth: AuthState }) {
                 csvPreviewRows={scheduleImportPreviewSource === 'csv' ? csvPreviewRows : []}
                 csvImportErrors={csvImportErrors}
                 csvFileName={csvFileName}
+                loadingCsvFile={loadingCsvFile}
                 importingCsv={importingCsv}
                 onCalendarUrlChange={(value) => {
                   setCalendarUrl(value);
@@ -1281,6 +1287,7 @@ function ScheduleStaffTools({
   csvPreviewRows,
   csvImportErrors,
   csvFileName,
+  loadingCsvFile,
   importingCsv,
   onCalendarUrlChange,
   onAddCalendarUrl,
@@ -1311,6 +1318,7 @@ function ScheduleStaffTools({
   csvPreviewRows: ScheduleCsvImportPreviewRow[];
   csvImportErrors: string[];
   csvFileName: string;
+  loadingCsvFile: boolean;
   importingCsv: boolean;
   onCalendarUrlChange: (value: string) => void;
   onAddCalendarUrl: (event: FormEvent<HTMLFormElement>) => void;
@@ -1359,6 +1367,7 @@ function ScheduleStaffTools({
         previewRows={csvPreviewRows}
         errors={csvImportErrors}
         fileName={csvFileName}
+        loadingCsvFile={loadingCsvFile}
         importing={importingCsv}
         onFileChange={onCsvFileChange}
         onMappingChange={onCsvMappingChange}
@@ -1452,13 +1461,14 @@ function ScheduleAiImportPanel({ teamName, text, imageName, previewRows, errors,
   );
 }
 
-function ScheduleCsvImportPanel({ teamName, headers, mapping, previewRows, errors, fileName, importing, onFileChange, onMappingChange, onPreview, onImport, onClear }: {
+function ScheduleCsvImportPanel({ teamName, headers, mapping, previewRows, errors, fileName, loadingCsvFile, importing, onFileChange, onMappingChange, onPreview, onImport, onClear }: {
   teamName: string;
   headers: string[];
   mapping: ScheduleCsvImportMapping;
   previewRows: ScheduleCsvImportPreviewRow[];
   errors: string[];
   fileName: string;
+  loadingCsvFile: boolean;
   importing: boolean;
   onFileChange: (file: File | null) => void;
   onMappingChange: (field: keyof ScheduleCsvImportMapping, value: string) => void;
@@ -1532,8 +1542,8 @@ function ScheduleCsvImportPanel({ teamName, headers, mapping, previewRows, error
         ) : null}
 
         <div className="flex flex-wrap gap-2">
-          <button type="button" className="secondary-button" onClick={onPreview} disabled={!fileName || importing}>Preview rows</button>
-          <button type="button" className="primary-button" onClick={onImport} disabled={!previewRows.length || invalidCount > 0 || importing}>{importing ? 'Importing…' : 'Import rows'}</button>
+          <button type="button" className="secondary-button" onClick={onPreview} disabled={!fileName || importing || loadingCsvFile}>{loadingCsvFile ? 'Reading CSV…' : 'Preview rows'}</button>
+          <button type="button" className="primary-button" onClick={onImport} disabled={!previewRows.length || invalidCount > 0 || importing || loadingCsvFile}>{importing ? 'Importing…' : 'Import rows'}</button>
           <button type="button" className="secondary-button" onClick={onClear} disabled={importing}>Clear</button>
         </div>
       </div>

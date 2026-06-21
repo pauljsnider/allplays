@@ -24,8 +24,8 @@ describe('team media page wiring', () => {
         expect(page).toContain('Add album');
         expect(page).toContain('Upload files');
         expect(page).toContain('Save video link');
-        expect(source).toContain("from './db.js?v=56'");
-        expect(source).toContain("import { checkAuth } from './auth.js?v=25';");
+        expect(source).toContain("from './db.js?v=57'");
+        expect(source).toContain("import { checkAuth } from './auth.js?v=28';");
         expect(source).toContain('checkAuth(async (user) => {');
         expect(source).toContain('team.html#teamId=${encodeURIComponent(state.teamId)}');
         expect(source).toContain('Team media permissions are not enabled');

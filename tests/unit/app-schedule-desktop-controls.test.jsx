@@ -143,6 +143,21 @@ async function clickButton(container, text) {
     });
 }
 
+async function waitForButtonEnabled(container, text) {
+    for (let index = 0; index < 200; index += 1) {
+        const button = queryButtonByText(container, text);
+        if (button && !button.disabled) return button;
+        await act(async () => {
+            if (vi.isFakeTimers()) {
+                await vi.advanceTimersByTimeAsync(1);
+                await Promise.resolve();
+                return;
+            }
+            await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+    }
+    throw new Error(`Timed out waiting for enabled button: ${text}`);
+}
 
 async function changeInput(input, value) {
     await act(async () => {
@@ -505,9 +520,7 @@ describe('React app desktop Schedule controls', () => {
             await Promise.resolve();
         });
         await waitForText(container, 'Loaded schedule.csv');
-        await act(async () => {
-            await new Promise((resolve) => setTimeout(resolve, 60));
-        });
+        await waitForButtonEnabled(container, 'Preview rows');
 
         await clickButton(container, 'Preview rows');
         await waitForText(container, 'Game vs Tigers');
