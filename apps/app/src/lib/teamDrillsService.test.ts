@@ -1,4 +1,5 @@
 import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { buildPracticeAiCoachPrompt, filterDrillSummaries, loadFavoriteDrills, loadTeamDrillLibraryPage, setTeamDrillFavorite } from './teamDrillsService';
 
@@ -147,7 +148,7 @@ describe('teamDrillsService', () => {
   });
 
   it('keeps practice prompt section headers on their own source line so prompts stay readable', () => {
-    const source = readFileSync(new URL('./teamDrillsService.ts', import.meta.url), 'utf8');
+    const source = readFileSync(resolve(process.cwd(), 'src/lib/teamDrillsService.ts'), 'utf8');
 
     expect(source).toContain("`Practice goals:\n${goalLines.map((goal) => `- ${goal}`).join('\\n')}`");
     expect(source).toContain("`Focus skills:\n${skillLines.map((skill) => `- ${skill}`).join('\\n')}`");
