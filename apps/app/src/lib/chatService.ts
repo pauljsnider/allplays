@@ -1,41 +1,43 @@
 import { Capacitor } from '@capacitor/core';
 import {
+  GoogleAIBackend,
   canAccessTeamChat,
   canModerateChat,
+  clearChatMuted,
   deleteChatMessage,
   deleteUploadedChatAttachments,
   editChatMessage,
+  getAI,
   getAggregatedStatsForGames,
+  getApp,
   getChatConversations,
   getChatMessages,
   getGameEvents,
   getGames,
+  getGenerativeModel,
   getParentTeams,
   getPlayers,
   getSentTeamEmails,
-  getTeamEmailDrafts as getStoredTeamEmailDrafts,
-  getTeamEmailTemplates as getStoredTeamEmailTemplates,
+  getStoredTeamEmailDrafts,
+  getStoredTeamEmailTemplates,
   getTeam,
   getUnreadChatCounts,
   getUserByEmail,
   getUserProfile,
   getUserTeamsWithAccess,
+  isTeamActive,
   postChatMessage,
-  saveTeamEmailDraft as saveStoredTeamEmailDraft,
-  saveTeamEmailTemplate as saveStoredTeamEmailTemplate,
+  resolveImageFirebaseConfig,
+  saveStoredTeamEmailDraft,
+  saveStoredTeamEmailTemplate,
   sendTeamEmail,
   subscribeToChatMessages,
   toggleChatReaction,
   updateChatLastRead,
   updateChatMuted,
-  clearChatMuted,
   uploadChatImage,
   upsertChatConversation
-} from '../../../../js/db.js';
-import { getApp } from '../../../../js/vendor/firebase-app.js';
-import { getAI, getGenerativeModel, GoogleAIBackend } from '../../../../js/vendor/firebase-ai.js';
-import { resolveImageFirebaseConfig } from '../../../../js/firebase-runtime-config.js';
-import { isTeamActive } from '../../../../js/team-visibility.js';
+} from './adapters/legacyChatService';
 import { firebaseAuth, getNativeAuthIdToken } from './authService';
 import { loadCachedAppData } from './appDataCache';
 import { getNativeRestDedupKey, loadDedupedNativeRestRequest, shouldDedupNativeRestRequest } from './nativeRestDedup';
