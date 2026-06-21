@@ -6066,10 +6066,19 @@ export async function getSentTeamEmails(teamId, { limit = 25 } = {}) {
     return snapshot.docs.map((d) => ({ id: d.id, ...d.data(), _doc: d }));
 }
 
+function normalizeChatClientMessageId(clientMessageId) {
+    const normalized = String(clientMessageId || '')
+        .trim()
+        .replace(/[^A-Za-z0-9_-]/g, '_')
+        .slice(0, 120);
+    return normalized || null;
+}
+
 /**
  * Post a new chat message.
  */
 export async function postChatMessage(teamId, {
+    clientMessageId = null,
     text,
     senderId,
     senderName,
@@ -6120,7 +6129,9 @@ export async function postChatMessage(teamId, {
     if (isDefaultTeamConversation(conversationId) && effectiveTargetType !== 'full_team') {
         throw new Error('Targeted team chat messages must use a non-default conversation.');
     }
-    const docRef = await addDoc(messagesRef, {
+    const normalizedClientMessageId = normalizeChatClientMessageId(clientMessageId);
+    const messageData = {
+        clientMessageId: normalizedClientMessageId,
         text,
         senderId,
         senderName: senderName || null,
@@ -6145,7 +6156,14 @@ export async function postChatMessage(teamId, {
         recipientIds: normalizedRecipientIds,
         targetRole: effectiveTargetType === 'staff' ? (targetRole || 'staff') : null,
         conversationId: isDefaultTeamConversation(conversationId) ? null : conversationId
-    });
+    };
+    let docRef;
+    if (normalizedClientMessageId) {
+        docRef = doc(messagesRef, normalizedClientMessageId);
+        await setDoc(docRef, messageData);
+    } else {
+        docRef = await addDoc(messagesRef, messageData);
+    }
 
     if (!isDefaultTeamConversation(conversationId)) {
         const conversationRef = doc(db, 'teams', teamId, 'chatConversations', conversationId);

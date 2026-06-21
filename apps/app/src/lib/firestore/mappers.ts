@@ -178,6 +178,7 @@ export function mapChatMessageRecord(value: unknown, fallbackId = ''): ChatMessa
 
     return {
         id,
+        clientMessageId: asTrimmedString(source.clientMessageId),
         text: asTrimmedString(source.text),
         senderId: asTrimmedString(source.senderId),
         senderName: asTrimmedString(source.senderName),

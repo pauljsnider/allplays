@@ -348,11 +348,17 @@ async function nativePatchDocument(path: string, data: Record<string, unknown>) 
   });
 }
 
-async function nativeCreateDocument(path: string, data: Record<string, unknown>) {
+async function nativeCreateDocument(path: string, data: Record<string, unknown>, options: { documentId?: string | null } = {}) {
   const fields = Object.keys(data).reduce<Record<string, Record<string, unknown>>>((acc, key) => {
     acc[key] = encodeFirestoreValue(data[key]);
     return acc;
   }, {});
+  if (options.documentId) {
+    return mapFirestoreDocument(await nativeFirestoreRequest(`/${path}/${encodeURIComponent(options.documentId)}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ fields })
+    }) as NativeFirestoreDocument);
+  }
   return mapFirestoreDocument(await nativeFirestoreRequest(`/${path}`, {
     method: 'POST',
     body: JSON.stringify({ fields })
@@ -948,6 +954,7 @@ export async function uploadTeamChatAttachment(teamId: string, file: File): Prom
 }
 
 async function nativePostChatMessage(teamId: string, input: {
+  clientMessageId?: string | null;
   text: string;
   senderId: string;
   senderName?: string | null;
@@ -964,6 +971,7 @@ async function nativePostChatMessage(teamId: string, input: {
   const attachments = input.attachments || [];
   const firstImage = attachments.find((attachment) => attachment.type === 'image') || null;
   return nativeCreateDocument(getMessageCollectionPath(teamId, input.conversationId), {
+    clientMessageId: input.clientMessageId || null,
     text: input.text || '',
     senderId: input.senderId,
     senderName: input.senderName || null,
@@ -986,11 +994,12 @@ async function nativePostChatMessage(teamId: string, input: {
     recipientIds: input.targetType === 'individuals' ? input.recipientIds : [],
     targetRole: input.targetType === 'staff' ? (input.targetRole || 'staff') : null,
     conversationId: isDefaultTeamConversation(input.conversationId) ? null : input.conversationId
-  });
+  }, { documentId: input.clientMessageId || null });
 }
 
 export async function sendTeamChatMessage({
   teamId,
+  clientMessageId,
   user,
   profile,
   text,
@@ -1004,6 +1013,7 @@ export async function sendTeamChatMessage({
   aiMeta
 }: {
   teamId: string;
+  clientMessageId?: string | null;
   user: AuthUser;
   profile: Record<string, any>;
   text: string;
@@ -1060,6 +1070,7 @@ export async function sendTeamChatMessage({
     }
 
     const payload = {
+      clientMessageId: clientMessageId || null,
       text,
       senderId: user.uid,
       senderName: profile.fullName || user.displayName || null,

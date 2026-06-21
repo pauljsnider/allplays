@@ -86,6 +86,7 @@ import {
   isDefaultTeamConversation,
   isStaffConversation,
   isSafeChatMediaUrl,
+  mergeChatMessageLists,
   normalizeChatReactions,
   shouldRetryChatLastReadOnViewReturn,
   shouldUpdateChatLastRead,
@@ -118,11 +119,95 @@ type FilePreview = {
   url: string;
 };
 
+type OptimisticChatMessage = ChatMessage & {
+  clientMessageId: string;
+  sendStatus: 'pending' | 'failed';
+  sendError?: string | null;
+  attachmentCount?: number;
+};
+
+type PendingChatSendRequest = {
+  clientMessageId: string;
+  text: string;
+  files: File[];
+  attachmentCount: number;
+  user: NonNullable<AuthState['user']>;
+  profile: Record<string, any>;
+  team: Record<string, any>;
+  selectedConversation: ChatConversation | null;
+  selectedConversationId: string;
+  selectedRecipientTarget: ChatTargetType;
+  selectedRecipientIds: string[];
+};
+
 const allTargetOptions: Array<{ value: ChatTargetType; label: string; description: string }> = [
   { value: 'full_team', label: 'Full team', description: 'Visible to everyone in this team chat.' },
   { value: 'staff', label: 'Staff only', description: 'Moves this into a staff conversation.' },
   { value: 'individuals', label: 'Selected members', description: 'Starts a direct or group conversation.' }
 ];
+
+function createChatClientMessageId(userId: string) {
+  const randomPart = typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+    ? crypto.randomUUID()
+    : Math.random().toString(36).slice(2);
+  return `client_${userId}_${Date.now()}_${randomPart}`
+    .replace(/[^A-Za-z0-9_-]/g, '_')
+    .slice(0, 120);
+}
+
+function getChatSendErrorMessage(error: unknown) {
+  return error instanceof Error && error.message ? error.message : 'Failed to send message. Tap retry to try again.';
+}
+
+function createOptimisticChatMessage(request: PendingChatSendRequest): OptimisticChatMessage {
+  return {
+    id: request.clientMessageId,
+    clientMessageId: request.clientMessageId,
+    text: request.text,
+    senderId: request.user.uid,
+    senderName: request.profile.fullName || request.user.displayName || 'You',
+    senderEmail: request.user.email || null,
+    senderPhotoUrl: request.profile.photoUrl || request.user.photoUrl || null,
+    attachments: [],
+    createdAt: new Date(),
+    editedAt: null,
+    deleted: false,
+    reactions: {},
+    targetType: request.selectedRecipientTarget,
+    recipientIds: request.selectedRecipientTarget === 'individuals' ? request.selectedRecipientIds : [],
+    targetRole: request.selectedRecipientTarget === 'staff' ? 'staff' : null,
+    conversationId: isDefaultTeamConversation(request.selectedConversationId) ? null : request.selectedConversationId,
+    sendStatus: 'pending',
+    sendError: null,
+    attachmentCount: request.attachmentCount
+  };
+}
+
+function getMessageConversationId(message: Pick<ChatMessage, 'conversationId'>) {
+  return normalizeConversationId(message.conversationId);
+}
+
+function toStoredMessageConversationId(conversationId: string) {
+  return isDefaultTeamConversation(conversationId) ? null : conversationId;
+}
+
+export function mergeVisibleChatMessages(liveMessages: ChatMessage[], optimisticMessages: OptimisticChatMessage[], selectedConversationId: string) {
+  const activeConversationId = normalizeConversationId(selectedConversationId);
+  const liveClientIds = new Set(liveMessages.map((message) => String(message.clientMessageId || message.id || '')).filter(Boolean));
+  const pendingOnly = optimisticMessages.filter((message) => (
+    getMessageConversationId(message) === activeConversationId &&
+    !liveClientIds.has(message.clientMessageId || message.id)
+  ));
+  return mergeChatMessageLists(pendingOnly, liveMessages) as ChatMessage[];
+}
+
+export function normalizeConversationId(conversationId: string | null | undefined) {
+  return String(conversationId || '').trim() || DEFAULT_TEAM_CONVERSATION_ID;
+}
+
+export function isSelectedConversation(conversationId: string, selectedConversationId: string) {
+  return conversationId === selectedConversationId;
+}
 
 export function Messages({ auth }: { auth: AuthState }) {
   const { teamId } = useParams();
@@ -545,7 +630,8 @@ function ChatWindow({
   const [composerNotice, setComposerNotice] = useState('');
   const [text, setText] = useState('');
   const [filePreviews, setFilePreviews] = useState<FilePreview[]>([]);
-  const [sending, setSending] = useState(false);
+  const [pendingSendCount, setPendingSendCount] = useState(0);
+  const [optimisticMessages, setOptimisticMessages] = useState<OptimisticChatMessage[]>([]);
   const [aiThinking, setAiThinking] = useState(false);
   const [voiceListening, setVoiceListening] = useState(false);
   const [voiceSupported, setVoiceSupported] = useState(() => voiceRecognition.isNativeRuntime() || voiceRecognition.hasBrowserSupport());
@@ -610,6 +696,8 @@ function ChatWindow({
   const scheduledScrollForceRef = useRef(false);
   const scheduledScrollTimeoutsRef = useRef<number[]>([]);
   const lastObservedViewportSignatureRef = useRef('');
+  const pendingSendRequestsRef = useRef(new Map<string, PendingChatSendRequest>());
+  const sendQueueRef = useRef(Promise.resolve());
 
   const resetChatSelectionState = useCallback(() => {
     setStatus(null);
@@ -643,6 +731,7 @@ function ChatWindow({
     preferredConversationId,
     onTeamReset: resetChatSelectionState
   });
+  const effectiveConversationId = normalizeConversationId(selectedConversationId);
 
   const handleBeforeLiveUpdate = useCallback(() => isNearBottom(messagesRef.current), []);
   const handleLiveUpdateState = useCallback(({ isInitialSnapshot, wasNearBottom }: { isInitialSnapshot: boolean; wasNearBottom: boolean }) => {
@@ -677,36 +766,54 @@ function ChatWindow({
     teamId,
     team,
     user: auth.user,
-    selectedConversationId,
+    selectedConversationId: effectiveConversationId,
     onBeforeLiveUpdate: handleBeforeLiveUpdate,
     onLiveUpdateState: handleLiveUpdateState,
     onMessagesReset: handleMessagesReset,
     onMarkRead: handleMarkRead
   });
+  const sending = pendingSendCount > 0;
+  const visibleMessages = useMemo(
+    () => mergeVisibleChatMessages(messages, optimisticMessages, effectiveConversationId),
+    [effectiveConversationId, messages, optimisticMessages]
+  );
   const error = teamError || messagesError;
 
+  useEffect(() => {
+    const liveClientIds = new Set(messages.map((message) => String(message.clientMessageId || message.id || '')).filter(Boolean));
+    if (!liveClientIds.size) return;
+    const confirmedClientIds = optimisticMessages
+      .map((message) => message.clientMessageId || message.id)
+      .filter((id) => liveClientIds.has(id));
+    if (!confirmedClientIds.length) return;
+    setOptimisticMessages((current) => current.filter((message) => {
+      return !liveClientIds.has(message.clientMessageId || message.id);
+    }));
+    confirmedClientIds.forEach((id) => pendingSendRequestsRef.current.delete(id));
+  }, [messages, optimisticMessages]);
+
   const selectedConversation = useMemo(() => (
-    conversations.find((conversation) => conversation.id === selectedConversationId) || conversations[0] || null
-  ), [conversations, selectedConversationId]);
+    conversations.find((conversation) => conversation.id === effectiveConversationId) || conversations[0] || null
+  ), [conversations, effectiveConversationId]);
   const audienceMetadata = useMemo(() => buildChatAudienceMetadata({
     selectedConversation,
-    selectedConversationId,
+    selectedConversationId: effectiveConversationId,
     selectedRecipientTarget,
     selectedRecipientIds
-  }), [selectedConversation, selectedConversationId, selectedRecipientIds, selectedRecipientTarget]);
+  }), [effectiveConversationId, selectedConversation, selectedRecipientIds, selectedRecipientTarget]);
   const emailAudienceMetadata = useMemo(() => buildEmailAudienceMetadata({
     selectedConversation,
-    selectedConversationId,
+    selectedConversationId: effectiveConversationId,
     selectedRecipientTarget,
     selectedRecipientIds,
     recipientOptions
-  }), [recipientOptions, selectedConversation, selectedConversationId, selectedRecipientIds, selectedRecipientTarget]);
+  }), [effectiveConversationId, recipientOptions, selectedConversation, selectedRecipientIds, selectedRecipientTarget]);
   const audienceSummary = useMemo(() => getAudienceSummaryText(audienceMetadata, recipientOptions), [audienceMetadata, recipientOptions]);
   const mentionSuggestions = useMemo(
     () => buildChatMentionSuggestions(recipientOptions, text),
     [recipientOptions, text]
   );
-  const mediaEntries = useMemo(() => collectThreadMedia(messages), [messages]);
+  const mediaEntries = useMemo(() => collectThreadMedia(visibleMessages), [visibleMessages]);
   const teamName = team?.name || inboxTeam?.name || 'Team chat';
 
   const ensureRecipientOptionsLoaded = useCallback(async () => {
@@ -895,15 +1002,15 @@ function ChatWindow({
   }, [teamId]);
 
   useEffect(() => {
-    setIsMuted(resolveMutedState(teamId, selectedConversationId, inboxTeam, profile));
-  }, [inboxTeam, profile, selectedConversationId, teamId]);
+    setIsMuted(resolveMutedState(teamId, effectiveConversationId, inboxTeam, profile));
+  }, [effectiveConversationId, inboxTeam, profile, teamId]);
 
   useLayoutEffect(() => {
     if (!pendingScrollRef.current) return;
     scrollToLatest('auto');
     pendingScrollRef.current = false;
     scheduleScrollToLatest('auto');
-  }, [messages.length, aiThinking, scheduleScrollToLatest, scrollToLatest, selectedConversationId]);
+  }, [visibleMessages.length, aiThinking, scheduleScrollToLatest, scrollToLatest, selectedConversationId]);
 
   useEffect(() => {
     const container = messagesRef.current;
@@ -1012,7 +1119,7 @@ function ChatWindow({
     }
 
     if (target === 'full_team') {
-      if (!isDefaultTeamConversation(selectedConversationId)) {
+      if (!isDefaultTeamConversation(effectiveConversationId)) {
         switchConversation(DEFAULT_TEAM_CONVERSATION_ID);
       }
       closeAudienceSheet();
@@ -1107,9 +1214,105 @@ function ChatWindow({
     setLinkDraft('');
   };
 
+  const performQueuedSend = useCallback(async (request: PendingChatSendRequest) => {
+    const attachmentNotice = `Uploading ${request.attachmentCount} attachment${request.attachmentCount === 1 ? '' : 's'}...`;
+    setComposerNotice(request.attachmentCount ? attachmentNotice : 'Sending...');
+
+    try {
+      const result = await sendTeamChatMessage({
+        teamId,
+        clientMessageId: request.clientMessageId,
+        user: request.user,
+        profile: request.profile,
+        text: request.text,
+        files: request.files,
+        selectedConversation: request.selectedConversation,
+        selectedConversationId: request.selectedConversationId,
+        selectedRecipientTarget: request.selectedRecipientTarget,
+        selectedRecipientIds: request.selectedRecipientIds,
+        onProgress: (stage) => {
+          setComposerNotice(stage === 'uploading' ? attachmentNotice : 'Posting message...');
+        }
+      });
+      if (result.createdConversation) {
+        await reloadConversations();
+      }
+      const resultConversationId = normalizeConversationId(result.conversationId);
+      setOptimisticMessages((current) => current.map((candidate) => (
+        candidate.clientMessageId === request.clientMessageId
+          ? { ...candidate, conversationId: toStoredMessageConversationId(resultConversationId) }
+          : candidate
+      )));
+      if (resultConversationId !== effectiveConversationId) {
+        setSelectedConversationId(resultConversationId);
+      }
+
+      if (result.wantsAi) {
+        setComposerNotice('Asking ALL PLAYS...');
+        const question = extractAllPlaysQuestion(request.text);
+        if (!question) {
+          setStatus({ tone: 'error', message: 'Ask a question after @ALL PLAYS.' });
+        } else {
+          setAiThinking(true);
+          try {
+            await sendAllPlaysChatAnswer({
+              teamId,
+              team: request.team,
+              user: request.user,
+              question,
+              selectedConversation: request.selectedConversation,
+              selectedConversationId: normalizeConversationId(result.conversationId),
+              selectedRecipientTarget: request.selectedRecipientTarget,
+              selectedRecipientIds: request.selectedRecipientIds
+            });
+          } catch (aiError: any) {
+            setStatus({ tone: 'error', message: aiError?.message || 'ALL PLAYS could not answer. Please try again.' });
+          } finally {
+            setAiThinking(false);
+          }
+        }
+      }
+    } catch (sendError) {
+      const message = getChatSendErrorMessage(sendError);
+      setOptimisticMessages((current) => current.map((candidate) => (
+        candidate.clientMessageId === request.clientMessageId
+          ? { ...candidate, sendStatus: 'failed', sendError: message }
+          : candidate
+      )));
+      setStatus({ tone: 'error', message });
+    } finally {
+      setPendingSendCount((current) => Math.max(0, current - 1));
+      setComposerNotice('');
+    }
+  }, [effectiveConversationId, reloadConversations, setSelectedConversationId, teamId]);
+
+  const enqueueChatSend = useCallback((request: PendingChatSendRequest) => {
+    setPendingSendCount((current) => current + 1);
+    sendQueueRef.current = sendQueueRef.current
+      .catch(() => undefined)
+      .then(() => performQueuedSend(request));
+  }, [performQueuedSend]);
+
+  const retryChatSend = useCallback((clientMessageId: string) => {
+    const request = pendingSendRequestsRef.current.get(clientMessageId);
+    if (!request) {
+      setStatus({ tone: 'error', message: 'This message can no longer be retried.' });
+      return;
+    }
+
+    setStatus(null);
+    pendingScrollRef.current = true;
+    setOptimisticMessages((current) => current.map((message) => (
+      message.clientMessageId === clientMessageId
+        ? { ...message, sendStatus: 'pending', sendError: null }
+        : message
+    )));
+    enqueueChatSend(request);
+  }, [enqueueChatSend]);
+
   const handleSend = async (event?: FormEvent) => {
     event?.preventDefault();
-    if (!auth.user || !team || sending) return;
+    if (!auth.user || !team) return;
     const trimmed = text.trim();
     const files = filePreviews.map((preview) => preview.file);
     if (!trimmed && !files.length) return;
@@ -1122,76 +1325,34 @@ function ChatWindow({
       return;
     }
 
-    setSending(true);
+    const clientMessageId = createChatClientMessageId(auth.user.uid);
+    const request: PendingChatSendRequest = {
+      clientMessageId,
+      text: trimmed,
+      files,
+      attachmentCount: files.length,
+      user: auth.user,
+      profile,
+      team,
+      selectedConversation,
+      selectedConversationId: effectiveConversationId,
+      selectedRecipientTarget,
+      selectedRecipientIds: [...selectedRecipientIds]
+    };
+
     setStatus(null);
-    setComposerNotice(files.length ? `Uploading ${files.length} attachment${files.length === 1 ? '' : 's'}...` : 'Sending...');
     stopVoiceCapture();
     pendingScrollRef.current = true;
-
-    try {
-      const result = await sendTeamChatMessage({
-        teamId,
-        user: auth.user,
-        profile,
-        text: trimmed,
-        files,
-        selectedConversation,
-        selectedConversationId,
-        selectedRecipientTarget,
-        selectedRecipientIds,
-        onProgress: (stage) => {
-          if (stage === 'uploading') {
-            setComposerNotice(`Uploading ${files.length} attachment${files.length === 1 ? '' : 's'}...`);
-          } else {
-            setComposerNotice('Posting message...');
-          }
-        }
-      });
-      setText('');
-      setFilePreviews((current) => {
-        current.forEach((preview) => URL.revokeObjectURL(preview.url));
-        return [];
-      });
-      if (result.createdConversation) {
-        await reloadConversations();
-      }
-      if (result.conversationId !== selectedConversationId) {
-        setSelectedConversationId(result.conversationId);
-      }
-      setSelectedRecipientTarget('full_team');
-      setSelectedRecipientIds([]);
-
-      if (result.wantsAi) {
-        setComposerNotice('Asking ALL PLAYS...');
-        const question = extractAllPlaysQuestion(trimmed);
-        if (!question) {
-          setStatus({ tone: 'error', message: 'Ask a question after @ALL PLAYS.' });
-        } else {
-          setAiThinking(true);
-          try {
-            await sendAllPlaysChatAnswer({
-              teamId,
-              team,
-              user: auth.user,
-              question,
-              selectedConversation,
-              selectedConversationId: result.conversationId,
-              selectedRecipientTarget,
-              selectedRecipientIds
-            });
-          } catch (aiError: any) {
-            setStatus({ tone: 'error', message: aiError?.message || 'ALL PLAYS could not answer. Please try again.' });
-          } finally {
-            setAiThinking(false);
-          }
-        }
-      }
-    } catch (sendError: any) {
-      setStatus({ tone: 'error', message: sendError?.message || 'Failed to send message. Please try again.' });
-    } finally {
-      setComposerNotice('');
-      setSending(false);
-    }
+    pendingSendRequestsRef.current.set(clientMessageId, request);
+    setOptimisticMessages((current) => [...current, createOptimisticChatMessage(request)]);
+    setText('');
+    setFilePreviews((current) => {
+      current.forEach((preview) => URL.revokeObjectURL(preview.url));
+      return [];
+    });
+    setSelectedRecipientTarget('full_team');
+    setSelectedRecipientIds([]);
+    enqueueChatSend(request);
   };
 
   const reloadSentEmailHistory = async ({ suppressErrorStatus = false } = {}) => {
@@ -1262,7 +1423,7 @@ function ChatWindow({
   const handleApplyEmailDraft = (draftId: string) => {
     const draft = emailState.drafts.find((item) => item.id === draftId);
     if (!draft) return;
-    if (!isDefaultTeamConversation(selectedConversationId)) {
+    if (!isDefaultTeamConversation(effectiveConversationId)) {
       switchConversation(DEFAULT_TEAM_CONVERSATION_ID);
     }
     setSelectedRecipientTarget('individuals');
@@ -1524,12 +1685,12 @@ function ChatWindow({
   const handleToggleReaction = useCallback(async (messageId: string, reactionKey: string) => {
     if (!auth.user) return;
     try {
-      await toggleTeamChatReaction(teamId, messageId, reactionKey, auth.user.uid, selectedConversationId);
+      await toggleTeamChatReaction(teamId, messageId, reactionKey, auth.user.uid, effectiveConversationId);
       setReactionMessageId('');
     } catch (reactionError: any) {
       setStatus({ tone: 'error', message: reactionError?.message || 'Failed to update reaction.' });
     }
-  }, [auth.user, selectedConversationId, teamId]);
+  }, [auth.user, effectiveConversationId, teamId]);
 
   const handleEdit = useCallback((message: ChatMessage) => {
     setEditingMessage(message);
@@ -1545,7 +1706,7 @@ function ChatWindow({
       return;
     }
     try {
-      await editTeamChatMessage(teamId, editingMessage.id, trimmed, selectedConversationId);
+      await editTeamChatMessage(teamId, editingMessage.id, trimmed, effectiveConversationId);
       setEditingMessage(null);
       setEditText('');
     } catch (editError: any) {
@@ -1557,16 +1718,16 @@ function ChatWindow({
     setActionMessageId('');
     if (!window.confirm('Delete this message?')) return;
     try {
-      await deleteTeamChatMessage(teamId, message.id, selectedConversationId);
+      await deleteTeamChatMessage(teamId, message.id, effectiveConversationId);
     } catch (deleteError: any) {
       setStatus({ tone: 'error', message: deleteError?.message || 'Failed to delete message.' });
     }
-  }, [selectedConversationId, teamId]);
+  }, [effectiveConversationId, teamId]);
 
   const handleToggleMute = useCallback(async () => {
     if (!auth.user?.uid) return;
     const next = !isMuted;
-    const conversationId = selectedConversationId || DEFAULT_TEAM_CONVERSATION_ID;
+    const conversationId = effectiveConversationId;
     setIsMuted(next);
     onInboxMuteChange?.(conversationId, next);
     try {
@@ -1579,7 +1740,7 @@ function ChatWindow({
       setIsMuted(!next);
       onInboxMuteChange?.(conversationId, !next);
     }
-  }, [auth.user?.uid, isMuted, onInboxMuteChange, selectedConversationId, teamId]);
+  }, [auth.user?.uid, effectiveConversationId, isMuted, onInboxMuteChange, teamId]);
 
   if (loadingContext) {
     return <MessagesPageSkeleton embedded={embedded} />;
@@ -1639,7 +1800,7 @@ function ChatWindow({
         {isDesktopWeb ? (
           <div className="mt-3 flex gap-2 overflow-x-auto pb-1">
             {conversations.map((conversation) => {
-              const active = conversation.id === selectedConversationId;
+              const active = conversation.id === effectiveConversationId;
               return (
                 <button
                   key={conversation.id}
@@ -1676,7 +1837,7 @@ function ChatWindow({
                 <Loader2 className="mr-2 h-4 w-4 animate-spin" aria-hidden="true" />
                 Loading messages...
               </div>
-            ) : messages.length === 0 && !aiThinking ? (
+            ) : visibleMessages.length === 0 && !aiThinking ? (
               <div className="flex min-h-64 items-center justify-center p-8 text-center">
                 <div>
                   <MessageCircle className="mx-auto h-12 w-12 text-gray-300" aria-hidden="true" />
@@ -1686,7 +1847,7 @@ function ChatWindow({
               </div>
             ) : (
               <MessageList
-                messages={messages}
+                messages={visibleMessages}
                 currentUserId={auth.user?.uid || ''}
                 canModerate={canModerate}
                 actionMessageId={actionMessageId}
@@ -1696,6 +1857,7 @@ function ChatWindow({
                 onToggleReaction={handleToggleReaction}
                 onEdit={handleEdit}
                 onDelete={handleDelete}
+                onRetrySend={retryChatSend}
               />
             )}
             {aiThinking ? <AiThinkingBubble /> : null}
@@ -1719,7 +1881,7 @@ function ChatWindow({
         aiThinking={aiThinking}
         voiceListening={voiceListening}
         voiceSupported={voiceSupported}
-        canModerate={canModerate && isDefaultTeamConversation(selectedConversationId)}
+        canModerate={canModerate && isDefaultTeamConversation(effectiveConversationId)}
         canSendTeamEmail={canModerate}
         mentionSuggestions={mentionSuggestions}
         mentionSuggestionsLoading={hasChatMentionTrigger(text) && recipientOptionsLoading}
@@ -1745,7 +1907,7 @@ function ChatWindow({
         <ConversationSheet
           conversations={conversations}
           team={team || {}}
-          selectedConversationId={selectedConversationId}
+          selectedConversationId={effectiveConversationId}
           onSelect={switchConversation}
           onClose={closeConversationSheet}
         />
@@ -2315,6 +2477,7 @@ type MessageListProps = {
   onToggleReaction: (messageId: string, reactionKey: string) => void;
   onEdit: (message: ChatMessage) => void;
   onDelete: (message: ChatMessage) => void;
+  onRetrySend: (clientMessageId: string) => void;
 };
 
 const MessageList = memo(function MessageList({
@@ -2327,7 +2490,8 @@ const MessageList = memo(function MessageList({
   onReactionMessage,
   onToggleReaction,
   onEdit,
-  onDelete
+  onDelete,
+  onRetrySend
 }: MessageListProps) {
   let lastDay = '';
   return (
@@ -2352,6 +2516,7 @@ const MessageList = memo(function MessageList({
               onToggleReaction={onToggleReaction}
               onEdit={onEdit}
               onDelete={onDelete}
+              onRetrySend={onRetrySend}
             />
           </div>
         );
@@ -2374,6 +2539,7 @@ type MessageBubbleProps = {
   onToggleReaction: (messageId: string, reactionKey: string) => void;
   onEdit: (message: ChatMessage) => void;
   onDelete: (message: ChatMessage) => void;
+  onRetrySend: (clientMessageId: string) => void;
 };
 
 const MessageBubble = memo(function MessageBubble({
@@ -2387,11 +2553,13 @@ const MessageBubble = memo(function MessageBubble({
   onReactionMessage,
   onToggleReaction,
   onEdit,
-  onDelete
+  onDelete,
+  onRetrySend
 }: MessageBubbleProps) {
   const isAi = message.ai === true;
   const isOwn = !isAi && message.senderId === currentUserId;
   const isDeleted = message.deleted === true;
+  const isLocalSend = message.sendStatus === 'pending' || message.sendStatus === 'failed';
   const senderLabel = useMemo(() => getMessageSenderLabel(message, currentUserId), [currentUserId, message]);
   const attachments = useMemo(
     () => getMessageAttachments(message).filter((attachment: any) => isSafeChatMediaUrl(attachment.url)),
@@ -2400,8 +2568,8 @@ const MessageBubble = memo(function MessageBubble({
   const reactions = useMemo(() => normalizeChatReactions(message), [message]);
   const messageHtml = useMemo(() => formatChatMessageHtml(message.text || ''), [message.text]);
   const createdAtLabel = useMemo(() => formatChatTime(message.createdAt), [message.createdAt]);
-  const canEdit = isOwn && !isDeleted && Boolean(message.text);
-  const canDelete = !isAi && !isDeleted && (isOwn || canModerate);
+  const canEdit = isOwn && !isLocalSend && !isDeleted && Boolean(message.text);
+  const canDelete = !isAi && !isLocalSend && !isDeleted && (isOwn || canModerate);
 
   if (isDeleted) {
     return (
@@ -2436,15 +2604,22 @@ const MessageBubble = memo(function MessageBubble({
               dangerouslySetInnerHTML={{ __html: messageHtml }}
             />
           ) : null}
+          {!message.text && isLocalSend && message.attachmentCount ? (
+            <div className="text-sm font-semibold leading-6">
+              {message.attachmentCount} attachment{message.attachmentCount === 1 ? '' : 's'} queued
+            </div>
+          ) : null}
         </div>
         <div className={`chat-reactions-anchor ${isOwn ? 'justify-end' : 'justify-start'}`}>
-          <ReactionPills
-            message={message}
-            currentUserId={currentUserId}
-            reactions={reactions}
-            onToggleReaction={onToggleReaction}
-            onOpenPicker={() => onReactionMessage(reactionsOpen ? '' : message.id)}
-          />
+          {!isLocalSend ? (
+            <ReactionPills
+              message={message}
+              currentUserId={currentUserId}
+              reactions={reactions}
+              onToggleReaction={onToggleReaction}
+              onOpenPicker={() => onReactionMessage(reactionsOpen ? '' : message.id)}
+            />
+          ) : null}
           {reactionsOpen ? (
             <div className={`chat-reaction-picker ${preferReactionPickerAbove ? 'chat-reaction-picker-above' : 'chat-reaction-picker-below'} ${isOwn ? 'right-0' : 'left-0'}`}>
               {chatReactions.map((reaction) => (
@@ -2461,6 +2636,24 @@ const MessageBubble = memo(function MessageBubble({
             </div>
           ) : null}
         </div>
+        {isLocalSend ? (
+          <div className={`mt-1 flex ${isOwn ? 'justify-end' : 'justify-start'}`}>
+            {message.sendStatus === 'failed' ? (
+              <div className="flex max-w-full flex-wrap items-center justify-end gap-2 text-xs font-bold text-rose-700">
+                <span>{message.sendError || 'Failed to send message.'}</span>
+                <button type="button" className="ghost-button !h-7 !min-h-7 px-2 text-xs" onClick={() => onRetrySend(message.clientMessageId || message.id)}>
+                  <RefreshCw className="h-3.5 w-3.5" aria-hidden="true" />
+                  Retry
+                </button>
+              </div>
+            ) : (
+              <span className="inline-flex items-center gap-1 text-xs font-bold text-gray-500">
+                <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
+                Sending
+              </span>
+            )}
+          </div>
+        ) : null}
         {(canEdit || canDelete) ? (
           <div className={`mt-1 flex ${isOwn ? 'justify-end' : 'justify-start'}`}>
             <button
@@ -2508,15 +2701,20 @@ function areMessageBubblePropsEqual(previous: MessageBubbleProps, next: MessageB
     && previous.onToggleReaction === next.onToggleReaction
     && previous.onEdit === next.onEdit
     && previous.onDelete === next.onDelete
+    && previous.onRetrySend === next.onRetrySend
     && areMessagesEquivalent(previous.message, next.message);
 }
 
 function areMessagesEquivalent(previous: ChatMessage, next: ChatMessage) {
   return previous === next || (
     previous.id === next.id
+    && previous.clientMessageId === next.clientMessageId
     && previous.text === next.text
     && previous.ai === next.ai
     && previous.deleted === next.deleted
+    && previous.sendStatus === next.sendStatus
+    && previous.sendError === next.sendError
+    && previous.attachmentCount === next.attachmentCount
     && previous.senderId === next.senderId
     && previous.senderName === next.senderName
     && previous.senderEmail === next.senderEmail
@@ -2721,7 +2919,7 @@ function Composer({
   onMention: () => void;
   onRecipientMention: (mentionLabel: string) => void;
 }) {
-  const canSend = Boolean(text.trim() || filePreviews.length) && !sending && !aiThinking;
+  const canSend = Boolean(text.trim() || filePreviews.length) && !aiThinking;
   const showMentionQuickAction = /(^|\s)@\w*$/i.test(text) && !hasAllPlaysMention(text);
   const showMentionSuggestions = hasChatMentionTrigger(text) && !hasAllPlaysMention(text) && (mentionSuggestionsLoading || mentionSuggestions.length > 0);
   const placeholder = teamName.length > 16 ? 'Message' : `Message ${teamName}`;
@@ -2797,7 +2995,7 @@ function Composer({
           }}
         />
         <button type="submit" className="chat-composer-send primary-button" disabled={!canSend} aria-label="Send message">
-          {sending || aiThinking ? <Loader2 className="h-5 w-5 animate-spin" aria-hidden="true" /> : <Send className="h-5 w-5" aria-hidden="true" />}
+          {aiThinking ? <Loader2 className="h-5 w-5 animate-spin" aria-hidden="true" /> : <Send className="h-5 w-5" aria-hidden="true" />}
         </button>
       </div>
 
@@ -2856,7 +3054,7 @@ function ConversationSheet({
     <Sheet title="Conversations" onClose={onClose}>
       <div className="space-y-2">
         {conversations.map((conversation) => {
-          const active = conversation.id === selectedConversationId;
+          const active = isSelectedConversation(conversation.id, selectedConversationId);
           const typeLabel = conversation.type === 'direct' ? 'Direct' : conversation.type === 'group' ? 'Group' : 'Team';
           return (
             <button
