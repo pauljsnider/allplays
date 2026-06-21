@@ -1469,7 +1469,11 @@ exports.validateAccessCodeForAcceptance = functions.https.onCall(async (data, co
   if (!code) {
     throw new functions.https.HttpsError('invalid-argument', 'Access code is required.');
   }
-  if (!context?.auth?.uid) {
+  const nativeAuthToken = String(data?.nativeAuthToken || '').trim();
+  const hasNativeAuthToken = nativeAuthToken
+    ? await admin.auth().verifyIdToken(nativeAuthToken).then(() => true).catch(() => false)
+    : false;
+  if (!context?.auth?.uid && !hasNativeAuthToken) {
     return buildGenericPreAuthAccessCodeValidationResult();
   }
 

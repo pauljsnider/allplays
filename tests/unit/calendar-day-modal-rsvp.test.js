@@ -100,7 +100,7 @@ const Blob = deps.Blob;
             'const { mergeGlobalCalendarIcsEvents } = deps.calendarIcsSync;'
         )
         .replace(
-            "import { requireAuth, checkAuth } from './js/auth.js?v=29';",
+            "import { requireAuth, checkAuth } from './js/auth.js?v=30';",
             'const { requireAuth, checkAuth } = deps.auth;'
         )
         .replace(

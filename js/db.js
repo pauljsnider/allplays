@@ -3690,14 +3690,20 @@ export async function getTeamAccessCodes(teamId) {
     return snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
 }
 
-export async function validateAccessCode(code) {
+export async function validateAccessCode(code, options = {}) {
     const normalizedCode = String(code || '').trim().toUpperCase();
     if (!normalizedCode) {
         return { valid: false, message: "Invalid access code" };
     }
+    const nativeAuthToken = typeof options?.nativeAuthToken === 'string'
+        ? options.nativeAuthToken.trim()
+        : '';
 
     const callable = httpsCallable(functions, 'validateAccessCodeForAcceptance');
-    const response = await callable({ code: normalizedCode });
+    const response = await callable({
+        code: normalizedCode,
+        ...(nativeAuthToken ? { nativeAuthToken } : {})
+    });
     const payload = response?.data || response;
     return payload && typeof payload === 'object'
         ? payload
