@@ -124,7 +124,7 @@ describe('team media notification recipients', () => {
         expect(functionsSource).toContain("firestore.collection('teamMediaNotificationBatches')");
         expect(functionsSource).toContain("category: 'media'");
         expect(functionsSource).toContain('dedupKey: `team-media:${batch.id}`');
-        expect(functionsSource).toContain('audienceContext: metadata.audienceContext || { albumVisibility: metadata.albumVisibility }');
+        expect(functionsSource).toContain("audienceContext: { albumVisibility }");
         expect(functionsSource).toContain("['sent', 'sending', 'skipped'].includes(currentStatus)");
         expect(firestoreIndexes).toContain('"collectionGroup": "teamMediaNotificationBatches"');
         expect(firestoreIndexes).toContain('"fieldPath": "dueAt"');
@@ -194,6 +194,38 @@ describe('team media notification recipients', () => {
         ]);
     });
 
+    it('keeps indexed parent and staff targets for standard visible albums', async () => {
+        const harness = createHarness({
+            candidateUsers: [
+                { uid: 'parent-1', roles: ['parent'] },
+                { uid: 'parent-disabled', roles: ['parent'] },
+                { uid: 'staff-1', roles: ['staff'] }
+            ],
+            indexedTargets: [
+                { uid: 'parent-1', deviceId: 'parent-device', token: 'parent-token', categories: { media: true } },
+                { uid: 'parent-disabled', deviceId: 'disabled-device', token: 'disabled-token', categories: { media: false } },
+                { uid: 'staff-1', deviceId: 'staff-device', token: 'staff-token', categories: { media: true } }
+            ]
+        });
+
+        const targets = await harness.getTargetsForCategory('team-1', 'media', null, { albumVisibility: 'team' });
+
+        expect(normalizeTargets(targets)).toEqual([
+            {
+                uid: 'parent-1',
+                deviceId: 'parent-device',
+                token: 'parent-token',
+                teamId: 'team-1'
+            },
+            {
+                uid: 'staff-1',
+                deviceId: 'staff-device',
+                token: 'staff-token',
+                teamId: 'team-1'
+            }
+        ]);
+    });
+
     it('filters indexed team-visible media recipients by explicit allowed user ids', async () => {
         const harness = createHarness({
             candidateUsers: [
@@ -227,6 +259,25 @@ describe('team media notification recipients', () => {
                 teamId: 'team-1'
             }
         ]);
+    });
+
+    it('distinguishes visible and restricted album eligibility with the same candidate users', async () => {
+        const createSharedHarness = () => createHarness({
+            candidateUsers: [
+                { uid: 'parent-1', roles: ['parent'] },
+                { uid: 'staff-1', roles: ['staff'] }
+            ],
+            indexedTargets: [
+                { uid: 'parent-1', deviceId: 'parent-device', token: 'parent-token' },
+                { uid: 'staff-1', deviceId: 'staff-device', token: 'staff-token' }
+            ]
+        });
+
+        const visibleTargets = await createSharedHarness().getTargetsForCategory('team-1', 'media', null, { albumVisibility: 'team' });
+        const restrictedTargets = await createSharedHarness().getTargetsForCategory('team-1', 'media', null, { albumVisibility: 'private' });
+
+        expect(normalizeTargets(visibleTargets).map((target) => target.uid)).toEqual(['parent-1', 'staff-1']);
+        expect(normalizeTargets(restrictedTargets).map((target) => target.uid)).toEqual(['staff-1']);
     });
 
     it('filters fallback team-visible media recipients by explicit audience roles', async () => {
