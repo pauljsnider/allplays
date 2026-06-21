@@ -212,6 +212,77 @@ describe('executeEmailPasswordSignup', () => {
         expect(dependencies.sendEmailVerification).toHaveBeenCalledTimes(1);
     });
 
+    it('revalidates after account creation when pre-auth validation is generic', async () => {
+        const dependencies = createDependencies({
+            validateAccessCode: vi.fn()
+                .mockResolvedValueOnce({
+                    valid: false,
+                    message: 'Invalid or expired access code'
+                })
+                .mockResolvedValueOnce({
+                    valid: true,
+                    type: 'parent_invite',
+                    data: { code: 'PARENTCODE' }
+                })
+        });
+        const reload = vi.fn().mockResolvedValue(undefined);
+        const auth = {
+            currentUser: {
+                email: 'parent@example.com',
+                reload
+            }
+        };
+
+        await executeEmailPasswordSignup({
+            email: 'parent@example.com',
+            password: 'password123',
+            activationCode: 'PARENTCODE',
+            auth,
+            dependencies
+        });
+
+        expect(dependencies.validateAccessCode).toHaveBeenCalledTimes(2);
+        expect(dependencies.createUserWithEmailAndPassword).toHaveBeenCalledTimes(1);
+        expect(dependencies.redeemParentInvite).toHaveBeenCalledWith('user-123', 'PARENTCODE', 'parent@example.com');
+        expect(dependencies.sendEmailVerification).toHaveBeenCalledTimes(1);
+    });
+
+    it('cleans up the auth account when post-auth revalidation still fails', async () => {
+        const deleteAuthUser = vi.fn().mockResolvedValue(undefined);
+        const dependencies = createDependencies({
+            validateAccessCode: vi.fn()
+                .mockResolvedValueOnce({
+                    valid: false,
+                    message: 'Invalid or expired access code'
+                })
+                .mockResolvedValueOnce({
+                    valid: false,
+                    message: 'Invalid access code'
+                }),
+            createUserWithEmailAndPassword: vi.fn().mockResolvedValue({
+                user: {
+                    uid: 'user-789',
+                    delete: deleteAuthUser
+                }
+            })
+        });
+        const auth = { currentUser: null };
+
+        await expect(executeEmailPasswordSignup({
+            email: 'parent@example.com',
+            password: 'password123',
+            activationCode: 'PARENTCODE',
+            auth,
+            dependencies
+        })).rejects.toThrow('Invalid access code');
+
+        expect(dependencies.validateAccessCode).toHaveBeenCalledTimes(2);
+        expect(deleteAuthUser).toHaveBeenCalledTimes(1);
+        expect(dependencies.signOut).toHaveBeenCalledWith(auth);
+        expect(dependencies.redeemParentInvite).not.toHaveBeenCalled();
+        expect(dependencies.updateUserProfile).not.toHaveBeenCalled();
+    });
+
     it('routes admin invite signup through admin persistence and not generic code consumption', async () => {
         const dependencies = createDependencies({
             validateAccessCode: vi.fn().mockResolvedValue({

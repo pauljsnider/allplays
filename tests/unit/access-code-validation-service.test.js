@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest';
 
-const { validateAccessCodeCandidates } = await import('../../functions/access-code-validation.cjs');
+const {
+    buildGenericPreAuthAccessCodeValidationResult,
+    validateAccessCodeCandidates
+} = await import('../../functions/access-code-validation.cjs');
 
 describe('access code validation service', () => {
     it('returns only generic pre-auth invite state for a redeemable invite', () => {
@@ -55,5 +58,15 @@ describe('access code validation service', () => {
         expect(validateAccessCodeCandidates([
             { id: 'expired', data: { code: 'EXPIRE1', used: false, expiresAt: Date.now() - 1_000 } }
         ])).toEqual({ valid: false, message: 'Code has expired' });
+    });
+
+    it('returns one generic result for anonymous pre-auth validation failures', () => {
+        const genericResult = buildGenericPreAuthAccessCodeValidationResult();
+
+        expect(genericResult).toEqual({
+            valid: false,
+            message: 'Invalid or expired access code'
+        });
+        expect(buildGenericPreAuthAccessCodeValidationResult()).toEqual(genericResult);
     });
 });

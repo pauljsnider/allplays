@@ -70,7 +70,10 @@ const {
   buildRegistrationPaymentRetryUrl,
   shouldStopRegistrationPaymentReminders
 } = require('./registration-payment-reminders-core.cjs');
-const { validateAccessCodeCandidates } = require('./access-code-validation.cjs');
+const {
+  buildGenericPreAuthAccessCodeValidationResult,
+  validateAccessCodeCandidates
+} = require('./access-code-validation.cjs');
 const {
   PRE_EVENT_REMINDER_QUERY_PAGE_SIZE,
   PRE_EVENT_REMINDER_MAX_PAGES_PER_RUN,
@@ -1461,10 +1464,13 @@ exports.autoAcceptParentInviteForExistingUser = functions.https.onCall(async (da
   return { autoLinked: true, userId: userRef.id };
 });
 
-exports.validateAccessCodeForAcceptance = functions.https.onCall(async (data) => {
+exports.validateAccessCodeForAcceptance = functions.https.onCall(async (data, context) => {
   const code = String(data?.code || '').trim().toUpperCase();
   if (!code) {
     throw new functions.https.HttpsError('invalid-argument', 'Access code is required.');
+  }
+  if (!context?.auth?.uid) {
+    return buildGenericPreAuthAccessCodeValidationResult();
   }
 
   const snapshot = await firestore.collection('accessCodes').where('code', '==', code).get();
