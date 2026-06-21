@@ -14,6 +14,12 @@ import {
     parseRegistrationDiscountRulesText,
     validateAdminRegistrationFormPayload
 } from '../../js/admin-registration-forms.js';
+import {
+    buildPaymentPlanSnapshot,
+    getActiveRegistrationOptions,
+    getPaymentPlanChoices,
+    normalizeRegistrationForm
+} from '../../js/registration-flow.js';
 
 describe('admin registration form setup', () => {
     it('builds draft and published form payloads with metadata, fields, waiver, and fee', () => {
@@ -82,6 +88,53 @@ describe('admin registration form setup', () => {
             { id: 'discount_2', type: 'quantity', label: 'Sibling discount', amountType: 'percent', amountValue: 10, earlyBirdDeadline: '', minimumQuantity: 2, active: true, sortOrder: 1 }
         ]);
         expect(validateAdminRegistrationFormPayload(payload)).toEqual([]);
+    });
+
+    it('emits the option, waiver, fee, and payment-plan shape consumed by app and legacy registration flows', () => {
+        const payload = buildAdminRegistrationFormPayload({
+            title: 'Summer Camp',
+            description: 'Skills camp',
+            programType: 'camp',
+            season: 'Summer 2026',
+            feeAmount: '90',
+            participantFieldsText: 'Player name',
+            guardianFieldsText: 'Guardian email',
+            registrationOptions: [
+                { id: 'travel', label: 'Travel', capacityLimit: '12', active: true, waitlistEnabled: false },
+                { id: 'rec', label: 'Recreation', capacityLimit: '5', active: true, waitlistEnabled: true }
+            ],
+            installmentPlan: { enabled: true, installmentCount: '2', firstDueDate: '2026-06-01', intervalDays: '14' },
+            waiverText: 'Guardian accepts the camp waiver.',
+            status: 'published'
+        }, { teamId: 'team-1' });
+        const normalized = normalizeRegistrationForm({
+            ...payload,
+            id: 'form-1',
+            registrationOptionCounts: {
+                travel: { enrolled: 11 },
+                rec: { enrolled: 5 }
+            }
+        }, { teamId: 'team-1', formId: 'form-1' });
+
+        expect(normalized).toMatchObject({
+            id: 'form-1',
+            teamId: 'team-1',
+            programName: 'Summer Camp',
+            feeAmountCents: 9000,
+            waiverText: 'Guardian accepts the camp waiver.',
+            published: true
+        });
+        expect(getActiveRegistrationOptions(normalized, normalized.registrationOptionCounts).map((option) => option.id)).toEqual(['travel', 'rec']);
+        expect(getPaymentPlanChoices(normalized).map((choice) => choice.id)).toEqual(['pay_full', 'installments']);
+        expect(buildPaymentPlanSnapshot(normalized, 'installments')).toMatchObject({
+            id: 'installments',
+            installmentCount: 2,
+            totalBalanceDueCents: 9000,
+            schedule: [
+                { label: 'Installment 1', dueDate: '2026-06-01', amountCents: 4500 },
+                { label: 'Installment 2', dueDate: '2026-06-15', amountCents: 4500 }
+            ]
+        });
     });
 
     it('normalizes manual screening settings to bounded admin statuses', () => {
