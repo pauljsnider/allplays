@@ -404,6 +404,26 @@ describe('bulk AI roster update wiring', () => {
         expect(source).toContain('Never add a second active player for a likely update to an existing player');
         expect(source).not.toContain('For each player, create an operation with action="add"');
     });
+
+    it('supports text-only AI roster imports with a structured add/update response contract', () => {
+        const source = readEditRoster();
+
+        expect(source).toContain('Upload roster image (optional)');
+        expect(source).toContain('id="bulk-text-input"');
+        expect(source).toContain("if (!textInput && !imageFile)");
+        expect(source).toContain("alert('Please upload an image or paste roster text')");
+        expect(source).toContain("const imageFile = document.getElementById('roster-image-input').files[0];");
+        expect(source).toContain("Extract ALL players ${imageFile ? 'from the image' : 'from the text'}");
+        expect(source).toContain('let promptParts = [promptText];');
+        expect(source).toContain('if (imageFile) {');
+        expect(source).toContain('promptParts.push(imagePart);');
+        expect(source).toContain('operations: Schema.array({');
+        expect(source).toContain('action: Schema.string()');
+        expect(source).toContain('playerId: Schema.string()');
+        expect(source).toContain('changes: Schema.object({');
+        expect(source).toContain('responseMimeType: "application/json"');
+        expect(source).toContain('responseSchema: jsonSchema');
+    });
 });
 
 describe('registration roster import wiring', () => {
