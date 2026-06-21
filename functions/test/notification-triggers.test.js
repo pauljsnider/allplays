@@ -697,6 +697,11 @@ test('notifyPublishedCertificateAward sends awards notifications to linked paren
             write.path === 'teams/team-1/certificates/certificate-1'
             && write.value.awardNotificationProcessedEventId === 'event-award-1'
         )), true);
+
+        const storedCertificate = (await ref.get()).data();
+        assert.equal(storedCertificate.awardNotificationProcessedEventId, 'event-award-1');
+        assert.equal('awardNotificationProcessingEventId' in storedCertificate, false);
+        assert.equal('awardNotificationProcessingStartedAt' in storedCertificate, false);
     } finally {
         cleanup();
     }
