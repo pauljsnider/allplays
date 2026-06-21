@@ -175,7 +175,7 @@ export async function normalizeParentScopeLinks(parentLinks = []) {
 
     return {
         activeLinks,
-        parentTeamIds: [...new Set(accessLinks.map((link) => link.teamId))],
+        parentTeamIds: [...new Set(activeLinks.map((link) => link.teamId))],
         parentPlayerKeys: [...new Set(accessLinks.map((link) => `${link.teamId}::${link.playerId}`))],
         blockedLinkCount,
         staleLinkCount
