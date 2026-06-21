@@ -183,6 +183,8 @@ it('keeps schedule workflows behind typed legacy adapters', () => {
   expect(scheduleServiceSource).toContain("./adapters/legacyScheduleDb");
   expect(scheduleServiceSource).toContain("./adapters/legacyScheduleHelpers");
   expect(scheduleServiceSource).toContain("./adapters/legacyAvailability");
+  expect(scheduleServiceSource).toContain("./statTrackingEvent");
+  expect(scheduleServiceSource).not.toContain("from './statTrackingService'");
   expect(scheduleServiceSource).toContain("./logger");
   expect(scheduleServiceSource).toContain("createLogger('schedule-service')");
   expect(scheduleServiceSource).not.toContain('console.');
