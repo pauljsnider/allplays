@@ -50,6 +50,7 @@ class MockElement {
         this.style = {};
         this.download = '';
         this.href = '';
+        this.listeners = new Map();
         this.classList = new MockClassList(id === 'day-modal' ? ['hidden'] : []);
     }
 
@@ -63,6 +64,16 @@ class MockElement {
     }
 
     click() {}
+
+    addEventListener(type, callback) {
+        if (!this.listeners.has(type)) this.listeners.set(type, []);
+        this.listeners.get(type).push(callback);
+    }
+
+    removeEventListener(type, callback) {
+        const listeners = this.listeners.get(type) || [];
+        this.listeners.set(type, listeners.filter((listener) => listener !== callback));
+    }
 
     querySelectorAll() {
         return [];
@@ -137,7 +148,15 @@ function createEnvironment() {
         'view-calendar',
         'day-modal',
         'day-modal-title',
-        'day-modal-content'
+        'day-modal-content',
+        'sync-calendar',
+        'sync-calendar-modal',
+        'sync-calendar-backdrop',
+        'sync-calendar-close',
+        'sync-calendar-apple',
+        'sync-calendar-google',
+        'sync-calendar-copy',
+        'sync-calendar-feedback'
     ];
     const elements = new Map(ids.map((id) => [id, new MockElement(id)]));
     elements.get('team-filter').value = '';
