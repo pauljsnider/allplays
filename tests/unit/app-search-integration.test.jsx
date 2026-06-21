@@ -5,7 +5,8 @@ import { createRoot } from 'react-dom/client';
 import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom';
 
 const dbMocks = vi.hoisted(() => ({
-    getTeams: vi.fn()
+    getTeams: vi.fn(),
+    discoverPublicTeams: vi.fn()
 }));
 
 const homeMocks = vi.hoisted(() => ({
@@ -177,6 +178,21 @@ beforeEach(() => {
         { id: 'team-1', name: 'Bears', sport: 'Basketball', zip: '66210', isPublic: true },
         { id: 'team-private', name: 'Private', sport: 'Soccer', isPublic: false }
     ]);
+    dbMocks.discoverPublicTeams.mockImplementation(async ({ searchText } = {}) => {
+        const normalized = String(searchText || '').trim().toLowerCase();
+        if (!normalized) {
+            return { teams: [], nextCursor: null };
+        }
+        if (normalized.includes('bea')) {
+            return {
+                teams: [
+                    { id: 'team-1', name: 'Bears', sport: 'Basketball', zip: '66210', isPublic: true, appAccess: true }
+                ],
+                nextCursor: null
+            };
+        }
+        return { teams: [], nextCursor: null };
+    });
     homeMocks.loadParentHomeSummary.mockImplementation((...args) => homeMocks.loadParentHome(...args));
     homeMocks.loadParentHome.mockResolvedValue({
         teams: [{
@@ -635,6 +651,7 @@ describe('React app shell search', () => {
 
     it('keeps one-character player searches local and shows empty result states', async () => {
         homeMocks.loadParentHome.mockResolvedValueOnce({ teams: [] });
+        dbMocks.discoverPublicTeams.mockResolvedValueOnce({ teams: [], nextCursor: null });
         firebaseMocks.getDocs.mockResolvedValueOnce({ docs: [] });
         const { container } = await renderShell();
 
@@ -652,7 +669,7 @@ describe('React app shell search', () => {
     });
 
     it('shows team and player search errors in the dialog', async () => {
-        firebaseMocks.getDocs.mockRejectedValue(new Error('Team search unavailable'));
+        dbMocks.discoverPublicTeams.mockRejectedValue(new Error('Team search unavailable'));
         homeMocks.loadParentHome.mockRejectedValueOnce(new Error('Home teams unavailable'));
         const { container } = await renderShell();
 
