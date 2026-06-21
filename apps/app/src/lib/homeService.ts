@@ -1,5 +1,5 @@
-import { listParentTeamFeeRecipients } from '../../../../js/db.js';
-import { normalizeParentFeeRecord } from '../../../../js/parent-dashboard-fees.js';
+import { listParentTeamFeeRecipients } from './adapters/legacyHomeFees';
+import { normalizeParentFeeRecord } from './adapters/legacyHomeFees';
 import { loadChatInbox } from './chatService';
 import { startUxTimer } from './uxTiming';
 import {
