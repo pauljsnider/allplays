@@ -130,4 +130,13 @@ describe('loadProfileAccessCodesPage', () => {
 
         expect(dbMocks.getUserAccessCodesPage).toHaveBeenCalledWith('user-1', { cursor, pageSize: 3 });
     });
+
+    it('falls back to a safe empty result when the access-code page helper returns no page payload', async () => {
+        dbMocks.getUserAccessCodesPage.mockResolvedValue(undefined);
+
+        await expect(loadProfileAccessCodesPage('user-1')).resolves.toEqual({
+            codes: [],
+            nextCursor: null
+        });
+    });
 });

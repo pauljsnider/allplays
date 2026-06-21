@@ -560,11 +560,16 @@ export async function loadProfileAccessCodes(userId: string): Promise<AccessCode
 
 export async function loadProfileAccessCodesPage(userId: string, { cursor = null, pageSize = 10 }: { cursor?: unknown | null; pageSize?: number } = {}): Promise<AccessCodePage> {
   try {
-    return await withTimeout(
+    const page = await withTimeout(
       Promise.resolve(getUserAccessCodesPage(userId, { cursor, pageSize })) as Promise<AccessCodePage>,
       'Invite history load',
       primaryDataTimeoutMs
     );
+
+    return {
+      codes: Array.isArray(page?.codes) ? page.codes : [],
+      nextCursor: page?.nextCursor ?? null
+    };
   } catch (error) {
     logProfileWarning('Falling back to REST invite history load.', 'invite-history-load', error, { userId });
     return nativeLoadAccessCodesPage(userId, { cursor, pageSize });
