@@ -155,6 +155,52 @@ describe('statTrackingService', () => {
     expect(await service.undoLastEvent('team-1', 'game-1', user)).toBeNull();
   });
 
+  it('steps backward through standard tracker scoring events one undo at a time', async () => {
+    const dependencies = createDependencies();
+    const service = createStatTrackingService({
+      statConfig: { columns: ['PTS'] },
+      initialScore: { homeScore: 0, awayScore: 0 },
+      dependencies
+    });
+    const user = { uid: 'coach-1' };
+
+    await service.recordEvent('team-1', 'game-1', {
+      text: '#4 Alex PTS +2',
+      playerName: 'Alex',
+      playerNumber: '4',
+      undoData: {
+        type: 'stat',
+        playerId: 'player-1',
+        statKey: 'PTS',
+        value: 2
+      }
+    }, user);
+    await service.recordEvent('team-1', 'game-1', {
+      text: '#12 Sam PTS +3',
+      playerName: 'Sam',
+      playerNumber: '12',
+      undoData: {
+        type: 'stat',
+        playerId: 'player-2',
+        statKey: 'PTS',
+        value: 3
+      }
+    }, user);
+
+    expect(service.getCurrentScore()).toEqual({ homeScore: 5, awayScore: 0 });
+    expect(service.getEventLog().map((entry) => entry.playerName)).toEqual(['Alex', 'Sam']);
+
+    const firstUndo = await service.undoLastEvent('team-1', 'game-1', user);
+    expect(firstUndo?.playerName).toBe('Sam');
+    expect(service.getCurrentScore()).toEqual({ homeScore: 2, awayScore: 0 });
+    expect(service.getEventLog().map((entry) => entry.playerName)).toEqual(['Alex']);
+
+    const secondUndo = await service.undoLastEvent('team-1', 'game-1', user);
+    expect(secondUndo?.playerName).toBe('Alex');
+    expect(service.getCurrentScore()).toEqual({ homeScore: 0, awayScore: 0 });
+    expect(service.getEventLog()).toEqual([]);
+  });
+
   it('rejects unknown stat columns before writing', async () => {
     const dependencies = createDependencies();
     const service = createStatTrackingService({
