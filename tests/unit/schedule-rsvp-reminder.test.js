@@ -29,6 +29,24 @@ describe('staff RSVP reminder helpers', () => {
     expect(preview.eligibleEmailCount).toBe(1);
   });
 
+  it('suppresses reminders for every active player covered by a family RSVP', () => {
+    const players = [
+      { id: 'p1', name: 'Avery', active: true, parents: [{ userId: 'family-1', email: 'family@example.com' }] },
+      { id: 'p2', name: 'Blake', active: true, parents: [{ userId: 'family-1', email: 'family@example.com' }] },
+      { id: 'p3', name: 'Casey', active: true, parents: [{ userId: 'family-2', email: 'casey@example.com' }] }
+    ];
+    const rsvps = [
+      { userId: 'family-1', response: 'going' },
+      { playerIds: ['p3'], response: 'not_responded' }
+    ];
+
+    const preview = buildStaffRsvpReminderPreview(players, rsvps);
+
+    expect(preview.players.map((player) => player.playerId)).toEqual(['p3']);
+    expect(preview.eligibleEmails).toEqual(['casey@example.com']);
+    expect(preview.missingPlayerCount).toBe(1);
+  });
+
   it('builds the team chat reminder text with event details and missing count', () => {
     expect(buildStaffRsvpReminderMessage({
       eventType: 'practice',
