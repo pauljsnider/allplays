@@ -433,6 +433,7 @@ test('sendCategoryNotification deep links rideshare notifications to the ridesha
                 eventId: 'game-9',
                 conversationId: '',
                 childId: '',
+                rsvpId: '',
                 appRoute: '/schedule/team-1/game-9?section=rideshare',
                 link: 'https://allplays.ai/app/#/schedule/team-1/game-9?section=rideshare'
             });
@@ -479,6 +480,7 @@ test('sendCategoryNotification uses eventId for rideshare deep links when no gam
                 eventId: 'event-9',
                 conversationId: '',
                 childId: '',
+                rsvpId: '',
                 appRoute: '/schedule/team-1/event-9?section=rideshare',
                 link: 'https://allplays.ai/app/#/schedule/team-1/event-9?section=rideshare'
             });
@@ -528,6 +530,7 @@ for (const [category, categories] of [
                 eventId: '',
                 conversationId: 'staff room',
                 childId: '',
+                rsvpId: '',
                 appRoute: '/messages/team-1?conversationId=staff%20room',
                 link: 'https://allplays.ai/team-chat.html?teamId=team-1&conversationId=staff%20room'
             });
