@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const dbMocks = vi.hoisted(() => ({
+    discoverPublicTeams: vi.fn(),
     getTeams: vi.fn()
 }));
 
@@ -89,6 +90,7 @@ function firestoreDocument(id, data, exists = true) {
 beforeEach(() => {
     vi.clearAllMocks();
     firebaseMocks.getDoc.mockReset();
+    dbMocks.discoverPublicTeams.mockResolvedValue({ teams: [], nextCursor: null });
     resetAppSearchCacheForTests();
     helpMocks.searchHelpKnowledge.mockReturnValue([]);
     homeMocks.loadParentHomeSummary.mockImplementation((...args) => homeMocks.loadParentHome(...args));
@@ -715,22 +717,47 @@ describe('React app search service', () => {
         await expect(loadAppSearchTeams(auth.user)).rejects.toThrow('direct access down');
     });
 
-    it('searches teams by public-only bounded prefix queries and merges app-access teams locally', async () => {
-        firebaseMocks.getDocs
-            .mockResolvedValueOnce({
-                docs: [
-                    firestoreTeam('team-public', { name: 'Bears', sport: 'Basketball', isPublic: true }),
-                    firestoreTeam('team-private-hidden', { name: 'Bear Den', sport: 'Soccer', isPublic: false })
-                ]
-            })
-            .mockResolvedValueOnce({ docs: [] });
+    it('searches teams through bounded public discovery and merges app-access teams locally', async () => {
+        dbMocks.discoverPublicTeams.mockResolvedValueOnce({
+            teams: [
+                { id: 'team-public', name: 'Bears', sport: 'Basketball', city: 'Kansas City', state: 'MO', isPublic: true },
+                { id: 'team-home', name: 'Bearcats Public', sport: 'Soccer', zip: '66210', isPublic: true }
+            ],
+            nextCursor: null
+        });
 
         const teams = await searchAppTeams('be', [{ id: 'team-home', name: 'Bearcats', sport: 'Soccer', fromAppAccess: true }], auth.user);
 
-        expect(firebaseMocks.limit).toHaveBeenCalledWith(20);
-        expect(firebaseMocks.where).toHaveBeenCalledWith('isPublic', '==', true);
+        expect(dbMocks.discoverPublicTeams).toHaveBeenCalledWith({ searchText: 'be', cursor: null, pageSize: 20 });
         expect(teams.map((team) => team.id)).toEqual(['team-home', 'team-public']);
-        expect(teams.find((team) => team.id === 'team-private-hidden')).toBeUndefined();
+        expect(teams.find((team) => team.id === 'team-home')).toMatchObject({
+            name: 'Bearcats Public',
+            isPublic: true
+        });
+    });
+
+    it('includes location-matched public teams in global app search results', async () => {
+        dbMocks.discoverPublicTeams.mockResolvedValueOnce({
+            teams: [
+                { id: 'team-zip', name: 'Northside Storm', sport: 'Softball', zip: '60601', isPublic: true },
+                { id: 'team-city', name: 'River City Hoops', sport: 'Basketball', city: 'Kansas City', state: 'MO', isPublic: true }
+            ],
+            nextCursor: null
+        });
+
+        const zipTeams = await searchAppTeams('60601', [], auth.user);
+        expect(zipTeams.map((team) => team.id)).toEqual(['team-zip']);
+
+        dbMocks.discoverPublicTeams.mockResolvedValueOnce({
+            teams: [
+                { id: 'team-city', name: 'River City Hoops', sport: 'Basketball', city: 'Kansas City', state: 'MO', isPublic: true }
+            ],
+            nextCursor: null
+        });
+
+        const cityTeams = await searchAppTeams('Kansas City', [], auth.user);
+        expect(cityTeams.map((team) => team.id)).toEqual(['team-city']);
+        expect(cityTeams[0]).toMatchObject({ city: 'Kansas City', state: 'MO' });
     });
 
     it('searches players only within visible team collections and filters local results', async () => {

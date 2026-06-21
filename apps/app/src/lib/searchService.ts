@@ -17,6 +17,7 @@ import {
 } from '../../../../js/firebase.js';
 import { loadParentHomeSummary } from './homeService';
 import { searchHelpKnowledge } from './helpKnowledgeService';
+import { getPublicTeamsPage } from './publicTeamsService';
 import type { AuthState, AuthUser, UserRole } from './types';
 
 const teamsCacheTtlMs = 10 * 60 * 1000;
@@ -61,6 +62,7 @@ export type AppSearchTeam = {
   zip?: string | null;
   city?: string | null;
   state?: string | null;
+  location?: string | null;
   isPublic?: boolean;
   active?: boolean;
   archived?: boolean;
@@ -363,28 +365,20 @@ export async function searchAppTeams(queryText: string, appAccessTeams: AppSearc
   const firstToken = splitSearchTokens(rawQuery)[0] || '';
   if (!firstToken) return appAccessTeams.slice(0, teamSearchQueryLimit);
 
-  const prefixes = Array.from(new Set([
-    firstToken,
-    titleCaseWord(firstToken)
-  ].filter(Boolean))).slice(0, 2);
-
-  const publicTeamQueries = prefixes.map((prefix) => getDocs(query(
-    collection(db, 'teams'),
-    where('isPublic', '==', true),
-    orderBy('name'),
-    where('name', '>=', prefix),
-    where('name', '<=', `${prefix}\uf8ff`),
-    limit(teamSearchQueryLimit)
-  )));
-
   const localTeamsById = new Map(appAccessTeams.map((team) => [team.id, team]));
-  const snapshots = await Promise.allSettled(publicTeamQueries);
-  const rejected = snapshots.filter((snapshot) => snapshot.status === 'rejected').map((snapshot: any) => snapshot.reason).filter(Boolean);
-  const hasFulfilled = snapshots.some((snapshot) => snapshot.status === 'fulfilled');
+  const publicTeamsResult = await Promise.allSettled([
+    getPublicTeamsPage({ searchText: rawQuery, pageSize: teamSearchQueryLimit })
+  ]);
 
-  snapshots.forEach((snapshot: any) => {
-    if (snapshot.status !== 'fulfilled') return;
-    normalizeTeams((snapshot.value?.docs || []).map((doc: any) => ({ id: doc.id, ...(typeof doc.data === 'function' ? doc.data() || {} : {}) }))).forEach((team) => {
+  const rejected = publicTeamsResult
+    .filter((result) => result.status === 'rejected')
+    .map((result: any) => result.reason)
+    .filter(Boolean);
+  const hasFulfilled = publicTeamsResult.some((result) => result.status === 'fulfilled');
+
+  publicTeamsResult.forEach((result: any) => {
+    if (result.status !== 'fulfilled') return;
+    normalizePublicTeamSearchResults(result.value?.teams || []).forEach((team) => {
       if (canUserDiscoverTeamInAppSearch(team, user)) {
         localTeamsById.set(team.id, team);
       }
@@ -666,6 +660,7 @@ function buildParentHomeSearchTeam(homeTeam: any, baseTeam?: AppSearchTeam): App
     zip: baseTeam?.zip || '',
     city: baseTeam?.city || '',
     state: baseTeam?.state || '',
+    location: baseTeam?.location || cleanString(homeTeam?.location),
     isPublic: baseTeam?.isPublic,
     active: homeTeam?.active ?? baseTeam?.active,
     archived: homeTeam?.archived ?? baseTeam?.archived,
@@ -677,6 +672,42 @@ function buildParentHomeSearchTeam(homeTeam: any, baseTeam?: AppSearchTeam): App
     streamAccessMode: baseTeam?.streamAccessMode,
     streamVolunteerEmails: baseTeam?.streamVolunteerEmails || [],
     teamPermissions: baseTeam?.teamPermissions || null
+  };
+}
+
+function normalizePublicTeamSearchResults(teams: any[]): AppSearchTeam[] {
+  return (Array.isArray(teams) ? teams : [])
+    .map((team) => {
+      const location = cleanString(team?.location);
+      const parsedLocation = parseTeamSearchLocation(location);
+      return {
+        id: cleanString(team?.teamId || team?.id),
+        name: cleanString(team?.teamName || team?.name) || 'Team',
+        sport: cleanString(team?.sport),
+        zip: cleanString(team?.zip) || parsedLocation.zip,
+        city: cleanString(team?.city) || parsedLocation.city,
+        state: cleanString(team?.state) || parsedLocation.state,
+        location,
+        isPublic: true,
+        active: team?.active,
+        archived: team?.archived,
+        status: cleanString(team?.status),
+        photoUrl: getFirstUrl(team?.photoUrl, team?.teamPhotoUrl, team?.logoUrl, team?.imageUrl)
+      };
+    })
+    .filter((team) => team.id);
+}
+
+function parseTeamSearchLocation(location: string) {
+  if (!location) return { zip: '', city: '', state: '' };
+  if (/^\d{5}(?:-\d{4})?$/.test(location)) {
+    return { zip: location, city: '', state: '' };
+  }
+  const [city, state] = location.split(',').map((part) => cleanString(part));
+  return {
+    zip: '',
+    city: city || location,
+    state: state || ''
   };
 }
 
@@ -743,11 +774,12 @@ function rankTeamsForQuery(teams: AppSearchTeam[], queryText: string) {
 }
 
 function teamToSearchItem(team: AppSearchTeam): AppSearchItem {
+  const location = cleanString(team.location);
   return {
     id: `team:${team.id}`,
     kind: 'team',
     title: team.name || 'Team',
-    subtitle: [team.sport, team.zip || [team.city, team.state].filter(Boolean).join(', ')].filter(Boolean).join(' • '),
+    subtitle: [team.sport, team.zip || [team.city, team.state].filter(Boolean).join(', ') || location].filter(Boolean).join(' • '),
     route: `/teams/${encodeURIComponent(team.id)}`
   };
 }
