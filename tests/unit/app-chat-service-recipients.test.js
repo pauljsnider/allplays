@@ -495,6 +495,64 @@ describe('React app chat recipient service', () => {
         expect(dbMocks.getUserTeamsWithAccess).not.toHaveBeenCalled();
     });
 
+    it('normalizes chat conversations and older message pages through typed mappers', async () => {
+        dbMocks.getChatConversations.mockResolvedValue([
+            { name: 'Missing id', type: 'direct' },
+            {
+                id: 'conversation-1',
+                type: 'unsupported',
+                participantIds: [' user-1 ', 'user-1', 'coach-1'],
+                mutedBy: [' coach-1 ', 'coach-1'],
+                updatedAt: { seconds: Date.parse('2026-06-19T19:00:00.000Z') / 1000 }
+            }
+        ]);
+        dbMocks.getChatMessages.mockResolvedValue([
+            {
+                text: 'missing id',
+                createdAt: new Date('2026-06-19T19:01:00.000Z')
+            },
+            {
+                id: 'message-1',
+                text: '  Bring water ',
+                reactions: {
+                    heart: [' user-2 ', 'user-2', '']
+                },
+                mentionedUids: [' user-3 ', 'user-3'],
+                createdAt: { toDate: () => new Date('2026-06-19T19:02:00.000Z') }
+            }
+        ]);
+
+        const { loadChatConversations, loadOlderTeamChatMessages } = await import('../../apps/app/src/lib/chatService.ts');
+        const conversations = await loadChatConversations(
+            'team-1',
+            { uid: 'user-1', email: 'parent@example.com', roles: [] },
+            { id: 'team-1', name: 'Bears' },
+            true
+        );
+        const messages = await loadOlderTeamChatMessages('team-1', 'conversation-1', { id: 'cursor' });
+
+        expect(conversations).toEqual([
+            expect.objectContaining({
+                id: 'conversation-1',
+                type: 'group',
+                participantIds: ['user-1', 'coach-1'],
+                mutedBy: ['coach-1'],
+                updatedAt: new Date('2026-06-19T19:00:00.000Z')
+            })
+        ]);
+        expect(messages).toEqual([
+            expect.objectContaining({
+                id: 'message-1',
+                text: 'Bring water',
+                reactions: {
+                    heart: ['user-2']
+                },
+                mentionedUids: ['user-3'],
+                createdAt: new Date('2026-06-19T19:02:00.000Z')
+            })
+        ]);
+    });
+
     it('routes selected-member messages into a non-default conversation before posting', async () => {
         const photo = new File(['photo'], 'arrival.jpg', { type: 'image/jpeg' });
         const video = new File(['clip'], 'warmups.mp4', { type: 'video/mp4' });
