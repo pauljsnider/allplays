@@ -29,7 +29,7 @@ function getBuildTeamChatNotificationContext() {
 }
 
 function getBuildTeamChatNotificationPlan() {
-    const start = functionsSource.indexOf('function buildTeamChatNotificationPlan(');
+    const start = functionsSource.indexOf('function dedupeNotificationTargetsByUserDevice(');
     const end = functionsSource.indexOf('\nexports.notifyTeamChatMessageCreated');
     const slice = functionsSource.slice(start, end);
     return new Function('detectMentionedUids', `${slice}; return buildTeamChatNotificationPlan;`)(detectMentionedUids);
@@ -266,6 +266,7 @@ describe('buildTeamChatNotificationPlan', () => {
                 targetsByCategory: {
                     mentions: [
                         { uid: 'u1', token: 'mention-1' },
+                        { uid: 'u1', token: 'mention-1' },
                         { uid: 'u2', token: 'mention-2' },
                         { uid: 'u3', token: 'mention-3' }
                     ],
@@ -274,6 +275,7 @@ describe('buildTeamChatNotificationPlan', () => {
                         { uid: 'u1', token: 'chat-1' },
                         { uid: 'u2', token: 'chat-2' },
                         { uid: 'u3', token: 'chat-3' },
+                        { uid: 'u4', token: 'chat-4' },
                         { uid: 'u4', token: 'chat-4' }
                     ]
                 }
@@ -283,6 +285,8 @@ describe('buildTeamChatNotificationPlan', () => {
         expect(plan.mentionedUids.sort()).toEqual(['u1', 'u2']);
         expect(plan.mentionTargets.map((target) => target.uid).sort()).toEqual(['u1', 'u2']);
         expect(plan.liveChatTargets.map((target) => target.uid)).toEqual(['u4']);
+        expect(plan.mentionTargets).toHaveLength(2);
+        expect(plan.liveChatTargets).toHaveLength(1);
     });
 
     it('handles a large mixed team fixture from one preloaded recipient context', () => {

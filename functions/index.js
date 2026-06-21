@@ -6471,6 +6471,22 @@ function normalizeTeamChatConversationId(value) {
   return conversationId || 'team';
 }
 
+function dedupeNotificationTargetsByUserDevice(targets = []) {
+  const seen = new Set();
+  const uniqueTargets = [];
+  for (const target of Array.isArray(targets) ? targets : []) {
+    const uid = String(target?.uid || '').trim();
+    const deviceId = String(target?.deviceId || target?.token || '').trim();
+    const token = String(target?.token || '').trim();
+    if (!uid || !token) continue;
+    const key = `${uid}::${deviceId || token}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    uniqueTargets.push({ ...target, uid, token });
+  }
+  return uniqueTargets;
+}
+
 function detectMentionedUids(text, members, options = {}) {
   if (!text) return [];
   const { allowReservedMentions = false } = options || {};
@@ -6619,12 +6635,8 @@ function buildTeamChatNotificationPlan({ text, actorUid = null, recipientContext
     mutedUids: [],
     targetsByCategory: { mentions: [], liveChat: [] }
   };
-  const mentionTargets = Array.isArray(context.targetsByCategory?.mentions)
-    ? context.targetsByCategory.mentions
-    : [];
-  const liveChatTargets = Array.isArray(context.targetsByCategory?.liveChat)
-    ? context.targetsByCategory.liveChat
-    : [];
+  const mentionTargets = dedupeNotificationTargetsByUserDevice(context.targetsByCategory?.mentions);
+  const liveChatTargets = dedupeNotificationTargetsByUserDevice(context.targetsByCategory?.liveChat);
   const mentionEligibleUids = new Set(mentionTargets.map((target) => target.uid));
   const mentionMembers = Array.isArray(context.members)
     ? context.members.filter((member) => mentionEligibleUids.has(member.uid))
