@@ -1663,7 +1663,7 @@
 
             document.querySelectorAll('.deactivate-btn').forEach(btn => {
                 btn.addEventListener('click', async (e) => {
-                    if (confirm('Deactivate this player? This keeps all historical stats and reports.')) {
+                    if (confirm('Deactivate this player? This keeps historical stats and reports, but linked parents may lose team access, including history, until the player is reactivated or parent scope is repaired.')) {
                         await deactivatePlayer(currentTeamId, e.target.dataset.id);
                         loadRoster();
                     }

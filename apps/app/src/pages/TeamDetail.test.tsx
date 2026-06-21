@@ -233,7 +233,7 @@ describe('TeamDetail', () => {
         ]
       })
       .mockResolvedValueOnce(managedModel);
-    vi.spyOn(window, 'confirm')
+    const confirmSpy = vi.spyOn(window, 'confirm')
       .mockReturnValueOnce(true)
       .mockReturnValueOnce(true);
 
@@ -250,6 +250,7 @@ describe('TeamDetail', () => {
 
     fireEvent.click(await screen.findByRole('button', { name: 'Deactivate' }));
 
+    expect(confirmSpy).toHaveBeenCalledWith('Deactivate Pat Star?\n\nLinked parents may lose access to this team, including history, until the player is reactivated or parent scope is repaired.');
     await waitFor(() => expect(teamDetailServiceMocks.deactivateRosterPlayerForApp).toHaveBeenCalledWith('team-1', 'player-1'));
     expect(await screen.findByText('Pat Star deactivated.')).toBeTruthy();
     expect(await screen.findByText('Inactive roster')).toBeTruthy();
@@ -257,6 +258,7 @@ describe('TeamDetail', () => {
     const reactivateButtons = await screen.findAllByRole('button', { name: 'Reactivate' });
     fireEvent.click(reactivateButtons[0]);
 
+    expect(confirmSpy).toHaveBeenCalledWith('Reactivate Sam Bench?');
     await waitFor(() => expect(teamDetailServiceMocks.reactivateRosterPlayerForApp).toHaveBeenCalledWith('team-1', 'player-2'));
     expect(await screen.findByText('Sam Bench reactivated.')).toBeTruthy();
   });

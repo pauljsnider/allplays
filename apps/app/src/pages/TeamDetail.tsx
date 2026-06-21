@@ -526,7 +526,10 @@ function RosterTab({
 
   async function togglePlayerActiveState(player: TeamDetailPlayer) {
     const action = player.active ? 'deactivate' : 'reactivate';
-    const confirmed = window.confirm(`${action === 'deactivate' ? 'Deactivate' : 'Reactivate'} ${player.name}?`);
+    const confirmationMessage = player.active
+      ? `Deactivate ${player.name}?\n\nLinked parents may lose access to this team, including history, until the player is reactivated or parent scope is repaired.`
+      : `Reactivate ${player.name}?`;
+    const confirmed = window.confirm(confirmationMessage);
     if (!confirmed) return;
     setPendingPlayerId(player.id);
     setStatus(null);
