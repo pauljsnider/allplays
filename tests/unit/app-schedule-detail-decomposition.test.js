@@ -22,10 +22,12 @@ describe('ScheduleEventDetail decomposition', () => {
         expect(source).toContain('useScheduleRideOffers()');
     });
 
-    it('keeps extracted schedule detail modules under focused tests', () => {
+    it('keeps extracted schedule detail modules and focused coverage files in the repo', () => {
         [
             'apps/app/src/components/schedule/ScheduleEventSummaryComponents.test.tsx',
+            'apps/app/src/hooks/schedule/useScheduleEventRsvp.ts',
             'apps/app/src/hooks/schedule/useScheduleEventRsvp.test.tsx',
+            'apps/app/src/hooks/schedule/useScheduleRideOffers.ts',
             'apps/app/src/hooks/schedule/useScheduleRideOffers.test.tsx'
         ].forEach((path) => {
             expect(readRepoFile(path).length).toBeGreaterThan(0);
