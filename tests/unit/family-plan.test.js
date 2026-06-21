@@ -468,6 +468,6 @@ describe('family plan helpers', () => {
         expect(html).toContain('function updateShareLinkControlsReady()');
         expect(html).toContain('Link created and copied to clipboard.');
         expect(html).toContain('id="retry-share-links-btn"');
-        expect(html).toContain("from './js/db.js?v=58'");
+        expect(html).toContain("from './js/db.js?v=59'");
     });
 });
