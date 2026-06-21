@@ -24,6 +24,34 @@ function template(overrides: Partial<TeamEmailTemplate> = {}): TeamEmailTemplate
 }
 
 describe('emailReducer', () => {
+  it('starts with empty composer fields and applies direct subject and body edits', () => {
+    expect(initialEmailComposerState).toMatchObject({
+      drafts: [],
+      templates: [],
+      selectedDraftId: '',
+      subject: '',
+      body: '',
+      templateName: ''
+    });
+
+    const editedSubject = emailReducer(initialEmailComposerState, {
+      type: 'updateSubject',
+      subject: 'Saturday schedule'
+    });
+    const editedBody = emailReducer(editedSubject, {
+      type: 'updateBody',
+      body: 'Arrive 30 minutes early.'
+    });
+
+    expect(editedBody).toMatchObject({
+      drafts: [],
+      templates: [],
+      selectedDraftId: '',
+      subject: 'Saturday schedule',
+      body: 'Arrive 30 minutes early.'
+    });
+  });
+
   it('selects a draft and updates selection, subject, and body together', () => {
     const state = emailReducer(initialEmailComposerState, {
       type: 'setDrafts',
@@ -131,6 +159,20 @@ describe('emailReducer', () => {
       selectedDraftId: 'draft-1',
       subject: 'Server subject',
       body: 'Server body'
+    });
+  });
+
+  it('clears stale composer content when refreshed drafts no longer include the selected draft', () => {
+    const selected = emailReducer(
+      emailReducer(initialEmailComposerState, { type: 'setDrafts', drafts: [draft()] }),
+      { type: 'selectDraft', draftId: 'draft-1' }
+    );
+
+    expect(emailReducer(selected, { type: 'setDrafts', drafts: [] })).toMatchObject({
+      drafts: [],
+      selectedDraftId: '',
+      subject: '',
+      body: ''
     });
   });
 
