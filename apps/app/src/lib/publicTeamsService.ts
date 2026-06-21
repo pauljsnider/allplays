@@ -1,4 +1,4 @@
-import { discoverPublicTeams } from '../../../../js/db.js';
+import { discoverPublicTeams } from './adapters/legacyPublicTeamsDb';
 import { type ParentHomeTeam } from './homeLogic';
 
 export type PublicTeamsPage = {
