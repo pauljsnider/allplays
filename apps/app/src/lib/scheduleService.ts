@@ -80,7 +80,7 @@ import {
   isTeamActive
 } from './adapters/legacyScheduleHelpers';
 import { buildAvailabilityNoteRows, canViewAvailabilityNotes, formatAvailabilityCutoff, isAvailabilityLocked, normalizeAvailabilityPreferences } from './adapters/legacyAvailability';
-import { buildTrackerEventDocument } from './statTrackingService';
+import { buildTrackerEventDocument } from './statTrackingEvent';
 import { loadProfileDocument, saveProfileDocument } from './profileService';
 import { firebaseAuth, getNativeAuthIdToken } from './authService';
 import { startInteractionTimer, startUxTimer, UX_TIMING } from './uxTiming';

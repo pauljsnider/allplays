@@ -1,5 +1,7 @@
+import { readFileSync } from 'node:fs';
 import { describe, expect, it, vi } from 'vitest';
-import { buildTrackerEventDocument, createStatTrackingService } from './statTrackingService';
+import { buildTrackerEventDocument } from './statTrackingEvent';
+import { createStatTrackingService } from './statTrackingService';
 
 function createDependencies() {
   return {
@@ -13,6 +15,14 @@ function createDependencies() {
 }
 
 describe('statTrackingService', () => {
+  it('keeps stat tracking helpers behind typed adapters and the extracted tracker event builder', () => {
+    const statTrackingServiceSource = readFileSync('src/lib/statTrackingService.ts', 'utf8');
+
+    expect(statTrackingServiceSource).not.toContain("../../../../js/");
+    expect(statTrackingServiceSource).toContain("./adapters/legacyStatTrackingDb");
+    expect(statTrackingServiceSource).toContain("./statTrackingEvent");
+  });
+
   it('builds legacy-compatible tracker event documents', () => {
     const event = buildTrackerEventDocument({
       text: '#4 Alex PTS +2',
