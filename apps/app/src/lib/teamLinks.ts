@@ -1,4 +1,4 @@
-import { normalizeYouTubeEmbedUrl } from '../../../../js/live-stream-utils.js';
+import { normalizeYouTubeEmbedUrl } from './adapters/legacyLiveStreamUtils';
 
 const YOUTUBE_HOST_RE = /(^|\.)youtube\.com$/i;
 const YOUTU_BE_HOST_RE = /(^|\.)youtu\.be$/i;
