@@ -1,17 +1,20 @@
 import type { QuerySnapshot, DocumentData } from 'firebase/firestore';
 import {
-  collection,
-  db,
-  doc,
-  functions,
-  httpsCallable,
-  limit,
-  onSnapshot,
-  orderBy,
-  query,
-  serverTimestamp,
-  updateDoc
+    collection,
+    db,
+    doc,
+    functions,
+    httpsCallable,
+    limit,
+    onSnapshot,
+    orderBy,
+    query,
+    serverTimestamp,
+    updateDoc
 } from './adapters/legacyNotificationInboxDb';
+import { createLogger } from './logger';
+
+const logger = createLogger('notification-inbox-service');
 
 export type NotificationInboxItem = {
     id: string;
@@ -79,7 +82,7 @@ export function subscribeToNotificationInbox(
             if (onError) {
                 onError(error);
             } else {
-                console.error('Failed to subscribe to notification inbox:', error);
+                logger.error('Failed to subscribe to notification inbox.', { error });
             }
         }
     );

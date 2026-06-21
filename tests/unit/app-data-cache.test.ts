@@ -1,7 +1,9 @@
 // @vitest-environment jsdom
+import { readFileSync } from 'node:fs';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const cacheModulePath = '../../apps/app/src/lib/appDataCache.ts';
+const cacheSource = readFileSync(`${process.cwd()}/apps/app/src/lib/appDataCache.ts`, 'utf8');
 
 async function loadCacheModule() {
   return import(cacheModulePath);
@@ -143,6 +145,11 @@ describe('appDataCache', () => {
     const cache = await loadCacheModule();
 
     expect(cache.getParentScheduleSummaryCacheKey('parent-1')).toBe('app-schedule-summary:parent-1');
+  });
+
+  it('routes handled cache failures through the shared logger', () => {
+    expect(cacheSource).toContain("from './logger'");
+    expect(cacheSource).not.toContain('console.');
   });
 });
 
