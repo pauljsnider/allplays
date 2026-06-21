@@ -212,6 +212,60 @@ describe('registration roster import planning', () => {
         expect(plan.previewRows.map((row) => row.status)).toEqual(['add']);
     });
 
+    it('preserves full roster family contacts on add operations for invite workflows', () => {
+        const plan = planRegistrationRosterImport({
+            source: { type: 'sports-connect', id: 'league-1' },
+            sourcePlayers: [
+                {
+                    externalPlayerId: 'ext-4',
+                    firstName: 'Taylor',
+                    lastName: 'Reed',
+                    jerseyNumber: '22',
+                    guardians: [
+                        { fullName: 'Pat Reed', email: 'PAT@example.com', phoneNumber: '555-1000', relationship: 'Mother' },
+                        { displayName: 'Chris Reed', emailAddress: 'CHRIS@example.com', mobilePhone: '555-2000', type: 'Father' }
+                    ],
+                    contacts: [
+                        { name: 'Dana Reed', email: 'DANA@example.com', phone: '555-3000', relation: 'Emergency Contact' }
+                    ]
+                }
+            ]
+        });
+
+        const guardians = [
+            { name: 'Pat Reed', email: 'pat@example.com', phone: '555-1000', relation: 'Mother' },
+            { name: 'Chris Reed', email: 'chris@example.com', phone: '555-2000', relation: 'Father' }
+        ];
+        const contacts = [
+            { name: 'Dana Reed', email: 'dana@example.com', phone: '555-3000', relation: 'Emergency Contact' }
+        ];
+
+        expect(plan.results).toMatchObject({ added: 1, updated: 0, skipped: 0, conflicted: 0 });
+        expect(plan.operations).toHaveLength(1);
+        expect(plan.operations[0]).toMatchObject({
+            id: 'source-ext-4',
+            type: 'add',
+            payload: {
+                name: 'Taylor Reed',
+                number: '22',
+                guardians,
+                contacts,
+                sourceMetadata: {
+                    sourceType: 'sports-connect',
+                    sourceId: 'league-1',
+                    externalPlayerId: 'ext-4'
+                }
+            }
+        });
+        expect(plan.previewRows[0]).toMatchObject({
+            status: 'add',
+            playerName: 'Taylor Reed',
+            number: '22',
+            guardians,
+            contacts
+        });
+    });
+
     it('maps configured roster profile fields from matching registration answer keys and labels', () => {
         const plan = planRegistrationRosterImport({
             source: { type: 'sports-connect', id: 'league-1' },
