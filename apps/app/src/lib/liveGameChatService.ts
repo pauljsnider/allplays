@@ -1,5 +1,4 @@
-import { postLiveChatMessage, subscribeLiveChat } from '../../../../js/db.js';
-import { isViewerChatEnabled } from '../../../../js/live-game-chat.js';
+import { isViewerChatEnabled, postLiveChatMessage, subscribeLiveChat } from './adapters/legacyLiveGameChat';
 import type { AuthUser } from './types';
 
 export type LiveGameChatMessage = {
