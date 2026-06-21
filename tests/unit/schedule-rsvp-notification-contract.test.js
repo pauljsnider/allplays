@@ -36,19 +36,22 @@ describe('schedule and RSVP notification contract', () => {
         expect(functionsSource).toContain("category: 'schedule'");
         expect(functionsSource).toContain('const emailResult = await createPublicRsvpEmailDeliveries({');
         expect(functionsSource).toContain('rsvpPushResult = await sendRsvpReminderPushNotifications({');
+        expect(functionsSource).toContain('recipientTargets: emailResult.recipientTargets');
         expect(functionsSource).toContain('recipientUserIds: emailResult.recipientUserIds');
         expect(functionsSource).toContain('rsvpPushSuccessCount: rsvpPushResult.successCount');
         expect(functionsSource).toContain('rsvpPushTargetCount: rsvpPushResult.targetCount');
     });
 
-    it('sends RSVP reminder pushes through the rsvp category with event deep links', () => {
-        expect(functionsSource).toContain('async function sendRsvpReminderPushNotifications({ teamId, gameId, event = {}, recipientUserIds = [] } = {})');
-        expect(functionsSource).toContain("const targets = await getTargetsForCategoryUserIds(teamId, 'rsvp', recipientUserIds);");
+    it('sends RSVP reminder pushes through the rsvp category with per-recipient child deep links', () => {
+        expect(functionsSource).toContain('async function sendRsvpReminderPushNotifications({ teamId, gameId, event = {}, recipientUserIds = [], recipientTargets = [] } = {})');
+        expect(functionsSource).toContain('const childIdByRecipientGroup = new Map();');
+        expect(functionsSource).toContain('const groupUserIds = childIdByRecipientGroup.get(childId) || [];');
+        expect(functionsSource).toContain("const targets = await getTargetsForCategoryUserIds(teamId, 'rsvp', userIds);");
         expect(functionsSource).toContain("category: 'rsvp'");
         expect(functionsSource).toContain('eventId: gameId');
         expect(functionsSource).toContain('childId: getScheduleNotificationChildId(event)');
         expect(functionsSource).toContain("childId: String(childId || '')");
-        expect(functionsSource).toContain('targetCount: targets.length');
+        expect(functionsSource).toContain('targetCount += targets.length');
         expect(functionsSource).toContain("return `/schedule/${encodeURIComponent(teamId)}/${encodeURIComponent(scheduleEventId)}${buildScheduleSectionQuery('availability', childId)}`;");
     });
 

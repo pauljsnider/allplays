@@ -5943,6 +5943,7 @@ async function dispatchDuePreEventReminders(now = new Date()) {
             teamId,
             gameId,
             event: claimedEvent,
+            recipientTargets: emailResult.recipientTargets,
             recipientUserIds: emailResult.recipientUserIds
           });
         } catch (pushError) {
@@ -7626,9 +7627,48 @@ function getScheduleNotificationChildId(event = {}) {
   return String(event.childId || event.playerId || event.recipientId || '').trim() || null;
 }
 
-async function sendRsvpReminderPushNotifications({ teamId, gameId, event = {}, recipientUserIds = [] } = {}) {
+async function sendRsvpReminderPushNotifications({ teamId, gameId, event = {}, recipientUserIds = [], recipientTargets = [] } = {}) {
   if (!teamId || !gameId) {
     return { successCount: 0, failureCount: 0, targetCount: 0 };
+  }
+
+  const payload = buildRsvpReminderPushPayload(event);
+  const childIdByRecipientGroup = new Map();
+  (Array.isArray(recipientTargets) ? recipientTargets : []).forEach((target) => {
+    const userId = String(target?.userId || '').trim();
+    const childId = String(target?.childId || '').trim();
+    if (!userId || !childId) return;
+    const groupUserIds = childIdByRecipientGroup.get(childId) || [];
+    if (!groupUserIds.includes(userId)) {
+      groupUserIds.push(userId);
+      childIdByRecipientGroup.set(childId, groupUserIds);
+    }
+  });
+
+  if (childIdByRecipientGroup.size > 0) {
+    let successCount = 0;
+    let failureCount = 0;
+    let targetCount = 0;
+
+    for (const [childId, userIds] of childIdByRecipientGroup.entries()) {
+      const targets = await getTargetsForCategoryUserIds(teamId, 'rsvp', userIds);
+      if (!targets.length) continue;
+      const sendResult = await sendDirectTargetsNotification({
+        targets,
+        category: 'rsvp',
+        title: payload.title,
+        body: payload.body,
+        teamId,
+        gameId,
+        eventId: gameId,
+        childId
+      });
+      successCount += Number(sendResult?.successCount || 0);
+      failureCount += Number(sendResult?.failureCount || 0);
+      targetCount += targets.length;
+    }
+
+    return { successCount, failureCount, targetCount };
   }
 
   const targets = await getTargetsForCategoryUserIds(teamId, 'rsvp', recipientUserIds);
@@ -7636,7 +7676,6 @@ async function sendRsvpReminderPushNotifications({ teamId, gameId, event = {}, r
     return { successCount: 0, failureCount: 0, targetCount: 0 };
   }
 
-  const payload = buildRsvpReminderPushPayload(event);
   const sendResult = await sendDirectTargetsNotification({
     targets,
     category: 'rsvp',
@@ -7806,6 +7845,7 @@ async function createPublicRsvpEmailDeliveries({ teamId, gameId, actorUid = null
   let linkCount = 0;
   const remindedPlayerIds = new Set();
   const recipientUserIds = new Set();
+  const recipientTargets = [];
 
   const ensurePublicRsvpEmailBatchCapacity = () => {
     if (batchWriteCount + 2 <= PUBLIC_RSVP_EMAIL_BATCH_WRITE_LIMIT) return;
@@ -7869,6 +7909,10 @@ async function createPublicRsvpEmailDeliveries({ teamId, gameId, actorUid = null
       remindedPlayerIds.add(String(player.id || '').trim());
       if (contact.userId) {
         recipientUserIds.add(contact.userId);
+        recipientTargets.push({
+          userId: contact.userId,
+          childId: player.id
+        });
       }
     });
   });
@@ -7884,6 +7928,7 @@ async function createPublicRsvpEmailDeliveries({ teamId, gameId, actorUid = null
     linkCount,
     playerIds: Array.from(remindedPlayerIds).filter(Boolean),
     recipientUserIds: Array.from(recipientUserIds).filter(Boolean),
+    recipientTargets,
     recipientCount: recipientUserIds.size
   };
 }
@@ -7936,6 +7981,7 @@ exports.sendPublicRsvpEmails = functions.https.onRequest(async (req, res) => {
         teamId,
         gameId,
         event: eventRecord.data,
+        recipientTargets: result.recipientTargets,
         recipientUserIds: result.recipientUserIds
       });
     } catch (pushError) {

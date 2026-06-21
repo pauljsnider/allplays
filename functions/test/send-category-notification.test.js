@@ -398,6 +398,56 @@ test('sendRsvpReminderPushNotifications sends availability pushes only to email 
         }
 });
 
+test('sendRsvpReminderPushNotifications sends per-recipient child routes when player ids are available', async () => {
+        const { internals, env, cleanup } = loadNotificationInternals({
+            teamDoc: {
+                ownerId: 'coach-1',
+                adminEmails: []
+            },
+            parentUserIds: ['parent-1', 'parent-2'],
+            indexedTargets: [
+                {
+                    uid: 'parent-1',
+                    deviceId: 'parent-1-device',
+                    token: 'parent-1-token',
+                    categories: { rsvp: true }
+                },
+                {
+                    uid: 'parent-2',
+                    deviceId: 'parent-2-device',
+                    token: 'parent-2-token',
+                    categories: { rsvp: true }
+                }
+            ]
+        });
+
+        try {
+            const result = await internals.sendRsvpReminderPushNotifications({
+                teamId: 'team-1',
+                gameId: 'game-9',
+                event: { opponent: 'Wildcats' },
+                recipientTargets: [
+                    { userId: 'parent-1', childId: 'player-1' },
+                    { userId: 'parent-2', childId: 'player-2' }
+                ]
+            });
+
+            assert.deepEqual(result, { successCount: 2, failureCount: 0, targetCount: 2 });
+            assert.equal(env.messagingCalls.length, 2);
+            assert.deepEqual(env.messagingCalls.map((call) => call.tokens), [['parent-1-token'], ['parent-2-token']]);
+            assert.deepEqual(env.messagingCalls.map((call) => call.data.appRoute), [
+                '/schedule/team-1/game-9?childId=player-1&section=availability',
+                '/schedule/team-1/game-9?childId=player-2&section=availability'
+            ]);
+            assert.deepEqual(env.messagingCalls.map((call) => call.webLink), [
+                'https://allplays.ai/app/#/schedule/team-1/game-9?childId=player-1&section=availability',
+                'https://allplays.ai/app/#/schedule/team-1/game-9?childId=player-2&section=availability'
+            ]);
+        } finally {
+            cleanup();
+        }
+});
+
 test('sendCategoryNotification deep links rideshare notifications to the rideshare event section', async () => {
         const { internals, env, cleanup } = loadNotificationInternals({
             teamDoc: {
