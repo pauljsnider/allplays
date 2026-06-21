@@ -57,4 +57,11 @@ describe('player soft-delete policy', () => {
         expect(liveGame).toContain(': getPlayers(state.teamId)');
         expect(teamChat).toContain('getPlayers(teamId, { includeInactive: true })');
     });
+
+    it('warns staff that deactivation can affect linked parent team access', () => {
+        const legacyRoster = readFile('edit-roster.html');
+
+        expect(legacyRoster).toContain('linked parents may lose team access, including history');
+        expect(legacyRoster).toContain('until the player is reactivated or parent scope is repaired');
+    });
 });
