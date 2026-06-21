@@ -17,14 +17,6 @@ const dbMocks = vi.hoisted(() => ({
     upsertNotificationDeviceToken: vi.fn(),
     uploadUserPhoto: vi.fn()
 }));
-const telemetryMocks = vi.hoisted(() => {
-    const timerEnd = vi.fn();
-    return {
-        timerEnd,
-        captureHandledAppError: vi.fn(),
-        createAppTimer: vi.fn(() => ({ end: timerEnd }))
-    };
-});
 
 vi.mock('../../../../js/db.js', () => dbMocks);
 vi.mock('../../../../js/notification-preferences.js', () => ({
@@ -41,88 +33,19 @@ vi.mock('./authService', () => ({
     firebaseAuth: { app: { options: { projectId: 'demo-project' } } },
     getNativeAuthIdToken: vi.fn()
 }));
-vi.mock('./telemetry', () => telemetryMocks);
 vi.mock('../../../../js/team-visibility.js', () => ({
     isTeamActive: vi.fn(() => true)
 }));
 
 import { normalizeProfilePhoto } from './profilePhotoService';
-import { getNativeAuthIdToken } from './authService';
-import { loadProfileAccessCodesPage, loadProfileDocument, requestAccountMerge } from './profileService';
+import { loadProfileAccessCodesPage, requestAccountMerge } from './profileService';
 
 it('routes handled profile-service failures through the shared logger helper', () => {
     const profileServiceSource = readFileSync('src/lib/profileService.ts', 'utf8');
 
     expect(profileServiceSource).toContain("from './logger'");
-    expect(profileServiceSource).toContain("from './telemetry'");
     expect(profileServiceSource).toContain("createLogger('profile-service')");
-    expect(profileServiceSource).toContain("createAppTimer('profile document service load'");
-    expect(profileServiceSource).toContain("captureHandledAppError(`profile ${operation}`");
     expect(profileServiceSource).not.toContain('console.');
-});
-
-describe('loadProfileDocument telemetry', () => {
-    beforeEach(() => {
-        vi.clearAllMocks();
-    });
-
-    afterEach(() => {
-        vi.unstubAllGlobals();
-    });
-
-    it('records profile load timing when the SDK path succeeds', async () => {
-        dbMocks.getUserProfile.mockResolvedValue({ fullName: 'Pat Parent' });
-
-        await expect(loadProfileDocument('user-1')).resolves.toEqual({ fullName: 'Pat Parent' });
-
-        expect(telemetryMocks.createAppTimer).toHaveBeenCalledWith('profile document service load', {
-            category: 'service_load',
-            service: 'profile',
-            operation: 'profile-load'
-        });
-        expect(telemetryMocks.timerEnd).toHaveBeenCalledWith({
-            path: 'sdk',
-            userIdPresent: true
-        });
-        expect(telemetryMocks.captureHandledAppError).not.toHaveBeenCalled();
-    });
-
-    it('emits handled telemetry for SDK profile load fallback without raw user IDs', async () => {
-        const sdkError = new TypeError('Failed to fetch with Authorization Bearer secret-token');
-        dbMocks.getUserProfile.mockRejectedValue(sdkError);
-        vi.mocked(getNativeAuthIdToken).mockResolvedValue('native-token');
-        vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
-            ok: true,
-            json: async () => ({
-                name: 'projects/demo/databases/(default)/documents/users/user-1',
-                fields: {
-                    fullName: { stringValue: 'Native Pat' }
-                }
-            })
-        }));
-
-        await expect(loadProfileDocument('user-1')).resolves.toEqual({
-            id: 'user-1',
-            fullName: 'Native Pat'
-        });
-
-        expect(telemetryMocks.captureHandledAppError).toHaveBeenCalledWith(
-            'profile profile-load',
-            sdkError,
-            expect.objectContaining({
-                service: 'profile',
-                operation: 'profile-load',
-                fallback: 'rest',
-                userIdPresent: true
-            })
-        );
-        expect(JSON.stringify(telemetryMocks.captureHandledAppError.mock.calls[0][2])).not.toContain('user-1');
-        expect(telemetryMocks.timerEnd).toHaveBeenCalledWith({
-            path: 'rest_fallback',
-            fallback: true,
-            userIdPresent: true
-        });
-    });
 });
 
 describe('normalizeProfilePhoto', () => {

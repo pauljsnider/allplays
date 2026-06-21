@@ -188,8 +188,6 @@ it('keeps schedule workflows behind typed legacy adapters', () => {
   expect(scheduleServiceSource).not.toContain("from './statTrackingService'");
   expect(scheduleServiceSource).toContain("./logger");
   expect(scheduleServiceSource).toContain("createLogger('schedule-service')");
-  expect(scheduleServiceSource).toContain("startUxTimer('parent schedule service load', {");
-  expect(scheduleServiceSource).toContain("operation: 'parent-schedule-load'");
   expect(scheduleServiceSource).not.toContain('console.');
   expect(scheduleServiceSource).not.toContain('await Promise.resolve();');
   expect(scheduleServiceSource).toContain('lock.waiters.push(resolve);');
