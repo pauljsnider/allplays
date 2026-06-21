@@ -78,6 +78,7 @@ export type ChatMessageFirestoreRecord = {
     reactions?: Record<string, string[]>;
     targetType?: 'full_team' | 'staff' | 'individuals';
     recipientIds?: string[];
+    mentionedUids?: string[];
     targetRole?: string | null;
     conversationId?: string | null;
     sendStatus?: 'pending' | 'failed';

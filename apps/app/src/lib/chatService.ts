@@ -56,7 +56,12 @@ import {
 } from './chatLogic';
 import { sanitizeErrorForLogging } from './nativeRestLogging';
 import { startInteractionTimer, UX_TIMING } from './uxTiming';
-import { mapChatConversationRecord, mapChatMessageRecord, mapFirestoreDocument } from './firestore/mappers';
+import {
+  mapChatConversationRecords,
+  mapChatMessageRecord,
+  mapChatMessageRecords,
+  mapFirestoreDocument
+} from './firestore/mappers';
 import type {
   ChatAttachmentFirestoreRecord,
   ChatConversationFirestoreRecord,
@@ -503,11 +508,7 @@ async function getLatestMessagePreview(teamId: string, user: AuthUser, team: Rec
       `latest chat conversations ${teamId}`,
       2500
     ) as ChatConversation[];
-    const mappedConversations = Array.isArray(loadedConversations)
-      ? loadedConversations
-        .map((conversation) => mapChatConversationRecord(conversation, conversation?.id || ''))
-        .filter((conversation): conversation is ChatConversation => Boolean(conversation))
-      : [];
+    const mappedConversations = mapChatConversationRecords(loadedConversations);
     conversations = mappedConversations.length
       ? mappedConversations
       : [buildDefaultTeamConversation(team)];
@@ -717,9 +718,7 @@ export async function loadChatTeamContext(teamId: string, user: AuthUser | null)
 export async function loadChatConversations(teamId: string, user: AuthUser, team: Record<string, any>, canModerate: boolean): Promise<ChatConversation[]> {
   try {
     const conversations = await withTimeout(Promise.resolve(getChatConversations(teamId, user, { team, canModerate })), 'Chat conversations load') as ChatConversation[];
-    return (Array.isArray(conversations) ? conversations : [])
-      .map((conversation) => mapChatConversationRecord(conversation, conversation?.id || ''))
-      .filter((conversation): conversation is ChatConversation => Boolean(conversation));
+    return mapChatConversationRecords(conversations);
   } catch (error) {
     console.warn('[chat-service] Falling back to default chat conversation:', sanitizeErrorForLogging(error));
     return [buildDefaultTeamConversation(team) as ChatConversation];
@@ -757,9 +756,7 @@ export function subscribeToTeamChatMessages(
           orderBy: 'createdAt desc',
           pageSize: 50
         });
-        const mappedMessages = messages
-          .map((message) => mapChatMessageRecord(message, message?.id || ''))
-          .filter((message): message is ChatMessage => Boolean(message));
+        const mappedMessages = mapChatMessageRecords(messages);
         onMessages(mappedMessages, mappedMessages[mappedMessages.length - 1]?._doc || null);
       } catch (error: any) {
         onError?.(error);
@@ -774,9 +771,7 @@ export function subscribeToTeamChatMessages(
   try {
     unsubscribe = subscribeToChatMessages(teamId, { limit: 50, conversationId }, (messages: ChatMessage[], oldestDoc: unknown | null) => {
       if (!cancelled) {
-        const mappedMessages = (Array.isArray(messages) ? messages : [])
-          .map((message) => mapChatMessageRecord(message, message?.id || ''))
-          .filter((message): message is ChatMessage => Boolean(message));
+        const mappedMessages = mapChatMessageRecords(messages);
         onMessages(mappedMessages, oldestDoc);
       }
     });
@@ -805,9 +800,7 @@ export async function loadOlderTeamChatMessages(teamId: string, conversationId: 
       startAfterDoc,
       conversationId
     })), 'Older chat messages load') as ChatMessage[];
-    return (Array.isArray(messages) ? messages : [])
-      .map((message) => mapChatMessageRecord(message, message?.id || ''))
-      .filter((message): message is ChatMessage => Boolean(message));
+    return mapChatMessageRecords(messages);
   } catch (error) {
     if (!isNativeRuntime()) throw error;
     console.warn('[chat-service] Older chat history is limited in native REST fallback:', sanitizeErrorForLogging(error));

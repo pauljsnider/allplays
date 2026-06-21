@@ -59,6 +59,20 @@ function asOptionalDate(value: unknown): Date | null {
     if (value instanceof Date) {
         return Number.isNaN(value.getTime()) ? null : value;
     }
+    if (value && typeof (value as { toDate?: unknown }).toDate === 'function') {
+        const date = (value as { toDate: () => unknown }).toDate();
+        return date instanceof Date && !Number.isNaN(date.getTime()) ? date : null;
+    }
+    if (value && typeof (value as { toMillis?: unknown }).toMillis === 'function') {
+        const date = new Date((value as { toMillis: () => number }).toMillis());
+        return Number.isNaN(date.getTime()) ? null : date;
+    }
+    if (value && typeof (value as { seconds?: unknown }).seconds === 'number') {
+        const { seconds, nanoseconds } = value as { seconds: number; nanoseconds?: unknown };
+        const millis = (seconds * 1000) + Math.floor(Number(nanoseconds || 0) / 1000000);
+        const date = new Date(millis);
+        return Number.isNaN(date.getTime()) ? null : date;
+    }
     const stringValue = asTrimmedString(value);
     if (!stringValue) return null;
     const parsed = new Date(stringValue);
@@ -81,15 +95,6 @@ function asObject(value: unknown): Record<string, unknown> | null {
 }
 
 function asTemporalValue(value: unknown): unknown {
-    if (value instanceof Date) {
-        return Number.isNaN(value.getTime()) ? null : value;
-    }
-    if (value && typeof (value as { toDate?: unknown }).toDate === 'function') {
-        return value;
-    }
-    if (typeof (value as { seconds?: unknown })?.seconds === 'number') {
-        return value;
-    }
     return asOptionalDate(value);
 }
 
@@ -171,6 +176,15 @@ export function mapChatConversationDocument(document: FirestoreDocument | null |
     return decoded ? mapChatConversationRecord(decoded, decoded.id) : null;
 }
 
+export function mapChatConversationRecords(values: unknown): ChatConversationFirestoreRecord[] {
+    return Array.isArray(values)
+        ? values.map((value) => {
+            const source = asLooseObject(value);
+            return mapChatConversationRecord(source, asTrimmedString(source.id) || '');
+        }).filter((conversation): conversation is ChatConversationFirestoreRecord => Boolean(conversation))
+        : [];
+}
+
 export function mapChatMessageRecord(value: unknown, fallbackId = ''): ChatMessageFirestoreRecord | null {
     const source = asLooseObject(value);
     const id = asTrimmedString(source.id) || fallbackId;
@@ -202,10 +216,20 @@ export function mapChatMessageRecord(value: unknown, fallbackId = ''): ChatMessa
         reactions: asReactionMap(source.reactions),
         targetType: asChatTargetType(source.targetType),
         recipientIds: asUniqueStringArray(source.recipientIds),
+        mentionedUids: asUniqueStringArray(source.mentionedUids),
         targetRole: asTrimmedString(source.targetRole),
         conversationId: asTrimmedString(source.conversationId),
         _doc: source._doc
     };
+}
+
+export function mapChatMessageRecords(values: unknown): ChatMessageFirestoreRecord[] {
+    return Array.isArray(values)
+        ? values.map((value) => {
+            const source = asLooseObject(value);
+            return mapChatMessageRecord(source, asTrimmedString(source.id) || '');
+        }).filter((message): message is ChatMessageFirestoreRecord => Boolean(message))
+        : [];
 }
 
 export function mapChatMessageDocument(document: FirestoreDocument | null | undefined): ChatMessageFirestoreRecord | null {
