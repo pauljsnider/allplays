@@ -1,44 +1,62 @@
 import {
   addPlayer,
+  addTeamAdminEmail,
+  buildPlayerLeaderboardSnapshot,
+  buildTeamStaffPermissionsViewModel,
+  buildTrackingStatusPayload,
+  calculateSeasonRecord,
+  collection,
+  computeNativeStandings,
   createConfig,
-  getAggregatedStatsForGames,
+  db,
+  deactivatePlayer,
+  describeScheduleReminderWindow,
+  doc,
   getAdSpaceSponsors,
+  getAggregatedStatsForGames,
   getConfigs,
+  getDoc,
+  getDocs,
   getGames,
-  inviteParent,
   getLocalAttractionSponsors,
-  getPlayers,
   getPlayerTrackingStatuses,
+  getPlayers,
   getPublicTrackingItems,
   getRosterFieldDefinitions,
   getTeam,
-  setTeamTrackingStatus,
-  updateTeam,
+  getVisiblePlayerTrackingSummary,
   grantScorekeeperAccess,
   grantVideographerAccess,
+  hasFullTeamAccess,
   inviteAdmin,
-  addTeamAdminEmail,
+  inviteExistingTeamAdmin,
+  inviteParent,
+  listSeasonLabels,
+  normalizeAdminEmailList,
+  normalizeRosterFieldDefinitions,
+  normalizeScheduleNotificationSettings,
+  normalizeStatTrackerConfig,
+  normalizeTrackingStatus,
+  query,
+  reactivatePlayer,
   revokeScorekeeperAccess,
   revokeVideographerAccess,
-  deactivatePlayer,
-  reactivatePlayer,
+  selectAnalyticsConfig,
+  sendInviteEmail,
+  serverTimestamp,
+  setDoc,
   setPlayerPrivateRosterProfileFields,
+  setTeamTrackingStatus,
+  splitRosterProfileValuesByVisibility,
+  summarizeTrackingStatus,
   updateConfig,
+  updateDoc,
+  updateTeam,
   uploadPlayerPhoto,
-  uploadTeamPhoto
-} from '../../../../js/db.js';
-import { sendInviteEmail } from '../../../../js/auth.js';
-import { inviteExistingTeamAdmin } from '../../../../js/edit-team-admin-invites.js';
-import { collection, db, doc, getDoc, getDocs, query, serverTimestamp, setDoc, updateDoc, where } from '../../../../js/firebase.js';
-import { normalizeRosterFieldDefinitions, splitRosterProfileValuesByVisibility, validateRosterProfileValues } from '../../../../js/roster-profile-fields.js';
-import { describeScheduleReminderWindow, normalizeScheduleNotificationSettings } from '../../../../js/schedule-notifications.js';
-import { calculateSeasonRecord, listSeasonLabels } from '../../../../js/season-record.js';
-import { computeNativeStandings } from '../../../../js/native-standings.js';
-import { buildPlayerLeaderboardSnapshot, normalizeStatTrackerConfig, selectAnalyticsConfig } from '../../../../js/stat-leaderboards.js';
-import { getVisiblePlayerTrackingSummary, normalizeTrackingStatus } from '../../../../js/player-tracking-summary.js';
-import { hasFullTeamAccess, normalizeAdminEmailList } from '../../../../js/team-access.js';
-import { buildTeamStaffPermissionsViewModel } from '../../../../js/team-staff-permissions.js';
-import { buildTrackingStatusPayload, summarizeTrackingStatus } from '../../../../js/tracking-status-admin.js';
+  uploadTeamPhoto,
+  validateRosterProfileValues,
+  where
+} from './adapters/legacyTeamDetail';
 import { firebaseAuth, getNativeAuthIdToken } from './authService';
 import { buildAppAcceptInviteUrl } from './inviteUrls';
 import { getNativeRestDedupKey, loadDedupedNativeRestRequest, shouldDedupNativeRestRequest } from './nativeRestDedup';
