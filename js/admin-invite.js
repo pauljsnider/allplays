@@ -1,4 +1,4 @@
-import { redeemAdminInviteAtomicPersistence } from './db.js?v=57';
+import { redeemAdminInviteAtomicPersistence } from './db.js?v=58';
 
 export async function redeemAdminInviteAcceptance({
     userId,

@@ -5,6 +5,7 @@ import {
   getNotificationPreferencesForTeam,
   getParentTeams,
   getUserAccessCodes,
+  getUserAccessCodesPage,
   getUserProfile,
   getUserTeamsWithAccess,
   saveNotificationPreferencesForTeam,
@@ -79,6 +80,11 @@ export type AccessCodeRecord = {
   used?: boolean;
   createdAt?: unknown;
   usedAt?: unknown;
+};
+
+export type AccessCodePage = {
+  codes: AccessCodeRecord[];
+  nextCursor: unknown | null;
 };
 
 export type NotificationDeviceTokenInput = {
@@ -399,6 +405,17 @@ async function nativeLoadAccessCodes(userId: string): Promise<AccessCodeRecord[]
   });
 }
 
+async function nativeLoadAccessCodesPage(userId: string, { cursor = null, pageSize = 10 }: { cursor?: unknown | null; pageSize?: number } = {}): Promise<AccessCodePage> {
+  const codes = await nativeLoadAccessCodes(userId);
+  const offset = typeof cursor === 'number' && Number.isFinite(cursor) ? Math.max(0, cursor) : 0;
+  const nextCodes = codes.slice(offset, offset + pageSize);
+  const nextOffset = offset + nextCodes.length;
+  return {
+    codes: nextCodes,
+    nextCursor: nextOffset < codes.length ? nextOffset : null
+  };
+}
+
 function getMillis(value: any) {
   if (!value) return 0;
   if (value instanceof Date) return value.getTime();
@@ -538,5 +555,23 @@ export async function loadProfileAccessCodes(userId: string): Promise<AccessCode
   } catch (error) {
     logProfileWarning('Falling back to REST invite history load.', 'invite-history-load', error, { userId });
     return nativeLoadAccessCodes(userId);
+  }
+}
+
+export async function loadProfileAccessCodesPage(userId: string, { cursor = null, pageSize = 10 }: { cursor?: unknown | null; pageSize?: number } = {}): Promise<AccessCodePage> {
+  try {
+    const page = await withTimeout(
+      Promise.resolve(getUserAccessCodesPage(userId, { cursor, pageSize })) as Promise<AccessCodePage>,
+      'Invite history load',
+      primaryDataTimeoutMs
+    );
+
+    return {
+      codes: Array.isArray(page?.codes) ? page.codes : [],
+      nextCursor: page?.nextCursor ?? null
+    };
+  } catch (error) {
+    logProfileWarning('Falling back to REST invite history load.', 'invite-history-load', error, { userId });
+    return nativeLoadAccessCodesPage(userId, { cursor, pageSize });
   }
 }

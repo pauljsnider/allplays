@@ -12,6 +12,7 @@ const profileServiceMocks = vi.hoisted(() => ({
   loadNotificationPreferences: vi.fn(),
   loadNotificationTeams: vi.fn(),
   loadProfileAccessCodes: vi.fn(),
+  loadProfileAccessCodesPage: vi.fn(),
   loadProfileDocument: vi.fn(),
   normalizeNotificationPreferences: vi.fn((preferences?: any) => ({
     liveChat: preferences?.liveChat !== false,
@@ -187,6 +188,13 @@ describe('Profile invites', () => {
       { id: 'code-1', code: 'ACTIVE123', email: 'coach@example.com', phone: '', used: false, createdAt: { seconds: 1717200000 } },
       { id: 'code-2', code: 'USED1234', email: 'used@example.com', phone: '', used: true, createdAt: { seconds: 1717113600 }, usedAt: { seconds: 1717200000 } }
     ]);
+    profileServiceMocks.loadProfileAccessCodesPage.mockResolvedValue({
+      codes: [
+        { id: 'code-1', code: 'ACTIVE123', email: 'coach@example.com', phone: '', used: false, createdAt: { seconds: 1717200000 } },
+        { id: 'code-2', code: 'USED1234', email: 'used@example.com', phone: '', used: true, createdAt: { seconds: 1717113600 }, usedAt: { seconds: 1717200000 } }
+      ],
+      nextCursor: null
+    });
     shellLayoutState.isDesktopWeb = false;
     shellLayoutState.isNative = false;
   });
@@ -257,9 +265,12 @@ describe('Profile invites', () => {
 
   it('routes typed profile invite links through the app accept flow', async () => {
     publicActionsMocks.sharePublicUrl.mockResolvedValue('shared');
-    profileServiceMocks.loadProfileAccessCodes.mockResolvedValue([
-      { id: 'code-1', code: 'ACTIVE123', email: 'coach@example.com', phone: '', used: false, type: 'parent_invite', createdAt: { seconds: 1717200000 } }
-    ]);
+    profileServiceMocks.loadProfileAccessCodesPage.mockResolvedValue({
+      codes: [
+        { id: 'code-1', code: 'ACTIVE123', email: 'coach@example.com', phone: '', used: false, type: 'parent_invite', createdAt: { seconds: 1717200000 } }
+      ],
+      nextCursor: null
+    });
 
     renderProfile();
 
@@ -270,6 +281,40 @@ describe('Profile invites', () => {
       url: expect.stringContaining('/app#/accept-invite?code=ACTIVE123&type=parent_invite'),
       clipboardText: expect.stringContaining('/app#/accept-invite?code=ACTIVE123&type=parent_invite')
     })));
+  });
+
+  it('loads invite history in bounded pages and appends older codes on demand', async () => {
+    profileServiceMocks.loadProfileAccessCodesPage
+      .mockResolvedValueOnce({
+        codes: [
+          { id: 'code-1', code: 'RECENT1', email: 'recent@example.com', phone: '', used: false, createdAt: { seconds: 1717200000 } },
+          { id: 'code-2', code: 'RECENT2', email: '', phone: '', used: false, createdAt: { seconds: 1717113600 } },
+          { id: 'code-3', code: 'RECENT3', email: '', phone: '', used: true, createdAt: { seconds: 1717027200 } }
+        ],
+        nextCursor: { cursor: 'older' }
+      })
+      .mockResolvedValueOnce({
+        codes: [
+          { id: 'code-4', code: 'OLDER4', email: 'older@example.com', phone: '', used: false, createdAt: { seconds: 1716940800 } }
+        ],
+        nextCursor: null
+      });
+
+    renderProfile();
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Invites' }));
+
+    expect(await screen.findByLabelText('Copy saved invite code RECENT1')).toBeTruthy();
+    expect(screen.queryByLabelText('Copy saved invite code OLDER4')).toBeNull();
+    expect(profileServiceMocks.loadProfileAccessCodesPage).toHaveBeenCalledWith('user-1', { pageSize: 3 });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Show more codes' }));
+
+    expect(await screen.findByLabelText('Copy saved invite code OLDER4')).toBeTruthy();
+    expect(profileServiceMocks.loadProfileAccessCodesPage).toHaveBeenLastCalledWith('user-1', {
+      cursor: { cursor: 'older' },
+      pageSize: 3
+    });
   });
 
   it('revokes replaced and removed profile photo blob previews', async () => {

@@ -13,6 +13,7 @@ const profileServiceMocks = vi.hoisted(() => ({
     loadNotificationPreferences: vi.fn(),
     loadNotificationTeams: vi.fn(),
     loadProfileAccessCodes: vi.fn(),
+    loadProfileAccessCodesPage: vi.fn(),
     loadProfileDocument: vi.fn(),
     normalizeNotificationPreferences: vi.fn((preferences?: any) => ({
         liveChat: preferences?.liveChat !== false,
@@ -116,6 +117,7 @@ describe('Profile seed from auth.profile', () => {
         profileServiceMocks.normalizeNotificationPreferences.mockClear();
         profileServiceMocks.loadNotificationTeams.mockResolvedValue([]);
         profileServiceMocks.loadProfileAccessCodes.mockResolvedValue([]);
+        profileServiceMocks.loadProfileAccessCodesPage.mockResolvedValue({ codes: [], nextCursor: null });
         profileServiceMocks.loadParentTeams.mockResolvedValue([]);
         profileServiceMocks.loadNotificationPreferences.mockResolvedValue({ liveChat: true, liveScore: false, schedule: true });
         profileServiceMocks.saveNotificationPreferences.mockResolvedValue({ liveChat: true, liveScore: false, schedule: true });

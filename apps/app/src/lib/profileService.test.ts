@@ -9,6 +9,7 @@ const dbMocks = vi.hoisted(() => ({
     getNotificationPreferencesForTeam: vi.fn(),
     getParentTeams: vi.fn(),
     getUserAccessCodes: vi.fn(),
+    getUserAccessCodesPage: vi.fn(),
     getUserProfile: vi.fn(),
     getUserTeamsWithAccess: vi.fn(),
     saveNotificationPreferencesForTeam: vi.fn(),
@@ -37,7 +38,7 @@ vi.mock('../../../../js/team-visibility.js', () => ({
 }));
 
 import { normalizeProfilePhoto } from './profilePhotoService';
-import { requestAccountMerge } from './profileService';
+import { loadProfileAccessCodesPage, requestAccountMerge } from './profileService';
 
 it('routes handled profile-service failures through the shared logger helper', () => {
     const profileServiceSource = readFileSync('src/lib/profileService.ts', 'utf8');
@@ -106,6 +107,36 @@ describe('requestAccountMerge', () => {
         expect(dbMocks.createAccountMergeRequest).toHaveBeenCalledWith('user-1', {
             primaryEmail: 'parent@example.com',
             secondaryEmail: 'child@example.com'
+        });
+    });
+});
+
+describe('loadProfileAccessCodesPage', () => {
+    beforeEach(() => {
+        vi.clearAllMocks();
+    });
+
+    it('uses the bounded access-code page helper with cursor and page size', async () => {
+        const cursor = { id: 'cursor' };
+        dbMocks.getUserAccessCodesPage.mockResolvedValue({
+            codes: [{ id: 'code-1', code: 'ACTIVE123' }],
+            nextCursor: null
+        });
+
+        await expect(loadProfileAccessCodesPage('user-1', { cursor, pageSize: 3 })).resolves.toEqual({
+            codes: [{ id: 'code-1', code: 'ACTIVE123' }],
+            nextCursor: null
+        });
+
+        expect(dbMocks.getUserAccessCodesPage).toHaveBeenCalledWith('user-1', { cursor, pageSize: 3 });
+    });
+
+    it('falls back to a safe empty result when the access-code page helper returns no page payload', async () => {
+        dbMocks.getUserAccessCodesPage.mockResolvedValue(undefined);
+
+        await expect(loadProfileAccessCodesPage('user-1')).resolves.toEqual({
+            codes: [],
+            nextCursor: null
         });
     });
 });

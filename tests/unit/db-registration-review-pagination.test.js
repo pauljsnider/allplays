@@ -17,9 +17,13 @@ describe('registration review pagination query', () => {
     });
 
     it('keeps Firestore indexes aligned with submittedAt pagination', () => {
-        const indexes = readSource('firestore.indexes.json');
+        const { indexes } = JSON.parse(readSource('firestore.indexes.json'));
+        const registrationIndexes = indexes.filter((index) => index.collectionGroup === 'registrations');
+        const registrationFieldPaths = registrationIndexes.flatMap((index) =>
+            index.fields.map((field) => `${field.fieldPath}:${field.order ?? field.arrayConfig ?? 'none'}`)
+        );
 
-        expect(indexes).toContain('{ "fieldPath": "submittedAt", "order": "DESCENDING" }');
-        expect(indexes).not.toContain('{ "fieldPath": "createdAt", "order": "DESCENDING" }');
+        expect(registrationFieldPaths).toContain('submittedAt:DESCENDING');
+        expect(registrationFieldPaths).not.toContain('createdAt:DESCENDING');
     });
 });

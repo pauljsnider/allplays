@@ -3651,6 +3651,31 @@ export async function getUserAccessCodes(userId) {
     });
 }
 
+export async function getUserAccessCodesPage(userId, options = {}) {
+    const rawPageSize = Number(options.pageSize);
+    const pageSize = Number.isFinite(rawPageSize)
+        ? Math.min(Math.max(Math.floor(rawPageSize), 1), 50)
+        : 10;
+    const constraints = [
+        where("generatedBy", "==", userId),
+        orderBy("createdAt", "desc")
+    ];
+    if (options.cursor) {
+        constraints.push(startAfter(options.cursor));
+    }
+    constraints.push(limit(pageSize));
+    const q = query(
+        collection(db, "accessCodes"),
+        ...constraints
+    );
+    const snapshot = await getDocs(q);
+    const codes = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+    return {
+        codes,
+        nextCursor: snapshot.docs.length === pageSize ? snapshot.docs[snapshot.docs.length - 1] : null
+    };
+}
+
 export async function getTeamAccessCodes(teamId) {
     const normalizedTeamId = String(teamId || '').trim();
     if (!normalizedTeamId) {
