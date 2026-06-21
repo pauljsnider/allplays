@@ -10,7 +10,22 @@ const scheduleServiceMocks = vi.hoisted(() => ({
   cancelScheduledGameForApp: vi.fn(),
   claimParentScheduleAssignmentSlot: vi.fn(),
   createParentScheduleRideOffer: vi.fn(),
+  loadScheduleStatTrackerConfigsForApp: vi.fn<(...args: any[]) => Promise<any[]>>(() => Promise.resolve([{ id: 'cfg-basketball', name: 'Basketball' }])),
   loadParentPracticePacket: vi.fn(),
+  loadStaffPracticePacket: vi.fn<(...args: any[]) => Promise<any>>(() => Promise.resolve({
+    sessionId: 'session-1',
+    teamId: 'team-1',
+    eventId: 'practice-1',
+    title: 'Practice',
+    date: new Date('2026-06-04T18:00:00Z'),
+    location: 'Main Gym',
+    packetTitle: 'Practice home packet',
+    dueDate: null,
+    totalMinutes: 0,
+    homePacket: { blocks: [], totalMinutes: 0 },
+    completions: [],
+    children: [{ id: 'player-1', name: 'Avery Smith' }]
+  })),
   loadStaffPracticeAttendance: vi.fn(),
   loadParentScheduleAssignments: vi.fn(),
   loadParentScheduleEventDetail: vi.fn(),
@@ -34,10 +49,25 @@ const scheduleServiceMocks = vi.hoisted(() => ({
   undoRecordedPlayerGameStat: vi.fn(),
   saveScheduledGameLineupDraftForApp: vi.fn(),
   saveStaffPracticeAttendance: vi.fn(),
+  saveStaffPracticePacket: vi.fn<(...args: any[]) => Promise<any>>(() => Promise.resolve({
+    sessionId: 'session-1',
+    teamId: 'team-1',
+    eventId: 'practice-1',
+    title: 'Practice',
+    date: new Date('2026-06-04T18:00:00Z'),
+    location: 'Main Gym',
+    packetTitle: 'Practice home packet',
+    dueDate: null,
+    totalMinutes: 10,
+    homePacket: { blocks: [{ drillTitle: 'Home Drill 1', duration: 10 }], totalMinutes: 10 },
+    completions: [],
+    children: [{ id: 'player-1', name: 'Avery Smith' }]
+  })),
   completeGameWrapupForApp: vi.fn(),
   loadGameDayLiveEventsForApp: vi.fn<(...args: any[]) => Promise<any[]>>(() => Promise.resolve([] as any[])),
   saveGameDaySubstitutionForApp: vi.fn((_teamId, _gameId, _user, payload) => Promise.resolve(payload)),
   updateGameScore: vi.fn(),
+  updateScheduledGameForApp: vi.fn<(...args: any[]) => Promise<any>>(() => Promise.resolve({ updated: true, eventId: 'game-1' })),
   updateLiveGameClockState: vi.fn(),
   buildLiveGameClockPeriods: vi.fn((game: any) => game?.gamePlan?.numPeriods === 4 ? ['Q1', 'Q2', 'Q3', 'Q4'] : ['H1', 'H2']),
   resolveLiveGameClockSnapshot: vi.fn((game: any, now = new Date()) => {
@@ -1666,6 +1696,49 @@ describe('ScheduleEventDetail practice timeline', () => {
     await waitFor(() => {
       expect(screen.getByText('Shorten the water break', { exact: false })).toBeTruthy();
     });
+  });
+
+  it('preserves UTC midnight packet due dates as calendar dates in the date input', async () => {
+    scheduleServiceMocks.loadParentScheduleEventDetail.mockResolvedValue({
+      events: [buildEvent({
+        id: 'practice-1',
+        type: 'practice',
+        title: 'Thursday Practice',
+        isTeamStaff: true,
+        isTeamAdmin: true,
+        practiceSessionId: 'session-1'
+      })],
+      children: []
+    });
+    scheduleServiceMocks.loadParentPracticePacket.mockResolvedValue(null);
+    scheduleServiceMocks.loadStaffPracticeAttendance.mockResolvedValue(null);
+    scheduleServiceMocks.loadStaffPracticePacket.mockResolvedValue({
+      sessionId: 'session-1',
+      teamId: 'team-1',
+      eventId: 'practice-1',
+      title: 'Practice',
+      date: new Date('2026-06-04T18:00:00Z'),
+      location: 'Main Gym',
+      packetTitle: 'Practice home packet',
+      dueDate: '2026-05-24T00:00:00.000Z',
+      totalMinutes: 0,
+      homePacket: { blocks: [], totalMinutes: 0 },
+      completions: [],
+      children: [{ id: 'player-1', name: 'Avery Smith' }]
+    });
+
+    renderScheduleEventDetail();
+
+    await waitFor(() => {
+      expect(screen.getAllByRole('button', { name: 'More' }).length).toBeGreaterThan(0);
+    });
+    fireEvent.click(screen.getAllByRole('button', { name: 'More' })[0]);
+
+    await waitFor(() => {
+      expect(screen.getByText('Assign practice packet')).toBeTruthy();
+    });
+
+    expect(screen.getByLabelText('Due date')).toHaveValue('2026-05-24');
   });
 
   it('shows the practice packet first and hides the timeline for non-admin practice viewers', async () => {

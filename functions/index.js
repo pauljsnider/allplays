@@ -104,6 +104,15 @@ const {
   getEventTitle,
   formatScheduleUpdateDate
 } = require('./schedule-notification-utils.cjs');
+const {
+  assertSportsConnectSyncConfig,
+  buildSportsConnectRegistrationSnapshot,
+  buildSportsConnectSyncErrorUpdate,
+  buildSportsConnectTeamUpdate,
+  fetchSportsConnectRegistrationPayload,
+  getRegistrationSource,
+  getTeamSportsConnectConfig
+} = require('./sports-connect-registration-sync.cjs');
 
 if (admin.apps.length === 0) {
   admin.initializeApp();
@@ -845,6 +854,90 @@ function hasTeamAdminAccess({ team, user = {}, uid, email }) {
   const adminEmails = Array.isArray(team?.adminEmails) ? team.adminEmails.map((entry) => String(entry || '').trim().toLowerCase()) : [];
   return Boolean(uid && team?.ownerId === uid) || Boolean(normalizedEmail && adminEmails.includes(normalizedEmail));
 }
+
+function getSportsConnectFunctionsConfig() {
+  const sportsConnectConfig = functions.config()?.sports_connect || {};
+  return {
+    endpointTemplate: process.env.SPORTS_CONNECT_REGISTRATION_SNAPSHOT_URL ||
+      process.env.SPORTS_CONNECT_REGISTRATION_BASE_URL ||
+      sportsConnectConfig.registration_snapshot_url ||
+      sportsConnectConfig.registration_base_url,
+    accessToken: process.env.SPORTS_CONNECT_API_TOKEN ||
+      sportsConnectConfig.api_token ||
+      sportsConnectConfig.token
+  };
+}
+
+function toHttpsError(error, fallbackCode = 'internal') {
+  if (error instanceof functions.https.HttpsError) return error;
+  const code = error?.code && typeof error.code === 'string' ? error.code : fallbackCode;
+  return new functions.https.HttpsError(code, error?.message || 'Request failed.');
+}
+
+exports.syncRegistrationProvider = functions.https.onCall(async (data, context) => {
+  if (!context.auth) {
+    throw new functions.https.HttpsError('unauthenticated', 'Sign in to sync registration data.');
+  }
+
+  const teamId = String(data?.teamId || '').trim();
+  if (!teamId) {
+    throw new functions.https.HttpsError('invalid-argument', 'Team ID is required.');
+  }
+
+  const teamRef = firestore.doc(`teams/${teamId}`);
+  const [teamSnap, userSnap] = await Promise.all([
+    teamRef.get(),
+    firestore.doc(`users/${context.auth.uid}`).get()
+  ]);
+  if (!teamSnap.exists) {
+    throw new functions.https.HttpsError('not-found', 'Team not found.');
+  }
+
+  const team = teamSnap.data() || {};
+  const user = userSnap.exists ? userSnap.data() || {} : {};
+  const callerEmail = String(context.auth.token?.email || '').trim().toLowerCase();
+  if (!hasTeamAdminAccess({ team, user, uid: context.auth.uid, email: callerEmail })) {
+    throw new functions.https.HttpsError('permission-denied', 'Only team owners and admins can sync registration data.');
+  }
+
+  const existingSource = getRegistrationSource(team);
+  const syncConfig = getTeamSportsConnectConfig(team, getSportsConnectFunctionsConfig());
+  try {
+    assertSportsConnectSyncConfig(syncConfig);
+    const payload = await fetchSportsConnectRegistrationPayload(syncConfig);
+    const nowIso = new Date().toISOString();
+    const snapshot = buildSportsConnectRegistrationSnapshot(payload, {
+      externalTeamId: syncConfig.externalTeamId,
+      fetchedAt: nowIso
+    });
+    const update = buildSportsConnectTeamUpdate({
+      existingSource,
+      snapshot,
+      nowIso
+    });
+    update.registrationSource.teamId = teamId;
+    update.registrationSource.lastSyncBy = context.auth.uid;
+    update.registrationSource.lastSyncByEmail = callerEmail || null;
+    await teamRef.set(update, { merge: true });
+    return {
+      success: true,
+      teamId,
+      provider: 'Sports Connect',
+      externalTeamId: snapshot.externalTeamId,
+      playerCount: snapshot.playerCount,
+      fetchedAt: snapshot.fetchedAt
+    };
+  } catch (error) {
+    const nowIso = new Date().toISOString();
+    await teamRef.set(buildSportsConnectSyncErrorUpdate(existingSource, error?.message, nowIso), { merge: true }).catch((writeError) => {
+      functions.logger.warn('Failed to record Sports Connect sync error state.', {
+        teamId,
+        error: writeError?.message || String(writeError)
+      });
+    });
+    throw toHttpsError(error, 'unavailable');
+  }
+});
 
 function normalizeOrganizationDraftSlot(slot = {}) {
   const homeTeamId = String(slot.homeTeamId || '').trim();
@@ -3656,6 +3749,70 @@ function hasPracticePacketContent(packet = null) {
   return Array.isArray(packet?.blocks) && packet.blocks.length > 0;
 }
 
+function collectPracticePacketAssignedPlayerIds(packet = {}, session = {}) {
+  const playerIds = new Set();
+  const collectValue = (value) => {
+    if (!value) return;
+    if (Array.isArray(value)) {
+      value.forEach(collectValue);
+      return;
+    }
+    if (typeof value === 'object') {
+      collectValue(value.playerId || value.childId || value.id);
+      return;
+    }
+    const normalized = String(value || '').trim();
+    if (normalized) {
+      playerIds.add(normalized);
+    }
+  };
+
+  [
+    packet.playerIds,
+    packet.assignedPlayerIds,
+    packet.targetPlayerIds,
+    packet.childIds,
+    packet.players,
+    packet.assignedPlayers,
+    session.playerIds,
+    session.assignedPlayerIds,
+    session.targetPlayerIds
+  ].forEach(collectValue);
+
+  return Array.from(playerIds);
+}
+
+async function resolvePracticePacketAssignedParentUserIds(teamId, packet = {}, session = {}) {
+  const directParentUserIds = [
+    packet.parentUserIds,
+    packet.recipientUserIds,
+    packet.assignedParentUserIds
+  ].flatMap((value) => (Array.isArray(value) ? value : [value]))
+    .map((value) => String(value || '').trim())
+    .filter(Boolean);
+  const assignedPlayerIds = collectPracticePacketAssignedPlayerIds(packet, session);
+
+  if (!directParentUserIds.length && !assignedPlayerIds.length) {
+    return null;
+  }
+
+  const userIds = new Set(directParentUserIds);
+  const parentLookups = await Promise.allSettled(
+    assignedPlayerIds.map((playerId) => firestore.collection('users')
+      .where('parentPlayerKeys', 'array-contains', `${teamId}::${playerId}`)
+      .get())
+  );
+  parentLookups.forEach((result) => {
+    if (result.status !== 'fulfilled') return;
+    (result.value.docs || []).forEach((docSnap) => {
+      const uid = String(docSnap.id || '').trim();
+      if (uid) userIds.add(uid);
+    });
+  });
+
+  return Array.from(userIds);
+}
+
 function getCertificateNotificationPlayerKey(certificate = {}, teamId = '') {
   const resolvedTeamId = String(certificate.teamId || teamId || '').trim();
   const playerId = String(certificate.playerId || certificate.childId || '').trim();
@@ -3775,23 +3932,29 @@ async function practicePacketAssignedNotification(beforeData = null, afterData =
   }
 
   const { teamId, sessionId } = context.params || {};
-  const [allPracticeTargets, candidateUsers] = await Promise.all([
+  const [allPracticeTargets, candidateUsers, assignedParentUserIds] = await Promise.all([
     getTargetsForCategory(teamId, 'practice', null),
-    getCandidateUsersForTeam(teamId)
+    getCandidateUsersForTeam(teamId),
+    resolvePracticePacketAssignedParentUserIds(teamId, afterPacket, afterData)
   ]);
   const parentUserIds = new Set(
     candidateUsers
       .filter((user) => Array.isArray(user?.roles) && user.roles.includes('parent'))
       .map((user) => user.uid)
   );
-  const parentTargets = allPracticeTargets.filter((target) => parentUserIds.has(target.uid));
+  const assignedParentUserIdSet = Array.isArray(assignedParentUserIds) ? new Set(assignedParentUserIds) : null;
+  const parentTargets = allPracticeTargets.filter((target) => (
+    parentUserIds.has(target.uid)
+    && (!assignedParentUserIdSet || assignedParentUserIdSet.has(target.uid))
+  ));
 
   if (!parentTargets.length) {
     functions.logger.warn('notifyPracticePacketAssigned found no practice-enabled parent targets.', {
       teamId,
       sessionId,
       totalPracticeTargets: allPracticeTargets.length,
-      parentUserCount: parentUserIds.size
+      parentUserCount: parentUserIds.size,
+      assignedParentUserCount: assignedParentUserIdSet ? assignedParentUserIdSet.size : null
     });
     return null;
   }

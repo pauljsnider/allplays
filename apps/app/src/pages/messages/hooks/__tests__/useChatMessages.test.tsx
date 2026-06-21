@@ -83,6 +83,12 @@ describe('useChatMessages', () => {
         });
     });
 
+    it('falls back to the default conversation when the selected id is blank', async () => {
+        render(<MessagesProbe conversationId="" />);
+
+        expect(subscribeToTeamChatMessages).toHaveBeenCalledWith('team-1', 'team', expect.any(Function), expect.any(Function));
+    });
+
     it('subscribes to the selected conversation and exposes live messages', async () => {
         render(<MessagesProbe conversationId="staff" />);
 

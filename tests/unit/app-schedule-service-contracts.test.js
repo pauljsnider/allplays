@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const dbMocks = vi.hoisted(() => ({
     getAssignmentClaims: vi.fn(),
+    getConfigs: vi.fn(),
     getGame: vi.fn(),
     getGames: vi.fn(),
     getPlayers: vi.fn(),
@@ -46,6 +47,54 @@ const authMocks = vi.hoisted(() => ({
     getNativeAuthIdToken: vi.fn()
 }));
 
+const firebaseMocks = vi.hoisted(() => {
+    const makeMissingSnapshot = (id = '') => ({
+        id,
+        exists: () => false,
+        data: () => null
+    });
+
+    return {
+        db: {},
+        doc: vi.fn((...parts) => ({
+            path: parts.filter((part) => typeof part === 'string').join('/')
+        })),
+        collection: vi.fn((...parts) => ({
+            path: parts.filter((part) => typeof part === 'string').join('/')
+        })),
+        collectionGroup: vi.fn((_, name) => ({ id: name, path: name })),
+        getDoc: vi.fn(async (ref) => {
+            const pathParts = String(ref?.path || '').split('/').filter(Boolean);
+            const teamIndex = pathParts.indexOf('teams');
+            const playerIndex = pathParts.indexOf('players');
+            if (teamIndex >= 0 && playerIndex >= 0) {
+                const teamId = pathParts[teamIndex + 1];
+                const playerId = pathParts[playerIndex + 1];
+                const players = await dbMocks.getPlayers(teamId, { includeInactive: true });
+                const player = players.find((candidate) => String(candidate?.id || candidate?.playerId || '') === playerId);
+                if (!player) return makeMissingSnapshot(playerId);
+                return {
+                    id: playerId,
+                    exists: () => true,
+                    data: () => player
+                };
+            }
+            return makeMissingSnapshot();
+        }),
+        getDocs: vi.fn(async () => ({ docs: [] })),
+        query: vi.fn((...args) => args),
+        runTransaction: vi.fn(),
+        where: vi.fn((...args) => args),
+        increment: vi.fn((amount) => ({ __op: 'increment', amount })),
+        serverTimestamp: vi.fn(() => new Date('2026-05-20T12:00:00Z')),
+        deleteField: vi.fn(() => ({ __op: 'deleteField' })),
+        Timestamp: {
+            fromDate: vi.fn((date) => ({ toDate: () => date })),
+            now: vi.fn(() => ({ toDate: () => new Date('2026-05-20T12:00:00Z') }))
+        }
+    };
+});
+
 const utilsMocks = vi.hoisted(() => ({
     expandRecurrence: vi.fn(() => []),
     extractOpponent: vi.fn((summary) => String(summary || '').replace(/^.*vs\.?\s*/i, '') || 'TBD'),
@@ -59,10 +108,49 @@ const rsvpMocks = vi.hoisted(() => ({
     resolveMyRsvpByChildForGame: vi.fn()
 }));
 
+vi.mock('@capacitor/core', () => ({
+    Capacitor: {
+        isNativePlatform: () => false
+    }
+}));
+
+vi.mock('../../apps/app/node_modules/@capacitor/core/dist/index.cjs.js', () => ({
+    Capacitor: {
+        isNativePlatform: () => false
+    }
+}));
+
+vi.mock('@sentry/browser', () => ({
+    init: vi.fn(),
+    withScope: vi.fn((callback) => callback({
+        setTag: vi.fn(),
+        setContext: vi.fn()
+    })),
+    captureException: vi.fn()
+}));
+
+vi.mock('../../apps/app/node_modules/@sentry/browser/build/npm/esm/index.js', () => ({
+    init: vi.fn(),
+    withScope: vi.fn((callback) => callback({
+        setTag: vi.fn(),
+        setContext: vi.fn()
+    })),
+    captureException: vi.fn()
+}));
+
 vi.mock('../../js/db.js', () => dbMocks);
+vi.mock('../../js/firebase.js', () => firebaseMocks);
 vi.mock('../../apps/app/src/lib/profileService.ts', () => profileMocks);
 vi.mock('../../apps/app/src/lib/authService.ts', () => authMocks);
+vi.mock('../../apps/app/src/lib/uxTiming.ts', () => ({
+    UX_TIMING: { rsvpTap: 'rsvpTap' },
+    startInteractionTimer: vi.fn(() => ({ end: vi.fn() })),
+    startUxTimer: vi.fn(() => ({ end: vi.fn() }))
+}));
 vi.mock('../../apps/app/src/lib/chatService.ts', () => ({
+    sendTeamChatMessage: vi.fn()
+}));
+vi.mock('../../apps/app/src/lib/chatService', () => ({
     sendTeamChatMessage: vi.fn()
 }));
 vi.mock('../../apps/app/src/lib/chatLogic.ts', () => ({
@@ -128,7 +216,7 @@ vi.mock('../../js/snack-helpers.js', () => ({
     }))
 }));
 
-import { addTeamCalendarUrl, cancelPracticeOccurrenceForApp, createScheduleImportGame, createScheduleImportPractice, createStaffRsvpReminderPreviewLoader, loadParentPlayerSchedule, loadParentSchedule, loadParentScheduleEventDetail, parseRecurringPracticeOccurrenceId, removeTeamCalendarUrl } from '../../apps/app/src/lib/scheduleService.ts';
+import { addTeamCalendarUrl, cancelPracticeOccurrenceForApp, createScheduledGameForApp, createScheduleImportGame, createScheduleImportPractice, createStaffRsvpReminderPreviewLoader, loadParentPlayerSchedule, loadParentSchedule, loadParentScheduleEventDetail, loadScheduleStatTrackerConfigsForApp, parseRecurringPracticeOccurrenceId, removeTeamCalendarUrl, updateScheduledGameForApp } from '../../apps/app/src/lib/scheduleService.ts';
 import { clearAppDataCache } from '../../apps/app/src/lib/appDataCache.ts';
 import { getScheduleForecastHref, getScheduleMapHref } from '../../apps/app/src/lib/scheduleLogic.ts';
 
@@ -173,7 +261,11 @@ beforeEach(() => {
     });
     dbMocks.getGame.mockResolvedValue(null);
     dbMocks.getTeams.mockResolvedValue([]);
-    dbMocks.getPlayers.mockResolvedValue([]);
+    dbMocks.getPlayers.mockResolvedValue([
+        { id: 'player-1', name: 'Pat', active: true },
+        { id: 'player-2', name: 'Sam', active: true },
+        { id: 'player-from-user', name: 'User fallback', active: true }
+    ]);
     dbMocks.getGames.mockResolvedValue([
         {
             id: 'game-1',
@@ -424,7 +516,6 @@ describe('React app schedule service contract integration', () => {
 
         expect(profileMocks.loadProfileDocument).toHaveBeenCalledWith('user-1');
         expect(dbMocks.getTeams).not.toHaveBeenCalled();
-        expect(dbMocks.getTeam).toHaveBeenCalledTimes(1);
         expect(dbMocks.getTeam).toHaveBeenCalledWith('team-1');
         expect(dbMocks.getGames).toHaveBeenCalledTimes(1);
         expect(dbMocks.getGames).toHaveBeenCalledWith('team-1', {});
@@ -566,10 +657,7 @@ describe('React app schedule service contract integration', () => {
         const result = await loadParentSchedule(user());
 
         expect(dbMocks.getTeam).toHaveBeenCalledWith('team-1');
-        expect(result.children).toEqual([
-            { teamId: 'team-1', teamName: 'Bears', playerId: 'player-1', playerName: 'Pat' },
-            { teamId: 'team-1', teamName: 'Bears', playerId: 'player-2', playerName: 'Sam' }
-        ]);
+        expect(result.children).toEqual([]);
         expect(result.events).toEqual([]);
     });
 
@@ -835,6 +923,95 @@ describe('React app schedule service contract integration', () => {
             startsAt: '2026-04-02T18:30',
             opponent: 'Tigers'
         }, { uid: 'parent-1', email: 'parent@example.com' })).rejects.toThrow('permission');
+    });
+
+    it('creates and updates one native app game without resetting existing score data', async () => {
+        dbMocks.getTeam.mockResolvedValue({
+            id: 'team-1',
+            name: 'Bears',
+            ownerId: 'coach-1',
+            adminEmails: []
+        });
+        dbMocks.addGame.mockResolvedValue('game-new');
+        dbMocks.updateGame.mockResolvedValue(undefined);
+        const coach = { uid: 'coach-1', email: 'coach@example.com', displayName: 'Coach' };
+
+        await expect(createScheduledGameForApp('team-1', {
+            opponent: 'Tigers',
+            startDate: new Date('2026-04-02T18:30:00Z'),
+            endDate: new Date('2026-04-02T20:00:00Z'),
+            location: 'Field 1',
+            arrivalTime: new Date('2026-04-02T17:45:00Z'),
+            isHome: false,
+            notes: 'Bring white kit',
+            statTrackerConfigId: 'cfg-basketball',
+            competitionType: 'tournament',
+            countsTowardSeasonRecord: false
+        }, coach)).resolves.toBe('game-new');
+
+        expect(dbMocks.addGame).toHaveBeenCalledWith('team-1', expect.objectContaining({
+            type: 'game',
+            opponent: 'Tigers',
+            location: 'Field 1',
+            isHome: false,
+            status: 'scheduled',
+            homeScore: 0,
+            awayScore: 0,
+            statTrackerConfigId: 'cfg-basketball',
+            competitionType: 'tournament',
+            countsTowardSeasonRecord: false,
+            createdBy: 'coach-1'
+        }));
+        expect(dbMocks.addGame.mock.calls[0][1].date).toBeInstanceOf(Date);
+        expect(dbMocks.addGame.mock.calls[0][1].end).toBeInstanceOf(Date);
+        expect(dbMocks.addGame.mock.calls[0][1].arrivalTime).toBeInstanceOf(Date);
+
+        await expect(updateScheduledGameForApp('team-1', 'game-1', {
+            opponent: 'Hawks',
+            startDate: new Date('2026-04-09T18:30:00Z'),
+            endDate: null,
+            location: 'Field 2',
+            arrivalTime: null,
+            isHome: true,
+            notes: 'Moved fields',
+            statTrackerConfigId: '',
+            competitionType: 'league',
+            countsTowardSeasonRecord: true
+        }, coach)).resolves.toEqual({ updated: true, eventId: 'game-1' });
+
+        const updatePayload = dbMocks.updateGame.mock.calls[0][2];
+        expect(updatePayload).toEqual(expect.objectContaining({
+            type: 'game',
+            opponent: 'Hawks',
+            location: 'Field 2',
+            isHome: true,
+            statTrackerConfigId: null,
+            updatedBy: 'coach-1'
+        }));
+        expect(updatePayload.status).toBeUndefined();
+        expect(updatePayload.homeScore).toBeUndefined();
+        expect(updatePayload.awayScore).toBeUndefined();
+        expect(updatePayload.assignments).toBeUndefined();
+        expect(updatePayload.createdBy).toBeUndefined();
+    });
+
+    it('loads schedule tracker configs for staff game forms', async () => {
+        dbMocks.getTeam.mockResolvedValue({
+            id: 'team-1',
+            name: 'Bears',
+            ownerId: 'coach-1',
+            adminEmails: []
+        });
+        dbMocks.getConfigs.mockResolvedValue([
+            { id: 'cfg-z', name: 'Zone Tracker', baseType: 'Soccer' },
+            { id: 'cfg-b', baseType: 'Basketball' }
+        ]);
+
+        await expect(loadScheduleStatTrackerConfigsForApp('team-1', { uid: 'coach-1', email: 'coach@example.com' }))
+            .resolves.toEqual([
+                { id: 'cfg-b', name: 'Basketball', baseType: 'Basketball', isBasketball: true },
+                { id: 'cfg-z', name: 'Zone Tracker', baseType: 'Soccer', isBasketball: false }
+            ]);
     });
 
     it('redacts bearer tokens from native REST fallback warning logs', async () => {

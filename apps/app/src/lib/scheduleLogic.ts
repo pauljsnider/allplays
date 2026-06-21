@@ -84,11 +84,13 @@ export type ScheduleRideOffer = {
 };
 
 export type PracticePacketBlock = {
+  drillId?: string | null;
   type?: string | null;
   duration?: string | number | null;
   drillTitle?: string | null;
   title?: string | null;
   description?: string | null;
+  notes?: string | null;
 };
 
 export type PracticeHomePacket = {
@@ -153,6 +155,7 @@ export type ParentScheduleEvent = {
   seasonLabel?: string | null;
   competitionType?: string | null;
   countsTowardSeasonRecord?: boolean | null;
+  statTrackerConfigId?: string | null;
   sourceType?: ScheduleSourceType | string | null;
   sourceLabel?: string | null;
   isImported?: boolean;

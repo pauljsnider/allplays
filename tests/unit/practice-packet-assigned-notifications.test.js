@@ -31,12 +31,21 @@ function buildHarness({
     categories = ['practice', 'schedule'],
     targets = [],
     users = [],
+    parentUserIdsByPlayerKey = {},
     sendResult = null
 } = {}) {
     const sendDirectTargetsNotification = vi.fn(() => sendResult || Promise.resolve({ successCount: 1, failureCount: 0 }));
     const getTargetsForCategory = vi.fn(async () => targets);
     const getCandidateUsersForTeam = vi.fn(async () => users);
-    const firestore = {};
+    const firestore = {
+        collection: vi.fn((_path) => ({
+            where: vi.fn((_field, _op, playerKey) => ({
+                get: vi.fn(async () => ({
+                    docs: (parentUserIdsByPlayerKey[playerKey] || []).map((uid) => ({ id: uid }))
+                }))
+            }))
+        }))
+    };
     const functions = {
         firestore: {
             document: vi.fn(() => ({
@@ -72,6 +81,7 @@ function buildHarness({
     return {
         trigger,
         functions,
+        firestore,
         getTargetsForCategory,
         getCandidateUsersForTeam,
         sendDirectTargetsNotification
@@ -79,7 +89,7 @@ function buildHarness({
 }
 
 describe('notifyPracticePacketAssigned trigger', () => {
-    it('fires from the practice session write and targets only parent devices', async () => {
+    it('fires from the practice session write and targets only parents linked to assigned players', async () => {
         const harness = buildHarness({
             targets: [
                 { uid: 'parent-1', token: 'parent-1-token', teamId: 'team-1' },
@@ -90,7 +100,10 @@ describe('notifyPracticePacketAssigned trigger', () => {
                 { uid: 'parent-1', roles: ['parent'] },
                 { uid: 'parent-2', roles: ['parent'] },
                 { uid: 'staff-1', roles: ['staff'] }
-            ]
+            ],
+            parentUserIdsByPlayerKey: {
+                'team-1::player-1': ['parent-1']
+            }
         });
 
         await harness.trigger({
@@ -105,6 +118,7 @@ describe('notifyPracticePacketAssigned trigger', () => {
                     eventId: 'practice-44',
                     date: '2026-06-21',
                     homePacketContent: {
+                        assignedPlayerIds: ['player-1'],
                         blocks: [{ id: 'block-1', title: 'Ball handling' }],
                         totalMinutes: 20,
                         updatedAt: '2026-06-19T20:15:00.000Z'
@@ -117,10 +131,10 @@ describe('notifyPracticePacketAssigned trigger', () => {
 
         expect(harness.getTargetsForCategory).toHaveBeenCalledWith('team-1', 'practice', null);
         expect(harness.getCandidateUsersForTeam).toHaveBeenCalledWith('team-1');
+        expect(harness.firestore.collection).toHaveBeenCalledWith('users');
         expect(harness.sendDirectTargetsNotification).toHaveBeenCalledWith(expect.objectContaining({
             targets: [
-                { uid: 'parent-1', token: 'parent-1-token', teamId: 'team-1' },
-                { uid: 'parent-2', token: 'parent-2-token', teamId: 'team-1' }
+                { uid: 'parent-1', token: 'parent-1-token', teamId: 'team-1' }
             ],
             category: 'practice',
             title: 'Practice packet ready',

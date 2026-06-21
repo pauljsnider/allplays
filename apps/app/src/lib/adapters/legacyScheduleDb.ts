@@ -9,6 +9,7 @@ import {
     claimOpenOfficiatingSlot as legacyClaimOpenOfficiatingSlot,
     closeRideOffer as legacyCloseRideOffer,
     createRideOffer as legacyCreateRideOffer,
+    getConfigs as legacyGetConfigs,
     getAssignmentClaims as legacyGetAssignmentClaims,
     getGame as legacyGetGame,
     getGames as legacyGetGames,
@@ -33,9 +34,11 @@ import {
     updateGame as legacyUpdateGame,
     updateOccurrence as legacyUpdateOccurrence,
     updatePracticeAttendance as legacyUpdatePracticeAttendance,
+    updatePracticeSession as legacyUpdatePracticeSession,
     updateRideRequestStatus as legacyUpdateRideRequestStatus,
     updateSeries as legacyUpdateSeries,
     updateTeam as legacyUpdateTeam,
+    upsertPracticeSessionForEvent as legacyUpsertPracticeSessionForEvent,
     upsertPracticePacketCompletion as legacyUpsertPracticePacketCompletion,
     listRideOffersForEvent as legacyListRideOffersForEvent
 } from '../../../../../js/db.js';
@@ -45,6 +48,7 @@ import {
     db as legacyFirebaseDb,
     doc as legacyFirebaseDoc,
     deleteField as legacyFirebaseDeleteField,
+    getDoc as legacyFirebaseGetDoc,
     getDocs as legacyFirebaseGetDocs,
     increment as legacyFirebaseIncrement,
     query as legacyFirebaseQuery,
@@ -58,6 +62,7 @@ export const db = legacyFirebaseDb;
 export const doc = legacyFirebaseDoc;
 export const collection = legacyFirebaseCollection;
 export const collectionGroup = legacyFirebaseCollectionGroup;
+export const getDoc = legacyFirebaseGetDoc;
 export const getDocs = legacyFirebaseGetDocs;
 export const query = legacyFirebaseQuery;
 export const runTransaction = legacyFirebaseRunTransaction;
@@ -85,6 +90,10 @@ export async function getGames(teamId: string, options: GamesQueryOptions = {}) 
     return await Promise.resolve(legacyGetGames(teamId, options));
 }
 
+export async function getConfigs(teamId: string) {
+    return await Promise.resolve(legacyGetConfigs(teamId));
+}
+
 export async function getPracticePacketCompletions(teamId: string, sessionId: string) {
     return await Promise.resolve(legacyGetPracticePacketCompletions(teamId, sessionId));
 }
@@ -99,6 +108,14 @@ export async function getPracticeSessionByEvent(teamId: string, eventId: string)
 
 export async function getPracticeSessions(teamId: string) {
     return await Promise.resolve(legacyGetPracticeSessions(teamId));
+}
+
+export async function updatePracticeSession(teamId: string, sessionId: string, payload: Record<string, unknown>) {
+    return await Promise.resolve(legacyUpdatePracticeSession(teamId, sessionId, payload));
+}
+
+export async function upsertPracticeSessionForEvent(teamId: string, eventId: string, payload: Record<string, unknown>) {
+    return await Promise.resolve(legacyUpsertPracticeSessionForEvent(teamId, eventId, payload));
 }
 
 export async function getPlayers(teamId: string, options?: { includeInactive?: boolean }) {

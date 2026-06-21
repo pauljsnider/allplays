@@ -1,6 +1,7 @@
 import {
   getAssignmentClaims,
   claimOpenOfficiatingSlot,
+  getConfigs,
   getGame,
   getGames,
   getPracticePacketCompletions,
@@ -29,7 +30,9 @@ import {
   getLiveEvents,
   updateGame,
   updatePracticeAttendance,
+  updatePracticeSession,
   updateTeam,
+  upsertPracticeSessionForEvent,
   upsertPracticePacketCompletion,
   postChatMessage,
   postSharedGameCancellationNotification,
@@ -39,6 +42,7 @@ import {
   doc,
   collection,
   collectionGroup,
+  getDoc,
   getDocs,
   query,
   runTransaction,
@@ -135,6 +139,7 @@ const buildPracticePacketCompletionPayloadBase = buildPracticePacketCompletionPa
 
 const primaryDataTimeoutMs = 5000;
 const parentScheduleTeamConcurrency = 3;
+const parentSchedulePlayerConcurrency = 8;
 const scheduleHydrationCacheTtlMs = 30 * 1000;
 const parentHomeHydrationLookAheadMs = 14 * 24 * 60 * 60 * 1000;
 const parentHomeHydrationLookBehindMs = 12 * 60 * 60 * 1000;
@@ -165,6 +170,12 @@ export type ParentScheduleChild = {
   teamName: string;
   playerId: string;
   playerName: string;
+};
+
+type ParentScopeLink = ParentScheduleChild & {
+  playerNumber?: string;
+  playerPhotoUrl?: string | null;
+  hasMetadata: boolean;
 };
 
 export type ParentScheduleLoadResult = {
@@ -265,6 +276,27 @@ export type ParentPracticePacket = {
   homePacket: PracticeHomePacket;
   completions: PracticePacketCompletion[];
   children: ParentPracticePacketChild[];
+};
+
+export type StaffPracticePacketBlock = {
+  drillId?: string | null;
+  drillTitle: string;
+  type?: string | null;
+  duration: number;
+  description?: string | null;
+  notes?: string | null;
+};
+
+export type StaffPracticePacketInput = {
+  packetTitle?: string | null;
+  dueDate?: string | Date | null;
+  blocks: StaffPracticePacketBlock[];
+};
+
+export type StaffPracticePacket = ParentPracticePacket & {
+  packetTitle: string;
+  dueDate: string | null;
+  totalMinutes: number;
 };
 
 export type PracticeAttendanceStatus = 'present' | 'late' | 'absent';
@@ -1282,6 +1314,29 @@ export type ScheduleImportNormalizedRow = {
   } | null;
 };
 
+export type ScheduleGameFormInput = {
+  opponent: string;
+  startDate: Date;
+  endDate?: Date | null;
+  location?: string | null;
+  arrivalTime?: Date | null;
+  isHome?: boolean | null;
+  notes?: string | null;
+  statTrackerConfigId?: string | null;
+  competitionType?: string | null;
+  countsTowardSeasonRecord?: boolean;
+  opponentTeamId?: string | null;
+  opponentTeamName?: string | null;
+  opponentTeamPhoto?: string | null;
+};
+
+export type ScheduleStatTrackerConfigOption = {
+  id: string;
+  name: string;
+  baseType?: string | null;
+  isBasketball?: boolean;
+};
+
 function normalizeScheduleImportBatch(input: ScheduleImportNormalizedRow['importBatch']) {
   const batchId = compactString(input?.batchId);
   const totalCount = Math.max(0, Number.parseInt(String(input?.totalCount ?? 0), 10) || 0);
@@ -1344,6 +1399,61 @@ function buildScheduleImportGamePayload(row: ScheduleImportNormalizedRow, user: 
   };
 }
 
+function parseScheduleGameFormDate(value: Date | string | number | null | undefined, label: string) {
+  const date = value instanceof Date ? new Date(value) : new Date(value || '');
+  if (Number.isNaN(date.getTime())) {
+    throw new Error(`${label} is invalid.`);
+  }
+  return date;
+}
+
+function buildScheduledGamePayload(input: ScheduleGameFormInput, user: AuthUser) {
+  const opponent = compactString(input.opponent);
+  if (!opponent) throw new Error('Games require an opponent.');
+  const startDate = parseScheduleGameFormDate(input.startDate, 'Game start time');
+  const endDate = input.endDate ? parseScheduleGameFormDate(input.endDate, 'Game end time') : null;
+  const arrivalTime = input.arrivalTime ? parseScheduleGameFormDate(input.arrivalTime, 'Arrival time') : null;
+  if (endDate && endDate.getTime() <= startDate.getTime()) {
+    throw new Error('Game end time must be after the start time.');
+  }
+  return {
+    type: 'game',
+    date: startDate,
+    end: endDate,
+    opponent,
+    title: null,
+    location: compactString(input.location),
+    isHome: input.isHome === null || input.isHome === undefined ? null : input.isHome === true,
+    arrivalTime,
+    notes: compactString(input.notes),
+    assignments: [],
+    status: 'scheduled',
+    homeScore: 0,
+    awayScore: 0,
+    competitionType: compactString(input.competitionType) || 'league',
+    countsTowardSeasonRecord: input.countsTowardSeasonRecord === false ? false : true,
+    statTrackerConfigId: compactString(input.statTrackerConfigId) || null,
+    opponentTeamId: compactString(input.opponentTeamId) || null,
+    opponentTeamName: compactString(input.opponentTeamName) || null,
+    opponentTeamPhoto: compactString(input.opponentTeamPhoto) || null,
+    createdBy: user.uid
+  };
+}
+
+function buildScheduledGameUpdatePayload(input: ScheduleGameFormInput, user: AuthUser) {
+  const { assignments, status, homeScore, awayScore, createdBy, ...payload } = buildScheduledGamePayload(input, user) as Record<string, unknown>;
+  void assignments;
+  void status;
+  void homeScore;
+  void awayScore;
+  void createdBy;
+  return {
+    ...payload,
+    updatedAt: new Date(),
+    updatedBy: user.uid
+  };
+}
+
 function buildScheduleImportPracticePayload(row: ScheduleImportNormalizedRow, user: AuthUser) {
   const startDate = parseScheduleImportDate(row.startsAt, 'Start time');
   const importBatch = normalizeScheduleImportBatch(row.importBatch);
@@ -1393,6 +1503,63 @@ export type UpdateScheduledPracticeOptions = {
   scope?: SchedulePracticeEditScope;
   instanceDate?: string | null;
 };
+
+export async function loadScheduleStatTrackerConfigsForApp(teamId: string, user: AuthUser | null): Promise<ScheduleStatTrackerConfigOption[]> {
+  const normalizedTeamId = compactString(teamId);
+  if (!normalizedTeamId) throw new Error('Team is required.');
+  await requireScheduleImportStaff(normalizedTeamId, user);
+  const configs = await readWithNativeFallback(
+    `schedule stat tracker configs ${normalizedTeamId}`,
+    () => Promise.resolve(getConfigs(normalizedTeamId)),
+    () => nativeListCollection(`teams/${encodeURIComponent(normalizedTeamId)}/statTrackerConfigs`)
+  ).catch(() => []);
+  return (Array.isArray(configs) ? configs : [])
+    .map((config: any) => ({
+      id: compactString(config?.id),
+      name: compactString(config?.name) || compactString(config?.label) || compactString(config?.baseType) || 'Tracker config',
+      baseType: compactString(config?.baseType) || null,
+      isBasketball: config?.isBasketball === true || compactString(config?.baseType).toLowerCase() === 'basketball'
+    }))
+    .filter((config) => config.id)
+    .sort((first, second) => first.name.localeCompare(second.name));
+}
+
+export async function createScheduledGameForApp(teamId: string, input: ScheduleGameFormInput, user: AuthUser | null) {
+  const normalizedTeamId = compactString(teamId);
+  if (!normalizedTeamId) throw new Error('Team is required.');
+  await requireScheduleImportStaff(normalizedTeamId, user);
+  const payload = buildScheduledGamePayload(input, user as AuthUser);
+
+  try {
+    return await withTimeout(Promise.resolve(addGame(normalizedTeamId, payload)), 'Scheduled game create');
+  } catch (error) {
+    if (!isNativeRuntime()) throw error;
+    logScheduleWarning('Falling back to REST scheduled game create.', 'scheduled-game-create', error, { fallback: 'rest', teamId: normalizedTeamId });
+    const doc = await nativeCreateDocument(`teams/${encodeURIComponent(normalizedTeamId)}/games`, {
+      ...payload,
+      createdAt: new Date()
+    });
+    return doc?.id || '';
+  }
+}
+
+export async function updateScheduledGameForApp(teamId: string, gameId: string, input: ScheduleGameFormInput, user: AuthUser | null) {
+  const normalizedTeamId = compactString(teamId);
+  const normalizedGameId = compactString(gameId);
+  if (!normalizedTeamId) throw new Error('Team is required.');
+  if (!normalizedGameId) throw new Error('Game is required.');
+  await requireScheduleImportStaff(normalizedTeamId, user);
+  const payload = buildScheduledGameUpdatePayload(input, user as AuthUser);
+
+  try {
+    await withTimeout(Promise.resolve(updateGame(normalizedTeamId, normalizedGameId, payload)), 'Scheduled game update');
+  } catch (error) {
+    if (!isNativeRuntime()) throw error;
+    logScheduleWarning('Falling back to REST scheduled game update.', 'scheduled-game-update', error, { fallback: 'rest', teamId: normalizedTeamId, gameId: normalizedGameId });
+    await nativePatchDocument(`teams/${encodeURIComponent(normalizedTeamId)}/games/${encodeURIComponent(normalizedGameId)}`, payload);
+  }
+  return { updated: true, eventId: normalizedGameId };
+}
 
 function sanitizePracticeRecurrenceInput(input?: PracticeRecurrenceFormInput | null) {
   const byDays = Array.isArray(input?.byDays) ? input?.byDays.map((value) => compactString(value).toUpperCase()).filter(Boolean) : [];
@@ -1741,6 +1908,18 @@ async function loadPlayers(teamId: string) {
   );
 }
 
+async function loadPlayer(teamId: string, playerId: string) {
+  return readWithNativeFallback(
+    `player ${teamId}/${playerId}`,
+    async () => {
+      const snapshot = await getDoc(doc(db, 'teams', teamId, 'players', playerId));
+      if (!snapshot.exists()) return null;
+      return { id: snapshot.id || playerId, ...(snapshot.data() || {}) };
+    },
+    () => nativeGetDocument(`teams/${encodeURIComponent(teamId)}/players/${encodeURIComponent(playerId)}`)
+  );
+}
+
 function normalizePlayerName(player: any) {
   return compactString(player?.name || player?.displayName || player?.playerName) || 'Player';
 }
@@ -1788,28 +1967,146 @@ export async function loadHomeScoringPlayers(teamId: string, gameId: string): Pr
     .filter(Boolean) as ScheduleHomeScoringPlayer[];
 }
 
-function normalizeChildLinks(user: AuthUser, profile: Record<string, unknown>): ParentScheduleChild[] {
-  const parentOf = Array.isArray(profile.parentOf) && profile.parentOf.length > 0
-    ? profile.parentOf
-    : Array.isArray(user.parentOf) ? user.parentOf : [];
+function getProfileArray(profile: Record<string, unknown>, key: string) {
+  const value = profile[key];
+  return Array.isArray(value) ? value : [];
+}
 
-  const seen = new Set<string>();
-  return parentOf
-    .map((entry: any) => {
-      const teamId = compactString(entry?.teamId);
-      const playerId = compactString(entry?.playerId || entry?.childId);
-      if (!teamId || !playerId) return null;
-      const key = `${teamId}::${playerId}`;
-      if (seen.has(key)) return null;
-      seen.add(key);
-      return {
-        teamId,
-        teamName: compactString(entry?.teamName),
-        playerId,
-        playerName: compactString(entry?.playerName || entry?.childName || entry?.name) || 'Player'
-      };
-    })
-    .filter(Boolean) as ParentScheduleChild[];
+function getUserArray(user: AuthUser, key: keyof AuthUser | 'parentTeamIds' | 'parentPlayerKeys') {
+  const value = (user as any)[key];
+  return Array.isArray(value) ? value : [];
+}
+
+function parseParentPlayerKey(value: unknown) {
+  const raw = compactString(value);
+  const separatorIndex = raw.indexOf('::');
+  if (separatorIndex <= 0 || separatorIndex >= raw.length - 2) return null;
+  const teamId = compactString(raw.slice(0, separatorIndex));
+  const playerId = compactString(raw.slice(separatorIndex + 2));
+  if (!teamId || !playerId) return null;
+  return { teamId, playerId };
+}
+
+function collectParentScopeLinks(user: AuthUser, profile: Record<string, unknown>): ParentScopeLink[] {
+  const linksByKey = new Map<string, ParentScopeLink>();
+
+  const addLink = (link: ParentScopeLink) => {
+    const key = `${link.teamId}::${link.playerId}`;
+    const existing = linksByKey.get(key);
+    if (!existing) {
+      linksByKey.set(key, link);
+      return;
+    }
+    linksByKey.set(key, {
+      ...existing,
+      teamName: existing.teamName || link.teamName,
+      playerName: existing.playerName === 'Player' ? link.playerName : existing.playerName,
+      playerNumber: existing.playerNumber || link.playerNumber,
+      playerPhotoUrl: existing.playerPhotoUrl || link.playerPhotoUrl,
+      hasMetadata: existing.hasMetadata || link.hasMetadata
+    });
+  };
+
+  const addParentOfEntry = (entry: any) => {
+    const teamId = compactString(entry?.teamId);
+    const playerId = compactString(entry?.playerId || entry?.childId);
+    if (!teamId || !playerId) return;
+    const teamName = compactString(entry?.teamName);
+    const playerName = compactString(entry?.playerName || entry?.childName || entry?.name);
+    const playerNumber = compactString(entry?.playerNumber || entry?.number);
+    const playerPhotoUrl = compactString(entry?.playerPhotoUrl || entry?.photoUrl) || null;
+    addLink({
+      teamId,
+      teamName,
+      playerId,
+      playerName: playerName || 'Player',
+      playerNumber,
+      playerPhotoUrl,
+      hasMetadata: Boolean(teamName || playerName || playerNumber || playerPhotoUrl)
+    });
+  };
+
+  const profileParentOf = getProfileArray(profile, 'parentOf');
+  const profileParentPlayerKeys = getProfileArray(profile, 'parentPlayerKeys');
+  const hasProfileScope = profileParentOf.length > 0 || profileParentPlayerKeys.length > 0;
+  const parentOf = hasProfileScope ? profileParentOf : getUserArray(user, 'parentOf');
+  const parentPlayerKeys = profileParentPlayerKeys.length > 0 ? profileParentPlayerKeys : getUserArray(user, 'parentPlayerKeys');
+
+  parentOf.forEach(addParentOfEntry);
+  parentPlayerKeys
+    .map(parseParentPlayerKey)
+    .filter(Boolean)
+    .forEach((parsed) => {
+      addLink({
+        teamId: parsed!.teamId,
+        teamName: '',
+        playerId: parsed!.playerId,
+        playerName: 'Player',
+        hasMetadata: false
+      });
+    });
+
+  return [...linksByKey.values()];
+}
+
+async function resolveParentScheduleChildren(user: AuthUser, profile: Record<string, unknown>): Promise<ParentScheduleChild[]> {
+  const links = collectParentScopeLinks(user, profile);
+  if (!links.length) return [];
+
+  const linksByTeam = new Map<string, ParentScopeLink[]>();
+  links.forEach((link) => {
+    if (!linksByTeam.has(link.teamId)) linksByTeam.set(link.teamId, []);
+    linksByTeam.get(link.teamId)?.push(link);
+  });
+
+  const batches = await mapWithConcurrency([...linksByTeam.entries()], parentScheduleTeamConcurrency, async ([teamId, teamLinks]) => {
+    const rawTeam = await loadRawTeam(teamId).catch((error) => {
+      logScheduleWarning('Unable to validate parent-linked team.', 'parent-team-scope-load', error, { teamId });
+      return undefined;
+    });
+    if (rawTeam === null) return [];
+    if (rawTeam && !isTeamActive(rawTeam as Record<string, any>)) return [];
+
+    const linkedPlayers = await mapWithConcurrency(teamLinks, parentSchedulePlayerConcurrency, async (link) => {
+      const player = await loadPlayer(teamId, link.playerId).catch((error) => {
+        logScheduleWarning('Unable to validate parent-linked player.', 'parent-player-scope-load', error, {
+          teamId,
+          playerId: link.playerId
+        });
+        return null;
+      });
+      return { playerId: link.playerId, player };
+    });
+    const playersById = new Map<string, any>();
+    linkedPlayers.forEach(({ playerId, player }) => {
+      if (player) {
+        const id = compactString(player?.id || player?.playerId);
+        playersById.set(id || playerId, player);
+      }
+    });
+
+    const teamName = compactString((rawTeam as any)?.name) || compactString((rawTeam as any)?.teamName) || '';
+    return teamLinks
+      .map((link) => {
+        const player = playersById.get(link.playerId) || null;
+        if (!player || !isActiveRosterPlayer(player)) return null;
+        return {
+          teamId: link.teamId,
+          teamName: teamName || link.teamName,
+          playerId: link.playerId,
+          playerName: player ? normalizePlayerName(player) : link.playerName || 'Player'
+        };
+      })
+      .filter(Boolean) as ParentScheduleChild[];
+  });
+
+  return batches.flat();
+}
+
+export async function loadParentScheduleChildren(user: AuthUser | null, options: { profile?: Record<string, unknown> } = {}): Promise<ParentScheduleChild[]> {
+  if (!user?.uid) return [];
+  const profile = options.profile || await loadProfileDocument(user.uid).catch(() => ({}));
+  return resolveParentScheduleChildren(user, profile as Record<string, unknown>);
 }
 
 function hasRecordedAttendance(attendance: any) {
@@ -1868,13 +2165,17 @@ function getTrackedCalendarEventUidsFromLoadedGames(games: any[] = []) {
     .filter(Boolean);
 }
 
-async function loadTeam(teamId: string) {
-  const team = await readWithNativeFallback(
+async function loadRawTeam(teamId: string) {
+  return readWithNativeFallback(
     `team ${teamId}`,
     () => Promise.resolve(getTeam(teamId)),
     () => nativeGetDocument(`teams/${encodeURIComponent(teamId)}`)
   );
-  return isTeamActive(team as Record<string, any> | null) ? team : null;
+}
+
+async function loadTeam(teamId: string) {
+  const team = await loadRawTeam(teamId);
+  return team && isTeamActive(team as Record<string, any>) ? team : null;
 }
 
 type ScheduleDateRange = { startDate?: Date | null; endDate?: Date | null };
@@ -2118,6 +2419,7 @@ function createScheduleEvent(input: {
   seasonLabel?: string | null;
   competitionType?: string | null;
   countsTowardSeasonRecord?: boolean | null;
+  statTrackerConfigId?: string | null;
   sourceType?: string | null;
   sourceLabel?: string | null;
   isImported?: boolean;
@@ -2184,6 +2486,7 @@ function createScheduleEvent(input: {
     seasonLabel: input.seasonLabel || null,
     competitionType: input.competitionType || null,
     countsTowardSeasonRecord: input.countsTowardSeasonRecord ?? null,
+    statTrackerConfigId: input.statTrackerConfigId || null,
     sourceType: input.sourceType || (input.isDbGame ? 'db' : 'calendar'),
     sourceLabel: input.sourceLabel || (input.isDbGame ? 'ALL PLAYS schedule' : 'Team calendar'),
     isImported: input.isImported === true || !input.isDbGame,
@@ -2523,6 +2826,7 @@ async function buildTargetedTeamScheduleEvent(teamId: string, eventId: string, t
     seasonLabel: game.seasonLabel || null,
     competitionType: game.competitionType || null,
     countsTowardSeasonRecord: game.countsTowardSeasonRecord ?? null,
+    statTrackerConfigId: game.statTrackerConfigId || null,
     sourceType: game.sourceMetadata?.sourceType || game.source || 'db',
     sourceLabel: getScheduleSourceLabel(game),
     isImported: Boolean(game.sourceMetadata || game.source === 'calendar' || game.source === 'registration'),
@@ -2671,7 +2975,7 @@ export async function hydrateParentScheduleDetails(schedule: ParentScheduleLoadR
 
 async function buildParentScheduleTeamChildren(user: AuthUser, profile: Record<string, unknown>, options: ParentScheduleLoadOptions = {}) {
   const expandStaffPlayers = options.expandStaffPlayers !== false;
-  const children = normalizeChildLinks(user, profile as Record<string, unknown>);
+  const children = await resolveParentScheduleChildren(user, profile as Record<string, unknown>);
   const byTeam = new Map<string, ParentScheduleChild[]>();
   children.forEach((child) => {
     if (!byTeam.has(child.teamId)) byTeam.set(child.teamId, []);
@@ -2779,7 +3083,7 @@ export async function loadParentPlayerSchedule(user: AuthUser | null, options: P
 
   try {
     const profile = await loadProfileDocument(user.uid);
-    const children = normalizeChildLinks(user, profile as Record<string, unknown>);
+    const children = await resolveParentScheduleChildren(user, profile as Record<string, unknown>);
     let child = (requestedTeamId && requestedPlayerId)
       ? children.find((entry) => entry.teamId === requestedTeamId && entry.playerId === requestedPlayerId)
       : children.find((entry) => entry.playerId === requestedPlayerId);
@@ -4871,6 +5175,133 @@ export async function saveStaffPracticeAttendance(event: ParentScheduleEvent, us
     checkedInCount: payload.checkedInCount,
     players
   };
+}
+
+function assertPracticePacketManagementEvent(event: ParentScheduleEvent, user: AuthUser | null) {
+  if (event.type !== 'practice') {
+    throw new Error('Home packets are only available for practice sessions.');
+  }
+  if (!event.isDbGame) {
+    throw new Error('Home packets open after this practice is tracked in the schedule.');
+  }
+  if (!user?.uid) {
+    throw new Error('Sign in before managing practice packets.');
+  }
+  if (!event.isTeamAdmin) {
+    throw new Error('Only team owners and admins can manage practice packets.');
+  }
+}
+
+function normalizeStaffPracticePacketBlocks(blocks: StaffPracticePacketBlock[]): StaffPracticePacketBlock[] {
+  return (Array.isArray(blocks) ? blocks : [])
+    .map((block, index) => ({
+      drillId: compactString(block?.drillId) || null,
+      drillTitle: compactString(block?.drillTitle) || `Home Drill ${index + 1}`,
+      type: compactString(block?.type) || 'Technical',
+      duration: Math.max(1, Number.parseInt(String(block?.duration || 10), 10) || 10),
+      description: compactString(block?.description),
+      notes: compactString(block?.notes)
+    }))
+    .filter((block) => block.drillTitle);
+}
+
+function normalizeStaffPracticePacketDueDate(value: StaffPracticePacketInput['dueDate']) {
+  if (!value) return null;
+  const parsed = normalizeScheduleDate(value);
+  return parsed && !Number.isNaN(parsed.getTime()) ? parsed : null;
+}
+
+function buildStaffPracticePacketContent(input: StaffPracticePacketInput, event: ParentScheduleEvent, user: AuthUser) {
+  const blocks = normalizeStaffPracticePacketBlocks(input.blocks);
+  if (!blocks.length) {
+    throw new Error('Add at least one home drill before saving the packet.');
+  }
+  const totalMinutes = blocks.reduce((sum, block) => sum + block.duration, 0);
+  const dueAt = normalizeStaffPracticePacketDueDate(input.dueDate);
+  const packetTitle = compactString(input.packetTitle) || `${event.title || 'Practice'} home packet`;
+  return {
+    packetTitle,
+    blocks,
+    totalMinutes,
+    dueDate: dueAt ? dueAt.toISOString() : null,
+    dueAt,
+    updatedAt: new Date(),
+    updatedBy: user.uid
+  };
+}
+
+function getStaffPracticePacketTitle(homePacket: any, event: ParentScheduleEvent) {
+  return compactString(homePacket?.packetTitle) || `${event.title || 'Practice'} home packet`;
+}
+
+function getStaffPracticePacketDueDate(homePacket: any) {
+  const dueDate = normalizeScheduleDate(homePacket?.dueDate || homePacket?.dueAt);
+  return dueDate ? dueDate.toISOString() : null;
+}
+
+function buildStaffPracticePacketResult(event: ParentScheduleEvent, sessionId: string, homePacket: PracticeHomePacket, completions: PracticePacketCompletion[], childEvents: ParentScheduleEvent[]): StaffPracticePacket {
+  return {
+    sessionId,
+    teamId: event.teamId,
+    eventId: event.id,
+    title: event.title || 'Practice',
+    date: event.date,
+    location: event.location || 'TBD',
+    homePacket,
+    completions,
+    children: getPracticePacketChildren(childEvents, event),
+    packetTitle: getStaffPracticePacketTitle(homePacket, event),
+    dueDate: getStaffPracticePacketDueDate(homePacket),
+    totalMinutes: homePacket.totalMinutes || (Array.isArray(homePacket.blocks) ? homePacket.blocks.reduce((sum, block) => sum + (Number.parseInt(String(block?.duration || 0), 10) || 0), 0) : 0)
+  };
+}
+
+export async function loadStaffPracticePacket(event: ParentScheduleEvent, childEvents: ParentScheduleEvent[] = [], user: AuthUser | null): Promise<StaffPracticePacket> {
+  assertPracticePacketManagementEvent(event, user);
+  const session = await loadPracticeSessionForAttendance(event).catch(() => null);
+  const sessionId = compactString(session?.id) || getPracticePacketSessionId(event) || event.id;
+  const homePacket = (hasHomePacket(session) ? session.homePacketContent : event.practiceHomePacket) || { blocks: [], totalMinutes: 0 };
+  const completions = sessionId ? normalizePracticePacketCompletions(await loadPracticePacketCompletions(event.teamId, sessionId).catch(() => [])) : [];
+  return buildStaffPracticePacketResult(event, sessionId, homePacket, completions, childEvents);
+}
+
+export async function saveStaffPracticePacket(event: ParentScheduleEvent, user: AuthUser | null, input: StaffPracticePacketInput, childEvents: ParentScheduleEvent[] = []): Promise<StaffPracticePacket> {
+  assertPracticePacketManagementEvent(event, user);
+  const authUser = user as AuthUser;
+  const homePacketContent = buildStaffPracticePacketContent(input, event, authUser);
+  const sessionPayload = {
+    eventId: event.id,
+    eventType: 'practice',
+    sourcePage: 'app-schedule',
+    title: event.title || 'Practice',
+    date: event.date,
+    location: event.location || '',
+    duration: homePacketContent.totalMinutes,
+    status: 'draft',
+    homePacketGenerated: true,
+    homePacketContent,
+    updatedBy: authUser.uid
+  };
+
+  let sessionId = compactString(event.practiceSessionId);
+  try {
+    if (sessionId) {
+      await withTimeout(Promise.resolve(updatePracticeSession(event.teamId, sessionId, sessionPayload)), 'Practice packet save');
+    } else {
+      sessionId = await withTimeout(Promise.resolve(upsertPracticeSessionForEvent(event.teamId, event.id, sessionPayload)), 'Practice packet save');
+    }
+  } catch (error) {
+    if (!isNativeRuntime()) throw error;
+    sessionId = sessionId || event.id;
+    logScheduleWarning('Falling back to REST practice packet save.', 'practice-packet-save', error, { fallback: 'rest', teamId: event.teamId, sessionId });
+    await nativePatchDocument(`teams/${encodeURIComponent(event.teamId)}/practiceSessions/${encodeURIComponent(sessionId)}`, {
+      ...sessionPayload,
+      updatedAt: new Date()
+    });
+  }
+
+  const completions = normalizePracticePacketCompletions(await loadPracticePacketCompletions(event.teamId, sessionId).catch(() => []));
+  return buildStaffPracticePacketResult(event, sessionId, homePacketContent, completions, childEvents);
 }
 
 function getPracticePacketChildren(events: ParentScheduleEvent[], fallbackEvent: ParentScheduleEvent): ParentPracticePacketChild[] {

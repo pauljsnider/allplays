@@ -4,6 +4,8 @@ const dbMocks = vi.hoisted(() => ({
     getAssignmentClaims: vi.fn(),
     getGames: vi.fn(),
     getPracticePacketCompletions: vi.fn(),
+    getPracticeSession: vi.fn(),
+    getPracticeSessionByEvent: vi.fn(),
     getPracticeSessions: vi.fn(),
     getRsvps: vi.fn(),
     getRsvpSummaries: vi.fn(),
@@ -18,6 +20,8 @@ const dbMocks = vi.hoisted(() => ({
     cancelRideRequest: vi.fn(),
     releaseAssignmentClaim: vi.fn(),
     submitRsvpForPlayer: vi.fn(),
+    updatePracticeSession: vi.fn(),
+    upsertPracticeSessionForEvent: vi.fn(),
     upsertPracticePacketCompletion: vi.fn(),
     updateGame: vi.fn()
 }));
@@ -38,7 +42,47 @@ const authMocks = vi.hoisted(() => ({
     getNativeAuthIdToken: vi.fn()
 }));
 
+const firebaseMocks = vi.hoisted(() => {
+    const playersById = {
+        'player-1': { id: 'player-1', name: 'Pat', active: true },
+        'player-2': { id: 'player-2', name: 'Sam', active: true }
+    };
+
+    const makeSnapshot = (id, data = null) => ({
+        id,
+        exists: () => data !== null,
+        data: () => data
+    });
+
+    return {
+        db: {},
+        doc: vi.fn((...parts) => ({
+            path: parts.filter((part) => typeof part === 'string').join('/')
+        })),
+        collection: vi.fn((...parts) => ({
+            path: parts.filter((part) => typeof part === 'string').join('/')
+        })),
+        collectionGroup: vi.fn((_, name) => ({ id: name, path: name })),
+        getDoc: vi.fn(async (ref) => {
+            const playerId = String(ref?.path || '').split('/').filter(Boolean).pop() || '';
+            return makeSnapshot(playerId, playersById[playerId] || null);
+        }),
+        getDocs: vi.fn(async () => ({ docs: [] })),
+        query: vi.fn((...args) => args),
+        runTransaction: vi.fn(),
+        where: vi.fn((...args) => args),
+        increment: vi.fn((amount) => ({ __op: 'increment', amount })),
+        serverTimestamp: vi.fn(() => new Date('2026-05-20T12:00:00Z')),
+        deleteField: vi.fn(() => ({ __op: 'deleteField' })),
+        Timestamp: {
+            fromDate: vi.fn((date) => ({ toDate: () => date })),
+            now: vi.fn(() => ({ toDate: () => new Date('2026-05-20T12:00:00Z') }))
+        }
+    };
+});
+
 vi.mock('../../js/db.js', () => dbMocks);
+vi.mock('../../js/firebase.js', () => firebaseMocks);
 vi.mock('../../apps/app/src/lib/profileService.ts', () => profileMocks);
 vi.mock('../../apps/app/src/lib/authService.ts', () => authMocks);
 vi.mock('../../js/utils.js', () => ({
@@ -70,9 +114,11 @@ vi.mock('../../js/snack-helpers.js', () => ({
 }));
 
 import {
+    loadStaffPracticePacket,
     loadParentPracticePacket,
     loadParentSchedule,
-    markParentPracticePacketComplete
+    markParentPracticePacketComplete,
+    saveStaffPracticePacket
 } from '../../apps/app/src/lib/scheduleService.ts';
 
 function installWindow(protocol = 'http:') {
@@ -137,6 +183,10 @@ beforeEach(() => {
     dbMocks.getPracticePacketCompletions.mockResolvedValue([
         { id: 'user-1__player-2', parentUserId: 'user-1', childId: 'player-2', childName: 'Sam', status: 'completed' }
     ]);
+    dbMocks.getPracticeSession.mockResolvedValue(null);
+    dbMocks.getPracticeSessionByEvent.mockResolvedValue(null);
+    dbMocks.updatePracticeSession.mockResolvedValue(undefined);
+    dbMocks.upsertPracticeSessionForEvent.mockResolvedValue('session-1');
     dbMocks.upsertPracticePacketCompletion.mockResolvedValue(undefined);
 });
 
@@ -195,6 +245,84 @@ describe('React app practice packet service', () => {
             status: 'completed'
         });
         expect(profileMocks.saveProfileDocument).not.toHaveBeenCalled();
+    });
+
+    it('loads coach packet management data with completion status', async () => {
+        dbMocks.getPracticeSession.mockResolvedValue({
+            id: 'session-1',
+            eventId: 'practice-1',
+            homePacketGenerated: true,
+            homePacketContent: {
+                packetTitle: 'Weekend touches',
+                dueDate: '2026-05-24T12:00:00.000Z',
+                totalMinutes: 15,
+                blocks: [
+                    { drillTitle: 'Ball Mastery', type: 'Technical', duration: 15, notes: 'Both feet' }
+                ]
+            }
+        });
+
+        const packet = await loadStaffPracticePacket(practiceEvent({
+            isTeamAdmin: true
+        }), [
+            practiceEvent({ childId: 'player-1', childName: 'Pat' }),
+            practiceEvent({ childId: 'player-2', childName: 'Sam' })
+        ], user({ uid: 'coach-1', roles: ['coach'] }));
+
+        expect(dbMocks.getPracticeSession).toHaveBeenCalledWith('team-1', 'session-1');
+        expect(packet).toMatchObject({
+            sessionId: 'session-1',
+            packetTitle: 'Weekend touches',
+            dueDate: '2026-05-24T12:00:00.000Z',
+            totalMinutes: 15
+        });
+        expect(packet.children).toEqual([
+            { id: 'player-1', name: 'Pat' },
+            { id: 'player-2', name: 'Sam' }
+        ]);
+        expect(packet.completions).toEqual([
+            expect.objectContaining({ childId: 'player-2', status: 'completed' })
+        ]);
+    });
+
+    it('saves a coach-created packet on the linked practice session', async () => {
+        const coach = user({ uid: 'coach-1', roles: ['coach'] });
+        const saved = await saveStaffPracticePacket(practiceEvent({
+            isTeamAdmin: true,
+            practiceSessionId: null,
+            practiceHomePacketSummary: null,
+            practiceHomePacket: null
+        }), coach, {
+            packetTitle: 'Weekend touches',
+            dueDate: '2026-05-24',
+            blocks: [
+                { drillTitle: 'Ball Mastery', type: 'Technical', duration: 12, description: 'Ten toe taps', notes: 'Both feet' },
+                { drillTitle: '', duration: 8 }
+            ]
+        }, [practiceEvent({ childId: 'player-1', childName: 'Pat' })]);
+
+        expect(dbMocks.upsertPracticeSessionForEvent).toHaveBeenCalledWith('team-1', 'practice-1', expect.objectContaining({
+            eventId: 'practice-1',
+            eventType: 'practice',
+            sourcePage: 'app-schedule',
+            homePacketGenerated: true,
+            homePacketContent: expect.objectContaining({
+                packetTitle: 'Weekend touches',
+                dueDate: expect.stringContaining('2026-05-24'),
+                totalMinutes: 20,
+                updatedBy: 'coach-1'
+            })
+        }));
+        const packetContent = dbMocks.upsertPracticeSessionForEvent.mock.calls[0][2].homePacketContent;
+        expect(packetContent.blocks).toEqual([
+            expect.objectContaining({ drillTitle: 'Ball Mastery', duration: 12, notes: 'Both feet' }),
+            expect.objectContaining({ drillTitle: 'Home Drill 2', duration: 8 })
+        ]);
+        expect(saved).toMatchObject({
+            sessionId: 'session-1',
+            packetTitle: 'Weekend touches',
+            totalMinutes: 20
+        });
     });
 
     it('carries packet data from practice sessions into parent schedule events', async () => {

@@ -8,7 +8,9 @@ const scheduleMocks = vi.hoisted(() => ({
     cancelParentScheduleRideRequest: vi.fn(),
     claimParentScheduleAssignmentSlot: vi.fn(),
     createParentScheduleRideOffer: vi.fn(),
+    loadScheduleStatTrackerConfigsForApp: vi.fn(),
     loadParentPracticePacket: vi.fn(),
+    loadStaffPracticePacket: vi.fn(),
     loadParentSchedule: vi.fn(),
     loadParentScheduleEventDetail: vi.fn(),
     loadParentScheduleAssignments: vi.fn().mockResolvedValue([]),
@@ -44,7 +46,9 @@ const scheduleMocks = vi.hoisted(() => ({
     publishLiveScoreUpdateEvent: vi.fn(),
     recordPlayerScoringStat: vi.fn(),
     saveScheduledGameLineupDraftForApp: vi.fn(),
+    saveStaffPracticePacket: vi.fn(),
     updateGameScore: vi.fn(),
+    updateScheduledGameForApp: vi.fn(),
     updateParentScheduleRideRequestStatus: vi.fn()
 }));
 
@@ -185,7 +189,22 @@ beforeEach(() => {
     vi.clearAllMocks();
     scheduleMocks.loadParentSchedule.mockResolvedValue({ events: [] });
     scheduleMocks.loadParentScheduleEventDetail.mockImplementation(async () => scheduleMocks.loadParentSchedule());
+    scheduleMocks.loadScheduleStatTrackerConfigsForApp.mockResolvedValue([{ id: 'cfg-basketball', name: 'Basketball' }]);
     scheduleMocks.loadParentPracticePacket.mockResolvedValue(null);
+    scheduleMocks.loadStaffPracticePacket.mockResolvedValue({
+        sessionId: 'session-1',
+        teamId: 'team-1',
+        eventId: 'practice-1',
+        title: 'Practice',
+        date: new Date('2026-05-25T08:00:00Z'),
+        location: 'Main Gym',
+        packetTitle: 'Practice home packet',
+        dueDate: null,
+        totalMinutes: 0,
+        homePacket: { blocks: [], totalMinutes: 0 },
+        completions: [],
+        children: [{ id: 'player-1', name: 'Pat' }]
+    });
     scheduleMocks.publishGamePlanForApp.mockResolvedValue({ gamePlan: {}, notificationError: null });
     scheduleMocks.loadAutoFilledLineupDraftPreviewForApp.mockResolvedValue({
         formationId: 'basketball-5v5',
@@ -223,7 +242,22 @@ beforeEach(() => {
             lineups: { 'Q1-pg': 'p1', 'Q1-sg': 'p2' }
         }
     });
+    scheduleMocks.saveStaffPracticePacket.mockResolvedValue({
+        sessionId: 'session-1',
+        teamId: 'team-1',
+        eventId: 'practice-1',
+        title: 'Practice',
+        date: new Date('2026-05-25T08:00:00Z'),
+        location: 'Main Gym',
+        packetTitle: 'Practice home packet',
+        dueDate: null,
+        totalMinutes: 10,
+        homePacket: { blocks: [{ drillTitle: 'Home Drill 1', duration: 10 }], totalMinutes: 10 },
+        completions: [],
+        children: [{ id: 'player-1', name: 'Pat' }]
+    });
     scheduleMocks.updateGameScore.mockResolvedValue({ homeScore: 5, awayScore: 2, scoreUpdatedAt: new Date('2026-05-25T08:00:00Z'), scoreUpdatedBy: 'user-1' });
+    scheduleMocks.updateScheduledGameForApp.mockResolvedValue({ updated: true, eventId: 'game-1' });
     scheduleMocks.publishLiveScoreUpdateEvent.mockResolvedValue({ type: 'score_update', homeScore: 5, awayScore: 2 });
     scheduleMocks.markParentPracticePacketComplete.mockResolvedValue({
         id: 'user-1__player-1',
