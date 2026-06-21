@@ -381,7 +381,11 @@ export function mapScheduleEventRecord(value: unknown, fallbackId = ''): Schedul
         rotationActual: asObject(decoded.rotationActual),
         coachingNotes: asObjectArray(decoded.coachingNotes),
         isSeriesMaster: decoded.isSeriesMaster === true,
-        recurrence: asObject(decoded.recurrence)
+        recurrence: asObject(decoded.recurrence),
+        startTime: asTrimmedString(decoded.startTime),
+        endDayOffset: asOptionalNumber(decoded.endDayOffset),
+        exDates: asUniqueStringArray(decoded.exDates),
+        overrides: asObject(decoded.overrides) as Record<string, Record<string, unknown>> | null
     };
 }
 

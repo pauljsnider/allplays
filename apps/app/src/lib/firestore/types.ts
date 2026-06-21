@@ -135,6 +135,10 @@ export type ScheduleEventFirestoreRecord = {
     coachingNotes?: Array<Record<string, unknown>>;
     isSeriesMaster?: boolean;
     recurrence?: Record<string, unknown> | null;
+    startTime?: string | null;
+    endDayOffset?: number | null;
+    exDates?: string[];
+    overrides?: Record<string, Record<string, unknown>> | null;
 };
 
 export type GameReportStatValue = string | number | boolean | null;
