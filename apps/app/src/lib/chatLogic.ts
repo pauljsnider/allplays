@@ -1,23 +1,19 @@
 import DOMPurifyModule from 'dompurify';
 import {
-  DEFAULT_TEAM_CONVERSATION_ID,
-  buildDefaultTeamConversation,
-  getConversationDisplayName,
-  isDefaultTeamConversation
-} from '../../../../js/team-chat-conversations.js';
-import {
-  MAX_CHAT_MEDIA_SIZE,
   buildChatMediaShareDetails,
+  buildDefaultTeamConversation,
   collectThreadMedia,
+  DEFAULT_TEAM_CONVERSATION_ID,
   getChatMediaActionState,
   getChatMediaDownloadName,
+  getConversationDisplayName,
   getMessageAttachments,
-  isSafeChatMediaUrl
-} from '../../../../js/team-chat-media.js';
-import {
+  isDefaultTeamConversation,
+  isSafeChatMediaUrl,
+  MAX_CHAT_MEDIA_SIZE,
   shouldRetryChatLastReadOnViewReturn,
   shouldUpdateChatLastRead
-} from '../../../../js/team-chat-last-read.js';
+} from './adapters/legacyChatLogic';
 
 export {
   DEFAULT_TEAM_CONVERSATION_ID,
