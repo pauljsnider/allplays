@@ -424,12 +424,12 @@
 <h2 id="staff-permissions-overview">Staff and Permissions Overview</h2>
 <p>The <strong>Team Staff &amp; Permissions</strong> section on the team page (visible to full team admins) shows current owner/admin staff, pending admin invites, and all scoped helper permissions with distinct empty states. Access it via the <strong>Staff</strong> entry in the team management banner.</p>
 <h2 id="registration-provider">Registration Provider Setup</h2>
-<p>Connect a registration provider (such as Sports Connect) to sync roster and schedule data.</p>
+<p>Configure registration provider metadata (such as Sports Connect Team ID mapping) so stored snapshot imports can match the right external source.</p>
 <ol class="ml-6 list-decimal space-y-1">
 <li>Open <strong>Edit Team</strong> and select <strong>Sports Connect</strong> (or your provider) in the registration provider field.</li>
-<li>Enter the external Team ID / mapping field.</li>
-<li>View connection status, last sync status, and last sync time.</li>
-<li>Use the manual re-import entry point to trigger a fresh sync when needed.</li>
+<li>Enter the external Team ID / mapping field, then save the team so the provider card keeps that mapping.</li>
+<li>On the provider card, use <strong>Sync now</strong> to fetch Sports Connect data through the backend and store the latest roster snapshot for import.</li>
+<li>After <strong>Sync now</strong> finishes, use the manual re-import entry point only when a roster/schedule snapshot or other provider data is already loaded into ALL PLAYS.</li>
 </ol>
 <ol class="ml-6 list-decimal space-y-1">
 <li>Handle invite outcomes.</li>
