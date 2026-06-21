@@ -5,6 +5,17 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { useAsyncOperation } from './useAsyncOperation';
 
+function createDeferred<T>() {
+    let resolve!: (value: T | PromiseLike<T>) => void;
+    let reject!: (reason?: unknown) => void;
+    const promise = new Promise<T>((resolvePromise, rejectPromise) => {
+        resolve = resolvePromise;
+        reject = rejectPromise;
+    });
+
+    return { promise, resolve, reject };
+}
+
 function AsyncOperationHarness({
     operation,
     getErrorMessage,
@@ -47,9 +58,8 @@ describe('useAsyncOperation', () => {
     });
 
     it('clears stale errors and surfaces mapped failures without rethrowing', async () => {
-        const operation = vi.fn(async () => {
-            throw new Error('raw async failure');
-        });
+        const deferred = createDeferred<string>();
+        const operation = vi.fn(() => deferred.promise);
         const onError = vi.fn();
         const onFinally = vi.fn();
 
@@ -66,6 +76,13 @@ describe('useAsyncOperation', () => {
         expect(screen.getByTestId('error').textContent).toBe('stale error');
 
         fireEvent.click(screen.getByRole('button', { name: 'Run' }));
+
+        await waitFor(() => {
+            expect(screen.getByTestId('loading').textContent).toBe('true');
+            expect(screen.getByTestId('error').textContent).toBe('');
+        });
+
+        deferred.reject(new Error('raw async failure'));
 
         await waitFor(() => {
             expect(screen.getByTestId('error').textContent).toBe('Mapped: raw async failure');
