@@ -3515,6 +3515,8 @@ export async function setCompletedGamePlayerStats(teamId, gameId, playerId, stat
             ...basePayload,
             stats: privateStats
         }, { merge: true });
+    } else {
+        await deleteDoc(privateDocRef);
     }
 }
 
