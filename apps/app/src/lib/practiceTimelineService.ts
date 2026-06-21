@@ -1,6 +1,4 @@
-import { getDrills, getPracticeSessionByEvent, getTeam, getTeamDrills, updatePracticeSession, upsertPracticeSessionForEvent } from '../../../../js/db.js';
-import { appendLivePracticeNote } from '../../../../js/drills-live-practice-notes.js';
-import { hasFullTeamAccess } from '../../../../js/team-access.js';
+import { appendLivePracticeNote, getDrills, getPracticeSessionByEvent, getTeam, getTeamDrills, hasFullTeamAccess, updatePracticeSession, upsertPracticeSessionForEvent } from './adapters/legacyPracticeTimeline';
 import type { AuthUser } from './types';
 
 export type PracticeTimelineNote = {
