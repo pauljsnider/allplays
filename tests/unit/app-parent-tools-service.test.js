@@ -252,9 +252,14 @@ describe('React app parent tools service', () => {
         const source = await import('node:fs/promises').then(({ readFile }) =>
             readFile(resolve(process.cwd(), 'apps/app/src/lib/parentToolsService.ts'), 'utf8')
         );
+        const adapterSource = await import('node:fs/promises').then(({ readFile }) =>
+            readFile(resolve(process.cwd(), 'apps/app/src/lib/adapters/legacyParentTools.ts'), 'utf8')
+        );
 
-        expect(source).toContain("from '../../../../js/firebase.js';");
+        expect(source).toContain("from './adapters/legacyParentTools';");
+        expect(adapterSource).toContain("from '@legacy/firebase.js';");
         expect(source).not.toContain("firebase.js?v=");
+        expect(adapterSource).not.toContain("firebase.js?v=");
     });
 
     it('builds legacy URLs used for current-site handoffs', () => {

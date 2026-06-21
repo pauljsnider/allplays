@@ -1,18 +1,44 @@
 import {
+  addPendingFamilyMember,
   approveTeamRegistration,
+  buildPendingRegistrationRecord,
+  calculateRegistrationFeeSnapshot,
+  canAccessTeamChat,
+  canContributeTeamMedia,
+  canManageTeamMedia,
+  canReadTeamMediaAlbum,
+  cancelStripeRegistrationCheckout,
+  collection,
   createFamilyShareToken,
   createParentMembershipRequest,
   createRegistrationCheckoutSession,
-  extendTeamRegistrationOffer,
   createTeamMediaFolder,
   createTeamMediaLink,
+  db,
+  decideRegistrationPlacement,
+  deleteTeamMediaItem,
   discoverPublicTeams,
+  doc,
+  extendTeamRegistrationOffer,
+  formatParentFeeAmount,
+  formatParentFeeDueDate,
+  getActiveRegistrationOptions,
+  getDoc,
+  getParentFeeStatusMeta,
+  getPaymentPlanChoices,
   getPlayers,
-  getTeamRegistrationForm,
+  getRegistrationGuardianDrafts,
+  getRegistrationPaymentNotice,
+  getRegistrationPlayerDraft,
+  getRegistrationSubmittedData,
   getTeam,
   getTeamMediaFolders,
+  getTeamMediaItemUrl,
   getTeamMediaItems,
-  canAccessTeamChat,
+  getTeamRegistrationForm,
+  hasOnlineRegistrationCheckout,
+  initiateTeamFeeCheckout,
+  isSafeTeamMediaUrl,
   listCertificatesForPlayer,
   listFamilyShareTokens,
   listMyParentMembershipRequests,
@@ -20,51 +46,24 @@ import {
   listTeamRegistrationForms,
   listTeamRegistrationReviews,
   listTeamRegistrationReviewsPage,
-  rejectTeamRegistration,
-  revokeFamilyShareToken,
-  updateFamilyShareTokenCalendars,
-  uploadTeamMediaFile,
-  uploadTeamMediaPhoto,
-  deleteTeamMediaItem,
-  updateTeamMediaItem,
   moveTeamMediaItems,
-  setTeamMediaAlbumCover
-} from '../../../../js/db.js';
-import { addPendingFamilyMember, readFamilyMembers } from '../../../../js/family-plan.js';
-import { db, doc, collection, getDoc, serverTimestamp, runTransaction } from '../../../../js/firebase.js';
-import {
-  formatParentFeeAmount,
-  formatParentFeeDueDate,
-  getParentFeeStatusMeta,
   normalizeParentFeeRecord,
-  sortParentFeeRecords
-} from '../../../../js/parent-dashboard-fees.js';
-import { cancelStripeRegistrationCheckout, initiateTeamFeeCheckout } from '../../../../js/stripe-service.js';
-import {
-  buildPendingRegistrationRecord,
-  calculateRegistrationFeeSnapshot,
-  decideRegistrationPlacement,
-  getActiveRegistrationOptions,
-  getPaymentPlanChoices,
-  getRegistrationPaymentNotice,
-  hasOnlineRegistrationCheckout,
   normalizeRegistrationForm,
-  requiresRegistrationOption
-} from '../../../../js/registration-flow.js';
-import {
-  getRegistrationGuardianDrafts,
-  getRegistrationPlayerDraft,
-  getRegistrationSubmittedData,
-  normalizeRegistrationStatus
-} from '../../../../js/registration-review.js';
-import {
-  canContributeTeamMedia,
-  canManageTeamMedia,
-  canReadTeamMediaAlbum,
-  getTeamMediaItemUrl,
-  isSafeTeamMediaUrl,
-  sortByMediaOrder
-} from '../../../../js/team-media-utils.js';
+  normalizeRegistrationStatus,
+  readFamilyMembers,
+  rejectTeamRegistration,
+  requiresRegistrationOption,
+  revokeFamilyShareToken,
+  runTransaction,
+  serverTimestamp,
+  setTeamMediaAlbumCover,
+  sortByMediaOrder,
+  sortParentFeeRecords,
+  updateFamilyShareTokenCalendars,
+  updateTeamMediaItem,
+  uploadTeamMediaFile,
+  uploadTeamMediaPhoto
+} from './adapters/legacyParentTools';
 import { firebaseAuth, getNativeAuthIdToken } from './authService';
 import { formatCurrencyFromCents as formatCurrency } from './money';
 import { loadParentScheduleSummary } from './homeService';
