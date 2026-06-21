@@ -739,7 +739,7 @@ describe('React app search service', () => {
     it('includes location-matched public teams in global app search results', async () => {
         dbMocks.discoverPublicTeams.mockResolvedValueOnce({
             teams: [
-                { id: 'team-zip', name: 'Northside Storm', sport: 'Softball', zip: '60601', isPublic: true },
+                { id: 'team-zip', name: 'Northside Storm', sport: 'Softball', city: 'Chicago', state: 'IL', zip: '60601', isPublic: true },
                 { id: 'team-city', name: 'River City Hoops', sport: 'Basketball', city: 'Kansas City', state: 'MO', isPublic: true }
             ],
             nextCursor: null
@@ -747,6 +747,7 @@ describe('React app search service', () => {
 
         const zipTeams = await searchAppTeams('60601', [], auth.user);
         expect(zipTeams.map((team) => team.id)).toEqual(['team-zip']);
+        expect(zipTeams[0]).toMatchObject({ city: 'Chicago', state: 'IL', zip: '60601' });
 
         dbMocks.discoverPublicTeams.mockResolvedValueOnce({
             teams: [

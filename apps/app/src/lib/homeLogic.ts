@@ -58,6 +58,9 @@ export type ParentHomeTeam = {
   sport: string | null;
   photoUrl?: string | null;
   location?: string | null; // Added for public team search
+  city?: string | null;
+  state?: string | null;
+  zip?: string | null;
   appAccess?: boolean; // Added for public team search
   webAccess?: boolean; // Added for public team search
   isPublic?: boolean; // Added for public team search
