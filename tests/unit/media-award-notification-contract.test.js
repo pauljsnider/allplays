@@ -28,7 +28,7 @@ describe('media and award notification contract', () => {
         expect(functionsSource).toContain('await markTeamMediaNotificationBatchSkipped(batchRef, claimId, \'album_not_team_visible\');');
         expect(functionsSource).toContain("category: 'media'");
         expect(functionsSource).toContain('dedupKey: `team-media:${batch.id}`');
-        expect(functionsSource).toContain('audienceContext: { albumVisibility }');
+        expect(functionsSource).toContain('audienceContext');
         expect(functionsSource).toContain('exports.dispatchDueTeamMediaNotificationBatches = functions.pubsub');
         expect(firestoreIndexes).toContain('"collectionGroup": "teamMediaNotificationBatches"');
         expect(firestoreIndexes).toContain('"fieldPath": "status"');

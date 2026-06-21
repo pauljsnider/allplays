@@ -4225,6 +4225,21 @@ function normalizeTeamMediaNotificationVisibility(value) {
   return normalizeNotificationAlbumVisibility(value);
 }
 
+function buildTeamMediaNotificationAudienceContext(folder = {}) {
+  const albumVisibility = normalizeTeamMediaNotificationVisibility(folder.visibility);
+  const allowedUserIds = normalizeNotificationAudienceUserIds(
+    folder.allowedUserIds || folder.audienceUserIds || folder.visibleToUserIds || folder.userIds
+  );
+  const allowedRoles = normalizeNotificationAudienceRoles(
+    folder.allowedRoles || folder.audienceRoles || folder.visibleToRoles || folder.roles
+  );
+  return {
+    albumVisibility,
+    ...(allowedUserIds.length ? { allowedUserIds } : {}),
+    ...(allowedRoles.length ? { allowedRoles } : {})
+  };
+}
+
 function normalizeTeamMediaNotificationItemType(value) {
   const normalized = String(value || '').trim().toLowerCase().replace(/[\s-]+/g, '_');
   if (['photo', 'image', 'team_photo'].includes(normalized)) return 'photo';
@@ -4255,7 +4270,8 @@ function buildTeamMediaNotificationBatchMetadata({ teamId, itemId, item = {}, fo
   const folderId = normalizeTeamMediaNotificationText(item.folderId || folder.id);
   if (!normalizedTeamId || !normalizedItemId || !folderId || item.deleted === true) return null;
 
-  const albumVisibility = normalizeTeamMediaNotificationVisibility(folder.visibility);
+  const audienceContext = buildTeamMediaNotificationAudienceContext(folder);
+  const albumVisibility = audienceContext.albumVisibility;
   if (albumVisibility !== 'team') return null;
 
   const createdAt = coerceDate(item.createdAt) || (now instanceof Date ? now : new Date(now));
@@ -4267,6 +4283,7 @@ function buildTeamMediaNotificationBatchMetadata({ teamId, itemId, item = {}, fo
     folderId,
     albumName: normalizeTeamMediaNotificationText(folder.name) || 'Team media',
     albumVisibility,
+    audienceContext,
     itemId: normalizedItemId,
     itemType: normalizeTeamMediaNotificationItemType(item.type || item.mediaType),
     itemTitle: normalizeTeamMediaNotificationText(item.title || item.fileName || item.name),
@@ -4308,6 +4325,7 @@ function buildTeamMediaNotificationBatchWrite(batch = {}, metadata = {}) {
     folderId: metadata.folderId,
     albumName: metadata.albumName,
     albumVisibility: metadata.albumVisibility,
+    audienceContext: metadata.audienceContext || { albumVisibility: metadata.albumVisibility },
     windowStartAt: admin.firestore.Timestamp.fromDate(metadata.windowStartAt),
     dueAt: admin.firestore.Timestamp.fromDate(metadata.dueAt),
     status: 'pending',
@@ -4417,7 +4435,11 @@ async function dispatchDueTeamMediaNotificationBatches(now = new Date()) {
       }
 
       const folder = folderSnap.data() || {};
-      const albumVisibility = normalizeTeamMediaNotificationVisibility(folder.visibility || batch.albumVisibility);
+      const audienceContext = buildTeamMediaNotificationAudienceContext({
+        ...folder,
+        visibility: folder.visibility || batch.albumVisibility
+      });
+      const albumVisibility = audienceContext.albumVisibility;
       if (albumVisibility !== 'team') {
         await markTeamMediaNotificationBatchSkipped(batchRef, claimId, 'album_not_team_visible');
         continue;
@@ -4434,7 +4456,7 @@ async function dispatchDueTeamMediaNotificationBatches(now = new Date()) {
         title: payload.title,
         body: payload.body,
         dedupKey: `team-media:${batch.id}`,
-        audienceContext: { albumVisibility }
+        audienceContext
       });
       await markTeamMediaNotificationBatchSent(batchRef, claimId, sendResult);
       results.push({
@@ -4529,14 +4551,65 @@ function normalizeNotificationAlbumVisibility(value) {
   return ['private', 'staff', 'staff-only'].includes(normalized) ? 'private' : 'team';
 }
 
+function normalizeNotificationAudienceList(value) {
+  if (Array.isArray(value)) {
+    return value;
+  }
+  if (value instanceof Set) {
+    return Array.from(value);
+  }
+  if (typeof value === 'string') {
+    return value.split(',');
+  }
+  return [];
+}
+
+function normalizeNotificationAudienceUserIds(value) {
+  return Array.from(new Set(
+    normalizeNotificationAudienceList(value)
+      .map((entry) => String(entry || '').trim())
+      .filter(Boolean)
+  ));
+}
+
+function normalizeNotificationAudienceRoles(value) {
+  return Array.from(new Set(
+    normalizeNotificationAudienceList(value)
+      .map((entry) => String(entry || '').trim().toLowerCase().replace(/[\s_]+/g, '-'))
+      .map((role) => (['admin', 'coach', 'manager', 'owner'].includes(role) ? 'staff' : role))
+      .filter((role) => ['parent', 'staff'].includes(role))
+  ));
+}
+
+function mediaAudienceAllowsUser(user, audienceContext = {}) {
+  const allowedUserIds = normalizeNotificationAudienceUserIds(audienceContext.allowedUserIds);
+  const allowedRoles = normalizeNotificationAudienceRoles(audienceContext.allowedRoles);
+  if (!allowedUserIds.length && !allowedRoles.length) return true;
+
+  const uid = String(user?.uid || '').trim();
+  const roles = normalizeNotificationAudienceRoles(user?.roles || []);
+  if (allowedUserIds.includes(uid)) return true;
+  return roles.some((role) => allowedRoles.includes(role));
+}
+
+function hasMediaAudienceConstraints(audienceContext = {}) {
+  return normalizeNotificationAudienceUserIds(audienceContext.allowedUserIds).length > 0
+    || normalizeNotificationAudienceRoles(audienceContext.allowedRoles).length > 0;
+}
+
 function canReceiveCategoryNotification(category, user, audienceContext = {}) {
   if (!user?.uid || !notificationAudienceAllowsRoles(category, user.roles)) return false;
   if (category !== 'media') return true;
   const albumVisibility = audienceContext?.staffOnly === true
     ? 'private'
     : normalizeNotificationAlbumVisibility(audienceContext.albumVisibility);
-  if (albumVisibility !== 'private') return true;
-  return Array.isArray(user.roles) && user.roles.includes('staff');
+  if (albumVisibility === 'private') {
+    if (hasMediaAudienceConstraints(audienceContext)) {
+      return mediaAudienceAllowsUser(user, audienceContext);
+    }
+    return Array.isArray(user.roles) && user.roles.includes('staff');
+  }
+  return mediaAudienceAllowsUser(user, audienceContext);
 }
 
 async function getLegacyTargetsForCategory(teamId, category, users, actorUid = null, audienceContext = {}) {
