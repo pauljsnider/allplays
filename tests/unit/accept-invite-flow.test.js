@@ -1,6 +1,30 @@
 import { describe, it, expect, vi } from 'vitest';
-import { createInviteProcessor } from '../../js/accept-invite-flow.js';
+import { createInviteProcessor, getInviteDashboardUrl, isInviteAlreadyRedeemedError } from '../../js/accept-invite-flow.js';
 import { hasFullTeamAccess } from '../../js/team-access.js';
+
+describe('already-redeemed invite handling (#1808)', () => {
+    it('recognizes already-used / already-member errors', () => {
+        expect(isInviteAlreadyRedeemedError(new Error('Code already used'))).toBe(true);
+        expect(isInviteAlreadyRedeemedError(new Error('This invite has already been used.'))).toBe(true);
+        expect(isInviteAlreadyRedeemedError(new Error('You are already a member of this team'))).toBe(true);
+        expect(isInviteAlreadyRedeemedError(new Error('You are already an admin'))).toBe(true);
+    });
+
+    it('does not treat other errors as already-redeemed', () => {
+        expect(isInviteAlreadyRedeemedError(new Error('Invalid or expired invite code'))).toBe(false);
+        expect(isInviteAlreadyRedeemedError(new Error('This invite was sent to a@b.com.'))).toBe(false);
+        expect(isInviteAlreadyRedeemedError(null)).toBe(false);
+        expect(isInviteAlreadyRedeemedError({})).toBe(false);
+    });
+
+    it('routes invite types to the dashboard a successful redemption would use', () => {
+        expect(getInviteDashboardUrl('parent')).toBe('parent-dashboard.html');
+        expect(getInviteDashboardUrl('household')).toBe('parent-dashboard.html');
+        expect(getInviteDashboardUrl('admin')).toBe('dashboard.html');
+        expect(getInviteDashboardUrl('admin_invite')).toBe('dashboard.html');
+        expect(getInviteDashboardUrl(undefined)).toBe('parent-dashboard.html');
+    });
+});
 
 describe('accept invite flow', () => {
     it('redeems admin invite codes via atomic redemption when available', async () => {
