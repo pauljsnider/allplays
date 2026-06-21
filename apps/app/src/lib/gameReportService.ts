@@ -1,19 +1,22 @@
 import {
+  buildHighlightShareUrl,
+  collection,
+  db,
+  generateGameInsights,
   getConfigs,
+  getDocs,
   getGame,
   getGameEvents,
   getPlayers,
   getTeam,
-  getTeamStatsForGame
-} from '../../../../js/db.js';
-import { collection, getDocs } from '../../../../js/firebase.js';
-import { db } from '../../../../js/firebase.js';
-import { resolveReportStatColumns, resolveOpponentReportStatColumns } from '../../../../js/game-report-stats.js';
-import { buildHighlightShareUrl, normalizeGameRecapHighlightClips } from '../../../../js/live-game-video.js';
-import { resolveLiveStatConfig } from '../../../../js/live-game-state.js';
-import { generateGameInsights } from '../../../../js/post-game-insights.js';
-import { hasPlayerProfileParticipation } from '../../../../js/player-profile-stats.js';
-import { resolvePostGameTeamStatFields } from '../../../../js/post-game-stat-editor.js';
+  getTeamStatsForGame,
+  hasPlayerProfileParticipation,
+  normalizeGameRecapHighlightClips,
+  resolveLiveStatConfig,
+  resolveOpponentReportStatColumns,
+  resolvePostGameTeamStatFields,
+  resolveReportStatColumns
+} from './adapters/legacyGameReport';
 import {
   mapGameReportAggregatedStatsRecord,
   mapGameReportGameRecord,
