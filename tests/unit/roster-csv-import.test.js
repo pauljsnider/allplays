@@ -86,8 +86,10 @@ describe('roster CSV import planning', () => {
             type: 'add',
             payload: {
                 name: 'Avery Lee',
-                number: '4',
-                guardians: [{
+                number: '4'
+            },
+            privateFamilyContacts: {
+                parents: [{
                     name: 'Pat Lee',
                     email: 'pat@example.com',
                     phone: '555-0101',
@@ -111,6 +113,8 @@ describe('roster CSV import planning', () => {
                 { email: 'kim@example.com', displayName: 'Aunt Kim', relation: 'Contact', phone: '555-0199' }
             ]
         });
+        expect(plan.operations[0].payload).not.toHaveProperty('guardians');
+        expect(plan.operations[0].payload).not.toHaveProperty('contacts');
     });
 
     it('merges imported guardian contacts onto existing player updates without duplicates', () => {
@@ -133,8 +137,8 @@ describe('roster CSV import planning', () => {
         expect(plan.operations[0]).toMatchObject({
             type: 'update',
             playerId: 'p1',
-            payload: {
-                guardians: [
+            privateFamilyContacts: {
+                parents: [
                     expect.objectContaining({ email: 'pat@example.com', relation: 'Parent' }),
                     expect.objectContaining({ email: 'robin@example.com', relation: 'Guardian' })
                 ]
@@ -144,6 +148,7 @@ describe('roster CSV import planning', () => {
                 { email: 'robin@example.com', displayName: 'Robin Lee', relation: 'Guardian', phone: '' }
             ]
         });
+        expect(plan.operations[0].payload).not.toHaveProperty('guardians');
     });
 
     it('returns actionable row validation errors without producing operations', () => {

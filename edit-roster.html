@@ -1033,8 +1033,8 @@
                     } else if (operation.type === 'add') {
                         playerId = await addPlayer(currentTeamId, operation.payload);
                     }
-                    if (operation.privateRosterFields) {
-                        await setPlayerPrivateRosterProfileFields(currentTeamId, playerId, operation.privateRosterFields);
+                    if (operation.privateRosterFields || operation.privateFamilyContacts) {
+                        await setPlayerPrivateRosterProfileFields(currentTeamId, playerId, operation.privateRosterFields || {}, operation.privateFamilyContacts || {});
                     }
                 }
 
@@ -2007,8 +2007,8 @@
                     } else {
                         playerId = await addPlayer(currentTeamId, operation.payload);
                     }
-                    if (operation.privateRosterFields) {
-                        await setPlayerPrivateRosterProfileFields(currentTeamId, playerId, operation.privateRosterFields);
+                    if (operation.privateRosterFields || operation.privateFamilyContacts) {
+                        await setPlayerPrivateRosterProfileFields(currentTeamId, playerId, operation.privateRosterFields || {}, operation.privateFamilyContacts || {});
                     }
                 }
                 renderCsvImportStatus(`Imported ${plan.operations.length} player row${plan.operations.length === 1 ? '' : 's'}.`, 'success');

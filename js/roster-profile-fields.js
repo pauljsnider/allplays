@@ -457,12 +457,16 @@ export function planRosterCsvImport({ csvText = '', fields = [], existingPlayers
         if (hasNumberColumn) payload.number = number;
         const mergedGuardians = mergeImportedContacts(existing?.guardians || existing?.parents || existing?.familyContacts || [], contactPlan.guardians);
         const mergedContacts = mergeImportedContacts(existing?.contacts || [], contactPlan.contacts);
-        if (mergedGuardians.length > 0) payload.guardians = mergedGuardians;
-        if (mergedContacts.length > 0) payload.contacts = mergedContacts;
         const privateRosterFields = Object.keys(privateValues).length > 0 ? privateValues : null;
+        const privateFamilyContacts = mergedGuardians.length > 0 || mergedContacts.length > 0
+            ? {
+                ...(mergedGuardians.length > 0 ? { parents: mergedGuardians } : {}),
+                ...(mergedContacts.length > 0 ? { contacts: mergedContacts } : {})
+            }
+            : null;
         operations.push(existing
-            ? { type: 'update', playerId: existing.id, payload, privateRosterFields, familyContacts: contactPlan.familyContacts, inviteRequests: contactPlan.inviteRequests }
-            : { type: 'add', payload, privateRosterFields, familyContacts: contactPlan.familyContacts, inviteRequests: contactPlan.inviteRequests });
+            ? { type: 'update', playerId: existing.id, payload, privateRosterFields, privateFamilyContacts, familyContacts: contactPlan.familyContacts, inviteRequests: contactPlan.inviteRequests }
+            : { type: 'add', payload, privateRosterFields, privateFamilyContacts, familyContacts: contactPlan.familyContacts, inviteRequests: contactPlan.inviteRequests });
     });
 
     if (errors.length) return { errors, operations: [] };
