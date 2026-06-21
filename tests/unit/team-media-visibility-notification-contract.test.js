@@ -41,7 +41,7 @@ describe('team media visibility notification contract', () => {
         expect(functionsSource).toContain("return ['private', 'staff', 'staff-only'].includes(normalized) ? 'private' : 'team';");
         expect(functionsSource).toContain('function canReceiveCategoryNotification(category, user, audienceContext = {}) {');
         expect(functionsSource).toContain("if (category !== 'media') return true;");
-        expect(functionsSource).toContain("const albumVisibility = audienceContext?.staffOnly === true");
+        expect(functionsSource).toContain("const albumVisibility = audienceContext?.staffOnly === true\n    ? 'private'\n    : normalizeNotificationAlbumVisibility(audienceContext.albumVisibility);");
         expect(functionsSource).toContain("if (albumVisibility !== 'private') return true;");
         expect(functionsSource).toContain("return Array.isArray(user.roles) && user.roles.includes('staff');");
     });
@@ -49,7 +49,7 @@ describe('team media visibility notification contract', () => {
     it('passes media audience context through indexed and legacy target lookups', () => {
         expect(functionsSource).toContain('canReceiveCategoryNotification(category, user, audienceContext)');
         expect(functionsSource).toContain('getLegacyTargetsForCategory(teamId, category, missingUsers, actorUid, audienceContext)');
-        expect(functionsSource).toContain('getTargetsForCategory(teamId, category, actorUid, audienceContext');
+        expect(functionsSource).toContain('async function getTargetsForCategory(teamId, category, actorUid = null, audienceContext = {}, additionalUsers = []) {');
         expect(functionsSource).toContain('const eligibleUsers = new Map(users');
         expect(functionsSource).toContain('eligibleUsers.has(user.uid)');
         expect(functionsSource).toContain('const fallbackTargets = await getLegacyTargetsForCategory(teamId, category, missingUsers, actorUid, audienceContext);');
