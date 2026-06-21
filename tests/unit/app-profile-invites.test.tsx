@@ -213,7 +213,7 @@ describe('Profile invites', () => {
       clipboardText: expect.stringContaining('/app#/accept-invite?code=NEWMVP42')
     })));
     expect(screen.getByText(/\/app#\/accept-invite\?code=NEWMVP42/)).toBeTruthy();
-    expect(screen.getByText('Share sheet opened.')).toBeTruthy();
+    expect(await screen.findByText('Share sheet opened.')).toBeTruthy();
   });
 
   it('shows active invite share actions, hides them for used codes, and surfaces copied and cancelled statuses', async () => {
