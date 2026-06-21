@@ -44,6 +44,18 @@ describe('Capacitor native config', () => {
         expect(iosPackage).toContain('CapacitorStatusBar');
     });
 
+    it('pins the app Vite dependency version in both lockfiles', () => {
+        const appPackage = JSON.parse(readProjectFile('apps/app/package.json'));
+        const appPackageLock = JSON.parse(readProjectFile('apps/app/package-lock.json'));
+        const appPnpmLock = readProjectFile('apps/app/pnpm-lock.yaml');
+
+        expect(appPackage.devDependencies.vite).toBe('^8.0.16');
+        expect(appPackageLock.packages[''].devDependencies.vite).toBe('^8.0.16');
+        expect(appPackageLock.packages['node_modules/vite'].version).toBe('8.0.16');
+        expect(appPnpmLock).toContain('vite@8.0.16:');
+        expect(appPnpmLock).toContain("'@vitejs/plugin-react@5.2.0(vite@8.0.16");
+    });
+
     it('wires first paint splash hiding and status bar setup into the app bootstrap', () => {
         const main = readProjectFile('apps/app/src/main.tsx');
         const nativeAppearance = readProjectFile('apps/app/src/lib/nativeAppearance.ts');
