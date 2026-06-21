@@ -31,43 +31,47 @@ function HookProbe() {
     );
 }
 
+function expectSheetState(testId: string, state: boolean) {
+    expect(screen.getByTestId(testId).textContent).toBe(String(state));
+}
+
 describe('useChatSheets', () => {
     it('opens and closes each extracted sheet without leaking state', () => {
         render(<HookProbe />);
 
-        expect(screen.getByTestId('conversation')).toHaveTextContent('false');
-        expect(screen.getByTestId('audience')).toHaveTextContent('false');
-        expect(screen.getByTestId('media')).toHaveTextContent('false');
-        expect(screen.getByTestId('attach')).toHaveTextContent('false');
-        expect(screen.getByTestId('link')).toHaveTextContent('false');
-        expect(screen.getByTestId('email')).toHaveTextContent('false');
+        expectSheetState('conversation', false);
+        expectSheetState('audience', false);
+        expectSheetState('media', false);
+        expectSheetState('attach', false);
+        expectSheetState('link', false);
+        expectSheetState('email', false);
 
         fireEvent.click(screen.getByRole('button', { name: 'Open conversation' }));
-        expect(screen.getByTestId('conversation')).toHaveTextContent('true');
+        expectSheetState('conversation', true);
         fireEvent.click(screen.getByRole('button', { name: 'Close conversation' }));
-        expect(screen.getByTestId('conversation')).toHaveTextContent('false');
+        expectSheetState('conversation', false);
 
         fireEvent.click(screen.getByRole('button', { name: 'Open audience' }));
-        expect(screen.getByTestId('audience')).toHaveTextContent('true');
+        expectSheetState('audience', true);
         fireEvent.click(screen.getByRole('button', { name: 'Close audience' }));
-        expect(screen.getByTestId('audience')).toHaveTextContent('false');
+        expectSheetState('audience', false);
 
         fireEvent.click(screen.getByRole('button', { name: 'Open media' }));
-        expect(screen.getByTestId('media')).toHaveTextContent('true');
+        expectSheetState('media', true);
         fireEvent.click(screen.getByRole('button', { name: 'Close media' }));
-        expect(screen.getByTestId('media')).toHaveTextContent('false');
+        expectSheetState('media', false);
 
         fireEvent.click(screen.getByRole('button', { name: 'Open attach' }));
-        expect(screen.getByTestId('attach')).toHaveTextContent('true');
+        expectSheetState('attach', true);
         fireEvent.click(screen.getByRole('button', { name: 'Open link' }));
-        expect(screen.getByTestId('attach')).toHaveTextContent('false');
-        expect(screen.getByTestId('link')).toHaveTextContent('true');
+        expectSheetState('attach', false);
+        expectSheetState('link', true);
         fireEvent.click(screen.getByRole('button', { name: 'Close link' }));
-        expect(screen.getByTestId('link')).toHaveTextContent('false');
+        expectSheetState('link', false);
 
         fireEvent.click(screen.getByRole('button', { name: 'Open email' }));
-        expect(screen.getByTestId('email')).toHaveTextContent('true');
+        expectSheetState('email', true);
         fireEvent.click(screen.getByRole('button', { name: 'Close email' }));
-        expect(screen.getByTestId('email')).toHaveTextContent('false');
+        expectSheetState('email', false);
     });
 });
