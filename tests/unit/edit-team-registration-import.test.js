@@ -38,8 +38,8 @@ describe('edit team registration import', () => {
         expect(source).toContain('registrationExternalTeamId');
         expect(source).toContain('registrationCopiedTeamId');
         expect(source).toContain('registrationLastSyncStatus');
-        expect(source).toContain('Selecting Sports Connect enables a backend manual sync after this team is saved.');
-        expect(source).toContain('Save a Sports Connect provider mapping, then sync a roster snapshot for import.');
+        expect(source).toContain('Selecting Sports Connect saves metadata only; it does not fetch live provider data today.');
+        expect(source).toContain('Save a Sports Connect provider mapping as metadata. A future connector is required before roster snapshots can be synced.');
     });
 
     it('renders registration provider metadata on the team page', () => {
