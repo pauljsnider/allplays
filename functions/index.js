@@ -6700,8 +6700,11 @@ exports.notifyTeamChatMessageCreated = functions.firestore
 
     const results = [];
 
-    if (mentionedUids.length) {
+    if (shouldResolveMentions) {
       await snapshot.ref.update({ mentionedUids });
+    }
+
+    if (mentionedUids.length) {
       // Send mentions push only to the mentioned users (those who have mentions enabled)
       if (notificationPlan.mentionTargets.length) {
         results.push(await sendDirectTargetsNotification({
