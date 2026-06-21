@@ -83,6 +83,20 @@ export type OfflineTeamFeeRefundInput = {
   currentPaidCents?: string | number | null;
 };
 
+export type TeamFeeInstallmentScheduleInput = {
+  amount: string | number;
+  installmentCount: string | number;
+  firstDueDate: string;
+  intervalDays?: string | number | null;
+};
+
+export type TeamFeeInstallmentPreview = {
+  installmentNumber: number;
+  amountCents: number;
+  dueDate: string;
+  label: string;
+};
+
 const REFUND_METHOD_LABELS: Record<string, string> = {
   cash: 'Cash',
   check: 'Check'
@@ -96,6 +110,61 @@ export function toFeeCents(value: string | number | null | undefined) {
   const parsed = Number(normalized);
   if (!Number.isFinite(parsed) || parsed < 0) return null;
   return Math.round(parsed * 100);
+}
+
+function parseInstallmentDate(value: string) {
+  const normalized = normalizeString(value);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(normalized)) return null;
+  const date = new Date(`${normalized}T00:00:00.000Z`);
+  if (Number.isNaN(date.getTime())) return null;
+  return date.toISOString().slice(0, 10) === normalized ? date : null;
+}
+
+function addInstallmentDays(date: Date, days: number) {
+  const nextDate = new Date(date.getTime());
+  nextDate.setUTCDate(nextDate.getUTCDate() + days);
+  return nextDate.toISOString().slice(0, 10);
+}
+
+export function buildTeamFeeInstallmentSchedule({
+  amount,
+  installmentCount,
+  firstDueDate,
+  intervalDays = 30
+}: TeamFeeInstallmentScheduleInput) {
+  const totalAmountCents = toFeeCents(amount);
+  if (totalAmountCents === null || totalAmountCents <= 0) {
+    throw new Error('Enter an amount greater than $0 before creating a payment plan.');
+  }
+
+  const count = Number.parseInt(String(installmentCount ?? '').trim(), 10);
+  if (!Number.isInteger(count) || count < 2 || count > 12) {
+    throw new Error('Choose between 2 and 12 installments.');
+  }
+
+  const firstDate = parseInstallmentDate(firstDueDate);
+  if (!firstDate) throw new Error('Enter a valid first installment due date.');
+
+  const interval = Number.parseInt(String(intervalDays ?? '').trim(), 10);
+  if (!Number.isInteger(interval) || interval < 1 || interval > 366) {
+    throw new Error('Installment spacing must be between 1 and 366 days.');
+  }
+
+  const baseAmountCents = Math.floor(totalAmountCents / count);
+  const remainderCents = totalAmountCents % count;
+  const installments = Array.from({ length: count }, (_, index): TeamFeeInstallmentPreview => ({
+    installmentNumber: index + 1,
+    amountCents: baseAmountCents + (index < remainderCents ? 1 : 0),
+    dueDate: addInstallmentDays(firstDate, index * interval),
+    label: `Installment ${index + 1} of ${count}`
+  }));
+
+  return {
+    totalAmountCents,
+    installmentCount: count,
+    intervalDays: interval,
+    installments
+  };
 }
 
 function toSignedFeeCents(value: string | number | null | undefined) {
