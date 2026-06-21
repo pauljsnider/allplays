@@ -487,6 +487,74 @@ describe('React app chat recipient service', () => {
         expect(dbMocks.getChatMessages).not.toHaveBeenCalled();
     });
 
+    it('throttles deferred inbox preview hydration while still emitting every update', async () => {
+        dbMocks.getUserProfile.mockResolvedValue({ email: 'coach@example.com' });
+        dbMocks.getUserTeamsWithAccess.mockResolvedValue([
+            { id: 'team-1', name: 'Alpha', sport: 'Soccer' },
+            { id: 'team-2', name: 'Beta', sport: 'Soccer' },
+            { id: 'team-3', name: 'Gamma', sport: 'Soccer' },
+            { id: 'team-4', name: 'Delta', sport: 'Soccer' },
+            { id: 'team-5', name: 'Echo', sport: 'Soccer' }
+        ]);
+        dbMocks.getParentTeams.mockResolvedValue([]);
+
+        const startedTeams = [];
+        const resolvers = new Map();
+        let activePreviewLoads = 0;
+        let maxActivePreviewLoads = 0;
+        dbMocks.getChatConversations.mockImplementation((teamId) => {
+            startedTeams.push(teamId);
+            activePreviewLoads += 1;
+            maxActivePreviewLoads = Math.max(maxActivePreviewLoads, activePreviewLoads);
+            return new Promise((resolve) => {
+                resolvers.set(teamId, (value) => {
+                    activePreviewLoads -= 1;
+                    resolve(value);
+                });
+            });
+        });
+
+        const previewUpdates = [];
+        const { loadChatInbox } = await import('../../apps/app/src/lib/chatService.ts');
+        const inbox = await loadChatInbox({
+            uid: 'user-1',
+            email: 'coach@example.com',
+            displayName: 'Coach',
+            roles: ['coach']
+        }, {
+            includeLastMessages: false,
+            onPreview: (update) => {
+                previewUpdates.push(update);
+            }
+        });
+
+        expect(inbox.teams.map((team) => team.id)).toEqual(['team-1', 'team-2', 'team-4', 'team-5', 'team-3']);
+        expect(inbox.teams.every((team) => team.lastMessage === null)).toBe(true);
+        await vi.waitFor(() => {
+            expect(startedTeams).toEqual(['team-1', 'team-2', 'team-3']);
+        });
+
+        resolvers.get('team-1')([]);
+        await vi.waitFor(() => {
+            expect(startedTeams).toEqual(['team-1', 'team-2', 'team-3', 'team-4']);
+        });
+        expect(maxActivePreviewLoads).toBeLessThanOrEqual(3);
+        expect(previewUpdates.map((update) => update.teamId)).toContain('team-1');
+
+        resolvers.get('team-2')([]);
+        resolvers.get('team-3')([]);
+        await vi.waitFor(() => {
+            expect(startedTeams).toEqual(['team-1', 'team-2', 'team-3', 'team-4', 'team-5']);
+        });
+        resolvers.get('team-4')([]);
+        resolvers.get('team-5')([]);
+
+        await vi.waitFor(() => {
+            expect(previewUpdates.map((update) => update.teamId).sort()).toEqual(['team-1', 'team-2', 'team-3', 'team-4', 'team-5']);
+        });
+        expect(maxActivePreviewLoads).toBeLessThanOrEqual(3);
+    });
+
     it('returns no inbox teams for signed-out users', async () => {
         const { loadChatInbox } = await import('../../apps/app/src/lib/chatService.ts');
 
