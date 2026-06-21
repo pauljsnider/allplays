@@ -194,6 +194,57 @@ test('notifyTeamChatMessageCreated sends mentions and liveChat only to enabled r
     }
 });
 
+test('notifyTeamChatMessageCreated honors conversation mutes while preserving direct mentions', async () => {
+    const { moduleExports, env, cleanup } = loadNotificationInternals({
+        teamDoc: { ownerId: 'coach-1', adminEmails: ['assistant@example.com'] },
+        parentUserIds: ['parent-1'],
+        authUsersByEmail: { 'assistant@example.com': 'coach-2' },
+        userDocs: {
+            'coach-1': { displayName: 'Coach Prime' },
+            'coach-2': { displayName: 'Coach Helper' },
+            'parent-1': {
+                displayName: 'Jamie Parent',
+                teamChatState: {
+                    'team-1': {
+                        mutedConversations: {
+                            'thread-7': true
+                        }
+                    }
+                }
+            }
+        },
+        indexedTargets: [
+            { uid: 'coach-1', deviceId: 'coach-device', token: 'coach-token', categories: { liveChat: true, mentions: true } },
+            { uid: 'coach-2', deviceId: 'assistant-device', token: 'assistant-token', categories: { liveChat: true, mentions: true } },
+            { uid: 'parent-1', deviceId: 'parent-device', token: 'parent-token', categories: { liveChat: true, mentions: true } }
+        ]
+    });
+
+    try {
+        const ref = env.firestoreState.doc('teams/team-1/chatMessages/message-2');
+        const snapshot = makeSnapshot(ref, {
+            text: 'Heads up @Jamie',
+            senderId: 'coach-1',
+            senderName: 'Coach Prime',
+            conversationId: 'thread-7'
+        });
+        const context = { params: { teamId: 'team-1', messageId: 'message-2' } };
+
+        const result = await moduleExports.notifyTeamChatMessageCreated(snapshot, context);
+
+        assert.equal(result.length, 2);
+        assert.equal(env.messagingCalls.length, 2);
+        assert.deepEqual(env.messagingCalls.map((call) => `${call.data.category}:${call.tokens[0]}`).sort(), [
+            'liveChat:assistant-token',
+            'mentions:parent-token'
+        ]);
+        assert.equal(env.messagingCalls.every((call) => call.data.conversationId === 'thread-7'), true);
+        assert.deepEqual(env.updatedDocs, [{ path: 'teams/team-1/chatMessages/message-2', value: { mentionedUids: ['parent-1'] } }]);
+    } finally {
+        cleanup();
+    }
+});
+
 test('notifyOfficiatingNotificationCreated mirrors assignment records to the linked official', async () => {
     const { moduleExports, env, cleanup } = loadNotificationInternals({
         teamDoc: { ownerId: 'coach-1', adminEmails: [] },
