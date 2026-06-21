@@ -11,8 +11,8 @@ import { getParentScheduleSummaryCacheKey, loadCachedAppData } from './appDataCa
 import { toAppServiceError } from './appErrors';
 import {
   hydrateParentScheduleDetails,
+  loadParentScheduleChildren,
   loadParentSchedule,
-  type ParentScheduleChild,
   type ParentScheduleLoadResult
 } from './scheduleService';
 import type { AuthUser } from './types';
@@ -91,10 +91,12 @@ export async function loadParentTeamsSummary(user: AuthUser | null, options: { f
     async () => {
       const timer = startUxTimer('teams summary load');
       try {
-        const chatInbox = await loadChatInbox(user, { includeLastMessages: false }).catch((error) => {
-          throw toAppServiceError(error, 'Unable to load teams.');
-        });
-        const children = normalizeChildLinks(user, { parentOf: user.parentOf || [] });
+        const [chatInbox, children] = await Promise.all([
+          loadChatInbox(user, { includeLastMessages: false }).catch((error) => {
+            throw toAppServiceError(error, 'Unable to load teams.');
+          }),
+          loadParentScheduleChildren(user)
+        ]);
         const model = buildParentHomeModel({
           children,
           events: [],
@@ -213,32 +215,4 @@ function normalizeInboxTeams(teams: any[]): ParentHomeInboxTeam[] {
     photoUrl: team.photoUrl || null,
     unreadCount: Number(team.unreadCount || 0)
   }));
-}
-
-function compactString(value: unknown) {
-  return String(value || '').trim();
-}
-
-function normalizeChildLinks(user: AuthUser, profile: Record<string, unknown>): ParentScheduleChild[] {
-  const parentOf = Array.isArray(profile.parentOf) && profile.parentOf.length > 0
-    ? profile.parentOf
-    : Array.isArray(user.parentOf) ? user.parentOf : [];
-
-  const seen = new Set<string>();
-  return parentOf
-    .map((entry: any) => {
-      const teamId = compactString(entry?.teamId);
-      const playerId = compactString(entry?.playerId || entry?.childId);
-      if (!teamId || !playerId) return null;
-      const key = `${teamId}::${playerId}`;
-      if (seen.has(key)) return null;
-      seen.add(key);
-      return {
-        teamId,
-        teamName: compactString(entry?.teamName),
-        playerId,
-        playerName: compactString(entry?.playerName || entry?.childName || entry?.name) || 'Player'
-      };
-    })
-    .filter(Boolean) as ParentScheduleChild[];
 }
