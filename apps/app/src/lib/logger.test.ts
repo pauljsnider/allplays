@@ -27,6 +27,46 @@ describe('logger', () => {
         });
     });
 
+    it('sanitizes Error objects with nested headers and circular request context', () => {
+        const request: Record<string, unknown> = {
+            headers: new Headers({
+                Authorization: 'Bearer request-secret',
+                'X-Team': 'team-1'
+            })
+        };
+        request.self = request;
+
+        const error = Object.assign(new Error('Request failed'), {
+            status: 503,
+            request,
+            config: {
+                apiKey: 'config-secret',
+                nested: {
+                    password: 'unsafe-password'
+                }
+            }
+        });
+
+        expect(sanitizeForLogging(error)).toEqual({
+            name: 'Error',
+            message: 'Request failed',
+            status: 503,
+            request: {
+                headers: {
+                    authorization: '[REDACTED]',
+                    'x-team': 'team-1'
+                },
+                self: '[Circular]'
+            },
+            config: {
+                apiKey: '[REDACTED]',
+                nested: {
+                    password: '[REDACTED]'
+                }
+            }
+        });
+    });
+
     it('emits sanitized structured warnings through level helpers', () => {
         const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
         const logger = createLogger('schedule-service');
