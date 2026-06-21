@@ -59,7 +59,7 @@ jobs:
           done
 
       - name: Install Playwright Chromium
-        run: npx playwright install --with-deps chromium
+        run: npx playwright install chromium
 
       - name: Run static-hosting smoke
         run: npx playwright test --config=playwright.smoke.config.js --reporter=line
