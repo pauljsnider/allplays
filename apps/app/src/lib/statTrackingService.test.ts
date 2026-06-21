@@ -400,4 +400,42 @@ describe('statTrackingService', () => {
     });
     expect(service.getCurrentScore()).toEqual({ homeScore: 10, awayScore: 11 });
   });
+
+  it('undoes opponent scoring without writing player aggregates', async () => {
+    const dependencies = createDependencies();
+    const service = createStatTrackingService({
+      statConfig: { columns: ['PTS'] },
+      initialScore: { homeScore: 10, awayScore: 8 },
+      dependencies
+    });
+    const user = { uid: 'coach-1' };
+
+    await service.recordEvent('team-1', 'game-1', {
+      text: 'Opponent PTS +2',
+      clock: '00:45',
+      period: 'Q2',
+      undoData: {
+        type: 'stat',
+        playerId: 'opponent',
+        statKey: 'PTS',
+        value: 2,
+        isOpponent: true
+      }
+    }, user);
+
+    expect(dependencies.setDoc).toHaveBeenCalledTimes(1);
+    expect(service.getCurrentScore()).toEqual({ homeScore: 10, awayScore: 10 });
+
+    dependencies.setDoc.mockClear();
+    dependencies.updateGameScore.mockClear();
+    const undone = await service.undoLastEvent('team-1', 'game-1', user);
+
+    expect(undone?.isOpponent).toBe(true);
+    expect(dependencies.setDoc).not.toHaveBeenCalled();
+    expect(dependencies.updateGameScore).toHaveBeenCalledWith('team-1', 'game-1', {
+      homeScore: 10,
+      awayScore: 8
+    }, user);
+    expect(service.getCurrentScore()).toEqual({ homeScore: 10, awayScore: 8 });
+  });
 });
