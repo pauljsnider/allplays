@@ -49,6 +49,8 @@ export interface AuthUser {
   emailVerified?: boolean;
   roles: UserRole[];
   parentOf?: Array<Record<string, unknown>>;
+  parentTeamIds?: string[];
+  parentPlayerKeys?: string[];
   coachOf?: string[];
   isAdmin?: boolean;
   isPlatformAdmin?: boolean;

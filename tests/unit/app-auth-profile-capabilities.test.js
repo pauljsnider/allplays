@@ -66,6 +66,22 @@ describe('React app auth/profile capability parity', () => {
         ]);
     });
 
+    it('hydrates normalized parent scope keys into app auth users', () => {
+        const authService = readProjectFile('apps/app/src/lib/authService.ts');
+        const types = readProjectFile('apps/app/src/lib/types.ts');
+
+        expectContains(types, [
+            'parentTeamIds?: string[];',
+            'parentPlayerKeys?: string[];'
+        ]);
+        expectContains(authService, [
+            'Array.isArray(profile.parentTeamIds)',
+            'Array.isArray(profile.parentPlayerKeys)',
+            'parentTeamIds: Array.isArray(profile.parentTeamIds)',
+            'parentPlayerKeys: Array.isArray(profile.parentPlayerKeys)'
+        ]);
+    });
+
     it('covers login.html sign-in, sign-up, Google, activation code, and password reset features', () => {
         const legacyLogin = readProjectFile('login.html');
         const authPage = readProjectFile('apps/app/src/pages/AuthPage.tsx');

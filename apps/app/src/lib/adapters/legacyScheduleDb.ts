@@ -47,6 +47,7 @@ import {
     db as legacyFirebaseDb,
     doc as legacyFirebaseDoc,
     deleteField as legacyFirebaseDeleteField,
+    getDoc as legacyFirebaseGetDoc,
     getDocs as legacyFirebaseGetDocs,
     increment as legacyFirebaseIncrement,
     query as legacyFirebaseQuery,
@@ -60,6 +61,7 @@ export const db = legacyFirebaseDb;
 export const doc = legacyFirebaseDoc;
 export const collection = legacyFirebaseCollection;
 export const collectionGroup = legacyFirebaseCollectionGroup;
+export const getDoc = legacyFirebaseGetDoc;
 export const getDocs = legacyFirebaseGetDocs;
 export const query = legacyFirebaseQuery;
 export const runTransaction = legacyFirebaseRunTransaction;

@@ -41,6 +41,7 @@ import {
   doc,
   collection,
   collectionGroup,
+  getDoc,
   getDocs,
   query,
   runTransaction,
@@ -137,6 +138,7 @@ const buildPracticePacketCompletionPayloadBase = buildPracticePacketCompletionPa
 
 const primaryDataTimeoutMs = 5000;
 const parentScheduleTeamConcurrency = 3;
+const parentSchedulePlayerConcurrency = 8;
 const scheduleHydrationCacheTtlMs = 30 * 1000;
 const parentHomeHydrationLookAheadMs = 14 * 24 * 60 * 60 * 1000;
 const parentHomeHydrationLookBehindMs = 12 * 60 * 60 * 1000;
@@ -167,6 +169,12 @@ export type ParentScheduleChild = {
   teamName: string;
   playerId: string;
   playerName: string;
+};
+
+type ParentScopeLink = ParentScheduleChild & {
+  playerNumber?: string;
+  playerPhotoUrl?: string | null;
+  hasMetadata: boolean;
 };
 
 export type ParentScheduleLoadResult = {
@@ -1764,6 +1772,18 @@ async function loadPlayers(teamId: string) {
   );
 }
 
+async function loadPlayer(teamId: string, playerId: string) {
+  return readWithNativeFallback(
+    `player ${teamId}/${playerId}`,
+    async () => {
+      const snapshot = await getDoc(doc(db, 'teams', teamId, 'players', playerId));
+      if (!snapshot.exists()) return null;
+      return { id: snapshot.id || playerId, ...(snapshot.data() || {}) };
+    },
+    () => nativeGetDocument(`teams/${encodeURIComponent(teamId)}/players/${encodeURIComponent(playerId)}`)
+  );
+}
+
 function normalizePlayerName(player: any) {
   return compactString(player?.name || player?.displayName || player?.playerName) || 'Player';
 }
@@ -1811,28 +1831,146 @@ export async function loadHomeScoringPlayers(teamId: string, gameId: string): Pr
     .filter(Boolean) as ScheduleHomeScoringPlayer[];
 }
 
-function normalizeChildLinks(user: AuthUser, profile: Record<string, unknown>): ParentScheduleChild[] {
-  const parentOf = Array.isArray(profile.parentOf) && profile.parentOf.length > 0
-    ? profile.parentOf
-    : Array.isArray(user.parentOf) ? user.parentOf : [];
+function getProfileArray(profile: Record<string, unknown>, key: string) {
+  const value = profile[key];
+  return Array.isArray(value) ? value : [];
+}
 
-  const seen = new Set<string>();
-  return parentOf
-    .map((entry: any) => {
-      const teamId = compactString(entry?.teamId);
-      const playerId = compactString(entry?.playerId || entry?.childId);
-      if (!teamId || !playerId) return null;
-      const key = `${teamId}::${playerId}`;
-      if (seen.has(key)) return null;
-      seen.add(key);
-      return {
-        teamId,
-        teamName: compactString(entry?.teamName),
-        playerId,
-        playerName: compactString(entry?.playerName || entry?.childName || entry?.name) || 'Player'
-      };
-    })
-    .filter(Boolean) as ParentScheduleChild[];
+function getUserArray(user: AuthUser, key: keyof AuthUser | 'parentTeamIds' | 'parentPlayerKeys') {
+  const value = (user as any)[key];
+  return Array.isArray(value) ? value : [];
+}
+
+function parseParentPlayerKey(value: unknown) {
+  const raw = compactString(value);
+  const separatorIndex = raw.indexOf('::');
+  if (separatorIndex <= 0 || separatorIndex >= raw.length - 2) return null;
+  const teamId = compactString(raw.slice(0, separatorIndex));
+  const playerId = compactString(raw.slice(separatorIndex + 2));
+  if (!teamId || !playerId) return null;
+  return { teamId, playerId };
+}
+
+function collectParentScopeLinks(user: AuthUser, profile: Record<string, unknown>): ParentScopeLink[] {
+  const linksByKey = new Map<string, ParentScopeLink>();
+
+  const addLink = (link: ParentScopeLink) => {
+    const key = `${link.teamId}::${link.playerId}`;
+    const existing = linksByKey.get(key);
+    if (!existing) {
+      linksByKey.set(key, link);
+      return;
+    }
+    linksByKey.set(key, {
+      ...existing,
+      teamName: existing.teamName || link.teamName,
+      playerName: existing.playerName === 'Player' ? link.playerName : existing.playerName,
+      playerNumber: existing.playerNumber || link.playerNumber,
+      playerPhotoUrl: existing.playerPhotoUrl || link.playerPhotoUrl,
+      hasMetadata: existing.hasMetadata || link.hasMetadata
+    });
+  };
+
+  const addParentOfEntry = (entry: any) => {
+    const teamId = compactString(entry?.teamId);
+    const playerId = compactString(entry?.playerId || entry?.childId);
+    if (!teamId || !playerId) return;
+    const teamName = compactString(entry?.teamName);
+    const playerName = compactString(entry?.playerName || entry?.childName || entry?.name);
+    const playerNumber = compactString(entry?.playerNumber || entry?.number);
+    const playerPhotoUrl = compactString(entry?.playerPhotoUrl || entry?.photoUrl) || null;
+    addLink({
+      teamId,
+      teamName,
+      playerId,
+      playerName: playerName || 'Player',
+      playerNumber,
+      playerPhotoUrl,
+      hasMetadata: Boolean(teamName || playerName || playerNumber || playerPhotoUrl)
+    });
+  };
+
+  const profileParentOf = getProfileArray(profile, 'parentOf');
+  const profileParentPlayerKeys = getProfileArray(profile, 'parentPlayerKeys');
+  const hasProfileScope = profileParentOf.length > 0 || profileParentPlayerKeys.length > 0;
+  const parentOf = hasProfileScope ? profileParentOf : getUserArray(user, 'parentOf');
+  const parentPlayerKeys = profileParentPlayerKeys.length > 0 ? profileParentPlayerKeys : getUserArray(user, 'parentPlayerKeys');
+
+  parentOf.forEach(addParentOfEntry);
+  parentPlayerKeys
+    .map(parseParentPlayerKey)
+    .filter(Boolean)
+    .forEach((parsed) => {
+      addLink({
+        teamId: parsed!.teamId,
+        teamName: '',
+        playerId: parsed!.playerId,
+        playerName: 'Player',
+        hasMetadata: false
+      });
+    });
+
+  return [...linksByKey.values()];
+}
+
+async function resolveParentScheduleChildren(user: AuthUser, profile: Record<string, unknown>): Promise<ParentScheduleChild[]> {
+  const links = collectParentScopeLinks(user, profile);
+  if (!links.length) return [];
+
+  const linksByTeam = new Map<string, ParentScopeLink[]>();
+  links.forEach((link) => {
+    if (!linksByTeam.has(link.teamId)) linksByTeam.set(link.teamId, []);
+    linksByTeam.get(link.teamId)?.push(link);
+  });
+
+  const batches = await mapWithConcurrency([...linksByTeam.entries()], parentScheduleTeamConcurrency, async ([teamId, teamLinks]) => {
+    const rawTeam = await loadRawTeam(teamId).catch((error) => {
+      logScheduleWarning('Unable to validate parent-linked team.', 'parent-team-scope-load', error, { teamId });
+      return undefined;
+    });
+    if (rawTeam === null) return [];
+    if (rawTeam && !isTeamActive(rawTeam as Record<string, any>)) return [];
+
+    const linkedPlayers = await mapWithConcurrency(teamLinks, parentSchedulePlayerConcurrency, async (link) => {
+      const player = await loadPlayer(teamId, link.playerId).catch((error) => {
+        logScheduleWarning('Unable to validate parent-linked player.', 'parent-player-scope-load', error, {
+          teamId,
+          playerId: link.playerId
+        });
+        return null;
+      });
+      return { playerId: link.playerId, player };
+    });
+    const playersById = new Map<string, any>();
+    linkedPlayers.forEach(({ playerId, player }) => {
+      if (player) {
+        const id = compactString(player?.id || player?.playerId);
+        playersById.set(id || playerId, player);
+      }
+    });
+
+    const teamName = compactString((rawTeam as any)?.name) || compactString((rawTeam as any)?.teamName) || '';
+    return teamLinks
+      .map((link) => {
+        const player = playersById.get(link.playerId) || null;
+        if (!player || !isActiveRosterPlayer(player)) return null;
+        return {
+          teamId: link.teamId,
+          teamName: teamName || link.teamName,
+          playerId: link.playerId,
+          playerName: player ? normalizePlayerName(player) : link.playerName || 'Player'
+        };
+      })
+      .filter(Boolean) as ParentScheduleChild[];
+  });
+
+  return batches.flat();
+}
+
+export async function loadParentScheduleChildren(user: AuthUser | null, options: { profile?: Record<string, unknown> } = {}): Promise<ParentScheduleChild[]> {
+  if (!user?.uid) return [];
+  const profile = options.profile || await loadProfileDocument(user.uid).catch(() => ({}));
+  return resolveParentScheduleChildren(user, profile as Record<string, unknown>);
 }
 
 function hasRecordedAttendance(attendance: any) {
@@ -1891,13 +2029,17 @@ function getTrackedCalendarEventUidsFromLoadedGames(games: any[] = []) {
     .filter(Boolean);
 }
 
-async function loadTeam(teamId: string) {
-  const team = await readWithNativeFallback(
+async function loadRawTeam(teamId: string) {
+  return readWithNativeFallback(
     `team ${teamId}`,
     () => Promise.resolve(getTeam(teamId)),
     () => nativeGetDocument(`teams/${encodeURIComponent(teamId)}`)
   );
-  return isTeamActive(team as Record<string, any> | null) ? team : null;
+}
+
+async function loadTeam(teamId: string) {
+  const team = await loadRawTeam(teamId);
+  return team && isTeamActive(team as Record<string, any>) ? team : null;
 }
 
 type ScheduleDateRange = { startDate?: Date | null; endDate?: Date | null };
@@ -2694,7 +2836,7 @@ export async function hydrateParentScheduleDetails(schedule: ParentScheduleLoadR
 
 async function buildParentScheduleTeamChildren(user: AuthUser, profile: Record<string, unknown>, options: ParentScheduleLoadOptions = {}) {
   const expandStaffPlayers = options.expandStaffPlayers !== false;
-  const children = normalizeChildLinks(user, profile as Record<string, unknown>);
+  const children = await resolveParentScheduleChildren(user, profile as Record<string, unknown>);
   const byTeam = new Map<string, ParentScheduleChild[]>();
   children.forEach((child) => {
     if (!byTeam.has(child.teamId)) byTeam.set(child.teamId, []);
@@ -2802,7 +2944,7 @@ export async function loadParentPlayerSchedule(user: AuthUser | null, options: P
 
   try {
     const profile = await loadProfileDocument(user.uid);
-    const children = normalizeChildLinks(user, profile as Record<string, unknown>);
+    const children = await resolveParentScheduleChildren(user, profile as Record<string, unknown>);
     let child = (requestedTeamId && requestedPlayerId)
       ? children.find((entry) => entry.teamId === requestedTeamId && entry.playerId === requestedPlayerId)
       : children.find((entry) => entry.playerId === requestedPlayerId);
