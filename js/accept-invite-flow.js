@@ -1,5 +1,32 @@
 import { hasFullTeamAccess } from './team-access.js?v=1';
 
+/**
+ * True when an invite failed only because the code was already redeemed/used (#1808).
+ * A returning user who already accepted an invite and opens the same link again
+ * should be treated like a normal login, not dead-ended on a used-code error.
+ */
+export function isInviteAlreadyRedeemedError(error) {
+    const message = String(error?.message || '').toLowerCase();
+    if (!message) return false;
+    return (
+        message.includes('already used')
+        || message.includes('already been used')
+        || message.includes('already redeemed')
+        || message.includes('already a member')
+        || message.includes('already an admin')
+    );
+}
+
+/** Dashboard a successful redemption of this invite type would land on. */
+export function getInviteDashboardUrl(inviteType) {
+    const normalized = String(inviteType || '').trim().toLowerCase();
+    if (normalized === 'admin' || normalized === 'admin_invite') {
+        return 'dashboard.html';
+    }
+    // parent, household, and unknown types all land on the parent dashboard.
+    return 'parent-dashboard.html';
+}
+
 function normalizeInviteEmail(email) {
     return String(email || '').trim().toLowerCase();
 }
