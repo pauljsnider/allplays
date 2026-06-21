@@ -66,6 +66,8 @@ class MockElement {
 
     click() {}
 
+    addEventListener() {}
+
     querySelectorAll() {
         return [];
     }
@@ -147,7 +149,15 @@ function createEnvironment() {
         'sync-calendar-feedback',
         'day-modal',
         'day-modal-title',
-        'day-modal-content'
+        'day-modal-content',
+        'sync-calendar',
+        'sync-calendar-modal',
+        'sync-calendar-backdrop',
+        'sync-calendar-close',
+        'sync-calendar-apple',
+        'sync-calendar-google',
+        'sync-calendar-copy',
+        'sync-calendar-feedback'
     ];
     const elements = new Map(ids.map((id) => [id, new MockElement(id)]));
     elements.get('team-filter').value = '';
