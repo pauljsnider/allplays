@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { buildPracticeAiCoachPrompt, filterDrillSummaries, loadFavoriteDrills, loadTeamDrillLibraryPage, setTeamDrillFavorite } from './teamDrillsService';
 
@@ -143,6 +144,17 @@ describe('teamDrillsService', () => {
     expect(prompt.user).toContain('- Half field only');
     expect(prompt.user).toContain('- Rondo 4v2 (Technical; 15 min, 8-10 players, 20x20). Skills: passing, support.');
     expect(prompt.user).toContain('minute-by-minute practice plan');
+  });
+
+  it('keeps practice prompt section headers on their own source line so prompts stay readable', () => {
+    const source = readFileSync(new URL('./teamDrillsService.ts', import.meta.url), 'utf8');
+
+    expect(source).toContain("`Practice goals:\n${goalLines.map((goal) => `- ${goal}`).join('\\n')}`");
+    expect(source).toContain("`Focus skills:\n${skillLines.map((skill) => `- ${skill}`).join('\\n')}`");
+    expect(source).toContain("`Constraints:\n${constraintLines.map((constraint) => `- ${constraint}`).join('\\n')}`");
+    expect(source).toContain("`Favorite drills to prefer when they fit:\n${drillLines.length ? drillLines.join('\\n') : '- No favorites supplied.'}`");
+    expect(source).not.toContain("`Practice goals:\\n${goalLines.map((goal) => `- ${goal}`).join('\\n')}`");
+    expect(source).not.toContain("`Favorite drills to prefer when they fit:\\n${drillLines.length ? drillLines.join('\\n') : '- No favorites supplied.'}`");
   });
 
   it('loads a bounded community drill page and merges team-published drills for staff users', async () => {

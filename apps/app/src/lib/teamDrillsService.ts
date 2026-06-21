@@ -217,10 +217,14 @@ export function buildPracticeAiCoachPrompt({
       `Age group: ${normalizeString(ageGroup) || 'Not specified'}`,
       `Available time: ${minutes} minutes`,
       `Roster size: ${playerCount}`,
-      `Practice goals:\n${goalLines.map((goal) => `- ${goal}`).join('\n')}`,
-      `Focus skills:\n${skillLines.map((skill) => `- ${skill}`).join('\n')}`,
-      `Constraints:\n${constraintLines.map((constraint) => `- ${constraint}`).join('\n')}`,
-      `Favorite drills to prefer when they fit:\n${drillLines.length ? drillLines.join('\n') : '- No favorites supplied.'}`,
+      `Practice goals:
+${goalLines.map((goal) => `- ${goal}`).join('\n')}`,
+      `Focus skills:
+${skillLines.map((skill) => `- ${skill}`).join('\n')}`,
+      `Constraints:
+${constraintLines.map((constraint) => `- ${constraint}`).join('\n')}`,
+      `Favorite drills to prefer when they fit:
+${drillLines.length ? drillLines.join('\n') : '- No favorites supplied.'}`,
       'Create a minute-by-minute practice plan with drill names, setup notes, coaching cues, and an adjustment for fewer players.'
     ].join('\n\n')
   };
