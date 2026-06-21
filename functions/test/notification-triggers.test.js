@@ -656,6 +656,57 @@ test('notifyFeeMarkedPaid avoids payment wording when a credit marks the fee as 
     }
 });
 
+test('notifyPublishedCertificateAward sends awards notifications to linked parents', async () => {
+    const { moduleExports, env, cleanup } = loadNotificationInternals({
+        teamDoc: { ownerId: 'coach-1', adminEmails: [] },
+        userDocs: {
+            'parent-1': { parentPlayerKeys: ['team-1::player-1'] },
+            'parent-2': { parentPlayerKeys: ['team-1::player-2'] }
+        },
+        indexedTargets: [
+            { uid: 'parent-1', deviceId: 'parent-device', token: 'parent-token', categories: { awards: true } },
+            { uid: 'parent-2', deviceId: 'other-parent-device', token: 'other-parent-token', categories: { awards: true } }
+        ]
+    });
+
+    try {
+        const ref = env.firestoreState.doc('teams/team-1/certificates/certificate-1');
+        const publishedCertificate = {
+            status: 'published',
+            playerId: 'player-1',
+            recipientName: 'Jordan B.',
+            awardTitle: 'Player of the Match'
+        };
+        await ref.set(publishedCertificate);
+
+        await moduleExports.notifyPublishedCertificateAward(
+            makeChange(ref, { status: 'draft', playerId: 'player-1' }, publishedCertificate),
+            { params: { teamId: 'team-1', certificateId: 'certificate-1' }, eventId: 'event-award-1' }
+        );
+
+        assert.equal(env.messagingCalls.length, 1);
+        assert.deepEqual(env.messagingCalls[0].tokens, ['parent-token']);
+        assert.equal(env.messagingCalls[0].title, 'Award published for Jordan B.');
+        assert.equal(env.messagingCalls[0].body, 'Player of the Match is ready to view in ParentTools.');
+        assert.equal(env.messagingCalls[0].data.category, 'awards');
+        assert.equal(env.messagingCalls[0].data.appRoute, '/parent-tools/certificates?teamId=team-1&certificateId=certificate-1');
+        assert.equal(env.messagingCalls[0].webLink, 'https://allplays.ai/app/#/parent-tools/certificates?teamId=team-1&certificateId=certificate-1');
+        assert.equal(env.auditWrites.length, 1);
+        assert.equal(env.auditWrites[0].value.category, 'awards');
+        assert.equal(env.updatedDocs.some((write) => (
+            write.path === 'teams/team-1/certificates/certificate-1'
+            && write.value.awardNotificationProcessedEventId === 'event-award-1'
+        )), true);
+
+        const storedCertificate = (await ref.get()).data();
+        assert.equal(storedCertificate.awardNotificationProcessedEventId, 'event-award-1');
+        assert.equal('awardNotificationProcessingEventId' in storedCertificate, false);
+        assert.equal('awardNotificationProcessingStartedAt' in storedCertificate, false);
+    } finally {
+        cleanup();
+    }
+});
+
 test('notifyParentMembershipRequestCreated sends access notifications only to staff reviewers', async () => {
     const { moduleExports, env, cleanup } = loadNotificationInternals({
         teamDoc: { ownerId: 'coach-1', adminEmails: ['assistant@example.com'] },

@@ -182,16 +182,53 @@ function buildNotificationTestEnv({
         return value == null ? value : JSON.parse(JSON.stringify(value));
     }
 
+    function isDeleteSentinel(value) {
+        return Boolean(value && typeof value === 'object' && value.__delete === true);
+    }
+
+    function setValueAtPath(target, pathSegments, value) {
+        let cursor = target;
+        for (let index = 0; index < pathSegments.length - 1; index += 1) {
+            const segment = pathSegments[index];
+            if (!cursor[segment] || typeof cursor[segment] !== 'object' || Array.isArray(cursor[segment])) {
+                cursor[segment] = {};
+            }
+            cursor = cursor[segment];
+        }
+        cursor[pathSegments[pathSegments.length - 1]] = value;
+    }
+
+    function deleteValueAtPath(target, pathSegments) {
+        let cursor = target;
+        for (let index = 0; index < pathSegments.length - 1; index += 1) {
+            cursor = cursor?.[pathSegments[index]];
+            if (!cursor || typeof cursor !== 'object') {
+                return;
+            }
+        }
+        if (cursor && typeof cursor === 'object') {
+            delete cursor[pathSegments[pathSegments.length - 1]];
+        }
+    }
+
     function writeStoredDoc(path, value) {
         docStore.set(path, clone(value));
     }
 
     function mergeStoredDoc(path, value) {
-        const current = docStore.get(path) || {};
-        docStore.set(path, {
-            ...clone(current),
-            ...clone(value)
+        const current = clone(docStore.get(path) || {});
+        const incoming = clone(value) || {};
+
+        Object.entries(incoming).forEach(([key, entryValue]) => {
+            const pathSegments = key.split('.');
+            if (isDeleteSentinel(entryValue)) {
+                deleteValueAtPath(current, pathSegments);
+                return;
+            }
+            setValueAtPath(current, pathSegments, entryValue);
         });
+
+        docStore.set(path, current);
     }
 
     function doc(path) {
@@ -505,7 +542,8 @@ function buildNotificationTestEnv({
             counts.dedupTransactions += 1;
             return handler({
                 get: (ref) => ref.get(),
-                set: (ref, value) => ref.set(value)
+                set: (ref, value) => ref.set(value),
+                update: (ref, value) => ref.update(value)
             });
         },
         batch() {
@@ -527,7 +565,8 @@ function buildNotificationTestEnv({
     const firestoreFactory = Object.assign(() => firestoreState, {
         FieldValue: {
             serverTimestamp: () => ({ __serverTimestamp: true }),
-            increment: (amount) => ({ __increment: amount })
+            increment: (amount) => ({ __increment: amount }),
+            delete: () => ({ __delete: true })
         },
         Timestamp: {
             fromDate: (date) => ({
