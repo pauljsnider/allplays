@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+import { useState } from 'react';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { useChatTeam } from '../useChatTeam';
@@ -29,6 +30,21 @@ function TeamProbe({ teamId, preferredConversationId = '' }: { teamId: string; p
             <div data-testid="selected-conversation">{state.selectedConversationId}</div>
             <div data-testid="conversation-count">{state.conversations.length}</div>
             <button type="button" onClick={() => state.switchConversation('staff')}>Open staff</button>
+        </div>
+    );
+}
+
+function ConversationSwitchProbe() {
+    const state = useChatTeam({ teamId: 'team-1', user });
+    const [lastResult, setLastResult] = useState<boolean | null>(null);
+
+    return (
+        <div>
+            <div data-testid="selected-conversation">{state.selectedConversationId}</div>
+            <div data-testid="last-result">{String(lastResult)}</div>
+            <button type="button" onClick={() => setLastResult(state.switchConversation(''))}>Blank</button>
+            <button type="button" onClick={() => setLastResult(state.switchConversation(DEFAULT_TEAM_CONVERSATION_ID))}>Same</button>
+            <button type="button" onClick={() => setLastResult(state.switchConversation('staff'))}>Staff</button>
         </div>
     );
 }
@@ -123,6 +139,33 @@ describe('useChatTeam', () => {
 
         await waitFor(() => expect(screen.getByTestId('selected-conversation').textContent).toBe(DEFAULT_TEAM_CONVERSATION_ID));
         fireEvent.click(screen.getByRole('button', { name: 'Open staff' }));
+        await waitFor(() => expect(screen.getByTestId('selected-conversation').textContent).toBe('staff'));
+    });
+
+    it('reports no-op conversation switches and accepts a new conversation id', async () => {
+        vi.mocked(loadChatTeamContext).mockResolvedValue({
+            team: { id: 'team-1', name: 'Bears' },
+            profile: {},
+            canModerate: true
+        });
+        vi.mocked(loadChatConversations).mockResolvedValue([
+            { id: DEFAULT_TEAM_CONVERSATION_ID, type: 'team', isDefault: true },
+            { id: 'staff', type: 'group', name: 'Staff only' }
+        ]);
+
+        render(<ConversationSwitchProbe />);
+
+        await waitFor(() => expect(screen.getByTestId('selected-conversation').textContent).toBe(DEFAULT_TEAM_CONVERSATION_ID));
+        fireEvent.click(screen.getByRole('button', { name: 'Blank' }));
+        expect(screen.getByTestId('last-result').textContent).toBe('false');
+        expect(screen.getByTestId('selected-conversation').textContent).toBe(DEFAULT_TEAM_CONVERSATION_ID);
+
+        fireEvent.click(screen.getByRole('button', { name: 'Same' }));
+        expect(screen.getByTestId('last-result').textContent).toBe('false');
+        expect(screen.getByTestId('selected-conversation').textContent).toBe(DEFAULT_TEAM_CONVERSATION_ID);
+
+        fireEvent.click(screen.getByRole('button', { name: 'Staff' }));
+        expect(screen.getByTestId('last-result').textContent).toBe('true');
         await waitFor(() => expect(screen.getByTestId('selected-conversation').textContent).toBe('staff'));
     });
 });
