@@ -192,6 +192,42 @@ test('getTargetsForCategory falls back to legacy resolution and backfills recipi
         }
 });
 
+test('getTargetsForCategory limits staff-only media notifications to staff recipients', async () => {
+        const { internals, env, cleanup } = loadNotificationInternals({
+            teamDoc: {
+                ownerId: 'coach-1',
+                adminEmails: []
+            },
+            parentUserIds: ['parent-1'],
+            indexedTargets: [
+                {
+                    uid: 'coach-1',
+                    deviceId: 'coach-device',
+                    token: 'coach-token',
+                    categories: { media: true }
+                },
+                {
+                    uid: 'parent-1',
+                    deviceId: 'parent-device',
+                    token: 'parent-token',
+                    categories: { media: true }
+                }
+            ]
+        });
+
+        try {
+            const targets = await internals.getTargetsForCategory('team-1', 'media', null, { albumVisibility: 'staff' });
+
+            assert.deepEqual(targets.map((target) => target.token), ['coach-token']);
+            assert.equal(env.counts.recipientQueries, 1);
+            assert.equal(env.counts.parentQueries, 1);
+            assert.equal(env.counts.preferenceGets, 0);
+            assert.equal(env.counts.deviceGets, 0);
+        } finally {
+            cleanup();
+        }
+});
+
 test('getTargetsForCategoryUserIds restricts RSVP targets to requested recipients with enabled preferences', async () => {
         const { internals, cleanup } = loadNotificationInternals({
             teamDoc: {
