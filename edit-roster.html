@@ -949,7 +949,7 @@
             description.textContent = hasImportableSnapshot
                 ? 'Preview players and guardian/contact records from the latest stored registration snapshot before importing. This uses saved provider data only and does not fetch Sports Connect live.'
                 : (hasConfiguredMetadata
-                    ? 'Sports Connect metadata is saved for this team, but roster import only works after a registration roster snapshot has been stored. This page does not fetch provider data live.'
+                    ? 'Sports Connect metadata is saved for this team, but roster import is unavailable until a provider connector stores a roster snapshot. This page does not fetch provider data live.'
                     : 'Roster import works from a stored registration snapshot. Connect a provider and save provider data before importing here.');
 
             previewButton.classList.toggle('hidden', !hasImportableSnapshot);
@@ -963,7 +963,7 @@
             status.textContent = hasImportableSnapshot
                 ? `${sourcePlayers.length} player${sourcePlayers.length === 1 ? '' : 's'} available in the latest stored roster snapshot. Preview before importing.`
                 : (hasConfiguredMetadata
-                    ? 'Required next step: save or load a registration roster snapshot for this team, then return here to preview and import the stored data.'
+                    ? 'Import unavailable: Sports Connect has metadata only. A live connector must create a stored roster snapshot before this page can preview or import players.'
                     : 'No registration provider data is available yet. Connect a provider and save a registration roster snapshot before importing.');
         }
 
@@ -975,7 +975,7 @@
             const sourcePlayers = getRegistrationRosterPlayers(currentTeam);
             if (sourcePlayers.length === 0) {
                 status.textContent = hasConfiguredRegistrationProviderMetadata(currentTeam)
-                    ? 'No stored registration roster snapshot is available yet. Save or load provider data for this team before previewing import.'
+                    ? 'No stored registration roster snapshot is available yet. Sports Connect live import requires a provider connector before preview is possible.'
                     : 'No registration provider data is available yet. Connect a provider and save a registration roster snapshot before previewing import.';
                 return;
             }

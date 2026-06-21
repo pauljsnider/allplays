@@ -454,7 +454,7 @@
                     <div class="flex items-start justify-between gap-3">
                         <div>
                             <h3 class="font-semibold text-blue-900 text-sm">Registration Provider Connection</h3>
-                            <p class="text-xs text-blue-700 mt-1">Store registration metadata for this team. Saved Sports Connect mappings can run a backend manual sync that fetches a roster snapshot for import.</p>
+                            <p class="text-xs text-blue-700 mt-1">Store registration metadata for this team. Sports Connect live sync is unavailable until a connector is added.</p>
                         </div>
                         <button id="clear-registration-provider-btn" type="button" class="shrink-0 px-3 py-1.5 bg-white border border-blue-200 text-blue-700 text-xs font-semibold rounded-lg hover:bg-blue-100 transition">
                             Clear
@@ -470,7 +470,7 @@
                                 <option value="League Apps">League Apps</option>
                                 <option value="Other">Other documented source</option>
                             </select>
-                            <p class="text-xs text-blue-700 mt-1">Selecting Sports Connect enables a backend manual sync after this team is saved.</p>
+                            <p class="text-xs text-blue-700 mt-1">Selecting Sports Connect saves metadata only; it does not fetch live provider data today.</p>
                         </div>
                         <div>
                             <label class="block text-sm font-medium text-gray-700">Sports Connect Team ID / External Mapping</label>
@@ -509,9 +509,9 @@
                             </div>
                         </div>
                         <div class="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-                            <p id="registration-connection-help" class="text-xs text-blue-700">Save a Sports Connect provider mapping, then sync a roster snapshot for import.</p>
+                            <p id="registration-connection-help" class="text-xs text-blue-700">Save a Sports Connect provider mapping as metadata. A future connector is required before roster snapshots can be synced.</p>
                             <button id="registration-refresh-btn" type="button" disabled aria-disabled="true" class="shrink-0 cursor-not-allowed rounded-lg border border-slate-200 bg-slate-100 px-3 py-1.5 text-xs font-semibold text-slate-500">
-                                Sync now
+                                Sync unavailable
                             </button>
                         </div>
                     </div>
@@ -795,15 +795,7 @@
                 return 'Metadata incomplete. Add provider mapping.';
             }
             if (isSportsConnectProvider(provider)) {
-                const source = currentRegistrationSource || {};
-                if (source.lastSyncStatus === 'success') {
-                    const count = Number(source.playerCount || 0);
-                    return `Last sync successful${count ? ` (${count} players)` : ''}`;
-                }
-                if (source.lastSyncStatus === 'error') {
-                    return 'Last sync failed';
-                }
-                return 'Ready for manual sync';
+                return 'Metadata saved; live sync unavailable';
             }
             return 'Registration metadata only. No live sync.';
         }
@@ -832,22 +824,18 @@
             const lastSyncTime = getRegistrationLastSyncTime(source);
             const refreshButton = document.getElementById('registration-refresh-btn');
             const hasUnsavedSyncChanges = hasUnsavedRegistrationSyncChanges(provider, externalTeamId);
-            const canSyncSportsConnect = Boolean(currentTeamId && isSportsConnectProvider(provider) && externalTeamId && !hasUnsavedSyncChanges);
+            const canSyncSportsConnect = false;
             let helpText = 'Choose a provider and team mapping to save registration metadata.';
 
             if (provider && externalTeamId) {
                 helpText = isSportsConnectProvider(provider)
-                    ? (currentTeamId
-                        ? (hasUnsavedSyncChanges
-                            ? 'Save the updated Sports Connect mapping before running backend sync.'
-                            : 'Sync now fetches Sports Connect data through the backend and stores the roster snapshot for import.')
-                        : 'Save the team before running a Sports Connect sync.')
+                    ? 'Sports Connect metadata is saved for reference only. Live refresh and re-import require a future provider connector.'
                     : 'This provider mapping is saved as metadata only. Manual refresh stays unavailable until a live connector exists.';
             } else if (provider) {
                 helpText = 'Add the provider team ID or mapping to finish setup.';
             }
 
-            if (!hasUnsavedSyncChanges && source.lastSyncStatus === 'error' && source.lastSyncError) {
+            if (!isSportsConnectProvider(provider) && !hasUnsavedSyncChanges && source.lastSyncStatus === 'error' && source.lastSyncError) {
                 helpText = `Last sync error: ${source.lastSyncError}`;
             }
 
@@ -894,6 +882,12 @@
         async function handleRegistrationProviderSync() {
             const button = document.getElementById('registration-refresh-btn');
             if (!currentTeamId || button.disabled) return;
+            const provider = document.getElementById('registrationProviderName').value.trim();
+            if (isSportsConnectProvider(provider)) {
+                renderRegistrationConnectionStatus(currentRegistrationSource || {});
+                document.getElementById('registration-connection-help').textContent = 'Sports Connect live refresh is unavailable until a provider connector exists.';
+                return;
+            }
 
             const originalText = button.textContent;
             let finalHelpText = '';
@@ -947,7 +941,7 @@
                 externalTeamId,
                 teamId: currentTeamId || null,
                 connectionStatus: provider && externalTeamId ? 'metadata_configured' : 'metadata_incomplete',
-                syncEnabled: isSportsConnectProvider(provider) && !!externalTeamId,
+                syncEnabled: false,
                 lastSyncStatus: metadataStatus
             };
         }
