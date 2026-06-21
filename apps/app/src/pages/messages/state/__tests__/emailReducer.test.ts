@@ -139,4 +139,17 @@ describe('emailReducer', () => {
       body: ''
     });
   });
+
+  it('keeps composer state unchanged when applying an unknown template id', () => {
+    const withTemplate = emailReducer(initialEmailComposerState, {
+      type: 'setTemplates',
+      templates: [template()]
+    });
+    const edited = emailReducer(
+      emailReducer(withTemplate, { type: 'updateSubject', subject: 'Manual subject' }),
+      { type: 'updateBody', body: 'Manual body' }
+    );
+
+    expect(emailReducer(edited, { type: 'applyTemplate', templateId: 'missing-template' })).toEqual(edited);
+  });
 });
