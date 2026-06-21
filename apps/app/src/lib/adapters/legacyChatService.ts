@@ -1,0 +1,45 @@
+/* Auto-generated typed adapter boundary for legacy js/ chat-service imports (#2066).
+ * Bindings re-exported as-is so existing js/* test mocks apply via the @legacy alias. */
+import { canAccessTeamChat as legacy_canAccessTeamChat, canModerateChat as legacy_canModerateChat, deleteChatMessage as legacy_deleteChatMessage, deleteUploadedChatAttachments as legacy_deleteUploadedChatAttachments, editChatMessage as legacy_editChatMessage, getAggregatedStatsForGames as legacy_getAggregatedStatsForGames, getChatConversations as legacy_getChatConversations, getChatMessages as legacy_getChatMessages, getGameEvents as legacy_getGameEvents, getGames as legacy_getGames, getParentTeams as legacy_getParentTeams, getPlayers as legacy_getPlayers, getSentTeamEmails as legacy_getSentTeamEmails, getTeamEmailDrafts as legacy_getStoredTeamEmailDrafts, getTeamEmailTemplates as legacy_getStoredTeamEmailTemplates, getTeam as legacy_getTeam, getUnreadChatCounts as legacy_getUnreadChatCounts, getUserByEmail as legacy_getUserByEmail, getUserProfile as legacy_getUserProfile, getUserTeamsWithAccess as legacy_getUserTeamsWithAccess, postChatMessage as legacy_postChatMessage, saveTeamEmailDraft as legacy_saveStoredTeamEmailDraft, saveTeamEmailTemplate as legacy_saveStoredTeamEmailTemplate, sendTeamEmail as legacy_sendTeamEmail, subscribeToChatMessages as legacy_subscribeToChatMessages, toggleChatReaction as legacy_toggleChatReaction, updateChatLastRead as legacy_updateChatLastRead, updateChatMuted as legacy_updateChatMuted, clearChatMuted as legacy_clearChatMuted, uploadChatImage as legacy_uploadChatImage, upsertChatConversation as legacy_upsertChatConversation } from '@legacy/db.js';
+import { getApp as legacy_getApp } from '@legacy/vendor/firebase-app.js';
+import { getAI as legacy_getAI, getGenerativeModel as legacy_getGenerativeModel, GoogleAIBackend as legacy_GoogleAIBackend } from '@legacy/vendor/firebase-ai.js';
+import { resolveImageFirebaseConfig as legacy_resolveImageFirebaseConfig } from '@legacy/firebase-runtime-config.js';
+import { isTeamActive as legacy_isTeamActive } from '@legacy/team-visibility.js';
+
+export const canAccessTeamChat = legacy_canAccessTeamChat as (...args: any[]) => any;
+export const canModerateChat = legacy_canModerateChat as (...args: any[]) => any;
+export const deleteChatMessage = legacy_deleteChatMessage as (...args: any[]) => any;
+export const deleteUploadedChatAttachments = legacy_deleteUploadedChatAttachments as (...args: any[]) => any;
+export const editChatMessage = legacy_editChatMessage as (...args: any[]) => any;
+export const getAggregatedStatsForGames = legacy_getAggregatedStatsForGames as (...args: any[]) => any;
+export const getChatConversations = legacy_getChatConversations as (...args: any[]) => any;
+export const getChatMessages = legacy_getChatMessages as (...args: any[]) => any;
+export const getGameEvents = legacy_getGameEvents as (...args: any[]) => any;
+export const getGames = legacy_getGames as (...args: any[]) => any;
+export const getParentTeams = legacy_getParentTeams as (...args: any[]) => any;
+export const getPlayers = legacy_getPlayers as (...args: any[]) => any;
+export const getSentTeamEmails = legacy_getSentTeamEmails as (...args: any[]) => any;
+export const getStoredTeamEmailDrafts = legacy_getStoredTeamEmailDrafts as (...args: any[]) => any;
+export const getStoredTeamEmailTemplates = legacy_getStoredTeamEmailTemplates as (...args: any[]) => any;
+export const getTeam = legacy_getTeam as (...args: any[]) => any;
+export const getUnreadChatCounts = legacy_getUnreadChatCounts as (...args: any[]) => any;
+export const getUserByEmail = legacy_getUserByEmail as (...args: any[]) => any;
+export const getUserProfile = legacy_getUserProfile as (...args: any[]) => any;
+export const getUserTeamsWithAccess = legacy_getUserTeamsWithAccess as (...args: any[]) => any;
+export const postChatMessage = legacy_postChatMessage as (...args: any[]) => any;
+export const saveStoredTeamEmailDraft = legacy_saveStoredTeamEmailDraft as (...args: any[]) => any;
+export const saveStoredTeamEmailTemplate = legacy_saveStoredTeamEmailTemplate as (...args: any[]) => any;
+export const sendTeamEmail = legacy_sendTeamEmail as (...args: any[]) => any;
+export const subscribeToChatMessages = legacy_subscribeToChatMessages as (...args: any[]) => any;
+export const toggleChatReaction = legacy_toggleChatReaction as (...args: any[]) => any;
+export const updateChatLastRead = legacy_updateChatLastRead as (...args: any[]) => any;
+export const updateChatMuted = legacy_updateChatMuted as (...args: any[]) => any;
+export const clearChatMuted = legacy_clearChatMuted as (...args: any[]) => any;
+export const uploadChatImage = legacy_uploadChatImage as (...args: any[]) => any;
+export const upsertChatConversation = legacy_upsertChatConversation as (...args: any[]) => any;
+export const getApp = legacy_getApp as (...args: any[]) => any;
+export const getAI = legacy_getAI as (...args: any[]) => any;
+export const getGenerativeModel = legacy_getGenerativeModel as (...args: any[]) => any;
+export const GoogleAIBackend = legacy_GoogleAIBackend as new (...args: any[]) => unknown;
+export const resolveImageFirebaseConfig = legacy_resolveImageFirebaseConfig as (...args: any[]) => any;
+export const isTeamActive = legacy_isTeamActive as (...args: any[]) => any;
