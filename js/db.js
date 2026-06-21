@@ -2130,11 +2130,18 @@ export async function updatePlayer(teamId, playerId, playerData) {
     await updateDoc(doc(db, `teams/${teamId}/players`, playerId), playerData);
 }
 
-export async function setPlayerPrivateRosterProfileFields(teamId, playerId, rosterFields = {}) {
-    await setDoc(doc(db, `teams/${teamId}/players/${playerId}/private/profile`), {
+export async function setPlayerPrivateRosterProfileFields(teamId, playerId, rosterFields = {}, extraData = {}) {
+    const privateProfileUpdate = {
         rosterFields,
         updatedAt: Timestamp.now()
-    }, { merge: true });
+    };
+    if (Array.isArray(extraData?.parents)) {
+        privateProfileUpdate.parents = extraData.parents;
+    }
+    if (Array.isArray(extraData?.contacts)) {
+        privateProfileUpdate.contacts = extraData.contacts;
+    }
+    await setDoc(doc(db, `teams/${teamId}/players/${playerId}/private/profile`), privateProfileUpdate, { merge: true });
 }
 
 export async function deletePlayer(teamId, playerId) {

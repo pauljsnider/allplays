@@ -129,7 +129,7 @@
                     <div id="content-csv-import" class="p-6 hidden">
                         <div class="mb-3">
                             <h2 class="text-xl font-bold">CSV Roster Import</h2>
-                            <p class="text-sm text-gray-600">Upload or paste a CSV with Name, Number, and roster field label/key columns. Unknown headers and invalid field values are rejected before anything is saved.</p>
+                            <p class="text-sm text-gray-600">Upload or paste a CSV with Name, Number, roster field label/key columns, and parent/guardian/contact columns such as Parent Email or Guardian Phone. Unknown headers and invalid field values are rejected before anything is saved.</p>
                         </div>
 
                         <div class="space-y-4">
@@ -142,7 +142,7 @@
                                 <label class="block text-sm font-medium text-gray-700 mb-2">CSV data</label>
                                 <textarea id="roster-csv-input" rows="8"
                                     class="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:border-indigo-500 focus:ring-indigo-500 text-sm font-mono"
-                                    placeholder="Name,Number,Grade,Throws Right&#10;Avery Lee,4,6,yes"></textarea>
+                                    placeholder="Name,Number,Parent Name,Parent Email,Grade&#10;Avery Lee,4,Pat Lee,pat@example.com,6"></textarea>
                             </div>
                             <button id="import-csv-btn" type="button"
                                 class="w-full bg-indigo-600 text-white py-2 px-4 rounded-md hover:bg-indigo-700 transition">Import CSV</button>
@@ -546,7 +546,7 @@
     <div id="footer-container"></div>
 
     <script type="module">
-        import { getTeam, getPlayers, addPlayer, deactivatePlayer, reactivatePlayer, getGames, uploadPlayerPhoto, updatePlayer, setPlayerPrivateRosterProfileFields, inviteParent, removeParentFromPlayer, getAllUsers, getUnreadChatCount, listTeamParentMembershipRequests, approveParentMembershipRequest, denyParentMembershipRequest, getRosterFieldDefinitions, saveRosterFieldDefinition, disableRosterFieldDefinition, reorderRosterFieldDefinitions, listTeamRegistrationForms, listTeamRegistrationReviews, approveTeamRegistration, rejectTeamRegistration, extendTeamRegistrationOffer, releaseTeamRegistrationWaitlist, listTeamTrackingItems, createTeamTrackingItem, listTeamTrackingStatuses, setTeamTrackingStatus } from './js/db.js?v=56';
+        import { getTeam, getPlayers, addPlayer, deactivatePlayer, reactivatePlayer, getGames, uploadPlayerPhoto, updatePlayer, setPlayerPrivateRosterProfileFields, inviteParent, removeParentFromPlayer, getAllUsers, getUnreadChatCount, listTeamParentMembershipRequests, approveParentMembershipRequest, denyParentMembershipRequest, getRosterFieldDefinitions, saveRosterFieldDefinition, disableRosterFieldDefinition, reorderRosterFieldDefinitions, listTeamRegistrationForms, listTeamRegistrationReviews, approveTeamRegistration, rejectTeamRegistration, extendTeamRegistrationOffer, releaseTeamRegistrationWaitlist, listTeamTrackingItems, createTeamTrackingItem, listTeamTrackingStatuses, setTeamTrackingStatus } from './js/db.js?v=57';
         import { buildRosterFieldDefinitionPayload, collectRosterProfileValues, getRosterProfileValues, normalizeRosterFieldDefinitions, planRosterCsvImport, renderRosterProfileFields, validateRosterProfileValues } from './js/roster-profile-fields.js?v=3';
         import { buildTrackingStatusPayload, mergeTrackingStatusRows, normalizeTrackingItemDraft, summarizeTrackingStatus } from './js/tracking-status-admin.js?v=2';
         import { renderHeader, renderFooter, getUrlParams, escapeHtml } from './js/utils.js?v=8';
@@ -1033,8 +1033,8 @@
                     } else if (operation.type === 'add') {
                         playerId = await addPlayer(currentTeamId, operation.payload);
                     }
-                    if (operation.privateRosterFields) {
-                        await setPlayerPrivateRosterProfileFields(currentTeamId, playerId, operation.privateRosterFields);
+                    if (operation.privateRosterFields || operation.privateFamilyContacts) {
+                        await setPlayerPrivateRosterProfileFields(currentTeamId, playerId, operation.privateRosterFields || {}, operation.privateFamilyContacts || {});
                     }
                 }
 
@@ -2007,8 +2007,8 @@
                     } else {
                         playerId = await addPlayer(currentTeamId, operation.payload);
                     }
-                    if (operation.privateRosterFields) {
-                        await setPlayerPrivateRosterProfileFields(currentTeamId, playerId, operation.privateRosterFields);
+                    if (operation.privateRosterFields || operation.privateFamilyContacts) {
+                        await setPlayerPrivateRosterProfileFields(currentTeamId, playerId, operation.privateRosterFields || {}, operation.privateFamilyContacts || {});
                     }
                 }
                 renderCsvImportStatus(`Imported ${plan.operations.length} player row${plan.operations.length === 1 ? '' : 's'}.`, 'success');
