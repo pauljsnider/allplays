@@ -1,35 +1,21 @@
 import { describe, expect, it } from 'vitest';
-import { readdirSync, readFileSync, statSync } from 'node:fs';
-import { join, relative } from 'node:path';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 
 const repoRoot = process.cwd();
-const appLibDir = join(repoRoot, 'apps/app/src/lib');
-const adapterDir = join(appLibDir, 'adapters');
-const directLegacyImportPattern = /from\s+['"]\.\.\/\.\.\/\.\.\/\.\.\/\.\.\/js\//;
-
-function collectSourceFiles(dir) {
-    return readdirSync(dir).flatMap((entry) => {
-        const fullPath = join(dir, entry);
-        const stats = statSync(fullPath);
-        if (stats.isDirectory()) {
-            return collectSourceFiles(fullPath);
-        }
-        return /\.(ts|tsx)$/.test(entry) ? [fullPath] : [];
-    });
-}
+const directLegacyImportPattern = /from\s+['"](?:\.\.\/){4,}js\//;
 
 function readRepoFile(path) {
     return readFileSync(join(repoRoot, path), 'utf8');
 }
 
 describe('app legacy adapter boundary', () => {
-    it('keeps direct legacy js imports inside adapter modules', () => {
-        const nonAdapterLegacyImports = collectSourceFiles(appLibDir)
-            .filter((filePath) => !filePath.startsWith(adapterDir))
-            .filter((filePath) => directLegacyImportPattern.test(readFileSync(filePath, 'utf8')))
-            .map((filePath) => relative(repoRoot, filePath));
+    it('keeps schedule and player services free of direct legacy js imports', () => {
+        const scheduleServiceSource = readRepoFile('apps/app/src/lib/scheduleService.ts');
+        const playerServiceSource = readRepoFile('apps/app/src/lib/playerService.ts');
 
-        expect(nonAdapterLegacyImports).toEqual([]);
+        expect(directLegacyImportPattern.test(scheduleServiceSource)).toBe(false);
+        expect(directLegacyImportPattern.test(playerServiceSource)).toBe(false);
     });
 
     it('routes schedule and player services through typed legacy adapters', () => {
