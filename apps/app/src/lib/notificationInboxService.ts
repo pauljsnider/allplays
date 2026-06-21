@@ -1,17 +1,17 @@
 import type { QuerySnapshot, DocumentData } from 'firebase/firestore';
 import {
-    collection,
-    db,
-    doc,
-    functions,
-    httpsCallable,
-    limit,
-    onSnapshot,
-    orderBy,
-    query,
-    updateDoc,
-    serverTimestamp
-} from '../../../../js/firebase.js';
+  collection,
+  db,
+  doc,
+  functions,
+  httpsCallable,
+  limit,
+  onSnapshot,
+  orderBy,
+  query,
+  serverTimestamp,
+  updateDoc
+} from './adapters/legacyNotificationInboxDb';
 
 export type NotificationInboxItem = {
     id: string;
