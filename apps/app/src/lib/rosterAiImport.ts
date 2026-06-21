@@ -1,5 +1,4 @@
-import { getApp } from '../../../../js/vendor/firebase-app.js';
-import { getAI, getGenerativeModel, GoogleAIBackend, Schema } from '../../../../js/vendor/firebase-ai.js';
+import { getAI, getApp, getGenerativeModel, GoogleAIBackend, Schema } from './adapters/legacyRosterAi';
 
 export type RosterAiImportCurrentPlayer = {
   id?: string;
