@@ -19,4 +19,13 @@ describe('profile access code pagination contract', () => {
         expect(profilePageSource).toContain('loadProfileAccessCodesPage(user.uid, { pageSize: collapsedInviteCount })');
         expect(profilePageSource).not.toContain('setAccessCodes(await loadProfileAccessCodes(user.uid))');
     });
+
+    it('declares the composite Firestore index required by the paged access-code query', () => {
+        const indexes = JSON.parse(readProjectFile('firestore.indexes.json'));
+        const accessCodeIndexes = indexes.indexes
+            .filter((index) => index.collectionGroup === 'accessCodes' && index.queryScope === 'COLLECTION')
+            .map((index) => index.fields.map((field) => `${field.fieldPath}:${field.order || field.arrayConfig}`).join(','));
+
+        expect(accessCodeIndexes).toContain('generatedBy:ASCENDING,createdAt:DESCENDING');
+    });
 });
