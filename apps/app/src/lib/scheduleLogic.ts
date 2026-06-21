@@ -155,6 +155,7 @@ export type ParentScheduleEvent = {
   seasonLabel?: string | null;
   competitionType?: string | null;
   countsTowardSeasonRecord?: boolean | null;
+  tournament?: Record<string, any> | null;
   statTrackerConfigId?: string | null;
   sourceType?: ScheduleSourceType | string | null;
   sourceLabel?: string | null;
@@ -542,6 +543,47 @@ export function getScheduleEventDetailPath(
   if (section) params.set('section', section);
   const query = params.toString();
   return `/schedule/${encodeURIComponent(event.teamId)}/${encodeURIComponent(event.id)}${query ? `?${query}` : ''}`;
+}
+
+export function getScheduleTournamentInfo(
+  event: Pick<ParentScheduleEvent, 'competitionType' | 'tournament'> & Record<string, any>
+) {
+  const tournament = event?.tournament && typeof event.tournament === 'object' ? event.tournament : {};
+  const isTournament = String(event?.competitionType || '').trim().toLowerCase() === 'tournament'
+    || Object.keys(tournament).length > 0;
+
+  if (!isTournament) {
+    return {
+      isTournament: false,
+      label: '',
+      details: '',
+      divisionName: '',
+      bracketName: '',
+      roundName: '',
+      poolName: ''
+    };
+  }
+
+  const divisionName = compactString(tournament.divisionName || event.divisionName);
+  const bracketName = compactString(tournament.bracketName || event.bracketName);
+  const roundName = compactString(tournament.roundName || event.roundName);
+  const poolName = compactString(tournament.poolName || event.poolName);
+  const labelParts = [divisionName, bracketName, roundName || poolName].filter(Boolean);
+  const detailParts = [
+    poolName && roundName ? `Pool: ${poolName}` : poolName,
+    tournament.gameLabel,
+    tournament.seedLabel
+  ].map(compactString).filter(Boolean);
+
+  return {
+    isTournament: true,
+    label: labelParts.join(' / ') || 'Tournament',
+    details: detailParts.join(' - '),
+    divisionName,
+    bracketName,
+    roundName,
+    poolName
+  };
 }
 
 export function getScheduleAssignmentStatus(assignment: Partial<ScheduleAssignment>, userId = '') {

@@ -2419,6 +2419,7 @@ function createScheduleEvent(input: {
   seasonLabel?: string | null;
   competitionType?: string | null;
   countsTowardSeasonRecord?: boolean | null;
+  tournament?: Record<string, any> | null;
   statTrackerConfigId?: string | null;
   sourceType?: string | null;
   sourceLabel?: string | null;
@@ -2486,6 +2487,7 @@ function createScheduleEvent(input: {
     seasonLabel: input.seasonLabel || null,
     competitionType: input.competitionType || null,
     countsTowardSeasonRecord: input.countsTowardSeasonRecord ?? null,
+    tournament: input.tournament && typeof input.tournament === 'object' ? input.tournament : null,
     statTrackerConfigId: input.statTrackerConfigId || null,
     sourceType: input.sourceType || (input.isDbGame ? 'db' : 'calendar'),
     sourceLabel: input.sourceLabel || (input.isDbGame ? 'ALL PLAYS schedule' : 'Team calendar'),
@@ -2592,6 +2594,7 @@ async function buildTeamSchedule(teamId: string, teamChildren: ParentScheduleChi
             seasonLabel: game.seasonLabel || null,
             competitionType: game.competitionType || null,
             countsTowardSeasonRecord: game.countsTowardSeasonRecord ?? null,
+            tournament: game.tournament || null,
             sourceType: game.sourceMetadata?.sourceType || game.source || 'db',
             sourceLabel: getScheduleSourceLabel(game),
             isImported: Boolean(game.sourceMetadata || game.source === 'calendar' || game.source === 'registration'),
@@ -2655,6 +2658,7 @@ async function buildTeamSchedule(teamId: string, teamChildren: ParentScheduleChi
           seasonLabel: game.seasonLabel || null,
           competitionType: game.competitionType || null,
           countsTowardSeasonRecord: game.countsTowardSeasonRecord ?? null,
+          tournament: game.tournament || null,
           sourceType: game.sourceMetadata?.sourceType || game.source || 'db',
           sourceLabel: getScheduleSourceLabel(game),
           isImported: Boolean(game.sourceMetadata || game.source === 'calendar' || game.source === 'registration'),
@@ -2826,6 +2830,7 @@ async function buildTargetedTeamScheduleEvent(teamId: string, eventId: string, t
     seasonLabel: game.seasonLabel || null,
     competitionType: game.competitionType || null,
     countsTowardSeasonRecord: game.countsTowardSeasonRecord ?? null,
+    tournament: game.tournament || null,
     statTrackerConfigId: game.statTrackerConfigId || null,
     sourceType: game.sourceMetadata?.sourceType || game.source || 'db',
     sourceLabel: getScheduleSourceLabel(game),
