@@ -74,4 +74,17 @@ describe('useChatSheets', () => {
         fireEvent.click(screen.getByRole('button', { name: 'Close email' }));
         expectSheetState('email', false);
     });
+
+    it('keeps unrelated sheet state intact when closing the email composer', () => {
+        render(<HookProbe />);
+
+        fireEvent.click(screen.getByRole('button', { name: 'Open conversation' }));
+        fireEvent.click(screen.getByRole('button', { name: 'Open email' }));
+        expect(screen.getByTestId('conversation')).toHaveTextContent('true');
+        expect(screen.getByTestId('email')).toHaveTextContent('true');
+
+        fireEvent.click(screen.getByRole('button', { name: 'Close email' }));
+        expect(screen.getByTestId('conversation')).toHaveTextContent('true');
+        expect(screen.getByTestId('email')).toHaveTextContent('false');
+    });
 });
