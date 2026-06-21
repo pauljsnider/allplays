@@ -634,3 +634,46 @@ test('sendCategoryNotification prunes invalid tokens from both notification inde
             cleanup();
         }
 });
+
+test('sendCategoryNotification suppresses duplicate sends with the same dedup key', async () => {
+        const { internals, env, cleanup } = loadNotificationInternals({
+            teamDoc: {
+                ownerId: 'coach-1',
+                adminEmails: []
+            },
+            indexedTargets: [
+                {
+                    uid: 'coach-1',
+                    deviceId: 'coach-device',
+                    token: 'coach-token',
+                    categories: { schedule: true }
+                }
+            ]
+        });
+
+        try {
+            const firstResult = await internals.sendCategoryNotification({
+                teamId: 'team-1',
+                category: 'schedule',
+                title: 'Schedule changed',
+                body: 'Updated',
+                dedupKey: 'event:event-1:created'
+            });
+            const secondResult = await internals.sendCategoryNotification({
+                teamId: 'team-1',
+                category: 'schedule',
+                title: 'Schedule changed',
+                body: 'Updated again',
+                dedupKey: 'event:event-1:created'
+            });
+
+            assert.equal(firstResult?.successCount, 1);
+            assert.equal(secondResult, null);
+            assert.equal(env.counts.dedupTransactions, 2);
+            assert.equal(env.messagingCalls.length, 1);
+            assert.equal(env.auditWrites.length, 1);
+            assert.equal(env.dedupWrites.filter((write) => write.path.includes('/notificationSendLog/')).length, 1);
+        } finally {
+            cleanup();
+        }
+});
