@@ -26,7 +26,7 @@ describe('Messages page decomposition', () => {
             'apps/app/src/pages/messages/hooks/__tests__/useChatMessages.test.tsx',
             'apps/app/src/pages/messages/state/__tests__/emailReducer.test.ts'
         ].forEach((path) => {
-            expect(readRepoFile(path).length).toBeGreaterThan(0);
+            expect(readRepoFile(path)).toMatch(/\b(describe|it|test)\s*\(/);
         });
     });
 });
