@@ -124,7 +124,8 @@ describe('team media notification recipients', () => {
         expect(functionsSource).toContain("firestore.collection('teamMediaNotificationBatches')");
         expect(functionsSource).toContain("category: 'media'");
         expect(functionsSource).toContain('dedupKey: `team-media:${batch.id}`');
-        expect(functionsSource).toContain("audienceContext: { albumVisibility }");
+        expect(functionsSource).toContain('const audienceContext = buildTeamMediaNotificationAudienceContext({');
+        expect(functionsSource).toMatch(/sendCategoryNotification\(\{[\s\S]*dedupKey: `team-media:\$\{batch\.id\}`,[\s\S]*audienceContext[\s\S]*\}\)/);
         expect(functionsSource).toContain("['sent', 'sending', 'skipped'].includes(currentStatus)");
         expect(firestoreIndexes).toContain('"collectionGroup": "teamMediaNotificationBatches"');
         expect(firestoreIndexes).toContain('"fieldPath": "dueAt"');
