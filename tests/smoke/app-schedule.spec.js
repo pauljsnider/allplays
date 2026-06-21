@@ -611,6 +611,24 @@ async function mockScheduleModules(page, options = {}) {
                     };
                 }
 
+                export async function loadStaffPracticePacket(event, childEvents) {
+                    window.__scheduleCalls.packets.push({ action: 'staff-load', eventId: event.id, sessionId: event.practiceSessionId });
+                    return {
+                        sessionId: event.practiceSessionId || event.id,
+                        teamId: event.teamId,
+                        eventId: event.id,
+                        title: event.title || 'Practice',
+                        date: event.date,
+                        location: event.location || 'TBD',
+                        homePacket: event.practiceHomePacket || { blocks: [], totalMinutes: 0 },
+                        completions: window.__mockPacketCompletions || [],
+                        children: childEvents.map((childEvent) => ({ id: childEvent.childId, name: childEvent.childName })),
+                        packetTitle: event.practiceHomePacket?.packetTitle || ((event.title || 'Practice') + ' home packet'),
+                        dueDate: event.practiceHomePacket?.dueDate || null,
+                        totalMinutes: event.practiceHomePacket?.totalMinutes || 0
+                    };
+                }
+
                 export async function loadStaffPracticeAttendance(event) {
                     window.__scheduleCalls.attendance = (window.__scheduleCalls.attendance || []).concat({ action: 'load', eventId: event?.id || null });
                     return [];
@@ -625,6 +643,40 @@ async function mockScheduleModules(page, options = {}) {
                         count: saved.length
                     });
                     return saved;
+                }
+
+                export async function saveStaffPracticePacket(event, user, input, childEvents) {
+                    const blocks = Array.isArray(input?.blocks)
+                        ? input.blocks.map((block, index) => ({
+                            drillId: block?.drillId || null,
+                            drillTitle: block?.drillTitle || ('Home Drill ' + (index + 1)),
+                            type: block?.type || 'Technical',
+                            duration: Number.parseInt(String(block?.duration || 10), 10) || 10,
+                            description: block?.description || '',
+                            notes: block?.notes || ''
+                        }))
+                        : [];
+                    const homePacket = {
+                        packetTitle: input?.packetTitle || ((event.title || 'Practice') + ' home packet'),
+                        dueDate: input?.dueDate || null,
+                        totalMinutes: blocks.reduce((sum, block) => sum + block.duration, 0),
+                        blocks
+                    };
+                    window.__scheduleCalls.packets.push({ action: 'staff-save', eventId: event?.id || null, userId: user?.uid || null, blockCount: blocks.length });
+                    return {
+                        sessionId: event.practiceSessionId || event.id,
+                        teamId: event.teamId,
+                        eventId: event.id,
+                        title: event.title || 'Practice',
+                        date: event.date,
+                        location: event.location || 'TBD',
+                        homePacket,
+                        completions: window.__mockPacketCompletions || [],
+                        children: childEvents.map((childEvent) => ({ id: childEvent.childId, name: childEvent.childName })),
+                        packetTitle: homePacket.packetTitle,
+                        dueDate: homePacket.dueDate,
+                        totalMinutes: homePacket.totalMinutes
+                    };
                 }
 
                 export async function markParentPracticePacketComplete(packet, user, child) {
