@@ -38,7 +38,47 @@ const authMocks = vi.hoisted(() => ({
     getNativeAuthIdToken: vi.fn()
 }));
 
+const firebaseMocks = vi.hoisted(() => {
+    const playersById = {
+        'player-1': { id: 'player-1', name: 'Pat', active: true },
+        'player-2': { id: 'player-2', name: 'Sam', active: true }
+    };
+
+    const makeSnapshot = (id, data = null) => ({
+        id,
+        exists: () => data !== null,
+        data: () => data
+    });
+
+    return {
+        db: {},
+        doc: vi.fn((...parts) => ({
+            path: parts.filter((part) => typeof part === 'string').join('/')
+        })),
+        collection: vi.fn((...parts) => ({
+            path: parts.filter((part) => typeof part === 'string').join('/')
+        })),
+        collectionGroup: vi.fn((_, name) => ({ id: name, path: name })),
+        getDoc: vi.fn(async (ref) => {
+            const playerId = String(ref?.path || '').split('/').filter(Boolean).pop() || '';
+            return makeSnapshot(playerId, playersById[playerId] || null);
+        }),
+        getDocs: vi.fn(async () => ({ docs: [] })),
+        query: vi.fn((...args) => args),
+        runTransaction: vi.fn(),
+        where: vi.fn((...args) => args),
+        increment: vi.fn((amount) => ({ __op: 'increment', amount })),
+        serverTimestamp: vi.fn(() => new Date('2026-05-20T12:00:00Z')),
+        deleteField: vi.fn(() => ({ __op: 'deleteField' })),
+        Timestamp: {
+            fromDate: vi.fn((date) => ({ toDate: () => date })),
+            now: vi.fn(() => ({ toDate: () => new Date('2026-05-20T12:00:00Z') }))
+        }
+    };
+});
+
 vi.mock('../../js/db.js', () => dbMocks);
+vi.mock('../../js/firebase.js', () => firebaseMocks);
 vi.mock('../../apps/app/src/lib/profileService.ts', () => profileMocks);
 vi.mock('../../apps/app/src/lib/authService.ts', () => authMocks);
 vi.mock('../../js/utils.js', () => ({
