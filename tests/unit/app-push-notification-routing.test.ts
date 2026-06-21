@@ -70,6 +70,11 @@ describe('app push notification routing', () => {
     it('returns the home route when notification data is missing', () => {
         expect(resolvePushNotificationRoute(undefined)).toBe('/home');
         expect(resolvePushNotificationRoute(null)).toBe('/home');
+        expect(resolvePushNotificationRoute({ data: undefined })).toBe('/home');
+    });
+
+    it('accepts Capacitor notification wrappers without requiring data to be dereferenced first', () => {
+        expect(resolvePushNotificationRoute({ data: { category: 'rsvp', teamId: 'team-1', eventId: 'game-9', childId: 'player-2' } })).toBe('/schedule/team-1/game-9?childId=player-2&section=availability');
     });
 
     it('keeps and clears pending notification routes for delayed auth hydration', () => {

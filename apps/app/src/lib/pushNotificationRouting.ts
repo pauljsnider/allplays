@@ -18,6 +18,17 @@ function normalizeValue(value: unknown) {
     return String(value || '').trim();
 }
 
+function getPushPayload(input: unknown) {
+    if (!input || typeof input !== 'object') {
+        return null;
+    }
+    const candidate = input as PushPayload & { data?: unknown };
+    if (candidate.data && typeof candidate.data === 'object') {
+        return candidate.data as PushPayload;
+    }
+    return candidate;
+}
+
 function encodeRouteParam(value: string) {
     return encodeURIComponent(value);
 }
@@ -112,11 +123,11 @@ function buildLegacyLinkFallback(link: string) {
 }
 
 export function resolvePushNotificationRoute(input: unknown) {
-    if (!input || typeof input !== 'object') {
+    const payload = getPushPayload(input);
+    if (!payload) {
         return '/home';
     }
 
-    const payload = input as PushPayload;
     const appRoute = normalizeAppRoute(payload.appRoute);
     if (appRoute) {
         return appRoute;

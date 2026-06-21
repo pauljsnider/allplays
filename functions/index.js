@@ -5055,6 +5055,7 @@ async function sendCategoryNotification({
         eventId: String(eventId || gameId || ''),
         conversationId: String(conversationId || ''),
         childId: String(childId || ''),
+        rsvpId: String(childId || ''),
         category: String(category),
         appRoute,
         link
@@ -5311,6 +5312,7 @@ async function sendDirectTargetsNotification({
         eventId: String(eventId || gameId || ''),
         conversationId: String(conversationId || ''),
         childId: String(childId || ''),
+        rsvpId: String(childId || ''),
         category: String(category),
         appRoute,
         link
