@@ -630,7 +630,8 @@ describe('edit team admin access persistence', () => {
         expect(html.indexOf('id="teamColorPrimary"')).toBeGreaterThan(advancedIndex);
         expect(html.indexOf('id="registrationProviderName"')).toBeGreaterThan(advancedIndex);
         expect(html).toContain('Registration Provider Connection');
-        expect(html).toContain('Saved Sports Connect mappings can run a backend manual sync that fetches a roster snapshot for import.');
+        expect(html).toContain('Sports Connect live sync is unavailable until a connector is added.');
+        expect(html).toContain('Sync unavailable');
         expect(html).toContain('id="team-create-mode-registration"');
         expect(html).toContain('No registration sources are configured yet. Start with a blank team or load provider data before using this import path.');
         expect(html).toContain('registrationMode.setAttribute(\'aria-disabled\', String(registrationMode.disabled));');
@@ -646,6 +647,16 @@ describe('edit team admin access persistence', () => {
         } finally {
             createEnv.cleanup();
         }
+    });
+
+    it('blocks Sports Connect roster import until a stored provider snapshot exists', () => {
+        const html = readFileSync(new URL('../../edit-roster.html', import.meta.url), 'utf8');
+
+        expect(html).toContain('Sports Connect metadata is saved for this team, but roster import is unavailable until a provider connector stores a roster snapshot.');
+        expect(html).toContain('Import unavailable: Sports Connect has metadata only. A live connector must create a stored roster snapshot before this page can preview or import players.');
+        expect(html).toContain('No stored registration roster snapshot is available yet. Sports Connect live import requires a provider connector before preview is possible.');
+        expect(html).toContain("previewButton.disabled = !hasImportableSnapshot;");
+        expect(html).toContain("importButton.disabled = true;");
     });
 
     it('saves the simple create path with safe advanced defaults', async () => {
@@ -1111,11 +1122,11 @@ describe('edit team admin access persistence', () => {
             expect(env.elements.get('registrationProviderName').value).toBe('Sports Connect');
             expect(env.elements.get('registrationExternalTeamId').value).toBe('SC-123');
             expect(env.elements.get('registrationCopiedTeamId').value).toBe('team-1');
-            expect(env.elements.get('registrationLastSyncStatus').value).toBe('Ready for manual sync');
-            expect(env.elements.get('registration-connection-status').textContent).toBe('Ready for manual sync');
-            expect(env.elements.get('registration-sync-status').textContent).toBe('Ready for manual sync');
+            expect(env.elements.get('registrationLastSyncStatus').value).toBe('Metadata saved; live sync unavailable');
+            expect(env.elements.get('registration-connection-status').textContent).toBe('Metadata saved; live sync unavailable');
+            expect(env.elements.get('registration-sync-status').textContent).toBe('Metadata saved; live sync unavailable');
             expect(env.elements.get('registration-sync-time').textContent).toContain('2026');
-            expect(env.elements.get('registration-refresh-btn').disabled).toBe(false);
+            expect(env.elements.get('registration-refresh-btn').disabled).toBe(true);
 
             env.elements.get('registrationProviderName').value = 'League Apps';
             env.elements.get('registrationExternalTeamId').value = 'LA-456';
@@ -1167,17 +1178,27 @@ describe('edit team admin access persistence', () => {
             updateCalls: []
         };
 
-        const env = await bootEditTeam(initialState);
+        let syncCalls = 0;
+        const env = await bootEditTeam(initialState, undefined, {
+            db: {
+                async syncRegistrationProvider() {
+                    syncCalls += 1;
+                    throw new Error('sync should stay unavailable');
+                }
+            }
+        });
         try {
             env.elements.get('registrationProviderName').value = 'sports-connect';
             env.elements.get('registrationExternalTeamId').value = 'SC-987';
             await env.elements.get('registrationProviderName').dispatchEvent(new MockEvent('change'));
 
-            expect(env.elements.get('registrationLastSyncStatus').value).toBe('Ready for manual sync');
-            expect(env.elements.get('registration-connection-status').textContent).toBe('Ready for manual sync');
-            expect(env.elements.get('registration-sync-status').textContent).toBe('Ready for manual sync');
-            expect(env.elements.get('registration-connection-help').textContent).toContain('backend');
+            expect(env.elements.get('registrationLastSyncStatus').value).toBe('Metadata saved; live sync unavailable');
+            expect(env.elements.get('registration-connection-status').textContent).toBe('Metadata saved; live sync unavailable');
+            expect(env.elements.get('registration-sync-status').textContent).toBe('Metadata saved; live sync unavailable');
+            expect(env.elements.get('registration-connection-help').textContent).toContain('future provider connector');
             expect(env.elements.get('registration-refresh-btn').disabled).toBe(true);
+            await env.elements.get('registration-refresh-btn').click();
+            expect(syncCalls).toBe(0);
 
             await env.elements.get('team-form').requestSubmit();
 
@@ -1187,9 +1208,47 @@ describe('edit team admin access persistence', () => {
                 externalTeamId: 'SC-987',
                 teamId: 'team-1',
                 connectionStatus: 'metadata_configured',
-                syncEnabled: true,
-                lastSyncStatus: 'Ready for manual sync'
+                syncEnabled: false,
+                lastSyncStatus: 'Metadata saved; live sync unavailable'
             });
+        } finally {
+            env.cleanup();
+        }
+    });
+
+    it('keeps Sports Connect connector guidance visible even when prior sync metadata contains an error', async () => {
+        const initialState = {
+            currentUser: { uid: 'owner-1', email: 'owner@example.com' },
+            team: {
+                id: 'team-1',
+                ownerId: 'owner-1',
+                name: 'Sharks',
+                description: 'Travel team',
+                sport: 'Basketball',
+                notificationEmail: 'notify@example.com',
+                leagueUrl: '',
+                standingsConfig: { enabled: false, rankingMode: 'points', tiebreakers: [] },
+                zip: '66209',
+                isPublic: true,
+                adminEmails: [],
+                registrationSource: {
+                    provider: 'sports-connect',
+                    externalTeamId: 'SC-987',
+                    teamId: 'team-1',
+                    connectionStatus: 'metadata_configured',
+                    syncEnabled: false,
+                    lastSyncStatus: 'error',
+                    lastSyncError: 'Connector failed upstream'
+                }
+            },
+            updateCalls: []
+        };
+
+        const env = await bootEditTeam(initialState);
+        try {
+            expect(env.elements.get('registration-sync-status').textContent).toBe('Metadata saved; live sync unavailable');
+            expect(env.elements.get('registration-connection-help').textContent).toContain('future provider connector');
+            expect(env.elements.get('registration-connection-help').textContent).not.toContain('Connector failed upstream');
         } finally {
             env.cleanup();
         }
