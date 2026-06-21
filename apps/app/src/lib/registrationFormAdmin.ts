@@ -1,6 +1,7 @@
 import {
   buildAdminRegistrationFormPayload,
   formatFieldLabels,
+  normalizeBackgroundCheckSettings,
   validateAdminRegistrationFormPayload
 } from '../../../../js/admin-registration-forms.js';
 import {
@@ -39,6 +40,7 @@ export type RegistrationFormAdminPayloadResult = {
 export function buildRegistrationFormEditorDraft(form: Record<string, any> = {}, context: { teamId?: string; formId?: string } = {}): RegistrationFormEditorDraft {
   const normalizedForm = normalizeRegistrationForm(form, context);
   const installmentPlan = normalizedForm.installmentPlan || {};
+  const backgroundCheck = normalizeBackgroundCheckSettings(form.backgroundCheck || normalizedForm.backgroundCheck || {});
 
   return {
     teamId: normalizedForm.teamId,
@@ -66,8 +68,8 @@ export function buildRegistrationFormEditorDraft(form: Record<string, any> = {},
       firstDueDate: installmentPlan.firstDueDate || '',
       intervalDays: installmentPlan.intervalDays || 30
     },
-    discountRules: [...(normalizedForm.discountRules || [])],
-    backgroundCheck: { ...(normalizedForm.backgroundCheck || {}) },
+    discountRules: denormalizeDraftDiscountRules(normalizedForm.discountRules || []),
+    backgroundCheck,
     waiverText: normalizedForm.waiverText,
     status: normalizedForm.published ? 'published' : 'draft'
   };
@@ -97,4 +99,13 @@ function formatFeeInput(feeAmountCents: number) {
   const cents = Math.max(0, Math.round(Number(feeAmountCents) || 0));
   if (!cents) return '';
   return (cents / 100).toFixed(2);
+}
+
+function denormalizeDraftDiscountRules(rules: Array<Record<string, any>> = []) {
+  return rules.map((rule) => ({
+    ...rule,
+    amountValue: rule?.amountType === 'fixed'
+      ? Number((Math.max(0, Number(rule?.amountValue || 0)) / 100).toFixed(2))
+      : Math.max(0, Number(rule?.amountValue || 0))
+  }));
 }

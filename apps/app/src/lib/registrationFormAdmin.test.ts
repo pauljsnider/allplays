@@ -27,6 +27,16 @@ describe('registrationFormAdmin', () => {
       ],
       paymentSettings: { offlinePaymentEnabled: true, onlineCheckoutEnabled: false },
       installmentPlan: { enabled: true, title: 'Three payments', installmentCount: 3, firstDueDate: '2026-05-01', intervalDays: 30 },
+      discountRules: [
+        { id: 'discount_1', type: 'quantity', label: 'Sibling discount', amountType: 'fixed', amountValue: 2500, minimumQuantity: 2, active: true }
+      ],
+      backgroundCheck: {
+        enabled: true,
+        required: true,
+        instructions: 'Bring a photo ID.',
+        initialScreeningStatus: 'submitted',
+        providerName: 'Checkr'
+      },
       waiverText: 'I accept the risk.',
       status: 'published'
     });
@@ -40,6 +50,13 @@ describe('registrationFormAdmin', () => {
       guardianFieldsText: 'Guardian name\nGuardian email',
       paymentSettings: { offlinePaymentEnabled: true, onlineCheckoutEnabled: false },
       installmentPlan: { enabled: true, title: 'Three payments', installmentCount: 3, firstDueDate: '2026-05-01', intervalDays: 30 },
+      backgroundCheck: {
+        enabled: true,
+        required: true,
+        instructions: 'Bring a photo ID.',
+        initialScreeningStatus: 'submitted',
+        providerName: 'Checkr'
+      },
       waiverText: 'I accept the risk.',
       status: 'published'
     });
@@ -47,9 +64,12 @@ describe('registrationFormAdmin', () => {
       { id: 'travel', label: 'Travel Team', description: '', capacityLimit: '12', active: true, waitlistEnabled: true },
       { id: 'academy', label: 'Academy', description: '', capacityLimit: '', active: false, waitlistEnabled: false }
     ]);
+    expect(draft.discountRules).toEqual([
+      { id: 'discount_1', type: 'quantity', label: 'Sibling discount', amountType: 'fixed', amountValue: 25, minimumQuantity: 2, active: true }
+    ]);
   });
 
-  it('builds legacy-compatible app setup payloads with options, fees, waivers, payment plans, and waitlists', () => {
+  it('builds legacy-compatible app setup payloads with options, fees, waivers, payment plans, waitlists, and editable fixed discounts', () => {
     const result = buildAppRegistrationFormAdminPayload({
       title: 'Summer Hoops',
       description: 'June camp',
@@ -64,6 +84,9 @@ describe('registrationFormAdmin', () => {
       ],
       paymentSettings: { offlinePaymentEnabled: true, onlineCheckoutEnabled: true },
       installmentPlan: { enabled: true, installmentCount: '4', firstDueDate: '2026-06-01', intervalDays: '14' },
+      discountRules: [
+        { id: 'discount_1', type: 'quantity', label: 'Sibling discount', amountType: 'fixed', amountValue: 25, minimumQuantity: 2, active: true }
+      ],
       waiverText: 'Guardian accepts camp waiver.',
       status: 'published'
     }, {
@@ -84,6 +107,9 @@ describe('registrationFormAdmin', () => {
     expect(result.payload.registrationOptions).toEqual([
       { id: 'full-day', label: 'Full day', capacityLimit: 20, active: true, waitlistEnabled: true, sortOrder: 0 },
       { id: 'half-day', label: 'Half day', capacityLimit: null, active: false, waitlistEnabled: false, sortOrder: 1 }
+    ]);
+    expect(result.payload.discountRules).toEqual([
+      { id: 'discount_1', type: 'quantity', label: 'Sibling discount', amountType: 'fixed', amountValue: 2500, minimumQuantity: 2, active: true, sortOrder: 0 }
     ]);
     expect(result.normalizedForm.registrationOptions[0]).toMatchObject({
       id: 'full-day',
