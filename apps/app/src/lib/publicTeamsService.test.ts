@@ -4,7 +4,7 @@ const dbMocks = vi.hoisted(() => ({
     discoverPublicTeams: vi.fn()
 }));
 
-vi.mock('../../../../js/db.js', () => dbMocks);
+vi.mock('./adapters/legacyPublicTeamsDb', () => dbMocks);
 
 import { getPublicTeamsByLocation, getPublicTeamsPage } from './publicTeamsService';
 
