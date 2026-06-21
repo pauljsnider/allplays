@@ -1216,6 +1216,44 @@ describe('edit team admin access persistence', () => {
         }
     });
 
+    it('keeps Sports Connect connector guidance visible even when prior sync metadata contains an error', async () => {
+        const initialState = {
+            currentUser: { uid: 'owner-1', email: 'owner@example.com' },
+            team: {
+                id: 'team-1',
+                ownerId: 'owner-1',
+                name: 'Sharks',
+                description: 'Travel team',
+                sport: 'Basketball',
+                notificationEmail: 'notify@example.com',
+                leagueUrl: '',
+                standingsConfig: { enabled: false, rankingMode: 'points', tiebreakers: [] },
+                zip: '66209',
+                isPublic: true,
+                adminEmails: [],
+                registrationSource: {
+                    provider: 'sports-connect',
+                    externalTeamId: 'SC-987',
+                    teamId: 'team-1',
+                    connectionStatus: 'metadata_configured',
+                    syncEnabled: false,
+                    lastSyncStatus: 'error',
+                    lastSyncError: 'Connector failed upstream'
+                }
+            },
+            updateCalls: []
+        };
+
+        const env = await bootEditTeam(initialState);
+        try {
+            expect(env.elements.get('registration-sync-status').textContent).toBe('Metadata saved; live sync unavailable');
+            expect(env.elements.get('registration-connection-help').textContent).toContain('future provider connector');
+            expect(env.elements.get('registration-connection-help').textContent).not.toContain('Connector failed upstream');
+        } finally {
+            env.cleanup();
+        }
+    });
+
     it('round-trips the archived replay Team Pass gate setting', async () => {
         const initialState = {
             currentUser: { uid: 'owner-1', email: 'owner@example.com' },
