@@ -794,7 +794,7 @@
         function getRegistrationProviderCapability(provider, externalTeamId, source = {}) {
             const hasProvider = Boolean(String(provider || '').trim());
             const hasExternalTeamId = Boolean(String(externalTeamId || '').trim());
-            const hasLiveConnection = source?.connectionStatus === 'live_connected' && source?.syncEnabled === true;
+            const hasLiveConnection = ['live_connected', 'sync_success'].includes(source?.connectionStatus) && source?.syncEnabled === true;
             if (!hasProvider) {
                 return {
                     state: 'not_configured',
