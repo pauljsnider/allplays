@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
-import { mapChatConversationRecord, mapFirestoreDocument } from './mappers';
-import type { FirestoreDocument } from './types';
+import { mapChatConversationRecord, mapFirestoreDocument } from '../../apps/app/src/lib/firestore/mappers.ts';
+import type { FirestoreDocument } from '../../apps/app/src/lib/firestore/types.ts';
 
 describe('firestore mappers', () => {
     it('decodes native Firestore document values behind the data-access boundary', () => {
