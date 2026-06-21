@@ -1,42 +1,50 @@
 /* Auto-generated typed adapter boundary for legacy js/ chat-service imports (#2066).
  * Bindings re-exported as-is so existing js/* test mocks apply via the @legacy alias. */
-import { canAccessTeamChat as legacy_canAccessTeamChat, canModerateChat as legacy_canModerateChat, deleteChatMessage as legacy_deleteChatMessage, deleteUploadedChatAttachments as legacy_deleteUploadedChatAttachments, editChatMessage as legacy_editChatMessage, getAggregatedStatsForGames as legacy_getAggregatedStatsForGames, getChatConversations as legacy_getChatConversations, getChatMessages as legacy_getChatMessages, getGameEvents as legacy_getGameEvents, getGames as legacy_getGames, getParentTeams as legacy_getParentTeams, getPlayers as legacy_getPlayers, getSentTeamEmails as legacy_getSentTeamEmails, getTeamEmailDrafts as legacy_getStoredTeamEmailDrafts, getTeamEmailTemplates as legacy_getStoredTeamEmailTemplates, getTeam as legacy_getTeam, getUnreadChatCounts as legacy_getUnreadChatCounts, getUserByEmail as legacy_getUserByEmail, getUserProfile as legacy_getUserProfile, getUserTeamsWithAccess as legacy_getUserTeamsWithAccess, postChatMessage as legacy_postChatMessage, saveTeamEmailDraft as legacy_saveStoredTeamEmailDraft, saveTeamEmailTemplate as legacy_saveStoredTeamEmailTemplate, sendTeamEmail as legacy_sendTeamEmail, subscribeToChatMessages as legacy_subscribeToChatMessages, toggleChatReaction as legacy_toggleChatReaction, updateChatLastRead as legacy_updateChatLastRead, updateChatMuted as legacy_updateChatMuted, clearChatMuted as legacy_clearChatMuted, uploadChatImage as legacy_uploadChatImage, upsertChatConversation as legacy_upsertChatConversation } from '@legacy/db.js';
+import * as legacyDb from '@legacy/db.js';
 import { getApp as legacy_getApp } from '@legacy/vendor/firebase-app.js';
 import { getAI as legacy_getAI, getGenerativeModel as legacy_getGenerativeModel, GoogleAIBackend as legacy_GoogleAIBackend } from '@legacy/vendor/firebase-ai.js';
 import { resolveImageFirebaseConfig as legacy_resolveImageFirebaseConfig } from '@legacy/firebase-runtime-config.js';
 import { isTeamActive as legacy_isTeamActive } from '@legacy/team-visibility.js';
 
-export const canAccessTeamChat = legacy_canAccessTeamChat as (...args: any[]) => any;
-export const canModerateChat = legacy_canModerateChat as (...args: any[]) => any;
-export const deleteChatMessage = legacy_deleteChatMessage as (...args: any[]) => any;
-export const deleteUploadedChatAttachments = legacy_deleteUploadedChatAttachments as (...args: any[]) => any;
-export const editChatMessage = legacy_editChatMessage as (...args: any[]) => any;
-export const getAggregatedStatsForGames = legacy_getAggregatedStatsForGames as (...args: any[]) => any;
-export const getChatConversations = legacy_getChatConversations as (...args: any[]) => any;
-export const getChatMessages = legacy_getChatMessages as (...args: any[]) => any;
-export const getGameEvents = legacy_getGameEvents as (...args: any[]) => any;
-export const getGames = legacy_getGames as (...args: any[]) => any;
-export const getParentTeams = legacy_getParentTeams as (...args: any[]) => any;
-export const getPlayers = legacy_getPlayers as (...args: any[]) => any;
-export const getSentTeamEmails = legacy_getSentTeamEmails as (...args: any[]) => any;
-export const getStoredTeamEmailDrafts = legacy_getStoredTeamEmailDrafts as (...args: any[]) => any;
-export const getStoredTeamEmailTemplates = legacy_getStoredTeamEmailTemplates as (...args: any[]) => any;
-export const getTeam = legacy_getTeam as (...args: any[]) => any;
-export const getUnreadChatCounts = legacy_getUnreadChatCounts as (...args: any[]) => any;
-export const getUserByEmail = legacy_getUserByEmail as (...args: any[]) => any;
-export const getUserProfile = legacy_getUserProfile as (...args: any[]) => any;
-export const getUserTeamsWithAccess = legacy_getUserTeamsWithAccess as (...args: any[]) => any;
-export const postChatMessage = legacy_postChatMessage as (...args: any[]) => any;
-export const saveStoredTeamEmailDraft = legacy_saveStoredTeamEmailDraft as (...args: any[]) => any;
-export const saveStoredTeamEmailTemplate = legacy_saveStoredTeamEmailTemplate as (...args: any[]) => any;
-export const sendTeamEmail = legacy_sendTeamEmail as (...args: any[]) => any;
-export const subscribeToChatMessages = legacy_subscribeToChatMessages as (...args: any[]) => any;
-export const toggleChatReaction = legacy_toggleChatReaction as (...args: any[]) => any;
-export const updateChatLastRead = legacy_updateChatLastRead as (...args: any[]) => any;
-export const updateChatMuted = legacy_updateChatMuted as (...args: any[]) => any;
-export const clearChatMuted = legacy_clearChatMuted as (...args: any[]) => any;
-export const uploadChatImage = legacy_uploadChatImage as (...args: any[]) => any;
-export const upsertChatConversation = legacy_upsertChatConversation as (...args: any[]) => any;
+function callLegacyDb(name: string, args: any[]) {
+  const fn = (legacyDb as Record<string, any>)[name];
+  if (typeof fn !== 'function') {
+    throw new TypeError(`Legacy db binding ${String(name)} is not available.`);
+  }
+  return fn(...args);
+}
+
+export const canAccessTeamChat = (...args: any[]) => callLegacyDb('canAccessTeamChat', args);
+export const canModerateChat = (...args: any[]) => callLegacyDb('canModerateChat', args);
+export const deleteChatMessage = (...args: any[]) => callLegacyDb('deleteChatMessage', args);
+export const deleteUploadedChatAttachments = (...args: any[]) => callLegacyDb('deleteUploadedChatAttachments', args);
+export const editChatMessage = (...args: any[]) => callLegacyDb('editChatMessage', args);
+export const getAggregatedStatsForGames = (...args: any[]) => callLegacyDb('getAggregatedStatsForGames', args);
+export const getChatConversations = (...args: any[]) => callLegacyDb('getChatConversations', args);
+export const getChatMessages = (...args: any[]) => callLegacyDb('getChatMessages', args);
+export const getGameEvents = (...args: any[]) => callLegacyDb('getGameEvents', args);
+export const getGames = (...args: any[]) => callLegacyDb('getGames', args);
+export const getParentTeams = (...args: any[]) => callLegacyDb('getParentTeams', args);
+export const getPlayers = (...args: any[]) => callLegacyDb('getPlayers', args);
+export const getSentTeamEmails = (...args: any[]) => callLegacyDb('getSentTeamEmails', args);
+export const getStoredTeamEmailDrafts = (...args: any[]) => callLegacyDb('getTeamEmailDrafts', args);
+export const getStoredTeamEmailTemplates = (...args: any[]) => callLegacyDb('getTeamEmailTemplates', args);
+export const getTeam = (...args: any[]) => callLegacyDb('getTeam', args);
+export const getUnreadChatCounts = (...args: any[]) => callLegacyDb('getUnreadChatCounts', args);
+export const getUserByEmail = (...args: any[]) => callLegacyDb('getUserByEmail', args);
+export const getUserProfile = (...args: any[]) => callLegacyDb('getUserProfile', args);
+export const getUserTeamsWithAccess = (...args: any[]) => callLegacyDb('getUserTeamsWithAccess', args);
+export const postChatMessage = (...args: any[]) => callLegacyDb('postChatMessage', args);
+export const saveStoredTeamEmailDraft = (...args: any[]) => callLegacyDb('saveTeamEmailDraft', args);
+export const saveStoredTeamEmailTemplate = (...args: any[]) => callLegacyDb('saveTeamEmailTemplate', args);
+export const sendTeamEmail = (...args: any[]) => callLegacyDb('sendTeamEmail', args);
+export const subscribeToChatMessages = (...args: any[]) => callLegacyDb('subscribeToChatMessages', args);
+export const toggleChatReaction = (...args: any[]) => callLegacyDb('toggleChatReaction', args);
+export const updateChatLastRead = (...args: any[]) => callLegacyDb('updateChatLastRead', args);
+export const updateChatMuted = (...args: any[]) => callLegacyDb('updateChatMuted', args);
+export const clearChatMuted = (...args: any[]) => callLegacyDb('clearChatMuted', args);
+export const uploadChatImage = (...args: any[]) => callLegacyDb('uploadChatImage', args);
+export const upsertChatConversation = (...args: any[]) => callLegacyDb('upsertChatConversation', args);
 export const getApp = legacy_getApp as (...args: any[]) => any;
 export const getAI = legacy_getAI as (...args: any[]) => any;
 export const getGenerativeModel = legacy_getGenerativeModel as (...args: any[]) => any;
