@@ -278,7 +278,15 @@ beforeEach(() => {
             sharedScheduleOpponentTeamId: 'team-2',
             status: 'scheduled',
             seasonLabel: 'Spring 2026',
-            competitionType: 'league',
+            competitionType: 'tournament',
+            tournament: {
+                divisionName: '10U Gold',
+                bracketName: 'Championship',
+                roundName: 'Semifinal',
+                poolName: 'Pool A',
+                gameLabel: 'Game 12',
+                seedLabel: 'A1 vs B2'
+            },
             assignments: [
                 { role: 'Snacks', value: '', claimable: true },
                 { role: 'Scorebook', value: 'Jamie', claimable: false }
@@ -443,6 +451,15 @@ describe('React app schedule service contract integration', () => {
             opponentTeamId: 'team-2',
             sharedScheduleOpponentTeamId: 'team-2',
             counterpartTitle: 'vs. Bears',
+            competitionType: 'tournament',
+            tournament: {
+                divisionName: '10U Gold',
+                bracketName: 'Championship',
+                roundName: 'Semifinal',
+                poolName: 'Pool A',
+                gameLabel: 'Game 12',
+                seedLabel: 'A1 vs B2'
+            },
             myRsvp: 'going',
             myRsvpNote: 'Needs a ride home',
             rsvpSummary: { going: 1, maybe: 1, notGoing: 0, notResponded: 0, total: 2 },
@@ -574,7 +591,15 @@ describe('React app schedule service contract integration', () => {
             sharedScheduleOpponentTeamId: 'team-2',
             status: 'scheduled',
             seasonLabel: 'Spring 2026',
-            competitionType: 'league',
+            competitionType: 'tournament',
+            tournament: {
+                divisionName: '10U Gold',
+                bracketName: 'Championship',
+                roundName: 'Semifinal',
+                poolName: 'Pool A',
+                gameLabel: 'Game 12',
+                seedLabel: 'A1 vs B2'
+            },
             assignments: [
                 { role: 'Snacks', value: '', claimable: true },
                 { role: 'Scorebook', value: 'Jamie', claimable: false }
@@ -600,6 +625,15 @@ describe('React app schedule service contract integration', () => {
         expect(result.events).toHaveLength(2);
         expect(result.events.every((event) => event.id === 'game-1')).toBe(true);
         expect(result.events.find((event) => event.childId === 'player-1')).toMatchObject({
+            competitionType: 'tournament',
+            tournament: {
+                divisionName: '10U Gold',
+                bracketName: 'Championship',
+                roundName: 'Semifinal',
+                poolName: 'Pool A',
+                gameLabel: 'Game 12',
+                seedLabel: 'A1 vs B2'
+            },
             myRsvp: 'going',
             myRsvpNote: 'Needs a ride home',
             teamNotificationEmail: 'team-notify@example.com',
