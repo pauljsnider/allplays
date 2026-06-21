@@ -1,5 +1,4 @@
-import { db, deleteDoc, doc, increment, setDoc } from '../../../../js/firebase.js';
-import { splitPlayerStatsByVisibility } from '../../../../js/stat-leaderboards.js';
+import { db, deleteDoc, doc, increment, setDoc, splitPlayerStatsByVisibility } from './adapters/legacyStatTrackingDb';
 
 export type TrackerScoreState = {
   homeScore: number;
