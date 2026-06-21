@@ -5,6 +5,7 @@ type PushPayload = {
     category?: string;
     teamId?: string;
     conversationId?: string;
+    childId?: string;
     gameId?: string;
     eventId?: string;
     batchId?: string;
@@ -34,7 +35,7 @@ function buildMessagesRoute(teamId: string, conversationId?: string) {
     return `${route}?conversationId=${encodeRouteParam(normalizedConversationId)}`;
 }
 
-function buildScheduleEventRoute(teamId: string, eventId: string, section?: string) {
+function buildScheduleEventRoute(teamId: string, eventId: string, section?: string, childId?: string) {
     const normalizedTeamId = normalizeValue(teamId);
     const normalizedEventId = normalizeValue(eventId);
     if (!normalizedTeamId || !normalizedEventId) {
@@ -42,7 +43,10 @@ function buildScheduleEventRoute(teamId: string, eventId: string, section?: stri
     }
     const route = `/schedule/${encodeRouteParam(normalizedTeamId)}/${encodeRouteParam(normalizedEventId)}`;
     const normalizedSection = normalizeValue(section);
-    return normalizedSection ? `${route}?section=${encodeRouteParam(normalizedSection)}` : route;
+    return appendQuery(route, {
+        childId: normalizeValue(childId),
+        section: normalizedSection
+    });
 }
 
 function appendQuery(route: string, params: Record<string, string>) {
@@ -123,6 +127,7 @@ export function resolvePushNotificationRoute(input: unknown) {
     const conversationId = normalizeValue(payload.conversationId);
     const gameId = normalizeValue(payload.gameId);
     const eventId = normalizeValue(payload.eventId) || gameId;
+    const childId = normalizeValue(payload.childId);
     const batchId = normalizeValue(payload.batchId);
     const recipientId = normalizeValue(payload.recipientId);
     const certificateId = normalizeValue(payload.certificateId);
@@ -154,7 +159,7 @@ export function resolvePushNotificationRoute(input: unknown) {
             return appRoute;
         }
         if (teamId && eventId) {
-            return buildScheduleEventRoute(teamId, eventId, 'availability');
+            return buildScheduleEventRoute(teamId, eventId, 'availability', childId);
         }
         if (teamId) {
             return `/schedule?teamId=${encodeRouteParam(teamId)}`;
@@ -188,7 +193,7 @@ export function resolvePushNotificationRoute(input: unknown) {
     }
     if (category === 'rideshare') {
         if (teamId && eventId) {
-            return buildScheduleEventRoute(teamId, eventId, 'rideshare');
+            return buildScheduleEventRoute(teamId, eventId, 'rideshare', childId);
         }
         return teamId ? `/schedule?teamId=${encodeRouteParam(teamId)}&section=rideshare` : '/schedule?section=rideshare';
     }

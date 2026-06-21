@@ -46,8 +46,10 @@ describe('schedule and RSVP notification contract', () => {
         expect(functionsSource).toContain("const targets = await getTargetsForCategoryUserIds(teamId, 'rsvp', recipientUserIds);");
         expect(functionsSource).toContain("category: 'rsvp'");
         expect(functionsSource).toContain('eventId: gameId');
+        expect(functionsSource).toContain('childId: getScheduleNotificationChildId(event)');
+        expect(functionsSource).toContain("childId: String(childId || '')");
         expect(functionsSource).toContain('targetCount: targets.length');
-        expect(functionsSource).toContain("return `/schedule/${encodeURIComponent(teamId)}/${encodeURIComponent(scheduleEventId)}?section=availability`;");
+        expect(functionsSource).toContain("return `/schedule/${encodeURIComponent(teamId)}/${encodeURIComponent(scheduleEventId)}${buildScheduleSectionQuery('availability', childId)}`;");
     });
 
     it('persists app-initiated RSVP reminder push metrics in schedule notification metadata', () => {
