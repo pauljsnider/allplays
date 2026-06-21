@@ -135,6 +135,19 @@ describe('useChatMessages', () => {
         expect(screen.getByTestId('has-more').textContent).toBe('false');
     });
 
+    it('skips older message loading when the live page has no older cursor', async () => {
+        render(<MessagesProbe conversationId="team" />);
+        act(() => {
+            liveCallback?.([message('latest', 20)], { cursor: 'latest' });
+        });
+
+        await waitFor(() => expect(screen.getByTestId('has-more').textContent).toBe('false'));
+        fireEvent.click(screen.getByRole('button', { name: 'Load older' }));
+
+        expect(loadOlderTeamChatMessages).not.toHaveBeenCalled();
+        expect(screen.getByTestId('loading-older').textContent).toBe('false');
+    });
+
     it('does not resubscribe when the user object changes identity but keeps the same uid', async () => {
         function MessagesProbeWithUser({ authUser }: { authUser: NonNullable<AuthState['user']> }) {
             useChatMessages({
