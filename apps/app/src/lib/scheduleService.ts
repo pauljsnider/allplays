@@ -29,7 +29,9 @@ import {
   getLiveEvents,
   updateGame,
   updatePracticeAttendance,
+  updatePracticeSession,
   updateTeam,
+  upsertPracticeSessionForEvent,
   upsertPracticePacketCompletion,
   postChatMessage,
   postSharedGameCancellationNotification,
@@ -273,6 +275,27 @@ export type ParentPracticePacket = {
   homePacket: PracticeHomePacket;
   completions: PracticePacketCompletion[];
   children: ParentPracticePacketChild[];
+};
+
+export type StaffPracticePacketBlock = {
+  drillId?: string | null;
+  drillTitle: string;
+  type?: string | null;
+  duration: number;
+  description?: string | null;
+  notes?: string | null;
+};
+
+export type StaffPracticePacketInput = {
+  packetTitle?: string | null;
+  dueDate?: string | Date | null;
+  blocks: StaffPracticePacketBlock[];
+};
+
+export type StaffPracticePacket = ParentPracticePacket & {
+  packetTitle: string;
+  dueDate: string | null;
+  totalMinutes: number;
 };
 
 export type PracticeAttendanceStatus = 'present' | 'late' | 'absent';
@@ -5013,6 +5036,133 @@ export async function saveStaffPracticeAttendance(event: ParentScheduleEvent, us
     checkedInCount: payload.checkedInCount,
     players
   };
+}
+
+function assertPracticePacketManagementEvent(event: ParentScheduleEvent, user: AuthUser | null) {
+  if (event.type !== 'practice') {
+    throw new Error('Home packets are only available for practice sessions.');
+  }
+  if (!event.isDbGame) {
+    throw new Error('Home packets open after this practice is tracked in the schedule.');
+  }
+  if (!user?.uid) {
+    throw new Error('Sign in before managing practice packets.');
+  }
+  if (!event.isTeamAdmin) {
+    throw new Error('Only team owners and admins can manage practice packets.');
+  }
+}
+
+function normalizeStaffPracticePacketBlocks(blocks: StaffPracticePacketBlock[]): StaffPracticePacketBlock[] {
+  return (Array.isArray(blocks) ? blocks : [])
+    .map((block, index) => ({
+      drillId: compactString(block?.drillId) || null,
+      drillTitle: compactString(block?.drillTitle) || `Home Drill ${index + 1}`,
+      type: compactString(block?.type) || 'Technical',
+      duration: Math.max(1, Number.parseInt(String(block?.duration || 10), 10) || 10),
+      description: compactString(block?.description),
+      notes: compactString(block?.notes)
+    }))
+    .filter((block) => block.drillTitle);
+}
+
+function normalizeStaffPracticePacketDueDate(value: StaffPracticePacketInput['dueDate']) {
+  if (!value) return null;
+  const parsed = normalizeScheduleDate(value);
+  return parsed && !Number.isNaN(parsed.getTime()) ? parsed : null;
+}
+
+function buildStaffPracticePacketContent(input: StaffPracticePacketInput, event: ParentScheduleEvent, user: AuthUser) {
+  const blocks = normalizeStaffPracticePacketBlocks(input.blocks);
+  if (!blocks.length) {
+    throw new Error('Add at least one home drill before saving the packet.');
+  }
+  const totalMinutes = blocks.reduce((sum, block) => sum + block.duration, 0);
+  const dueAt = normalizeStaffPracticePacketDueDate(input.dueDate);
+  const packetTitle = compactString(input.packetTitle) || `${event.title || 'Practice'} home packet`;
+  return {
+    packetTitle,
+    blocks,
+    totalMinutes,
+    dueDate: dueAt ? dueAt.toISOString() : null,
+    dueAt,
+    updatedAt: new Date(),
+    updatedBy: user.uid
+  };
+}
+
+function getStaffPracticePacketTitle(homePacket: any, event: ParentScheduleEvent) {
+  return compactString(homePacket?.packetTitle) || `${event.title || 'Practice'} home packet`;
+}
+
+function getStaffPracticePacketDueDate(homePacket: any) {
+  const dueDate = normalizeScheduleDate(homePacket?.dueDate || homePacket?.dueAt);
+  return dueDate ? dueDate.toISOString() : null;
+}
+
+function buildStaffPracticePacketResult(event: ParentScheduleEvent, sessionId: string, homePacket: PracticeHomePacket, completions: PracticePacketCompletion[], childEvents: ParentScheduleEvent[]): StaffPracticePacket {
+  return {
+    sessionId,
+    teamId: event.teamId,
+    eventId: event.id,
+    title: event.title || 'Practice',
+    date: event.date,
+    location: event.location || 'TBD',
+    homePacket,
+    completions,
+    children: getPracticePacketChildren(childEvents, event),
+    packetTitle: getStaffPracticePacketTitle(homePacket, event),
+    dueDate: getStaffPracticePacketDueDate(homePacket),
+    totalMinutes: homePacket.totalMinutes || (Array.isArray(homePacket.blocks) ? homePacket.blocks.reduce((sum, block) => sum + (Number.parseInt(String(block?.duration || 0), 10) || 0), 0) : 0)
+  };
+}
+
+export async function loadStaffPracticePacket(event: ParentScheduleEvent, childEvents: ParentScheduleEvent[] = [], user: AuthUser | null): Promise<StaffPracticePacket> {
+  assertPracticePacketManagementEvent(event, user);
+  const session = await loadPracticeSessionForAttendance(event).catch(() => null);
+  const sessionId = compactString(session?.id) || getPracticePacketSessionId(event) || event.id;
+  const homePacket = (hasHomePacket(session) ? session.homePacketContent : event.practiceHomePacket) || { blocks: [], totalMinutes: 0 };
+  const completions = sessionId ? normalizePracticePacketCompletions(await loadPracticePacketCompletions(event.teamId, sessionId).catch(() => [])) : [];
+  return buildStaffPracticePacketResult(event, sessionId, homePacket, completions, childEvents);
+}
+
+export async function saveStaffPracticePacket(event: ParentScheduleEvent, user: AuthUser | null, input: StaffPracticePacketInput, childEvents: ParentScheduleEvent[] = []): Promise<StaffPracticePacket> {
+  assertPracticePacketManagementEvent(event, user);
+  const authUser = user as AuthUser;
+  const homePacketContent = buildStaffPracticePacketContent(input, event, authUser);
+  const sessionPayload = {
+    eventId: event.id,
+    eventType: 'practice',
+    sourcePage: 'app-schedule',
+    title: event.title || 'Practice',
+    date: event.date,
+    location: event.location || '',
+    duration: homePacketContent.totalMinutes,
+    status: 'draft',
+    homePacketGenerated: true,
+    homePacketContent,
+    updatedBy: authUser.uid
+  };
+
+  let sessionId = compactString(event.practiceSessionId);
+  try {
+    if (sessionId) {
+      await withTimeout(Promise.resolve(updatePracticeSession(event.teamId, sessionId, sessionPayload)), 'Practice packet save');
+    } else {
+      sessionId = await withTimeout(Promise.resolve(upsertPracticeSessionForEvent(event.teamId, event.id, sessionPayload)), 'Practice packet save');
+    }
+  } catch (error) {
+    if (!isNativeRuntime()) throw error;
+    sessionId = sessionId || event.id;
+    logScheduleWarning('Falling back to REST practice packet save.', 'practice-packet-save', error, { fallback: 'rest', teamId: event.teamId, sessionId });
+    await nativePatchDocument(`teams/${encodeURIComponent(event.teamId)}/practiceSessions/${encodeURIComponent(sessionId)}`, {
+      ...sessionPayload,
+      updatedAt: new Date()
+    });
+  }
+
+  const completions = normalizePracticePacketCompletions(await loadPracticePacketCompletions(event.teamId, sessionId).catch(() => []));
+  return buildStaffPracticePacketResult(event, sessionId, homePacketContent, completions, childEvents);
 }
 
 function getPracticePacketChildren(events: ParentScheduleEvent[], fallbackEvent: ParentScheduleEvent): ParentPracticePacketChild[] {
