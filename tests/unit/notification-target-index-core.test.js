@@ -111,7 +111,8 @@ describe('notification target index core helpers', () => {
         expect(targetResolverSource).toContain('canReceiveCategoryNotification(category, user, audienceContext)');
         expect(functionsSource).toContain("const albumVisibility = audienceContext?.staffOnly === true");
         expect(functionsSource).toContain("return ['private', 'staff', 'staff-only'].includes(normalized) ? 'private' : 'team';");
-        expect(functionsSource).toContain("if (albumVisibility !== 'private') return true;");
+        expect(functionsSource).toContain('if (hasMediaAudienceConstraints(audienceContext))');
+        expect(functionsSource).toContain('return mediaAudienceAllowsUser(user, audienceContext);');
         expect(functionsSource).toContain("return Array.isArray(user.roles) && user.roles.includes('staff');");
         expect(targetResolverSource).toContain('const missingUsers = users.filter');
         expect(targetResolverSource).toContain('teamNotificationRecipientIndexIsEmpty(teamId)');
