@@ -2114,7 +2114,7 @@ function ScheduleList({ events, visibleCount, pageSize, canShowMore, loadingMore
             Showing {renderedEvents.length} of {events.length} events
           </div>
           <button type="button" className="secondary-button mt-2 min-h-9 px-3 py-2 text-xs" onClick={onShowMore} disabled={loadingMore}>
-            {loadingMore ? 'Loading more…' : `Show ${Math.min(pageSize, Math.max(remainingCount, pageSize))} more`}
+            {loadingMore ? 'Loading more…' : `Show ${Math.min(pageSize, remainingCount || pageSize)} more`}
           </button>
         </div>
       ) : null}
@@ -2176,7 +2176,7 @@ function CompactScheduleList({ events, visibleCount, pageSize, canShowMore, load
             Showing {renderedEvents.length} of {events.length} events
           </div>
           <button type="button" className="secondary-button mt-2 min-h-9 px-3 py-2 text-xs" onClick={onShowMore} disabled={loadingMore}>
-            {loadingMore ? 'Loading more…' : `Show ${Math.min(pageSize, Math.max(remainingCount, pageSize))} more`}
+            {loadingMore ? 'Loading more…' : `Show ${Math.min(pageSize, remainingCount || pageSize)} more`}
           </button>
         </div>
       ) : null}
