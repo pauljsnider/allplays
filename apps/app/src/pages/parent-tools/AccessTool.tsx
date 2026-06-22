@@ -39,7 +39,6 @@ export function AccessTool({ auth, onAccessChanged }: { auth: AuthState; onAcces
     const runPlayerLoad = playerLoadOperation.run;
     const runSubmit = submitOperation.run;
     const runRedeem = redeemOperation.run;
-    const playerLoadError = playerLoadOperation.error;
 
     const loading = accessLoadOperation.loading;
     const loadingTeams = teamLoadOperation.loading;
@@ -111,7 +110,10 @@ export function AccessTool({ auth, onAccessChanged }: { auth: AuthState; onAcces
             () => loadParentAccessPlayers(teamId),
             {
                 rethrow: false,
-                getErrorMessage: (error) => getParentToolErrorMessage(toAppServiceError(error, 'Unable to load players for this team.'), 'Unable to load players for this team.')
+                getErrorMessage: (error) => getParentToolErrorMessage(toAppServiceError(error, 'Unable to load players for this team.'), 'Unable to load players for this team.'),
+                onError: (error) => {
+                    setManualLookupError(toAppServiceError(error, 'Unable to load players for this team.'));
+                }
             }
         );
         if (rows) {
@@ -119,8 +121,7 @@ export function AccessTool({ auth, onAccessChanged }: { auth: AuthState; onAcces
             setSelectedPlayerId(rows[0]?.id || '');
             return;
         }
-        setManualLookupError(toAppServiceError(playerLoadError || new Error('Unable to load players for this team.'), 'Unable to load players for this team.'));
-    }, [playerLoadError, runPlayerLoad]);
+    }, [runPlayerLoad]);
 
     useEffect(() => {
         let cancelled = false;
@@ -132,7 +133,12 @@ export function AccessTool({ auth, onAccessChanged }: { auth: AuthState; onAcces
                 () => loadParentAccessPlayers(selectedTeamId),
                 {
                     rethrow: false,
-                    getErrorMessage: (error) => getParentToolErrorMessage(toAppServiceError(error, 'Unable to load players for this team.'), 'Unable to load players for this team.')
+                    getErrorMessage: (error) => getParentToolErrorMessage(toAppServiceError(error, 'Unable to load players for this team.'), 'Unable to load players for this team.'),
+                    onError: (error) => {
+                        if (!cancelled) {
+                            setManualLookupError(toAppServiceError(error, 'Unable to load players for this team.'));
+                        }
+                    }
                 }
             );
             if (!cancelled && rows) {
@@ -140,15 +146,12 @@ export function AccessTool({ auth, onAccessChanged }: { auth: AuthState; onAcces
                 setPlayers(rows);
                 setSelectedPlayerId(rows[0]?.id || '');
             }
-            if (!cancelled && !rows) {
-                setManualLookupError(toAppServiceError(playerLoadError || new Error('Unable to load players for this team.'), 'Unable to load players for this team.'));
-            }
         }
         void loadPlayers();
         return () => {
             cancelled = true;
         };
-    }, [playerLoadError, runPlayerLoad, selectedTeamId]);
+    }, [runPlayerLoad, selectedTeamId]);
 
     const redeem = async (event: FormEvent) => {
         event.preventDefault();

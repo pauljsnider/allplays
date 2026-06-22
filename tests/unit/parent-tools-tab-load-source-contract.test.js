@@ -37,5 +37,9 @@ describe('Parent Tools tab load boundary', () => {
         parentToolPanelSources.forEach(({ fileName, source }) => {
             expect(source, fileName).not.toMatch(unstableOperationDependency);
         });
+
+        const accessSource = parentToolPanelSources.find(({ fileName }) => fileName === 'AccessTool.tsx').source;
+        expect(accessSource).not.toContain('playerLoadOperation.error');
+        expect(accessSource).not.toMatch(/\[[^\]]*playerLoadError[^\]]*\]/);
     });
 });
