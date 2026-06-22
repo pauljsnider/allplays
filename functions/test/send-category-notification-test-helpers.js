@@ -328,10 +328,11 @@ function buildNotificationTestEnv({
             },
             async set(value) {
                 if (path.startsWith(`teams/${teamId}/notificationSendLog/`)) {
+                    const sentAtMillis = Date.now();
                     docStore.set(path, {
                         ...clone(value),
                         sentAt: {
-                            toMillis: () => Date.now()
+                            toMillis: () => sentAtMillis
                         }
                     });
                 } else {
