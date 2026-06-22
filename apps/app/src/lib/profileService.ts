@@ -17,6 +17,7 @@ import {
 import { firebaseAuth, getNativeAuthIdToken } from './authService';
 import { createLogger } from './logger';
 import { getNativeRestDedupKey, loadDedupedNativeRestRequest, shouldDedupNativeRestRequest } from './nativeRestDedup';
+import { captureHandledAppError, createAppTimer } from './telemetry';
 
 export {
   acquireProfilePhoto,
@@ -36,6 +37,21 @@ function logProfileWarning(message: string, operation: string, error: unknown, c
         ...context,
         error
     });
+    captureHandledAppError(`profile ${operation}`, error, {
+        service: 'profile',
+        operation,
+        fallback: 'rest',
+        ...toSafeProfileTelemetryContext(context)
+    });
+}
+
+function toSafeProfileTelemetryContext(context: Record<string, unknown> = {}) {
+    const { userId, teamId, ...safeContext } = context;
+    return {
+        ...safeContext,
+        ...(userId ? { userIdPresent: true } : {}),
+        ...(teamId ? { teamIdPresent: true } : {})
+    };
 }
 
 export type ProfileDocument = {
@@ -425,11 +441,25 @@ function getMillis(value: any) {
 }
 
 export async function loadProfileDocument(userId: string): Promise<ProfileDocument> {
+  const timer = createAppTimer('profile document service load', {
+    category: 'service_load',
+    service: 'profile',
+    operation: 'profile-load'
+  });
   try {
-    return await withTimeout(Promise.resolve(getUserProfile(userId)), 'Profile load', primaryDataTimeoutMs) || {};
+    const profile = await withTimeout(Promise.resolve(getUserProfile(userId)), 'Profile load', primaryDataTimeoutMs) || {};
+    timer.end({ path: 'sdk', userIdPresent: Boolean(userId) });
+    return profile;
   } catch (error) {
     logProfileWarning('Falling back to REST profile load.', 'profile-load', error, { userId });
-    return nativeLoadProfileDocument(userId);
+    try {
+      const profile = await nativeLoadProfileDocument(userId);
+      timer.end({ path: 'rest_fallback', fallback: true, userIdPresent: Boolean(userId) });
+      return profile;
+    } catch (fallbackError) {
+      timer.end({ path: 'rest_fallback', fallback: true, userIdPresent: Boolean(userId), error: fallbackError });
+      throw fallbackError;
+    }
   }
 }
 
