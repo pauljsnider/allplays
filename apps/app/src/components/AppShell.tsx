@@ -30,6 +30,7 @@ import { useShellLayout } from '../lib/useShellLayout';
 import { recordUxTiming } from '../lib/uxTiming';
 import { openPublicUrl } from '../lib/publicActions';
 import { APP_BACK_DISMISS_EVENT } from '../lib/nativeBackButton';
+import { updateAppIconBadge } from '../lib/badgeService';
 import type { NotificationInboxItem } from '../lib/notificationInboxService';
 import { loadNotificationInboxService } from '../lib/notificationInboxServiceLoader';
 import type { AuthState, NavItem } from '../lib/types';
@@ -165,6 +166,17 @@ export function AppShell({ auth, children }: AppShellProps) {
       unsubscribe();
     };
   }, [auth.user?.uid]);
+
+  useEffect(() => {
+    if (!auth.user?.uid) {
+      void updateAppIconBadge(0);
+      return;
+    }
+    if (unreadState !== 'ready') {
+      return;
+    }
+    void updateAppIconBadge(unreadCount);
+  }, [auth.user?.uid, unreadCount, unreadState]);
 
   useEffect(() => {
     const uid = auth.user?.uid;

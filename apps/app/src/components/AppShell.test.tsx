@@ -19,10 +19,11 @@ type SubscribeToUnreadNotificationCount = (
   onError?: (error: unknown) => void
 ) => () => void;
 
-const { useShellLayoutMock, subscribeToNotificationInboxMock, subscribeToUnreadNotificationCountMock } = vi.hoisted(() => ({
+const { useShellLayoutMock, subscribeToNotificationInboxMock, subscribeToUnreadNotificationCountMock, updateAppIconBadgeMock } = vi.hoisted(() => ({
   useShellLayoutMock: vi.fn(() => ({ isDesktopWeb: true })),
   subscribeToNotificationInboxMock: vi.fn<SubscribeToNotificationInbox>(() => vi.fn()),
   subscribeToUnreadNotificationCountMock: vi.fn<SubscribeToUnreadNotificationCount>(() => vi.fn()),
+  updateAppIconBadgeMock: vi.fn(() => Promise.resolve()),
 }));
 
 vi.mock('../lib/useShellLayout', () => ({
@@ -33,11 +34,24 @@ vi.mock('../lib/uxTiming', () => ({
   recordUxTiming: vi.fn(),
 }));
 
+vi.mock('../lib/badgeService', () => ({
+  updateAppIconBadge: updateAppIconBadgeMock,
+}));
+
 vi.mock('../lib/notificationInboxService', () => ({
   countUnread: (items: Array<{ readAt: unknown | null }>) => items.filter((item) => !item.readAt).length,
   markNotificationRead: vi.fn(),
   subscribeToNotificationInbox: subscribeToNotificationInboxMock,
   subscribeToUnreadNotificationCount: subscribeToUnreadNotificationCountMock,
+}));
+
+vi.mock('../lib/notificationInboxServiceLoader', () => ({
+  loadNotificationInboxService: () => Promise.resolve({
+    subscribeToNotificationInbox: subscribeToNotificationInboxMock,
+    subscribeToUnreadNotificationCount: subscribeToUnreadNotificationCountMock,
+    markNotificationRead: vi.fn(),
+    markAllNotificationsRead: vi.fn(),
+  }),
 }));
 
 vi.mock('./AppSearchDialog', () => ({
@@ -48,11 +62,14 @@ vi.mock('./NotificationInboxSheet', () => ({
   NotificationInboxSheet: ({
     items,
     inboxState,
+    onClose,
   }: {
     items: Array<{ id: string; text: string }>;
     inboxState: 'loading' | 'ready' | 'error';
+    onClose: () => void;
   }) => (
     <div role="dialog" aria-label="Notifications">
+      <button type="button" aria-label="Close notifications" onClick={onClose}>Close</button>
       <div data-testid="notification-inbox-sheet-state">{inboxState}</div>
       {items.map((item) => (
         <div key={item.id}>{item.text}</div>
@@ -97,6 +114,7 @@ describe('AppShell', () => {
     subscribeToNotificationInboxMock.mockReturnValue(vi.fn());
     subscribeToUnreadNotificationCountMock.mockReset();
     subscribeToUnreadNotificationCountMock.mockReturnValue(vi.fn());
+    updateAppIconBadgeMock.mockClear();
   });
 
   afterEach(() => {
@@ -163,6 +181,47 @@ describe('AppShell', () => {
     });
   });
 
+  it('syncs the native app badge from unread notification counts', async () => {
+    subscribeToUnreadNotificationCountMock.mockImplementation((_uid, onCount) => {
+      onCount(3);
+      return vi.fn();
+    });
+
+    render(
+      <MemoryRouter initialEntries={['/home']}>
+        <Routes>
+          <Route path="/home" element={<AppShell auth={signedInAuth}><div>Home</div></AppShell>} />
+        </Routes>
+      </MemoryRouter>
+    );
+
+    await waitFor(() => {
+      expect(updateAppIconBadgeMock).toHaveBeenCalledWith(3);
+    });
+  });
+
+  it('clears the native app badge after sign-out', async () => {
+    const { rerender } = render(
+      <MemoryRouter initialEntries={['/home']}>
+        <Routes>
+          <Route path="/home" element={<AppShell auth={signedInAuth}><div>Home</div></AppShell>} />
+        </Routes>
+      </MemoryRouter>
+    );
+
+    rerender(
+      <MemoryRouter initialEntries={['/home']}>
+        <Routes>
+          <Route path="/home" element={<AppShell auth={auth}><div>Home</div></AppShell>} />
+        </Routes>
+      </MemoryRouter>
+    );
+
+    await waitFor(() => {
+      expect(updateAppIconBadgeMock).toHaveBeenLastCalledWith(0);
+    });
+  });
+
   it('does not subscribe to the full inbox until notifications are opened', async () => {
     render(
       <MemoryRouter initialEntries={['/home']}>
@@ -224,7 +283,7 @@ describe('AppShell', () => {
       expect(screen.getByText('Notification for user-123')).toBeTruthy();
     });
 
-    fireEvent.click(screen.getByTestId('app-shell-notifications-trigger'));
+    fireEvent.click(screen.getByRole('button', { name: 'Close notifications' }));
 
     rerender(
       <MemoryRouter initialEntries={['/home']}>
