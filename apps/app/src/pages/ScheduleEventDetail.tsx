@@ -1,6 +1,6 @@
 import { createContext, Fragment, useCallback, useContext, useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from 'react';
 import { Link, useParams, useSearchParams } from 'react-router-dom';
-import { AlertCircle, CalendarDays, Car, CheckCircle2, ChevronDown, ChevronLeft, ClipboardCheck, ExternalLink, FileText, Radio, RefreshCw, Share2, Users, Video, type LucideIcon } from 'lucide-react';
+import { AlertCircle, CalendarDays, CheckCircle2, ChevronDown, ChevronLeft, ClipboardCheck, ExternalLink, FileText, Radio, RefreshCw, Share2, Users, Video, type LucideIcon } from 'lucide-react';
 import {
   cancelPracticeOccurrenceForApp,
   cancelScheduledGameForApp,
@@ -13,17 +13,14 @@ import {
   type SchedulePracticeFormInput,
   type PracticeRecurrenceFormInput,
   type ScheduleStatTrackerConfigOption,
-  claimParentScheduleAssignmentSlot,
   loadParentPracticePacket,
   loadStaffPracticePacket,
   loadStaffPracticeAttendance,
   loadParentScheduleEventDetail,
   resolveCachedParentScheduleEvents,
-  loadParentScheduleAssignments,
   loadAutoFilledLineupDraftPreviewForApp,
   markParentPracticePacketComplete,
   publishGamePlanForApp,
-  releaseParentScheduleAssignmentClaim,
   loadHomeScoringPlayers,
   publishLiveScoreUpdateEvent,
   recordPlayerGameStat,
@@ -39,7 +36,6 @@ import {
   updateLiveGameClockState,
   buildLiveGameClockPeriods,
   resolveLiveGameClockSnapshot,
-  type RideRequestChildInput,
   type PracticeAttendancePlayer,
   type StaffPracticeAttendance,
   type StaffPracticePacket,
@@ -84,11 +80,12 @@ import {
 import { type AppServiceError, toAppServiceError } from '../lib/appErrors';
 import { useAsyncOperation } from '../lib/useAsyncOperation';
 import { EventDetailPageSkeleton } from '../components/PageSkeletons';
-import { AssignmentCard } from '../components/schedule/AssignmentCard';
+import { AssignmentsSection } from '../components/schedule/AssignmentsSection';
 import { DateTile } from '../components/schedule/DateTile';
 import { EventBrief } from '../components/schedule/EventBrief';
 import { EventDetailsPanel } from '../components/schedule/EventDetailsPanel';
 import { EventSectionNav } from '../components/schedule/EventSectionNav';
+import { RideshareSection } from '../components/schedule/RideshareSection';
 import { StaffRsvpBreakdownPanel } from '../components/schedule/StaffRsvpBreakdownPanel';
 import { StaffRsvpReminderPanel } from '../components/schedule/StaffRsvpReminderPanel';
 import {
@@ -103,27 +100,17 @@ import {
   type ScheduleEventDetailSectionId
 } from '../components/schedule/AvailabilityPanels';
 import {
-  canRequestScheduleRide,
-  findScheduleRideRequestForChild,
-  formatRideDirection,
   formatEventDateLabel,
   formatEventTimeLabel,
-  getScheduleAssignmentStatus,
   getScheduleMapHref,
   getScheduleForecastHref,
-  getScheduleRideRequestCounts,
-  getScheduleRideSeatInfo,
   isScheduleAssignmentOpen,
   getScheduleTitle,
   getLiveClockViewModel,
   normalizeRsvpResponse,
-  type RideOfferDirection,
-  type RideRequestStatus,
   type ParentScheduleEvent,
   type PracticePacketCompletion,
-  type RsvpResponse,
-  type ScheduleAssignment,
-  type ScheduleRideOffer
+  type RsvpResponse
 } from '../lib/scheduleLogic';
 // Type-only imports for deferred modules — runtime values loaded on demand below
 import type { LiveGameChatMessage } from '../lib/liveGameChatService';
@@ -154,7 +141,6 @@ import type { AuthState } from '../lib/types';
 import { ScheduleEventDetailProvider } from './schedule/ScheduleEventDetailContext';
 import { useScheduleEventRsvp } from '../hooks/schedule/useScheduleEventRsvp';
 import { useStaffRsvpBreakdown } from '../hooks/schedule/useStaffRsvpBreakdown';
-import { useScheduleRideOffers } from '../hooks/schedule/useScheduleRideOffers';
 
 export { getAvailabilityNoteSaveState } from '../components/schedule/AvailabilityPanels';
 
@@ -169,13 +155,6 @@ export function parseEventDetailSection(section: string | null | undefined): Eve
     return normalized as EventDetailSectionId;
   }
   return 'availability';
-}
-
-function cloneScheduleAssignments(assignments: ScheduleAssignment[] = []) {
-  return assignments.map((assignment) => ({
-    ...assignment,
-    claim: assignment.claim ? { ...assignment.claim } : null
-  }));
 }
 
 const gameReportSections: Array<{ id: GameReportSectionId; label: string }> = [
@@ -408,14 +387,6 @@ export function ScheduleEventDetail({ auth }: { auth: AuthState }) {
   const updateEvents = useCallback((updater: (current: ParentScheduleEvent[]) => ParentScheduleEvent[]) => {
     setEvents((current) => updater(current));
   }, []);
-
-  const handleAssignmentsChanged = useCallback((assignments: ScheduleAssignment[]) => {
-    setEvents((current) => current.map((event) => (
-      event.teamId === decodedTeamId && event.id === decodedEventId
-        ? { ...event, assignments }
-        : event
-    )));
-  }, [decodedEventId, decodedTeamId]);
 
   const handleScoreUpdated = useCallback((homeScore: number, awayScore: number) => {
     setEvents((current) => current.map((event) => (
@@ -650,19 +621,8 @@ export function ScheduleEventDetail({ auth }: { auth: AuthState }) {
             onSelectSection={selectSection}
           />
         ) : null}
-        {activeSection === 'rideshare' ? (
-          <RideshareSection
-            auth={auth}
-            event={selectedEvent}
-          />
-        ) : null}
-        {activeSection === 'assignments' ? (
-          <AssignmentsSection
-            auth={auth}
-            event={selectedEvent}
-            onAssignmentsChanged={handleAssignmentsChanged}
-          />
-        ) : null}
+        {activeSection === 'rideshare' ? <RideshareSection /> : null}
+        {activeSection === 'assignments' ? <AssignmentsSection /> : null}
         {activeSection === 'game' ? <GameHubSection key={selectedEvent.eventKey} auth={auth} event={selectedEvent} childEvents={events} onScoreUpdated={handleScoreUpdated} onLiveClockUpdated={handleLiveClockUpdated} onWrapupCompleted={handleWrapupCompleted} onStatsheetImported={handleStatsheetImported} onGameCancelled={handleGameCancelled} onPracticeOccurrenceCancelled={handlePracticeOccurrenceCancelled} onGamePlanPublished={handleGamePlanPublished} /> : null}
       </div>
       </div>
@@ -1050,438 +1010,6 @@ function AvailabilitySection({ event, rsvp, availabilityNote, onAvailabilityNote
   );
 }
 
-type RideChildChoice = {
-  childId: string;
-  childName: string;
-};
-
-const rideDirectionOptions: Array<{ value: RideOfferDirection; label: string }> = [
-  { value: 'to', label: 'To event' },
-  { value: 'from', label: 'From event' },
-  { value: 'round-trip', label: 'Round trip' }
-];
-
-function RideshareSection({ auth, event }: {
-  auth: AuthState;
-  event: ParentScheduleEvent;
-}) {
-  const rideOffers = useScheduleRideOffers();
-
-  const submitRideOffer = async (formEvent: FormEvent) => {
-    formEvent.preventDefault();
-    await rideOffers.submit();
-  };
-
-  return (
-    <section className="app-card overflow-hidden p-0">
-      <div className="border-b border-gray-100 p-4">
-        <div className="flex items-start justify-between gap-3">
-          <div className="min-w-0">
-            <div className="flex items-center gap-2 text-sm font-black text-primary-800">
-              <Car className="h-5 w-5 text-primary-600" aria-hidden="true" />
-              Rideshare
-            </div>
-            <h2 className="mt-1 app-section-title">Rideshare</h2>
-            <div className="mt-0.5 text-xs font-semibold text-gray-500">Coordinate seats for this event.</div>
-          </div>
-          <button
-            type="button"
-            className="secondary-button !min-h-9 flex-none !px-3 !py-2 text-xs"
-            onClick={() => rideOffers.setFormOpen(!rideOffers.formOpen)}
-            disabled={!event.isDbGame || event.isCancelled || rideOffers.submitting === 'create-offer'}
-          >
-            Offer Ride
-          </button>
-        </div>
-        <div className="mt-3 grid grid-cols-3 gap-2">
-          <DetailRow label="Seats open" value={rideOffers.summary ? String(rideOffers.summary.seatsLeft) : '0'} />
-          <DetailRow label="Requests" value={rideOffers.summary ? String(rideOffers.summary.requests) : '0'} />
-          <DetailRow label="Offers" value={rideOffers.summary ? String(rideOffers.summary.offerCount) : '0'} />
-        </div>
-      </div>
-
-      {rideOffers.formOpen ? (
-        <form className="border-b border-primary-100 bg-primary-50 p-3 sm:p-4" onSubmit={submitRideOffer}>
-          <div className="grid grid-cols-[0.75fr_1.25fr] gap-2 sm:grid-cols-[0.6fr_1fr_2fr_auto]">
-            <label className="min-w-0">
-              <span className="app-label">Seats</span>
-              <input
-                className="auth-input mt-1 min-h-10 !px-3 !py-2 text-sm"
-                type="number"
-                min="1"
-                max="12"
-                value={rideOffers.seatCapacity}
-                onChange={(inputEvent) => rideOffers.setSeatCapacity(inputEvent.target.value)}
-              />
-            </label>
-            <label className="min-w-0">
-              <span className="app-label">Direction</span>
-              <select
-                className="auth-input mt-1 min-h-10 !px-3 !py-2 text-sm"
-                value={rideOffers.direction}
-                onChange={(inputEvent) => rideOffers.setDirection(inputEvent.target.value as RideOfferDirection)}
-              >
-                {rideDirectionOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
-              </select>
-            </label>
-            <label className="col-span-2 min-w-0 sm:col-span-1">
-              <span className="app-label">Note</span>
-              <input
-                className="auth-input mt-1 min-h-10 !px-3 !py-2 text-sm"
-                value={rideOffers.note}
-                maxLength={160}
-                onChange={(inputEvent) => rideOffers.setNote(inputEvent.target.value)}
-                placeholder="Optional"
-              />
-            </label>
-            <button type="submit" className="primary-button col-span-2 !min-h-10 !py-2 text-sm sm:col-span-1 sm:self-end" disabled={rideOffers.submitting === 'create-offer'}>
-              {rideOffers.submitting === 'create-offer' ? 'Saving' : 'Save'}
-            </button>
-          </div>
-        </form>
-      ) : null}
-
-      <div className="p-3 sm:p-4">
-        {rideOffers.message ? <Status tone="success" message={rideOffers.message} /> : null}
-        {rideOffers.error ? <div className="mt-2"><Status tone="error" message={rideOffers.error} /></div> : null}
-        {!event.isDbGame || event.isCancelled ? (
-          <div className="mt-2 rounded-xl border border-gray-200 bg-gray-50 p-3 text-sm font-semibold text-gray-500">Rideshare is available for active tracked schedule events.</div>
-        ) : rideOffers.loading ? (
-          <div className="mt-2 flex items-center gap-2 rounded-xl border border-gray-200 bg-gray-50 p-3 text-sm font-bold text-gray-600">
-            <RefreshCw className="h-4 w-4 animate-spin text-primary-600" aria-hidden="true" />
-            Loading rideshare offers
-          </div>
-        ) : rideOffers.error && !rideOffers.offers.length ? (
-          <div className="mt-2 rounded-xl border border-rose-200 bg-rose-50 p-3">
-            <div className="text-sm font-semibold text-rose-700">Rideshare could not be loaded for this event.</div>
-            <button
-              type="button"
-              className="secondary-button mt-3 min-h-9 w-fit px-3 text-xs"
-              onClick={() => void rideOffers.retry()}
-            >
-              Retry rideshare
-            </button>
-          </div>
-        ) : rideOffers.offers.length ? (
-          <div className="mt-2 space-y-3">
-            {rideOffers.offers.map((offer) => (
-              <RideOfferCard
-                key={offer.id}
-                offer={offer}
-                event={event}
-                userId={auth.user?.uid || ''}
-                canManage={rideOffers.canManageOffer(offer)}
-                childChoices={rideOffers.childChoices}
-                selectedChildId={rideOffers.resolveSelectedChildId(offer)}
-                busyAction={rideOffers.submitting}
-                onChildChange={(childId) => rideOffers.selectChildForOffer(offer.id, childId)}
-                onRequest={(child) => rideOffers.requestSpot(offer, child)}
-                onCancel={(requestId) => rideOffers.cancelRequest(offer, requestId)}
-                onDecision={(requestId, status) => rideOffers.updateRequestStatus(offer, requestId, status)}
-                onToggleStatus={() => rideOffers.toggleOfferStatus(offer)}
-              />
-            ))}
-          </div>
-        ) : (
-          <div className="mt-2 rounded-xl border border-gray-200 bg-gray-50 p-3 text-sm font-semibold text-gray-500">No ride offers yet for this event.</div>
-        )}
-      </div>
-    </section>
-  );
-}
-
-function RideOfferCard({ offer, event, userId, canManage, childChoices, selectedChildId, busyAction, onChildChange, onRequest, onCancel, onDecision, onToggleStatus }: {
-  offer: ScheduleRideOffer;
-  event: ParentScheduleEvent;
-  userId: string;
-  canManage: boolean;
-  childChoices: RideChildChoice[];
-  selectedChildId: string;
-  busyAction: string | null;
-  onChildChange: (childId: string) => void;
-  onRequest: (child: RideRequestChildInput) => Promise<void>;
-  onCancel: (requestId: string) => Promise<void>;
-  onDecision: (requestId: string, status: RideRequestStatus) => Promise<void>;
-  onToggleStatus: () => Promise<void>;
-}) {
-  const seatInfo = getScheduleRideSeatInfo(offer);
-  const requestCounts = getScheduleRideRequestCounts(offer);
-  const selectedChild = childChoices.find((child) => child.childId === selectedChildId) || null;
-  const myRequest = selectedChild ? findScheduleRideRequestForChild(offer, userId, selectedChild.childId) : null;
-  const canRequest = selectedChild ? canRequestScheduleRide(offer, userId, selectedChild.childId) : false;
-  const isDriver = offer.driverUserId === userId;
-  const requestBusy = busyAction === `request-${offer.id}`;
-  const cancelBusy = myRequest ? busyAction === `cancel-${offer.id}-${myRequest.id}` : false;
-  const toggleBusy = busyAction === `offer-status-${offer.id}`;
-
-  return (
-    <article className="rounded-xl border border-gray-200 bg-white p-3 shadow-sm">
-      <div className="flex items-start justify-between gap-3">
-        <div className="min-w-0">
-          <div className="text-sm font-black text-gray-950">{offer.driverName || 'Driver'}</div>
-          <div className="mt-0.5 flex flex-wrap gap-x-2 gap-y-1 text-xs font-semibold text-gray-500">
-            <span>{formatRideDirection(offer.direction)}</span>
-            <span>{seatInfo.seatCountConfirmed}/{seatInfo.seatCapacity} confirmed</span>
-            <span>{seatInfo.seatsLeft} left</span>
-            {offer.status !== 'open' ? <span className="font-black text-orange-700">Closed</span> : null}
-          </div>
-          {offer.note ? <div className="mt-1 text-xs font-semibold italic text-gray-500">{offer.note}</div> : null}
-        </div>
-        {canManage ? (
-          <button
-            type="button"
-            className={`min-h-8 flex-none rounded-full border px-3 text-xs font-black ${
-              offer.status === 'open'
-                ? 'border-orange-200 bg-orange-50 text-orange-700'
-                : 'border-emerald-200 bg-emerald-50 text-emerald-700'
-            }`}
-            onClick={onToggleStatus}
-            disabled={Boolean(busyAction)}
-          >
-            {toggleBusy ? 'Saving' : offer.status === 'open' ? 'Close' : 'Reopen'}
-          </button>
-        ) : null}
-      </div>
-
-      <div className="mt-3 rounded-xl border border-gray-100 bg-gray-50 p-2.5">
-        <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-          <div className="min-w-0">
-            <div className="text-[11px] font-extrabold uppercase tracking-[0.04em] text-gray-500">Ride request</div>
-            {childChoices.length > 1 ? (
-              <select
-                className="auth-input mt-1 min-h-9 !px-3 !py-1.5 text-sm"
-                value={selectedChildId}
-                onChange={(selectEvent) => onChildChange(selectEvent.target.value)}
-              >
-                {childChoices.map((child) => <option key={child.childId} value={child.childId}>{child.childName}</option>)}
-              </select>
-            ) : (
-              <div className="mt-1 text-sm font-black text-gray-950">{selectedChild?.childName || event.childName}</div>
-            )}
-          </div>
-          <div className="flex flex-wrap gap-2 sm:justify-end">
-            {isDriver ? (
-              <span className="inline-flex min-h-8 items-center rounded-full border border-primary-100 bg-primary-50 px-3 text-xs font-black text-primary-700">Your offer</span>
-            ) : null}
-            {canRequest && selectedChild ? (
-              <button
-                type="button"
-                className="min-h-8 rounded-full border border-emerald-200 bg-emerald-50 px-3 text-xs font-black text-emerald-700"
-                onClick={() => onRequest(selectedChild)}
-                disabled={Boolean(busyAction)}
-              >
-                {requestBusy ? 'Requesting' : 'Request spot'}
-              </button>
-            ) : null}
-            {myRequest ? (
-              <button
-                type="button"
-                className="min-h-8 rounded-full border border-gray-200 bg-white px-3 text-xs font-black text-gray-700"
-                onClick={() => onCancel(myRequest.id)}
-                disabled={Boolean(busyAction)}
-              >
-                {cancelBusy ? 'Cancelling' : 'Cancel'}
-              </button>
-            ) : null}
-          </div>
-        </div>
-        {myRequest ? (
-          <div className={`mt-2 text-xs font-black ${getRideRequestStatusClass(myRequest.status)}`}>
-            Your request for {myRequest.childName || selectedChild?.childName || 'Player'}: {formatRideRequestStatus(myRequest.status)}
-          </div>
-        ) : !isDriver && !canRequest ? (
-          <div className="mt-2 text-xs font-semibold text-gray-500">{getRideUnavailableText(offer, selectedChildId, userId)}</div>
-        ) : null}
-      </div>
-
-      {canManage && offer.requests.length ? (
-        <div className="mt-3 border-t border-gray-100 pt-3">
-          <div className="mb-2 flex items-center justify-between gap-2">
-            <div className="text-[11px] font-extrabold uppercase tracking-[0.04em] text-gray-500">Requests</div>
-            <div className="text-[11px] font-bold text-gray-500">
-              {requestCounts.pending} pending · {requestCounts.confirmed} confirmed
-            </div>
-          </div>
-          <div className="space-y-2">
-            {offer.requests.map((request) => (
-              <div key={request.id} className="rounded-lg border border-gray-100 bg-gray-50 p-2">
-                <div className="flex items-start justify-between gap-2">
-                  <div className="min-w-0">
-                    <div className="text-sm font-black text-gray-900">{request.childName || 'Player'}</div>
-                    <div className={`mt-0.5 text-xs font-black ${getRideRequestStatusClass(request.status)}`}>{formatRideRequestStatus(request.status)}</div>
-                  </div>
-                  <div className="flex flex-wrap justify-end gap-1">
-                    {(['confirmed', 'waitlisted', 'declined'] as const).map((status) => (
-                      <button
-                        key={status}
-                        type="button"
-                        className={`min-h-7 rounded-full border px-2 text-[11px] font-black ${getRideDecisionButtonClass(status, request.status)}`}
-                        onClick={() => onDecision(request.id, status)}
-                        disabled={Boolean(busyAction)}
-                      >
-                        {busyAction === `decision-${offer.id}-${request.id}-${status}` ? 'Saving' : getRideDecisionLabel(status)}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-      ) : null}
-    </article>
-  );
-}
-
-function formatRideRequestStatus(status: unknown) {
-  const normalized = String(status || 'pending').toLowerCase();
-  if (normalized === 'confirmed') return 'confirmed';
-  if (normalized === 'waitlisted') return 'waitlisted';
-  if (normalized === 'declined') return 'declined';
-  return 'pending';
-}
-
-function getRideRequestStatusClass(status: unknown) {
-  const normalized = formatRideRequestStatus(status);
-  if (normalized === 'confirmed') return 'text-emerald-700';
-  if (normalized === 'waitlisted') return 'text-amber-700';
-  if (normalized === 'declined') return 'text-rose-700';
-  return 'text-gray-600';
-}
-
-function getRideDecisionLabel(status: RideRequestStatus) {
-  if (status === 'confirmed') return 'Confirm';
-  if (status === 'waitlisted') return 'Waitlist';
-  return 'Decline';
-}
-
-function getRideDecisionButtonClass(status: RideRequestStatus, currentStatus: unknown) {
-  const active = formatRideRequestStatus(currentStatus) === status;
-  if (status === 'confirmed') return active ? 'border-emerald-300 bg-emerald-100 text-emerald-800' : 'border-emerald-200 bg-white text-emerald-700';
-  if (status === 'waitlisted') return active ? 'border-amber-300 bg-amber-100 text-amber-800' : 'border-amber-200 bg-white text-amber-700';
-  return active ? 'border-rose-300 bg-rose-100 text-rose-800' : 'border-rose-200 bg-white text-rose-700';
-}
-
-function getRideUnavailableText(offer: ScheduleRideOffer, selectedChildId: string, userId: string) {
-  if (!selectedChildId) return 'Select a child first.';
-  if (offer.status !== 'open') return 'This ride offer is closed.';
-  if (getScheduleRideSeatInfo(offer).seatsLeft <= 0) return 'This ride is full.';
-  const existing = findScheduleRideRequestForChild(offer, userId, selectedChildId);
-  if (existing) return `Request is ${formatRideRequestStatus(existing.status)}.`;
-  return 'Request unavailable.';
-}
-
-function AssignmentsSection({ auth, event, onAssignmentsChanged }: {
-  auth: AuthState;
-  event: ParentScheduleEvent;
-  onAssignmentsChanged: (assignments: ScheduleAssignment[]) => void;
-}) {
-  const [assignments, setAssignments] = useState<ScheduleAssignment[]>(() => cloneScheduleAssignments(event.assignments));
-  const [loading, setLoading] = useState(true);
-  const [busyRole, setBusyRole] = useState<string | null>(null);
-  const [assignmentStatus, setAssignmentStatus] = useState<string | null>(null);
-  const [assignmentError, setAssignmentError] = useState<string | null>(null);
-
-  const refreshAssignments = useCallback(async (showLoading = true) => {
-    if (showLoading) setLoading(true);
-    setAssignmentError(null);
-    try {
-      const loaded = cloneScheduleAssignments(await loadParentScheduleAssignments(event));
-      setAssignments(loaded);
-      onAssignmentsChanged(loaded);
-    } catch (error: any) {
-      setAssignmentError(error?.message || 'Unable to load assignments.');
-      setAssignments(cloneScheduleAssignments(event.assignments));
-    } finally {
-      if (showLoading) setLoading(false);
-    }
-  }, [event.id, event.isCancelled, event.isDbGame, event.teamId, onAssignmentsChanged]);
-
-  useEffect(() => {
-    setAssignmentStatus(null);
-    refreshAssignments();
-  }, [refreshAssignments]);
-
-  const runAssignmentAction = async (role: string, action: () => Promise<void>, successMessage: string) => {
-    setBusyRole(role);
-    setAssignmentStatus(null);
-    setAssignmentError(null);
-    try {
-      await action();
-      await refreshAssignments(false);
-      setAssignmentStatus(successMessage);
-    } catch (error: any) {
-      setAssignmentError(error?.message || 'Unable to update assignment.');
-    } finally {
-      setBusyRole(null);
-    }
-  };
-
-  const claimSlot = (assignment: ScheduleAssignment) => {
-    const role = String(assignment.role || '').trim();
-    if (!auth.user || !role) return;
-    return runAssignmentAction(
-      role,
-      () => claimParentScheduleAssignmentSlot(event, auth.user!, role),
-      `${role} claimed.`
-    );
-  };
-
-  const releaseSlot = (assignment: ScheduleAssignment) => {
-    const role = String(assignment.role || '').trim();
-    if (!role) return;
-    return runAssignmentAction(
-      role,
-      () => releaseParentScheduleAssignmentClaim(event, role),
-      `${role} released.`
-    );
-  };
-
-  const openCount = assignments.filter(isScheduleAssignmentOpen).length;
-
-  return (
-    <section className="app-card overflow-hidden p-0">
-      <div className="border-b border-gray-100 p-4">
-        <div className="flex items-start justify-between gap-3">
-          <div className="min-w-0">
-            <div className="flex items-center gap-2 text-sm font-black text-primary-800">
-              <ClipboardCheck className="h-5 w-5 text-primary-600" aria-hidden="true" />
-              Assignments
-            </div>
-            <h2 className="mt-1 app-section-title">Assignments</h2>
-            <div className="mt-0.5 text-xs font-semibold text-gray-500">
-              {assignments.length ? `${assignments.length} posted · ${openCount} open` : 'None posted'}
-            </div>
-          </div>
-          {loading ? <RefreshCw className="mt-1 h-4 w-4 animate-spin text-primary-600" aria-hidden="true" /> : null}
-        </div>
-      </div>
-
-      <div className="p-3 sm:p-4">
-        {assignmentStatus ? <Status tone="success" message={assignmentStatus} /> : null}
-        {assignmentError ? <div className="mt-2"><Status tone="error" message={assignmentError} /></div> : null}
-        <div className="mt-2 space-y-2">
-          {assignments.length ? assignments.map((assignment, index) => (
-            <AssignmentCard
-              key={`${assignment.role || 'assignment'}-${index}`}
-              assignment={assignment}
-              userId={auth.user?.uid || ''}
-              busy={busyRole === String(assignment.role || '').trim()}
-              disabled={Boolean(busyRole) || !event.isDbGame || event.isCancelled}
-              onClaim={() => claimSlot(assignment)}
-              onRelease={() => releaseSlot(assignment)}
-            />
-          )) : (
-            <div className="rounded-xl border border-gray-200 bg-gray-50 p-3 text-sm font-semibold text-gray-500">None posted</div>
-          )}
-        </div>
-        {!event.isDbGame || event.isCancelled ? (
-          <div className="mt-2 text-xs font-semibold text-gray-500">Assignment sign-up is available for active tracked schedule events.</div>
-        ) : null}
-      </div>
-    </section>
-  );
-}
 
 function LiveGameReactionsPanel({ auth, event }: { auth: AuthState; event: ParentScheduleEvent }) {
   const [reactionsModule, setReactionsModule] = useState<LiveGameReactionsModule | null>(null);
