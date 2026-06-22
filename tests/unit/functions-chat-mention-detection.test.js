@@ -417,6 +417,37 @@ describe('buildTeamChatNotificationPlan', () => {
         expect(plan.liveChatTargets.some((target) => target.uid === 'alice-parent')).toBe(false);
     });
 
+    it('deduplicates mentioned users out of generic live chat pushes across devices', () => {
+        const plan = buildTeamChatNotificationPlan({
+            text: '@Alice check the jersey note',
+            actorUid: 'coach-1',
+            recipientContext: {
+                members: [
+                    { uid: 'coach-1', displayName: 'Coach Kim', roles: ['staff'] },
+                    { uid: 'u1', displayName: 'Alice Parent', roles: ['parent'] },
+                    { uid: 'u2', displayName: 'Blair Parent', roles: ['parent'] }
+                ],
+                mutedUids: [],
+                targetsByCategory: {
+                    mentions: [
+                        { uid: 'u1', deviceId: 'ios', token: 'mention-ios' },
+                        { uid: 'u1', deviceId: 'web', token: 'mention-web' },
+                        { uid: 'u1', deviceId: 'web', token: 'mention-web' }
+                    ],
+                    liveChat: [
+                        { uid: 'u1', deviceId: 'ios', token: 'chat-ios' },
+                        { uid: 'u1', deviceId: 'web', token: 'chat-web' },
+                        { uid: 'u2', deviceId: 'ios', token: 'chat-u2' }
+                    ]
+                }
+            }
+        });
+
+        expect(plan.mentionedUids).toEqual(['u1']);
+        expect(plan.mentionTargets.map((target) => `${target.uid}:${target.deviceId}`).sort()).toEqual(['u1:ios', 'u1:web']);
+        expect(plan.liveChatTargets.map((target) => target.uid)).toEqual(['u2']);
+    });
+
     it('suppresses muted conversation participants from generic photo-only chat pushes', () => {
         const plan = buildTeamChatNotificationPlan({
             text: '',
