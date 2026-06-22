@@ -904,13 +904,13 @@
                 team?.teamCalendarToken;
             if (!token || !team?.id) return '';
 
-            const configuredUrl = window.__ALLPLAYS_CONFIG__?.privateTeamCalendarIcsFunctionUrl || window.ALLPLAYS_PRIVATE_TEAM_CALENDAR_ICS_URL;
+            const configuredUrl = window.__ALLPLAYS_CONFIG__?.teamCalendarFeedFunctionUrl || window.ALLPLAYS_TEAM_CALENDAR_FEED_URL;
             const fallbackUrl = window.__ALLPLAYS_CONFIG__?.calendarFetchFunctionUrl || window.ALLPLAYS_CALENDAR_FUNCTION_URL;
             const baseUrl = (typeof configuredUrl === 'string' && configuredUrl.trim())
                 ? configuredUrl.trim()
                 : (typeof fallbackUrl === 'string' && fallbackUrl.includes('fetchCalendarIcs')
-                    ? fallbackUrl.replace('fetchCalendarIcs', 'privateTeamCalendarIcs')
-                    : 'https://us-central1-all-plays-prod.cloudfunctions.net/privateTeamCalendarIcs');
+                    ? fallbackUrl.replace('fetchCalendarIcs', 'teamCalendarFeed')
+                    : 'https://us-central1-all-plays-prod.cloudfunctions.net/teamCalendarFeed');
             const separator = baseUrl.includes('?') ? '&' : '?';
             return `${baseUrl}${separator}teamId=${encodeURIComponent(team.id)}&token=${encodeURIComponent(token)}`;
         }
