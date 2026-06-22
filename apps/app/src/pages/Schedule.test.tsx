@@ -67,6 +67,26 @@ function renderSchedule() {
   );
 }
 
+function buildScheduleEvent(index: number) {
+  return {
+    eventKey: `team-1::event-${index}::player-1::2100-06-${String(index).padStart(2, '0')}T18:00:00.000Z::game`,
+    id: `event-${index}`,
+    teamId: 'team-1',
+    teamName: 'Bears',
+    type: 'game' as const,
+    date: new Date(`2100-06-${String(index).padStart(2, '0')}T18:00:00.000Z`),
+    location: 'Main Gym',
+    opponent: 'Rivals',
+    title: null,
+    childId: 'player-1',
+    childName: 'Pat',
+    isDbGame: true,
+    isCancelled: false,
+    myRsvp: 'not_responded' as const,
+    assignments: []
+  };
+}
+
 function resolveAppSourcePath(relativePath: string) {
   const cwd = process.cwd();
   const appRoot = cwd.endsWith('/apps/app') || cwd.endsWith('\\apps\\app')
@@ -156,6 +176,20 @@ describe('Schedule', () => {
     expect(playerFilter.innerHTML).toContain('Pat');
   });
 
+  it('shows the remaining event count when only one more event is hidden', async () => {
+    scheduleServiceMocks.loadParentSchedule.mockResolvedValueOnce({
+      children: [
+        { playerId: 'player-1', playerName: 'Pat', teamId: 'team-1', teamName: 'Bears' }
+      ],
+      events: Array.from({ length: 21 }, (_, index) => buildScheduleEvent(index + 1))
+    });
+
+    renderSchedule();
+
+    expect(await screen.findByText('Showing 20 of 21 events')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Show 1 more' })).toBeTruthy();
+  });
+
   it('shows permission-specific copy when a loaded schedule refresh is denied', async () => {
     scheduleServiceMocks.loadParentSchedule
       .mockResolvedValueOnce({
@@ -186,6 +220,6 @@ describe('Schedule', () => {
 
     expect(source).toContain('function ScheduleList({ events, visibleCount, pageSize, canShowMore, loadingMore, onShowMore }');
     expect(source).toContain('function CompactScheduleList({ events, visibleCount, pageSize, canShowMore, loadingMore, onShowMore }');
-    expect(source).toContain("{loadingMore ? 'Loading more…' : `Show ${Math.min(pageSize, Math.max(remainingCount, pageSize))} more`}");
+    expect(source).toContain("{loadingMore ? 'Loading more…' : `Show ${Math.min(pageSize, remainingCount || pageSize)} more`}");
   });
 });
