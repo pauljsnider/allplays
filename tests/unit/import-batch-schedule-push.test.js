@@ -114,6 +114,72 @@ describe('schedule import batch push notifications', () => {
         }
     });
 
+    it('does not count duplicate create trigger retries toward large import summary totals', async () => {
+        const harness = loadNotificationInternals({
+            teamDoc: { ownerId: 'user-1' },
+            indexedTargets: [{
+                uid: 'user-1',
+                deviceId: 'device-1',
+                token: 'token-1',
+                categories: { schedule: true }
+            }]
+        });
+
+        try {
+            const batch = {
+                batchId: 'batch-retry',
+                totalCount: 4
+            };
+            const events = [
+                { gameId: 'game-1', type: 'game', opponent: 'Opponent 1', rowNumber: 1 },
+                { gameId: 'game-1', type: 'game', opponent: 'Opponent 1', rowNumber: 1 },
+                { gameId: 'game-2', type: 'practice', title: 'Practice 2', rowNumber: 2 },
+                { gameId: 'game-3', type: 'game', opponent: 'Opponent 3', rowNumber: 3 }
+            ];
+
+            for (const item of events) {
+                await harness.internals.notifyGameCreated(
+                    createSnapshot({
+                        type: item.type,
+                        title: item.title || null,
+                        opponent: item.opponent || null,
+                        status: 'scheduled',
+                        createdBy: 'coach-1',
+                        importBatch: {
+                            ...batch,
+                            rowNumber: item.rowNumber
+                        }
+                    }),
+                    { params: { teamId: 'team-1', gameId: item.gameId } }
+                );
+            }
+
+            expect(harness.env.messagingCalls).toHaveLength(0);
+
+            await harness.internals.notifyGameCreated(
+                createSnapshot({
+                    type: 'practice',
+                    title: 'Practice 4',
+                    status: 'scheduled',
+                    createdBy: 'coach-1',
+                    importBatch: {
+                        ...batch,
+                        rowNumber: 4
+                    }
+                }),
+                { params: { teamId: 'team-1', gameId: 'game-4' } }
+            );
+
+            expect(harness.env.messagingCalls).toHaveLength(1);
+            expect(harness.env.messagingCalls[0]).toMatchObject({
+                title: 'Schedule import complete',
+                body: 'Imported 4 schedule events (2 games, 2 practices).'
+            });
+        } finally {
+            harness.cleanup();
+        }
+    });
+
     it('falls back to per-event create pushes when a large app import finishes with only three successful events', async () => {
         const harness = loadNotificationInternals({
             teamDoc: { ownerId: 'user-1' },
