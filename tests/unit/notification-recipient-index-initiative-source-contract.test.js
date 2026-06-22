@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 
 const functionsSource = readFileSync(new URL('../../functions/index.js', import.meta.url), 'utf8');
 const firestoreRules = readFileSync(new URL('../../firestore.rules', import.meta.url), 'utf8');
+const migrationSource = readFileSync(new URL('../../_migration/backfill-notification-recipients.js', import.meta.url), 'utf8');
 
 describe('notification recipient index initiative source contract', () => {
     it('resolves category sends through the denormalized notificationRecipients index first', () => {
@@ -17,6 +18,15 @@ describe('notification recipient index initiative source contract', () => {
         expect(functionsSource).toContain('if (targetSnap.empty && await teamNotificationRecipientIndexIsEmpty(teamId)) {');
         expect(functionsSource).toContain('await backfillNotificationRecipientsForTeam(teamId, users, { skipLegacyCleanup: true });');
         expect(functionsSource).toContain('Failed to backfill notification recipient index after empty lookup');
+    });
+
+    it('ships a migration script for seeding existing team recipient indexes', () => {
+        expect(migrationSource).toContain("db.doc(`teams/${teamId}/notificationRecipients/${uid}`)");
+        expect(migrationSource).toContain('normalizeNotificationTargetCategories(preferences)');
+        expect(migrationSource).toContain("db.collection('users')");
+        expect(migrationSource).toContain("'parentTeamIds', 'array-contains', teamId");
+        expect(migrationSource).toContain('admin.auth().getUserByEmail(email)');
+        expect(migrationSource).toContain('--dry-run');
     });
 
     it('deduplicates logical sends through a server-only notificationSendLog', () => {

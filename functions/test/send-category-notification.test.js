@@ -45,6 +45,117 @@ test('getTargetsForCategory uses indexed targets without legacy per-user device 
         }
 });
 
+test('getTargetsForCategory returns the same recipient set from indexed resolution as the legacy scan', async () => {
+        const fixture = {
+            teamDoc: {
+                ownerId: 'coach-1',
+                adminEmails: ['assistant@example.com']
+            },
+            authUsersByEmail: {
+                'assistant@example.com': 'assistant-1'
+            },
+            parentUserIds: ['parent-1'],
+            userDocs: {
+                'coach-1': { email: 'coach@example.com', parentTeamIds: [] },
+                'assistant-1': { email: 'assistant@example.com', parentTeamIds: [] },
+                'parent-1': { email: 'parent1@example.com', parentTeamIds: ['team-1'] }
+            },
+            preferenceDocs: {
+                'users/coach-1/notificationPreferences/team-1': { schedule: true },
+                'users/assistant-1/notificationPreferences/team-1': { schedule: true },
+                'users/parent-1/notificationPreferences/team-1': { schedule: true }
+            },
+            deviceDocs: {
+                'coach-1': [
+                    { id: 'coach-phone', token: 'coach-phone-token', platform: 'ios' }
+                ],
+                'assistant-1': [
+                    { id: 'assistant-phone', token: 'assistant-phone-token', platform: 'android' }
+                ],
+                'parent-1': [
+                    { id: 'parent-phone', token: 'parent-phone-token', platform: 'ios' }
+                ]
+            },
+            indexedRecipients: [
+                {
+                    uid: 'coach-1',
+                    teamId: 'team-1',
+                    roles: ['staff'],
+                    categories: { schedule: true },
+                    tokens: [
+                        {
+                            deviceId: 'coach-phone',
+                            token: 'coach-phone-token',
+                            platform: 'ios',
+                            userAgent: ''
+                        }
+                    ]
+                },
+                {
+                    uid: 'assistant-1',
+                    teamId: 'team-1',
+                    roles: ['staff'],
+                    categories: { schedule: true },
+                    tokens: [
+                        {
+                            deviceId: 'assistant-phone',
+                            token: 'assistant-phone-token',
+                            platform: 'android',
+                            userAgent: ''
+                        }
+                    ]
+                },
+                {
+                    uid: 'parent-1',
+                    teamId: 'team-1',
+                    roles: ['parent'],
+                    categories: { schedule: true },
+                    tokens: [
+                        {
+                            deviceId: 'parent-phone',
+                            token: 'parent-phone-token',
+                            platform: 'ios',
+                            userAgent: ''
+                        }
+                    ]
+                }
+            ]
+        };
+
+        const indexed = loadNotificationInternals(fixture);
+        const legacy = loadNotificationInternals({
+            ...fixture,
+            indexedRecipients: []
+        });
+
+        try {
+            const [indexedTargets, legacyTargets] = await Promise.all([
+                indexed.internals.getTargetsForCategory('team-1', 'schedule'),
+                legacy.internals.getTargetsForCategory('team-1', 'schedule')
+            ]);
+
+            const normalizeTargets = (targets) => targets
+                .map((target) => `${target.uid}:${target.deviceId}:${target.token}`)
+                .sort();
+
+            assert.deepEqual(normalizeTargets(indexedTargets), normalizeTargets(legacyTargets));
+            assert.equal(indexed.env.counts.recipientQueries, 1);
+            assert.equal(indexed.env.counts.preferenceGets, 0);
+            assert.equal(indexed.env.counts.deviceGets, 0);
+            assert.equal(legacy.env.counts.recipientQueries, 1);
+            assert.ok(legacy.env.counts.preferenceGets > 0);
+            assert.ok(legacy.env.counts.deviceGets > 0);
+            assert.deepEqual(normalizeTargets(indexedTargets), [
+                'assistant-1:assistant-phone:assistant-phone-token',
+                'coach-1:coach-phone:coach-phone-token',
+                'parent-1:parent-phone:parent-phone-token'
+            ]);
+        } finally {
+            indexed.cleanup();
+            legacy.cleanup();
+        }
+});
+
 test('getTargetsForCategory does not backfill repeatedly when the recipient collection already contains disabled-category docs', async () => {
         const { internals, env, cleanup } = loadNotificationInternals({
             teamDoc: {
