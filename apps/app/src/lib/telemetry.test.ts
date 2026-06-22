@@ -160,6 +160,24 @@ describe('app telemetry bridge', () => {
     });
   });
 
+  it('accepts global runtime DSN fallbacks without installing production-only handlers in local mode', async () => {
+    window.ALLPLAYS_ERROR_TRACKING_DSN = 'https://public@example.ingest.sentry.io/global';
+    window.ALLPLAYS_ERROR_TRACKING_ENVIRONMENT = 'staging';
+    window.ALLPLAYS_ERROR_TRACKING_RELEASE = 'app@global';
+    const addEventListenerSpy = vi.spyOn(window, 'addEventListener');
+
+    const telemetry = await import('./telemetry');
+
+    expect(telemetry.initializeAppErrorTracking({ isProduction: false })).toBe(true);
+    expect(sentryMocks.init).toHaveBeenCalledWith(expect.objectContaining({
+      dsn: 'https://public@example.ingest.sentry.io/global',
+      environment: 'staging',
+      release: 'app@global'
+    }));
+    expect(addEventListenerSpy).not.toHaveBeenCalledWith('error', expect.any(Function));
+    expect(addEventListenerSpy).not.toHaveBeenCalledWith('unhandledrejection', expect.any(Function));
+  });
+
   it('reports React boundary failures without misclassifying generic TypeErrors as network errors', async () => {
     const capture = vi.fn();
     window.AllPlaysTelemetry = { capture };
