@@ -4168,7 +4168,14 @@ function buildNotificationAppRoute({ category, teamId, gameId, eventId, batchId 
     const query = params.toString();
     return `/parent-tools/fees${query ? `?${query}` : ''}`;
   }
-  if ((category === 'liveChat' || category === 'mentions') && teamId) {
+  if (category === 'mentions' && teamId) {
+    const route = `/messages/${encodeURIComponent(teamId)}`;
+    if (!conversationId) {
+      return route;
+    }
+    return `${route}?conversation=${encodeURIComponent(conversationId)}`;
+  }
+  if (category === 'liveChat' && teamId) {
     const route = `/messages/${encodeURIComponent(teamId)}`;
     if (!conversationId) {
       return route;
@@ -5295,17 +5302,46 @@ function normalizeScheduleImportBatch(batch = {}) {
   return { batchId, totalCount, rowNumber };
 }
 
-function buildScheduleImportSummaryPayload({ totalCount, gameCount, practiceCount }) {
+function normalizeScheduleImportTeamName(value) {
+  return String(value || '').replace(/\s+/g, ' ').trim();
+}
+
+async function resolveScheduleImportTeamName(teamId, batch = {}) {
+  const batchTeamName = normalizeScheduleImportTeamName(
+    batch.teamName
+    || batch.team?.name
+    || batch.teamDisplayName
+  );
+  if (batchTeamName) return batchTeamName;
+
+  try {
+    const teamSnap = await firestore.doc(`teams/${teamId}`).get();
+    if (!teamSnap.exists) return '';
+    const team = teamSnap.data() || {};
+    return normalizeScheduleImportTeamName(team.name || team.teamName || team.displayName);
+  } catch (error) {
+    functions.logger.warn('Failed to resolve schedule import team name for notification summary', {
+      teamId,
+      batchId: batch.batchId || null,
+      error: error?.message || String(error || 'Unknown error')
+    });
+    return '';
+  }
+}
+
+function buildScheduleImportSummaryPayload({ totalCount, gameCount, practiceCount, teamName = '' }) {
   const safeTotalCount = Math.max(0, Number(totalCount || 0));
   const safeGameCount = Math.max(0, Number(gameCount || 0));
   const safePracticeCount = Math.max(0, Number(practiceCount || 0));
+  const teamLabel = normalizeScheduleImportTeamName(teamName);
   const parts = [];
   if (safeGameCount > 0) parts.push(`${safeGameCount} game${safeGameCount === 1 ? '' : 's'}`);
   if (safePracticeCount > 0) parts.push(`${safePracticeCount} practice${safePracticeCount === 1 ? '' : 's'}`);
+  const teamDetail = teamLabel ? ` for ${teamLabel}` : '';
   const detail = parts.length ? ` (${parts.join(', ')})` : '';
   return {
     title: 'Schedule import complete',
-    body: `Imported ${safeTotalCount} schedule events${detail}.`
+    body: `Imported ${safeTotalCount} schedule events${teamDetail}${detail}.`
   };
 }
 
@@ -5345,7 +5381,8 @@ async function sendScheduleImportBatchNotifications({ teamId, batchId, batch }) 
   }
 
   if (totalCount > 3) {
-    const payload = buildScheduleImportSummaryPayload({ totalCount, gameCount, practiceCount });
+    const teamName = await resolveScheduleImportTeamName(teamId, batch);
+    const payload = buildScheduleImportSummaryPayload({ totalCount, gameCount, practiceCount, teamName });
     await sendCategoryNotification({
       teamId,
       category: 'schedule',

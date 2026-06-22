@@ -4,6 +4,7 @@ type PushPayload = {
     appRoute?: string;
     category?: string;
     teamId?: string;
+    conversation?: string;
     conversationId?: string;
     childId?: string;
     gameId?: string;
@@ -33,7 +34,7 @@ function encodeRouteParam(value: string) {
     return encodeURIComponent(value);
 }
 
-function buildMessagesRoute(teamId: string, conversationId?: string) {
+function buildMessagesRoute(teamId: string, conversationId?: string, conversationParam = 'conversationId') {
     const normalizedTeamId = normalizeValue(teamId);
     if (!normalizedTeamId) {
         return '';
@@ -43,7 +44,7 @@ function buildMessagesRoute(teamId: string, conversationId?: string) {
     if (!normalizedConversationId) {
         return route;
     }
-    return `${route}?conversationId=${encodeRouteParam(normalizedConversationId)}`;
+    return `${route}?${conversationParam}=${encodeRouteParam(normalizedConversationId)}`;
 }
 
 function buildScheduleEventRoute(teamId: string, eventId: string, section?: string, childId?: string) {
@@ -88,12 +89,13 @@ function buildLegacyLinkFallback(link: string) {
     try {
         const url = new URL(link);
         const teamId = normalizeValue(url.searchParams.get('teamId'));
-        const conversationId = normalizeValue(url.searchParams.get('conversationId'));
+        const conversation = normalizeValue(url.searchParams.get('conversation'));
+        const conversationId = normalizeValue(url.searchParams.get('conversationId')) || conversation;
         const gameId = normalizeValue(url.searchParams.get('gameId'));
         const path = url.pathname.toLowerCase();
 
         if (path.endsWith('/team-chat.html') && teamId) {
-            return buildMessagesRoute(teamId, conversationId);
+            return buildMessagesRoute(teamId, conversationId, conversation ? 'conversation' : 'conversationId');
         }
         if (path.endsWith('/officials.html')) {
             return teamId ? `/officials?teamId=${encodeRouteParam(teamId)}` : '/officials';
@@ -135,7 +137,8 @@ export function resolvePushNotificationRoute(input: unknown) {
 
     const category = normalizeValue(payload.category);
     const teamId = normalizeValue(payload.teamId);
-    const conversationId = normalizeValue(payload.conversationId);
+    const conversation = normalizeValue(payload.conversation);
+    const conversationId = normalizeValue(payload.conversationId) || conversation;
     const gameId = normalizeValue(payload.gameId);
     const eventId = normalizeValue(payload.eventId) || gameId;
     const childId = normalizeValue(payload.childId);
@@ -190,7 +193,7 @@ export function resolvePushNotificationRoute(input: unknown) {
         return buildMessagesRoute(teamId, conversationId);
     }
     if (category === 'mentions' && teamId) {
-        return buildMessagesRoute(teamId, conversationId);
+        return buildMessagesRoute(teamId, conversationId, 'conversation');
     }
     if (category === 'fees') {
         if (teamId && batchId) {

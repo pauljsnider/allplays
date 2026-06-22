@@ -55,7 +55,8 @@ describe('app push notification routing', () => {
         expect(resolvePushNotificationRoute({ category: 'rideshare', teamId: 'team-1', eventId: 'game-7', childId: 'player-2' })).toBe('/schedule/team-1/game-7?childId=player-2&section=rideshare');
         expect(resolvePushNotificationRoute({ category: 'media', teamId: 'team-1' })).toBe('/teams/team-1/media');
         expect(resolvePushNotificationRoute({ category: 'awards', teamId: 'team-1', certificateId: 'cert-9' })).toBe('/parent-tools/certificates?teamId=team-1&certificateId=cert-9');
-        expect(resolvePushNotificationRoute({ category: 'mentions', teamId: 'team-1', conversationId: 'staff-2' })).toBe('/messages/team-1?conversationId=staff-2');
+        expect(resolvePushNotificationRoute({ category: 'mentions', teamId: 'team-1', conversationId: 'staff-2' })).toBe('/messages/team-1?conversation=staff-2');
+        expect(resolvePushNotificationRoute({ category: 'mentions', teamId: 'team-1', conversation: 'staff-2' })).toBe('/messages/team-1?conversation=staff-2');
         expect(resolvePushNotificationRoute({ category: 'gameDay', teamId: 'team-1', gameId: 'game-7' })).toBe('/schedule/team-1/game-7?section=game');
         expect(resolvePushNotificationRoute({ category: 'officiating', teamId: 'team-1' })).toBe('/officials?teamId=team-1');
     });
@@ -63,6 +64,7 @@ describe('app push notification routing', () => {
     it('falls back to legacy web links when an explicit app route is absent', () => {
         expect(resolvePushNotificationRoute({ link: 'https://allplays.ai/team-chat.html?teamId=team-1' })).toBe('/messages/team-1');
         expect(resolvePushNotificationRoute({ link: 'https://allplays.ai/team-chat.html?teamId=team-1&conversationId=staff-2' })).toBe('/messages/team-1?conversationId=staff-2');
+        expect(resolvePushNotificationRoute({ link: 'https://allplays.ai/team-chat.html?teamId=team-1&conversation=staff-2' })).toBe('/messages/team-1?conversation=staff-2');
         expect(resolvePushNotificationRoute({ link: 'https://allplays.ai/live-game.html?teamId=team-1&gameId=game-7' })).toBe('/schedule/team-1/game-7?section=game');
         expect(resolvePushNotificationRoute({ link: 'https://allplays.ai/game-day.html?teamId=team-1&gameId=game-7' })).toBe('/schedule/team-1/game-7?section=game');
     });

@@ -50,7 +50,7 @@ describe('schedule and RSVP notification contract', () => {
     it('summarizes large schedule imports and deduplicates the individual event ids', () => {
         expect(functionsSource).toContain('async function sendScheduleImportBatchNotifications({ teamId, batchId, batch })');
         expect(functionsSource).toContain('if (totalCount > 3) {');
-        expect(functionsSource).toContain('const payload = buildScheduleImportSummaryPayload({ totalCount, gameCount, practiceCount });');
+        expect(functionsSource).toContain('const payload = buildScheduleImportSummaryPayload({ totalCount, gameCount, practiceCount, teamName });');
         expect(functionsSource).toContain("dedupKey: `import-batch:${batchId}`");
         expect(functionsSource).toContain("eventIds.map((eventId) => markNotificationDedupSent(teamId, 'schedule', eventId))");
         expect(functionsSource).toContain('exports.notifyScheduleImportBatchCompleted = notifyScheduleImportBatchCompleted;');
