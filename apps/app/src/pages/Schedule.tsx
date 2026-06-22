@@ -140,7 +140,16 @@ export function Schedule({ auth }: { auth: AuthState }) {
   const [children, setChildren] = useState<ParentScheduleChild[]>([]);
   const [events, setEvents] = useState<ParentScheduleEvent[]>([]);
   const [scheduleLoadError, setScheduleLoadError] = useState<AppServiceError | null>(null);
-  const { loading, error, clearError, run: runAsyncOperation } = useAsyncOperation();
+  const {
+    loading: scheduleReadLoading,
+    error: scheduleReadError,
+    clearError: clearScheduleReadError,
+    run: runScheduleRead
+  } = useAsyncOperation();
+  const {
+    loading: loadingPastHistory,
+    run: runPastHistoryRead
+  } = useAsyncOperation();
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
   const [visibleListCount, setVisibleListCount] = useState(upcomingListPageSize);
   const [calendarMonth, setCalendarMonth] = useState(() => {
@@ -181,7 +190,6 @@ export function Schedule({ auth }: { auth: AuthState }) {
   const [savingPractice, setSavingPractice] = useState(false);
   const [practiceFormError, setPracticeFormError] = useState<string | null>(null);
   const [loadedScheduleUserId, setLoadedScheduleUserId] = useState<string | null>(null);
-  const [loadingPastHistory, setLoadingPastHistory] = useState(false);
   const [pastHistoryHasMore, setPastHistoryHasMore] = useState(false);
   const hasLoadedScheduleRef = useRef(false);
   const hasStartedInitialScheduleLoadRef = useRef(false);
@@ -257,27 +265,34 @@ export function Schedule({ auth }: { auth: AuthState }) {
       return false;
     }
 
-    setLoadingPastHistory(true);
-    try {
-      const beforeKeys = new Set(eventsRef.current.map((event) => event.eventKey));
-      const result = await loadParentSchedule(user, {
-        hydrateDetails: false,
-        expandStaffPlayers: false,
-        scheduleRangeByTeam
-      });
-      const nextEvents = result.events.filter((event) => !beforeKeys.has(event.eventKey));
-      if (!nextEvents.length) {
-        setPastHistoryHasMore(false);
-        return false;
+    const loaded = await runPastHistoryRead(
+      async () => {
+        const beforeKeys = new Set(eventsRef.current.map((event) => event.eventKey));
+        const result = await loadParentSchedule(user, {
+          hydrateDetails: false,
+          expandStaffPlayers: false,
+          scheduleRangeByTeam
+        });
+        return {
+          children: result.children,
+          events: result.events.filter((event) => !beforeKeys.has(event.eventKey))
+        };
+      },
+      {
+        clearError: false,
+        rethrow: false,
+        onSuccess: (result) => {
+          if (!result.events.length) {
+            setPastHistoryHasMore(false);
+            return;
+          }
+          mergeScheduleResult({ children: result.children, events: result.events });
+          setPastHistoryHasMore(true);
+        }
       }
-      mergeScheduleResult({ children: result.children, events: nextEvents });
-      setPastHistoryHasMore(true);
-      return true;
-    } catch {
-      return false;
-    } finally {
-      setLoadingPastHistory(false);
-    }
+    );
+
+    return Boolean(loaded?.events.length);
   };
 
   const ensurePastSchedulePageLoaded = async (force = false) => {
@@ -302,7 +317,7 @@ export function Schedule({ auth }: { auth: AuthState }) {
 
   const refreshSchedule = async (force = false) => {
     if (!auth.user) return null;
-    clearError();
+    clearScheduleReadError();
     setScheduleLoadError(null);
     setStatusMessage(null);
     const hasExistingSchedule = hasLoadedScheduleRef.current;
@@ -317,7 +332,7 @@ export function Schedule({ auth }: { auth: AuthState }) {
     const scheduleCacheTtlMs = 60 * 1000 * 5;
     const cached = getCachedAppData(cacheKey);
 
-    return runAsyncOperation(
+    return runScheduleRead(
       () => loadCachedAppData(
         cacheKey,
         () => loadParentSchedule(auth.user, { hydrateDetails: false, expandStaffPlayers: false }),
@@ -413,11 +428,11 @@ export function Schedule({ auth }: { auth: AuthState }) {
   useRefreshOnResume(() => { void refreshSchedule(true); }, { enabled: Boolean(auth.user?.uid) });
 
   useEffect(() => {
-    if (!hasStartedInitialScheduleLoadRef.current || loading || isInitialScheduleLoad) {
+    if (!hasStartedInitialScheduleLoadRef.current || scheduleReadLoading || isInitialScheduleLoad) {
       return;
     }
     recordFirstMeaningfulRender('schedule');
-  }, [isInitialScheduleLoad, loading]);
+  }, [isInitialScheduleLoad, scheduleReadLoading]);
 
   const visibleEvents = useMemo(() => (
     filterParentScheduleEvents(events, { filter, playerId: selectedPlayerId, teamId: selectedTeamId, timeRange })
@@ -518,7 +533,7 @@ export function Schedule({ auth }: { auth: AuthState }) {
     setSavingGame(true);
     setGameFormError(null);
     setStatusMessage(null);
-    clearError();
+    clearScheduleReadError();
     try {
       await createScheduledGameForApp(selectedCalendarTeam.teamId, gameForm, auth.user);
       setGameForm(getDefaultScheduleGameForm());
@@ -537,7 +552,7 @@ export function Schedule({ auth }: { auth: AuthState }) {
     setSavingPractice(true);
     setPracticeFormError(null);
     setStatusMessage(null);
-    clearError();
+    clearScheduleReadError();
     try {
       await createScheduledPracticeForApp(selectedCalendarTeam.teamId, practiceForm, auth.user);
       setPracticeForm(getDefaultSchedulePracticeForm());
@@ -653,7 +668,7 @@ export function Schedule({ auth }: { auth: AuthState }) {
     setCsvPreviewRows([]);
     setScheduleImportPreviewSource(null);
     setStatusMessage(null);
-    clearError();
+    clearScheduleReadError();
     const currentGames = events
       .filter((event) => event.teamId === selectedCalendarTeam.teamId && event.type === 'game' && event.isDbGame)
       .map((event) => ({
@@ -699,7 +714,7 @@ export function Schedule({ auth }: { auth: AuthState }) {
     setImportingCsv(true);
     setCsvImportErrors([]);
     setStatusMessage(null);
-    clearError();
+    clearScheduleReadError();
     const failedRows: ScheduleCsvImportPreviewRow[] = [];
     const importBatchId = `app-schedule-import-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
     const importBatchTimestamp = new Date().toISOString();
@@ -761,7 +776,7 @@ export function Schedule({ auth }: { auth: AuthState }) {
     setSavingCalendarUrl(true);
     setCalendarUrlError(null);
     setStatusMessage(null);
-    clearError();
+    clearScheduleReadError();
     try {
       const result = await addTeamCalendarUrl(selectedCalendarTeam.teamId, validation.url, auth.user);
       setCalendarUrl('');
@@ -783,7 +798,7 @@ export function Schedule({ auth }: { auth: AuthState }) {
     setRemovingCalendarUrl(url);
     setCalendarUrlError(null);
     setStatusMessage(null);
-    clearError();
+    clearScheduleReadError();
     try {
       const result = await removeTeamCalendarUrl(selectedCalendarTeam.teamId, url, auth.user);
       setStatusMessage(result.removed ? 'Calendar link removed. Refreshing schedule…' : 'Calendar link was already removed. Refreshing schedule…');
@@ -856,8 +871,8 @@ export function Schedule({ auth }: { auth: AuthState }) {
             </div>
           </div>
           <div className="flex flex-none gap-1.5">
-            <button type="button" className="ghost-button !h-9 !min-h-9 !w-9 !p-0" onClick={() => refreshSchedule(true)} disabled={loading} aria-label="Refresh schedule">
-              <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} aria-hidden="true" />
+            <button type="button" className="ghost-button !h-9 !min-h-9 !w-9 !p-0" onClick={() => refreshSchedule(true)} disabled={scheduleReadLoading} aria-label="Refresh schedule">
+              <RefreshCw className={`h-4 w-4 ${scheduleReadLoading ? 'animate-spin' : ''}`} aria-hidden="true" />
             </button>
             <button type="button" className="secondary-button !h-9 !min-h-9 !w-9 !p-0" onClick={handleExport} aria-label="Export calendar">
               <Download className="h-4 w-4" aria-hidden="true" />
@@ -940,8 +955,8 @@ export function Schedule({ auth }: { auth: AuthState }) {
             </div>
 
             <div className="mt-3 flex flex-wrap gap-2">
-              <button type="button" className="ghost-button !min-h-9 !px-3 !py-2 !text-xs sm:!min-h-10 sm:!text-sm" onClick={() => refreshSchedule(true)} disabled={loading}>
-                <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} aria-hidden="true" />
+              <button type="button" className="ghost-button !min-h-9 !px-3 !py-2 !text-xs sm:!min-h-10 sm:!text-sm" onClick={() => refreshSchedule(true)} disabled={scheduleReadLoading}>
+                <RefreshCw className={`h-4 w-4 ${scheduleReadLoading ? 'animate-spin' : ''}`} aria-hidden="true" />
                 Refresh
               </button>
               {!isDesktopWeb ? (
@@ -1021,7 +1036,7 @@ export function Schedule({ auth }: { auth: AuthState }) {
               timeRange={timeRange}
               children={children}
               teamOptions={teamOptions}
-              loading={loading}
+              loading={scheduleReadLoading}
               insights={webInsights}
               onFilterChange={setFilter}
               onViewChange={setView}
@@ -1128,9 +1143,9 @@ export function Schedule({ auth }: { auth: AuthState }) {
           ) : null}
 
           {statusMessage ? <Status tone="success" message={statusMessage} /> : null}
-          {error ? <Status tone="error" message={scheduleLoadError ? getScheduleLoadErrorMessage(scheduleLoadError, hasLoadedSchedule) : error} /> : null}
+          {scheduleReadError ? <Status tone="error" message={scheduleLoadError ? getScheduleLoadErrorMessage(scheduleLoadError, hasLoadedSchedule) : scheduleReadError} /> : null}
 
-          {loading || isInitialScheduleLoad ? (
+          {scheduleReadLoading || isInitialScheduleLoad ? (
             <LoadingSchedule />
           ) : view === 'calendar' ? (
             <CalendarSchedule

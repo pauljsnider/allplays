@@ -52,7 +52,12 @@ describe('app async operation initiative source contract', () => {
 
         expect(scheduleSource).toContain("import { toAppServiceError, type AppServiceError } from '../lib/appErrors';");
         expect(scheduleSource).toContain("import { useAsyncOperation } from '../lib/useAsyncOperation';");
-        expect(scheduleSource).toContain('const { loading, error, clearError, run: runAsyncOperation } = useAsyncOperation();');
+        expect(scheduleSource).toContain('loading: scheduleReadLoading');
+        expect(scheduleSource).toContain('error: scheduleReadError');
+        expect(scheduleSource).toContain('clearError: clearScheduleReadError');
+        expect(scheduleSource).toContain('run: runScheduleRead');
+        expect(scheduleSource).toContain('loading: loadingPastHistory');
+        expect(scheduleSource).toContain('run: runPastHistoryRead');
         expect(scheduleSource).toContain('getScheduleLoadErrorMessage(toAppServiceError(loadError, \'Unable to load schedule.\'), hasExistingSchedule)');
     });
 
