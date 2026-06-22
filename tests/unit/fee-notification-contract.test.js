@@ -44,6 +44,17 @@ describe('fee notification contract', () => {
         expect(buildFeeAssignmentNotificationBody({}, '')).toBe('A new team fee has been assigned.');
     });
 
+    it('resolves app-created child fee recipients and collapses each batch to one payer push', () => {
+        expect(functionsSource).toContain('async function resolveFeeAssignmentPayerUserIds(teamId, recipient = {})');
+        expect(functionsSource).toContain('playerId: playerId || recipient.playerId || recipient.childId');
+        expect(functionsSource).toContain("const playerKey = getFeeReminderPlayerKey({");
+        expect(functionsSource).toContain(".where('parentPlayerKeys', 'array-contains', playerKey)");
+        expect(functionsSource).toContain('function buildFeeAssignmentNotificationClaimRef({ teamId, batchId, uid })');
+        expect(functionsSource).toContain("assignmentNotificationClaims/${normalizedUid}");
+        expect(functionsSource).toContain('firstRecipientId: recipientId || null');
+        expect(functionsSource).toContain('if (claimSnap.exists) return false;');
+    });
+
     it('sends due-soon reminders only to linked payers with remaining balances and marks sent after targets exist', () => {
         expect(functionsSource).toContain('function getFeeReminderPlayerKey(recipient = {}, teamId = \'\')');
         expect(functionsSource).toContain("return `${resolvedTeamId}::${playerId}`;");
