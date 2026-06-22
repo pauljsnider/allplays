@@ -49,6 +49,8 @@ const authServiceMocks = vi.hoisted(() => ({
   getNativeAuthIdToken: vi.fn()
 }));
 
+vi.mock('@capacitor/core', () => ({ Capacitor: { isNativePlatform: vi.fn(() => false), getPlatform: vi.fn(() => 'web') } }));
+vi.mock('@capacitor-firebase/authentication', () => ({ FirebaseAuthentication: {} }));
 vi.mock('../../../../js/db.js', () => dbMocks);
 vi.mock('../../../../js/auth.js', () => ({ sendInviteEmail: vi.fn() }));
 vi.mock('../../../../js/edit-team-admin-invites.js', () => ({ inviteExistingTeamAdmin: vi.fn() }));
@@ -205,12 +207,14 @@ describe('tracking admin helpers', () => {
     dbMocks.getConfigs.mockResolvedValue([]);
     firebaseMocks.collection.mockImplementation((...parts) => parts.join('/'));
     firebaseMocks.doc.mockImplementation((...parts) => ({ path: parts.join('/') }));
+    firebaseMocks.where.mockImplementation((...parts) => ({ kind: 'where', parts }));
+    firebaseMocks.query.mockImplementation((target, ...constraints) => ({ target, constraints }));
     __resetTeamDetailBaseSnapshotCacheForTests();
   });
 
-  it('loads legacy tracking docs, excludes inactive players, and summarizes completion by item', async () => {
-    firebaseMocks.getDocs.mockImplementation(async (path) => {
-      if (String(path).endsWith('/trackingItems')) {
+  it('loads tracking statuses from each legacy nested memberTracking path, excludes inactive players, and summarizes completion by item', async () => {
+    firebaseMocks.getDocs.mockImplementation(async (input) => {
+      if (typeof input === 'string' && input.endsWith('/trackingItems')) {
         return {
           docs: [
             { id: 'item-1', data: () => ({ name: 'Waiver', visibility: 'public', status: 'active', active: true, archived: false }) },
@@ -218,10 +222,18 @@ describe('tracking admin helpers', () => {
           ]
         };
       }
-      if (String(path).includes('/trackingItems/item-1/memberTracking')) {
+      if (typeof input === 'string' && input.endsWith('/trackingItems/item-1/memberTracking')) {
         return {
           docs: [
-            { id: 'player-1', data: () => ({ playerId: 'player-1', status: 'complete', complete: true }) }
+            { id: 'status-1', data: () => ({ teamId: 'team-1', trackingItemId: 'item-1', playerId: 'player-1', status: 'complete', complete: true }) },
+            { id: 'status-mismatch', data: () => ({ teamId: 'team-1', trackingItemId: 'item-2', playerId: 'player-1', status: 'complete', complete: true }) }
+          ]
+        };
+      }
+      if (typeof input === 'string' && input.endsWith('/trackingItems/item-2/memberTracking')) {
+        return {
+          docs: [
+            { id: 'status-2', data: () => ({ teamId: 'team-1', trackingItemId: 'item-2', playerId: 'player-1', status: 'open', complete: false }) }
           ]
         };
       }
@@ -244,6 +256,10 @@ describe('tracking admin helpers', () => {
       })
     ]);
     expect(items[0].playerStatuses.some((player) => player.playerId === 'player-2')).toBe(false);
+    expect(firebaseMocks.getDocs).toHaveBeenCalledTimes(3);
+    expect(firebaseMocks.getDocs).toHaveBeenCalledWith('[object Object]/teams/team-1/trackingItems');
+    expect(firebaseMocks.getDocs).toHaveBeenCalledWith('[object Object]/teams/team-1/trackingItems/item-1/memberTracking');
+    expect(firebaseMocks.getDocs).toHaveBeenCalledWith('[object Object]/teams/team-1/trackingItems/item-2/memberTracking');
   });
 
   it('writes legacy-compatible tracking item docs when saving in the app', async () => {

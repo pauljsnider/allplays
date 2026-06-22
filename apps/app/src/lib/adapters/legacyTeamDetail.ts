@@ -60,6 +60,7 @@ export const uploadTeamPhoto = (...args: any[]) => callLegacyDb('uploadTeamPhoto
 export const sendInviteEmail = legacy_sendInviteEmail as (...args: any[]) => any;
 export const inviteExistingTeamAdmin = legacy_inviteExistingTeamAdmin as (...args: any[]) => any;
 export const collection = (...args: any[]) => callLegacyFirebase('collection', args);
+export const collectionGroup = (...args: any[]) => callLegacyFirebase('collectionGroup', args);
 export const db: unknown = legacyFirebase.db;
 export const doc = (...args: any[]) => callLegacyFirebase('doc', args);
 export const getDoc = (...args: any[]) => callLegacyFirebase('getDoc', args);
