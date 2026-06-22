@@ -525,13 +525,13 @@ export function buildPrivateTeamCalendarFeedUrl(teamId: string, team: Record<str
     || team?.teamCalendarToken;
   if (!teamId || !token) return '';
 
-  const configured = (window as any).__ALLPLAYS_CONFIG__?.privateTeamCalendarIcsFunctionUrl || (window as any).ALLPLAYS_PRIVATE_TEAM_CALENDAR_ICS_URL;
+  const configured = (window as any).__ALLPLAYS_CONFIG__?.teamCalendarFeedFunctionUrl || (window as any).ALLPLAYS_TEAM_CALENDAR_FEED_URL;
   const fallback = (window as any).__ALLPLAYS_CONFIG__?.calendarFetchFunctionUrl || (window as any).ALLPLAYS_CALENDAR_FUNCTION_URL;
   const baseUrl = typeof configured === 'string' && configured.trim()
     ? configured.trim()
     : typeof fallback === 'string' && fallback.includes('fetchCalendarIcs')
-      ? fallback.replace('fetchCalendarIcs', 'privateTeamCalendarIcs')
-      : 'https://us-central1-all-plays-prod.cloudfunctions.net/privateTeamCalendarIcs';
+      ? fallback.replace('fetchCalendarIcs', 'teamCalendarFeed')
+      : 'https://us-central1-all-plays-prod.cloudfunctions.net/teamCalendarFeed';
   const separator = baseUrl.includes('?') ? '&' : '?';
   return `${baseUrl}${separator}teamId=${encodeURIComponent(teamId)}&token=${encodeURIComponent(token)}`;
 }
@@ -543,13 +543,13 @@ export async function getPrivateTeamCalendarFeedUrl(teamId: string) {
   const token = await getNativeAuthIdToken(false).catch(() => null)
     || await firebaseAuth.currentUser?.getIdToken?.(false).catch(() => null);
   if (!teamId || !token) return '';
-  const configured = (window as any).__ALLPLAYS_CONFIG__?.privateTeamCalendarIcsFunctionUrl || (window as any).ALLPLAYS_PRIVATE_TEAM_CALENDAR_ICS_URL;
+  const configured = (window as any).__ALLPLAYS_CONFIG__?.teamCalendarFeedFunctionUrl || (window as any).ALLPLAYS_TEAM_CALENDAR_FEED_URL;
   const fallback = (window as any).__ALLPLAYS_CONFIG__?.calendarFetchFunctionUrl || (window as any).ALLPLAYS_CALENDAR_FUNCTION_URL;
   const baseUrl = typeof configured === 'string' && configured.trim()
     ? configured.trim()
     : typeof fallback === 'string' && fallback.includes('fetchCalendarIcs')
-      ? fallback.replace('fetchCalendarIcs', 'privateTeamCalendarIcs')
-      : 'https://us-central1-all-plays-prod.cloudfunctions.net/privateTeamCalendarIcs';
+      ? fallback.replace('fetchCalendarIcs', 'teamCalendarFeed')
+      : 'https://us-central1-all-plays-prod.cloudfunctions.net/teamCalendarFeed';
   const separator = baseUrl.includes('?') ? '&' : '?';
   return `${baseUrl}${separator}teamId=${encodeURIComponent(teamId)}&token=${encodeURIComponent(token)}`;
 }
