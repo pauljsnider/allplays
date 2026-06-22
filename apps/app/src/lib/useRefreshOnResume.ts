@@ -1,6 +1,7 @@
 import { useEffect, useRef } from 'react';
 import { App as CapacitorApp } from '@capacitor/app';
 import { Capacitor } from '@capacitor/core';
+import { createLogger } from './logger';
 
 export type RefreshOnResumeFn = () => void | Promise<void>;
 
@@ -20,6 +21,7 @@ export type RefreshOnResumeDeps = {
 };
 
 const defaultStaleAfterMs = 5 * 60_000;
+const logger = createLogger('refresh-on-resume');
 
 /**
  * Refreshes a page when the app returns to the foreground (Capacitor `App.appStateChange`)
@@ -55,7 +57,7 @@ export function useRefreshOnResume(
       if (elapsed < staleAfterMs) return;
       lastRefreshAtRef.current = now();
       void Promise.resolve(refreshRef.current()).catch((error) => {
-        console.warn('[refresh-on-resume] Refresh failed:', error);
+        logger.warn('Refresh failed.', { error });
       });
     };
 
