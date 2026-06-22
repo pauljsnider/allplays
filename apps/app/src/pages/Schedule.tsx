@@ -58,6 +58,7 @@ const upcomingListPageSize = 20;
 const pastListPageSize = 10;
 const pastScheduleCutoffMs = 3 * 60 * 60 * 1000;
 const pastScheduleHistoryPageWindowMs = 365 * 24 * 60 * 60 * 1000;
+const pastScheduleInitialHistoryWindowMs = 400 * 24 * 60 * 60 * 1000;
 
 const rsvpLabels: Record<RsvpResponse, string> = {
   going: 'Going',
@@ -219,6 +220,7 @@ export function Schedule({ auth }: { auth: AuthState }) {
 
   const buildPastScheduleRangeByTeam = () => {
     const cutoff = new Date(Date.now() - pastScheduleCutoffMs);
+    const defaultHistoryBoundary = new Date(Date.now() - pastScheduleInitialHistoryWindowMs);
     const oldestPastEventByTeam = new Map<string, Date>();
     eventsRef.current.forEach((event) => {
       if (event.date >= cutoff) return;
@@ -228,17 +230,21 @@ export function Schedule({ auth }: { auth: AuthState }) {
       }
     });
 
-    const scheduleRangeByTeam = Object.fromEntries(
-      [...oldestPastEventByTeam.entries()].map(([teamId, oldestDate]) => {
-        const endDate = new Date(oldestDate.getTime() - 1);
+    const teamIds = Array.from(new Set(childrenRef.current.map((child) => child.teamId).filter(Boolean)));
+    if (!teamIds.length) {
+      return null;
+    }
+
+    return Object.fromEntries(
+      teamIds.map((teamId) => {
+        const boundaryDate = oldestPastEventByTeam.get(teamId) || defaultHistoryBoundary;
+        const endDate = new Date(boundaryDate.getTime() - 1);
         return [teamId, {
           startDate: new Date(endDate.getTime() - pastScheduleHistoryPageWindowMs),
           endDate
         }];
       })
     );
-
-    return Object.keys(scheduleRangeByTeam).length ? scheduleRangeByTeam : null;
   };
 
   const loadPastSchedulePage = async () => {
