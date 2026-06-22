@@ -277,7 +277,7 @@ export function AppSearchDialog({ auth, open, onClose }: AppSearchDialogProps) {
       : `No ${getHelpRoleLabel(helpRoleFilter)} help articles match this search`
     : '';
   const playersStatus = !hasRealQuery
-    ? ''
+    ? 'Type at least 2 characters to search players'
     : playersLoading
       ? 'Searching players...'
       : playersError
@@ -363,18 +363,16 @@ export function AppSearchDialog({ auth, open, onClose }: AppSearchDialogProps) {
               onHover={setActiveResultIndex}
             />
 
-            {hasRealQuery ? (
-              <SearchSection
-                title="Players"
-                items={results.players}
-                activeIndex={activeIndex}
-                offset={results.actions.length + results.teams.length + helpResults.length}
-                status={playersStatus}
-                statusTone={playersError ? 'error' : 'neutral'}
-                onOpen={openResult}
-                onHover={setActiveResultIndex}
-              />
-            ) : null}
+            <SearchSection
+              title="Players"
+              items={results.players}
+              activeIndex={activeIndex}
+              offset={results.actions.length + results.teams.length + helpResults.length}
+              status={playersStatus}
+              statusTone={playersError ? 'error' : 'neutral'}
+              onOpen={openResult}
+              onHover={setActiveResultIndex}
+            />
 
             {!teamsLoading && !playersLoading && flatResults.length === 0 ? (
               <div className="rounded-xl border border-gray-200 bg-gray-50 px-4 py-6 text-center text-sm font-semibold text-gray-500">

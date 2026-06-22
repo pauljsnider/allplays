@@ -112,7 +112,7 @@ describe('AppSearchDialog', () => {
     preloadSearchRouteMock.mockImplementation(async () => true);
   });
 
-  it('hides help role filters and the players section until search has a real query', async () => {
+  it('shows player guidance while keeping player results hidden until search has a real query', async () => {
     const onClose = vi.fn();
 
     render(
@@ -122,14 +122,14 @@ describe('AppSearchDialog', () => {
     );
 
     expect(screen.queryByLabelText('Filter help by role')).toBeNull();
-    expect(screen.queryByText('Players')).toBeNull();
-    expect(screen.queryByText('Type at least 2 characters to search players')).toBeNull();
+    expect(screen.getByText('Players')).not.toBeNull();
+    expect(screen.getByText('Type at least 2 characters to search players')).not.toBeNull();
 
     fireEvent.change(screen.getByLabelText('Search teams, players, actions, help'), { target: { value: ' r ' } });
 
     await waitFor(() => expect(screen.queryByLabelText('Filter help by role')).toBeNull());
-    expect(screen.queryByText('Players')).toBeNull();
-    expect(screen.queryByText('Type at least 2 characters to search players')).toBeNull();
+    expect(screen.getByText('Players')).not.toBeNull();
+    expect(screen.getByText('Type at least 2 characters to search players')).not.toBeNull();
   });
 
   it('shows help role filters and player results once the query reaches two characters', async () => {
