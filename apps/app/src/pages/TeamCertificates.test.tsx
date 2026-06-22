@@ -6,6 +6,13 @@ import { TeamCertificates } from './TeamCertificates';
 import type { AuthState } from '../lib/types';
 
 const certificateDraftServiceMocks = vi.hoisted(() => ({
+  getCertificateStudioUrl: vi.fn((teamId: string, batchId = '') => {
+    const url = new URL('certificates.html', 'https://allplays.ai');
+    const params = new URLSearchParams({ teamId });
+    if (batchId) params.set('batchId', batchId);
+    url.hash = params.toString();
+    return url.toString();
+  }),
   loadCertificateDraftComposer: vi.fn(),
   saveCertificateDraftsForApp: vi.fn()
 }));
@@ -150,6 +157,24 @@ describe('TeamCertificates', () => {
 
     expect(await screen.findByText('Unable to create certificate drafts.')).toBeTruthy();
     expect(publicActionMocks.openPublicUrl).not.toHaveBeenCalled();
+  });
+
+  it('opens the awards web studio for AI narratives, publish, and print continuation', async () => {
+    render(
+      <MemoryRouter initialEntries={['/teams/team-1/certificates']}>
+        <Routes>
+          <Route path="/teams/:teamId/certificates" element={<TeamCertificates auth={auth} />} />
+        </Routes>
+      </MemoryRouter>
+    );
+
+    expect(await screen.findByRole('heading', { name: 'Awards drafts' })).toBeTruthy();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Open website' }));
+
+    await waitFor(() => {
+      expect(publicActionMocks.openPublicUrl).toHaveBeenCalledWith('https://allplays.ai/certificates.html#teamId=team-1');
+    });
   });
 
   it('ignores stale certificate loads after navigating to a different team', async () => {
