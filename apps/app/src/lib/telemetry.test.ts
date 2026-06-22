@@ -88,6 +88,33 @@ describe('app telemetry bridge', () => {
     expect(sentryMocks.captureException).toHaveBeenCalledWith(expect.any(TypeError));
   });
 
+  it('records app startup timing with the canonical startup stage', async () => {
+    const capture = vi.fn();
+    window.AllPlaysTelemetry = { capture };
+    const telemetry = await import('./telemetry');
+
+    vi.spyOn(performance, 'now')
+      .mockReturnValueOnce(25)
+      .mockReturnValueOnce(125);
+
+    const timer = telemetry.startAppStartupTimer();
+    timer.end({ phase: 'initial-render' });
+
+    await Promise.resolve();
+
+    expect(capture).toHaveBeenCalledWith(
+      'app_ux_timing',
+      expect.objectContaining({
+        label: 'app startup',
+        stage: 'startup',
+        phase: 'initial-render',
+        durationMs: 100,
+        outcome: 'success'
+      }),
+      {}
+    );
+  });
+
   it('initializes only when runtime config provides a DSN, redacts sensitive payload fields, and preserves stack frames', async () => {
     const telemetry = await import('./telemetry');
 
