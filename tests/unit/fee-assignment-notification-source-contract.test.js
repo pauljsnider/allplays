@@ -9,9 +9,15 @@ describe('fee assignment notification source contract', () => {
         expect(functionsSource).toContain(".document('teams/{teamId}/feeBatches/{batchId}/feeRecipients/{recipientId}')");
         expect(functionsSource).toContain('const payerUserIds = await resolveFeeAssignmentPayerUserIds(teamId, data);');
         expect(functionsSource).toContain("const payerTargets = await getTargetsForCategoryUserIds(teamId, 'fees', payerUserIds, null);");
-        expect(functionsSource).toContain('targets: claimedTargets,');
+        expect(functionsSource).toContain('const batchRecipients = await listFeeAssignmentBatchRecipients({');
+        expect(functionsSource).toContain('for (const uid of claimedUserIds)');
+        expect(functionsSource).toContain('const targetsForUser = claimedTargets.filter');
+        expect(functionsSource).toContain('const recipientsForUser = await filterFeeAssignmentRecipientsForUser({');
+        expect(functionsSource).toContain('const payload = buildCombinedFeeAssignmentNotificationPayload(recipientsForUser);');
+        expect(functionsSource).toContain('targets: targetsForUser,');
         expect(functionsSource).toContain("category: 'fees',");
-        expect(functionsSource).toContain('title: `New fee assigned: ${title}${amountDisplay}`');
+        expect(functionsSource).toContain('title: payload.title');
+        expect(functionsSource).toContain('body: payload.body');
     });
 
     it('deduplicates assignment notifications by parent within a fee batch', () => {
