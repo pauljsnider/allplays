@@ -41,9 +41,10 @@ describe('Home async operation contract', () => {
     it('keeps secondary Home hydration partial while classifying service failures', () => {
         expect(homeServiceSource).toContain("throw toAppServiceError(error, 'Unable to load Home chat.');");
         expect(homeServiceSource).toContain("throw toAppServiceError(error, 'Unable to load Home fees.');");
-        expect(homeServiceSource).toContain("console.warn('[home] Schedule hydration failed:', rethrowIfPermissionError(error, 'Unable to hydrate Home schedule.'));");
-        expect(homeServiceSource).toContain("console.warn('[home] Chat inbox failed:', rethrowIfPermissionError(error, 'Unable to load Home chat.'));");
-        expect(homeServiceSource).toContain("console.warn('[home] Fees failed:', rethrowIfPermissionError(error, 'Unable to load Home fees.'));");
+        expect(homeServiceSource).toContain("console.warn('[home] Schedule hydration failed:', appError);");
+        expect(homeServiceSource).toContain("console.warn('[home] Chat inbox failed:', appError);");
+        expect(homeServiceSource).toContain("console.warn('[home] Fees failed:', appError);");
+        expect(homeServiceSource).toContain('throwIfAllSecondarySlicesFailed(secondaryErrors);');
         expect(homeServiceSource).toContain('onPartial?.(buildParentHomeModel(partialState));');
     });
 });
