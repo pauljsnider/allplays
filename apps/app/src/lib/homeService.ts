@@ -8,7 +8,7 @@ import {
   type ParentHomeModel
 } from './homeLogic';
 import { getParentScheduleSummaryCacheKey, loadCachedAppData } from './appDataCache';
-import { AppServiceError, toAppServiceError } from './appErrors';
+import { toAppServiceError, type AppServiceError } from './appErrors';
 import {
   hydrateParentScheduleDetails,
   loadParentScheduleChildren,
