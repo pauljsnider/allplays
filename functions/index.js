@@ -6633,9 +6633,25 @@ function detectMentionedUids(text, members, options = {}) {
 }
 
 async function buildTeamChatNotificationContext(teamId, options = {}) {
-  const { includeMentions = true, conversationId = null } = options || {};
+  const {
+    includeMentions = true,
+    conversationId = null,
+    targetType = 'full_team',
+    recipientIds = []
+  } = options || {};
   const normalizedConversationId = normalizeTeamChatConversationId(conversationId);
-  const teamSnap = await firestore.doc(`teams/${teamId}`).get();
+  const allowedTargetTypes = new Set(['full_team', 'staff', 'individuals']);
+  const normalizedTargetType = allowedTargetTypes.has(String(targetType || '').trim())
+    ? String(targetType || '').trim()
+    : 'full_team';
+  const teamRef = firestore.doc(`teams/${teamId}`);
+  const conversationRef = normalizedConversationId === 'team'
+    ? null
+    : firestore.doc(`teams/${teamId}/chatConversations/${normalizedConversationId}`);
+  const [teamSnap, conversationSnap] = await Promise.all([
+    teamRef.get(),
+    conversationRef ? conversationRef.get() : Promise.resolve(null)
+  ]);
   if (!teamSnap.exists) {
     return {
       members: [],
@@ -6648,6 +6664,44 @@ async function buildTeamChatNotificationContext(teamId, options = {}) {
   }
 
   const team = teamSnap.data() || {};
+  const conversation = conversationSnap?.exists ? (conversationSnap.data() || {}) : {};
+  const participantRoles = new Set(
+    (Array.isArray(conversation.participantRoles) ? conversation.participantRoles : [])
+      .map((role) => String(role || '').trim().toLowerCase())
+      .filter(Boolean)
+  );
+  const conversationParticipantIds = Array.from(new Set(
+    (Array.isArray(conversation.participantIds) ? conversation.participantIds : [])
+      .map((id) => String(id || '').trim())
+      .filter(Boolean)
+  ));
+  const normalizedRecipientIds = Array.from(new Set(
+    (Array.isArray(recipientIds) ? recipientIds : [])
+      .map((id) => String(id || '').trim())
+      .filter(Boolean)
+  ));
+  const effectiveTargetType = normalizedConversationId === 'team'
+    ? 'full_team'
+    : (participantRoles.has('staff')
+      ? 'staff'
+      : (normalizedTargetType === 'individuals' || conversationParticipantIds.length > 0 || normalizedRecipientIds.length > 0
+        ? 'individuals'
+        : normalizedTargetType));
+  const scopedParticipantIds = effectiveTargetType === 'individuals'
+    ? Array.from(new Set([...conversationParticipantIds, ...normalizedRecipientIds]))
+    : [];
+  const scopedParticipantUids = new Set(
+    scopedParticipantIds
+      .filter((id) => !id.toLowerCase().startsWith('email:'))
+      .map((id) => id.toLowerCase().startsWith('user:') ? id.slice(5).trim() : id)
+      .filter(Boolean)
+  );
+  const scopedParticipantEmails = Array.from(new Set(
+    scopedParticipantIds
+      .filter((id) => id.toLowerCase().startsWith('email:'))
+      .map((id) => id.slice(6).trim().toLowerCase())
+      .filter(Boolean)
+  ));
   const users = new Map();
   const addRole = (uid, role) => {
     const normalizedUid = String(uid || '').trim();
@@ -6659,19 +6713,28 @@ async function buildTeamChatNotificationContext(teamId, options = {}) {
 
   addRole(team.ownerId, 'staff');
 
-  const [parentSnap, indexedTargetSnap, adminUserIds] = await Promise.all([
+  const [parentSnap, indexedTargetSnap, adminUserIds, participantEmailUserIds] = await Promise.all([
     firestore.collection('users').where('parentTeamIds', 'array-contains', teamId).get(),
     firestore.collection(`teams/${teamId}/notificationTargets`).get(),
-    getUserIdsByEmails(team.adminEmails || [])
+    getUserIdsByEmails(team.adminEmails || []),
+    scopedParticipantEmails.length > 0 ? getUserIdsByEmails(scopedParticipantEmails) : Promise.resolve([])
   ]);
 
   parentSnap.forEach((docSnap) => addRole(docSnap.id, 'parent'));
   adminUserIds.forEach((uid) => addRole(uid, 'staff'));
+  participantEmailUserIds.forEach((uid) => scopedParticipantUids.add(uid));
 
-  const members = Array.from(users.values()).map((entry) => ({
+  let members = Array.from(users.values()).map((entry) => ({
     uid: entry.uid,
     roles: Array.from(entry.roles)
   }));
+
+  if (effectiveTargetType === 'staff') {
+    members = members.filter((member) => Array.isArray(member.roles) && member.roles.includes('staff'));
+  } else if (effectiveTargetType === 'individuals') {
+    members = members.filter((member) => scopedParticipantUids.has(member.uid));
+  }
+
   const userRecords = await getUserRecordsByIds(members.map((member) => member.uid));
 
   const categories = includeMentions ? ['mentions', 'liveChat'] : ['liveChat'];
@@ -6802,7 +6865,9 @@ async function handleTeamChatMessageCreated(snapshot, context) {
   const shouldResolveMentions = Boolean(text);
   const recipientContext = await buildTeamChatNotificationContext(teamId, {
     includeMentions: shouldResolveMentions,
-    conversationId
+    conversationId,
+    targetType: data.targetType,
+    recipientIds: data.recipientIds
   });
   const notificationPlan = buildTeamChatNotificationPlan({
     text,
