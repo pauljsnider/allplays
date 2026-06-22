@@ -40,10 +40,13 @@ const {
 }));
 
 vi.mock('../lib/searchService', () => ({
-  computeAppSearchResults: ({ teams, players }: {
+  computeAppSearchResults: ({ queryText, players, helpRoleFilter, teams }: {
+    queryText: string;
     teams: Array<{ id: string; name: string; sport?: string; zip?: string }>;
     players: Array<{ id: string; title: string; subtitle?: string; route?: string }>;
+    helpRoleFilter: 'all' | 'parent' | 'coach' | 'admin' | 'member';
   }) => {
+    const normalizedQuery = queryText.trim().toLowerCase();
     const actionItems = [{ id: 'browse-teams', kind: 'action', title: 'Browse Teams', subtitle: 'Explore public teams', route: '/teams' }];
     const teamItems = teams.map((team) => ({
       id: `team:${team.id}`,
@@ -52,12 +55,25 @@ vi.mock('../lib/searchService', () => ({
       subtitle: [team.sport, team.zip].filter(Boolean).join(' • '),
       route: `/teams/${team.id}`,
     }));
+    const allHelpItems = normalizedQuery.length >= 2
+      ? [{
+          id: 'help:coach-search',
+          kind: 'help',
+          title: 'Search like a coach',
+          subtitle: 'Use filters to find coaching answers fast',
+          route: '/help/coach-search',
+          roles: ['coach']
+        }]
+      : [];
+    const helpItems = helpRoleFilter === 'all'
+      ? allHelpItems
+      : allHelpItems.filter((item) => item.roles?.includes(helpRoleFilter));
     return {
       actions: actionItems,
       teams: teamItems,
-      help: [],
+      help: helpItems,
       players,
-      flat: [...actionItems, ...teamItems, ...players],
+      flat: [...actionItems, ...teamItems, ...helpItems, ...players],
     };
   },
   getKnownAppSearchTeams: getKnownAppSearchTeamsMock,
@@ -94,6 +110,52 @@ describe('AppSearchDialog', () => {
     searchAppTeamsMock.mockImplementation(async (_query, teams) => teams);
     searchAppPlayersMock.mockResolvedValue([]);
     preloadSearchRouteMock.mockImplementation(async () => true);
+  });
+
+  it('shows player guidance while keeping player results hidden until search has a real query', async () => {
+    const onClose = vi.fn();
+
+    render(
+      <MemoryRouter>
+        <AppSearchDialog auth={auth} open={true} onClose={onClose} />
+      </MemoryRouter>
+    );
+
+    expect(screen.queryByLabelText('Filter help by role')).toBeNull();
+    expect(screen.getByText('Players')).not.toBeNull();
+    expect(screen.getByText('Type at least 2 characters to search players')).not.toBeNull();
+
+    fireEvent.change(screen.getByLabelText('Search teams, players, actions, help'), { target: { value: ' r ' } });
+
+    await waitFor(() => expect(screen.queryByLabelText('Filter help by role')).toBeNull());
+    expect(screen.getByText('Players')).not.toBeNull();
+    expect(screen.getByText('Type at least 2 characters to search players')).not.toBeNull();
+  });
+
+  it('shows help role filters and player results once the query reaches two characters', async () => {
+    const onClose = vi.fn();
+    searchAppPlayersMock.mockResolvedValueOnce([{
+      id: 'player:team-2:player-2',
+      kind: 'player',
+      title: '#10 Rocket Kid',
+      subtitle: 'Rockets',
+      route: '/players/team-2/player-2',
+      teamId: 'team-2',
+      playerId: 'player-2',
+    }]);
+
+    render(
+      <MemoryRouter>
+        <AppSearchDialog auth={auth} open={true} onClose={onClose} />
+      </MemoryRouter>
+    );
+
+    fireEvent.change(screen.getByLabelText('Search teams, players, actions, help'), { target: { value: 'ro' } });
+
+    expect(await screen.findByLabelText('Filter help by role')).not.toBeNull();
+    expect(await screen.findByText('Players')).not.toBeNull();
+    expect(await screen.findByRole('button', { name: /#10 Rocket Kid/i })).not.toBeNull();
+    expect(screen.getByRole('button', { name: /Search like a coach/i })).not.toBeNull();
   });
 
   it('keeps the opening tap guard active long enough for slower mobile pointer sequences', async () => {

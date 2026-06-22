@@ -261,7 +261,8 @@ export function AppSearchDialog({ auth, open, onClose }: AppSearchDialogProps) {
     }
   };
 
-  const teamsStatus = query.trim().length >= 2
+  const hasRealQuery = query.trim().length >= 2;
+  const teamsStatus = hasRealQuery
     ? teamsLoading
       ? 'Searching teams...'
       : teamsError
@@ -270,17 +271,17 @@ export function AppSearchDialog({ auth, open, onClose }: AppSearchDialogProps) {
           ? 'No matching teams'
           : ''
     : teamsError;
-  const helpStatus = query.trim().length >= 2 && helpResults.length === 0
+  const helpStatus = hasRealQuery && helpResults.length === 0
     ? helpRoleFilter === 'all'
       ? 'No matching help articles'
       : `No ${getHelpRoleLabel(helpRoleFilter)} help articles match this search`
     : '';
-  const playersStatus = playersLoading
-    ? 'Searching players...'
-    : playersError
-      ? playersError
-      : query.trim().length < 2
-        ? 'Type at least 2 characters to search players'
+  const playersStatus = !hasRealQuery
+    ? 'Type at least 2 characters to search players'
+    : playersLoading
+      ? 'Searching players...'
+      : playersError
+        ? playersError
         : results.players.length === 0
           ? 'No matching players'
           : '';
@@ -317,7 +318,6 @@ export function AppSearchDialog({ auth, open, onClose }: AppSearchDialogProps) {
               <div className="mt-2 hidden text-xs font-semibold text-gray-500 sm:block">
                 Use arrow keys to move, Enter to open, Esc to close.
               </div>
-              <HelpRoleFilter value={helpRoleFilter} onChange={setHelpRoleFilter} />
             </div>
             <button
               type="button"
@@ -358,6 +358,7 @@ export function AppSearchDialog({ auth, open, onClose }: AppSearchDialogProps) {
               activeIndex={activeIndex}
               offset={results.actions.length + results.teams.length}
               status={helpStatus}
+              headerAccessory={hasRealQuery ? <HelpRoleFilter value={helpRoleFilter} onChange={setHelpRoleFilter} /> : null}
               onOpen={openResult}
               onHover={setActiveResultIndex}
             />
@@ -398,8 +399,8 @@ function HelpRoleFilter({ value, onChange }: {
   onChange: (value: AppSearchHelpRoleFilter) => void;
 }) {
   return (
-    <div className="mt-3" aria-label="Filter help by role">
-      <div className="mb-1 text-[11px] font-extrabold uppercase tracking-[0.04em] text-gray-500">Help role</div>
+    <div className="flex flex-wrap items-center justify-end gap-1.5" aria-label="Filter help by role">
+      <div className="text-[11px] font-extrabold uppercase tracking-[0.04em] text-gray-500">Help role</div>
       <div className="flex flex-wrap gap-1.5">
         {helpRoleOptions.map((option) => (
           <button
