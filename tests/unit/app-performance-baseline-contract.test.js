@@ -57,6 +57,36 @@ describe('app performance baseline contract', () => {
         expect(messages).toContain("startScreenMountTimer('messages'");
     });
 
+    it('keeps startup, initial Home load, and handled load-failure telemetry wired', () => {
+        const telemetry = readRepoFile('apps/app/src/lib/telemetry.ts');
+        const main = readRepoFile('apps/app/src/main.tsx');
+        const home = readRepoFile('apps/app/src/pages/Home.tsx');
+        const homeService = readRepoFile('apps/app/src/lib/homeService.ts');
+
+        expect(main).toContain('const startupTimer = startAppStartupTimer();');
+        expect(main).toContain("startupTimer.end({ phase: 'initial-render' });");
+        expect(main).toContain("captureAppStartupFailure(error, { phase: 'initial-render' });");
+        expect(main).toContain("startupTimer.end({ phase: 'initial-render', error });");
+
+        expect(telemetry).toContain("captureAppTelemetryEvent('app_ux_timing'");
+        expect(telemetry).toContain("captureAppTelemetryEvent('app_load_error'");
+        expect(telemetry).toContain("captureHandledAppError(label, error, {");
+
+        expect(home).toContain("const timer = startScreenMountTimer('home', {");
+        expect(home).toContain('const summary = await loadParentHomeSummaryBootstrap(user, { force });');
+        expect(home).toContain('const secondaryHome = await loadParentHomeWithSecondaryData(user, {');
+        expect(home).toContain('timer.end({');
+        expect(home).toContain('hydrated: true');
+        expect(home).toContain('playerCount: secondaryHome.players.length');
+        expect(home).toContain("getErrorMessage: (loadError) => getHomeLoadErrorMessage(toAppServiceError(loadError, 'Unable to load Home.'), hasExistingHome)");
+        expect(home).toContain('onError: (loadError) => {');
+        expect(home).toContain('timer.end({\n            hydrated: false,\n            error: appError.message\n          });');
+
+        expect(homeService).toContain("const timer = startUxTimer('teams summary load');");
+        expect(homeService).toContain('timer.end({\n          children: children.length,\n          teams: model.teams.length,');
+        expect(homeService).toContain("timer.end({ error: error?.message || 'Unable to load team summary.' });");
+    });
+
     it('records RSVP and chat-send interaction latency around the write paths', () => {
         const scheduleService = readRepoFile('apps/app/src/lib/scheduleService.ts');
         const chatService = readRepoFile('apps/app/src/lib/chatService.ts');

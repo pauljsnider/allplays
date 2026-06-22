@@ -259,6 +259,31 @@ describe('React app Home service', () => {
         ]));
     });
 
+    it('throws a typed secondary error when every Home detail slice fails', async () => {
+        scheduleMocks.hydrateParentScheduleDetails.mockRejectedValueOnce(new TypeError('Failed to fetch'));
+        chatMocks.loadChatInbox.mockRejectedValueOnce(new TypeError('Failed to fetch'));
+        dbMocks.listParentTeamFeeRecipients.mockRejectedValueOnce(new TypeError('Failed to fetch'));
+        const { loadParentHomeWithSecondaryData } = await import('../../apps/app/src/lib/homeService.ts');
+
+        await expect(loadParentHomeWithSecondaryData(user, {
+            schedule: {
+                children: [
+                    {
+                        teamId: 'team-1',
+                        teamName: 'Bears',
+                        playerId: 'player-1',
+                        playerName: 'Pat Star'
+                    }
+                ],
+                events: [event()]
+            }
+        })).rejects.toMatchObject({
+            name: 'AppServiceError',
+            type: 'network',
+            message: 'Failed to fetch'
+        });
+    });
+
     it('preserves every completed secondary slice in the final progressive Home model', async () => {
         let resolveChat;
         let resolveFees;

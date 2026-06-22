@@ -11,6 +11,35 @@ function createSnapshot(data) {
 }
 
 describe('schedule import batch push notifications', () => {
+    it('does not send created-event pushes for draft schedule records', async () => {
+        const harness = loadNotificationInternals({
+            teamDoc: { ownerId: 'user-1' },
+            indexedTargets: [{
+                uid: 'user-1',
+                deviceId: 'device-1',
+                token: 'token-1',
+                categories: { schedule: true, practice: true }
+            }]
+        });
+
+        try {
+            const result = await harness.internals.notifyGameCreated(
+                createSnapshot({
+                    type: 'game',
+                    opponent: 'Falcons',
+                    status: 'draft',
+                    createdBy: 'coach-1'
+                }),
+                { params: { teamId: 'team-1', gameId: 'game-draft' } }
+            );
+
+            expect(result).toBeNull();
+            expect(harness.env.messagingCalls).toHaveLength(0);
+        } finally {
+            harness.cleanup();
+        }
+    });
+
     it('sends one schedule summary push for app imports larger than three events and suppresses follow-on updates', async () => {
         const harness = loadNotificationInternals({
             teamDoc: { ownerId: 'user-1' },
@@ -48,6 +77,14 @@ describe('schedule import batch push notifications', () => {
             expect(harness.env.messagingCalls[0]).toMatchObject({
                 title: 'Schedule import complete',
                 body: 'Imported 4 schedule events (2 games, 2 practices).'
+            });
+            const batchSnapshot = await harness.env.firestoreState
+                .doc('teams/team-1/scheduleImportNotificationBatches/batch-large')
+                .get();
+            expect(batchSnapshot.data()).toMatchObject({
+                sentAt: { __serverTimestamp: true },
+                summaryTitle: 'Schedule import complete',
+                summaryBody: 'Imported 4 schedule events (2 games, 2 practices).'
             });
 
             const duplicateUpdate = await harness.internals.sendCategoryNotification({
@@ -101,6 +138,72 @@ describe('schedule import batch push notifications', () => {
             expect(harness.env.messagingCalls).toHaveLength(3);
             expect(harness.env.messagingCalls[0].title).toContain('New game:');
             expect(harness.env.messagingCalls[2].title).toContain('New practice:');
+        } finally {
+            harness.cleanup();
+        }
+    });
+
+    it('does not count duplicate create trigger retries toward large import summary totals', async () => {
+        const harness = loadNotificationInternals({
+            teamDoc: { ownerId: 'user-1' },
+            indexedTargets: [{
+                uid: 'user-1',
+                deviceId: 'device-1',
+                token: 'token-1',
+                categories: { schedule: true }
+            }]
+        });
+
+        try {
+            const batch = {
+                batchId: 'batch-retry',
+                totalCount: 4
+            };
+            const events = [
+                { gameId: 'game-1', type: 'game', opponent: 'Opponent 1', rowNumber: 1 },
+                { gameId: 'game-1', type: 'game', opponent: 'Opponent 1', rowNumber: 1 },
+                { gameId: 'game-2', type: 'practice', title: 'Practice 2', rowNumber: 2 },
+                { gameId: 'game-3', type: 'game', opponent: 'Opponent 3', rowNumber: 3 }
+            ];
+
+            for (const item of events) {
+                await harness.internals.notifyGameCreated(
+                    createSnapshot({
+                        type: item.type,
+                        title: item.title || null,
+                        opponent: item.opponent || null,
+                        status: 'scheduled',
+                        createdBy: 'coach-1',
+                        importBatch: {
+                            ...batch,
+                            rowNumber: item.rowNumber
+                        }
+                    }),
+                    { params: { teamId: 'team-1', gameId: item.gameId } }
+                );
+            }
+
+            expect(harness.env.messagingCalls).toHaveLength(0);
+
+            await harness.internals.notifyGameCreated(
+                createSnapshot({
+                    type: 'practice',
+                    title: 'Practice 4',
+                    status: 'scheduled',
+                    createdBy: 'coach-1',
+                    importBatch: {
+                        ...batch,
+                        rowNumber: 4
+                    }
+                }),
+                { params: { teamId: 'team-1', gameId: 'game-4' } }
+            );
+
+            expect(harness.env.messagingCalls).toHaveLength(1);
+            expect(harness.env.messagingCalls[0]).toMatchObject({
+                title: 'Schedule import complete',
+                body: 'Imported 4 schedule events (2 games, 2 practices).'
+            });
         } finally {
             harness.cleanup();
         }
