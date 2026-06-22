@@ -149,10 +149,17 @@ describe('team media db ordering', () => {
         });
         const filePromise = uploadTeamMediaFile('team-1', 'folder-1', file);
         uploadTaskQueue.splice(0).forEach((complete) => complete());
-        const fileId = await filePromise;
+        const uploadedFile = await filePromise;
 
         expect(linkId).toBe('media-1');
-        expect(fileId).toBe('media-2');
+        expect(uploadedFile).toMatchObject({
+            id: 'media-2',
+            title: 'lineup.pdf',
+            type: 'file',
+            order: 1,
+            url: 'https://cdn.example.test/uploaded-file',
+            downloadUrl: 'https://cdn.example.test/uploaded-file'
+        });
         expect(firebaseMocks.getDocs).not.toHaveBeenCalled();
         expect(firebaseMocks.addDoc).toHaveBeenNthCalledWith(1, { path: 'teams/team-1/mediaItems' }, expect.objectContaining({
             title: 'Replay',
