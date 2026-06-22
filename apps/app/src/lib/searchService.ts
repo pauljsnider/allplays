@@ -577,8 +577,6 @@ export function resetAppSearchCacheForTests() {
 }
 
 async function mergeParentHomeSearchTeams(teamsById: Map<string, AppSearchTeam>, homeTeams: any[], user: AuthUser | null) {
-  const fallbackTeams: any[] = [];
-
   (Array.isArray(homeTeams) ? homeTeams : []).forEach((team: any) => {
     const teamId = cleanString(team?.teamId || team?.id);
     if (!teamId) return;
@@ -590,25 +588,7 @@ async function mergeParentHomeSearchTeams(teamsById: Map<string, AppSearchTeam>,
       return;
     }
 
-    fallbackTeams.push({ ...team, teamId });
-  });
-
-  if (!fallbackTeams.length) return;
-
-  const snapshots = await Promise.allSettled(
-    fallbackTeams.map((team) => getDoc(doc(db, 'teams', team.teamId)))
-  );
-
-  snapshots.forEach((snapshot: any, index) => {
-    if (snapshot.status !== 'fulfilled') return;
-    const teamDoc = snapshot.value;
-    if (!teamDoc?.exists?.()) return;
-
-    const homeTeam = fallbackTeams[index];
-    const [firestoreTeam] = normalizeTeams([{ id: homeTeam.teamId, ...(typeof teamDoc.data === 'function' ? teamDoc.data() || {} : {}) }]);
-    if (!firestoreTeam || !isTeamActive(firestoreTeam)) return;
-
-    const searchTeam = buildParentHomeSearchTeam(homeTeam, firestoreTeam);
+    const searchTeam = buildParentHomeSearchTeam({ ...team, teamId });
     if (canUserDiscoverTeamInAppSearch(searchTeam, user)) {
       teamsById.set(searchTeam.id, searchTeam);
     }
