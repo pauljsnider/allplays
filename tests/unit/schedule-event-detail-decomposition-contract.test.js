@@ -14,6 +14,7 @@ describe('ScheduleEventDetail decomposition contract', () => {
         [
             "import { DateTile } from '../components/schedule/DateTile';",
             "import { EventBrief } from '../components/schedule/EventBrief';",
+            "import { EventDetailsPanel } from '../components/schedule/EventDetailsPanel';",
             "import { EventSectionNav } from '../components/schedule/EventSectionNav';",
             "import { StaffRsvpPlayerRow } from '../components/schedule/StaffRsvpPlayerRow';",
             'QuickAvailabilityPanel',
@@ -26,6 +27,7 @@ describe('ScheduleEventDetail decomposition contract', () => {
         [
             /^function DateTile\b/m,
             /^function EventBrief\b/m,
+            /^function EventDetailsPanel\b/m,
             /^function EventSectionNav\b/m,
             /^function StaffRsvpPlayerRow\b/m,
             /^function QuickAvailabilityPanel\b/m,
@@ -66,5 +68,16 @@ describe('ScheduleEventDetail decomposition contract', () => {
         expect(component).toContain("(['going', 'maybe', 'not_going'] as const).map");
         expect(component).toContain("disabled={submitting || eventLocked}");
         expect(component).toContain("{submitting && player.response !== response ? 'Saving' : rsvpLabels[response]}");
+    });
+
+    it('keeps event detail metadata rendering in the extracted schedule component', () => {
+        const component = readRepoFile('apps/app/src/components/schedule/EventDetailsPanel.tsx');
+
+        expect(component).toContain('export function EventDetailsPanel');
+        expect(component).toContain('function getEventDetailRows(event: ParentScheduleEvent)');
+        expect(component).toContain('const mapHref = getScheduleMapHref(event.location);');
+        expect(component).toContain('const forecastHref = getScheduleForecastHref(event.location);');
+        expect(component).toContain("{ label: 'Game info', value: formatGameInfo(event), icon: ClipboardCheck }");
+        expect(component).toContain("{ label: 'Home packet', value: event.practiceHomePacketSummary, icon: FileText }");
     });
 });
