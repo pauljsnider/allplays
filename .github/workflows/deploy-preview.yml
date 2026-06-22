@@ -157,13 +157,17 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           CURRENT_CHANNEL: pr-${{ github.event.pull_request.number }}
           KEEP_RECENT_OPEN_PR_CHANNELS: '20'
+          MAX_PREVIEW_CHANNELS: '29'
         run: |
           set -euo pipefail
+
           open_pr_numbers_file="$RUNNER_TEMP/firebase-preview-open-pr-numbers.txt"
           if ! gh pr list --repo "${{ github.repository }}" --state open --limit 200 --json number,updatedAt --jq 'sort_by(.updatedAt) | reverse | .[].number' > "$open_pr_numbers_file"; then
             echo "Warning: unable to list open PRs; skipping stale Firebase preview channel pruning."
             exit 0
           fi
+
+          open_pr_numbers="$(cat "$open_pr_numbers_file")"
           channels_file="$RUNNER_TEMP/firebase-preview-channels.txt"
           keep_file="$RUNNER_TEMP/firebase-preview-keep.txt"
           prune_file="$RUNNER_TEMP/firebase-preview-prune.txt"
@@ -173,20 +177,56 @@ jobs:
           } | sed '/^$/d' | sort -u > "$keep_file"
           npx firebase-tools@14.25.0 hosting:channel:list --site game-flow-c6311 --project game-flow-c6311 > "$channels_file"
           awk -F '│' 'NF > 2 {gsub(/^[[:space:]]+|[[:space:]]+$/, "", $2); if ($2 ~ /^pr-/) print $2 }' "$channels_file" | sort -u > "$prune_file"
+
+          delete_channel() {
+            local channel="$1"
+            local delete_log="$RUNNER_TEMP/firebase-preview-delete-$channel.log"
+            if ! npx firebase-tools@14.25.0 hosting:channel:delete "$channel" --site game-flow-c6311 --project game-flow-c6311 --force >"$delete_log" 2>&1; then
+              if grep -Eq 'HTTP Error: 404|Not Found' "$delete_log"; then
+                echo "Skipping already-missing Firebase preview channel: $channel"
+                return 0
+              fi
+              cat "$delete_log" >&2
+              return 1
+            fi
+          }
+
           while read -r channel; do
             if [ -z "$channel" ] || grep -qx "$channel" "$keep_file"; then
               continue
             fi
-            delete_log="$RUNNER_TEMP/firebase-preview-delete-$channel.log"
-            if ! npx firebase-tools@14.25.0 hosting:channel:delete "$channel" --site game-flow-c6311 --project game-flow-c6311 --force >"$delete_log" 2>&1; then
-              if grep -Eq 'HTTP Error: 404|Not Found' "$delete_log"; then
-                echo "Skipping already-missing Firebase preview channel: $channel"
+            delete_channel "$channel"
+          done < "$prune_file"
+
+          npx firebase-tools@14.25.0 hosting:channel:list --site game-flow-c6311 --project game-flow-c6311 > "$channels_file"
+          awk -F '│' 'NF > 2 {gsub(/^[[:space:]]+|[[:space:]]+$/, "", $2); if ($2 ~ /^pr-/) print $2 }' "$channels_file" | sort -u > "$prune_file"
+          mapfile -t existing_channels < <(awk 'NF { print }' "$prune_file")
+          current_exists=0
+          preview_count=0
+          for channel in "${existing_channels[@]}"; do
+            [ -n "$channel" ] || continue
+            preview_count=$((preview_count + 1))
+            if [ "$channel" = "$CURRENT_CHANNEL" ]; then
+              current_exists=1
+            fi
+          done
+
+          if [ "$current_exists" -eq 0 ] && [ "$preview_count" -ge "$MAX_PREVIEW_CHANNELS" ]; then
+            for pr_number in $open_pr_numbers; do
+              candidate="pr-$pr_number"
+              if [ "$candidate" = "$CURRENT_CHANNEL" ]; then
                 continue
               fi
-              cat "$delete_log" >&2
-              exit 1
-            fi
-          done < "$prune_file"
+              if ! printf '%s\n' "${existing_channels[@]}" | grep -qx "$candidate"; then
+                continue
+              fi
+              delete_channel "$candidate"
+              preview_count=$((preview_count - 1))
+              if [ "$preview_count" -lt "$MAX_PREVIEW_CHANNELS" ]; then
+                break
+              fi
+            done
+          fi
 
       - name: Deploy Firebase Hosting preview
         id: deploy_preview
