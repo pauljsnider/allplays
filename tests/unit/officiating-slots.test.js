@@ -22,6 +22,10 @@ function readFirestoreRules() {
     return readFileSync(new URL('../../firestore.rules', import.meta.url), 'utf8');
 }
 
+function readFunctionsSource() {
+    return readFileSync(new URL('../../functions/index.js', import.meta.url), 'utf8');
+}
+
 describe('officiating slots', () => {
     it('normalizes officials and fills slot display names from the directory', () => {
         const officials = normalizeOfficialsDirectory([
@@ -125,6 +129,7 @@ describe('officiating slots', () => {
         const officialsSource = readOfficialsPage();
         const dbSource = readDbSource();
         const rules = readFirestoreRules();
+        const functionsSource = readFunctionsSource();
 
         expect(officialsSource).toContain('canClaimOpenSlots = isEligibleOpenSlotParticipant(currentUser, currentUserProfile, currentTeam);');
         expect(officialsSource).toContain("section.classList.add('hidden');");
@@ -134,18 +139,16 @@ describe('officiating slots', () => {
         expect(officialsSource).not.toContain('Open self-assignment slots are only available to team owners, admins, or parents.');
         expect(dbSource).toContain('function isEligibleOpenOfficiatingSlotParticipant(team = {}, userProfile = {}, user = {})');
         expect(dbSource).toContain("throw new Error('Only team owners, admins, or parents can claim open officiating slots.');");
-        expect(dbSource).toContain('officiatingAuthorizedUserIds: Array.from(officiatingAuthorizedUserIds)');
-        expect(dbSource).toContain('officiatingAuthorizedEmails: Array.from(officiatingAuthorizedEmails)');
-        expect(dbSource).toContain('const officiatingSlots = claimOfficiatingSlot(game.officiatingSlots || [], slotId, {');
-        expect(dbSource).toContain('officiatingCoverageStatus: computeOfficiatingCoverageStatus(officiatingSlots)');
-        expect(rules).toContain('function canClaimOpenOfficiatingSlot(teamId)');
-        expect(rules).toContain('isParentForTeam(teamId)');
+        expect(dbSource).toContain("const callable = httpsCallable(functions, 'claimOpenOfficiatingSlot');");
+        expect(dbSource).toContain("displayName: official?.displayName || official?.email || 'Official'");
+        expect(dbSource).not.toContain('const officiatingSlots = claimOfficiatingSlot(game.officiatingSlots || [], slotId, {');
+        expect(functionsSource).toContain('exports.claimOpenOfficiatingSlot = functions.https.onCall');
+        expect(functionsSource).toContain('isEligibleOpenOfficiatingSlotParticipant({ team, user, uid, email: callerEmail, teamId: input.teamId })');
+        expect(functionsSource).toContain('buildOpenOfficiatingSlotClaimUpdate({');
+        expect(functionsSource).toContain('buildOfficiatingSelfAssignmentNotificationRecord({');
+        expect(functionsSource).toContain('transaction.set(notificationRef, {');
         expect(rules).not.toContain('playerTeamIds');
-        expect(rules).toContain('function isOpenOfficiatingSelfAssignmentUpdate(teamId)');
-        expect(rules).toContain('return canClaimOpenOfficiatingSlot(teamId) &&');
-        expect(rules).toContain('function isOnlyAddingCurrentOfficialAuthorization()');
-        expect(rules).toContain("nextUserIds.hasOnly(previousUserIds + [request.auth.uid])");
-        expect(rules).toContain("nextEmails.hasOnly(previousEmails + [callerEmail])");
-        expect(rules).toContain('allow update: if isOpenOfficiatingSelfAssignmentUpdate(teamId);');
+        expect(rules).not.toContain('function isOpenOfficiatingSelfAssignmentUpdate(teamId)');
+        expect(rules).not.toContain('allow update: if isOpenOfficiatingSelfAssignmentUpdate(teamId);');
     });
 });

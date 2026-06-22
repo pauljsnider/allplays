@@ -199,7 +199,6 @@ import { buildTournamentPoolOverrideKey } from './tournament-standings.js?v=1';
 import { buildBulkDeleteUpdates, buildMoveUpdates, buildReorderUpdates, isSafeTeamMediaUrl, isSupportedTeamMediaDocument, isSupportedTeamMediaImage, normalizeTeamMediaFolderDraft, normalizeAlbumVisibility, sortByMediaOrder } from './team-media-utils.js?v=3';
 import { getApp } from './vendor/firebase-app.js';
 import {
-    claimOfficiatingSlot,
     computeOfficiatingCoverageStatus,
     updateOfficiatingSlotResponse,
     updateOfficiatingSlotResult
@@ -7524,49 +7523,13 @@ export async function claimOpenOfficiatingSlot(teamId, gameId, slotId, official 
         throw new Error('Only team owners, admins, or parents can claim open officiating slots.');
     }
 
-    const docRef = getGameDocRef(teamId, gameId);
-    let notificationRecord = null;
-    await runTransaction(db, async (transaction) => {
-        const snap = await transaction.get(docRef);
-        if (!snap.exists()) throw new Error('Game not found');
-        const game = snap.data() || {};
-        if (game.officiatingSelfAssignmentEnabled !== true) {
-            throw new Error('Self-assignment is not enabled for this game');
-        }
-        const officiatingSlots = claimOfficiatingSlot(game.officiatingSlots || [], slotId, {
-            uid: official?.uid || '',
-            email: official?.email || '',
-            displayName: official?.displayName || official?.email || 'Official'
-        });
-        const updatedSlot = officiatingSlots.find((slot) => slot.id === slotId) || null;
-        if (updatedSlot) {
-            notificationRecord = buildOfficiatingNotificationRecord({
-                teamId,
-                gameId,
-                game: { ...game, officiatingSlots },
-                slot: updatedSlot,
-                event: 'self_assigned',
-                status: updatedSlot.status,
-                recipientType: 'assigner',
-                actor: official || {},
-                timestamp: Timestamp.now()
-            });
-        }
-        const officiatingAuthorizedUserIds = new Set(game.officiatingAuthorizedUserIds || []);
-        const officiatingAuthorizedEmails = new Set(game.officiatingAuthorizedEmails || []);
-        if (official?.uid) officiatingAuthorizedUserIds.add(official.uid);
-        if (official?.email) officiatingAuthorizedEmails.add(String(official.email).trim().toLowerCase());
-
-        transaction.update(docRef, {
-            officiatingSlots,
-            officiatingCoverageStatus: computeOfficiatingCoverageStatus(officiatingSlots),
-            officiatingUpdatedAt: Timestamp.now(),
-            officiatingAuthorizedUserIds: Array.from(officiatingAuthorizedUserIds),
-            officiatingAuthorizedEmails: Array.from(officiatingAuthorizedEmails)
-        });
+    const callable = httpsCallable(functions, 'claimOpenOfficiatingSlot');
+    await callable({
+        teamId,
+        gameId,
+        slotId,
+        displayName: official?.displayName || official?.email || 'Official'
     });
-
-    await tryCreateOfficiatingAssignmentNotificationRecords(teamId, notificationRecord ? [notificationRecord] : []);
 }
 
 export async function submitOfficiatingAssignmentResult(teamId, gameId, slotId, result, official = auth.currentUser) {
