@@ -170,6 +170,20 @@ describe('registration review helpers', () => {
             offerExtendedBy: 'admin-1',
             waitlistStatusUpdatedByName: 'admin@example.com'
         });
+        expect(canTransitionRegistrationStatus('offer-extended', 'offer-accepted', { adminAction: true })).toBe(true);
+        expect(buildRegistrationStatusUpdate({
+            registration: { status: 'offer-extended' },
+            status: 'offer-accepted',
+            reviewer: { userId: 'admin-1', email: 'admin@example.com' },
+            now
+        })).toMatchObject({
+            status: 'offer-accepted',
+            activeWaitlistDemand: true,
+            offerAcceptedAt: now,
+            offerAcceptedBy: 'admin-1',
+            waitlistStatusUpdatedByName: 'admin@example.com'
+        });
+        expect(canTransitionRegistrationStatus('waitlisted', 'offer-accepted', { adminAction: true })).toBe(false);
         expect(buildRegistrationStatusUpdate({ registration: { status: 'offer-accepted' }, status: 'released', now })).toMatchObject({
             status: 'released',
             activeWaitlistDemand: false,
@@ -214,6 +228,9 @@ describe('registration review helpers', () => {
         expect(editRosterPage).toContain('registration-export-options');
         expect(editRosterPage).toContain('registration-export-columns');
         expect(editRosterPage).toContain('getRegistrationReviewCsvColumnDefinitions');
+        expect(editRosterPage).toContain('acceptTeamRegistrationOffer');
+        expect(editRosterPage).toContain('accept-offer-registration-btn');
+        expect(editRosterPage).toContain('Mark accepted');
     });
 
     it('flattens registration reviews for CSV export', () => {

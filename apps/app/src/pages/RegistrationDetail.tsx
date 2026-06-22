@@ -153,6 +153,7 @@ function RegistrationDetailPage({ auth, publicAccess = false, staffReview = fals
   const totalWaitlisted = queue?.totalWaitlisted ?? waitlistedReviews.length;
   const canApproveSelectedReview = selectedReview ? ['pending', 'offer-accepted'].includes(selectedReview.status) : false;
   const canPromoteSelectedReview = selectedReview?.status === 'waitlisted';
+  const canAcceptOfferSelectedReview = selectedReview?.status === 'offer-extended';
   const canDeclineSelectedReview = selectedReview ? ['pending', 'waitlisted', 'offer-extended', 'offer-accepted'].includes(selectedReview.status) : false;
   const selectedReviewOptionAvailability = useMemo(() => {
     if (!form || !selectedReview) return '';
@@ -368,6 +369,22 @@ function RegistrationDetailPage({ auth, publicAccess = false, staffReview = fals
     }
   };
 
+  const handleAcceptOffer = async () => {
+    if (!selectedReview || saving) return;
+    setSaving(true);
+    setError('');
+    setMessage('');
+    try {
+      await (parentToolsService as any).acceptTeamRegistrationOfferForApp(auth.user, teamId, formId, selectedReview.id);
+      setMessage('Waitlist offer marked accepted. This registration can now be approved to the roster.');
+      setReloadKey((current) => current + 1);
+    } catch (actionError: any) {
+      setError(actionError?.message || 'Waitlist offer could not be marked accepted.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
   const handleLoadMore = async () => {
     if (!lastDoc || !hasMore || saving) return;
     setSaving(true);
@@ -507,6 +524,11 @@ function RegistrationDetailPage({ auth, publicAccess = false, staffReview = fals
                     <button type="button" className="primary-button" onClick={handlePromote} disabled={saving}>
                       {saving ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <Send className="h-4 w-4" aria-hidden="true" />}
                       Promote from waitlist
+                    </button>
+                  ) : canAcceptOfferSelectedReview ? (
+                    <button type="button" className="primary-button" onClick={handleAcceptOffer} disabled={saving}>
+                      {saving ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <CheckCircle2 className="h-4 w-4" aria-hidden="true" />}
+                      Mark accepted
                     </button>
                   ) : (
                     <button type="button" className="primary-button" onClick={handleApprove} disabled={saving || !canApproveSelectedReview}>

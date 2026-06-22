@@ -14,6 +14,7 @@ const parentToolsServiceMocks = vi.hoisted(() => ({
   loadPublicRegistrationDetail: vi.fn(),
   submitOfflineRegistration: vi.fn(),
   initiateRegistrationCheckout: vi.fn(),
+  acceptTeamRegistrationOfferForApp: vi.fn(),
   approveTeamRegistrationForApp: vi.fn(),
   extendTeamRegistrationOfferForApp: vi.fn(),
   rejectTeamRegistrationForApp: vi.fn(),
@@ -316,6 +317,7 @@ beforeEach(() => {
     success: true,
     checkoutUrl: 'https://checkout.stripe.com/c/pay-reg-1',
   });
+  parentToolsServiceMocks.acceptTeamRegistrationOfferForApp.mockResolvedValue({ success: true });
   parentToolsServiceMocks.approveTeamRegistrationForApp.mockResolvedValue({ success: true });
   parentToolsServiceMocks.extendTeamRegistrationOfferForApp.mockResolvedValue({ success: true });
   parentToolsServiceMocks.rejectTeamRegistrationForApp.mockResolvedValue({ success: true });
@@ -806,6 +808,52 @@ describe('RegistrationDetail page', () => {
     );
     await waitForText(container, 'Waitlist offer extended using the legacy registration flow.');
     await waitForText(container, 'Waitlisted applicants (1)');
+  });
+
+  it('marks extended waitlist offers accepted through the legacy waitlist flow', async () => {
+    parentToolsServiceMocks.loadTeamRegistrationQueuePage
+      .mockResolvedValueOnce({
+        reviews: [{
+          id: 'reg-offer-1',
+          status: 'offer-extended',
+          participantName: 'Riley Runner',
+          guardianLabel: 'riley@example.com',
+          guardianEmails: ['riley@example.com'],
+          participant: { name: 'Riley Runner' },
+          guardian: { email: 'riley@example.com' },
+          submittedData: {},
+          submittedAt: '2026-06-20T18:00:00.000Z',
+          selectedOption: { id: 'opt-1', countKey: 'opt-1', title: 'Travel' },
+          selectedOptionLabel: 'Travel',
+          paymentLabel: 'unpaid · $150.00',
+          waiverAccepted: true,
+          linkedPlayerId: '',
+          decisionNote: '',
+        }],
+        lastDoc: { id: 'reg-offer-1' },
+        hasMore: false,
+      })
+      .mockResolvedValueOnce({
+        reviews: [],
+        lastDoc: null,
+        hasMore: false,
+      });
+
+    const { container } = await renderStaffRegistrationReview();
+    await waitForText(container, 'Riley Runner');
+    await waitForText(container, 'Mark accepted');
+
+    expect(container.textContent).not.toContain('Merge into existing roster player');
+
+    await clickButton(container, 'Mark accepted');
+
+    expect(parentToolsServiceMocks.acceptTeamRegistrationOfferForApp).toHaveBeenCalledWith(
+      expect.objectContaining({ uid: 'user-1' }),
+      'team-coach',
+      'form-review',
+      'reg-offer-1'
+    );
+    await waitForText(container, 'Waitlist offer marked accepted. This registration can now be approved to the roster.');
   });
 
   it('defaults the selected option to the first option with available capacity', async () => {
