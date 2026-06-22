@@ -56,6 +56,8 @@ const timeRangeOptions: Array<{ value: ScheduleTimeRange; label: string }> = [
 
 const upcomingListPageSize = 20;
 const pastListPageSize = 10;
+const pastScheduleCutoffMs = 3 * 60 * 60 * 1000;
+const pastScheduleHistoryPageWindowMs = 365 * 24 * 60 * 60 * 1000;
 
 const rsvpLabels: Record<RsvpResponse, string> = {
   going: 'Going',
@@ -177,32 +179,107 @@ export function Schedule({ auth }: { auth: AuthState }) {
   const [savingPractice, setSavingPractice] = useState(false);
   const [practiceFormError, setPracticeFormError] = useState<string | null>(null);
   const [loadedScheduleUserId, setLoadedScheduleUserId] = useState<string | null>(null);
+  const [loadingPastHistory, setLoadingPastHistory] = useState(false);
+  const [pastHistoryHasMore, setPastHistoryHasMore] = useState(false);
   const hasLoadedScheduleRef = useRef(false);
   const hasStartedInitialScheduleLoadRef = useRef(false);
-
-  const fullHistoryLoadedRef = useRef(false);
+  const pastHistoryLoadedRef = useRef(false);
+  const childrenRef = useRef<ParentScheduleChild[]>([]);
+  const eventsRef = useRef<ParentScheduleEvent[]>([]);
 
   const applyScheduleResult = (data: { children: ParentScheduleChild[]; events: ParentScheduleEvent[]; }) => {
+    childrenRef.current = data.children;
+    eventsRef.current = data.events;
     setChildren(data.children);
     setEvents(data.events);
   };
 
-  // The default schedule load is windowed to recent games (#2034). When the user
-  // opens the "Past Events" filter, load the full history once and merge it in.
-  const loadFullScheduleHistory = async (force = false) => {
+  const mergeScheduleResult = (data: { children: ParentScheduleChild[]; events: ParentScheduleEvent[]; }) => {
+    const mergedChildren = [...childrenRef.current];
+    const childKeys = new Set(mergedChildren.map((child) => `${child.teamId}::${child.playerId}`));
+    data.children.forEach((child) => {
+      const key = `${child.teamId}::${child.playerId}`;
+      if (!childKeys.has(key)) {
+        childKeys.add(key);
+        mergedChildren.push(child);
+      }
+    });
+
+    const mergedEvents = [...eventsRef.current];
+    const eventKeys = new Set(mergedEvents.map((event) => event.eventKey));
+    data.events.forEach((event) => {
+      if (!eventKeys.has(event.eventKey)) {
+        eventKeys.add(event.eventKey);
+        mergedEvents.push(event);
+      }
+    });
+    mergedEvents.sort((a, b) => a.date.getTime() - b.date.getTime());
+    applyScheduleResult({ children: mergedChildren, events: mergedEvents });
+  };
+
+  const buildPastScheduleRangeByTeam = () => {
+    const cutoff = new Date(Date.now() - pastScheduleCutoffMs);
+    const oldestPastEventByTeam = new Map<string, Date>();
+    eventsRef.current.forEach((event) => {
+      if (event.date >= cutoff) return;
+      const currentOldest = oldestPastEventByTeam.get(event.teamId);
+      if (!currentOldest || event.date < currentOldest) {
+        oldestPastEventByTeam.set(event.teamId, event.date);
+      }
+    });
+
+    const scheduleRangeByTeam = Object.fromEntries(
+      [...oldestPastEventByTeam.entries()].map(([teamId, oldestDate]) => {
+        const endDate = new Date(oldestDate.getTime() - 1);
+        return [teamId, {
+          startDate: new Date(endDate.getTime() - pastScheduleHistoryPageWindowMs),
+          endDate
+        }];
+      })
+    );
+
+    return Object.keys(scheduleRangeByTeam).length ? scheduleRangeByTeam : null;
+  };
+
+  const loadPastSchedulePage = async () => {
     const user = auth.user;
-    if (!user) return;
-    if (fullHistoryLoadedRef.current && !force) return;
-    fullHistoryLoadedRef.current = true;
+    if (!user || loadingPastHistory) return false;
+    const scheduleRangeByTeam = buildPastScheduleRangeByTeam();
+    if (!scheduleRangeByTeam) {
+      setPastHistoryHasMore(false);
+      return false;
+    }
+
+    setLoadingPastHistory(true);
     try {
-      const result = await loadCachedAppData(
-        `${getParentScheduleSummaryCacheKey(user.uid)}:full-history`,
-        () => loadParentSchedule(user, { hydrateDetails: false, expandStaffPlayers: false, includePastGames: true }),
-        { ttlMs: 60 * 1000 * 5, force }
-      );
-      applyScheduleResult(result);
+      const beforeKeys = new Set(eventsRef.current.map((event) => event.eventKey));
+      const result = await loadParentSchedule(user, {
+        hydrateDetails: false,
+        expandStaffPlayers: false,
+        scheduleRangeByTeam
+      });
+      const nextEvents = result.events.filter((event) => !beforeKeys.has(event.eventKey));
+      if (!nextEvents.length) {
+        setPastHistoryHasMore(false);
+        return false;
+      }
+      mergeScheduleResult({ children: result.children, events: nextEvents });
+      setPastHistoryHasMore(true);
+      return true;
     } catch {
-      fullHistoryLoadedRef.current = false; // allow a retry on the next attempt
+      return false;
+    } finally {
+      setLoadingPastHistory(false);
+    }
+  };
+
+  const ensurePastSchedulePageLoaded = async (force = false) => {
+    if (pastHistoryLoadedRef.current && !force) return;
+    pastHistoryLoadedRef.current = true;
+    setPastHistoryHasMore(true);
+    const loaded = await loadPastSchedulePage();
+    if (!loaded) {
+      setPastHistoryHasMore(false);
     }
   };
 
@@ -247,10 +324,10 @@ export function Schedule({ auth }: { auth: AuthState }) {
           setScheduleLoadError(null);
           applyScheduleResult(result);
 
-          // A forced refresh re-fetches the windowed set; if the user is viewing
-          // past events, reload the full history so older games don't disappear.
           if (filter === 'past-all') {
-            void loadFullScheduleHistory(force);
+            pastHistoryLoadedRef.current = false;
+            setPastHistoryHasMore(true);
+            void ensurePastSchedulePageLoaded(true);
           }
 
           if (selectedPlayerId && !result.children.some((child) => child.playerId === selectedPlayerId)) {
@@ -291,7 +368,8 @@ export function Schedule({ auth }: { auth: AuthState }) {
   useEffect(() => {
     hasLoadedScheduleRef.current = false;
     hasStartedInitialScheduleLoadRef.current = false;
-    fullHistoryLoadedRef.current = false;
+    pastHistoryLoadedRef.current = false;
+    setPastHistoryHasMore(false);
     if (!auth.user?.uid) {
       setLoadedScheduleUserId(null);
       applyScheduleResult({ children: [], events: [] });
@@ -304,8 +382,10 @@ export function Schedule({ auth }: { auth: AuthState }) {
 
   useEffect(() => {
     if (filter === 'past-all' && hasLoadedSchedule) {
-      void loadFullScheduleHistory();
+      void ensurePastSchedulePageLoaded();
+      return;
     }
+    setPastHistoryHasMore(false);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [filter, hasLoadedSchedule]);
 
@@ -330,6 +410,21 @@ export function Schedule({ auth }: { auth: AuthState }) {
 
   const calendarEntries = useMemo(() => getCalendarScheduleEntries(visibleEvents), [visibleEvents]);
   const listEntries = calendarEntries;
+  const canLoadMorePastHistory = filter === 'past-all' && (pastHistoryHasMore || visibleListCount < listEntries.length);
+
+  const handleShowMore = async () => {
+    if (visibleListCount < listEntries.length) {
+      setVisibleListCount((current) => Math.min(current + listPageSize, listEntries.length));
+      return;
+    }
+    if (filter !== 'past-all' || !pastHistoryHasMore || loadingPastHistory) {
+      return;
+    }
+    const loaded = await loadPastSchedulePage();
+    if (loaded) {
+      setVisibleListCount((current) => current + listPageSize);
+    }
+  };
   const parentLinkedPlayerIds = useMemo(() => new Set(children.map((child) => child.playerId)), [children]);
   const teamOptions = useMemo(() => getParentScheduleTeamOptions(events, children), [children, events]);
   const packetRows = useMemo(() => getPracticePacketRows(visibleEvents), [visibleEvents]);
@@ -1033,14 +1128,18 @@ export function Schedule({ auth }: { auth: AuthState }) {
               events={listEntries}
               visibleCount={visibleListCount}
               pageSize={listPageSize}
-              onShowMore={() => setVisibleListCount((current) => Math.min(current + listPageSize, listEntries.length))}
+              canShowMore={canLoadMorePastHistory || visibleListCount < listEntries.length}
+              loadingMore={filter === 'past-all' && loadingPastHistory}
+              onShowMore={handleShowMore}
             />
           ) : (
             <ScheduleList
               events={listEntries}
               visibleCount={visibleListCount}
               pageSize={listPageSize}
-              onShowMore={() => setVisibleListCount((current) => Math.min(current + listPageSize, listEntries.length))}
+              canShowMore={canLoadMorePastHistory || visibleListCount < listEntries.length}
+              loadingMore={filter === 'past-all' && loadingPastHistory}
+              onShowMore={handleShowMore}
             />
           )}
 

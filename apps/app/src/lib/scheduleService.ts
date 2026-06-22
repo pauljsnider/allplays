@@ -188,6 +188,7 @@ export type ParentScheduleLoadOptions = {
   expandStaffPlayers?: boolean;
   /** Load the team's full game history instead of the default recent window (#2034). */
   includePastGames?: boolean;
+  scheduleRangeByTeam?: ScheduleDateRangeByTeam;
 };
 
 export type OfficialAssignmentsAccess = {
@@ -2179,6 +2180,7 @@ async function loadTeam(teamId: string) {
 }
 
 type ScheduleDateRange = { startDate?: Date | null; endDate?: Date | null };
+type ScheduleDateRangeByTeam = Record<string, ScheduleDateRange | undefined>;
 
 function isEventWithinRange(game: any, range: ScheduleDateRange) {
   if (!range.startDate && !range.endDate) return true;
@@ -2211,13 +2213,16 @@ async function loadGameById(teamId: string, gameId: string) {
   );
 }
 
-async function loadPracticeSessions(teamId: string) {
+async function loadPracticeSessions(teamId: string, range: ScheduleDateRange = {}) {
   return readWithNativeFallback(
     `practice sessions ${teamId}`,
-    () => Promise.resolve(getPracticeSessions(teamId)),
+    () => Promise.resolve(getPracticeSessions(teamId, range)),
     async () => {
       const docs = await nativeListCollection(`teams/${encodeURIComponent(teamId)}/practiceSessions`);
-      return docs.sort((a, b) => toEventDate(b.date).getTime() - toEventDate(a.date).getTime());
+      const windowed = (range.startDate || range.endDate)
+        ? docs.filter((doc) => isEventWithinRange(doc, range))
+        : docs;
+      return windowed.sort((a, b) => toEventDate(b.date).getTime() - toEventDate(a.date).getTime());
     }
   );
 }
@@ -2520,18 +2525,18 @@ function createScheduleEvent(input: {
   };
 }
 
-async function buildTeamSchedule(teamId: string, teamChildren: ParentScheduleChild[], user: AuthUser, options: { includePastGames?: boolean } = {}) {
+async function buildTeamSchedule(teamId: string, teamChildren: ParentScheduleChild[], user: AuthUser, options: { includePastGames?: boolean; range?: ScheduleDateRange } = {}) {
   const events: ParentScheduleEvent[] = [];
   // Default schedule views only need upcoming + recent games; window the games
   // query so teams with several seasons of history don't read hundreds of docs
   // on every load (#2034). Explicit history views pass includePastGames.
-  const gamesRange: ScheduleDateRange = options.includePastGames
+  const gamesRange: ScheduleDateRange = options.range || (options.includePastGames
     ? {}
-    : { startDate: new Date(Date.now() - defaultScheduleHistoryWindowMs) };
+    : { startDate: new Date(Date.now() - defaultScheduleHistoryWindowMs) });
   const [team, dbGames, practiceSessions] = await Promise.all([
     loadTeam(teamId),
     loadGames(teamId, gamesRange),
-    loadPracticeSessions(teamId)
+    loadPracticeSessions(teamId, gamesRange)
   ]);
   if (!team) return events;
   const trackedUids = getTrackedCalendarEventUidsFromLoadedGames(dbGames || []);
@@ -2771,12 +2776,17 @@ async function buildTeamSchedule(teamId: string, teamChildren: ParentScheduleChi
 }
 
 async function buildTargetedTeamScheduleEvent(teamId: string, eventId: string, teamChildren: ParentScheduleChild[], user: AuthUser) {
-  const [team, game] = await Promise.all([
+  const occurrenceMatch = eventId.match(/^(.*)__([0-9]{4}-[0-9]{2}-[0-9]{2})$/);
+  const [team, initialGame] = await Promise.all([
     loadTeam(teamId),
     loadGameById(teamId, eventId)
   ]);
-  if (!team || !game) return [];
-  if (game.type === 'practice' && game.isSeriesMaster && game.recurrence) return [];
+  if (!team) return [];
+
+  const game = initialGame || (occurrenceMatch?.[1]
+    ? await loadGameById(teamId, occurrenceMatch[1]).catch(() => null)
+    : null);
+  if (!game) return [];
 
   const teamName = compactString(team.name) || teamId;
   const teamWithId = { ...team, id: team.id || teamId };
@@ -2790,6 +2800,66 @@ async function buildTargetedTeamScheduleEvent(teamId: string, eventId: string, t
   const normalizedId = compactString(game.id || game.gameId || eventId);
   const isCancelled = game.status === 'cancelled';
   if (!normalizedId) return [];
+
+  if (isPractice && game.isSeriesMaster && game.recurrence) {
+    const occurrenceDateKey = occurrenceMatch?.[2] || null;
+    if (!occurrenceDateKey) return [];
+    const occurrence = expandRecurrence(game).find((candidate) => (
+      compactString(candidate?.instanceDate) === occurrenceDateKey ||
+      compactString(`${candidate?.masterId || normalizedId}__${candidate?.instanceDate || ''}`) === eventId
+    ));
+    if (!occurrence) return [];
+
+    const occurrenceDate = normalizeScheduleDate(occurrence.date) || new Date(occurrence.date);
+    return teamChildren.map((child) => createScheduleEvent({
+      teamId,
+      teamName,
+      teamNotificationEmail: team.notificationEmail || null,
+      child,
+      id: eventId,
+      type: 'practice',
+      date: occurrenceDate,
+      endDate: occurrence.endDate || occurrence.end || game.endDate || game.end || null,
+      location: occurrence.location || 'TBD',
+      opponent: 'TBD',
+      title: occurrence.title || null,
+      isDbGame: true,
+      isCancelled,
+      status: game.status || null,
+      liveStatus: game.liveStatus || null,
+      liveClockMs: game.liveClockMs ?? null,
+      liveClockRunning: game.liveClockRunning ?? null,
+      liveClockPeriod: game.liveClockPeriod || null,
+      liveClockUpdatedAt: game.liveClockUpdatedAt || null,
+      homeScore: game.homeScore ?? null,
+      awayScore: game.awayScore ?? null,
+      canUpdateScore: false,
+      arrivalTime: game.arrivalTime || null,
+      notes: game.notes || null,
+      seasonLabel: game.seasonLabel || null,
+      competitionType: game.competitionType || null,
+      countsTowardSeasonRecord: game.countsTowardSeasonRecord ?? null,
+      tournament: game.tournament || null,
+      statTrackerConfigId: game.statTrackerConfigId || null,
+      sourceType: game.sourceMetadata?.sourceType || game.source || 'db',
+      sourceLabel: getScheduleSourceLabel(game),
+      isImported: Boolean(game.sourceMetadata || game.source === 'calendar' || game.source === 'registration'),
+      visibility: game.visibility || null,
+      assignments: Array.isArray(game.assignments) ? game.assignments : [],
+      rsvpSummary: game.rsvpSummary || null,
+      practiceAttendance: hasRecordedAttendance(session?.attendance) ? session?.attendance : null,
+      practiceHomePacket: hasHomePacket(session) ? session?.homePacketContent : null,
+      practiceSessionId: compactString(session?.id) || null,
+      availabilityPreferences,
+      isTeamAdmin: isRsvpReminderManager,
+      isTeamStaff: isStaff,
+      isTeamRsvpReminderManager: isRsvpReminderManager,
+      gamePlan: game.gamePlan || null,
+      rotationPlan: game.rotationPlan || null,
+      rotationActual: game.rotationActual || null,
+      coachingNotes: Array.isArray(game.coachingNotes) ? game.coachingNotes : []
+    }));
+  }
 
   teamChildren.forEach((child) => {
     child.teamName = child.teamName || teamName;
@@ -3233,6 +3303,7 @@ export async function loadParentSchedule(user: AuthUser | null, options: ParentS
   const hydrateDetails = options.hydrateDetails !== false;
   const expandStaffPlayers = options.expandStaffPlayers !== false;
   const includePastGames = options.includePastGames === true;
+  const scheduleRangeByTeam = options.scheduleRangeByTeam || null;
 
   try {
     const profile = await loadProfileDocument(user.uid);
@@ -3241,7 +3312,10 @@ export async function loadParentSchedule(user: AuthUser | null, options: ParentS
     const teamEntries = [...byTeam.entries()];
     const eventBatches = await mapWithConcurrency(teamEntries, parentScheduleTeamConcurrency, async ([teamId, teamChildren]) => {
       try {
-        return await buildTeamSchedule(teamId, teamChildren, user, { includePastGames });
+        return await buildTeamSchedule(teamId, teamChildren, user, {
+          includePastGames,
+          range: scheduleRangeByTeam?.[teamId]
+        });
       } catch (error) {
         logScheduleWarning('Failed to load team schedule.', 'team-schedule-load', error, { teamId });
         throw toAppServiceError(error, 'Unable to load schedule.');

@@ -7117,13 +7117,37 @@ export async function removeDrillFavorite(teamId, drillId) {
 /**
  * Get all practice sessions for a team
  */
-export async function getPracticeSessions(teamId) {
-    const q = query(
-        collection(db, `teams/${teamId}/practiceSessions`),
-        orderBy('date', 'desc')
-    );
-    const snapshot = await getDocs(q);
-    return snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
+function isPracticeSessionWithinDateRange(session, startDate, endDate) {
+    const date = toComparableGameDate(session?.date);
+    if (!date) return true;
+    if (startDate && date < startDate) return false;
+    if (endDate && date > endDate) return false;
+    return true;
+}
+
+export async function getPracticeSessions(teamId, options = {}) {
+    const startDate = options?.startDate ?? null;
+    const endDate = options?.endDate ?? null;
+    const constraints = [];
+    if (startDate instanceof Date) constraints.push(where('date', '>=', Timestamp.fromDate(startDate)));
+    if (endDate instanceof Date) constraints.push(where('date', '<=', Timestamp.fromDate(endDate)));
+    constraints.push(orderBy('date', 'desc'));
+
+    try {
+        const snapshot = await getDocs(query(
+            collection(db, `teams/${teamId}/practiceSessions`),
+            ...constraints
+        ));
+        return snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
+    } catch (error) {
+        const snapshot = await getDocs(query(
+            collection(db, `teams/${teamId}/practiceSessions`),
+            orderBy('date', 'desc')
+        ));
+        return snapshot.docs
+            .map(d => ({ id: d.id, ...d.data() }))
+            .filter(session => isPracticeSessionWithinDateRange(session, startDate, endDate));
+    }
 }
 
 /**
