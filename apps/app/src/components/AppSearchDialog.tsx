@@ -90,6 +90,7 @@ export function AppSearchDialog({ auth, open, onClose }: AppSearchDialogProps) {
 
   useEffect(() => {
     if (!open) return;
+    let disposed = false;
     const trimmedQuery = query.trim();
     const requestId = ++searchRequestId.current;
 
@@ -100,7 +101,9 @@ export function AppSearchDialog({ auth, open, onClose }: AppSearchDialogProps) {
       setPlayers([]);
       setPlayersLoading(false);
       setPlayersError('');
-      return;
+      return () => {
+        disposed = true;
+      };
     }
 
     const initialAccessibleTeams = baseTeamsRef.current;
@@ -109,6 +112,17 @@ export function AppSearchDialog({ auth, open, onClose }: AppSearchDialogProps) {
     setPlayersLoading(true);
     setPlayersError('');
     const timeoutId = window.setTimeout(() => {
+      const applyPlayerResults = (playersResult: PromiseSettledResult<AppSearchPlayer[]>) => {
+        if (disposed || requestId !== searchRequestId.current) return;
+        if (playersResult.status === 'fulfilled') {
+          setPlayers(playersResult.value);
+          setPlayersError('');
+          return;
+        }
+        setPlayers([]);
+        setPlayersError(getPlayerSearchError(playersResult.reason));
+      };
+
       const runSearch = async (accessibleTeams: AppSearchTeam[]) => {
         const accessibleTeamsById = new Map(accessibleTeams.map((team) => [team.id, team]));
         const [teamsResult, playersResult] = await Promise.allSettled([
@@ -116,7 +130,7 @@ export function AppSearchDialog({ auth, open, onClose }: AppSearchDialogProps) {
           searchAppPlayers(trimmedQuery, accessibleTeamsById, auth.user)
         ]) as [PromiseSettledResult<AppSearchTeam[]>, PromiseSettledResult<AppSearchPlayer[]>];
 
-        if (requestId !== searchRequestId.current) return;
+        if (disposed || requestId !== searchRequestId.current) return;
 
         if (teamsResult.status === 'fulfilled') {
           setTeams(teamsResult.value);
@@ -126,15 +140,9 @@ export function AppSearchDialog({ auth, open, onClose }: AppSearchDialogProps) {
           setTeamsError(teamsResult.reason?.message || 'Team search unavailable.');
         }
 
-        if (playersResult.status === 'fulfilled') {
-          setPlayers(playersResult.value);
-          setPlayersError('');
-        } else {
-          setPlayers([]);
-          setPlayersError(getPlayerSearchError(playersResult.reason));
-        }
+        applyPlayerResults(playersResult);
 
-        if (requestId === searchRequestId.current) {
+        if (!disposed && requestId === searchRequestId.current) {
           setTeamsLoading(false);
           setPlayersLoading(false);
         }
@@ -144,7 +152,7 @@ export function AppSearchDialog({ auth, open, onClose }: AppSearchDialogProps) {
         .then((loadedTeams) => mergeSearchTeams(initialAccessibleTeams, loadedTeams));
 
       const resolveAccessibleTeams = async () => {
-        const hydratedScope = await Promise.race([
+        return Promise.race([
           hydrationPromise
             .then((hydratedTeams) => ({ teams: hydratedTeams, resolved: true }))
             .catch(() => ({ teams: initialAccessibleTeams, resolved: false })),
@@ -152,21 +160,52 @@ export function AppSearchDialog({ auth, open, onClose }: AppSearchDialogProps) {
             window.setTimeout(() => resolve({ teams: initialAccessibleTeams, resolved: false }), hydrationSearchFallbackMs);
           })
         ]);
-
-        return hydratedScope.teams;
       };
 
       void resolveAccessibleTeams()
-        .then((accessibleTeams) => runSearch(accessibleTeams))
+        .then(({ teams: accessibleTeams, resolved }) => {
+          void runSearch(accessibleTeams);
+
+          if (resolved) return;
+
+          void hydrationPromise
+            .then((hydratedTeams) => {
+              if (disposed || requestId !== searchRequestId.current) return;
+              const initialTeamIds = new Set(accessibleTeams.map((team) => team.id));
+              const hasExpandedScope = hydratedTeams.some((team) => !initialTeamIds.has(team.id));
+              if (!hasExpandedScope) return;
+              setPlayersLoading(true);
+              return searchAppPlayers(trimmedQuery, new Map(hydratedTeams.map((team) => [team.id, team])), auth.user)
+                .then((refreshedPlayers) => {
+                  applyPlayerResults({ status: 'fulfilled', value: refreshedPlayers });
+                })
+                .catch((error) => {
+                  applyPlayerResults({ status: 'rejected', reason: error });
+                })
+                .finally(() => {
+                  if (!disposed && requestId === searchRequestId.current) {
+                    setPlayersLoading(false);
+                  }
+                });
+            })
+            .catch(() => {
+              if (!disposed && requestId === searchRequestId.current) {
+                setPlayersLoading(false);
+              }
+            });
+        })
         .catch(() => {
-          if (requestId === searchRequestId.current) {
+          if (!disposed && requestId === searchRequestId.current) {
             setTeamsLoading(false);
             setPlayersLoading(false);
           }
         });
     }, 180);
 
-    return () => window.clearTimeout(timeoutId);
+    return () => {
+      disposed = true;
+      window.clearTimeout(timeoutId);
+    };
   }, [auth.user, open, query]);
 
   useEffect(() => {

@@ -297,10 +297,14 @@ describe('AppSearchDialog', () => {
     await waitFor(() => expect(searchAppPlayersMock).toHaveBeenCalledTimes(1));
   });
 
-  it('falls back to the provisional scope once when hydration misses the gate and does not replay later', async () => {
+  it('refreshes player results once hydrated access expands after a provisional fallback search', async () => {
     vi.useFakeTimers();
     const onClose = vi.fn();
     const initialTeams: AppSearchTeam[] = [{ id: 'team-1', name: 'Bears', sport: 'Basketball', zip: '66210' }];
+    const hydratedTeams: AppSearchTeam[] = [
+      ...initialTeams,
+      { id: 'team-2', name: 'Rockets', sport: 'Soccer', zip: '64114' }
+    ];
     let releaseHydration!: (teams: AppSearchTeam[] | PromiseLike<AppSearchTeam[]>) => void;
 
     getKnownAppSearchTeamsMock.mockReturnValue(initialTeams);
@@ -321,15 +325,16 @@ describe('AppSearchDialog', () => {
     expect(searchAppTeamsMock).toHaveBeenCalledTimes(1);
     expect(searchAppPlayersMock).toHaveBeenCalledTimes(1);
     expect(searchAppTeamsMock).toHaveBeenNthCalledWith(1, 'ro', initialTeams, null);
+    expect(searchAppPlayersMock).toHaveBeenNthCalledWith(1, 'ro', expect.any(Map), null);
 
-    releaseHydration([
-      ...initialTeams,
-      { id: 'team-2', name: 'Rockets', sport: 'Soccer', zip: '64114' }
-    ]);
+    releaseHydration(hydratedTeams);
     await vi.advanceTimersByTimeAsync(50);
+    await Promise.resolve();
 
     expect(searchAppTeamsMock).toHaveBeenCalledTimes(1);
-    expect(searchAppPlayersMock).toHaveBeenCalledTimes(1);
+    expect(searchAppPlayersMock).toHaveBeenCalledTimes(2);
+    expect(searchAppPlayersMock).toHaveBeenNthCalledWith(2, 'ro', expect.any(Map), null);
+    expect(Array.from(searchAppPlayersMock.mock.calls[1][1].values())).toEqual(hydratedTeams);
   });
 
   it('falls back to provisional search results when hydrated team loading fails', async () => {
