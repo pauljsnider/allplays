@@ -76,6 +76,7 @@ import type { AuthUser } from './types';
 const primaryDataTimeoutMs = 5000;
 const chatUploadTimeoutMs = 25000;
 const chatPreviewCacheTtlMs = 20 * 1000;
+const deferredInboxPreviewConcurrency = 3;
 const imageUploadSessionKey = 'allplays-chat-image-upload-session';
 const aiStatsGamesLimit = 10;
 const aiGamesContextLimit = 20;
@@ -589,6 +590,20 @@ function loadCachedMessagePreview(teamId: string, user: AuthUser, team: Record<s
   );
 }
 
+async function runDeferredInboxPreviewQueue<T>(items: T[], worker: (item: T) => Promise<void>, concurrency = deferredInboxPreviewConcurrency): Promise<void> {
+  if (items.length === 0) return;
+  const workerCount = Math.min(Math.max(1, concurrency), items.length);
+  let nextIndex = 0;
+
+  await Promise.allSettled(Array.from({ length: workerCount }, async () => {
+    while (nextIndex < items.length) {
+      const item = items[nextIndex];
+      nextIndex += 1;
+      await worker(item);
+    }
+  }));
+}
+
 export async function loadChatInbox(user: AuthUser | null, options: ChatInboxLoadOptions = {}): Promise<ChatInboxLoadResult> {
   if (!user?.uid) return { teams: [] };
   const includeLastMessages = options.includeLastMessages !== false;
@@ -645,7 +660,7 @@ export async function loadChatInbox(user: AuthUser | null, options: ChatInboxLoa
     }));
 
   if (!includeLastMessages && onPreview && accessibleTeams.length > 0) {
-    void Promise.allSettled(previewInputs.map(async ({ team, canModerate }) => {
+    void runDeferredInboxPreviewQueue(previewInputs, async ({ team, canModerate }) => {
       try {
         const preview = await loadCachedMessagePreview(team.id, userWithProfile, team, canModerate);
         onPreview({
@@ -659,7 +674,7 @@ export async function loadChatInbox(user: AuthUser | null, options: ChatInboxLoa
       } catch (error) {
         console.warn('[chat-service] Deferred inbox preview failed:', sanitizeErrorForLogging(error));
       }
-    }));
+    });
   }
 
   return {
