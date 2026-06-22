@@ -166,8 +166,8 @@ describe('Notification inbox review regressions', () => {
         errorHandler(subscriptionError);
 
         expect(consoleErrorSpy).toHaveBeenCalledWith(
-            'Failed to subscribe to notification inbox:',
-            subscriptionError
+            '[notification-inbox-service] Failed to subscribe to notification inbox.',
+            { error: { name: 'Error', message: 'subscription failed' } }
         );
     });
 
