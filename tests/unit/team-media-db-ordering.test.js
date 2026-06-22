@@ -10,7 +10,8 @@ const firebaseMocks = vi.hoisted(() => ({
     getDocs: vi.fn(),
     getDownloadURL: vi.fn(async () => 'https://cdn.example.test/uploaded-file'),
     doc: vi.fn((_db, path, id) => ({ path: `${path}/${id}` })),
-    orderBy: vi.fn(),
+    limit: vi.fn((value) => ({ type: 'limit', value })),
+    orderBy: vi.fn((field, direction) => ({ type: 'orderBy', field, direction })),
     query: vi.fn((...parts) => parts),
     runTransaction: vi.fn(async (_db, callback) => callback({
         get: async () => ({
@@ -22,8 +23,9 @@ const firebaseMocks = vi.hoisted(() => ({
         }
     })),
     serverTimestamp: vi.fn(() => 'server-ts'),
+    startAfter: vi.fn((cursor) => ({ type: 'startAfter', cursor })),
     updateDoc: vi.fn(async () => undefined),
-    where: vi.fn(),
+    where: vi.fn((field, op, value) => ({ type: 'where', field, op, value })),
     writeBatch: vi.fn(),
 }));
 
@@ -50,8 +52,8 @@ vi.mock('../../js/firebase.js?v=19', () => ({
     arrayUnion: vi.fn(),
     arrayRemove: vi.fn(),
     deleteField: vi.fn(),
-    limit: vi.fn(),
-    startAfter: vi.fn(),
+    limit: firebaseMocks.limit,
+    startAfter: firebaseMocks.startAfter,
     getCountFromServer: firebaseMocks.getCountFromServer,
     onSnapshot: vi.fn(),
     serverTimestamp: firebaseMocks.serverTimestamp,
@@ -244,5 +246,90 @@ describe('team media db ordering', () => {
                 downloadUrl: 'https://cdn.example.test/legacy.pdf'
             })
         ]);
+    });
+
+    it('returns bounded media item pages with stable folder order and cursor metadata', async () => {
+        const docs = [
+            {
+                id: 'media-1',
+                data: () => ({ folderId: 'folder-1', type: 'photo', downloadUrl: 'https://cdn.example.test/1.jpg', order: 1, deleted: false })
+            },
+            {
+                id: 'media-2',
+                data: () => ({ folderId: 'folder-1', type: 'photo', downloadUrl: 'https://cdn.example.test/2.jpg', order: 2, deleted: false })
+            },
+            {
+                id: 'media-3',
+                data: () => ({ folderId: 'folder-1', type: 'photo', downloadUrl: 'https://cdn.example.test/3.jpg', order: 3, deleted: false })
+            }
+        ];
+        firebaseMocks.getDocs.mockResolvedValue({ docs });
+
+        const { getTeamMediaItemsPage } = await import('../../js/db.js');
+        const firstPage = await getTeamMediaItemsPage('team-1', 'folder-1', { pageSize: 2 });
+        const secondPage = await getTeamMediaItemsPage('team-1', 'folder-1', { pageSize: 2, cursor: firstPage.nextCursor });
+
+        expect(firebaseMocks.where).toHaveBeenCalledWith('folderId', '==', 'folder-1');
+        expect(firstPage.items.map((item) => item.id)).toEqual(['media-1', 'media-2']);
+        expect(firstPage.hasMore).toBe(true);
+        expect(firstPage.lastDoc).toBe(docs[1]);
+        expect(firstPage.nextCursor).toEqual({ kind: 'team-media-items-page', folderId: 'folder-1', offset: 2 });
+        expect(secondPage.items.map((item) => item.id)).toEqual(['media-3']);
+        expect(secondPage.hasMore).toBe(false);
+        expect(secondPage.nextCursor).toBeNull();
+    });
+
+    it('keeps deleted items from truncating later live media pages', async () => {
+        const docs = [
+            {
+                id: 'media-1',
+                data: () => ({ folderId: 'folder-1', type: 'photo', downloadUrl: 'https://cdn.example.test/1.jpg', order: 1, deleted: false })
+            },
+            {
+                id: 'media-deleted',
+                data: () => ({ folderId: 'folder-1', type: 'photo', downloadUrl: 'https://cdn.example.test/deleted.jpg', order: 2, deleted: true })
+            },
+            {
+                id: 'media-2',
+                data: () => ({ folderId: 'folder-1', type: 'photo', downloadUrl: 'https://cdn.example.test/2.jpg', order: 3, deleted: false })
+            },
+            {
+                id: 'media-3',
+                data: () => ({ folderId: 'folder-1', type: 'photo', downloadUrl: 'https://cdn.example.test/3.jpg', order: 4, deleted: false })
+            }
+        ];
+        firebaseMocks.getDocs.mockResolvedValue({ docs });
+
+        const { getTeamMediaItemsPage } = await import('../../js/db.js');
+        const firstPage = await getTeamMediaItemsPage('team-1', 'folder-1', { pageSize: 2 });
+        const secondPage = await getTeamMediaItemsPage('team-1', 'folder-1', { pageSize: 2, cursor: firstPage.nextCursor });
+
+        expect(firstPage.items.map((item) => item.id)).toEqual(['media-1', 'media-2']);
+        expect(firstPage.hasMore).toBe(true);
+        expect(secondPage.items.map((item) => item.id)).toEqual(['media-3']);
+        expect(secondPage.hasMore).toBe(false);
+    });
+
+    it('preserves legacy media without order fields at the end of paginated reads', async () => {
+        const docs = [
+            {
+                id: 'media-ordered',
+                data: () => ({ folderId: 'folder-1', type: 'photo', downloadUrl: 'https://cdn.example.test/ordered.jpg', order: 0, deleted: false, title: 'Ordered' })
+            },
+            {
+                id: 'media-legacy',
+                data: () => ({ folderId: 'folder-1', type: 'photo', downloadUrl: 'https://cdn.example.test/legacy.jpg', deleted: false, title: 'Legacy' })
+            }
+        ];
+        firebaseMocks.getDocs.mockResolvedValue({ docs });
+
+        const { getTeamMediaItemsPage } = await import('../../js/db.js');
+        const firstPage = await getTeamMediaItemsPage('team-1', 'folder-1', { pageSize: 1 });
+        const secondPage = await getTeamMediaItemsPage('team-1', 'folder-1', { pageSize: 1, cursor: firstPage.nextCursor });
+
+        expect(firstPage.items.map((item) => item.id)).toEqual(['media-ordered']);
+        expect(firstPage.hasMore).toBe(true);
+        expect(secondPage.items.map((item) => item.id)).toEqual(['media-legacy']);
+        expect(secondPage.hasMore).toBe(false);
     });
 });

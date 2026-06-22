@@ -21,7 +21,7 @@ describe('team media entry point', () => {
         const pageJs = readRepoFile('js/team-media.js');
         const rules = readRepoFile('firestore.rules');
 
-        expect(pageHtml).toContain('<script type="module" src="js/team-media.js?v=7"></script>');
+        expect(pageHtml).toContain('<script type="module" src="js/team-media.js?v=8"></script>');
         expect(pageHtml).toContain('id="team-media-upload-panel"');
         expect(pageHtml).toContain('id="team-media-admin-panel"');
         expect(pageHtml).toContain('id="bulk-actions"');
@@ -45,6 +45,10 @@ describe('team media entry point', () => {
         expect(pageJs).toContain('canReadTeamMediaAlbum');
         expect(pageJs).toContain('bulkDeleteTeamMediaItems');
         expect(pageJs).toContain('setTeamMediaAlbumCover');
+        expect(pageJs).toContain('getTeamMediaItemsPage');
+        expect(pageJs).toContain('TEAM_MEDIA_PAGE_SIZE');
+        expect(pageJs).toContain('data-load-more-media');
+        expect(pageJs).not.toContain('getTeamMediaItems(state.teamId)');
         expect(pageJs).toContain('MEDIA_TYPE_FILTERS');
         expect(pageJs).toContain("{ id: 'videos', label: 'Videos' }");
         expect(pageJs).toContain('data-media-type-filter');

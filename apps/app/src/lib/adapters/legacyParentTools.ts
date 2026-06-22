@@ -46,6 +46,7 @@ export const getTeamRegistrationForm = (...args: any[]) => callLegacyDb('getTeam
 export const getTeam = (...args: any[]) => callLegacyDb('getTeam', args);
 export const getTeamMediaFolders = (...args: any[]) => callLegacyDb('getTeamMediaFolders', args);
 export const getTeamMediaItems = (...args: any[]) => callLegacyDb('getTeamMediaItems', args);
+export const getTeamMediaItemsPage = (...args: any[]) => callLegacyDb('getTeamMediaItemsPage', args);
 export const canAccessTeamChat = (...args: any[]) => callLegacyDb('canAccessTeamChat', args);
 export const listCertificatesForPlayer = (...args: any[]) => callLegacyDb('listCertificatesForPlayer', args);
 export const listFamilyShareTokens = (...args: any[]) => callLegacyDb('listFamilyShareTokens', args);

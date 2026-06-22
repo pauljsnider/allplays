@@ -981,6 +981,94 @@ export async function getTeamMediaItems(teamId, folderId = null) {
     return sortByMediaOrder(resolvedItems);
 }
 
+function readTeamMediaPageOffset(cursor, folderId, sortedDocs = []) {
+    if (Number.isFinite(Number(cursor))) {
+        return Math.max(0, Math.floor(Number(cursor)));
+    }
+
+    if (cursor?.kind === 'team-media-items-page') {
+        const cursorFolderId = String(cursor.folderId || '').trim();
+        if (!cursorFolderId || cursorFolderId === folderId) {
+            const offset = Number(cursor.offset);
+            if (Number.isFinite(offset)) {
+                return Math.max(0, Math.floor(offset));
+            }
+        }
+    }
+
+    const cursorId = String(cursor?.id || '').trim();
+    if (!cursorId) return 0;
+    const cursorIndex = sortedDocs.findIndex((itemDoc) => itemDoc.id === cursorId);
+    return cursorIndex >= 0 ? cursorIndex + 1 : 0;
+}
+
+export async function getTeamMediaItemsPage(teamId, folderId, options = {}) {
+    if (!teamId) {
+        return { items: [], lastDoc: null, nextCursor: null, hasMore: false };
+    }
+
+    const cleanFolderId = String(folderId || '').trim();
+    if (!cleanFolderId) {
+        return { items: [], lastDoc: null, nextCursor: null, hasMore: false };
+    }
+
+    const requestedPageSize = Number(options.pageSize || 24);
+    const pageSize = Number.isFinite(requestedPageSize)
+        ? Math.min(Math.max(Math.floor(requestedPageSize), 1), 100)
+        : 24;
+    const cursor = options.cursor || options.afterDoc || null;
+
+    const snapshot = await getDocs(query(
+        getTeamMediaItemsRef(teamId),
+        where('folderId', '==', cleanFolderId)
+    ));
+    const docs = snapshot.docs
+        .filter((itemDoc) => {
+            const item = itemDoc.data() || {};
+            return item.deleted !== true && item.folderId === cleanFolderId;
+        });
+    const docsById = new Map(docs.map((itemDoc) => [itemDoc.id, itemDoc]));
+    const sortedDocs = sortByMediaOrder(docs.map((itemDoc) => ({ id: itemDoc.id, ...itemDoc.data() })))
+        .map((item) => docsById.get(item.id))
+        .filter(Boolean);
+    const startOffset = readTeamMediaPageOffset(cursor, cleanFolderId, sortedDocs);
+    const pageDocs = sortedDocs.slice(startOffset, startOffset + pageSize);
+    const hasMore = startOffset + pageSize < sortedDocs.length;
+    const items = pageDocs.map((itemDoc) => ({ id: itemDoc.id, ...itemDoc.data() }));
+    const resolvedItems = await Promise.all(items.map(async (item) => {
+        if (!['photo', 'file'].includes(String(item?.type || '').toLowerCase())) return item;
+        if (String(item.downloadUrl || item.url || item.src || '').trim()) return item;
+        if (!item.storagePath) return item;
+        try {
+            const downloadUrl = await getDownloadURL(ref(storage, item.storagePath));
+            updateDoc(doc(db, `teams/${teamId}/mediaItems`, item.id), {
+                downloadUrl,
+                updatedAt: serverTimestamp()
+            }).catch((error) => {
+                console.warn('Unable to backfill cached team media download URL:', error);
+            });
+            return { ...item, downloadUrl };
+        } catch (error) {
+            console.warn('Unable to resolve team media download URL:', error);
+            return item;
+        }
+    }));
+    const lastDoc = pageDocs[pageDocs.length - 1] || null;
+
+    return {
+        items: sortByMediaOrder(resolvedItems),
+        lastDoc,
+        nextCursor: hasMore
+            ? {
+                kind: 'team-media-items-page',
+                folderId: cleanFolderId,
+                offset: startOffset + pageDocs.length
+            }
+            : null,
+        hasMore
+    };
+}
+
 export async function createTeamMediaFolder(teamId, draft = {}) {
     const folder = normalizeTeamMediaFolderDraft(typeof draft === 'string' ? { name: draft } : draft);
     if (!teamId) throw new Error('Team is required.');
