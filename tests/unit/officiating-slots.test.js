@@ -136,6 +136,8 @@ describe('officiating slots', () => {
         expect(dbSource).toContain("throw new Error('Only team owners, admins, or parents can claim open officiating slots.');");
         expect(dbSource).toContain('officiatingAuthorizedUserIds: Array.from(officiatingAuthorizedUserIds)');
         expect(dbSource).toContain('officiatingAuthorizedEmails: Array.from(officiatingAuthorizedEmails)');
+        expect(dbSource).toContain('const officiatingSlots = claimOfficiatingSlot(game.officiatingSlots || [], slotId, {');
+        expect(dbSource).toContain('officiatingCoverageStatus: computeOfficiatingCoverageStatus(officiatingSlots)');
         expect(rules).toContain('function canClaimOpenOfficiatingSlot(teamId)');
         expect(rules).toContain('isParentForTeam(teamId)');
         expect(rules).not.toContain('playerTeamIds');
