@@ -162,6 +162,7 @@ export type ChatInboxPreviewUpdate = {
 
 type TeamChatStateEntry = {
   lastReadAt?: unknown;
+  lastReadByConversation?: Record<string, unknown>;
   mutedConversations?: Record<string, unknown>;
 };
 
@@ -647,6 +648,21 @@ export async function loadChatInbox(user: AuthUser | null, options: ChatInboxLoa
     }
     return acc;
   }, {});
+  const previewInputs = accessibleTeams.map((team) => {
+    const canModerate = canModerateChat(userWithProfile, { ...team, id: team.id });
+    return {
+      team,
+      canModerate
+    };
+  });
+  const conversationLookupByTeam = previewInputs.reduce<Record<string, { user: AuthUser; team: Record<string, any>; canModerate: boolean }>>((acc, entry) => {
+    acc[entry.team.id] = {
+      user: userWithProfile,
+      team: entry.team,
+      canModerate: entry.canModerate
+    };
+    return acc;
+  }, {});
   const unreadCandidateTeamIds = accessibleTeams
     .filter((team) => {
       const latestMessageAt = latestMessageAtByTeam[team.id];
@@ -659,18 +675,13 @@ export async function loadChatInbox(user: AuthUser | null, options: ChatInboxLoa
     })
     .map((team) => team.id);
   const unreadCounts = await withTimeout(
-    Promise.resolve(getUnreadChatCounts(user.uid, unreadCandidateTeamIds, { latestMessageAtByTeam })),
+    Promise.resolve(getUnreadChatCounts(user.uid, unreadCandidateTeamIds, {
+      latestMessageAtByTeam,
+      conversationLookupByTeam
+    })),
     'Chat unread counts',
     3000
   ).catch(() => ({} as Record<string, number>));
-
-  const previewInputs = accessibleTeams.map((team) => {
-    const canModerate = canModerateChat(userWithProfile, { ...team, id: team.id });
-    return {
-      team,
-      canModerate
-    };
-  });
 
   const previews = includeLastMessages
     ? await Promise.all(previewInputs.map(async ({ team, canModerate }) => ({
@@ -1334,9 +1345,9 @@ export async function toggleTeamChatReaction(teamId: string, messageId: string, 
   }
 }
 
-export async function markTeamChatRead(userId: string, teamId: string) {
+export async function markTeamChatRead(userId: string, teamId: string, conversationId = DEFAULT_TEAM_CONVERSATION_ID) {
   try {
-    return await withTimeout(Promise.resolve(updateChatLastRead(userId, teamId)), 'Chat last read update', 2500);
+    return await withTimeout(Promise.resolve(updateChatLastRead(userId, teamId, conversationId)), 'Chat last read update', 2500);
   } catch (error) {
     if (!isNativeRuntime()) {
       console.warn('[chat-service] Failed to update chat last-read:', sanitizeErrorForLogging(error));
@@ -1347,16 +1358,32 @@ export async function markTeamChatRead(userId: string, teamId: string) {
     const profile = (await nativeGetDocument(userPath) || {}) as Record<string, any>;
     const lastReadAt = new Date();
     const teamChatState = getTeamChatStateEntry(profile, teamId);
+    if (isDefaultTeamConversation(conversationId)) {
+      await nativePatchDocument(userPath, {
+        chatLastRead: {
+          ...(profile.chatLastRead || {}),
+          [teamId]: lastReadAt
+        },
+        teamChatState: {
+          ...(profile.teamChatState || {}),
+          [teamId]: {
+            ...teamChatState,
+            lastReadAt
+          }
+        }
+      });
+      return null;
+    }
+
     await nativePatchDocument(userPath, {
-      chatLastRead: {
-        ...(profile.chatLastRead || {}),
-        [teamId]: lastReadAt
-      },
       teamChatState: {
         ...(profile.teamChatState || {}),
         [teamId]: {
           ...teamChatState,
-          lastReadAt
+          lastReadByConversation: {
+            ...(teamChatState.lastReadByConversation || {}),
+            [conversationId]: lastReadAt
+          }
         }
       }
     });

@@ -747,8 +747,8 @@ function ChatWindow({
     setShowJumpToLatest(false);
   }, []);
   const handleMarkRead = useCallback(() => {
-    maybeMarkRead(auth.user, teamId, true);
-  }, [auth.user, teamId]);
+    maybeMarkRead(auth.user, teamId, true, effectiveConversationId);
+  }, [auth.user, effectiveConversationId, teamId]);
 
   const {
     messages,
@@ -1072,7 +1072,7 @@ function ChatWindow({
         hasMessages: messages.length > 0,
         hasLoadedSnapshot: initialSnapshotLoadedRef.current
       })) {
-        maybeMarkRead(auth.user, teamId, true);
+        maybeMarkRead(auth.user, teamId, true, effectiveConversationId);
       }
     };
     document.addEventListener('visibilitychange', handleReturn);
@@ -1081,7 +1081,7 @@ function ChatWindow({
       document.removeEventListener('visibilitychange', handleReturn);
       window.removeEventListener('focus', handleReturn);
     };
-  }, [auth.user?.uid, messages.length, teamId]);
+  }, [auth.user, effectiveConversationId, messages.length, teamId]);
 
   useEffect(() => {
     mountedRef.current = true;
@@ -2124,7 +2124,12 @@ function resolveMutedState(
   return false;
 }
 
-function maybeMarkRead(user: AuthState['user'] | null | undefined, teamId: string, hasTeamId: boolean) {
+function maybeMarkRead(
+  user: AuthState['user'] | null | undefined,
+  teamId: string,
+  hasTeamId: boolean,
+  conversationId = DEFAULT_TEAM_CONVERSATION_ID
+) {
   const isPageVisible = document.visibilityState === 'visible' && !document.hidden;
   const isWindowFocused = document.hasFocus();
   if (shouldUpdateChatLastRead({
@@ -2134,7 +2139,7 @@ function maybeMarkRead(user: AuthState['user'] | null | undefined, teamId: strin
     isWindowFocused
   })) {
     if (user?.uid) {
-      void markTeamChatRead(user.uid, teamId);
+      void markTeamChatRead(user.uid, teamId, conversationId);
     }
   }
 }

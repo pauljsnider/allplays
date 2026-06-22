@@ -6280,13 +6280,26 @@ export async function toggleChatReaction(teamId, messageId, reactionKey, userId,
  * @param {string} userId - The user's ID
  * @param {string} teamId - The team ID
  */
-export async function updateChatLastRead(userId, teamId) {
+export async function updateChatLastRead(userId, teamId, conversationId = DEFAULT_TEAM_CONVERSATION_ID) {
     const userRef = doc(db, 'users', userId);
     const lastReadAt = Timestamp.now();
-    return await updateDoc(userRef, {
-        [`chatLastRead.${teamId}`]: lastReadAt,
-        [`teamChatState.${teamId}.lastReadAt`]: lastReadAt
-    });
+
+    if (isDefaultTeamConversation(conversationId)) {
+        return await updateDoc(userRef, {
+            [`chatLastRead.${teamId}`]: lastReadAt,
+            [`teamChatState.${teamId}.lastReadAt`]: lastReadAt
+        });
+    }
+
+    return await setDoc(userRef, {
+        teamChatState: {
+            [teamId]: {
+                lastReadByConversation: {
+                    [conversationId]: lastReadAt
+                }
+            }
+        }
+    }, { merge: true });
 }
 
 export async function updateChatMuted(userId, teamId, conversationId = DEFAULT_TEAM_CONVERSATION_ID) {
@@ -6336,8 +6349,14 @@ export async function clearChatMuted(userId, teamId, conversationId = DEFAULT_TE
  */
 export async function getUnreadChatCount(userId, teamId, options = {}) {
     const userData = options.userData || (await getDoc(doc(db, 'users', userId))).data();
-    const lastRead = userData?.teamChatState?.[teamId]?.lastReadAt || userData?.chatLastRead?.[teamId] || null;
-    const messagesRef = collection(db, 'teams', teamId, 'chatMessages');
+    const conversationId = options.conversationId || DEFAULT_TEAM_CONVERSATION_ID;
+    const teamChatState = userData?.teamChatState?.[teamId] || {};
+    const lastRead = isDefaultTeamConversation(conversationId)
+        ? teamChatState?.lastReadAt || userData?.chatLastRead?.[teamId] || null
+        : teamChatState?.lastReadByConversation?.[conversationId] || null;
+    const messagesRef = isDefaultTeamConversation(conversationId)
+        ? collection(db, 'teams', teamId, 'chatMessages')
+        : collection(db, 'teams', teamId, 'chatConversations', conversationId, 'chatMessages');
     const toMillis = (value) => {
         if (!value) return 0;
         if (typeof value?.toMillis === 'function') return value.toMillis();
@@ -6391,6 +6410,8 @@ export async function getUnreadChatCount(userId, teamId, options = {}) {
 export async function getUnreadChatCounts(userId, teamIds, options = {}) {
     const counts = {};
     const latestMessageAtByTeam = options?.latestMessageAtByTeam || {};
+    const conversationIdsByTeam = options?.conversationIdsByTeam || {};
+    const conversationLookupByTeam = options?.conversationLookupByTeam || {};
     let userData = {};
 
     try {
@@ -6406,12 +6427,40 @@ export async function getUnreadChatCounts(userId, teamIds, options = {}) {
 
     await Promise.all(teamIds.map(async (teamId) => {
         try {
-            counts[teamId] = await getUnreadChatCount(userId, teamId, {
-                userData,
-                latestMessageAt: Object.prototype.hasOwnProperty.call(latestMessageAtByTeam, teamId)
-                    ? latestMessageAtByTeam[teamId]
-                    : undefined
-            });
+            const storedConversationIds = Array.isArray(conversationIdsByTeam?.[teamId])
+                ? conversationIdsByTeam[teamId]
+                : null;
+            const conversationLookup = conversationLookupByTeam?.[teamId] || {};
+            const loadedConversationIds = storedConversationIds || (await getChatConversations(
+                teamId,
+                conversationLookup.user || null,
+                {
+                    team: conversationLookup.team || null,
+                    canModerate: conversationLookup.canModerate === true
+                }
+            )).map((conversation) => conversation?.id).filter(Boolean);
+            const conversationIds = [
+                DEFAULT_TEAM_CONVERSATION_ID,
+                ...loadedConversationIds.filter((conversationId) => !isDefaultTeamConversation(conversationId))
+            ];
+
+            const unreadCounts = await Promise.all(conversationIds.map(async (conversationId) => {
+                try {
+                    return await getUnreadChatCount(userId, teamId, {
+                        userData,
+                        conversationId,
+                        latestMessageAt: isDefaultTeamConversation(conversationId)
+                            && Object.prototype.hasOwnProperty.call(latestMessageAtByTeam, teamId)
+                            ? latestMessageAtByTeam[teamId]
+                            : undefined
+                    });
+                } catch (err) {
+                    console.warn(`Failed to get unread count for team ${teamId} conversation ${conversationId}:`, err);
+                    return 0;
+                }
+            }));
+
+            counts[teamId] = unreadCounts.reduce((sum, count) => sum + Number(count || 0), 0);
         } catch (err) {
             console.warn(`Failed to get unread count for team ${teamId}:`, err);
             counts[teamId] = 0;

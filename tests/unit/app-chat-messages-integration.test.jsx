@@ -2378,6 +2378,47 @@ describe('React app messages integration', () => {
         expect(chatMocks.unmuteTeamChat).toHaveBeenCalledWith('user-1', 'team-1', 'team');
     });
 
+    it('marks only the opened deep-linked conversation as read, including the view-return retry path', async () => {
+        Object.defineProperty(document, 'visibilityState', {
+            configurable: true,
+            value: 'visible'
+        });
+        Object.defineProperty(document, 'hidden', {
+            configurable: true,
+            value: false
+        });
+        document.hasFocus = vi.fn(() => true);
+        chatMocks.loadChatConversations.mockResolvedValueOnce([
+            { id: 'team', type: 'team', name: 'Bears Team Chat', participantIds: [], participantRoles: ['team'] },
+            { id: 'staff-conversation', type: 'group', name: 'Staff only', participantIds: ['user-1'], participantRoles: ['staff'] }
+        ]);
+        chatMocks.subscribeToTeamChatMessages.mockImplementationOnce((requestedTeamId, conversationId, onMessages) => {
+            onMessages([
+                chatMessage({
+                    id: `msg-${requestedTeamId}-${conversationId}`,
+                    text: 'Staff follow-up',
+                    senderId: 'coach-1',
+                    senderName: 'Coach Jamie'
+                })
+            ], { id: `cursor-${requestedTeamId}-${conversationId}` });
+            return { unsubscribe: vi.fn() };
+        });
+
+        await renderMessages('/messages/team-1?conversationId=staff-conversation');
+
+        expect(chatMocks.markTeamChatRead).toHaveBeenCalledWith('user-1', 'team-1', 'staff-conversation');
+        expect(chatMocks.markTeamChatRead).not.toHaveBeenCalledWith('user-1', 'team-1');
+
+        chatMocks.markTeamChatRead.mockClear();
+        await act(async () => {
+            window.dispatchEvent(new Event('focus'));
+        });
+        await flush();
+
+        expect(chatMocks.markTeamChatRead).toHaveBeenCalledWith('user-1', 'team-1', 'staff-conversation');
+        expect(chatMocks.markTeamChatRead).not.toHaveBeenCalledWith('user-1', 'team-1');
+    });
+
 
     it('keeps the updated mute state after switching away and back to a muted staff conversation', async () => {
         layoutMocks.isDesktopWeb = true;
