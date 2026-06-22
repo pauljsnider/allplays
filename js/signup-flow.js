@@ -22,14 +22,6 @@ export async function executeEmailPasswordSignup({
         throw new Error('Activation code is required');
     }
 
-    const validation = await validateAccessCode(activationCode);
-    if (!validation.valid) {
-        throw new Error(validation.message || 'Invalid activation code');
-    }
-
-    const userCredential = await createUserWithEmailAndPassword(auth, email, password);
-    const userId = userCredential.user.uid;
-
     async function cleanupFailedParentInviteSignup(createdUser) {
         if (createdUser && typeof createdUser.delete === 'function') {
             try {
@@ -45,6 +37,35 @@ export async function executeEmailPasswordSignup({
             } catch (signOutError) {
                 console.error('Error signing out after failed parent invite:', signOutError);
             }
+        }
+    }
+
+    function isGenericPreAuthValidationFailure(validationResult) {
+        const message = String(validationResult?.message || '').trim().toLowerCase();
+        return !validationResult?.valid && message === 'invalid or expired access code';
+    }
+
+    const preAuthValidation = await validateAccessCode(activationCode);
+    const shouldValidateAfterSignup = isGenericPreAuthValidationFailure(preAuthValidation);
+    if (!preAuthValidation.valid && !shouldValidateAfterSignup) {
+        throw new Error(preAuthValidation.message || 'Invalid activation code');
+    }
+
+    const userCredential = await createUserWithEmailAndPassword(auth, email, password);
+    const userId = userCredential.user.uid;
+    let validation = preAuthValidation;
+
+    if (shouldValidateAfterSignup) {
+        try {
+            validation = await validateAccessCode(activationCode);
+        } catch (error) {
+            await cleanupFailedParentInviteSignup(userCredential?.user);
+            throw error;
+        }
+
+        if (!validation.valid) {
+            await cleanupFailedParentInviteSignup(userCredential?.user);
+            throw new Error(validation.message || 'Invalid activation code');
         }
     }
 
