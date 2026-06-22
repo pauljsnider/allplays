@@ -586,6 +586,98 @@ describe('React app search service', () => {
         });
     });
 
+    it('uses parent home team visibility summaries without per-team Firestore fallback reads', async () => {
+        homeMocks.loadParentHome.mockResolvedValue({
+            teams: [
+                {
+                    teamId: 'team-summary-private',
+                    teamName: 'Summary Private',
+                    sport: 'Basketball',
+                    isPublic: false,
+                    active: true,
+                    archived: false,
+                    status: 'active',
+                    photoUrl: 'https://img.example.test/summary.png'
+                },
+                {
+                    teamId: 'team-summary-public',
+                    teamName: 'Summary Public',
+                    sport: 'Soccer',
+                    searchVisibility: 'public',
+                    active: true
+                },
+                {
+                    teamId: 'team-summary-visibility-private',
+                    teamName: 'Visibility Private',
+                    sport: 'Volleyball',
+                    visibility: 'private',
+                    active: true
+                },
+                {
+                    teamId: 'team-summary-archived',
+                    teamName: 'Archived Summary',
+                    sport: 'Baseball',
+                    isPublic: false,
+                    status: 'archived'
+                }
+            ]
+        });
+        firebaseMocks.getDocs
+            .mockResolvedValueOnce({ docs: [] })
+            .mockResolvedValueOnce({ docs: [] })
+            .mockResolvedValueOnce({ docs: [] })
+            .mockResolvedValueOnce({ docs: [] });
+
+        const teams = await loadAppSearchTeams(auth.user);
+
+        expect(firebaseMocks.getDoc).not.toHaveBeenCalled();
+        expect(teams.map((team) => team.id)).toEqual(['team-summary-private', 'team-summary-public', 'team-summary-visibility-private']);
+        expect(teams.find((team) => team.id === 'team-summary-private')).toMatchObject({
+            isPublic: false,
+            fromAppAccess: true,
+            photoUrl: 'https://img.example.test/summary.png'
+        });
+        expect(teams.find((team) => team.id === 'team-summary-visibility-private')).toMatchObject({
+            isPublic: false,
+            fromAppAccess: true
+        });
+    });
+
+    it('falls back to Firestore when parent home summaries only say app access without visibility', async () => {
+        homeMocks.loadParentHome.mockResolvedValue({
+            teams: [
+                {
+                    teamId: 'team-app-access-only',
+                    teamName: 'App Access Only',
+                    sport: 'Basketball',
+                    appAccess: true,
+                    active: true
+                }
+            ]
+        });
+        firebaseMocks.getDocs
+            .mockResolvedValueOnce({ docs: [] })
+            .mockResolvedValueOnce({ docs: [] })
+            .mockResolvedValueOnce({ docs: [] })
+            .mockResolvedValueOnce({ docs: [] });
+        firebaseMocks.getDoc.mockResolvedValueOnce(firestoreDocument('team-app-access-only', {
+            name: 'Stored App Access Only',
+            sport: 'Basketball',
+            isPublic: false,
+            active: true
+        }));
+
+        const teams = await loadAppSearchTeams(auth.user);
+
+        expect(firebaseMocks.doc).toHaveBeenCalledWith(firebaseMocks.db, 'teams', 'team-app-access-only');
+        expect(teams).toEqual([expect.objectContaining({
+            id: 'team-app-access-only',
+            name: 'App Access Only',
+            isPublic: false,
+            fromAppAccess: true
+        })]);
+    });
+
     it('loads private selected stream-volunteer teams before checking search access', async () => {
         homeMocks.loadParentHome.mockResolvedValue({ teams: [] });
         firebaseMocks.getDocs
