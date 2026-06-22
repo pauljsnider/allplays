@@ -9,7 +9,9 @@ describe('team chat notification delivery contract', () => {
     it('builds one recipient context for mentions and live chat with per-conversation mute state', () => {
         expect(functionsSource).toContain('async function buildTeamChatNotificationContext(teamId, options = {})');
         expect(functionsSource).toContain('const { includeMentions = true, conversationId = null } = options || {};');
+        expect(functionsSource).toContain("const { targetType = 'full_team', recipientIds = [] } = options || {};");
         expect(functionsSource).toContain('const normalizedConversationId = normalizeTeamChatConversationId(conversationId);');
+        expect(functionsSource).toContain('const normalizedRecipientIds = Array.from(new Set(');
         expect(functionsSource).toContain("const categories = includeMentions ? ['mentions', 'liveChat'] : ['liveChat'];");
         expect(functionsSource).toContain('const mutedConversations = userRecord.teamChatState?.[teamId]?.mutedConversations;');
         expect(functionsSource).toContain('mutedConversations[normalizedConversationId]');

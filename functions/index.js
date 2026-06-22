@@ -6571,25 +6571,62 @@ function dedupeNotificationTargetsByUserDevice(targets = []) {
   return uniqueTargets;
 }
 
+const teamChatMentionStartRegex = /(^|[\s([{"'])@/g;
+
 function detectMentionedUids(text, members, options = {}) {
   if (!text) return [];
   const { allowReservedMentions = false } = options || {};
   const mentioned = new Set();
-  const tokens = text.match(/@[\w.'"-]+/gi) || [];
-  for (const token of tokens) {
-    const name = token.slice(1).toLowerCase();
-    if (name === 'all' || name === 'team') {
-      if (!allowReservedMentions) continue;
-      members.forEach((m) => mentioned.add(m.uid));
-      break;
+  const sourceText = String(text || '');
+  const normalizedMembers = Array.isArray(members)
+    ? members.map((member) => {
+      const memberName = String(member?.displayName || member?.name || '').toLowerCase().trim().replace(/\s+/g, ' ');
+      return {
+        uid: member?.uid,
+        fullName: memberName,
+        compactName: memberName.replace(/\s+/g, ''),
+        firstName: memberName.split(' ')[0] || ''
+      };
+    }).filter((member) => member.uid && member.fullName)
+    : [];
+
+  for (const match of sourceText.matchAll(teamChatMentionStartRegex)) {
+    const startIndex = Number(match.index || 0) + String(match[1] || '').length + 1;
+    const candidateMatch = sourceText.slice(startIndex).match(/^([A-Za-z0-9][A-Za-z0-9.'-]*)(?:\s+([A-Za-z0-9][A-Za-z0-9.'-]*))?(?:\s+([A-Za-z0-9][A-Za-z0-9.'-]*))?/);
+    if (!candidateMatch) continue;
+    const candidateWords = candidateMatch.slice(1).filter(Boolean).map((part) => String(part).toLowerCase());
+    if (!candidateWords.length) continue;
+
+    const candidateLabels = [];
+    for (let wordCount = candidateWords.length; wordCount >= 1; wordCount -= 1) {
+      const label = candidateWords.slice(0, wordCount).join(' ');
+      candidateLabels.push({
+        name: label,
+        compactName: label.replace(/\s+/g, '')
+      });
     }
-    for (const member of members) {
-      const memberName = String(member.displayName || member.name || '').toLowerCase();
-      const memberNameCompact = memberName.replace(/\s+/g, '');
-      const firstName = memberName.split(' ')[0];
-      if (memberNameCompact === name || firstName === name) {
-        mentioned.add(member.uid);
+
+    let matchedReservedMention = false;
+    for (const candidate of candidateLabels) {
+      if (candidate.name !== 'all' && candidate.name !== 'team') continue;
+      if (!allowReservedMentions) {
+        matchedReservedMention = true;
+        break;
       }
+      normalizedMembers.forEach((member) => mentioned.add(member.uid));
+      return [...mentioned];
+    }
+    if (matchedReservedMention) continue;
+
+    for (const candidate of candidateLabels) {
+      let matchedMember = false;
+      for (const member of normalizedMembers) {
+        if (member.fullName === candidate.name || member.compactName === candidate.compactName || member.firstName === candidate.name) {
+          mentioned.add(member.uid);
+          matchedMember = true;
+        }
+      }
+      if (matchedMember) break;
     }
   }
   return [...mentioned];
@@ -6597,8 +6634,20 @@ function detectMentionedUids(text, members, options = {}) {
 
 async function buildTeamChatNotificationContext(teamId, options = {}) {
   const { includeMentions = true, conversationId = null } = options || {};
+  const { targetType = 'full_team', recipientIds = [] } = options || {};
   const normalizedConversationId = normalizeTeamChatConversationId(conversationId);
-  const teamSnap = await firestore.doc(`teams/${teamId}`).get();
+  const allowedTargetTypes = new Set(['full_team', 'staff', 'individuals']);
+  const normalizedTargetType = allowedTargetTypes.has(String(targetType || '').trim())
+    ? String(targetType || '').trim()
+    : 'full_team';
+  const teamRef = firestore.doc(`teams/${teamId}`);
+  const conversationRef = normalizedConversationId === 'team'
+    ? null
+    : firestore.doc(`teams/${teamId}/chatConversations/${normalizedConversationId}`);
+  const [teamSnap, conversationSnap] = await Promise.all([
+    teamRef.get(),
+    conversationRef ? conversationRef.get() : Promise.resolve(null)
+  ]);
   if (!teamSnap.exists) {
     return {
       members: [],
@@ -6611,6 +6660,44 @@ async function buildTeamChatNotificationContext(teamId, options = {}) {
   }
 
   const team = teamSnap.data() || {};
+  const conversation = conversationSnap?.exists ? (conversationSnap.data() || {}) : {};
+  const participantRoles = new Set(
+    (Array.isArray(conversation.participantRoles) ? conversation.participantRoles : [])
+      .map((role) => String(role || '').trim().toLowerCase())
+      .filter(Boolean)
+  );
+  const conversationParticipantIds = Array.from(new Set(
+    (Array.isArray(conversation.participantIds) ? conversation.participantIds : [])
+      .map((id) => String(id || '').trim())
+      .filter(Boolean)
+  ));
+  const normalizedRecipientIds = Array.from(new Set(
+    (Array.isArray(recipientIds) ? recipientIds : [])
+      .map((id) => String(id || '').trim())
+      .filter(Boolean)
+  ));
+  const effectiveTargetType = normalizedConversationId === 'team'
+    ? 'full_team'
+    : (participantRoles.has('staff')
+      ? 'staff'
+      : (normalizedTargetType === 'individuals' || conversationParticipantIds.length > 0 || normalizedRecipientIds.length > 0
+        ? 'individuals'
+        : normalizedTargetType));
+  const scopedParticipantIds = effectiveTargetType === 'individuals'
+    ? Array.from(new Set([...conversationParticipantIds, ...normalizedRecipientIds]))
+    : [];
+  const scopedParticipantUids = new Set(
+    scopedParticipantIds
+      .filter((id) => !id.toLowerCase().startsWith('email:'))
+      .map((id) => id.toLowerCase().startsWith('user:') ? id.slice(5).trim() : id)
+      .filter(Boolean)
+  );
+  const scopedParticipantEmails = Array.from(new Set(
+    scopedParticipantIds
+      .filter((id) => id.toLowerCase().startsWith('email:'))
+      .map((id) => id.slice(6).trim().toLowerCase())
+      .filter(Boolean)
+  ));
   const users = new Map();
   const addRole = (uid, role) => {
     const normalizedUid = String(uid || '').trim();
@@ -6622,19 +6709,28 @@ async function buildTeamChatNotificationContext(teamId, options = {}) {
 
   addRole(team.ownerId, 'staff');
 
-  const [parentSnap, indexedTargetSnap, adminUserIds] = await Promise.all([
+  const [parentSnap, indexedTargetSnap, adminUserIds, participantEmailUserIds] = await Promise.all([
     firestore.collection('users').where('parentTeamIds', 'array-contains', teamId).get(),
     firestore.collection(`teams/${teamId}/notificationTargets`).get(),
-    getUserIdsByEmails(team.adminEmails || [])
+    getUserIdsByEmails(team.adminEmails || []),
+    scopedParticipantEmails.length > 0 ? getUserIdsByEmails(scopedParticipantEmails) : Promise.resolve([])
   ]);
 
   parentSnap.forEach((docSnap) => addRole(docSnap.id, 'parent'));
   adminUserIds.forEach((uid) => addRole(uid, 'staff'));
+  participantEmailUserIds.forEach((uid) => scopedParticipantUids.add(uid));
 
-  const members = Array.from(users.values()).map((entry) => ({
+  let members = Array.from(users.values()).map((entry) => ({
     uid: entry.uid,
     roles: Array.from(entry.roles)
   }));
+
+  if (effectiveTargetType === 'staff') {
+    members = members.filter((member) => Array.isArray(member.roles) && member.roles.includes('staff'));
+  } else if (effectiveTargetType === 'individuals') {
+    members = members.filter((member) => scopedParticipantUids.has(member.uid));
+  }
+
   const userRecords = await getUserRecordsByIds(members.map((member) => member.uid));
 
   const categories = includeMentions ? ['mentions', 'liveChat'] : ['liveChat'];
@@ -6747,73 +6843,75 @@ function buildTeamChatNotificationPlan({ text, actorUid = null, recipientContext
   };
 }
 
-exports.notifyTeamChatMessageCreated = functions.firestore
-  .document('teams/{teamId}/chatMessages/{messageId}')
-  .onCreate(async (snapshot, context) => {
-    const data = snapshot.data() || {};
-    const text = String(data.text || '').trim();
-    const imageUrl = String(data.imageUrl || '').trim();
-    if (!text && !imageUrl) return null;
-    if (isPreEventReminderChatMessage(data)) return null;
+async function handleTeamChatMessageCreated(snapshot, context) {
+  const data = snapshot.data() || {};
+  const text = String(data.text || '').trim();
+  const imageUrl = String(data.imageUrl || '').trim();
+  if (!text && !imageUrl) return null;
+  if (isPreEventReminderChatMessage(data)) return null;
 
-    const teamId = context.params.teamId;
-    const actorUid = data.senderId || null;
-    const conversationId = normalizeTeamChatConversationId(data.conversationId);
-    const senderName = String(data.senderName || 'Team').trim();
-    const body = text
-      ? (text.length > 120 ? `${text.slice(0, 117)}...` : text)
-      : 'sent a photo';
+  const teamId = context.params.teamId;
+  const actorUid = data.senderId || null;
+  const conversationId = normalizeTeamChatConversationId(data.conversationId || context.params.conversationId);
+  const senderName = String(data.senderName || 'Team').trim();
+  const body = text
+    ? (text.length > 120 ? `${text.slice(0, 117)}...` : text)
+    : 'sent a photo';
 
-    const shouldResolveMentions = Boolean(text);
-    const recipientContext = await buildTeamChatNotificationContext(teamId, {
-      includeMentions: shouldResolveMentions,
-      conversationId
-    });
-    const notificationPlan = buildTeamChatNotificationPlan({
-      text,
-      actorUid,
-      recipientContext
-    });
+  const shouldResolveMentions = Boolean(text);
+  const recipientContext = await buildTeamChatNotificationContext(teamId, {
+    includeMentions: shouldResolveMentions,
+    conversationId,
+    targetType: data.targetType,
+    recipientIds: data.recipientIds
+  });
+  const notificationPlan = buildTeamChatNotificationPlan({
+    text,
+    actorUid,
+    recipientContext
+  });
 
-    // Detect @mentions and send targeted mentions-category pushes
-    const mentionedUids = notificationPlan.mentionedUids;
+  const mentionedUids = notificationPlan.mentionedUids;
+  const results = [];
 
-    const results = [];
+  if (shouldResolveMentions) {
+    await snapshot.ref.update({ mentionedUids });
+  }
 
-    if (shouldResolveMentions) {
-      await snapshot.ref.update({ mentionedUids });
-    }
-
-    if (mentionedUids.length) {
-      // Send mentions push only to the mentioned users (those who have mentions enabled)
-      if (notificationPlan.mentionTargets.length) {
-        results.push(await sendDirectTargetsNotification({
-          targets: notificationPlan.mentionTargets,
-          category: 'mentions',
-          title: `${senderName} mentioned you`,
-          body,
-          teamId,
-          conversationId
-        }));
-      }
-    }
-
-    if (!notificationPlan.liveChatTargets.length) {
-      return results.length ? results : null;
-    }
-
-    // liveChat push — skip users who already got a mentions push or muted this conversation
+  if (mentionedUids.length && notificationPlan.mentionTargets.length) {
     results.push(await sendDirectTargetsNotification({
-      targets: notificationPlan.liveChatTargets,
-      category: 'liveChat',
-      title: `${senderName}: Team Chat`,
+      targets: notificationPlan.mentionTargets,
+      category: 'mentions',
+      title: `${senderName} mentioned you`,
       body,
       teamId,
       conversationId
     }));
+  }
 
-    return results;
-  });
+  if (!notificationPlan.liveChatTargets.length) {
+    return results.length ? results : null;
+  }
+
+  results.push(await sendDirectTargetsNotification({
+    targets: notificationPlan.liveChatTargets,
+    category: 'liveChat',
+    title: `${senderName}: Team Chat`,
+    body,
+    teamId,
+    conversationId
+  }));
+
+  return results;
+}
+
+exports.notifyTeamChatMessageCreated = functions.firestore
+  .document('teams/{teamId}/chatMessages/{messageId}')
+  .onCreate(handleTeamChatMessageCreated);
+
+exports.notifyConversationChatMessageCreated = functions.firestore
+  .document('teams/{teamId}/chatConversations/{conversationId}/chatMessages/{messageId}')
+  .onCreate(handleTeamChatMessageCreated);
 
 exports.postSharedGameCancellationNotification = functions.https.onCall(async (data, context) => {
   if (!context.auth?.uid) {
