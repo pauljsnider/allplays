@@ -4168,7 +4168,14 @@ function buildNotificationAppRoute({ category, teamId, gameId, eventId, batchId 
     const query = params.toString();
     return `/parent-tools/fees${query ? `?${query}` : ''}`;
   }
-  if ((category === 'liveChat' || category === 'mentions') && teamId) {
+  if (category === 'mentions' && teamId) {
+    const route = `/messages/${encodeURIComponent(teamId)}`;
+    if (!conversationId) {
+      return route;
+    }
+    return `${route}?conversation=${encodeURIComponent(conversationId)}`;
+  }
+  if (category === 'liveChat' && teamId) {
     const route = `/messages/${encodeURIComponent(teamId)}`;
     if (!conversationId) {
       return route;

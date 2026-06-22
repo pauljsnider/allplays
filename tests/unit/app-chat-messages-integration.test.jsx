@@ -464,7 +464,7 @@ describe('React app messages integration', () => {
             { id: 'staff-conversation', type: 'group', name: 'Staff only', participantIds: ['user-1'], participantRoles: ['staff'] }
         ]);
 
-        const { container } = await renderMessages('/messages/team-1?conversationId=staff-conversation');
+        const { container } = await renderMessages('/messages/team-1?conversation=staff-conversation');
 
         expect(chatMocks.loadChatInbox).not.toHaveBeenCalled();
         expect(chatMocks.loadChatTeamContext).toHaveBeenCalledWith('team-1', auth.user);

@@ -64,7 +64,7 @@ describe('notification delivery metadata', () => {
         });
 
         expect(mentionLink).toBe('https://allplays.ai/team-chat.html?teamId=team%201&conversationId=parents%2Fthread%202');
-        expect(appRoute).toBe('/messages/team%201?conversationId=parents%2Fthread%202');
+        expect(appRoute).toBe('/messages/team%201?conversation=parents%2Fthread%202');
     });
 
     it('collapses rapid live score notifications by game on iOS', () => {

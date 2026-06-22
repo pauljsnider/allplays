@@ -710,9 +710,9 @@ test('sendCategoryNotification uses eventId for rideshare deep links when no gam
         }
 });
 
-for (const [category, categories] of [
-    ['liveChat', { liveChat: true }],
-    ['mentions', { mentions: true }]
+for (const [category, categories, expectedAppRoute] of [
+    ['liveChat', { liveChat: true }, '/messages/team-1?conversationId=staff%20room'],
+    ['mentions', { mentions: true }, '/messages/team-1?conversation=staff%20room']
 ]) {
     test(`sendCategoryNotification includes conversation deep links for ${category} notifications`, async () => {
         const { internals, env, cleanup } = loadNotificationInternals({
@@ -749,12 +749,12 @@ for (const [category, categories] of [
                 conversationId: 'staff room',
                 childId: '',
                 rsvpId: '',
-                appRoute: '/messages/team-1?conversationId=staff%20room',
+                appRoute: expectedAppRoute,
                 link: 'https://allplays.ai/team-chat.html?teamId=team-1&conversationId=staff%20room'
             });
             assert.equal(env.messagingCalls[0].webLink, 'https://allplays.ai/team-chat.html?teamId=team-1&conversationId=staff%20room');
             assert.equal(env.inboxWrites.length, 1);
-            assert.equal(env.inboxWrites[0].value.appRoute, '/messages/team-1?conversationId=staff%20room');
+            assert.equal(env.inboxWrites[0].value.appRoute, expectedAppRoute);
             assert.equal(env.auditWrites.length, 1);
             assert.equal(env.auditWrites[0].value.category, category);
         } finally {
