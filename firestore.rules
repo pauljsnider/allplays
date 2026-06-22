@@ -1929,8 +1929,7 @@ service cloud.firestore {
 
         // Manager-only player stats subcollection for private player-scoped metrics.
         match /privatePlayerStats/{statId} {
-          allow read, create, update: if isTeamOwnerOrAdmin(teamId) || canScorekeepGame(teamId, gameId);
-          allow delete: if isTeamOwnerOrAdmin(teamId);
+          allow read, create, update, delete: if isTeamOwnerOrAdmin(teamId) || canScorekeepGame(teamId, gameId);
         }
 
         // Live Events subcollection - for real-time game broadcasting
