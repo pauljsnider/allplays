@@ -119,12 +119,13 @@ describe('standard tracker finish batch limits', () => {
         expect(secondaryBatches.map((batch) => batch.operations.length)).toEqual([450, 450, 450, 450, 10]);
         secondaryBatches.forEach((batch) => {
             expect(batch.commitCount).toBe(1);
-            expect(batch.operations.every((op) => op.type === 'set' || op.type === 'delete')).toBe(true);
+            expect(batch.operations.every((op) => ['set', 'delete'].includes(op.type))).toBe(true);
         });
         expect(secondaryBatches[0].operations.slice(0, 2)).toEqual([
             expect.objectContaining({ type: 'set', ref: { path: 'teams/team-1/games/game-1/aggregatedStats/player-1' } }),
             expect.objectContaining({ type: 'delete', ref: { path: 'teams/team-1/games/game-1/privatePlayerStats/player-1' } })
         ]);
+        expect(secondaryBatches.flatMap((batch) => batch.operations).filter((op) => op.type === 'delete')).toHaveLength(905);
         expect(gameUpdateBatch.operations).toEqual([
             expect.objectContaining({ type: 'update', ref: { path: 'teams/team-1/games/game-1' } })
         ]);
@@ -225,7 +226,7 @@ describe('standard tracker finish batch limits', () => {
         ]);
     });
 
-    it('deletes stale private player stats when the current finish has no private payload', async () => {
+    it('deletes stale private player stats when the current finish has no private data', async () => {
         const harness = createFirestoreHarness();
 
         await commitStandardTrackerFinishData({
@@ -243,7 +244,7 @@ describe('standard tracker finish batch limits', () => {
             statTrackerConfig: {
                 columns: ['PTS'],
                 statDefinitions: [
-                    { label: 'PTS', acronym: 'PTS' }
+                    { label: 'PTS', acronym: 'PTS', scope: 'player' }
                 ]
             },
             finalHome: 8,
@@ -264,7 +265,6 @@ describe('standard tracker finish batch limits', () => {
             }
         ]);
     });
-
 
     it('chunks more than 500 game logs instead of rejecting the finish', async () => {
         const { harness, result } = await runFinishSave({
@@ -328,7 +328,8 @@ describe('standard tracker finish batch limits', () => {
             type: 'delete',
             ref: { path: 'teams/team-1/games/game-1/privatePlayerStats/p1' }
         });
-        expect(harness.batches[1].operations[2].data).toMatchObject({
+        const benWrite = harness.batches[1].operations.find((op) => op.ref.path === 'teams/team-1/games/game-1/aggregatedStats/p2');
+        expect(benWrite.data).toMatchObject({
             playerName: 'Ben',
             playerNumber: '12',
             participated: false,
@@ -341,7 +342,7 @@ describe('standard tracker finish batch limits', () => {
             type: 'delete',
             ref: { path: 'teams/team-1/games/game-1/privatePlayerStats/p2' }
         });
-        expect(hasPlayerProfileParticipation(harness.batches[1].operations[2].data)).toBe(false);
+        expect(hasPlayerProfileParticipation(benWrite.data)).toBe(false);
     });
 
     it('rejects when a secondary aggregated stats batch fails after primary commit', async () => {
