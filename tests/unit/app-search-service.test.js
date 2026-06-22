@@ -533,7 +533,7 @@ describe('React app search service', () => {
         expect(dbMocks.getTeams).not.toHaveBeenCalled();
     });
 
-    it('uses parent home summary teams without per-team Firestore fallback reads', async () => {
+    it('hydrates parent home summary teams with Firestore metadata when direct access queries miss them', async () => {
         homeMocks.loadParentHome.mockResolvedValue({
             teams: [
                 { teamId: 'team-home', teamName: 'Home Rockets', sport: 'Basketball', location: 'Kansas City, MO' },
@@ -542,15 +542,28 @@ describe('React app search service', () => {
                 { teamId: 'team-status-archived-summary', teamName: 'Status Archived Summary', sport: 'Softball', status: 'archived' }
             ]
         });
+        firebaseMocks.getDoc.mockResolvedValueOnce(firestoreDocument('team-home', {
+            name: 'Stored Home Rockets',
+            sport: 'Basketball',
+            isPublic: false,
+            city: 'Kansas City',
+            state: 'MO',
+            zip: '64111',
+            active: true
+        }));
 
         const teams = await loadAppSearchTeams(auth.user);
 
-        expect(firebaseMocks.getDoc).not.toHaveBeenCalled();
-        expect(firebaseMocks.doc).not.toHaveBeenCalledWith(firebaseMocks.db, 'teams', 'team-home');
+        expect(firebaseMocks.doc).toHaveBeenCalledWith(firebaseMocks.db, 'teams', 'team-home');
         expect(teams.map((team) => team.id)).toEqual(['team-home']);
         expect(teams[0]).toMatchObject({
             id: 'team-home',
             name: 'Home Rockets',
+            sport: 'Basketball',
+            city: 'Kansas City',
+            state: 'MO',
+            zip: '64111',
+            isPublic: false,
             location: 'Kansas City, MO',
             fromAppAccess: true
         });
