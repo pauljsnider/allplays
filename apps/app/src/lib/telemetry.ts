@@ -1,7 +1,9 @@
 import * as Sentry from '@sentry/browser';
 import type { ErrorEvent as SentryErrorEvent } from '@sentry/browser';
 import type { ReactErrorBoundaryReport } from '../components/ErrorBoundary';
-import { sanitizeErrorForLogging } from './nativeRestLogging';
+import { createLogger } from './logger';
+
+const logger = createLogger('error-tracking');
 
 type TelemetryOptions = {
   flush?: boolean;
@@ -170,7 +172,7 @@ export function initializeAppErrorTracking(options: ErrorTrackingInitOptions = {
     }
     return true;
   } catch (error) {
-    console.warn('[error-tracking] Failed to initialize:', sanitizeErrorForLogging(error));
+    logger.warn('Failed to initialize.', { error });
     return false;
   }
 }

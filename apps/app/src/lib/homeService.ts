@@ -7,6 +7,7 @@ import {
   type ParentHomeInboxTeam,
   type ParentHomeModel
 } from './homeLogic';
+import { createLogger } from './logger';
 import { getParentScheduleSummaryCacheKey, loadCachedAppData } from './appDataCache';
 import { toAppServiceError, type AppServiceError } from './appErrors';
 import {
@@ -20,6 +21,7 @@ import type { AuthUser } from './types';
 const homeSummaryTtlMs = 45 * 1000;
 const homeSecondaryTtlMs = 30 * 1000;
 const teamsSummaryTtlMs = 30 * 1000;
+const logger = createLogger('home');
 
 function rethrowIfPermissionError(error: unknown, fallbackMessage: string) {
   const appError = toAppServiceError(error, fallbackMessage);
@@ -170,7 +172,7 @@ export async function loadParentHomeWithSecondaryData(
       }).catch((error) => {
         const appError = rethrowIfPermissionError(error, 'Unable to hydrate Home schedule.');
         secondaryErrors.push(appError);
-        console.warn('[home] Schedule hydration failed:', appError);
+        logger.warn('Schedule hydration failed.', { error: appError });
         return null;
       }),
       loadChatInbox(user).then((chatInbox) => {
@@ -180,7 +182,7 @@ export async function loadParentHomeWithSecondaryData(
       }).catch((error) => {
         const appError = rethrowIfPermissionError(error, 'Unable to load Home chat.');
         secondaryErrors.push(appError);
-        console.warn('[home] Chat inbox failed:', appError);
+        logger.warn('Chat inbox failed.', { error: appError });
         return [];
       }),
       Promise.resolve(listParentTeamFeeRecipients(user.uid, children)).then((rawFees) => {
@@ -190,7 +192,7 @@ export async function loadParentHomeWithSecondaryData(
       }).catch((error) => {
         const appError = rethrowIfPermissionError(error, 'Unable to load Home fees.');
         secondaryErrors.push(appError);
-        console.warn('[home] Fees failed:', appError);
+        logger.warn('Fees failed.', { error: appError });
         return [];
       })
     ]);

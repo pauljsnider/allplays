@@ -1,8 +1,11 @@
 import { Capacitor } from '@capacitor/core';
 import { FirebaseMessaging } from '@capacitor-firebase/messaging';
 import type { CreateChannelOptions, NotificationActionPerformedEvent } from '@capacitor-firebase/messaging';
+import { createLogger } from './logger';
 import { saveNotificationDeviceToken } from './profileService';
 import { rememberPendingPushRoute, resolvePushNotificationRoute } from './pushNotificationRouting';
+
+const logger = createLogger('push');
 
 export type PushNotificationPermissionState = 'enabled' | 'prompt' | 'blocked' | 'unsupported';
 
@@ -124,7 +127,7 @@ export async function ensureAndroidNotificationChannels(): Promise<void> {
     try {
       await FirebaseMessaging.createChannel({ ...channel });
     } catch (error) {
-      console.warn('[push] Unable to create Android notification channel:', channel.id, error);
+      logger.warn('Unable to create Android notification channel.', { channelId: channel.id, error });
     }
   }));
 }

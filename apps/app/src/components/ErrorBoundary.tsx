@@ -1,4 +1,7 @@
 import { Component, type ErrorInfo, type ReactNode } from 'react';
+import { createLogger } from '../lib/logger';
+
+const logger = createLogger('error-boundary');
 
 type ErrorBoundaryVariant = 'screen' | 'panel';
 
@@ -128,11 +131,11 @@ export function reportReactErrorBoundary(report: ReactErrorBoundaryReport) {
     try {
       reporter(report);
     } catch (reportError) {
-      console.error('[error-boundary] report hook failed:', reportError);
+      logger.error('Report hook failed.', { error: reportError });
     }
   }
 
-  console.error('[error-boundary] React render error:', {
+  logger.error('React render error.', {
     boundaryName: report.boundaryName,
     location: report.location,
     error: report.error,

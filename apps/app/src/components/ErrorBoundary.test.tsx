@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { fireEvent, render, screen } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ErrorBoundary } from './ErrorBoundary';
 
@@ -13,6 +13,7 @@ describe('ErrorBoundary', () => {
   });
 
   afterEach(() => {
+    cleanup();
     vi.restoreAllMocks();
     delete window.__ALLPLAYS_REPORT_REACT_ERROR__;
   });

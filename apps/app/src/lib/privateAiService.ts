@@ -18,6 +18,7 @@ import {
 import { getChatInboxPreview, loadChatInbox } from './chatService';
 import { searchHelpKnowledge } from './helpKnowledgeService';
 import { loadParentHome } from './homeService';
+import { createLogger } from './logger';
 import {
   loadParentCertificates,
   loadParentFeesForApp,
@@ -76,6 +77,7 @@ export type PrivateAiSendResult = {
 
 const privateAiCollectionName = 'privateAiMessages';
 const privateAiConversationCollectionName = 'privateAiConversations';
+const logger = createLogger('private-ai');
 export const DEFAULT_PRIVATE_AI_CONVERSATION_ID = 'default';
 export const DRAFT_PRIVATE_AI_CONVERSATION_ID = '__draft__';
 const maxLoadedMessages = 80;
@@ -209,7 +211,7 @@ export async function sendPrivateAiMessage(
       toolResults: aiResult.toolResults
     };
   } catch (error: any) {
-    console.warn('[private-ai] Unable to generate answer:', error);
+    logger.warn('Unable to generate answer.', { error });
     const assistantMessage = await savePrivateAiMessage(user, {
       role: 'assistant',
       text: 'I could not reach ALL PLAYS AI right now. Try again in a moment.',

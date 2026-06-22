@@ -14,6 +14,7 @@ import {
   where
 } from './adapters/legacySocialDb';
 import { loadParentHome } from './homeService';
+import { createLogger } from './logger';
 import type { ParentHomeModel } from './homeLogic';
 import { uploadTeamChatAttachment } from './chatService';
 import type { AuthUser } from './types';
@@ -37,6 +38,7 @@ const primaryDataTimeoutMs = 5000;
 const socialPostLimit = 30;
 const friendSuggestionLimit = 8;
 const publicUserProfileCollection = 'publicUserProfiles';
+const logger = createLogger('social-service');
 
 type FirestoreDoc = Record<string, any> & { id: string };
 
@@ -152,15 +154,15 @@ export async function loadSocialHome(user: AuthUser | null, homeOverride?: Paren
   const derivedFeed = buildDerivedSocialFeedItems(home, user.uid, authorName);
   const [posts, friendships, suggestions] = await Promise.all([
     loadVisibleSocialPosts(user, home).catch((error) => {
-      console.warn('[social-service] Unable to load social posts:', error);
+      logger.warn('Unable to load social posts.', { error });
       return [];
     }),
     loadFriendships(user).catch((error) => {
-      console.warn('[social-service] Unable to load friendships:', error);
+      logger.warn('Unable to load friendships.', { error });
       return [];
     }),
     loadFriendSuggestions(user, home).catch((error) => {
-      console.warn('[social-service] Unable to load friend suggestions:', error);
+      logger.warn('Unable to load friend suggestions.', { error });
       return [];
     })
   ]);
