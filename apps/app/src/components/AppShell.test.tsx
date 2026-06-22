@@ -44,6 +44,23 @@ vi.mock('./AppSearchDialog', () => ({
   AppSearchDialog: ({ open }: { open: boolean }) => (open ? <div role="dialog" aria-label="Search teams, players, actions, and help" /> : null),
 }));
 
+vi.mock('./NotificationInboxSheet', () => ({
+  NotificationInboxSheet: ({
+    items,
+    inboxState,
+  }: {
+    items: Array<{ id: string; text: string }>;
+    inboxState: 'loading' | 'ready' | 'error';
+  }) => (
+    <div role="dialog" aria-label="Notifications">
+      <div data-testid="notification-inbox-sheet-state">{inboxState}</div>
+      {items.map((item) => (
+        <div key={item.id}>{item.text}</div>
+      ))}
+    </div>
+  ),
+}));
+
 const auth: AuthState = {
   user: null,
   profile: null,
@@ -173,6 +190,59 @@ describe('AppShell', () => {
         expect.any(Function)
       );
     });
+  });
+
+  it('clears cached inbox items when the signed-in uid changes while the sheet is closed', async () => {
+    subscribeToNotificationInboxMock.mockImplementation((uid, onItems) => {
+      onItems([
+        {
+          id: `notif-${uid}`,
+          category: 'team_message',
+          type: 'team_message',
+          title: 'Notification',
+          body: '',
+          text: `Notification for ${uid}`,
+          appRoute: '/messages',
+          conversationId: '',
+          createdAt: null,
+          readAt: null,
+        },
+      ]);
+      return vi.fn();
+    });
+
+    const { rerender } = render(
+      <MemoryRouter initialEntries={['/home']}>
+        <Routes>
+          <Route path="/home" element={<AppShell auth={signedInAuth}><div>Home</div></AppShell>} />
+        </Routes>
+      </MemoryRouter>
+    );
+
+    fireEvent.click(screen.getByTestId('app-shell-notifications-trigger'));
+    await waitFor(() => {
+      expect(screen.getByText('Notification for user-123')).toBeTruthy();
+    });
+
+    fireEvent.click(screen.getByTestId('app-shell-notifications-trigger'));
+
+    rerender(
+      <MemoryRouter initialEntries={['/home']}>
+        <Routes>
+          <Route
+            path="/home"
+            element={<AppShell auth={{ ...signedInAuth, user: { ...signedInAuth.user!, uid: 'user-456' } }}><div>Home</div></AppShell>}
+          />
+        </Routes>
+      </MemoryRouter>
+    );
+
+    fireEvent.click(screen.getByTestId('app-shell-notifications-trigger'));
+
+    await waitFor(() => {
+      expect(screen.getByTestId('notification-inbox-sheet-state').textContent).toBe('loading');
+    });
+    expect(screen.queryByText('Notification for user-123')).toBeNull();
   });
 
   it('keeps the mobile search trigger discoverable with a stable selector', () => {

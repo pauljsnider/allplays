@@ -75,6 +75,7 @@ export function AppShell({ auth, children }: AppShellProps) {
   const navigate = useNavigate();
   const location = useLocation();
   const routeStartedAtRef = useRef(typeof performance !== 'undefined' ? performance.now() : Date.now());
+  const lastInboxUidRef = useRef<string | null>(auth.user?.uid ?? null);
   const isAiRoute = location.pathname === '/ai';
   const isMobileChatDetail = !isDesktopWeb && location.pathname.startsWith('/messages/') && location.pathname !== '/messages';
   const isDesktopMessages = isDesktopWeb && (location.pathname.startsWith('/messages') || isAiRoute);
@@ -167,6 +168,11 @@ export function AppShell({ auth, children }: AppShellProps) {
 
   useEffect(() => {
     const uid = auth.user?.uid;
+    if (lastInboxUidRef.current !== (uid ?? null)) {
+      lastInboxUidRef.current = uid ?? null;
+      setInboxItems([]);
+      setInboxState('idle');
+    }
     if (!uid) {
       setInboxItems([]);
       setInboxState('idle');
