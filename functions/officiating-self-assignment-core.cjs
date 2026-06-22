@@ -1,4 +1,6 @@
 const OFFICIATING_ASSIGNMENT_STATUSES = new Set(['pending', 'accepted', 'declined', 'cant_make', 'needs_review', 'open']);
+const SHARED_GAME_ID_PREFIX = 'shared_';
+const LEGACY_SHARED_GAME_ID_PREFIX = 'shared::';
 
 function normalizeString(value) {
     return String(value || '').trim();
@@ -20,6 +22,36 @@ function normalizeDocId(value, label) {
         throw createClaimError('invalid-argument', `${label} is required.`);
     }
     return normalized;
+}
+
+function isSharedGameSyntheticId(gameId) {
+    return typeof gameId === 'string'
+        && (gameId.startsWith(SHARED_GAME_ID_PREFIX) || gameId.startsWith(LEGACY_SHARED_GAME_ID_PREFIX));
+}
+
+function decodeSharedGameSyntheticId(gameId) {
+    if (!isSharedGameSyntheticId(gameId)) return null;
+    const prefix = gameId.startsWith(SHARED_GAME_ID_PREFIX)
+        ? SHARED_GAME_ID_PREFIX
+        : LEGACY_SHARED_GAME_ID_PREFIX;
+    return decodeURIComponent(gameId.slice(prefix.length));
+}
+
+function resolveOfficiatingGamePath(teamId, gameId) {
+    const sharedPath = decodeSharedGameSyntheticId(gameId);
+    return sharedPath || `teams/${teamId}/games/${gameId}`;
+}
+
+function isTeamLinkedToSharedGame(game = {}, teamId = '') {
+    const normalizedTeamId = normalizeString(teamId);
+    if (!normalizedTeamId) return false;
+
+    if (normalizeString(game.homeTeamId) === normalizedTeamId) return true;
+    if (normalizeString(game.awayTeamId) === normalizedTeamId) return true;
+    const teamIds = Array.isArray(game.teamIds)
+        ? game.teamIds.map(normalizeString).filter(Boolean)
+        : [];
+    return teamIds.includes(normalizedTeamId);
 }
 
 function normalizeOpenOfficiatingSlotClaimInput(data = {}) {
@@ -231,6 +263,10 @@ module.exports = {
     normalizeOfficiatingSlots,
     computeOfficiatingCoverageStatus,
     isEligibleOpenOfficiatingSlotParticipant,
+    isSharedGameSyntheticId,
+    decodeSharedGameSyntheticId,
+    resolveOfficiatingGamePath,
+    isTeamLinkedToSharedGame,
     claimOpenOfficiatingSlotForOfficial,
     buildOpenOfficiatingSlotClaimUpdate,
     buildOfficiatingSelfAssignmentNotificationRecord

@@ -110,6 +110,8 @@ const {
 const {
   normalizeOpenOfficiatingSlotClaimInput,
   isEligibleOpenOfficiatingSlotParticipant,
+  resolveOfficiatingGamePath,
+  isTeamLinkedToSharedGame,
   buildOpenOfficiatingSlotClaimUpdate,
   buildOfficiatingSelfAssignmentNotificationRecord
 } = require('./officiating-self-assignment-core.cjs');
@@ -977,7 +979,7 @@ exports.claimOpenOfficiatingSlot = functions.https.onCall(async (data, context) 
     throw new functions.https.HttpsError('permission-denied', 'Only team owners, admins, or parents can claim open officiating slots.');
   }
 
-  const gameRef = firestore.doc(`teams/${input.teamId}/games/${input.gameId}`);
+  const gameRef = firestore.doc(resolveOfficiatingGamePath(input.teamId, input.gameId));
   const notificationRef = firestore.collection(`teams/${input.teamId}/officiatingNotifications`).doc();
   const now = admin.firestore.FieldValue.serverTimestamp();
 
@@ -989,6 +991,10 @@ exports.claimOpenOfficiatingSlot = functions.https.onCall(async (data, context) 
       }
 
       const game = { id: input.gameId, ...(gameSnap.data() || {}) };
+      if (!gameRef.path.startsWith(`teams/${input.teamId}/games/`) && !isTeamLinkedToSharedGame(game, input.teamId)) {
+        throw new functions.https.HttpsError('permission-denied', 'Game is not available to this team.');
+      }
+
       const { update, claimedSlot } = buildOpenOfficiatingSlotClaimUpdate({
         game,
         slotId: input.slotId,

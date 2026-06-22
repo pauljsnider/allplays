@@ -3,6 +3,9 @@ const assert = require('node:assert/strict');
 const {
     normalizeOpenOfficiatingSlotClaimInput,
     isEligibleOpenOfficiatingSlotParticipant,
+    decodeSharedGameSyntheticId,
+    resolveOfficiatingGamePath,
+    isTeamLinkedToSharedGame,
     buildOpenOfficiatingSlotClaimUpdate,
     buildOfficiatingSelfAssignmentNotificationRecord
 } = require('../officiating-self-assignment-core.cjs');
@@ -25,6 +28,21 @@ test('normalizeOpenOfficiatingSlotClaimInput requires document-safe IDs', () => 
         gameId: 'games/game-1',
         slotId: 'line-judge'
     }), /Game ID is required/);
+});
+
+test('resolveOfficiatingGamePath decodes shared synthetic game ids', () => {
+    const syntheticId = 'shared_organizations%2Forg-1%2FsharedGames%2Fgame-1';
+
+    assert.equal(decodeSharedGameSyntheticId(syntheticId), 'organizations/org-1/sharedGames/game-1');
+    assert.equal(resolveOfficiatingGamePath('team-1', syntheticId), 'organizations/org-1/sharedGames/game-1');
+    assert.equal(resolveOfficiatingGamePath('team-1', 'game-1'), 'teams/team-1/games/game-1');
+});
+
+test('isTeamLinkedToSharedGame only accepts participating teams', () => {
+    assert.equal(isTeamLinkedToSharedGame({ homeTeamId: 'team-1' }, 'team-1'), true);
+    assert.equal(isTeamLinkedToSharedGame({ awayTeamId: 'team-2' }, 'team-2'), true);
+    assert.equal(isTeamLinkedToSharedGame({ teamIds: ['team-3', 'team-4'] }, 'team-4'), true);
+    assert.equal(isTeamLinkedToSharedGame({ homeTeamId: 'team-1', awayTeamId: 'team-2' }, 'team-9'), false);
 });
 
 test('isEligibleOpenOfficiatingSlotParticipant accepts staff and linked parents only', () => {
