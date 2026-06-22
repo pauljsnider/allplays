@@ -121,11 +121,12 @@ describe('fee notification contract', () => {
         expect(functionsSource).toContain("firestore.collectionGroup('feeRecipients')");
         expect(functionsSource).toContain(".where('status', 'in', ['unpaid', 'pending'])");
         expect(functionsSource).toContain(".where('dueDate', '>=', now)");
-        expect(functionsSource).toContain(".where('dueDate', '<=', threeDaysLater)");
-        expect(functionsSource).toContain('if (data.reminderSentAt) return null;');
+        expect(functionsSource).toContain(".where('dueDate', '<=', maxReminderThresholdLater)");
+        expect(functionsSource).toContain('if (wasFeeReminderSentForThreshold(data, reminderThresholdHours)) return null;');
         expect(functionsSource).toContain('const allTargets = await getTargetsForCategory(teamId, \'fees\', null);');
         expect(functionsSource).toContain('const payerTargets = allTargets.filter((t) => candidateUserIdSet.has(t.uid));');
-        expect(functionsSource).toContain('await doc.ref.update({ reminderSentAt: admin.firestore.FieldValue.serverTimestamp() });');
+        expect(functionsSource).toContain('reminderThresholdHours');
+        expect(functionsSource).toContain('const reminderWindowLabel = formatFeeReminderWindowLabel(reminderThresholdHours);');
         expect(functionsSource).toContain("title: `Reminder: ${title} is due soon`");
     });
 
