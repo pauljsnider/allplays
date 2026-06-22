@@ -15,6 +15,9 @@ describe('ScheduleEventDetail decomposition', () => {
 
         expect(source).toContain("from '../components/schedule/AssignmentsSection'");
         expect(source).toContain("from '../components/schedule/EventSectionNav'");
+        expect(source).toContain("from '../components/schedule/GameReportSections'");
+        expect(source).toContain("from '../components/schedule/PlayerSwitcher'");
+        expect(source).toContain("from '../components/schedule/ReportMarkdownText'");
         expect(source).toContain("from '../components/schedule/RideshareSection'");
         expect(source).toContain("from '../components/schedule/AvailabilityPanels'");
         expect(source).toContain("from '../components/schedule/StaffRsvpBreakdownPanel'");
@@ -25,6 +28,11 @@ describe('ScheduleEventDetail decomposition', () => {
         expect(source).toContain('<ScheduleEventDetailProvider value={{');
         expect(source).toContain('useScheduleEventRsvp({ availabilityNote })');
         expect(source).toContain('useStaffRsvpBreakdown()');
+        expect(source).toContain('<GameReportSections event={event} />');
+        expect(source).toContain('<PlayerSwitcher events={events} selectedChildId={selectedEvent.childId} onSelect={selectChild} compact />');
+        expect(source).not.toMatch(/^function GameReportSections\b/m);
+        expect(source).not.toMatch(/^function GameReportSectionContent\b/m);
+        expect(source).not.toMatch(/^function PlayerSwitcher\b/m);
         expect(source).not.toMatch(/^function RideshareSection\b/m);
         expect(source).not.toMatch(/^function AssignmentsSection\b/m);
 
@@ -35,6 +43,10 @@ describe('ScheduleEventDetail decomposition', () => {
     it('keeps extracted schedule detail modules and focused coverage files in the repo', () => {
         [
             'apps/app/src/components/schedule/AssignmentsSection.tsx',
+            'apps/app/src/components/schedule/GameReportSectionContent.tsx',
+            'apps/app/src/components/schedule/GameReportSections.tsx',
+            'apps/app/src/components/schedule/PlayerSwitcher.tsx',
+            'apps/app/src/components/schedule/ReportMarkdownText.tsx',
             'apps/app/src/components/schedule/RideOfferCard.tsx',
             'apps/app/src/components/schedule/RideshareSection.tsx',
             'apps/app/src/components/schedule/ScheduleEventSummaryComponents.test.tsx',

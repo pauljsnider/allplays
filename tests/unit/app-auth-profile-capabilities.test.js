@@ -465,6 +465,7 @@ describe('React app auth/profile capability parity', () => {
         const legacyParentDashboard = readProjectFile('parent-dashboard.html');
         const schedulePage = readProjectFile('apps/app/src/pages/Schedule.tsx');
         const scheduleEventDetail = readProjectFile('apps/app/src/pages/ScheduleEventDetail.tsx');
+        const gameReportContent = readProjectFile('apps/app/src/components/schedule/GameReportSectionContent.tsx');
         const scheduleHub = readProjectFile('apps/app/src/lib/scheduleHub.ts');
         const scheduleService = readProjectFile('apps/app/src/lib/scheduleService.ts');
         const scheduleLogic = readProjectFile('apps/app/src/lib/scheduleLogic.ts');
@@ -503,12 +504,14 @@ describe('React app auth/profile capability parity', () => {
             'Assignments',
             'Game hub',
             'Practice hub',
+            'PracticePacketSection'
+        ]);
+        expectContains(gameReportContent, [
             'MatchSummarySection',
             'PlayerPerformanceSection',
             'PlayByPlaySection',
             'OpponentStatsSection',
-            'Insights',
-            'PracticePacketSection'
+            'Insights'
         ]);
         expectContains(scheduleHub, [
             'Watch replay',
