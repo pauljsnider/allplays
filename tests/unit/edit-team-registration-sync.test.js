@@ -34,6 +34,13 @@ describe('edit team Sports Connect registration sync wiring', () => {
         expect(source).toContain('Sports Connect live sync is unavailable until a connector is added.');
         expect(source).toContain("state: 'metadata_configured'");
         expect(source).toContain("state: 'live_connected'");
+        expect(source).toContain("canRefresh: false");
+        expect(source).toContain("syncEnabled: false");
+        expect(source).toContain("canRefresh: true");
+        expect(source).toContain("syncEnabled: true");
+        expect(source).toContain("refreshButton.disabled = !capability.canRefresh;");
+        expect(source).toContain("if (!capability.canRefresh) {");
+        expect(source).toContain("providerCapability: capability.state");
         expect(source).toContain('syncEnabled: capability.syncEnabled');
         expect(source).toContain('Open roster import to preview changes.');
         expect(source).not.toContain('Manual refresh unavailable');
