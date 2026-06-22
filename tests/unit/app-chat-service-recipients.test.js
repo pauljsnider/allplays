@@ -173,9 +173,21 @@ describe('React app chat recipient service', () => {
 
         expect(dbMocks.getUserTeamsWithAccess).toHaveBeenCalledWith('user-1', 'parent@example.com');
         expect(dbMocks.getParentTeams).toHaveBeenCalledWith('user-1');
-        expect(dbMocks.getUnreadChatCounts).toHaveBeenCalledWith('user-1', ['team-coach', 'team-parent'], {
-            latestMessageAtByTeam: {}
-        });
+        expect(dbMocks.getUnreadChatCounts).toHaveBeenCalledWith('user-1', ['team-coach', 'team-parent'], expect.objectContaining({
+            latestMessageAtByTeam: {},
+            conversationLookupByTeam: expect.objectContaining({
+                'team-coach': expect.objectContaining({
+                    user: expect.objectContaining({ uid: 'user-1', email: 'parent@example.com' }),
+                    team: expect.objectContaining({ id: 'team-coach' }),
+                    canModerate: true
+                }),
+                'team-parent': expect.objectContaining({
+                    user: expect.objectContaining({ uid: 'user-1', email: 'parent@example.com' }),
+                    team: expect.objectContaining({ id: 'team-parent' }),
+                    canModerate: false
+                })
+            })
+        }));
         expect(dbMocks.canAccessTeamChat).not.toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ id: 'team-inactive-admin' }));
         expect(dbMocks.canAccessTeamChat).not.toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ id: 'team-inactive-parent' }));
         expect(dbMocks.canAccessTeamChat).toHaveBeenCalledWith(expect.objectContaining({
@@ -245,12 +257,29 @@ describe('React app chat recipient service', () => {
             roles: ['parent']
         });
 
-        expect(dbMocks.getUnreadChatCounts).toHaveBeenCalledWith('user-1', ['team-unread', 'team-unknown'], {
+        expect(dbMocks.getUnreadChatCounts).toHaveBeenCalledWith('user-1', ['team-unread', 'team-unknown'], expect.objectContaining({
             latestMessageAtByTeam: {
                 'team-read': new Date('2026-05-21T12:00:00Z'),
                 'team-unread': new Date('2026-05-21T14:00:00Z')
-            }
-        });
+            },
+            conversationLookupByTeam: expect.objectContaining({
+                'team-read': expect.objectContaining({
+                    user: expect.objectContaining({ uid: 'user-1', email: 'parent@example.com' }),
+                    team: expect.objectContaining({ id: 'team-read' }),
+                    canModerate: false
+                }),
+                'team-unread': expect.objectContaining({
+                    user: expect.objectContaining({ uid: 'user-1', email: 'parent@example.com' }),
+                    team: expect.objectContaining({ id: 'team-unread' }),
+                    canModerate: false
+                }),
+                'team-unknown': expect.objectContaining({
+                    user: expect.objectContaining({ uid: 'user-1', email: 'parent@example.com' }),
+                    team: expect.objectContaining({ id: 'team-unknown' }),
+                    canModerate: false
+                })
+            })
+        }));
         expect(inbox.teams).toEqual(expect.arrayContaining([
             expect.objectContaining({ id: 'team-read', unreadCount: 0 }),
             expect.objectContaining({ id: 'team-unread', unreadCount: 4 }),
