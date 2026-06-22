@@ -982,7 +982,7 @@ async function nativeUploadChatMedia(teamId: string, file: File): Promise<ChatAt
   };
 }
 
-export async function uploadTeamChatAttachment(teamId: string, file: File): Promise<ChatAttachment> {
+export async function uploadTeamChatAttachment(teamId: string, file: File, conversationId = DEFAULT_TEAM_CONVERSATION_ID): Promise<ChatAttachment> {
   if (!file.type.startsWith('image/') && !file.type.startsWith('video/')) {
     throw new Error('Choose image or video files only.');
   }
@@ -993,7 +993,7 @@ export async function uploadTeamChatAttachment(teamId: string, file: File): Prom
     return nativeUploadChatMedia(teamId, file);
   }
   try {
-    return await withTimeout(Promise.resolve(uploadChatImage(teamId, file)), 'Chat media upload', chatUploadTimeoutMs) as ChatAttachment;
+    return await withTimeout(Promise.resolve(uploadChatImage(teamId, file, conversationId)), 'Chat media upload', chatUploadTimeoutMs) as ChatAttachment;
   } catch (error) {
     throw error;
   }
@@ -1085,7 +1085,7 @@ export async function sendTeamChatMessage({
   try {
     for (const file of files) {
       onProgress?.('uploading');
-      uploadedAttachments.push(await uploadTeamChatAttachment(teamId, file));
+      uploadedAttachments.push(await uploadTeamChatAttachment(teamId, file, selectedConversationId || DEFAULT_TEAM_CONVERSATION_ID));
     }
     onProgress?.('posting');
 

@@ -2889,7 +2889,7 @@
             try {
                 if (imageFiles.length > 0) {
                     for (const file of imageFiles) {
-                        mediaPayloads.push(await uploadChatImage(teamId, file));
+                        mediaPayloads.push(await uploadChatImage(teamId, file, conversationId));
                     }
                 }
                 pendingScrollToBottom = true;

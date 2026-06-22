@@ -16,7 +16,7 @@ describe('team chat multi-file send cleanup', () => {
         const html = readRepoFile('team-chat.html');
 
         expect(html).toContain('for (const file of imageFiles)');
-        expect(html).toContain('mediaPayloads.push(await uploadChatImage(teamId, file));');
+        expect(html).toContain('mediaPayloads.push(await uploadChatImage(teamId, file, conversationId));');
         expect(html).not.toContain('Promise.all(imageFiles.map((file) => uploadChatImage(teamId, file)))');
     });
 

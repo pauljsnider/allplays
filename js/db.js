@@ -469,7 +469,7 @@ function getRequiredSignedInUserId() {
     return userId;
 }
 
-export async function uploadChatImage(teamId, file) {
+export async function uploadChatImage(teamId, file, conversationId = 'team') {
     await requireImageAuth();
 
     const ts = Date.now();
@@ -495,7 +495,7 @@ export async function uploadChatImage(teamId, file) {
         const code = error?.code || '';
         if (code === 'storage/unauthorized' || code === 'storage/unauthenticated') {
             console.warn('Image storage denied chat upload, falling back to main storage:', error?.message || error);
-            const fallbackPath = buildChatAttachmentFallbackPath(teamId, userId, file.name, ts);
+            const fallbackPath = buildChatAttachmentFallbackPath(teamId, userId, file.name, ts, conversationId);
             const fallbackRef = ref(storage, fallbackPath);
             const fallbackSnapshot = await uploadBytes(fallbackRef, file);
             const fallbackUrl = await getDownloadURL(fallbackSnapshot.ref);

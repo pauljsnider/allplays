@@ -30,6 +30,26 @@ service firebase.storage {
       return isTeamOwnerOrAdmin(teamId) || isParentForTeam(teamId);
     }
 
+    function canAccessTeamChatConversation(teamId, conversationId) {
+      let conversationPath = /databases/(default)/documents/teams/$(teamId)/chatConversations/$(conversationId);
+      let participantIds = firestore.exists(conversationPath)
+        ? firestore.get(conversationPath).data.get('participantIds', [])
+        : [];
+      return canAccessTeamMedia(teamId) &&
+        (
+          conversationId == 'team' ||
+          isTeamOwnerOrAdmin(teamId) ||
+          (firestore.exists(conversationPath) &&
+           (
+             firestore.get(conversationPath).data.get('type', '') == 'team' ||
+             request.auth.uid in participantIds ||
+             ('user:' + request.auth.uid) in participantIds ||
+             (request.auth.token.email != null &&
+              ('email:' + request.auth.token.email.lower()) in participantIds)
+           ))
+        );
+    }
+
     function hasTeamMediaUploadGrant(teamId) {
       let userPath = /databases/(default)/documents/users/$(request.auth.uid);
       return isSignedIn() &&
@@ -106,6 +126,17 @@ service firebase.storage {
         request.resource.size > 0 &&
         request.resource.size <= 20 * 1024 * 1024;
       allow delete: if isTeamOwnerOrAdmin(teamId);
+      allow update: if false;
+    }
+
+    match /stat-sheets/team-chat/{teamId}/conversations/{conversationId}/{userId}/{fileName} {
+      allow get: if canAccessTeamChatConversation(teamId, conversationId);
+      allow list: if false;
+      allow create: if canAccessTeamChatConversation(teamId, conversationId) &&
+        request.auth.uid == userId &&
+        request.resource.size > 0 &&
+        request.resource.size <= 20 * 1024 * 1024;
+      allow delete: if isTeamOwnerOrAdmin(teamId) || request.auth.uid == userId;
       allow update: if false;
     }
 
