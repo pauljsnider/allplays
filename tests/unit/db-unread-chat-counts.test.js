@@ -268,6 +268,27 @@ describe('chat unread count helpers', () => {
         }));
         expect(warn).toHaveBeenCalledWith('Failed to get unread count for team team-b:', expect.any(Error));
     });
+
+    it('returns zero counts when the shared user profile read fails', async () => {
+        const getUnreadChatCount = vi.fn();
+        const getDoc = vi.fn().mockRejectedValue(new Error('permission denied'));
+        const doc = vi.fn(() => ({ path: 'users/user-4' }));
+        const warn = vi.fn();
+        const getUnreadChatCounts = buildGetUnreadChatCounts({
+            db: {},
+            getDoc,
+            doc,
+            getUnreadChatCount,
+            console: { warn }
+        });
+
+        await expect(getUnreadChatCounts('user-4', ['team-a', 'team-b'])).resolves.toEqual({
+            'team-a': 0,
+            'team-b': 0
+        });
+        expect(getUnreadChatCount).not.toHaveBeenCalled();
+        expect(warn).toHaveBeenCalledWith('Failed to load chat state for user user-4:', expect.any(Error));
+    });
 });
 
 describe('chat user state persistence helpers', () => {

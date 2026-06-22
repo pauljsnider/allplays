@@ -6390,9 +6390,20 @@ export async function getUnreadChatCount(userId, teamId, options = {}) {
  */
 export async function getUnreadChatCounts(userId, teamIds, options = {}) {
     const counts = {};
-    const userDoc = await getDoc(doc(db, 'users', userId));
-    const userData = userDoc.data() || {};
     const latestMessageAtByTeam = options?.latestMessageAtByTeam || {};
+    let userData = {};
+
+    try {
+        const userDoc = await getDoc(doc(db, 'users', userId));
+        userData = userDoc.data() || {};
+    } catch (err) {
+        console.warn(`Failed to load chat state for user ${userId}:`, err);
+        teamIds.forEach((teamId) => {
+            counts[teamId] = 0;
+        });
+        return counts;
+    }
+
     await Promise.all(teamIds.map(async (teamId) => {
         try {
             counts[teamId] = await getUnreadChatCount(userId, teamId, {
