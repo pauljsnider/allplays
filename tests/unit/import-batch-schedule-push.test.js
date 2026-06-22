@@ -49,6 +49,14 @@ describe('schedule import batch push notifications', () => {
                 title: 'Schedule import complete',
                 body: 'Imported 4 schedule events (2 games, 2 practices).'
             });
+            const batchSnapshot = await harness.env.firestoreState
+                .doc('teams/team-1/scheduleImportNotificationBatches/batch-large')
+                .get();
+            expect(batchSnapshot.data()).toMatchObject({
+                sentAt: { __serverTimestamp: true },
+                summaryTitle: 'Schedule import complete',
+                summaryBody: 'Imported 4 schedule events (2 games, 2 practices).'
+            });
 
             const duplicateUpdate = await harness.internals.sendCategoryNotification({
                 teamId: 'team-1',
