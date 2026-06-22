@@ -4,6 +4,15 @@ import { describe, expect, it } from 'vitest';
 const functionsSource = readFileSync(new URL('../../functions/index.js', import.meta.url), 'utf8');
 const teamFeesCoreSource = readFileSync(new URL('../../functions/team-fees-core.cjs', import.meta.url), 'utf8');
 
+function getFeeAssignmentNotificationBodyHelper() {
+    const start = functionsSource.indexOf('function formatFeeAssignmentDueDate(');
+    const end = functionsSource.indexOf('\nasync function resolveFeeAssignmentPayerUserIds', start);
+    const slice = functionsSource.slice(start, end);
+    return new Function('coerceDate', `${slice}; return buildFeeAssignmentNotificationBody;`)(
+        (value) => (value ? new Date(value) : null)
+    );
+}
+
 describe('fee notification contract', () => {
     it('notifies assigned fee payers through the fees category with per-user claim guards', () => {
         expect(functionsSource).toContain('exports.notifyFeeAssigned = functions.firestore');
@@ -15,6 +24,15 @@ describe('fee notification contract', () => {
         expect(functionsSource).toContain("title: `New fee assigned: ${title}${amountDisplay}`");
         expect(functionsSource).toContain('body: buildFeeAssignmentNotificationBody(data, amountDisplay ? amountDisplay.slice(2, -1) : \'\')');
         expect(functionsSource).toContain('await releaseFeeAssignmentNotificationClaims({');
+    });
+
+    it('builds assigned-fee push copy with amount and due-date context', () => {
+        const buildFeeAssignmentNotificationBody = getFeeAssignmentNotificationBodyHelper();
+
+        expect(buildFeeAssignmentNotificationBody({
+            dueDate: '2026-08-15T12:00:00.000Z'
+        }, '$45.00')).toBe('$45.00 has been assigned, due Aug 15, 2026.');
+        expect(buildFeeAssignmentNotificationBody({}, '')).toBe('A new team fee has been assigned.');
     });
 
     it('sends due-soon reminders only to linked payers with remaining balances and marks sent after targets exist', () => {
