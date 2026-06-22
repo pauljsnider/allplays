@@ -33,6 +33,26 @@ describe('logger', () => {
         });
     });
 
+    it('redacts secret URL parameters inside free-form strings', () => {
+        const sanitized = sanitizeForLogging({
+            message: 'Fetch failed for https://example.test/callback?access_token=abc123&teamId=team-1#id_token=jwt456',
+            retryUrl: 'https://example.test/retry?client_secret=client-secret&status=pending',
+            nested: [
+                'https://example.test/session?auth-token=native-secret&view=home',
+                'Bearer message-token'
+            ]
+        });
+
+        expect(sanitized).toEqual({
+            message: 'Fetch failed for https://example.test/callback?access_token=[REDACTED]&teamId=team-1#id_token=[REDACTED]',
+            retryUrl: 'https://example.test/retry?client_secret=[REDACTED]&status=pending',
+            nested: [
+                'https://example.test/session?auth-token=[REDACTED]&view=home',
+                'Bearer [REDACTED]'
+            ]
+        });
+    });
+
     it('sanitizes Error objects with nested headers and circular request context', () => {
         const request: Record<string, unknown> = {
             headers: new Headers({

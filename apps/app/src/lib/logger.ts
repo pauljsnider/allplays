@@ -31,6 +31,13 @@ function redactBearerTokens(value: string) {
     return value.replace(/Bearer\s+[^\s"',}]+/gi, `Bearer ${redactedValue}`);
 }
 
+function redactSensitiveQueryParams(value: string) {
+    return value.replace(
+        /([?&#](?:access[_-]?token|id[_-]?token|refresh[_-]?token|auth[_-]?token|api[_-]?key|client[_-]?secret|token|password|secret)=)[^&#\s"',}]+/gi,
+        `$1${redactedValue}`
+    );
+}
+
 function isHeadersLike(value: unknown): value is Headers {
     return typeof Headers !== 'undefined' && value instanceof Headers;
 }
@@ -39,7 +46,7 @@ function sanitizeValue(value: unknown, seen: WeakSet<object>, depth: number, key
     if (value == null) return value;
 
     if (typeof value === 'string') {
-        return isSensitiveKey(keyHint) ? redactedValue : redactBearerTokens(value);
+        return isSensitiveKey(keyHint) ? redactedValue : redactSensitiveQueryParams(redactBearerTokens(value));
     }
 
     if (typeof value !== 'object') {
