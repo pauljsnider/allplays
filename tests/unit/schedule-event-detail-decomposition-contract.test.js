@@ -93,4 +93,16 @@ describe('ScheduleEventDetail decomposition contract', () => {
         expect(component).toContain("{busy ? 'Signing up' : 'Sign up'}");
         expect(component).toContain("{busy ? 'Releasing' : 'Release'}");
     });
+
+    it('keeps game report rendering behind named page boundaries', () => {
+        const page = readRepoFile('apps/app/src/pages/ScheduleEventDetail.tsx');
+
+        expect(page).toContain('function GameReportSections({ event }: { event: ParentScheduleEvent })');
+        expect(page).toContain('const loaded = await loadGameReportSections(event.teamId, event.id);');
+        expect(page).toContain('<GameReportSectionContent report={report} activeSection={activeReportSection} />');
+        expect(page).toContain('function GameReportSectionContent({ report, activeSection }: { report: GameReportData; activeSection: GameReportSectionId })');
+        expect(page).toContain('function MatchSummarySection({ report }: { report: GameReportData })');
+        expect(page).toContain('function PlayerPerformanceSection({ report }: { report: GameReportData })');
+        expect(page).toContain('function ReportInsightsSection({ report }: { report: GameReportData })');
+    });
 });
