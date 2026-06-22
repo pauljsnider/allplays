@@ -1,4 +1,4 @@
-import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from 'react';
+import { createContext, Fragment, useCallback, useContext, useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from 'react';
 import { Link, useParams, useSearchParams } from 'react-router-dom';
 import { AlertCircle, CalendarDays, Car, CheckCircle2, ChevronDown, ChevronLeft, ClipboardCheck, Clock, ExternalLink, FileText, MapPin, Radio, RefreshCw, Share2, Users, Video, type LucideIcon } from 'lucide-react';
 import {
@@ -2128,6 +2128,38 @@ function LazyGameHubPanel({
   );
 }
 
+const LiveGameClockNowContext = createContext<Date | null>(null);
+
+function LiveGameClockTickerProvider({ event, children }: { event: ParentScheduleEvent; children: ReactNode }) {
+  const [clockNow, setClockNow] = useState(() => new Date());
+
+  useEffect(() => {
+    setClockNow(new Date());
+    if (!event.liveClockRunning) return undefined;
+    const intervalId = window.setInterval(() => setClockNow(new Date()), 1000);
+    return () => window.clearInterval(intervalId);
+  }, [event.eventKey, event.liveClockMs, event.liveClockRunning, event.liveClockPeriod, event.liveClockUpdatedAt]);
+
+  return <LiveGameClockNowContext.Provider value={clockNow}>{children}</LiveGameClockNowContext.Provider>;
+}
+
+function useLiveGameClockNow() {
+  return useContext(LiveGameClockNowContext) || new Date();
+}
+
+function GameHubLiveClockBadge({ event }: { event: ParentScheduleEvent }) {
+  const clockNow = useLiveGameClockNow();
+  const liveClockView = getLiveClockViewModel(event, clockNow);
+
+  if (!liveClockView) return null;
+
+  return (
+    <div className="inline-flex min-h-6 items-center rounded-full border border-rose-200 bg-rose-50 px-2 text-[11px] font-extrabold uppercase tracking-[0.04em] text-rose-700 tabular-nums" aria-label="Live game clock">
+      {liveClockView.label}
+    </div>
+  );
+}
+
 function GameHubSection({ auth, event, childEvents, onScoreUpdated, onLiveClockUpdated, onWrapupCompleted, onStatsheetImported, onGameCancelled, onPracticeOccurrenceCancelled, onGamePlanPublished }: { auth: AuthState; event: ParentScheduleEvent; childEvents: ParentScheduleEvent[]; onScoreUpdated: (homeScore: number, awayScore: number) => void; onLiveClockUpdated: (payload: Partial<ParentScheduleEvent> & { period?: string | null }) => void; onWrapupCompleted: (payload: { homeScore: number; awayScore: number; postGameNotes: string; summary: string; practiceFeedItems: PracticeFeedItem[] }) => void; onStatsheetImported: (payload: { homeScore: number; awayScore: number; statSheetPhotoUrl?: string | null }) => void; onGameCancelled: () => void; onPracticeOccurrenceCancelled: () => void; onGamePlanPublished: (gamePlan: Record<string, any>) => void }) {
   const [shareStatus, setShareStatus] = useState<string | null>(null);
   const [cancelStatus, setCancelStatus] = useState<{ tone: 'success' | 'error'; message: string } | null>(null);
@@ -2135,8 +2167,6 @@ function GameHubSection({ auth, event, childEvents, onScoreUpdated, onLiveClockU
   const [openPanels, setOpenPanels] = useState<Record<string, boolean>>({});
   const statusLabel = getEventStatusLabel(event);
   const scoreLabel = getScoreLabel(event);
-  const [liveClockNow, setLiveClockNow] = useState(() => new Date());
-  const liveClockView = getLiveClockViewModel(event, liveClockNow);
   const isPractice = event.type === 'practice';
   const showAdminPracticeTimeline = Boolean(isPractice && event.isTeamAdmin);
   const showNonAdminPracticePacketFirst = Boolean(isPractice && !event.isTeamAdmin);
@@ -2147,13 +2177,6 @@ function GameHubSection({ auth, event, childEvents, onScoreUpdated, onLiveClockU
   const canPublishLineup = Boolean(!isPractice && event.isDbGame && event.isTeamStaff);
   const notifiesCounterpartTeam = Boolean(event.opponentTeamId || event.sharedScheduleOpponentTeamId);
   const hubDestinations = isPractice ? buildPracticeHubDestinations(event) : buildGameHubDestinations(event);
-
-  useEffect(() => {
-    setLiveClockNow(new Date());
-    if (!event.liveClockRunning) return undefined;
-    const intervalId = window.setInterval(() => setLiveClockNow(new Date()), 1000);
-    return () => window.clearInterval(intervalId);
-  }, [event.eventKey, event.liveClockRunning, event.liveClockMs, event.liveClockUpdatedAt]);
 
   useEffect(() => {
     setOpenPanels({});
@@ -2246,25 +2269,23 @@ function GameHubSection({ auth, event, childEvents, onScoreUpdated, onLiveClockU
         </div>
 
         <div className="px-3 py-3 sm:px-4">
-          <div className="flex items-center justify-between gap-3">
-            <div className="min-w-0">
-              <div className="text-sm font-black text-gray-950">{isPractice ? event.title || 'Practice' : getScheduleTitle(event)}</div>
-              <div className="mt-1 flex min-w-0 flex-wrap gap-x-2 gap-y-1 text-xs font-semibold text-gray-500">
-                <span>{formatEventDateLabel(event.date)} · {formatEventTimeLabel(event.date)}</span>
-                <span className="min-w-0 truncate">{event.location || 'Location TBD'}</span>
+          <LiveGameClockTickerProvider event={event}>
+            <div className="flex items-center justify-between gap-3">
+              <div className="min-w-0">
+                <div className="text-sm font-black text-gray-950">{isPractice ? event.title || 'Practice' : getScheduleTitle(event)}</div>
+                <div className="mt-1 flex min-w-0 flex-wrap gap-x-2 gap-y-1 text-xs font-semibold text-gray-500">
+                  <span>{formatEventDateLabel(event.date)} · {formatEventTimeLabel(event.date)}</span>
+                  <span className="min-w-0 truncate">{event.location || 'Location TBD'}</span>
+                </div>
+              </div>
+              <div className="flex flex-none flex-col items-end gap-1 text-right">
+                {scoreLabel ? <div className="text-2xl font-black tabular-nums text-gray-950">{scoreLabel}</div> : null}
+                <GameHubLiveClockBadge event={event} />
               </div>
             </div>
-            <div className="flex flex-none flex-col items-end gap-1 text-right">
-              {scoreLabel ? <div className="text-2xl font-black tabular-nums text-gray-950">{scoreLabel}</div> : null}
-              {liveClockView ? (
-                <div className="inline-flex min-h-6 items-center rounded-full border border-rose-200 bg-rose-50 px-2 text-[11px] font-extrabold uppercase tracking-[0.04em] text-rose-700 tabular-nums" aria-label="Live game clock">
-                  {liveClockView.label}
-                </div>
-              ) : null}
-            </div>
-          </div>
 
-          {canUpdateScore ? <LiveGameClockPanel auth={auth} event={event} onLiveClockUpdated={onLiveClockUpdated} /> : null}
+            {canUpdateScore ? <LiveGameClockPanel auth={auth} event={event} onLiveClockUpdated={onLiveClockUpdated} /> : null}
+          </LiveGameClockTickerProvider>
           {canUpdateScore ? <LiveScoreEditor auth={auth} event={event} onScoreUpdated={onScoreUpdated} /> : null}
           {canUpdateScore ? <GameDayFoulTrackerPanel auth={auth} event={event} /> : null}
 
@@ -3449,7 +3470,7 @@ type ScoreSnapshot = {
 };
 
 function LiveGameClockPanel({ auth, event, onLiveClockUpdated }: { auth: AuthState; event: ParentScheduleEvent; onLiveClockUpdated: (payload: Partial<ParentScheduleEvent> & { period?: string | null }) => void }) {
-  const [clockNow, setClockNow] = useState(() => new Date());
+  const clockNow = useLiveGameClockNow();
   const [saving, setSaving] = useState(false);
   const [status, setStatus] = useState<{ tone: 'success' | 'error'; message: string } | null>(null);
   const periods = useMemo(() => buildLiveGameClockPeriods(event as Record<string, any>), [event]);
@@ -3466,13 +3487,6 @@ function LiveGameClockPanel({ auth, event, onLiveClockUpdated }: { auth: AuthSta
     liveClockUpdatedAt: clockState.updatedAt
   } as ParentScheduleEvent, clockNow);
 
-  useEffect(() => {
-    setClockNow(new Date());
-    if (!clockState.running) return undefined;
-    const intervalId = window.setInterval(() => setClockNow(new Date()), 1000);
-    return () => window.clearInterval(intervalId);
-  }, [event.eventKey, event.liveClockMs, event.liveClockRunning, event.liveClockPeriod, event.liveClockUpdatedAt, clockState.running]);
-
   const persistClock = async (next: { running: boolean; period: string }) => {
     if (!auth.user) return;
     setSaving(true);
@@ -3485,7 +3499,6 @@ function LiveGameClockPanel({ auth, event, onLiveClockUpdated }: { auth: AuthSta
         currentGame: event
       }, auth.user);
       onLiveClockUpdated(payload as Partial<ParentScheduleEvent> & { period?: string | null });
-      setClockNow(new Date(payload.liveClockUpdatedAt as Date | string | number));
       setStatus({ tone: 'success', message: next.running ? 'Clock running.' : `Clock saved${next.period !== activePeriod ? ` for ${next.period}.` : '.'}` });
     } catch (error: any) {
       setStatus({ tone: 'error', message: error?.message || 'Unable to update the live clock.' });
@@ -3719,7 +3732,7 @@ function LiveScoreEditor({ auth, event, onScoreUpdated }: { auth: AuthState; eve
   };
 
   return (
-    <div className={`mt-3 rounded-2xl border p-3 ${dirty ? 'border-amber-200 bg-amber-50' : 'border-gray-100 bg-gray-50'}`}>
+    <div data-testid="live-score-editor" className={`mt-3 rounded-2xl border p-3 ${dirty ? 'border-amber-200 bg-amber-50' : 'border-gray-100 bg-gray-50'}`}>
       <div className="flex items-center justify-between gap-3">
         <div>
           <div className="text-xs font-black uppercase tracking-[0.04em] text-gray-500">Live score</div>
