@@ -88,6 +88,32 @@ async function mockParentToolsModules(page) {
         });
     });
 
+    await page.route(/\/src\/lib\/parentToolsAccessService\.ts(\?.*)?$/, async (route) => {
+        await route.fulfill({
+            status: 200,
+            contentType: 'application/javascript',
+            body: `
+                export async function loadParentAccessModel() {
+                    return {
+                        requests: [{ id: 'request-1', teamId: 'team-1', teamName: 'Bears', playerId: 'player-1', playerName: 'Pat Star', relation: 'Parent', status: 'pending' }]
+                    };
+                }
+                export async function loadParentAccessTeams() {
+                    window.__publicTeamLoads += 1;
+                    return [{ id: 'team-1', name: 'Bears', sport: 'Basketball', zip: '66210' }];
+                }
+                export async function loadParentAccessPlayers(teamId) {
+                    window.__playerLoads.push(String(teamId));
+                    return [{ id: 'player-1', name: 'Pat Star', number: '9', photoUrl: null }];
+                }
+                export async function submitParentAccessRequest(teamId, playerId, relation) {
+                    window.__accessRequests.push({ teamId, playerId, relation });
+                    return { success: true };
+                }
+            `
+        });
+    });
+
     await page.route(/\/src\/lib\/parentToolsService\.ts(\?.*)?$/, async (route) => {
         await route.fulfill({
             status: 200,
