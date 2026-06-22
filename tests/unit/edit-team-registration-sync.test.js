@@ -29,9 +29,12 @@ describe('edit team Sports Connect registration sync wiring', () => {
         expect(source).toContain('function handleRegistrationProviderSync()');
         expect(source).toContain('await syncRegistrationProvider(currentTeamId)');
         expect(source).toContain('function hasUnsavedRegistrationSyncChanges(provider, externalTeamId)');
+        expect(source).toContain('function getRegistrationProviderCapability(provider, externalTeamId, source = {})');
+        expect(source).toContain("['live_connected', 'sync_success'].includes(source?.connectionStatus) && source?.syncEnabled === true");
         expect(source).toContain('Sports Connect live sync is unavailable until a connector is added.');
-        expect(source).toContain('const canSyncSportsConnect = false;');
-        expect(source).toContain('syncEnabled: false');
+        expect(source).toContain("state: 'metadata_configured'");
+        expect(source).toContain("state: 'live_connected'");
+        expect(source).toContain('syncEnabled: capability.syncEnabled');
         expect(source).toContain('Open roster import to preview changes.');
         expect(source).not.toContain('Manual refresh unavailable');
 
