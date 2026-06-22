@@ -33,13 +33,16 @@ function extractMatchBlock(source, collectionPattern) {
     return null;
 }
 
+const liveEventsBlock = extractMatchBlock(rulesSource, 'match /liveEvents/{eventId}');
 const liveChatBlock = extractMatchBlock(rulesSource, 'match /liveChat/{messageId}');
 const liveReactionsBlock = extractMatchBlock(rulesSource, 'match /liveReactions/{reactionId}');
 
 describe('firestore rules — live game read visibility helpers', () => {
-    it('keeps live chat and reactions behind the shared game visibility helper', () => {
+    it('keeps live events, chat, and reactions behind the shared game visibility helper', () => {
+        expect(liveEventsBlock).toContain('allow read: if canReadGameSubcollectionDocument(teamId, gameId);');
         expect(liveChatBlock).toContain('allow read: if canReadGameSubcollectionDocument(teamId, gameId);');
         expect(liveReactionsBlock).toContain('allow read: if canReadGameSubcollectionDocument(teamId, gameId);');
+        expect(liveEventsBlock).not.toContain('allow read: if true;');
         expect(liveChatBlock).not.toContain('allow read: if true;');
         expect(liveReactionsBlock).not.toContain('allow read: if true;');
     });

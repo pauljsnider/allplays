@@ -1935,7 +1935,7 @@ service cloud.firestore {
 
         // Live Events subcollection - for real-time game broadcasting
         match /liveEvents/{eventId} {
-          allow read: if true;  // Public read for viewers
+          allow read: if canReadGameSubcollectionDocument(teamId, gameId);
           allow create: if isTeamOwnerOrAdmin(teamId) || canScorekeepGame(teamId, gameId);  // Stat tracker writes
           allow update, delete: if false;  // Events are immutable
         }
