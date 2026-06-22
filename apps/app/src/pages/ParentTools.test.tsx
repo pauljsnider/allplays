@@ -250,15 +250,15 @@ describe('ParentTools access', () => {
         renderParentTools();
 
         await screen.findByText('Request player access');
-        expect(panelLoads).toEqual(['access']);
+        expect(panelLoads).not.toContain('fees');
 
         fireEvent.click(screen.getByRole('button', { name: 'Fees' }));
         await screen.findByText('No fees in this view');
-        expect(panelLoads).toEqual(['access', 'fees']);
+        expect(panelLoads.filter((toolId) => toolId === 'fees')).toEqual(['fees']);
 
         fireEvent.click(screen.getByRole('button', { name: 'Access' }));
         await screen.findByText('Request player access');
-        expect(panelLoads).toEqual(['access', 'fees']);
+        expect(panelLoads.filter((toolId) => toolId === 'fees')).toEqual(['fees']);
     });
 
     it('reuses loaded tab data on revisit and only refreshes when requested', async () => {

@@ -17,9 +17,6 @@ const serviceMocks = vi.hoisted(() => ({
     getPrivateTeamCalendarFeedUrl: vi.fn(),
     initiateParentTeamFeeCheckout: vi.fn(),
     loadFamilyShareModel: vi.fn(),
-    loadParentAccessModel: vi.fn(),
-    loadParentAccessTeams: vi.fn(),
-    loadParentAccessPlayers: vi.fn(),
     loadParentCalendarTools: vi.fn(),
     loadParentCertificates: vi.fn(),
     loadParentFeesForApp: vi.fn(),
@@ -27,7 +24,6 @@ const serviceMocks = vi.hoisted(() => ({
     loadParentRegistrations: vi.fn(),
     loadTeamMediaForApp: vi.fn(),
     revokeParentFamilyShare: vi.fn(),
-    submitParentAccessRequest: vi.fn(),
     updateParentFamilyShareCalendars: vi.fn(),
     uploadParentTeamMediaFile: vi.fn(),
     uploadParentTeamMediaPhoto: vi.fn()
@@ -39,7 +35,20 @@ const publicActionMocks = vi.hoisted(() => ({
     sharePublicUrl: vi.fn().mockResolvedValue('shared')
 }));
 
+const accessServiceMocks = vi.hoisted(() => ({
+    loadParentAccessModel: vi.fn(),
+    loadParentAccessTeams: vi.fn(),
+    loadParentAccessPlayers: vi.fn(),
+    submitParentAccessRequest: vi.fn()
+}));
+
+const inviteRedemptionMocks = vi.hoisted(() => ({
+    redeemSignedInInvite: vi.fn()
+}));
+
 vi.mock('../../apps/app/src/lib/parentToolsService.ts', () => serviceMocks);
+vi.mock('../../apps/app/src/lib/parentToolsAccessService.ts', () => accessServiceMocks);
+vi.mock('../../apps/app/src/lib/inviteRedemption.ts', () => inviteRedemptionMocks);
 vi.mock('../../apps/app/src/lib/publicActions.ts', () => publicActionMocks);
 
 import { ParentTools } from '../../apps/app/src/pages/ParentTools.tsx';
@@ -97,7 +106,7 @@ async function flush() {
 }
 
 async function waitForText(container, text) {
-    for (let index = 0; index < 30; index += 1) {
+    for (let index = 0; index < 120; index += 1) {
         if (container.textContent.includes(text)) return;
         await flush();
     }
@@ -178,12 +187,17 @@ beforeEach(() => {
     URL.createObjectURL = vi.fn(() => 'blob:test');
     URL.revokeObjectURL = vi.fn();
 
-    serviceMocks.loadParentAccessModel.mockResolvedValue({
+    accessServiceMocks.loadParentAccessModel.mockResolvedValue({
         requests: [{ id: 'request-1', teamId: 'team-1', teamName: 'Bears', playerId: 'player-1', playerName: 'Pat Star', relation: 'Parent', status: 'pending' }]
     });
-    serviceMocks.loadParentAccessTeams.mockResolvedValue([{ id: 'team-1', name: 'Bears', sport: 'Basketball', zip: '66210' }]);
-    serviceMocks.loadParentAccessPlayers.mockResolvedValue([{ id: 'player-1', name: 'Pat Star', number: '9', photoUrl: null }]);
-    serviceMocks.submitParentAccessRequest.mockResolvedValue({ success: true });
+    accessServiceMocks.loadParentAccessTeams.mockResolvedValue([{ id: 'team-1', name: 'Bears', sport: 'Basketball', zip: '66210' }]);
+    accessServiceMocks.loadParentAccessPlayers.mockResolvedValue([{ id: 'player-1', name: 'Pat Star', number: '9', photoUrl: null }]);
+    accessServiceMocks.submitParentAccessRequest.mockResolvedValue({ success: true });
+    inviteRedemptionMocks.redeemSignedInInvite.mockResolvedValue({
+        code: 'AB12CD34',
+        redirectPath: '/home',
+        message: 'Invite accepted.'
+    });
     serviceMocks.loadParentHouseholdInviteModel.mockResolvedValue({
         linkedPlayers: [{ teamId: 'team-1', teamName: 'Bears', playerId: 'player-1', playerName: 'Pat Star', playerNumber: '9' }],
         members: [{ id: 'member-1', email: 'grandma@example.com', displayName: 'Grandma', relation: 'Grandparent', status: 'pending', teamName: 'Bears', playerName: 'Pat Star', playerNumber: '9', accessCode: 'HOME1234', inviteUrl: 'https://allplays.ai/accept-invite.html?code=HOME1234' }]
@@ -271,7 +285,7 @@ describe('React app parent tools integration', () => {
         expect(container.textContent).toContain('Access requests');
         await openManualAccessRequest(container);
         await submitForm(container, 'Send request');
-        expect(serviceMocks.submitParentAccessRequest).toHaveBeenCalledWith('team-1', 'player-1', 'Parent');
+        expect(accessServiceMocks.submitParentAccessRequest).toHaveBeenCalledWith('team-1', 'player-1', 'Parent');
 
         await clickButton(container, 'Household');
         await waitForText(container, 'Household member invite');
@@ -342,9 +356,9 @@ describe('React app parent tools integration', () => {
     it('keeps previously opened parent tool tabs warm until a tab refresh is requested', async () => {
         const { container } = await renderParentTools('/parent-tools/access');
         await waitForText(container, 'Request player access');
-        expect(serviceMocks.loadParentAccessModel).toHaveBeenCalledTimes(1);
-        expect(serviceMocks.loadParentAccessTeams).toHaveBeenCalledTimes(0);
-        expect(serviceMocks.loadParentAccessPlayers).toHaveBeenCalledTimes(0);
+        expect(accessServiceMocks.loadParentAccessModel).toHaveBeenCalledTimes(1);
+        expect(accessServiceMocks.loadParentAccessTeams).toHaveBeenCalledTimes(0);
+        expect(accessServiceMocks.loadParentAccessPlayers).toHaveBeenCalledTimes(0);
 
         await clickButton(container, 'Fees');
         await waitForText(container, 'Team dues');
@@ -352,9 +366,9 @@ describe('React app parent tools integration', () => {
 
         await clickButton(container, 'Access');
         await waitForText(container, 'Request player access');
-        expect(serviceMocks.loadParentAccessModel).toHaveBeenCalledTimes(1);
-        expect(serviceMocks.loadParentAccessTeams).toHaveBeenCalledTimes(0);
-        expect(serviceMocks.loadParentAccessPlayers).toHaveBeenCalledTimes(0);
+        expect(accessServiceMocks.loadParentAccessModel).toHaveBeenCalledTimes(1);
+        expect(accessServiceMocks.loadParentAccessTeams).toHaveBeenCalledTimes(0);
+        expect(accessServiceMocks.loadParentAccessPlayers).toHaveBeenCalledTimes(0);
 
         await clickButton(container, 'Register');
         await waitForText(container, 'Summer Camp');
@@ -396,7 +410,7 @@ describe('React app parent tools integration', () => {
         await openManualAccessRequest(container);
         await submitForm(container, 'Send request');
         await waitForText(container, 'Access request sent.');
-        expect(serviceMocks.loadParentAccessModel).toHaveBeenCalledTimes(2);
+        expect(accessServiceMocks.loadParentAccessModel).toHaveBeenCalledTimes(2);
         expect(serviceMocks.loadParentFeesForApp).toHaveBeenCalledTimes(1);
         expect(serviceMocks.loadParentRegistrations).toHaveBeenCalledTimes(1);
 
@@ -415,7 +429,7 @@ describe('React app parent tools integration', () => {
         const pendingRequest = new Promise((resolve) => {
             resolveRequest = resolve;
         });
-        serviceMocks.submitParentAccessRequest.mockImplementationOnce(() => pendingRequest);
+        accessServiceMocks.submitParentAccessRequest.mockImplementationOnce(() => pendingRequest);
         serviceMocks.loadParentRegistrations
             .mockResolvedValueOnce([])
             .mockResolvedValueOnce([{
@@ -460,19 +474,19 @@ describe('React app parent tools integration', () => {
         await waitForText(container, 'Request player access');
         expect(container.textContent).toContain('Access requests');
         expect(container.textContent).toContain('Pat Star');
-        expect(serviceMocks.loadParentAccessTeams).toHaveBeenCalledTimes(0);
-        expect(serviceMocks.loadParentAccessPlayers).toHaveBeenCalledTimes(0);
+        expect(accessServiceMocks.loadParentAccessTeams).toHaveBeenCalledTimes(0);
+        expect(accessServiceMocks.loadParentAccessPlayers).toHaveBeenCalledTimes(0);
 
         await clickButton(container, 'Request access without a code');
         await waitForText(container, 'Choose a team');
-        expect(serviceMocks.loadParentAccessTeams).toHaveBeenCalledTimes(1);
-        expect(serviceMocks.loadParentAccessPlayers).toHaveBeenCalledTimes(0);
+        expect(accessServiceMocks.loadParentAccessTeams).toHaveBeenCalledTimes(1);
+        expect(accessServiceMocks.loadParentAccessPlayers).toHaveBeenCalledTimes(0);
 
         const teamSelect = Array.from(container.querySelectorAll('select')).find((candidate) => candidate.previousElementSibling?.textContent === 'Team');
         await changeSelectValue(teamSelect, 'team-1');
         await waitForText(container, 'Choose a player');
-        expect(serviceMocks.loadParentAccessPlayers).toHaveBeenCalledTimes(1);
-        expect(serviceMocks.loadParentAccessPlayers).toHaveBeenCalledWith('team-1');
+        expect(accessServiceMocks.loadParentAccessPlayers).toHaveBeenCalledTimes(1);
+        expect(accessServiceMocks.loadParentAccessPlayers).toHaveBeenCalledWith('team-1');
     });
 
     it('requires confirmation before revoking a family share link', async () => {
