@@ -43,9 +43,16 @@ const shellLayoutState = vi.hoisted(() => ({
     isNative: false
 }));
 
+const initialLoadTelemetryMocks = vi.hoisted(() => ({
+    end: vi.fn()
+}));
+
 vi.mock('../../apps/app/src/lib/profileService', () => profileServiceMocks);
 vi.mock('../../apps/app/src/lib/publicActions', () => publicActionsMocks);
 vi.mock('../../apps/app/src/lib/pushService', () => pushServiceMocks);
+vi.mock('../../apps/app/src/lib/telemetry', () => ({
+    startAppInitialLoadTimer: vi.fn(() => initialLoadTelemetryMocks)
+}));
 vi.mock('../../apps/app/src/lib/useShellLayout', () => ({
     useShellLayout: () => shellLayoutState
 }));
@@ -233,5 +240,49 @@ describe('Profile seed from auth.profile', () => {
 
         expect(profileServiceMocks.loadProfileDocument).toHaveBeenCalledTimes(1);
         expect(profileServiceMocks.loadProfileDocument).toHaveBeenCalledWith('user-1');
+    });
+
+    it('emits profile initial load telemetry for auth-seeded success and handled load failure', async () => {
+        const seededAuth = buildAuth({
+            profile: {
+                fullName: 'Seeded User',
+                phone: '555-0100',
+                photoUrl: '',
+                email: 'test@example.com'
+            }
+        });
+
+        const { unmount } = render(
+            <MemoryRouter>
+                <Profile auth={seededAuth} />
+            </MemoryRouter>
+        );
+
+        const seededFullNameInput = await screen.findByPlaceholderText('Your name') as HTMLInputElement;
+        await waitFor(() => expect(seededFullNameInput.value).toBe('Seeded User'));
+        await waitFor(() => {
+            expect(initialLoadTelemetryMocks.end).toHaveBeenCalledWith(expect.objectContaining({
+                hasDisplayName: true,
+                hasPhone: true,
+                hasPhoto: false
+            }));
+        });
+
+        unmount();
+        initialLoadTelemetryMocks.end.mockClear();
+        profileServiceMocks.loadProfileDocument.mockRejectedValue(new Error('Failed to fetch'));
+
+        render(
+            <MemoryRouter>
+                <Profile auth={buildAuth({ profile: null })} />
+            </MemoryRouter>
+        );
+
+        expect(await screen.findByText('Profile details could not be loaded yet.')).toBeTruthy();
+        await waitFor(() => {
+            expect(initialLoadTelemetryMocks.end).toHaveBeenCalledWith(expect.objectContaining({
+                error: expect.any(Error)
+            }));
+        });
     });
 });

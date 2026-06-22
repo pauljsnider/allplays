@@ -59,6 +59,15 @@ export function startAppStartupTimer() {
   return createAppTimer('app startup', { stage: 'startup' });
 }
 
+export function startAppInitialLoadTimer(loadName: string, baseMeta: TelemetryProperties = {}) {
+  const startedAt = typeof performance !== 'undefined' ? performance.now() : Date.now();
+  return {
+    end(meta: TelemetryProperties = {}) {
+      recordAppInitialLoadTiming(loadName, startedAt, { ...baseMeta, ...meta });
+    }
+  };
+}
+
 export function createAppTimer(label: string, baseMeta: TelemetryProperties = {}) {
   const startedAt = typeof performance !== 'undefined' ? performance.now() : Date.now();
   return {
@@ -66,6 +75,27 @@ export function createAppTimer(label: string, baseMeta: TelemetryProperties = {}
       recordAppUxTiming(label, startedAt, { ...baseMeta, ...meta });
     }
   };
+}
+
+export function recordAppInitialLoadTiming(loadName: string, startedAt: number, meta: TelemetryProperties = {}) {
+  const now = typeof performance !== 'undefined' ? performance.now() : Date.now();
+  const durationMs = Math.max(0, Math.round(now - startedAt));
+  const { error, ...context } = meta;
+  const outcome = error ? 'failure' : 'success';
+
+  captureAppTelemetryEvent('app_initial_load', {
+    loadName,
+    durationMs,
+    outcome,
+    ...context
+  });
+
+  if (error) {
+    captureHandledAppError(`${loadName} initial load`, error, {
+      durationMs,
+      ...context
+    });
+  }
 }
 
 export function recordAppUxTiming(label: string, startedAt: number, meta: TelemetryProperties = {}) {
