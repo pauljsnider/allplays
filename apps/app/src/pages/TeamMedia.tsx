@@ -63,38 +63,81 @@ export function TeamMedia({ auth }: { auth: AuthState }) {
   const [movingItemId, setMovingItemId] = useState('');
   const [coverItemId, setCoverItemId] = useState('');
   const [postingItemId, setPostingItemId] = useState('');
+  const [loadingMoreFolderId, setLoadingMoreFolderId] = useState('');
   const postingItemIdRef = useRef('');
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
 
-  const refresh = async ({ showLoading = model === null, preferredFolderId = '', folderIdsToLoad = [] }: { showLoading?: boolean; preferredFolderId?: string; folderIdsToLoad?: string[] } = {}) => {
+  const refresh = async ({
+    showLoading = model === null,
+    preferredFolderId = '',
+    folderIdsToLoad = [],
+    cursorsByFolderId = {},
+    append = false
+  }: {
+    showLoading?: boolean;
+    preferredFolderId?: string;
+    folderIdsToLoad?: string[];
+    cursorsByFolderId?: Record<string, any>;
+    append?: boolean;
+  } = {}) => {
     if (!teamId) return;
     if (showLoading) setLoading(true);
     setError('');
     try {
-      const nextModel = await loadTeamMediaForApp(auth.user, teamId, {
+      const loadOptions: { initialFolderId: string; folderIds: string[]; cursorsByFolderId?: Record<string, any> } = {
         initialFolderId: preferredFolderId || activeFolderId,
         folderIds: folderIdsToLoad
+      };
+      if (Object.keys(cursorsByFolderId).length) loadOptions.cursorsByFolderId = cursorsByFolderId;
+      const nextModel = await loadTeamMediaForApp(auth.user, teamId, loadOptions);
+      const mergedFolders = nextModel.folders.map((folder) => {
+        const cachedFolder = model?.folders.find((currentFolder) => currentFolder.id === folder.id && (currentFolder.itemsLoaded || currentFolder.items.length));
+        if (folder.itemsLoaded || folder.items.length) {
+          return mergeTeamMediaFolderItems(folder, cachedFolder, append && folderIdsToLoad.includes(folder.id));
+        }
+        return cachedFolder ? {
+          ...folder,
+          items: cachedFolder.items,
+          itemCount: cachedFolder.itemCount,
+          itemsLoaded: true,
+          itemsHasMore: cachedFolder.itemsHasMore,
+          itemsNextCursor: cachedFolder.itemsNextCursor
+        } : folder;
       });
-      setModel((currentModel) => ({
+      setModel({
         ...nextModel,
-        folders: nextModel.folders.map((folder) => {
-          if (folder.itemsLoaded || folder.items.length) return { ...folder, itemsLoaded: true };
-          const cachedFolder = currentModel?.folders.find((currentFolder) => currentFolder.id === folder.id && (currentFolder.itemsLoaded || currentFolder.items.length));
-          return cachedFolder ? { ...folder, items: cachedFolder.items, itemCount: cachedFolder.itemCount, itemsLoaded: true } : folder;
-        })
-      }));
+        folders: mergedFolders
+      });
       setActiveFolderId((current) => {
         if (preferredFolderId && nextModel.folders.some((folder) => folder.id === preferredFolderId)) return preferredFolderId;
         if (current && nextModel.folders.some((folder) => folder.id === current)) return current;
         return nextModel.folders[0]?.id || '';
       });
-      setSelectedIds((current) => current.filter((itemId) => nextModel.folders.some((folder) => folder.items.some((item) => item.id === itemId))));
+      setSelectedIds((current) => current.filter((itemId) => mergedFolders.some((folder) => folder.items.some((item) => item.id === itemId))));
     } catch (loadError: any) {
       setError(loadError?.message || 'Unable to load media.');
       if (showLoading) setModel(null);
     } finally {
       if (showLoading) setLoading(false);
+    }
+  };
+
+  const handleLoadMoreItems = async () => {
+    const folderToLoad = model?.folders.find((folder) => folder.id === activeFolderId) || model?.folders[0] || null;
+    if (!folderToLoad?.id || !folderToLoad.itemsHasMore || !folderToLoad.itemsNextCursor) return;
+
+    setLoadingMoreFolderId(folderToLoad.id);
+    try {
+      await refresh({
+        showLoading: false,
+        preferredFolderId: folderToLoad.id,
+        folderIdsToLoad: [folderToLoad.id],
+        cursorsByFolderId: { [folderToLoad.id]: folderToLoad.itemsNextCursor },
+        append: true
+      });
+    } finally {
+      setLoadingMoreFolderId('');
     }
   };
 
@@ -287,6 +330,29 @@ export function TeamMedia({ auth }: { auth: AuthState }) {
     setUploadQueue((current) => current.map((item) => item.id === id ? { ...item, status: nextStatus, errorMessage } : item));
   };
 
+  const mergeUploadedItemsIntoFolder = (folderId: string, uploadedItems: TeamMediaItem[]) => {
+    const cleanItems = uploadedItems.filter((item) => item?.id && item.url);
+    if (!folderId || !cleanItems.length) return false;
+    setModel((current) => current ? {
+      ...current,
+      folders: current.folders.map((folder) => {
+        if (folder.id !== folderId) return folder;
+        const existingIds = new Set(folder.items.map((item) => item.id));
+        const additions = cleanItems.filter((item) => !existingIds.has(item.id));
+        if (!additions.length) return folder;
+        const nextItems = [...folder.items, ...additions].sort(sortTeamMediaItemsForDisplay);
+        const currentCount = Number.isFinite(Number(folder.itemCount)) ? Number(folder.itemCount) : folder.items.length;
+        return {
+          ...folder,
+          items: nextItems,
+          itemCount: Math.max(nextItems.length, currentCount + additions.length),
+          itemsLoaded: true
+        };
+      })
+    } : current);
+    return true;
+  };
+
   const uploadPhotos = async (files: File[]) => {
     if (!files.length || !activeFolder || creatingAlbum) return;
     const queueItems = files.map((file, index) => createUploadQueueItem(file, 'photo', index));
@@ -298,6 +364,7 @@ export function TeamMedia({ auth }: { auth: AuthState }) {
     setMessage(`Uploading ${files.length} photo${files.length === 1 ? '' : 's'}...`);
     let uploaded = 0;
     let failed = 0;
+    const uploadedItems: TeamMediaItem[] = [];
     try {
       await runWithConcurrency(queueItems, PHOTO_UPLOAD_CONCURRENCY, async (queueItem, index) => {
         const file = files[index];
@@ -307,7 +374,8 @@ export function TeamMedia({ auth }: { auth: AuthState }) {
           return;
         }
         try {
-          await uploadParentTeamMediaPhoto(teamId, activeFolder.id, file);
+          const uploadedItem = await uploadParentTeamMediaPhoto(teamId, activeFolder.id, file);
+          if (uploadedItem) uploadedItems.push(uploadedItem);
           uploaded += 1;
           updateUploadQueueItem(queueItem.id, 'success');
         } catch {
@@ -318,7 +386,9 @@ export function TeamMedia({ auth }: { auth: AuthState }) {
 
       if (uploaded > 0) {
         const resultMessage = getPhotoUploadMessage(uploaded, failed);
-        await refresh({ showLoading: false, preferredFolderId: activeFolder.id, folderIdsToLoad: [activeFolder.id] });
+        if (!mergeUploadedItemsIntoFolder(activeFolder.id, uploadedItems)) {
+          await refresh({ showLoading: false, preferredFolderId: activeFolder.id, folderIdsToLoad: [activeFolder.id] });
+        }
         if (failed > 0) {
           setError(resultMessage);
           setMessage('');
@@ -346,6 +416,7 @@ export function TeamMedia({ auth }: { auth: AuthState }) {
     setMessage(`Uploading ${files.length} file${files.length === 1 ? '' : 's'}...`);
     let uploaded = 0;
     let failed = 0;
+    const uploadedItems: TeamMediaItem[] = [];
     try {
       for (const [index, queueItem] of queueItems.entries()) {
         const file = files[index];
@@ -355,7 +426,8 @@ export function TeamMedia({ auth }: { auth: AuthState }) {
           continue;
         }
         try {
-          await uploadParentTeamMediaFile(teamId, activeFolder.id, file);
+          const uploadedItem = await uploadParentTeamMediaFile(teamId, activeFolder.id, file);
+          if (uploadedItem) uploadedItems.push(uploadedItem);
           uploaded += 1;
           updateUploadQueueItem(queueItem.id, 'success');
         } catch (uploadError: any) {
@@ -365,7 +437,9 @@ export function TeamMedia({ auth }: { auth: AuthState }) {
       }
 
       if (uploaded > 0) {
-        await refresh({ showLoading: false, preferredFolderId: activeFolder.id, folderIdsToLoad: [activeFolder.id] });
+        if (!mergeUploadedItemsIntoFolder(activeFolder.id, uploadedItems)) {
+          await refresh({ showLoading: false, preferredFolderId: activeFolder.id, folderIdsToLoad: [activeFolder.id] });
+        }
         const resultMessage = getFileUploadMessage(uploaded, failed);
         if (failed > 0) {
           setError(resultMessage);
@@ -661,6 +735,20 @@ export function TeamMedia({ auth }: { auth: AuthState }) {
             <div className="rounded-xl border border-gray-200 bg-gray-50 p-4 text-sm font-semibold text-gray-500">No {emptyStateLabel} in this album.</div>
           )}
         </div>
+        {activeFolder?.itemsHasMore ? (
+          <div className="mt-3 flex justify-center">
+            <button
+              type="button"
+              className="ghost-button justify-center disabled:opacity-60"
+              onClick={handleLoadMoreItems}
+              disabled={loadingMoreFolderId === activeFolder.id}
+              aria-disabled={loadingMoreFolderId === activeFolder.id}
+            >
+              {loadingMoreFolderId === activeFolder.id ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <RefreshCw className="h-4 w-4" aria-hidden="true" />}
+              {loadingMoreFolderId === activeFolder.id ? 'Loading more' : 'Load more'}
+            </button>
+          </div>
+        ) : null}
       </section>
     </div>
   );
@@ -708,6 +796,15 @@ function createUploadQueueItem(file: File, kind: 'photo' | 'file', index: number
     status: 'uploading',
     errorMessage: ''
   };
+}
+
+function sortTeamMediaItemsForDisplay(a: TeamMediaItem, b: TeamMediaItem) {
+  const aOrder = Number(a.order);
+  const bOrder = Number(b.order);
+  if (Number.isFinite(aOrder) && Number.isFinite(bOrder) && aOrder !== bOrder) return aOrder - bOrder;
+  if (Number.isFinite(aOrder)) return -1;
+  if (Number.isFinite(bOrder)) return 1;
+  return String(a.title || '').localeCompare(String(b.title || ''));
 }
 
 async function runWithConcurrency<T>(items: T[], concurrency: number, worker: (item: T, index: number) => Promise<void>) {
@@ -1058,4 +1155,25 @@ function getItemIcon(item: TeamMediaItem) {
   if (type === 'photo' || type.includes('image')) return ImageIcon;
   if (type.includes('link')) return LinkIcon;
   return File;
+}
+
+function mergeTeamMediaFolderItems(nextFolder: TeamMediaFolder, cachedFolder: TeamMediaFolder | undefined, append: boolean): TeamMediaFolder {
+  if (!append || !cachedFolder) {
+    return { ...nextFolder, itemsLoaded: true };
+  }
+
+  const seen = new Set<string>();
+  const items = [...cachedFolder.items, ...nextFolder.items].filter((item) => {
+    const itemId = String(item.id || '').trim();
+    if (!itemId || seen.has(itemId)) return false;
+    seen.add(itemId);
+    return true;
+  });
+
+  return {
+    ...nextFolder,
+    items,
+    itemCount: Math.max(Number(nextFolder.itemCount) || 0, Number(cachedFolder.itemCount) || 0, items.length),
+    itemsLoaded: true
+  };
 }

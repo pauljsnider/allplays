@@ -5,6 +5,10 @@ function readDetailSource() {
     return readFileSync(new URL('../../apps/app/src/pages/ScheduleEventDetail.tsx', import.meta.url), 'utf8');
 }
 
+function readDetailsPanelSource() {
+    return readFileSync(new URL('../../apps/app/src/components/schedule/EventDetailsPanel.tsx', import.meta.url), 'utf8');
+}
+
 describe('React app schedule event detail cancellation action', () => {
     it('wires a staff-only non-cancelled DB game action through the cancellation service', () => {
         const source = readDetailSource();
@@ -32,15 +36,18 @@ describe('React app schedule event detail cancellation action', () => {
     });
 
     it('includes Forecast link logic when a location is present', () => {
-        const source = readDetailSource();
-        expect(source).toContain('  getScheduleMapHref,');
-        expect(source).toContain('  getScheduleForecastHref,');
-        expect(source).toContain('const mapHref = getScheduleMapHref(event.location);');
-        expect(source).toContain('const forecastHref = getScheduleForecastHref(event.location);');
-        expect(source).toContain('{(mapHref || forecastHref) ? (');
-        expect(source).toContain('<a href={mapHref} target="_blank" rel="noreferrer" className="secondary-button min-h-9 flex-1 px-3 py-2 text-xs">');
-        expect(source).toContain('Directions');
-        expect(source).toContain('<a href={forecastHref} target="_blank" rel="noreferrer" className="secondary-button min-h-9 flex-1 px-3 py-2 text-xs">');
-        expect(source).toContain('Forecast');
+        const pageSource = readDetailSource();
+        const panelSource = readDetailsPanelSource();
+
+        expect(pageSource).toContain("import { EventDetailsPanel } from '../components/schedule/EventDetailsPanel';");
+        expect(panelSource).toContain('  getScheduleMapHref,');
+        expect(panelSource).toContain('  getScheduleForecastHref,');
+        expect(panelSource).toContain('const mapHref = getScheduleMapHref(event.location);');
+        expect(panelSource).toContain('const forecastHref = getScheduleForecastHref(event.location);');
+        expect(panelSource).toContain('{(mapHref || forecastHref) ? (');
+        expect(panelSource).toContain('<a href={mapHref} target="_blank" rel="noreferrer" className="secondary-button min-h-9 flex-1 px-3 py-2 text-xs">');
+        expect(panelSource).toContain('Directions');
+        expect(panelSource).toContain('<a href={forecastHref} target="_blank" rel="noreferrer" className="secondary-button min-h-9 flex-1 px-3 py-2 text-xs">');
+        expect(panelSource).toContain('Forecast');
     });
 });

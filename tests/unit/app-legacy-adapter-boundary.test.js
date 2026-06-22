@@ -4,6 +4,7 @@ import { join } from 'node:path';
 
 const repoRoot = process.cwd();
 const directLegacyImportPattern = /from\s+['"](?:\.\.\/){4,}js\//;
+const forbiddenServiceLegacyImportPattern = /from\s+['"](?:@legacy\/|(?:\.\.\/){4,}js\/)/;
 
 function readRepoFile(path) {
     return readFileSync(join(repoRoot, path), 'utf8');
@@ -14,8 +15,8 @@ describe('app legacy adapter boundary', () => {
         const scheduleServiceSource = readRepoFile('apps/app/src/lib/scheduleService.ts');
         const playerServiceSource = readRepoFile('apps/app/src/lib/playerService.ts');
 
-        expect(directLegacyImportPattern.test(scheduleServiceSource)).toBe(false);
-        expect(directLegacyImportPattern.test(playerServiceSource)).toBe(false);
+        expect(forbiddenServiceLegacyImportPattern.test(scheduleServiceSource)).toBe(false);
+        expect(forbiddenServiceLegacyImportPattern.test(playerServiceSource)).toBe(false);
     });
 
     it('routes schedule and player services through typed legacy adapters', () => {
@@ -31,6 +32,41 @@ describe('app legacy adapter boundary', () => {
         expect(playerAdapterSource).toContain("from '@legacy/db.js'");
         expect(scheduleAdapterSource).not.toMatch(directLegacyImportPattern);
         expect(playerAdapterSource).not.toMatch(directLegacyImportPattern);
+    });
+
+    it('keeps migrated app service clusters behind typed legacy adapters', () => {
+        const migratedClusters = [
+            ['apps/app/src/lib/homeService.ts', "from './adapters/legacyHomeFees'"],
+            ['apps/app/src/lib/searchService.ts', "from './adapters/legacySearchDb'"],
+            ['apps/app/src/lib/chatService.ts', "from './adapters/legacyChatService'"],
+            ['apps/app/src/lib/socialService.ts', "from './adapters/legacySocialDb'"],
+            ['apps/app/src/lib/teamDetailService.ts', "from './adapters/legacyTeamDetail'"],
+            ['apps/app/src/lib/teamFeesService.ts', "from './adapters/legacyTeamFees'"],
+            ['apps/app/src/lib/parentToolsService.ts', "from './adapters/legacyParentTools'"],
+            ['apps/app/src/lib/practiceTimelineService.ts', "from './adapters/legacyPracticeTimeline'"],
+            ['apps/app/src/lib/gameReportService.ts', "from './adapters/legacyGameReport'"]
+        ];
+
+        migratedClusters.forEach(([path, adapterImport]) => {
+            const source = readRepoFile(path);
+            expect(source).toContain(adapterImport);
+            expect(forbiddenServiceLegacyImportPattern.test(source), path).toBe(false);
+        });
+
+        [
+            'apps/app/src/lib/adapters/legacyHomeFees.ts',
+            'apps/app/src/lib/adapters/legacySearchDb.ts',
+            'apps/app/src/lib/adapters/legacyChatService.ts',
+            'apps/app/src/lib/adapters/legacySocialDb.ts',
+            'apps/app/src/lib/adapters/legacyTeamDetail.ts',
+            'apps/app/src/lib/adapters/legacyTeamFees.ts',
+            'apps/app/src/lib/adapters/legacyParentTools.ts',
+            'apps/app/src/lib/adapters/legacyPracticeTimeline.ts',
+            'apps/app/src/lib/adapters/legacyGameReport.ts'
+        ].forEach((path) => {
+            const source = readRepoFile(path);
+            expect(source, path).toMatch(/from\s+['"](?:@legacy\/|\.\.\/\.\.\/\.\.\/\.\.\/\.\.\/js\/)/);
+        });
     });
 
     it('keeps ScheduleEventDetail RSVP helpers behind the schedule helper adapter', () => {

@@ -1,0 +1,38 @@
+import { describe, expect, it } from 'vitest';
+import { readFileSync } from 'node:fs';
+
+const chatLogicSource = readFileSync(new URL('../../apps/app/src/lib/chatLogic.ts', import.meta.url), 'utf8');
+const messagesSource = readFileSync(new URL('../../apps/app/src/pages/Messages.tsx', import.meta.url), 'utf8');
+const chatLogicTestSource = readFileSync(new URL('./app-chat-logic.test.js', import.meta.url), 'utf8');
+const messagesIntegrationTestSource = readFileSync(new URL('./app-chat-messages-integration.test.jsx', import.meta.url), 'utf8');
+
+describe('issue 2592 chat mention autocomplete and highlight source contract', () => {
+    it('keeps mention parsing, suggestions, insertion, and highlight formatting in chatLogic', () => {
+        expect(chatLogicSource).toContain('const chatMentionTriggerRegex =');
+        expect(chatLogicSource).toContain('const chatMentionHighlightRegex =');
+        expect(chatLogicSource).toContain('export function getChatMentionQuery(text: string)');
+        expect(chatLogicSource).toContain('export function buildChatMentionSuggestions(');
+        expect(chatLogicSource).toContain('export function insertChatMention(text: string, mentionLabel: string)');
+        expect(chatLogicSource).toContain('export function formatChatMessageHtml(text: string)');
+        expect(chatLogicSource).toContain('<span class="chat-mention">@${mentionLabel}</span>');
+    });
+
+    it('keeps Messages wired to mention suggestions and mention rendering', () => {
+        expect(messagesSource).toContain('buildChatMentionSuggestions,');
+        expect(messagesSource).toContain('formatChatMessageHtml,');
+        expect(messagesSource).toContain('hasChatMentionTrigger,');
+        expect(messagesSource).toContain('insertChatMention,');
+        expect(messagesSource).toContain('const mentionSuggestions = useMemo(');
+        expect(messagesSource).toContain('mentionSuggestions={mentionSuggestions}');
+        expect(messagesSource).toContain('onRecipientMention={insertRecipientMention}');
+        expect(messagesSource).toContain('const messageHtml = useMemo(() => formatChatMessageHtml(message.text || \'\'), [message.text]);');
+        expect(messagesSource).toContain('aria-label="Mention suggestions"');
+    });
+
+    it('keeps regression tests for teammate mentions and hostile input escaping', () => {
+        expect(chatLogicTestSource).toContain('highlights teammate mentions while keeping hostile mention-like input escaped');
+        expect(chatLogicTestSource).toContain('filters mention suggestions from recipient options and inserts the selected mention');
+        expect(messagesIntegrationTestSource).toContain('suggests teammate mentions from recipient options and inserts the selected mention');
+        expect(messagesIntegrationTestSource).toContain('keeps mention suggestions visible for multi-word full-name queries');
+    });
+});
