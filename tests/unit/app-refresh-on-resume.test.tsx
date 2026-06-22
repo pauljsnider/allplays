@@ -172,4 +172,37 @@ describe('useRefreshOnResume', () => {
         view.unmount();
         expect(removeSpy).toHaveBeenCalledWith('visibilitychange', expect.any(Function));
     });
+
+    it('logs failed resume refreshes through the structured logger', async () => {
+        const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+        const doc = makeFakeDoc('visible');
+        let clock = 0;
+        const refresh = vi.fn(async () => {
+            throw Object.assign(new Error('Refresh failed with Bearer unsafe-token'), {
+                headers: { Authorization: 'Bearer header-token' }
+            });
+        });
+        mountUseRefreshOnResume(refresh, { staleAfterMs: 1_000 }, {
+            doc: doc as unknown as Document,
+            isNativePlatform: () => false,
+            now: () => clock
+        });
+
+        clock = 2_000;
+        doc.fire('visibilitychange');
+        await vi.waitFor(() => expect(warnSpy).toHaveBeenCalled());
+
+        expect(warnSpy).toHaveBeenCalledWith(
+            '[refresh-on-resume] Refresh failed.',
+            {
+                error: {
+                    name: 'Error',
+                    message: 'Refresh failed with Bearer [REDACTED]',
+                    headers: {
+                        Authorization: '[REDACTED]'
+                    }
+                }
+            }
+        );
+    });
 });
