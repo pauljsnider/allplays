@@ -100,4 +100,41 @@ describe('legacy global search modal', () => {
         expect(document.body.textContent).toContain('Bearcats');
         expect(firebaseMocks.doc).toHaveBeenCalledWith(firebaseMocks.db, 'teams', 'team-access');
     });
+
+    it('uses parent team link visibility summaries without per-team fallback reads', async () => {
+        const { setupHeaderSearch } = await import('../../js/global-search.js?v=8');
+
+        setupHeaderSearch({
+            user: {
+                uid: 'parent-1',
+                email: 'parent@example.com',
+                parentOf: [
+                    {
+                        teamId: 'team-summary',
+                        teamName: 'Summary Rockets',
+                        sport: 'Basketball',
+                        isPublic: false,
+                        active: true,
+                        status: 'active'
+                    },
+                    {
+                        teamId: 'team-archived',
+                        teamName: 'Archived Rockets',
+                        sport: 'Soccer',
+                        isPublic: false,
+                        status: 'archived'
+                    }
+                ]
+            },
+            headerContainer: null
+        });
+
+        window.dispatchEvent(new KeyboardEvent('keydown', { key: 'k', ctrlKey: true, bubbles: true }));
+        await flushAsyncWork();
+        await flushAsyncWork();
+
+        expect(firebaseMocks.getDoc).not.toHaveBeenCalled();
+        expect(document.body.textContent).toContain('Summary Rockets');
+        expect(document.body.textContent).not.toContain('Archived Rockets');
+    });
 });

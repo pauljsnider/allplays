@@ -590,6 +590,14 @@ async function mergeParentHomeSearchTeams(teamsById: Map<string, AppSearchTeam>,
       return;
     }
 
+    if (hasSearchSafeParentHomeTeamMetadata(team)) {
+      const searchTeam = buildParentHomeSearchTeam(team);
+      if (canUserDiscoverTeamInAppSearch(searchTeam, user)) {
+        teamsById.set(searchTeam.id, searchTeam);
+      }
+      return;
+    }
+
     fallbackTeams.push({ ...team, teamId });
   });
 
@@ -659,7 +667,11 @@ function buildParentHomeSearchTeam(homeTeam: any, baseTeam?: AppSearchTeam): App
     city: baseTeam?.city || '',
     state: baseTeam?.state || '',
     location: baseTeam?.location || cleanString(homeTeam?.location),
-    isPublic: baseTeam?.isPublic,
+    isPublic: typeof homeTeam?.isPublic === 'boolean'
+      ? homeTeam.isPublic
+      : typeof homeTeam?.public === 'boolean'
+        ? homeTeam.public
+        : baseTeam?.isPublic,
     active: homeTeam?.active ?? baseTeam?.active,
     archived: homeTeam?.archived ?? baseTeam?.archived,
     status: cleanString(homeTeam?.status) || baseTeam?.status,
@@ -671,6 +683,19 @@ function buildParentHomeSearchTeam(homeTeam: any, baseTeam?: AppSearchTeam): App
     streamVolunteerEmails: baseTeam?.streamVolunteerEmails || [],
     teamPermissions: baseTeam?.teamPermissions || null
   };
+}
+
+function hasSearchSafeParentHomeTeamMetadata(team: any) {
+  return cleanString(team?.teamName || team?.name) !== ''
+    && isTeamActive(team)
+    && (
+      typeof team?.isPublic === 'boolean'
+      || typeof team?.public === 'boolean'
+      || team?.fromAppAccess === true
+      || team?.appAccess === true
+      || cleanString(team?.visibility) !== ''
+      || cleanString(team?.searchVisibility) !== ''
+    );
 }
 
 function normalizePublicTeamSearchResults(teams: any[]): AppSearchTeam[] {
