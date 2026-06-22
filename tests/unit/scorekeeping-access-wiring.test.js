@@ -36,6 +36,8 @@ describe('scorekeeping access wiring', () => {
         expect(rules).toContain('function canScorekeepGame(teamId, gameId)');
         expect(rules).toMatch(/allow update: if isTeamOwnerOrAdmin\(teamId\) \|\|\s+\(isOfficialForGame\(\) && isOfficialGameUpdate\(\)\) \|\|\s+isScorekeepingGameUpdate\(teamId, gameId\) \|\|\s+isVideographyGameUpdate\(teamId, gameId\);/);
         expect(rules).toContain('allow create, update: if isTeamOwnerOrAdmin(teamId) || canScorekeepGame(teamId, gameId);');
+        expect(rules).toContain('match /privatePlayerStats/{statId}');
+        expect(rules).toContain('allow read, create, update, delete: if isTeamOwnerOrAdmin(teamId) || canScorekeepGame(teamId, gameId);');
         expect(rules).toContain('allow delete: if isTeamOwnerOrAdmin(teamId);');
     });
 });
