@@ -29,7 +29,7 @@ const scheduleServiceMocks = vi.hoisted(() => ({
   loadStaffPracticeAttendance: vi.fn(),
   loadParentScheduleAssignments: vi.fn(),
   loadParentScheduleEventDetail: vi.fn(),
-  resolveCachedParentScheduleEvents: vi.fn(() => [] as any[]),
+  resolveCachedParentScheduleEvents: vi.fn<(...args: any[]) => any[]>(() => [] as any[]),
   loadParentScheduleRideOffers: vi.fn(),
   loadStaffScheduleRsvpBreakdown: vi.fn(),
   loadStaffRsvpReminderPreview: vi.fn(),
@@ -344,6 +344,27 @@ describe('ScheduleEventDetail loading states', () => {
 
     expect(screen.queryByRole('status', { name: 'Loading event' })).toBeNull();
     expect(screen.getAllByText(/Avery Smith/).length).toBeGreaterThan(0);
+  });
+
+  it('clears a cached previous event while cold-loading a new route (#2649)', async () => {
+    scheduleServiceMocks.resolveCachedParentScheduleEvents.mockImplementation((_userId, _teamId, eventId) => (
+      eventId === 'game-1'
+        ? [buildEvent({ id: 'game-1', childId: 'player-1', childName: 'Cached Smith' })]
+        : []
+    ));
+    scheduleServiceMocks.loadParentScheduleEventDetail.mockReturnValue(new Promise(() => {}));
+
+    renderScheduleEventDetailWithRouteControls();
+
+    expect(screen.queryByRole('status', { name: 'Loading event' })).toBeNull();
+    expect(screen.getAllByText(/Cached Smith/).length).toBeGreaterThan(0);
+
+    fireEvent.click(screen.getByText('Switch game'));
+
+    await waitFor(() => {
+      expect(screen.getByRole('status', { name: 'Loading event' })).toBeTruthy();
+    });
+    expect(screen.queryByText(/Cached Smith/)).toBeNull();
   });
 
   it('reconciles a cached seed with the refreshed event details (#2649)', async () => {

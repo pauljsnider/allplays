@@ -395,6 +395,8 @@ export function ScheduleEventDetail({ auth }: { auth: AuthState }) {
       }
       setInitialLoadPending(false);
     } else {
+      setEvents([]);
+      hasLoadedEventRef.current = false;
       setInitialLoadPending(true);
     }
     void loadEvent();
