@@ -17,6 +17,9 @@ describe('ScheduleEventDetail decomposition contract', () => {
             "import { EventBrief } from '../components/schedule/EventBrief';",
             "import { EventDetailsPanel } from '../components/schedule/EventDetailsPanel';",
             "import { EventSectionNav } from '../components/schedule/EventSectionNav';",
+            "import { GameReportSections } from '../components/schedule/GameReportSections';",
+            "import { PlayerSwitcher } from '../components/schedule/PlayerSwitcher';",
+            "import { ReportMarkdownText } from '../components/schedule/ReportMarkdownText';",
             "import { RideshareSection } from '../components/schedule/RideshareSection';",
             "import { StaffRsvpBreakdownPanel } from '../components/schedule/StaffRsvpBreakdownPanel';",
             "import { StaffRsvpReminderPanel } from '../components/schedule/StaffRsvpReminderPanel';",
@@ -34,6 +37,9 @@ describe('ScheduleEventDetail decomposition contract', () => {
             /^function EventBrief\b/m,
             /^function EventDetailsPanel\b/m,
             /^function EventSectionNav\b/m,
+            /^function GameReportSections\b/m,
+            /^function PlayerSwitcher\b/m,
+            /^function ReportMarkdownText\b/m,
             /^function RideOfferCard\b/m,
             /^function RideshareSection\b/m,
             /^function StaffRsvpBreakdownPanel\b/m,
@@ -129,6 +135,21 @@ describe('ScheduleEventDetail decomposition contract', () => {
         expect(component).toContain("{ label: 'Home packet', value: event.practiceHomePacketSummary, icon: FileText }");
     });
 
+    it('keeps child switcher behavior in the extracted schedule component', () => {
+        const page = readRepoFile('apps/app/src/pages/ScheduleEventDetail.tsx');
+        const component = readRepoFile('apps/app/src/components/schedule/PlayerSwitcher.tsx');
+
+        expect(page).toContain("import { PlayerSwitcher } from '../components/schedule/PlayerSwitcher';");
+        expect(page).toContain('<PlayerSwitcher events={events} selectedChildId={selectedEvent.childId} onSelect={selectChild} compact />');
+        expect(page).not.toMatch(/^function PlayerSwitcher\b/m);
+
+        expect(component).toContain('export function PlayerSwitcher');
+        expect(component).toContain('data-testid="event-player-switcher"');
+        expect(component).toContain('selected ?');
+        expect(component).toContain('onClick={() => onSelect(event.childId)}');
+        expect(component).toContain('aria-pressed={selected}');
+    });
+
     it('keeps assignment row rendering in the extracted schedule component', () => {
         const component = readRepoFile('apps/app/src/components/schedule/AssignmentCard.tsx');
 
@@ -159,15 +180,26 @@ describe('ScheduleEventDetail decomposition contract', () => {
         expect(section).toContain('<AssignmentCard');
     });
 
-    it('keeps game report rendering behind named page boundaries', () => {
+    it('keeps game report rendering behind extracted schedule components', () => {
         const page = readRepoFile('apps/app/src/pages/ScheduleEventDetail.tsx');
+        const sections = readRepoFile('apps/app/src/components/schedule/GameReportSections.tsx');
+        const content = readRepoFile('apps/app/src/components/schedule/GameReportSectionContent.tsx');
+        const markdown = readRepoFile('apps/app/src/components/schedule/ReportMarkdownText.tsx');
 
-        expect(page).toContain('function GameReportSections({ event }: { event: ParentScheduleEvent })');
-        expect(page).toContain('const loaded = await loadGameReportSections(event.teamId, event.id);');
-        expect(page).toContain('<GameReportSectionContent report={report} activeSection={activeReportSection} />');
-        expect(page).toContain('function GameReportSectionContent({ report, activeSection }: { report: GameReportData; activeSection: GameReportSectionId })');
-        expect(page).toContain('function MatchSummarySection({ report }: { report: GameReportData })');
-        expect(page).toContain('function PlayerPerformanceSection({ report }: { report: GameReportData })');
-        expect(page).toContain('function ReportInsightsSection({ report }: { report: GameReportData })');
+        expect(page).toContain("import { GameReportSections } from '../components/schedule/GameReportSections';");
+        expect(page).toContain('<GameReportSections event={event} />');
+        expect(page).not.toMatch(/^function GameReportSections\b/m);
+        expect(page).not.toMatch(/^function GameReportSectionContent\b/m);
+        expect(page).not.toMatch(/loadGameReportSections\(/);
+
+        expect(sections).toContain('export function GameReportSections');
+        expect(sections).toContain('const loaded = await loadGameReportSections(event.teamId, event.id);');
+        expect(sections).toContain('<GameReportSectionContent report={report} activeSection={activeReportSection} />');
+        expect(sections).toContain('function getVisibleGameReportSections(report: GameReportData | null)');
+        expect(content).toContain('export function GameReportSectionContent');
+        expect(content).toContain('function MatchSummarySection({ report }: { report: GameReportData })');
+        expect(content).toContain('function PlayerPerformanceSection({ report }: { report: GameReportData })');
+        expect(content).toContain('function ReportInsightsSection({ report }: { report: GameReportData })');
+        expect(markdown).toContain('export function ReportMarkdownText');
     });
 });
