@@ -1,15 +1,15 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 
-function readDetailSource() {
-    return readFileSync(new URL('../../apps/app/src/pages/ScheduleEventDetail.tsx', import.meta.url), 'utf8');
+function readSource(path) {
+    return readFileSync(new URL(`../../${path}`, import.meta.url), 'utf8');
 }
 
 describe('React app schedule event detail audio announcer wiring', () => {
     it('adds an audio announcement toggle to the play-by-play report section', () => {
-        const source = readDetailSource();
+        const source = readSource('apps/app/src/components/schedule/GameReportSectionContent.tsx');
 
-        expect(source).toContain("import { useLiveGameAnnouncer } from '../lib/liveGameAnnouncer';");
+        expect(source).toContain("import { useLiveGameAnnouncer } from '../../lib/liveGameAnnouncer';");
         expect(source).toContain('const { supported, enabled, paused, toggleEnabled } = useLiveGameAnnouncer(plays);');
         expect(source).toContain('Audio announcements');
         expect(source).toContain('Turn on audio announcements');
@@ -19,7 +19,7 @@ describe('React app schedule event detail audio announcer wiring', () => {
     });
 
     it('only refreshes the game report automatically for live plays views', () => {
-        const source = readDetailSource();
+        const source = readSource('apps/app/src/components/schedule/GameReportSections.tsx');
 
         expect(source).toContain('const liveReportPollIntervalMs = 15000;');
         expect(source).toContain("const liveReportStatus = String(report?.game?.liveStatus || report?.game?.status || event.liveStatus || event.status || '').trim().toLowerCase();");

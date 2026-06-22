@@ -11,6 +11,10 @@ const rsvpHookSource = readSource('apps/app/src/hooks/schedule/useScheduleEventR
 const ridesHookSource = readSource('apps/app/src/hooks/schedule/useScheduleRideOffers.ts');
 const availabilityPanelsSource = readSource('apps/app/src/components/schedule/AvailabilityPanels.tsx');
 const assignmentsSectionSource = readSource('apps/app/src/components/schedule/AssignmentsSection.tsx');
+const gameReportSectionsSource = readSource('apps/app/src/components/schedule/GameReportSections.tsx');
+const gameReportContentSource = readSource('apps/app/src/components/schedule/GameReportSectionContent.tsx');
+const playerSwitcherSource = readSource('apps/app/src/components/schedule/PlayerSwitcher.tsx');
+const reportMarkdownSource = readSource('apps/app/src/components/schedule/ReportMarkdownText.tsx');
 const rideOfferCardSource = readSource('apps/app/src/components/schedule/RideOfferCard.tsx');
 const rideshareSectionSource = readSource('apps/app/src/components/schedule/RideshareSection.tsx');
 const staffRsvpRowSource = readSource('apps/app/src/components/schedule/StaffRsvpPlayerRow.tsx');
@@ -101,6 +105,9 @@ describe('ScheduleEventDetail decomposition initiative source contract', () => {
         [
             "import { DateTile } from '../components/schedule/DateTile';",
             "import { EventBrief } from '../components/schedule/EventBrief';",
+            "import { GameReportSections } from '../components/schedule/GameReportSections';",
+            "import { PlayerSwitcher } from '../components/schedule/PlayerSwitcher';",
+            "import { ReportMarkdownText } from '../components/schedule/ReportMarkdownText';",
             "import { EventSectionNav } from '../components/schedule/EventSectionNav';",
             "import { StaffRsvpBreakdownPanel } from '../components/schedule/StaffRsvpBreakdownPanel';",
             "import { StaffRsvpReminderPanel } from '../components/schedule/StaffRsvpReminderPanel';",
@@ -115,6 +122,9 @@ describe('ScheduleEventDetail decomposition initiative source contract', () => {
             /^function DateTile\b/m,
             /^function EventBrief\b/m,
             /^function EventSectionNav\b/m,
+            /^function GameReportSections\b/m,
+            /^function PlayerSwitcher\b/m,
+            /^function ReportMarkdownText\b/m,
             /^function StaffRsvpBreakdownPanel\b/m,
             /^function StaffRsvpReminderPanel\b/m,
             /^function QuickAvailabilityPanel\b/m,
@@ -132,6 +142,29 @@ describe('ScheduleEventDetail decomposition initiative source contract', () => {
         expect(staffRsvpBreakdownPanelSource).toContain('export function StaffRsvpBreakdownPanel');
         expect(staffRsvpReminderPanelSource).toContain('export function StaffRsvpReminderPanel');
         expect(summaryComponentTestSource).toContain("describe('Schedule event summary components'");
+    });
+
+    it('keeps child switching and game report rendering in extracted schedule components', () => {
+        expect(detailSource).toContain("import { PlayerSwitcher } from '../components/schedule/PlayerSwitcher';");
+        expect(detailSource).toContain("import { GameReportSections } from '../components/schedule/GameReportSections';");
+        expect(detailSource).toContain('<PlayerSwitcher events={events} selectedChildId={selectedEvent.childId} onSelect={selectChild} compact />');
+        expect(detailSource).toContain('<GameReportSections event={event} />');
+        expect(detailSource).not.toMatch(/^function PlayerSwitcher\b/m);
+        expect(detailSource).not.toMatch(/^function GameReportSections\b/m);
+        expect(detailSource).not.toMatch(/^function GameReportSectionContent\b/m);
+        expect(detailSource).not.toMatch(/loadGameReportSections\(/);
+
+        expect(playerSwitcherSource).toContain('export function PlayerSwitcher');
+        expect(playerSwitcherSource).toContain('data-testid="event-player-switcher"');
+        expect(playerSwitcherSource).toContain('onClick={() => onSelect(event.childId)}');
+        expect(gameReportSectionsSource).toContain('export function GameReportSections');
+        expect(gameReportSectionsSource).toContain('loadGameReportSections(event.teamId, event.id)');
+        expect(gameReportSectionsSource).toContain('function getVisibleGameReportSections(report: GameReportData | null)');
+        expect(gameReportContentSource).toContain('export function GameReportSectionContent');
+        expect(gameReportContentSource).toContain('function MatchSummarySection({ report }: { report: GameReportData })');
+        expect(gameReportContentSource).toContain('function PlayerPerformanceSection({ report }: { report: GameReportData })');
+        expect(gameReportContentSource).toContain('function ReportMediaSection({ report }: { report: GameReportData })');
+        expect(reportMarkdownSource).toContain('export function ReportMarkdownText');
     });
 
     it('keeps staff RSVP admin workflow behind extracted panel and hook modules', () => {
