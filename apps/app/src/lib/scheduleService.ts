@@ -3021,6 +3021,31 @@ async function buildParentScheduleTeamChildren(user: AuthUser, profile: Record<s
   return { children, byTeam, staffTeams };
 }
 
+/**
+ * Resolve already-cached schedule events for a route target from the parent
+ * schedule summary cache, so ScheduleEventDetail can warm-start from known data
+ * instead of showing a cold full-page skeleton (#2649). Returns every matching
+ * child-event row for the event.
+ */
+export function resolveCachedParentScheduleEvents(
+  userId: string,
+  teamId: string,
+  eventId: string
+): ParentScheduleEvent[] {
+  const normalizedTeamId = compactString(teamId);
+  const normalizedEventId = compactString(eventId);
+  if (!userId || !normalizedTeamId || !normalizedEventId) {
+    return [];
+  }
+  const cached = getCachedAppData<ParentScheduleLoadResult>(getParentScheduleSummaryCacheKey(userId));
+  if (!cached?.events?.length) {
+    return [];
+  }
+  return cached.events.filter(
+    (event) => event.teamId === normalizedTeamId && event.id === normalizedEventId
+  );
+}
+
 export async function loadParentScheduleEventDetail(user: AuthUser | null, options: ParentScheduleEventDetailLoadOptions): Promise<ParentScheduleLoadResult> {
   const requestedTeamId = compactString(options?.teamId);
   const requestedEventId = compactString(options?.eventId);
