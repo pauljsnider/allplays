@@ -13,7 +13,7 @@ function getFunctionSource(functionName) {
     return dbSource.slice(start, end);
 }
 
-function buildGetUnreadChatCount({ db, getDoc, doc, collection, query, where, orderBy, limit, getDocs, getCountFromServer }) {
+function buildGetUnreadChatCount({ db, getDoc, doc, collection, query, where, orderBy, limit, getDocs, getCountFromServer, DEFAULT_TEAM_CONVERSATION_ID = 'team', isDefaultTeamConversation = (conversationId) => conversationId === 'team' }) {
     const functionSource = getFunctionSource('getUnreadChatCount')
         .replace('export async function getUnreadChatCount', 'return async function getUnreadChatCount');
 
@@ -28,6 +28,8 @@ function buildGetUnreadChatCount({ db, getDoc, doc, collection, query, where, or
         'limit',
         'getDocs',
         'getCountFromServer',
+        'DEFAULT_TEAM_CONVERSATION_ID',
+        'isDefaultTeamConversation',
         functionSource
     )(
         db,
@@ -39,11 +41,13 @@ function buildGetUnreadChatCount({ db, getDoc, doc, collection, query, where, or
         orderBy,
         limit,
         getDocs,
-        getCountFromServer
+        getCountFromServer,
+        DEFAULT_TEAM_CONVERSATION_ID,
+        isDefaultTeamConversation
     );
 }
 
-function buildGetUnreadChatCounts({ db, getDoc, doc, getUnreadChatCount, console }) {
+function buildGetUnreadChatCounts({ db, getDoc, doc, getUnreadChatCount, getChatConversations, console, DEFAULT_TEAM_CONVERSATION_ID = 'team', isDefaultTeamConversation = (conversationId) => conversationId === 'team' }) {
     const functionSource = getFunctionSource('getUnreadChatCounts')
         .replace('export async function getUnreadChatCounts', 'return async function getUnreadChatCounts');
 
@@ -52,14 +56,20 @@ function buildGetUnreadChatCounts({ db, getDoc, doc, getUnreadChatCount, console
         'getDoc',
         'doc',
         'getUnreadChatCount',
+        'getChatConversations',
         'console',
+        'DEFAULT_TEAM_CONVERSATION_ID',
+        'isDefaultTeamConversation',
         functionSource
     )(
         db,
         getDoc,
         doc,
         getUnreadChatCount,
-        console
+        getChatConversations,
+        console,
+        DEFAULT_TEAM_CONVERSATION_ID,
+        isDefaultTeamConversation
     );
 }
 
@@ -230,10 +240,55 @@ describe('chat unread count helpers', () => {
         expect(getCountFromServer).not.toHaveBeenCalled();
     });
 
+    it('uses conversation-scoped last-read state for non-default conversations', async () => {
+        const lastRead = { seconds: 300 };
+        const getDoc = vi.fn();
+        const doc = vi.fn();
+        const messagesRef = { path: 'teams/team-1/chatConversations/staff-conversation/chatMessages' };
+        const collection = vi.fn(() => messagesRef);
+        const where = vi.fn((field, op, value) => ({ field, op, value }));
+        const orderBy = vi.fn((field, direction) => ({ field, direction }));
+        const limit = vi.fn((value) => ({ limit: value }));
+        const query = vi.fn((ref, ...constraints) => ({ ref, constraints }));
+        const getDocs = vi.fn().mockResolvedValue({
+            docs: [{ data: () => ({ createdAt: { seconds: 200 } }) }]
+        });
+        const getCountFromServer = vi.fn();
+
+        const getUnreadChatCount = buildGetUnreadChatCount({
+            db: {},
+            getDoc,
+            doc,
+            collection,
+            query,
+            where,
+            orderBy,
+            limit,
+            getDocs,
+            getCountFromServer
+        });
+
+        await expect(getUnreadChatCount('user-1', 'team-1', {
+            conversationId: 'staff-conversation',
+            userData: {
+                teamChatState: {
+                    'team-1': {
+                        lastReadByConversation: {
+                            'staff-conversation': lastRead
+                        }
+                    }
+                }
+            }
+        })).resolves.toBe(0);
+        expect(collection).toHaveBeenCalledWith({}, 'teams', 'team-1', 'chatConversations', 'staff-conversation', 'chatMessages');
+        expect(getCountFromServer).not.toHaveBeenCalled();
+    });
+
     it('reuses one user profile read and passes latest-message hints across teams', async () => {
         const getUnreadChatCount = vi.fn()
             .mockResolvedValueOnce(3)
             .mockRejectedValueOnce(new Error('index pending'));
+        const getChatConversations = vi.fn().mockResolvedValue([]);
         const getDoc = vi.fn().mockResolvedValue({
             data: () => ({ teamChatState: { 'team-a': { lastReadAt: { seconds: 100 } } } })
         });
@@ -244,6 +299,7 @@ describe('chat unread count helpers', () => {
             getDoc,
             doc,
             getUnreadChatCount,
+            getChatConversations,
             console: { warn }
         });
 
@@ -260,17 +316,68 @@ describe('chat unread count helpers', () => {
         expect(getUnreadChatCount).toHaveBeenCalledTimes(2);
         expect(getUnreadChatCount).toHaveBeenNthCalledWith(1, 'user-3', 'team-a', expect.objectContaining({
             userData: { teamChatState: { 'team-a': { lastReadAt: { seconds: 100 } } } },
+            conversationId: 'team',
             latestMessageAt: { seconds: 150 }
         }));
         expect(getUnreadChatCount).toHaveBeenNthCalledWith(2, 'user-3', 'team-b', expect.objectContaining({
             userData: { teamChatState: { 'team-a': { lastReadAt: { seconds: 100 } } } },
+            conversationId: 'team',
             latestMessageAt: { seconds: 250 }
         }));
-        expect(warn).toHaveBeenCalledWith('Failed to get unread count for team team-b:', expect.any(Error));
+        expect(warn).toHaveBeenCalledWith('Failed to get unread count for team team-b conversation team:', expect.any(Error));
+    });
+
+    it('aggregates unread counts across the default and sibling conversations for one team', async () => {
+        const getUnreadChatCount = vi.fn()
+            .mockResolvedValueOnce(1)
+            .mockResolvedValueOnce(2)
+            .mockResolvedValueOnce(0);
+        const getChatConversations = vi.fn().mockResolvedValue([
+            { id: 'team' },
+            { id: 'staff-conversation' },
+            { id: 'direct-conversation' }
+        ]);
+        const getDoc = vi.fn().mockResolvedValue({
+            data: () => ({ teamChatState: {} })
+        });
+        const doc = vi.fn(() => ({ path: 'users/user-5' }));
+        const warn = vi.fn();
+        const getUnreadChatCounts = buildGetUnreadChatCounts({
+            db: {},
+            getDoc,
+            doc,
+            getUnreadChatCount,
+            getChatConversations,
+            console: { warn }
+        });
+
+        await expect(getUnreadChatCounts('user-5', ['team-a'], {
+            latestMessageAtByTeam: {
+                'team-a': { seconds: 250 }
+            }
+        })).resolves.toEqual({
+            'team-a': 3
+        });
+
+        expect(getChatConversations).toHaveBeenCalledWith('team-a');
+        expect(getUnreadChatCount).toHaveBeenNthCalledWith(1, 'user-5', 'team-a', expect.objectContaining({
+            conversationId: 'team',
+            latestMessageAt: { seconds: 250 }
+        }));
+        expect(getUnreadChatCount).toHaveBeenNthCalledWith(2, 'user-5', 'team-a', expect.objectContaining({
+            conversationId: 'staff-conversation',
+            latestMessageAt: undefined
+        }));
+        expect(getUnreadChatCount).toHaveBeenNthCalledWith(3, 'user-5', 'team-a', expect.objectContaining({
+            conversationId: 'direct-conversation',
+            latestMessageAt: undefined
+        }));
+        expect(warn).not.toHaveBeenCalled();
     });
 
     it('returns zero counts when the shared user profile read fails', async () => {
         const getUnreadChatCount = vi.fn();
+        const getChatConversations = vi.fn();
         const getDoc = vi.fn().mockRejectedValue(new Error('permission denied'));
         const doc = vi.fn(() => ({ path: 'users/user-4' }));
         const warn = vi.fn();
@@ -279,6 +386,7 @@ describe('chat unread count helpers', () => {
             getDoc,
             doc,
             getUnreadChatCount,
+            getChatConversations,
             console: { warn }
         });
 
@@ -312,6 +420,34 @@ describe('chat user state persistence helpers', () => {
             'chatLastRead.team-1': lastReadAt,
             'teamChatState.team-1.lastReadAt': lastReadAt
         });
+    });
+
+    it('stores conversation-scoped last-read state without flattening the whole team', async () => {
+        const lastReadAt = { seconds: 654 };
+        const doc = vi.fn(() => ({ path: 'users/user-1' }));
+        const setDoc = vi.fn().mockResolvedValue(undefined);
+        const updateChatLastRead = buildChatStateUpdater('updateChatLastRead', {
+            db: {},
+            doc,
+            updateDoc: vi.fn(),
+            setDoc,
+            Timestamp: { now: () => lastReadAt },
+            deleteField: vi.fn(),
+            DEFAULT_TEAM_CONVERSATION_ID: 'team',
+            isDefaultTeamConversation: (conversationId) => conversationId === 'team'
+        });
+
+        await updateChatLastRead('user-1', 'team-1', 'staff-conversation');
+
+        expect(setDoc).toHaveBeenCalledWith({ path: 'users/user-1' }, {
+            teamChatState: {
+                'team-1': {
+                    lastReadByConversation: {
+                        'staff-conversation': lastReadAt
+                    }
+                }
+            }
+        }, { merge: true });
     });
 
     it('stores per-conversation mute state in the team chat state map', async () => {

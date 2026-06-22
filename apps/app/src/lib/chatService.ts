@@ -162,6 +162,7 @@ export type ChatInboxPreviewUpdate = {
 
 type TeamChatStateEntry = {
   lastReadAt?: unknown;
+  lastReadByConversation?: Record<string, unknown>;
   mutedConversations?: Record<string, unknown>;
 };
 
@@ -1334,9 +1335,9 @@ export async function toggleTeamChatReaction(teamId: string, messageId: string, 
   }
 }
 
-export async function markTeamChatRead(userId: string, teamId: string) {
+export async function markTeamChatRead(userId: string, teamId: string, conversationId = DEFAULT_TEAM_CONVERSATION_ID) {
   try {
-    return await withTimeout(Promise.resolve(updateChatLastRead(userId, teamId)), 'Chat last read update', 2500);
+    return await withTimeout(Promise.resolve(updateChatLastRead(userId, teamId, conversationId)), 'Chat last read update', 2500);
   } catch (error) {
     if (!isNativeRuntime()) {
       console.warn('[chat-service] Failed to update chat last-read:', sanitizeErrorForLogging(error));
@@ -1347,16 +1348,32 @@ export async function markTeamChatRead(userId: string, teamId: string) {
     const profile = (await nativeGetDocument(userPath) || {}) as Record<string, any>;
     const lastReadAt = new Date();
     const teamChatState = getTeamChatStateEntry(profile, teamId);
+    if (isDefaultTeamConversation(conversationId)) {
+      await nativePatchDocument(userPath, {
+        chatLastRead: {
+          ...(profile.chatLastRead || {}),
+          [teamId]: lastReadAt
+        },
+        teamChatState: {
+          ...(profile.teamChatState || {}),
+          [teamId]: {
+            ...teamChatState,
+            lastReadAt
+          }
+        }
+      });
+      return null;
+    }
+
     await nativePatchDocument(userPath, {
-      chatLastRead: {
-        ...(profile.chatLastRead || {}),
-        [teamId]: lastReadAt
-      },
       teamChatState: {
         ...(profile.teamChatState || {}),
         [teamId]: {
           ...teamChatState,
-          lastReadAt
+          lastReadByConversation: {
+            ...(teamChatState.lastReadByConversation || {}),
+            [conversationId]: lastReadAt
+          }
         }
       }
     });
