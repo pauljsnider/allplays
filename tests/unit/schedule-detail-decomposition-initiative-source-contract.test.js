@@ -10,6 +10,9 @@ const contextSource = readSource('apps/app/src/pages/schedule/ScheduleEventDetai
 const rsvpHookSource = readSource('apps/app/src/hooks/schedule/useScheduleEventRsvp.ts');
 const ridesHookSource = readSource('apps/app/src/hooks/schedule/useScheduleRideOffers.ts');
 const availabilityPanelsSource = readSource('apps/app/src/components/schedule/AvailabilityPanels.tsx');
+const assignmentsSectionSource = readSource('apps/app/src/components/schedule/AssignmentsSection.tsx');
+const rideOfferCardSource = readSource('apps/app/src/components/schedule/RideOfferCard.tsx');
+const rideshareSectionSource = readSource('apps/app/src/components/schedule/RideshareSection.tsx');
 const staffRsvpRowSource = readSource('apps/app/src/components/schedule/StaffRsvpPlayerRow.tsx');
 const staffRsvpBreakdownPanelSource = readSource('apps/app/src/components/schedule/StaffRsvpBreakdownPanel.tsx');
 const staffRsvpReminderPanelSource = readSource('apps/app/src/components/schedule/StaffRsvpReminderPanel.tsx');
@@ -55,10 +58,19 @@ describe('ScheduleEventDetail decomposition initiative source contract', () => {
     });
 
     it('keeps rideshare loading and mutations in useScheduleRideOffers', () => {
-        expect(detailSource).toContain("import { useScheduleRideOffers } from '../hooks/schedule/useScheduleRideOffers';");
-        expect(detailSource).toContain('const rideOffers = useScheduleRideOffers();');
+        expect(detailSource).toContain("import { RideshareSection } from '../components/schedule/RideshareSection';");
+        expect(detailSource).toContain("<RideshareSection />");
+        expect(detailSource).not.toMatch(/^function RideshareSection\b/m);
+        expect(detailSource).not.toMatch(/^function RideOfferCard\b/m);
         expect(detailSource).not.toMatch(/const\s+\[rideOffers\b/);
         expect(detailSource).not.toMatch(/loadParentScheduleRideOffers\(/);
+
+        expect(rideshareSectionSource).toContain("import { useScheduleRideOffers } from '../../hooks/schedule/useScheduleRideOffers';");
+        expect(rideshareSectionSource).toContain('const rideOffers = useScheduleRideOffers();');
+        expect(rideshareSectionSource).toContain('<RideOfferCard');
+        expect(rideOfferCardSource).toContain('export function RideOfferCard');
+        expect(rideOfferCardSource).toContain('canRequestScheduleRide(offer, userId, selectedChild.childId)');
+        expect(rideOfferCardSource).toContain('onDecision(request.id, status)');
 
         expect(ridesHookSource).toContain('const { auth, event, childEvents, updateEvents } = useScheduleEventDetailContext();');
         expect(ridesHookSource).toContain('const [offers, setOffers] = useState<ScheduleRideOffer[]>([]);');
@@ -67,6 +79,22 @@ describe('ScheduleEventDetail decomposition initiative source contract', () => {
         expect(ridesHookSource).toContain('const runRideAction = useCallback(async (actionKey: string, action: () => Promise<void>, successMessage: string) => {');
         expect(ridesHookSource).toContain('await createParentScheduleRideOffer(event, auth.user!, input);');
         expect(ridesHookTestSource).toContain("describe('useScheduleRideOffers'");
+    });
+
+    it('keeps assignment workflow loading and mutations in the extracted section', () => {
+        expect(detailSource).toContain("import { AssignmentsSection } from '../components/schedule/AssignmentsSection';");
+        expect(detailSource).toContain("<AssignmentsSection />");
+        expect(detailSource).not.toMatch(/^function AssignmentsSection\b/m);
+        expect(detailSource).not.toMatch(/claimParentScheduleAssignmentSlot\(/);
+        expect(detailSource).not.toMatch(/releaseParentScheduleAssignmentClaim\(/);
+        expect(detailSource).not.toMatch(/loadParentScheduleAssignments\(/);
+
+        expect(assignmentsSectionSource).toContain('export function AssignmentsSection');
+        expect(assignmentsSectionSource).toContain('const { auth, event, updateEvents } = useScheduleEventDetailContext();');
+        expect(assignmentsSectionSource).toContain('loadParentScheduleAssignments(event)');
+        expect(assignmentsSectionSource).toContain('claimParentScheduleAssignmentSlot(event, auth.user!, role)');
+        expect(assignmentsSectionSource).toContain('releaseParentScheduleAssignmentClaim(event, role)');
+        expect(assignmentsSectionSource).toContain('<AssignmentCard');
     });
 
     it('keeps reusable schedule UI out of the detail page body', () => {
