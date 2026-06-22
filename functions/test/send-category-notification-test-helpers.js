@@ -473,6 +473,24 @@ function buildNotificationTestEnv({
             };
         }
 
+        const feeRecipientsMatch = path.match(/^teams\/([^/]+)\/feeBatches\/([^/]+)\/feeRecipients$/);
+        if (feeRecipientsMatch) {
+            return {
+                async get() {
+                    const prefix = `${path}/`;
+                    const docs = Array.from(docStore.entries())
+                        .filter(([docPath]) => docPath.startsWith(prefix) && !docPath.slice(prefix.length).includes('/'))
+                        .map(([docPath, data]) => makeDocSnapshot({
+                            id: docPath.slice(prefix.length),
+                            ref: doc(docPath),
+                            data,
+                            exists: true
+                        }));
+                    return makeQuerySnapshot(docs);
+                }
+            };
+        }
+
         const inboxMatch = path.match(/^users\/([^/]+)\/notificationInbox$/);
         if (inboxMatch) {
             return {

@@ -6537,6 +6537,131 @@ function buildFeeAssignmentNotificationBody(recipient = {}, amountDisplay = '') 
   return `${parts.join(', ')}.`;
 }
 
+function getFeeAssignmentRecipientName(recipient = {}) {
+  return String(
+    recipient.playerName ||
+    recipient.childName ||
+    recipient.participantName ||
+    recipient.athleteName ||
+    recipient.name ||
+    ''
+  ).trim();
+}
+
+function joinDisplayValues(values = []) {
+  const uniqueValues = Array.from(new Set(
+    values.map((value) => String(value || '').trim()).filter(Boolean)
+  ));
+  if (uniqueValues.length <= 1) return uniqueValues[0] || '';
+  if (uniqueValues.length === 2) return `${uniqueValues[0]} and ${uniqueValues[1]}`;
+  return `${uniqueValues.slice(0, -1).join(', ')}, and ${uniqueValues[uniqueValues.length - 1]}`;
+}
+
+function buildCombinedFeeAssignmentNotificationPayload(recipients = []) {
+  const normalizedRecipients = (Array.isArray(recipients) ? recipients : [])
+    .filter((recipient) => recipient && typeof recipient === 'object');
+  if (normalizedRecipients.length <= 1) {
+    const recipient = normalizedRecipients[0] || {};
+    const title = String(recipient.feeTitle || recipient.title || 'Team fee').trim();
+    const amountCents = getTeamFeeBalanceCents(recipient) || Number(recipient.amountCents || recipient.feeAmountCents || 0);
+    const amountDisplay = amountCents > 0 ? formatMoneyFromCents(amountCents, recipient.currency || 'USD') : '';
+    return {
+      title: `New fee assigned: ${title}${amountDisplay ? ` (${amountDisplay})` : ''}`,
+      body: buildFeeAssignmentNotificationBody(recipient, amountDisplay)
+    };
+  }
+
+  const titles = Array.from(new Set(
+    normalizedRecipients
+      .map((recipient) => String(recipient.feeTitle || recipient.title || '').trim())
+      .filter(Boolean)
+  ));
+  const title = titles.length === 1 ? titles[0] : `${normalizedRecipients.length} team fees`;
+  const currency = normalizedRecipients.find((recipient) => recipient.currency)?.currency || 'USD';
+  const totalAmountCents = normalizedRecipients.reduce((total, recipient) => {
+    return total + (getTeamFeeBalanceCents(recipient) || Number(recipient.amountCents || recipient.feeAmountCents || 0));
+  }, 0);
+  const amountDisplay = totalAmountCents > 0 ? formatMoneyFromCents(totalAmountCents, currency) : '';
+  const names = normalizedRecipients.map(getFeeAssignmentRecipientName).filter(Boolean);
+  const dueDateDisplay = joinDisplayValues(
+    normalizedRecipients.map((recipient) => formatFeeAssignmentDueDate(recipient.dueDate || recipient.dueAt || recipient.deadline))
+  );
+  const childDisplay = names.length ? joinDisplayValues(names) : `${normalizedRecipients.length} children`;
+  const bodyParts = [
+    amountDisplay
+      ? `${amountDisplay} has been assigned for ${childDisplay}`
+      : `${normalizedRecipients.length} fees have been assigned for ${childDisplay}`
+  ];
+  if (dueDateDisplay) {
+    bodyParts.push(`due ${dueDateDisplay}`);
+  }
+  return {
+    title: `New fees assigned: ${title}${amountDisplay ? ` (${amountDisplay} total)` : ''}`,
+    body: `${bodyParts.join(', ')}.`
+  };
+}
+
+async function listFeeAssignmentBatchRecipients({ teamId, batchId, recipientId, recipient }) {
+  let recipients = [];
+  try {
+    const snap = await firestore.collection(`teams/${teamId}/feeBatches/${batchId}/feeRecipients`).get();
+    recipients = snap.docs
+      .map((docSnap) => ({ id: docSnap.id, ...(docSnap.data() || {}) }))
+      .filter((entry) => entry && typeof entry === 'object');
+  } catch (error) {
+    functions.logger.warn('Failed to read fee assignment batch recipients; falling back to current recipient.', {
+      teamId,
+      batchId,
+      recipientId,
+      error: error?.message || error
+    });
+  }
+
+  if (recipientId && !recipients.some((entry) => String(entry.id || '') === String(recipientId))) {
+    recipients.push({ id: recipientId, ...(recipient || {}) });
+  }
+  if (!recipients.length && recipient) {
+    recipients.push({ id: recipientId || null, ...recipient });
+  }
+  return recipients;
+}
+
+async function filterFeeAssignmentRecipientsForUser({ teamId, uid, recipients, fallbackRecipient }) {
+  const normalizedUid = String(uid || '').trim();
+  if (!normalizedUid) return fallbackRecipient ? [fallbackRecipient] : [];
+  const matchedRecipients = [];
+  for (const recipient of Array.isArray(recipients) ? recipients : []) {
+    const payerUserIds = await resolveFeeAssignmentPayerUserIds(teamId, recipient);
+    if (payerUserIds.includes(normalizedUid)) {
+      matchedRecipients.push(recipient);
+    }
+  }
+  return matchedRecipients.length ? matchedRecipients : (fallbackRecipient ? [fallbackRecipient] : []);
+}
+
+function combineDirectNotificationResults(results = []) {
+  const deliveredResults = (Array.isArray(results) ? results : []).filter(Boolean);
+  if (!deliveredResults.length) return null;
+  return deliveredResults.reduce((combined, result) => ({
+    responses: [
+      ...(combined.responses || []),
+      ...(Array.isArray(result.responses) ? result.responses : [])
+    ],
+    successCount: Number(combined.successCount || 0) + Number(result.successCount || 0),
+    failureCount: Number(combined.failureCount || 0) + Number(result.failureCount || 0),
+    inboxWriteCount: Number(combined.inboxWriteCount || 0) + Number(result.inboxWriteCount || 0),
+    inboxCleanupCount: Number(combined.inboxCleanupCount || 0) + Number(result.inboxCleanupCount || 0),
+    inboxFailureCount: Number(combined.inboxFailureCount || 0) + Number(result.inboxFailureCount || 0)
+  }), {
+    responses: [],
+    successCount: 0,
+    failureCount: 0,
+    inboxWriteCount: 0,
+    inboxCleanupCount: 0,
+    inboxFailureCount: 0
+  });
+}
+
 async function resolveFeeAssignmentPayerUserIds(teamId, recipient = {}) {
   const playerId = resolveFeeRecipientPlayerId(teamId, recipient);
   const playerRef = playerId ? firestore.doc(`teams/${teamId}/players/${playerId}`) : null;
@@ -7693,20 +7818,35 @@ exports.notifyFeeAssigned = functions.firestore
     const claimedUserIds = new Set(claimResults.filter((result) => result.claimed).map((result) => result.uid));
     if (!claimedUserIds.size) return null;
     const claimedTargets = payerTargets.filter((target) => claimedUserIds.has(target.uid));
-
-    const title = String(data.feeTitle || data.title || 'Team fee').trim();
-    const amountCents = getTeamFeeBalanceCents(data) || Number(data.amountCents || data.feeAmountCents || 0);
-    const amountDisplay = amountCents > 0 ? ` (${formatMoneyFromCents(amountCents, data.currency || 'USD')})` : '';
+    const batchRecipients = await listFeeAssignmentBatchRecipients({
+      teamId,
+      batchId,
+      recipientId,
+      recipient: data
+    });
 
     try {
-      return await sendDirectTargetsNotification({
-        targets: claimedTargets,
-        category: 'fees',
-        title: `New fee assigned: ${title}${amountDisplay}`,
-        body: buildFeeAssignmentNotificationBody(data, amountDisplay ? amountDisplay.slice(2, -1) : ''),
-        teamId,
-        batchId
-      });
+      const sendResults = [];
+      for (const uid of claimedUserIds) {
+        const targetsForUser = claimedTargets.filter((target) => String(target.uid || '').trim() === uid);
+        if (!targetsForUser.length) continue;
+        const recipientsForUser = await filterFeeAssignmentRecipientsForUser({
+          teamId,
+          uid,
+          recipients: batchRecipients,
+          fallbackRecipient: data
+        });
+        const payload = buildCombinedFeeAssignmentNotificationPayload(recipientsForUser);
+        sendResults.push(await sendDirectTargetsNotification({
+          targets: targetsForUser,
+          category: 'fees',
+          title: payload.title,
+          body: payload.body,
+          teamId,
+          batchId
+        }));
+      }
+      return combineDirectNotificationResults(sendResults);
     } catch (error) {
       await releaseFeeAssignmentNotificationClaims({
         teamId,
