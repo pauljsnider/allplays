@@ -6,6 +6,13 @@ const require = createRequire(import.meta.url);
 const functionsSource = readFileSync(new URL('../../functions/index.js', import.meta.url), 'utf8');
 const notificationCore = require('../../functions/notification-target-index-core.cjs');
 
+function extractBuildTargetsFromNotificationRecipientDoc() {
+    const start = functionsSource.indexOf('function buildTargetsFromNotificationRecipientDoc(');
+    const end = functionsSource.indexOf('\nasync function pruneInvalidTokens', start);
+    const source = functionsSource.slice(start, end);
+    return new Function(`${source}; return buildTargetsFromNotificationRecipientDoc;`)();
+}
+
 describe('notification recipient index foundation', () => {
     it('stores one denormalized recipient document per team user with category and token arrays', () => {
         expect(functionsSource).toContain('function buildTeamNotificationRecipientRef(teamId, uid');
@@ -75,5 +82,49 @@ describe('notification recipient index foundation', () => {
                 mentions: true
             })
         });
+    });
+
+    it('hydrates indexed recipient docs into valid category targets only', () => {
+        const buildTargetsFromNotificationRecipientDoc = extractBuildTargetsFromNotificationRecipientDoc();
+        const eligibleUsers = new Map([
+            ['parent-1', { uid: 'parent-1', roles: ['parent'] }]
+        ]);
+        const docSnap = {
+            id: 'parent-1',
+            data: () => ({
+                uid: ' parent-1 ',
+                categories: { fees: true, schedule: false },
+                tokens: [
+                    { deviceId: ' ios-1 ', token: ' token-1 ', platform: ' ios ', userAgent: ' AllPlays/1.0 ' },
+                    { deviceId: 'blank-token', token: '   ', platform: 'web' }
+                ]
+            })
+        };
+
+        expect(buildTargetsFromNotificationRecipientDoc(docSnap, {
+            teamId: 'team-1',
+            category: 'fees',
+            actorUid: 'staff-1',
+            eligibleUsers
+        })).toEqual([{
+            uid: 'parent-1',
+            deviceId: 'ios-1',
+            token: 'token-1',
+            teamId: 'team-1',
+            platform: 'ios',
+            userAgent: 'AllPlays/1.0'
+        }]);
+        expect(buildTargetsFromNotificationRecipientDoc(docSnap, {
+            teamId: 'team-1',
+            category: 'schedule',
+            actorUid: 'staff-1',
+            eligibleUsers
+        })).toEqual([]);
+        expect(buildTargetsFromNotificationRecipientDoc(docSnap, {
+            teamId: 'team-1',
+            category: 'fees',
+            actorUid: 'parent-1',
+            eligibleUsers
+        })).toEqual([]);
     });
 });
