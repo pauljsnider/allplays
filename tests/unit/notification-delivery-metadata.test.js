@@ -104,6 +104,20 @@ describe('notification delivery metadata', () => {
         expect(options.apns.payload.aps['thread-id']).toBe('team-team-1');
     });
 
+    it('routes rideshare notifications to the team channel without collapsing distinct events', () => {
+        const options = buildNotificationDeliveryOptions({
+            category: 'rideshare',
+            teamId: 'team 1',
+            eventId: 'game-1'
+        });
+
+        expect(options.android.notification.channelId).toBe('allplays_team');
+        expect(options.android.notification.tag).toBeUndefined();
+        expect(options.webpush).toBeUndefined();
+        expect(options.apns.payload.aps['thread-id']).toBe('team-team-1');
+        expect(options.apns.headers).toBeUndefined();
+    });
+
     it('wires delivery metadata and branded web assets into both backend send paths', () => {
         const firstSendPath = functionsSource.slice(
             functionsSource.indexOf('async function sendCategoryNotification'),
