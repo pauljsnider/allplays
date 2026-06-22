@@ -473,6 +473,10 @@ async function mockScheduleModules(page, options = {}) {
                     };
                 }
 
+                export function resolveCachedParentScheduleEvents() {
+                    return [];
+                }
+
                 export async function submitParentScheduleRsvp(event, user, response, note = '') {
                     window.__scheduleCalls.rsvps.push({ eventKey: event.eventKey, childId: event.childId, userId: user.uid, response, note });
                     return { going: 2, maybe: 0, notGoing: 0, notResponded: 0 };
