@@ -12,6 +12,7 @@ describe('ScheduleEventDetail decomposition contract', () => {
         const page = readRepoFile('apps/app/src/pages/ScheduleEventDetail.tsx');
 
         [
+            "import { AssignmentCard } from '../components/schedule/AssignmentCard';",
             "import { DateTile } from '../components/schedule/DateTile';",
             "import { EventBrief } from '../components/schedule/EventBrief';",
             "import { EventSectionNav } from '../components/schedule/EventSectionNav';",
@@ -24,6 +25,7 @@ describe('ScheduleEventDetail decomposition contract', () => {
         });
 
         [
+            /^function AssignmentCard\b/m,
             /^function DateTile\b/m,
             /^function EventBrief\b/m,
             /^function EventSectionNav\b/m,
@@ -66,5 +68,16 @@ describe('ScheduleEventDetail decomposition contract', () => {
         expect(component).toContain("(['going', 'maybe', 'not_going'] as const).map");
         expect(component).toContain("disabled={submitting || eventLocked}");
         expect(component).toContain("{submitting && player.response !== response ? 'Saving' : rsvpLabels[response]}");
+    });
+
+    it('keeps assignment row rendering in the extracted schedule component', () => {
+        const component = readRepoFile('apps/app/src/components/schedule/AssignmentCard.tsx');
+
+        expect(component).toContain('export function AssignmentCard');
+        expect(component).toContain('isScheduleAssignmentClaimedByUser(assignment, userId)');
+        expect(component).toContain('isScheduleAssignmentOpen(assignment)');
+        expect(component).toContain('getScheduleAssignmentStatus(assignment, userId)');
+        expect(component).toContain("{busy ? 'Signing up' : 'Sign up'}");
+        expect(component).toContain("{busy ? 'Releasing' : 'Release'}");
     });
 });
