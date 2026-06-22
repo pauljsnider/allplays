@@ -45,6 +45,8 @@ export function mapFirestoreDocument(document: FirestoreDocument | null | undefi
 }
 
 function asTrimmedString(value: unknown): string | null {
+    if (value === null || value === undefined) return null;
+    if (typeof value === 'object' || typeof value === 'function' || typeof value === 'symbol') return null;
     const normalized = String(value || '').trim();
     return normalized || null;
 }
