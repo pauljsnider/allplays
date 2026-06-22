@@ -27,4 +27,31 @@ describe('emailReducer', () => {
             body: ''
         });
     });
+
+    it('clears the composer only when the selected draft is deleted', () => {
+        const state = emailReducer(
+            emailReducer(initialEmailComposerState, {
+                type: 'setDrafts',
+                drafts: [
+                    draft(),
+                    draft({ id: 'draft-2', subject: 'Snacks', body: 'Please bring fruit.' })
+                ]
+            }),
+            { type: 'selectDraft', draftId: 'draft-1' }
+        );
+
+        expect(emailReducer(state, { type: 'deleteDraft', draftId: 'draft-2' })).toMatchObject({
+            selectedDraftId: 'draft-1',
+            subject: 'Practice reminder',
+            body: 'Bring shoes and water.',
+            drafts: [draft()]
+        });
+
+        expect(emailReducer(state, { type: 'deleteDraft', draftId: 'draft-1' })).toMatchObject({
+            selectedDraftId: '',
+            subject: '',
+            body: '',
+            drafts: [draft({ id: 'draft-2', subject: 'Snacks', body: 'Please bring fruit.' })]
+        });
+    });
 });
