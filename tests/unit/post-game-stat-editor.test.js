@@ -151,11 +151,13 @@ describe('post-game stat editor helpers', () => {
 
     it('wires completed-game edit controls into the match report page', () => {
         const pageSource = readFileSync(new URL('../../game.html', import.meta.url), 'utf8');
+        const dbSource = readFileSync(new URL('../../js/db.js', import.meta.url), 'utf8');
 
         expect(pageSource).toContain('id="edit-stats-btn"');
         expect(pageSource).toContain('id="stats-save-next-btn"');
         expect(pageSource).toContain('resolvePostGameEditorDidNotPlay');
         expect(pageSource).toContain('setCompletedGamePlayerStats');
+        expect(dbSource).toContain('await deleteDoc(privateDocRef);');
         expect(pageSource).toContain('id="team-stats-section"');
         expect(pageSource).toContain('setCompletedGameTeamStats');
         expect(pageSource).toContain('getTeamStatsForGame');
