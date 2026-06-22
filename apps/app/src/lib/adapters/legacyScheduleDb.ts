@@ -41,7 +41,7 @@ import {
     upsertPracticeSessionForEvent as legacyUpsertPracticeSessionForEvent,
     upsertPracticePacketCompletion as legacyUpsertPracticePacketCompletion,
     listRideOffersForEvent as legacyListRideOffersForEvent
-} from '../../../../../js/db.js';
+} from '@legacy/db.js';
 import {
     collection as legacyFirebaseCollection,
     collectionGroup as legacyFirebaseCollectionGroup,
@@ -56,7 +56,7 @@ import {
     serverTimestamp as legacyFirebaseServerTimestamp,
     Timestamp as legacyFirebaseTimestamp,
     where as legacyFirebaseWhere
-} from '../../../../../js/firebase.js';
+} from '@legacy/firebase.js';
 
 export const db = legacyFirebaseDb;
 export const doc = legacyFirebaseDoc;

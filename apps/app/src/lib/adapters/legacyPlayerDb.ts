@@ -17,7 +17,7 @@ import {
     updatePlayerProfile as legacyUpdatePlayerProfile,
     uploadAthleteProfileMedia as legacyUploadAthleteProfileMedia,
     uploadPlayerPhoto as legacyUploadPlayerPhoto
-} from '../../../../../js/db.js';
+} from '@legacy/db.js';
 
 export type LegacyTeamRecord = {
     id?: string;
