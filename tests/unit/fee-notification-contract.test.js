@@ -8,8 +8,17 @@ function getFeeAssignmentNotificationBodyHelper() {
     const start = functionsSource.indexOf('function formatFeeAssignmentDueDate(');
     const end = functionsSource.indexOf('\nasync function resolveFeeAssignmentPayerUserIds', start);
     const slice = functionsSource.slice(start, end);
-    return new Function('coerceDate', `${slice}; return buildFeeAssignmentNotificationBody;`)(
-        (value) => (value ? new Date(value) : null)
+    const utcIntl = {
+        DateTimeFormat: function DateTimeFormat(locale, options = {}) {
+            return new Intl.DateTimeFormat(locale, {
+                ...options,
+                timeZone: 'UTC'
+            });
+        }
+    };
+    return new Function('coerceDate', 'Intl', `${slice}; return buildFeeAssignmentNotificationBody;`)(
+        (value) => (value ? new Date(value) : null),
+        utcIntl
     );
 }
 
