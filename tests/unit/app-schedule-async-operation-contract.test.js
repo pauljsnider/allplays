@@ -17,8 +17,13 @@ describe('Schedule async operation contract', () => {
         const refreshScheduleSource = getRefreshScheduleSource();
 
         expect(scheduleSource).toContain("import { useAsyncOperation } from '../lib/useAsyncOperation';");
-        expect(scheduleSource).toContain('const { loading, error, clearError, run: runAsyncOperation } = useAsyncOperation();');
-        expect(refreshScheduleSource).toContain('return runAsyncOperation(');
+        expect(scheduleSource).toContain('loading: scheduleReadLoading');
+        expect(scheduleSource).toContain('error: scheduleReadError');
+        expect(scheduleSource).toContain('clearError: clearScheduleReadError');
+        expect(scheduleSource).toContain('run: runScheduleRead');
+        expect(scheduleSource).toContain('loading: loadingPastHistory');
+        expect(scheduleSource).toContain('run: runPastHistoryRead');
+        expect(refreshScheduleSource).toContain('return runScheduleRead(');
         expect(refreshScheduleSource).toContain('() => loadCachedAppData(');
         expect(refreshScheduleSource).toContain('() => loadParentSchedule(auth.user, { hydrateDetails: false, expandStaffPlayers: false })');
         expect(refreshScheduleSource).toContain('{ ttlMs: scheduleCacheTtlMs, force }');
@@ -39,6 +44,6 @@ describe('Schedule async operation contract', () => {
     it('keeps resume refresh and first meaningful render on the shared loading state', () => {
         expect(scheduleSource).toContain('useRefreshOnResume(() => { void refreshSchedule(true); }, { enabled: Boolean(auth.user?.uid) });');
         expect(scheduleSource).toContain("recordFirstMeaningfulRender('schedule');");
-        expect(scheduleSource).toContain('if (!hasStartedInitialScheduleLoadRef.current || loading || isInitialScheduleLoad) {');
+        expect(scheduleSource).toContain('if (!hasStartedInitialScheduleLoadRef.current || scheduleReadLoading || isInitialScheduleLoad) {');
     });
 });

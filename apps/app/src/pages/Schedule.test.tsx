@@ -322,4 +322,16 @@ describe('Schedule', () => {
     expect(source).toContain('function CompactScheduleList({ events, visibleCount, pageSize, canShowMore, loadingMore, onShowMore }');
     expect(source).toContain("{loadingMore ? 'Loading more…' : `Show ${Math.min(pageSize, remainingCount || pageSize)} more`}");
   });
+
+  it('keeps Schedule read loading paths on the shared async operation helper', () => {
+    const source = readFileSync(resolveAppSourcePath('src/pages/Schedule.tsx'), 'utf8');
+
+    expect(source).toContain('loading: scheduleReadLoading');
+    expect(source).toContain('run: runScheduleRead');
+    expect(source).toContain('loading: loadingPastHistory');
+    expect(source).toContain('run: runPastHistoryRead');
+    expect(source).toContain('return runScheduleRead(');
+    expect(source).toContain('const loaded = await runPastHistoryRead(');
+    expect(source).not.toContain('const [loadingPastHistory, setLoadingPastHistory]');
+  });
 });

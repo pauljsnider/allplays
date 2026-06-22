@@ -11,9 +11,16 @@ describe('Schedule lazy-load guards', () => {
 
     it('loads the summary workflow through the shared async operation hook', () => {
         expect(scheduleSource).toContain("import { useAsyncOperation } from '../lib/useAsyncOperation'");
-        expect(scheduleSource).toContain('const { loading, error, clearError, run: runAsyncOperation } = useAsyncOperation();');
-        expect(scheduleSource).toContain('return runAsyncOperation(');
+        expect(scheduleSource).toContain('loading: scheduleReadLoading');
+        expect(scheduleSource).toContain('error: scheduleReadError');
+        expect(scheduleSource).toContain('clearError: clearScheduleReadError');
+        expect(scheduleSource).toContain('run: runScheduleRead');
+        expect(scheduleSource).toContain('loading: loadingPastHistory');
+        expect(scheduleSource).toContain('run: runPastHistoryRead');
+        expect(scheduleSource).toContain('return runScheduleRead(');
+        expect(scheduleSource).toContain('const loaded = await runPastHistoryRead(');
         expect(scheduleSource).not.toContain('const [loading, setLoading] = useState(true);');
+        expect(scheduleSource).not.toContain('const [loadingPastHistory, setLoadingPastHistory]');
     });
 
     it('keeps Schedule reads on the shared async/cache/error path', () => {
@@ -24,7 +31,7 @@ describe('Schedule lazy-load guards', () => {
         expect(refreshSource).toContain("const timer = startScreenMountTimer('schedule', {");
         expect(refreshSource).toContain('const cacheKey = getParentScheduleSummaryCacheKey(auth.user.uid);');
         expect(refreshSource).toContain('const cached = getCachedAppData(cacheKey);');
-        expect(refreshSource).toContain('return runAsyncOperation(');
+        expect(refreshSource).toContain('return runScheduleRead(');
         expect(refreshSource).toContain('() => loadCachedAppData(');
         expect(refreshSource).toContain("() => loadParentSchedule(auth.user, { hydrateDetails: false, expandStaffPlayers: false })");
         expect(refreshSource).toContain("getScheduleLoadErrorMessage(toAppServiceError(loadError, 'Unable to load schedule.'), hasExistingSchedule)");
