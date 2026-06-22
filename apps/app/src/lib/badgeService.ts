@@ -1,6 +1,5 @@
 import { Capacitor } from '@capacitor/core';
-import { loadChatInbox, markTeamChatRead } from './chatService';
-import type { AuthUser } from './types';
+import type { NotificationInboxItem } from './notificationInboxService';
 
 function isNativeRuntime(): boolean {
     const protocol = typeof window === 'undefined' ? '' : window.location.protocol;
@@ -16,7 +15,7 @@ export function normalizeAppIconBadgeCount(count: unknown): number {
 }
 
 /**
- * Update the native app icon badge count to reflect unread chat messages.
+ * Update the native app icon badge count.
  * On web/non-native platforms this is a no-op.
  * Uses a dynamic import so the web build is unaffected if @capawesome/capacitor-badge
  * is not installed.
@@ -36,19 +35,12 @@ export async function updateAppIconBadge(count: number): Promise<void> {
     }
 }
 
-export async function refreshUnreadChatBadge(user: AuthUser | null): Promise<void> {
-    if (!user?.uid || !isNativeRuntime()) return;
-    const result = await loadChatInbox(user, { includeLastMessages: false });
-    const totalUnread = result.teams.reduce((sum, team) => sum + normalizeAppIconBadgeCount(team.unreadCount), 0);
-    await updateAppIconBadge(totalUnread);
+export function countUnreadNotificationInboxItems(items: NotificationInboxItem[]): number {
+    return (Array.isArray(items) ? items : []).reduce((count, item) => {
+        return item && !item.readAt ? count + 1 : count;
+    }, 0);
 }
 
-export async function markTeamChatReadAndRefreshBadge(user: AuthUser | null, teamId: string): Promise<void> {
-    if (!user?.uid || !teamId) return;
-    await markTeamChatRead(user.uid, teamId);
-    try {
-        await refreshUnreadChatBadge(user);
-    } catch {
-        // The chat read succeeded. Ignore badge refresh failures.
-    }
+export async function syncAppIconBadgeToNotificationInbox(items: NotificationInboxItem[]): Promise<void> {
+    await updateAppIconBadge(countUnreadNotificationInboxItems(items));
 }
