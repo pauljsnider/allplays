@@ -28,7 +28,10 @@ describe('calendar page live sync controls', () => {
         expect(source).toContain('function getPrivateCalendarFeedUrl(team)');
         expect(source).toContain('team?.calendarSubscriptionUrl');
         expect(source).toContain('team?.calendarSubscriptionToken');
+        expect(source).toContain('teamCalendarFeedFunctionUrl');
+        expect(source).toContain('ALLPLAYS_TEAM_CALENDAR_FEED_URL');
         expect(source).toContain('teamCalendarFeed');
+        expect(source).not.toContain('privateTeamCalendarIcs');
         expect(source).toContain("return feedUrl.replace(/^https?:\\/\\//i, 'webcal://');");
         expect(source).toContain("https://calendar.google.com/calendar/render?cid=${encodeURIComponent(feedUrl)}");
         expect(source).toContain("navigator.clipboard.writeText(feedUrl)");
