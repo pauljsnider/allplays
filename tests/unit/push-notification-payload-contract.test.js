@@ -30,7 +30,9 @@ describe('push notification payload contract', () => {
         expect(source).toContain('conversationId: String(conversationId || \'\')');
         expect(source).toContain('rsvpId: String(childId || \'\')');
         expect(source).toContain("if (category === 'liveChat' || category === 'mentions') {");
-        expect(source).toContain("if ((category === 'liveChat' || category === 'mentions') && teamId) {");
+        expect(source).toContain("if (category === 'mentions' && teamId) {");
+        expect(source).toContain('return `${route}?conversation=${encodeURIComponent(conversationId)}`;');
+        expect(source).toContain("if (category === 'liveChat' && teamId) {");
         expect(source).toContain('return `${route}?conversationId=${encodeURIComponent(conversationId)}`;');
         expect(source).toContain('params.push(`conversationId=${encodeURIComponent(conversationId)}`);');
         expect(source).toContain('fcmOptions: { link }');
