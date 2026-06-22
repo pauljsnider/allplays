@@ -7,6 +7,7 @@ import { PullToRefresh } from '../components/PullToRefresh';
 import { addTeamCalendarUrl, createScheduledGameForApp, createScheduledPracticeForApp, createScheduleImportGame, createScheduleImportPractice, finalizeScheduleImportBatch, loadParentSchedule, loadScheduleStatTrackerConfigsForApp, removeTeamCalendarUrl, type ParentScheduleChild, type ScheduleGameFormInput, type SchedulePracticeFormInput, type PracticeRecurrenceFormInput, type ScheduleStatTrackerConfigOption } from '../lib/scheduleService';
 import { getCachedAppData, getParentScheduleSummaryCacheKey, loadCachedAppData } from '../lib/appDataCache';
 import { toAppServiceError, type AppServiceError } from '../lib/appErrors';
+import { startAppInitialLoadTimer } from '../lib/telemetry';
 import { recordFirstMeaningfulRender, startScreenMountTimer } from '../lib/uxTiming';
 import { useAsyncOperation } from '../lib/useAsyncOperation';
 import { useRefreshOnResume } from '../lib/useRefreshOnResume';
@@ -305,6 +306,9 @@ export function Schedule({ auth }: { auth: AuthState }) {
     setScheduleLoadError(null);
     setStatusMessage(null);
     const hasExistingSchedule = hasLoadedScheduleRef.current;
+    const initialLoadTimer = !hasExistingSchedule
+      ? startAppInitialLoadTimer('schedule', { route: 'schedule' })
+      : null;
     const timer = startScreenMountTimer('schedule', {
       force,
       hasExistingSchedule
@@ -354,6 +358,13 @@ export function Schedule({ auth }: { auth: AuthState }) {
             eventRowCount: result.events.length,
             groupedEventCount: getCalendarScheduleEntries(result.events).length
           });
+          initialLoadTimer?.end({
+            cacheHit: Boolean(cached) && !force,
+            force,
+            children: result.children.length,
+            eventRows: result.events.length,
+            groupedEvents: getCalendarScheduleEntries(result.events).length
+          });
         },
         onError: (loadError) => {
           const mappedError = toAppServiceError(loadError, 'Unable to load schedule.');
@@ -365,6 +376,10 @@ export function Schedule({ auth }: { auth: AuthState }) {
           timer.end({
             force,
             error: mappedError.message
+          });
+          initialLoadTimer?.end({
+            force,
+            error: mappedError
           });
         }
       }

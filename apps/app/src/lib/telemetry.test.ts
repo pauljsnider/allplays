@@ -95,6 +95,66 @@ describe('app telemetry bridge', () => {
     expect(sentryMocks.captureException).toHaveBeenCalledWith(expect.any(TypeError));
   });
 
+  it('emits stable initial load timing and handled load failures', async () => {
+    const capture = vi.fn();
+    window.AllPlaysTelemetry = { capture };
+
+    const telemetry = await import('./telemetry');
+    vi.spyOn(performance, 'now')
+      .mockReturnValueOnce(200)
+      .mockReturnValueOnce(250)
+      .mockReturnValueOnce(300);
+
+    const timer = telemetry.startAppInitialLoadTimer('profile', {
+      route: 'profile',
+      source: 'profile-document'
+    });
+    timer.end({ hasPhone: true });
+    telemetry.recordAppInitialLoadTiming('schedule', 250, {
+      route: 'schedule',
+      error: new Error('Permission denied')
+    });
+
+    await Promise.resolve();
+
+    expect(capture).toHaveBeenNthCalledWith(
+      1,
+      'app_initial_load',
+      expect.objectContaining({
+        loadName: 'profile',
+        durationMs: 50,
+        outcome: 'success',
+        route: 'profile',
+        source: 'profile-document',
+        hasPhone: true
+      }),
+      {}
+    );
+    expect(capture).toHaveBeenNthCalledWith(
+      2,
+      'app_initial_load',
+      expect.objectContaining({
+        loadName: 'schedule',
+        durationMs: 50,
+        outcome: 'failure',
+        route: 'schedule'
+      }),
+      {}
+    );
+    expect(capture).toHaveBeenNthCalledWith(
+      3,
+      'app_load_error',
+      expect.objectContaining({
+        label: 'schedule initial load',
+        durationMs: 50,
+        route: 'schedule',
+        errorName: 'Error',
+        errorType: 'permission'
+      }),
+      { flush: true }
+    );
+  });
+
   it('records app startup timing with the canonical startup stage', async () => {
     const capture = vi.fn();
     window.AllPlaysTelemetry = { capture };
