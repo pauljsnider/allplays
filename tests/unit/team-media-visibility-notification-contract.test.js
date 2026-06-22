@@ -46,8 +46,10 @@ describe('team media visibility notification contract', () => {
         expect(functionsSource).toContain('function normalizeNotificationAudienceRoles(value) {');
         expect(functionsSource).toContain('function mediaAudienceAllowsUser(user, audienceContext = {}) {');
         expect(functionsSource).toContain('function hasMediaAudienceConstraints(audienceContext = {}) {');
+        expect(functionsSource).toContain("const isStaffUser = Array.isArray(user.roles) && user.roles.includes('staff');");
+        expect(functionsSource).toContain("if (!isStaffUser) return false;");
         expect(functionsSource).toContain("if (hasMediaAudienceConstraints(audienceContext)) {\n      return mediaAudienceAllowsUser(user, audienceContext);\n    }");
-        expect(functionsSource).toContain("return Array.isArray(user.roles) && user.roles.includes('staff');");
+        expect(functionsSource).toContain('return true;');
     });
 
     it('passes media audience context through indexed and legacy target lookups', () => {
@@ -59,5 +61,7 @@ describe('team media visibility notification contract', () => {
         expect(functionsSource).toContain('const fallbackTargets = await getLegacyTargetsForCategory(teamId, category, missingUsers, actorUid, audienceContext);');
         expect(functionsSource).toContain('audienceContext: metadata.audienceContext || { albumVisibility: metadata.albumVisibility }');
         expect(functionsSource).toContain('const audienceContext = buildTeamMediaNotificationAudienceContext({');
+        expect(functionsSource).not.toContain("if (albumVisibility !== 'team') return null;");
+        expect(functionsSource).not.toContain("await markTeamMediaNotificationBatchSkipped(batchRef, claimId, 'album_not_team_visible');");
     });
 });

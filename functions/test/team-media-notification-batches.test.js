@@ -66,16 +66,26 @@ test('team media notification batch writes preserve restricted album audience co
         }
 });
 
-test('team media notification batch metadata skips private albums and deleted items', () => {
+test('team media notification batch metadata preserves private album audience rules and skips deleted items', () => {
         const { internals, cleanup } = loadNotificationInternals();
 
         try {
-            assert.equal(internals.buildTeamMediaNotificationBatchMetadata({
+            assert.deepEqual(internals.buildTeamMediaNotificationBatchMetadata({
                 teamId: 'team-1',
                 itemId: 'photo-1',
                 item: { folderId: 'folder-1', type: 'photo' },
-                folder: { id: 'folder-1', name: 'Private film', visibility: 'private' }
-            }), null);
+                folder: {
+                    id: 'folder-1',
+                    name: 'Private film',
+                    visibility: 'private',
+                    allowedUserIds: ['parent-2'],
+                    allowedRoles: ['staff']
+                }
+            })?.audienceContext, {
+                albumVisibility: 'private',
+                allowedUserIds: ['parent-2'],
+                allowedRoles: ['staff']
+            });
             assert.equal(internals.buildTeamMediaNotificationBatchMetadata({
                 teamId: 'team-1',
                 itemId: 'photo-2',

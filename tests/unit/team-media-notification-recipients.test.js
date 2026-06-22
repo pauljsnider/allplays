@@ -339,4 +339,34 @@ describe('team media notification recipients', () => {
             }
         ]);
     });
+
+    it('keeps private album fanout staff-only even when explicit audience lists include parents', async () => {
+        const harness = createHarness({
+            candidateUsers: [
+                { uid: 'parent-1', roles: ['parent'] },
+                { uid: 'parent-2', roles: ['parent'] },
+                { uid: 'staff-1', roles: ['staff'] }
+            ],
+            indexedTargets: [
+                { uid: 'parent-1', deviceId: 'parent-1-device', token: 'parent-1-token' },
+                { uid: 'parent-2', deviceId: 'parent-2-device', token: 'parent-2-token' },
+                { uid: 'staff-1', deviceId: 'staff-device', token: 'staff-token' }
+            ]
+        });
+
+        const targets = await harness.getTargetsForCategory('team-1', 'media', null, {
+            albumVisibility: 'private',
+            allowedUserIds: ['parent-2'],
+            allowedRoles: ['staff']
+        });
+
+        expect(normalizeTargets(targets)).toEqual([
+            {
+                uid: 'staff-1',
+                deviceId: 'staff-device',
+                token: 'staff-token',
+                teamId: 'team-1'
+            }
+        ]);
+    });
 });

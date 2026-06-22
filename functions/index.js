@@ -4282,7 +4282,6 @@ function buildTeamMediaNotificationBatchMetadata({ teamId, itemId, item = {}, fo
 
   const audienceContext = buildTeamMediaNotificationAudienceContext(folder);
   const albumVisibility = audienceContext.albumVisibility;
-  if (albumVisibility !== 'team') return null;
 
   const createdAt = coerceDate(item.createdAt) || (now instanceof Date ? now : new Date(now));
   const windowStartAt = getTeamMediaNotificationWindowStart(createdAt);
@@ -4450,10 +4449,6 @@ async function dispatchDueTeamMediaNotificationBatches(now = new Date()) {
         visibility: folder.visibility || batch.albumVisibility
       });
       const albumVisibility = audienceContext.albumVisibility;
-      if (albumVisibility !== 'team') {
-        await markTeamMediaNotificationBatchSkipped(batchRef, claimId, 'album_not_team_visible');
-        continue;
-      }
 
       const payload = buildTeamMediaNotificationPayload({
         ...batch,
@@ -4614,10 +4609,12 @@ function canReceiveCategoryNotification(category, user, audienceContext = {}) {
     ? 'private'
     : normalizeNotificationAlbumVisibility(audienceContext.albumVisibility);
   if (albumVisibility === 'private') {
+    const isStaffUser = Array.isArray(user.roles) && user.roles.includes('staff');
+    if (!isStaffUser) return false;
     if (hasMediaAudienceConstraints(audienceContext)) {
       return mediaAudienceAllowsUser(user, audienceContext);
     }
-    return Array.isArray(user.roles) && user.roles.includes('staff');
+    return true;
   }
   return mediaAudienceAllowsUser(user, audienceContext);
 }
