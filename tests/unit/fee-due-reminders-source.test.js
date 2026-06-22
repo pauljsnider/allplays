@@ -52,6 +52,16 @@ describe('fee due reminder source wiring', () => {
         expect(functionsSource).toContain('await doc.ref.update({ reminderSentAt: admin.firestore.FieldValue.serverTimestamp() });');
     });
 
+    it('leaves reminders unmarked when no payer targets can receive them', () => {
+        const candidateGuardIndex = functionsSource.indexOf('if (!candidateUserIds.length) return null;');
+        const targetGuardIndex = functionsSource.indexOf('if (!payerTargets.length) return null;');
+        const markSentIndex = functionsSource.indexOf('await doc.ref.update({ reminderSentAt: admin.firestore.FieldValue.serverTimestamp() });');
+
+        expect(candidateGuardIndex).toBeGreaterThan(-1);
+        expect(targetGuardIndex).toBeGreaterThan(candidateGuardIndex);
+        expect(markSentIndex).toBeGreaterThan(targetGuardIndex);
+    });
+
     it('formats the reminder amount and attaches fee-specific routing identifiers', () => {
         expect(functionsSource).toContain("const batchId = pathParts[3];");
         expect(functionsSource).toContain("const recipientId = pathParts[5];");

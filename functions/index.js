@@ -108,6 +108,14 @@ const {
   formatScheduleUpdateDate
 } = require('./schedule-notification-utils.cjs');
 const {
+  normalizeOpenOfficiatingSlotClaimInput,
+  isEligibleOpenOfficiatingSlotParticipant,
+  resolveOfficiatingGamePath,
+  isTeamLinkedToSharedGame,
+  buildOpenOfficiatingSlotClaimUpdate,
+  buildOfficiatingSelfAssignmentNotificationRecord
+} = require('./officiating-self-assignment-core.cjs');
+const {
   assertSportsConnectSyncConfig,
   buildSportsConnectRegistrationSnapshot,
   buildSportsConnectSyncErrorUpdate,
@@ -939,6 +947,90 @@ exports.syncRegistrationProvider = functions.https.onCall(async (data, context) 
       });
     });
     throw toHttpsError(error, 'unavailable');
+  }
+});
+
+exports.claimOpenOfficiatingSlot = functions.https.onCall(async (data, context) => {
+  if (!context.auth) {
+    throw new functions.https.HttpsError('unauthenticated', 'Sign in before claiming an officiating slot.');
+  }
+
+  let input;
+  try {
+    input = normalizeOpenOfficiatingSlotClaimInput(data || {});
+  } catch (error) {
+    throw toHttpsError(error, 'invalid-argument');
+  }
+
+  const uid = context.auth.uid;
+  const callerEmail = String(context.auth.token?.email || '').trim().toLowerCase();
+  const displayName = String(context.auth.token?.name || data?.displayName || callerEmail || 'Official').trim();
+  const [teamSnap, userSnap] = await Promise.all([
+    firestore.doc(`teams/${input.teamId}`).get(),
+    firestore.doc(`users/${uid}`).get()
+  ]);
+  if (!teamSnap.exists) {
+    throw new functions.https.HttpsError('not-found', 'Team not found.');
+  }
+
+  const team = { id: input.teamId, ...(teamSnap.data() || {}) };
+  const user = userSnap.exists ? userSnap.data() || {} : {};
+  if (!isEligibleOpenOfficiatingSlotParticipant({ team, user, uid, email: callerEmail, teamId: input.teamId })) {
+    throw new functions.https.HttpsError('permission-denied', 'Only team owners, admins, or parents can claim open officiating slots.');
+  }
+
+  const gameRef = firestore.doc(resolveOfficiatingGamePath(input.teamId, input.gameId));
+  const notificationRef = firestore.collection(`teams/${input.teamId}/officiatingNotifications`).doc();
+  const now = admin.firestore.FieldValue.serverTimestamp();
+
+  try {
+    const result = await firestore.runTransaction(async (transaction) => {
+      const gameSnap = await transaction.get(gameRef);
+      if (!gameSnap.exists) {
+        throw new functions.https.HttpsError('not-found', 'Game not found.');
+      }
+
+      const game = { id: input.gameId, ...(gameSnap.data() || {}) };
+      if (!gameRef.path.startsWith(`teams/${input.teamId}/games/`) && !isTeamLinkedToSharedGame(game, input.teamId)) {
+        throw new functions.https.HttpsError('permission-denied', 'Game is not available to this team.');
+      }
+
+      const { update, claimedSlot } = buildOpenOfficiatingSlotClaimUpdate({
+        game,
+        slotId: input.slotId,
+        official: { uid, email: callerEmail, displayName },
+        now
+      });
+      const notificationRecord = buildOfficiatingSelfAssignmentNotificationRecord({
+        teamId: input.teamId,
+        gameId: input.gameId,
+        game,
+        slot: claimedSlot,
+        actor: { uid, email: callerEmail, displayName },
+        timestamp: now
+      });
+
+      transaction.update(gameRef, update);
+      transaction.set(notificationRef, {
+        ...notificationRecord,
+        createdAt: now
+      });
+
+      return {
+        claimedSlot,
+        notificationId: notificationRef.id
+      };
+    });
+
+    return {
+      success: true,
+      teamId: input.teamId,
+      gameId: input.gameId,
+      slotId: input.slotId,
+      ...result
+    };
+  } catch (error) {
+    throw toHttpsError(error, error?.code || 'internal');
   }
 });
 
@@ -7475,7 +7567,9 @@ exports.notifyFeeMarkedPaid = functions.firestore
           body: wasPaymentRecorded
             ? `We received your ${paymentAmountDisplay} payment. Thank you!`
             : 'Your fee balance is now marked as paid.',
-          teamId
+          teamId,
+          batchId,
+          recipientId
         }));
       }
     }

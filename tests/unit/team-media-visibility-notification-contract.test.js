@@ -60,7 +60,12 @@ describe('team media visibility notification contract', () => {
         expect(functionsSource).toContain('eligibleUsers.has(user.uid)');
         expect(functionsSource).toContain('const fallbackTargets = await getLegacyTargetsForCategory(teamId, category, missingUsers, actorUid, audienceContext);');
         expect(functionsSource).toContain('audienceContext: metadata.audienceContext || { albumVisibility: metadata.albumVisibility }');
+        expect(functionsSource).toContain('folder.allowedUserIds || folder.audienceUserIds || folder.visibleToUserIds || folder.userIds');
+        expect(functionsSource).toContain('folder.allowedRoles || folder.audienceRoles || folder.visibleToRoles || folder.roles');
+        expect(functionsSource).toContain('...(allowedUserIds.length ? { allowedUserIds } : {})');
+        expect(functionsSource).toContain('...(allowedRoles.length ? { allowedRoles } : {})');
         expect(functionsSource).toContain('const audienceContext = buildTeamMediaNotificationAudienceContext({');
+        expect(functionsSource).toContain('visibility: folder.visibility || batch.albumVisibility');
         expect(functionsSource).not.toContain("if (albumVisibility !== 'team') return null;");
         expect(functionsSource).not.toContain("await markTeamMediaNotificationBatchSkipped(batchRef, claimId, 'album_not_team_visible');");
     });
