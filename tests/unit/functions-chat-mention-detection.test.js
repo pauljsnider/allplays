@@ -385,6 +385,38 @@ describe('buildTeamChatNotificationPlan', () => {
         expect(plan.liveChatTargets).toHaveLength(1);
     });
 
+    it('excludes every live-chat device for mentioned users while preserving mention devices', () => {
+        const plan = buildTeamChatNotificationPlan({
+            text: 'Can you check this @alice?',
+            actorUid: 'coach-1',
+            recipientContext: {
+                members: [
+                    { uid: 'coach-1', displayName: 'Coach Kim', roles: ['staff'] },
+                    { uid: 'alice-parent', displayName: 'Alice Parent', roles: ['parent'] },
+                    { uid: 'blair-parent', displayName: 'Blair Parent', roles: ['parent'] }
+                ],
+                mutedUids: [],
+                targetsByCategory: {
+                    mentions: [
+                        { uid: 'alice-parent', deviceId: 'phone', token: 'mention-phone' },
+                        { uid: 'alice-parent', deviceId: 'tablet', token: 'mention-tablet' }
+                    ],
+                    liveChat: [
+                        { uid: 'coach-1', deviceId: 'phone', token: 'coach-chat' },
+                        { uid: 'alice-parent', deviceId: 'phone', token: 'alice-chat-phone' },
+                        { uid: 'alice-parent', deviceId: 'tablet', token: 'alice-chat-tablet' },
+                        { uid: 'blair-parent', deviceId: 'phone', token: 'blair-chat' }
+                    ]
+                }
+            }
+        });
+
+        expect(plan.mentionedUids).toEqual(['alice-parent']);
+        expect(plan.mentionTargets.map((target) => target.token).sort()).toEqual(['mention-phone', 'mention-tablet']);
+        expect(plan.liveChatTargets.map((target) => target.uid)).toEqual(['blair-parent']);
+        expect(plan.liveChatTargets.some((target) => target.uid === 'alice-parent')).toBe(false);
+    });
+
     it('handles a large mixed team fixture from one preloaded recipient context', () => {
         const mentionedUserIds = ['user-12', 'user-87', 'user-301'];
         const members = Array.from({ length: 500 }, (_, index) => ({
