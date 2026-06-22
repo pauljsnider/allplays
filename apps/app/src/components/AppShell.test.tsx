@@ -200,6 +200,21 @@ describe('AppShell', () => {
     });
   });
 
+  it('does not clear the native app badge while auth is still bootstrapping', async () => {
+    render(
+      <MemoryRouter initialEntries={['/home']}>
+        <Routes>
+          <Route path="/home" element={<AppShell auth={{ ...auth, loading: true }}><div>Home</div></AppShell>} />
+        </Routes>
+      </MemoryRouter>
+    );
+
+    await waitFor(() => {
+      expect(subscribeToUnreadNotificationCountMock).not.toHaveBeenCalled();
+    });
+    expect(updateAppIconBadgeMock).not.toHaveBeenCalled();
+  });
+
   it('clears the native app badge after sign-out', async () => {
     const { rerender } = render(
       <MemoryRouter initialEntries={['/home']}>

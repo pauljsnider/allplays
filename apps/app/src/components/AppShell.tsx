@@ -169,6 +169,9 @@ export function AppShell({ auth, children }: AppShellProps) {
 
   useEffect(() => {
     if (!auth.user?.uid) {
+      if (auth.loading) {
+        return;
+      }
       void updateAppIconBadge(0);
       return;
     }
@@ -176,7 +179,7 @@ export function AppShell({ auth, children }: AppShellProps) {
       return;
     }
     void updateAppIconBadge(unreadCount);
-  }, [auth.user?.uid, unreadCount, unreadState]);
+  }, [auth.loading, auth.user?.uid, unreadCount, unreadState]);
 
   useEffect(() => {
     const uid = auth.user?.uid;
