@@ -5,6 +5,16 @@ const functionsSource = readFileSync(new URL('../../functions/index.js', import.
 const scheduleLogicSource = readFileSync(new URL('../../apps/app/src/lib/scheduleLogic.ts', import.meta.url), 'utf8');
 const scheduleServiceSource = readFileSync(new URL('../../apps/app/src/lib/scheduleService.ts', import.meta.url), 'utf8');
 
+function getBuildPreEventReminderPayload() {
+    const start = functionsSource.indexOf('function buildPreEventReminderPayload({ teamId, gameId, event })');
+    const end = functionsSource.indexOf('\nfunction getPreEventReminderChatMessageId', start);
+    const slice = functionsSource.slice(start, end);
+    return new Function('coerceDate', 'getEventTitle', `${slice}; return buildPreEventReminderPayload;`)(
+        (value) => new Date(value),
+        (event) => event.title || 'Team event'
+    );
+}
+
 describe('schedule and RSVP notification contract', () => {
     it('sends created-event notifications unless the event is draft or part of a large import batch', () => {
         expect(functionsSource).toContain('async function sendCreatedScheduleEventNotification({ teamId, gameId, game })');
@@ -40,6 +50,30 @@ describe('schedule and RSVP notification contract', () => {
         expect(functionsSource).toContain('recipientUserIds: emailResult.recipientUserIds');
         expect(functionsSource).toContain('rsvpPushSuccessCount: rsvpPushResult.successCount');
         expect(functionsSource).toContain('rsvpPushTargetCount: rsvpPushResult.targetCount');
+    });
+
+    it('builds pre-event reminder payloads with event context and a game-day fallback link', () => {
+        const buildPreEventReminderPayload = getBuildPreEventReminderPayload();
+
+        expect(buildPreEventReminderPayload({
+            teamId: 'team 1',
+            gameId: 'game/1',
+            event: {
+                title: 'vs. Falcons',
+                date: '2026-07-04T18:30:00.000Z',
+                timeZone: 'America/Chicago',
+                location: 'Main Gym'
+            }
+        })).toEqual({
+            title: 'Upcoming team event',
+            body: 'vs. Falcons is coming up Sat, Jul 4, 1:30 PM. Location: Main Gym',
+            link: 'https://allplays.ai/game-day.html?teamId=team%201&gameId=game%2F1',
+            chatText: [
+                'Schedule reminder: Upcoming team event',
+                'vs. Falcons is coming up Sat, Jul 4, 1:30 PM.',
+                'Location: Main Gym'
+            ].join('\n')
+        });
     });
 
     it('sends RSVP reminder pushes through the rsvp category with per-recipient child deep links', () => {
