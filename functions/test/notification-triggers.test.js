@@ -545,7 +545,7 @@ test('notifyFeeAssigned resolves app-created child fee recipients through parent
     }
 });
 
-test('notifyFeeAssigned sends one batch assignment push when a parent has multiple recipients', async () => {
+test('notifyFeeAssigned sends one combined batch assignment push when a parent has multiple recipients', async () => {
     const { moduleExports, env, cleanup } = loadNotificationInternals({
         teamDoc: { ownerId: 'coach-1', adminEmails: [] },
         userDocs: {
@@ -557,22 +557,38 @@ test('notifyFeeAssigned sends one batch assignment push when a parent has multip
     });
 
     try {
+        const recipientA = {
+            playerKey: 'team-1::player-1',
+            childName: 'Avery',
+            feeTitle: 'Spring dues',
+            amountCents: 2500,
+            dueDate: '2026-07-01T12:00:00.000Z'
+        };
+        const recipientB = {
+            playerKey: 'team-1::player-2',
+            childName: 'Blake',
+            feeTitle: 'Spring dues',
+            amountCents: 2500,
+            dueDate: '2026-07-01T12:00:00.000Z'
+        };
+        const refA = env.firestoreState.doc('teams/team-1/feeBatches/batch-3/feeRecipients/recipient-a');
+        const refB = env.firestoreState.doc('teams/team-1/feeBatches/batch-3/feeRecipients/recipient-b');
+        await refA.set(recipientA);
+        await refB.set(recipientB);
         const contextA = { params: { teamId: 'team-1', batchId: 'batch-3', recipientId: 'recipient-a' } };
         const contextB = { params: { teamId: 'team-1', batchId: 'batch-3', recipientId: 'recipient-b' } };
 
-        const firstResult = await moduleExports.notifyFeeAssigned(makeSnapshot(
-            env.firestoreState.doc('teams/team-1/feeBatches/batch-3/feeRecipients/recipient-a'),
-            { playerKey: 'team-1::player-1', feeTitle: 'Spring dues', amountCents: 2500 }
-        ), contextA);
-        const secondResult = await moduleExports.notifyFeeAssigned(makeSnapshot(
-            env.firestoreState.doc('teams/team-1/feeBatches/batch-3/feeRecipients/recipient-b'),
-            { playerKey: 'team-1::player-2', feeTitle: 'Spring dues', amountCents: 2500 }
-        ), contextB);
+        const firstResult = await moduleExports.notifyFeeAssigned(makeSnapshot(refA, recipientA), contextA);
+        const secondResult = await moduleExports.notifyFeeAssigned(makeSnapshot(refB, recipientB), contextB);
 
         assert.equal(firstResult?.successCount, 1);
         assert.equal(secondResult, null);
         assert.equal(env.messagingCalls.length, 1);
         assert.deepEqual(env.messagingCalls[0].tokens, ['parent-token']);
+        assert.equal(env.messagingCalls[0].title, 'New fees assigned: Spring dues ($50.00 total)');
+        assert.equal(env.messagingCalls[0].body, '$50.00 has been assigned for Avery and Blake, due Jul 1, 2026.');
+        assert.equal(env.counts.parentQueries, 2);
+        assert.equal(env.counts.userRecordGets, 1);
     } finally {
         cleanup();
     }
