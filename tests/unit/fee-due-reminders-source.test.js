@@ -23,6 +23,12 @@ describe('fee due reminder helper logic', () => {
         expect(getFeeReminderPlayerKey({ playerKey: 'team-9::player-9', playerId: 'ignored' }, 'team-1')).toBe('team-9::player-9');
     });
 
+    it('does not invent player-linked lookup keys when team or player context is missing', () => {
+        expect(getFeeReminderPlayerKey({ playerId: 'player-1' }, '')).toBe('');
+        expect(getFeeReminderPlayerKey({ teamId: 'team-1' }, 'team-1')).toBe('');
+        expect(getFeeReminderPlayerKey({}, 'team-1')).toBe('');
+    });
+
     it('merges direct payer ids with player-linked owner ids and removes blanks or duplicates', () => {
         expect(buildFeeReminderCandidateUserIds({
             userId: 'user-1',
