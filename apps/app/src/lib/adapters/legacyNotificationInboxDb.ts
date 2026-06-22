@@ -8,6 +8,7 @@ import {
   onSnapshot as legacyOnSnapshot,
   orderBy as legacyOrderBy,
   query as legacyQuery,
+  where as legacyWhere,
   updateDoc as legacyUpdateDoc,
   serverTimestamp as legacyServerTimestamp
 } from '@legacy/firebase.js';
@@ -26,5 +27,6 @@ export const limit = legacyLimit as (...args: any[]) => any;
 export const onSnapshot = legacyOnSnapshot as (...args: any[]) => () => void;
 export const orderBy = legacyOrderBy as (...args: any[]) => any;
 export const query = legacyQuery as (...args: any[]) => any;
+export const where = legacyWhere as (...args: any[]) => any;
 export const updateDoc = legacyUpdateDoc as (...args: any[]) => Promise<any>;
 export const serverTimestamp = legacyServerTimestamp as (...args: any[]) => any;

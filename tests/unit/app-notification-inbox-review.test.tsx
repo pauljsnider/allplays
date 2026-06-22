@@ -24,6 +24,7 @@ const firebaseMocks = vi.hoisted(() => ({
     onSnapshot: vi.fn(() => vi.fn()),
     orderBy: vi.fn((field: string, direction: string) => ({ type: 'orderBy', field, direction })),
     query: vi.fn((...args: unknown[]) => ({ args })),
+    where: vi.fn((field: string, operator: string, value: unknown) => ({ type: 'where', field, operator, value })),
     serverTimestamp: vi.fn(),
     updateDoc: vi.fn(),
     writeBatch: vi.fn(),

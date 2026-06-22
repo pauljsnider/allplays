@@ -68,22 +68,21 @@ export function AppShell({ auth, children }: AppShellProps) {
   const [addTeamOpen, setAddTeamOpen] = useState(false);
   const [inboxOpen, setInboxOpen] = useState(false);
   const [inboxItems, setInboxItems] = useState<NotificationInboxItem[]>([]);
-  const [inboxState, setInboxState] = useState<'loading' | 'ready' | 'error'>('loading');
+  const [inboxState, setInboxState] = useState<'idle' | 'loading' | 'ready' | 'error'>('idle');
+  const [unreadCount, setUnreadCount] = useState(0);
+  const [unreadState, setUnreadState] = useState<'loading' | 'ready' | 'error'>('loading');
   const { isDesktopWeb } = useShellLayout();
   const navigate = useNavigate();
   const location = useLocation();
   const routeStartedAtRef = useRef(typeof performance !== 'undefined' ? performance.now() : Date.now());
+  const lastInboxUidRef = useRef<string | null>(auth.user?.uid ?? null);
   const isAiRoute = location.pathname === '/ai';
   const isMobileChatDetail = !isDesktopWeb && location.pathname.startsWith('/messages/') && location.pathname !== '/messages';
   const isDesktopMessages = isDesktopWeb && (location.pathname.startsWith('/messages') || isAiRoute);
-  // Inlined from notificationInboxService.countUnread so this boot-path component
-  // does not statically import the module (which pulls the vendored Firestore SDK
-  // into the entry chunk). The module is dynamically imported on subscribe below.
-  const unreadCount = inboxItems.filter((item) => !item.readAt).length;
   const unreadNotificationStatus = auth.user
-    ? inboxState === 'loading' && inboxItems.length === 0
+    ? unreadState === 'loading'
       ? 'Loading notifications…'
-      : inboxState === 'error' && inboxItems.length === 0
+      : unreadState === 'error'
         ? 'Could not load notifications'
         : unreadCount > 0
           ? `${unreadCount} unread notification${unreadCount === 1 ? '' : 's'}`
@@ -136,12 +135,54 @@ export function AppShell({ auth, children }: AppShellProps) {
 
   useEffect(() => {
     const uid = auth.user?.uid;
-    if (!uid) return;
+    if (!uid) {
+      setUnreadCount(0);
+      setUnreadState('ready');
+      return;
+    }
+    setUnreadState('loading');
+    let active = true;
+    let unsubscribe = () => {};
+    void loadNotificationInboxService()
+      .then((mod) => {
+        if (!active) return;
+        unsubscribe = mod.subscribeToUnreadNotificationCount(
+          uid,
+          (count) => {
+            setUnreadCount(count);
+            setUnreadState('ready');
+          },
+          () => {
+            setUnreadState('error');
+          }
+        );
+      })
+      .catch(() => {
+        if (active) setUnreadState('error');
+      });
+    return () => {
+      active = false;
+      unsubscribe();
+    };
+  }, [auth.user?.uid]);
+
+  useEffect(() => {
+    const uid = auth.user?.uid;
+    if (lastInboxUidRef.current !== (uid ?? null)) {
+      lastInboxUidRef.current = uid ?? null;
+      setInboxItems([]);
+      setInboxState('idle');
+    }
+    if (!uid) {
+      setInboxItems([]);
+      setInboxState('idle');
+      return;
+    }
+    if (!inboxOpen) return;
+
     setInboxState('loading');
     let active = true;
     let unsubscribe = () => {};
-    // Lazy-import the inbox service (and its Firestore dependency) so it stays out
-    // of the entry chunk and loads after first paint.
     void loadNotificationInboxService()
       .then((mod) => {
         if (!active) return;
@@ -159,11 +200,12 @@ export function AppShell({ auth, children }: AppShellProps) {
       .catch(() => {
         if (active) setInboxState('error');
       });
+
     return () => {
       active = false;
       unsubscribe();
     };
-  }, [auth.user?.uid]);
+  }, [auth.user?.uid, inboxOpen]);
 
   const handleMarkNotificationRead = async (uid: string, itemId: string) => {
     const mod = await loadNotificationInboxService();
@@ -407,7 +449,7 @@ export function AppShell({ auth, children }: AppShellProps) {
         <Suspense fallback={null}>
           <NotificationInboxSheet
             items={inboxItems}
-            inboxState={inboxState}
+            inboxState={inboxState === 'idle' ? 'loading' : inboxState}
             uid={auth.user?.uid ?? ''}
             onClose={() => setInboxOpen(false)}
             onMarkRead={handleMarkNotificationRead}
