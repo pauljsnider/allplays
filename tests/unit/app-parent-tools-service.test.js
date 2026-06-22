@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { clearAppDataCache } from '../../apps/app/src/lib/appDataCache.ts';
 
 const dbMocks = vi.hoisted(() => ({
+    acceptTeamRegistrationOffer: vi.fn(),
     approveTeamRegistration: vi.fn(),
     createFamilyShareToken: vi.fn(),
     createParentMembershipRequest: vi.fn(),
@@ -221,6 +222,7 @@ import {
     deleteTeamMediaItemForApp,
     updateTeamMediaItemForApp,
     approveTeamRegistrationForApp,
+    acceptTeamRegistrationOfferForApp,
     extendTeamRegistrationOfferForApp,
     rejectTeamRegistrationForApp,
     cancelRegistrationCheckout,
@@ -828,6 +830,7 @@ describe('React app parent tools service', () => {
         ]);
         dbMocks.getPlayers.mockResolvedValue([{ id: 'player-9', name: 'Riley Runner', number: '12' }]);
         dbMocks.approveTeamRegistration.mockResolvedValue({ success: true });
+        dbMocks.acceptTeamRegistrationOffer.mockResolvedValue({ success: true });
         dbMocks.extendTeamRegistrationOffer.mockResolvedValue({ success: true });
         dbMocks.rejectTeamRegistration.mockResolvedValue({ success: true });
 
@@ -855,6 +858,9 @@ describe('React app parent tools service', () => {
 
         await extendTeamRegistrationOfferForApp(user, 'team-coach', 'form-review', 'reg-1');
         expect(dbMocks.extendTeamRegistrationOffer).toHaveBeenCalledWith('team-coach', 'form-review', 'reg-1', '');
+
+        await acceptTeamRegistrationOfferForApp(user, 'team-coach', 'form-review', 'reg-1');
+        expect(dbMocks.acceptTeamRegistrationOffer).toHaveBeenCalledWith('team-coach', 'form-review', 'reg-1', '');
 
         await rejectTeamRegistrationForApp(user, 'team-coach', 'form-review', 'reg-1', 'Not eligible');
         expect(dbMocks.rejectTeamRegistration).toHaveBeenCalledWith('team-coach', 'form-review', 'reg-1', 'Not eligible');

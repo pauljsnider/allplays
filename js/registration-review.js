@@ -95,6 +95,7 @@ export function canTransitionRegistrationStatus(fromStatus, toStatus, { adminAct
     if (from === to) return true;
     if (from === 'released') return false;
     if (to === 'offer-extended') return from === 'waitlisted' && adminAction;
+    if (to === 'offer-accepted') return from === 'offer-extended' && adminAction;
     if (to === 'released') return ['waitlisted', 'offer-extended', 'offer-accepted'].includes(from) && adminAction;
     if (to === 'enrolled') return ['pending', 'offer-accepted'].includes(from) && adminAction;
     if (to === 'rejected') return ['pending', 'waitlisted', 'offer-extended', 'offer-accepted'].includes(from) && adminAction;
@@ -121,6 +122,11 @@ export function buildRegistrationStatusUpdate({ registration = {}, status = '', 
         update.offerExtendedAt = changedAt;
         update.offerExtendedBy = reviewer.userId || '';
         update.offerExtendedByName = reviewer.name || reviewer.email || 'Admin';
+    }
+    if (nextStatus === 'offer-accepted') {
+        update.offerAcceptedAt = changedAt;
+        update.offerAcceptedBy = reviewer.userId || '';
+        update.offerAcceptedByName = reviewer.name || reviewer.email || 'Admin';
     }
     if (nextStatus === 'released') {
         update.releasedAt = changedAt;

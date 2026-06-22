@@ -34,6 +34,7 @@ function callLegacyStripeService(name: string, args: any[]) {
 }
 
 export const approveTeamRegistration = (...args: any[]) => callLegacyDb('approveTeamRegistration', args);
+export const acceptTeamRegistrationOffer = (...args: any[]) => callLegacyDb('acceptTeamRegistrationOffer', args);
 export const createFamilyShareToken = (...args: any[]) => callLegacyDb('createFamilyShareToken', args);
 export const createParentMembershipRequest = (...args: any[]) => callLegacyDb('createParentMembershipRequest', args);
 export const createRegistrationCheckoutSession = (...args: any[]) => callLegacyDb('createRegistrationCheckoutSession', args);

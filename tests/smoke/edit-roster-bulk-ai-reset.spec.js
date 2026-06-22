@@ -48,6 +48,7 @@ export async function listTeamRegistrationReviews() {
 export async function approveTeamRegistration() {}
 export async function rejectTeamRegistration() {}
 export async function extendTeamRegistrationOffer() {}
+export async function acceptTeamRegistrationOffer() {}
 export async function releaseTeamRegistrationWaitlist() {}
 export async function listTeamTrackingItems() {
     return [];

@@ -546,7 +546,7 @@
     <div id="footer-container"></div>
 
     <script type="module">
-        import { getTeam, getPlayers, addPlayer, deactivatePlayer, reactivatePlayer, getGames, uploadPlayerPhoto, updatePlayer, setPlayerPrivateRosterProfileFields, inviteParent, removeParentFromPlayer, getAllUsers, getUnreadChatCount, listTeamParentMembershipRequests, approveParentMembershipRequest, denyParentMembershipRequest, getRosterFieldDefinitions, saveRosterFieldDefinition, disableRosterFieldDefinition, reorderRosterFieldDefinitions, listTeamRegistrationForms, listTeamRegistrationReviews, approveTeamRegistration, rejectTeamRegistration, extendTeamRegistrationOffer, releaseTeamRegistrationWaitlist, listTeamTrackingItems, createTeamTrackingItem, listTeamTrackingStatuses, setTeamTrackingStatus } from './js/db.js?v=64';
+        import { getTeam, getPlayers, addPlayer, deactivatePlayer, reactivatePlayer, getGames, uploadPlayerPhoto, updatePlayer, setPlayerPrivateRosterProfileFields, inviteParent, removeParentFromPlayer, getAllUsers, getUnreadChatCount, listTeamParentMembershipRequests, approveParentMembershipRequest, denyParentMembershipRequest, getRosterFieldDefinitions, saveRosterFieldDefinition, disableRosterFieldDefinition, reorderRosterFieldDefinitions, listTeamRegistrationForms, listTeamRegistrationReviews, approveTeamRegistration, rejectTeamRegistration, extendTeamRegistrationOffer, acceptTeamRegistrationOffer, releaseTeamRegistrationWaitlist, listTeamTrackingItems, createTeamTrackingItem, listTeamTrackingStatuses, setTeamTrackingStatus } from './js/db.js?v=65';
         import { buildRosterFieldDefinitionPayload, collectRosterProfileValues, getRosterProfileValues, normalizeRosterFieldDefinitions, planRosterCsvImport, renderRosterProfileFields, validateRosterProfileValues } from './js/roster-profile-fields.js?v=3';
         import { buildTrackingStatusPayload, mergeTrackingStatusRows, normalizeTrackingItemDraft, summarizeTrackingStatus } from './js/tracking-status-admin.js?v=2';
         import { renderHeader, renderFooter, getUrlParams, escapeHtml } from './js/utils.js?v=8';
@@ -1338,6 +1338,7 @@
                         : (['rejected', 'released'].includes(statusLabel) ? 'bg-red-100 text-red-700 border-red-200' : 'bg-amber-100 text-amber-700 border-amber-200');
                     const canApprove = ['pending', 'offer-accepted'].includes(statusLabel);
                     const canExtendOffer = statusLabel === 'waitlisted';
+                    const canAcceptOffer = statusLabel === 'offer-extended';
                     const canRelease = ['waitlisted', 'offer-extended', 'offer-accepted'].includes(statusLabel);
                     return `
                         <div class="rounded-lg border border-gray-200 p-4" data-registration-id="${escapeHtml(registration.id)}">
@@ -1367,10 +1368,11 @@
                                     ${registration.waitlistStatusUpdatedByName ? `<p class="text-xs text-gray-500 mt-1">Waitlist updated by ${escapeHtml(registration.waitlistStatusUpdatedByName)} on ${formatRegistrationDate(registration.waitlistStatusUpdatedAt)}</p>` : ''}
                                     ${registration.decisionNote ? `<p class="text-xs text-gray-600 mt-1">Decision note: ${escapeHtml(registration.decisionNote)}</p>` : ''}
                                 </div>
-                                ${(canApprove || canExtendOffer || canRelease || statusLabel === 'pending') ? `
+                                ${(canApprove || canExtendOffer || canAcceptOffer || canRelease || statusLabel === 'pending') ? `
                                     <div class="flex flex-wrap items-center gap-2">
                                         ${canApprove ? `<button type="button" class="approve-registration-btn text-xs font-semibold px-3 py-2 rounded border border-emerald-300 bg-emerald-50 text-emerald-700 hover:bg-emerald-100" data-registration-id="${escapeHtml(registration.id)}">Approve to roster</button>` : ''}
                                         ${canExtendOffer ? `<button type="button" class="extend-offer-registration-btn text-xs font-semibold px-3 py-2 rounded border border-indigo-300 bg-indigo-50 text-indigo-700 hover:bg-indigo-100" data-registration-id="${escapeHtml(registration.id)}">Extend offer</button>` : ''}
+                                        ${canAcceptOffer ? `<button type="button" class="accept-offer-registration-btn text-xs font-semibold px-3 py-2 rounded border border-emerald-300 bg-emerald-50 text-emerald-700 hover:bg-emerald-100" data-registration-id="${escapeHtml(registration.id)}">Mark accepted</button>` : ''}
                                         ${canRelease ? `<button type="button" class="release-waitlist-registration-btn text-xs font-semibold px-3 py-2 rounded border border-orange-300 bg-orange-50 text-orange-700 hover:bg-orange-100" data-registration-id="${escapeHtml(registration.id)}">Release</button>` : ''}
                                         ${statusLabel === 'pending' ? `<button type="button" class="reject-registration-btn text-xs font-semibold px-3 py-2 rounded border border-red-300 bg-red-50 text-red-700 hover:bg-red-100" data-registration-id="${escapeHtml(registration.id)}">Reject</button>` : ''}
                                     </div>
@@ -1422,6 +1424,21 @@
                         } catch (err) {
                             console.error('Error extending waitlist offer', err);
                             alert('Error extending offer: ' + (err?.message || 'Please try again.'));
+                            event.currentTarget.disabled = false;
+                        }
+                    });
+                });
+                document.querySelectorAll('.accept-offer-registration-btn').forEach((button) => {
+                    button.addEventListener('click', async (event) => {
+                        const registrationId = event.currentTarget.dataset.registrationId;
+                        if (!registrationId || !confirm('Mark this waitlist offer as accepted?')) return;
+                        try {
+                            event.currentTarget.disabled = true;
+                            await acceptTeamRegistrationOffer(currentTeamId, selectedRegistrationFormId, registrationId);
+                            await loadRegistrationReviews();
+                        } catch (err) {
+                            console.error('Error accepting waitlist offer', err);
+                            alert('Error marking offer accepted: ' + (err?.message || 'Please try again.'));
                             event.currentTarget.disabled = false;
                         }
                     });

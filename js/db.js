@@ -2536,6 +2536,10 @@ export function extendTeamRegistrationOffer(teamId, formId, registrationId, deci
     return updateTeamRegistrationWaitlistStatus(teamId, formId, registrationId, 'offer-extended', decisionNote);
 }
 
+export function acceptTeamRegistrationOffer(teamId, formId, registrationId, decisionNote = '') {
+    return updateTeamRegistrationWaitlistStatus(teamId, formId, registrationId, 'offer-accepted', decisionNote);
+}
+
 export function releaseTeamRegistrationWaitlist(teamId, formId, registrationId, decisionNote = '') {
     return updateTeamRegistrationWaitlistStatus(teamId, formId, registrationId, 'released', decisionNote);
 }
