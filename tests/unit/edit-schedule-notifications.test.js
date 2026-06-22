@@ -156,9 +156,12 @@ describe('notifyGameCreated Cloud Function trigger', () => {
     });
 
     it('routes standard create pushes through the shared schedule notification helper', () => {
+        expect(functionsSource).toContain("function buildCreatedScheduleEventNotificationPayload(game = {}) {");
         expect(functionsSource).toContain("async function sendCreatedScheduleEventNotification({ teamId, gameId, game }) {");
-        expect(functionsSource).toContain("const category = isPractice ? 'practice' : 'schedule';");
-        expect(functionsSource).toContain("const title = isPractice ? `New practice: ${eventTitle}` : `New game: ${eventTitle}`;");
+        expect(functionsSource).toContain("const isPracticeSeries = isPractice && (game.isSeriesMaster === true || Boolean(game.recurrence));");
+        expect(functionsSource).toContain("title: isPracticeSeries");
+        expect(functionsSource).toContain("category: 'schedule'");
+        expect(functionsSource).toContain("title: payload.title");
     });
 
     it('skips draft events and returns null', () => {
