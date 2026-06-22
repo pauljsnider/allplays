@@ -12,8 +12,10 @@ describe('ScheduleEventDetail decomposition contract', () => {
         const page = readRepoFile('apps/app/src/pages/ScheduleEventDetail.tsx');
 
         [
+            "import { AssignmentCard } from '../components/schedule/AssignmentCard';",
             "import { DateTile } from '../components/schedule/DateTile';",
             "import { EventBrief } from '../components/schedule/EventBrief';",
+            "import { EventDetailsPanel } from '../components/schedule/EventDetailsPanel';",
             "import { EventSectionNav } from '../components/schedule/EventSectionNav';",
             "import { StaffRsvpPlayerRow } from '../components/schedule/StaffRsvpPlayerRow';",
             'QuickAvailabilityPanel',
@@ -24,8 +26,10 @@ describe('ScheduleEventDetail decomposition contract', () => {
         });
 
         [
+            /^function AssignmentCard\b/m,
             /^function DateTile\b/m,
             /^function EventBrief\b/m,
+            /^function EventDetailsPanel\b/m,
             /^function EventSectionNav\b/m,
             /^function StaffRsvpPlayerRow\b/m,
             /^function QuickAvailabilityPanel\b/m,
@@ -66,5 +70,39 @@ describe('ScheduleEventDetail decomposition contract', () => {
         expect(component).toContain("(['going', 'maybe', 'not_going'] as const).map");
         expect(component).toContain("disabled={submitting || eventLocked}");
         expect(component).toContain("{submitting && player.response !== response ? 'Saving' : rsvpLabels[response]}");
+    });
+
+    it('keeps event detail metadata rendering in the extracted schedule component', () => {
+        const component = readRepoFile('apps/app/src/components/schedule/EventDetailsPanel.tsx');
+
+        expect(component).toContain('export function EventDetailsPanel');
+        expect(component).toContain('function getEventDetailRows(event: ParentScheduleEvent)');
+        expect(component).toContain('const mapHref = getScheduleMapHref(event.location);');
+        expect(component).toContain('const forecastHref = getScheduleForecastHref(event.location);');
+        expect(component).toContain("{ label: 'Game info', value: formatGameInfo(event), icon: ClipboardCheck }");
+        expect(component).toContain("{ label: 'Home packet', value: event.practiceHomePacketSummary, icon: FileText }");
+    });
+
+    it('keeps assignment row rendering in the extracted schedule component', () => {
+        const component = readRepoFile('apps/app/src/components/schedule/AssignmentCard.tsx');
+
+        expect(component).toContain('export function AssignmentCard');
+        expect(component).toContain('isScheduleAssignmentClaimedByUser(assignment, userId)');
+        expect(component).toContain('isScheduleAssignmentOpen(assignment)');
+        expect(component).toContain('getScheduleAssignmentStatus(assignment, userId)');
+        expect(component).toContain("{busy ? 'Signing up' : 'Sign up'}");
+        expect(component).toContain("{busy ? 'Releasing' : 'Release'}");
+    });
+
+    it('keeps game report rendering behind named page boundaries', () => {
+        const page = readRepoFile('apps/app/src/pages/ScheduleEventDetail.tsx');
+
+        expect(page).toContain('function GameReportSections({ event }: { event: ParentScheduleEvent })');
+        expect(page).toContain('const loaded = await loadGameReportSections(event.teamId, event.id);');
+        expect(page).toContain('<GameReportSectionContent report={report} activeSection={activeReportSection} />');
+        expect(page).toContain('function GameReportSectionContent({ report, activeSection }: { report: GameReportData; activeSection: GameReportSectionId })');
+        expect(page).toContain('function MatchSummarySection({ report }: { report: GameReportData })');
+        expect(page).toContain('function PlayerPerformanceSection({ report }: { report: GameReportData })');
+        expect(page).toContain('function ReportInsightsSection({ report }: { report: GameReportData })');
     });
 });

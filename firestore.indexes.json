@@ -310,6 +310,14 @@
       ]
     },
     {
+      "collectionGroup": "mediaItems",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "folderId", "order": "ASCENDING" },
+        { "fieldPath": "order", "order": "ASCENDING" }
+      ]
+    },
+    {
       "collectionGroup": "chatMessages",
       "queryScope": "COLLECTION",
       "fields": [

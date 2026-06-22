@@ -164,6 +164,7 @@ jobs:
             echo "Warning: unable to list open PRs; skipping stale Firebase preview channel pruning."
             exit 0
           fi
+
           channels_file="$RUNNER_TEMP/firebase-preview-channels.txt"
           keep_file="$RUNNER_TEMP/firebase-preview-keep.txt"
           prune_file="$RUNNER_TEMP/firebase-preview-prune.txt"
@@ -173,19 +174,25 @@ jobs:
           } | sed '/^$/d' | sort -u > "$keep_file"
           npx firebase-tools@14.25.0 hosting:channel:list --site game-flow-c6311 --project game-flow-c6311 > "$channels_file"
           awk -F '│' 'NF > 2 {gsub(/^[[:space:]]+|[[:space:]]+$/, "", $2); if ($2 ~ /^pr-/) print $2 }' "$channels_file" | sort -u > "$prune_file"
+
+          delete_channel() {
+            local channel="$1"
+            local delete_log="$RUNNER_TEMP/firebase-preview-delete-$channel.log"
+            if ! npx firebase-tools@14.25.0 hosting:channel:delete "$channel" --site game-flow-c6311 --project game-flow-c6311 --force >"$delete_log" 2>&1; then
+              if grep -Eq 'HTTP Error: 404|Not Found' "$delete_log"; then
+                echo "Skipping already-missing Firebase preview channel: $channel"
+                return 0
+              fi
+              cat "$delete_log" >&2
+              return 1
+            fi
+          }
+
           while read -r channel; do
             if [ -z "$channel" ] || grep -qx "$channel" "$keep_file"; then
               continue
             fi
-            delete_log="$RUNNER_TEMP/firebase-preview-delete-$channel.log"
-            if ! npx firebase-tools@14.25.0 hosting:channel:delete "$channel" --site game-flow-c6311 --project game-flow-c6311 --force >"$delete_log" 2>&1; then
-              if grep -Eq 'HTTP Error: 404|Not Found' "$delete_log"; then
-                echo "Skipping already-missing Firebase preview channel: $channel"
-                continue
-              fi
-              cat "$delete_log" >&2
-              exit 1
-            fi
+            delete_channel "$channel"
           done < "$prune_file"
 
       - name: Deploy Firebase Hosting preview
@@ -196,8 +203,9 @@ jobs:
           set -euo pipefail
           log_file="$RUNNER_TEMP/firebase-preview-deploy.log"
 
-          deploy_preview() {
-            npx firebase-tools@14.25.0 hosting:channel:deploy "$CURRENT_CHANNEL" --project game-flow-c6311 --config "$FIREBASE_PREVIEW_CONFIG" --expires 7d --non-interactive >"$log_file" 2>&1
+          deploy_preview_channel() {
+            : > "$log_file"
+            npx firebase-tools@14.25.0 hosting:channel:deploy "$CURRENT_CHANNEL" --project game-flow-c6311 --config "$FIREBASE_PREVIEW_CONFIG" --expires 7d --non-interactive 2>&1 | tee "$log_file"
           }
 
           skip_preview_for_quota() {
@@ -210,27 +218,36 @@ jobs:
             exit 0
           }
 
-          if ! deploy_preview; then
-            cat "$log_file"
-            if ! grep -Eiq 'HTTP Error: 429|channel quota reached' "$log_file"; then
-              exit 1
-            fi
-
-            channels_file="$RUNNER_TEMP/firebase-preview-channels.txt"
+          delete_oldest_preview_channel() {
+            channels_file="$RUNNER_TEMP/firebase-preview-channels-retry.txt"
+            delete_log="$RUNNER_TEMP/firebase-preview-delete-retry.log"
             if ! npx firebase-tools@14.25.0 hosting:channel:list --site game-flow-c6311 --project game-flow-c6311 > "$channels_file"; then
               skip_preview_for_quota
             fi
-            eviction_channel="$(awk -F '│' 'NF > 2 {gsub(/^[[:space:]]+|[[:space:]]+$/, "", $2); if ($2 ~ /^pr-[0-9]+$/) print $2 }' "$channels_file" | grep -vx "$CURRENT_CHANNEL" | sort -t- -k2,2n | head -n1)"
-            if [ -z "$eviction_channel" ]; then
+            oldest_channel="$(awk -F '│' 'NF > 3 {
+              channel=$2
+              release_time=$3
+              gsub(/^[[:space:]]+|[[:space:]]+$/, "", channel)
+              gsub(/^[[:space:]]+|[[:space:]]+$/, "", release_time)
+              if (channel ~ /^pr-/ && channel != ENVIRON["CURRENT_CHANNEL"]) {
+                print release_time "\t" channel
+              }
+            }' "$channels_file" | sort | head -n1 | cut -f2)"
+            if [ -z "$oldest_channel" ]; then
               skip_preview_for_quota
             fi
+            echo "Deleting oldest Firebase preview channel to free quota: $oldest_channel"
+            if ! npx firebase-tools@14.25.0 hosting:channel:delete "$oldest_channel" --site game-flow-c6311 --project game-flow-c6311 --force >"$delete_log" 2>&1; then
+              skip_preview_for_quota
+            fi
+          }
 
-            echo "Firebase preview channel quota reached. Evicting $eviction_channel and retrying deployment."
-            if ! npx firebase-tools@14.25.0 hosting:channel:delete "$eviction_channel" --site game-flow-c6311 --project game-flow-c6311 --force; then
-              skip_preview_for_quota
+          if ! deploy_preview_channel; then
+            if ! grep -Eiq 'HTTP Error: 429|channel quota reached' "$log_file"; then
+              exit 1
             fi
-            if ! deploy_preview; then
-              cat "$log_file"
+            delete_oldest_preview_channel
+            if ! deploy_preview_channel; then
               if grep -Eiq 'HTTP Error: 429|channel quota reached' "$log_file"; then
                 skip_preview_for_quota
               fi
@@ -238,7 +255,6 @@ jobs:
             fi
           fi
 
-          cat "$log_file"
           preview_url="$(grep -Eo 'https://[^ ]+' "$log_file" | tail -n1)"
           if [ -z "$preview_url" ]; then
             echo "Failed to extract preview URL from Firebase deploy output." >&2

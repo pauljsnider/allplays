@@ -34,7 +34,7 @@ import {
   getTeam,
   getTeamMediaFolders,
   getTeamMediaItemUrl,
-  getTeamMediaItems,
+  getTeamMediaItemsPage,
   getTeamRegistrationForm,
   hasOnlineRegistrationCheckout,
   initiateTeamFeeCheckout,
@@ -244,6 +244,8 @@ export type TeamMediaFolder = Record<string, any> & {
   itemCount: number;
   items: TeamMediaItem[];
   itemsLoaded?: boolean;
+  itemsHasMore?: boolean;
+  itemsNextCursor?: any;
 };
 
 export type TeamMediaItem = Record<string, any> & {
@@ -833,7 +835,7 @@ function getPublicRegistrationTeamName(form: Record<string, any>) {
 export async function loadTeamMediaForApp(
   user: AuthUser | null,
   teamId: string,
-  options: { initialFolderId?: string; folderIds?: string[] } = {}
+  options: { initialFolderId?: string; folderIds?: string[]; pageSize?: number; cursorsByFolderId?: Record<string, any> } = {}
 ): Promise<TeamMediaModel> {
   if (!teamId) throw new Error('Team is required.');
   const team = await Promise.resolve(getTeam(teamId));
@@ -859,6 +861,7 @@ export async function loadTeamMediaForApp(
 
   const itemSets = new Map<string, TeamMediaItem[]>();
   const fallbackCounts = new Map<string, number>();
+  const pageStateByFolderId = new Map<string, { hasMore: boolean; nextCursor: any }>();
   await Promise.all(visibleFolders.map(async (folder: any) => {
     const folderId = compactString(folder?.id);
     if (!folderId) return;
@@ -868,10 +871,19 @@ export async function loadTeamMediaForApp(
       if (storedCount !== null) fallbackCounts.set(folderId, storedCount);
       return;
     }
-    const items = sortByMediaOrder(await Promise.resolve(getTeamMediaItems(teamId, folderId)).catch(() => []))
+    const page = await Promise.resolve(getTeamMediaItemsPage(teamId, folderId, {
+      pageSize: options.pageSize || 24,
+      cursor: options.cursorsByFolderId?.[folderId] || null
+    })).catch(() => ({ items: [], hasMore: false, nextCursor: null }));
+    const pageItems = Array.isArray(page?.items) ? page.items : [];
+    const items = sortByMediaOrder(pageItems)
       .map(toTeamMediaItem)
       .filter((item: TeamMediaItem) => item.url && isSafeTeamMediaUrl(item.url));
-    fallbackCounts.set(folderId, items.length);
+    fallbackCounts.set(folderId, storedCount !== null ? Math.max(storedCount, items.length) : items.length);
+    pageStateByFolderId.set(folderId, {
+      hasMore: page?.hasMore === true,
+      nextCursor: page?.nextCursor || page?.lastDoc || null
+    });
     itemSets.set(folderId, items);
   }));
 
@@ -882,9 +894,11 @@ export async function loadTeamMediaForApp(
     return {
       ...folder,
       id: folderId,
-      itemCount: loadedItems ? loadedItems.length : Number.isFinite(fallbackCount) ? fallbackCount : 0,
+      itemCount: Number.isFinite(fallbackCount) ? fallbackCount : loadedItems ? loadedItems.length : 0,
       items: loadedItems || [],
-      itemsLoaded: Boolean(loadedItems)
+      itemsLoaded: Boolean(loadedItems),
+      itemsHasMore: pageStateByFolderId.get(folderId)?.hasMore || false,
+      itemsNextCursor: pageStateByFolderId.get(folderId)?.nextCursor || null
     };
   });
 
@@ -898,11 +912,13 @@ export async function loadTeamMediaForApp(
 }
 
 export async function uploadParentTeamMediaPhoto(teamId: string, folderId: string, file: File) {
-  return uploadTeamMediaPhoto(teamId, folderId, file);
+  const result = await uploadTeamMediaPhoto(teamId, folderId, file, { returnItem: true });
+  return result && typeof result === 'object' ? toTeamMediaItem(result) : null;
 }
 
 export async function uploadParentTeamMediaFile(teamId: string, folderId: string, file: File) {
-  return uploadTeamMediaFile(teamId, folderId, file);
+  const result = await uploadTeamMediaFile(teamId, folderId, file, { returnItem: true });
+  return result && typeof result === 'object' ? toTeamMediaItem(result) : null;
 }
 
 export async function createTeamMediaAlbumForApp(teamId: string, draft: { name: string; visibility?: string }) {

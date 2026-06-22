@@ -442,6 +442,10 @@ describe('registration roster import wiring', () => {
         expect(source).toContain('Import unavailable: Sports Connect has metadata only. A live connector must create a stored roster snapshot before this page can preview or import players.');
         expect(source).toContain('No stored registration roster snapshot is available yet. Sports Connect live import requires a provider connector before preview is possible.');
         expect(source).toContain('save or load a registration roster snapshot for this team');
+        expect(source).toContain('const hasImportableSnapshot = hasStoredSnapshot && sourcePlayers.length > 0;');
+        expect(source).toContain("previewButton.classList.toggle('hidden', !hasImportableSnapshot);");
+        expect(source).toContain("importButton.classList.toggle('hidden', !hasImportableSnapshot);");
+        expect(source).toContain('previewButton.disabled = !hasImportableSnapshot;');
         expect(source).toContain('previewButton.setAttribute(\'aria-disabled\', String(previewButton.disabled));');
         expect(source).toContain('importButton.setAttribute(\'aria-disabled\', \'true\');');
         expect(source).toContain('importButton.setAttribute(\'aria-disabled\', String(importButton.disabled));');

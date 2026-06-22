@@ -51,4 +51,52 @@ describe('edit team Sports Connect registration sync wiring', () => {
         expect(coreSource).toContain('registrationRosterSnapshot');
         expect(coreSource).not.toContain('source.syncUrl');
     });
+
+    it('keeps registration provider capability states explicit for metadata-only providers', () => {
+        const source = readEditTeam();
+        const capabilitySource = source.slice(
+            source.indexOf('function getRegistrationProviderCapability'),
+            source.indexOf('function ensureRegistrationProviderOption')
+        );
+
+        [
+            "state: 'not_configured'",
+            "connectionStatus: 'not_configured'",
+            "helpText: 'Choose a provider and team mapping to save registration metadata.'",
+            "state: 'metadata_incomplete'",
+            "connectionStatus: 'metadata_incomplete'",
+            "helpText: 'Add the provider team ID or mapping to finish setup.'",
+            "state: 'metadata_configured'",
+            "connectionStatus: 'metadata_configured'",
+            "label: isSportsConnect ? 'Metadata saved; live sync unavailable' : 'Registration metadata only. No live sync.'",
+            "? 'Sports Connect metadata is saved for reference only. Live refresh and re-import require a future provider connector.'",
+            "state: 'live_connected'",
+            "connectionStatus: 'live_connected'",
+            "canRefresh: true",
+            "syncEnabled: true"
+        ].forEach((snippet) => {
+            expect(capabilitySource).toContain(snippet);
+        });
+
+        expect(capabilitySource).toContain("const hasLiveConnection = ['live_connected', 'sync_success'].includes(source?.connectionStatus) && source?.syncEnabled === true;");
+        expect(capabilitySource).toContain("if (hasProvider && hasLiveConnection) {");
+        expect(capabilitySource).toContain('canRefresh: false');
+        expect(capabilitySource).toContain('syncEnabled: false');
+    });
+
+    it('does not call the Sports Connect sync callable when refresh is unavailable', () => {
+        const source = readEditTeam();
+        const syncHandlerSource = source.slice(
+            source.indexOf('async function handleRegistrationProviderSync()'),
+            source.indexOf('function buildRegistrationSourcePayload()')
+        );
+
+        expect(syncHandlerSource).toContain('if (!currentTeamId || button.disabled) return;');
+        expect(syncHandlerSource).toContain('const capability = getRegistrationProviderCapability(provider, externalTeamId, currentRegistrationSource || {});');
+        expect(syncHandlerSource).toContain('if (!capability.canRefresh) {');
+        expect(syncHandlerSource).toContain('renderRegistrationConnectionStatus(currentRegistrationSource || {});');
+        expect(syncHandlerSource).toContain("document.getElementById('registration-connection-help').textContent = capability.helpText;");
+        expect(syncHandlerSource).toContain('return;');
+        expect(syncHandlerSource.indexOf('return;')).toBeLessThan(syncHandlerSource.indexOf('await syncRegistrationProvider(currentTeamId)'));
+    });
 });

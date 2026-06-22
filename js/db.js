@@ -199,7 +199,6 @@ import { buildTournamentPoolOverrideKey } from './tournament-standings.js?v=1';
 import { buildBulkDeleteUpdates, buildMoveUpdates, buildReorderUpdates, isSafeTeamMediaUrl, isSupportedTeamMediaDocument, isSupportedTeamMediaImage, normalizeTeamMediaFolderDraft, normalizeAlbumVisibility, sortByMediaOrder } from './team-media-utils.js?v=3';
 import { getApp } from './vendor/firebase-app.js';
 import {
-    claimOfficiatingSlot,
     computeOfficiatingCoverageStatus,
     updateOfficiatingSlotResponse,
     updateOfficiatingSlotResult
@@ -982,6 +981,94 @@ export async function getTeamMediaItems(teamId, folderId = null) {
     return sortByMediaOrder(resolvedItems);
 }
 
+function readTeamMediaPageOffset(cursor, folderId, sortedDocs = []) {
+    if (Number.isFinite(Number(cursor))) {
+        return Math.max(0, Math.floor(Number(cursor)));
+    }
+
+    if (cursor?.kind === 'team-media-items-page') {
+        const cursorFolderId = String(cursor.folderId || '').trim();
+        if (!cursorFolderId || cursorFolderId === folderId) {
+            const offset = Number(cursor.offset);
+            if (Number.isFinite(offset)) {
+                return Math.max(0, Math.floor(offset));
+            }
+        }
+    }
+
+    const cursorId = String(cursor?.id || '').trim();
+    if (!cursorId) return 0;
+    const cursorIndex = sortedDocs.findIndex((itemDoc) => itemDoc.id === cursorId);
+    return cursorIndex >= 0 ? cursorIndex + 1 : 0;
+}
+
+export async function getTeamMediaItemsPage(teamId, folderId, options = {}) {
+    if (!teamId) {
+        return { items: [], lastDoc: null, nextCursor: null, hasMore: false };
+    }
+
+    const cleanFolderId = String(folderId || '').trim();
+    if (!cleanFolderId) {
+        return { items: [], lastDoc: null, nextCursor: null, hasMore: false };
+    }
+
+    const requestedPageSize = Number(options.pageSize || 24);
+    const pageSize = Number.isFinite(requestedPageSize)
+        ? Math.min(Math.max(Math.floor(requestedPageSize), 1), 100)
+        : 24;
+    const cursor = options.cursor || options.afterDoc || null;
+
+    const snapshot = await getDocs(query(
+        getTeamMediaItemsRef(teamId),
+        where('folderId', '==', cleanFolderId)
+    ));
+    const docs = snapshot.docs
+        .filter((itemDoc) => {
+            const item = itemDoc.data() || {};
+            return item.deleted !== true && item.folderId === cleanFolderId;
+        });
+    const docsById = new Map(docs.map((itemDoc) => [itemDoc.id, itemDoc]));
+    const sortedDocs = sortByMediaOrder(docs.map((itemDoc) => ({ id: itemDoc.id, ...itemDoc.data() })))
+        .map((item) => docsById.get(item.id))
+        .filter(Boolean);
+    const startOffset = readTeamMediaPageOffset(cursor, cleanFolderId, sortedDocs);
+    const pageDocs = sortedDocs.slice(startOffset, startOffset + pageSize);
+    const hasMore = startOffset + pageSize < sortedDocs.length;
+    const items = pageDocs.map((itemDoc) => ({ id: itemDoc.id, ...itemDoc.data() }));
+    const resolvedItems = await Promise.all(items.map(async (item) => {
+        if (!['photo', 'file'].includes(String(item?.type || '').toLowerCase())) return item;
+        if (String(item.downloadUrl || item.url || item.src || '').trim()) return item;
+        if (!item.storagePath) return item;
+        try {
+            const downloadUrl = await getDownloadURL(ref(storage, item.storagePath));
+            updateDoc(doc(db, `teams/${teamId}/mediaItems`, item.id), {
+                downloadUrl,
+                updatedAt: serverTimestamp()
+            }).catch((error) => {
+                console.warn('Unable to backfill cached team media download URL:', error);
+            });
+            return { ...item, downloadUrl };
+        } catch (error) {
+            console.warn('Unable to resolve team media download URL:', error);
+            return item;
+        }
+    }));
+    const lastDoc = pageDocs[pageDocs.length - 1] || null;
+
+    return {
+        items: sortByMediaOrder(resolvedItems),
+        lastDoc,
+        nextCursor: hasMore
+            ? {
+                kind: 'team-media-items-page',
+                folderId: cleanFolderId,
+                offset: startOffset + pageDocs.length
+            }
+            : null,
+        hasMore
+    };
+}
+
 export async function createTeamMediaFolder(teamId, draft = {}) {
     const folder = normalizeTeamMediaFolderDraft(typeof draft === 'string' ? { name: draft } : draft);
     if (!teamId) throw new Error('Team is required.');
@@ -1114,7 +1201,7 @@ export async function uploadTeamMediaPhoto(teamId, folderId, file, options = {})
 
     const downloadUrl = await getDownloadURL(snapshot.ref);
     const order = await reserveNextTeamMediaOrder(cleanTeamId, cleanFolderId);
-    const docRef = await addDoc(getTeamMediaItemsRef(cleanTeamId), {
+    const mediaItem = {
         folderId: cleanFolderId,
         title: String(file.name || 'Uploaded photo').trim() || 'Uploaded photo',
         type: 'photo',
@@ -1127,7 +1214,11 @@ export async function uploadTeamMediaPhoto(teamId, folderId, file, options = {})
         deleted: false,
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp()
-    });
+    };
+    const docRef = await addDoc(getTeamMediaItemsRef(cleanTeamId), mediaItem);
+    if (options?.returnItem === true) {
+        return { id: docRef.id, ...mediaItem, url: downloadUrl };
+    }
     return docRef.id;
 }
 
@@ -1160,7 +1251,7 @@ export async function uploadTeamMediaFile(teamId, folderId, file, options = {}) 
 
     const downloadUrl = await getDownloadURL(snapshot.ref);
     const order = await reserveNextTeamMediaOrder(cleanTeamId, cleanFolderId);
-    const docRef = await addDoc(getTeamMediaItemsRef(cleanTeamId), {
+    const mediaItem = {
         folderId: cleanFolderId,
         title: String(file.name || 'Uploaded file').trim() || 'Uploaded file',
         fileName: String(file.name || '').trim(),
@@ -1174,7 +1265,11 @@ export async function uploadTeamMediaFile(teamId, folderId, file, options = {}) 
         deleted: false,
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp()
-    });
+    };
+    const docRef = await addDoc(getTeamMediaItemsRef(cleanTeamId), mediaItem);
+    if (options?.returnItem === true) {
+        return { id: docRef.id, ...mediaItem, url: downloadUrl };
+    }
     return docRef.id;
 }
 
@@ -4718,6 +4813,9 @@ export async function listParentTeamFeeRecipients(userId, children = []) {
     ];
 
     const results = await Promise.allSettled(queries.map((feeQuery) => getDocs(feeQuery)));
+    if (results.length > 0 && results.every((result) => result.status === 'rejected')) {
+        throw results[0].reason;
+    }
     const feesByPath = new Map();
 
     results.forEach((result) => {
@@ -7524,49 +7622,13 @@ export async function claimOpenOfficiatingSlot(teamId, gameId, slotId, official 
         throw new Error('Only team owners, admins, or parents can claim open officiating slots.');
     }
 
-    const docRef = getGameDocRef(teamId, gameId);
-    let notificationRecord = null;
-    await runTransaction(db, async (transaction) => {
-        const snap = await transaction.get(docRef);
-        if (!snap.exists()) throw new Error('Game not found');
-        const game = snap.data() || {};
-        if (game.officiatingSelfAssignmentEnabled !== true) {
-            throw new Error('Self-assignment is not enabled for this game');
-        }
-        const officiatingSlots = claimOfficiatingSlot(game.officiatingSlots || [], slotId, {
-            uid: official?.uid || '',
-            email: official?.email || '',
-            displayName: official?.displayName || official?.email || 'Official'
-        });
-        const updatedSlot = officiatingSlots.find((slot) => slot.id === slotId) || null;
-        if (updatedSlot) {
-            notificationRecord = buildOfficiatingNotificationRecord({
-                teamId,
-                gameId,
-                game: { ...game, officiatingSlots },
-                slot: updatedSlot,
-                event: 'self_assigned',
-                status: updatedSlot.status,
-                recipientType: 'assigner',
-                actor: official || {},
-                timestamp: Timestamp.now()
-            });
-        }
-        const officiatingAuthorizedUserIds = new Set(game.officiatingAuthorizedUserIds || []);
-        const officiatingAuthorizedEmails = new Set(game.officiatingAuthorizedEmails || []);
-        if (official?.uid) officiatingAuthorizedUserIds.add(official.uid);
-        if (official?.email) officiatingAuthorizedEmails.add(String(official.email).trim().toLowerCase());
-
-        transaction.update(docRef, {
-            officiatingSlots,
-            officiatingCoverageStatus: computeOfficiatingCoverageStatus(officiatingSlots),
-            officiatingUpdatedAt: Timestamp.now(),
-            officiatingAuthorizedUserIds: Array.from(officiatingAuthorizedUserIds),
-            officiatingAuthorizedEmails: Array.from(officiatingAuthorizedEmails)
-        });
+    const callable = httpsCallable(functions, 'claimOpenOfficiatingSlot');
+    await callable({
+        teamId,
+        gameId,
+        slotId,
+        displayName: official?.displayName || official?.email || 'Official'
     });
-
-    await tryCreateOfficiatingAssignmentNotificationRecords(teamId, notificationRecord ? [notificationRecord] : []);
 }
 
 export async function submitOfficiatingAssignmentResult(teamId, gameId, slotId, result, official = auth.currentUser) {
