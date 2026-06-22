@@ -11,23 +11,32 @@ function readRepoFile(path) {
 describe('ScheduleEventDetail decomposition', () => {
     it('keeps extracted navigation, availability, RSVP, and rideshare pieces wired in', () => {
         const source = readRepoFile('apps/app/src/pages/ScheduleEventDetail.tsx');
+        const rideshareSource = readRepoFile('apps/app/src/components/schedule/RideshareSection.tsx');
 
+        expect(source).toContain("from '../components/schedule/AssignmentsSection'");
         expect(source).toContain("from '../components/schedule/EventSectionNav'");
+        expect(source).toContain("from '../components/schedule/RideshareSection'");
         expect(source).toContain("from '../components/schedule/AvailabilityPanels'");
         expect(source).toContain("from '../components/schedule/StaffRsvpBreakdownPanel'");
         expect(source).toContain("from '../components/schedule/StaffRsvpReminderPanel'");
         expect(source).toContain("from './schedule/ScheduleEventDetailContext'");
         expect(source).toContain("from '../hooks/schedule/useScheduleEventRsvp'");
         expect(source).toContain("from '../hooks/schedule/useStaffRsvpBreakdown'");
-        expect(source).toContain("from '../hooks/schedule/useScheduleRideOffers'");
         expect(source).toContain('<ScheduleEventDetailProvider value={{');
         expect(source).toContain('useScheduleEventRsvp({ availabilityNote })');
         expect(source).toContain('useStaffRsvpBreakdown()');
-        expect(source).toContain('useScheduleRideOffers()');
+        expect(source).not.toMatch(/^function RideshareSection\b/m);
+        expect(source).not.toMatch(/^function AssignmentsSection\b/m);
+
+        expect(rideshareSource).toContain("import { useScheduleRideOffers } from '../../hooks/schedule/useScheduleRideOffers';");
+        expect(rideshareSource).toContain('const rideOffers = useScheduleRideOffers();');
     });
 
     it('keeps extracted schedule detail modules and focused coverage files in the repo', () => {
         [
+            'apps/app/src/components/schedule/AssignmentsSection.tsx',
+            'apps/app/src/components/schedule/RideOfferCard.tsx',
+            'apps/app/src/components/schedule/RideshareSection.tsx',
             'apps/app/src/components/schedule/ScheduleEventSummaryComponents.test.tsx',
             'apps/app/src/hooks/schedule/useScheduleEventRsvp.ts',
             'apps/app/src/hooks/schedule/useScheduleEventRsvp.test.tsx',

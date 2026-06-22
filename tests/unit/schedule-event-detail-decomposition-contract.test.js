@@ -12,11 +12,12 @@ describe('ScheduleEventDetail decomposition contract', () => {
         const page = readRepoFile('apps/app/src/pages/ScheduleEventDetail.tsx');
 
         [
-            "import { AssignmentCard } from '../components/schedule/AssignmentCard';",
+            "import { AssignmentsSection } from '../components/schedule/AssignmentsSection';",
             "import { DateTile } from '../components/schedule/DateTile';",
             "import { EventBrief } from '../components/schedule/EventBrief';",
             "import { EventDetailsPanel } from '../components/schedule/EventDetailsPanel';",
             "import { EventSectionNav } from '../components/schedule/EventSectionNav';",
+            "import { RideshareSection } from '../components/schedule/RideshareSection';",
             "import { StaffRsvpBreakdownPanel } from '../components/schedule/StaffRsvpBreakdownPanel';",
             "import { StaffRsvpReminderPanel } from '../components/schedule/StaffRsvpReminderPanel';",
             'QuickAvailabilityPanel',
@@ -28,10 +29,13 @@ describe('ScheduleEventDetail decomposition contract', () => {
 
         [
             /^function AssignmentCard\b/m,
+            /^function AssignmentsSection\b/m,
             /^function DateTile\b/m,
             /^function EventBrief\b/m,
             /^function EventDetailsPanel\b/m,
             /^function EventSectionNav\b/m,
+            /^function RideOfferCard\b/m,
+            /^function RideshareSection\b/m,
             /^function StaffRsvpBreakdownPanel\b/m,
             /^function StaffRsvpReminderPanel\b/m,
             /^function StaffRsvpPlayerRow\b/m,
@@ -44,6 +48,8 @@ describe('ScheduleEventDetail decomposition contract', () => {
 
     it('keeps RSVP and rideshare workflows behind extracted hooks and page context', () => {
         const page = readRepoFile('apps/app/src/pages/ScheduleEventDetail.tsx');
+        const rideshareSection = readRepoFile('apps/app/src/components/schedule/RideshareSection.tsx');
+        const rideOfferCard = readRepoFile('apps/app/src/components/schedule/RideOfferCard.tsx');
         const rsvpHook = readRepoFile('apps/app/src/hooks/schedule/useScheduleEventRsvp.ts');
         const ridesHook = readRepoFile('apps/app/src/hooks/schedule/useScheduleRideOffers.ts');
         const context = readRepoFile('apps/app/src/pages/schedule/ScheduleEventDetailContext.tsx');
@@ -51,15 +57,22 @@ describe('ScheduleEventDetail decomposition contract', () => {
         expect(page).toContain("import { ScheduleEventDetailProvider } from './schedule/ScheduleEventDetailContext';");
         expect(page).toContain("import { useScheduleEventRsvp } from '../hooks/schedule/useScheduleEventRsvp';");
         expect(page).toContain("import { useStaffRsvpBreakdown } from '../hooks/schedule/useStaffRsvpBreakdown';");
-        expect(page).toContain("import { useScheduleRideOffers } from '../hooks/schedule/useScheduleRideOffers';");
+        expect(page).toContain("import { RideshareSection } from '../components/schedule/RideshareSection';");
         expect(page).toContain('<ScheduleEventDetailProvider value={{');
         expect(page).toContain('const rsvpWorkflow = useScheduleEventRsvp({ availabilityNote });');
         expect(page).toContain('const staffRsvp = useStaffRsvpBreakdown();');
-        expect(page).toContain('const rideOffers = useScheduleRideOffers();');
+        expect(page).toContain('<RideshareSection />');
+        expect(page).not.toMatch(/^function RideshareSection\b/m);
+        expect(page).not.toMatch(/^function RideOfferCard\b/m);
 
         expect(rsvpHook).toContain('export function useScheduleEventRsvp');
         expect(rsvpHook).toContain('useScheduleEventDetailContext()');
         expect(rsvpHook).toContain('submitParentScheduleRsvp');
+        expect(rideshareSection).toContain("import { useScheduleRideOffers } from '../../hooks/schedule/useScheduleRideOffers';");
+        expect(rideshareSection).toContain('const rideOffers = useScheduleRideOffers();');
+        expect(rideshareSection).toContain('<RideOfferCard');
+        expect(rideOfferCard).toContain('export function RideOfferCard');
+        expect(rideOfferCard).toContain('canRequestScheduleRide');
         expect(ridesHook).toContain('export function useScheduleRideOffers');
         expect(ridesHook).toContain('useScheduleEventDetailContext()');
         expect(ridesHook).toContain('loadParentScheduleRideOffers');
@@ -125,6 +138,25 @@ describe('ScheduleEventDetail decomposition contract', () => {
         expect(component).toContain('getScheduleAssignmentStatus(assignment, userId)');
         expect(component).toContain("{busy ? 'Signing up' : 'Sign up'}");
         expect(component).toContain("{busy ? 'Releasing' : 'Release'}");
+    });
+
+    it('keeps assignment workflow actions in the extracted schedule section', () => {
+        const page = readRepoFile('apps/app/src/pages/ScheduleEventDetail.tsx');
+        const section = readRepoFile('apps/app/src/components/schedule/AssignmentsSection.tsx');
+
+        expect(page).toContain("import { AssignmentsSection } from '../components/schedule/AssignmentsSection';");
+        expect(page).toContain('<AssignmentsSection />');
+        expect(page).not.toMatch(/^function AssignmentsSection\b/m);
+        expect(page).not.toMatch(/loadParentScheduleAssignments\(/);
+        expect(page).not.toMatch(/claimParentScheduleAssignmentSlot\(/);
+        expect(page).not.toMatch(/releaseParentScheduleAssignmentClaim\(/);
+
+        expect(section).toContain('export function AssignmentsSection');
+        expect(section).toContain('useScheduleEventDetailContext()');
+        expect(section).toContain('loadParentScheduleAssignments(event)');
+        expect(section).toContain('claimParentScheduleAssignmentSlot(event, auth.user!, role)');
+        expect(section).toContain('releaseParentScheduleAssignmentClaim(event, role)');
+        expect(section).toContain('<AssignmentCard');
     });
 
     it('keeps game report rendering behind named page boundaries', () => {
