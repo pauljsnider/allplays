@@ -2,7 +2,7 @@
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { MemoryRouter, Route, Routes, useNavigate } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { ParentTools } from './ParentTools';
+import { ParentTools, type ParentToolId } from './ParentTools';
 import type { AuthState } from '../lib/types';
 import { openPublicUrl } from '../lib/publicActions';
 
@@ -17,17 +17,20 @@ const parentToolsServiceMocks = vi.hoisted(() => ({
     getPrivateTeamCalendarFeedUrl: vi.fn(),
     initiateParentTeamFeeCheckout: vi.fn(),
     loadFamilyShareModel: vi.fn(),
-    loadParentAccessModel: vi.fn(),
-    loadParentAccessTeams: vi.fn(),
-    loadParentAccessPlayers: vi.fn(),
     loadParentCalendarTools: vi.fn(),
     loadParentCertificates: vi.fn(),
     loadParentFeesForApp: vi.fn(),
     loadParentHouseholdInviteModel: vi.fn(),
     loadParentRegistrations: vi.fn(),
     revokeParentFamilyShare: vi.fn(),
-    submitParentAccessRequest: vi.fn(),
     updateParentFamilyShareCalendars: vi.fn()
+}));
+
+const parentToolsAccessServiceMocks = vi.hoisted(() => ({
+    loadParentAccessModel: vi.fn(),
+    loadParentAccessTeams: vi.fn(),
+    loadParentAccessPlayers: vi.fn(),
+    submitParentAccessRequest: vi.fn()
 }));
 
 const inviteRedemptionMocks = vi.hoisted(() => ({
@@ -35,6 +38,7 @@ const inviteRedemptionMocks = vi.hoisted(() => ({
 }));
 
 vi.mock('../lib/parentToolsService', () => parentToolsServiceMocks);
+vi.mock('../lib/parentToolsAccessService', () => parentToolsAccessServiceMocks);
 vi.mock('../lib/inviteRedemption', () => inviteRedemptionMocks);
 vi.mock('../lib/publicActions', () => ({
     openPublicUrl: vi.fn(),
@@ -97,16 +101,17 @@ describe('ParentTools access', () => {
     beforeEach(() => {
         vi.clearAllMocks();
         delete globalThis.__ALLPLAYS_PARENT_TOOLS_RENDER_TRACKER__;
-        parentToolsServiceMocks.loadParentAccessModel.mockResolvedValue({
+        delete globalThis.__ALLPLAYS_PARENT_TOOLS_PANEL_LOAD_TRACKER__;
+        parentToolsAccessServiceMocks.loadParentAccessModel.mockResolvedValue({
             requests: []
         });
-        parentToolsServiceMocks.loadParentAccessTeams.mockResolvedValue([
+        parentToolsAccessServiceMocks.loadParentAccessTeams.mockResolvedValue([
             { id: 'team-1', name: 'Bears', sport: 'Soccer' }
         ]);
-        parentToolsServiceMocks.loadParentAccessPlayers.mockResolvedValue([
+        parentToolsAccessServiceMocks.loadParentAccessPlayers.mockResolvedValue([
             { id: 'player-1', name: 'Sam Player', number: '12' }
         ]);
-        parentToolsServiceMocks.submitParentAccessRequest.mockResolvedValue(undefined);
+        parentToolsAccessServiceMocks.submitParentAccessRequest.mockResolvedValue(undefined);
         inviteRedemptionMocks.redeemSignedInInvite.mockResolvedValue({
             code: 'AB12CD34',
             redirectPath: '/home',
@@ -116,6 +121,7 @@ describe('ParentTools access', () => {
 
     afterEach(() => {
         delete globalThis.__ALLPLAYS_PARENT_TOOLS_RENDER_TRACKER__;
+        delete globalThis.__ALLPLAYS_PARENT_TOOLS_PANEL_LOAD_TRACKER__;
         cleanup();
     });
 
@@ -169,7 +175,7 @@ describe('ParentTools access', () => {
     it('opens the manual request form immediately while public teams finish loading', async () => {
         type PublicTeamRow = { id: string; name: string; sport: string };
         const deferredTeams: { resolve: ((value: PublicTeamRow[]) => void) | null } = { resolve: null };
-        parentToolsServiceMocks.loadParentAccessTeams.mockImplementation(() => new Promise<PublicTeamRow[]>((resolve) => {
+        parentToolsAccessServiceMocks.loadParentAccessTeams.mockImplementation(() => new Promise<PublicTeamRow[]>((resolve) => {
             deferredTeams.resolve = resolve;
         }));
         renderParentTools();
@@ -183,7 +189,7 @@ describe('ParentTools access', () => {
         expect(playerSelect).toBeTruthy();
         expect(teamSelect.disabled).toBe(true);
         expect(playerSelect.disabled).toBe(true);
-        expect(parentToolsServiceMocks.loadParentAccessTeams).toHaveBeenCalledTimes(1);
+        expect(parentToolsAccessServiceMocks.loadParentAccessTeams).toHaveBeenCalledTimes(1);
         expect(screen.queryByRole('button', { name: 'Request access without a code' })).toBeNull();
         expect(screen.getByRole('option', { name: 'Loading public teams...' })).toBeTruthy();
 
@@ -196,7 +202,7 @@ describe('ParentTools access', () => {
     });
 
     it('allows retry when public team loading fails after opening manual requests', async () => {
-        parentToolsServiceMocks.loadParentAccessTeams
+        parentToolsAccessServiceMocks.loadParentAccessTeams
             .mockRejectedValueOnce(new Error('Network hiccup.'))
             .mockResolvedValueOnce([{ id: 'team-1', name: 'Bears', sport: 'Soccer' }]);
         renderParentTools();
@@ -210,7 +216,7 @@ describe('ParentTools access', () => {
         fireEvent.click(retryButton);
 
         expect(await screen.findByRole('option', { name: 'Bears - Soccer' })).toBeTruthy();
-        expect(parentToolsServiceMocks.loadParentAccessTeams).toHaveBeenCalledTimes(2);
+        expect(parentToolsAccessServiceMocks.loadParentAccessTeams).toHaveBeenCalledTimes(2);
     });
 
     it('still submits request access after the redeem panel is added', async () => {
@@ -226,12 +232,33 @@ describe('ParentTools access', () => {
         fireEvent.click(submitButton);
 
         expect(await screen.findByText('Access request sent.')).toBeTruthy();
-        expect(parentToolsServiceMocks.submitParentAccessRequest).toHaveBeenCalledWith('team-1', 'player-1', 'Parent');
+        expect(parentToolsAccessServiceMocks.submitParentAccessRequest).toHaveBeenCalledWith('team-1', 'player-1', 'Parent');
 
         const requestsSection = screen.getByText('Access requests').closest('section');
         expect(requestsSection).toBeTruthy();
         if (!requestsSection) throw new Error('Requests section not found');
         expect(within(requestsSection).getByText('No requests yet')).toBeTruthy();
+    });
+
+    it('lazy-loads tab panels only when their tab is opened', async () => {
+        const panelLoads: ParentToolId[] = [];
+        globalThis.__ALLPLAYS_PARENT_TOOLS_PANEL_LOAD_TRACKER__ = (toolId) => {
+            panelLoads.push(toolId);
+        };
+        parentToolsServiceMocks.loadParentFeesForApp.mockResolvedValue([]);
+
+        renderParentTools();
+
+        await screen.findByText('Request player access');
+        expect(panelLoads).not.toContain('fees');
+
+        fireEvent.click(screen.getByRole('button', { name: 'Fees' }));
+        await screen.findByText('No fees in this view');
+        expect(panelLoads.filter((toolId) => toolId === 'fees')).toEqual(['fees']);
+
+        fireEvent.click(screen.getByRole('button', { name: 'Access' }));
+        await screen.findByText('Request player access');
+        expect(panelLoads.filter((toolId) => toolId === 'fees')).toEqual(['fees']);
     });
 
     it('reuses loaded tab data on revisit and only refreshes when requested', async () => {
@@ -286,16 +313,16 @@ describe('ParentTools access', () => {
         await screen.findByText('Request player access');
         fireEvent.click(screen.getByRole('button', { name: 'Fees' }));
         await screen.findByText('Team dues');
-        expect(parentToolsServiceMocks.loadParentAccessModel).toHaveBeenCalledTimes(1);
-        expect(parentToolsServiceMocks.loadParentAccessTeams).not.toHaveBeenCalled();
-        expect(parentToolsServiceMocks.loadParentAccessPlayers).not.toHaveBeenCalled();
+        expect(parentToolsAccessServiceMocks.loadParentAccessModel).toHaveBeenCalledTimes(1);
+        expect(parentToolsAccessServiceMocks.loadParentAccessTeams).not.toHaveBeenCalled();
+        expect(parentToolsAccessServiceMocks.loadParentAccessPlayers).not.toHaveBeenCalled();
         expect(parentToolsServiceMocks.loadParentFeesForApp).toHaveBeenCalledTimes(1);
 
         fireEvent.click(screen.getByRole('button', { name: 'Access' }));
         await screen.findByText('Request player access');
-        expect(parentToolsServiceMocks.loadParentAccessModel).toHaveBeenCalledTimes(1);
-        expect(parentToolsServiceMocks.loadParentAccessTeams).not.toHaveBeenCalled();
-        expect(parentToolsServiceMocks.loadParentAccessPlayers).not.toHaveBeenCalled();
+        expect(parentToolsAccessServiceMocks.loadParentAccessModel).toHaveBeenCalledTimes(1);
+        expect(parentToolsAccessServiceMocks.loadParentAccessTeams).not.toHaveBeenCalled();
+        expect(parentToolsAccessServiceMocks.loadParentAccessPlayers).not.toHaveBeenCalled();
 
         fireEvent.click(screen.getByRole('button', { name: 'Register' }));
         await screen.findByText('Summer Camp');
@@ -345,7 +372,7 @@ describe('ParentTools access', () => {
         fireEvent.change(screen.getByPlaceholderText('XXXXXXXX'), { target: { value: 'ab12cd34' } });
         fireEvent.click(screen.getByRole('button', { name: 'Redeem code' }));
         expect(await screen.findByText('Invite accepted.')).toBeTruthy();
-        await waitFor(() => expect(parentToolsServiceMocks.loadParentAccessModel).toHaveBeenCalledTimes(2));
+        await waitFor(() => expect(parentToolsAccessServiceMocks.loadParentAccessModel).toHaveBeenCalledTimes(2));
         expect(parentToolsServiceMocks.loadParentRegistrations).toHaveBeenCalledTimes(1);
 
         fireEvent.click(screen.getByRole('button', { name: 'Register' }));
@@ -604,7 +631,7 @@ describe('ParentTools access', () => {
         fireEvent.change(screen.getByPlaceholderText('XXXXXXXX'), { target: { value: 'ab12cd34' } });
         fireEvent.click(screen.getByRole('button', { name: 'Redeem code' }));
         expect(await screen.findByText('Invite accepted.')).toBeTruthy();
-        await waitFor(() => expect(parentToolsServiceMocks.loadParentAccessModel).toHaveBeenCalledTimes(2));
+        await waitFor(() => expect(parentToolsAccessServiceMocks.loadParentAccessModel).toHaveBeenCalledTimes(2));
         expect(parentToolsServiceMocks.loadParentFeesForApp).toHaveBeenCalledTimes(1);
 
         fireEvent.click(screen.getByRole('button', { name: 'Fees' }));
@@ -643,7 +670,7 @@ describe('ParentTools access', () => {
         fireEvent.change(screen.getByPlaceholderText('XXXXXXXX'), { target: { value: 'ab12cd34' } });
         fireEvent.click(screen.getByRole('button', { name: 'Redeem code' }));
         expect(await screen.findByText('Invite accepted.')).toBeTruthy();
-        await waitFor(() => expect(parentToolsServiceMocks.loadParentAccessModel).toHaveBeenCalledTimes(2));
+        await waitFor(() => expect(parentToolsAccessServiceMocks.loadParentAccessModel).toHaveBeenCalledTimes(2));
 
         fireEvent.click(screen.getByRole('button', { name: 'Calendar' }));
         expect(await screen.findByText('Bears')).toBeTruthy();
@@ -731,19 +758,19 @@ describe('ParentTools access', () => {
         renderParentTools();
 
         await screen.findByText('Request player access');
-        expect(parentToolsServiceMocks.loadParentAccessModel).toHaveBeenCalledTimes(1);
-        expect(parentToolsServiceMocks.loadParentAccessTeams).not.toHaveBeenCalled();
-        expect(parentToolsServiceMocks.loadParentAccessPlayers).not.toHaveBeenCalled();
+        expect(parentToolsAccessServiceMocks.loadParentAccessModel).toHaveBeenCalledTimes(1);
+        expect(parentToolsAccessServiceMocks.loadParentAccessTeams).not.toHaveBeenCalled();
+        expect(parentToolsAccessServiceMocks.loadParentAccessPlayers).not.toHaveBeenCalled();
         expect(screen.getByRole('button', { name: 'Request access without a code' })).toBeTruthy();
 
         fireEvent.click(screen.getByRole('button', { name: 'Request access without a code' }));
         await screen.findByRole('option', { name: 'Bears - Soccer' });
-        expect(parentToolsServiceMocks.loadParentAccessTeams).toHaveBeenCalledTimes(1);
-        expect(parentToolsServiceMocks.loadParentAccessPlayers).not.toHaveBeenCalled();
+        expect(parentToolsAccessServiceMocks.loadParentAccessTeams).toHaveBeenCalledTimes(1);
+        expect(parentToolsAccessServiceMocks.loadParentAccessPlayers).not.toHaveBeenCalled();
 
         fireEvent.change(screen.getByLabelText('Team'), { target: { value: 'team-1' } });
         await screen.findByRole('option', { name: '#12 Sam Player' });
-        expect(parentToolsServiceMocks.loadParentAccessPlayers).toHaveBeenCalledTimes(1);
-        expect(parentToolsServiceMocks.loadParentAccessPlayers).toHaveBeenCalledWith('team-1');
+        expect(parentToolsAccessServiceMocks.loadParentAccessPlayers).toHaveBeenCalledTimes(1);
+        expect(parentToolsAccessServiceMocks.loadParentAccessPlayers).toHaveBeenCalledWith('team-1');
     });
 });
