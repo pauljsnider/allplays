@@ -67,5 +67,22 @@ export default [
       'react/prop-types': 'off',
       '@typescript-eslint/no-unused-expressions': 'warn'
     }
+  },
+  {
+    files: [
+      'src/lib/appDataCache.ts',
+      'src/lib/notificationInboxService.ts',
+      'src/lib/profileService.ts',
+      'src/lib/scheduleService.ts'
+    ],
+    rules: {
+      'no-console': 'error'
+    }
+  },
+  {
+    files: ['src/lib/logger.ts'],
+    rules: {
+      'no-console': 'off'
+    }
   }
 ];
