@@ -45,6 +45,8 @@ describe('fallback media paths and Storage rules', () => {
     it('builds team-scoped fallback paths with uploader context', () => {
         expect(buildChatAttachmentFallbackPath('team/alpha', 'group user 42', 'user 42', 'my photo (1).png', 1700000000000))
             .toBe('stat-sheets/team-chat/team_alpha/group_user_42/user_42/1700000000000_my_photo_1_.png');
+        expect(buildChatAttachmentFallbackPath('team/alpha', 'group_user%3Acoach-1', 'user 42', 'my photo (1).png', 1700000000000))
+            .toBe('stat-sheets/team-chat/team_alpha/group_user%3Acoach-1/user_42/1700000000000_my_photo_1_.png');
         expect(buildStatSheetFallbackPath('team/alpha', 'user 42', 'box score (1).png', 1700000000001))
             .toBe('stat-sheets/team-games/team_alpha/user_42/1700000000001_box_score_1_.png');
         expect(buildDrillDiagramFallbackPath('team/alpha', 'drill 7', 'user 42', 'diagram #1.png', 1700000000002))
