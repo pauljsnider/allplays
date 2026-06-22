@@ -22,7 +22,7 @@ describe('scoreboard widget embed', () => {
         const source = readPage('widget-scoreboard.html');
 
         expect(source).toContain('ALL PLAYS live scoreboard');
-        expect(source).toContain("import { getTeam, getGames } from './js/db.js?v=60';");
+        expect(source).toContain("import { getTeam, getGames } from './js/db.js?v=62';");
         expect(source).toContain('const REFRESH_MS = 60000;');
         expect(source).toContain('function selectWidgetGames(games)');
         expect(source).toContain('.filter((game) => game._date && (isLive(game) || game._date >= now || (isCompleted(game) && game._date >= recentCutoff)))');

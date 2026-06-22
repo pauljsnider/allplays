@@ -105,7 +105,7 @@ describe('discoverPublicTeams search pagination', () => {
             .mockResolvedValueOnce({ docs: [] })
             .mockResolvedValueOnce({ docs: [] });
 
-        const { discoverPublicTeams } = await import('../../js/db.js?v=60');
+        const { discoverPublicTeams } = await import('../../js/db.js?v=62');
 
         const firstPage = await discoverPublicTeams({ searchText: 'atlanta', pageSize: 2 });
 
@@ -148,7 +148,7 @@ describe('discoverPublicTeams search pagination', () => {
             publicSearchName: 'atlanta united 2'
         });
 
-        const { discoverPublicTeams } = await import('../../js/db.js?v=60');
+        const { discoverPublicTeams } = await import('../../js/db.js?v=62');
 
         const page = await discoverPublicTeams({
             searchText: 'atlanta',
