@@ -519,12 +519,6 @@ describe('React app search service', () => {
             .mockResolvedValueOnce({ docs: [firestoreTeam('team-admin', { name: 'Admin Lions', sport: 'Soccer', isPublic: false, adminEmails: ['parent@example.com'] })] })
             .mockResolvedValueOnce({ docs: [] })
             .mockResolvedValueOnce({ docs: [] });
-        firebaseMocks.getDoc.mockResolvedValueOnce(firestoreDocument('team-home', {
-            name: 'Home Rockets',
-            sport: 'Basketball',
-            isPublic: false,
-            active: true
-        }));
         const teams = await loadAppSearchTeams(auth.user);
 
         expect(teams.map((team) => team.id)).toEqual(['team-admin', 'team-home', 'team-owner']);
@@ -539,49 +533,38 @@ describe('React app search service', () => {
         expect(dbMocks.getTeams).not.toHaveBeenCalled();
     });
 
-    it('validates parent home fallback teams against Firestore visibility before adding them', async () => {
+    it('hydrates parent home summary teams with Firestore metadata when direct access queries miss them', async () => {
         homeMocks.loadParentHome.mockResolvedValue({
             teams: [
-                { teamId: 'team-active-private', teamName: 'Active Private', sport: 'Basketball' },
-                { teamId: 'team-archived-doc', teamName: 'Archived Doc', sport: 'Soccer' },
-                { teamId: 'team-inactive-doc', teamName: 'Inactive Doc', sport: 'Baseball' },
-                { teamId: 'team-missing-doc', teamName: 'Missing Doc', sport: 'Softball' }
+                { teamId: 'team-home', teamName: 'Home Rockets', sport: 'Basketball', location: 'Kansas City, MO' },
+                { teamId: 'team-archived-summary', teamName: 'Archived Summary', sport: 'Soccer', archived: true },
+                { teamId: 'team-inactive-summary', teamName: 'Inactive Summary', sport: 'Baseball', active: false },
+                { teamId: 'team-status-archived-summary', teamName: 'Status Archived Summary', sport: 'Softball', status: 'archived' }
             ]
         });
-        firebaseMocks.getDoc
-            .mockResolvedValueOnce(firestoreDocument('team-active-private', {
-                name: 'Stored Active Private',
-                sport: 'Basketball',
-                isPublic: false,
-                active: true,
-                archived: false,
-                status: 'active'
-            }))
-            .mockResolvedValueOnce(firestoreDocument('team-archived-doc', {
-                name: 'Stored Archived',
-                sport: 'Soccer',
-                isPublic: false,
-                archived: true
-            }))
-            .mockResolvedValueOnce(firestoreDocument('team-inactive-doc', {
-                name: 'Stored Inactive',
-                sport: 'Baseball',
-                isPublic: false,
-                active: false
-            }))
-            .mockResolvedValueOnce(firestoreDocument('team-missing-doc', {}, false));
+        firebaseMocks.getDoc.mockResolvedValueOnce(firestoreDocument('team-home', {
+            name: 'Stored Home Rockets',
+            sport: 'Basketball',
+            isPublic: false,
+            city: 'Kansas City',
+            state: 'MO',
+            zip: '64111',
+            active: true
+        }));
 
         const teams = await loadAppSearchTeams(auth.user);
 
-        expect(firebaseMocks.doc).toHaveBeenCalledWith(firebaseMocks.db, 'teams', 'team-active-private');
-        expect(firebaseMocks.doc).toHaveBeenCalledWith(firebaseMocks.db, 'teams', 'team-archived-doc');
-        expect(firebaseMocks.doc).toHaveBeenCalledWith(firebaseMocks.db, 'teams', 'team-inactive-doc');
-        expect(firebaseMocks.doc).toHaveBeenCalledWith(firebaseMocks.db, 'teams', 'team-missing-doc');
-        expect(teams.map((team) => team.id)).toEqual(['team-active-private']);
+        expect(firebaseMocks.doc).toHaveBeenCalledWith(firebaseMocks.db, 'teams', 'team-home');
+        expect(teams.map((team) => team.id)).toEqual(['team-home']);
         expect(teams[0]).toMatchObject({
-            id: 'team-active-private',
-            name: 'Active Private',
+            id: 'team-home',
+            name: 'Home Rockets',
+            sport: 'Basketball',
+            city: 'Kansas City',
+            state: 'MO',
+            zip: '64111',
             isPublic: false,
+            location: 'Kansas City, MO',
             fromAppAccess: true
         });
     });
@@ -763,12 +746,6 @@ describe('React app search service', () => {
             .mockResolvedValueOnce({ docs: [] })
             .mockResolvedValueOnce({ docs: [] })
             .mockResolvedValueOnce({ docs: [] });
-        firebaseMocks.getDoc.mockResolvedValueOnce(firestoreDocument('team-home', {
-            name: 'Home Rockets',
-            sport: 'Basketball',
-            isPublic: false,
-            active: true
-        }));
 
         const first = await loadAppSearchTeams(auth.user);
         const second = await loadAppSearchTeams(auth.user);
@@ -786,12 +763,6 @@ describe('React app search service', () => {
         homeMocks.loadParentHome.mockResolvedValueOnce({
             teams: [{ teamId: 'team-private-access', teamName: 'Private Access', sport: 'Soccer' }]
         });
-        firebaseMocks.getDoc.mockResolvedValueOnce(firestoreDocument('team-private-access', {
-            name: 'Private Access',
-            sport: 'Soccer',
-            isPublic: false,
-            active: true
-        }));
 
         await expect(loadAppSearchTeams(auth.user)).resolves.toMatchObject([
             { id: 'team-private-access', name: 'Private Access', fromAppAccess: true }

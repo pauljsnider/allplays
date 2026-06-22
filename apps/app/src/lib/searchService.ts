@@ -607,14 +607,14 @@ async function mergeParentHomeSearchTeams(teamsById: Map<string, AppSearchTeam>,
     fallbackTeams.map((team) => getDoc(doc(db, 'teams', team.teamId)))
   );
 
-  snapshots.forEach((snapshot: any, index) => {
-    if (snapshot.status !== 'fulfilled') return;
-    const teamDoc = snapshot.value;
-    if (!teamDoc?.exists?.()) return;
+  fallbackTeams.forEach((homeTeam, index) => {
+    const snapshot: any = snapshots[index];
+    const teamDoc = snapshot?.status === 'fulfilled' ? snapshot.value : null;
+    const [firestoreTeam] = teamDoc?.exists?.()
+      ? normalizeTeams([{ id: homeTeam.teamId, ...(typeof teamDoc.data === 'function' ? teamDoc.data() || {} : {}) }])
+      : [];
 
-    const homeTeam = fallbackTeams[index];
-    const [firestoreTeam] = normalizeTeams([{ id: homeTeam.teamId, ...(typeof teamDoc.data === 'function' ? teamDoc.data() || {} : {}) }]);
-    if (!firestoreTeam || !isTeamActive(firestoreTeam)) return;
+    if (firestoreTeam && !isTeamActive(firestoreTeam)) return;
 
     const searchTeam = buildParentHomeSearchTeam(homeTeam, firestoreTeam);
     if (canUserDiscoverTeamInAppSearch(searchTeam, user)) {
