@@ -97,7 +97,9 @@ describe('notifyFeeMarkedPaid trigger', () => {
         expect(harness.sendDirectTargetsNotification).toHaveBeenNthCalledWith(1, expect.objectContaining({
             targets: [{ uid: 'parent-1', token: 'parent-token', teamId: 'team-1' }],
             title: 'Payment received: Spring dues',
-            body: 'We received your $100.00 payment. Thank you!'
+            body: 'We received your $100.00 payment. Thank you!',
+            batchId: 'batch-1',
+            recipientId: 'recipient-1'
         }));
         expect(harness.sendDirectTargetsNotification).toHaveBeenNthCalledWith(2, expect.objectContaining({
             targets: [
@@ -142,7 +144,9 @@ describe('notifyFeeMarkedPaid trigger', () => {
         expect(harness.sendDirectTargetsNotification).toHaveBeenCalledTimes(2);
         expect(harness.sendDirectTargetsNotification).toHaveBeenNthCalledWith(1, expect.objectContaining({
             title: 'Fee paid: Spring dues',
-            body: 'Your fee balance is now marked as paid.'
+            body: 'Your fee balance is now marked as paid.',
+            batchId: 'batch-1',
+            recipientId: 'recipient-1'
         }));
         expect(harness.sendDirectTargetsNotification).toHaveBeenNthCalledWith(2, expect.objectContaining({
             title: 'Fee paid: Spring dues',

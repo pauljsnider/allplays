@@ -31,6 +31,7 @@ describe('workflow registration guide', () => {
 
         expect(source).toContain('<strong>Confirm live sync availability.</strong>');
         expect(source).toContain('Sports Connect live sync is not available today.');
+        expect(source).toContain('The refresh action remains disabled until a connector marks the provider as live connected.');
         expect(source).toContain('<strong>Open a stored-snapshot import.</strong>');
         expect(source).toContain('registration roster snapshot, registration source snapshot, registration schedule snapshot, or other loaded provider data is available for this team');
         expect(source).toContain('preview table appears from a registration schedule snapshot or other loaded provider data already saved in ALL PLAYS');

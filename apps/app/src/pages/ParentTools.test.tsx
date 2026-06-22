@@ -456,6 +456,53 @@ describe('ParentTools access', () => {
         expect(openPublicUrl).not.toHaveBeenCalledWith('https://pay.example.test/stale');
     });
 
+    it('shows deep-linked paid fees from notification query params', async () => {
+        parentToolsServiceMocks.loadParentFeesForApp.mockResolvedValue([
+            {
+                id: 'fee-open',
+                title: 'Open fee',
+                teamId: 'team-1',
+                batchId: 'batch-open',
+                recipientId: 'recipient-open',
+                teamName: 'Bears',
+                playerName: 'Sam Player',
+                status: 'open',
+                amountLabel: '$50',
+                dueLabel: 'Tomorrow',
+                statusLabel: 'Open',
+                balanceDueCents: 5000,
+                canPay: true,
+                lineItems: [],
+                installments: [],
+                ledgerEntries: []
+            },
+            {
+                id: 'fee-paid',
+                title: 'Paid fee',
+                teamId: 'team-1',
+                batchId: 'batch-1',
+                recipientId: 'recipient-1',
+                teamName: 'Bears',
+                playerName: 'Sam Player',
+                status: 'paid',
+                amountLabel: '$100',
+                dueLabel: 'Paid today',
+                statusLabel: 'Paid',
+                balanceDueCents: 0,
+                canPay: false,
+                lineItems: [],
+                installments: [],
+                ledgerEntries: []
+            }
+        ]);
+
+        renderParentTools(['/parent-tools/fees?teamId=team-1&batchId=batch-1&recipientId=recipient-1']);
+
+        expect(await screen.findByText('Paid fee')).toBeTruthy();
+        expect(screen.queryByText('Open fee')).toBeNull();
+        expect(screen.getByRole('button', { name: /all/i }).getAttribute('aria-pressed')).toBe('true');
+    });
+
     it('redirects invalid tabs without triggering a hook order violation', async () => {
         const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
 

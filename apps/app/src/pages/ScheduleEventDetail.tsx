@@ -1,6 +1,6 @@
 import { createContext, Fragment, useCallback, useContext, useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from 'react';
 import { Link, useParams, useSearchParams } from 'react-router-dom';
-import { AlertCircle, CalendarDays, Car, CheckCircle2, ChevronDown, ChevronLeft, ClipboardCheck, Clock, ExternalLink, FileText, MapPin, Radio, RefreshCw, Share2, Users, Video, type LucideIcon } from 'lucide-react';
+import { AlertCircle, CalendarDays, Car, CheckCircle2, ChevronDown, ChevronLeft, ClipboardCheck, ExternalLink, FileText, Radio, RefreshCw, Share2, Users, Video, type LucideIcon } from 'lucide-react';
 import {
   cancelPracticeOccurrenceForApp,
   cancelScheduledGameForApp,
@@ -91,8 +91,10 @@ import {
 import { type AppServiceError, toAppServiceError } from '../lib/appErrors';
 import { useAsyncOperation } from '../lib/useAsyncOperation';
 import { EventDetailPageSkeleton } from '../components/PageSkeletons';
+import { AssignmentCard } from '../components/schedule/AssignmentCard';
 import { DateTile } from '../components/schedule/DateTile';
 import { EventBrief } from '../components/schedule/EventBrief';
+import { EventDetailsPanel } from '../components/schedule/EventDetailsPanel';
 import { EventSectionNav } from '../components/schedule/EventSectionNav';
 import { StaffRsvpPlayerRow } from '../components/schedule/StaffRsvpPlayerRow';
 import {
@@ -111,12 +113,11 @@ import {
   formatRideDirection,
   formatEventDateLabel,
   formatEventTimeLabel,
+  getScheduleAssignmentStatus,
   getScheduleMapHref,
   getScheduleForecastHref,
-  getScheduleAssignmentStatus,
   getScheduleRideRequestCounts,
   getScheduleRideSeatInfo,
-  isScheduleAssignmentClaimedByUser,
   isScheduleAssignmentOpen,
   getScheduleTitle,
   getLiveClockViewModel,
@@ -1082,47 +1083,6 @@ function PracticePacketPrompt({ event, onOpen }: { event: ParentScheduleEvent; o
   );
 }
 
-function EventDetailsPanel({ event, open }: { event: ParentScheduleEvent; open: boolean }) {
-  if (!open) return null;
-  const rows = getEventDetailRows(event);
-  const mapHref = getScheduleMapHref(event.location);
-  const forecastHref = getScheduleForecastHref(event.location);
-
-  return (
-    <div className="mt-3 rounded-xl border border-gray-200 bg-white">
-      <dl className="divide-y divide-gray-200 px-3">
-        {rows.map((row) => (
-          <div key={row.label} className="flex items-start gap-3 py-3">
-            <div className="mt-0.5 flex h-8 w-8 flex-none items-center justify-center rounded-full bg-primary-50 text-primary-600">
-              <row.icon className="h-4 w-4" aria-hidden="true" />
-            </div>
-            <div className="min-w-0 flex-1">
-              <dt className="text-sm font-black text-gray-950">{row.value}</dt>
-              <dd className="mt-0.5 text-xs font-semibold text-gray-500">{row.label}</dd>
-            </div>
-          </div>
-        ))}
-      </dl>
-      {(mapHref || forecastHref) ? (
-        <div className="flex flex-wrap gap-2 border-t border-gray-100 p-3">
-          {mapHref ? (
-            <a href={mapHref} target="_blank" rel="noreferrer" className="secondary-button min-h-9 flex-1 px-3 py-2 text-xs">
-              <MapPin className="h-4 w-4" aria-hidden="true" />
-              Directions
-            </a>
-          ) : null}
-          {forecastHref ? (
-            <a href={forecastHref} target="_blank" rel="noreferrer" className="secondary-button min-h-9 flex-1 px-3 py-2 text-xs">
-              <ExternalLink className="h-4 w-4" aria-hidden="true" />
-              Forecast
-            </a>
-          ) : null}
-        </div>
-      ) : null}
-    </div>
-  );
-}
-
 function AvailabilitySection({ auth, event, rsvp, availabilityNote, onAvailabilityNoteChange, staffRsvpBreakdown, staffRsvpLoading, staffRsvpError, staffRsvpSubmittingPlayerId, staffRsvpStatus, staffRsvpRefreshToken, onStaffRsvpOverride, attentionItems, onSelectSection }: {
   auth: AuthState;
   event: ParentScheduleEvent;
@@ -1761,55 +1721,6 @@ function AssignmentsSection({ auth, event, onAssignmentsChanged }: {
         ) : null}
       </div>
     </section>
-  );
-}
-
-function AssignmentCard({ assignment, userId, busy, disabled, onClaim, onRelease }: {
-  assignment: ScheduleAssignment;
-  userId: string;
-  busy: boolean;
-  disabled: boolean;
-  onClaim: () => void | Promise<void>;
-  onRelease: () => void | Promise<void>;
-}) {
-  const role = String(assignment.role || 'Assignment').trim();
-  const myOwn = isScheduleAssignmentClaimedByUser(assignment, userId);
-  const open = isScheduleAssignmentOpen(assignment);
-  const status = getScheduleAssignmentStatus(assignment, userId);
-
-  return (
-    <article className={`rounded-xl border p-3 ${myOwn ? 'border-emerald-200 bg-emerald-50' : open ? 'border-amber-200 bg-amber-50' : 'border-gray-200 bg-gray-50'}`}>
-      <div className="flex items-start justify-between gap-3">
-        <div className="min-w-0">
-          <div className="text-sm font-black text-gray-950">{role}</div>
-          <div className={`mt-1 text-xs font-black ${myOwn ? 'text-emerald-700' : open ? 'text-amber-800' : 'text-gray-600'}`}>
-            {assignment.claimable ? status : `${role}: ${status}`}
-          </div>
-          {assignment.claimable ? (
-            <div className="mt-1 text-[11px] font-semibold text-gray-500">Parent sign-up slot</div>
-          ) : null}
-        </div>
-        {myOwn ? (
-          <button
-            type="button"
-            className="min-h-8 flex-none rounded-full border border-emerald-200 bg-white px-3 text-xs font-black text-emerald-700"
-            onClick={onRelease}
-            disabled={disabled}
-          >
-            {busy ? 'Releasing' : 'Release'}
-          </button>
-        ) : open ? (
-          <button
-            type="button"
-            className="min-h-8 flex-none rounded-full border border-amber-200 bg-white px-3 text-xs font-black text-amber-800"
-            onClick={onClaim}
-            disabled={disabled}
-          >
-            {busy ? 'Signing up' : 'Sign up'}
-          </button>
-        ) : null}
-      </div>
-    </article>
   );
 }
 
@@ -5312,39 +5223,11 @@ function getEventBriefPieces(event: ParentScheduleEvent) {
   ].filter(Boolean).slice(0, 6);
 }
 
-function getEventDetailRows(event: ParentScheduleEvent) {
-  return [
-    { label: 'Date', value: formatEventDateLabel(event.date), icon: CalendarDays },
-    { label: 'Start time', value: formatEventTimeLabel(event.date), icon: Clock },
-    event.endDate ? { label: 'End time', value: formatEventTimeLabel(event.endDate), icon: Clock } : null,
-    event.arrivalTime ? { label: 'Arrival time', value: formatEventTimeLabel(event.arrivalTime), icon: Clock } : null,
-    { label: 'Location', value: event.location || 'TBD', icon: MapPin },
-    { label: 'Game info', value: formatGameInfo(event), icon: ClipboardCheck },
-    event.seasonLabel ? { label: 'Season', value: event.seasonLabel, icon: CalendarDays } : null,
-    event.competitionType ? { label: 'Competition', value: event.competitionType, icon: ClipboardCheck } : null,
-    event.sourceLabel ? { label: 'Source', value: event.sourceLabel, icon: ExternalLink } : null,
-    event.kitColor ? { label: 'Kit', value: event.kitColor, icon: Users } : null,
-    event.practiceAttendanceSummary ? { label: 'Practice', value: event.practiceAttendanceSummary, icon: ClipboardCheck } : null,
-    event.practiceHomePacketSummary ? { label: 'Home packet', value: event.practiceHomePacketSummary, icon: FileText } : null,
-    event.notes ? { label: 'Notes', value: event.notes, icon: FileText } : null
-  ].filter((row): row is { label: string; value: string; icon: LucideIcon } => Boolean(row));
-}
-
 function formatHeroTime(event: ParentScheduleEvent) {
   if (event.arrivalTime) {
     return `Arrive ${formatEventTimeLabel(event.arrivalTime)} · Starts ${formatEventTimeLabel(event.date)}`;
   }
   return `Starts ${formatEventTimeLabel(event.date)}`;
-}
-
-function formatGameInfo(event: ParentScheduleEvent) {
-  const pieces = [
-    event.isHome === true ? 'Home' : event.isHome === false ? 'Away' : '',
-    event.kitColor ? `${event.kitColor} kit` : '',
-    event.countsTowardSeasonRecord === false ? 'Exhibition' : '',
-    event.isCancelled ? 'Cancelled' : ''
-  ].filter(Boolean);
-  return pieces.length ? pieces.join(' · ') : 'Game-day details';
 }
 
 function getReportScoreLabel(game: Record<string, any>) {
