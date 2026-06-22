@@ -26,7 +26,10 @@ describe('app legacy adapter boundary', () => {
 
         expect(scheduleServiceSource).toContain("from './adapters/legacyScheduleDb'");
         expect(playerServiceSource).toContain("from './adapters/legacyPlayerDb'");
-        expect(scheduleAdapterSource).toContain("from '../../../../../js/db.js'");
-        expect(playerAdapterSource).toContain("from '../../../../../js/db.js'");
+        expect(scheduleAdapterSource).toContain("from '@legacy/db.js'");
+        expect(scheduleAdapterSource).toContain("from '@legacy/firebase.js'");
+        expect(playerAdapterSource).toContain("from '@legacy/db.js'");
+        expect(scheduleAdapterSource).not.toMatch(directLegacyImportPattern);
+        expect(playerAdapterSource).not.toMatch(directLegacyImportPattern);
     });
 });
