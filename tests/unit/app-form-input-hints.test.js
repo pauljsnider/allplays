@@ -27,11 +27,12 @@ describe('app form mobile input hints', () => {
   });
 
   test('parent tools invite and household fields expose expected hints', () => {
-    const source = readSource('apps/app/src/pages/ParentTools.tsx');
+    const accessTool = readSource('apps/app/src/pages/parent-tools/AccessTool.tsx');
+    const householdInviteTool = readSource('apps/app/src/pages/parent-tools/HouseholdInviteTool.tsx');
 
-    expect(source).toContain('autoComplete="one-time-code"');
-    expect(source).toContain('autoComplete="email" enterKeyHint="send"');
-    expect(source).toContain('autoComplete="name" enterKeyHint="next"');
+    expect(accessTool).toContain('autoComplete="one-time-code"');
+    expect(householdInviteTool).toContain('autoComplete="email" enterKeyHint="send"');
+    expect(householdInviteTool).toContain('autoComplete="name" enterKeyHint="next"');
   });
 
   test('messages search and composers expose search/send enter key hints', () => {
