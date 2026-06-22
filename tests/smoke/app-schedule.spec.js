@@ -461,6 +461,10 @@ async function mockScheduleModules(page, options = {}) {
                     return schedule;
                 }
 
+                export function resolveCachedParentScheduleEvents() {
+                    return [];
+                }
+
                 export async function loadParentScheduleEventDetail(user, { teamId, eventId }) {
                     const result = await loadParentSchedule(user);
                     return {

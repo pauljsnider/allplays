@@ -18,6 +18,7 @@ import {
   loadStaffPracticePacket,
   loadStaffPracticeAttendance,
   loadParentScheduleEventDetail,
+  resolveCachedParentScheduleEvents,
   loadParentScheduleAssignments,
   loadStaffScheduleRsvpBreakdown,
   loadStaffRsvpReminderPreview,
@@ -380,7 +381,24 @@ export function ScheduleEventDetail({ auth }: { auth: AuthState }) {
 
   useEffect(() => {
     hasLoadedEventRef.current = false;
-    setInitialLoadPending(true);
+    // Warm-start from cached parent schedule data when the same event was just
+    // rendered in Schedule/Home, so in-app navigation shows content immediately
+    // and only true cold loads fall back to the full-page skeleton (#2649).
+    const cachedEvents = auth.user?.uid
+      ? resolveCachedParentScheduleEvents(auth.user.uid, decodedTeamId, decodedEventId)
+      : [];
+    if (cachedEvents.length > 0) {
+      setEvents(cachedEvents);
+      hasLoadedEventRef.current = true;
+      if (!selectedChildId && cachedEvents[0]?.childId) {
+        setSelectedChildId(cachedEvents[0].childId);
+      }
+      setInitialLoadPending(false);
+    } else {
+      setEvents([]);
+      hasLoadedEventRef.current = false;
+      setInitialLoadPending(true);
+    }
     void loadEvent();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [auth.user?.uid, decodedTeamId, decodedEventId]);
@@ -546,7 +564,9 @@ export function ScheduleEventDetail({ auth }: { auth: AuthState }) {
     }
   };
 
-  if (loading || initialLoadPending) {
+  // Keep the full-page skeleton for cold loads only; once a cached or fetched
+  // event is available, render it and let the background refresh reconcile (#2649).
+  if ((loading || initialLoadPending) && !selectedEvent) {
     return <EventDetailPageSkeleton />;
   }
 

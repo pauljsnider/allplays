@@ -166,7 +166,7 @@ import { expandRecurrence, fetchAndParseCalendar, isTeamActive } from './adapter
 import { getCachedAppData, loadCachedAppData } from './appDataCache';
 import { mapScheduleEventRecord } from './firestore/mappers';
 import { loadProfileDocument } from './profileService';
-import { buildPlayerScoringLiveEvent, claimOfficialAssignmentItem, createScheduledPracticeForApp, flushPendingLivePublishOperations, hydrateParentScheduleDetails, loadOfficialAssignments, loadParentSchedule, loadParentScheduleChildren, loadParentScheduleEventDetail, loadScheduledPracticeSeriesForEdit, loadStaffPracticeAttendance, loadStaffScheduleRsvpBreakdown, publishLiveScoreUpdateEvent, recordPlayerGameStat, recordPlayerScoringStat, releaseParentScheduleAssignmentClaim, resolveLiveGameClockSnapshot, resolveParentGameRoute, respondToOfficialAssignmentItem, revertScheduledPracticeOccurrenceForApp, saveScheduledGameLineupDraftForApp, saveStaffPracticeAttendance, submitStaffScheduleRsvpOverride, undoRecordedPlayerGameStat, updateLiveGameClockState, updateScheduledPracticeForApp } from './scheduleService';
+import { buildPlayerScoringLiveEvent, claimOfficialAssignmentItem, createScheduledPracticeForApp, flushPendingLivePublishOperations, hydrateParentScheduleDetails, loadOfficialAssignments, loadParentSchedule, loadParentScheduleChildren, loadParentScheduleEventDetail, loadScheduledPracticeSeriesForEdit, loadStaffPracticeAttendance, loadStaffScheduleRsvpBreakdown, publishLiveScoreUpdateEvent, recordPlayerGameStat, recordPlayerScoringStat, releaseParentScheduleAssignmentClaim, resolveCachedParentScheduleEvents, resolveLiveGameClockSnapshot, resolveParentGameRoute, respondToOfficialAssignmentItem, revertScheduledPracticeOccurrenceForApp, saveScheduledGameLineupDraftForApp, saveStaffPracticeAttendance, submitStaffScheduleRsvpOverride, undoRecordedPlayerGameStat, updateLiveGameClockState, updateScheduledPracticeForApp } from './scheduleService';
 
 function playerSnapshot(id: string, data: Record<string, unknown> | null) {
   return {
@@ -2028,5 +2028,42 @@ describe('team schedule game windowing (#2034)', () => {
         }
       }
     });
+  });
+});
+
+describe('resolveCachedParentScheduleEvents (#2649)', () => {
+  beforeEach(() => {
+    vi.mocked(getCachedAppData).mockReset();
+  });
+
+  it('returns every matching child-event row for the route target from cached schedule data', () => {
+    vi.mocked(getCachedAppData).mockReturnValue({
+      children: [],
+      events: [
+        { id: 'e1', teamId: 't1', childId: 'c1' },
+        { id: 'e1', teamId: 't1', childId: 'c2' },
+        { id: 'e2', teamId: 't1', childId: 'c1' },
+        { id: 'e1', teamId: 't9', childId: 'c1' }
+      ]
+    } as never);
+
+    const result = resolveCachedParentScheduleEvents('u1', 't1', 'e1');
+
+    expect(result.map((event) => event.childId)).toEqual(['c1', 'c2']);
+    expect(getCachedAppData).toHaveBeenCalledWith('app-schedule-summary:u1');
+  });
+
+  it('returns empty without reading the cache when identifiers are blank', () => {
+    vi.mocked(getCachedAppData).mockReturnValue({ children: [], events: [{ id: 'e1', teamId: 't1', childId: 'c1' }] } as never);
+
+    expect(resolveCachedParentScheduleEvents('', 't1', 'e1')).toEqual([]);
+    expect(resolveCachedParentScheduleEvents('u1', '', 'e1')).toEqual([]);
+    expect(resolveCachedParentScheduleEvents('u1', 't1', '')).toEqual([]);
+    expect(getCachedAppData).not.toHaveBeenCalled();
+  });
+
+  it('returns empty on a cache miss', () => {
+    vi.mocked(getCachedAppData).mockReturnValue(null);
+    expect(resolveCachedParentScheduleEvents('u1', 't1', 'e1')).toEqual([]);
   });
 });
