@@ -66,7 +66,7 @@ describe('app performance measurement initiative source contract', () => {
         });
 
         expect(uxTimingSource).toContain('recordAppUxTiming(label, startedAt, meta);');
-        expect(uxTimingSource).toContain('console.info(`[ux] ${label} ${JSON.stringify({ durationMs, ...meta })}`);');
+        expect(uxTimingSource).toContain('logger.info(label, { durationMs, ...meta });');
         expect(telemetrySource).toContain("captureAppTelemetryEvent('app_ux_timing', {");
         expect(telemetrySource).toContain('durationMs,');
         expect(telemetrySource).toContain('outcome,');
