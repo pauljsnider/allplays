@@ -205,7 +205,7 @@ jobs:
 
           deploy_preview_channel() {
             : > "$log_file"
-            npx firebase-tools@14.25.0 hosting:channel:deploy "$CURRENT_CHANNEL" --project game-flow-c6311 --config "$FIREBASE_PREVIEW_CONFIG" --expires 7d --non-interactive | tee "$log_file"
+            npx firebase-tools@14.25.0 hosting:channel:deploy "$CURRENT_CHANNEL" --project game-flow-c6311 --config "$FIREBASE_PREVIEW_CONFIG" --expires 7d --non-interactive 2>&1 | tee "$log_file"
           }
 
           skip_preview_for_quota() {
