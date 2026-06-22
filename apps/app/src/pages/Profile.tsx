@@ -44,6 +44,7 @@ import {
 } from '../lib/pushService';
 import { buildAppAcceptInviteUrl } from '../lib/inviteUrls';
 import { sharePublicUrl } from '../lib/publicActions';
+import { startAppInitialLoadTimer } from '../lib/telemetry';
 import { useShellLayout } from '../lib/useShellLayout';
 import { NOTIFICATION_PREFERENCE_GROUPS } from '../lib/adapters/legacyProfile';
 import type { AccessCodeRecord, NotificationCategory, NotificationPreferences, NotificationTeam, ProfileDocument } from '../lib/profileService';
@@ -245,19 +246,39 @@ export function Profile({ auth }: { auth: AuthState }) {
         const isFullyHydrated = seededProfile != null &&
           typeof seededProfile.fullName === 'string' &&
           'phone' in seededProfile;
+        const profileLoadSource = isFullyHydrated ? 'auth-profile' : 'profile-document';
+        const initialLoadTimer = startAppInitialLoadTimer('profile', {
+          route: 'profile',
+          source: profileLoadSource
+        });
+        let initialLoadTelemetryRecorded = false;
         let loadedProfile: ProfileDocument;
         if (isFullyHydrated) {
           loadedProfile = seededProfile as ProfileDocument;
         } else {
           loadedProfile = await loadProfileDocument(user.uid).catch((error) => {
             console.warn('[profile] Unable to load profile:', error);
-            setProfileStatus({ message: 'Profile details could not be loaded yet.', tone: 'error' });
+            if (!cancelled) {
+              setProfileStatus({ message: 'Profile details could not be loaded yet.', tone: 'error' });
+              initialLoadTimer.end({
+                error
+              });
+              initialLoadTelemetryRecorded = true;
+            }
             return {} as ProfileDocument;
           });
         }
 
         if (cancelled) {
           return;
+        }
+
+        if (!initialLoadTelemetryRecorded) {
+          initialLoadTimer.end({
+            hasDisplayName: Boolean(loadedProfile.fullName || loadedProfile.displayName || user.displayName),
+            hasPhone: Boolean(loadedProfile.phone),
+            hasPhoto: Boolean(loadedProfile.photoUrl)
+          });
         }
 
         revokeOwnedPhotoPreviewUrl();

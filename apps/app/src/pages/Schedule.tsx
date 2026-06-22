@@ -5,6 +5,7 @@ import { SchedulePageSkeleton } from '../components/PageSkeletons';
 import { addTeamCalendarUrl, createScheduleImportGame, createScheduleImportPractice, loadParentSchedule, removeTeamCalendarUrl, type ParentScheduleChild } from '../lib/scheduleService';
 import { getCachedAppData, getParentScheduleSummaryCacheKey, loadCachedAppData } from '../lib/appDataCache';
 import { toAppServiceError, type AppServiceError } from '../lib/appErrors';
+import { startAppInitialLoadTimer } from '../lib/telemetry';
 import { startUxTimer } from '../lib/uxTiming';
 import { useAsyncOperation } from '../lib/useAsyncOperation';
 import { useShellLayout } from '../lib/useShellLayout';
@@ -189,6 +190,9 @@ export function Schedule({ auth }: { auth: AuthState }) {
     setStatusMessage(null);
     const timer = startUxTimer('schedule summary load');
     const hasExistingSchedule = hasLoadedScheduleRef.current;
+    const initialLoadTimer = !hasExistingSchedule
+      ? startAppInitialLoadTimer('schedule', { route: 'schedule' })
+      : null;
     const cacheKey = getParentScheduleSummaryCacheKey(auth.user.uid);
     const scheduleCacheTtlMs = 60 * 1000 * 5;
     const cached = getCachedAppData(cacheKey);
@@ -228,6 +232,13 @@ export function Schedule({ auth }: { auth: AuthState }) {
             eventRows: result.events.length,
             groupedEvents: getCalendarScheduleEntries(result.events).length
           });
+          initialLoadTimer?.end({
+            cacheHit: Boolean(cached) && !force,
+            force,
+            children: result.children.length,
+            eventRows: result.events.length,
+            groupedEvents: getCalendarScheduleEntries(result.events).length
+          });
         },
         onError: (loadError) => {
           const mappedError = toAppServiceError(loadError, 'Unable to load schedule.');
@@ -239,6 +250,10 @@ export function Schedule({ auth }: { auth: AuthState }) {
           timer.end({
             force,
             error: mappedError.message
+          });
+          initialLoadTimer?.end({
+            force,
+            error: mappedError
           });
         }
       }

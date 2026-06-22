@@ -23,8 +23,15 @@ const uxTimingMocks = vi.hoisted(() => ({
   end: vi.fn()
 }));
 
+const initialLoadTelemetryMocks = vi.hoisted(() => ({
+  end: vi.fn()
+}));
+
 vi.mock('../lib/scheduleService', () => scheduleServiceMocks);
 vi.mock('../lib/appDataCache', () => appDataCacheMocks);
+vi.mock('../lib/telemetry', () => ({
+  startAppInitialLoadTimer: vi.fn(() => initialLoadTelemetryMocks)
+}));
 vi.mock('../lib/uxTiming', () => ({
   startUxTimer: vi.fn(() => uxTimingMocks)
 }));
@@ -118,6 +125,59 @@ describe('Schedule', () => {
     expect(await screen.findByText('Unable to refresh schedule while offline. Showing the last loaded schedule.')).toBeTruthy();
     expect(teamFilter.innerHTML).toContain('Bears');
     expect(playerFilter.innerHTML).toContain('Pat');
+  });
+
+  it('emits initial schedule load telemetry for success and failure paths', async () => {
+    scheduleServiceMocks.loadParentSchedule
+      .mockResolvedValueOnce({
+        children: [
+          { playerId: 'player-1', playerName: 'Pat', teamId: 'team-1', teamName: 'Bears' }
+        ],
+        events: []
+      })
+      .mockRejectedValueOnce(new TypeError('Failed to fetch'));
+
+    const { rerender } = render(
+      <MemoryRouter initialEntries={['/schedule']}>
+        <Routes>
+          <Route path="/schedule" element={<Schedule auth={auth} />} />
+        </Routes>
+      </MemoryRouter>
+    );
+
+    expect(await screen.findByText('No events in this filter')).toBeTruthy();
+    await waitFor(() => {
+      expect(initialLoadTelemetryMocks.end).toHaveBeenCalledWith(expect.objectContaining({
+        children: 1,
+        eventRows: 0,
+        groupedEvents: 0
+      }));
+    });
+
+    initialLoadTelemetryMocks.end.mockClear();
+    rerender(
+      <MemoryRouter initialEntries={['/schedule']}>
+        <Routes>
+          <Route
+            path="/schedule"
+            element={<Schedule auth={{
+              ...auth,
+              user: { ...auth.user!, uid: 'next-user' } as AuthState['user']
+            }} />}
+          />
+        </Routes>
+      </MemoryRouter>
+    );
+
+    expect(await screen.findByText('Unable to load schedule while offline. Check your connection and try again.')).toBeTruthy();
+    await waitFor(() => {
+      expect(initialLoadTelemetryMocks.end).toHaveBeenCalledWith(expect.objectContaining({
+        error: expect.objectContaining({
+          name: 'AppServiceError',
+          type: 'network'
+        })
+      }));
+    });
   });
 
   it('shows permission-specific copy when a loaded schedule refresh is denied', async () => {
