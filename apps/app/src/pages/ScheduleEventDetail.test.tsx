@@ -505,6 +505,7 @@ describe('ScheduleEventDetail route state', () => {
     expect(screen.getAllByRole('button', { name: 'Assignments' })[0].className).toContain('bg-primary-600');
     expect(screen.getByTestId('event-route').textContent).toBe('/schedule/team-1/game-1?childId=player-2&section=assignments');
   });
+
 });
 
 describe('ScheduleEventDetail rideshare permissions', () => {

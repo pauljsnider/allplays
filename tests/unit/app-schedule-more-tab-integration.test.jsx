@@ -2,7 +2,7 @@
 import React, { act } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createRoot } from 'react-dom/client';
-import { MemoryRouter, Route, Routes } from 'react-router-dom';
+import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom';
 
 const scheduleMocks = vi.hoisted(() => ({
     cancelParentScheduleRideRequest: vi.fn(),
@@ -129,6 +129,11 @@ function report(overrides = {}) {
     };
 }
 
+function LocationProbe() {
+    const location = useLocation();
+    return React.createElement('div', { 'data-testid': 'location' }, `${location.pathname}${location.search}`);
+}
+
 async function renderDetail(initialEntry) {
     const container = document.createElement('div');
     document.body.appendChild(container);
@@ -138,13 +143,16 @@ async function renderDetail(initialEntry) {
         root.render(React.createElement(
             MemoryRouter,
             { initialEntries: [initialEntry] },
-            React.createElement(
-                Routes,
-                null,
-                React.createElement(Route, {
-                    path: '/schedule/:teamId/:eventId',
-                    element: React.createElement(ScheduleEventDetail, { auth })
-                })
+            React.createElement(React.Fragment, null,
+                React.createElement(LocationProbe),
+                React.createElement(
+                    Routes,
+                    null,
+                    React.createElement(Route, {
+                        path: '/schedule/:teamId/:eventId',
+                        element: React.createElement(ScheduleEventDetail, { auth })
+                    })
+                )
             )
         ));
     });
@@ -465,6 +473,24 @@ describe('React app ScheduleEventDetail More tab integration', () => {
         await waitForText(container, 'Is Pat going?');
 
         expect(container.textContent).not.toContain('Game hub');
+    });
+
+    it('keeps the requested section while falling back to the first event when the route childId is unknown', async () => {
+        scheduleMocks.loadParentScheduleEventDetail.mockResolvedValue({
+            events: [
+                event({ childId: 'player-1', childName: 'Pat' }),
+                event({ eventKey: 'team-1::game-1::player-2', childId: 'player-2', childName: 'Sam', myRsvp: 'maybe' })
+            ]
+        });
+
+        const { container } = await renderDetail('/schedule/team-1/game-1?childId=missing-player&section=availability');
+        await waitForText(container, 'Is Pat going?');
+
+        const switcher = container.querySelector('[data-testid="event-player-switcher"]');
+        expect(switcher).not.toBeNull();
+        expect(buttonByText(switcher, 'Pat').getAttribute('aria-pressed')).toBe('true');
+        expect(buttonByText(switcher, 'Sam').getAttribute('aria-pressed')).toBe('false');
+        expect(container.querySelector('[data-testid="location"]')?.textContent).toBe('/schedule/team-1/game-1?childId=missing-player&section=availability');
     });
 
     it('renders the completed game More tab with replay and report actions wired to public URLs', async () => {
