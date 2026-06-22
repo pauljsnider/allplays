@@ -6633,12 +6633,8 @@ function detectMentionedUids(text, members, options = {}) {
 }
 
 async function buildTeamChatNotificationContext(teamId, options = {}) {
-  const {
-    includeMentions = true,
-    conversationId = null,
-    targetType = 'full_team',
-    recipientIds = []
-  } = options || {};
+  const { includeMentions = true, conversationId = null } = options || {};
+  const { targetType = 'full_team', recipientIds = [] } = options || {};
   const normalizedConversationId = normalizeTeamChatConversationId(conversationId);
   const allowedTargetTypes = new Set(['full_team', 'staff', 'individuals']);
   const normalizedTargetType = allowedTargetTypes.has(String(targetType || '').trim())
