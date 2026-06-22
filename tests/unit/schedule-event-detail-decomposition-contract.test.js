@@ -67,4 +67,19 @@ describe('ScheduleEventDetail decomposition contract', () => {
         expect(component).toContain("disabled={submitting || eventLocked}");
         expect(component).toContain("{submitting && player.response !== response ? 'Saving' : rsvpLabels[response]}");
     });
+
+    it('keeps event details and game report rendering behind named page boundaries', () => {
+        const page = readRepoFile('apps/app/src/pages/ScheduleEventDetail.tsx');
+
+        expect(page).toContain('function EventDetailsPanel({ event, open }: { event: ParentScheduleEvent; open: boolean })');
+        expect(page).toContain('const rows = getEventDetailRows(event);');
+        expect(page).toContain('<EventDetailsPanel event={selectedEvent} open={detailsOpen} />');
+        expect(page).toContain('function GameReportSections({ event }: { event: ParentScheduleEvent })');
+        expect(page).toContain('const loaded = await loadGameReportSections(event.teamId, event.id);');
+        expect(page).toContain('<GameReportSectionContent report={report} activeSection={activeReportSection} />');
+        expect(page).toContain('function GameReportSectionContent({ report, activeSection }: { report: GameReportData; activeSection: GameReportSectionId })');
+        expect(page).toContain('function MatchSummarySection({ report }: { report: GameReportData })');
+        expect(page).toContain('function PlayerPerformanceSection({ report }: { report: GameReportData })');
+        expect(page).toContain('function ReportInsightsSection({ report }: { report: GameReportData })');
+    });
 });
