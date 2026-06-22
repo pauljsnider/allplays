@@ -4,6 +4,7 @@ import { join } from 'node:path';
 
 const repoRoot = process.cwd();
 const directLegacyImportPattern = /from\s+['"](?:\.\.\/){4,}js\//;
+const forbiddenServiceLegacyImportPattern = /from\s+['"](?:@legacy\/|(?:\.\.\/){4,}js\/)/;
 
 function readRepoFile(path) {
     return readFileSync(join(repoRoot, path), 'utf8');
@@ -14,8 +15,8 @@ describe('app legacy adapter boundary', () => {
         const scheduleServiceSource = readRepoFile('apps/app/src/lib/scheduleService.ts');
         const playerServiceSource = readRepoFile('apps/app/src/lib/playerService.ts');
 
-        expect(directLegacyImportPattern.test(scheduleServiceSource)).toBe(false);
-        expect(directLegacyImportPattern.test(playerServiceSource)).toBe(false);
+        expect(forbiddenServiceLegacyImportPattern.test(scheduleServiceSource)).toBe(false);
+        expect(forbiddenServiceLegacyImportPattern.test(playerServiceSource)).toBe(false);
     });
 
     it('routes schedule and player services through typed legacy adapters', () => {
@@ -49,7 +50,7 @@ describe('app legacy adapter boundary', () => {
         migratedClusters.forEach(([path, adapterImport]) => {
             const source = readRepoFile(path);
             expect(source).toContain(adapterImport);
-            expect(directLegacyImportPattern.test(source), path).toBe(false);
+            expect(forbiddenServiceLegacyImportPattern.test(source), path).toBe(false);
         });
 
         [
