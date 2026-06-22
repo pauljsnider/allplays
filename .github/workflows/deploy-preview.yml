@@ -159,6 +159,7 @@ jobs:
           KEEP_RECENT_OPEN_PR_CHANNELS: '20'
         run: |
           set -euo pipefail
+
           open_pr_numbers_file="$RUNNER_TEMP/firebase-preview-open-pr-numbers.txt"
           if ! gh pr list --repo "${{ github.repository }}" --state open --limit 200 --json number,updatedAt --jq 'sort_by(.updatedAt) | reverse | .[].number' > "$open_pr_numbers_file"; then
             echo "Warning: unable to list open PRs; skipping stale Firebase preview channel pruning."
