@@ -788,16 +788,54 @@
         }
 
         function getRegistrationMetadataStatus(provider, externalTeamId) {
-            if (!provider) {
-                return 'Not configured';
+            return getRegistrationProviderCapability(provider, externalTeamId).label;
+        }
+
+        function getRegistrationProviderCapability(provider, externalTeamId, source = {}) {
+            const hasProvider = Boolean(String(provider || '').trim());
+            const hasExternalTeamId = Boolean(String(externalTeamId || '').trim());
+            const hasLiveConnection = ['live_connected', 'sync_success'].includes(source?.connectionStatus) && source?.syncEnabled === true;
+            if (!hasProvider) {
+                return {
+                    state: 'not_configured',
+                    connectionStatus: 'not_configured',
+                    label: 'Not configured',
+                    helpText: 'Choose a provider and team mapping to save registration metadata.',
+                    canRefresh: false,
+                    syncEnabled: false
+                };
             }
-            if (!externalTeamId) {
-                return 'Metadata incomplete. Add provider mapping.';
+            if (!hasExternalTeamId) {
+                return {
+                    state: 'metadata_incomplete',
+                    connectionStatus: 'metadata_incomplete',
+                    label: 'Metadata incomplete. Add provider mapping.',
+                    helpText: 'Add the provider team ID or mapping to finish setup.',
+                    canRefresh: false,
+                    syncEnabled: false
+                };
             }
-            if (isSportsConnectProvider(provider)) {
-                return 'Metadata saved; live sync unavailable';
+            if (hasProvider && hasLiveConnection) {
+                return {
+                    state: 'live_connected',
+                    connectionStatus: 'live_connected',
+                    label: 'Live connected',
+                    helpText: 'Live provider refresh is available for this registration connection.',
+                    canRefresh: true,
+                    syncEnabled: true
+                };
             }
-            return 'Registration metadata only. No live sync.';
+            const isSportsConnect = isSportsConnectProvider(provider);
+            return {
+                state: 'metadata_configured',
+                connectionStatus: 'metadata_configured',
+                label: isSportsConnect ? 'Metadata saved; live sync unavailable' : 'Registration metadata only. No live sync.',
+                helpText: isSportsConnect
+                    ? 'Sports Connect metadata is saved for reference only. Live refresh and re-import require a future provider connector.'
+                    : 'This provider mapping is saved as metadata only. Manual refresh stays unavailable until a live connector exists.',
+                canRefresh: false,
+                syncEnabled: false
+            };
         }
 
         function ensureRegistrationProviderOption(provider) {
@@ -820,31 +858,22 @@
         function renderRegistrationConnectionStatus(source = {}) {
             const provider = document.getElementById('registrationProviderName').value.trim();
             const externalTeamId = document.getElementById('registrationExternalTeamId').value.trim();
-            const metadataStatus = getRegistrationMetadataStatus(provider, externalTeamId);
+            const capability = getRegistrationProviderCapability(provider, externalTeamId, source);
             const lastSyncTime = getRegistrationLastSyncTime(source);
             const refreshButton = document.getElementById('registration-refresh-btn');
             const hasUnsavedSyncChanges = hasUnsavedRegistrationSyncChanges(provider, externalTeamId);
-            const canSyncSportsConnect = false;
-            let helpText = 'Choose a provider and team mapping to save registration metadata.';
+            let helpText = capability.helpText;
 
-            if (provider && externalTeamId) {
-                helpText = isSportsConnectProvider(provider)
-                    ? 'Sports Connect metadata is saved for reference only. Live refresh and re-import require a future provider connector.'
-                    : 'This provider mapping is saved as metadata only. Manual refresh stays unavailable until a live connector exists.';
-            } else if (provider) {
-                helpText = 'Add the provider team ID or mapping to finish setup.';
-            }
-
-            if (!isSportsConnectProvider(provider) && !hasUnsavedSyncChanges && source.lastSyncStatus === 'error' && source.lastSyncError) {
+            if (capability.canRefresh && !hasUnsavedSyncChanges && source.lastSyncStatus === 'error' && source.lastSyncError) {
                 helpText = `Last sync error: ${source.lastSyncError}`;
             }
 
-            document.getElementById('registrationLastSyncStatus').value = metadataStatus;
-            document.getElementById('registration-connection-status').textContent = metadataStatus;
-            document.getElementById('registration-sync-status').textContent = metadataStatus;
+            document.getElementById('registrationLastSyncStatus').value = capability.label;
+            document.getElementById('registration-connection-status').textContent = capability.label;
+            document.getElementById('registration-sync-status').textContent = capability.label;
             document.getElementById('registration-sync-time').textContent = formatRegistrationSyncTime(lastSyncTime);
             document.getElementById('registration-connection-help').textContent = helpText;
-            refreshButton.disabled = !canSyncSportsConnect;
+            refreshButton.disabled = !capability.canRefresh;
             refreshButton.setAttribute('aria-disabled', String(refreshButton.disabled));
             refreshButton.classList.toggle('cursor-not-allowed', refreshButton.disabled);
             refreshButton.classList.toggle('border-slate-200', refreshButton.disabled);
@@ -883,9 +912,11 @@
             const button = document.getElementById('registration-refresh-btn');
             if (!currentTeamId || button.disabled) return;
             const provider = document.getElementById('registrationProviderName').value.trim();
-            if (isSportsConnectProvider(provider)) {
+            const externalTeamId = document.getElementById('registrationExternalTeamId').value.trim();
+            const capability = getRegistrationProviderCapability(provider, externalTeamId, currentRegistrationSource || {});
+            if (!capability.canRefresh) {
                 renderRegistrationConnectionStatus(currentRegistrationSource || {});
-                document.getElementById('registration-connection-help').textContent = 'Sports Connect live refresh is unavailable until a provider connector exists.';
+                document.getElementById('registration-connection-help').textContent = capability.helpText;
                 return;
             }
 
@@ -930,7 +961,7 @@
         function buildRegistrationSourcePayload() {
             const provider = document.getElementById('registrationProviderName').value.trim();
             const externalTeamId = document.getElementById('registrationExternalTeamId').value.trim();
-            const metadataStatus = getRegistrationMetadataStatus(provider, externalTeamId);
+            const capability = getRegistrationProviderCapability(provider, externalTeamId, currentRegistrationSource || {});
             if (!provider && !externalTeamId) {
                 return null;
             }
@@ -940,9 +971,10 @@
                 providerId: getRegistrationProviderId(provider) || null,
                 externalTeamId,
                 teamId: currentTeamId || null,
-                connectionStatus: provider && externalTeamId ? 'metadata_configured' : 'metadata_incomplete',
-                syncEnabled: false,
-                lastSyncStatus: metadataStatus
+                connectionStatus: capability.connectionStatus,
+                providerCapability: capability.state,
+                syncEnabled: capability.syncEnabled,
+                lastSyncStatus: capability.label
             };
         }
 
