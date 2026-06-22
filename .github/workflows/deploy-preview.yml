@@ -190,10 +190,55 @@ jobs:
 
       - name: Deploy Firebase Hosting preview
         id: deploy_preview
+        env:
+          CURRENT_CHANNEL: pr-${{ github.event.pull_request.number }}
         run: |
           set -euo pipefail
           log_file="$RUNNER_TEMP/firebase-preview-deploy.log"
-          npx firebase-tools@14.25.0 hosting:channel:deploy pr-${{ github.event.pull_request.number }} --project game-flow-c6311 --config "$FIREBASE_PREVIEW_CONFIG" --expires 7d --non-interactive | tee "$log_file"
+
+          deploy_preview() {
+            npx firebase-tools@14.25.0 hosting:channel:deploy "$CURRENT_CHANNEL" --project game-flow-c6311 --config "$FIREBASE_PREVIEW_CONFIG" --expires 7d --non-interactive >"$log_file" 2>&1
+          }
+
+          skip_preview_for_quota() {
+            {
+              echo "### Firebase preview skipped"
+              echo
+              echo "Firebase Hosting preview channel quota was reached. Build and regression checks completed successfully, so this deploy-only preview limitation did not fail the PR."
+            } >> "$GITHUB_STEP_SUMMARY"
+            echo "preview_url=" >> "$GITHUB_OUTPUT"
+            exit 0
+          }
+
+          if ! deploy_preview; then
+            cat "$log_file"
+            if ! grep -Eiq 'HTTP Error: 429|channel quota reached' "$log_file"; then
+              exit 1
+            fi
+
+            channels_file="$RUNNER_TEMP/firebase-preview-channels.txt"
+            if ! npx firebase-tools@14.25.0 hosting:channel:list --site game-flow-c6311 --project game-flow-c6311 > "$channels_file"; then
+              skip_preview_for_quota
+            fi
+            eviction_channel="$(awk -F '│' 'NF > 2 {gsub(/^[[:space:]]+|[[:space:]]+$/, "", $2); if ($2 ~ /^pr-[0-9]+$/) print $2 }' "$channels_file" | grep -vx "$CURRENT_CHANNEL" | sort -t- -k2,2n | head -n1)"
+            if [ -z "$eviction_channel" ]; then
+              skip_preview_for_quota
+            fi
+
+            echo "Firebase preview channel quota reached. Evicting $eviction_channel and retrying deployment."
+            if ! npx firebase-tools@14.25.0 hosting:channel:delete "$eviction_channel" --site game-flow-c6311 --project game-flow-c6311 --force; then
+              skip_preview_for_quota
+            fi
+            if ! deploy_preview; then
+              cat "$log_file"
+              if grep -Eiq 'HTTP Error: 429|channel quota reached' "$log_file"; then
+                skip_preview_for_quota
+              fi
+              exit 1
+            fi
+          fi
+
+          cat "$log_file"
           preview_url="$(grep -Eo 'https://[^ ]+' "$log_file" | tail -n1)"
           if [ -z "$preview_url" ]; then
             echo "Failed to extract preview URL from Firebase deploy output." >&2
@@ -211,9 +256,11 @@ jobs:
         run: |
           set -euo pipefail
           marker='<!-- allplays-preview-url -->'
-          body="$marker
-
-          Preview URL: $PREVIEW_URL"
+          if [ -n "$PREVIEW_URL" ]; then
+            body="$(printf '%s\n\nPreview URL: %s' "$marker" "$PREVIEW_URL")"
+          else
+            body="$(printf '%s\n\nFirebase preview skipped: Firebase Hosting preview channel quota was reached for this run.' "$marker")"
+          fi
           comment_id="$(gh api --paginate repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/comments --jq "$JQ_FILTER" | head -n1)"
           if [ -n "$comment_id" ]; then
             gh api repos/${{ github.repository }}/issues/comments/"$comment_id" --method PATCH -f body="$body" >/dev/null
