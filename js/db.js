@@ -982,6 +982,27 @@ export async function getTeamMediaItems(teamId, folderId = null) {
     return sortByMediaOrder(resolvedItems);
 }
 
+function readTeamMediaPageOffset(cursor, folderId, sortedDocs = []) {
+    if (Number.isFinite(Number(cursor))) {
+        return Math.max(0, Math.floor(Number(cursor)));
+    }
+
+    if (cursor?.kind === 'team-media-items-page') {
+        const cursorFolderId = String(cursor.folderId || '').trim();
+        if (!cursorFolderId || cursorFolderId === folderId) {
+            const offset = Number(cursor.offset);
+            if (Number.isFinite(offset)) {
+                return Math.max(0, Math.floor(offset));
+            }
+        }
+    }
+
+    const cursorId = String(cursor?.id || '').trim();
+    if (!cursorId) return 0;
+    const cursorIndex = sortedDocs.findIndex((itemDoc) => itemDoc.id === cursorId);
+    return cursorIndex >= 0 ? cursorIndex + 1 : 0;
+}
+
 export async function getTeamMediaItemsPage(teamId, folderId, options = {}) {
     if (!teamId) {
         return { items: [], lastDoc: null, nextCursor: null, hasMore: false };
@@ -997,21 +1018,23 @@ export async function getTeamMediaItemsPage(teamId, folderId, options = {}) {
         ? Math.min(Math.max(Math.floor(requestedPageSize), 1), 100)
         : 24;
     const cursor = options.cursor || options.afterDoc || null;
-    const constraints = [
-        where('folderId', '==', cleanFolderId),
-        orderBy('order', 'asc')
-    ];
-    if (cursor) constraints.push(startAfterQuery(cursor));
-    constraints.push(limitQuery(pageSize + 1));
 
-    const snapshot = await getDocs(query(getTeamMediaItemsRef(teamId), ...constraints));
+    const snapshot = await getDocs(query(
+        getTeamMediaItemsRef(teamId),
+        where('folderId', '==', cleanFolderId)
+    ));
     const docs = snapshot.docs
         .filter((itemDoc) => {
             const item = itemDoc.data() || {};
             return item.deleted !== true && item.folderId === cleanFolderId;
         });
-    const pageDocs = docs.slice(0, pageSize);
-    const hasMore = docs.length > pageSize;
+    const docsById = new Map(docs.map((itemDoc) => [itemDoc.id, itemDoc]));
+    const sortedDocs = sortByMediaOrder(docs.map((itemDoc) => ({ id: itemDoc.id, ...itemDoc.data() })))
+        .map((item) => docsById.get(item.id))
+        .filter(Boolean);
+    const startOffset = readTeamMediaPageOffset(cursor, cleanFolderId, sortedDocs);
+    const pageDocs = sortedDocs.slice(startOffset, startOffset + pageSize);
+    const hasMore = startOffset + pageSize < sortedDocs.length;
     const items = pageDocs.map((itemDoc) => ({ id: itemDoc.id, ...itemDoc.data() }));
     const resolvedItems = await Promise.all(items.map(async (item) => {
         if (!['photo', 'file'].includes(String(item?.type || '').toLowerCase())) return item;
@@ -1036,7 +1059,13 @@ export async function getTeamMediaItemsPage(teamId, folderId, options = {}) {
     return {
         items: sortByMediaOrder(resolvedItems),
         lastDoc,
-        nextCursor: hasMore ? lastDoc : null,
+        nextCursor: hasMore
+            ? {
+                kind: 'team-media-items-page',
+                folderId: cleanFolderId,
+                offset: startOffset + pageDocs.length
+            }
+            : null,
         hasMore
     };
 }
