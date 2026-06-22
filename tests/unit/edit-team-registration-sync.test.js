@@ -51,4 +51,20 @@ describe('edit team Sports Connect registration sync wiring', () => {
         expect(coreSource).toContain('registrationRosterSnapshot');
         expect(coreSource).not.toContain('source.syncUrl');
     });
+
+    it('does not call the Sports Connect sync callable when refresh is unavailable', () => {
+        const source = readEditTeam();
+        const syncHandlerSource = source.slice(
+            source.indexOf('async function handleRegistrationProviderSync()'),
+            source.indexOf('function buildRegistrationSourcePayload()')
+        );
+
+        expect(syncHandlerSource).toContain('if (!currentTeamId || button.disabled) return;');
+        expect(syncHandlerSource).toContain('const capability = getRegistrationProviderCapability(provider, externalTeamId, currentRegistrationSource || {});');
+        expect(syncHandlerSource).toContain('if (!capability.canRefresh) {');
+        expect(syncHandlerSource).toContain('renderRegistrationConnectionStatus(currentRegistrationSource || {});');
+        expect(syncHandlerSource).toContain("document.getElementById('registration-connection-help').textContent = capability.helpText;");
+        expect(syncHandlerSource).toContain('return;');
+        expect(syncHandlerSource.indexOf('return;')).toBeLessThan(syncHandlerSource.indexOf('await syncRegistrationProvider(currentTeamId)'));
+    });
 });
