@@ -1072,9 +1072,42 @@ describe('React app parent tools service', () => {
         await addParentTeamMediaLink('team-1', 'folder-1', 'Replay', 'https://video.example.test/replay');
         expect(dbMocks.canAccessTeamChat).toHaveBeenCalledWith(expect.objectContaining({ uid: 'user-1' }), { id: 'team-1', name: 'Bears' });
         expect(dbMocks.createTeamMediaFolder).toHaveBeenCalledWith('team-1', { name: 'Spring photos', visibility: 'private' });
-        expect(dbMocks.uploadTeamMediaPhoto).toHaveBeenCalledWith('team-1', 'folder-1', photoFile);
-        expect(dbMocks.uploadTeamMediaFile).toHaveBeenCalledWith('team-1', 'folder-1', docFile);
+        expect(dbMocks.uploadTeamMediaPhoto).toHaveBeenCalledWith('team-1', 'folder-1', photoFile, { returnItem: true });
+        expect(dbMocks.uploadTeamMediaFile).toHaveBeenCalledWith('team-1', 'folder-1', docFile, { returnItem: true });
         expect(dbMocks.createTeamMediaLink).toHaveBeenCalledWith('team-1', 'folder-1', { title: 'Replay', url: 'https://video.example.test/replay' });
+    });
+
+    it('returns normalized team media upload items so the app can merge them without rereading the album', async () => {
+        const photoFile = new File(['photo'], 'photo.jpg', { type: 'image/jpeg' });
+        const docFile = new File(['doc'], 'packet.pdf', { type: 'application/pdf' });
+        dbMocks.uploadTeamMediaPhoto.mockResolvedValue({
+            id: 'photo-2',
+            title: 'photo.jpg',
+            type: 'photo',
+            downloadUrl: 'https://img.example.test/photo-2.jpg',
+            order: 4
+        });
+        dbMocks.uploadTeamMediaFile.mockResolvedValue({
+            id: 'file-1',
+            title: 'packet.pdf',
+            type: 'file',
+            downloadUrl: 'https://files.example.test/packet.pdf',
+            order: 5
+        });
+
+        await expect(uploadParentTeamMediaPhoto('team-1', 'folder-1', photoFile)).resolves.toMatchObject({
+            id: 'photo-2',
+            title: 'photo.jpg',
+            type: 'photo',
+            url: 'https://img.example.test/photo-2.jpg'
+        });
+        await expect(uploadParentTeamMediaFile('team-1', 'folder-1', docFile)).resolves.toMatchObject({
+            id: 'file-1',
+            title: 'packet.pdf',
+            type: 'file',
+            url: 'https://files.example.test/packet.pdf'
+        });
+        expect(dbMocks.getTeamMediaItems).not.toHaveBeenCalled();
     });
 
     it('initiates Stripe checkout for registration and returns URL', async () => {

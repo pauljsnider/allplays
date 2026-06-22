@@ -1114,7 +1114,7 @@ export async function uploadTeamMediaPhoto(teamId, folderId, file, options = {})
 
     const downloadUrl = await getDownloadURL(snapshot.ref);
     const order = await reserveNextTeamMediaOrder(cleanTeamId, cleanFolderId);
-    const docRef = await addDoc(getTeamMediaItemsRef(cleanTeamId), {
+    const mediaItem = {
         folderId: cleanFolderId,
         title: String(file.name || 'Uploaded photo').trim() || 'Uploaded photo',
         type: 'photo',
@@ -1127,7 +1127,11 @@ export async function uploadTeamMediaPhoto(teamId, folderId, file, options = {})
         deleted: false,
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp()
-    });
+    };
+    const docRef = await addDoc(getTeamMediaItemsRef(cleanTeamId), mediaItem);
+    if (options?.returnItem === true) {
+        return { id: docRef.id, ...mediaItem, url: downloadUrl };
+    }
     return docRef.id;
 }
 
@@ -1160,7 +1164,7 @@ export async function uploadTeamMediaFile(teamId, folderId, file, options = {}) 
 
     const downloadUrl = await getDownloadURL(snapshot.ref);
     const order = await reserveNextTeamMediaOrder(cleanTeamId, cleanFolderId);
-    const docRef = await addDoc(getTeamMediaItemsRef(cleanTeamId), {
+    const mediaItem = {
         folderId: cleanFolderId,
         title: String(file.name || 'Uploaded file').trim() || 'Uploaded file',
         fileName: String(file.name || '').trim(),
@@ -1174,7 +1178,11 @@ export async function uploadTeamMediaFile(teamId, folderId, file, options = {}) 
         deleted: false,
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp()
-    });
+    };
+    const docRef = await addDoc(getTeamMediaItemsRef(cleanTeamId), mediaItem);
+    if (options?.returnItem === true) {
+        return { id: docRef.id, ...mediaItem, url: downloadUrl };
+    }
     return docRef.id;
 }
 

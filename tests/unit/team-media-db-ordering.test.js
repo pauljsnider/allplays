@@ -117,7 +117,7 @@ describe('team media db ordering', () => {
         expect(uploadTaskQueue).toHaveLength(2);
 
         uploadTaskQueue.splice(0).forEach((complete) => complete());
-        await Promise.all(uploadPromises);
+        await expect(Promise.all(uploadPromises)).resolves.toEqual(['media-1', 'media-2']);
 
         expect(firebaseMocks.getDocs).not.toHaveBeenCalled();
         expect(firebaseMocks.runTransaction).toHaveBeenCalledTimes(2);
@@ -166,6 +166,33 @@ describe('team media db ordering', () => {
             downloadUrl: 'https://cdn.example.test/uploaded-file'
         }));
         expect(firebaseMocks.getDownloadURL).toHaveBeenCalledTimes(1);
+    });
+
+    it('returns the created media item for app callers that opt into the richer upload payload', async () => {
+        const { uploadTeamMediaFile, uploadTeamMediaPhoto } = await import('../../js/db.js');
+        const docFile = new File(['doc'], 'packet.pdf', { type: 'application/pdf' });
+        const photoFile = new File(['photo'], 'tipoff.jpg', { type: 'image/jpeg' });
+
+        const uploadedFilePromise = uploadTeamMediaFile('team-1', 'folder-1', docFile, { returnItem: true });
+        const uploadedPhotoPromise = uploadTeamMediaPhoto('team-1', 'folder-1', photoFile, { returnItem: true });
+        uploadTaskQueue.splice(0).forEach((complete) => complete());
+
+        await expect(uploadedFilePromise).resolves.toMatchObject({
+            id: 'media-1',
+            title: 'packet.pdf',
+            type: 'file',
+            order: 0,
+            url: 'https://cdn.example.test/uploaded-file',
+            downloadUrl: 'https://cdn.example.test/uploaded-file'
+        });
+        await expect(uploadedPhotoPromise).resolves.toMatchObject({
+            id: 'media-2',
+            title: 'tipoff.jpg',
+            type: 'photo',
+            order: 1,
+            url: 'https://cdn.example.test/uploaded-file',
+            downloadUrl: 'https://cdn.example.test/uploaded-file'
+        });
     });
 
     it('reuses cached media URLs and backfills legacy items after the first storage lookup', async () => {
