@@ -2,15 +2,18 @@
 import React, { act } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createRoot } from 'react-dom/client';
-import { MemoryRouter, Route, Routes } from 'react-router-dom';
+import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom';
 
 const scheduleMocks = vi.hoisted(() => ({
     cancelParentScheduleRideRequest: vi.fn(),
     claimParentScheduleAssignmentSlot: vi.fn(),
     createParentScheduleRideOffer: vi.fn(),
+    loadScheduleStatTrackerConfigsForApp: vi.fn(),
     loadParentPracticePacket: vi.fn(),
+    loadStaffPracticePacket: vi.fn(),
     loadParentSchedule: vi.fn(),
     loadParentScheduleEventDetail: vi.fn(),
+    resolveCachedParentScheduleEvents: vi.fn(() => []),
     loadParentScheduleAssignments: vi.fn().mockResolvedValue([]),
     loadParentScheduleRideOffers: vi.fn().mockResolvedValue([]),
     loadHomeScoringPlayers: vi.fn().mockResolvedValue([]),
@@ -43,8 +46,11 @@ const scheduleMocks = vi.hoisted(() => ({
     })),
     publishLiveScoreUpdateEvent: vi.fn(),
     recordPlayerScoringStat: vi.fn(),
+    resolveCachedParentScheduleEvents: vi.fn(() => []),
     saveScheduledGameLineupDraftForApp: vi.fn(),
+    saveStaffPracticePacket: vi.fn(),
     updateGameScore: vi.fn(),
+    updateScheduledGameForApp: vi.fn(),
     updateParentScheduleRideRequestStatus: vi.fn()
 }));
 
@@ -123,6 +129,11 @@ function report(overrides = {}) {
     };
 }
 
+function LocationProbe() {
+    const location = useLocation();
+    return React.createElement('div', { 'data-testid': 'location' }, `${location.pathname}${location.search}`);
+}
+
 async function renderDetail(initialEntry) {
     const container = document.createElement('div');
     document.body.appendChild(container);
@@ -132,13 +143,16 @@ async function renderDetail(initialEntry) {
         root.render(React.createElement(
             MemoryRouter,
             { initialEntries: [initialEntry] },
-            React.createElement(
-                Routes,
-                null,
-                React.createElement(Route, {
-                    path: '/schedule/:teamId/:eventId',
-                    element: React.createElement(ScheduleEventDetail, { auth })
-                })
+            React.createElement(React.Fragment, null,
+                React.createElement(LocationProbe),
+                React.createElement(
+                    Routes,
+                    null,
+                    React.createElement(Route, {
+                        path: '/schedule/:teamId/:eventId',
+                        element: React.createElement(ScheduleEventDetail, { auth })
+                    })
+                )
             )
         ));
     });
@@ -183,9 +197,25 @@ async function clickButton(container, text) {
 
 beforeEach(() => {
     vi.clearAllMocks();
+    scheduleMocks.resolveCachedParentScheduleEvents.mockReturnValue([]);
     scheduleMocks.loadParentSchedule.mockResolvedValue({ events: [] });
     scheduleMocks.loadParentScheduleEventDetail.mockImplementation(async () => scheduleMocks.loadParentSchedule());
+    scheduleMocks.loadScheduleStatTrackerConfigsForApp.mockResolvedValue([{ id: 'cfg-basketball', name: 'Basketball' }]);
     scheduleMocks.loadParentPracticePacket.mockResolvedValue(null);
+    scheduleMocks.loadStaffPracticePacket.mockResolvedValue({
+        sessionId: 'session-1',
+        teamId: 'team-1',
+        eventId: 'practice-1',
+        title: 'Practice',
+        date: new Date('2026-05-25T08:00:00Z'),
+        location: 'Main Gym',
+        packetTitle: 'Practice home packet',
+        dueDate: null,
+        totalMinutes: 0,
+        homePacket: { blocks: [], totalMinutes: 0 },
+        completions: [],
+        children: [{ id: 'player-1', name: 'Pat' }]
+    });
     scheduleMocks.publishGamePlanForApp.mockResolvedValue({ gamePlan: {}, notificationError: null });
     scheduleMocks.loadAutoFilledLineupDraftPreviewForApp.mockResolvedValue({
         formationId: 'basketball-5v5',
@@ -223,7 +253,22 @@ beforeEach(() => {
             lineups: { 'Q1-pg': 'p1', 'Q1-sg': 'p2' }
         }
     });
+    scheduleMocks.saveStaffPracticePacket.mockResolvedValue({
+        sessionId: 'session-1',
+        teamId: 'team-1',
+        eventId: 'practice-1',
+        title: 'Practice',
+        date: new Date('2026-05-25T08:00:00Z'),
+        location: 'Main Gym',
+        packetTitle: 'Practice home packet',
+        dueDate: null,
+        totalMinutes: 10,
+        homePacket: { blocks: [{ drillTitle: 'Home Drill 1', duration: 10 }], totalMinutes: 10 },
+        completions: [],
+        children: [{ id: 'player-1', name: 'Pat' }]
+    });
     scheduleMocks.updateGameScore.mockResolvedValue({ homeScore: 5, awayScore: 2, scoreUpdatedAt: new Date('2026-05-25T08:00:00Z'), scoreUpdatedBy: 'user-1' });
+    scheduleMocks.updateScheduledGameForApp.mockResolvedValue({ updated: true, eventId: 'game-1' });
     scheduleMocks.publishLiveScoreUpdateEvent.mockResolvedValue({ type: 'score_update', homeScore: 5, awayScore: 2 });
     scheduleMocks.markParentPracticePacketComplete.mockResolvedValue({
         id: 'user-1__player-1',
@@ -428,6 +473,24 @@ describe('React app ScheduleEventDetail More tab integration', () => {
         await waitForText(container, 'Is Pat going?');
 
         expect(container.textContent).not.toContain('Game hub');
+    });
+
+    it('keeps the requested section while falling back to the first event when the route childId is unknown', async () => {
+        scheduleMocks.loadParentScheduleEventDetail.mockResolvedValue({
+            events: [
+                event({ childId: 'player-1', childName: 'Pat' }),
+                event({ eventKey: 'team-1::game-1::player-2', childId: 'player-2', childName: 'Sam', myRsvp: 'maybe' })
+            ]
+        });
+
+        const { container } = await renderDetail('/schedule/team-1/game-1?childId=missing-player&section=availability');
+        await waitForText(container, 'Is Pat going?');
+
+        const switcher = container.querySelector('[data-testid="event-player-switcher"]');
+        expect(switcher).not.toBeNull();
+        expect(buttonByText(switcher, 'Pat').getAttribute('aria-pressed')).toBe('true');
+        expect(buttonByText(switcher, 'Sam').getAttribute('aria-pressed')).toBe('false');
+        expect(container.querySelector('[data-testid="location"]')?.textContent).toBe('/schedule/team-1/game-1?childId=missing-player&section=availability');
     });
 
     it('renders the completed game More tab with replay and report actions wired to public URLs', async () => {

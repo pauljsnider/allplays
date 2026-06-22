@@ -1,18 +1,20 @@
-import { getUserProfile } from '../../../../js/db.js';
 import {
-  db,
   addDoc,
   collection,
+  db,
   doc,
+  getAI,
+  getApp,
   getDocs,
+  getGenerativeModel,
+  getUserProfile,
+  GoogleAIBackend,
   limit,
   orderBy,
   query,
   serverTimestamp,
   setDoc
-} from '../../../../js/firebase.js';
-import { getApp } from '../../../../js/vendor/firebase-app.js';
-import { getAI, getGenerativeModel, GoogleAIBackend } from '../../../../js/vendor/firebase-ai.js';
+} from './adapters/legacyPrivateAi';
 import { getChatInboxPreview, loadChatInbox } from './chatService';
 import { searchHelpKnowledge } from './helpKnowledgeService';
 import { loadParentHome } from './homeService';
@@ -315,12 +317,16 @@ export async function runPrivateAiTool(user: AuthUser, call: PrivateAiToolCall):
           ok: true,
           data: summarizeHome(await loadParentHome(user))
         };
-      case 'get_schedule':
+      case 'get_schedule': {
+        const range = compactText(args.range).toLowerCase();
         return {
           name,
           ok: true,
-          data: summarizeSchedule(await loadParentSchedule(user), args)
+          data: summarizeSchedule(await loadParentSchedule(user, {
+            includePastGames: range === 'all'
+          }), args)
         };
+      }
       case 'get_messages':
         return {
           name,

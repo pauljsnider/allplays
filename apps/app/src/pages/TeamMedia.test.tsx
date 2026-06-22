@@ -327,4 +327,62 @@ describe('TeamMedia bulk delete', () => {
     expect(parentToolsServiceMocks.loadTeamMediaForApp).toHaveBeenCalledTimes(2);
     expect(await screen.findByText('Photo one')).toBeTruthy();
   });
+
+  it('loads the next album page with the stored cursor and appends it', async () => {
+    const cursor = { id: 'cursor-1' };
+    parentToolsServiceMocks.loadTeamMediaForApp
+      .mockResolvedValueOnce({
+        team: { id: 'team-1', name: 'Bears' },
+        canManage: true,
+        canContribute: false,
+        canPostChat: false,
+        folders: [
+          {
+            id: 'album-1',
+            name: 'Game day',
+            visibility: 'team',
+            itemCount: 2,
+            itemsLoaded: true,
+            itemsHasMore: true,
+            itemsNextCursor: cursor,
+            items: [
+              { id: 'photo-1', title: 'Photo one', type: 'photo', url: 'https://example.com/photo-1.jpg', uploadedBy: 'coach-1' }
+            ]
+          }
+        ]
+      })
+      .mockResolvedValueOnce({
+        team: { id: 'team-1', name: 'Bears' },
+        canManage: true,
+        canContribute: false,
+        canPostChat: false,
+        folders: [
+          {
+            id: 'album-1',
+            name: 'Game day',
+            visibility: 'team',
+            itemCount: 2,
+            itemsLoaded: true,
+            itemsHasMore: false,
+            itemsNextCursor: null,
+            items: [
+              { id: 'photo-2', title: 'Photo two', type: 'photo', url: 'https://example.com/photo-2.jpg', uploadedBy: 'coach-1' }
+            ]
+          }
+        ]
+      });
+
+    renderTeamMedia();
+
+    await screen.findByText('Photo one');
+    fireEvent.click(screen.getByRole('button', { name: 'Load more' }));
+
+    expect(parentToolsServiceMocks.loadTeamMediaForApp).toHaveBeenNthCalledWith(2, auth.user, 'team-1', {
+      initialFolderId: 'album-1',
+      folderIds: ['album-1'],
+      cursorsByFolderId: { 'album-1': cursor }
+    });
+    expect(await screen.findByText('Photo two')).toBeTruthy();
+    expect(screen.getByText('Photo one')).toBeTruthy();
+  });
 });

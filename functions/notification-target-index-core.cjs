@@ -39,11 +39,11 @@ const NOTIFICATION_CATEGORY_AUDIENCES = Object.freeze({
   rsvp: Object.freeze(['parent', 'staff']),
   fees: Object.freeze(['parent', 'staff']),
   practice: Object.freeze(['parent', 'staff']),
-  access: Object.freeze(['staff']),
+  access: Object.freeze(['parent', 'staff']),
   rideshare: Object.freeze(['parent', 'staff']),
   media: Object.freeze(['parent', 'staff']),
   awards: Object.freeze(['parent', 'staff']),
-  officiating: Object.freeze(['staff'])
+  officiating: Object.freeze(['parent', 'staff'])
 });
 
 function sanitizeNotificationTargetSegment(value) {

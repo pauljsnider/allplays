@@ -42,7 +42,9 @@ import {
   type ParentPlayerDetailData,
   type ParentPlayerStatRow
 } from '../lib/playerService';
+import { DetailLoadErrorState } from '../components/DetailLoadErrorState';
 import { getEventDetailPath } from '../lib/homeLogic';
+import { toAppServiceError, type AppServiceError } from '../lib/appErrors';
 import {
   formatEventDateLabel,
   formatEventTimeLabel,
@@ -122,7 +124,7 @@ export function PlayerDetail({ auth }: { auth: AuthState }) {
   const [activeSection, setActiveSection] = useState<PlayerSectionId>('overview');
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
-  const [error, setError] = useState('');
+  const [error, setError] = useState<AppServiceError | null>(null);
 
   const refreshPlayer = async ({ showLoading = data === null }: { showLoading?: boolean } = {}) => {
     const fullPageLoading = showLoading || data === null;
@@ -131,14 +133,14 @@ export function PlayerDetail({ auth }: { auth: AuthState }) {
     } else {
       setRefreshing(true);
     }
-    setError('');
+    setError(null);
     try {
       setData(await loadParentPlayerDetail(auth.user, teamId, playerId));
     } catch (loadError: any) {
       if (fullPageLoading) {
         setData(null);
       }
-      setError(loadError?.message || 'Unable to load player.');
+      setError(toAppServiceError(loadError, 'Unable to load player.'));
     } finally {
       if (fullPageLoading) {
         setLoading(false);
@@ -172,13 +174,16 @@ export function PlayerDetail({ auth }: { auth: AuthState }) {
 
   if (!data) {
     return (
-      <div className="space-y-3">
-        <Link to="/home" className="ghost-button min-h-9 px-3 text-xs">
-          <ChevronLeft className="h-4 w-4" aria-hidden="true" />
-          Home
-        </Link>
-        <Status tone="error" message={error || 'This player is not available for your account.'} />
-      </div>
+      <DetailLoadErrorState
+        icon={UserRound}
+        title="Player unavailable"
+        error={error}
+        fallbackMessage="This player is not available for your account."
+        backTo="/home"
+        backLabel="Home"
+        onRetry={() => refreshPlayer({ showLoading: true })}
+        retrying={loading}
+      />
     );
   }
 
@@ -194,7 +199,7 @@ export function PlayerDetail({ auth }: { auth: AuthState }) {
             <ChevronLeft className="h-4 w-4" aria-hidden="true" />
           </Link>
           <div className="flex h-11 w-11 flex-none items-center justify-center overflow-hidden rounded-2xl bg-primary-50 text-base font-black text-primary-700">
-            {data.player.photoUrl ? <img src={data.player.photoUrl} alt="" className="h-full w-full object-cover" /> : <span>{jersey || getInitials(playerName)}</span>}
+            {data.player.photoUrl ? <img src={data.player.photoUrl} alt={`${playerName} profile photo`} className="h-full w-full object-cover" /> : <span>{jersey || getInitials(playerName)}</span>}
           </div>
           <div className="min-w-0 flex-1">
             <div className="app-label">Player</div>
@@ -232,7 +237,7 @@ export function PlayerDetail({ auth }: { auth: AuthState }) {
         </div>
       </div>
 
-      {error ? <Status tone="error" message={error} /> : null}
+      {error ? <Status tone="error" message={error.message} /> : null}
       {activeSection === 'overview' ? <OverviewSection data={data} /> : null}
       {activeSection === 'schedule' ? <PlayerScheduleSection events={data.events} /> : null}
       {activeSection === 'performance' ? <ReportsSection data={data} /> : null}
@@ -520,10 +525,7 @@ function PlayerProfileSection({ data, auth, onChanged }: { data: ParentPlayerDet
 }
 
 function StaffRosterDetailsCard({ data, auth, onChanged }: { data: ParentPlayerDetailData; auth: AuthState; onChanged: () => Promise<void> }) {
-  if (!data.access.canEditRosterDetails) {
-    return null;
-  }
-
+  const canEditRosterDetails = data.access.canEditRosterDetails;
   const [name, setName] = useState(data.player.name || data.child.playerName || '');
   const [number, setNumber] = useState(String(data.player.number || ''));
   const [photoFile, setPhotoFile] = useState<File | null>(null);
@@ -549,6 +551,10 @@ function StaffRosterDetailsCard({ data, auth, onChanged }: { data: ParentPlayerD
       if (previewUrl.startsWith('blob:')) URL.revokeObjectURL(previewUrl);
     };
   }, [previewUrl]);
+
+  if (!canEditRosterDetails) {
+    return null;
+  }
 
   const submit = async (event: FormEvent) => {
     event.preventDefault();
@@ -580,7 +586,7 @@ function StaffRosterDetailsCard({ data, auth, onChanged }: { data: ParentPlayerD
     <section className="app-card p-4">
       <div className="flex items-start gap-3">
         <div className="flex h-14 w-14 flex-none items-center justify-center overflow-hidden rounded-2xl bg-primary-50 text-sm font-black text-primary-700">
-          {previewUrl ? <img src={previewUrl} alt="" className="h-full w-full object-cover" /> : getInitials(name || data.child.playerName || 'Player')}
+          {previewUrl ? <img src={previewUrl} alt={`${name || data.child.playerName || 'Player'} roster photo preview`} className="h-full w-full object-cover" /> : getInitials(name || data.child.playerName || 'Player')}
         </div>
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2 text-sm font-black text-gray-950">
@@ -627,10 +633,7 @@ function StaffRosterDetailsCard({ data, auth, onChanged }: { data: ParentPlayerD
 }
 
 function EditablePlayerProfileCard({ data, auth, onChanged }: { data: ParentPlayerDetailData; auth: AuthState; onChanged: () => Promise<void> }) {
-  if (!data.access.isLinkedParent && !auth.isAdmin && !auth.isPlatformAdmin) {
-    return null;
-  }
-
+  const canEditProfile = data.access.isLinkedParent || auth.isAdmin || auth.isPlatformAdmin;
   const [emergencyName, setEmergencyName] = useState(data.privateProfile?.emergencyContact?.name || '');
   const [emergencyPhone, setEmergencyPhone] = useState(data.privateProfile?.emergencyContact?.phone || '');
   const [medicalInfo, setMedicalInfo] = useState(data.privateProfile?.medicalInfo || '');
@@ -645,6 +648,10 @@ function EditablePlayerProfileCard({ data, auth, onChanged }: { data: ParentPlay
       if (previewUrl.startsWith('blob:')) URL.revokeObjectURL(previewUrl);
     };
   }, [previewUrl]);
+
+  if (!canEditProfile) {
+    return null;
+  }
 
   const submit = async (event: FormEvent) => {
     event.preventDefault();
@@ -674,7 +681,7 @@ function EditablePlayerProfileCard({ data, auth, onChanged }: { data: ParentPlay
     <section className="app-card p-4">
       <div className="flex items-start gap-3">
         <div className="flex h-14 w-14 flex-none items-center justify-center overflow-hidden rounded-2xl bg-primary-50 text-sm font-black text-primary-700">
-          {previewUrl ? <img src={previewUrl} alt="" className="h-full w-full object-cover" /> : getInitials(playerName)}
+          {previewUrl ? <img src={previewUrl} alt={`${playerName} profile photo preview`} className="h-full w-full object-cover" /> : getInitials(playerName)}
         </div>
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2 text-sm font-black text-gray-950">
@@ -1905,7 +1912,12 @@ function CardText({ title, detail }: { title: string; detail: string }) {
 function Status({ tone, message }: { tone: 'error' | 'success'; message: string }) {
   const isError = tone === 'error';
   return (
-    <div className={`flex items-start gap-2 rounded-xl border px-3 py-2 text-sm font-semibold ${isError ? 'border-rose-200 bg-rose-50 text-rose-800' : 'border-emerald-200 bg-emerald-50 text-emerald-800'}`}>
+    <div
+      className={`flex items-start gap-2 rounded-xl border px-3 py-2 text-sm font-semibold ${isError ? 'border-rose-200 bg-rose-50 text-rose-800' : 'border-emerald-200 bg-emerald-50 text-emerald-800'}`}
+      role={isError ? 'alert' : 'status'}
+      aria-live={isError ? 'assertive' : 'polite'}
+      aria-atomic="true"
+    >
       {isError ? <AlertCircle className="mt-0.5 h-4 w-4 flex-none" aria-hidden="true" /> : <CheckCircle2 className="mt-0.5 h-4 w-4 flex-none" aria-hidden="true" />}
       {message}
     </div>

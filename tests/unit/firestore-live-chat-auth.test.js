@@ -33,8 +33,33 @@ function extractMatchBlock(source, collectionPattern) {
     return null;
 }
 
+const liveEventsBlock = extractMatchBlock(rulesSource, 'match /liveEvents/{eventId}');
 const liveChatBlock = extractMatchBlock(rulesSource, 'match /liveChat/{messageId}');
 const liveReactionsBlock = extractMatchBlock(rulesSource, 'match /liveReactions/{reactionId}');
+
+describe('firestore rules — live game read visibility helpers', () => {
+    it('keeps live events, chat, and reactions behind the shared game visibility helper', () => {
+        expect(liveEventsBlock).toContain('allow read: if canReadGameSubcollectionDocument(teamId, gameId);');
+        expect(liveChatBlock).toContain('allow read: if canReadGameSubcollectionDocument(teamId, gameId);');
+        expect(liveReactionsBlock).toContain('allow read: if canReadGameSubcollectionDocument(teamId, gameId);');
+        expect(liveEventsBlock).not.toContain('allow read: if true;');
+        expect(liveChatBlock).not.toContain('allow read: if true;');
+        expect(liveReactionsBlock).not.toContain('allow read: if true;');
+    });
+
+    it('preserves the shared helper coverage for private and shareable game reads', () => {
+        expect(rulesSource).toContain('function canReadGameDocument(teamId, gameId, data)');
+        expect(rulesSource).toContain('function canReadGameSubcollectionDocument(teamId, gameId)');
+        expect(rulesSource).toContain('isTeamOwnerOrAdmin(teamId) ||');
+        expect(rulesSource).toContain('isParentForTeam(teamId) ||');
+        expect(rulesSource).toContain('canScorekeepGame(teamId, gameId) ||');
+        expect(rulesSource).toContain('canVideographGame(teamId, gameId) ||');
+        expect(rulesSource).toContain('isAuthorizedOfficialForGame(data) ||');
+        expect(rulesSource).toContain('canReadPublicGameDocument(get(teamPath).data, data)');
+        expect(rulesSource).toContain("data.get('shareable', false) == true");
+        expect(rulesSource).toContain("data.get('publicCalendar', false) == true");
+    });
+});
 
 describe('firestore rules — liveChat authentication requirements', () => {
     it('extracts the liveChat match block from firestore.rules', () => {

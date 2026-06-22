@@ -129,7 +129,7 @@
                     <div id="content-csv-import" class="p-6 hidden">
                         <div class="mb-3">
                             <h2 class="text-xl font-bold">CSV Roster Import</h2>
-                            <p class="text-sm text-gray-600">Upload or paste a CSV with Name, Number, and roster field label/key columns. Unknown headers and invalid field values are rejected before anything is saved.</p>
+                            <p class="text-sm text-gray-600">Upload or paste a CSV with Name, Number, roster field label/key columns, and parent/guardian/contact columns such as Parent Email or Guardian Phone. Unknown headers and invalid field values are rejected before anything is saved.</p>
                         </div>
 
                         <div class="space-y-4">
@@ -142,7 +142,7 @@
                                 <label class="block text-sm font-medium text-gray-700 mb-2">CSV data</label>
                                 <textarea id="roster-csv-input" rows="8"
                                     class="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:border-indigo-500 focus:ring-indigo-500 text-sm font-mono"
-                                    placeholder="Name,Number,Grade,Throws Right&#10;Avery Lee,4,6,yes"></textarea>
+                                    placeholder="Name,Number,Parent Name,Parent Email,Grade&#10;Avery Lee,4,Pat Lee,pat@example.com,6"></textarea>
                             </div>
                             <button id="import-csv-btn" type="button"
                                 class="w-full bg-indigo-600 text-white py-2 px-4 rounded-md hover:bg-indigo-700 transition">Import CSV</button>
@@ -546,11 +546,11 @@
     <div id="footer-container"></div>
 
     <script type="module">
-        import { getTeam, getPlayers, addPlayer, deactivatePlayer, reactivatePlayer, getGames, uploadPlayerPhoto, updatePlayer, setPlayerPrivateRosterProfileFields, inviteParent, removeParentFromPlayer, getAllUsers, getUnreadChatCount, listTeamParentMembershipRequests, approveParentMembershipRequest, denyParentMembershipRequest, getRosterFieldDefinitions, saveRosterFieldDefinition, disableRosterFieldDefinition, reorderRosterFieldDefinitions, listTeamRegistrationForms, listTeamRegistrationReviews, approveTeamRegistration, rejectTeamRegistration, extendTeamRegistrationOffer, releaseTeamRegistrationWaitlist, listTeamTrackingItems, createTeamTrackingItem, listTeamTrackingStatuses, setTeamTrackingStatus } from './js/db.js?v=53';
+        import { getTeam, getPlayers, addPlayer, deactivatePlayer, reactivatePlayer, getGames, uploadPlayerPhoto, updatePlayer, setPlayerPrivateRosterProfileFields, inviteParent, removeParentFromPlayer, getAllUsers, getUnreadChatCount, listTeamParentMembershipRequests, approveParentMembershipRequest, denyParentMembershipRequest, getRosterFieldDefinitions, saveRosterFieldDefinition, disableRosterFieldDefinition, reorderRosterFieldDefinitions, listTeamRegistrationForms, listTeamRegistrationReviews, approveTeamRegistration, rejectTeamRegistration, extendTeamRegistrationOffer, releaseTeamRegistrationWaitlist, listTeamTrackingItems, createTeamTrackingItem, listTeamTrackingStatuses, setTeamTrackingStatus } from './js/db.js?v=64';
         import { buildRosterFieldDefinitionPayload, collectRosterProfileValues, getRosterProfileValues, normalizeRosterFieldDefinitions, planRosterCsvImport, renderRosterProfileFields, validateRosterProfileValues } from './js/roster-profile-fields.js?v=3';
         import { buildTrackingStatusPayload, mergeTrackingStatusRows, normalizeTrackingItemDraft, summarizeTrackingStatus } from './js/tracking-status-admin.js?v=2';
         import { renderHeader, renderFooter, getUrlParams, escapeHtml } from './js/utils.js?v=8';
-        import { checkAuth, sendInviteEmail } from './js/auth.js?v=26';
+        import { checkAuth, sendInviteEmail } from './js/auth.js?v=33';
         import { renderTeamAdminBanner } from './js/team-admin-banner.js';
         import { hasFullTeamAccess, normalizeTeamPermissions } from './js/team-access.js';
         import { formatRegistrationRosterImportResults, getRegistrationRosterPlayers, hasConfiguredRegistrationProviderMetadata, isExternallyLinkedRosterTeam, planRegistrationRosterImport } from './js/edit-roster-registration-import.js?v=2';
@@ -949,8 +949,8 @@
             description.textContent = hasImportableSnapshot
                 ? 'Preview players and guardian/contact records from the latest stored registration snapshot before importing. This uses saved provider data only and does not fetch Sports Connect live.'
                 : (hasConfiguredMetadata
-                    ? 'Sports Connect metadata is saved for this team, but roster import only works after a registration roster snapshot has been stored. This page does not fetch provider data live.'
-                    : 'Roster import works from a stored registration snapshot. Connect a provider and save provider data before importing here.');
+                    ? 'Sports Connect metadata is saved for this team, but roster import is unavailable until a provider connector stores a roster snapshot. This page does not fetch provider data live.'
+                    : 'Roster import works from a stored registration snapshot. Connect a provider and save or load a registration roster snapshot for this team before importing here.');
 
             previewButton.classList.toggle('hidden', !hasImportableSnapshot);
             importButton.classList.toggle('hidden', !hasImportableSnapshot);
@@ -963,7 +963,7 @@
             status.textContent = hasImportableSnapshot
                 ? `${sourcePlayers.length} player${sourcePlayers.length === 1 ? '' : 's'} available in the latest stored roster snapshot. Preview before importing.`
                 : (hasConfiguredMetadata
-                    ? 'Required next step: save or load a registration roster snapshot for this team, then return here to preview and import the stored data.'
+                    ? 'Import unavailable: Sports Connect has metadata only. A live connector must create a stored roster snapshot before this page can preview or import players.'
                     : 'No registration provider data is available yet. Connect a provider and save a registration roster snapshot before importing.');
         }
 
@@ -975,7 +975,7 @@
             const sourcePlayers = getRegistrationRosterPlayers(currentTeam);
             if (sourcePlayers.length === 0) {
                 status.textContent = hasConfiguredRegistrationProviderMetadata(currentTeam)
-                    ? 'No stored registration roster snapshot is available yet. Save or load provider data for this team before previewing import.'
+                    ? 'No stored registration roster snapshot is available yet. Sports Connect live import requires a provider connector before preview is possible.'
                     : 'No registration provider data is available yet. Connect a provider and save a registration roster snapshot before previewing import.';
                 return;
             }
@@ -1033,8 +1033,8 @@
                     } else if (operation.type === 'add') {
                         playerId = await addPlayer(currentTeamId, operation.payload);
                     }
-                    if (operation.privateRosterFields) {
-                        await setPlayerPrivateRosterProfileFields(currentTeamId, playerId, operation.privateRosterFields);
+                    if (operation.privateRosterFields || operation.privateFamilyContacts) {
+                        await setPlayerPrivateRosterProfileFields(currentTeamId, playerId, operation.privateRosterFields || {}, operation.privateFamilyContacts || {});
                     }
                 }
 
@@ -1187,7 +1187,7 @@
 
         function loadFirebaseModule() {
             if (!firebaseModulePromise) {
-                firebaseModulePromise = import('./js/firebase.js?v=17').catch((error) => {
+                firebaseModulePromise = import('./js/firebase.js?v=19').catch((error) => {
                     firebaseModulePromise = null;
                     throw error;
                 });
@@ -1663,7 +1663,7 @@
 
             document.querySelectorAll('.deactivate-btn').forEach(btn => {
                 btn.addEventListener('click', async (e) => {
-                    if (confirm('Deactivate this player? This keeps all historical stats and reports.')) {
+                    if (confirm('Deactivate this player? This keeps historical stats and reports, but linked parents may lose team access, including history, until the player is reactivated or parent scope is repaired.')) {
                         await deactivatePlayer(currentTeamId, e.target.dataset.id);
                         loadRoster();
                     }
@@ -2007,8 +2007,8 @@
                     } else {
                         playerId = await addPlayer(currentTeamId, operation.payload);
                     }
-                    if (operation.privateRosterFields) {
-                        await setPlayerPrivateRosterProfileFields(currentTeamId, playerId, operation.privateRosterFields);
+                    if (operation.privateRosterFields || operation.privateFamilyContacts) {
+                        await setPlayerPrivateRosterProfileFields(currentTeamId, playerId, operation.privateRosterFields || {}, operation.privateFamilyContacts || {});
                     }
                 }
                 renderCsvImportStatus(`Imported ${plan.operations.length} player row${plan.operations.length === 1 ? '' : 's'}.`, 'success');

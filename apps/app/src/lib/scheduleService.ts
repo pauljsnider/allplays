@@ -1,6 +1,7 @@
 import {
   getAssignmentClaims,
   claimOpenOfficiatingSlot,
+  getConfigs,
   getGame,
   getGames,
   getPracticePacketCompletions,
@@ -29,21 +30,30 @@ import {
   getLiveEvents,
   updateGame,
   updatePracticeAttendance,
+  updatePracticeSession,
   updateTeam,
+  upsertPracticeSessionForEvent,
   upsertPracticePacketCompletion,
   postChatMessage,
   postSharedGameCancellationNotification,
   cancelOccurrence,
+  clearOccurrenceOverride,
   db,
   doc,
   collection,
   collectionGroup,
+  getDoc,
   getDocs,
   query,
   runTransaction,
+  updateEvent,
+  updateOccurrence,
+  updateSeries,
   where,
   increment,
-  serverTimestamp
+  serverTimestamp,
+  deleteField,
+  Timestamp
 } from './adapters/legacyScheduleDb';
 import {
   sendPublicRsvpReminderEmails,
@@ -60,7 +70,9 @@ import {
   filterVisiblePracticeSessions,
   buildPracticePacketCompletionPayload,
   resolveMyRsvpByChildForGame,
+  applyPracticeRecurrenceFields,
   buildGameDayRsvpBreakdown,
+  generateSeriesId,
   getPeriodsForFormation,
   getEventRideshareSummary,
   mergeAssignmentsWithClaims,
@@ -68,10 +80,10 @@ import {
   isTeamActive
 } from './adapters/legacyScheduleHelpers';
 import { buildAvailabilityNoteRows, canViewAvailabilityNotes, formatAvailabilityCutoff, isAvailabilityLocked, normalizeAvailabilityPreferences } from './adapters/legacyAvailability';
-import { buildTrackerEventDocument } from './statTrackingService';
+import { buildTrackerEventDocument } from './statTrackingEvent';
 import { loadProfileDocument, saveProfileDocument } from './profileService';
 import { firebaseAuth, getNativeAuthIdToken } from './authService';
-import { startUxTimer } from './uxTiming';
+import { startInteractionTimer, startUxTimer, UX_TIMING } from './uxTiming';
 import {
   getNextRideConfirmedSeatCount,
   getScheduleRideshareSummary,
@@ -115,10 +127,11 @@ import {
 } from './gameDayLineupPublish';
 import { sendTeamChatMessage } from './chatService';
 import { DEFAULT_TEAM_CONVERSATION_ID } from './chatLogic';
-import { getCachedAppData, getParentScheduleSummaryCacheKey } from './appDataCache';
+import { getCachedAppData, getParentScheduleSummaryCacheKey, loadCachedAppData } from './appDataCache';
 import { toAppServiceError } from './appErrors';
 import { createLogger } from './logger';
-import { mapFirestoreDocument, mapScheduleEventDocument, mapScheduleEventDocuments } from './firestore/mappers';
+import { getNativeRestDedupKey, loadDedupedNativeRestRequest, shouldDedupNativeRestRequest } from './nativeRestDedup';
+import { mapFirestoreDocument, mapScheduleEventDocument, mapScheduleEventDocuments, mapScheduleEventRecord, mapScheduleEventRecords } from './firestore/mappers';
 import type { FirestoreDecodedDocument, FirestoreDocument as NativeFirestoreDocument } from './firestore/types';
 import type { AuthUser } from './types';
 
@@ -126,6 +139,14 @@ const buildPracticePacketCompletionPayloadBase = buildPracticePacketCompletionPa
 
 const primaryDataTimeoutMs = 5000;
 const parentScheduleTeamConcurrency = 3;
+const parentSchedulePlayerConcurrency = 8;
+const scheduleHydrationCacheTtlMs = 30 * 1000;
+const parentHomeHydrationLookAheadMs = 14 * 24 * 60 * 60 * 1000;
+const parentHomeHydrationLookBehindMs = 12 * 60 * 60 * 1000;
+// Default games window for schedule views: ~13 months covers the current and
+// previous season so the "Past Events" filter still shows recent history before
+// an explicit full-history load. Tune here if season length assumptions change.
+const defaultScheduleHistoryWindowMs = 400 * 24 * 60 * 60 * 1000;
 const logger = createLogger('schedule-service');
 
 function logScheduleWarning(message: string, operation: string, error: unknown, context: Record<string, unknown> = {}) {
@@ -151,6 +172,12 @@ export type ParentScheduleChild = {
   playerName: string;
 };
 
+type ParentScopeLink = ParentScheduleChild & {
+  playerNumber?: string;
+  playerPhotoUrl?: string | null;
+  hasMetadata: boolean;
+};
+
 export type ParentScheduleLoadResult = {
   children: ParentScheduleChild[];
   events: ParentScheduleEvent[];
@@ -159,6 +186,9 @@ export type ParentScheduleLoadResult = {
 export type ParentScheduleLoadOptions = {
   hydrateDetails?: boolean;
   expandStaffPlayers?: boolean;
+  /** Load the team's full game history instead of the default recent window (#2034). */
+  includePastGames?: boolean;
+  scheduleRangeByTeam?: ScheduleDateRangeByTeam;
 };
 
 export type OfficialAssignmentsAccess = {
@@ -226,6 +256,10 @@ type FirestoreDocument = FirestoreDecodedDocument;
 
 export type StaffRsvpReminderSendResult = StaffRsvpReminderPreview & {
   emailSentCount: number;
+  rsvpPushSuccessCount: number;
+  rsvpPushFailureCount: number;
+  rsvpPushTargetCount: number;
+  rsvpPushError: string | null;
 };
 
 export type ParentPracticePacketChild = {
@@ -243,6 +277,27 @@ export type ParentPracticePacket = {
   homePacket: PracticeHomePacket;
   completions: PracticePacketCompletion[];
   children: ParentPracticePacketChild[];
+};
+
+export type StaffPracticePacketBlock = {
+  drillId?: string | null;
+  drillTitle: string;
+  type?: string | null;
+  duration: number;
+  description?: string | null;
+  notes?: string | null;
+};
+
+export type StaffPracticePacketInput = {
+  packetTitle?: string | null;
+  dueDate?: string | Date | null;
+  blocks: StaffPracticePacketBlock[];
+};
+
+export type StaffPracticePacket = ParentPracticePacket & {
+  packetTitle: string;
+  dueDate: string | null;
+  totalMinutes: number;
 };
 
 export type PracticeAttendanceStatus = 'present' | 'late' | 'absent';
@@ -682,20 +737,26 @@ async function getNativeHeaders() {
 }
 
 async function nativeFirestoreRequest(path: string, init: RequestInit = {}) {
-  const response = await withTimeout(fetch(`${getFirestoreBaseUrl()}${path}`, {
-    ...init,
-    headers: {
-      ...(await getNativeHeaders()),
-      ...(init.headers || {})
+  const url = `${getFirestoreBaseUrl()}${path}`;
+  const runRequest = async () => {
+    const response = await withTimeout(fetch(url, {
+      ...init,
+      headers: {
+        ...(await getNativeHeaders()),
+        ...(init.headers || {})
+      }
+    }), 'Firestore REST request');
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      const error = new Error(payload?.error?.message || `Firestore request failed (${response.status}).`) as Error & { status?: number };
+      error.status = response.status;
+      throw error;
     }
-  }), 'Firestore REST request');
-  const payload = await response.json().catch(() => ({}));
-  if (!response.ok) {
-    const error = new Error(payload?.error?.message || `Firestore request failed (${response.status}).`) as Error & { status?: number };
-    error.status = response.status;
-    throw error;
-  }
-  return payload;
+    return payload;
+  };
+  return shouldDedupNativeRestRequest(path, init)
+    ? loadDedupedNativeRestRequest(getNativeRestDedupKey(url, init), runRequest)
+    : runRequest();
 }
 
 function encodeFirestoreValue(value: any): Record<string, unknown> {
@@ -776,13 +837,53 @@ async function nativeListScheduleEventDocuments(path: string) {
   return mapScheduleEventDocuments((payload.documents || []) as NativeFirestoreDocument[]);
 }
 
+const nativeDeleteFieldSentinel = { __deleteField: true };
+
+function escapeFirestoreFieldPathSegment(segment: string) {
+  return /^[A-Za-z_][A-Za-z0-9_]*$/.test(segment)
+    ? segment
+    : `\`${segment.replace(/`/g, '\\`')}\``;
+}
+
+function buildFirestoreUpdateMaskPath(path: string) {
+  return path
+    .split('.')
+    .filter(Boolean)
+    .map((segment) => escapeFirestoreFieldPathSegment(segment))
+    .join('.');
+}
+
+function assignNestedFirestoreValue(target: Record<string, unknown>, path: string, value: unknown) {
+  const segments = path.split('.').filter(Boolean);
+  if (!segments.length) return;
+  let cursor: Record<string, unknown> = target;
+  segments.forEach((segment, index) => {
+    if (index === segments.length - 1) {
+      cursor[segment] = value;
+      return;
+    }
+    const next = cursor[segment];
+    if (!next || typeof next !== 'object' || Array.isArray(next)) {
+      cursor[segment] = {};
+    }
+    cursor = cursor[segment] as Record<string, unknown>;
+  });
+}
+
 async function nativePatchDocument(path: string, data: Record<string, unknown>) {
-  const fields = Object.keys(data).reduce<Record<string, Record<string, unknown>>>((acc, key) => {
-    acc[key] = encodeFirestoreValue(data[key]);
+  const nestedData = Object.keys(data).reduce<Record<string, unknown>>((acc, key) => {
+    if (data[key] === nativeDeleteFieldSentinel) {
+      return acc;
+    }
+    assignNestedFirestoreValue(acc, key, data[key]);
+    return acc;
+  }, {});
+  const fields = Object.keys(nestedData).reduce<Record<string, Record<string, unknown>>>((acc, key) => {
+    acc[key] = encodeFirestoreValue(nestedData[key]);
     return acc;
   }, {});
   const params = new URLSearchParams();
-  Object.keys(data).forEach((key) => params.append('updateMask.fieldPaths', key));
+  Object.keys(data).forEach((key) => params.append('updateMask.fieldPaths', buildFirestoreUpdateMaskPath(key)));
   const suffix = params.toString() ? `?${params.toString()}` : '';
   await nativeFirestoreRequest(`/${path}${suffix}`, {
     method: 'PATCH',
@@ -1205,7 +1306,53 @@ export type ScheduleImportNormalizedRow = {
   arrivalTime?: string | null;
   isHome?: boolean | null;
   notes?: string | null;
+  importBatch?: {
+    batchId: string;
+    totalCount: number;
+    rowNumber: number;
+    importedAt?: string | null;
+    importedBy?: string | null;
+  } | null;
 };
+
+export type ScheduleGameFormInput = {
+  opponent: string;
+  startDate: Date;
+  endDate?: Date | null;
+  location?: string | null;
+  arrivalTime?: Date | null;
+  isHome?: boolean | null;
+  notes?: string | null;
+  statTrackerConfigId?: string | null;
+  competitionType?: string | null;
+  countsTowardSeasonRecord?: boolean;
+  opponentTeamId?: string | null;
+  opponentTeamName?: string | null;
+  opponentTeamPhoto?: string | null;
+};
+
+export type ScheduleStatTrackerConfigOption = {
+  id: string;
+  name: string;
+  baseType?: string | null;
+  isBasketball?: boolean;
+};
+
+function normalizeScheduleImportBatch(input: ScheduleImportNormalizedRow['importBatch']) {
+  const batchId = compactString(input?.batchId);
+  const totalCount = Math.max(0, Number.parseInt(String(input?.totalCount ?? 0), 10) || 0);
+  const rowNumber = Math.max(0, Number.parseInt(String(input?.rowNumber ?? 0), 10) || 0);
+  if (!batchId || totalCount <= 0 || rowNumber <= 0) {
+    return null;
+  }
+  return {
+    batchId,
+    totalCount,
+    rowNumber,
+    importedAt: compactString(input?.importedAt) || new Date().toISOString(),
+    importedBy: compactString(input?.importedBy) || null
+  };
+}
 
 function requireScheduleImportStaff(teamId: string, user: AuthUser | null) {
   if (!user?.uid) {
@@ -1230,6 +1377,7 @@ function parseScheduleImportDate(value: string | null | undefined, label: string
 
 function buildScheduleImportGamePayload(row: ScheduleImportNormalizedRow, user: AuthUser) {
   const startDate = parseScheduleImportDate(row.startsAt, 'Start time');
+  const importBatch = normalizeScheduleImportBatch(row.importBatch);
   return {
     type: 'game',
     date: startDate,
@@ -1247,12 +1395,69 @@ function buildScheduleImportGamePayload(row: ScheduleImportNormalizedRow, user: 
     competitionType: 'league',
     countsTowardSeasonRecord: true,
     statTrackerConfigId: null,
+    createdBy: user.uid,
+    ...(importBatch ? { importBatch } : {})
+  };
+}
+
+function parseScheduleGameFormDate(value: Date | string | number | null | undefined, label: string) {
+  const date = value instanceof Date ? new Date(value) : new Date(value || '');
+  if (Number.isNaN(date.getTime())) {
+    throw new Error(`${label} is invalid.`);
+  }
+  return date;
+}
+
+function buildScheduledGamePayload(input: ScheduleGameFormInput, user: AuthUser) {
+  const opponent = compactString(input.opponent);
+  if (!opponent) throw new Error('Games require an opponent.');
+  const startDate = parseScheduleGameFormDate(input.startDate, 'Game start time');
+  const endDate = input.endDate ? parseScheduleGameFormDate(input.endDate, 'Game end time') : null;
+  const arrivalTime = input.arrivalTime ? parseScheduleGameFormDate(input.arrivalTime, 'Arrival time') : null;
+  if (endDate && endDate.getTime() <= startDate.getTime()) {
+    throw new Error('Game end time must be after the start time.');
+  }
+  return {
+    type: 'game',
+    date: startDate,
+    end: endDate,
+    opponent,
+    title: null,
+    location: compactString(input.location),
+    isHome: input.isHome === null || input.isHome === undefined ? null : input.isHome === true,
+    arrivalTime,
+    notes: compactString(input.notes),
+    assignments: [],
+    status: 'scheduled',
+    homeScore: 0,
+    awayScore: 0,
+    competitionType: compactString(input.competitionType) || 'league',
+    countsTowardSeasonRecord: input.countsTowardSeasonRecord === false ? false : true,
+    statTrackerConfigId: compactString(input.statTrackerConfigId) || null,
+    opponentTeamId: compactString(input.opponentTeamId) || null,
+    opponentTeamName: compactString(input.opponentTeamName) || null,
+    opponentTeamPhoto: compactString(input.opponentTeamPhoto) || null,
     createdBy: user.uid
+  };
+}
+
+function buildScheduledGameUpdatePayload(input: ScheduleGameFormInput, user: AuthUser) {
+  const { assignments, status, homeScore, awayScore, createdBy, ...payload } = buildScheduledGamePayload(input, user) as Record<string, unknown>;
+  void assignments;
+  void status;
+  void homeScore;
+  void awayScore;
+  void createdBy;
+  return {
+    ...payload,
+    updatedAt: new Date(),
+    updatedBy: user.uid
   };
 }
 
 function buildScheduleImportPracticePayload(row: ScheduleImportNormalizedRow, user: AuthUser) {
   const startDate = parseScheduleImportDate(row.startsAt, 'Start time');
+  const importBatch = normalizeScheduleImportBatch(row.importBatch);
   return {
     type: 'practice',
     title: compactString(row.title) || 'Practice',
@@ -1266,7 +1471,311 @@ function buildScheduleImportPracticePayload(row: ScheduleImportNormalizedRow, us
     homeScore: 0,
     awayScore: 0,
     statTrackerConfigId: null,
+    createdBy: user.uid,
+    ...(importBatch ? { importBatch } : {})
+  };
+}
+
+export type PracticeRecurrenceFormInput = {
+  isRecurring: boolean;
+  freq?: 'weekly' | 'daily';
+  interval?: number;
+  byDays?: string[];
+  endType?: 'never' | 'until' | 'count';
+  untilValue?: string;
+  countValue?: number;
+};
+
+export type SchedulePracticeFormInput = {
+  title: string;
+  startDate: Date;
+  endDate: Date;
+  location?: string | null;
+  notes?: string | null;
+  scheduleNotifications?: Record<string, unknown> | null;
+  recurrence?: PracticeRecurrenceFormInput | null;
+};
+
+export type SchedulePracticeEditScope = 'series' | 'occurrence';
+
+export type UpdateScheduledPracticeOptions = {
+  eventId: string;
+  seriesId?: string | null;
+  scope?: SchedulePracticeEditScope;
+  instanceDate?: string | null;
+};
+
+export async function loadScheduleStatTrackerConfigsForApp(teamId: string, user: AuthUser | null): Promise<ScheduleStatTrackerConfigOption[]> {
+  const normalizedTeamId = compactString(teamId);
+  if (!normalizedTeamId) throw new Error('Team is required.');
+  await requireScheduleImportStaff(normalizedTeamId, user);
+  const configs = await readWithNativeFallback(
+    `schedule stat tracker configs ${normalizedTeamId}`,
+    () => Promise.resolve(getConfigs(normalizedTeamId)),
+    () => nativeListCollection(`teams/${encodeURIComponent(normalizedTeamId)}/statTrackerConfigs`)
+  ).catch(() => []);
+  return (Array.isArray(configs) ? configs : [])
+    .map((config: any) => ({
+      id: compactString(config?.id),
+      name: compactString(config?.name) || compactString(config?.label) || compactString(config?.baseType) || 'Tracker config',
+      baseType: compactString(config?.baseType) || null,
+      isBasketball: config?.isBasketball === true || compactString(config?.baseType).toLowerCase() === 'basketball'
+    }))
+    .filter((config) => config.id)
+    .sort((first, second) => first.name.localeCompare(second.name));
+}
+
+export async function createScheduledGameForApp(teamId: string, input: ScheduleGameFormInput, user: AuthUser | null) {
+  const normalizedTeamId = compactString(teamId);
+  if (!normalizedTeamId) throw new Error('Team is required.');
+  await requireScheduleImportStaff(normalizedTeamId, user);
+  const payload = buildScheduledGamePayload(input, user as AuthUser);
+
+  try {
+    return await withTimeout(Promise.resolve(addGame(normalizedTeamId, payload)), 'Scheduled game create');
+  } catch (error) {
+    if (!isNativeRuntime()) throw error;
+    logScheduleWarning('Falling back to REST scheduled game create.', 'scheduled-game-create', error, { fallback: 'rest', teamId: normalizedTeamId });
+    const doc = await nativeCreateDocument(`teams/${encodeURIComponent(normalizedTeamId)}/games`, {
+      ...payload,
+      createdAt: new Date()
+    });
+    return doc?.id || '';
+  }
+}
+
+export async function updateScheduledGameForApp(teamId: string, gameId: string, input: ScheduleGameFormInput, user: AuthUser | null) {
+  const normalizedTeamId = compactString(teamId);
+  const normalizedGameId = compactString(gameId);
+  if (!normalizedTeamId) throw new Error('Team is required.');
+  if (!normalizedGameId) throw new Error('Game is required.');
+  await requireScheduleImportStaff(normalizedTeamId, user);
+  const payload = buildScheduledGameUpdatePayload(input, user as AuthUser);
+
+  try {
+    await withTimeout(Promise.resolve(updateGame(normalizedTeamId, normalizedGameId, payload)), 'Scheduled game update');
+  } catch (error) {
+    if (!isNativeRuntime()) throw error;
+    logScheduleWarning('Falling back to REST scheduled game update.', 'scheduled-game-update', error, { fallback: 'rest', teamId: normalizedTeamId, gameId: normalizedGameId });
+    await nativePatchDocument(`teams/${encodeURIComponent(normalizedTeamId)}/games/${encodeURIComponent(normalizedGameId)}`, payload);
+  }
+  return { updated: true, eventId: normalizedGameId };
+}
+
+function sanitizePracticeRecurrenceInput(input?: PracticeRecurrenceFormInput | null) {
+  const byDays = Array.isArray(input?.byDays) ? input?.byDays.map((value) => compactString(value).toUpperCase()).filter(Boolean) : [];
+  return {
+    isRecurring: input?.isRecurring === true,
+    freq: input?.freq === 'daily' ? 'daily' : 'weekly',
+    interval: Math.max(1, Number(input?.interval || 1)),
+    byDays,
+    endType: input?.endType === 'until' || input?.endType === 'count' ? input.endType : 'never',
+    untilValue: compactString(input?.untilValue),
+    countValue: Math.max(1, Number(input?.countValue || 10))
+  };
+}
+
+function buildScheduledPracticePayload(input: SchedulePracticeFormInput, user: AuthUser, options?: { editingPracticeId?: string | null; editingSeriesId?: string | null }) {
+  const title = compactString(input.title) || 'Practice';
+  const startDate = new Date(input.startDate);
+  const endDate = new Date(input.endDate);
+  if (Number.isNaN(startDate.getTime())) throw new Error('Practice start time is invalid.');
+  if (Number.isNaN(endDate.getTime())) throw new Error('Practice end time is invalid.');
+  if (endDate.getTime() <= startDate.getTime()) throw new Error('Practice end time must be after the start time.');
+
+  const practiceData: Record<string, unknown> = {
+    type: 'practice',
+    title,
+    date: startDate,
+    end: endDate,
+    opponent: null,
+    location: compactString(input.location),
+    notes: compactString(input.notes),
+    scheduleNotifications: input.scheduleNotifications || {},
+    status: 'scheduled',
+    homeScore: 0,
+    awayScore: 0,
+    statTrackerConfigId: null,
     createdBy: user.uid
+  };
+
+  const recurrence = sanitizePracticeRecurrenceInput(input.recurrence);
+  applyPracticeRecurrenceFields({
+    practiceData,
+    isRecurring: recurrence.isRecurring,
+    editingPracticeId: options?.editingPracticeId || null,
+    editingSeriesId: options?.editingSeriesId || null,
+    recurrenceConfig: recurrence,
+    startDate,
+    endDate,
+    Timestamp,
+    deleteField,
+    generateSeriesId
+  });
+
+  return practiceData;
+}
+
+function buildNativePracticePatchPayload(input: SchedulePracticeFormInput, user: AuthUser, options?: { editingPracticeId?: string | null; editingSeriesId?: string | null }) {
+  const payload = buildScheduledPracticePayload(input, user, options) as Record<string, unknown>;
+  const recurrence = sanitizePracticeRecurrenceInput(input.recurrence);
+  const recurrenceFieldNames = ['isSeriesMaster', 'recurrence', 'seriesId', 'startTime', 'endTime', 'endDayOffset', 'exDates', 'overrides'];
+  Object.keys(payload).forEach((key) => {
+    if (payload[key] === undefined || (options?.editingPracticeId && !recurrence.isRecurring && recurrenceFieldNames.includes(key))) {
+      payload[key] = nativeDeleteFieldSentinel;
+    }
+  });
+  return payload;
+}
+
+function buildOccurrenceOverridePayload(input: SchedulePracticeFormInput) {
+  const title = compactString(input.title) || 'Practice';
+  const startDate = new Date(input.startDate);
+  const endDate = new Date(input.endDate);
+  if (Number.isNaN(startDate.getTime())) throw new Error('Practice start time is invalid.');
+  if (Number.isNaN(endDate.getTime())) throw new Error('Practice end time is invalid.');
+  if (endDate.getTime() <= startDate.getTime()) throw new Error('Practice end time must be after the start time.');
+  return {
+    title,
+    startTime: startDate.toTimeString().slice(0, 5),
+    endTime: endDate.toTimeString().slice(0, 5),
+    location: compactString(input.location),
+    notes: compactString(input.notes)
+  };
+}
+
+export async function createScheduledPracticeForApp(teamId: string, input: SchedulePracticeFormInput, user: AuthUser | null) {
+  const normalizedTeamId = compactString(teamId);
+  if (!normalizedTeamId) throw new Error('Team is required.');
+  await requireScheduleImportStaff(normalizedTeamId, user);
+  const payload = buildScheduledPracticePayload(input, user as AuthUser);
+
+  try {
+    return await withTimeout(Promise.resolve(addPractice(normalizedTeamId, payload)), 'Scheduled practice create');
+  } catch (error) {
+    if (!isNativeRuntime()) throw error;
+    logScheduleWarning('Falling back to REST scheduled practice create.', 'scheduled-practice-create', error, { fallback: 'rest', teamId: normalizedTeamId });
+    const doc = await nativeCreateDocument(`teams/${encodeURIComponent(normalizedTeamId)}/games`, {
+      ...buildNativePracticePatchPayload(input, user as AuthUser),
+      createdAt: new Date()
+    });
+    return doc?.id || '';
+  }
+}
+
+export async function updateScheduledPracticeForApp(teamId: string, input: SchedulePracticeFormInput, user: AuthUser | null, options: UpdateScheduledPracticeOptions) {
+  const normalizedTeamId = compactString(teamId);
+  const normalizedEventId = compactString(options?.eventId);
+  if (!normalizedTeamId) throw new Error('Team is required.');
+  if (!normalizedEventId) throw new Error('Practice is required.');
+  await requireScheduleImportStaff(normalizedTeamId, user);
+  const scope = options?.scope === 'occurrence' ? 'occurrence' : 'series';
+  const occurrence = scope === 'occurrence'
+    ? (options?.instanceDate ? { masterId: normalizedEventId, instanceDate: compactString(options.instanceDate) } : parseRecurringPracticeOccurrenceId(normalizedEventId))
+    : null;
+
+  if (scope === 'occurrence') {
+    if (!occurrence?.masterId || !occurrence?.instanceDate) throw new Error('A recurring practice occurrence is required.');
+    const payload = buildOccurrenceOverridePayload(input);
+    try {
+      await withTimeout(Promise.resolve(updateOccurrence(normalizedTeamId, occurrence.masterId, occurrence.instanceDate, payload)), 'Scheduled practice occurrence update');
+    } catch (error) {
+      if (!isNativeRuntime()) throw error;
+      logScheduleWarning('Falling back to REST scheduled practice occurrence update.', 'scheduled-practice-occurrence-update', error, { fallback: 'rest', teamId: normalizedTeamId, masterId: occurrence.masterId, instanceDate: occurrence.instanceDate });
+      const dotPayload = Object.keys(payload).reduce<Record<string, unknown>>((acc, key) => {
+        acc[`overrides.${occurrence.instanceDate}.${key}`] = payload[key as keyof typeof payload];
+        return acc;
+      }, {});
+      await nativePatchDocument(`teams/${encodeURIComponent(normalizedTeamId)}/games/${encodeURIComponent(occurrence.masterId)}`, {
+        ...dotPayload,
+        updatedAt: new Date(),
+        updatedBy: (user as AuthUser).uid
+      });
+    }
+    return { updated: true, scope, eventId: occurrence.masterId, instanceDate: occurrence.instanceDate };
+  }
+
+  const payload = buildScheduledPracticePayload(input, user as AuthUser, {
+    editingPracticeId: normalizedEventId,
+    editingSeriesId: options?.seriesId || null
+  });
+  try {
+    await withTimeout(Promise.resolve(updateEvent(normalizedTeamId, normalizedEventId, payload)), 'Scheduled practice series update');
+  } catch (error) {
+    if (!isNativeRuntime()) throw error;
+    logScheduleWarning('Falling back to REST scheduled practice series update.', 'scheduled-practice-series-update', error, { fallback: 'rest', teamId: normalizedTeamId, eventId: normalizedEventId });
+    await nativePatchDocument(`teams/${encodeURIComponent(normalizedTeamId)}/games/${encodeURIComponent(normalizedEventId)}`, {
+      ...buildNativePracticePatchPayload(input, user as AuthUser, {
+        editingPracticeId: normalizedEventId,
+        editingSeriesId: options?.seriesId || null
+      }),
+      updatedAt: new Date(),
+      updatedBy: (user as AuthUser).uid
+    });
+  }
+  return { updated: true, scope, eventId: normalizedEventId };
+}
+
+export async function revertScheduledPracticeOccurrenceForApp(teamId: string, eventId: string, user: AuthUser | null) {
+  const normalizedTeamId = compactString(teamId);
+  if (!normalizedTeamId) throw new Error('Team is required.');
+  await requireScheduleImportStaff(normalizedTeamId, user);
+  const occurrence = parseRecurringPracticeOccurrenceId(eventId);
+  if (!occurrence) throw new Error('A recurring practice occurrence is required.');
+
+  try {
+    await withTimeout(Promise.resolve(clearOccurrenceOverride(normalizedTeamId, occurrence.masterId, occurrence.instanceDate)), 'Scheduled practice occurrence revert');
+  } catch (error) {
+    if (!isNativeRuntime()) throw error;
+    logScheduleWarning('Falling back to REST scheduled practice occurrence revert.', 'scheduled-practice-occurrence-revert', error, { fallback: 'rest', teamId: normalizedTeamId, masterId: occurrence.masterId, instanceDate: occurrence.instanceDate });
+    await nativePatchDocument(`teams/${encodeURIComponent(normalizedTeamId)}/games/${encodeURIComponent(occurrence.masterId)}`, {
+      [`overrides.${occurrence.instanceDate}`]: nativeDeleteFieldSentinel,
+      updatedAt: new Date(),
+      updatedBy: (user as AuthUser).uid
+    });
+  }
+  return { reverted: true, eventId: occurrence.masterId, instanceDate: occurrence.instanceDate };
+}
+
+export async function loadScheduledPracticeSeriesForEdit(teamId: string, eventId: string, user: AuthUser | null) {
+  const normalizedTeamId = compactString(teamId);
+  if (!normalizedTeamId) throw new Error('Team is required.');
+  await requireScheduleImportStaff(normalizedTeamId, user);
+  const occurrence = parseRecurringPracticeOccurrenceId(eventId);
+  const sourceEventId = occurrence?.masterId || compactString(eventId);
+  if (!sourceEventId) throw new Error('Practice is required.');
+
+  const game = await readWithNativeFallback(
+    `scheduled practice master ${sourceEventId}`,
+    () => Promise.resolve(getGame(normalizedTeamId, sourceEventId)),
+    () => nativeGetDocument(`teams/${encodeURIComponent(normalizedTeamId)}/games/${encodeURIComponent(sourceEventId)}`)
+  );
+  if (!game || game.type !== 'practice') throw new Error('Practice series not found.');
+
+  const startDate = toEventDate(game.date) || new Date();
+  const endDate = toEventDate(game.end) || new Date(startDate.getTime() + 90 * 60000);
+  const recurrence = sanitizePracticeRecurrenceInput({
+    isRecurring: Boolean(game.isSeriesMaster && game.recurrence),
+    freq: game.recurrence?.freq,
+    interval: game.recurrence?.interval,
+    byDays: Array.isArray(game.recurrence?.byDays) ? game.recurrence.byDays : [],
+    endType: game.recurrence?.until ? 'until' : (game.recurrence?.count ? 'count' : 'never'),
+    untilValue: game.recurrence?.until ? (normalizeScheduleDate(game.recurrence.until)?.toISOString().slice(0, 10) || '') : '',
+    countValue: Number(game.recurrence?.count || 10)
+  });
+
+  return {
+    eventId: sourceEventId,
+    seriesId: compactString(game.seriesId) || null,
+    input: {
+      title: compactString(game.title) || 'Practice',
+      startDate,
+      endDate,
+      location: compactString(game.location),
+      notes: compactString(game.notes),
+      scheduleNotifications: game.scheduleNotifications && typeof game.scheduleNotifications === 'object' ? game.scheduleNotifications : {},
+      recurrence
+    } as SchedulePracticeFormInput
   };
 }
 
@@ -1288,6 +1797,25 @@ export async function createScheduleImportGame(teamId: string, row: ScheduleImpo
     });
     return doc?.id || '';
   }
+}
+
+export async function finalizeScheduleImportBatch(teamId: string, batchId: string, totalCount: number, user: AuthUser | null) {
+  const normalizedTeamId = compactString(teamId);
+  const normalizedBatchId = compactString(batchId);
+  const safeTotalCount = Math.max(0, Number.parseInt(String(totalCount || 0), 10) || 0);
+  if (!normalizedTeamId) throw new Error('Team is required.');
+  if (!normalizedBatchId || safeTotalCount <= 0) return;
+  await requireScheduleImportStaff(normalizedTeamId, user);
+
+  await withTimeout(runTransaction(db, async (transaction: any) => {
+    transaction.set(doc(db, `teams/${normalizedTeamId}/scheduleImportNotificationBatches/${normalizedBatchId}`), {
+      batchId: normalizedBatchId,
+      totalCount: safeTotalCount,
+      importCompletedAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
+      finalizedBy: user?.uid || null
+    }, { merge: true });
+  }), 'Schedule import batch finalize');
 }
 
 export async function createScheduleImportPractice(teamId: string, row: ScheduleImportNormalizedRow, user: AuthUser | null) {
@@ -1381,6 +1909,18 @@ async function loadPlayers(teamId: string) {
   );
 }
 
+async function loadPlayer(teamId: string, playerId: string) {
+  return readWithNativeFallback(
+    `player ${teamId}/${playerId}`,
+    async () => {
+      const snapshot = await getDoc(doc(db, 'teams', teamId, 'players', playerId));
+      if (!snapshot.exists()) return null;
+      return { id: snapshot.id || playerId, ...(snapshot.data() || {}) };
+    },
+    () => nativeGetDocument(`teams/${encodeURIComponent(teamId)}/players/${encodeURIComponent(playerId)}`)
+  );
+}
+
 function normalizePlayerName(player: any) {
   return compactString(player?.name || player?.displayName || player?.playerName) || 'Player';
 }
@@ -1428,28 +1968,146 @@ export async function loadHomeScoringPlayers(teamId: string, gameId: string): Pr
     .filter(Boolean) as ScheduleHomeScoringPlayer[];
 }
 
-function normalizeChildLinks(user: AuthUser, profile: Record<string, unknown>): ParentScheduleChild[] {
-  const parentOf = Array.isArray(profile.parentOf) && profile.parentOf.length > 0
-    ? profile.parentOf
-    : Array.isArray(user.parentOf) ? user.parentOf : [];
+function getProfileArray(profile: Record<string, unknown>, key: string) {
+  const value = profile[key];
+  return Array.isArray(value) ? value : [];
+}
 
-  const seen = new Set<string>();
-  return parentOf
-    .map((entry: any) => {
-      const teamId = compactString(entry?.teamId);
-      const playerId = compactString(entry?.playerId || entry?.childId);
-      if (!teamId || !playerId) return null;
-      const key = `${teamId}::${playerId}`;
-      if (seen.has(key)) return null;
-      seen.add(key);
-      return {
-        teamId,
-        teamName: compactString(entry?.teamName),
-        playerId,
-        playerName: compactString(entry?.playerName || entry?.childName || entry?.name) || 'Player'
-      };
-    })
-    .filter(Boolean) as ParentScheduleChild[];
+function getUserArray(user: AuthUser, key: keyof AuthUser | 'parentTeamIds' | 'parentPlayerKeys') {
+  const value = (user as any)[key];
+  return Array.isArray(value) ? value : [];
+}
+
+function parseParentPlayerKey(value: unknown) {
+  const raw = compactString(value);
+  const separatorIndex = raw.indexOf('::');
+  if (separatorIndex <= 0 || separatorIndex >= raw.length - 2) return null;
+  const teamId = compactString(raw.slice(0, separatorIndex));
+  const playerId = compactString(raw.slice(separatorIndex + 2));
+  if (!teamId || !playerId) return null;
+  return { teamId, playerId };
+}
+
+function collectParentScopeLinks(user: AuthUser, profile: Record<string, unknown>): ParentScopeLink[] {
+  const linksByKey = new Map<string, ParentScopeLink>();
+
+  const addLink = (link: ParentScopeLink) => {
+    const key = `${link.teamId}::${link.playerId}`;
+    const existing = linksByKey.get(key);
+    if (!existing) {
+      linksByKey.set(key, link);
+      return;
+    }
+    linksByKey.set(key, {
+      ...existing,
+      teamName: existing.teamName || link.teamName,
+      playerName: existing.playerName === 'Player' ? link.playerName : existing.playerName,
+      playerNumber: existing.playerNumber || link.playerNumber,
+      playerPhotoUrl: existing.playerPhotoUrl || link.playerPhotoUrl,
+      hasMetadata: existing.hasMetadata || link.hasMetadata
+    });
+  };
+
+  const addParentOfEntry = (entry: any) => {
+    const teamId = compactString(entry?.teamId);
+    const playerId = compactString(entry?.playerId || entry?.childId);
+    if (!teamId || !playerId) return;
+    const teamName = compactString(entry?.teamName);
+    const playerName = compactString(entry?.playerName || entry?.childName || entry?.name);
+    const playerNumber = compactString(entry?.playerNumber || entry?.number);
+    const playerPhotoUrl = compactString(entry?.playerPhotoUrl || entry?.photoUrl) || null;
+    addLink({
+      teamId,
+      teamName,
+      playerId,
+      playerName: playerName || 'Player',
+      playerNumber,
+      playerPhotoUrl,
+      hasMetadata: Boolean(teamName || playerName || playerNumber || playerPhotoUrl)
+    });
+  };
+
+  const profileParentOf = getProfileArray(profile, 'parentOf');
+  const profileParentPlayerKeys = getProfileArray(profile, 'parentPlayerKeys');
+  const hasProfileScope = profileParentOf.length > 0 || profileParentPlayerKeys.length > 0;
+  const parentOf = hasProfileScope ? profileParentOf : getUserArray(user, 'parentOf');
+  const parentPlayerKeys = profileParentPlayerKeys.length > 0 ? profileParentPlayerKeys : getUserArray(user, 'parentPlayerKeys');
+
+  parentOf.forEach(addParentOfEntry);
+  parentPlayerKeys
+    .map(parseParentPlayerKey)
+    .filter(Boolean)
+    .forEach((parsed) => {
+      addLink({
+        teamId: parsed!.teamId,
+        teamName: '',
+        playerId: parsed!.playerId,
+        playerName: 'Player',
+        hasMetadata: false
+      });
+    });
+
+  return [...linksByKey.values()];
+}
+
+async function resolveParentScheduleChildren(user: AuthUser, profile: Record<string, unknown>): Promise<ParentScheduleChild[]> {
+  const links = collectParentScopeLinks(user, profile);
+  if (!links.length) return [];
+
+  const linksByTeam = new Map<string, ParentScopeLink[]>();
+  links.forEach((link) => {
+    if (!linksByTeam.has(link.teamId)) linksByTeam.set(link.teamId, []);
+    linksByTeam.get(link.teamId)?.push(link);
+  });
+
+  const batches = await mapWithConcurrency([...linksByTeam.entries()], parentScheduleTeamConcurrency, async ([teamId, teamLinks]) => {
+    const rawTeam = await loadRawTeam(teamId).catch((error) => {
+      logScheduleWarning('Unable to validate parent-linked team.', 'parent-team-scope-load', error, { teamId });
+      return undefined;
+    });
+    if (rawTeam === null) return [];
+    if (rawTeam && !isTeamActive(rawTeam as Record<string, any>)) return [];
+
+    const linkedPlayers = await mapWithConcurrency(teamLinks, parentSchedulePlayerConcurrency, async (link) => {
+      const player = await loadPlayer(teamId, link.playerId).catch((error) => {
+        logScheduleWarning('Unable to validate parent-linked player.', 'parent-player-scope-load', error, {
+          teamId,
+          playerId: link.playerId
+        });
+        return null;
+      });
+      return { playerId: link.playerId, player };
+    });
+    const playersById = new Map<string, any>();
+    linkedPlayers.forEach(({ playerId, player }) => {
+      if (player) {
+        const id = compactString(player?.id || player?.playerId);
+        playersById.set(id || playerId, player);
+      }
+    });
+
+    const teamName = compactString((rawTeam as any)?.name) || compactString((rawTeam as any)?.teamName) || '';
+    return teamLinks
+      .map((link) => {
+        const player = playersById.get(link.playerId) || null;
+        if (!player || !isActiveRosterPlayer(player)) return null;
+        return {
+          teamId: link.teamId,
+          teamName: teamName || link.teamName,
+          playerId: link.playerId,
+          playerName: player ? normalizePlayerName(player) : link.playerName || 'Player'
+        };
+      })
+      .filter(Boolean) as ParentScheduleChild[];
+  });
+
+  return batches.flat();
+}
+
+export async function loadParentScheduleChildren(user: AuthUser | null, options: { profile?: Record<string, unknown> } = {}): Promise<ParentScheduleChild[]> {
+  if (!user?.uid) return [];
+  const profile = options.profile || await loadProfileDocument(user.uid).catch(() => ({}));
+  return resolveParentScheduleChildren(user, profile as Record<string, unknown>);
 }
 
 function hasRecordedAttendance(attendance: any) {
@@ -1508,22 +2166,41 @@ function getTrackedCalendarEventUidsFromLoadedGames(games: any[] = []) {
     .filter(Boolean);
 }
 
-async function loadTeam(teamId: string) {
-  const team = await readWithNativeFallback(
+async function loadRawTeam(teamId: string) {
+  return readWithNativeFallback(
     `team ${teamId}`,
     () => Promise.resolve(getTeam(teamId)),
     () => nativeGetDocument(`teams/${encodeURIComponent(teamId)}`)
   );
-  return isTeamActive(team as Record<string, any> | null) ? team : null;
 }
 
-async function loadGames(teamId: string) {
+async function loadTeam(teamId: string) {
+  const team = await loadRawTeam(teamId);
+  return team && isTeamActive(team as Record<string, any>) ? team : null;
+}
+
+type ScheduleDateRange = { startDate?: Date | null; endDate?: Date | null };
+type ScheduleDateRangeByTeam = Record<string, ScheduleDateRange | undefined>;
+
+function isEventWithinRange(game: any, range: ScheduleDateRange) {
+  if (!range.startDate && !range.endDate) return true;
+  const date = toEventDate(game?.date);
+  if (Number.isNaN(date.getTime())) return true;
+  if (range.startDate && date < range.startDate) return false;
+  if (range.endDate && date > range.endDate) return false;
+  return true;
+}
+
+async function loadGames(teamId: string, range: ScheduleDateRange = {}) {
   return readWithNativeFallback(
     `games ${teamId}`,
-    () => Promise.resolve(getGames(teamId)),
+    async () => mapScheduleEventRecords(await getGames(teamId, range)),
     async () => {
       const docs = await nativeListScheduleEventDocuments(`teams/${encodeURIComponent(teamId)}/games`);
-      return docs.sort((a, b) => toEventDate(a.date).getTime() - toEventDate(b.date).getTime());
+      const windowed = (range.startDate || range.endDate)
+        ? docs.filter((doc) => isEventWithinRange(doc, range))
+        : docs;
+      return windowed.sort((a, b) => toEventDate(a.date).getTime() - toEventDate(b.date).getTime());
     }
   );
 }
@@ -1531,18 +2208,21 @@ async function loadGames(teamId: string) {
 async function loadGameById(teamId: string, gameId: string) {
   return readWithNativeFallback(
     `game ${teamId}/${gameId}`,
-    () => Promise.resolve(getGame(teamId, gameId)),
+    async () => mapScheduleEventRecord(await getGame(teamId, gameId), gameId),
     () => nativeGetScheduleEventDocument(`teams/${encodeURIComponent(teamId)}/games/${encodeURIComponent(gameId)}`)
   );
 }
 
-async function loadPracticeSessions(teamId: string) {
+async function loadPracticeSessions(teamId: string, range: ScheduleDateRange = {}) {
   return readWithNativeFallback(
     `practice sessions ${teamId}`,
-    () => Promise.resolve(getPracticeSessions(teamId)),
+    () => Promise.resolve(getPracticeSessions(teamId, range)),
     async () => {
       const docs = await nativeListCollection(`teams/${encodeURIComponent(teamId)}/practiceSessions`);
-      return docs.sort((a, b) => toEventDate(b.date).getTime() - toEventDate(a.date).getTime());
+      const windowed = (range.startDate || range.endDate)
+        ? docs.filter((doc) => isEventWithinRange(doc, range))
+        : docs;
+      return windowed.sort((a, b) => toEventDate(b.date).getTime() - toEventDate(a.date).getTime());
     }
   );
 }
@@ -1744,6 +2424,8 @@ function createScheduleEvent(input: {
   seasonLabel?: string | null;
   competitionType?: string | null;
   countsTowardSeasonRecord?: boolean | null;
+  tournament?: Record<string, any> | null;
+  statTrackerConfigId?: string | null;
   sourceType?: string | null;
   sourceLabel?: string | null;
   isImported?: boolean;
@@ -1810,6 +2492,8 @@ function createScheduleEvent(input: {
     seasonLabel: input.seasonLabel || null,
     competitionType: input.competitionType || null,
     countsTowardSeasonRecord: input.countsTowardSeasonRecord ?? null,
+    tournament: input.tournament && typeof input.tournament === 'object' ? input.tournament : null,
+    statTrackerConfigId: input.statTrackerConfigId || null,
     sourceType: input.sourceType || (input.isDbGame ? 'db' : 'calendar'),
     sourceLabel: input.sourceLabel || (input.isDbGame ? 'ALL PLAYS schedule' : 'Team calendar'),
     isImported: input.isImported === true || !input.isDbGame,
@@ -1841,12 +2525,18 @@ function createScheduleEvent(input: {
   };
 }
 
-async function buildTeamSchedule(teamId: string, teamChildren: ParentScheduleChild[], user: AuthUser) {
+async function buildTeamSchedule(teamId: string, teamChildren: ParentScheduleChild[], user: AuthUser, options: { includePastGames?: boolean; range?: ScheduleDateRange } = {}) {
   const events: ParentScheduleEvent[] = [];
+  // Default schedule views only need upcoming + recent games; window the games
+  // query so teams with several seasons of history don't read hundreds of docs
+  // on every load (#2034). Explicit history views pass includePastGames.
+  const gamesRange: ScheduleDateRange = options.range || (options.includePastGames
+    ? {}
+    : { startDate: new Date(Date.now() - defaultScheduleHistoryWindowMs) });
   const [team, dbGames, practiceSessions] = await Promise.all([
     loadTeam(teamId),
-    loadGames(teamId),
-    loadPracticeSessions(teamId)
+    loadGames(teamId, gamesRange),
+    loadPracticeSessions(teamId, gamesRange)
   ]);
   if (!team) return events;
   const trackedUids = getTrackedCalendarEventUidsFromLoadedGames(dbGames || []);
@@ -1909,6 +2599,7 @@ async function buildTeamSchedule(teamId: string, teamChildren: ParentScheduleChi
             seasonLabel: game.seasonLabel || null,
             competitionType: game.competitionType || null,
             countsTowardSeasonRecord: game.countsTowardSeasonRecord ?? null,
+            tournament: game.tournament || null,
             sourceType: game.sourceMetadata?.sourceType || game.source || 'db',
             sourceLabel: getScheduleSourceLabel(game),
             isImported: Boolean(game.sourceMetadata || game.source === 'calendar' || game.source === 'registration'),
@@ -1972,6 +2663,7 @@ async function buildTeamSchedule(teamId: string, teamChildren: ParentScheduleChi
           seasonLabel: game.seasonLabel || null,
           competitionType: game.competitionType || null,
           countsTowardSeasonRecord: game.countsTowardSeasonRecord ?? null,
+          tournament: game.tournament || null,
           sourceType: game.sourceMetadata?.sourceType || game.source || 'db',
           sourceLabel: getScheduleSourceLabel(game),
           isImported: Boolean(game.sourceMetadata || game.source === 'calendar' || game.source === 'registration'),
@@ -2084,12 +2776,17 @@ async function buildTeamSchedule(teamId: string, teamChildren: ParentScheduleChi
 }
 
 async function buildTargetedTeamScheduleEvent(teamId: string, eventId: string, teamChildren: ParentScheduleChild[], user: AuthUser) {
-  const [team, game] = await Promise.all([
+  const occurrenceMatch = eventId.match(/^(.*)__([0-9]{4}-[0-9]{2}-[0-9]{2})$/);
+  const [team, initialGame] = await Promise.all([
     loadTeam(teamId),
     loadGameById(teamId, eventId)
   ]);
-  if (!team || !game) return [];
-  if (game.type === 'practice' && game.isSeriesMaster && game.recurrence) return [];
+  if (!team) return [];
+
+  const game = initialGame || (occurrenceMatch?.[1]
+    ? await loadGameById(teamId, occurrenceMatch[1]).catch(() => null)
+    : null);
+  if (!game) return [];
 
   const teamName = compactString(team.name) || teamId;
   const teamWithId = { ...team, id: team.id || teamId };
@@ -2103,6 +2800,66 @@ async function buildTargetedTeamScheduleEvent(teamId: string, eventId: string, t
   const normalizedId = compactString(game.id || game.gameId || eventId);
   const isCancelled = game.status === 'cancelled';
   if (!normalizedId) return [];
+
+  if (isPractice && game.isSeriesMaster && game.recurrence) {
+    const occurrenceDateKey = occurrenceMatch?.[2] || null;
+    if (!occurrenceDateKey) return [];
+    const occurrence = expandRecurrence(game).find((candidate) => (
+      compactString(candidate?.instanceDate) === occurrenceDateKey ||
+      compactString(`${candidate?.masterId || normalizedId}__${candidate?.instanceDate || ''}`) === eventId
+    ));
+    if (!occurrence) return [];
+
+    const occurrenceDate = normalizeScheduleDate(occurrence.date) || new Date(occurrence.date);
+    return teamChildren.map((child) => createScheduleEvent({
+      teamId,
+      teamName,
+      teamNotificationEmail: team.notificationEmail || null,
+      child,
+      id: eventId,
+      type: 'practice',
+      date: occurrenceDate,
+      endDate: occurrence.endDate || occurrence.end || game.endDate || game.end || null,
+      location: occurrence.location || 'TBD',
+      opponent: 'TBD',
+      title: occurrence.title || null,
+      isDbGame: true,
+      isCancelled,
+      status: game.status || null,
+      liveStatus: game.liveStatus || null,
+      liveClockMs: game.liveClockMs ?? null,
+      liveClockRunning: game.liveClockRunning ?? null,
+      liveClockPeriod: game.liveClockPeriod || null,
+      liveClockUpdatedAt: game.liveClockUpdatedAt || null,
+      homeScore: game.homeScore ?? null,
+      awayScore: game.awayScore ?? null,
+      canUpdateScore: false,
+      arrivalTime: game.arrivalTime || null,
+      notes: game.notes || null,
+      seasonLabel: game.seasonLabel || null,
+      competitionType: game.competitionType || null,
+      countsTowardSeasonRecord: game.countsTowardSeasonRecord ?? null,
+      tournament: game.tournament || null,
+      statTrackerConfigId: game.statTrackerConfigId || null,
+      sourceType: game.sourceMetadata?.sourceType || game.source || 'db',
+      sourceLabel: getScheduleSourceLabel(game),
+      isImported: Boolean(game.sourceMetadata || game.source === 'calendar' || game.source === 'registration'),
+      visibility: game.visibility || null,
+      assignments: Array.isArray(game.assignments) ? game.assignments : [],
+      rsvpSummary: game.rsvpSummary || null,
+      practiceAttendance: hasRecordedAttendance(session?.attendance) ? session?.attendance : null,
+      practiceHomePacket: hasHomePacket(session) ? session?.homePacketContent : null,
+      practiceSessionId: compactString(session?.id) || null,
+      availabilityPreferences,
+      isTeamAdmin: isRsvpReminderManager,
+      isTeamStaff: isStaff,
+      isTeamRsvpReminderManager: isRsvpReminderManager,
+      gamePlan: game.gamePlan || null,
+      rotationPlan: game.rotationPlan || null,
+      rotationActual: game.rotationActual || null,
+      coachingNotes: Array.isArray(game.coachingNotes) ? game.coachingNotes : []
+    }));
+  }
 
   teamChildren.forEach((child) => {
     child.teamName = child.teamName || teamName;
@@ -2143,6 +2900,8 @@ async function buildTargetedTeamScheduleEvent(teamId: string, eventId: string, t
     seasonLabel: game.seasonLabel || null,
     competitionType: game.competitionType || null,
     countsTowardSeasonRecord: game.countsTowardSeasonRecord ?? null,
+    tournament: game.tournament || null,
+    statTrackerConfigId: game.statTrackerConfigId || null,
     sourceType: game.sourceMetadata?.sourceType || game.source || 'db',
     sourceLabel: getScheduleSourceLabel(game),
     isImported: Boolean(game.sourceMetadata || game.source === 'calendar' || game.source === 'registration'),
@@ -2232,11 +2991,7 @@ async function hydrateEventDetails(events: ParentScheduleEvent[], user: AuthUser
     const firstEvent = matchingEvents[0];
     if (!firstEvent) return;
 
-    const [rsvps, offers, claims] = await Promise.all([
-      loadRsvps(teamId, gameId).catch(() => []),
-      loadRideOffers(teamId, gameId).catch(() => []),
-      loadAssignmentClaims(teamId, gameId).catch(() => ({}))
-    ]);
+    const { rsvps, offers, claims } = await loadCachedEventHydrationDetails(teamId, gameId);
     const myRsvpByChild = resolveMyRsvpByChildForGame(events, teamId, gameId, rsvps, user.uid);
     const myRsvpNotesByChild = resolveMyRsvpNotesByChildForGame(events, teamId, gameId, rsvps, user.uid);
     const summary = summaryMapsByTeam.get(teamId)?.get(gameId) || firstEvent.rsvpSummary || summarizeRsvps(rsvps);
@@ -2260,17 +3015,51 @@ async function hydrateEventDetails(events: ParentScheduleEvent[], user: AuthUser
   return events;
 }
 
+function shouldEagerlyHydrateParentHomeEvent(event: ParentScheduleEvent, nowMs = Date.now()) {
+  const eventTime = event.date?.getTime?.();
+  if (!Number.isFinite(eventTime)) return false;
+  return eventTime >= nowMs - parentHomeHydrationLookBehindMs
+    && eventTime <= nowMs + parentHomeHydrationLookAheadMs;
+}
+
+function loadCachedEventHydrationDetails(teamId: string, gameId: string) {
+  return loadCachedAppData(
+    `event-details:${teamId}:${gameId}`,
+    async () => {
+      const results = await Promise.allSettled([
+        loadRsvps(teamId, gameId),
+        loadRideOffers(teamId, gameId),
+        loadAssignmentClaims(teamId, gameId)
+      ]);
+      const firstRejected = results.find((result) => result.status === 'rejected');
+      if (firstRejected && results.every((result) => result.status === 'rejected')) {
+        throw firstRejected.reason;
+      }
+      const [rsvpsResult, offersResult, claimsResult] = results;
+      return {
+        rsvps: rsvpsResult.status === 'fulfilled' ? rsvpsResult.value : [],
+        offers: offersResult.status === 'fulfilled' ? offersResult.value : [],
+        claims: claimsResult.status === 'fulfilled' ? claimsResult.value : {}
+      };
+    },
+    {
+      ttlMs: scheduleHydrationCacheTtlMs,
+      persist: false
+    }
+  );
+}
+
 export async function hydrateParentScheduleDetails(schedule: ParentScheduleLoadResult, user: AuthUser | null): Promise<ParentScheduleLoadResult> {
   if (!user?.uid || !schedule.events.length) {
     return schedule;
   }
-  await hydrateEventDetails(schedule.events, user);
+  await hydrateEventDetails(schedule.events.filter((event) => shouldEagerlyHydrateParentHomeEvent(event)), user);
   return schedule;
 }
 
 async function buildParentScheduleTeamChildren(user: AuthUser, profile: Record<string, unknown>, options: ParentScheduleLoadOptions = {}) {
   const expandStaffPlayers = options.expandStaffPlayers !== false;
-  const children = normalizeChildLinks(user, profile as Record<string, unknown>);
+  const children = await resolveParentScheduleChildren(user, profile as Record<string, unknown>);
   const byTeam = new Map<string, ParentScheduleChild[]>();
   children.forEach((child) => {
     if (!byTeam.has(child.teamId)) byTeam.set(child.teamId, []);
@@ -2311,6 +3100,31 @@ async function buildParentScheduleTeamChildren(user: AuthUser, profile: Record<s
   return { children, byTeam, staffTeams };
 }
 
+/**
+ * Resolve already-cached schedule events for a route target from the parent
+ * schedule summary cache, so ScheduleEventDetail can warm-start from known data
+ * instead of showing a cold full-page skeleton (#2649). Returns every matching
+ * child-event row for the event.
+ */
+export function resolveCachedParentScheduleEvents(
+  userId: string,
+  teamId: string,
+  eventId: string
+): ParentScheduleEvent[] {
+  const normalizedTeamId = compactString(teamId);
+  const normalizedEventId = compactString(eventId);
+  if (!userId || !normalizedTeamId || !normalizedEventId) {
+    return [];
+  }
+  const cached = getCachedAppData<ParentScheduleLoadResult>(getParentScheduleSummaryCacheKey(userId));
+  if (!cached?.events?.length) {
+    return [];
+  }
+  return cached.events.filter(
+    (event) => event.teamId === normalizedTeamId && event.id === normalizedEventId
+  );
+}
+
 export async function loadParentScheduleEventDetail(user: AuthUser | null, options: ParentScheduleEventDetailLoadOptions): Promise<ParentScheduleLoadResult> {
   const requestedTeamId = compactString(options?.teamId);
   const requestedEventId = compactString(options?.eventId);
@@ -2338,7 +3152,8 @@ export async function loadParentScheduleEventDetail(user: AuthUser | null, optio
     let events = await buildTargetedTeamScheduleEvent(requestedTeamId, requestedEventId, teamChildren, user);
     if (!events.length) {
       fallback = true;
-      const teamEvents = await buildTeamSchedule(requestedTeamId, teamChildren, user);
+      // Full history here so a deep-linked past event outside the default window is still found.
+      const teamEvents = await buildTeamSchedule(requestedTeamId, teamChildren, user, { includePastGames: true });
       teamEventRows = teamEvents.length;
       events = teamEvents.filter((event) => event.id === requestedEventId);
     }
@@ -2377,7 +3192,7 @@ export async function loadParentPlayerSchedule(user: AuthUser | null, options: P
 
   try {
     const profile = await loadProfileDocument(user.uid);
-    const children = normalizeChildLinks(user, profile as Record<string, unknown>);
+    const children = await resolveParentScheduleChildren(user, profile as Record<string, unknown>);
     let child = (requestedTeamId && requestedPlayerId)
       ? children.find((entry) => entry.teamId === requestedTeamId && entry.playerId === requestedPlayerId)
       : children.find((entry) => entry.playerId === requestedPlayerId);
@@ -2405,7 +3220,8 @@ export async function loadParentPlayerSchedule(user: AuthUser | null, options: P
       return { children, events: [] };
     }
 
-    const events = await buildTeamSchedule(child.teamId, [child], user);
+    // Single-player view: keep full history so past games still appear.
+    const events = await buildTeamSchedule(child.teamId, [child], user, { includePastGames: true });
     if (hydrateDetails && events.length) {
       await hydrateEventDetails(events, user);
     }
@@ -2488,9 +3304,15 @@ export async function loadParentSchedule(user: AuthUser | null, options: ParentS
   if (!user?.uid) {
     return { children: [], events: [] };
   }
-  const timer = startUxTimer('parent schedule service load');
+  const timer = startUxTimer('parent schedule service load', {
+    category: 'service_load',
+    service: 'schedule',
+    operation: 'parent-schedule-load'
+  });
   const hydrateDetails = options.hydrateDetails !== false;
   const expandStaffPlayers = options.expandStaffPlayers !== false;
+  const includePastGames = options.includePastGames === true;
+  const scheduleRangeByTeam = options.scheduleRangeByTeam || null;
 
   try {
     const profile = await loadProfileDocument(user.uid);
@@ -2499,7 +3321,10 @@ export async function loadParentSchedule(user: AuthUser | null, options: ParentS
     const teamEntries = [...byTeam.entries()];
     const eventBatches = await mapWithConcurrency(teamEntries, parentScheduleTeamConcurrency, async ([teamId, teamChildren]) => {
       try {
-        return await buildTeamSchedule(teamId, teamChildren, user);
+        return await buildTeamSchedule(teamId, teamChildren, user, {
+          includePastGames,
+          range: scheduleRangeByTeam?.[teamId]
+        });
       } catch (error) {
         logScheduleWarning('Failed to load team schedule.', 'team-schedule-load', error, { teamId });
         throw toAppServiceError(error, 'Unable to load schedule.');
@@ -2645,17 +3470,25 @@ export async function submitParentScheduleRsvp(event: ParentScheduleEvent, user:
     throw new Error('Select a child before submitting RSVP.');
   }
 
+  const interaction = startInteractionTimer(UX_TIMING.rsvpTap, { response });
   try {
-    return await withTimeout(Promise.resolve(submitRsvpForPlayer(event.teamId, event.id, user.uid, {
+    const result = await withTimeout(Promise.resolve(submitRsvpForPlayer(event.teamId, event.id, user.uid, {
       displayName: user.displayName || user.email,
       playerId: event.childId,
       response,
       note: compactString(note) || null
     })), 'RSVP submit');
+    interaction.end({ path: 'sdk' });
+    return result;
   } catch (error) {
-    if (!isNativeRuntime()) throw error;
+    if (!isNativeRuntime()) {
+      interaction.end({ error: (error as Error)?.message || 'RSVP submit failed' });
+      throw error;
+    }
     logScheduleWarning('Falling back to REST RSVP submit.', 'parent-rsvp-submit', error, { fallback: 'rest', teamId: event.teamId, gameId: event.id, childId: event.childId });
-    return nativeSubmitRsvpForPlayer(event.teamId, event.id, user, event.childId, response, note);
+    const fallback = await nativeSubmitRsvpForPlayer(event.teamId, event.id, user, event.childId, response, note);
+    interaction.end({ path: 'rest' });
+    return fallback;
   }
 }
 
@@ -2781,6 +3614,7 @@ export async function updateLiveGameClockState(teamId: string, gameId: string, c
     throw new Error('Sign in before updating the live clock.');
   }
 
+  assertGameAllowsLivePublishing(clock.currentGame);
   const now = new Date();
   const periods = buildLiveGameClockPeriods({ ...(clock.currentGame || {}), liveClockPeriod: clock.liveClockPeriod });
   const requestedPeriod = compactString(clock.liveClockPeriod) || compactString(clock.currentGame?.liveClockPeriod) || compactString(clock.currentGame?.period) || periods[0] || 'H1';
@@ -2792,12 +3626,8 @@ export async function updateLiveGameClockState(teamId: string, gameId: string, c
     liveClockUpdatedAt: now,
     liveClockUpdatedBy: user.uid,
     period,
-    liveStatus: 'live',
-    liveHasData: true
+    ...buildLiveTrackingGamePatch(clock.currentGame, user, now)
   };
-  if (!clock.currentGame?.liveStartedAt) {
-    payload.liveStartedAt = now;
-  }
 
   try {
     await withTimeout(Promise.resolve(updateGame(teamId, gameId, payload)), 'Live clock update');
@@ -2824,9 +3654,21 @@ function isFinalLiveTrackingStatus(value: unknown) {
   return normalized === 'completed' || normalized === 'final';
 }
 
+// Games are only ever live for a few hours; reject live publishing once a game's
+// scheduled date is well past so a stray late score update can't flip a stale game
+// to liveStatus: 'live' and leave it stuck there (#2022). Finalizing still happens
+// through Game Wrapup (completeGameWrapupForApp writes liveStatus: 'completed').
+const liveTrackingMaxStalenessMs = 3 * 24 * 60 * 60 * 1000;
+
 function assertGameAllowsLivePublishing(game: Record<string, any> | null | undefined) {
   if (isFinalLiveTrackingStatus(game?.status) || isFinalLiveTrackingStatus(game?.liveStatus)) {
     throw new Error('Live play-by-play is unavailable after the game is final.');
+  }
+  if (game?.date) {
+    const scheduledDate = toEventDate(game.date);
+    if (!Number.isNaN(scheduledDate.getTime()) && Date.now() - scheduledDate.getTime() > liveTrackingMaxStalenessMs) {
+      throw new Error('Live play-by-play is unavailable for past games. Use Game Wrapup to set the final score.');
+    }
   }
 }
 
@@ -3844,9 +4686,25 @@ async function sendPublicRsvpReminderEmailsNativeSafe(event: ParentScheduleEvent
   return payload;
 }
 
-async function updateRsvpReminderMetadata(event: ParentScheduleEvent, user: AuthUser, missingCount: number, emailCount: number) {
+function normalizeStaffRsvpReminderPushMetrics(source: Record<string, any> | null | undefined) {
+  const normalizeCount = (value: unknown) => Math.max(0, Number.parseInt(String(value || 0), 10) || 0);
+  return {
+    rsvpPushSuccessCount: normalizeCount(source?.rsvpPushSuccessCount),
+    rsvpPushFailureCount: normalizeCount(source?.rsvpPushFailureCount),
+    rsvpPushTargetCount: normalizeCount(source?.rsvpPushTargetCount),
+    rsvpPushError: compactString(source?.rsvpPushError) || null
+  };
+}
+
+async function updateRsvpReminderMetadata(
+  event: ParentScheduleEvent,
+  user: AuthUser,
+  missingCount: number,
+  emailCount: number,
+  pushMetrics = normalizeStaffRsvpReminderPushMetrics(null)
+) {
   const sentAt = new Date().toISOString();
-  const metadata = buildStaffRsvpReminderMetadata(user.uid, missingCount, emailCount, sentAt);
+  const metadata = buildStaffRsvpReminderMetadata(user.uid, missingCount, emailCount, sentAt, pushMetrics);
   const { persistedEventId, occurrenceKey } = getStaffRsvpReminderMetadataTarget(event.id);
 
   if (isNativeRuntime()) {
@@ -3876,7 +4734,11 @@ async function updateRsvpReminderMetadata(event: ParentScheduleEvent, user: Auth
     'scheduleNotifications.lastSentAt': sentAt,
     'scheduleNotifications.lastSentBy': user.uid || null,
     'scheduleNotifications.lastRsvpReminderCount': missingCount,
-    'scheduleNotifications.lastRsvpEmailCount': emailCount
+    'scheduleNotifications.lastRsvpEmailCount': emailCount,
+    'scheduleNotifications.lastRsvpPushSuccessCount': metadata.lastRsvpPushSuccessCount,
+    'scheduleNotifications.lastRsvpPushFailureCount': metadata.lastRsvpPushFailureCount,
+    'scheduleNotifications.lastRsvpPushTargetCount': metadata.lastRsvpPushTargetCount,
+    'scheduleNotifications.lastRsvpPushError': metadata.lastRsvpPushError
   };
   if (occurrenceKey) {
     updates[`scheduleNotifications.rsvpReminderOccurrences.${occurrenceKey}`] = metadata;
@@ -3909,10 +4771,12 @@ export async function sendStaffRsvpReminder(event: ParentScheduleEvent, user: Au
     selectedRecipientIds: []
   });
   const emailSentCount = resolveStaffRsvpReminderEmailSentCount(emailResult?.sentCount, preview.eligibleEmailCount);
-  await updateRsvpReminderMetadata(event, user, preview.missingPlayerCount, emailSentCount);
+  const rsvpPushMetrics = normalizeStaffRsvpReminderPushMetrics(emailResult);
+  await updateRsvpReminderMetadata(event, user, preview.missingPlayerCount, emailSentCount, rsvpPushMetrics);
   return {
     ...preview,
-    emailSentCount
+    emailSentCount,
+    ...rsvpPushMetrics
   };
 }
 
@@ -4428,6 +5292,133 @@ export async function saveStaffPracticeAttendance(event: ParentScheduleEvent, us
     checkedInCount: payload.checkedInCount,
     players
   };
+}
+
+function assertPracticePacketManagementEvent(event: ParentScheduleEvent, user: AuthUser | null) {
+  if (event.type !== 'practice') {
+    throw new Error('Home packets are only available for practice sessions.');
+  }
+  if (!event.isDbGame) {
+    throw new Error('Home packets open after this practice is tracked in the schedule.');
+  }
+  if (!user?.uid) {
+    throw new Error('Sign in before managing practice packets.');
+  }
+  if (!event.isTeamAdmin) {
+    throw new Error('Only team owners and admins can manage practice packets.');
+  }
+}
+
+function normalizeStaffPracticePacketBlocks(blocks: StaffPracticePacketBlock[]): StaffPracticePacketBlock[] {
+  return (Array.isArray(blocks) ? blocks : [])
+    .map((block, index) => ({
+      drillId: compactString(block?.drillId) || null,
+      drillTitle: compactString(block?.drillTitle) || `Home Drill ${index + 1}`,
+      type: compactString(block?.type) || 'Technical',
+      duration: Math.max(1, Number.parseInt(String(block?.duration || 10), 10) || 10),
+      description: compactString(block?.description),
+      notes: compactString(block?.notes)
+    }))
+    .filter((block) => block.drillTitle);
+}
+
+function normalizeStaffPracticePacketDueDate(value: StaffPracticePacketInput['dueDate']) {
+  if (!value) return null;
+  const parsed = normalizeScheduleDate(value);
+  return parsed && !Number.isNaN(parsed.getTime()) ? parsed : null;
+}
+
+function buildStaffPracticePacketContent(input: StaffPracticePacketInput, event: ParentScheduleEvent, user: AuthUser) {
+  const blocks = normalizeStaffPracticePacketBlocks(input.blocks);
+  if (!blocks.length) {
+    throw new Error('Add at least one home drill before saving the packet.');
+  }
+  const totalMinutes = blocks.reduce((sum, block) => sum + block.duration, 0);
+  const dueAt = normalizeStaffPracticePacketDueDate(input.dueDate);
+  const packetTitle = compactString(input.packetTitle) || `${event.title || 'Practice'} home packet`;
+  return {
+    packetTitle,
+    blocks,
+    totalMinutes,
+    dueDate: dueAt ? dueAt.toISOString() : null,
+    dueAt,
+    updatedAt: new Date(),
+    updatedBy: user.uid
+  };
+}
+
+function getStaffPracticePacketTitle(homePacket: any, event: ParentScheduleEvent) {
+  return compactString(homePacket?.packetTitle) || `${event.title || 'Practice'} home packet`;
+}
+
+function getStaffPracticePacketDueDate(homePacket: any) {
+  const dueDate = normalizeScheduleDate(homePacket?.dueDate || homePacket?.dueAt);
+  return dueDate ? dueDate.toISOString() : null;
+}
+
+function buildStaffPracticePacketResult(event: ParentScheduleEvent, sessionId: string, homePacket: PracticeHomePacket, completions: PracticePacketCompletion[], childEvents: ParentScheduleEvent[]): StaffPracticePacket {
+  return {
+    sessionId,
+    teamId: event.teamId,
+    eventId: event.id,
+    title: event.title || 'Practice',
+    date: event.date,
+    location: event.location || 'TBD',
+    homePacket,
+    completions,
+    children: getPracticePacketChildren(childEvents, event),
+    packetTitle: getStaffPracticePacketTitle(homePacket, event),
+    dueDate: getStaffPracticePacketDueDate(homePacket),
+    totalMinutes: homePacket.totalMinutes || (Array.isArray(homePacket.blocks) ? homePacket.blocks.reduce((sum, block) => sum + (Number.parseInt(String(block?.duration || 0), 10) || 0), 0) : 0)
+  };
+}
+
+export async function loadStaffPracticePacket(event: ParentScheduleEvent, childEvents: ParentScheduleEvent[] = [], user: AuthUser | null): Promise<StaffPracticePacket> {
+  assertPracticePacketManagementEvent(event, user);
+  const session = await loadPracticeSessionForAttendance(event).catch(() => null);
+  const sessionId = compactString(session?.id) || getPracticePacketSessionId(event) || event.id;
+  const homePacket = (hasHomePacket(session) ? session.homePacketContent : event.practiceHomePacket) || { blocks: [], totalMinutes: 0 };
+  const completions = sessionId ? normalizePracticePacketCompletions(await loadPracticePacketCompletions(event.teamId, sessionId).catch(() => [])) : [];
+  return buildStaffPracticePacketResult(event, sessionId, homePacket, completions, childEvents);
+}
+
+export async function saveStaffPracticePacket(event: ParentScheduleEvent, user: AuthUser | null, input: StaffPracticePacketInput, childEvents: ParentScheduleEvent[] = []): Promise<StaffPracticePacket> {
+  assertPracticePacketManagementEvent(event, user);
+  const authUser = user as AuthUser;
+  const homePacketContent = buildStaffPracticePacketContent(input, event, authUser);
+  const sessionPayload = {
+    eventId: event.id,
+    eventType: 'practice',
+    sourcePage: 'app-schedule',
+    title: event.title || 'Practice',
+    date: event.date,
+    location: event.location || '',
+    duration: homePacketContent.totalMinutes,
+    status: 'draft',
+    homePacketGenerated: true,
+    homePacketContent,
+    updatedBy: authUser.uid
+  };
+
+  let sessionId = compactString(event.practiceSessionId);
+  try {
+    if (sessionId) {
+      await withTimeout(Promise.resolve(updatePracticeSession(event.teamId, sessionId, sessionPayload)), 'Practice packet save');
+    } else {
+      sessionId = await withTimeout(Promise.resolve(upsertPracticeSessionForEvent(event.teamId, event.id, sessionPayload)), 'Practice packet save');
+    }
+  } catch (error) {
+    if (!isNativeRuntime()) throw error;
+    sessionId = sessionId || event.id;
+    logScheduleWarning('Falling back to REST practice packet save.', 'practice-packet-save', error, { fallback: 'rest', teamId: event.teamId, sessionId });
+    await nativePatchDocument(`teams/${encodeURIComponent(event.teamId)}/practiceSessions/${encodeURIComponent(sessionId)}`, {
+      ...sessionPayload,
+      updatedAt: new Date()
+    });
+  }
+
+  const completions = normalizePracticePacketCompletions(await loadPracticePacketCompletions(event.teamId, sessionId).catch(() => []));
+  return buildStaffPracticePacketResult(event, sessionId, homePacketContent, completions, childEvents);
 }
 
 function getPracticePacketChildren(events: ParentScheduleEvent[], fallbackEvent: ParentScheduleEvent): ParentPracticePacketChild[] {

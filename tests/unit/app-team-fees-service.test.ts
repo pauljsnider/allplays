@@ -23,6 +23,7 @@ import {
     createTeamFeeBatchForApp,
     buildBalanceAdjustmentUpdate,
     buildOfflineTeamFeeRefundUpdate,
+    buildTeamFeeInstallmentSchedule,
     buildManualPaymentUpdate,
     initiateStaffTeamFeeCheckout,
     loadTeamFeeManagementModel,
@@ -257,6 +258,66 @@ describe('React app team fee offline payment service', () => {
             currentBalanceCents: 10000,
             currentPaidCents: 5000
         })).toThrow('admin note');
+    });
+
+    it('builds rounded installment previews for payment plan setup', () => {
+        const preview = buildTeamFeeInstallmentSchedule({
+            amount: '100.01',
+            installmentCount: 3,
+            firstDueDate: '2026-07-15',
+            intervalDays: 14
+        });
+
+        expect(preview).toEqual({
+            totalAmountCents: 10001,
+            installmentCount: 3,
+            intervalDays: 14,
+            installments: [
+                { installmentNumber: 1, amountCents: 3334, dueDate: '2026-07-15', label: 'Installment 1 of 3' },
+                { installmentNumber: 2, amountCents: 3334, dueDate: '2026-07-29', label: 'Installment 2 of 3' },
+                { installmentNumber: 3, amountCents: 3333, dueDate: '2026-08-12', label: 'Installment 3 of 3' }
+            ]
+        });
+    });
+
+    it('defaults null installment spacing to 30 days', () => {
+        const preview = buildTeamFeeInstallmentSchedule({
+            amount: '90.00',
+            installmentCount: 3,
+            firstDueDate: '2026-07-15',
+            intervalDays: null
+        });
+
+        expect(preview.intervalDays).toBe(30);
+        expect(preview.installments.map((installment) => installment.dueDate)).toEqual([
+            '2026-07-15',
+            '2026-08-14',
+            '2026-09-13'
+        ]);
+    });
+
+    it('rejects invalid installment plan inputs', () => {
+        expect(() => buildTeamFeeInstallmentSchedule({
+            amount: '0',
+            installmentCount: 3,
+            firstDueDate: '2026-07-15'
+        })).toThrow('greater than $0');
+        expect(() => buildTeamFeeInstallmentSchedule({
+            amount: '100.00',
+            installmentCount: 1,
+            firstDueDate: '2026-07-15'
+        })).toThrow('between 2 and 12');
+        expect(() => buildTeamFeeInstallmentSchedule({
+            amount: '100.00',
+            installmentCount: 3,
+            firstDueDate: '2026-02-31'
+        })).toThrow('valid first installment due date');
+        expect(() => buildTeamFeeInstallmentSchedule({
+            amount: '100.00',
+            installmentCount: 3,
+            firstDueDate: '2026-07-15',
+            intervalDays: 0
+        })).toThrow('between 1 and 366 days');
     });
 
     it('loads batches and recipients only for fee managers', async () => {

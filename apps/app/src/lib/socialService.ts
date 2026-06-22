@@ -1,18 +1,18 @@
 import {
-  db,
+  addDoc,
   collection,
-  getDocs,
+  db,
   doc,
   getDoc,
-  setDoc,
-  addDoc,
-  updateDoc,
-  query,
-  where,
+  getDocs,
   limit,
+  query,
+  serverTimestamp,
+  setDoc,
   Timestamp,
-  serverTimestamp
-} from '../../../../js/firebase.js';
+  updateDoc,
+  where
+} from './adapters/legacySocialDb';
 import { loadParentHome } from './homeService';
 import type { ParentHomeModel } from './homeLogic';
 import { uploadTeamChatAttachment } from './chatService';

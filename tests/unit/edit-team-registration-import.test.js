@@ -30,7 +30,7 @@ describe('edit team registration import', () => {
         expect(source).toContain('externalTeamName: selectedRegistrationTeam.externalTeamName');
     });
 
-    it('adds editable registration provider fields without live provider calls', () => {
+    it('adds editable registration provider fields and documents manual sync behavior', () => {
         const source = readRepoFile('edit-team.html');
 
         expect(source).toContain('Registration Provider Connection');
@@ -38,7 +38,8 @@ describe('edit team registration import', () => {
         expect(source).toContain('registrationExternalTeamId');
         expect(source).toContain('registrationCopiedTeamId');
         expect(source).toContain('registrationLastSyncStatus');
-        expect(source).toContain('No provider login, sync job, or network call runs from these fields');
+        expect(source).toContain('Selecting Sports Connect saves metadata only; it does not fetch live provider data today.');
+        expect(source).toContain('Save a Sports Connect provider mapping as metadata. A future connector is required before roster snapshots can be synced.');
     });
 
     it('renders registration provider metadata on the team page', () => {

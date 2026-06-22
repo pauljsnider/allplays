@@ -5,9 +5,9 @@ import {
   type CameraPhoto
 } from '@capacitor/camera';
 import { Capacitor } from '@capacitor/core';
-import { resolveImageFirebaseConfig } from '../../../../js/firebase-runtime-config.js';
+import { resolveImageFirebaseConfig } from './adapters/legacyProfilePhotoDb';
 import { sanitizeErrorForLogging } from './nativeRestLogging';
-import { uploadUserPhoto } from '../../../../js/db.js';
+import { uploadUserPhoto } from './adapters/legacyProfilePhotoDb';
 
 const profileTimeoutMs = 8000;
 const nativeImageUploadTimeoutMs = 20000;

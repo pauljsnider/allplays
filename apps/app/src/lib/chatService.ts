@@ -1,42 +1,46 @@
 import { Capacitor } from '@capacitor/core';
 import {
+  GoogleAIBackend,
   canAccessTeamChat,
   canModerateChat,
+  clearChatMuted,
   deleteChatMessage,
   deleteUploadedChatAttachments,
   editChatMessage,
+  getAI,
   getAggregatedStatsForGames,
+  getApp,
   getChatConversations,
   getChatMessages,
   getGameEvents,
   getGames,
+  getGenerativeModel,
   getParentTeams,
   getPlayers,
   getSentTeamEmails,
-  getTeamEmailDrafts as getStoredTeamEmailDrafts,
-  getTeamEmailTemplates as getStoredTeamEmailTemplates,
+  getStoredTeamEmailDrafts,
+  getStoredTeamEmailTemplates,
   getTeam,
   getUnreadChatCounts,
   getUserByEmail,
   getUserProfile,
   getUserTeamsWithAccess,
+  isTeamActive,
   postChatMessage,
-  saveTeamEmailDraft as saveStoredTeamEmailDraft,
-  saveTeamEmailTemplate as saveStoredTeamEmailTemplate,
+  resolveImageFirebaseConfig,
+  saveStoredTeamEmailDraft,
+  saveStoredTeamEmailTemplate,
   sendTeamEmail,
   subscribeToChatMessages,
   toggleChatReaction,
   updateChatLastRead,
   updateChatMuted,
-  clearChatMuted,
   uploadChatImage,
   upsertChatConversation
-} from '../../../../js/db.js';
-import { getApp } from '../../../../js/vendor/firebase-app.js';
-import { getAI, getGenerativeModel, GoogleAIBackend } from '../../../../js/vendor/firebase-ai.js';
-import { resolveImageFirebaseConfig } from '../../../../js/firebase-runtime-config.js';
-import { isTeamActive } from '../../../../js/team-visibility.js';
+} from './adapters/legacyChatService';
 import { firebaseAuth, getNativeAuthIdToken } from './authService';
+import { loadCachedAppData } from './appDataCache';
+import { getNativeRestDedupKey, loadDedupedNativeRestRequest, shouldDedupNativeRestRequest } from './nativeRestDedup';
 import {
   DEFAULT_TEAM_CONVERSATION_ID,
   MAX_CHAT_MEDIA_SIZE,
@@ -53,7 +57,13 @@ import {
   type ChatTargetType
 } from './chatLogic';
 import { sanitizeErrorForLogging } from './nativeRestLogging';
-import { mapChatConversationRecord, mapChatMessageRecord, mapFirestoreDocument } from './firestore/mappers';
+import { startInteractionTimer, UX_TIMING } from './uxTiming';
+import {
+  mapChatConversationRecords,
+  mapChatMessageRecord,
+  mapChatMessageRecords,
+  mapFirestoreDocument
+} from './firestore/mappers';
 import type {
   ChatAttachmentFirestoreRecord,
   ChatConversationFirestoreRecord,
@@ -65,6 +75,8 @@ import type { AuthUser } from './types';
 
 const primaryDataTimeoutMs = 5000;
 const chatUploadTimeoutMs = 25000;
+const chatPreviewCacheTtlMs = 20 * 1000;
+const deferredInboxPreviewConcurrency = 3;
 const imageUploadSessionKey = 'allplays-chat-image-upload-session';
 const aiStatsGamesLimit = 10;
 const aiGamesContextLimit = 20;
@@ -150,6 +162,7 @@ export type ChatInboxPreviewUpdate = {
 
 type TeamChatStateEntry = {
   lastReadAt?: unknown;
+  lastReadByConversation?: Record<string, unknown>;
   mutedConversations?: Record<string, unknown>;
 };
 
@@ -266,20 +279,26 @@ async function getNativeHeaders() {
 }
 
 async function nativeFirestoreRequest(path: string, init: RequestInit = {}) {
-  const response = await withTimeout(fetch(`${getFirestoreBaseUrl()}${path}`, {
-    ...init,
-    headers: {
-      ...(await getNativeHeaders()),
-      ...(init.headers || {})
+  const url = `${getFirestoreBaseUrl()}${path}`;
+  const runRequest = async () => {
+    const response = await withTimeout(fetch(url, {
+      ...init,
+      headers: {
+        ...(await getNativeHeaders()),
+        ...(init.headers || {})
+      }
+    }), 'Firestore REST request');
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      const error = new Error(payload?.error?.message || `Firestore request failed (${response.status}).`) as Error & { status?: number };
+      error.status = response.status;
+      throw error;
     }
-  }), 'Firestore REST request');
-  const payload = await response.json().catch(() => ({}));
-  if (!response.ok) {
-    const error = new Error(payload?.error?.message || `Firestore request failed (${response.status}).`) as Error & { status?: number };
-    error.status = response.status;
-    throw error;
-  }
-  return payload;
+    return payload;
+  };
+  return shouldDedupNativeRestRequest(path, init)
+    ? loadDedupedNativeRestRequest(getNativeRestDedupKey(url, init), runRequest)
+    : runRequest();
 }
 
 function encodeFirestoreValue(value: any): Record<string, unknown> {
@@ -338,11 +357,17 @@ async function nativePatchDocument(path: string, data: Record<string, unknown>) 
   });
 }
 
-async function nativeCreateDocument(path: string, data: Record<string, unknown>) {
+async function nativeCreateDocument(path: string, data: Record<string, unknown>, options: { documentId?: string | null } = {}) {
   const fields = Object.keys(data).reduce<Record<string, Record<string, unknown>>>((acc, key) => {
     acc[key] = encodeFirestoreValue(data[key]);
     return acc;
   }, {});
+  if (options.documentId) {
+    return mapFirestoreDocument(await nativeFirestoreRequest(`/${path}/${encodeURIComponent(options.documentId)}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ fields })
+    }) as NativeFirestoreDocument);
+  }
   return mapFirestoreDocument(await nativeFirestoreRequest(`/${path}`, {
     method: 'POST',
     body: JSON.stringify({ fields })
@@ -462,6 +487,13 @@ function getConversationActivityTime(conversation: ChatConversation | null | und
   return conversationTime ? conversationTime.getTime() : null;
 }
 
+function getTeamLatestMessageTime(team: Record<string, any>) {
+  return team?.lastMessageAt
+    || team?.chatLastMessageAt
+    || team?.lastChatMessageAt
+    || null;
+}
+
 async function getLatestConversationMessage(teamId: string, conversationId: string): Promise<ChatMessage | null> {
   try {
     const [message] = await withTimeout(Promise.resolve(getChatMessages(teamId, { limit: 1, conversationId })), `latest chat ${teamId}/${conversationId}`, 2500);
@@ -487,11 +519,7 @@ async function getLatestMessagePreview(teamId: string, user: AuthUser, team: Rec
       `latest chat conversations ${teamId}`,
       2500
     ) as ChatConversation[];
-    const mappedConversations = Array.isArray(loadedConversations)
-      ? loadedConversations
-        .map((conversation) => mapChatConversationRecord(conversation, conversation?.id || ''))
-        .filter((conversation): conversation is ChatConversation => Boolean(conversation))
-      : [];
+    const mappedConversations = mapChatConversationRecords(loadedConversations);
     conversations = mappedConversations.length
       ? mappedConversations
       : [buildDefaultTeamConversation(team)];
@@ -536,21 +564,52 @@ async function getLatestMessagePreview(teamId: string, user: AuthUser, team: Rec
   if (previewMessage.message) return previewMessage;
 
   const attemptedConversationIds = new Set(previewCandidates.map((conversation) => conversation.id));
-  for (const { conversation } of rankedConversations) {
-    if (!conversation?.id || attemptedConversationIds.has(conversation.id)) continue;
-    const fallbackMessage = await getLatestConversationMessage(teamId, conversation.id);
-    if (fallbackMessage) {
-      return {
-        message: fallbackMessage,
-        conversationId: conversation.id
-      };
-    }
-  }
+  const fallbackMessages = await Promise.allSettled(
+    rankedConversations
+      .map(({ conversation }) => conversation)
+      .filter((conversation): conversation is ChatConversation => Boolean(conversation?.id && !attemptedConversationIds.has(conversation.id)))
+      .map(async (conversation) => ({
+        conversationId: conversation.id,
+        message: await getLatestConversationMessage(teamId, conversation.id)
+      }))
+  );
+  const fallbackPreview = fallbackMessages.reduce<{ message: ChatMessage | null; conversationId: string | null }>((newest, result) => {
+    if (result.status !== 'fulfilled') return newest;
+    return getMessageTime(result.value.message) > getMessageTime(newest.message)
+      ? result.value
+      : newest;
+  }, { message: null, conversationId: null });
+  if (fallbackPreview.message) return fallbackPreview;
 
   return {
     message: null,
     conversationId: null
   };
+}
+
+function loadCachedMessagePreview(teamId: string, user: AuthUser, team: Record<string, any>, canModerate: boolean) {
+  return loadCachedAppData(
+    `chat-preview:${user.uid}:${teamId}:${canModerate ? 'moderator' : 'member'}`,
+    () => getLatestMessagePreview(teamId, user, team, canModerate),
+    {
+      ttlMs: chatPreviewCacheTtlMs,
+      persist: false
+    }
+  );
+}
+
+async function runDeferredInboxPreviewQueue<T>(items: T[], worker: (item: T) => Promise<void>, concurrency = deferredInboxPreviewConcurrency): Promise<void> {
+  if (items.length === 0) return;
+  const workerCount = Math.min(Math.max(1, concurrency), items.length);
+  let nextIndex = 0;
+
+  await Promise.allSettled(Array.from({ length: workerCount }, async () => {
+    while (nextIndex < items.length) {
+      const item = items[nextIndex];
+      nextIndex += 1;
+      await worker(item);
+    }
+  }));
 }
 
 export async function loadChatInbox(user: AuthUser | null, options: ChatInboxLoadOptions = {}): Promise<ChatInboxLoadResult> {
@@ -582,12 +641,13 @@ export async function loadChatInbox(user: AuthUser | null, options: ChatInboxLoa
 
   const userWithProfile = mapUserWithProfile(user, profile);
   const accessibleTeams = teams.filter((team) => isTeamActive(team) && canAccessTeamChat(userWithProfile, { ...team, id: team.id }));
-  const unreadCounts = await withTimeout(
-    Promise.resolve(getUnreadChatCounts(user.uid, accessibleTeams.map((team) => team.id))),
-    'Chat unread counts',
-    3000
-  ).catch(() => ({} as Record<string, number>));
-
+  const latestMessageAtByTeam = accessibleTeams.reduce<Record<string, unknown>>((acc, team) => {
+    const latestMessageAt = getTeamLatestMessageTime(team);
+    if (latestMessageAt) {
+      acc[team.id] = latestMessageAt;
+    }
+    return acc;
+  }, {});
   const previewInputs = accessibleTeams.map((team) => {
     const canModerate = canModerateChat(userWithProfile, { ...team, id: team.id });
     return {
@@ -595,12 +655,39 @@ export async function loadChatInbox(user: AuthUser | null, options: ChatInboxLoa
       canModerate
     };
   });
+  const conversationLookupByTeam = previewInputs.reduce<Record<string, { user: AuthUser; team: Record<string, any>; canModerate: boolean }>>((acc, entry) => {
+    acc[entry.team.id] = {
+      user: userWithProfile,
+      team: entry.team,
+      canModerate: entry.canModerate
+    };
+    return acc;
+  }, {});
+  const unreadCandidateTeamIds = accessibleTeams
+    .filter((team) => {
+      const latestMessageAt = latestMessageAtByTeam[team.id];
+      if (!latestMessageAt) return true;
+      const lastReadAt = getTeamChatStateEntry(profile, team.id).lastReadAt || profile?.chatLastRead?.[team.id] || null;
+      if (!lastReadAt) return true;
+      const latestTime = toDate(latestMessageAt)?.getTime() || 0;
+      const lastReadTime = toDate(lastReadAt)?.getTime() || 0;
+      return latestTime === 0 || latestTime > lastReadTime;
+    })
+    .map((team) => team.id);
+  const unreadCounts = await withTimeout(
+    Promise.resolve(getUnreadChatCounts(user.uid, unreadCandidateTeamIds, {
+      latestMessageAtByTeam,
+      conversationLookupByTeam
+    })),
+    'Chat unread counts',
+    3000
+  ).catch(() => ({} as Record<string, number>));
 
   const previews = includeLastMessages
     ? await Promise.all(previewInputs.map(async ({ team, canModerate }) => ({
       team,
       canModerate,
-      preview: await getLatestMessagePreview(team.id, userWithProfile, team, canModerate)
+      preview: await loadCachedMessagePreview(team.id, userWithProfile, team, canModerate)
     })))
     : previewInputs.map(({ team, canModerate }) => ({
       team,
@@ -609,9 +696,9 @@ export async function loadChatInbox(user: AuthUser | null, options: ChatInboxLoa
     }));
 
   if (!includeLastMessages && onPreview && accessibleTeams.length > 0) {
-    void Promise.allSettled(previewInputs.map(async ({ team, canModerate }) => {
+    void runDeferredInboxPreviewQueue(previewInputs, async ({ team, canModerate }) => {
       try {
-        const preview = await getLatestMessagePreview(team.id, userWithProfile, team, canModerate);
+        const preview = await loadCachedMessagePreview(team.id, userWithProfile, team, canModerate);
         onPreview({
           teamId: team.id,
           lastMessage: preview.message,
@@ -623,7 +710,7 @@ export async function loadChatInbox(user: AuthUser | null, options: ChatInboxLoa
       } catch (error) {
         console.warn('[chat-service] Deferred inbox preview failed:', sanitizeErrorForLogging(error));
       }
-    }));
+    });
   }
 
   return {
@@ -684,9 +771,7 @@ export async function loadChatTeamContext(teamId: string, user: AuthUser | null)
 export async function loadChatConversations(teamId: string, user: AuthUser, team: Record<string, any>, canModerate: boolean): Promise<ChatConversation[]> {
   try {
     const conversations = await withTimeout(Promise.resolve(getChatConversations(teamId, user, { team, canModerate })), 'Chat conversations load') as ChatConversation[];
-    return (Array.isArray(conversations) ? conversations : [])
-      .map((conversation) => mapChatConversationRecord(conversation, conversation?.id || ''))
-      .filter((conversation): conversation is ChatConversation => Boolean(conversation));
+    return mapChatConversationRecords(conversations);
   } catch (error) {
     console.warn('[chat-service] Falling back to default chat conversation:', sanitizeErrorForLogging(error));
     return [buildDefaultTeamConversation(team) as ChatConversation];
@@ -724,9 +809,7 @@ export function subscribeToTeamChatMessages(
           orderBy: 'createdAt desc',
           pageSize: 50
         });
-        const mappedMessages = messages
-          .map((message) => mapChatMessageRecord(message, message?.id || ''))
-          .filter((message): message is ChatMessage => Boolean(message));
+        const mappedMessages = mapChatMessageRecords(messages);
         onMessages(mappedMessages, mappedMessages[mappedMessages.length - 1]?._doc || null);
       } catch (error: any) {
         onError?.(error);
@@ -741,9 +824,7 @@ export function subscribeToTeamChatMessages(
   try {
     unsubscribe = subscribeToChatMessages(teamId, { limit: 50, conversationId }, (messages: ChatMessage[], oldestDoc: unknown | null) => {
       if (!cancelled) {
-        const mappedMessages = (Array.isArray(messages) ? messages : [])
-          .map((message) => mapChatMessageRecord(message, message?.id || ''))
-          .filter((message): message is ChatMessage => Boolean(message));
+        const mappedMessages = mapChatMessageRecords(messages);
         onMessages(mappedMessages, oldestDoc);
       }
     });
@@ -772,9 +853,7 @@ export async function loadOlderTeamChatMessages(teamId: string, conversationId: 
       startAfterDoc,
       conversationId
     })), 'Older chat messages load') as ChatMessage[];
-    return (Array.isArray(messages) ? messages : [])
-      .map((message) => mapChatMessageRecord(message, message?.id || ''))
-      .filter((message): message is ChatMessage => Boolean(message));
+    return mapChatMessageRecords(messages);
   } catch (error) {
     if (!isNativeRuntime()) throw error;
     console.warn('[chat-service] Older chat history is limited in native REST fallback:', sanitizeErrorForLogging(error));
@@ -864,7 +943,7 @@ async function getImageUploadSession(apiKey: string) {
   return createImageUploadSession(apiKey);
 }
 
-async function nativeUploadChatMedia(teamId: string, file: File): Promise<ChatAttachment> {
+async function nativeUploadChatMedia(teamId: string, file: File, conversationId = DEFAULT_TEAM_CONVERSATION_ID): Promise<ChatAttachment> {
   const imageConfig = resolveImageFirebaseConfig();
   const bucket = imageConfig.storageBucket;
   if (!imageConfig.apiKey || !bucket) {
@@ -874,7 +953,8 @@ async function nativeUploadChatMedia(teamId: string, file: File): Promise<ChatAt
   const safeName = String(file.name || 'media').replace(/[^\w.-]+/g, '_');
   const isVideo = String(file.type || '').toLowerCase().startsWith('video/');
   const mediaFolder = isVideo ? 'team-videos' : 'team-photos';
-  const path = `${mediaFolder}/${Date.now()}_chat_${teamId}_${safeName}`;
+  const safeConversationId = String(conversationId || DEFAULT_TEAM_CONVERSATION_ID).replace(/[^\w.-]+/g, '_') || DEFAULT_TEAM_CONVERSATION_ID;
+  const path = `${mediaFolder}/${Date.now()}_chat_${teamId}_${safeConversationId}_${safeName}`;
   const response = await withTimeout(fetch(`https://firebasestorage.googleapis.com/v0/b/${encodeURIComponent(bucket)}/o?uploadType=media&name=${encodeURIComponent(path)}`, {
     method: 'POST',
     headers: {
@@ -903,7 +983,7 @@ async function nativeUploadChatMedia(teamId: string, file: File): Promise<ChatAt
   };
 }
 
-export async function uploadTeamChatAttachment(teamId: string, file: File): Promise<ChatAttachment> {
+export async function uploadTeamChatAttachment(teamId: string, file: File, conversationId = DEFAULT_TEAM_CONVERSATION_ID): Promise<ChatAttachment> {
   if (!file.type.startsWith('image/') && !file.type.startsWith('video/')) {
     throw new Error('Choose image or video files only.');
   }
@@ -911,16 +991,17 @@ export async function uploadTeamChatAttachment(teamId: string, file: File): Prom
     throw new Error('Photos and videos must be 5MB or smaller each.');
   }
   if (isNativeRuntime()) {
-    return nativeUploadChatMedia(teamId, file);
+    return nativeUploadChatMedia(teamId, file, conversationId);
   }
   try {
-    return await withTimeout(Promise.resolve(uploadChatImage(teamId, file)), 'Chat media upload', chatUploadTimeoutMs) as ChatAttachment;
+    return await withTimeout(Promise.resolve(uploadChatImage(teamId, file, { conversationId })), 'Chat media upload', chatUploadTimeoutMs) as ChatAttachment;
   } catch (error) {
     throw error;
   }
 }
 
 async function nativePostChatMessage(teamId: string, input: {
+  clientMessageId?: string | null;
   text: string;
   senderId: string;
   senderName?: string | null;
@@ -937,6 +1018,7 @@ async function nativePostChatMessage(teamId: string, input: {
   const attachments = input.attachments || [];
   const firstImage = attachments.find((attachment) => attachment.type === 'image') || null;
   return nativeCreateDocument(getMessageCollectionPath(teamId, input.conversationId), {
+    clientMessageId: input.clientMessageId || null,
     text: input.text || '',
     senderId: input.senderId,
     senderName: input.senderName || null,
@@ -959,11 +1041,12 @@ async function nativePostChatMessage(teamId: string, input: {
     recipientIds: input.targetType === 'individuals' ? input.recipientIds : [],
     targetRole: input.targetType === 'staff' ? (input.targetRole || 'staff') : null,
     conversationId: isDefaultTeamConversation(input.conversationId) ? null : input.conversationId
-  });
+  }, { documentId: input.clientMessageId || null });
 }
 
 export async function sendTeamChatMessage({
   teamId,
+  clientMessageId,
   user,
   profile,
   text,
@@ -977,6 +1060,7 @@ export async function sendTeamChatMessage({
   aiMeta
 }: {
   teamId: string;
+  clientMessageId?: string | null;
   user: AuthUser;
   profile: Record<string, any>;
   text: string;
@@ -994,16 +1078,12 @@ export async function sendTeamChatMessage({
     throw new Error('Choose at least one selected member before sending.');
   }
 
+  const interaction = startInteractionTimer(UX_TIMING.chatSend, {
+    attachments: files.length,
+    target: selectedRecipientTarget
+  });
   const uploadedAttachments: ChatAttachment[] = [];
   try {
-    for (const file of files) {
-      onProgress?.('uploading');
-      uploadedAttachments.push(await uploadTeamChatAttachment(teamId, file));
-    }
-    onProgress?.('posting');
-
-    const attachments = [...sharedAttachments, ...uploadedAttachments];
-
     const targetMetadata = buildChatAudienceMetadata({
       selectedConversation,
       selectedConversationId,
@@ -1028,7 +1108,16 @@ export async function sendTeamChatMessage({
       conversationId = createdConversation.id;
     }
 
+    for (const file of files) {
+      onProgress?.('uploading');
+      uploadedAttachments.push(await uploadTeamChatAttachment(teamId, file, conversationId));
+    }
+    onProgress?.('posting');
+
+    const attachments = [...sharedAttachments, ...uploadedAttachments];
+
     const payload = {
+      clientMessageId: clientMessageId || null,
       text,
       senderId: user.uid,
       senderName: profile.fullName || user.displayName || null,
@@ -1046,12 +1135,14 @@ export async function sendTeamChatMessage({
       await withTimeout(Promise.resolve(postChatMessage(teamId, payload)), 'Chat message send');
     }
 
+    interaction.end({ path: isNativeRuntime() ? 'native' : 'sdk' });
     return {
       conversationId,
       createdConversation,
       wantsAi: hasAllPlaysMention(text)
     };
   } catch (error) {
+    interaction.end({ error: (error as Error)?.message || 'Chat send failed' });
     if (uploadedAttachments.length > 0) {
       try {
         await deleteUploadedChatAttachments(uploadedAttachments);
@@ -1255,9 +1346,9 @@ export async function toggleTeamChatReaction(teamId: string, messageId: string, 
   }
 }
 
-export async function markTeamChatRead(userId: string, teamId: string) {
+export async function markTeamChatRead(userId: string, teamId: string, conversationId = DEFAULT_TEAM_CONVERSATION_ID) {
   try {
-    return await withTimeout(Promise.resolve(updateChatLastRead(userId, teamId)), 'Chat last read update', 2500);
+    return await withTimeout(Promise.resolve(updateChatLastRead(userId, teamId, conversationId)), 'Chat last read update', 2500);
   } catch (error) {
     if (!isNativeRuntime()) {
       console.warn('[chat-service] Failed to update chat last-read:', sanitizeErrorForLogging(error));
@@ -1268,16 +1359,32 @@ export async function markTeamChatRead(userId: string, teamId: string) {
     const profile = (await nativeGetDocument(userPath) || {}) as Record<string, any>;
     const lastReadAt = new Date();
     const teamChatState = getTeamChatStateEntry(profile, teamId);
+    if (isDefaultTeamConversation(conversationId)) {
+      await nativePatchDocument(userPath, {
+        chatLastRead: {
+          ...(profile.chatLastRead || {}),
+          [teamId]: lastReadAt
+        },
+        teamChatState: {
+          ...(profile.teamChatState || {}),
+          [teamId]: {
+            ...teamChatState,
+            lastReadAt
+          }
+        }
+      });
+      return null;
+    }
+
     await nativePatchDocument(userPath, {
-      chatLastRead: {
-        ...(profile.chatLastRead || {}),
-        [teamId]: lastReadAt
-      },
       teamChatState: {
         ...(profile.teamChatState || {}),
         [teamId]: {
           ...teamChatState,
-          lastReadAt
+          lastReadByConversation: {
+            ...(teamChatState.lastReadByConversation || {}),
+            [conversationId]: lastReadAt
+          }
         }
       }
     });

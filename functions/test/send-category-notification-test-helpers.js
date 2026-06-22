@@ -95,11 +95,16 @@ function buildNotificationTestEnv({
     authUsersByEmail = {},
     playerDocs = {},
     privateProfileDocs = {},
+    gameDocs = {},
+    rideOfferDocs = {},
+    rideRequestDocs = {},
     indexedRecipients = [],
     indexedTargets = [],
+    notificationRecipientDocs = null,
     preferenceDocs = {},
     deviceDocs = {},
-    invalidTokenResponses = []
+    invalidTokenResponses = [],
+    sendEachErrors = []
 } = {}) {
     const dedupWrites = [];
     const inboxWrites = [];
@@ -113,6 +118,7 @@ function buildNotificationTestEnv({
         parentQueries: 0,
         recipientQueries: 0,
         targetQueries: 0,
+        recipientDocGets: 0,
         recipientCollectionGets: 0,
         preferenceGets: 0,
         deviceGets: 0,
@@ -123,15 +129,44 @@ function buildNotificationTestEnv({
         deleteCalls: 0
     };
 
-    const notificationRecipientDocs = (indexedRecipients.length ? indexedRecipients : indexedTargets).map((target, index) => ({
-        id: `${target.uid || `user-${index}`}__${target.deviceId || `device-${index}`}`,
-        data: {
-            uid: target.uid,
-            deviceId: target.deviceId,
-            token: target.token,
-            categories: target.categories || {}
-        }
-    }));
+    const notificationRecipientDocsList = notificationRecipientDocs || Array.from(
+        (indexedRecipients.length ? indexedRecipients : indexedTargets).reduce((docsByUid, target, index) => {
+            const uid = String(target.uid || `user-${index}`).trim();
+            const existing = docsByUid.get(uid) || {
+                id: uid,
+                data: {
+                    uid,
+                    teamId,
+                    roles: target.roles || ['parent'],
+                    categories: {},
+                    tokens: []
+                }
+            };
+            existing.data.categories = {
+                ...existing.data.categories,
+                ...(target.categories || {})
+            };
+            const tokenEntries = Array.isArray(target.tokens)
+                ? target.tokens
+                : [{
+                    deviceId: target.deviceId || `device-${index}`,
+                    token: target.token,
+                    platform: target.platform,
+                    userAgent: target.userAgent
+                }];
+            tokenEntries.forEach((entry) => {
+                if (!entry?.token) return;
+                existing.data.tokens.push({
+                    deviceId: entry.deviceId || `device-${existing.data.tokens.length}`,
+                    token: entry.token,
+                    platform: entry.platform,
+                    userAgent: entry.userAgent
+                });
+            });
+            docsByUid.set(uid, existing);
+            return docsByUid;
+        }, new Map()).values()
+    );
 
     const notificationTargetDocs = indexedTargets.map((target, index) => ({
         id: `${target.uid || `user-${index}`}__${target.deviceId || `device-${index}`}`,
@@ -147,16 +182,53 @@ function buildNotificationTestEnv({
         return value == null ? value : JSON.parse(JSON.stringify(value));
     }
 
+    function isDeleteSentinel(value) {
+        return Boolean(value && typeof value === 'object' && value.__delete === true);
+    }
+
+    function setValueAtPath(target, pathSegments, value) {
+        let cursor = target;
+        for (let index = 0; index < pathSegments.length - 1; index += 1) {
+            const segment = pathSegments[index];
+            if (!cursor[segment] || typeof cursor[segment] !== 'object' || Array.isArray(cursor[segment])) {
+                cursor[segment] = {};
+            }
+            cursor = cursor[segment];
+        }
+        cursor[pathSegments[pathSegments.length - 1]] = value;
+    }
+
+    function deleteValueAtPath(target, pathSegments) {
+        let cursor = target;
+        for (let index = 0; index < pathSegments.length - 1; index += 1) {
+            cursor = cursor?.[pathSegments[index]];
+            if (!cursor || typeof cursor !== 'object') {
+                return;
+            }
+        }
+        if (cursor && typeof cursor === 'object') {
+            delete cursor[pathSegments[pathSegments.length - 1]];
+        }
+    }
+
     function writeStoredDoc(path, value) {
         docStore.set(path, clone(value));
     }
 
     function mergeStoredDoc(path, value) {
-        const current = docStore.get(path) || {};
-        docStore.set(path, {
-            ...clone(current),
-            ...clone(value)
+        const current = clone(docStore.get(path) || {});
+        const incoming = clone(value) || {};
+
+        Object.entries(incoming).forEach(([key, entryValue]) => {
+            const pathSegments = key.split('.');
+            if (isDeleteSentinel(entryValue)) {
+                deleteValueAtPath(current, pathSegments);
+                return;
+            }
+            setValueAtPath(current, pathSegments, entryValue);
         });
+
+        docStore.set(path, current);
     }
 
     function doc(path) {
@@ -189,6 +261,30 @@ function buildNotificationTestEnv({
                         exists: data !== undefined
                     });
                 }
+                const gameMatch = path.match(/^teams\/([^/]+)\/games\/([^/]+)$/);
+                if (gameMatch) {
+                    const gameId = gameMatch[2];
+                    const storedData = docStore.get(path);
+                    const seededData = gameDocs[gameId];
+                    const data = storedData !== undefined ? storedData : seededData;
+                    return makeDocSnapshot({
+                        id: gameId,
+                        ref: this,
+                        data,
+                        exists: data !== undefined
+                    });
+                }
+                const rideOfferMatch = path.match(/^teams\/([^/]+)\/games\/([^/]+)\/rideOffers\/([^/]+)$/);
+                if (rideOfferMatch) {
+                    const key = `${rideOfferMatch[2]}/${rideOfferMatch[3]}`;
+                    const data = rideOfferDocs[key];
+                    return makeDocSnapshot({
+                        id: rideOfferMatch[3],
+                        ref: this,
+                        data,
+                        exists: data !== undefined
+                    });
+                }
                 const privateProfileMatch = path.match(/^teams\/([^/]+)\/players\/([^/]+)\/private\/profile$/);
                 if (privateProfileMatch) {
                     const playerId = privateProfileMatch[2];
@@ -214,6 +310,17 @@ function buildNotificationTestEnv({
                     const data = docStore.get(path);
                     return makeDocSnapshot({ id: this.id, ref: this, data, exists: data !== undefined });
                 }
+                if (path.startsWith(`teams/${teamId}/notificationRecipients/`)) {
+                    counts.recipientDocGets += 1;
+                    const docId = String(path).split('/').pop();
+                    const entry = notificationRecipientDocsList.find((recipientDoc) => recipientDoc.id === docId);
+                    return makeDocSnapshot({
+                        id: docId,
+                        ref: this,
+                        data: entry?.data,
+                        exists: Boolean(entry)
+                    });
+                }
                 if (docStore.has(path)) {
                     return makeDocSnapshot({ id: this.id, ref: this, data: docStore.get(path), exists: true });
                 }
@@ -221,10 +328,11 @@ function buildNotificationTestEnv({
             },
             async set(value) {
                 if (path.startsWith(`teams/${teamId}/notificationSendLog/`)) {
+                    const sentAtMillis = Date.now();
                     docStore.set(path, {
                         ...clone(value),
                         sentAt: {
-                            toMillis: () => Date.now()
+                            toMillis: () => sentAtMillis
                         }
                     });
                 } else {
@@ -254,15 +362,29 @@ function buildNotificationTestEnv({
                     return {
                         async get() {
                             counts.parentQueries += 1;
-                            if (field !== 'parentTeamIds' || op !== 'array-contains' || value !== teamId) {
+                            if (op !== 'array-contains') {
                                 return makeQuerySnapshot([]);
                             }
-                            return makeQuerySnapshot(parentUserIds.map((uid) => makeDocSnapshot({
-                                id: uid,
-                                ref: doc(`users/${uid}`),
-                                data: { parentTeamIds: [teamId] },
-                                exists: true
-                            })));
+                            if (field === 'parentTeamIds' && value === teamId) {
+                                return makeQuerySnapshot(parentUserIds.map((uid) => makeDocSnapshot({
+                                    id: uid,
+                                    ref: doc(`users/${uid}`),
+                                    data: { parentTeamIds: [teamId] },
+                                    exists: true
+                                })));
+                            }
+                            if (field === 'parentPlayerKeys') {
+                                const docs = Object.entries(userDocs)
+                                    .filter(([, user]) => Array.isArray(user?.parentPlayerKeys) && user.parentPlayerKeys.includes(value))
+                                    .map(([uid, user]) => makeDocSnapshot({
+                                        id: uid,
+                                        ref: doc(`users/${uid}`),
+                                        data: user,
+                                        exists: true
+                                    }));
+                                return makeQuerySnapshot(docs);
+                            }
+                            return makeQuerySnapshot([]);
                         }
                     };
                 }
@@ -276,7 +398,7 @@ function buildNotificationTestEnv({
                         async get() {
                             counts.recipientQueries += 1;
                             const category = String(field || '').replace(/^categories\./, '');
-                            const docs = notificationRecipientDocs.filter((entry) => op === '==' && value === true && entry.data.categories?.[category] === true)
+                            const docs = notificationRecipientDocsList.filter((entry) => op === '==' && value === true && entry.data.categories?.[category] === true)
                                 .map((entry) => makeDocSnapshot({
                                     id: entry.id,
                                     ref: doc(`${path}/${entry.id}`),
@@ -291,7 +413,7 @@ function buildNotificationTestEnv({
                     return {
                         async get() {
                             counts.recipientCollectionGets += 1;
-                            return makeQuerySnapshot(notificationRecipientDocs.slice(0, 1).map((entry) => makeDocSnapshot({
+                            return makeQuerySnapshot(notificationRecipientDocsList.slice(0, 1).map((entry) => makeDocSnapshot({
                                 id: entry.id,
                                 ref: doc(`${path}/${entry.id}`),
                                 data: entry.data,
@@ -302,7 +424,7 @@ function buildNotificationTestEnv({
                 },
                 async get() {
                     counts.recipientCollectionGets += 1;
-                    return makeQuerySnapshot(notificationRecipientDocs.map((entry) => makeDocSnapshot({
+                    return makeQuerySnapshot(notificationRecipientDocsList.map((entry) => makeDocSnapshot({
                         id: entry.id,
                         ref: doc(`${path}/${entry.id}`),
                         data: entry.data,
@@ -331,6 +453,22 @@ function buildNotificationTestEnv({
                 async add(value) {
                     auditWrites.push({ path, value });
                     return { id: `audit-${auditWrites.length}` };
+                }
+            };
+        }
+
+        const rideRequestsMatch = path.match(/^teams\/([^/]+)\/games\/([^/]+)\/rideOffers\/([^/]+)\/requests$/);
+        if (rideRequestsMatch) {
+            const key = `${rideRequestsMatch[2]}/${rideRequestsMatch[3]}`;
+            return {
+                async get() {
+                    const docs = (rideRequestDocs[key] || []).map((entry, index) => makeDocSnapshot({
+                        id: entry.id || `request-${index}`,
+                        ref: doc(`${path}/${entry.id || `request-${index}`}`),
+                        data: entry,
+                        exists: true
+                    }));
+                    return makeQuerySnapshot(docs);
                 }
             };
         }
@@ -405,7 +543,8 @@ function buildNotificationTestEnv({
             counts.dedupTransactions += 1;
             return handler({
                 get: (ref) => ref.get(),
-                set: (ref, value) => ref.set(value)
+                set: (ref, value) => ref.set(value),
+                update: (ref, value) => ref.update(value)
             });
         },
         batch() {
@@ -414,6 +553,8 @@ function buildNotificationTestEnv({
                     dedupWrites.push({ path: ref.path, value });
                 },
                 delete(ref) {
+                    counts.deleteCalls += 1;
+                    docStore.delete(ref.path);
                     deletedPaths.push(ref.path);
                 },
                 update() {},
@@ -425,7 +566,14 @@ function buildNotificationTestEnv({
     const firestoreFactory = Object.assign(() => firestoreState, {
         FieldValue: {
             serverTimestamp: () => ({ __serverTimestamp: true }),
-            increment: (amount) => ({ __increment: amount })
+            increment: (amount) => ({ __increment: amount }),
+            delete: () => ({ __delete: true })
+        },
+        Timestamp: {
+            fromDate: (date) => ({
+                toDate: () => new Date(date),
+                toMillis: () => new Date(date).getTime()
+            })
         }
     });
 
@@ -449,6 +597,10 @@ function buildNotificationTestEnv({
                     data: { ...(message.data || {}) },
                     webLink: message.webpush?.fcmOptions?.link || ''
                 });
+                const sendError = sendEachErrors.length ? sendEachErrors.shift() : null;
+                if (sendError) {
+                    throw sendError;
+                }
                 const responses = message.tokens.map((token, index) => invalidTokenResponses[index] || { success: true, token });
                 const failureCount = responses.filter((response) => response?.success === false).length;
                 return {

@@ -26,7 +26,9 @@ import {
   Users,
   type LucideIcon
 } from 'lucide-react';
+import { Modal } from '../components/Modal';
 import { HomePageSkeleton } from '../components/PageSkeletons';
+import { PullToRefresh } from '../components/PullToRefresh';
 import { loadParentHomeSummaryBootstrap, loadParentHomeWithSecondaryData } from '../lib/homeService';
 import { toAppServiceError, type AppServiceError } from '../lib/appErrors';
 import {
@@ -64,7 +66,9 @@ import {
   type RsvpResponse
 } from '../lib/scheduleLogic';
 import { loadOfficialAssignmentsAccess } from '../lib/scheduleService';
+import { recordFirstMeaningfulRender, startScreenMountTimer } from '../lib/uxTiming';
 import { useAsyncOperation } from '../lib/useAsyncOperation';
+import { useRefreshOnResume } from '../lib/useRefreshOnResume';
 import {
   emptySocialHome,
   filterSocialFeedItems,
@@ -144,6 +148,7 @@ export function Home({ auth }: { auth: AuthState }) {
   const [homeLoadError, setHomeLoadError] = useState<AppServiceError | null>(null);
   const { loading, error, clearError, run: runPrimaryLoad } = useAsyncOperation();
   const { loading: socialLoading, run: runSecondaryLoad } = useAsyncOperation();
+  const hasStartedInitialHomeLoadRef = useRef(false);
 
   const authUserId = auth.user?.uid || null;
   const hasLoadedHomeDetails = Boolean(authUserId) && authUserId === loadedHomeDetailsUserId;
@@ -155,6 +160,10 @@ export function Home({ auth }: { auth: AuthState }) {
     clearError();
     setHomeLoadError(null);
     setSocialStatus(null);
+    const timer = startScreenMountTimer('home', {
+      force,
+      hasExistingHome
+    });
     return runPrimaryLoad(
       async () => {
         const summary = await loadParentHomeSummaryBootstrap(user, { force });
@@ -163,17 +172,43 @@ export function Home({ auth }: { auth: AuthState }) {
 
         void runSecondaryLoad(
           async () => {
-            const secondaryHome = await loadParentHomeWithSecondaryData(user, { force, schedule: summary.schedule });
+            const secondaryHome = await loadParentHomeWithSecondaryData(user, {
+              force,
+              schedule: summary.schedule,
+              // Render each secondary slice (chat badges, fees, hydrated RSVP) as it
+              // arrives instead of waiting for all of them (#2037).
+              onPartial: (partial) => setHome(partial)
+            });
             setHome(secondaryHome);
-            setSocial(await loadSocialHome(user, secondaryHome));
             setLoadedHomeDetailsUserId(user.uid);
             setHomeLoadError(null);
+            const socialHome = await loadSocialHome(user, secondaryHome);
+            setSocial(socialHome);
+            timer.end({
+              hydrated: true,
+              playerCount: secondaryHome.players.length,
+              teamCount: secondaryHome.teams.length,
+              upcomingEventCount: secondaryHome.upcomingEvents.length,
+              actionItemCount: secondaryHome.actionItems.length,
+              feeCount: secondaryHome.fees.length,
+              socialFeedCount: socialHome.feedItems.length,
+              friendCount: socialHome.friends.length
+            });
           },
           {
             rethrow: false,
             getErrorMessage: (secondaryError) => getHomeSecondaryErrorMessage(toAppServiceError(secondaryError, 'Unable to refresh Home details.')),
             onError: (secondaryError) => {
               const appError = toAppServiceError(secondaryError, 'Unable to refresh Home details.');
+              timer.end({
+                hydrated: false,
+                playerCount: summary.home.players.length,
+                teamCount: summary.home.teams.length,
+                upcomingEventCount: summary.home.upcomingEvents.length,
+                actionItemCount: summary.home.actionItems.length,
+                feeCount: summary.home.fees.length,
+                error: appError.message
+              });
               if (!hasExistingHome) {
                 setHomeLoadError(appError);
                 setLoadedHomeDetailsUserId(null);
@@ -191,7 +226,12 @@ export function Home({ auth }: { auth: AuthState }) {
         getErrorMessage: (loadError) => getHomeLoadErrorMessage(toAppServiceError(loadError, 'Unable to load Home.'), hasExistingHome),
         rethrow: false,
         onError: (loadError) => {
-          setHomeLoadError(toAppServiceError(loadError, 'Unable to load Home.'));
+          const appError = toAppServiceError(loadError, 'Unable to load Home.');
+          setHomeLoadError(appError);
+          timer.end({
+            hydrated: false,
+            error: appError.message
+          });
           if (!hasExistingHome) {
             setHome(emptyHome());
             setSocial(emptySocialHome());
@@ -203,9 +243,25 @@ export function Home({ auth }: { auth: AuthState }) {
   };
 
   useEffect(() => {
+    if (!auth.user?.uid) {
+      hasStartedInitialHomeLoadRef.current = false;
+      return;
+    }
+    hasStartedInitialHomeLoadRef.current = true;
     refreshHome();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [auth.user?.uid]);
+
+  useRefreshOnResume(() => { void refreshHome({ force: true }); }, { enabled: Boolean(auth.user?.uid) });
+
+  useEffect(() => {
+    if (!hasStartedInitialHomeLoadRef.current || loading || socialLoading) {
+      return;
+    }
+    if (hasLoadedHomeDetails || homeLoadError) {
+      recordFirstMeaningfulRender('home');
+    }
+  }, [hasLoadedHomeDetails, homeLoadError, loading, socialLoading]);
 
   useEffect(() => {
     let cancelled = false;
@@ -306,6 +362,7 @@ export function Home({ auth }: { auth: AuthState }) {
   };
 
   return (
+    <PullToRefresh onRefresh={() => refreshHome({ force: true })} disabled={!auth.user?.uid}>
     <div className="home-page home-page-live home-page-social space-y-3">
       <section className="home-hero app-card overflow-hidden">
         <div className="flex items-center gap-3 px-3 py-3 sm:px-4">
@@ -413,6 +470,7 @@ export function Home({ auth }: { auth: AuthState }) {
         />
       ) : null}
     </div>
+    </PullToRefresh>
   );
 }
 
@@ -1459,7 +1517,7 @@ function SocialComposerModal({
   };
 
   return (
-    <div className="fixed inset-0 z-[70] flex items-end justify-center bg-gray-950/45 p-3 sm:items-center" role="dialog" aria-modal="true" aria-label="Create social post">
+    <Modal overlayClassName="z-[70] flex items-end justify-center bg-gray-950/45 p-3 sm:items-center" ariaLabel="Create social post" onClose={onClose}>
       <form className="social-composer-modal app-card w-full max-w-xl overflow-hidden" onSubmit={handleSubmit}>
         <div className="flex items-center justify-between gap-3 border-b border-gray-100 px-4 py-3">
           <div>
@@ -1622,7 +1680,7 @@ function SocialComposerModal({
           </button>
         </div>
       </form>
-    </div>
+    </Modal>
   );
 }
 

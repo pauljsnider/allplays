@@ -24,6 +24,9 @@ function extractChunk(startMarker, endMarker) {
 const mergeNotificationWebpushOptions = new Function(
     `${extractChunk('function mergeNotificationWebpushOptions(', 'async function sendCategoryNotification(')}\nreturn mergeNotificationWebpushOptions;`
 )();
+const notificationRouteHelpers = new Function(
+    `${extractChunk('function buildScheduleSectionQuery', 'function buildTeamMediaNotificationAudienceContext')}\nreturn { buildNotificationLink, buildNotificationAppRoute };`
+)();
 
 describe('notification delivery metadata', () => {
     it('defines the five Android channels used by app startup and backend sends', () => {
@@ -46,6 +49,22 @@ describe('notification delivery metadata', () => {
         expect(options.android.notification.channelId).toBe('allplays_messages');
         expect(options.apns.payload.aps['thread-id']).toBe('messages-team-1');
         expect(options.apns.headers).toBeUndefined();
+    });
+
+    it('builds conversation deep links for mention notifications', () => {
+        const mentionLink = notificationRouteHelpers.buildNotificationLink({
+            category: 'mentions',
+            teamId: 'team 1',
+            conversationId: 'parents/thread 2'
+        });
+        const appRoute = notificationRouteHelpers.buildNotificationAppRoute({
+            category: 'mentions',
+            teamId: 'team 1',
+            conversationId: 'parents/thread 2'
+        });
+
+        expect(mentionLink).toBe('https://allplays.ai/team-chat.html?teamId=team%201&conversationId=parents%2Fthread%202');
+        expect(appRoute).toBe('/messages/team%201?conversationId=parents%2Fthread%202');
     });
 
     it('collapses rapid live score notifications by game on iOS', () => {
@@ -83,6 +102,20 @@ describe('notification delivery metadata', () => {
 
         expect(options.android.notification.channelId).toBe('allplays_team');
         expect(options.apns.payload.aps['thread-id']).toBe('team-team-1');
+    });
+
+    it('routes rideshare notifications to the team channel without collapsing distinct events', () => {
+        const options = buildNotificationDeliveryOptions({
+            category: 'rideshare',
+            teamId: 'team 1',
+            eventId: 'game-1'
+        });
+
+        expect(options.android.notification.channelId).toBe('allplays_team');
+        expect(options.android.notification.tag).toBeUndefined();
+        expect(options.webpush).toBeUndefined();
+        expect(options.apns.payload.aps['thread-id']).toBe('team-team-1');
+        expect(options.apns.headers).toBeUndefined();
     });
 
     it('wires delivery metadata and branded web assets into both backend send paths', () => {
@@ -136,5 +169,21 @@ describe('notification delivery metadata', () => {
         expect(serviceWorkerSource).toContain("const WEB_PUSH_NOTIFICATION_BADGE = '/img/logo_small.png';");
         expect(serviceWorkerSource).toContain('icon,');
         expect(serviceWorkerSource).toContain('badge,');
+    });
+
+    it('normalizes web notification taps to native app hash routes when appRoute is present', () => {
+        expect(serviceWorkerSource).toContain('function buildAppRouteNotificationLink');
+        expect(serviceWorkerSource).toContain("new URL(`/app/#${appRoute}`, self.location.origin).toString()");
+        expect(serviceWorkerSource).toContain('buildAppRouteNotificationLink(payload?.data?.appRoute)');
+        expect(serviceWorkerSource).toContain('payload?.fcmOptions?.link');
+        expect(serviceWorkerSource).toContain('event.waitUntil(clients.openWindow(link));');
+    });
+
+    it('versions and expires cached Firebase service worker config', () => {
+        expect(serviceWorkerSource).toContain("const CONFIG_CACHE_VERSION = 'v2';");
+        expect(serviceWorkerSource).toContain('const CONFIG_CACHE_TTL_MS = 24 * 60 * 60 * 1000;');
+        expect(serviceWorkerSource).toContain('cached?.version !== CONFIG_CACHE_VERSION');
+        expect(serviceWorkerSource).toContain('Date.now() - cached.cachedAt > CONFIG_CACHE_TTL_MS');
+        expect(serviceWorkerSource).toContain('cachedAt: Date.now()');
     });
 });

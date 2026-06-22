@@ -96,17 +96,23 @@ function RegistrationDetailPage({ auth, publicAccess = false, staffReview = fals
         }
         setForm(nextForm);
         if (staffReview) {
-          const [nextPage, rosterPlayers] = await Promise.all([
+          const [nextPage, waitlistedPage, rosterPlayers] = await Promise.all([
             (parentToolsService as any).loadTeamRegistrationQueuePage(teamId, formId) as Promise<{ reviews: any[]; lastDoc: any; hasMore: boolean }>,
+            (parentToolsService as any).loadTeamRegistrationQueuePage(teamId, formId, { status: 'waitlisted' }) as Promise<{ reviews: any[]; lastDoc: any; hasMore: boolean }>,
             (parentToolsService as any).loadTeamRegistrationRosterPlayers(auth.user, teamId).catch(() => [])
           ]);
           if (cancelled) return;
-          const nextQueue: TeamRegistrationQueueModel = { reviews: nextPage.reviews, rosterPlayers };
+          const nextQueue: TeamRegistrationQueueModel = {
+            reviews: nextPage.reviews,
+            rosterPlayers,
+            waitlistedReviews: waitlistedPage.reviews,
+            totalWaitlisted: getTotalWaitlistedCount(nextForm.registrationOptionCounts, waitlistedPage.reviews.length)
+          };
           setQueue(nextQueue);
           setLastDoc(nextPage.lastDoc);
           setHasMore(nextPage.hasMore);
-          const firstReviewId = nextQueue.reviews[0]?.id || '';
-          setSelectedReviewId((current) => current && nextQueue.reviews.some((review) => review.id === current) ? current : firstReviewId);
+          const firstReviewId = nextQueue.reviews[0]?.id || nextQueue.waitlistedReviews?.[0]?.id || '';
+          setSelectedReviewId((current) => current && [...nextQueue.reviews, ...(nextQueue.waitlistedReviews || [])].some((review) => review.id === current) ? current : firstReviewId);
         } else {
           setQueue(null);
           setLastDoc(null);
@@ -139,9 +145,26 @@ function RegistrationDetailPage({ auth, publicAccess = false, staffReview = fals
   const effectiveQuantity = useMemo(() => hasQuantityDiscount ? quantity : 1, [hasQuantityDiscount, quantity]);
   const displayFeeSnapshot = useMemo(() => form ? calculateRegistrationFeeSnapshot(form, { quantity: effectiveQuantity, now: new Date() }) : null, [form, effectiveQuantity]);
   const displayFeeLines = useMemo<FeeSummaryLine[]>(() => displayFeeSnapshot ? formatFeeSnapshotLines(displayFeeSnapshot) : [], [displayFeeSnapshot]);
-  const selectedReview = useMemo(() => queue?.reviews.find((review) => review.id === selectedReviewId) || queue?.reviews[0] || null, [queue, selectedReviewId]);
+  const selectedReview = useMemo(() => {
+    const allReviews = [...(queue?.reviews || []), ...(queue?.waitlistedReviews || [])];
+    return allReviews.find((review) => review.id === selectedReviewId) || allReviews[0] || null;
+  }, [queue, selectedReviewId]);
+  const waitlistedReviews = useMemo(() => queue?.waitlistedReviews || (queue?.reviews || []).filter((review) => review.status === 'waitlisted'), [queue]);
+  const totalWaitlisted = queue?.totalWaitlisted ?? waitlistedReviews.length;
   const canApproveSelectedReview = selectedReview ? ['pending', 'offer-accepted'].includes(selectedReview.status) : false;
+  const canPromoteSelectedReview = selectedReview?.status === 'waitlisted';
   const canDeclineSelectedReview = selectedReview ? ['pending', 'waitlisted', 'offer-extended', 'offer-accepted'].includes(selectedReview.status) : false;
+  const selectedReviewOptionAvailability = useMemo(() => {
+    if (!form || !selectedReview) return '';
+    const reviewOptionId = String(selectedReview.selectedOption?.id || selectedReview.selectedOption?.countKey || '');
+    const reviewOptionTitle = String(selectedReview.selectedOptionLabel || '').trim();
+    const reviewOption = (form.options || []).find((option: any) => (
+      String(option?.id || '') === reviewOptionId
+      || String(option?.countKey || '') === reviewOptionId
+      || String(option?.title || '').trim() === reviewOptionTitle
+    ));
+    return reviewOption ? formatOptionAvailability(reviewOption, form.registrationOptionCounts || {}) : '';
+  }, [form, selectedReview]);
 
   useEffect(() => {
     if (!selectedReview) return;
@@ -329,6 +352,22 @@ function RegistrationDetailPage({ auth, publicAccess = false, staffReview = fals
     }
   };
 
+  const handlePromote = async () => {
+    if (!selectedReview || saving) return;
+    setSaving(true);
+    setError('');
+    setMessage('');
+    try {
+      await (parentToolsService as any).extendTeamRegistrationOfferForApp(auth.user, teamId, formId, selectedReview.id);
+      setMessage('Waitlist offer extended using the legacy registration flow.');
+      setReloadKey((current) => current + 1);
+    } catch (actionError: any) {
+      setError(actionError?.message || 'Waitlist offer could not be extended.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
   const handleLoadMore = async () => {
     if (!lastDoc || !hasMore || saving) return;
     setSaving(true);
@@ -383,6 +422,31 @@ function RegistrationDetailPage({ auth, publicAccess = false, staffReview = fals
               <button type="button" className="ghost-button !min-h-9 text-xs" onClick={() => setReloadKey((current) => current + 1)} disabled={loading || saving}>Refresh</button>
             </div>
             <div className="mt-3 grid gap-2">
+              {waitlistedReviews.length ? (
+                <div className="rounded-2xl border border-amber-200 bg-amber-50 p-3">
+                  <div className="text-sm font-black text-amber-950">Waitlisted applicants ({totalWaitlisted})</div>
+                  <div className="mt-1 text-xs font-semibold text-amber-800">Promote a waitlisted applicant into the same offer and payment path used on the legacy site.</div>
+                  <div className="mt-3 grid gap-2" data-waitlist-list>
+                    {waitlistedReviews.map((review) => (
+                      <button
+                        key={`waitlist-${review.id}`}
+                        type="button"
+                        onClick={() => setSelectedReviewId(review.id)}
+                        className={`rounded-2xl border p-3 text-left ${selectedReview?.id === review.id ? 'border-amber-300 bg-white' : 'border-amber-200 bg-white/80'}`}
+                      >
+                        <div className="flex items-center justify-between gap-3">
+                          <div className="min-w-0">
+                            <div className="truncate text-sm font-black text-gray-950">{review.participantName}</div>
+                            <div className="truncate text-xs font-semibold text-gray-500">{review.guardianLabel || 'Guardian details unavailable'}</div>
+                          </div>
+                          <StatusPill value={review.status} />
+                        </div>
+                        <div className="mt-2 text-xs font-semibold text-gray-500">{review.selectedOptionLabel || 'No option selected'} · {review.paymentLabel}</div>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              ) : null}
               {queue?.reviews.length ? queue.reviews.map((review) => (
                 <button
                   key={review.id}
@@ -425,22 +489,31 @@ function RegistrationDetailPage({ auth, publicAccess = false, staffReview = fals
 
                 <div className="grid gap-2 rounded-xl border border-gray-200 bg-gray-50 p-3 text-sm font-semibold text-gray-700">
                   <div className="flex items-center justify-between gap-3"><span>Waiver accepted</span><span className="font-black text-gray-950">{selectedReview.waiverAccepted ? 'Yes' : 'No'}</span></div>
+                  {selectedReviewOptionAvailability ? <div className="flex items-center justify-between gap-3"><span>Current capacity</span><span className="text-right font-black text-gray-950">{selectedReviewOptionAvailability}</span></div> : null}
                   {selectedReview.decisionNote ? <div className="flex items-start justify-between gap-3"><span>Decision note</span><span className="text-right font-black text-gray-950">{selectedReview.decisionNote}</span></div> : null}
                 </div>
 
-                <label className="min-w-0">
-                  <span className="app-label">Merge into existing roster player</span>
-                  <select className="auth-input mt-1" aria-label="Merge into existing roster player" value={selectedMergePlayerId} onChange={(event) => setSelectedMergePlayerId(event.target.value)} disabled={saving}>
-                    <option value="">Create a new roster player</option>
-                    {(queue?.rosterPlayers || []).map((player) => <option key={player.id} value={player.id}>{player.number ? `#${player.number} ` : ''}{player.name}</option>)}
-                  </select>
-                </label>
+                {canApproveSelectedReview ? (
+                  <label className="min-w-0">
+                    <span className="app-label">Merge into existing roster player</span>
+                    <select className="auth-input mt-1" aria-label="Merge into existing roster player" value={selectedMergePlayerId} onChange={(event) => setSelectedMergePlayerId(event.target.value)} disabled={saving}>
+                      <option value="">Create a new roster player</option>
+                      {(queue?.rosterPlayers || []).map((player) => <option key={player.id} value={player.id}>{player.number ? `#${player.number} ` : ''}{player.name}</option>)}</select>
+                  </label>
+                ) : null}
 
                 <div className="grid gap-2 sm:grid-cols-2">
-                  <button type="button" className="primary-button" onClick={handleApprove} disabled={saving || !canApproveSelectedReview}>
-                    {saving ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <UserPlus className="h-4 w-4" aria-hidden="true" />}
-                    Approve application
-                  </button>
+                  {canPromoteSelectedReview ? (
+                    <button type="button" className="primary-button" onClick={handlePromote} disabled={saving}>
+                      {saving ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <Send className="h-4 w-4" aria-hidden="true" />}
+                      Promote from waitlist
+                    </button>
+                  ) : (
+                    <button type="button" className="primary-button" onClick={handleApprove} disabled={saving || !canApproveSelectedReview}>
+                      {saving ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <UserPlus className="h-4 w-4" aria-hidden="true" />}
+                      Approve application
+                    </button>
+                  )}
                   <button type="button" className="secondary-button !border-rose-200 !text-rose-700 hover:!bg-rose-50" onClick={handleDecline} disabled={saving || !canDeclineSelectedReview}>
                     <XCircle className="h-4 w-4" aria-hidden="true" />
                     Decline application
@@ -587,6 +660,14 @@ function normalizeRegistrationReturnStatus(value: string | null) {
   const status = String(value || '').trim().toLowerCase();
   if (status === 'success' || status === 'cancelled') return status;
   return '';
+}
+
+function getTotalWaitlistedCount(registrationOptionCounts: Record<string, any> | undefined, fallback = 0) {
+  const total = Object.values(registrationOptionCounts || {}).reduce((sum, counts) => {
+    const nextCount = Number((counts as Record<string, any>)?.waitlisted || 0);
+    return sum + (Number.isFinite(nextCount) ? nextCount : 0);
+  }, 0);
+  return total > 0 ? total : fallback;
 }
 
 function collectFieldValues(formElement: HTMLFormElement | null, group: string, fallback: Record<string, string>) {

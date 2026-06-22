@@ -1,4 +1,6 @@
 import {
+  TEMPLATES,
+  buildDefaultSigners,
   createCertificate,
   createCertificateBatch,
   getCertificateDefaults,
@@ -6,13 +8,12 @@ import {
   getTeam,
   getUserByEmail,
   getUserProfile,
+  hasFullTeamAccess,
+  normalizeSigners,
+  resolveColors,
   setCertificateDefaults,
   updateCertificateBatch
-} from '../../../../js/db.js';
-import { buildDefaultSigners, normalizeSigners } from '../../../../js/certificates/signers.js';
-import { resolveColors } from '../../../../js/certificates/renderer.js';
-import { TEMPLATES } from '../../../../js/certificates/templates.js';
-import { hasFullTeamAccess } from '../../../../js/team-access.js';
+} from './adapters/legacyCertificateDraft';
 import type { AuthUser } from './types';
 
 export type CertificateDraftTemplateOption = {
@@ -231,9 +232,11 @@ export function buildCertificatePayloadForApp({
   };
 }
 
-export function getCertificateStudioUrl(teamId: string, batchId: string) {
+export function getCertificateStudioUrl(teamId: string, batchId = '') {
   const url = new URL('certificates.html', 'https://allplays.ai');
-  url.hash = new URLSearchParams({ teamId, batchId }).toString();
+  const params = new URLSearchParams({ teamId });
+  if (batchId) params.set('batchId', batchId);
+  url.hash = params.toString();
   return url.toString();
 }
 

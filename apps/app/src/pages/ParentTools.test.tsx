@@ -456,6 +456,53 @@ describe('ParentTools access', () => {
         expect(openPublicUrl).not.toHaveBeenCalledWith('https://pay.example.test/stale');
     });
 
+    it('shows deep-linked paid fees from notification query params', async () => {
+        parentToolsServiceMocks.loadParentFeesForApp.mockResolvedValue([
+            {
+                id: 'fee-open',
+                title: 'Open fee',
+                teamId: 'team-1',
+                batchId: 'batch-open',
+                recipientId: 'recipient-open',
+                teamName: 'Bears',
+                playerName: 'Sam Player',
+                status: 'open',
+                amountLabel: '$50',
+                dueLabel: 'Tomorrow',
+                statusLabel: 'Open',
+                balanceDueCents: 5000,
+                canPay: true,
+                lineItems: [],
+                installments: [],
+                ledgerEntries: []
+            },
+            {
+                id: 'fee-paid',
+                title: 'Paid fee',
+                teamId: 'team-1',
+                batchId: 'batch-1',
+                recipientId: 'recipient-1',
+                teamName: 'Bears',
+                playerName: 'Sam Player',
+                status: 'paid',
+                amountLabel: '$100',
+                dueLabel: 'Paid today',
+                statusLabel: 'Paid',
+                balanceDueCents: 0,
+                canPay: false,
+                lineItems: [],
+                installments: [],
+                ledgerEntries: []
+            }
+        ]);
+
+        renderParentTools(['/parent-tools/fees?teamId=team-1&batchId=batch-1&recipientId=recipient-1']);
+
+        expect(await screen.findByText('Paid fee')).toBeTruthy();
+        expect(screen.queryByText('Open fee')).toBeNull();
+        expect(screen.getByRole('button', { name: /all/i }).getAttribute('aria-pressed')).toBe('true');
+    });
+
     it('redirects invalid tabs without triggering a hook order violation', async () => {
         const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
 
@@ -650,6 +697,34 @@ describe('ParentTools access', () => {
 
         expect(await screen.findByText('Summer Camp')).toBeTruthy();
         await waitFor(() => expect(parentToolsServiceMocks.loadParentRegistrations).toHaveBeenCalledTimes(2));
+    });
+
+    it('shows a retryable registrations load error and refreshes the section on retry', async () => {
+        parentToolsServiceMocks.loadParentRegistrations
+            .mockRejectedValueOnce(new Error('Registration service unavailable.'))
+            .mockResolvedValueOnce([
+                {
+                    id: 'form-1',
+                    teamId: 'team-1',
+                    teamName: 'Bears',
+                    programName: 'Spring Skills',
+                    description: 'Sunday clinic',
+                    season: 'Spring',
+                    feeLabel: '$50.00',
+                    paymentNotice: '',
+                    onlineCheckout: true,
+                    options: [],
+                    url: 'https://allplays.ai/registration.html?teamId=team-1&formId=form-1'
+                }
+            ]);
+
+        renderParentTools(['/parent-tools/registrations']);
+
+        expect(await screen.findByText('Registration service unavailable.')).toBeTruthy();
+        fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+
+        expect(await screen.findByText('Spring Skills')).toBeTruthy();
+        expect(parentToolsServiceMocks.loadParentRegistrations).toHaveBeenCalledTimes(2);
     });
 
     it('defers public team and player loading until manual access starts', async () => {

@@ -1,13 +1,24 @@
-import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from 'react';
+import { createContext, Fragment, useCallback, useContext, useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from 'react';
 import { Link, useParams, useSearchParams } from 'react-router-dom';
-import { AlertCircle, CalendarDays, Car, CheckCircle2, ChevronDown, ChevronLeft, ClipboardCheck, Clock, ExternalLink, FileText, MapPin, Radio, RefreshCw, Share2, Users, Video, type LucideIcon } from 'lucide-react';
+import { AlertCircle, CalendarDays, Car, CheckCircle2, ChevronDown, ChevronLeft, ClipboardCheck, ExternalLink, FileText, Radio, RefreshCw, Share2, Users, Video, type LucideIcon } from 'lucide-react';
 import {
   cancelPracticeOccurrenceForApp,
   cancelScheduledGameForApp,
+  loadScheduleStatTrackerConfigsForApp,
+  loadScheduledPracticeSeriesForEdit,
+  updateScheduledGameForApp,
+  updateScheduledPracticeForApp,
+  revertScheduledPracticeOccurrenceForApp,
+  type ScheduleGameFormInput,
+  type SchedulePracticeFormInput,
+  type PracticeRecurrenceFormInput,
+  type ScheduleStatTrackerConfigOption,
   claimParentScheduleAssignmentSlot,
   loadParentPracticePacket,
+  loadStaffPracticePacket,
   loadStaffPracticeAttendance,
   loadParentScheduleEventDetail,
+  resolveCachedParentScheduleEvents,
   loadParentScheduleAssignments,
   loadStaffScheduleRsvpBreakdown,
   loadStaffRsvpReminderPreview,
@@ -24,6 +35,7 @@ import {
   undoRecordedPlayerGameStat,
   saveScheduledGameLineupDraftForApp,
   saveStaffPracticeAttendance,
+  saveStaffPracticePacket,
   completeGameWrapupForApp,
   loadGameDayLiveEventsForApp,
   saveGameDaySubstitutionForApp,
@@ -34,6 +46,8 @@ import {
   type RideRequestChildInput,
   type PracticeAttendancePlayer,
   type StaffPracticeAttendance,
+  type StaffPracticePacket,
+  type StaffPracticePacketBlock,
   type ParentPracticePacket,
   type ParentPracticePacketChild,
   type StaffScheduleRsvpBreakdown,
@@ -77,22 +91,33 @@ import {
 import { type AppServiceError, toAppServiceError } from '../lib/appErrors';
 import { useAsyncOperation } from '../lib/useAsyncOperation';
 import { EventDetailPageSkeleton } from '../components/PageSkeletons';
+import { AssignmentCard } from '../components/schedule/AssignmentCard';
 import { DateTile } from '../components/schedule/DateTile';
 import { EventBrief } from '../components/schedule/EventBrief';
+import { EventDetailsPanel } from '../components/schedule/EventDetailsPanel';
 import { EventSectionNav } from '../components/schedule/EventSectionNav';
-import { PlayerInitials } from '../components/schedule/PlayerInitials';
+import { StaffRsvpPlayerRow } from '../components/schedule/StaffRsvpPlayerRow';
+import {
+  AttentionPanel,
+  AvailabilityNotesList,
+  QuickAvailabilityPanel,
+  getAvailabilityNoteSaveState,
+  rsvpBadgeClasses,
+  rsvpLabels,
+  type AttentionItem,
+  type ScheduleEventDetailSectionId
+} from '../components/schedule/AvailabilityPanels';
 import {
   canRequestScheduleRide,
   findScheduleRideRequestForChild,
   formatRideDirection,
   formatEventDateLabel,
   formatEventTimeLabel,
+  getScheduleAssignmentStatus,
   getScheduleMapHref,
   getScheduleForecastHref,
-  getScheduleAssignmentStatus,
   getScheduleRideRequestCounts,
   getScheduleRideSeatInfo,
-  isScheduleAssignmentClaimedByUser,
   isScheduleAssignmentOpen,
   getScheduleTitle,
   getLiveClockViewModel,
@@ -136,7 +161,9 @@ import { ScheduleEventDetailProvider } from './schedule/ScheduleEventDetailConte
 import { useScheduleEventRsvp } from '../hooks/schedule/useScheduleEventRsvp';
 import { useScheduleRideOffers } from '../hooks/schedule/useScheduleRideOffers';
 
-type EventDetailSectionId = 'availability' | 'rideshare' | 'assignments' | 'game';
+export { getAvailabilityNoteSaveState } from '../components/schedule/AvailabilityPanels';
+
+type EventDetailSectionId = ScheduleEventDetailSectionId;
 type GameReportSectionId = 'summary' | 'players' | 'plays' | 'opponent' | 'insights' | 'media';
 
 const eventDetailSectionIds = new Set<EventDetailSectionId>(['availability', 'rideshare', 'assignments', 'game']);
@@ -230,34 +257,6 @@ function getEventDetailSections(event?: ParentScheduleEvent | null): Array<{ id:
   ];
 }
 
-const rsvpLabels: Record<RsvpResponse, string> = {
-  going: 'Going',
-  maybe: 'Maybe',
-  not_going: "Can't go",
-  not_responded: 'RSVP needed'
-};
-
-const rsvpBadgeClasses: Record<RsvpResponse, string> = {
-  going: 'border-emerald-200 bg-emerald-50 text-emerald-700',
-  maybe: 'border-amber-200 bg-amber-50 text-amber-700',
-  not_going: 'border-rose-200 bg-rose-50 text-rose-700',
-  not_responded: 'border-primary-200 bg-primary-50 text-primary-700'
-};
-
-export function getAvailabilityNoteSaveState(rsvp: RsvpResponse, availabilityNote: string, savedAvailabilityNote: string) {
-  const trimmedAvailabilityNote = String(availabilityNote || '').trim();
-  const trimmedSavedAvailabilityNote = String(savedAvailabilityNote || '').trim();
-  const isDirty = trimmedAvailabilityNote !== trimmedSavedAvailabilityNote;
-  const canSaveNote = rsvp !== 'not_responded' && isDirty;
-
-  return {
-    isDirty,
-    canSaveNote,
-    trimmedAvailabilityNote,
-    trimmedSavedAvailabilityNote
-  };
-}
-
 function getScheduleEventDetailLoadErrorMessage(error: AppServiceError, hasExistingEvent: boolean) {
   if (hasExistingEvent) {
     if (error.type === 'network') return 'Unable to refresh this event while offline. Showing the last loaded details.';
@@ -272,12 +271,6 @@ function getScheduleEventDetailLoadErrorMessage(error: AppServiceError, hasExist
   if (error.type === 'validation') return error.message;
   return error.message || 'Unable to load event details.';
 }
-
-type AttentionItem = {
-  title: string;
-  detail: string;
-  section: EventDetailSectionId;
-};
 
 type ActiveLiveReaction = LiveGameReaction & {
   localId: string;
@@ -390,7 +383,24 @@ export function ScheduleEventDetail({ auth }: { auth: AuthState }) {
 
   useEffect(() => {
     hasLoadedEventRef.current = false;
-    setInitialLoadPending(true);
+    // Warm-start from cached parent schedule data when the same event was just
+    // rendered in Schedule/Home, so in-app navigation shows content immediately
+    // and only true cold loads fall back to the full-page skeleton (#2649).
+    const cachedEvents = auth.user?.uid
+      ? resolveCachedParentScheduleEvents(auth.user.uid, decodedTeamId, decodedEventId)
+      : [];
+    if (cachedEvents.length > 0) {
+      setEvents(cachedEvents);
+      hasLoadedEventRef.current = true;
+      if (!selectedChildId && cachedEvents[0]?.childId) {
+        setSelectedChildId(cachedEvents[0].childId);
+      }
+      setInitialLoadPending(false);
+    } else {
+      setEvents([]);
+      hasLoadedEventRef.current = false;
+      setInitialLoadPending(true);
+    }
     void loadEvent();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [auth.user?.uid, decodedTeamId, decodedEventId]);
@@ -556,7 +566,9 @@ export function ScheduleEventDetail({ auth }: { auth: AuthState }) {
     }
   };
 
-  if (loading || initialLoadPending) {
+  // Keep the full-page skeleton for cold loads only; once a cached or fetched
+  // event is available, render it and let the background refresh reconcile (#2649).
+  if ((loading || initialLoadPending) && !selectedEvent) {
     return <EventDetailPageSkeleton />;
   }
 
@@ -743,160 +755,11 @@ export function ScheduleEventDetail({ auth }: { auth: AuthState }) {
   );
 }
 
-function QuickAvailabilityPanel({ event, rsvp, canSubmitRsvp, submitting, availabilityNote, onAvailabilityNoteChange, onSubmit }: {
-  event: ParentScheduleEvent;
-  rsvp: RsvpResponse;
-  canSubmitRsvp: boolean;
-  submitting: RsvpResponse | null;
-  availabilityNote: string;
-  onAvailabilityNoteChange: (note: string) => void;
-  onSubmit: (response: Exclude<RsvpResponse, 'not_responded'>) => Promise<void>;
-}) {
-  const needsResponse = rsvp === 'not_responded';
-  const noteSaveState = getAvailabilityNoteSaveState(rsvp, availabilityNote, event.myRsvpNote || '');
-  const showDirtyState = rsvp !== 'not_responded' && noteSaveState.isDirty;
-  return (
-    <div className={`border-b px-3 py-2.5 sm:px-4 sm:py-3 ${needsResponse ? 'border-amber-200 bg-amber-50' : 'border-gray-200 bg-white'}`}>
-      <div className="flex items-center gap-2.5 sm:items-start sm:gap-3">
-        <PlayerInitials name={event.childName} />
-        <div className="min-w-0 flex-1">
-          <div className={`text-[11px] font-black uppercase tracking-[0.06em] ${needsResponse ? 'text-amber-800' : showDirtyState ? 'text-amber-800' : 'text-gray-500'}`}>
-            {needsResponse ? 'Availability needed' : showDirtyState ? 'Unsaved note changes' : 'Availability saved'}
-          </div>
-          <div className="mt-0.5 text-sm font-black leading-tight text-gray-950 sm:mt-1 sm:text-base">Is {event.childName} going?</div>
-          <div className="mt-2 grid grid-cols-3 gap-1.5">
-            {(['going', 'maybe', 'not_going'] as const).map((response) => (
-              <button
-                key={response}
-                type="button"
-                className={`min-h-8 rounded-full border px-2 text-[11px] font-black transition sm:min-h-9 ${
-                  rsvp === response ? rsvpBadgeClasses[response] : 'border-gray-200 bg-white text-gray-600 hover:border-primary-200 hover:bg-primary-50 hover:text-primary-700'
-                } ${!canSubmitRsvp ? 'cursor-not-allowed opacity-60' : ''}`}
-                disabled={!canSubmitRsvp || submitting === response}
-                onClick={() => onSubmit(response)}
-              >
-                {submitting === response ? 'Saving' : rsvpLabels[response]}
-              </button>
-            ))}
-          </div>
-          <label className="mt-2 block">
-            <span className="sr-only">Availability note</span>
-            <textarea
-              aria-label="Availability note"
-              className="auth-input min-h-16 resize-none !px-3 !py-2 text-xs font-semibold"
-              value={availabilityNote}
-              onChange={(changeEvent) => onAvailabilityNoteChange(changeEvent.target.value)}
-              disabled={!canSubmitRsvp}
-              placeholder="Optional note for coaches, rides, or arrival details"
-              rows={2}
-              maxLength={280}
-            />
-          </label>
-          <div className="mt-1 text-[11px] font-semibold text-gray-500">
-            {event.availabilityNotesVisible ? 'Team note sharing is on for this team.' : 'Notes are visible to team staff unless sharing is enabled.'}
-          </div>
-          {noteSaveState.canSaveNote ? (
-            <div className="mt-2 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2">
-              <div className="text-xs font-black text-amber-900">Note edited but not saved yet.</div>
-              <button
-                type="button"
-                className="min-h-8 rounded-full border border-primary-200 bg-white px-3 text-xs font-black text-primary-700 transition hover:border-primary-300 hover:bg-primary-50"
-                disabled={!canSubmitRsvp || submitting === rsvp}
-                onClick={() => onSubmit(rsvp as Exclude<RsvpResponse, 'not_responded'>)}
-              >
-                {submitting === rsvp ? 'Saving' : 'Save note'}
-              </button>
-            </div>
-          ) : null}
-          {!canSubmitRsvp ? <div className="mt-2 text-xs font-semibold text-gray-500">Availability is not open for this event.</div> : null}
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function AvailabilityNotesList({ event }: { event: ParentScheduleEvent }) {
-  const notes = Array.isArray(event.availabilityNotes) ? event.availabilityNotes : [];
-  if (!event.availabilityNotesVisible || !notes.length) return null;
-
-  return (
-    <div className="mt-3 rounded-xl border border-gray-200 bg-white p-3">
-      <div className="text-[11px] font-extrabold uppercase tracking-[0.04em] text-gray-500">Availability notes</div>
-      <div className="mt-2 space-y-2">
-        {notes.map((note, index) => {
-          const response = normalizeRsvpResponse(note.response);
-          return (
-            <div key={`${note.displayName}-${index}`} className="rounded-lg bg-gray-50 p-2">
-              <div className="flex items-center justify-between gap-2">
-                <div className="truncate text-sm font-black text-gray-950">{note.displayName}</div>
-                <span className={`flex-none rounded-full border px-2 py-0.5 text-[10px] font-extrabold uppercase tracking-[0.04em] ${rsvpBadgeClasses[response]}`}>
-                  {rsvpLabels[response]}
-                </span>
-              </div>
-              <div className="mt-1 text-sm font-semibold leading-5 text-gray-700">{note.note}</div>
-            </div>
-          );
-        })}
-      </div>
-    </div>
-  );
-}
-
 function CompactMeta({ icon: Icon, value }: { icon: LucideIcon; value: string }) {
   return (
     <div className="flex min-w-0 items-center gap-2 text-sm font-bold text-gray-800">
       <Icon className="h-4 w-4 flex-none text-primary-600" aria-hidden="true" />
       <span className="min-w-0 truncate">{value}</span>
-    </div>
-  );
-}
-
-function AttentionPanel({ items, onSelectSection }: { items: AttentionItem[]; onSelectSection: (sectionId: EventDetailSectionId) => void }) {
-  if (!items.length) {
-    return (
-      <div className="mt-3 flex items-start gap-2 rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-sm font-semibold text-emerald-800">
-        <CheckCircle2 className="mt-0.5 h-4 w-4 flex-none" aria-hidden="true" />
-        <div>
-          <div className="font-black">All caught up</div>
-          <div className="mt-0.5 text-xs font-semibold text-emerald-700">No parent actions need attention right now.</div>
-        </div>
-      </div>
-    );
-  }
-
-  const [primary, ...secondary] = items;
-
-  return (
-    <div className="mt-2 rounded-xl border border-amber-200 bg-amber-50 p-2.5 sm:mt-3 sm:p-3">
-      <div className="flex items-center gap-2 text-sm font-black text-amber-900">
-        <AlertCircle className="h-4 w-4 flex-none" aria-hidden="true" />
-        Needs attention
-      </div>
-      <button
-        type="button"
-        className="mt-2 flex w-full items-start justify-between gap-3 rounded-lg border border-amber-200 bg-white px-3 py-1.5 text-left transition hover:border-amber-300 hover:bg-amber-50 sm:py-2"
-        onClick={() => onSelectSection(primary.section)}
-      >
-        <span>
-          <span className="block text-sm font-black text-gray-950">{primary.title}</span>
-          <span className="mt-0.5 block text-xs font-semibold leading-4 text-gray-600 sm:leading-5">{primary.detail}</span>
-        </span>
-        <span className="mt-0.5 flex-none text-xs font-black text-primary-700">Go</span>
-      </button>
-      {secondary.length ? (
-        <div className="mt-2 flex flex-wrap gap-2">
-          {secondary.map((item) => (
-            <button
-              key={`${item.section}-${item.title}`}
-              type="button"
-              className="min-h-8 rounded-full border border-amber-200 bg-white px-3 text-xs font-black text-amber-900"
-              onClick={() => onSelectSection(item.section)}
-            >
-              {item.title}
-            </button>
-          ))}
-        </div>
-      ) : null}
     </div>
   );
 }
@@ -932,6 +795,272 @@ function PlayerSwitcher({ events, selectedChildId, onSelect, compact = false }: 
   );
 }
 
+
+function padDatePart(value: number) {
+  return String(value).padStart(2, '0');
+}
+
+function toDatetimeLocalInputValue(value: Date | string | number | null | undefined) {
+  if (value === null || value === undefined || value === '') return '';
+  const date = value instanceof Date ? value : new Date(value || Date.now());
+  if (Number.isNaN(date.getTime())) return '';
+  return `${date.getFullYear()}-${padDatePart(date.getMonth() + 1)}-${padDatePart(date.getDate())}T${padDatePart(date.getHours())}:${padDatePart(date.getMinutes())}`;
+}
+function getDefaultPracticeEndDate(startDate: Date) {
+  return new Date(startDate.getTime() + 90 * 60000);
+}
+
+function buildPracticeFormFromEvent(event: ParentScheduleEvent): SchedulePracticeFormInput {
+  const startDate = event.date instanceof Date ? event.date : new Date(event.date);
+  const endDate = event.endDate instanceof Date ? event.endDate : (event.endDate ? new Date(event.endDate) : getDefaultPracticeEndDate(startDate));
+  return {
+    title: event.title || 'Practice',
+    startDate,
+    endDate,
+    location: event.location || '',
+    notes: event.notes || '',
+    recurrence: { isRecurring: event.id.includes('__') }
+  };
+}
+
+function buildGameFormFromEvent(event: ParentScheduleEvent): ScheduleGameFormInput {
+  const startDate = event.date instanceof Date ? event.date : new Date(event.date);
+  const endDate = event.endDate instanceof Date ? event.endDate : (event.endDate ? new Date(event.endDate) : null);
+  const arrivalTime = event.arrivalTime instanceof Date ? event.arrivalTime : (event.arrivalTime ? new Date(event.arrivalTime) : null);
+  return {
+    opponent: event.opponent || event.title || '',
+    startDate,
+    endDate,
+    location: event.location || '',
+    arrivalTime,
+    isHome: event.isHome === false ? false : event.isHome === true ? true : null,
+    notes: event.notes || '',
+    statTrackerConfigId: event.statTrackerConfigId || '',
+    competitionType: event.competitionType || 'league',
+    countsTowardSeasonRecord: event.countsTowardSeasonRecord !== false,
+    opponentTeamId: event.opponentTeamId || null,
+    opponentTeamName: event.opponentTeamName || null,
+    opponentTeamPhoto: event.opponentTeamPhoto || null
+  };
+}
+
+function GameScheduleEditPanel({ auth, event }: { auth: AuthState; event: ParentScheduleEvent }) {
+  const [open, setOpen] = useState(false);
+  const [form, setForm] = useState<ScheduleGameFormInput>(() => buildGameFormFromEvent(event));
+  const [configs, setConfigs] = useState<ScheduleStatTrackerConfigOption[]>([]);
+  const [saving, setSaving] = useState(false);
+  const [status, setStatus] = useState<{ tone: 'success' | 'error'; message: string } | null>(null);
+  const [configError, setConfigError] = useState<string | null>(null);
+
+  useEffect(() => {
+    setForm(buildGameFormFromEvent(event));
+    setStatus(null);
+  }, [event.eventKey]);
+
+  useEffect(() => {
+    if (!open || !auth.user) return;
+    let cancelled = false;
+    setConfigError(null);
+    loadScheduleStatTrackerConfigsForApp(event.teamId, auth.user)
+      .then((nextConfigs) => {
+        if (!cancelled) setConfigs(nextConfigs);
+      })
+      .catch((error: any) => {
+        if (!cancelled) setConfigError(error?.message || 'Unable to load tracker configs.');
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [auth.user, event.teamId, open]);
+
+  const updateField = (field: keyof ScheduleGameFormInput, value: string | Date | boolean | null) => {
+    setForm((current) => ({ ...current, [field]: value }));
+  };
+
+  const saveGame = async (submitEvent: FormEvent<HTMLFormElement>) => {
+    submitEvent.preventDefault();
+    if (!auth.user) return;
+    setSaving(true);
+    setStatus(null);
+    try {
+      await updateScheduledGameForApp(event.teamId, event.id, form, auth.user);
+      setStatus({ tone: 'success', message: 'Game schedule was updated.' });
+    } catch (error: any) {
+      setStatus({ tone: 'error', message: error?.message || 'Unable to update game.' });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <section className="app-card p-3 sm:p-4" aria-label="Edit game schedule">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <div className="text-xs font-black uppercase tracking-[0.04em] text-primary-700">Schedule management</div>
+          <h2 className="mt-1 text-base font-black text-gray-950">Edit game</h2>
+          <p className="mt-1 text-sm font-semibold text-gray-500">Update opponent, timing, location, home/away, and tracker config without touching score data.</p>
+        </div>
+        <button type="button" className="secondary-button" onClick={() => setOpen((current) => !current)}>{open ? 'Hide editor' : 'Edit game'}</button>
+      </div>
+      {open ? (
+        <form className="mt-3 space-y-3" onSubmit={saveGame}>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <label className="text-xs font-bold uppercase tracking-wide text-gray-600">Opponent<input className="auth-input mt-1" value={form.opponent} onChange={(e) => updateField('opponent', e.target.value)} /></label>
+            <label className="text-xs font-bold uppercase tracking-wide text-gray-600">Location<input className="auth-input mt-1" value={form.location || ''} onChange={(e) => updateField('location', e.target.value)} /></label>
+            <label className="text-xs font-bold uppercase tracking-wide text-gray-600">Starts<input type="datetime-local" className="auth-input mt-1" value={toDatetimeLocalInputValue(form.startDate)} onChange={(e) => updateField('startDate', new Date(e.target.value))} /></label>
+            <label className="text-xs font-bold uppercase tracking-wide text-gray-600">Ends<input type="datetime-local" className="auth-input mt-1" value={toDatetimeLocalInputValue(form.endDate)} onChange={(e) => updateField('endDate', e.target.value ? new Date(e.target.value) : null)} /></label>
+            <label className="text-xs font-bold uppercase tracking-wide text-gray-600">Arrival<input type="datetime-local" className="auth-input mt-1" value={toDatetimeLocalInputValue(form.arrivalTime)} onChange={(e) => updateField('arrivalTime', e.target.value ? new Date(e.target.value) : null)} /></label>
+            <label className="text-xs font-bold uppercase tracking-wide text-gray-600">Home / away<select className="auth-input mt-1" value={form.isHome === false ? 'away' : form.isHome === true ? 'home' : 'neutral'} onChange={(e) => updateField('isHome', e.target.value === 'neutral' ? null : e.target.value === 'home')}><option value="home">Home</option><option value="away">Away</option><option value="neutral">Neutral</option></select></label>
+            <label className="text-xs font-bold uppercase tracking-wide text-gray-600">Tracker config<select className="auth-input mt-1" value={form.statTrackerConfigId || ''} onChange={(e) => updateField('statTrackerConfigId', e.target.value)}><option value="">No tracker config</option>{configs.map((config) => <option key={config.id} value={config.id}>{config.name}</option>)}</select></label>
+            <label className="text-xs font-bold uppercase tracking-wide text-gray-600">Competition<select className="auth-input mt-1" value={form.competitionType || 'league'} onChange={(e) => updateField('competitionType', e.target.value)}><option value="league">League</option><option value="tournament">Tournament</option><option value="scrimmage">Scrimmage</option><option value="friendly">Friendly</option></select></label>
+          </div>
+          <label className="flex items-center gap-2 text-sm font-black text-gray-800"><input type="checkbox" checked={form.countsTowardSeasonRecord !== false} onChange={(e) => updateField('countsTowardSeasonRecord', e.target.checked)} /> Counts toward season record</label>
+          <label className="text-xs font-bold uppercase tracking-wide text-gray-600">Notes<textarea className="auth-input mt-1 min-h-20" value={form.notes || ''} onChange={(e) => updateField('notes', e.target.value)} /></label>
+          <button type="submit" className="primary-button" disabled={saving}>{saving ? 'Saving' : 'Save game'}</button>
+          {configError ? <div className="rounded-2xl border border-amber-200 bg-amber-50 px-3 py-2 text-sm font-bold text-amber-700">{configError}</div> : null}
+        </form>
+      ) : null}
+      {status ? <div className={`mt-3 rounded-2xl border px-3 py-2 text-sm font-bold ${status.tone === 'success' ? 'border-emerald-200 bg-emerald-50 text-emerald-700' : 'border-rose-200 bg-rose-50 text-rose-700'}`}>{status.message}</div> : null}
+    </section>
+  );
+}
+
+function PracticeScheduleEditPanel({ auth, event }: { auth: AuthState; event: ParentScheduleEvent }) {
+  const [open, setOpen] = useState(false);
+  const [scope, setScope] = useState<'occurrence' | 'series'>(event.id.includes('__') ? 'occurrence' : 'series');
+  const [form, setForm] = useState<SchedulePracticeFormInput>(() => buildPracticeFormFromEvent(event));
+  const [seriesId, setSeriesId] = useState<string | null>(null);
+  const [seriesEventId, setSeriesEventId] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [status, setStatus] = useState<{ tone: 'success' | 'error'; message: string } | null>(null);
+
+  useEffect(() => {
+    setForm(buildPracticeFormFromEvent(event));
+    setScope(event.id.includes('__') ? 'occurrence' : 'series');
+    setSeriesId(null);
+    setSeriesEventId(null);
+    setStatus(null);
+  }, [event.eventKey]);
+
+  const updateField = (field: keyof SchedulePracticeFormInput, value: string | Date | PracticeRecurrenceFormInput) => {
+    setForm((current) => ({ ...current, [field]: value }));
+  };
+
+  const loadSeries = async () => {
+    if (!auth.user) return;
+    setSaving(true);
+    setStatus(null);
+    try {
+      const loaded = await loadScheduledPracticeSeriesForEdit(event.teamId, event.id, auth.user);
+      setForm(loaded.input);
+      setSeriesId(loaded.seriesId || null);
+      setSeriesEventId(loaded.eventId);
+      setScope('series');
+      setOpen(true);
+    } catch (error: any) {
+      setStatus({ tone: 'error', message: error?.message || 'Unable to load practice series.' });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const savePractice = async (submitEvent: FormEvent<HTMLFormElement>) => {
+    submitEvent.preventDefault();
+    if (!auth.user) return;
+    setSaving(true);
+    setStatus(null);
+    try {
+      await updateScheduledPracticeForApp(event.teamId, form, auth.user, {
+        eventId: scope === 'series' ? (seriesEventId || event.id) : event.id,
+        seriesId,
+        scope
+      });
+      setStatus({ tone: 'success', message: scope === 'occurrence' ? 'This practice occurrence was updated.' : 'Practice series was updated.' });
+    } catch (error: any) {
+      setStatus({ tone: 'error', message: error?.message || 'Unable to update practice.' });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const revertOccurrence = async () => {
+    if (!auth.user) return;
+    setSaving(true);
+    setStatus(null);
+    try {
+      await revertScheduledPracticeOccurrenceForApp(event.teamId, event.id, auth.user);
+      setStatus({ tone: 'success', message: 'This occurrence now follows the series again.' });
+    } catch (error: any) {
+      setStatus({ tone: 'error', message: error?.message || 'Unable to revert this occurrence.' });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <section className="app-card p-3 sm:p-4" aria-label="Edit practice schedule">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <div className="text-xs font-black uppercase tracking-[0.04em] text-primary-700">Schedule management</div>
+          <h2 className="mt-1 text-base font-black text-gray-950">Edit practice</h2>
+          <p className="mt-1 text-sm font-semibold text-gray-500">Update this occurrence or the full recurring series using the same backend semantics as the website.</p>
+        </div>
+        <button type="button" className="secondary-button" onClick={() => setOpen((current) => !current)}>{open ? 'Hide editor' : 'Edit practice'}</button>
+      </div>
+      {open ? (
+        <form className="mt-3 space-y-3" onSubmit={savePractice}>
+          {event.id.includes('__') ? (
+            <div className="grid gap-2 sm:grid-cols-2">
+              <button type="button" className={scope === 'occurrence' ? 'primary-button' : 'secondary-button'} onClick={() => { setScope('occurrence'); setForm(buildPracticeFormFromEvent(event)); }}>This occurrence</button>
+              <button type="button" className={scope === 'series' ? 'primary-button' : 'secondary-button'} onClick={loadSeries} disabled={saving}>Entire series</button>
+            </div>
+          ) : null}
+          <div className="grid gap-3 sm:grid-cols-2">
+            <label className="text-xs font-bold uppercase tracking-wide text-gray-600">Title<input className="auth-input mt-1" value={form.title} onChange={(e) => updateField('title', e.target.value)} /></label>
+            <label className="text-xs font-bold uppercase tracking-wide text-gray-600">Location<input className="auth-input mt-1" value={form.location || ''} onChange={(e) => updateField('location', e.target.value)} /></label>
+            <label className="text-xs font-bold uppercase tracking-wide text-gray-600">Starts<input type="datetime-local" className="auth-input mt-1" value={toDatetimeLocalInputValue(form.startDate)} onChange={(e) => updateField('startDate', new Date(e.target.value))} /></label>
+            <label className="text-xs font-bold uppercase tracking-wide text-gray-600">Ends<input type="datetime-local" className="auth-input mt-1" value={toDatetimeLocalInputValue(form.endDate)} onChange={(e) => updateField('endDate', new Date(e.target.value))} /></label>
+          </div>
+          <label className="text-xs font-bold uppercase tracking-wide text-gray-600">Notes<textarea className="auth-input mt-1 min-h-20" value={form.notes || ''} onChange={(e) => updateField('notes', e.target.value)} /></label>
+          {scope === 'series' ? <PracticeRecurrenceFields form={form} onChange={setForm} /> : null}
+          <div className="flex flex-wrap gap-2">
+            <button type="submit" className="primary-button" disabled={saving}>{saving ? 'Saving' : 'Save practice'}</button>
+            {event.id.includes('__') ? <button type="button" className="secondary-button" disabled={saving} onClick={revertOccurrence}>Revert occurrence</button> : null}
+          </div>
+        </form>
+      ) : null}
+      {status ? <div className={`mt-3 rounded-2xl border px-3 py-2 text-sm font-bold ${status.tone === 'success' ? 'border-emerald-200 bg-emerald-50 text-emerald-700' : 'border-rose-200 bg-rose-50 text-rose-700'}`}>{status.message}</div> : null}
+    </section>
+  );
+}
+
+function PracticeRecurrenceFields({ form, onChange }: { form: SchedulePracticeFormInput; onChange: (form: SchedulePracticeFormInput) => void }) {
+  const recurrence = form.recurrence || { isRecurring: false };
+  const byDays = new Set(recurrence.byDays || []);
+  const setRecurrence = (next: Partial<PracticeRecurrenceFormInput>) => onChange({ ...form, recurrence: { ...recurrence, ...next } });
+  const days = [['MO', 'Mon'], ['TU', 'Tue'], ['WE', 'Wed'], ['TH', 'Thu'], ['FR', 'Fri'], ['SA', 'Sat'], ['SU', 'Sun']];
+  return (
+    <div className="rounded-2xl border border-gray-200 bg-gray-50 p-3">
+      <label className="flex items-center gap-2 text-sm font-black text-gray-800"><input type="checkbox" checked={recurrence.isRecurring === true} onChange={(e) => setRecurrence({ isRecurring: e.target.checked })} /> Weekly recurrence</label>
+      {recurrence.isRecurring ? (
+        <div className="mt-3 space-y-3">
+          <div className="flex flex-wrap gap-2">
+            {days.map(([value, label]) => (
+              <label key={value} className="rounded-full border border-gray-200 bg-white px-3 py-1 text-xs font-black text-gray-700"><input className="mr-1" type="checkbox" checked={byDays.has(value)} onChange={(e) => { const next = new Set(byDays); if (e.target.checked) next.add(value); else next.delete(value); setRecurrence({ byDays: Array.from(next) }); }} />{label}</label>
+            ))}
+          </div>
+          <div className="grid gap-3 sm:grid-cols-3">
+            <label className="text-xs font-bold uppercase tracking-wide text-gray-600">Every<input type="number" min="1" className="auth-input mt-1" value={recurrence.interval || 1} onChange={(e) => setRecurrence({ interval: Number(e.target.value) || 1 })} /></label>
+            <label className="text-xs font-bold uppercase tracking-wide text-gray-600">Ends<select className="auth-input mt-1" value={recurrence.endType || 'never'} onChange={(e) => setRecurrence({ endType: e.target.value as PracticeRecurrenceFormInput['endType'] })}><option value="never">Never</option><option value="until">On date</option><option value="count">After count</option></select></label>
+            {recurrence.endType === 'until' ? <label className="text-xs font-bold uppercase tracking-wide text-gray-600">Until<input type="date" className="auth-input mt-1" value={recurrence.untilValue || ''} onChange={(e) => setRecurrence({ untilValue: e.target.value })} /></label> : null}
+            {recurrence.endType === 'count' ? <label className="text-xs font-bold uppercase tracking-wide text-gray-600">Count<input type="number" min="1" className="auth-input mt-1" value={recurrence.countValue || 10} onChange={(e) => setRecurrence({ countValue: Number(e.target.value) || 10 })} /></label> : null}
+          </div>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 function PracticePacketPrompt({ event, onOpen }: { event: ParentScheduleEvent; onOpen: () => void }) {
   return (
     <button
@@ -951,47 +1080,6 @@ function PracticePacketPrompt({ event, onOpen }: { event: ParentScheduleEvent; o
       </span>
       <span className="flex-none rounded-full bg-white px-3 py-1 text-xs font-black text-blue-700">Review</span>
     </button>
-  );
-}
-
-function EventDetailsPanel({ event, open }: { event: ParentScheduleEvent; open: boolean }) {
-  if (!open) return null;
-  const rows = getEventDetailRows(event);
-  const mapHref = getScheduleMapHref(event.location);
-  const forecastHref = getScheduleForecastHref(event.location);
-
-  return (
-    <div className="mt-3 rounded-xl border border-gray-200 bg-white">
-      <dl className="divide-y divide-gray-200 px-3">
-        {rows.map((row) => (
-          <div key={row.label} className="flex items-start gap-3 py-3">
-            <div className="mt-0.5 flex h-8 w-8 flex-none items-center justify-center rounded-full bg-primary-50 text-primary-600">
-              <row.icon className="h-4 w-4" aria-hidden="true" />
-            </div>
-            <div className="min-w-0 flex-1">
-              <dt className="text-sm font-black text-gray-950">{row.value}</dt>
-              <dd className="mt-0.5 text-xs font-semibold text-gray-500">{row.label}</dd>
-            </div>
-          </div>
-        ))}
-      </dl>
-      {(mapHref || forecastHref) ? (
-        <div className="flex flex-wrap gap-2 border-t border-gray-100 p-3">
-          {mapHref ? (
-            <a href={mapHref} target="_blank" rel="noreferrer" className="secondary-button min-h-9 flex-1 px-3 py-2 text-xs">
-              <MapPin className="h-4 w-4" aria-hidden="true" />
-              Directions
-            </a>
-          ) : null}
-          {forecastHref ? (
-            <a href={forecastHref} target="_blank" rel="noreferrer" className="secondary-button min-h-9 flex-1 px-3 py-2 text-xs">
-              <ExternalLink className="h-4 w-4" aria-hidden="true" />
-              Forecast
-            </a>
-          ) : null}
-        </div>
-      ) : null}
-    </div>
   );
 }
 
@@ -1099,37 +1187,16 @@ function StaffRsvpBreakdownPanel({ event, breakdown, loading, error, submittingP
               <div className="space-y-2">
                 {rows.map((player) => {
                   const inlineStatus = status?.playerId === player.playerId ? status : null;
+                  const busy = submittingPlayerId === player.playerId;
                   return (
-                    <div key={player.playerId} className="rounded-xl border border-gray-200 bg-gray-50 p-3" data-testid={`staff-rsvp-row-${player.playerId}`}>
-                      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                        <div className="min-w-0">
-                          <div className="text-sm font-black text-gray-950">{player.playerNumber ? `#${player.playerNumber} ` : ''}{player.playerName}</div>
-                          <div className="mt-1 flex flex-wrap items-center gap-2">
-                            <span className={`rounded-full border px-2 py-0.5 text-[10px] font-extrabold uppercase tracking-[0.04em] ${rsvpBadgeClasses[player.response]}`}>
-                              {rsvpLabels[player.response]}
-                            </span>
-                            {player.note ? <span className="text-xs font-semibold text-gray-500">{player.note}</span> : null}
-                          </div>
-                        </div>
-                        <div className="grid grid-cols-3 gap-1.5 sm:min-w-[220px]">
-                          {(['going', 'maybe', 'not_going'] as const).map((response) => {
-                            const busy = submittingPlayerId === player.playerId;
-                            return (
-                              <button
-                                key={response}
-                                type="button"
-                                className={`min-h-8 rounded-full border px-2 text-[11px] font-black transition ${player.response === response ? rsvpBadgeClasses[response] : 'border-gray-200 bg-white text-gray-600 hover:border-primary-200 hover:bg-primary-50 hover:text-primary-700'}`}
-                                disabled={busy || event.isCancelled || event.availabilityLocked}
-                                onClick={() => onOverride(player, response)}
-                              >
-                                {busy && player.response !== response ? 'Saving' : rsvpLabels[response]}
-                              </button>
-                            );
-                          })}
-                        </div>
-                      </div>
-                      {inlineStatus ? <div className={`mt-2 text-xs font-bold ${inlineStatus.tone === 'success' ? 'text-emerald-700' : 'text-rose-700'}`}>{inlineStatus.message}</div> : null}
-                    </div>
+                    <StaffRsvpPlayerRow
+                      key={player.playerId}
+                      eventLocked={event.isCancelled || event.availabilityLocked === true}
+                      player={player}
+                      submitting={busy}
+                      status={inlineStatus}
+                      onOverride={onOverride}
+                    />
                   );
                 })}
               </div>
@@ -1657,55 +1724,6 @@ function AssignmentsSection({ auth, event, onAssignmentsChanged }: {
   );
 }
 
-function AssignmentCard({ assignment, userId, busy, disabled, onClaim, onRelease }: {
-  assignment: ScheduleAssignment;
-  userId: string;
-  busy: boolean;
-  disabled: boolean;
-  onClaim: () => void | Promise<void>;
-  onRelease: () => void | Promise<void>;
-}) {
-  const role = String(assignment.role || 'Assignment').trim();
-  const myOwn = isScheduleAssignmentClaimedByUser(assignment, userId);
-  const open = isScheduleAssignmentOpen(assignment);
-  const status = getScheduleAssignmentStatus(assignment, userId);
-
-  return (
-    <article className={`rounded-xl border p-3 ${myOwn ? 'border-emerald-200 bg-emerald-50' : open ? 'border-amber-200 bg-amber-50' : 'border-gray-200 bg-gray-50'}`}>
-      <div className="flex items-start justify-between gap-3">
-        <div className="min-w-0">
-          <div className="text-sm font-black text-gray-950">{role}</div>
-          <div className={`mt-1 text-xs font-black ${myOwn ? 'text-emerald-700' : open ? 'text-amber-800' : 'text-gray-600'}`}>
-            {assignment.claimable ? status : `${role}: ${status}`}
-          </div>
-          {assignment.claimable ? (
-            <div className="mt-1 text-[11px] font-semibold text-gray-500">Parent sign-up slot</div>
-          ) : null}
-        </div>
-        {myOwn ? (
-          <button
-            type="button"
-            className="min-h-8 flex-none rounded-full border border-emerald-200 bg-white px-3 text-xs font-black text-emerald-700"
-            onClick={onRelease}
-            disabled={disabled}
-          >
-            {busy ? 'Releasing' : 'Release'}
-          </button>
-        ) : open ? (
-          <button
-            type="button"
-            className="min-h-8 flex-none rounded-full border border-amber-200 bg-white px-3 text-xs font-black text-amber-800"
-            onClick={onClaim}
-            disabled={disabled}
-          >
-            {busy ? 'Signing up' : 'Sign up'}
-          </button>
-        ) : null}
-      </div>
-    </article>
-  );
-}
-
 function LiveGameReactionsPanel({ auth, event }: { auth: AuthState; event: ParentScheduleEvent }) {
   const [reactionsModule, setReactionsModule] = useState<LiveGameReactionsModule | null>(null);
   const [activeReactions, setActiveReactions] = useState<ActiveLiveReaction[]>([]);
@@ -2001,6 +2019,38 @@ function LazyGameHubPanel({
   );
 }
 
+const LiveGameClockNowContext = createContext<Date | null>(null);
+
+function LiveGameClockTickerProvider({ event, children }: { event: ParentScheduleEvent; children: ReactNode }) {
+  const [clockNow, setClockNow] = useState(() => new Date());
+
+  useEffect(() => {
+    setClockNow(new Date());
+    if (!event.liveClockRunning) return undefined;
+    const intervalId = window.setInterval(() => setClockNow(new Date()), 1000);
+    return () => window.clearInterval(intervalId);
+  }, [event.eventKey, event.liveClockMs, event.liveClockRunning, event.liveClockPeriod, event.liveClockUpdatedAt]);
+
+  return <LiveGameClockNowContext.Provider value={clockNow}>{children}</LiveGameClockNowContext.Provider>;
+}
+
+function useLiveGameClockNow() {
+  return useContext(LiveGameClockNowContext) || new Date();
+}
+
+function GameHubLiveClockBadge({ event }: { event: ParentScheduleEvent }) {
+  const clockNow = useLiveGameClockNow();
+  const liveClockView = getLiveClockViewModel(event, clockNow);
+
+  if (!liveClockView) return null;
+
+  return (
+    <div className="inline-flex min-h-6 items-center rounded-full border border-rose-200 bg-rose-50 px-2 text-[11px] font-extrabold uppercase tracking-[0.04em] text-rose-700 tabular-nums" aria-label="Live game clock">
+      {liveClockView.label}
+    </div>
+  );
+}
+
 function GameHubSection({ auth, event, childEvents, onScoreUpdated, onLiveClockUpdated, onWrapupCompleted, onStatsheetImported, onGameCancelled, onPracticeOccurrenceCancelled, onGamePlanPublished }: { auth: AuthState; event: ParentScheduleEvent; childEvents: ParentScheduleEvent[]; onScoreUpdated: (homeScore: number, awayScore: number) => void; onLiveClockUpdated: (payload: Partial<ParentScheduleEvent> & { period?: string | null }) => void; onWrapupCompleted: (payload: { homeScore: number; awayScore: number; postGameNotes: string; summary: string; practiceFeedItems: PracticeFeedItem[] }) => void; onStatsheetImported: (payload: { homeScore: number; awayScore: number; statSheetPhotoUrl?: string | null }) => void; onGameCancelled: () => void; onPracticeOccurrenceCancelled: () => void; onGamePlanPublished: (gamePlan: Record<string, any>) => void }) {
   const [shareStatus, setShareStatus] = useState<string | null>(null);
   const [cancelStatus, setCancelStatus] = useState<{ tone: 'success' | 'error'; message: string } | null>(null);
@@ -2008,8 +2058,6 @@ function GameHubSection({ auth, event, childEvents, onScoreUpdated, onLiveClockU
   const [openPanels, setOpenPanels] = useState<Record<string, boolean>>({});
   const statusLabel = getEventStatusLabel(event);
   const scoreLabel = getScoreLabel(event);
-  const [liveClockNow, setLiveClockNow] = useState(() => new Date());
-  const liveClockView = getLiveClockViewModel(event, liveClockNow);
   const isPractice = event.type === 'practice';
   const showAdminPracticeTimeline = Boolean(isPractice && event.isTeamAdmin);
   const showNonAdminPracticePacketFirst = Boolean(isPractice && !event.isTeamAdmin);
@@ -2020,13 +2068,6 @@ function GameHubSection({ auth, event, childEvents, onScoreUpdated, onLiveClockU
   const canPublishLineup = Boolean(!isPractice && event.isDbGame && event.isTeamStaff);
   const notifiesCounterpartTeam = Boolean(event.opponentTeamId || event.sharedScheduleOpponentTeamId);
   const hubDestinations = isPractice ? buildPracticeHubDestinations(event) : buildGameHubDestinations(event);
-
-  useEffect(() => {
-    setLiveClockNow(new Date());
-    if (!event.liveClockRunning) return undefined;
-    const intervalId = window.setInterval(() => setLiveClockNow(new Date()), 1000);
-    return () => window.clearInterval(intervalId);
-  }, [event.eventKey, event.liveClockRunning, event.liveClockMs, event.liveClockUpdatedAt]);
 
   useEffect(() => {
     setOpenPanels({});
@@ -2101,6 +2142,9 @@ function GameHubSection({ auth, event, childEvents, onScoreUpdated, onLiveClockU
     <section className="space-y-3">
       {showNonAdminPracticePacketFirst ? <PracticePacketSection auth={auth} event={event} childEvents={childEvents} /> : null}
       {showAdminPracticeTimeline ? <PracticeTimelineSection auth={auth} event={event} /> : null}
+      {!isPractice && event.isTeamAdmin && event.isDbGame && !event.isCancelled ? <GameScheduleEditPanel auth={auth} event={event} /> : null}
+      {isPractice && event.isTeamAdmin && event.isDbGame && !event.isCancelled ? <PracticeScheduleEditPanel auth={auth} event={event} /> : null}
+      {isPractice && event.isTeamAdmin && event.isDbGame && !event.isCancelled ? <StaffPracticePacketEditor auth={auth} event={event} childEvents={childEvents} /> : null}
       {isPractice && !showNonAdminPracticePacketFirst ? <PracticePacketSection auth={auth} event={event} childEvents={childEvents} /> : null}
       <div className="app-card overflow-hidden p-0">
         <div className="border-b border-gray-100 px-3 py-3 sm:px-4">
@@ -2116,25 +2160,23 @@ function GameHubSection({ auth, event, childEvents, onScoreUpdated, onLiveClockU
         </div>
 
         <div className="px-3 py-3 sm:px-4">
-          <div className="flex items-center justify-between gap-3">
-            <div className="min-w-0">
-              <div className="text-sm font-black text-gray-950">{isPractice ? event.title || 'Practice' : getScheduleTitle(event)}</div>
-              <div className="mt-1 flex min-w-0 flex-wrap gap-x-2 gap-y-1 text-xs font-semibold text-gray-500">
-                <span>{formatEventDateLabel(event.date)} · {formatEventTimeLabel(event.date)}</span>
-                <span className="min-w-0 truncate">{event.location || 'Location TBD'}</span>
+          <LiveGameClockTickerProvider event={event}>
+            <div className="flex items-center justify-between gap-3">
+              <div className="min-w-0">
+                <div className="text-sm font-black text-gray-950">{isPractice ? event.title || 'Practice' : getScheduleTitle(event)}</div>
+                <div className="mt-1 flex min-w-0 flex-wrap gap-x-2 gap-y-1 text-xs font-semibold text-gray-500">
+                  <span>{formatEventDateLabel(event.date)} · {formatEventTimeLabel(event.date)}</span>
+                  <span className="min-w-0 truncate">{event.location || 'Location TBD'}</span>
+                </div>
+              </div>
+              <div className="flex flex-none flex-col items-end gap-1 text-right">
+                {scoreLabel ? <div className="text-2xl font-black tabular-nums text-gray-950">{scoreLabel}</div> : null}
+                <GameHubLiveClockBadge event={event} />
               </div>
             </div>
-            <div className="flex flex-none flex-col items-end gap-1 text-right">
-              {scoreLabel ? <div className="text-2xl font-black tabular-nums text-gray-950">{scoreLabel}</div> : null}
-              {liveClockView ? (
-                <div className="inline-flex min-h-6 items-center rounded-full border border-rose-200 bg-rose-50 px-2 text-[11px] font-extrabold uppercase tracking-[0.04em] text-rose-700 tabular-nums" aria-label="Live game clock">
-                  {liveClockView.label}
-                </div>
-              ) : null}
-            </div>
-          </div>
 
-          {canUpdateScore ? <LiveGameClockPanel auth={auth} event={event} onLiveClockUpdated={onLiveClockUpdated} /> : null}
+            {canUpdateScore ? <LiveGameClockPanel auth={auth} event={event} onLiveClockUpdated={onLiveClockUpdated} /> : null}
+          </LiveGameClockTickerProvider>
           {canUpdateScore ? <LiveScoreEditor auth={auth} event={event} onScoreUpdated={onScoreUpdated} /> : null}
           {canUpdateScore ? <GameDayFoulTrackerPanel auth={auth} event={event} /> : null}
 
@@ -3319,7 +3361,7 @@ type ScoreSnapshot = {
 };
 
 function LiveGameClockPanel({ auth, event, onLiveClockUpdated }: { auth: AuthState; event: ParentScheduleEvent; onLiveClockUpdated: (payload: Partial<ParentScheduleEvent> & { period?: string | null }) => void }) {
-  const [clockNow, setClockNow] = useState(() => new Date());
+  const clockNow = useLiveGameClockNow();
   const [saving, setSaving] = useState(false);
   const [status, setStatus] = useState<{ tone: 'success' | 'error'; message: string } | null>(null);
   const periods = useMemo(() => buildLiveGameClockPeriods(event as Record<string, any>), [event]);
@@ -3336,13 +3378,6 @@ function LiveGameClockPanel({ auth, event, onLiveClockUpdated }: { auth: AuthSta
     liveClockUpdatedAt: clockState.updatedAt
   } as ParentScheduleEvent, clockNow);
 
-  useEffect(() => {
-    setClockNow(new Date());
-    if (!clockState.running) return undefined;
-    const intervalId = window.setInterval(() => setClockNow(new Date()), 1000);
-    return () => window.clearInterval(intervalId);
-  }, [event.eventKey, event.liveClockMs, event.liveClockRunning, event.liveClockPeriod, event.liveClockUpdatedAt, clockState.running]);
-
   const persistClock = async (next: { running: boolean; period: string }) => {
     if (!auth.user) return;
     setSaving(true);
@@ -3355,7 +3390,6 @@ function LiveGameClockPanel({ auth, event, onLiveClockUpdated }: { auth: AuthSta
         currentGame: event
       }, auth.user);
       onLiveClockUpdated(payload as Partial<ParentScheduleEvent> & { period?: string | null });
-      setClockNow(new Date(payload.liveClockUpdatedAt as Date | string | number));
       setStatus({ tone: 'success', message: next.running ? 'Clock running.' : `Clock saved${next.period !== activePeriod ? ` for ${next.period}.` : '.'}` });
     } catch (error: any) {
       setStatus({ tone: 'error', message: error?.message || 'Unable to update the live clock.' });
@@ -3589,7 +3623,7 @@ function LiveScoreEditor({ auth, event, onScoreUpdated }: { auth: AuthState; eve
   };
 
   return (
-    <div className={`mt-3 rounded-2xl border p-3 ${dirty ? 'border-amber-200 bg-amber-50' : 'border-gray-100 bg-gray-50'}`}>
+    <div data-testid="live-score-editor" className={`mt-3 rounded-2xl border p-3 ${dirty ? 'border-amber-200 bg-amber-50' : 'border-gray-100 bg-gray-50'}`}>
       <div className="flex items-center justify-between gap-3">
         <div>
           <div className="text-xs font-black uppercase tracking-[0.04em] text-gray-500">Live score</div>
@@ -4123,6 +4157,131 @@ function PracticeTimelineSection({ auth, event }: { auth: AuthState; event: Pare
           </div>
         ) : null}
       </div>
+    </section>
+  );
+}
+
+function StaffPracticePacketEditor({ auth, event, childEvents }: { auth: AuthState; event: ParentScheduleEvent; childEvents: ParentScheduleEvent[] }) {
+  const [packet, setPacket] = useState<StaffPracticePacket | null>(null);
+  const [packetTitle, setPacketTitle] = useState('');
+  const [dueDate, setDueDate] = useState('');
+  const [blocks, setBlocks] = useState<StaffPracticePacketBlock[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [status, setStatus] = useState<{ tone: 'success' | 'error'; message: string } | null>(null);
+
+  useEffect(() => {
+    if (!auth.user) return;
+    let cancelled = false;
+    setLoading(true);
+    setStatus(null);
+    loadStaffPracticePacket(event, childEvents, auth.user)
+      .then((loaded) => {
+        if (cancelled) return;
+        setPacket(loaded);
+        setPacketTitle(loaded.packetTitle || `${event.title || 'Practice'} home packet`);
+        setDueDate(toDateInputValue(loaded.dueDate));
+        setBlocks(getPracticePacketBlocks(loaded).map((block, index) => ({
+          drillId: block.drillId || null,
+          drillTitle: block.drillTitle || block.title || `Home Drill ${index + 1}`,
+          type: block.type || 'Technical',
+          duration: Number.parseInt(String(block.duration || 10), 10) || 10,
+          description: block.description || '',
+          notes: block.notes || ''
+        })));
+      })
+      .catch((error: any) => {
+        if (!cancelled) setStatus({ tone: 'error', message: error?.message || 'Unable to load practice packet.' });
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [auth.user, childEvents, event.eventKey]);
+
+  const updateBlock = (index: number, patch: Partial<StaffPracticePacketBlock>) => {
+    setBlocks((current) => current.map((block, blockIndex) => blockIndex === index ? { ...block, ...patch } : block));
+  };
+
+  const addBlock = () => {
+    setBlocks((current) => ([
+      ...current,
+      { drillTitle: `Home Drill ${current.length + 1}`, type: 'Technical', duration: 10, description: '', notes: '' }
+    ]));
+  };
+
+  const removeBlock = (index: number) => {
+    setBlocks((current) => current.filter((_block, blockIndex) => blockIndex !== index));
+  };
+
+  const savePacket = async (submitEvent: FormEvent<HTMLFormElement>) => {
+    submitEvent.preventDefault();
+    if (!auth.user) return;
+    setSaving(true);
+    setStatus(null);
+    try {
+      const saved = await saveStaffPracticePacket(event, auth.user, { packetTitle, dueDate: dueDate || null, blocks }, childEvents);
+      setPacket(saved);
+      setPacketTitle(saved.packetTitle);
+      setDueDate(toDateInputValue(saved.dueDate));
+      setBlocks(getPracticePacketBlocks(saved).map((block, index) => ({
+        drillId: block.drillId || null,
+        drillTitle: block.drillTitle || block.title || `Home Drill ${index + 1}`,
+        type: block.type || 'Technical',
+        duration: Number.parseInt(String(block.duration || 10), 10) || 10,
+        description: block.description || '',
+        notes: block.notes || ''
+      })));
+      setStatus({ tone: 'success', message: 'Practice packet saved.' });
+    } catch (error: any) {
+      setStatus({ tone: 'error', message: error?.message || 'Unable to save practice packet.' });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const completedChildIds = getCompletedPacketChildIds(packet?.completions || []);
+  const childCount = packet?.children.length || childEvents.length || 0;
+  const totalMinutes = blocks.reduce((sum, block) => sum + (Number.parseInt(String(block.duration || 0), 10) || 0), 0);
+
+  return (
+    <section className="app-card p-3 sm:p-4" aria-label="Manage practice packet">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <div className="text-xs font-black uppercase tracking-[0.04em] text-blue-700">Home packet</div>
+          <h2 className="mt-1 text-base font-black text-gray-950">Assign practice packet</h2>
+          <p className="mt-1 text-sm font-semibold text-gray-500">{completedChildIds.size}/{Math.max(childCount, completedChildIds.size)} completions · {totalMinutes} min</p>
+        </div>
+        <button type="button" className="secondary-button" onClick={addBlock}>Add packet drill</button>
+      </div>
+      <form className="mt-3 space-y-3" onSubmit={savePacket}>
+        <div className="grid gap-3 sm:grid-cols-2">
+          <label className="text-xs font-bold uppercase tracking-wide text-gray-600">Packet title<input className="auth-input mt-1" value={packetTitle} onChange={(e) => setPacketTitle(e.target.value)} /></label>
+          <label className="text-xs font-bold uppercase tracking-wide text-gray-600">Due date<input type="date" className="auth-input mt-1" value={dueDate} onChange={(e) => setDueDate(e.target.value)} /></label>
+        </div>
+        <div className="space-y-2">
+          {blocks.length ? blocks.map((block, index) => (
+            <div key={`staff-packet-block-${index}`} className="rounded-2xl border border-blue-100 bg-blue-50/70 p-3">
+              <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_7rem]">
+                <label className="text-xs font-bold uppercase tracking-wide text-blue-700">Drill<input className="auth-input mt-1" value={block.drillTitle} onChange={(e) => updateBlock(index, { drillTitle: e.target.value })} /></label>
+                <label className="text-xs font-bold uppercase tracking-wide text-blue-700">Minutes<input type="number" min="1" className="auth-input mt-1" value={block.duration} onChange={(e) => updateBlock(index, { duration: Number.parseInt(e.target.value, 10) || 1 })} /></label>
+              </div>
+              <div className="mt-2 grid gap-3 sm:grid-cols-2">
+                <label className="text-xs font-bold uppercase tracking-wide text-blue-700">Type<input className="auth-input mt-1" value={block.type || ''} onChange={(e) => updateBlock(index, { type: e.target.value })} /></label>
+                <label className="text-xs font-bold uppercase tracking-wide text-blue-700">Notes<input className="auth-input mt-1" value={block.notes || ''} onChange={(e) => updateBlock(index, { notes: e.target.value })} /></label>
+              </div>
+              <label className="mt-2 block text-xs font-bold uppercase tracking-wide text-blue-700">Description<textarea className="auth-input mt-1 min-h-16" value={block.description || ''} onChange={(e) => updateBlock(index, { description: e.target.value })} /></label>
+              <button type="button" className="secondary-button mt-2" onClick={() => removeBlock(index)}>Remove drill</button>
+            </div>
+          )) : (
+            <div className="rounded-2xl border border-gray-200 bg-gray-50 p-3 text-sm font-semibold text-gray-500">No home drills yet.</div>
+          )}
+        </div>
+        <button type="submit" className="primary-button" disabled={saving || loading}>{saving ? 'Saving packet' : 'Save packet'}</button>
+      </form>
+      {status ? <div className="mt-3"><Status tone={status.tone} message={status.message} /></div> : null}
     </section>
   );
 }
@@ -5064,39 +5223,11 @@ function getEventBriefPieces(event: ParentScheduleEvent) {
   ].filter(Boolean).slice(0, 6);
 }
 
-function getEventDetailRows(event: ParentScheduleEvent) {
-  return [
-    { label: 'Date', value: formatEventDateLabel(event.date), icon: CalendarDays },
-    { label: 'Start time', value: formatEventTimeLabel(event.date), icon: Clock },
-    event.endDate ? { label: 'End time', value: formatEventTimeLabel(event.endDate), icon: Clock } : null,
-    event.arrivalTime ? { label: 'Arrival time', value: formatEventTimeLabel(event.arrivalTime), icon: Clock } : null,
-    { label: 'Location', value: event.location || 'TBD', icon: MapPin },
-    { label: 'Game info', value: formatGameInfo(event), icon: ClipboardCheck },
-    event.seasonLabel ? { label: 'Season', value: event.seasonLabel, icon: CalendarDays } : null,
-    event.competitionType ? { label: 'Competition', value: event.competitionType, icon: ClipboardCheck } : null,
-    event.sourceLabel ? { label: 'Source', value: event.sourceLabel, icon: ExternalLink } : null,
-    event.kitColor ? { label: 'Kit', value: event.kitColor, icon: Users } : null,
-    event.practiceAttendanceSummary ? { label: 'Practice', value: event.practiceAttendanceSummary, icon: ClipboardCheck } : null,
-    event.practiceHomePacketSummary ? { label: 'Home packet', value: event.practiceHomePacketSummary, icon: FileText } : null,
-    event.notes ? { label: 'Notes', value: event.notes, icon: FileText } : null
-  ].filter((row): row is { label: string; value: string; icon: LucideIcon } => Boolean(row));
-}
-
 function formatHeroTime(event: ParentScheduleEvent) {
   if (event.arrivalTime) {
     return `Arrive ${formatEventTimeLabel(event.arrivalTime)} · Starts ${formatEventTimeLabel(event.date)}`;
   }
   return `Starts ${formatEventTimeLabel(event.date)}`;
-}
-
-function formatGameInfo(event: ParentScheduleEvent) {
-  const pieces = [
-    event.isHome === true ? 'Home' : event.isHome === false ? 'Away' : '',
-    event.kitColor ? `${event.kitColor} kit` : '',
-    event.countsTowardSeasonRecord === false ? 'Exhibition' : '',
-    event.isCancelled ? 'Cancelled' : ''
-  ].filter(Boolean);
-  return pieces.length ? pieces.join(' · ') : 'Game-day details';
 }
 
 function getReportScoreLabel(game: Record<string, any>) {
@@ -5136,6 +5267,25 @@ function getPracticePacketTotalMinutes(packet: ParentPracticePacket) {
 
 function formatPracticePacketDuration(duration: unknown) {
   return Number.parseInt(String(duration || 0), 10) || 0;
+}
+
+function toDateInputValue(value: Date | string | number | null | undefined) {
+  if (value === null || value === undefined || value === '') return '';
+  if (typeof value === 'string') {
+    const normalized = value.trim();
+    const utcCalendarDateMatch = normalized.match(/^(\d{4}-\d{2}-\d{2})(?:T00:00:00(?:\.\d+)?Z)?$/i);
+    if (utcCalendarDateMatch) return utcCalendarDateMatch[1];
+  }
+  const date = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(date.getTime())) return '';
+  const useUtcCalendarDate = date.getUTCHours() === 0
+    && date.getUTCMinutes() === 0
+    && date.getUTCSeconds() === 0
+    && date.getUTCMilliseconds() === 0;
+  if (useUtcCalendarDate) {
+    return `${date.getUTCFullYear()}-${padDatePart(date.getUTCMonth() + 1)}-${padDatePart(date.getUTCDate())}`;
+  }
+  return `${date.getFullYear()}-${padDatePart(date.getMonth() + 1)}-${padDatePart(date.getDate())}`;
 }
 
 function getCompletedPacketChildIds(completions: PracticePacketCompletion[]) {

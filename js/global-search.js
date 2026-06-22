@@ -1,5 +1,5 @@
 import { escapeHtml } from './utils.js?v=8';
-import { discoverPublicTeams } from './db.js?v=53';
+import { discoverPublicTeams } from './db.js?v=64';
 import { canUserDiscoverPlayerInSearch, filterSearchableTeams } from './global-search-visibility.js?v=2';
 import { isTeamActive } from './team-visibility.js?v=2';
 import {
@@ -17,7 +17,7 @@ import {
     where,
     orderBy,
     limit
-} from './firebase.js?v=18';
+} from './firebase.js?v=19';
 
 let cachedAccessibleTeams = null;
 let cachedAccessibleTeamsLoadedAt = 0;
@@ -133,11 +133,53 @@ function buildAccessibleTeamsCacheKey(user) {
     });
 }
 
-function getParentTeamIds(user) {
-    return Array.from(new Set([
-        ...(Array.isArray(user?.parentOf) ? user.parentOf.map((link) => String(link?.teamId || '').trim()) : []),
-        ...(Array.isArray(user?.parentPlayerKeys) ? user.parentPlayerKeys.map((key) => String(key || '').split('::')[0] || '') : [])
-    ].filter(Boolean)));
+function getParentTeamLinks(user) {
+    const byId = new Map();
+    (Array.isArray(user?.parentOf) ? user.parentOf : []).forEach((link) => {
+        const teamId = String(link?.teamId || link?.id || '').trim();
+        if (!teamId) return;
+        byId.set(teamId, { ...link, teamId });
+    });
+    (Array.isArray(user?.parentPlayerKeys) ? user.parentPlayerKeys : []).forEach((key) => {
+        const teamId = String(key || '').split('::')[0] || '';
+        if (teamId && !byId.has(teamId)) byId.set(teamId, { teamId });
+    });
+    return Array.from(byId.values());
+}
+
+function hasSearchSafeParentTeamLinkMetadata(team) {
+    return String(team?.teamName || team?.name || '').trim() !== ''
+        && isTeamActive(team)
+        && typeof resolveParentTeamLinkIsPublic(team) === 'boolean';
+}
+
+function buildParentTeamLinkSearchTeam(team) {
+    return {
+        id: String(team?.teamId || team?.id || '').trim(),
+        name: String(team?.teamName || team?.name || 'Team').trim(),
+        sport: String(team?.sport || '').trim(),
+        zip: String(team?.zip || '').trim(),
+        city: String(team?.city || '').trim(),
+        state: String(team?.state || '').trim(),
+        location: String(team?.location || '').trim(),
+        isPublic: resolveParentTeamLinkIsPublic(team),
+        active: team?.active,
+        archived: team?.archived,
+        status: String(team?.status || '').trim(),
+        photoUrl: team?.photoUrl || team?.teamPhotoUrl || team?.logoUrl || team?.imageUrl || '',
+        fromAppAccess: true
+    };
+}
+
+function resolveParentTeamLinkIsPublic(team) {
+    if (typeof team?.isPublic === 'boolean') return team.isPublic;
+    if (typeof team?.public === 'boolean') return team.public;
+
+    const visibility = String(team?.searchVisibility || team?.visibility || '').trim().toLowerCase();
+    if (visibility === 'private') return false;
+    if (visibility === 'public') return true;
+
+    return undefined;
 }
 
 function normalizeAccessibleTeams(teams) {
@@ -160,9 +202,12 @@ async function loadAccessibleTeams(user) {
         teamQueries.push(getDocs(query(teamsRef, where('adminEmails', 'array-contains', email))));
     }
 
+    const parentTeamLinks = getParentTeamLinks(user).filter(isTeamActive);
+    const fallbackParentTeamLinks = parentTeamLinks.filter((team) => !hasSearchSafeParentTeamLinkMetadata(team));
+
     const [queryResults, parentTeamResults] = await Promise.all([
         Promise.allSettled(teamQueries),
-        Promise.allSettled(getParentTeamIds(user).map((teamId) => getDoc(doc(db, 'teams', teamId))))
+        Promise.allSettled(fallbackParentTeamLinks.map((team) => getDoc(doc(db, 'teams', team.teamId))))
     ]);
 
     const teamsById = new Map();
@@ -172,11 +217,17 @@ async function loadAccessibleTeams(user) {
             teamsById.set(teamDoc.id, { id: teamDoc.id, ...(teamDoc.data() || {}) });
         });
     });
+    parentTeamLinks
+        .filter(hasSearchSafeParentTeamLinkMetadata)
+        .forEach((team) => {
+            const searchTeam = buildParentTeamLinkSearchTeam(team);
+            if (searchTeam.id) teamsById.set(searchTeam.id, searchTeam);
+        });
     parentTeamResults.forEach((result, index) => {
         if (result.status !== 'fulfilled') return;
         const teamDoc = result.value;
         if (!teamDoc?.exists?.()) return;
-        const teamId = getParentTeamIds(user)[index];
+        const teamId = fallbackParentTeamLinks[index]?.teamId;
         teamsById.set(teamDoc.id || teamId, { id: teamDoc.id || teamId, ...(teamDoc.data() || {}) });
     });
 

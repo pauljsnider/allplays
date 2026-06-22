@@ -1,5 +1,5 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from 'react';
-import { Link, Navigate, useNavigate, useParams } from 'react-router-dom';
+import { Link, Navigate, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import type { LucideIcon } from 'lucide-react';
 import {
   AlertCircle,
@@ -228,6 +228,55 @@ export function ParentTools({ auth }: { auth: AuthState }) {
 function KeepAliveTool({ active, mounted, children }: { active: boolean; mounted: boolean; children: ReactNode }) {
   if (!mounted) return null;
   return <div hidden={!active}>{children}</div>;
+}
+
+type ParentToolAsyncOptions<T> = {
+  onSuccess?: (value: T) => void | Promise<void>;
+  onError?: (error: AppServiceError) => void | Promise<void>;
+  clearError?: boolean;
+};
+
+function useParentToolAsyncOperation() {
+  const { loading, clearError: clearOperationError, run: runOperation } = useAsyncOperation();
+  const [error, setError] = useState<AppServiceError | null>(null);
+
+  const clearError = useCallback(() => {
+    setError(null);
+    clearOperationError();
+  }, [clearOperationError]);
+
+  const run = useCallback(async function runParentToolAsyncOperation<T>(
+    task: () => Promise<T>,
+    fallbackMessage: string,
+    options: ParentToolAsyncOptions<T> = {}
+  ) {
+    if (options.clearError ?? true) {
+      setError(null);
+      clearOperationError();
+    }
+
+    return runOperation(task, {
+      rethrow: false,
+      getErrorMessage: (taskError) => getParentToolErrorMessage(toAppServiceError(taskError, fallbackMessage), fallbackMessage),
+      onSuccess: async (value) => {
+        setError(null);
+        await options.onSuccess?.(value);
+      },
+      onError: async (taskError) => {
+        const appError = toAppServiceError(taskError, fallbackMessage);
+        setError(appError);
+        await options.onError?.(appError);
+      }
+    });
+  }, [clearOperationError, runOperation]);
+
+  return {
+    loading,
+    error,
+    setError,
+    clearError,
+    run
+  };
 }
 
 function AccessTool({ auth, onAccessChanged }: { auth: AuthState; onAccessChanged: () => void }) {
@@ -517,43 +566,60 @@ function AccessTool({ auth, onAccessChanged }: { auth: AuthState; onAccessChange
 }
 
 function FeesTool({ auth, refreshVersion }: { auth: AuthState; refreshVersion: number }) {
+  const [searchParams] = useSearchParams();
   const [fees, setFees] = useState<ParentFeeAppRecord[]>([]);
   const [filter, setFilter] = useState<'open' | 'all' | 'paid'>('open');
-  const [error, setError] = useState<AppServiceError | null>(null);
   const [payingFeeId, setPayingFeeId] = useState('');
   const [feeErrors, setFeeErrors] = useState<Record<string, string>>({});
-  const loadOperation = useAsyncOperation();
+  const { loading, error, run: runLoad } = useParentToolAsyncOperation();
   const payOperation = useAsyncOperation();
-  const loading = loadOperation.loading;
+  const requestedTeamId = String(searchParams.get('teamId') || '').trim();
+  const requestedBatchId = String(searchParams.get('batchId') || '').trim();
+  const requestedRecipientId = String(searchParams.get('recipientId') || '').trim();
+  const hasRequestedFee = Boolean(requestedTeamId || requestedBatchId || requestedRecipientId);
 
   const refresh = useCallback(async () => {
-    setError(null);
-    return loadOperation.run(
+    return runLoad(
       () => loadParentFeesForApp(auth.user),
+      'Unable to load fees.',
       {
-        rethrow: false,
-        getErrorMessage: (loadError) => getParentToolErrorMessage(toAppServiceError(loadError, 'Unable to load fees.'), 'Unable to load fees.'),
         onSuccess: (result) => {
           setFees(result);
-          setError(null);
-        },
-        onError: (loadError) => {
-          setError(toAppServiceError(loadError, 'Unable to load fees.'));
         }
       }
     );
-  }, [auth.user, loadOperation]);
+  }, [auth.user, runLoad]);
 
   useEffect(() => {
     void refresh();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [auth.user?.uid, refreshVersion]);
 
-  const visibleFees = useMemo(() => fees.filter((fee) => {
-    if (filter === 'all') return true;
-    if (filter === 'paid') return fee.status === 'paid';
-    return !['paid', 'canceled', 'cancelled'].includes(String(fee.status || '').toLowerCase());
-  }), [fees, filter]);
+  useEffect(() => {
+    if (!hasRequestedFee) return;
+    setFilter((current) => (current === 'open' ? 'all' : current));
+  }, [hasRequestedFee, requestedBatchId, requestedRecipientId, requestedTeamId]);
+
+  const visibleFees = useMemo(() => {
+    const filteredFees = fees.filter((fee) => {
+      if (filter === 'all') return true;
+      if (filter === 'paid') return fee.status === 'paid';
+      return !['paid', 'canceled', 'cancelled'].includes(String(fee.status || '').toLowerCase());
+    });
+
+    if (!hasRequestedFee) {
+      return filteredFees;
+    }
+
+    const matchingFees = filteredFees.filter((fee) => {
+      if (requestedTeamId && String(fee.teamId || '') !== requestedTeamId) return false;
+      if (requestedBatchId && String(fee.batchId || '') !== requestedBatchId) return false;
+      if (requestedRecipientId && String(fee.recipientId || '') !== requestedRecipientId) return false;
+      return true;
+    });
+
+    return matchingFees.length ? matchingFees : filteredFees;
+  }, [fees, filter, hasRequestedFee, requestedBatchId, requestedRecipientId, requestedTeamId]);
 
   const openCount = fees.filter((fee) => !['paid', 'canceled', 'cancelled'].includes(String(fee.status || '').toLowerCase())).length;
   const balanceCents = visibleFees.reduce((sum, fee) => sum + Number(fee.balanceDueCents ?? fee.amountDueCents ?? 0), 0);
@@ -1070,26 +1136,19 @@ function FamilyShareTool({ auth, refreshVersion }: { auth: AuthState; refreshVer
 
 function RegistrationsTool({ auth, refreshVersion }: { auth: AuthState; refreshVersion: number }) {
   const [cards, setCards] = useState<ParentRegistrationCard[]>([]);
-  const [error, setError] = useState<AppServiceError | null>(null);
-  const loadOperation = useAsyncOperation();
-  const loading = loadOperation.loading;
+  const { loading, error, run: runLoad } = useParentToolAsyncOperation();
 
   const refresh = useCallback(async () => {
-    setError(null);
-    return loadOperation.run(
+    return runLoad(
       () => loadParentRegistrations(auth.user),
+      'Unable to load registrations.',
       {
-        rethrow: false,
-        getErrorMessage: (loadError) => getParentToolErrorMessage(toAppServiceError(loadError, 'Unable to load registrations.'), 'Unable to load registrations.'),
         onSuccess: (result) => {
           setCards(result);
-        },
-        onError: (loadError) => {
-          setError(toAppServiceError(loadError, 'Unable to load registrations.'));
         }
       }
     );
-  }, [auth.user, loadOperation]);
+  }, [auth.user, runLoad]);
 
   useEffect(() => {
     void refresh();
@@ -1115,26 +1174,19 @@ function RegistrationsTool({ auth, refreshVersion }: { auth: AuthState; refreshV
 
 function CertificatesTool({ auth, refreshVersion }: { auth: AuthState; refreshVersion: number }) {
   const [cards, setCards] = useState<ParentCertificateCard[]>([]);
-  const [error, setError] = useState<AppServiceError | null>(null);
-  const loadOperation = useAsyncOperation();
-  const loading = loadOperation.loading;
+  const { loading, error, run: runLoad } = useParentToolAsyncOperation();
 
   const refresh = useCallback(async () => {
-    setError(null);
-    return loadOperation.run(
+    return runLoad(
       () => loadParentCertificates(auth.user),
+      'Unable to load awards.',
       {
-        rethrow: false,
-        getErrorMessage: (loadError) => getParentToolErrorMessage(toAppServiceError(loadError, 'Unable to load awards.'), 'Unable to load awards.'),
         onSuccess: (result) => {
           setCards(result);
-        },
-        onError: (loadError) => {
-          setError(toAppServiceError(loadError, 'Unable to load awards.'));
         }
       }
     );
-  }, [auth.user, loadOperation]);
+  }, [auth.user, runLoad]);
 
   useEffect(() => {
     void refresh();

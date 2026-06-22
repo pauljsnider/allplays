@@ -15,11 +15,27 @@ const sensitiveKeys = new Set([
 
 const redactedValue = '[REDACTED]';
 
+function normalizeSensitiveKey(key: string) {
+    return key.toLowerCase().replace(/[^a-z0-9]/g, '');
+}
+
+function isSensitiveKey(key: string) {
+    const lowerKey = key.toLowerCase();
+    return sensitiveKeys.has(lowerKey) || sensitiveKeys.has(normalizeSensitiveKey(lowerKey));
+}
+
 export type LogLevel = 'debug' | 'info' | 'warn' | 'error';
 export type LogContext = Record<string, unknown>;
 
 function redactBearerTokens(value: string) {
     return value.replace(/Bearer\s+[^\s"',}]+/gi, `Bearer ${redactedValue}`);
+}
+
+function redactSensitiveQueryParams(value: string) {
+    return value.replace(
+        /([?&#](?:access[_-]?token|id[_-]?token|refresh[_-]?token|auth[_-]?token|api[_-]?key|client[_-]?secret|token|password|secret)=)[^&#\s"',}]+/gi,
+        `$1${redactedValue}`
+    );
 }
 
 function isHeadersLike(value: unknown): value is Headers {
@@ -30,7 +46,7 @@ function sanitizeValue(value: unknown, seen: WeakSet<object>, depth: number, key
     if (value == null) return value;
 
     if (typeof value === 'string') {
-        return sensitiveKeys.has(keyHint.toLowerCase()) ? redactedValue : redactBearerTokens(value);
+        return isSensitiveKey(keyHint) ? redactedValue : redactSensitiveQueryParams(redactBearerTokens(value));
     }
 
     if (typeof value !== 'object') {
@@ -71,7 +87,7 @@ function sanitizeValue(value: unknown, seen: WeakSet<object>, depth: number, key
     }
 
     return Object.entries(value as Record<string, unknown>).reduce<Record<string, unknown>>((acc, [key, entryValue]) => {
-        acc[key] = sensitiveKeys.has(key.toLowerCase())
+        acc[key] = isSensitiveKey(key)
             ? redactedValue
             : sanitizeValue(entryValue, seen, depth + 1, key);
         return acc;
@@ -91,7 +107,7 @@ function getConsoleMethod(level: LogLevel) {
 
 function writeLog(scope: string, level: LogLevel, message: string, context?: LogContext) {
     const method = getConsoleMethod(level);
-    const prefix = `[${scope}] ${message}`;
+    const prefix = `[${scope}] ${sanitizeForLogging(message)}`;
     if (!context || !Object.keys(context).length) {
         method(prefix);
         return;

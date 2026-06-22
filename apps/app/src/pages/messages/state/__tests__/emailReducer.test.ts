@@ -24,6 +24,34 @@ function template(overrides: Partial<TeamEmailTemplate> = {}): TeamEmailTemplate
 }
 
 describe('emailReducer', () => {
+  it('starts with empty composer fields and applies direct subject and body edits', () => {
+    expect(initialEmailComposerState).toMatchObject({
+      drafts: [],
+      templates: [],
+      selectedDraftId: '',
+      subject: '',
+      body: '',
+      templateName: ''
+    });
+
+    const editedSubject = emailReducer(initialEmailComposerState, {
+      type: 'updateSubject',
+      subject: 'Saturday schedule'
+    });
+    const editedBody = emailReducer(editedSubject, {
+      type: 'updateBody',
+      body: 'Arrive 30 minutes early.'
+    });
+
+    expect(editedBody).toMatchObject({
+      drafts: [],
+      templates: [],
+      selectedDraftId: '',
+      subject: 'Saturday schedule',
+      body: 'Arrive 30 minutes early.'
+    });
+  });
+
   it('selects a draft and updates selection, subject, and body together', () => {
     const state = emailReducer(initialEmailComposerState, {
       type: 'setDrafts',
@@ -74,6 +102,26 @@ describe('emailReducer', () => {
       selectedDraftId: '',
       subject: '',
       body: ''
+    });
+  });
+
+  it('removes an unselected draft without disturbing the selected draft composer', () => {
+    const selected = emailReducer(
+      emailReducer(initialEmailComposerState, {
+        type: 'setDrafts',
+        drafts: [
+          draft({ id: 'draft-1', subject: 'Selected subject', body: 'Selected body' }),
+          draft({ id: 'draft-2', subject: 'Other subject', body: 'Other body' })
+        ]
+      }),
+      { type: 'selectDraft', draftId: 'draft-1' }
+    );
+
+    expect(emailReducer(selected, { type: 'deleteDraft', draftId: 'draft-2' })).toMatchObject({
+      drafts: [draft({ id: 'draft-1', subject: 'Selected subject', body: 'Selected body' })],
+      selectedDraftId: 'draft-1',
+      subject: 'Selected subject',
+      body: 'Selected body'
     });
   });
 
@@ -138,5 +186,18 @@ describe('emailReducer', () => {
       subject: '',
       body: ''
     });
+  });
+
+  it('keeps composer state unchanged when applying an unknown template id', () => {
+    const withTemplate = emailReducer(initialEmailComposerState, {
+      type: 'setTemplates',
+      templates: [template()]
+    });
+    const edited = emailReducer(
+      emailReducer(withTemplate, { type: 'updateSubject', subject: 'Manual subject' }),
+      { type: 'updateBody', body: 'Manual body' }
+    );
+
+    expect(emailReducer(edited, { type: 'applyTemplate', templateId: 'missing-template' })).toEqual(edited);
   });
 });

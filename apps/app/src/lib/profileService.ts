@@ -5,16 +5,19 @@ import {
   getNotificationPreferencesForTeam,
   getParentTeams,
   getUserAccessCodes,
+  getUserAccessCodesPage,
   getUserProfile,
   getUserTeamsWithAccess,
+  isTeamActive,
+  normalizeTeamNotificationPreferences,
   saveNotificationPreferencesForTeam,
   updateUserProfile,
   upsertNotificationDeviceToken
-} from '../../../../js/db.js';
-import { normalizeTeamNotificationPreferences } from '../../../../js/notification-preferences.js';
+} from './adapters/legacyProfileDb';
 import { firebaseAuth, getNativeAuthIdToken } from './authService';
 import { createLogger } from './logger';
-import { isTeamActive } from '../../../../js/team-visibility.js';
+import { getNativeRestDedupKey, loadDedupedNativeRestRequest, shouldDedupNativeRestRequest } from './nativeRestDedup';
+import { captureHandledAppError, createAppTimer } from './telemetry';
 
 export {
   acquireProfilePhoto,
@@ -34,6 +37,21 @@ function logProfileWarning(message: string, operation: string, error: unknown, c
         ...context,
         error
     });
+    captureHandledAppError(`profile ${operation}`, error, {
+        service: 'profile',
+        operation,
+        fallback: 'rest',
+        ...toSafeProfileTelemetryContext(context)
+    });
+}
+
+function toSafeProfileTelemetryContext(context: Record<string, unknown> = {}) {
+    const { userId, teamId, ...safeContext } = context;
+    return {
+        ...safeContext,
+        ...(userId ? { userIdPresent: true } : {}),
+        ...(teamId ? { teamIdPresent: true } : {})
+    };
 }
 
 export type ProfileDocument = {
@@ -78,6 +96,11 @@ export type AccessCodeRecord = {
   used?: boolean;
   createdAt?: unknown;
   usedAt?: unknown;
+};
+
+export type AccessCodePage = {
+  codes: AccessCodeRecord[];
+  nextCursor: unknown | null;
 };
 
 export type NotificationDeviceTokenInput = {
@@ -130,21 +153,27 @@ async function getNativeHeaders() {
 }
 
 async function nativeFirestoreRequest(path: string, init: RequestInit = {}) {
-  const headers = await getNativeHeaders();
-  const response = await withTimeout(fetch(`${getFirestoreBaseUrl()}${path}`, {
-    ...init,
-    headers: {
-      ...headers,
-      ...(init.headers || {})
+  const url = `${getFirestoreBaseUrl()}${path}`;
+  const runRequest = async () => {
+    const headers = await getNativeHeaders();
+    const response = await withTimeout(fetch(url, {
+      ...init,
+      headers: {
+        ...headers,
+        ...(init.headers || {})
+      }
+    }), 'Firestore REST request');
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      const error = new Error(payload?.error?.message || `Firestore request failed (${response.status}).`) as Error & { status?: number };
+      error.status = response.status;
+      throw error;
     }
-  }), 'Firestore REST request');
-  const payload = await response.json().catch(() => ({}));
-  if (!response.ok) {
-    const error = new Error(payload?.error?.message || `Firestore request failed (${response.status}).`) as Error & { status?: number };
-    error.status = response.status;
-    throw error;
-  }
-  return payload;
+    return payload;
+  };
+  return shouldDedupNativeRestRequest(path, init)
+    ? loadDedupedNativeRestRequest(getNativeRestDedupKey(url, init), runRequest)
+    : runRequest();
 }
 
 function encodeFirestoreValue(value: any): Record<string, unknown> {
@@ -392,6 +421,17 @@ async function nativeLoadAccessCodes(userId: string): Promise<AccessCodeRecord[]
   });
 }
 
+async function nativeLoadAccessCodesPage(userId: string, { cursor = null, pageSize = 10 }: { cursor?: unknown | null; pageSize?: number } = {}): Promise<AccessCodePage> {
+  const codes = await nativeLoadAccessCodes(userId);
+  const offset = typeof cursor === 'number' && Number.isFinite(cursor) ? Math.max(0, cursor) : 0;
+  const nextCodes = codes.slice(offset, offset + pageSize);
+  const nextOffset = offset + nextCodes.length;
+  return {
+    codes: nextCodes,
+    nextCursor: nextOffset < codes.length ? nextOffset : null
+  };
+}
+
 function getMillis(value: any) {
   if (!value) return 0;
   if (value instanceof Date) return value.getTime();
@@ -401,11 +441,25 @@ function getMillis(value: any) {
 }
 
 export async function loadProfileDocument(userId: string): Promise<ProfileDocument> {
+  const timer = createAppTimer('profile document service load', {
+    category: 'service_load',
+    service: 'profile',
+    operation: 'profile-load'
+  });
   try {
-    return await withTimeout(Promise.resolve(getUserProfile(userId)), 'Profile load', primaryDataTimeoutMs) || {};
+    const profile = await withTimeout(Promise.resolve(getUserProfile(userId)), 'Profile load', primaryDataTimeoutMs) || {};
+    timer.end({ path: 'sdk', userIdPresent: Boolean(userId) });
+    return profile;
   } catch (error) {
     logProfileWarning('Falling back to REST profile load.', 'profile-load', error, { userId });
-    return nativeLoadProfileDocument(userId);
+    try {
+      const profile = await nativeLoadProfileDocument(userId);
+      timer.end({ path: 'rest_fallback', fallback: true, userIdPresent: Boolean(userId) });
+      return profile;
+    } catch (fallbackError) {
+      timer.end({ path: 'rest_fallback', fallback: true, userIdPresent: Boolean(userId), error: fallbackError });
+      throw fallbackError;
+    }
   }
 }
 
@@ -531,5 +585,23 @@ export async function loadProfileAccessCodes(userId: string): Promise<AccessCode
   } catch (error) {
     logProfileWarning('Falling back to REST invite history load.', 'invite-history-load', error, { userId });
     return nativeLoadAccessCodes(userId);
+  }
+}
+
+export async function loadProfileAccessCodesPage(userId: string, { cursor = null, pageSize = 10 }: { cursor?: unknown | null; pageSize?: number } = {}): Promise<AccessCodePage> {
+  try {
+    const page = await withTimeout(
+      Promise.resolve(getUserAccessCodesPage(userId, { cursor, pageSize })) as Promise<AccessCodePage>,
+      'Invite history load',
+      primaryDataTimeoutMs
+    );
+
+    return {
+      codes: Array.isArray(page?.codes) ? page.codes : [],
+      nextCursor: page?.nextCursor ?? null
+    };
+  } catch (error) {
+    logProfileWarning('Falling back to REST invite history load.', 'invite-history-load', error, { userId });
+    return nativeLoadAccessCodesPage(userId, { cursor, pageSize });
   }
 }

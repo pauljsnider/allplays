@@ -6,7 +6,7 @@ const collectionMock = vi.fn((database, path) => ({ database, path }));
 const whereMock = vi.fn((field, op, value) => ({ field, op, value }));
 const queryMock = vi.fn((...parts) => parts);
 
-vi.mock('../../js/firebase.js?v=18', () => ({
+vi.mock('../../js/firebase.js?v=19', () => ({
     db: {},
     auth: {},
     functions: {},
@@ -81,6 +81,28 @@ describe('validateAccessCode', () => {
                 code: 'DUP123',
                 type: 'parent_invite'
             }
+        });
+    });
+
+    it('passes native auth tokens to the backend callable when provided', async () => {
+        const { validateAccessCode } = await import('../../js/db.js');
+        callableMock.mockResolvedValue({
+            data: {
+                valid: true,
+                codeId: 'native-code',
+                type: 'standard',
+                data: {
+                    code: 'NATIVE123',
+                    type: 'standard'
+                }
+            }
+        });
+
+        await validateAccessCode('native123', { nativeAuthToken: ' firebase-id-token ' });
+
+        expect(callableMock).toHaveBeenCalledWith({
+            code: 'NATIVE123',
+            nativeAuthToken: 'firebase-id-token'
         });
     });
 

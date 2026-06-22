@@ -1,13 +1,16 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from 'react';
 import { AlertCircle, CalendarDays, CheckCircle2, ChevronDown, ChevronLeft, ChevronRight, ClipboardCheck, Copy, Download, Filter, Link as LinkIcon, ListChecks, MapPin, RefreshCw } from 'lucide-react';
 import { Link } from 'react-router-dom';
+import { Modal } from '../components/Modal';
 import { SchedulePageSkeleton } from '../components/PageSkeletons';
-import { addTeamCalendarUrl, createScheduleImportGame, createScheduleImportPractice, loadParentSchedule, removeTeamCalendarUrl, type ParentScheduleChild } from '../lib/scheduleService';
+import { PullToRefresh } from '../components/PullToRefresh';
+import { addTeamCalendarUrl, createScheduledGameForApp, createScheduledPracticeForApp, createScheduleImportGame, createScheduleImportPractice, finalizeScheduleImportBatch, loadParentSchedule, loadScheduleStatTrackerConfigsForApp, removeTeamCalendarUrl, type ParentScheduleChild, type ScheduleGameFormInput, type SchedulePracticeFormInput, type PracticeRecurrenceFormInput, type ScheduleStatTrackerConfigOption } from '../lib/scheduleService';
 import { getCachedAppData, getParentScheduleSummaryCacheKey, loadCachedAppData } from '../lib/appDataCache';
 import { toAppServiceError, type AppServiceError } from '../lib/appErrors';
 import { startAppInitialLoadTimer } from '../lib/telemetry';
-import { startUxTimer } from '../lib/uxTiming';
+import { recordFirstMeaningfulRender, startScreenMountTimer } from '../lib/uxTiming';
 import { useAsyncOperation } from '../lib/useAsyncOperation';
+import { useRefreshOnResume } from '../lib/useRefreshOnResume';
 import { useShellLayout } from '../lib/useShellLayout';
 import {
   buildScheduleIcs,
@@ -54,6 +57,9 @@ const timeRangeOptions: Array<{ value: ScheduleTimeRange; label: string }> = [
 
 const upcomingListPageSize = 20;
 const pastListPageSize = 10;
+const pastScheduleCutoffMs = 3 * 60 * 60 * 1000;
+const pastScheduleHistoryPageWindowMs = 365 * 24 * 60 * 60 * 1000;
+const pastScheduleInitialHistoryWindowMs = 400 * 24 * 60 * 60 * 1000;
 
 const rsvpLabels: Record<RsvpResponse, string> = {
   going: 'Going',
@@ -157,6 +163,7 @@ export function Schedule({ auth }: { auth: AuthState }) {
   const [scheduleImportPreviewSource, setScheduleImportPreviewSource] = useState<'csv' | 'ai' | null>(null);
   const [csvImportErrors, setCsvImportErrors] = useState<string[]>([]);
   const [csvFileName, setCsvFileName] = useState('');
+  const [loadingCsvFile, setLoadingCsvFile] = useState(false);
   const [aiScheduleText, setAiScheduleText] = useState('');
   const [aiScheduleImage, setAiScheduleImage] = useState<File | null>(null);
   const [aiScheduleImageName, setAiScheduleImageName] = useState('');
@@ -165,12 +172,122 @@ export function Schedule({ auth }: { auth: AuthState }) {
   const [importingCsv, setImportingCsv] = useState(false);
   const [removingCalendarUrl, setRemovingCalendarUrl] = useState<string | null>(null);
   const [mobileStaffToolsOpen, setMobileStaffToolsOpen] = useState(false);
+  const [gameForm, setGameForm] = useState<ScheduleGameFormInput>(() => getDefaultScheduleGameForm());
+  const [savingGame, setSavingGame] = useState(false);
+  const [gameFormError, setGameFormError] = useState<string | null>(null);
+  const [gameTrackerConfigs, setGameTrackerConfigs] = useState<ScheduleStatTrackerConfigOption[]>([]);
+  const [gameTrackerConfigError, setGameTrackerConfigError] = useState<string | null>(null);
+  const [practiceForm, setPracticeForm] = useState<SchedulePracticeFormInput>(() => getDefaultSchedulePracticeForm());
+  const [savingPractice, setSavingPractice] = useState(false);
+  const [practiceFormError, setPracticeFormError] = useState<string | null>(null);
   const [loadedScheduleUserId, setLoadedScheduleUserId] = useState<string | null>(null);
+  const [loadingPastHistory, setLoadingPastHistory] = useState(false);
+  const [pastHistoryHasMore, setPastHistoryHasMore] = useState(false);
   const hasLoadedScheduleRef = useRef(false);
+  const hasStartedInitialScheduleLoadRef = useRef(false);
+  const pastHistoryLoadedRef = useRef(false);
+  const childrenRef = useRef<ParentScheduleChild[]>([]);
+  const eventsRef = useRef<ParentScheduleEvent[]>([]);
 
   const applyScheduleResult = (data: { children: ParentScheduleChild[]; events: ParentScheduleEvent[]; }) => {
+    childrenRef.current = data.children;
+    eventsRef.current = data.events;
     setChildren(data.children);
     setEvents(data.events);
+  };
+
+  const mergeScheduleResult = (data: { children: ParentScheduleChild[]; events: ParentScheduleEvent[]; }) => {
+    const mergedChildren = [...childrenRef.current];
+    const childKeys = new Set(mergedChildren.map((child) => `${child.teamId}::${child.playerId}`));
+    data.children.forEach((child) => {
+      const key = `${child.teamId}::${child.playerId}`;
+      if (!childKeys.has(key)) {
+        childKeys.add(key);
+        mergedChildren.push(child);
+      }
+    });
+
+    const mergedEvents = [...eventsRef.current];
+    const eventKeys = new Set(mergedEvents.map((event) => event.eventKey));
+    data.events.forEach((event) => {
+      if (!eventKeys.has(event.eventKey)) {
+        eventKeys.add(event.eventKey);
+        mergedEvents.push(event);
+      }
+    });
+    mergedEvents.sort((a, b) => a.date.getTime() - b.date.getTime());
+    applyScheduleResult({ children: mergedChildren, events: mergedEvents });
+  };
+
+  const buildPastScheduleRangeByTeam = () => {
+    const cutoff = new Date(Date.now() - pastScheduleCutoffMs);
+    const defaultHistoryBoundary = new Date(Date.now() - pastScheduleInitialHistoryWindowMs);
+    const oldestPastEventByTeam = new Map<string, Date>();
+    eventsRef.current.forEach((event) => {
+      if (event.date >= cutoff) return;
+      const currentOldest = oldestPastEventByTeam.get(event.teamId);
+      if (!currentOldest || event.date < currentOldest) {
+        oldestPastEventByTeam.set(event.teamId, event.date);
+      }
+    });
+
+    const teamIds = Array.from(new Set(childrenRef.current.map((child) => child.teamId).filter(Boolean)));
+    if (!teamIds.length) {
+      return null;
+    }
+
+    return Object.fromEntries(
+      teamIds.map((teamId) => {
+        const boundaryDate = oldestPastEventByTeam.get(teamId) || defaultHistoryBoundary;
+        const endDate = new Date(boundaryDate.getTime() - 1);
+        return [teamId, {
+          startDate: new Date(endDate.getTime() - pastScheduleHistoryPageWindowMs),
+          endDate
+        }];
+      })
+    );
+  };
+
+  const loadPastSchedulePage = async () => {
+    const user = auth.user;
+    if (!user || loadingPastHistory) return false;
+    const scheduleRangeByTeam = buildPastScheduleRangeByTeam();
+    if (!scheduleRangeByTeam) {
+      setPastHistoryHasMore(false);
+      return false;
+    }
+
+    setLoadingPastHistory(true);
+    try {
+      const beforeKeys = new Set(eventsRef.current.map((event) => event.eventKey));
+      const result = await loadParentSchedule(user, {
+        hydrateDetails: false,
+        expandStaffPlayers: false,
+        scheduleRangeByTeam
+      });
+      const nextEvents = result.events.filter((event) => !beforeKeys.has(event.eventKey));
+      if (!nextEvents.length) {
+        setPastHistoryHasMore(false);
+        return false;
+      }
+      mergeScheduleResult({ children: result.children, events: nextEvents });
+      setPastHistoryHasMore(true);
+      return true;
+    } catch {
+      return false;
+    } finally {
+      setLoadingPastHistory(false);
+    }
+  };
+
+  const ensurePastSchedulePageLoaded = async (force = false) => {
+    if (pastHistoryLoadedRef.current && !force) return;
+    pastHistoryLoadedRef.current = true;
+    setPastHistoryHasMore(true);
+    const loaded = await loadPastSchedulePage();
+    if (!loaded) {
+      setPastHistoryHasMore(false);
+    }
   };
 
   const hasLoadedSchedule = Boolean(auth.user?.uid) && loadedScheduleUserId === auth.user?.uid && hasLoadedScheduleRef.current;
@@ -188,11 +305,14 @@ export function Schedule({ auth }: { auth: AuthState }) {
     clearError();
     setScheduleLoadError(null);
     setStatusMessage(null);
-    const timer = startUxTimer('schedule summary load');
     const hasExistingSchedule = hasLoadedScheduleRef.current;
     const initialLoadTimer = !hasExistingSchedule
       ? startAppInitialLoadTimer('schedule', { route: 'schedule' })
       : null;
+    const timer = startScreenMountTimer('schedule', {
+      force,
+      hasExistingSchedule
+    });
     const cacheKey = getParentScheduleSummaryCacheKey(auth.user.uid);
     const scheduleCacheTtlMs = 60 * 1000 * 5;
     const cached = getCachedAppData(cacheKey);
@@ -214,6 +334,12 @@ export function Schedule({ auth }: { auth: AuthState }) {
           setScheduleLoadError(null);
           applyScheduleResult(result);
 
+          if (filter === 'past-all') {
+            pastHistoryLoadedRef.current = false;
+            setPastHistoryHasMore(true);
+            void ensurePastSchedulePageLoaded(true);
+          }
+
           if (selectedPlayerId && !result.children.some((child) => child.playerId === selectedPlayerId)) {
             setSelectedPlayerId('');
           }
@@ -228,9 +354,9 @@ export function Schedule({ auth }: { auth: AuthState }) {
           timer.end({
             cacheHit: Boolean(cached) && !force,
             force,
-            children: result.children.length,
-            eventRows: result.events.length,
-            groupedEvents: getCalendarScheduleEntries(result.events).length
+            childCount: result.children.length,
+            eventRowCount: result.events.length,
+            groupedEventCount: getCalendarScheduleEntries(result.events).length
           });
           initialLoadTimer?.end({
             cacheHit: Boolean(cached) && !force,
@@ -262,14 +388,36 @@ export function Schedule({ auth }: { auth: AuthState }) {
 
   useEffect(() => {
     hasLoadedScheduleRef.current = false;
+    hasStartedInitialScheduleLoadRef.current = false;
+    pastHistoryLoadedRef.current = false;
+    setPastHistoryHasMore(false);
     if (!auth.user?.uid) {
       setLoadedScheduleUserId(null);
       applyScheduleResult({ children: [], events: [] });
       return;
     }
+    hasStartedInitialScheduleLoadRef.current = true;
     void refreshSchedule();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [auth.user?.uid]);
+
+  useEffect(() => {
+    if (filter === 'past-all' && hasLoadedSchedule) {
+      void ensurePastSchedulePageLoaded();
+      return;
+    }
+    setPastHistoryHasMore(false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [filter, hasLoadedSchedule]);
+
+  useRefreshOnResume(() => { void refreshSchedule(true); }, { enabled: Boolean(auth.user?.uid) });
+
+  useEffect(() => {
+    if (!hasStartedInitialScheduleLoadRef.current || loading || isInitialScheduleLoad) {
+      return;
+    }
+    recordFirstMeaningfulRender('schedule');
+  }, [isInitialScheduleLoad, loading]);
 
   const visibleEvents = useMemo(() => (
     filterParentScheduleEvents(events, { filter, playerId: selectedPlayerId, teamId: selectedTeamId, timeRange })
@@ -283,6 +431,21 @@ export function Schedule({ auth }: { auth: AuthState }) {
 
   const calendarEntries = useMemo(() => getCalendarScheduleEntries(visibleEvents), [visibleEvents]);
   const listEntries = calendarEntries;
+  const canLoadMorePastHistory = filter === 'past-all' && (pastHistoryHasMore || visibleListCount < listEntries.length);
+
+  const handleShowMore = async () => {
+    if (visibleListCount < listEntries.length) {
+      setVisibleListCount((current) => Math.min(current + listPageSize, listEntries.length));
+      return;
+    }
+    if (filter !== 'past-all' || !pastHistoryHasMore || loadingPastHistory) {
+      return;
+    }
+    const loaded = await loadPastSchedulePage();
+    if (loaded) {
+      setVisibleListCount((current) => current + listPageSize);
+    }
+  };
   const parentLinkedPlayerIds = useMemo(() => new Set(children.map((child) => child.playerId)), [children]);
   const teamOptions = useMemo(() => getParentScheduleTeamOptions(events, children), [children, events]);
   const packetRows = useMemo(() => getPracticePacketRows(visibleEvents), [visibleEvents]);
@@ -319,6 +482,74 @@ export function Schedule({ auth }: { auth: AuthState }) {
     }
   }, [isDesktopWeb, selectedCalendarTeam]);
 
+
+  useEffect(() => {
+    let cancelled = false;
+    setGameTrackerConfigs([]);
+    setGameTrackerConfigError(null);
+    if (!selectedCalendarTeam || !auth.user) return;
+    loadScheduleStatTrackerConfigsForApp(selectedCalendarTeam.teamId, auth.user)
+      .then((configs) => {
+        if (!cancelled) setGameTrackerConfigs(configs);
+      })
+      .catch((configError: any) => {
+        if (!cancelled) setGameTrackerConfigError(configError?.message || 'Unable to load tracker configs.');
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [auth.user, selectedCalendarTeam]);
+
+  useEffect(() => {
+    setGameForm((current) => {
+      if (!current.statTrackerConfigId) return current;
+      const hasMatchingConfig = gameTrackerConfigs.some((config) => config.id === current.statTrackerConfigId);
+      if (hasMatchingConfig) return current;
+      return {
+        ...current,
+        statTrackerConfigId: ''
+      };
+    });
+  }, [gameTrackerConfigs]);
+
+  const handleCreateGame = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!selectedCalendarTeam || !auth.user || savingGame) return;
+    setSavingGame(true);
+    setGameFormError(null);
+    setStatusMessage(null);
+    clearError();
+    try {
+      await createScheduledGameForApp(selectedCalendarTeam.teamId, gameForm, auth.user);
+      setGameForm(getDefaultScheduleGameForm());
+      await refreshSchedule(true);
+      setStatusMessage('Game created and schedule refreshed.');
+    } catch (gameError: any) {
+      setGameFormError(gameError?.message || 'Unable to create game.');
+    } finally {
+      setSavingGame(false);
+    }
+  };
+
+  const handleCreatePractice = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!selectedCalendarTeam || !auth.user || savingPractice) return;
+    setSavingPractice(true);
+    setPracticeFormError(null);
+    setStatusMessage(null);
+    clearError();
+    try {
+      await createScheduledPracticeForApp(selectedCalendarTeam.teamId, practiceForm, auth.user);
+      setPracticeForm(getDefaultSchedulePracticeForm());
+      await refreshSchedule(true);
+      setStatusMessage(practiceForm.recurrence?.isRecurring ? 'Recurring practice series created and schedule refreshed.' : 'Practice created and schedule refreshed.');
+    } catch (practiceError: any) {
+      setPracticeFormError(practiceError?.message || 'Unable to create practice.');
+    } finally {
+      setSavingPractice(false);
+    }
+  };
+
   const handleCsvFileChange = async (file: File | null) => {
     setCsvImportErrors([]);
     setCsvPreviewRows([]);
@@ -330,6 +561,7 @@ export function Schedule({ auth }: { auth: AuthState }) {
     csvRowsRef.current = [];
     csvMappingRef.current = {};
     setCsvFileName(file?.name || '');
+    setLoadingCsvFile(Boolean(file));
     if (!file) {
       csvLoadPromiseRef.current = null;
       return;
@@ -357,6 +589,7 @@ export function Schedule({ auth }: { auth: AuthState }) {
       if (csvLoadPromiseRef.current === loadPromise) {
         csvLoadPromiseRef.current = null;
       }
+      setLoadingCsvFile(false);
     }
   };
 
@@ -386,6 +619,7 @@ export function Schedule({ auth }: { auth: AuthState }) {
     setCsvPreviewRows([]);
     setCsvImportErrors([]);
     setCsvFileName('');
+    setLoadingCsvFile(false);
     setScheduleImportPreviewSource(null);
   };
 
@@ -467,13 +701,28 @@ export function Schedule({ auth }: { auth: AuthState }) {
     setStatusMessage(null);
     clearError();
     const failedRows: ScheduleCsvImportPreviewRow[] = [];
+    const importBatchId = `app-schedule-import-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+    const importBatchTimestamp = new Date().toISOString();
+    const totalCount = csvPreviewRows.length;
     let importedCount = 0;
-    for (const row of csvPreviewRows) {
+    const successfulImportIds: string[] = [];
+    for (const [index, row] of csvPreviewRows.entries()) {
+      const normalizedRow = {
+        ...row.normalized,
+        importBatch: {
+          batchId: importBatchId,
+          totalCount,
+          rowNumber: row.normalized.rowNumber || row.rowNumber || index + 1,
+          importedAt: importBatchTimestamp,
+          importedBy: auth.user.uid
+        }
+      };
       try {
-        if (row.normalized.eventType === 'game') {
-          await createScheduleImportGame(selectedCalendarTeam.teamId, row.normalized, auth.user);
-        } else {
-          await createScheduleImportPractice(selectedCalendarTeam.teamId, row.normalized, auth.user);
+        const createdId = row.normalized.eventType === 'game'
+          ? await createScheduleImportGame(selectedCalendarTeam.teamId, normalizedRow, auth.user)
+          : await createScheduleImportPractice(selectedCalendarTeam.teamId, normalizedRow, auth.user);
+        if (createdId) {
+          successfulImportIds.push(createdId);
         }
         importedCount += 1;
       } catch (importError: any) {
@@ -481,6 +730,14 @@ export function Schedule({ auth }: { auth: AuthState }) {
           ...row,
           errors: [importError?.message || 'Import failed for this row.']
         });
+      }
+    }
+
+    if (totalCount > 3 && importedCount > 0) {
+      try {
+        await finalizeScheduleImportBatch(selectedCalendarTeam.teamId, importBatchId, successfulImportIds.length || importedCount, auth.user);
+      } catch {
+        // Ignore notification finalization errors so successful imports still complete.
       }
     }
 
@@ -588,6 +845,7 @@ export function Schedule({ auth }: { auth: AuthState }) {
   };
 
   return (
+    <PullToRefresh onRefresh={() => refreshSchedule(true)} disabled={!auth.user?.uid}>
     <div className="schedule-page space-y-4">
       <section className="schedule-header app-card p-3 sm:hidden">
         <div className="flex items-center justify-between gap-2">
@@ -802,6 +1060,31 @@ export function Schedule({ auth }: { auth: AuthState }) {
           ) : null}
 
           {isDesktopWeb && selectedCalendarTeam ? (
+            <>
+              <ScheduleGameCreatePanel
+                teamName={selectedCalendarTeam.teamName}
+                form={gameForm}
+                configs={gameTrackerConfigs}
+                saving={savingGame}
+                error={gameFormError}
+                configError={gameTrackerConfigError}
+                onChange={(nextForm) => {
+                  setGameForm(nextForm);
+                  if (gameFormError) setGameFormError(null);
+                }}
+                onSubmit={handleCreateGame}
+              />
+              <SchedulePracticeCreatePanel
+                teamName={selectedCalendarTeam.teamName}
+                form={practiceForm}
+                saving={savingPractice}
+                error={practiceFormError}
+                onChange={(nextForm) => {
+                  setPracticeForm(nextForm);
+                  if (practiceFormError) setPracticeFormError(null);
+                }}
+                onSubmit={handleCreatePractice}
+              />
             <ScheduleStaffTools
               teamName={selectedCalendarTeam.teamName}
               calendarUrl={calendarUrl}
@@ -819,6 +1102,7 @@ export function Schedule({ auth }: { auth: AuthState }) {
               csvPreviewRows={scheduleImportPreviewSource === 'csv' ? csvPreviewRows : []}
               csvImportErrors={csvImportErrors}
               csvFileName={csvFileName}
+              loadingCsvFile={loadingCsvFile}
               importingCsv={importingCsv}
               onCalendarUrlChange={(value) => {
                 setCalendarUrl(value);
@@ -840,6 +1124,7 @@ export function Schedule({ auth }: { auth: AuthState }) {
               onCsvPreview={handleCsvPreview}
               onClearCsv={handleCsvClear}
             />
+            </>
           ) : null}
 
           {statusMessage ? <Status tone="success" message={statusMessage} /> : null}
@@ -864,14 +1149,18 @@ export function Schedule({ auth }: { auth: AuthState }) {
               events={listEntries}
               visibleCount={visibleListCount}
               pageSize={listPageSize}
-              onShowMore={() => setVisibleListCount((current) => Math.min(current + listPageSize, listEntries.length))}
+              canShowMore={canLoadMorePastHistory || visibleListCount < listEntries.length}
+              loadingMore={filter === 'past-all' && loadingPastHistory}
+              onShowMore={handleShowMore}
             />
           ) : (
             <ScheduleList
               events={listEntries}
               visibleCount={visibleListCount}
               pageSize={listPageSize}
-              onShowMore={() => setVisibleListCount((current) => Math.min(current + listPageSize, listEntries.length))}
+              canShowMore={canLoadMorePastHistory || visibleListCount < listEntries.length}
+              loadingMore={filter === 'past-all' && loadingPastHistory}
+              onShowMore={handleShowMore}
             />
           )}
 
@@ -881,6 +1170,30 @@ export function Schedule({ auth }: { auth: AuthState }) {
               teamName={selectedCalendarTeam.teamName}
               onToggle={() => setMobileStaffToolsOpen((current) => !current)}
             >
+              <ScheduleGameCreatePanel
+                teamName={selectedCalendarTeam.teamName}
+                form={gameForm}
+                configs={gameTrackerConfigs}
+                saving={savingGame}
+                error={gameFormError}
+                configError={gameTrackerConfigError}
+                onChange={(nextForm) => {
+                  setGameForm(nextForm);
+                  if (gameFormError) setGameFormError(null);
+                }}
+                onSubmit={handleCreateGame}
+              />
+              <SchedulePracticeCreatePanel
+                teamName={selectedCalendarTeam.teamName}
+                form={practiceForm}
+                saving={savingPractice}
+                error={practiceFormError}
+                onChange={(nextForm) => {
+                  setPracticeForm(nextForm);
+                  if (practiceFormError) setPracticeFormError(null);
+                }}
+                onSubmit={handleCreatePractice}
+              />
               <ScheduleStaffTools
                 teamName={selectedCalendarTeam.teamName}
                 calendarUrl={calendarUrl}
@@ -898,6 +1211,7 @@ export function Schedule({ auth }: { auth: AuthState }) {
                 csvPreviewRows={scheduleImportPreviewSource === 'csv' ? csvPreviewRows : []}
                 csvImportErrors={csvImportErrors}
                 csvFileName={csvFileName}
+                loadingCsvFile={loadingCsvFile}
                 importingCsv={importingCsv}
                 onCalendarUrlChange={(value) => {
                   setCalendarUrl(value);
@@ -923,6 +1237,129 @@ export function Schedule({ auth }: { auth: AuthState }) {
           ) : null}
         </div>
       </div>
+    </div>
+    </PullToRefresh>
+  );
+}
+
+
+function padDatePart(value: number) {
+  return String(value).padStart(2, '0');
+}
+
+function toDatetimeLocalInputValue(value: Date | string | number | null | undefined) {
+  if (value === null || value === undefined || value === '') return '';
+  const date = value instanceof Date ? value : new Date(value || Date.now());
+  if (Number.isNaN(date.getTime())) return '';
+  return `${date.getFullYear()}-${padDatePart(date.getMonth() + 1)}-${padDatePart(date.getDate())}T${padDatePart(date.getHours())}:${padDatePart(date.getMinutes())}`;
+}
+
+function getDefaultScheduleGameForm(): ScheduleGameFormInput {
+  const startDate = new Date();
+  startDate.setDate(startDate.getDate() + 1);
+  startDate.setHours(18, 30, 0, 0);
+  return {
+    opponent: '',
+    startDate,
+    endDate: new Date(startDate.getTime() + 90 * 60000),
+    location: '',
+    arrivalTime: new Date(startDate.getTime() - 30 * 60000),
+    isHome: true,
+    notes: '',
+    statTrackerConfigId: '',
+    competitionType: 'league',
+    countsTowardSeasonRecord: true
+  };
+}
+
+function getDefaultSchedulePracticeForm(): SchedulePracticeFormInput {
+  const startDate = new Date();
+  startDate.setDate(startDate.getDate() + 1);
+  startDate.setHours(18, 0, 0, 0);
+  const endDate = new Date(startDate.getTime() + 90 * 60000);
+  const dayCodes = ['SU', 'MO', 'TU', 'WE', 'TH', 'FR', 'SA'];
+  return {
+    title: 'Practice',
+    startDate,
+    endDate,
+    location: '',
+    notes: '',
+    recurrence: { isRecurring: false, freq: 'weekly', interval: 1, byDays: [dayCodes[startDate.getDay()]], endType: 'never', countValue: 10 }
+  };
+}
+
+function ScheduleGameCreatePanel({ teamName, form, configs, saving, error, configError, onChange, onSubmit }: { teamName: string; form: ScheduleGameFormInput; configs: ScheduleStatTrackerConfigOption[]; saving: boolean; error: string | null; configError: string | null; onChange: (form: ScheduleGameFormInput) => void; onSubmit: (event: FormEvent<HTMLFormElement>) => void }) {
+  const updateField = (field: keyof ScheduleGameFormInput, value: string | Date | boolean | null) => onChange({ ...form, [field]: value });
+  return (
+    <section className="app-card p-3 sm:p-4" aria-label="Create game">
+      <div className="app-label">Game scheduling</div>
+      <h2 className="mt-1 text-base font-black text-gray-950">Add game for {teamName}</h2>
+      <form className="mt-3 space-y-3" onSubmit={onSubmit}>
+        <div className="grid gap-3 sm:grid-cols-2">
+          <label className="text-xs font-bold uppercase tracking-wide text-gray-600">Opponent<input className="auth-input mt-1" value={form.opponent} onChange={(event) => updateField('opponent', event.target.value)} /></label>
+          <label className="text-xs font-bold uppercase tracking-wide text-gray-600">Location<input className="auth-input mt-1" value={form.location || ''} onChange={(event) => updateField('location', event.target.value)} /></label>
+          <label className="text-xs font-bold uppercase tracking-wide text-gray-600">Starts<input type="datetime-local" className="auth-input mt-1" value={toDatetimeLocalInputValue(form.startDate)} onChange={(event) => updateField('startDate', new Date(event.target.value))} /></label>
+          <label className="text-xs font-bold uppercase tracking-wide text-gray-600">Ends<input type="datetime-local" className="auth-input mt-1" value={toDatetimeLocalInputValue(form.endDate)} onChange={(event) => updateField('endDate', event.target.value ? new Date(event.target.value) : null)} /></label>
+          <label className="text-xs font-bold uppercase tracking-wide text-gray-600">Arrival<input type="datetime-local" className="auth-input mt-1" value={toDatetimeLocalInputValue(form.arrivalTime)} onChange={(event) => updateField('arrivalTime', event.target.value ? new Date(event.target.value) : null)} /></label>
+          <label className="text-xs font-bold uppercase tracking-wide text-gray-600">Home / away<select className="auth-input mt-1" value={form.isHome === false ? 'away' : form.isHome === true ? 'home' : 'neutral'} onChange={(event) => updateField('isHome', event.target.value === 'neutral' ? null : event.target.value === 'home')}><option value="home">Home</option><option value="away">Away</option><option value="neutral">Neutral</option></select></label>
+          <label className="text-xs font-bold uppercase tracking-wide text-gray-600">Tracker config<select className="auth-input mt-1" value={form.statTrackerConfigId || ''} onChange={(event) => updateField('statTrackerConfigId', event.target.value)}><option value="">No tracker config</option>{configs.map((config) => <option key={config.id} value={config.id}>{config.name}</option>)}</select></label>
+          <label className="text-xs font-bold uppercase tracking-wide text-gray-600">Competition<select className="auth-input mt-1" value={form.competitionType || 'league'} onChange={(event) => updateField('competitionType', event.target.value)}><option value="league">League</option><option value="tournament">Tournament</option><option value="scrimmage">Scrimmage</option><option value="friendly">Friendly</option></select></label>
+        </div>
+        <label className="flex items-center gap-2 text-sm font-black text-gray-800"><input type="checkbox" checked={form.countsTowardSeasonRecord !== false} onChange={(event) => updateField('countsTowardSeasonRecord', event.target.checked)} /> Counts toward season record</label>
+        <label className="text-xs font-bold uppercase tracking-wide text-gray-600">Notes<textarea className="auth-input mt-1 min-h-20" value={form.notes || ''} onChange={(event) => updateField('notes', event.target.value)} /></label>
+        <button type="submit" className="primary-button" disabled={saving}>{saving ? 'Creating game' : 'Create game'}</button>
+        {configError ? <div className="rounded-2xl border border-amber-200 bg-amber-50 px-3 py-2 text-sm font-bold text-amber-700">{configError}</div> : null}
+        {error ? <div className="rounded-2xl border border-rose-200 bg-rose-50 px-3 py-2 text-sm font-bold text-rose-700">{error}</div> : null}
+      </form>
+    </section>
+  );
+}
+
+function SchedulePracticeCreatePanel({ teamName, form, saving, error, onChange, onSubmit }: { teamName: string; form: SchedulePracticeFormInput; saving: boolean; error: string | null; onChange: (form: SchedulePracticeFormInput) => void; onSubmit: (event: FormEvent<HTMLFormElement>) => void }) {
+  const updateField = (field: keyof SchedulePracticeFormInput, value: string | Date | PracticeRecurrenceFormInput) => onChange({ ...form, [field]: value });
+  return (
+    <section className="app-card p-3 sm:p-4" aria-label="Create practice">
+      <div className="app-label">Practice scheduling</div>
+      <h2 className="mt-1 text-base font-black text-gray-950">Add practice for {teamName}</h2>
+      <form className="mt-3 space-y-3" onSubmit={onSubmit}>
+        <div className="grid gap-3 sm:grid-cols-2">
+          <label className="text-xs font-bold uppercase tracking-wide text-gray-600">Title<input className="auth-input mt-1" value={form.title} onChange={(event) => updateField('title', event.target.value)} /></label>
+          <label className="text-xs font-bold uppercase tracking-wide text-gray-600">Location<input className="auth-input mt-1" value={form.location || ''} onChange={(event) => updateField('location', event.target.value)} /></label>
+          <label className="text-xs font-bold uppercase tracking-wide text-gray-600">Starts<input type="datetime-local" className="auth-input mt-1" value={toDatetimeLocalInputValue(form.startDate)} onChange={(event) => updateField('startDate', new Date(event.target.value))} /></label>
+          <label className="text-xs font-bold uppercase tracking-wide text-gray-600">Ends<input type="datetime-local" className="auth-input mt-1" value={toDatetimeLocalInputValue(form.endDate)} onChange={(event) => updateField('endDate', new Date(event.target.value))} /></label>
+        </div>
+        <label className="text-xs font-bold uppercase tracking-wide text-gray-600">Notes<textarea className="auth-input mt-1 min-h-20" value={form.notes || ''} onChange={(event) => updateField('notes', event.target.value)} /></label>
+        <PracticeRecurrenceFields form={form} onChange={onChange} />
+        <button type="submit" className="primary-button" disabled={saving}>{saving ? 'Creating practice' : 'Create practice'}</button>
+        {error ? <div className="rounded-2xl border border-rose-200 bg-rose-50 px-3 py-2 text-sm font-bold text-rose-700">{error}</div> : null}
+      </form>
+    </section>
+  );
+}
+
+function PracticeRecurrenceFields({ form, onChange }: { form: SchedulePracticeFormInput; onChange: (form: SchedulePracticeFormInput) => void }) {
+  const recurrence = form.recurrence || { isRecurring: false, freq: 'weekly', interval: 1, byDays: [], endType: 'never', countValue: 10 };
+  const setRecurrence = (next: Partial<PracticeRecurrenceFormInput>) => onChange({ ...form, recurrence: { ...recurrence, ...next } });
+  const byDays = new Set(recurrence.byDays || []);
+  const days = [['MO', 'Mon'], ['TU', 'Tue'], ['WE', 'Wed'], ['TH', 'Thu'], ['FR', 'Fri'], ['SA', 'Sat'], ['SU', 'Sun']];
+  return (
+    <div className="rounded-2xl border border-gray-200 bg-gray-50 p-3">
+      <label className="flex items-center gap-2 text-sm font-black text-gray-800"><input type="checkbox" checked={recurrence.isRecurring === true} onChange={(event) => setRecurrence({ isRecurring: event.target.checked })} /> Repeat weekly</label>
+      {recurrence.isRecurring ? (
+        <div className="mt-3 space-y-3">
+          <div className="flex flex-wrap gap-2">
+            {days.map(([value, label]) => (
+              <label key={value} className="rounded-full border border-gray-200 bg-white px-3 py-1 text-xs font-black text-gray-700"><input className="mr-1" type="checkbox" checked={byDays.has(value)} onChange={(event) => { const next = new Set(byDays); if (event.target.checked) next.add(value); else next.delete(value); setRecurrence({ byDays: Array.from(next) }); }} />{label}</label>
+            ))}
+          </div>
+          <div className="grid gap-3 sm:grid-cols-3">
+            <label className="text-xs font-bold uppercase tracking-wide text-gray-600">Every<input type="number" min="1" className="auth-input mt-1" value={recurrence.interval || 1} onChange={(event) => setRecurrence({ interval: Number(event.target.value) || 1 })} /></label>
+            <label className="text-xs font-bold uppercase tracking-wide text-gray-600">Ends<select className="auth-input mt-1" value={recurrence.endType || 'never'} onChange={(event) => setRecurrence({ endType: event.target.value as PracticeRecurrenceFormInput['endType'] })}><option value="never">Never</option><option value="until">On date</option><option value="count">After count</option></select></label>
+            {recurrence.endType === 'until' ? <label className="text-xs font-bold uppercase tracking-wide text-gray-600">Until<input type="date" className="auth-input mt-1" value={recurrence.untilValue || ''} onChange={(event) => setRecurrence({ untilValue: event.target.value })} /></label> : null}
+            {recurrence.endType === 'count' ? <label className="text-xs font-bold uppercase tracking-wide text-gray-600">Count<input type="number" min="1" className="auth-input mt-1" value={recurrence.countValue || 10} onChange={(event) => setRecurrence({ countValue: Number(event.target.value) || 10 })} /></label> : null}
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -970,6 +1407,7 @@ function ScheduleStaffTools({
   csvPreviewRows,
   csvImportErrors,
   csvFileName,
+  loadingCsvFile,
   importingCsv,
   onCalendarUrlChange,
   onAddCalendarUrl,
@@ -1000,6 +1438,7 @@ function ScheduleStaffTools({
   csvPreviewRows: ScheduleCsvImportPreviewRow[];
   csvImportErrors: string[];
   csvFileName: string;
+  loadingCsvFile: boolean;
   importingCsv: boolean;
   onCalendarUrlChange: (value: string) => void;
   onAddCalendarUrl: (event: FormEvent<HTMLFormElement>) => void;
@@ -1048,6 +1487,7 @@ function ScheduleStaffTools({
         previewRows={csvPreviewRows}
         errors={csvImportErrors}
         fileName={csvFileName}
+        loadingCsvFile={loadingCsvFile}
         importing={importingCsv}
         onFileChange={onCsvFileChange}
         onMappingChange={onCsvMappingChange}
@@ -1141,13 +1581,14 @@ function ScheduleAiImportPanel({ teamName, text, imageName, previewRows, errors,
   );
 }
 
-function ScheduleCsvImportPanel({ teamName, headers, mapping, previewRows, errors, fileName, importing, onFileChange, onMappingChange, onPreview, onImport, onClear }: {
+function ScheduleCsvImportPanel({ teamName, headers, mapping, previewRows, errors, fileName, loadingCsvFile, importing, onFileChange, onMappingChange, onPreview, onImport, onClear }: {
   teamName: string;
   headers: string[];
   mapping: ScheduleCsvImportMapping;
   previewRows: ScheduleCsvImportPreviewRow[];
   errors: string[];
   fileName: string;
+  loadingCsvFile: boolean;
   importing: boolean;
   onFileChange: (file: File | null) => void;
   onMappingChange: (field: keyof ScheduleCsvImportMapping, value: string) => void;
@@ -1221,8 +1662,8 @@ function ScheduleCsvImportPanel({ teamName, headers, mapping, previewRows, error
         ) : null}
 
         <div className="flex flex-wrap gap-2">
-          <button type="button" className="secondary-button" onClick={onPreview} disabled={!fileName || importing}>Preview rows</button>
-          <button type="button" className="primary-button" onClick={onImport} disabled={!previewRows.length || invalidCount > 0 || importing}>{importing ? 'Importing…' : 'Import rows'}</button>
+          <button type="button" className="secondary-button" onClick={onPreview} disabled={!fileName || importing || loadingCsvFile}>{loadingCsvFile ? 'Reading CSV…' : 'Preview rows'}</button>
+          <button type="button" className="primary-button" onClick={onImport} disabled={!previewRows.length || invalidCount > 0 || importing || loadingCsvFile}>{importing ? 'Importing…' : 'Import rows'}</button>
           <button type="button" className="secondary-button" onClick={onClear} disabled={importing}>Clear</button>
         </div>
       </div>
@@ -1660,10 +2101,12 @@ function LoadingSchedule() {
   return <SchedulePageSkeleton />;
 }
 
-function ScheduleList({ events, visibleCount, pageSize, onShowMore }: {
+function ScheduleList({ events, visibleCount, pageSize, canShowMore, loadingMore, onShowMore }: {
   events: CalendarScheduleEntry[];
   visibleCount: number;
   pageSize: number;
+  canShowMore: boolean;
+  loadingMore: boolean;
   onShowMore: () => void;
 }) {
   if (!events.length) {
@@ -1686,13 +2129,13 @@ function ScheduleList({ events, visibleCount, pageSize, onShowMore }: {
           <ScheduleEventCard key={event.eventKey} event={event} />
         ))}
       </div>
-      {remainingCount > 0 ? (
+      {canShowMore ? (
         <div className="rounded-xl border border-gray-200 bg-white p-3 text-center shadow-sm">
           <div className="text-xs font-bold text-gray-500">
             Showing {renderedEvents.length} of {events.length} events
           </div>
-          <button type="button" className="secondary-button mt-2 min-h-9 px-3 py-2 text-xs" onClick={onShowMore}>
-            Show {Math.min(pageSize, remainingCount)} more
+          <button type="button" className="secondary-button mt-2 min-h-9 px-3 py-2 text-xs" onClick={onShowMore} disabled={loadingMore}>
+            {loadingMore ? 'Loading more…' : `Show ${Math.min(pageSize, remainingCount || pageSize)} more`}
           </button>
         </div>
       ) : null}
@@ -1700,10 +2143,12 @@ function ScheduleList({ events, visibleCount, pageSize, onShowMore }: {
   );
 }
 
-function CompactScheduleList({ events, visibleCount, pageSize, onShowMore }: {
+function CompactScheduleList({ events, visibleCount, pageSize, canShowMore, loadingMore, onShowMore }: {
   events: CalendarScheduleEntry[];
   visibleCount: number;
   pageSize: number;
+  canShowMore: boolean;
+  loadingMore: boolean;
   onShowMore: () => void;
 }) {
   if (!events.length) {
@@ -1746,13 +2191,13 @@ function CompactScheduleList({ events, visibleCount, pageSize, onShowMore }: {
           })}
         </div>
       </div>
-      {remainingCount > 0 ? (
+      {canShowMore ? (
         <div className="rounded-xl border border-gray-200 bg-white p-3 text-center shadow-sm">
           <div className="text-xs font-bold text-gray-500">
             Showing {renderedEvents.length} of {events.length} events
           </div>
-          <button type="button" className="secondary-button mt-2 min-h-9 px-3 py-2 text-xs" onClick={onShowMore}>
-            Show {Math.min(pageSize, remainingCount)} more
+          <button type="button" className="secondary-button mt-2 min-h-9 px-3 py-2 text-xs" onClick={onShowMore} disabled={loadingMore}>
+            {loadingMore ? 'Loading more…' : `Show ${Math.min(pageSize, remainingCount || pageSize)} more`}
           </button>
         </div>
       ) : null}
@@ -2072,23 +2517,13 @@ function CalendarEventPicker({ day, entries, onClose }: {
   entries: CalendarScheduleEntry[];
   onClose: () => void;
 }) {
-  useEffect(() => {
-    if (!day) return;
-    const handleKeydown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') onClose();
-    };
-    window.addEventListener('keydown', handleKeydown);
-    return () => window.removeEventListener('keydown', handleKeydown);
-  }, [day, onClose]);
-
   if (!day) return null;
 
   const dayLabel = day.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' });
   const eventCountLabel = `${entries.length} ${entries.length === 1 ? 'event' : 'events'}`;
 
   return (
-    <div className="fixed inset-0 z-[70] flex items-end bg-gray-950/40 p-0 sm:items-center sm:p-6" role="dialog" aria-modal="true" aria-labelledby="calendar-event-picker-title">
-      <button type="button" className="absolute inset-0 h-full w-full cursor-default" onClick={onClose} aria-label="Close calendar events" />
+    <Modal overlayClassName="z-[70] flex items-end bg-gray-950/40 p-0 sm:items-center sm:p-6" ariaLabelledBy="calendar-event-picker-title" onClose={onClose}>
       <section className="relative w-full overflow-hidden rounded-t-3xl bg-white shadow-2xl sm:mx-auto sm:max-w-2xl sm:rounded-2xl">
         <div className="flex items-start justify-between gap-3 border-b border-gray-100 px-4 py-3">
           <div className="min-w-0">
@@ -2096,9 +2531,19 @@ function CalendarEventPicker({ day, entries, onClose }: {
             <h2 id="calendar-event-picker-title" className="mt-1 truncate text-lg font-black text-gray-950">{dayLabel}</h2>
             <div className="mt-0.5 text-xs font-semibold text-gray-500">{eventCountLabel}</div>
           </div>
-          <button type="button" className="ghost-button !min-h-9 !px-3 !py-2 !text-xs" onClick={onClose}>
-            Close
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-gray-200 bg-white text-lg font-black leading-none text-gray-500 transition hover:border-gray-300 hover:text-gray-700"
+              aria-label="Close calendar events"
+              onClick={onClose}
+            >
+              <span aria-hidden="true">×</span>
+            </button>
+            <button type="button" className="ghost-button !min-h-9 !px-3 !py-2 !text-xs" onClick={onClose}>
+              Close
+            </button>
+          </div>
         </div>
 
         {entries.length ? (
@@ -2113,7 +2558,7 @@ function CalendarEventPicker({ day, entries, onClose }: {
           <div className="p-5 text-sm font-semibold text-gray-500">No events on this day.</div>
         )}
       </section>
-    </div>
+    </Modal>
   );
 }
 

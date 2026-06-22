@@ -1,9 +1,18 @@
-import { getConfigs, getGame, getGameEvents, getTeam } from '../../../../js/db.js';
-import { buildGameSummaryPrompt, buildPracticeFeedPrompt, buildFinishGamePayload } from '../../../../js/game-day-wrapup.js';
-import { resolveLiveStatConfig } from '../../../../js/live-game-state.js';
-import { resolveSummaryRecipient } from '../../../../js/live-tracker-email.js';
-import { getApp } from '../../../../js/vendor/firebase-app.js';
-import { getAI, getGenerativeModel, GoogleAIBackend } from '../../../../js/vendor/firebase-ai.js';
+import {
+  buildFinishGamePayload,
+  buildGameSummaryPrompt,
+  buildPracticeFeedPrompt,
+  getAI,
+  getApp,
+  getConfigs,
+  getGame,
+  getGameEvents,
+  getGenerativeModel,
+  getTeam,
+  GoogleAIBackend,
+  resolveLiveStatConfig,
+  resolveSummaryRecipient
+} from './adapters/legacyGameWrapup';
 
 export type GameWrapupScore = {
   home: number;

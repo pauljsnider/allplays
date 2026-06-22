@@ -1,7 +1,20 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { readFileSync } from 'node:fs';
+
+const scheduleServiceSource = readFileSync(new URL('../../apps/app/src/lib/scheduleService.ts', import.meta.url), 'utf8');
+
+function getScheduleServiceSlice(startMarker, endMarker) {
+    const start = scheduleServiceSource.indexOf(startMarker);
+    const end = scheduleServiceSource.indexOf(endMarker, start);
+    if (start === -1 || end === -1) {
+        throw new Error(`Unable to extract schedule service slice: ${startMarker}`);
+    }
+    return scheduleServiceSource.slice(start, end);
+}
 
 const dbMocks = vi.hoisted(() => ({
     getAssignmentClaims: vi.fn(),
+    getConfigs: vi.fn(),
     getGame: vi.fn(),
     getGames: vi.fn(),
     getPlayers: vi.fn(),
@@ -46,6 +59,54 @@ const authMocks = vi.hoisted(() => ({
     getNativeAuthIdToken: vi.fn()
 }));
 
+const firebaseMocks = vi.hoisted(() => {
+    const makeMissingSnapshot = (id = '') => ({
+        id,
+        exists: () => false,
+        data: () => null
+    });
+
+    return {
+        db: {},
+        doc: vi.fn((...parts) => ({
+            path: parts.filter((part) => typeof part === 'string').join('/')
+        })),
+        collection: vi.fn((...parts) => ({
+            path: parts.filter((part) => typeof part === 'string').join('/')
+        })),
+        collectionGroup: vi.fn((_, name) => ({ id: name, path: name })),
+        getDoc: vi.fn(async (ref) => {
+            const pathParts = String(ref?.path || '').split('/').filter(Boolean);
+            const teamIndex = pathParts.indexOf('teams');
+            const playerIndex = pathParts.indexOf('players');
+            if (teamIndex >= 0 && playerIndex >= 0) {
+                const teamId = pathParts[teamIndex + 1];
+                const playerId = pathParts[playerIndex + 1];
+                const players = await dbMocks.getPlayers(teamId, { includeInactive: true });
+                const player = players.find((candidate) => String(candidate?.id || candidate?.playerId || '') === playerId);
+                if (!player) return makeMissingSnapshot(playerId);
+                return {
+                    id: playerId,
+                    exists: () => true,
+                    data: () => player
+                };
+            }
+            return makeMissingSnapshot();
+        }),
+        getDocs: vi.fn(async () => ({ docs: [] })),
+        query: vi.fn((...args) => args),
+        runTransaction: vi.fn(),
+        where: vi.fn((...args) => args),
+        increment: vi.fn((amount) => ({ __op: 'increment', amount })),
+        serverTimestamp: vi.fn(() => new Date('2026-05-20T12:00:00Z')),
+        deleteField: vi.fn(() => ({ __op: 'deleteField' })),
+        Timestamp: {
+            fromDate: vi.fn((date) => ({ toDate: () => date })),
+            now: vi.fn(() => ({ toDate: () => new Date('2026-05-20T12:00:00Z') }))
+        }
+    };
+});
+
 const utilsMocks = vi.hoisted(() => ({
     expandRecurrence: vi.fn(() => []),
     extractOpponent: vi.fn((summary) => String(summary || '').replace(/^.*vs\.?\s*/i, '') || 'TBD'),
@@ -59,10 +120,49 @@ const rsvpMocks = vi.hoisted(() => ({
     resolveMyRsvpByChildForGame: vi.fn()
 }));
 
+vi.mock('@capacitor/core', () => ({
+    Capacitor: {
+        isNativePlatform: () => false
+    }
+}));
+
+vi.mock('../../apps/app/node_modules/@capacitor/core/dist/index.cjs.js', () => ({
+    Capacitor: {
+        isNativePlatform: () => false
+    }
+}));
+
+vi.mock('@sentry/browser', () => ({
+    init: vi.fn(),
+    withScope: vi.fn((callback) => callback({
+        setTag: vi.fn(),
+        setContext: vi.fn()
+    })),
+    captureException: vi.fn()
+}));
+
+vi.mock('../../apps/app/node_modules/@sentry/browser/build/npm/esm/index.js', () => ({
+    init: vi.fn(),
+    withScope: vi.fn((callback) => callback({
+        setTag: vi.fn(),
+        setContext: vi.fn()
+    })),
+    captureException: vi.fn()
+}));
+
 vi.mock('../../js/db.js', () => dbMocks);
+vi.mock('../../js/firebase.js', () => firebaseMocks);
 vi.mock('../../apps/app/src/lib/profileService.ts', () => profileMocks);
 vi.mock('../../apps/app/src/lib/authService.ts', () => authMocks);
+vi.mock('../../apps/app/src/lib/uxTiming.ts', () => ({
+    UX_TIMING: { rsvpTap: 'rsvpTap' },
+    startInteractionTimer: vi.fn(() => ({ end: vi.fn() })),
+    startUxTimer: vi.fn(() => ({ end: vi.fn() }))
+}));
 vi.mock('../../apps/app/src/lib/chatService.ts', () => ({
+    sendTeamChatMessage: vi.fn()
+}));
+vi.mock('../../apps/app/src/lib/chatService', () => ({
     sendTeamChatMessage: vi.fn()
 }));
 vi.mock('../../apps/app/src/lib/chatLogic.ts', () => ({
@@ -128,7 +228,8 @@ vi.mock('../../js/snack-helpers.js', () => ({
     }))
 }));
 
-import { addTeamCalendarUrl, cancelPracticeOccurrenceForApp, createScheduleImportGame, createScheduleImportPractice, createStaffRsvpReminderPreviewLoader, loadParentPlayerSchedule, loadParentSchedule, loadParentScheduleEventDetail, parseRecurringPracticeOccurrenceId, removeTeamCalendarUrl } from '../../apps/app/src/lib/scheduleService.ts';
+import { addTeamCalendarUrl, cancelPracticeOccurrenceForApp, createScheduledGameForApp, createScheduleImportGame, createScheduleImportPractice, createStaffRsvpReminderPreviewLoader, loadParentPlayerSchedule, loadParentSchedule, loadParentScheduleEventDetail, loadScheduleStatTrackerConfigsForApp, parseRecurringPracticeOccurrenceId, removeTeamCalendarUrl, updateScheduledGameForApp } from '../../apps/app/src/lib/scheduleService.ts';
+import { clearAppDataCache } from '../../apps/app/src/lib/appDataCache.ts';
 import { getScheduleForecastHref, getScheduleMapHref } from '../../apps/app/src/lib/scheduleLogic.ts';
 
 function installWindow(protocol = 'http:') {
@@ -152,6 +253,7 @@ function user() {
 }
 
 beforeEach(() => {
+    clearAppDataCache();
     vi.clearAllMocks();
     vi.unstubAllGlobals();
     installWindow();
@@ -171,7 +273,11 @@ beforeEach(() => {
     });
     dbMocks.getGame.mockResolvedValue(null);
     dbMocks.getTeams.mockResolvedValue([]);
-    dbMocks.getPlayers.mockResolvedValue([]);
+    dbMocks.getPlayers.mockResolvedValue([
+        { id: 'player-1', name: 'Pat', active: true },
+        { id: 'player-2', name: 'Sam', active: true },
+        { id: 'player-from-user', name: 'User fallback', active: true }
+    ]);
     dbMocks.getGames.mockResolvedValue([
         {
             id: 'game-1',
@@ -184,7 +290,15 @@ beforeEach(() => {
             sharedScheduleOpponentTeamId: 'team-2',
             status: 'scheduled',
             seasonLabel: 'Spring 2026',
-            competitionType: 'league',
+            competitionType: 'tournament',
+            tournament: {
+                divisionName: '10U Gold',
+                bracketName: 'Championship',
+                roundName: 'Semifinal',
+                poolName: 'Pool A',
+                gameLabel: 'Game 12',
+                seedLabel: 'A1 vs B2'
+            },
             assignments: [
                 { role: 'Snacks', value: '', claimable: true },
                 { role: 'Scorebook', value: 'Jamie', claimable: false }
@@ -315,19 +429,45 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+    clearAppDataCache();
     vi.unstubAllGlobals();
 });
 
 describe('React app schedule service contract integration', () => {
+    it('routes parent schedule event detail reads through typed schedule mappers', () => {
+        const importSource = scheduleServiceSource.slice(0, scheduleServiceSource.indexOf('type StaffRsvpReminderContext'));
+        const nativeMapperSource = getScheduleServiceSlice('async function nativeGetScheduleEventDocument', 'const nativeDeleteFieldSentinel');
+        const readMapperSource = getScheduleServiceSlice('async function loadGames', 'async function loadPracticeSessions');
+        const targetedSource = getScheduleServiceSlice('async function buildTargetedTeamScheduleEvent', 'function resolveMyRsvpNotesByChildForGame');
+        const detailSource = getScheduleServiceSlice('export async function loadParentScheduleEventDetail', 'export async function loadParentPlayerSchedule');
+
+        expect(importSource).toContain("mapScheduleEventDocument, mapScheduleEventDocuments, mapScheduleEventRecord, mapScheduleEventRecords } from './firestore/mappers'");
+        expect(nativeMapperSource).toContain('return mapScheduleEventDocument(await nativeFirestoreRequest');
+        expect(nativeMapperSource).toContain('return mapScheduleEventDocuments((payload.documents || [])');
+        expect(readMapperSource).toContain('async () => mapScheduleEventRecords(await getGames(teamId, range))');
+        expect(readMapperSource).toContain('async () => mapScheduleEventRecord(await getGame(teamId, gameId), gameId)');
+        expect(readMapperSource).toContain('() => nativeGetScheduleEventDocument(`teams/${encodeURIComponent(teamId)}/games/${encodeURIComponent(gameId)}`)');
+        expect(targetedSource).toContain('loadGameById(teamId, eventId)');
+        expect(targetedSource).toContain('loadGameById(teamId, occurrenceMatch[1])');
+        expect(targetedSource).toContain('createScheduleEvent({');
+        expect(detailSource).toContain('let events = await buildTargetedTeamScheduleEvent(requestedTeamId, requestedEventId, teamChildren, user);');
+        expect(detailSource).toContain('const teamEvents = await buildTeamSchedule(requestedTeamId, teamChildren, user, { includePastGames: true });');
+        expect(detailSource).toContain('events = teamEvents.filter((event) => event.id === requestedEventId);');
+    });
+
     it('loads parent schedule data through existing site contracts without duplicating schemas', async () => {
         const result = await loadParentSchedule(user());
 
         expect(profileMocks.loadProfileDocument).toHaveBeenCalledWith('user-1');
         expect(dbMocks.getTeam).toHaveBeenCalledWith('team-1');
-        expect(dbMocks.getGames).toHaveBeenCalledWith('team-1');
+        expect(dbMocks.getGames).toHaveBeenCalledWith('team-1', {
+            startDate: expect.any(Date)
+        });
         expect(dbMocks.getGames).toHaveBeenCalledTimes(1);
         expect(dbMocks.getTrackedCalendarEventUids).not.toHaveBeenCalled();
-        expect(dbMocks.getPracticeSessions).toHaveBeenCalledWith('team-1');
+        expect(dbMocks.getPracticeSessions).toHaveBeenCalledWith('team-1', {
+            startDate: expect.any(Date)
+        });
         expect(utilsMocks.fetchAndParseCalendar).toHaveBeenCalledWith('mock://team-calendar');
         expect(dbMocks.getRsvpSummaries).toHaveBeenCalledWith('team-1', expect.arrayContaining(['game-1', 'practice-1', 'final-1']));
         expect(dbMocks.listRideOffersForEvent).toHaveBeenCalledWith('team-1', 'game-1', { fallbackGameIds: [] });
@@ -346,6 +486,15 @@ describe('React app schedule service contract integration', () => {
             opponentTeamId: 'team-2',
             sharedScheduleOpponentTeamId: 'team-2',
             counterpartTitle: 'vs. Bears',
+            competitionType: 'tournament',
+            tournament: {
+                divisionName: '10U Gold',
+                bracketName: 'Championship',
+                roundName: 'Semifinal',
+                poolName: 'Pool A',
+                gameLabel: 'Game 12',
+                seedLabel: 'A1 vs B2'
+            },
             myRsvp: 'going',
             myRsvpNote: 'Needs a ride home',
             rsvpSummary: { going: 1, maybe: 1, notGoing: 0, notResponded: 0, total: 2 },
@@ -419,12 +568,11 @@ describe('React app schedule service contract integration', () => {
 
         expect(profileMocks.loadProfileDocument).toHaveBeenCalledWith('user-1');
         expect(dbMocks.getTeams).not.toHaveBeenCalled();
-        expect(dbMocks.getTeam).toHaveBeenCalledTimes(1);
         expect(dbMocks.getTeam).toHaveBeenCalledWith('team-1');
         expect(dbMocks.getGames).toHaveBeenCalledTimes(1);
-        expect(dbMocks.getGames).toHaveBeenCalledWith('team-1');
+        expect(dbMocks.getGames).toHaveBeenCalledWith('team-1', {});
         expect(dbMocks.getPracticeSessions).toHaveBeenCalledTimes(1);
-        expect(dbMocks.getPracticeSessions).toHaveBeenCalledWith('team-1');
+        expect(dbMocks.getPracticeSessions).toHaveBeenCalledWith('team-1', {});
         expect(result.children).toEqual([
             { teamId: 'team-1', teamName: 'Bears', playerId: 'player-1', playerName: 'Pat' },
             { teamId: 'team-1', teamName: 'Bears', playerId: 'player-2', playerName: 'Sam' }
@@ -478,7 +626,15 @@ describe('React app schedule service contract integration', () => {
             sharedScheduleOpponentTeamId: 'team-2',
             status: 'scheduled',
             seasonLabel: 'Spring 2026',
-            competitionType: 'league',
+            competitionType: 'tournament',
+            tournament: {
+                divisionName: '10U Gold',
+                bracketName: 'Championship',
+                roundName: 'Semifinal',
+                poolName: 'Pool A',
+                gameLabel: 'Game 12',
+                seedLabel: 'A1 vs B2'
+            },
             assignments: [
                 { role: 'Snacks', value: '', claimable: true },
                 { role: 'Scorebook', value: 'Jamie', claimable: false }
@@ -504,6 +660,15 @@ describe('React app schedule service contract integration', () => {
         expect(result.events).toHaveLength(2);
         expect(result.events.every((event) => event.id === 'game-1')).toBe(true);
         expect(result.events.find((event) => event.childId === 'player-1')).toMatchObject({
+            competitionType: 'tournament',
+            tournament: {
+                divisionName: '10U Gold',
+                bracketName: 'Championship',
+                roundName: 'Semifinal',
+                poolName: 'Pool A',
+                gameLabel: 'Game 12',
+                seedLabel: 'A1 vs B2'
+            },
             myRsvp: 'going',
             myRsvpNote: 'Needs a ride home',
             teamNotificationEmail: 'team-notify@example.com',
@@ -561,10 +726,7 @@ describe('React app schedule service contract integration', () => {
         const result = await loadParentSchedule(user());
 
         expect(dbMocks.getTeam).toHaveBeenCalledWith('team-1');
-        expect(result.children).toEqual([
-            { teamId: 'team-1', teamName: 'Bears', playerId: 'player-1', playerName: 'Pat' },
-            { teamId: 'team-1', teamName: 'Bears', playerId: 'player-2', playerName: 'Sam' }
-        ]);
+        expect(result.children).toEqual([]);
         expect(result.events).toEqual([]);
     });
 
@@ -762,7 +924,14 @@ describe('React app schedule service contract integration', () => {
             location: 'Field 1',
             arrivalTime: '2026-04-02T17:45',
             isHome: false,
-            notes: 'Bring white kit'
+            notes: 'Bring white kit',
+            importBatch: {
+                batchId: 'batch-1',
+                totalCount: 4,
+                rowNumber: 1,
+                importedAt: '2026-06-20T02:30:00.000Z',
+                importedBy: 'coach-1'
+            }
         }, coach)).resolves.toBe('game-new');
 
         expect(dbMocks.addGame).toHaveBeenCalledWith('team-1', expect.objectContaining({
@@ -773,7 +942,14 @@ describe('React app schedule service contract integration', () => {
             status: 'scheduled',
             homeScore: 0,
             awayScore: 0,
-            createdBy: 'coach-1'
+            createdBy: 'coach-1',
+            importBatch: {
+                batchId: 'batch-1',
+                totalCount: 4,
+                rowNumber: 1,
+                importedAt: '2026-06-20T02:30:00.000Z',
+                importedBy: 'coach-1'
+            }
         }));
         expect(dbMocks.addGame.mock.calls[0][1].date).toBeInstanceOf(Date);
         expect(dbMocks.addGame.mock.calls[0][1].arrivalTime).toBeInstanceOf(Date);
@@ -785,7 +961,14 @@ describe('React app schedule service contract integration', () => {
             title: 'Speed Session',
             location: 'Field 2',
             arrivalTime: null,
-            notes: 'Bring water'
+            notes: 'Bring water',
+            importBatch: {
+                batchId: 'batch-1',
+                totalCount: 4,
+                rowNumber: 2,
+                importedAt: '2026-06-20T02:30:00.000Z',
+                importedBy: 'coach-1'
+            }
         }, coach)).resolves.toBe('practice-new');
 
         expect(dbMocks.addPractice).toHaveBeenCalledWith('team-1', expect.objectContaining({
@@ -793,7 +976,14 @@ describe('React app schedule service contract integration', () => {
             title: 'Speed Session',
             opponent: null,
             status: 'scheduled',
-            createdBy: 'coach-1'
+            createdBy: 'coach-1',
+            importBatch: {
+                batchId: 'batch-1',
+                totalCount: 4,
+                rowNumber: 2,
+                importedAt: '2026-06-20T02:30:00.000Z',
+                importedBy: 'coach-1'
+            }
         }));
 
         dbMocks.getTeam.mockResolvedValue({ id: 'team-1', ownerId: 'other-user', adminEmails: [] });
@@ -802,6 +992,95 @@ describe('React app schedule service contract integration', () => {
             startsAt: '2026-04-02T18:30',
             opponent: 'Tigers'
         }, { uid: 'parent-1', email: 'parent@example.com' })).rejects.toThrow('permission');
+    });
+
+    it('creates and updates one native app game without resetting existing score data', async () => {
+        dbMocks.getTeam.mockResolvedValue({
+            id: 'team-1',
+            name: 'Bears',
+            ownerId: 'coach-1',
+            adminEmails: []
+        });
+        dbMocks.addGame.mockResolvedValue('game-new');
+        dbMocks.updateGame.mockResolvedValue(undefined);
+        const coach = { uid: 'coach-1', email: 'coach@example.com', displayName: 'Coach' };
+
+        await expect(createScheduledGameForApp('team-1', {
+            opponent: 'Tigers',
+            startDate: new Date('2026-04-02T18:30:00Z'),
+            endDate: new Date('2026-04-02T20:00:00Z'),
+            location: 'Field 1',
+            arrivalTime: new Date('2026-04-02T17:45:00Z'),
+            isHome: false,
+            notes: 'Bring white kit',
+            statTrackerConfigId: 'cfg-basketball',
+            competitionType: 'tournament',
+            countsTowardSeasonRecord: false
+        }, coach)).resolves.toBe('game-new');
+
+        expect(dbMocks.addGame).toHaveBeenCalledWith('team-1', expect.objectContaining({
+            type: 'game',
+            opponent: 'Tigers',
+            location: 'Field 1',
+            isHome: false,
+            status: 'scheduled',
+            homeScore: 0,
+            awayScore: 0,
+            statTrackerConfigId: 'cfg-basketball',
+            competitionType: 'tournament',
+            countsTowardSeasonRecord: false,
+            createdBy: 'coach-1'
+        }));
+        expect(dbMocks.addGame.mock.calls[0][1].date).toBeInstanceOf(Date);
+        expect(dbMocks.addGame.mock.calls[0][1].end).toBeInstanceOf(Date);
+        expect(dbMocks.addGame.mock.calls[0][1].arrivalTime).toBeInstanceOf(Date);
+
+        await expect(updateScheduledGameForApp('team-1', 'game-1', {
+            opponent: 'Hawks',
+            startDate: new Date('2026-04-09T18:30:00Z'),
+            endDate: null,
+            location: 'Field 2',
+            arrivalTime: null,
+            isHome: true,
+            notes: 'Moved fields',
+            statTrackerConfigId: '',
+            competitionType: 'league',
+            countsTowardSeasonRecord: true
+        }, coach)).resolves.toEqual({ updated: true, eventId: 'game-1' });
+
+        const updatePayload = dbMocks.updateGame.mock.calls[0][2];
+        expect(updatePayload).toEqual(expect.objectContaining({
+            type: 'game',
+            opponent: 'Hawks',
+            location: 'Field 2',
+            isHome: true,
+            statTrackerConfigId: null,
+            updatedBy: 'coach-1'
+        }));
+        expect(updatePayload.status).toBeUndefined();
+        expect(updatePayload.homeScore).toBeUndefined();
+        expect(updatePayload.awayScore).toBeUndefined();
+        expect(updatePayload.assignments).toBeUndefined();
+        expect(updatePayload.createdBy).toBeUndefined();
+    });
+
+    it('loads schedule tracker configs for staff game forms', async () => {
+        dbMocks.getTeam.mockResolvedValue({
+            id: 'team-1',
+            name: 'Bears',
+            ownerId: 'coach-1',
+            adminEmails: []
+        });
+        dbMocks.getConfigs.mockResolvedValue([
+            { id: 'cfg-z', name: 'Zone Tracker', baseType: 'Soccer' },
+            { id: 'cfg-b', baseType: 'Basketball' }
+        ]);
+
+        await expect(loadScheduleStatTrackerConfigsForApp('team-1', { uid: 'coach-1', email: 'coach@example.com' }))
+            .resolves.toEqual([
+                { id: 'cfg-b', name: 'Basketball', baseType: 'Basketball', isBasketball: true },
+                { id: 'cfg-z', name: 'Zone Tracker', baseType: 'Soccer', isBasketball: false }
+            ]);
     });
 
     it('redacts bearer tokens from native REST fallback warning logs', async () => {

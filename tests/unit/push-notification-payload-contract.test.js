@@ -11,16 +11,24 @@ function getHelper(name, nextMarker) {
 }
 
 const buildStaffFeeNotificationDestination = getHelper('buildStaffFeeNotificationDestination', 'function buildNotificationLink');
-const buildNotificationLink = getHelper('buildNotificationLink', 'function buildNotificationAppRoute');
-const buildNotificationAppRoute = getHelper('buildNotificationAppRoute', 'async function getUserIdsByEmails');
+function getNotificationRouteHelper(name) {
+    const start = source.indexOf('function buildScheduleSectionQuery(');
+    const end = source.indexOf('\nasync function getUserIdsByEmails', start);
+    const slice = source.slice(start, end);
+    return new Function(`${slice}; return ${name};`)();
+}
+
+const buildNotificationLink = getNotificationRouteHelper('buildNotificationLink');
+const buildNotificationAppRoute = getNotificationRouteHelper('buildNotificationAppRoute');
 
 describe('push notification payload contract', () => {
     it('includes native app routing fields alongside the legacy web link', () => {
         expect(source).toContain('function buildNotificationAppRoute');
         expect(source).toContain('appRoute,');
-        expect(source).toContain("return `/schedule/${encodeURIComponent(teamId)}/${encodeURIComponent(gameId)}`;");
+        expect(source).toContain("return `/schedule/${encodeURIComponent(teamId)}/${encodeURIComponent(gameId)}?section=game`;");
         expect(source).toContain('eventId: String(eventId || gameId || \'\')');
         expect(source).toContain('conversationId: String(conversationId || \'\')');
+        expect(source).toContain('rsvpId: String(childId || \'\')');
         expect(source).toContain("if (category === 'liveChat' || category === 'mentions') {");
         expect(source).toContain("if ((category === 'liveChat' || category === 'mentions') && teamId) {");
         expect(source).toContain('return `${route}?conversationId=${encodeURIComponent(conversationId)}`;');
@@ -42,6 +50,50 @@ describe('push notification payload contract', () => {
             batchId: 'batch/1',
             recipientId: 'recipient?1'
         })).toBe('/parent-tools/fees?teamId=team+1&batchId=batch%2F1&recipientId=recipient%3F1');
+    });
+
+    it('builds RSVP notification routes to the event availability view', () => {
+        expect(buildNotificationLink({
+            category: 'rsvp',
+            teamId: 'team 1',
+            gameId: 'game/1',
+            childId: 'child?1'
+        })).toBe('https://allplays.ai/app/#/schedule/team%201/game%2F1?childId=child%3F1&section=availability');
+
+        expect(buildNotificationAppRoute({
+            category: 'rsvp',
+            teamId: 'team 1',
+            gameId: 'game/1',
+            childId: 'child?1'
+        })).toBe('/schedule/team%201/game%2F1?childId=child%3F1&section=availability');
+    });
+
+    it('builds rideshare notification routes with child context', () => {
+        expect(buildNotificationLink({
+            category: 'rideshare',
+            teamId: 'team 1',
+            eventId: 'game/1',
+            childId: 'child?1'
+        })).toBe('https://allplays.ai/app/#/schedule/team%201/game%2F1?childId=child%3F1&section=rideshare');
+
+        expect(buildNotificationAppRoute({
+            category: 'rideshare',
+            teamId: 'team 1',
+            eventId: 'game/1',
+            childId: 'child?1'
+        })).toBe('/schedule/team%201/game%2F1?childId=child%3F1&section=rideshare');
+    });
+
+    it('builds media notification routes to the team media page', () => {
+        expect(buildNotificationLink({
+            category: 'media',
+            teamId: 'team 1'
+        })).toBe('https://allplays.ai/app/#/teams/team%201/media');
+
+        expect(buildNotificationAppRoute({
+            category: 'media',
+            teamId: 'team 1'
+        })).toBe('/teams/team%201/media');
     });
 
     it('builds staff fee notification routes to the team fee management page', () => {

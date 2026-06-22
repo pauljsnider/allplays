@@ -12,6 +12,7 @@ const profileServiceMocks = vi.hoisted(() => ({
   loadNotificationPreferences: vi.fn(),
   loadNotificationTeams: vi.fn(),
   loadProfileAccessCodes: vi.fn(),
+  loadProfileAccessCodesPage: vi.fn(),
   loadProfileDocument: vi.fn(),
   normalizeNotificationPreferences: vi.fn((preferences?: any) => ({
     liveChat: preferences?.liveChat !== false,
@@ -36,7 +37,8 @@ const publicActionsMocks = vi.hoisted(() => ({
 const pushServiceMocks = vi.hoisted(() => ({
   enablePushNotificationsForUser: vi.fn(),
   getPushNotificationPermissionStatus: vi.fn(),
-  openPushNotificationSettings: vi.fn()
+  openPushNotificationSettings: vi.fn(),
+  runPushNotificationPrimer: vi.fn()
 }));
 
 const shellLayoutState = vi.hoisted(() => ({
@@ -173,6 +175,7 @@ describe('Profile invites', () => {
       canOpenSettings: false
     });
     pushServiceMocks.openPushNotificationSettings.mockResolvedValue(undefined);
+    pushServiceMocks.runPushNotificationPrimer.mockResolvedValue(true);
     profileServiceMocks.loadNotificationPreferences.mockResolvedValue({ liveChat: true, liveScore: false, schedule: true });
     profileServiceMocks.loadParentTeams.mockResolvedValue([]);
     profileServiceMocks.requestAccountMerge.mockResolvedValue(undefined);
@@ -185,6 +188,13 @@ describe('Profile invites', () => {
       { id: 'code-1', code: 'ACTIVE123', email: 'coach@example.com', phone: '', used: false, createdAt: { seconds: 1717200000 } },
       { id: 'code-2', code: 'USED1234', email: 'used@example.com', phone: '', used: true, createdAt: { seconds: 1717113600 }, usedAt: { seconds: 1717200000 } }
     ]);
+    profileServiceMocks.loadProfileAccessCodesPage.mockResolvedValue({
+      codes: [
+        { id: 'code-1', code: 'ACTIVE123', email: 'coach@example.com', phone: '', used: false, createdAt: { seconds: 1717200000 } },
+        { id: 'code-2', code: 'USED1234', email: 'used@example.com', phone: '', used: true, createdAt: { seconds: 1717113600 }, usedAt: { seconds: 1717200000 } }
+      ],
+      nextCursor: null
+    });
     shellLayoutState.isDesktopWeb = false;
     shellLayoutState.isNative = false;
   });
@@ -211,7 +221,7 @@ describe('Profile invites', () => {
       clipboardText: expect.stringContaining('/app#/accept-invite?code=NEWMVP42')
     })));
     expect(screen.getByText(/\/app#\/accept-invite\?code=NEWMVP42/)).toBeTruthy();
-    expect(screen.getByText('Share sheet opened.')).toBeTruthy();
+    expect(await screen.findByText('Share sheet opened.')).toBeTruthy();
   });
 
   it('shows active invite share actions, hides them for used codes, and surfaces copied and cancelled statuses', async () => {
@@ -255,9 +265,12 @@ describe('Profile invites', () => {
 
   it('routes typed profile invite links through the app accept flow', async () => {
     publicActionsMocks.sharePublicUrl.mockResolvedValue('shared');
-    profileServiceMocks.loadProfileAccessCodes.mockResolvedValue([
-      { id: 'code-1', code: 'ACTIVE123', email: 'coach@example.com', phone: '', used: false, type: 'parent_invite', createdAt: { seconds: 1717200000 } }
-    ]);
+    profileServiceMocks.loadProfileAccessCodesPage.mockResolvedValue({
+      codes: [
+        { id: 'code-1', code: 'ACTIVE123', email: 'coach@example.com', phone: '', used: false, type: 'parent_invite', createdAt: { seconds: 1717200000 } }
+      ],
+      nextCursor: null
+    });
 
     renderProfile();
 
@@ -268,6 +281,40 @@ describe('Profile invites', () => {
       url: expect.stringContaining('/app#/accept-invite?code=ACTIVE123&type=parent_invite'),
       clipboardText: expect.stringContaining('/app#/accept-invite?code=ACTIVE123&type=parent_invite')
     })));
+  });
+
+  it('loads invite history in bounded pages and appends older codes on demand', async () => {
+    profileServiceMocks.loadProfileAccessCodesPage
+      .mockResolvedValueOnce({
+        codes: [
+          { id: 'code-1', code: 'RECENT1', email: 'recent@example.com', phone: '', used: false, createdAt: { seconds: 1717200000 } },
+          { id: 'code-2', code: 'RECENT2', email: '', phone: '', used: false, createdAt: { seconds: 1717113600 } },
+          { id: 'code-3', code: 'RECENT3', email: '', phone: '', used: true, createdAt: { seconds: 1717027200 } }
+        ],
+        nextCursor: { cursor: 'older' }
+      })
+      .mockResolvedValueOnce({
+        codes: [
+          { id: 'code-4', code: 'OLDER4', email: 'older@example.com', phone: '', used: false, createdAt: { seconds: 1716940800 } }
+        ],
+        nextCursor: null
+      });
+
+    renderProfile();
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Invites' }));
+
+    expect(await screen.findByLabelText('Copy saved invite code RECENT1')).toBeTruthy();
+    expect(screen.queryByLabelText('Copy saved invite code OLDER4')).toBeNull();
+    expect(profileServiceMocks.loadProfileAccessCodesPage).toHaveBeenCalledWith('user-1', { pageSize: 3 });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Show more codes' }));
+
+    expect(await screen.findByLabelText('Copy saved invite code OLDER4')).toBeTruthy();
+    expect(profileServiceMocks.loadProfileAccessCodesPage).toHaveBeenLastCalledWith('user-1', {
+      cursor: { cursor: 'older' },
+      pageSize: 3
+    });
   });
 
   it('revokes replaced and removed profile photo blob previews', async () => {
@@ -405,6 +452,28 @@ describe('Profile invites', () => {
     expect(screen.getByRole('link', { name: 'Go to My Teams' }).getAttribute('href')).toBe('/teams');
   });
 
+  it('renders a retry path when alert teams fail to load', async () => {
+    profileServiceMocks.loadNotificationTeams
+      .mockRejectedValueOnce(new Error('network offline'))
+      .mockResolvedValueOnce([{ id: 'team-1', name: 'Blue Team' }]);
+    profileServiceMocks.loadNotificationPreferences.mockResolvedValue({ liveChat: false, liveScore: true, schedule: false });
+
+    renderProfile();
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Alerts' }));
+
+    expect(await screen.findByText('Alerts unavailable')).toBeTruthy();
+    expect(screen.getByText('network offline')).toBeTruthy();
+    expect(screen.queryByText('No team alerts available yet')).toBeNull();
+    expect(screen.queryByLabelText('Team')).toBeNull();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Retry alerts' }));
+
+    await waitFor(() => expect(profileServiceMocks.loadNotificationTeams).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect((screen.getByLabelText('Team') as HTMLSelectElement).value).toBe('team-1'));
+    expect(screen.queryByText('network offline')).toBeNull();
+  });
+
   it('uses hydrated alert preferences before saving game-day alerts', async () => {
     profileServiceMocks.loadNotificationTeams.mockResolvedValue([{ id: 'team-1', name: 'Blue Team' }]);
     profileServiceMocks.loadNotificationPreferences.mockResolvedValueOnce({ liveChat: true, liveScore: false, schedule: false });
@@ -430,6 +499,25 @@ describe('Profile invites', () => {
       schedule: true
     });
     expect(await screen.findByText('Game-day alerts are on for this team.')).toBeTruthy();
+  });
+
+  it('does not request push or save alerts when the notification primer is declined', async () => {
+    profileServiceMocks.loadNotificationTeams.mockResolvedValue([{ id: 'team-1', name: 'Blue Team' }]);
+    profileServiceMocks.loadNotificationPreferences.mockResolvedValueOnce({ liveChat: true, liveScore: false, schedule: false });
+    pushServiceMocks.runPushNotificationPrimer.mockResolvedValueOnce(false);
+
+    renderProfile();
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Alerts' }));
+
+    await waitFor(() => expect((screen.getByLabelText('Team') as HTMLSelectElement).value).toBe('team-1'));
+    const gameDayButton = await screen.findByRole('button', { name: 'Turn on game-day alerts' });
+    fireEvent.click(gameDayButton);
+
+    await waitFor(() => expect(pushServiceMocks.runPushNotificationPrimer).toHaveBeenCalledWith('game_day_alerts'));
+    expect(pushServiceMocks.enablePushNotificationsForUser).not.toHaveBeenCalled();
+    expect(profileServiceMocks.saveNotificationPreferences).not.toHaveBeenCalled();
+    expect(await screen.findByText('Push setup was skipped. You can turn notifications on later from Alerts.')).toBeTruthy();
   });
 
   it('hides stale team toggles and disables team actions until the new team preferences finish hydrating', async () => {
@@ -540,7 +628,8 @@ describe('Profile invites', () => {
     fireEvent.change(teamSelect, { target: { value: 'team-2' } });
 
     await waitFor(() => expect(profileServiceMocks.loadNotificationPreferences).toHaveBeenCalledTimes(2));
-    expect(await screen.findByText('Unable to load notification preferences.')).toBeTruthy();
+    expect(await screen.findByText('Alerts unavailable')).toBeTruthy();
+    expect(screen.getByText('temporary outage')).toBeTruthy();
     await waitFor(() => expect(screen.queryByText('Loading alerts for Gold Team…')).toBeNull());
     expect(screen.getByLabelText('Live Chat')).toBeTruthy();
     expect((screen.getByLabelText('Live Chat') as HTMLInputElement).checked).toBe(true);
@@ -556,6 +645,37 @@ describe('Profile invites', () => {
       liveScore: false,
       schedule: true
     }));
+  });
+
+  it('reloads alert preferences for the selected team after tapping retry', async () => {
+    profileServiceMocks.loadNotificationTeams.mockResolvedValue([
+      { id: 'team-1', name: 'Blue Team' },
+      { id: 'team-2', name: 'Gold Team' }
+    ]);
+    profileServiceMocks.loadNotificationPreferences
+      .mockResolvedValueOnce({ liveChat: true, liveScore: false, schedule: false })
+      .mockRejectedValueOnce(new Error('temporary outage'))
+      .mockResolvedValueOnce({ liveChat: false, liveScore: true, schedule: false });
+
+    renderProfile();
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Alerts' }));
+
+    await waitFor(() => expect(profileServiceMocks.loadNotificationPreferences).toHaveBeenCalledTimes(1));
+    fireEvent.change(await screen.findByLabelText('Team'), { target: { value: 'team-2' } });
+
+    await waitFor(() => expect(profileServiceMocks.loadNotificationPreferences).toHaveBeenCalledTimes(2));
+    expect(await screen.findByText('temporary outage')).toBeTruthy();
+    expect((screen.getByLabelText('Live Chat') as HTMLInputElement).checked).toBe(true);
+    expect((screen.getByLabelText('Live Score') as HTMLInputElement).checked).toBe(false);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Retry alerts' }));
+
+    await waitFor(() => expect(profileServiceMocks.loadNotificationPreferences).toHaveBeenCalledTimes(3));
+    await waitFor(() => expect(screen.queryByText('temporary outage')).toBeNull());
+    await waitFor(() => expect((screen.getByLabelText('Live Chat') as HTMLInputElement).checked).toBe(false));
+    expect((screen.getByLabelText('Live Score') as HTMLInputElement).checked).toBe(true);
+    expect((screen.getByLabelText('Schedule Changes') as HTMLInputElement).checked).toBe(false);
   });
 
   it('shows blocked native push recovery and refreshes after returning from settings', async () => {

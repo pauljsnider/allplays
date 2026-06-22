@@ -277,6 +277,16 @@ service cloud.firestore {
              isPublicTrackingItem(get(itemPath).data);
     }
 
+    function canReadNestedTrackingStatus(teamId, itemId, trackingId, data) {
+      let playerId = data.get('playerId', data.get('childId', data.get('memberId', trackingId)));
+      let itemPath = /databases/$(database)/documents/teams/$(teamId)/trackingItems/$(itemId);
+      return playerId is string &&
+             playerId.size() > 0 &&
+             (isParentForPlayer(teamId, playerId) || isPlayerSelf(teamId, playerId)) &&
+             exists(itemPath) &&
+             canReadPublicTrackingItem(teamId, get(itemPath).data);
+    }
+
     function hasIncentivePlayerLink(data) {
       return data.teamId is string &&
              data.playerId is string &&
@@ -865,43 +875,6 @@ service cloud.firestore {
         (request.auth.token.email != null &&
          request.auth.token.email.lower() in resource.data.get('officiatingAuthorizedEmails', []))
       );
-    }
-
-    function isOnlyAddingCurrentOfficialAuthorization() {
-      let previousUserIds = resource.data.get('officiatingAuthorizedUserIds', []);
-      let nextUserIds = request.resource.data.get('officiatingAuthorizedUserIds', []);
-      let previousEmails = resource.data.get('officiatingAuthorizedEmails', []);
-      let nextEmails = request.resource.data.get('officiatingAuthorizedEmails', []);
-      let callerEmail = request.auth.token.email != null ? request.auth.token.email.lower() : '';
-      return nextUserIds.hasAll(previousUserIds) &&
-             nextUserIds.hasOnly(previousUserIds + [request.auth.uid]) &&
-             request.auth.uid in nextUserIds &&
-             nextEmails.hasAll(previousEmails) &&
-             (
-               (callerEmail == '' && nextEmails.hasOnly(previousEmails)) ||
-               (callerEmail != '' &&
-                nextEmails.hasOnly(previousEmails + [callerEmail]) &&
-                callerEmail in nextEmails)
-             );
-    }
-
-    function canClaimOpenOfficiatingSlot(teamId) {
-      return isTeamOwnerOrAdmin(teamId) ||
-             isParentForTeam(teamId);
-    }
-
-    function isOpenOfficiatingSelfAssignmentUpdate(teamId) {
-      return canClaimOpenOfficiatingSlot(teamId) &&
-             resource.data.get('officiatingSelfAssignmentEnabled', false) == true &&
-             request.resource.data.get('officiatingSelfAssignmentEnabled', false) == true &&
-             request.resource.data.diff(resource.data).affectedKeys().hasOnly([
-               'officiatingSlots',
-               'officiatingCoverageStatus',
-               'officiatingUpdatedAt',
-               'officiatingAuthorizedUserIds',
-               'officiatingAuthorizedEmails'
-             ]) &&
-             isOnlyAddingCurrentOfficialAuthorization();
     }
 
     function canAccessTeamChat(teamId) {
@@ -1776,6 +1749,11 @@ service cloud.firestore {
                       request.resource.data.createdAt == resource.data.createdAt &&
                       hasTrackingItemUpdateAudit(request.resource.data);
         allow delete: if isTeamOwnerOrAdmin(teamId);
+
+        match /memberTracking/{trackingId} {
+          allow read: if isTeamOwnerOrAdmin(teamId) || canReadNestedTrackingStatus(teamId, itemId, trackingId, resource.data);
+          allow create, update, delete: if isTeamOwnerOrAdmin(teamId);
+        }
       }
 
       match /calendarTokens/{tokenId} {
@@ -1867,6 +1845,10 @@ service cloud.firestore {
         allow read, write: if isTeamOwnerOrAdmin(teamId);
       }
 
+      match /notificationRecipients/{uid} {
+        allow read, write: if false;
+      }
+
       // In-app audit records for officiating assignment lifecycle changes.
       match /officiatingNotifications/{notificationId} {
         allow read: if isTeamOwnerOrAdmin(teamId) ||
@@ -1885,7 +1867,6 @@ service cloud.firestore {
                         (isOfficialForGame() && isOfficialGameUpdate()) ||
                         isScorekeepingGameUpdate(teamId, gameId) ||
                         isVideographyGameUpdate(teamId, gameId);
-        allow update: if isOpenOfficiatingSelfAssignmentUpdate(teamId);
 
         // Events subcollection
         match /events/{eventId} {
@@ -1911,19 +1892,19 @@ service cloud.firestore {
         // Manager-only player stats subcollection for private player-scoped metrics.
         match /privatePlayerStats/{statId} {
           allow read, create, update: if isTeamOwnerOrAdmin(teamId) || canScorekeepGame(teamId, gameId);
-          allow delete: if isTeamOwnerOrAdmin(teamId);
+          allow delete: if isTeamOwnerOrAdmin(teamId) || canScorekeepGame(teamId, gameId);
         }
 
         // Live Events subcollection - for real-time game broadcasting
         match /liveEvents/{eventId} {
-          allow read: if true;  // Public read for viewers
+          allow read: if canReadGameSubcollectionDocument(teamId, gameId);
           allow create: if isTeamOwnerOrAdmin(teamId) || canScorekeepGame(teamId, gameId);  // Stat tracker writes
           allow update, delete: if false;  // Events are immutable
         }
 
         // Live Chat subcollection - game-specific chat for live viewers
         match /liveChat/{messageId} {
-          allow read: if true;  // Public read for all viewers
+          allow read: if canReadGameSubcollectionDocument(teamId, gameId);
           allow create: if isSignedIn()
             && (isTeamOwnerOrAdmin(teamId) || isParentForTeam(teamId) ||
                 (exists(/databases/$(database)/documents/teams/$(teamId)/games/$(gameId)) &&
@@ -1941,7 +1922,7 @@ service cloud.firestore {
 
         // Live Reactions subcollection - ephemeral reactions during live games
         match /liveReactions/{reactionId} {
-          allow read: if true;  // Public read
+          allow read: if canReadGameSubcollectionDocument(teamId, gameId);
           allow create: if isSignedIn()
             && (isTeamOwnerOrAdmin(teamId) || isParentForTeam(teamId) ||
                 (exists(/databases/$(database)/documents/teams/$(teamId)/games/$(gameId)) &&

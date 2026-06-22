@@ -26,6 +26,13 @@ describe('app telemetry bridge', () => {
     delete window.__ALLPLAYS_REPORT_REACT_ERROR__;
     delete window.__ALLPLAYS_CONFIG__;
     delete window.ALLPLAYS_ERROR_TRACKING_DSN;
+    delete window.ALLPLAYS_ERROR_TRACKING_ENVIRONMENT;
+    delete window.ALLPLAYS_ERROR_TRACKING_RELEASE;
+    delete window.ALLPLAYS_SENTRY_DSN;
+    delete window.ALLPLAYS_SENTRY_ENVIRONMENT;
+    delete window.ALLPLAYS_SENTRY_RELEASE;
+    delete window.ALLPLAYS_ENVIRONMENT;
+    delete window.ALLPLAYS_RELEASE;
     document.body.innerHTML = '<div id="root"></div>';
   });
 
@@ -148,6 +155,33 @@ describe('app telemetry bridge', () => {
     );
   });
 
+  it('records app startup timing with the canonical startup stage', async () => {
+    const capture = vi.fn();
+    window.AllPlaysTelemetry = { capture };
+    const telemetry = await import('./telemetry');
+
+    vi.spyOn(performance, 'now')
+      .mockReturnValueOnce(25)
+      .mockReturnValueOnce(125);
+
+    const timer = telemetry.startAppStartupTimer();
+    timer.end({ phase: 'initial-render' });
+
+    await Promise.resolve();
+
+    expect(capture).toHaveBeenCalledWith(
+      'app_ux_timing',
+      expect.objectContaining({
+        label: 'app startup',
+        stage: 'startup',
+        phase: 'initial-render',
+        durationMs: 100,
+        outcome: 'success'
+      }),
+      {}
+    );
+  });
+
   it('initializes only when runtime config provides a DSN, redacts sensitive payload fields, and preserves stack frames', async () => {
     const telemetry = await import('./telemetry');
 
@@ -218,6 +252,37 @@ describe('app telemetry bridge', () => {
         }
       }]
     });
+  });
+
+  it('accepts global runtime DSN fallbacks without installing production-only handlers in local mode', async () => {
+    window.ALLPLAYS_ERROR_TRACKING_DSN = 'https://public@example.ingest.sentry.io/global';
+    window.ALLPLAYS_ERROR_TRACKING_ENVIRONMENT = 'staging';
+    window.ALLPLAYS_ERROR_TRACKING_RELEASE = 'app@global';
+    const addEventListenerSpy = vi.spyOn(window, 'addEventListener');
+
+    const telemetry = await import('./telemetry');
+
+    expect(telemetry.initializeAppErrorTracking({ isProduction: false })).toBe(true);
+    expect(sentryMocks.init).toHaveBeenCalledWith(expect.objectContaining({
+      dsn: 'https://public@example.ingest.sentry.io/global',
+      environment: 'staging',
+      release: 'app@global'
+    }));
+    expect(addEventListenerSpy).not.toHaveBeenCalledWith('error', expect.any(Function));
+    expect(addEventListenerSpy).not.toHaveBeenCalledWith('unhandledrejection', expect.any(Function));
+  });
+
+  it('does not leak global fallback environment or release values into later DSN-only initialization', async () => {
+    window.ALLPLAYS_ERROR_TRACKING_DSN = 'https://public@example.ingest.sentry.io/clean';
+
+    const telemetry = await import('./telemetry');
+
+    expect(telemetry.initializeAppErrorTracking({ isProduction: false })).toBe(true);
+    expect(sentryMocks.init).toHaveBeenCalledWith(expect.objectContaining({
+      dsn: 'https://public@example.ingest.sentry.io/clean',
+      environment: undefined,
+      release: undefined
+    }));
   });
 
   it('reports React boundary failures without misclassifying generic TypeErrors as network errors', async () => {

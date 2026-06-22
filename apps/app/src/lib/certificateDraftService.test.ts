@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   buildCertificatePayloadForApp,
+  getCertificateStudioUrl,
   loadCertificateDraftComposer,
   saveCertificateDraftsForApp,
   type CertificateDraftSharedState
@@ -192,6 +193,11 @@ describe('certificateDraftService', () => {
       certificateIds: ['cert-1', 'cert-2'],
       webUrl: 'https://allplays.ai/certificates.html#teamId=team-1&batchId=batch-1'
     });
+  });
+
+  it('builds team-only and batch continuation URLs for the web awards studio', () => {
+    expect(getCertificateStudioUrl('team 1')).toBe('https://allplays.ai/certificates.html#teamId=team+1');
+    expect(getCertificateStudioUrl('team 1', 'batch/1')).toBe('https://allplays.ai/certificates.html#teamId=team+1&batchId=batch%2F1');
   });
 
   it('builds a draft payload that matches the saved web studio shape', () => {

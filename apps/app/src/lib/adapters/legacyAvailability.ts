@@ -4,7 +4,7 @@ import {
     formatAvailabilityCutoff as legacyFormatAvailabilityCutoff,
     isAvailabilityLocked as legacyIsAvailabilityLocked,
     normalizeAvailabilityPreferences as legacyNormalizeAvailabilityPreferences
-} from '../../../../../js/availability-preferences.js';
+} from '@legacy/availability-preferences.js';
 
 export type LegacyAvailabilityPreferences = Record<string, unknown> & {
     noteVisibility?: string | null;

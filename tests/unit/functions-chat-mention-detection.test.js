@@ -6,9 +6,13 @@ const notifyTeamChatMessageCreatedSource = functionsSource.slice(
     functionsSource.indexOf('exports.notifyTeamChatMessageCreated = functions.firestore'),
     functionsSource.indexOf('\nexports.postSharedGameCancellationNotification')
 );
+const handleTeamChatMessageCreatedSource = functionsSource.slice(
+    functionsSource.indexOf('async function handleTeamChatMessageCreated(snapshot, context) {'),
+    functionsSource.indexOf('\nexports.notifyTeamChatMessageCreated = functions.firestore')
+);
 
 function getDetectMentionedUids() {
-    const start = functionsSource.indexOf('function detectMentionedUids(');
+    const start = functionsSource.indexOf('const teamChatMentionStartRegex =');
     const end = functionsSource.indexOf('\nasync function buildTeamChatNotificationContext');
     const slice = functionsSource.slice(start, end);
     return new Function(`${slice}; return detectMentionedUids;`)();
@@ -29,14 +33,22 @@ function getBuildTeamChatNotificationContext() {
 }
 
 function getBuildTeamChatNotificationPlan() {
-    const start = functionsSource.indexOf('function buildTeamChatNotificationPlan(');
+    const start = functionsSource.indexOf('function dedupeNotificationTargetsByUserDevice(');
     const end = functionsSource.indexOf('\nexports.notifyTeamChatMessageCreated');
     const slice = functionsSource.slice(start, end);
     return new Function('detectMentionedUids', `${slice}; return buildTeamChatNotificationPlan;`)(detectMentionedUids);
 }
 
+function getNotificationDestinationBuilders() {
+    const start = functionsSource.indexOf('function buildScheduleSectionQuery(');
+    const end = functionsSource.indexOf('\nfunction normalizeAccessNotificationStatus');
+    const slice = functionsSource.slice(start, end);
+    return new Function(`${slice}; return { buildNotificationLink, buildNotificationAppRoute };`)();
+}
+
 const detectMentionedUids = getDetectMentionedUids();
 const buildTeamChatNotificationPlan = getBuildTeamChatNotificationPlan();
+const { buildNotificationLink, buildNotificationAppRoute } = getNotificationDestinationBuilders();
 
 describe('detectMentionedUids', () => {
     it('returns empty array when text is empty or null', () => {
@@ -59,6 +71,11 @@ describe('detectMentionedUids', () => {
     it('matches by first name when display name has a last name', () => {
         const members = [{ uid: 'u2', displayName: 'Bob Smith' }];
         expect(detectMentionedUids('Good work @bob!', members)).toEqual(['u2']);
+    });
+
+    it('matches a rostered multi-word display name exactly', () => {
+        const members = [{ uid: 'u2', displayName: 'Bob Smith' }];
+        expect(detectMentionedUids('Good work @Bob Smith!', members)).toEqual(['u2']);
     });
 
     it('matches compacted full name with no spaces', () => {
@@ -134,7 +151,7 @@ describe('detectMentionedUids', () => {
 });
 
 describe('buildTeamChatNotificationContext', () => {
-    it('uses per-conversation mute state before falling back to team-wide chatMuted', async () => {
+    function createTeamChatNotificationContextHarness({ conversationDocs = {}, emailUserIds = ['assistant-1'] } = {}) {
         const teamData = { ownerId: 'coach-1', adminEmails: ['assistant@example.com'] };
         const parentDocs = [{ id: 'parent-1' }];
         const targetDocs = [
@@ -151,10 +168,15 @@ describe('buildTeamChatNotificationContext', () => {
 
         const firestore = {
             doc: (path) => ({
-                get: async () => ({
-                    exists: path === 'teams/team-1',
-                    data: () => teamData
-                })
+                get: async () => {
+                    if (path === 'teams/team-1') {
+                        return { exists: true, data: () => teamData };
+                    }
+                    if (conversationDocs[path]) {
+                        return { exists: true, data: () => conversationDocs[path] };
+                    }
+                    return { exists: false, data: () => null };
+                }
             }),
             collection: (path) => {
                 if (path === 'users') {
@@ -174,9 +196,14 @@ describe('buildTeamChatNotificationContext', () => {
         };
 
         const factory = getBuildTeamChatNotificationContext();
-        const buildTeamChatNotificationContext = factory(
+        return factory(
             firestore,
-            async () => ['assistant-1'],
+            async (emails = []) => {
+                const normalized = Array.isArray(emails) ? emails.map((email) => String(email || '').trim().toLowerCase()).sort() : [];
+                if (normalized.length === 1 && normalized[0] === 'assistant@example.com') return ['assistant-1'];
+                if (normalized.length === 1 && normalized[0] === 'parent@example.com') return ['parent-1'];
+                return emailUserIds;
+            },
             async () => new Map([
                 ['coach-1', { displayName: 'Coach Kim', teamChatState: { 'team-1': { mutedConversations: { staff: { seconds: 1 } } } } }],
                 ['assistant-1', { displayName: 'Assistant Lee', chatMuted: { 'team-1': { seconds: 2 } } }],
@@ -185,6 +212,17 @@ describe('buildTeamChatNotificationContext', () => {
             (category, roles = []) => category === 'mentions' || roles.includes('parent') || roles.includes('staff'),
             async () => []
         );
+    }
+
+    it('uses per-conversation mute state before falling back to team-wide chatMuted', async () => {
+        const buildTeamChatNotificationContext = createTeamChatNotificationContextHarness({
+            conversationDocs: {
+                'teams/team-1/chatConversations/staff': {
+                    participantRoles: ['staff'],
+                    participantIds: ['coach-1']
+                }
+            }
+        });
 
         const teamConversationContext = await buildTeamChatNotificationContext('team-1', {
             includeMentions: true,
@@ -197,6 +235,28 @@ describe('buildTeamChatNotificationContext', () => {
 
         expect(teamConversationContext.mutedUids.sort()).toEqual(['assistant-1', 'parent-1']);
         expect(staffConversationContext.mutedUids).toEqual(['coach-1']);
+        expect(staffConversationContext.members.map((member) => member.uid).sort()).toEqual(['assistant-1', 'coach-1']);
+    });
+
+    it('limits conversation-scoped notifications to conversation participants', async () => {
+        const buildTeamChatNotificationContext = createTeamChatNotificationContextHarness({
+            conversationDocs: {
+                'teams/team-1/chatConversations/direct_coach_parent': {
+                    participantIds: ['coach-1', 'parent-1']
+                }
+            }
+        });
+
+        const context = await buildTeamChatNotificationContext('team-1', {
+            includeMentions: true,
+            conversationId: 'direct_coach_parent',
+            targetType: 'individuals',
+            recipientIds: ['coach-1', 'parent-1']
+        });
+
+        expect(context.members.map((member) => member.uid).sort()).toEqual(['coach-1', 'parent-1']);
+        expect(context.targetsByCategory.mentions.map((target) => target.uid).sort()).toEqual(['coach-1', 'parent-1']);
+        expect(context.targetsByCategory.liveChat.map((target) => target.uid).sort()).toEqual(['coach-1', 'parent-1']);
     });
 });
 
@@ -207,29 +267,37 @@ describe('notifyTeamChatMessageCreated source wiring', () => {
     });
 
     it('stores mentionedUids on the message document', () => {
-        expect(notifyTeamChatMessageCreatedSource).toContain('snapshot.ref.update({ mentionedUids })');
+        expect(handleTeamChatMessageCreatedSource).toContain('await snapshot.ref.update({ mentionedUids });');
     });
 
     it('builds one shared recipient context for mentions and live chat delivery', () => {
-        expect(notifyTeamChatMessageCreatedSource).toContain('const shouldResolveMentions = Boolean(text);');
-        expect(notifyTeamChatMessageCreatedSource).toContain('const conversationId = normalizeTeamChatConversationId(data.conversationId);');
-        expect(notifyTeamChatMessageCreatedSource).toContain('const recipientContext = await buildTeamChatNotificationContext(teamId, {');
-        expect(notifyTeamChatMessageCreatedSource).toContain('includeMentions: shouldResolveMentions');
-        expect(notifyTeamChatMessageCreatedSource).toContain('conversationId');
-        expect(notifyTeamChatMessageCreatedSource).toContain('const notificationPlan = buildTeamChatNotificationPlan({');
+        expect(handleTeamChatMessageCreatedSource).toContain('const shouldResolveMentions = Boolean(text);');
+        expect(handleTeamChatMessageCreatedSource).toContain('const conversationId = normalizeTeamChatConversationId(data.conversationId || context.params.conversationId);');
+        expect(handleTeamChatMessageCreatedSource).toContain('const recipientContext = await buildTeamChatNotificationContext(teamId, {');
+        expect(handleTeamChatMessageCreatedSource).toContain('includeMentions: shouldResolveMentions');
+        expect(handleTeamChatMessageCreatedSource).toContain('conversationId');
+        expect(handleTeamChatMessageCreatedSource).toContain('targetType: data.targetType');
+        expect(handleTeamChatMessageCreatedSource).toContain('recipientIds: data.recipientIds');
+        expect(handleTeamChatMessageCreatedSource).toContain('const notificationPlan = buildTeamChatNotificationPlan({');
         expect(notifyTeamChatMessageCreatedSource).not.toContain('const candidateUsers = await getCandidateUsersForTeam(teamId);');
         expect(notifyTeamChatMessageCreatedSource).not.toContain('await getMutedUserIdsForTeam(');
         expect(notifyTeamChatMessageCreatedSource).not.toContain('const userSnap = await firestore.doc(`users/${uid}`).get();');
     });
 
+    it('reuses the same create handler for conversation-scoped chat message documents', () => {
+        expect(functionsSource).toContain("exports.notifyConversationChatMessageCreated = functions.firestore");
+        expect(functionsSource).toContain(".document('teams/{teamId}/chatConversations/{conversationId}/chatMessages/{messageId}')");
+        expect(functionsSource).toContain('.onCreate(handleTeamChatMessageCreated);');
+    });
+
     it('sends a mentions-category notification for mentioned users', () => {
-        expect(notifyTeamChatMessageCreatedSource).toContain("category: 'mentions'");
-        expect(notifyTeamChatMessageCreatedSource).toContain('mentioned you');
+        expect(handleTeamChatMessageCreatedSource).toContain("category: 'mentions'");
+        expect(handleTeamChatMessageCreatedSource).toContain('mentioned you');
     });
 
     it('sends a liveChat notification directly from the shared recipient plan', () => {
-        expect(notifyTeamChatMessageCreatedSource).toContain("category: 'liveChat'");
-        expect(notifyTeamChatMessageCreatedSource).toContain('targets: notificationPlan.liveChatTargets');
+        expect(handleTeamChatMessageCreatedSource).toContain("category: 'liveChat'");
+        expect(handleTeamChatMessageCreatedSource).toContain('targets: notificationPlan.liveChatTargets');
     });
 
     it('preloads user records in batches instead of one users/{uid} read per recipient', () => {
@@ -246,6 +314,34 @@ describe('notifyTeamChatMessageCreated source wiring', () => {
         expect(notifyTeamChatMessageCreatedSource).toContain('conversationId');
         expect(functionsSource).toContain('conversationId: String(conversationId || \'\')');
         expect(functionsSource).toContain('return `${route}?conversationId=${encodeURIComponent(conversationId)}`;');
+    });
+});
+
+describe('chat mention notification destinations', () => {
+    it('builds legacy and app deep links for mentioned conversation notifications', () => {
+        expect(buildNotificationLink({
+            category: 'mentions',
+            teamId: 'team 1',
+            conversationId: 'direct/user?2'
+        })).toBe('https://allplays.ai/team-chat.html?teamId=team%201&conversationId=direct%2Fuser%3F2');
+        expect(buildNotificationAppRoute({
+            category: 'mentions',
+            teamId: 'team 1',
+            conversationId: 'direct/user?2'
+        })).toBe('/messages/team%201?conversationId=direct%2Fuser%3F2');
+    });
+
+    it('keeps team-wide mention notifications on the default message route', () => {
+        expect(buildNotificationLink({
+            category: 'mentions',
+            teamId: 'team-1',
+            conversationId: ''
+        })).toBe('https://allplays.ai/team-chat.html?teamId=team-1');
+        expect(buildNotificationAppRoute({
+            category: 'mentions',
+            teamId: 'team-1',
+            conversationId: ''
+        })).toBe('/messages/team-1');
     });
 });
 
@@ -266,6 +362,7 @@ describe('buildTeamChatNotificationPlan', () => {
                 targetsByCategory: {
                     mentions: [
                         { uid: 'u1', token: 'mention-1' },
+                        { uid: 'u1', token: 'mention-1' },
                         { uid: 'u2', token: 'mention-2' },
                         { uid: 'u3', token: 'mention-3' }
                     ],
@@ -274,6 +371,7 @@ describe('buildTeamChatNotificationPlan', () => {
                         { uid: 'u1', token: 'chat-1' },
                         { uid: 'u2', token: 'chat-2' },
                         { uid: 'u3', token: 'chat-3' },
+                        { uid: 'u4', token: 'chat-4' },
                         { uid: 'u4', token: 'chat-4' }
                     ]
                 }
@@ -283,6 +381,98 @@ describe('buildTeamChatNotificationPlan', () => {
         expect(plan.mentionedUids.sort()).toEqual(['u1', 'u2']);
         expect(plan.mentionTargets.map((target) => target.uid).sort()).toEqual(['u1', 'u2']);
         expect(plan.liveChatTargets.map((target) => target.uid)).toEqual(['u4']);
+        expect(plan.mentionTargets).toHaveLength(2);
+        expect(plan.liveChatTargets).toHaveLength(1);
+    });
+
+    it('excludes every live-chat device for mentioned users while preserving mention devices', () => {
+        const plan = buildTeamChatNotificationPlan({
+            text: 'Can you check this @alice?',
+            actorUid: 'coach-1',
+            recipientContext: {
+                members: [
+                    { uid: 'coach-1', displayName: 'Coach Kim', roles: ['staff'] },
+                    { uid: 'alice-parent', displayName: 'Alice Parent', roles: ['parent'] },
+                    { uid: 'blair-parent', displayName: 'Blair Parent', roles: ['parent'] }
+                ],
+                mutedUids: [],
+                targetsByCategory: {
+                    mentions: [
+                        { uid: 'alice-parent', deviceId: 'phone', token: 'mention-phone' },
+                        { uid: 'alice-parent', deviceId: 'tablet', token: 'mention-tablet' }
+                    ],
+                    liveChat: [
+                        { uid: 'coach-1', deviceId: 'phone', token: 'coach-chat' },
+                        { uid: 'alice-parent', deviceId: 'phone', token: 'alice-chat-phone' },
+                        { uid: 'alice-parent', deviceId: 'tablet', token: 'alice-chat-tablet' },
+                        { uid: 'blair-parent', deviceId: 'phone', token: 'blair-chat' }
+                    ]
+                }
+            }
+        });
+
+        expect(plan.mentionedUids).toEqual(['alice-parent']);
+        expect(plan.mentionTargets.map((target) => target.token).sort()).toEqual(['mention-phone', 'mention-tablet']);
+        expect(plan.liveChatTargets.map((target) => target.uid)).toEqual(['blair-parent']);
+        expect(plan.liveChatTargets.some((target) => target.uid === 'alice-parent')).toBe(false);
+    });
+
+    it('deduplicates mentioned users out of generic live chat pushes across devices', () => {
+        const plan = buildTeamChatNotificationPlan({
+            text: '@Alice check the jersey note',
+            actorUid: 'coach-1',
+            recipientContext: {
+                members: [
+                    { uid: 'coach-1', displayName: 'Coach Kim', roles: ['staff'] },
+                    { uid: 'u1', displayName: 'Alice Parent', roles: ['parent'] },
+                    { uid: 'u2', displayName: 'Blair Parent', roles: ['parent'] }
+                ],
+                mutedUids: [],
+                targetsByCategory: {
+                    mentions: [
+                        { uid: 'u1', deviceId: 'ios', token: 'mention-ios' },
+                        { uid: 'u1', deviceId: 'web', token: 'mention-web' },
+                        { uid: 'u1', deviceId: 'web', token: 'mention-web' }
+                    ],
+                    liveChat: [
+                        { uid: 'u1', deviceId: 'ios', token: 'chat-ios' },
+                        { uid: 'u1', deviceId: 'web', token: 'chat-web' },
+                        { uid: 'u2', deviceId: 'ios', token: 'chat-u2' }
+                    ]
+                }
+            }
+        });
+
+        expect(plan.mentionedUids).toEqual(['u1']);
+        expect(plan.mentionTargets.map((target) => `${target.uid}:${target.deviceId}`).sort()).toEqual(['u1:ios', 'u1:web']);
+        expect(plan.liveChatTargets.map((target) => target.uid)).toEqual(['u2']);
+    });
+
+    it('suppresses muted conversation participants from generic photo-only chat pushes', () => {
+        const plan = buildTeamChatNotificationPlan({
+            text: '',
+            actorUid: 'coach-1',
+            recipientContext: {
+                members: [
+                    { uid: 'coach-1', displayName: 'Coach Kim', roles: ['staff'] },
+                    { uid: 'muted-parent', displayName: 'Muted Parent', roles: ['parent'] },
+                    { uid: 'active-parent', displayName: 'Active Parent', roles: ['parent'] }
+                ],
+                mutedUids: ['muted-parent'],
+                targetsByCategory: {
+                    mentions: [],
+                    liveChat: [
+                        { uid: 'coach-1', deviceId: 'phone', token: 'coach-chat' },
+                        { uid: 'muted-parent', deviceId: 'phone', token: 'muted-chat' },
+                        { uid: 'active-parent', deviceId: 'phone', token: 'active-chat' }
+                    ]
+                }
+            }
+        });
+
+        expect(plan.mentionedUids).toEqual([]);
+        expect(plan.mentionTargets).toEqual([]);
+        expect(plan.liveChatTargets.map((target) => target.uid)).toEqual(['active-parent']);
     });
 
     it('handles a large mixed team fixture from one preloaded recipient context', () => {

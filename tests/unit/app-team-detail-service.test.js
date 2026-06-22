@@ -105,8 +105,16 @@ describe('React app team detail model', () => {
             return readFile(resolve(dirname(testFilePath), '../../apps/app/src/lib/teamDetailService.ts'), 'utf8');
         });
 
-        expect(source).toContain("from '../../../../js/firebase.js';");
+        const adapterSource = await import('node:fs/promises').then(async ({ readFile }) => {
+            const { resolve, dirname } = await import('node:path');
+            const testFilePath = fileURLToPath(import.meta.url);
+            return readFile(resolve(dirname(testFilePath), '../../apps/app/src/lib/adapters/legacyTeamDetail.ts'), 'utf8');
+        });
+
+        expect(source).toContain("from './adapters/legacyTeamDetail';");
+        expect(adapterSource).toContain("from '@legacy/firebase.js';");
         expect(source).not.toContain("firebase.js?v=");
+        expect(adapterSource).not.toContain("firebase.js?v=");
     });
 
     it('creates one normalized admin invite for the app and builds fallback links', async () => {
@@ -1387,7 +1395,7 @@ describe('React app team detail model', () => {
         expect(getTeam).toHaveBeenCalledTimes(2);
     });
 
-    it('updates only the managed basic team settings fields for app editing', async () => {
+    it('updates the managed app team settings fields, including clearing unset links', async () => {
         getTeam.mockResolvedValue({
             id: 'team-1',
             ownerId: 'owner-1',
@@ -1422,6 +1430,10 @@ describe('React app team detail model', () => {
             zip: '662101234',
             isPublic: false,
             photoUrl: 'https://img.example.test/updated.png',
+            leagueUrl: null,
+            twitchChannel: null,
+            streamEmbedUrl: null,
+            youtubeEmbedUrl: null,
             updatedAt: expect.any(Date)
         });
     });

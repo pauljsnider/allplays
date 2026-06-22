@@ -70,7 +70,10 @@ const {
   buildRegistrationPaymentRetryUrl,
   shouldStopRegistrationPaymentReminders
 } = require('./registration-payment-reminders-core.cjs');
-const { validateAccessCodeCandidates } = require('./access-code-validation.cjs');
+const {
+  buildGenericPreAuthAccessCodeValidationResult,
+  validateAccessCodeCandidates
+} = require('./access-code-validation.cjs');
 const {
   PRE_EVENT_REMINDER_QUERY_PAGE_SIZE,
   PRE_EVENT_REMINDER_MAX_PAGES_PER_RUN,
@@ -80,6 +83,7 @@ const {
 const {
   NOTIFICATION_CATEGORIES,
   DEFAULT_NOTIFICATION_PREFERENCES,
+  normalizeNotificationTargetCategories,
   hasEnabledNotificationCategory,
   buildNotificationTargetDocId,
   buildNotificationTargetPayload,
@@ -96,16 +100,38 @@ const {
   buildNotificationDeliveryOptions
 } = require('./notification-delivery-metadata.cjs');
 const {
+  getStaleNotificationTokenCutoffMillis
+} = require('./notification-token-sweep-core.cjs');
+const {
   coerceDate,
   getEventTitle,
   formatScheduleUpdateDate
 } = require('./schedule-notification-utils.cjs');
+const {
+  normalizeOpenOfficiatingSlotClaimInput,
+  isEligibleOpenOfficiatingSlotParticipant,
+  resolveOfficiatingGamePath,
+  isTeamLinkedToSharedGame,
+  buildOpenOfficiatingSlotClaimUpdate,
+  buildOfficiatingSelfAssignmentNotificationRecord
+} = require('./officiating-self-assignment-core.cjs');
+const {
+  assertSportsConnectSyncConfig,
+  buildSportsConnectRegistrationSnapshot,
+  buildSportsConnectSyncErrorUpdate,
+  buildSportsConnectTeamUpdate,
+  fetchSportsConnectRegistrationPayload,
+  getRegistrationSource,
+  getTeamSportsConnectConfig
+} = require('./sports-connect-registration-sync.cjs');
 
 if (admin.apps.length === 0) {
   admin.initializeApp();
 }
 
 const firestore = admin.firestore();
+const TEAM_MEDIA_NOTIFICATION_BATCH_WINDOW_MS = 60 * 60 * 1000;
+const TEAM_MEDIA_NOTIFICATION_DISPATCH_LIMIT = 50;
 const checkStripeWebhookRateLimit = createInMemoryRateLimiter({
   windowMs: 60_000,
   maxRequests: 120,
@@ -840,6 +866,174 @@ function hasTeamAdminAccess({ team, user = {}, uid, email }) {
   return Boolean(uid && team?.ownerId === uid) || Boolean(normalizedEmail && adminEmails.includes(normalizedEmail));
 }
 
+function getSportsConnectFunctionsConfig() {
+  const sportsConnectConfig = functions.config()?.sports_connect || {};
+  return {
+    endpointTemplate: process.env.SPORTS_CONNECT_REGISTRATION_SNAPSHOT_URL ||
+      process.env.SPORTS_CONNECT_REGISTRATION_BASE_URL ||
+      sportsConnectConfig.registration_snapshot_url ||
+      sportsConnectConfig.registration_base_url,
+    accessToken: process.env.SPORTS_CONNECT_API_TOKEN ||
+      sportsConnectConfig.api_token ||
+      sportsConnectConfig.token
+  };
+}
+
+function toHttpsError(error, fallbackCode = 'internal') {
+  if (error instanceof functions.https.HttpsError) return error;
+  const code = error?.code && typeof error.code === 'string' ? error.code : fallbackCode;
+  return new functions.https.HttpsError(code, error?.message || 'Request failed.');
+}
+
+exports.syncRegistrationProvider = functions.https.onCall(async (data, context) => {
+  if (!context.auth) {
+    throw new functions.https.HttpsError('unauthenticated', 'Sign in to sync registration data.');
+  }
+
+  const teamId = String(data?.teamId || '').trim();
+  if (!teamId) {
+    throw new functions.https.HttpsError('invalid-argument', 'Team ID is required.');
+  }
+
+  const teamRef = firestore.doc(`teams/${teamId}`);
+  const [teamSnap, userSnap] = await Promise.all([
+    teamRef.get(),
+    firestore.doc(`users/${context.auth.uid}`).get()
+  ]);
+  if (!teamSnap.exists) {
+    throw new functions.https.HttpsError('not-found', 'Team not found.');
+  }
+
+  const team = teamSnap.data() || {};
+  const user = userSnap.exists ? userSnap.data() || {} : {};
+  const callerEmail = String(context.auth.token?.email || '').trim().toLowerCase();
+  if (!hasTeamAdminAccess({ team, user, uid: context.auth.uid, email: callerEmail })) {
+    throw new functions.https.HttpsError('permission-denied', 'Only team owners and admins can sync registration data.');
+  }
+
+  const existingSource = getRegistrationSource(team);
+  const syncConfig = getTeamSportsConnectConfig(team, getSportsConnectFunctionsConfig());
+  try {
+    assertSportsConnectSyncConfig(syncConfig);
+    const payload = await fetchSportsConnectRegistrationPayload(syncConfig);
+    const nowIso = new Date().toISOString();
+    const snapshot = buildSportsConnectRegistrationSnapshot(payload, {
+      externalTeamId: syncConfig.externalTeamId,
+      fetchedAt: nowIso
+    });
+    const update = buildSportsConnectTeamUpdate({
+      existingSource,
+      snapshot,
+      nowIso
+    });
+    update.registrationSource.teamId = teamId;
+    update.registrationSource.lastSyncBy = context.auth.uid;
+    update.registrationSource.lastSyncByEmail = callerEmail || null;
+    await teamRef.set(update, { merge: true });
+    return {
+      success: true,
+      teamId,
+      provider: 'Sports Connect',
+      externalTeamId: snapshot.externalTeamId,
+      playerCount: snapshot.playerCount,
+      fetchedAt: snapshot.fetchedAt
+    };
+  } catch (error) {
+    const nowIso = new Date().toISOString();
+    await teamRef.set(buildSportsConnectSyncErrorUpdate(existingSource, error?.message, nowIso), { merge: true }).catch((writeError) => {
+      functions.logger.warn('Failed to record Sports Connect sync error state.', {
+        teamId,
+        error: writeError?.message || String(writeError)
+      });
+    });
+    throw toHttpsError(error, 'unavailable');
+  }
+});
+
+exports.claimOpenOfficiatingSlot = functions.https.onCall(async (data, context) => {
+  if (!context.auth) {
+    throw new functions.https.HttpsError('unauthenticated', 'Sign in before claiming an officiating slot.');
+  }
+
+  let input;
+  try {
+    input = normalizeOpenOfficiatingSlotClaimInput(data || {});
+  } catch (error) {
+    throw toHttpsError(error, 'invalid-argument');
+  }
+
+  const uid = context.auth.uid;
+  const callerEmail = String(context.auth.token?.email || '').trim().toLowerCase();
+  const displayName = String(context.auth.token?.name || data?.displayName || callerEmail || 'Official').trim();
+  const [teamSnap, userSnap] = await Promise.all([
+    firestore.doc(`teams/${input.teamId}`).get(),
+    firestore.doc(`users/${uid}`).get()
+  ]);
+  if (!teamSnap.exists) {
+    throw new functions.https.HttpsError('not-found', 'Team not found.');
+  }
+
+  const team = { id: input.teamId, ...(teamSnap.data() || {}) };
+  const user = userSnap.exists ? userSnap.data() || {} : {};
+  if (!isEligibleOpenOfficiatingSlotParticipant({ team, user, uid, email: callerEmail, teamId: input.teamId })) {
+    throw new functions.https.HttpsError('permission-denied', 'Only team owners, admins, or parents can claim open officiating slots.');
+  }
+
+  const gameRef = firestore.doc(resolveOfficiatingGamePath(input.teamId, input.gameId));
+  const notificationRef = firestore.collection(`teams/${input.teamId}/officiatingNotifications`).doc();
+  const now = admin.firestore.FieldValue.serverTimestamp();
+
+  try {
+    const result = await firestore.runTransaction(async (transaction) => {
+      const gameSnap = await transaction.get(gameRef);
+      if (!gameSnap.exists) {
+        throw new functions.https.HttpsError('not-found', 'Game not found.');
+      }
+
+      const game = { id: input.gameId, ...(gameSnap.data() || {}) };
+      if (!gameRef.path.startsWith(`teams/${input.teamId}/games/`) && !isTeamLinkedToSharedGame(game, input.teamId)) {
+        throw new functions.https.HttpsError('permission-denied', 'Game is not available to this team.');
+      }
+
+      const { update, claimedSlot } = buildOpenOfficiatingSlotClaimUpdate({
+        game,
+        slotId: input.slotId,
+        official: { uid, email: callerEmail, displayName },
+        now
+      });
+      const notificationRecord = buildOfficiatingSelfAssignmentNotificationRecord({
+        teamId: input.teamId,
+        gameId: input.gameId,
+        game,
+        slot: claimedSlot,
+        actor: { uid, email: callerEmail, displayName },
+        timestamp: now
+      });
+
+      transaction.update(gameRef, update);
+      transaction.set(notificationRef, {
+        ...notificationRecord,
+        createdAt: now
+      });
+
+      return {
+        claimedSlot,
+        notificationId: notificationRef.id
+      };
+    });
+
+    return {
+      success: true,
+      teamId: input.teamId,
+      gameId: input.gameId,
+      slotId: input.slotId,
+      ...result
+    };
+  } catch (error) {
+    throw toHttpsError(error, error?.code || 'internal');
+  }
+});
+
 function normalizeOrganizationDraftSlot(slot = {}) {
   const homeTeamId = String(slot.homeTeamId || '').trim();
   const awayTeamId = String(slot.awayTeamId || '').trim();
@@ -1362,10 +1556,17 @@ exports.autoAcceptParentInviteForExistingUser = functions.https.onCall(async (da
   return { autoLinked: true, userId: userRef.id };
 });
 
-exports.validateAccessCodeForAcceptance = functions.https.onCall(async (data) => {
+exports.validateAccessCodeForAcceptance = functions.https.onCall(async (data, context) => {
   const code = String(data?.code || '').trim().toUpperCase();
   if (!code) {
     throw new functions.https.HttpsError('invalid-argument', 'Access code is required.');
+  }
+  const nativeAuthToken = String(data?.nativeAuthToken || '').trim();
+  const hasNativeAuthToken = nativeAuthToken
+    ? await admin.auth().verifyIdToken(nativeAuthToken).then(() => true).catch(() => false)
+    : false;
+  if (!context?.auth?.uid && !hasNativeAuthToken) {
+    return buildGenericPreAuthAccessCodeValidationResult();
   }
 
   const snapshot = await firestore.collection('accessCodes').where('code', '==', code).get();
@@ -3088,16 +3289,13 @@ function buildTeamNotificationTargetRef(teamId, uid, deviceId) {
 }
 
 function buildTeamNotificationRecipientRef(teamId, uid, deviceId) {
-  const docId = buildNotificationTargetDocId({ uid, deviceId });
-  if (!docId) return null;
-  return firestore.doc(`teams/${teamId}/notificationRecipients/${docId}`);
+  const normalizedUid = String(uid || '').trim();
+  if (!normalizedUid || normalizedUid.includes('/')) return null;
+  return firestore.doc(`teams/${teamId}/notificationRecipients/${normalizedUid}`);
 }
 
 function buildTeamNotificationIndexRefs(teamId, uid, deviceId) {
-  return [
-    buildTeamNotificationTargetRef(teamId, uid, deviceId),
-    buildTeamNotificationRecipientRef(teamId, uid, deviceId)
-  ].filter(Boolean);
+  return [buildTeamNotificationTargetRef(teamId, uid, deviceId)].filter(Boolean);
 }
 
 function normalizeNotificationDeviceRecord(deviceId, raw) {
@@ -3206,6 +3404,243 @@ async function teamNotificationRecipientIndexIsEmpty(teamId) {
     .get();
   return recipientSnap.empty;
 }
+
+function getNotificationRecipientRoles({ teamId, team, user, uid, email = '' }) {
+  const normalizedTeamId = String(teamId || '').trim();
+  const normalizedUid = String(uid || '').trim();
+  const normalizedEmail = String(email || '').trim().toLowerCase();
+  if (!normalizedTeamId || !normalizedUid || !team || !user) return [];
+
+  const roles = new Set();
+  if (team.ownerId === normalizedUid) {
+    roles.add('staff');
+  }
+
+  const adminEmails = Array.isArray(team.adminEmails)
+    ? team.adminEmails.map((entry) => String(entry || '').trim().toLowerCase()).filter(Boolean)
+    : [];
+  if (normalizedEmail && adminEmails.includes(normalizedEmail)) {
+    roles.add('staff');
+  }
+
+  const parentTeamIds = new Set(
+    Array.isArray(user.parentTeamIds)
+      ? user.parentTeamIds.map((entry) => String(entry || '').trim()).filter(Boolean)
+      : []
+  );
+  if (parentTeamIds.has(normalizedTeamId)) {
+    roles.add('parent');
+  }
+
+  return Array.from(roles);
+}
+
+function buildNotificationRecipientTokens(devicesSnap) {
+  return (devicesSnap?.docs || [])
+    .map((deviceSnap) => normalizeNotificationDeviceRecord(deviceSnap.id, deviceSnap.data()))
+    .filter(Boolean)
+    .map((device) => ({
+      deviceId: device.deviceId,
+      token: device.token,
+      platform: device.platform,
+      userAgent: device.userAgent
+    }));
+}
+
+async function cleanupLegacyNotificationRecipientDocs(teamId, uid) {
+  const recipientRef = buildTeamNotificationRecipientRef(teamId, uid);
+  if (!recipientRef) return 0;
+
+  const recipientSnap = await firestore.collection(`teams/${teamId}/notificationRecipients`)
+    .where('uid', '==', String(uid || '').trim())
+    .get();
+  const legacyRefs = recipientSnap.docs
+    .map((docSnap) => docSnap.ref)
+    .filter((ref) => ref && ref.id !== recipientRef.id);
+
+  if (!legacyRefs.length) return 0;
+  await Promise.allSettled(legacyRefs.map((ref) => ref.delete()));
+  return legacyRefs.length;
+}
+
+async function syncNotificationRecipientForTeamUser(teamId, uid, options = {}) {
+  const recipientRef = buildTeamNotificationRecipientRef(teamId, uid);
+  if (!recipientRef) return null;
+
+  const normalizedUid = String(uid || '').trim();
+  const user = options.userData !== undefined ? options.userData : null;
+  const team = options.teamData !== undefined ? options.teamData : null;
+  const skipLegacyCleanup = options.skipLegacyCleanup === true;
+
+  const [resolvedUser, resolvedTeam] = await Promise.all([
+    user === null ? firestore.doc(`users/${normalizedUid}`).get().then((snap) => (snap.exists ? (snap.data() || {}) : null)) : Promise.resolve(user),
+    team === null ? firestore.doc(`teams/${teamId}`).get().then((snap) => (snap.exists ? (snap.data() || {}) : null)) : Promise.resolve(team)
+  ]);
+
+  if (!resolvedUser || !resolvedTeam) {
+    if (!skipLegacyCleanup) {
+      await cleanupLegacyNotificationRecipientDocs(teamId, normalizedUid);
+    }
+    await recipientRef.delete();
+    return null;
+  }
+
+  const email = String(resolvedUser.email || resolvedUser.profileEmail || '').trim().toLowerCase();
+  const roles = getNotificationRecipientRoles({
+    teamId,
+    team: resolvedTeam,
+    user: resolvedUser,
+    uid: normalizedUid,
+    email
+  });
+  if (!roles.length) {
+    if (!skipLegacyCleanup) {
+      await cleanupLegacyNotificationRecipientDocs(teamId, normalizedUid);
+    }
+    await recipientRef.delete();
+    return null;
+  }
+
+  const [prefSnap, devicesSnap] = await Promise.all([
+    firestore.doc(`users/${normalizedUid}/notificationPreferences/${teamId}`).get(),
+    firestore.collection(`users/${normalizedUid}/notificationDevices`).get()
+  ]);
+  const preferences = prefSnap.exists
+    ? normalizeNotificationPreferences(prefSnap.data())
+    : DEFAULT_NOTIFICATION_PREFERENCES;
+  const tokens = buildNotificationRecipientTokens(devicesSnap);
+  if (!tokens.length || !hasEnabledNotificationCategory(preferences)) {
+    if (!skipLegacyCleanup) {
+      await cleanupLegacyNotificationRecipientDocs(teamId, normalizedUid);
+    }
+    await recipientRef.delete();
+    return null;
+  }
+
+  if (!skipLegacyCleanup) {
+    await cleanupLegacyNotificationRecipientDocs(teamId, normalizedUid);
+  }
+
+  await recipientRef.set({
+    uid: normalizedUid,
+    teamId: String(teamId || '').trim(),
+    roles,
+    categories: normalizeNotificationTargetCategories(preferences),
+    tokens,
+    updatedAt: admin.firestore.FieldValue.serverTimestamp()
+  }, { merge: true });
+  return { uid: normalizedUid, teamId, roles, tokenCount: tokens.length };
+}
+
+async function getNotificationRecipientTeamIdsForUser(user, uid, extraTeamIds = []) {
+  const normalizedUid = String(uid || '').trim();
+  if (!normalizedUid || !user) return Array.from(new Set((extraTeamIds || []).filter(Boolean)));
+
+  const teamIds = new Set(
+    [...(Array.isArray(extraTeamIds) ? extraTeamIds : []), ...(Array.isArray(user.parentTeamIds) ? user.parentTeamIds : [])]
+      .map((entry) => String(entry || '').trim())
+      .filter(Boolean)
+  );
+
+  const queries = [firestore.collection('teams').where('ownerId', '==', normalizedUid).get()];
+  const email = String(user.email || user.profileEmail || '').trim().toLowerCase();
+  if (email) {
+    queries.push(firestore.collection('teams').where('adminEmails', 'array-contains', email).get());
+  }
+
+  const querySnaps = await Promise.all(queries);
+  querySnaps.forEach((snap) => {
+    (snap.docs || []).forEach((docSnap) => teamIds.add(String(docSnap.id || '').trim()));
+  });
+
+  return Array.from(teamIds).filter(Boolean);
+}
+
+async function syncNotificationRecipientsForUserChange(uid, beforeUser, afterUser) {
+  const teamIds = new Set();
+  const beforeTeamIds = await getNotificationRecipientTeamIdsForUser(beforeUser, uid);
+  const afterTeamIds = await getNotificationRecipientTeamIdsForUser(afterUser, uid);
+  beforeTeamIds.forEach((teamId) => teamIds.add(teamId));
+  afterTeamIds.forEach((teamId) => teamIds.add(teamId));
+
+  await Promise.all(Array.from(teamIds).map((teamId) => syncNotificationRecipientForTeamUser(teamId, uid, {
+    userData: afterUser || null
+  })));
+}
+
+async function getCandidateUsersForTeamData(teamId, team) {
+  if (!team) return [];
+  const users = new Map();
+  const addRole = (uid, role) => {
+    const normalizedUid = String(uid || '').trim();
+    if (!normalizedUid) return;
+    const entry = users.get(normalizedUid) || { uid: normalizedUid, roles: new Set() };
+    entry.roles.add(role);
+    users.set(normalizedUid, entry);
+  };
+
+  addRole(team.ownerId, 'staff');
+
+  const parentSnap = await firestore.collection('users').where('parentTeamIds', 'array-contains', teamId).get();
+  parentSnap.forEach((docSnap) => addRole(docSnap.id, 'parent'));
+
+  const adminUserIds = await getUserIdsByEmails(team.adminEmails || []);
+  adminUserIds.forEach((uid) => addRole(uid, 'staff'));
+
+  return Array.from(users.values()).map((entry) => ({
+    uid: entry.uid,
+    roles: Array.from(entry.roles)
+  }));
+}
+
+async function syncNotificationRecipientsForTeamChange(teamId, beforeTeam, afterTeam) {
+  const beforeUsers = await getCandidateUsersForTeamData(teamId, beforeTeam);
+  const afterUsers = await getCandidateUsersForTeamData(teamId, afterTeam);
+  const candidateUids = new Set(
+    [...beforeUsers, ...afterUsers]
+      .map((entry) => String(entry?.uid || '').trim())
+      .filter(Boolean)
+  );
+
+  await Promise.all(Array.from(candidateUids).map((uid) => syncNotificationRecipientForTeamUser(teamId, uid, {
+    teamData: afterTeam || null
+  })));
+}
+
+exports.syncTeamNotificationRecipientsOnPreferenceWrite = functions.firestore
+  .document('users/{uid}/notificationPreferences/{teamId}')
+  .onWrite(async (_change, context) => {
+    await syncNotificationRecipientForTeamUser(context.params.teamId, context.params.uid);
+    return null;
+  });
+
+exports.syncTeamNotificationRecipientsOnDeviceWrite = functions.firestore
+  .document('users/{uid}/notificationDevices/{deviceId}')
+  .onWrite(async (_change, context) => {
+    const userSnap = await firestore.doc(`users/${context.params.uid}`).get();
+    const user = userSnap.exists ? (userSnap.data() || {}) : null;
+    const teamIds = await getNotificationRecipientTeamIdsForUser(user, context.params.uid);
+    await Promise.all(teamIds.map((teamId) => syncNotificationRecipientForTeamUser(teamId, context.params.uid, { userData: user })));
+    return null;
+  });
+
+exports.syncTeamNotificationRecipientsOnUserWrite = functions.firestore
+  .document('users/{uid}')
+  .onWrite(async (change, context) => {
+    const before = change.before.exists ? (change.before.data() || {}) : null;
+    const after = change.after.exists ? (change.after.data() || {}) : null;
+    await syncNotificationRecipientsForUserChange(context.params.uid, before, after);
+    return null;
+  });
+
+exports.syncTeamNotificationRecipientsOnTeamWrite = functions.firestore
+  .document('teams/{teamId}')
+  .onWrite(async (change, context) => {
+    const before = change.before.exists ? (change.before.data() || {}) : null;
+    const after = change.after.exists ? (change.after.data() || {}) : null;
+    await syncNotificationRecipientsForTeamChange(context.params.teamId, before, after);
+    return null;
+  });
 
 exports.syncTeamNotificationTargetsOnPreferenceWrite = functions.firestore
   .document('users/{uid}/notificationPreferences/{teamId}')
@@ -3318,6 +3753,55 @@ function buildPracticePacketNotificationDestination({ teamId, eventId = null, se
   };
 }
 
+function buildAccessNotificationDestination({ teamId }) {
+  const encodedTeamId = encodeURIComponent(teamId);
+  const query = teamId ? `?teamId=${encodedTeamId}` : '';
+  return {
+    appRoute: `/parent-tools/access${query}`,
+    link: `https://allplays.ai/app/#/parent-tools/access${query}`
+  };
+}
+
+function buildStaffAccessRequestNotificationDestination({ teamId }) {
+  const encodedTeamId = encodeURIComponent(teamId);
+  return {
+    appRoute: `/parent-tools/access?teamId=${encodedTeamId}`,
+    link: `https://allplays.ai/edit-roster.html?teamId=${encodedTeamId}`
+  };
+}
+
+function buildRegistrationReviewNotificationDestination({ teamId, formId }) {
+  const encodedTeamId = encodeURIComponent(teamId);
+  const encodedFormId = encodeURIComponent(formId);
+  return {
+    appRoute: `/teams/${encodedTeamId}/registrations/${encodedFormId}`,
+    link: `https://allplays.ai/edit-roster.html?teamId=${encodedTeamId}`
+  };
+}
+
+function buildParentRegistrationNotificationDestination({ teamId, formId, registrationId = null }) {
+  const encodedTeamId = encodeURIComponent(teamId);
+  const encodedFormId = encodeURIComponent(formId);
+  const params = new URLSearchParams();
+  if (registrationId) {
+    params.set('registrationId', registrationId);
+  }
+  const query = params.toString();
+  const appRoute = `/parent-tools/registrations/${encodedTeamId}/${encodedFormId}${query ? `?${query}` : ''}`;
+  return {
+    appRoute,
+    link: `https://allplays.ai/app/#${appRoute}`
+  };
+}
+
+function buildTeamNotificationDestination({ teamId }) {
+  const encodedTeamId = encodeURIComponent(teamId);
+  return {
+    appRoute: `/teams/${encodedTeamId}`,
+    link: `https://allplays.ai/app/#/teams/${encodedTeamId}`
+  };
+}
+
 function getPracticePacketNotificationLabel(session = {}) {
   const sessionTitle = String(session?.title || session?.eventTitle || '').trim();
   return sessionTitle ? `home packet for ${sessionTitle}` : 'home packet';
@@ -3335,9 +3819,11 @@ function formatPracticePacketDueDate(value) {
   const date = coercePracticePacketDate(value);
   if (!date) return '';
   return date.toLocaleDateString('en-US', {
+    timeZone: 'UTC',
     month: 'short',
     day: 'numeric',
-    year: 'numeric'
+    year: 'numeric',
+    timeZone: 'UTC'
   });
 }
 
@@ -3363,6 +3849,70 @@ function getPracticePacketNotificationBody(packet = {}, session = {}) {
 
 function hasPracticePacketContent(packet = null) {
   return Array.isArray(packet?.blocks) && packet.blocks.length > 0;
+}
+
+function collectPracticePacketAssignedPlayerIds(packet = {}, session = {}) {
+  const playerIds = new Set();
+  const collectValue = (value) => {
+    if (!value) return;
+    if (Array.isArray(value)) {
+      value.forEach(collectValue);
+      return;
+    }
+    if (typeof value === 'object') {
+      collectValue(value.playerId || value.childId || value.id);
+      return;
+    }
+    const normalized = String(value || '').trim();
+    if (normalized) {
+      playerIds.add(normalized);
+    }
+  };
+
+  [
+    packet.playerIds,
+    packet.assignedPlayerIds,
+    packet.targetPlayerIds,
+    packet.childIds,
+    packet.players,
+    packet.assignedPlayers,
+    session.playerIds,
+    session.assignedPlayerIds,
+    session.targetPlayerIds
+  ].forEach(collectValue);
+
+  return Array.from(playerIds);
+}
+
+async function resolvePracticePacketAssignedParentUserIds(teamId, packet = {}, session = {}) {
+  const directParentUserIds = [
+    packet.parentUserIds,
+    packet.recipientUserIds,
+    packet.assignedParentUserIds
+  ].flatMap((value) => (Array.isArray(value) ? value : [value]))
+    .map((value) => String(value || '').trim())
+    .filter(Boolean);
+  const assignedPlayerIds = collectPracticePacketAssignedPlayerIds(packet, session);
+
+  if (!directParentUserIds.length && !assignedPlayerIds.length) {
+    return null;
+  }
+
+  const userIds = new Set(directParentUserIds);
+  const parentLookups = await Promise.allSettled(
+    assignedPlayerIds.map((playerId) => firestore.collection('users')
+      .where('parentPlayerKeys', 'array-contains', `${teamId}::${playerId}`)
+      .get())
+  );
+  parentLookups.forEach((result) => {
+    if (result.status !== 'fulfilled') return;
+    (result.value.docs || []).forEach((docSnap) => {
+      const uid = String(docSnap.id || '').trim();
+      if (uid) userIds.add(uid);
+    });
+  });
+
+  return Array.from(userIds);
 }
 
 function getCertificateNotificationPlayerKey(certificate = {}, teamId = '') {
@@ -3484,23 +4034,29 @@ async function practicePacketAssignedNotification(beforeData = null, afterData =
   }
 
   const { teamId, sessionId } = context.params || {};
-  const [allPracticeTargets, candidateUsers] = await Promise.all([
+  const [allPracticeTargets, candidateUsers, assignedParentUserIds] = await Promise.all([
     getTargetsForCategory(teamId, 'practice', null),
-    getCandidateUsersForTeam(teamId)
+    getCandidateUsersForTeam(teamId),
+    resolvePracticePacketAssignedParentUserIds(teamId, afterPacket, afterData)
   ]);
   const parentUserIds = new Set(
     candidateUsers
       .filter((user) => Array.isArray(user?.roles) && user.roles.includes('parent'))
       .map((user) => user.uid)
   );
-  const parentTargets = allPracticeTargets.filter((target) => parentUserIds.has(target.uid));
+  const assignedParentUserIdSet = Array.isArray(assignedParentUserIds) ? new Set(assignedParentUserIds) : null;
+  const parentTargets = allPracticeTargets.filter((target) => (
+    parentUserIds.has(target.uid)
+    && (!assignedParentUserIdSet || assignedParentUserIdSet.has(target.uid))
+  ));
 
   if (!parentTargets.length) {
     functions.logger.warn('notifyPracticePacketAssigned found no practice-enabled parent targets.', {
       teamId,
       sessionId,
       totalPracticeTargets: allPracticeTargets.length,
-      parentUserCount: parentUserIds.size
+      parentUserCount: parentUserIds.size,
+      assignedParentUserCount: assignedParentUserIdSet ? assignedParentUserIdSet.size : null
     });
     return null;
   }
@@ -3521,7 +4077,24 @@ async function practicePacketAssignedNotification(beforeData = null, afterData =
   return null;
 }
 
-function buildNotificationLink({ category, teamId, gameId, batchId = null, recipientId = null, conversationId = null }) {
+function buildScheduleSectionQuery(section, childId = null) {
+  const params = new URLSearchParams();
+  if (childId) {
+    params.set('childId', childId);
+  }
+  if (section) {
+    params.set('section', section);
+  }
+  const query = params.toString();
+  return query ? `?${query}` : '';
+}
+
+function buildNotificationLink({ category, teamId, gameId, eventId = null, batchId = null, recipientId = null, conversationId = null, childId = null }) {
+  if (category === 'officiating') {
+    return teamId
+      ? `https://allplays.ai/officials.html?teamId=${encodeURIComponent(teamId)}`
+      : 'https://allplays.ai/officials.html';
+  }
   if (category === 'fees') {
     const params = new URLSearchParams();
     if (teamId) {
@@ -3546,10 +4119,41 @@ function buildNotificationLink({ category, teamId, gameId, batchId = null, recip
   if (category === 'liveScore' && gameId) {
     return `https://allplays.ai/live-game.html?teamId=${encodeURIComponent(teamId)}&gameId=${encodeURIComponent(gameId)}`;
   }
+  if (category === 'rsvp') {
+    if (teamId && gameId) {
+      return `https://allplays.ai/app/#/schedule/${encodeURIComponent(teamId)}/${encodeURIComponent(gameId)}${buildScheduleSectionQuery('availability', childId)}`;
+    }
+    if (teamId) {
+      return `https://allplays.ai/app/#/schedule?teamId=${encodeURIComponent(teamId)}`;
+    }
+    return 'https://allplays.ai/app/#/schedule';
+  }
+  if (category === 'rideshare') {
+    const scheduleEventId = eventId || gameId;
+    if (teamId && scheduleEventId) {
+      return `https://allplays.ai/app/#/schedule/${encodeURIComponent(teamId)}/${encodeURIComponent(scheduleEventId)}${buildScheduleSectionQuery('rideshare', childId)}`;
+    }
+    if (teamId) {
+      return `https://allplays.ai/app/#/schedule?teamId=${encodeURIComponent(teamId)}&section=rideshare`;
+    }
+    return 'https://allplays.ai/app/#/schedule?section=rideshare';
+  }
+  if (category === 'media') {
+    if (teamId) {
+      return `https://allplays.ai/app/#/teams/${encodeURIComponent(teamId)}/media`;
+    }
+    return 'https://allplays.ai/app/#/teams';
+  }
+  if (category === 'access') {
+    return buildAccessNotificationDestination({ teamId }).link;
+  }
   return `https://allplays.ai/team.html?teamId=${encodeURIComponent(teamId)}`;
 }
 
-function buildNotificationAppRoute({ category, teamId, gameId, eventId, batchId = null, recipientId = null, conversationId = null }) {
+function buildNotificationAppRoute({ category, teamId, gameId, eventId, batchId = null, recipientId = null, conversationId = null, childId = null }) {
+  if (category === 'officiating') {
+    return teamId ? `/officials?teamId=${encodeURIComponent(teamId)}` : '/officials';
+  }
   if (category === 'fees') {
     const params = new URLSearchParams();
     if (teamId) {
@@ -3573,7 +4177,7 @@ function buildNotificationAppRoute({ category, teamId, gameId, eventId, batchId 
   }
   if (category === 'liveScore' && gameId) {
     if (teamId) {
-      return `/schedule/${encodeURIComponent(teamId)}/${encodeURIComponent(gameId)}`;
+      return `/schedule/${encodeURIComponent(teamId)}/${encodeURIComponent(gameId)}?section=game`;
     }
     return '/schedule';
   }
@@ -3586,10 +4190,386 @@ function buildNotificationAppRoute({ category, teamId, gameId, eventId, batchId 
     }
     return '/schedule';
   }
+  if (category === 'rsvp') {
+    const scheduleEventId = eventId || gameId;
+    if (teamId && scheduleEventId) {
+      return `/schedule/${encodeURIComponent(teamId)}/${encodeURIComponent(scheduleEventId)}${buildScheduleSectionQuery('availability', childId)}`;
+    }
+    if (teamId) {
+      return `/schedule?teamId=${encodeURIComponent(teamId)}`;
+    }
+    return '/schedule';
+  }
+  if (category === 'rideshare') {
+    const scheduleEventId = eventId || gameId;
+    if (teamId && scheduleEventId) {
+      return `/schedule/${encodeURIComponent(teamId)}/${encodeURIComponent(scheduleEventId)}${buildScheduleSectionQuery('rideshare', childId)}`;
+    }
+    if (teamId) {
+      return `/schedule?teamId=${encodeURIComponent(teamId)}&section=rideshare`;
+    }
+    return '/schedule?section=rideshare';
+  }
+  if (category === 'media') {
+    if (teamId) {
+      return `/teams/${encodeURIComponent(teamId)}/media`;
+    }
+    return '/teams';
+  }
+  if (category === 'access') {
+    return buildAccessNotificationDestination({ teamId }).appRoute;
+  }
   if (category === 'practice') {
     return buildPracticePacketNotificationDestination({ teamId, eventId }).appRoute;
   }
   return '/home';
+}
+
+function normalizeAccessNotificationStatus(status) {
+  const normalized = String(status || '').trim().toLowerCase().replace(/[ _]+/g, '-');
+  if (['approved', 'accepted', 'enrolled', 'roster-approved'].includes(normalized)) return 'approved';
+  if (['rejected', 'denied', 'declined'].includes(normalized)) return 'denied';
+  if (['submitted', 'new', 'in-review'].includes(normalized)) return 'pending';
+  if (['waitlisted', 'offer-extended', 'offer-accepted', 'released', 'pending'].includes(normalized)) return normalized;
+  return normalized || 'pending';
+}
+
+function getRegistrationParticipantName(registration = {}) {
+  const participant = registration.participant && typeof registration.participant === 'object' ? registration.participant : {};
+  return [
+    participant.name,
+    participant.fullName,
+    participant.playerName,
+    participant.athleteName,
+    registration.participantName,
+    registration.playerName,
+    registration.recipientName
+  ].map((value) => String(value || '').trim()).find(Boolean) || 'A player';
+}
+
+function getRegistrationProgramName(registration = {}) {
+  return [registration.programName, registration.formName, registration.title]
+    .map((value) => String(value || '').trim())
+    .find(Boolean) || 'Registration';
+}
+
+function getRegistrationGuardianEmails(registration = {}) {
+  const emailSet = new Set();
+  const addEmail = (value) => {
+    const normalized = String(value || '').trim().toLowerCase();
+    if (normalized) {
+      emailSet.add(normalized);
+    }
+  };
+  const addGuardian = (guardian = {}) => {
+    addEmail(guardian.email);
+    addEmail(guardian.parentEmail);
+    addEmail(guardian.guardianEmail);
+  };
+
+  addGuardian(registration.guardian || {});
+  (Array.isArray(registration.guardians) ? registration.guardians : []).forEach(addGuardian);
+  (Array.isArray(registration.guardianLinks) ? registration.guardianLinks : []).forEach(addGuardian);
+
+  return Array.from(emailSet);
+}
+
+async function resolveRegistrationNotificationUserIds(registration = {}) {
+  const userIds = new Set(
+    (Array.isArray(registration.guardianLinks) ? registration.guardianLinks : [])
+      .map((guardian) => String(guardian?.userId || '').trim())
+      .filter(Boolean)
+  );
+
+  const emailUserIds = await getUserIdsByEmails(getRegistrationGuardianEmails(registration));
+  emailUserIds.forEach((uid) => userIds.add(uid));
+  return Array.from(userIds);
+}
+
+async function getStaffTargetsForAccess(teamId, actorUid = null) {
+  const [allAccessTargets, candidateUsers] = await Promise.all([
+    getTargetsForCategory(teamId, 'access', actorUid),
+    getCandidateUsersForTeam(teamId)
+  ]);
+  const staffUserIds = new Set(
+    candidateUsers
+      .filter((user) => Array.isArray(user?.roles) && user.roles.includes('staff'))
+      .map((user) => user.uid)
+  );
+  return allAccessTargets.filter((target) => staffUserIds.has(target.uid));
+}
+
+async function sendRegistrationStatusNotification({ teamId, formId, registrationId, registration, title, body }) {
+  const guardianUserIds = await resolveRegistrationNotificationUserIds(registration);
+  if (!guardianUserIds.length) return null;
+
+  const guardianTargets = await getTargetsForCategoryUserIds(teamId, 'access', guardianUserIds);
+  if (!guardianTargets.length) return null;
+
+  const destination = buildParentRegistrationNotificationDestination({ teamId, formId, registrationId });
+  return sendDirectTargetsNotification({
+    targets: guardianTargets,
+    category: 'access',
+    title,
+    body,
+    teamId,
+    eventId: registrationId,
+    linkOverride: destination.link,
+    appRouteOverride: destination.appRoute
+  });
+}
+
+function normalizeTeamMediaNotificationText(value) {
+  return String(value || '').replace(/\s+/g, ' ').trim();
+}
+
+function normalizeTeamMediaNotificationVisibility(value) {
+  return normalizeNotificationAlbumVisibility(value);
+}
+
+function buildTeamMediaNotificationAudienceContext(folder = {}) {
+  const albumVisibility = normalizeTeamMediaNotificationVisibility(folder.visibility);
+  const allowedUserIds = normalizeNotificationAudienceUserIds(
+    folder.allowedUserIds || folder.audienceUserIds || folder.visibleToUserIds || folder.userIds
+  );
+  const allowedRoles = normalizeNotificationAudienceRoles(
+    folder.allowedRoles || folder.audienceRoles || folder.visibleToRoles || folder.roles
+  );
+  return {
+    albumVisibility,
+    ...(allowedUserIds.length ? { allowedUserIds } : {}),
+    ...(allowedRoles.length ? { allowedRoles } : {})
+  };
+}
+
+function normalizeTeamMediaNotificationItemType(value) {
+  const normalized = String(value || '').trim().toLowerCase().replace(/[\s-]+/g, '_');
+  if (['photo', 'image', 'team_photo'].includes(normalized)) return 'photo';
+  if (['file', 'document', 'doc'].includes(normalized)) return 'file';
+  if (['video', 'video_link', 'link'].includes(normalized)) return 'video';
+  return 'item';
+}
+
+function getTeamMediaNotificationWindowStart(date) {
+  const timestamp = date instanceof Date && !Number.isNaN(date.getTime()) ? date.getTime() : Date.now();
+  return new Date(Math.floor(timestamp / TEAM_MEDIA_NOTIFICATION_BATCH_WINDOW_MS) * TEAM_MEDIA_NOTIFICATION_BATCH_WINDOW_MS);
+}
+
+function buildTeamMediaNotificationBatchId(teamId, folderId, windowStartAt) {
+  const startedAt = windowStartAt instanceof Date && !Number.isNaN(windowStartAt.getTime())
+    ? windowStartAt
+    : getTeamMediaNotificationWindowStart(new Date());
+  return [teamId, folderId, startedAt.toISOString()]
+    .map((part) => String(part || '').trim().replace(/[^A-Za-z0-9_-]+/g, '_').replace(/^_+|_+$/g, ''))
+    .filter(Boolean)
+    .join('__')
+    .slice(0, 220);
+}
+
+function buildTeamMediaNotificationBatchMetadata({ teamId, itemId, item = {}, folder = {}, now = new Date() } = {}) {
+  const normalizedTeamId = normalizeTeamMediaNotificationText(teamId);
+  const normalizedItemId = normalizeTeamMediaNotificationText(itemId);
+  const folderId = normalizeTeamMediaNotificationText(item.folderId || folder.id);
+  if (!normalizedTeamId || !normalizedItemId || !folderId || item.deleted === true) return null;
+
+  const audienceContext = buildTeamMediaNotificationAudienceContext(folder);
+  const albumVisibility = audienceContext.albumVisibility;
+
+  const createdAt = coerceDate(item.createdAt) || (now instanceof Date ? now : new Date(now));
+  const windowStartAt = getTeamMediaNotificationWindowStart(createdAt);
+  const dueAt = new Date(windowStartAt.getTime() + TEAM_MEDIA_NOTIFICATION_BATCH_WINDOW_MS);
+  return {
+    batchId: buildTeamMediaNotificationBatchId(normalizedTeamId, folderId, windowStartAt),
+    teamId: normalizedTeamId,
+    folderId,
+    albumName: normalizeTeamMediaNotificationText(folder.name) || 'Team media',
+    albumVisibility,
+    audienceContext,
+    itemId: normalizedItemId,
+    itemType: normalizeTeamMediaNotificationItemType(item.type || item.mediaType),
+    itemTitle: normalizeTeamMediaNotificationText(item.title || item.fileName || item.name),
+    windowStartAt,
+    dueAt
+  };
+}
+
+function buildTeamMediaNotificationPayload(batch = {}) {
+  const itemCount = Math.max(1, Number(batch.itemCount || 0));
+  const albumName = normalizeTeamMediaNotificationText(batch.albumName) || 'Team media';
+  const itemLabel = `${itemCount} new media item${itemCount === 1 ? '' : 's'}`;
+  return {
+    title: 'New team media',
+    body: truncateNotificationBody(`${albumName} has ${itemLabel}.`)
+  };
+}
+
+function buildTeamMediaNotificationBatchWrite(batch = {}, metadata = {}) {
+  const existingItemIds = Array.from(new Set(
+    (Array.isArray(batch.itemIds) ? batch.itemIds : [])
+      .map((itemId) => normalizeTeamMediaNotificationText(itemId))
+      .filter(Boolean)
+  ));
+  const existingItemTypes = Array.from(new Set(
+    (Array.isArray(batch.itemTypes) ? batch.itemTypes : [])
+      .map((itemType) => normalizeTeamMediaNotificationItemType(itemType))
+      .filter(Boolean)
+  ));
+  const nextItemIds = existingItemIds.includes(metadata.itemId)
+    ? existingItemIds
+    : [...existingItemIds, metadata.itemId];
+  const nextItemTypes = metadata.itemType && !existingItemTypes.includes(metadata.itemType)
+    ? [...existingItemTypes, metadata.itemType]
+    : existingItemTypes;
+
+  return {
+    teamId: metadata.teamId,
+    folderId: metadata.folderId,
+    albumName: metadata.albumName,
+    albumVisibility: metadata.albumVisibility,
+    audienceContext: metadata.audienceContext || { albumVisibility: metadata.albumVisibility },
+    windowStartAt: admin.firestore.Timestamp.fromDate(metadata.windowStartAt),
+    dueAt: admin.firestore.Timestamp.fromDate(metadata.dueAt),
+    status: 'pending',
+    itemCount: nextItemIds.length,
+    itemIds: nextItemIds,
+    itemTypes: nextItemTypes,
+    latestItemTitle: metadata.itemTitle || null,
+    updatedAt: admin.firestore.FieldValue.serverTimestamp()
+  };
+}
+
+async function queueTeamMediaNotificationBatch({ teamId, itemId, item, now = new Date() } = {}) {
+  const folderId = normalizeTeamMediaNotificationText(item?.folderId);
+  if (!teamId || !itemId || !folderId || item?.deleted === true) return null;
+
+  const folderRef = firestore.doc(`teams/${teamId}/mediaFolders/${folderId}`);
+  const folderSnap = await folderRef.get();
+  if (!folderSnap.exists) return null;
+
+  const metadata = buildTeamMediaNotificationBatchMetadata({
+    teamId,
+    itemId,
+    item,
+    folder: { id: folderId, ...(folderSnap.data() || {}) },
+    now
+  });
+  if (!metadata) return null;
+
+  const batchRef = firestore.doc(`teamMediaNotificationBatches/${metadata.batchId}`);
+  await firestore.runTransaction(async (transaction) => {
+    const batchSnap = await transaction.get(batchRef);
+    const batch = batchSnap.exists ? (batchSnap.data() || {}) : {};
+    const currentStatus = batchSnap.exists ? String(batch.status || '') : '';
+    if (['sent', 'sending', 'skipped'].includes(currentStatus)) return;
+
+    transaction.set(batchRef, buildTeamMediaNotificationBatchWrite(batch, metadata), { merge: true });
+  });
+
+  return metadata;
+}
+
+async function claimTeamMediaNotificationBatch(batchRef, claimId, now = new Date()) {
+  return firestore.runTransaction(async (transaction) => {
+    const snap = await transaction.get(batchRef);
+    if (!snap.exists) return null;
+    const batch = snap.data() || {};
+    const dueAt = coerceDate(batch.dueAt);
+    if (batch.status !== 'pending' || (dueAt && dueAt > now)) return null;
+
+    transaction.update(batchRef, {
+      status: 'sending',
+      claimId,
+      lastAttemptAt: admin.firestore.FieldValue.serverTimestamp()
+    });
+    return { id: snap.id, ...batch };
+  });
+}
+
+async function markTeamMediaNotificationBatchSkipped(batchRef, claimId, reason) {
+  await batchRef.update({
+    status: 'skipped',
+    claimId,
+    skippedReason: reason || null,
+    finishedAt: admin.firestore.FieldValue.serverTimestamp()
+  });
+}
+
+async function markTeamMediaNotificationBatchSent(batchRef, claimId, sendResult) {
+  await batchRef.update({
+    status: 'sent',
+    claimId,
+    sentAt: admin.firestore.FieldValue.serverTimestamp(),
+    successCount: Number(sendResult?.successCount || 0),
+    failureCount: Number(sendResult?.failureCount || 0),
+    inboxWriteCount: Number(sendResult?.inboxWriteCount || 0)
+  });
+}
+
+async function releaseTeamMediaNotificationBatchAfterFailure(batchRef, claimId, error) {
+  await batchRef.update({
+    status: 'pending',
+    claimId,
+    lastError: error?.message || 'Unknown team media notification error',
+    lastAttemptAt: admin.firestore.FieldValue.serverTimestamp()
+  });
+}
+
+async function dispatchDueTeamMediaNotificationBatches(now = new Date()) {
+  const dueSnap = await firestore.collection('teamMediaNotificationBatches')
+    .where('status', '==', 'pending')
+    .where('dueAt', '<=', admin.firestore.Timestamp.fromDate(now))
+    .limit(TEAM_MEDIA_NOTIFICATION_DISPATCH_LIMIT)
+    .get();
+  const results = [];
+
+  for (const docSnap of dueSnap.docs) {
+    const batchRef = docSnap.ref;
+    const claimId = `team-media-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    const batch = await claimTeamMediaNotificationBatch(batchRef, claimId, now);
+    if (!batch) continue;
+
+    try {
+      const folderSnap = await firestore.doc(`teams/${batch.teamId}/mediaFolders/${batch.folderId}`).get();
+      if (!folderSnap.exists) {
+        await markTeamMediaNotificationBatchSkipped(batchRef, claimId, 'album_not_found');
+        continue;
+      }
+
+      const folder = folderSnap.data() || {};
+      const audienceContext = buildTeamMediaNotificationAudienceContext({
+        ...folder,
+        visibility: folder.visibility || batch.albumVisibility
+      });
+      const albumVisibility = audienceContext.albumVisibility;
+
+      const payload = buildTeamMediaNotificationPayload({
+        ...batch,
+        albumName: normalizeTeamMediaNotificationText(folder.name || batch.albumName),
+        albumVisibility
+      });
+      const sendResult = await sendCategoryNotification({
+        teamId: batch.teamId,
+        category: 'media',
+        title: payload.title,
+        body: payload.body,
+        dedupKey: `team-media:${batch.id}`,
+        audienceContext
+      });
+      await markTeamMediaNotificationBatchSent(batchRef, claimId, sendResult);
+      results.push({
+        teamId: batch.teamId,
+        folderId: batch.folderId,
+        itemCount: Number(batch.itemCount || 0),
+        successCount: Number(sendResult?.successCount || 0),
+        failureCount: Number(sendResult?.failureCount || 0)
+      });
+    } catch (error) {
+      await releaseTeamMediaNotificationBatchAfterFailure(batchRef, claimId, error);
+      console.error('Failed to dispatch team media notification batch', { batchId: batch.id, error });
+    }
+  }
+
+  return results;
 }
 
 async function getUserIdsByEmails(emails) {
@@ -3668,14 +4648,67 @@ function normalizeNotificationAlbumVisibility(value) {
   return ['private', 'staff', 'staff-only'].includes(normalized) ? 'private' : 'team';
 }
 
+function normalizeNotificationAudienceList(value) {
+  if (Array.isArray(value)) {
+    return value;
+  }
+  if (value instanceof Set) {
+    return Array.from(value);
+  }
+  if (typeof value === 'string') {
+    return value.split(',');
+  }
+  return [];
+}
+
+function normalizeNotificationAudienceUserIds(value) {
+  return Array.from(new Set(
+    normalizeNotificationAudienceList(value)
+      .map((entry) => String(entry || '').trim())
+      .filter(Boolean)
+  ));
+}
+
+function normalizeNotificationAudienceRoles(value) {
+  return Array.from(new Set(
+    normalizeNotificationAudienceList(value)
+      .map((entry) => String(entry || '').trim().toLowerCase().replace(/[\s_]+/g, '-'))
+      .map((role) => (['admin', 'coach', 'manager', 'owner'].includes(role) ? 'staff' : role))
+      .filter((role) => ['parent', 'staff'].includes(role))
+  ));
+}
+
+function mediaAudienceAllowsUser(user, audienceContext = {}) {
+  const allowedUserIds = normalizeNotificationAudienceUserIds(audienceContext.allowedUserIds);
+  const allowedRoles = normalizeNotificationAudienceRoles(audienceContext.allowedRoles);
+  if (!allowedUserIds.length && !allowedRoles.length) return true;
+
+  const uid = String(user?.uid || '').trim();
+  const roles = normalizeNotificationAudienceRoles(user?.roles || []);
+  if (allowedUserIds.includes(uid)) return true;
+  return roles.some((role) => allowedRoles.includes(role));
+}
+
+function hasMediaAudienceConstraints(audienceContext = {}) {
+  return normalizeNotificationAudienceUserIds(audienceContext.allowedUserIds).length > 0
+    || normalizeNotificationAudienceRoles(audienceContext.allowedRoles).length > 0;
+}
+
 function canReceiveCategoryNotification(category, user, audienceContext = {}) {
   if (!user?.uid || !notificationAudienceAllowsRoles(category, user.roles)) return false;
   if (category !== 'media') return true;
   const albumVisibility = audienceContext?.staffOnly === true
     ? 'private'
     : normalizeNotificationAlbumVisibility(audienceContext.albumVisibility);
-  if (albumVisibility !== 'private') return true;
-  return Array.isArray(user.roles) && user.roles.includes('staff');
+  if (albumVisibility === 'private') {
+    const isStaffUser = Array.isArray(user.roles) && user.roles.includes('staff');
+    if (!isStaffUser) return false;
+    if (hasMediaAudienceConstraints(audienceContext)) {
+      return mediaAudienceAllowsUser(user, audienceContext);
+    }
+    return true;
+  }
+  return mediaAudienceAllowsUser(user, audienceContext);
 }
 
 async function getLegacyTargetsForCategory(teamId, category, users, actorUid = null, audienceContext = {}) {
@@ -3712,74 +4745,18 @@ async function getLegacyTargetsForCategory(teamId, category, users, actorUid = n
   return targetGroups.flat();
 }
 
-async function backfillNotificationRecipientsForTeam(teamId, users) {
+async function backfillNotificationRecipientsForTeam(teamId, users, options = {}) {
   const uniqueUsers = Array.from(new Map(
     (Array.isArray(users) ? users : [])
       .filter((user) => user?.uid)
       .map((user) => [user.uid, user])
   ).values());
   if (!uniqueUsers.length) return 0;
-
-  const userRecords = await Promise.all(uniqueUsers.map(async (user) => {
-    const uid = user.uid;
-    const prefRef = firestore.doc(`users/${uid}/notificationPreferences/${teamId}`);
-    const devicesRef = firestore.collection(`users/${uid}/notificationDevices`);
-    const [prefSnap, devicesSnap] = await Promise.all([
-      prefRef.get(),
-      devicesRef.get()
-    ]);
-    return {
-      uid,
-      preferences: prefSnap.exists
-        ? normalizeNotificationPreferences(prefSnap.data())
-        : DEFAULT_NOTIFICATION_PREFERENCES,
-      devicesSnap
-    };
-  }));
-
-  let batch = firestore.batch();
-  let pendingOps = 0;
-  let writeCount = 0;
-  const commitBatch = async () => {
-    if (!pendingOps) return;
-    await batch.commit();
-    batch = firestore.batch();
-    pendingOps = 0;
+  const syncOptions = {
+    skipLegacyCleanup: options.skipLegacyCleanup === true
   };
-
-  for (const record of userRecords) {
-    const hasAnyEnabledCategory = hasEnabledNotificationCategory(record.preferences);
-    for (const deviceSnap of record.devicesSnap.docs) {
-      const device = normalizeNotificationDeviceRecord(deviceSnap.id, deviceSnap.data());
-      const recipientRef = buildTeamNotificationRecipientRef(teamId, record.uid, deviceSnap.id);
-      if (!recipientRef) continue;
-
-      if (!device || !hasAnyEnabledCategory) {
-        batch.delete(recipientRef);
-      } else {
-        batch.set(recipientRef, {
-          ...buildNotificationTargetPayload({
-            uid: record.uid,
-            teamId,
-            deviceId: device.deviceId,
-            token: device.token,
-            platform: device.platform,
-            userAgent: device.userAgent,
-            preferences: record.preferences
-          }),
-          updatedAt: admin.firestore.FieldValue.serverTimestamp()
-        }, { merge: true });
-        writeCount += 1;
-      }
-
-      pendingOps += 1;
-      if (pendingOps === 450) {
-        await commitBatch();
-      }
-    }
-  }
-
-  await commitBatch();
+  const results = await Promise.all(uniqueUsers.map((user) => syncNotificationRecipientForTeamUser(teamId, user.uid, syncOptions)));
+  const writeCount = results.filter(Boolean).length;
   return writeCount;
 }
 
@@ -3816,21 +4793,7 @@ async function getTargetsForCategory(teamId, category, actorUid = null, audience
     .filter((user) => canReceiveCategoryNotification(category, user, audienceContext))
     .map((user) => [user.uid, user]));
   const indexedTargets = targetSnap.docs
-    .map((docSnap) => {
-      const data = docSnap.data() || {};
-      const uid = String(data.uid || '').trim();
-      const deviceId = String(data.deviceId || '').trim();
-      const token = String(data.token || '').trim();
-      if (!uid || !deviceId || !token) return null;
-      if (uid === actorUid) return null;
-      if (!eligibleUsers.has(uid)) return null;
-      return {
-        uid,
-        deviceId,
-        token,
-        teamId
-      };
-    })
+    .flatMap((docSnap) => buildTargetsFromNotificationRecipientDoc(docSnap, { teamId, category, actorUid, eligibleUsers }))
     .filter(Boolean);
 
   const indexedUserIds = new Set(indexedTargets.map((target) => target.uid));
@@ -3846,7 +4809,7 @@ async function getTargetsForCategory(teamId, category, actorUid = null, audience
 
   if (targetSnap.empty && await teamNotificationRecipientIndexIsEmpty(teamId)) {
     try {
-      await backfillNotificationRecipientsForTeam(teamId, users);
+      await backfillNotificationRecipientsForTeam(teamId, users, { skipLegacyCleanup: true });
     } catch (error) {
       functions.logger.warn('Failed to backfill notification recipient index after empty lookup', {
         teamId,
@@ -3858,6 +4821,77 @@ async function getTargetsForCategory(teamId, category, actorUid = null, audience
 
   const fallbackTargets = await getLegacyTargetsForCategory(teamId, category, missingUsers, actorUid, audienceContext);
   return [...indexedTargets, ...fallbackTargets];
+}
+
+async function getTargetsForCategoryUserIds(teamId, category, userIds = [], actorUid = null, audienceContext = {}) {
+  if (!NOTIFICATION_CATEGORIES.includes(category)) return [];
+  const recipientUserIds = new Set(
+    (Array.isArray(userIds) ? userIds : [])
+      .map((uid) => String(uid || '').trim())
+      .filter(Boolean)
+  );
+  if (!recipientUserIds.size) return [];
+
+  const users = Array.from(recipientUserIds).map((uid) => ({ uid, roles: ['parent'] }));
+  const eligibleUsers = new Map(users
+    .filter((user) => user.uid !== actorUid && canReceiveCategoryNotification(category, user, audienceContext))
+    .map((user) => [user.uid, user]));
+  if (!eligibleUsers.size) return [];
+
+  const recipientRefs = Array.from(eligibleUsers.keys())
+    .map((uid) => buildTeamNotificationRecipientRef(teamId, uid))
+    .filter(Boolean);
+  const recipientSnaps = recipientRefs.length ? await firestore.getAll(...recipientRefs) : [];
+  const indexedTargets = recipientSnaps
+    .filter((docSnap) => docSnap.exists)
+    .flatMap((docSnap) => buildTargetsFromNotificationRecipientDoc(docSnap, { teamId, category, actorUid, eligibleUsers }));
+  const indexedUserIds = new Set(indexedTargets.map((target) => target.uid));
+  const missingUsers = users.filter((user) => (
+    user?.uid
+    && user.uid !== actorUid
+    && !indexedUserIds.has(user.uid)
+    && eligibleUsers.has(user.uid)
+  ));
+  const fallbackTargets = missingUsers.length
+    ? await getLegacyTargetsForCategory(teamId, category, missingUsers, actorUid, audienceContext)
+    : [];
+
+  const seenTargetIds = new Set();
+  return [...indexedTargets, ...fallbackTargets].filter((target) => {
+    const uid = String(target?.uid || '').trim();
+    if (!recipientUserIds.has(uid)) return false;
+    const key = `${uid}:${target?.deviceId || ''}:${target?.token || ''}`;
+    if (seenTargetIds.has(key)) return false;
+    seenTargetIds.add(key);
+    return true;
+  });
+}
+
+function buildTargetsFromNotificationRecipientDoc(docSnap, { teamId, category, actorUid = null, eligibleUsers = new Map() } = {}) {
+  const data = docSnap?.data?.() || {};
+  const uid = String(data.uid || docSnap?.id || '').trim();
+  if (!uid || uid === actorUid || !eligibleUsers.has(uid)) return [];
+  if (data.categories && data.categories[category] !== true) return [];
+
+  const tokenEntries = Array.isArray(data.tokens)
+    ? data.tokens
+    : [{
+      deviceId: data.deviceId,
+      token: data.token,
+      platform: data.platform,
+      userAgent: data.userAgent
+    }];
+
+  return tokenEntries
+    .map((entry) => ({
+      uid,
+      deviceId: String(entry?.deviceId || '').trim(),
+      token: String(entry?.token || '').trim(),
+      teamId,
+      platform: String(entry?.platform || '').trim(),
+      userAgent: String(entry?.userAgent || '').trim()
+    }))
+    .filter((entry) => entry.deviceId && entry.token);
 }
 
 async function pruneInvalidTokens(sendResult, targets) {
@@ -3877,13 +4911,47 @@ async function pruneInvalidTokens(sendResult, targets) {
     removals.push(
       firestore.doc(`users/${target.uid}/notificationDevices/${target.deviceId}`).delete()
     );
-    buildTeamNotificationIndexRefs(target.teamId, target.uid, target.deviceId)
-      .forEach((ref) => removals.push(ref.delete()));
+    const targetRef = buildTeamNotificationTargetRef(target.teamId, target.uid, target.deviceId);
+    if (targetRef) {
+      removals.push(targetRef.delete());
+    }
   });
 
   if (removals.length) {
     await Promise.allSettled(removals);
   }
+}
+
+async function sweepStaleNotificationDeviceTokens(nowMillis = Date.now()) {
+  const cutoff = admin.firestore.Timestamp.fromMillis(getStaleNotificationTokenCutoffMillis(nowMillis));
+  const pageSize = 400;
+  let deletedCount = 0;
+  let pageCount = 0;
+
+  while (pageCount < 20) {
+    pageCount += 1;
+    const snapshot = await firestore.collectionGroup('notificationDevices')
+      .where('updatedAt', '<', cutoff)
+      .limit(pageSize)
+      .get();
+    if (snapshot.empty) break;
+
+    const batch = firestore.batch();
+    snapshot.docs.forEach((docSnap) => {
+      batch.delete(docSnap.ref);
+      deletedCount += 1;
+    });
+    await batch.commit();
+
+    if (snapshot.docs.length < pageSize) break;
+  }
+
+  functions.logger.info('Swept stale notification device tokens.', {
+    deletedCount,
+    pageCount,
+    cutoffMillis: cutoff.toMillis?.() || null
+  });
+  return { deletedCount, pageCount };
 }
 
 async function cleanupNotificationInbox(inboxRef) {
@@ -3923,7 +4991,8 @@ async function writeNotificationInboxRecords({
   appRoute,
   teamId,
   gameId = null,
-  eventId = null
+  eventId = null,
+  conversationId = null
 }) {
   const uniqueTargets = getUniqueNotificationInboxTargets(targets);
   if (!uniqueTargets.length) {
@@ -3942,6 +5011,7 @@ async function writeNotificationInboxRecords({
       teamId,
       gameId,
       eventId,
+      conversationId,
       createdAt,
       readAt
     }));
@@ -4028,10 +5098,27 @@ async function writeNotificationAuditRecord({
 
 const NOTIFICATION_DEDUP_WINDOW_MS = 5 * 60 * 1000; // 5 minutes
 
-async function checkAndSetNotificationDedup(teamId, category, gameId) {
-  const key = [teamId, category, gameId || ''].join('::');
+function buildNotificationDedupRef(teamId, category, dedupIdentity = '') {
+  const key = [teamId, category, dedupIdentity || ''].join('::');
   const hash = crypto.createHash('sha256').update(key).digest('hex').slice(0, 16);
-  const dedupRef = firestore.doc(`teams/${teamId}/notificationSendLog/${hash}`);
+  return firestore.doc(`teams/${teamId}/notificationSendLog/${hash}`);
+}
+
+async function markNotificationDedupSent(teamId, category, gameId, dedupKey = null) {
+  const dedupIdentity = String(dedupKey || gameId || '').trim();
+  const dedupRef = buildNotificationDedupRef(teamId, category, dedupIdentity);
+  await dedupRef.set({
+    teamId,
+    category,
+    gameId: gameId || null,
+    dedupKey: dedupKey || null,
+    sentAt: admin.firestore.FieldValue.serverTimestamp()
+  }, { merge: true });
+}
+
+async function checkAndSetNotificationDedup(teamId, category, gameId, dedupKey = null) {
+  const dedupIdentity = String(dedupKey || gameId || '').trim();
+  const dedupRef = buildNotificationDedupRef(teamId, category, dedupIdentity);
 
   const result = await firestore.runTransaction(async (txn) => {
     const snap = await txn.get(dedupRef);
@@ -4045,6 +5132,7 @@ async function checkAndSetNotificationDedup(teamId, category, gameId) {
       teamId,
       category,
       gameId: gameId || null,
+      dedupKey: dedupKey || null,
       sentAt: admin.firestore.FieldValue.serverTimestamp()
     });
     return true;
@@ -4075,11 +5163,13 @@ async function sendCategoryNotification({
   gameId = null,
   eventId = null,
   conversationId = null,
+  childId = null,
   category,
   title,
   body,
   actorUid = null,
   linkOverride = null,
+  dedupKey = null,
   excludeUids = [],
   audienceContext = {}
 }) {
@@ -4087,9 +5177,9 @@ async function sendCategoryNotification({
 
   const ALWAYS_SEND_CATEGORIES = new Set(['liveScore', 'mentions', 'liveChat']);
   if (!ALWAYS_SEND_CATEGORIES.has(category)) {
-    const canSend = await checkAndSetNotificationDedup(teamId, category, gameId);
+    const canSend = await checkAndSetNotificationDedup(teamId, category, gameId, dedupKey);
     if (!canSend) {
-      functions.logger.info('Notification dedup: skipping duplicate send', { teamId, category, gameId });
+      functions.logger.info('Notification dedup: skipping duplicate send', { teamId, category, gameId, dedupKey });
       return null;
     }
   }
@@ -4101,8 +5191,8 @@ async function sendCategoryNotification({
     : allTargets;
   if (!targets.length) return null;
 
-  const link = linkOverride || buildNotificationLink({ category, teamId, gameId, conversationId });
-  const appRoute = buildNotificationAppRoute({ category, teamId, gameId, eventId: eventId || gameId, conversationId });
+  const link = linkOverride || buildNotificationLink({ category, teamId, gameId, eventId: eventId || gameId, conversationId, childId });
+  const appRoute = buildNotificationAppRoute({ category, teamId, gameId, eventId: eventId || gameId, conversationId, childId });
   const deliveryOptions = typeof buildNotificationDeliveryOptions === 'function'
     ? buildNotificationDeliveryOptions({ category, teamId, gameId, eventId: eventId || gameId })
     : {};
@@ -4138,6 +5228,8 @@ async function sendCategoryNotification({
         gameId: String(gameId || ''),
         eventId: String(eventId || gameId || ''),
         conversationId: String(conversationId || ''),
+        childId: String(childId || ''),
+        rsvpId: String(childId || ''),
         category: String(category),
         appRoute,
         link
@@ -4162,7 +5254,8 @@ async function sendCategoryNotification({
     appRoute,
     teamId,
     gameId,
-    eventId: eventId || gameId
+    eventId: eventId || gameId,
+    conversationId
   });
 
   await writeNotificationAuditRecord({
@@ -4192,6 +5285,153 @@ async function sendCategoryNotification({
   };
 }
 
+function normalizeScheduleImportBatch(batch = {}) {
+  const batchId = String(batch?.batchId || '').trim();
+  const totalCount = Math.max(0, Number.parseInt(String(batch?.totalCount ?? 0), 10) || 0);
+  const rowNumber = Math.max(0, Number.parseInt(String(batch?.rowNumber ?? 0), 10) || 0);
+  if (!batchId || totalCount <= 0 || rowNumber <= 0) {
+    return null;
+  }
+  return { batchId, totalCount, rowNumber };
+}
+
+function buildScheduleImportSummaryPayload({ totalCount, gameCount, practiceCount }) {
+  const safeTotalCount = Math.max(0, Number(totalCount || 0));
+  const safeGameCount = Math.max(0, Number(gameCount || 0));
+  const safePracticeCount = Math.max(0, Number(practiceCount || 0));
+  const parts = [];
+  if (safeGameCount > 0) parts.push(`${safeGameCount} game${safeGameCount === 1 ? '' : 's'}`);
+  if (safePracticeCount > 0) parts.push(`${safePracticeCount} practice${safePracticeCount === 1 ? '' : 's'}`);
+  const detail = parts.length ? ` (${parts.join(', ')})` : '';
+  return {
+    title: 'Schedule import complete',
+    body: `Imported ${safeTotalCount} schedule events${detail}.`
+  };
+}
+
+async function sendCreatedScheduleEventNotification({ teamId, gameId, game }) {
+  if (game.source || game.sourceMetadata) return null;
+
+  const isPractice = String(game.type || '').toLowerCase() === 'practice';
+  const category = isPractice ? 'practice' : 'schedule';
+  const eventTitle = getEventTitle(game);
+  const dateValue = coerceDate(game.date);
+  const timeZone = String(game.timeZone || game.timezone || '').trim() || 'America/Chicago';
+  const dateLabel = dateValue ? formatScheduleUpdateDate(dateValue, timeZone) : '';
+  const title = isPractice ? `New practice: ${eventTitle}` : `New game: ${eventTitle}`;
+  const body = dateLabel || (isPractice ? 'Practice scheduled' : 'Game scheduled');
+
+  return sendCategoryNotification({
+    teamId,
+    gameId,
+    category,
+    title,
+    body,
+    actorUid: game.createdBy || null
+  });
+}
+
+async function sendScheduleImportBatchNotifications({ teamId, batchId, batch }) {
+  const batchRef = firestore.doc(`teams/${teamId}/scheduleImportNotificationBatches/${batchId}`);
+  const eventIds = Array.isArray(batch?.eventIds)
+    ? batch.eventIds.map((value) => String(value || '').trim()).filter(Boolean)
+    : [];
+  const totalCount = Math.max(0, Number(batch?.totalCount || 0));
+  const gameCount = Math.max(0, Number(batch?.gameCount || 0));
+  const practiceCount = Math.max(0, Number(batch?.practiceCount || 0));
+
+  if (!eventIds.length || totalCount <= 0 || eventIds.length < totalCount) {
+    return null;
+  }
+
+  if (totalCount > 3) {
+    const payload = buildScheduleImportSummaryPayload({ totalCount, gameCount, practiceCount });
+    await sendCategoryNotification({
+      teamId,
+      category: 'schedule',
+      title: payload.title,
+      body: payload.body,
+      actorUid: batch?.finalizedBy || null,
+      dedupKey: `import-batch:${batchId}`
+    });
+    await Promise.all(eventIds.map((eventId) => markNotificationDedupSent(teamId, 'schedule', eventId)));
+    await batchRef.set({
+      sentAt: admin.firestore.FieldValue.serverTimestamp(),
+      summaryTitle: payload.title,
+      summaryBody: payload.body
+    }, { merge: true });
+    return payload;
+  }
+
+  const sentEventIds = [];
+  for (const eventId of eventIds) {
+    const gameSnap = await firestore.doc(`teams/${teamId}/games/${eventId}`).get();
+    if (!gameSnap.exists) continue;
+    await sendCreatedScheduleEventNotification({ teamId, gameId: eventId, game: gameSnap.data() || {} });
+    sentEventIds.push(eventId);
+  }
+
+  await Promise.all(sentEventIds.map((eventId) => markNotificationDedupSent(teamId, 'schedule', eventId)));
+  await batchRef.set({
+    sentAt: admin.firestore.FieldValue.serverTimestamp(),
+    summaryTitle: null,
+    summaryBody: null
+  }, { merge: true });
+  return { totalCount, eventIds: sentEventIds };
+}
+
+async function registerScheduleImportBatchEvent({ teamId, gameId, game, batch }) {
+  const batchRef = firestore.doc(`teams/${teamId}/scheduleImportNotificationBatches/${batch.batchId}`);
+  const batchState = await firestore.runTransaction(async (txn) => {
+    const snap = await txn.get(batchRef);
+    const current = snap.exists ? (snap.data() || {}) : {};
+    const currentEventIds = Array.isArray(current.eventIds)
+      ? current.eventIds.map((value) => String(value || '').trim()).filter(Boolean)
+      : [];
+    const nextEventIds = currentEventIds.includes(gameId) ? currentEventIds : [...currentEventIds, gameId];
+    const alreadyCounted = currentEventIds.includes(gameId);
+    const nextGameCount = Math.max(0, Number(current.gameCount || 0)) + (!alreadyCounted && String(game?.type || '').toLowerCase() !== 'practice' ? 1 : 0);
+    const nextPracticeCount = Math.max(0, Number(current.practiceCount || 0)) + (!alreadyCounted && String(game?.type || '').toLowerCase() === 'practice' ? 1 : 0);
+    const totalCount = Math.max(batch.totalCount, Number(current.totalCount || 0));
+    const shouldSendSummary = !current.sentAt && !current.notificationClaimedAt && nextEventIds.length >= totalCount;
+
+    txn.set(batchRef, {
+      batchId: batch.batchId,
+      totalCount,
+      eventIds: nextEventIds,
+      gameCount: nextGameCount,
+      practiceCount: nextPracticeCount,
+      lastGameId: gameId,
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      ...(shouldSendSummary ? {
+        notificationClaimedAt: admin.firestore.FieldValue.serverTimestamp(),
+        notificationClaimedByGameId: gameId
+      } : {})
+    }, { merge: true });
+
+    return {
+      shouldSendSummary,
+      totalCount,
+      eventIds: nextEventIds,
+      gameCount: nextGameCount,
+      practiceCount: nextPracticeCount
+    };
+  });
+
+  if (!batchState.shouldSendSummary) {
+    return null;
+  }
+
+  return sendScheduleImportBatchNotifications({
+    teamId,
+    batchId: batch.batchId,
+    batch: {
+      ...batchState,
+      finalizedBy: game.createdBy || null
+    }
+  });
+}
+
 async function sendDirectTargetsNotification({
   targets,
   category,
@@ -4203,13 +5443,14 @@ async function sendDirectTargetsNotification({
   batchId = null,
   recipientId = null,
   conversationId = null,
+  childId = null,
   linkOverride = null,
   appRouteOverride = null
 }) {
   if (!targets.length) return null;
 
-  const link = linkOverride || buildNotificationLink({ category, teamId, gameId, batchId, recipientId, conversationId });
-  const appRoute = appRouteOverride || buildNotificationAppRoute({ category, teamId, gameId, eventId: eventId || gameId, batchId, recipientId, conversationId });
+  const link = linkOverride || buildNotificationLink({ category, teamId, gameId, eventId: eventId || gameId, batchId, recipientId, conversationId, childId });
+  const appRoute = appRouteOverride || buildNotificationAppRoute({ category, teamId, gameId, eventId: eventId || gameId, batchId, recipientId, conversationId, childId });
   const deliveryOptions = typeof buildNotificationDeliveryOptions === 'function'
     ? buildNotificationDeliveryOptions({ category, teamId, gameId, eventId: eventId || gameId })
     : {};
@@ -4245,6 +5486,8 @@ async function sendDirectTargetsNotification({
         gameId: String(gameId || ''),
         eventId: String(eventId || gameId || ''),
         conversationId: String(conversationId || ''),
+        childId: String(childId || ''),
+        rsvpId: String(childId || ''),
         category: String(category),
         appRoute,
         link
@@ -4269,7 +5512,8 @@ async function sendDirectTargetsNotification({
     appRoute,
     teamId,
     gameId,
-    eventId: eventId || gameId
+    eventId: eventId || gameId,
+    conversationId
   });
 
   await writeNotificationAuditRecord({
@@ -4301,11 +5545,239 @@ async function sendDirectTargetsNotification({
   };
 }
 
+function getOfficiatingPositionLabel(record = {}) {
+  return String(record.position || record.assignmentType || 'Officiating assignment').trim() || 'Officiating assignment';
+}
+
+function getOfficiatingGameLabel(game = {}) {
+  return getEventTitle(game || {}) || 'the event';
+}
+
+function getOfficiatingDateLabel(game = {}) {
+  const date = coerceDate(game.date || game.startAt || game.startTime);
+  if (!date) return '';
+  const timeZone = String(game.timeZone || game.timezone || '').trim() || 'America/Chicago';
+  return formatScheduleUpdateDate(date, timeZone);
+}
+
+function getOfficiatingNotificationCopy(record = {}) {
+  const position = getOfficiatingPositionLabel(record);
+  const game = record.gameReference || {};
+  const gameLabel = getOfficiatingGameLabel(game);
+  const dateLabel = getOfficiatingDateLabel(game);
+  const suffix = dateLabel ? ` on ${dateLabel}` : '';
+  const event = String(record.event || '').trim().toLowerCase();
+
+  if (event === 'rescheduled') {
+    return {
+      title: `Officiating assignment updated: ${position}`,
+      body: `${gameLabel}${suffix} was rescheduled.`
+    };
+  }
+  if (event === 'cancelled' || event === 'canceled') {
+    return {
+      title: `Officiating assignment cancelled: ${position}`,
+      body: `${gameLabel}${suffix} was cancelled.`
+    };
+  }
+  if (event === 'declined') {
+    return {
+      title: `Officiating assignment declined: ${position}`,
+      body: `${gameLabel}${suffix} needs coverage.`
+    };
+  }
+  return {
+    title: `Officiating assignment: ${position}`,
+    body: `${gameLabel}${suffix} is ready for your response.`
+  };
+}
+
+async function getOfficiatingAssignerRecipientUserIds(teamId) {
+  const normalizedTeamId = String(teamId || '').trim();
+  if (!normalizedTeamId) return [];
+
+  const teamSnap = await firestore.doc(`teams/${normalizedTeamId}`).get();
+  if (!teamSnap.exists) return [];
+
+  const team = teamSnap.data() || {};
+  const userIds = new Set([String(team.ownerId || '').trim()].filter(Boolean));
+  const adminUserIds = await getUserIdsByEmails(team.adminEmails || []);
+  adminUserIds.forEach((uid) => userIds.add(uid));
+  return Array.from(userIds);
+}
+
+async function resolveOfficiatingRecordRecipientUserIds(teamId, record = {}) {
+  if (String(record.recipientType || '').trim().toLowerCase() === 'assigner') {
+    return getOfficiatingAssignerRecipientUserIds(teamId);
+  }
+
+  const userIds = new Set([
+    record.recipientOfficialUserId,
+    record.officialUserId,
+    record.userId
+  ].map((value) => String(value || '').trim()).filter(Boolean));
+
+  const email = String(record.recipientOfficialEmail || record.officialEmail || '').trim().toLowerCase();
+  if (email) {
+    const emailUserIds = await getUserIdsByEmails([email]);
+    emailUserIds.forEach((uid) => userIds.add(uid));
+  }
+  return Array.from(userIds);
+}
+
+function buildOfficiatingDestination(teamId) {
+  return {
+    link: buildNotificationLink({ category: 'officiating', teamId }),
+    appRoute: buildNotificationAppRoute({ category: 'officiating', teamId })
+  };
+}
+
+async function sendOfficiatingTargetsNotification({ teamId, gameId = null, targets, title, body }) {
+  if (!targets.length) return null;
+  const destination = buildOfficiatingDestination(teamId);
+  return sendDirectTargetsNotification({
+    targets,
+    category: 'officiating',
+    title,
+    body,
+    teamId,
+    gameId,
+    eventId: gameId,
+    linkOverride: destination.link,
+    appRouteOverride: destination.appRoute
+  });
+}
+
+function normalizeOfficiatingSlotForNotification(slot = {}) {
+  const id = String(slot?.id || slot?.slotId || slot?.position || '').trim();
+  const status = String(slot?.status || '').trim().toLowerCase() || 'open';
+  return {
+    id,
+    position: String(slot?.position || slot?.role || 'Official').trim() || 'Official',
+    status,
+    officialUserId: String(slot?.officialUserId || '').trim(),
+    officialEmail: String(slot?.officialEmail || slot?.email || '').trim().toLowerCase(),
+    officialName: String(slot?.officialName || slot?.name || '').trim()
+  };
+}
+
+function isOpenOfficiatingSlotForNotification(slot = {}) {
+  const normalized = normalizeOfficiatingSlotForNotification(slot);
+  return normalized.status === 'open'
+    && !normalized.officialUserId
+    && !normalized.officialEmail
+    && !normalized.officialName;
+}
+
+function getNewOpenOfficiatingSlots(beforeGame = {}, afterGame = {}) {
+  if (afterGame.officiatingSelfAssignmentEnabled !== true) return [];
+  const beforeOpenIds = beforeGame.officiatingSelfAssignmentEnabled === true
+    ? new Set(
+      (Array.isArray(beforeGame.officiatingSlots) ? beforeGame.officiatingSlots : [])
+        .filter(isOpenOfficiatingSlotForNotification)
+        .map((slot) => normalizeOfficiatingSlotForNotification(slot).id)
+        .filter(Boolean)
+    )
+    : new Set();
+  return (Array.isArray(afterGame.officiatingSlots) ? afterGame.officiatingSlots : [])
+    .map(normalizeOfficiatingSlotForNotification)
+    .filter((slot) => slot.id && isOpenOfficiatingSlotForNotification(slot) && !beforeOpenIds.has(slot.id));
+}
+
 exports._internal = {
+  getTargetsForCategoryUserIds,
+  buildTeamMediaNotificationBatchId,
+  buildTeamMediaNotificationBatchMetadata,
+  buildTeamMediaNotificationBatchWrite,
+  buildTeamMediaNotificationPayload,
+  dispatchDueTeamMediaNotificationBatches,
   getTargetsForCategory,
   sendCategoryNotification,
-  sendPracticePacketDueTomorrowReminders
+  sweepStaleNotificationDeviceTokens,
+  sendRsvpReminderPushNotifications,
+  sendPracticePacketDueTomorrowReminders,
+  syncNotificationRecipientForTeamUser,
+  syncNotificationRecipientsForUserChange,
+  syncNotificationRecipientsForTeamChange
 };
+
+exports.sweepStaleNotificationDeviceTokens = functions.pubsub
+  .schedule('every 24 hours')
+  .onRun(() => sweepStaleNotificationDeviceTokens());
+
+exports.notifyOfficiatingNotificationCreated = functions.firestore
+  .document('teams/{teamId}/officiatingNotifications/{notificationId}')
+  .onCreate(async (snapshot, context) => {
+    const record = snapshot.data() || {};
+    if (record.type && record.type !== 'officiating_assignment') return null;
+
+    const { teamId } = context.params;
+    const recipientUserIds = await resolveOfficiatingRecordRecipientUserIds(teamId, record);
+    if (!recipientUserIds.length) return null;
+
+    const actorUid = String(record.actorUserId || record.actor?.userId || '').trim() || null;
+    const targets = await getTargetsForCategoryUserIds(teamId, 'officiating', recipientUserIds, actorUid);
+    if (!targets.length) return null;
+
+    const copy = getOfficiatingNotificationCopy(record);
+    return sendOfficiatingTargetsNotification({
+      teamId,
+      gameId: record.gameId || record.gameReference?.gameId || null,
+      targets,
+      title: copy.title,
+      body: copy.body
+    });
+  });
+
+exports.notifyOpenOfficiatingSlots = functions.firestore
+  .document('teams/{teamId}/games/{gameId}')
+  .onWrite(async (change, context) => {
+    if (!change.after?.exists) return null;
+
+    const beforeGame = change.before?.exists ? (change.before.data() || {}) : {};
+    const afterGame = change.after.data() || {};
+    const openSlots = getNewOpenOfficiatingSlots(beforeGame, afterGame);
+    if (!openSlots.length) return null;
+
+    const { teamId, gameId } = context.params;
+    const actorUid = String(afterGame.updatedBy || afterGame.createdBy || '').trim() || null;
+    const targets = await getTargetsForCategory(teamId, 'officiating', actorUid);
+    if (!targets.length) return null;
+
+    const gameLabel = getOfficiatingGameLabel(afterGame);
+    const dateLabel = getOfficiatingDateLabel(afterGame);
+    const position = openSlots.length === 1
+      ? openSlots[0].position
+      : `${openSlots.length} open assignments`;
+
+    return sendOfficiatingTargetsNotification({
+      teamId,
+      gameId,
+      targets,
+      title: `Open assignment: ${position}`,
+      body: `${gameLabel}${dateLabel ? ` on ${dateLabel}` : ''} needs an official. Claim it before someone else does.`
+    });
+  });
+
+exports.queueTeamMediaNotificationBatch = functions.firestore
+  .document('teams/{teamId}/mediaItems/{itemId}')
+  .onCreate(async (snap, context) => {
+    const teamId = String(context.params.teamId || '').trim();
+    const itemId = String(context.params.itemId || '').trim();
+    const timestamp = context.timestamp ? new Date(context.timestamp) : new Date();
+    await queueTeamMediaNotificationBatch({
+      teamId,
+      itemId,
+      item: snap.data() || {},
+      now: timestamp
+    });
+    return null;
+  });
+
+exports.dispatchDueTeamMediaNotificationBatches = functions.pubsub
+  .schedule('every 15 minutes')
+  .timeZone('America/Chicago')
+  .onRun(() => dispatchDueTeamMediaNotificationBatches());
 
 exports.markNotificationInboxItemRead = functions.https.onCall(async (data, context) => {
   if (!context.auth?.uid) {
@@ -4565,7 +6037,13 @@ async function markReminderSent(eventRef, claimId, sendResult) {
     'scheduleNotifications.chatMessageError': sendResult?.chatMessageError
       ? sendResult.chatMessageError
       : admin.firestore.FieldValue.delete(),
-    'scheduleNotifications.rsvpEmailCount': Number(sendResult?.rsvpEmailCount || 0)
+    'scheduleNotifications.rsvpEmailCount': Number(sendResult?.rsvpEmailCount || 0),
+    'scheduleNotifications.rsvpPushSuccessCount': Number(sendResult?.rsvpPushSuccessCount || 0),
+    'scheduleNotifications.rsvpPushFailureCount': Number(sendResult?.rsvpPushFailureCount || 0),
+    'scheduleNotifications.rsvpPushTargetCount': Number(sendResult?.rsvpPushTargetCount || 0),
+    'scheduleNotifications.rsvpPushError': sendResult?.rsvpPushError
+      ? sendResult.rsvpPushError
+      : admin.firestore.FieldValue.delete()
   });
 }
 
@@ -4634,12 +6112,30 @@ async function dispatchDuePreEventReminders(now = new Date()) {
           gameId,
           actorUid: 'scheduled-reminder'
         });
+        let rsvpPushResult = { successCount: 0, failureCount: 0, targetCount: 0 };
+        let rsvpPushError = null;
+        try {
+          rsvpPushResult = await sendRsvpReminderPushNotifications({
+            teamId,
+            gameId,
+            event: claimedEvent,
+            recipientTargets: emailResult.recipientTargets,
+            recipientUserIds: emailResult.recipientUserIds
+          });
+        } catch (pushError) {
+          rsvpPushError = pushError;
+          console.error('Failed to send RSVP reminder push notifications', { teamId, gameId, error: pushError });
+        }
         await markReminderSent(eventRef, claimId, {
           ...sendResult,
           chatMessageId: chatResult.messageId,
           chatMessageCreated: chatResult.created,
           chatMessageError: chatMessageError?.message || null,
-          rsvpEmailCount: emailResult.sentCount
+          rsvpEmailCount: emailResult.sentCount,
+          rsvpPushSuccessCount: rsvpPushResult.successCount,
+          rsvpPushFailureCount: rsvpPushResult.failureCount,
+          rsvpPushTargetCount: rsvpPushResult.targetCount,
+          rsvpPushError: rsvpPushError?.message || null
         });
         return {
           teamId,
@@ -4647,7 +6143,11 @@ async function dispatchDuePreEventReminders(now = new Date()) {
           sent: Number(sendResult?.successCount || 0),
           chatMessageId: chatResult.messageId,
           chatMessageCreated: chatResult.created,
-          rsvpEmailCount: emailResult.sentCount
+          rsvpEmailCount: emailResult.sentCount,
+          rsvpPushSuccessCount: rsvpPushResult.successCount,
+          rsvpPushFailureCount: rsvpPushResult.failureCount,
+          rsvpPushTargetCount: rsvpPushResult.targetCount,
+          rsvpPushError: rsvpPushError?.message || null
         };
       } catch (error) {
         await markReminderPendingAfterFailure(eventRef, claimId, error);
@@ -5001,6 +6501,112 @@ function formatMoneyFromCents(amountCents, currency = 'USD') {
   }
 }
 
+function resolveFeeRecipientPlayerId(teamId, recipient = {}) {
+  const explicitPlayerId = String(recipient.playerId || recipient.childId || '').trim();
+  if (explicitPlayerId) return explicitPlayerId;
+
+  const playerKey = String(recipient.playerKey || '').trim();
+  const prefix = `${String(teamId || recipient.teamId || '').trim()}::`;
+  if (prefix.length > 2 && playerKey.startsWith(prefix)) {
+    return playerKey.slice(prefix.length).trim();
+  }
+  return '';
+}
+
+function formatFeeAssignmentDueDate(value) {
+  const dueDate = coerceDate(value);
+  if (!dueDate) return '';
+  return new Intl.DateTimeFormat('en-US', {
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric'
+  }).format(dueDate);
+}
+
+function buildFeeAssignmentNotificationBody(recipient = {}, amountDisplay = '') {
+  const dueDateDisplay = formatFeeAssignmentDueDate(recipient.dueDate || recipient.dueAt || recipient.deadline);
+  const parts = [];
+  if (amountDisplay) {
+    parts.push(`${amountDisplay} has been assigned`);
+  } else {
+    parts.push('A new team fee has been assigned');
+  }
+  if (dueDateDisplay) {
+    parts.push(`due ${dueDateDisplay}`);
+  }
+  return `${parts.join(', ')}.`;
+}
+
+async function resolveFeeAssignmentPayerUserIds(teamId, recipient = {}) {
+  const playerId = resolveFeeRecipientPlayerId(teamId, recipient);
+  const playerRef = playerId ? firestore.doc(`teams/${teamId}/players/${playerId}`) : null;
+  const [playerSnap, privateProfileSnap] = playerRef
+    ? await Promise.all([
+      playerRef.get(),
+      playerRef.collection('private').doc('profile').get()
+    ])
+    : [null, null];
+  const playerData = playerSnap?.exists ? { id: playerSnap.id, ...(playerSnap.data() || {}) } : {};
+  const privateProfileData = privateProfileSnap?.exists ? (privateProfileSnap.data() || {}) : {};
+  const userIds = new Set(getTeamFeeRecipientTargetUserIds({
+    ...recipient,
+    playerId: playerId || recipient.playerId || recipient.childId
+  }, playerData, privateProfileData));
+  const playerKey = getFeeReminderPlayerKey({
+    ...recipient,
+    playerId: playerId || recipient.playerId || recipient.childId
+  }, teamId);
+  if (playerKey) {
+    const parentSnap = await firestore.collection('users')
+      .where('parentPlayerKeys', 'array-contains', playerKey)
+      .get();
+    parentSnap.docs
+      .map((docSnap) => String(docSnap.id || '').trim())
+      .filter(Boolean)
+      .forEach((uid) => userIds.add(uid));
+  }
+  return Array.from(userIds);
+}
+
+function buildFeeAssignmentNotificationClaimRef({ teamId, batchId, uid }) {
+  const normalizedUid = String(uid || '').trim();
+  if (!teamId || !batchId || !normalizedUid) return null;
+  return firestore.doc(`teams/${teamId}/feeBatches/${batchId}/assignmentNotificationClaims/${normalizedUid}`);
+}
+
+async function claimFeeAssignmentNotificationUser({ teamId, batchId, recipientId, uid }) {
+  const normalizedUid = String(uid || '').trim();
+  const claimRef = buildFeeAssignmentNotificationClaimRef({ teamId, batchId, uid: normalizedUid });
+  if (!claimRef) return false;
+  return firestore.runTransaction(async (transaction) => {
+    const claimSnap = await transaction.get(claimRef);
+    if (claimSnap.exists) return false;
+    transaction.set(claimRef, {
+      uid: normalizedUid,
+      teamId,
+      batchId,
+      firstRecipientId: recipientId || null,
+      createdAt: admin.firestore.FieldValue.serverTimestamp()
+    });
+    return true;
+  });
+}
+
+async function releaseFeeAssignmentNotificationClaims({ teamId, batchId, userIds = [] }) {
+  const uniqueUserIds = Array.from(new Set(
+    (Array.isArray(userIds) ? userIds : [])
+      .map((uid) => String(uid || '').trim())
+      .filter(Boolean)
+  ));
+  if (!teamId || !batchId || !uniqueUserIds.length) return;
+  const batch = firestore.batch();
+  uniqueUserIds.forEach((uid) => {
+    const claimRef = buildFeeAssignmentNotificationClaimRef({ teamId, batchId, uid });
+    if (claimRef) batch.delete(claimRef);
+  });
+  await batch.commit();
+}
+
 function getFeePaymentAmountCents(before = {}, after = {}) {
   const explicitAmount = Number(
     after.stripePaymentAmountCents
@@ -5041,25 +6647,78 @@ function normalizeTeamChatConversationId(value) {
   return conversationId || 'team';
 }
 
+function dedupeNotificationTargetsByUserDevice(targets = []) {
+  const seen = new Set();
+  const uniqueTargets = [];
+  for (const target of Array.isArray(targets) ? targets : []) {
+    const uid = String(target?.uid || '').trim();
+    const deviceId = String(target?.deviceId || target?.token || '').trim();
+    const token = String(target?.token || '').trim();
+    if (!uid || !token) continue;
+    const key = `${uid}::${deviceId || token}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    uniqueTargets.push({ ...target, uid, token });
+  }
+  return uniqueTargets;
+}
+
+const teamChatMentionStartRegex = /(^|[\s([{"'])@/g;
+
 function detectMentionedUids(text, members, options = {}) {
   if (!text) return [];
   const { allowReservedMentions = false } = options || {};
   const mentioned = new Set();
-  const tokens = text.match(/@[\w.'"-]+/gi) || [];
-  for (const token of tokens) {
-    const name = token.slice(1).toLowerCase();
-    if (name === 'all' || name === 'team') {
-      if (!allowReservedMentions) continue;
-      members.forEach((m) => mentioned.add(m.uid));
-      break;
+  const sourceText = String(text || '');
+  const normalizedMembers = Array.isArray(members)
+    ? members.map((member) => {
+      const memberName = String(member?.displayName || member?.name || '').toLowerCase().trim().replace(/\s+/g, ' ');
+      return {
+        uid: member?.uid,
+        fullName: memberName,
+        compactName: memberName.replace(/\s+/g, ''),
+        firstName: memberName.split(' ')[0] || ''
+      };
+    }).filter((member) => member.uid && member.fullName)
+    : [];
+
+  for (const match of sourceText.matchAll(teamChatMentionStartRegex)) {
+    const startIndex = Number(match.index || 0) + String(match[1] || '').length + 1;
+    const candidateMatch = sourceText.slice(startIndex).match(/^([A-Za-z0-9][A-Za-z0-9.'-]*)(?:\s+([A-Za-z0-9][A-Za-z0-9.'-]*))?(?:\s+([A-Za-z0-9][A-Za-z0-9.'-]*))?/);
+    if (!candidateMatch) continue;
+    const candidateWords = candidateMatch.slice(1).filter(Boolean).map((part) => String(part).toLowerCase());
+    if (!candidateWords.length) continue;
+
+    const candidateLabels = [];
+    for (let wordCount = candidateWords.length; wordCount >= 1; wordCount -= 1) {
+      const label = candidateWords.slice(0, wordCount).join(' ');
+      candidateLabels.push({
+        name: label,
+        compactName: label.replace(/\s+/g, '')
+      });
     }
-    for (const member of members) {
-      const memberName = String(member.displayName || member.name || '').toLowerCase();
-      const memberNameCompact = memberName.replace(/\s+/g, '');
-      const firstName = memberName.split(' ')[0];
-      if (memberNameCompact === name || firstName === name) {
-        mentioned.add(member.uid);
+
+    let matchedReservedMention = false;
+    for (const candidate of candidateLabels) {
+      if (candidate.name !== 'all' && candidate.name !== 'team') continue;
+      if (!allowReservedMentions) {
+        matchedReservedMention = true;
+        break;
       }
+      normalizedMembers.forEach((member) => mentioned.add(member.uid));
+      return [...mentioned];
+    }
+    if (matchedReservedMention) continue;
+
+    for (const candidate of candidateLabels) {
+      let matchedMember = false;
+      for (const member of normalizedMembers) {
+        if (member.fullName === candidate.name || member.compactName === candidate.compactName || member.firstName === candidate.name) {
+          mentioned.add(member.uid);
+          matchedMember = true;
+        }
+      }
+      if (matchedMember) break;
     }
   }
   return [...mentioned];
@@ -5067,8 +6726,20 @@ function detectMentionedUids(text, members, options = {}) {
 
 async function buildTeamChatNotificationContext(teamId, options = {}) {
   const { includeMentions = true, conversationId = null } = options || {};
+  const { targetType = 'full_team', recipientIds = [] } = options || {};
   const normalizedConversationId = normalizeTeamChatConversationId(conversationId);
-  const teamSnap = await firestore.doc(`teams/${teamId}`).get();
+  const allowedTargetTypes = new Set(['full_team', 'staff', 'individuals']);
+  const normalizedTargetType = allowedTargetTypes.has(String(targetType || '').trim())
+    ? String(targetType || '').trim()
+    : 'full_team';
+  const teamRef = firestore.doc(`teams/${teamId}`);
+  const conversationRef = normalizedConversationId === 'team'
+    ? null
+    : firestore.doc(`teams/${teamId}/chatConversations/${normalizedConversationId}`);
+  const [teamSnap, conversationSnap] = await Promise.all([
+    teamRef.get(),
+    conversationRef ? conversationRef.get() : Promise.resolve(null)
+  ]);
   if (!teamSnap.exists) {
     return {
       members: [],
@@ -5081,6 +6752,44 @@ async function buildTeamChatNotificationContext(teamId, options = {}) {
   }
 
   const team = teamSnap.data() || {};
+  const conversation = conversationSnap?.exists ? (conversationSnap.data() || {}) : {};
+  const participantRoles = new Set(
+    (Array.isArray(conversation.participantRoles) ? conversation.participantRoles : [])
+      .map((role) => String(role || '').trim().toLowerCase())
+      .filter(Boolean)
+  );
+  const conversationParticipantIds = Array.from(new Set(
+    (Array.isArray(conversation.participantIds) ? conversation.participantIds : [])
+      .map((id) => String(id || '').trim())
+      .filter(Boolean)
+  ));
+  const normalizedRecipientIds = Array.from(new Set(
+    (Array.isArray(recipientIds) ? recipientIds : [])
+      .map((id) => String(id || '').trim())
+      .filter(Boolean)
+  ));
+  const effectiveTargetType = normalizedConversationId === 'team'
+    ? 'full_team'
+    : (participantRoles.has('staff')
+      ? 'staff'
+      : (normalizedTargetType === 'individuals' || conversationParticipantIds.length > 0 || normalizedRecipientIds.length > 0
+        ? 'individuals'
+        : normalizedTargetType));
+  const scopedParticipantIds = effectiveTargetType === 'individuals'
+    ? Array.from(new Set([...conversationParticipantIds, ...normalizedRecipientIds]))
+    : [];
+  const scopedParticipantUids = new Set(
+    scopedParticipantIds
+      .filter((id) => !id.toLowerCase().startsWith('email:'))
+      .map((id) => id.toLowerCase().startsWith('user:') ? id.slice(5).trim() : id)
+      .filter(Boolean)
+  );
+  const scopedParticipantEmails = Array.from(new Set(
+    scopedParticipantIds
+      .filter((id) => id.toLowerCase().startsWith('email:'))
+      .map((id) => id.slice(6).trim().toLowerCase())
+      .filter(Boolean)
+  ));
   const users = new Map();
   const addRole = (uid, role) => {
     const normalizedUid = String(uid || '').trim();
@@ -5092,19 +6801,28 @@ async function buildTeamChatNotificationContext(teamId, options = {}) {
 
   addRole(team.ownerId, 'staff');
 
-  const [parentSnap, indexedTargetSnap, adminUserIds] = await Promise.all([
+  const [parentSnap, indexedTargetSnap, adminUserIds, participantEmailUserIds] = await Promise.all([
     firestore.collection('users').where('parentTeamIds', 'array-contains', teamId).get(),
     firestore.collection(`teams/${teamId}/notificationTargets`).get(),
-    getUserIdsByEmails(team.adminEmails || [])
+    getUserIdsByEmails(team.adminEmails || []),
+    scopedParticipantEmails.length > 0 ? getUserIdsByEmails(scopedParticipantEmails) : Promise.resolve([])
   ]);
 
   parentSnap.forEach((docSnap) => addRole(docSnap.id, 'parent'));
   adminUserIds.forEach((uid) => addRole(uid, 'staff'));
+  participantEmailUserIds.forEach((uid) => scopedParticipantUids.add(uid));
 
-  const members = Array.from(users.values()).map((entry) => ({
+  let members = Array.from(users.values()).map((entry) => ({
     uid: entry.uid,
     roles: Array.from(entry.roles)
   }));
+
+  if (effectiveTargetType === 'staff') {
+    members = members.filter((member) => Array.isArray(member.roles) && member.roles.includes('staff'));
+  } else if (effectiveTargetType === 'individuals') {
+    members = members.filter((member) => scopedParticipantUids.has(member.uid));
+  }
+
   const userRecords = await getUserRecordsByIds(members.map((member) => member.uid));
 
   const categories = includeMentions ? ['mentions', 'liveChat'] : ['liveChat'];
@@ -5189,12 +6907,8 @@ function buildTeamChatNotificationPlan({ text, actorUid = null, recipientContext
     mutedUids: [],
     targetsByCategory: { mentions: [], liveChat: [] }
   };
-  const mentionTargets = Array.isArray(context.targetsByCategory?.mentions)
-    ? context.targetsByCategory.mentions
-    : [];
-  const liveChatTargets = Array.isArray(context.targetsByCategory?.liveChat)
-    ? context.targetsByCategory.liveChat
-    : [];
+  const mentionTargets = dedupeNotificationTargetsByUserDevice(context.targetsByCategory?.mentions);
+  const liveChatTargets = dedupeNotificationTargetsByUserDevice(context.targetsByCategory?.liveChat);
   const mentionEligibleUids = new Set(mentionTargets.map((target) => target.uid));
   const mentionMembers = Array.isArray(context.members)
     ? context.members.filter((member) => mentionEligibleUids.has(member.uid))
@@ -5221,70 +6935,75 @@ function buildTeamChatNotificationPlan({ text, actorUid = null, recipientContext
   };
 }
 
-exports.notifyTeamChatMessageCreated = functions.firestore
-  .document('teams/{teamId}/chatMessages/{messageId}')
-  .onCreate(async (snapshot, context) => {
-    const data = snapshot.data() || {};
-    const text = String(data.text || '').trim();
-    const imageUrl = String(data.imageUrl || '').trim();
-    if (!text && !imageUrl) return null;
-    if (isPreEventReminderChatMessage(data)) return null;
+async function handleTeamChatMessageCreated(snapshot, context) {
+  const data = snapshot.data() || {};
+  const text = String(data.text || '').trim();
+  const imageUrl = String(data.imageUrl || '').trim();
+  if (!text && !imageUrl) return null;
+  if (isPreEventReminderChatMessage(data)) return null;
 
-    const teamId = context.params.teamId;
-    const actorUid = data.senderId || null;
-    const conversationId = normalizeTeamChatConversationId(data.conversationId);
-    const senderName = String(data.senderName || 'Team').trim();
-    const body = text
-      ? (text.length > 120 ? `${text.slice(0, 117)}...` : text)
-      : 'sent a photo';
+  const teamId = context.params.teamId;
+  const actorUid = data.senderId || null;
+  const conversationId = normalizeTeamChatConversationId(data.conversationId || context.params.conversationId);
+  const senderName = String(data.senderName || 'Team').trim();
+  const body = text
+    ? (text.length > 120 ? `${text.slice(0, 117)}...` : text)
+    : 'sent a photo';
 
-    const shouldResolveMentions = Boolean(text);
-    const recipientContext = await buildTeamChatNotificationContext(teamId, {
-      includeMentions: shouldResolveMentions,
-      conversationId
-    });
-    const notificationPlan = buildTeamChatNotificationPlan({
-      text,
-      actorUid,
-      recipientContext
-    });
+  const shouldResolveMentions = Boolean(text);
+  const recipientContext = await buildTeamChatNotificationContext(teamId, {
+    includeMentions: shouldResolveMentions,
+    conversationId,
+    targetType: data.targetType,
+    recipientIds: data.recipientIds
+  });
+  const notificationPlan = buildTeamChatNotificationPlan({
+    text,
+    actorUid,
+    recipientContext
+  });
 
-    // Detect @mentions and send targeted mentions-category pushes
-    const mentionedUids = notificationPlan.mentionedUids;
+  const mentionedUids = notificationPlan.mentionedUids;
+  const results = [];
 
-    const results = [];
+  if (shouldResolveMentions) {
+    await snapshot.ref.update({ mentionedUids });
+  }
 
-    if (mentionedUids.length) {
-      await snapshot.ref.update({ mentionedUids });
-      // Send mentions push only to the mentioned users (those who have mentions enabled)
-      if (notificationPlan.mentionTargets.length) {
-        results.push(await sendDirectTargetsNotification({
-          targets: notificationPlan.mentionTargets,
-          category: 'mentions',
-          title: `${senderName} mentioned you`,
-          body,
-          teamId,
-          conversationId
-        }));
-      }
-    }
-
-    if (!notificationPlan.liveChatTargets.length) {
-      return results.length ? results : null;
-    }
-
-    // liveChat push — skip users who already got a mentions push or muted this conversation
+  if (mentionedUids.length && notificationPlan.mentionTargets.length) {
     results.push(await sendDirectTargetsNotification({
-      targets: notificationPlan.liveChatTargets,
-      category: 'liveChat',
-      title: `${senderName}: Team Chat`,
+      targets: notificationPlan.mentionTargets,
+      category: 'mentions',
+      title: `${senderName} mentioned you`,
       body,
       teamId,
       conversationId
     }));
+  }
 
-    return results;
-  });
+  if (!notificationPlan.liveChatTargets.length) {
+    return results.length ? results : null;
+  }
+
+  results.push(await sendDirectTargetsNotification({
+    targets: notificationPlan.liveChatTargets,
+    category: 'liveChat',
+    title: `${senderName}: Team Chat`,
+    body,
+    teamId,
+    conversationId
+  }));
+
+  return results;
+}
+
+exports.notifyTeamChatMessageCreated = functions.firestore
+  .document('teams/{teamId}/chatMessages/{messageId}')
+  .onCreate(handleTeamChatMessageCreated);
+
+exports.notifyConversationChatMessageCreated = functions.firestore
+  .document('teams/{teamId}/chatConversations/{conversationId}/chatMessages/{messageId}')
+  .onCreate(handleTeamChatMessageCreated);
 
 exports.postSharedGameCancellationNotification = functions.https.onCall(async (data, context) => {
   if (!context.auth?.uid) {
@@ -5562,34 +7281,240 @@ exports.notifyGameUpdated = functions.firestore
     });
   });
 
-exports.notifyGameCreated = functions.firestore
+const notifyGameCreated = functions.firestore
   .document('teams/{teamId}/games/{gameId}')
   .onCreate(async (snapshot, context) => {
     const game = snapshot.data() || {};
     const teamId = context.params.teamId;
     const gameId = context.params.gameId;
+    const importBatch = normalizeScheduleImportBatch(game.importBatch);
 
     const status = String(game.status || '').trim().toLowerCase();
     if (status === 'draft') return null;
-    if (game.source || game.sourceMetadata) return null;
+    if (importBatch && importBatch.totalCount > 3) {
+      return registerScheduleImportBatchEvent({ teamId, gameId, game, batch: importBatch });
+    }
 
-    const isPractice = String(game.type || '').toLowerCase() === 'practice';
-    const category = isPractice ? 'practice' : 'schedule';
-    const eventTitle = getEventTitle(game);
-    const dateValue = coerceDate(game.date);
-    const timeZone = String(game.timeZone || game.timezone || '').trim() || 'America/Chicago';
-    const dateLabel = dateValue ? formatScheduleUpdateDate(dateValue, timeZone) : '';
-    const title = isPractice ? `New practice: ${eventTitle}` : `New game: ${eventTitle}`;
-    const body = dateLabel || (isPractice ? 'Practice scheduled' : 'Game scheduled');
+    return sendCreatedScheduleEventNotification({ teamId, gameId, game });
+  });
 
-    return sendCategoryNotification({
-      teamId,
-      gameId,
-      category,
-      title,
-      body,
-      actorUid: game.createdBy || null
+exports.notifyGameCreated = notifyGameCreated;
+exports._internal.notifyGameCreated = notifyGameCreated;
+
+const notifyScheduleImportBatchCompleted = functions.firestore
+  .document('teams/{teamId}/scheduleImportNotificationBatches/{batchId}')
+  .onWrite(async (change, context) => {
+    const after = change.after.exists ? (change.after.data() || {}) : null;
+    if (!after || !after.importCompletedAt || after.sentAt || after.notificationClaimedAt) {
+      return null;
+    }
+
+    return sendScheduleImportBatchNotifications({
+      teamId: context.params.teamId,
+      batchId: context.params.batchId,
+      batch: after
     });
+  });
+
+exports.notifyScheduleImportBatchCompleted = notifyScheduleImportBatchCompleted;
+exports._internal.notifyScheduleImportBatchCompleted = notifyScheduleImportBatchCompleted;
+
+exports.notifyParentMembershipRequestCreated = functions.firestore
+  .document('teams/{teamId}/membershipRequests/{requestId}')
+  .onCreate(async (snapshot, context) => {
+    const data = snapshot.data() || {};
+    if (!NOTIFICATION_CATEGORIES.includes('access')) return null;
+
+    const teamId = String(context.params?.teamId || '').trim();
+    if (!teamId) return null;
+
+    const staffTargets = await getStaffTargetsForAccess(teamId, String(data.requesterUserId || '').trim() || null);
+    if (!staffTargets.length) return null;
+
+    const destination = buildStaffAccessRequestNotificationDestination({ teamId });
+    const requesterName = String(data.requesterName || data.requesterEmail || 'A parent').trim() || 'A parent';
+    const playerName = String(data.playerName || 'a player').trim() || 'a player';
+
+    await sendDirectTargetsNotification({
+      targets: staffTargets,
+      category: 'access',
+      title: `Access request: ${requesterName} for ${playerName}`,
+      body: `${requesterName} requested ${String(data.relation || 'parent').trim() || 'parent'} access for ${playerName}.`,
+      teamId,
+      eventId: String(context.params?.requestId || '').trim() || null,
+      linkOverride: destination.link,
+      appRouteOverride: destination.appRoute
+    });
+    return null;
+  });
+
+exports.notifyParentMembershipRequestUpdated = functions.firestore
+  .document('teams/{teamId}/membershipRequests/{requestId}')
+  .onUpdate(async (change, context) => {
+    const beforeData = change.before.data() || {};
+    const afterData = change.after.data() || {};
+    if (!NOTIFICATION_CATEGORIES.includes('access')) return null;
+
+    const teamId = String(context.params?.teamId || '').trim();
+    const requesterUserId = String(afterData.requesterUserId || '').trim();
+    const beforeStatus = normalizeAccessNotificationStatus(beforeData.status);
+    const afterStatus = normalizeAccessNotificationStatus(afterData.status);
+    if (!teamId || !requesterUserId || beforeStatus === afterStatus) return null;
+    if (!['approved', 'denied'].includes(afterStatus)) return null;
+
+    const requesterTargets = await getTargetsForCategoryUserIds(teamId, 'access', [requesterUserId]);
+    if (!requesterTargets.length) return null;
+
+    const teamSnap = await firestore.doc(`teams/${teamId}`).get();
+    const teamName = String(teamSnap.exists ? (teamSnap.data()?.name || '') : '').trim() || 'your team';
+    const destination = buildTeamNotificationDestination({ teamId });
+
+    await sendDirectTargetsNotification({
+      targets: requesterTargets,
+      category: 'access',
+      title: afterStatus === 'approved'
+        ? `You now have access to ${teamName}`
+        : `Access request declined for ${teamName}`,
+      body: afterStatus === 'approved'
+        ? `${String(afterData.playerName || 'Your player').trim() || 'Your player'} is now linked in your account.`
+        : `Your request for ${String(afterData.playerName || 'this player').trim() || 'this player'} was declined.`,
+      teamId,
+      eventId: String(context.params?.requestId || '').trim() || null,
+      linkOverride: destination.link,
+      appRouteOverride: destination.appRoute
+    });
+    return null;
+  });
+
+exports.notifyRegistrationSubmitted = functions.firestore
+  .document('teams/{teamId}/registrationForms/{formId}/registrations/{registrationId}')
+  .onCreate(async (snapshot, context) => {
+    const data = snapshot.data() || {};
+    if (!NOTIFICATION_CATEGORIES.includes('access')) return null;
+
+    const teamId = String(context.params?.teamId || '').trim();
+    const formId = String(context.params?.formId || '').trim();
+    if (!teamId || !formId) return null;
+
+    const staffTargets = await getStaffTargetsForAccess(teamId, null);
+    if (!staffTargets.length) return null;
+
+    const participantName = getRegistrationParticipantName(data);
+    const programName = getRegistrationProgramName(data);
+    const destination = buildRegistrationReviewNotificationDestination({ teamId, formId });
+
+    await sendDirectTargetsNotification({
+      targets: staffTargets,
+      category: 'access',
+      title: `Registration submitted: ${participantName}`,
+      body: `${participantName} submitted ${programName}.`,
+      teamId,
+      eventId: String(context.params?.registrationId || '').trim() || null,
+      linkOverride: destination.link,
+      appRouteOverride: destination.appRoute
+    });
+    return null;
+  });
+
+exports.notifyRegistrationStatusChanged = functions.firestore
+  .document('teams/{teamId}/registrationForms/{formId}/registrations/{registrationId}')
+  .onUpdate(async (change, context) => {
+    const beforeData = change.before.data() || {};
+    const afterData = change.after.data() || {};
+    if (!NOTIFICATION_CATEGORIES.includes('access')) return null;
+
+    const teamId = String(context.params?.teamId || '').trim();
+    const formId = String(context.params?.formId || '').trim();
+    const registrationId = String(context.params?.registrationId || '').trim();
+    const beforeStatus = normalizeAccessNotificationStatus(beforeData.status);
+    const afterStatus = normalizeAccessNotificationStatus(afterData.status);
+    if (!teamId || !formId || !registrationId || beforeStatus === afterStatus) return null;
+
+    const participantName = getRegistrationParticipantName(afterData);
+    const programName = getRegistrationProgramName(afterData);
+
+    if (afterStatus === 'approved') {
+      return sendRegistrationStatusNotification({
+        teamId,
+        formId,
+        registrationId,
+        registration: afterData,
+        title: `Registration approved: ${participantName}`,
+        body: `${participantName} is approved for ${programName}.`
+      });
+    }
+
+    if (afterStatus === 'denied') {
+      return sendRegistrationStatusNotification({
+        teamId,
+        formId,
+        registrationId,
+        registration: afterData,
+        title: `Registration declined: ${participantName}`,
+        body: `${participantName}'s ${programName} application was declined.`
+      });
+    }
+
+    if (beforeStatus === 'waitlisted' && afterStatus === 'offer-extended') {
+      return sendRegistrationStatusNotification({
+        teamId,
+        formId,
+        registrationId,
+        registration: afterData,
+        title: `Spot available: ${participantName}`,
+        body: `${programName} has an available spot for ${participantName}.`
+      });
+    }
+
+    return null;
+  });
+
+exports.notifyInviteRedeemed = functions.firestore
+  .document('accessCodes/{codeId}')
+  .onUpdate(async (change, context) => {
+    const beforeData = change.before.data() || {};
+    const afterData = change.after.data() || {};
+    if (!NOTIFICATION_CATEGORIES.includes('access')) return null;
+
+    if (beforeData.used === true || afterData.used !== true) return null;
+
+    const inviteType = String(afterData.type || '').trim();
+    if (!['parent_invite', 'admin_invite'].includes(inviteType)) return null;
+
+    const teamId = String(afterData.teamId || '').trim();
+    const inviterUid = String(afterData.generatedBy || '').trim();
+    if (!teamId || !inviterUid) return null;
+
+    const inviteTargets = (await getTargetsForCategory(teamId, 'access', null, {}, [{ uid: inviterUid, roles: ['staff'] }]))
+      .filter((target) => target.uid === inviterUid);
+    if (!inviteTargets.length) return null;
+
+    const usedByUid = String(afterData.usedBy || '').trim();
+    const usedBySnap = usedByUid ? await firestore.doc(`users/${usedByUid}`).get() : null;
+    const usedByData = usedBySnap?.exists ? (usedBySnap.data() || {}) : {};
+    const inviteeName = String(
+      usedByData.displayName
+      || usedByData.fullName
+      || usedByData.name
+      || usedByData.email
+      || afterData.email
+      || 'A user'
+    ).trim() || 'A user';
+    const destination = buildTeamNotificationDestination({ teamId });
+
+    await sendDirectTargetsNotification({
+      targets: inviteTargets,
+      category: 'access',
+      title: `${inviteeName} accepted your invite`,
+      body: inviteType === 'admin_invite'
+        ? `${inviteeName} now has staff access to the team.`
+        : `${inviteeName} joined the team as a parent contact.`,
+      teamId,
+      eventId: String(context.params?.codeId || '').trim() || null,
+      linkOverride: destination.link,
+      appRouteOverride: destination.appRoute
+    });
+    return null;
   });
 
 exports.notifyFeeMarkedPaid = functions.firestore
@@ -5642,7 +7567,9 @@ exports.notifyFeeMarkedPaid = functions.firestore
           body: wasPaymentRecorded
             ? `We received your ${paymentAmountDisplay} payment. Thank you!`
             : 'Your fee balance is now marked as paid.',
-          teamId
+          teamId,
+          batchId,
+          recipientId
         }));
       }
     }
@@ -5751,36 +7678,43 @@ exports.notifyFeeAssigned = functions.firestore
       return null;
     }
 
-    const { teamId } = context.params;
-    const playerId = String(data.playerId || '').trim();
-    const playerRef = playerId ? firestore.doc(`teams/${teamId}/players/${playerId}`) : null;
-    const playerSnap = playerRef ? await playerRef.get() : null;
-    const playerData = playerSnap?.exists ? { id: playerSnap.id, ...(playerSnap.data() || {}) } : {};
-    let privateProfileData = {};
-    if (playerRef) {
-      const privateProfileSnap = await playerRef.collection('private').doc('profile').get();
-      privateProfileData = privateProfileSnap.exists ? (privateProfileSnap.data() || {}) : {};
-    }
-
-    const payerUserIds = getTeamFeeRecipientTargetUserIds(data, playerData, privateProfileData);
+    const { teamId, batchId, recipientId } = context.params;
+    const payerUserIds = await resolveFeeAssignmentPayerUserIds(teamId, data);
     if (!payerUserIds.length) return null;
 
-    const payerTargets = (await getTargetsForCategory(teamId, 'fees', null))
-      .filter((target) => payerUserIds.includes(target.uid));
+    const payerTargets = await getTargetsForCategoryUserIds(teamId, 'fees', payerUserIds, null);
     if (!payerTargets.length) return null;
 
+    const targetUserIds = Array.from(new Set(payerTargets.map((target) => String(target.uid || '').trim()).filter(Boolean)));
+    const claimResults = await Promise.all(targetUserIds.map(async (uid) => ({
+      uid,
+      claimed: await claimFeeAssignmentNotificationUser({ teamId, batchId, recipientId, uid })
+    })));
+    const claimedUserIds = new Set(claimResults.filter((result) => result.claimed).map((result) => result.uid));
+    if (!claimedUserIds.size) return null;
+    const claimedTargets = payerTargets.filter((target) => claimedUserIds.has(target.uid));
+
     const title = String(data.feeTitle || data.title || 'Team fee').trim();
-    const amountCents = Number(data.amountCents || data.feeAmountCents || 0);
+    const amountCents = getTeamFeeBalanceCents(data) || Number(data.amountCents || data.feeAmountCents || 0);
     const amountDisplay = amountCents > 0 ? ` (${formatMoneyFromCents(amountCents, data.currency || 'USD')})` : '';
 
-    await sendDirectTargetsNotification({
-      targets: payerTargets,
-      category: 'fees',
-      title: `New fee assigned: ${title}${amountDisplay}`,
-      body: 'A new team fee has been assigned to your account.',
-      teamId,
-    });
-    return null;
+    try {
+      return await sendDirectTargetsNotification({
+        targets: claimedTargets,
+        category: 'fees',
+        title: `New fee assigned: ${title}${amountDisplay}`,
+        body: buildFeeAssignmentNotificationBody(data, amountDisplay ? amountDisplay.slice(2, -1) : ''),
+        teamId,
+        batchId
+      });
+    } catch (error) {
+      await releaseFeeAssignmentNotificationClaims({
+        teamId,
+        batchId,
+        userIds: Array.from(claimedUserIds)
+      });
+      throw error;
+    }
   });
 
 exports.notifyPracticePacketCompleted = functions.firestore
@@ -5972,6 +7906,85 @@ function publicRsvpIsResponded(response) {
   return PUBLIC_RSVP_RESPONSES.has(String(response || '').trim());
 }
 
+function buildRsvpReminderPushPayload(event) {
+  const eventTitle = getEventTitle(event || {});
+  return {
+    title: 'RSVP reminder',
+    body: truncateNotificationBody(`${eventTitle} needs your availability. Tap to RSVP.`)
+  };
+}
+
+function getScheduleNotificationChildId(event = {}) {
+  return String(event.childId || event.playerId || event.recipientId || '').trim() || null;
+}
+
+async function sendRsvpReminderPushNotifications({ teamId, gameId, event = {}, recipientUserIds = [], recipientTargets = [] } = {}) {
+  if (!teamId || !gameId) {
+    return { successCount: 0, failureCount: 0, targetCount: 0 };
+  }
+
+  const payload = buildRsvpReminderPushPayload(event);
+  const childIdByRecipientGroup = new Map();
+  (Array.isArray(recipientTargets) ? recipientTargets : []).forEach((target) => {
+    const userId = String(target?.userId || '').trim();
+    const childId = String(target?.childId || '').trim();
+    if (!userId || !childId) return;
+    const groupUserIds = childIdByRecipientGroup.get(childId) || [];
+    if (!groupUserIds.includes(userId)) {
+      groupUserIds.push(userId);
+      childIdByRecipientGroup.set(childId, groupUserIds);
+    }
+  });
+
+  if (childIdByRecipientGroup.size > 0) {
+    let successCount = 0;
+    let failureCount = 0;
+    let targetCount = 0;
+
+    for (const [childId, userIds] of childIdByRecipientGroup.entries()) {
+      const targets = await getTargetsForCategoryUserIds(teamId, 'rsvp', userIds);
+      if (!targets.length) continue;
+      const sendResult = await sendDirectTargetsNotification({
+        targets,
+        category: 'rsvp',
+        title: payload.title,
+        body: payload.body,
+        teamId,
+        gameId,
+        eventId: gameId,
+        childId
+      });
+      successCount += Number(sendResult?.successCount || 0);
+      failureCount += Number(sendResult?.failureCount || 0);
+      targetCount += targets.length;
+    }
+
+    return { successCount, failureCount, targetCount };
+  }
+
+  const targets = await getTargetsForCategoryUserIds(teamId, 'rsvp', recipientUserIds);
+  if (!targets.length) {
+    return { successCount: 0, failureCount: 0, targetCount: 0 };
+  }
+
+  const sendResult = await sendDirectTargetsNotification({
+    targets,
+    category: 'rsvp',
+    title: payload.title,
+    body: payload.body,
+    teamId,
+    gameId,
+    eventId: gameId,
+    childId: getScheduleNotificationChildId(event)
+  });
+
+  return {
+    successCount: Number(sendResult?.successCount || 0),
+    failureCount: Number(sendResult?.failureCount || 0),
+    targetCount: targets.length
+  };
+}
+
 function getPublicRsvpResponseSortMs(rsvp, docSnap) {
   const respondedAt = coercePublicRsvpDate(rsvp?.respondedAt || rsvp?.updatedAt || rsvp?.createdAt);
   if (respondedAt) return respondedAt.getTime();
@@ -6121,6 +8134,9 @@ async function createPublicRsvpEmailDeliveries({ teamId, gameId, actorUid = null
   let batchWriteCount = 0;
   let sentCount = 0;
   let linkCount = 0;
+  const remindedPlayerIds = new Set();
+  const recipientUserIds = new Set();
+  const recipientTargets = [];
 
   const ensurePublicRsvpEmailBatchCapacity = () => {
     if (batchWriteCount + 2 <= PUBLIC_RSVP_EMAIL_BATCH_WRITE_LIMIT) return;
@@ -6181,6 +8197,14 @@ async function createPublicRsvpEmailDeliveries({ teamId, gameId, actorUid = null
       batchWriteCount += 2;
       sentCount += 1;
       linkCount += 3;
+      remindedPlayerIds.add(String(player.id || '').trim());
+      if (contact.userId) {
+        recipientUserIds.add(contact.userId);
+        recipientTargets.push({
+          userId: contact.userId,
+          childId: player.id
+        });
+      }
     });
   });
 
@@ -6190,7 +8214,14 @@ async function createPublicRsvpEmailDeliveries({ teamId, gameId, actorUid = null
   for (const publicRsvpEmailBatch of batches) {
     await publicRsvpEmailBatch.commit();
   }
-  return { sentCount, linkCount };
+  return {
+    sentCount,
+    linkCount,
+    playerIds: Array.from(remindedPlayerIds).filter(Boolean),
+    recipientUserIds: Array.from(recipientUserIds).filter(Boolean),
+    recipientTargets,
+    recipientCount: recipientUserIds.size
+  };
 }
 
 exports.sendPublicRsvpEmails = functions.https.onRequest(async (req, res) => {
@@ -6234,7 +8265,28 @@ exports.sendPublicRsvpEmails = functions.https.onRequest(async (req, res) => {
       gameId,
       actorUid: tokenData.uid
     });
-    res.status(200).json({ ok: true, ...result });
+    let rsvpPushResult = { successCount: 0, failureCount: 0, targetCount: 0 };
+    let rsvpPushError = null;
+    try {
+      rsvpPushResult = await sendRsvpReminderPushNotifications({
+        teamId,
+        gameId,
+        event: eventRecord.data,
+        recipientTargets: result.recipientTargets,
+        recipientUserIds: result.recipientUserIds
+      });
+    } catch (pushError) {
+      rsvpPushError = pushError;
+      console.error('Failed to send staff-triggered RSVP reminder push notifications', { teamId, gameId, error: pushError });
+    }
+    res.status(200).json({
+      ok: true,
+      ...result,
+      rsvpPushSuccessCount: rsvpPushResult.successCount,
+      rsvpPushFailureCount: rsvpPushResult.failureCount,
+      rsvpPushTargetCount: rsvpPushResult.targetCount,
+      rsvpPushError: rsvpPushError?.message || null
+    });
   } catch (error) {
     console.error('Failed to send public RSVP emails:', error);
     publicRsvpJsonError(res, error?.code === 'auth/argument-error' ? 401 : 500, error?.message || 'RSVP email delivery failed.');

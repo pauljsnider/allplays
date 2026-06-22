@@ -9,7 +9,7 @@ const redeemParentInviteMock = vi.fn();
 const updateUserProfileMock = vi.fn();
 const markAccessCodeAsUsedMock = vi.fn();
 
-vi.mock('../../js/firebase.js?v=18', () => ({
+vi.mock('../../js/firebase.js?v=19', () => ({
     auth: { currentUser: null },
     signInWithEmailAndPassword: vi.fn(),
     createUserWithEmailAndPassword: vi.fn(),
@@ -27,7 +27,7 @@ vi.mock('../../js/firebase.js?v=18', () => ({
     updatePassword: vi.fn()
 }));
 
-vi.mock('../../js/db.js?v=53', () => ({
+vi.mock('../../js/db.js?v=64', () => ({
     validateAccessCode: validateAccessCodeMock,
     markAccessCodeAsUsed: markAccessCodeAsUsedMock,
     updateUserProfile: updateUserProfileMock,
@@ -39,7 +39,7 @@ vi.mock('../../js/db.js?v=53', () => ({
     listMyParentMembershipRequests: vi.fn()
 }));
 
-vi.mock('../../js/signup-flow.js?v=4', () => ({
+vi.mock('../../js/signup-flow.js?v=5', () => ({
     executeEmailPasswordSignup: vi.fn()
 }));
 

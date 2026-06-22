@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { mapChatConversationDocument, mapChatMessageDocument, mapChatMessageRecord } from './firestore/mappers';
+import { mapChatConversationDocument, mapChatMessageDocument, mapChatMessageRecord, mapChatMessageRecords } from './firestore/mappers';
 import type { FirestoreDocument } from './firestore/types';
 
 describe('chat Firestore mappers', () => {
@@ -58,6 +58,7 @@ describe('chat Firestore mappers', () => {
 
     expect(mapChatMessageDocument(document)).toEqual({
       id: 'message-1',
+      clientMessageId: null,
       text: 'Great pass',
       senderId: 'user-1',
       senderName: 'Coach Kim',
@@ -92,6 +93,7 @@ describe('chat Firestore mappers', () => {
       },
       targetType: 'individuals',
       recipientIds: ['user-2', 'user-3'],
+      mentionedUids: [],
       targetRole: null,
       conversationId: null,
       _doc: undefined
@@ -111,6 +113,7 @@ describe('chat Firestore mappers', () => {
       recipientIds: [' user-4 ', '', 'user-4']
     })).toEqual({
       id: 'message-2',
+      clientMessageId: null,
       text: null,
       senderId: null,
       senderName: null,
@@ -145,10 +148,56 @@ describe('chat Firestore mappers', () => {
       },
       targetType: 'full_team',
       recipientIds: ['user-4'],
+      mentionedUids: [],
       targetRole: null,
       conversationId: null,
       _doc: undefined
     });
+  });
+
+  it('maps chat message record lists and drops malformed entries at the boundary', () => {
+    expect(mapChatMessageRecords([
+      {
+        text: 'missing id',
+        createdAt: { seconds: Date.parse('2026-06-19T19:02:00.000Z') / 1000 }
+      },
+      {
+        id: 'message-3',
+        text: '  Tagged update ',
+        attachments: [
+          {
+            url: 'https://example.com/photo.jpg',
+            mimeType: 'image/jpeg',
+            uploadedAt: { toMillis: () => Date.parse('2026-06-19T19:01:30.000Z') }
+          }
+        ],
+        reactions: {
+          heart: ['user-2', 'user-2', ''],
+          clap: [' user-3 ']
+        },
+        mentionedUids: [' user-4 ', 'user-4', 'user-5'],
+        createdAt: { toDate: () => new Date('2026-06-19T19:02:00.000Z') },
+        editedAt: { seconds: Date.parse('2026-06-19T19:03:00.000Z') / 1000, nanoseconds: 123000000 }
+      }
+    ])).toEqual([
+      expect.objectContaining({
+        id: 'message-3',
+        text: 'Tagged update',
+        attachments: [
+          expect.objectContaining({
+            url: 'https://example.com/photo.jpg',
+            uploadedAt: new Date('2026-06-19T19:01:30.000Z')
+          })
+        ],
+        reactions: {
+          heart: ['user-2'],
+          clap: ['user-3']
+        },
+        mentionedUids: ['user-4', 'user-5'],
+        createdAt: new Date('2026-06-19T19:02:00.000Z'),
+        editedAt: new Date('2026-06-19T19:03:00.123Z')
+      })
+    ]);
   });
 
   it('maps conversation preview metadata from partial Firestore documents', () => {

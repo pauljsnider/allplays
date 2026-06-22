@@ -4,6 +4,7 @@ import { clearAppDataCache } from '../../apps/app/src/lib/appDataCache.ts';
 
 const scheduleMocks = vi.hoisted(() => ({
     loadParentSchedule: vi.fn(),
+    loadParentScheduleChildren: vi.fn(),
     hydrateParentScheduleDetails: vi.fn((schedule) => Promise.resolve(schedule))
 }));
 
@@ -29,8 +30,40 @@ const feeMocks = vi.hoisted(() => ({
     }))
 }));
 
+vi.mock('@capacitor/core', () => ({
+    Capacitor: {
+        isNativePlatform: () => false
+    }
+}));
+
+vi.mock('../../apps/app/node_modules/@capacitor/core/dist/index.cjs.js', () => ({
+    Capacitor: {
+        isNativePlatform: () => false
+    }
+}));
+
+vi.mock('@sentry/browser', () => ({
+    init: vi.fn(),
+    withScope: vi.fn((callback) => callback({
+        setTag: vi.fn(),
+        setContext: vi.fn()
+    })),
+    captureException: vi.fn()
+}));
+
+vi.mock('../../apps/app/node_modules/@sentry/browser/build/npm/esm/index.js', () => ({
+    init: vi.fn(),
+    withScope: vi.fn((callback) => callback({
+        setTag: vi.fn(),
+        setContext: vi.fn()
+    })),
+    captureException: vi.fn()
+}));
+
 vi.mock('../../apps/app/src/lib/scheduleService.ts', () => scheduleMocks);
+vi.mock('../../apps/app/src/lib/scheduleService', () => scheduleMocks);
 vi.mock('../../apps/app/src/lib/chatService.ts', () => chatMocks);
+vi.mock('../../apps/app/src/lib/chatService', () => chatMocks);
 vi.mock('../../js/db.js', () => dbMocks);
 vi.mock('../../js/parent-dashboard-fees.js', () => feeMocks);
 
@@ -83,6 +116,14 @@ beforeEach(() => {
         ],
         events: [event()]
     });
+    scheduleMocks.loadParentScheduleChildren.mockResolvedValue([
+        {
+            teamId: 'team-1',
+            teamName: 'Bears',
+            playerId: 'player-1',
+            playerName: 'Pat Star'
+        }
+    ]);
     chatMocks.loadChatInbox.mockResolvedValue({
         teams: [
             {
@@ -194,6 +235,123 @@ describe('React app Home service', () => {
         });
     });
 
+    it('keeps rendering Home secondary data when fees fail for a non-permission reason', async () => {
+        dbMocks.listParentTeamFeeRecipients.mockRejectedValueOnce(new TypeError('Failed to fetch'));
+        const { loadParentHomeWithSecondaryData } = await import('../../apps/app/src/lib/homeService.ts');
+
+        const home = await loadParentHomeWithSecondaryData(user, {
+            schedule: {
+                children: [
+                    {
+                        teamId: 'team-1',
+                        teamName: 'Bears',
+                        playerId: 'player-1',
+                        playerName: 'Pat Star'
+                    }
+                ],
+                events: [event()]
+            }
+        });
+
+        expect(home.fees).toEqual([]);
+        expect(home.teams).toEqual(expect.arrayContaining([
+            expect.objectContaining({ teamId: 'team-1', unreadCount: 2 })
+        ]));
+    });
+
+    it('throws a typed secondary error when every Home detail slice fails', async () => {
+        scheduleMocks.hydrateParentScheduleDetails.mockRejectedValueOnce(new TypeError('Failed to fetch'));
+        chatMocks.loadChatInbox.mockRejectedValueOnce(new TypeError('Failed to fetch'));
+        dbMocks.listParentTeamFeeRecipients.mockRejectedValueOnce(new TypeError('Failed to fetch'));
+        const { loadParentHomeWithSecondaryData } = await import('../../apps/app/src/lib/homeService.ts');
+
+        await expect(loadParentHomeWithSecondaryData(user, {
+            schedule: {
+                children: [
+                    {
+                        teamId: 'team-1',
+                        teamName: 'Bears',
+                        playerId: 'player-1',
+                        playerName: 'Pat Star'
+                    }
+                ],
+                events: [event()]
+            }
+        })).rejects.toMatchObject({
+            name: 'AppServiceError',
+            type: 'network',
+            message: 'Failed to fetch'
+        });
+    });
+
+    it('preserves every completed secondary slice in the final progressive Home model', async () => {
+        let resolveChat;
+        let resolveFees;
+        chatMocks.loadChatInbox.mockImplementationOnce(() => new Promise((resolve) => {
+            resolveChat = resolve;
+        }));
+        dbMocks.listParentTeamFeeRecipients.mockImplementationOnce(() => new Promise((resolve) => {
+            resolveFees = resolve;
+        }));
+        const onPartial = vi.fn();
+        const { loadParentHomeWithSecondaryData } = await import('../../apps/app/src/lib/homeService.ts');
+
+        const promise = loadParentHomeWithSecondaryData(user, {
+            schedule: {
+                children: [
+                    {
+                        teamId: 'team-1',
+                        teamName: 'Bears',
+                        playerId: 'player-1',
+                        playerName: 'Pat Star'
+                    }
+                ],
+                events: [event()]
+            },
+            onPartial
+        });
+
+        resolveChat({
+            teams: [
+                {
+                    id: 'team-1',
+                    name: 'Bears',
+                    role: 'Parent',
+                    sport: 'Basketball',
+                    unreadCount: 4
+                }
+            ]
+        });
+        await Promise.resolve();
+        expect(onPartial).toHaveBeenCalledWith(expect.objectContaining({
+            metrics: expect.objectContaining({ unreadMessages: 4 }),
+            fees: []
+        }));
+
+        resolveFees([
+            {
+                id: 'fee-late',
+                teamId: 'team-1',
+                teamName: 'Bears',
+                playerId: 'player-1',
+                playerName: 'Pat Star',
+                title: 'Late dues',
+                status: 'unpaid',
+                balanceDueCents: 5000
+            }
+        ]);
+
+        const home = await promise;
+
+        expect(home.teams).toEqual(expect.arrayContaining([
+            expect.objectContaining({ teamId: 'team-1', unreadCount: 4 })
+        ]));
+        expect(home.fees).toEqual([
+            expect.objectContaining({ id: 'fee-late', title: 'Late dues' })
+        ]);
+        expect(home.actionItems.map((item) => item.kind)).toEqual(expect.arrayContaining(['fee', 'message']));
+    });
+
     it('throws a typed network error when the Teams summary chat load fails', async () => {
         chatMocks.loadChatInbox.mockRejectedValueOnce(new TypeError('Failed to fetch'));
         const { loadParentTeamsSummary } = await import('../../apps/app/src/lib/homeService.ts');
@@ -205,6 +363,30 @@ describe('React app Home service', () => {
         });
 
         expect(chatMocks.loadChatInbox).toHaveBeenCalledWith(user, { includeLastMessages: false });
+    });
+
+    it('uses the shared parent child resolver for the fast Teams summary', async () => {
+        const { loadParentTeamsSummary } = await import('../../apps/app/src/lib/homeService.ts');
+
+        const home = await loadParentTeamsSummary({ ...user, parentOf: [] }, { force: true });
+
+        expect(scheduleMocks.loadParentScheduleChildren).toHaveBeenCalledWith(expect.objectContaining({
+            uid: 'user-1',
+            parentOf: []
+        }));
+        expect(home.players).toEqual([
+            expect.objectContaining({
+                teamId: 'team-1',
+                playerId: 'player-1',
+                playerName: 'Pat Star'
+            })
+        ]);
+        expect(home.teams).toEqual(expect.arrayContaining([
+            expect.objectContaining({
+                teamId: 'team-1',
+                players: [expect.objectContaining({ playerId: 'player-1' })]
+            })
+        ]));
     });
 
     it('composes the fast Home summary without optional secondary data', async () => {

@@ -212,6 +212,60 @@ describe('registration roster import planning', () => {
         expect(plan.previewRows.map((row) => row.status)).toEqual(['add']);
     });
 
+    it('preserves full roster family contacts on add operations for invite workflows', () => {
+        const plan = planRegistrationRosterImport({
+            source: { type: 'sports-connect', id: 'league-1' },
+            sourcePlayers: [
+                {
+                    externalPlayerId: 'ext-4',
+                    firstName: 'Taylor',
+                    lastName: 'Reed',
+                    jerseyNumber: '22',
+                    guardians: [
+                        { fullName: 'Pat Reed', email: 'PAT@example.com', phoneNumber: '555-1000', relationship: 'Mother' },
+                        { displayName: 'Chris Reed', emailAddress: 'CHRIS@example.com', mobilePhone: '555-2000', type: 'Father' }
+                    ],
+                    contacts: [
+                        { name: 'Dana Reed', email: 'DANA@example.com', phone: '555-3000', relation: 'Emergency Contact' }
+                    ]
+                }
+            ]
+        });
+
+        const guardians = [
+            { name: 'Pat Reed', email: 'pat@example.com', phone: '555-1000', relation: 'Mother' },
+            { name: 'Chris Reed', email: 'chris@example.com', phone: '555-2000', relation: 'Father' }
+        ];
+        const contacts = [
+            { name: 'Dana Reed', email: 'dana@example.com', phone: '555-3000', relation: 'Emergency Contact' }
+        ];
+
+        expect(plan.results).toMatchObject({ added: 1, updated: 0, skipped: 0, conflicted: 0 });
+        expect(plan.operations).toHaveLength(1);
+        expect(plan.operations[0]).toMatchObject({
+            id: 'source-ext-4',
+            type: 'add',
+            payload: {
+                name: 'Taylor Reed',
+                number: '22',
+                guardians,
+                contacts,
+                sourceMetadata: {
+                    sourceType: 'sports-connect',
+                    sourceId: 'league-1',
+                    externalPlayerId: 'ext-4'
+                }
+            }
+        });
+        expect(plan.previewRows[0]).toMatchObject({
+            status: 'add',
+            playerName: 'Taylor Reed',
+            number: '22',
+            guardians,
+            contacts
+        });
+    });
+
     it('maps configured roster profile fields from matching registration answer keys and labels', () => {
         const plan = planRegistrationRosterImport({
             source: { type: 'sports-connect', id: 'league-1' },
@@ -350,6 +404,26 @@ describe('bulk AI roster update wiring', () => {
         expect(source).toContain('Never add a second active player for a likely update to an existing player');
         expect(source).not.toContain('For each player, create an operation with action="add"');
     });
+
+    it('supports text-only AI roster imports with a structured add/update response contract', () => {
+        const source = readEditRoster();
+
+        expect(source).toContain('Upload roster image (optional)');
+        expect(source).toContain('id="bulk-text-input"');
+        expect(source).toContain("if (!textInput && !imageFile)");
+        expect(source).toContain("alert('Please upload an image or paste roster text')");
+        expect(source).toContain("const imageFile = document.getElementById('roster-image-input').files[0];");
+        expect(source).toContain("Extract ALL players ${imageFile ? 'from the image' : 'from the text'}");
+        expect(source).toContain('let promptParts = [promptText];');
+        expect(source).toContain('if (imageFile) {');
+        expect(source).toContain('promptParts.push(imagePart);');
+        expect(source).toContain('operations: Schema.array({');
+        expect(source).toContain('action: Schema.string()');
+        expect(source).toContain('playerId: Schema.string()');
+        expect(source).toContain('changes: Schema.object({');
+        expect(source).toContain('responseMimeType: "application/json"');
+        expect(source).toContain('responseSchema: jsonSchema');
+    });
 });
 
 describe('registration roster import wiring', () => {
@@ -364,7 +438,14 @@ describe('registration roster import wiring', () => {
         expect(source).toContain('hasConfiguredRegistrationProviderMetadata(team)');
         expect(source).toContain('Registration provider metadata saved');
         expect(source).toContain('This page does not fetch provider data live.');
+        expect(source).toContain('Sports Connect metadata is saved for this team, but roster import is unavailable until a provider connector stores a roster snapshot.');
+        expect(source).toContain('Import unavailable: Sports Connect has metadata only. A live connector must create a stored roster snapshot before this page can preview or import players.');
+        expect(source).toContain('No stored registration roster snapshot is available yet. Sports Connect live import requires a provider connector before preview is possible.');
         expect(source).toContain('save or load a registration roster snapshot for this team');
+        expect(source).toContain('const hasImportableSnapshot = hasStoredSnapshot && sourcePlayers.length > 0;');
+        expect(source).toContain("previewButton.classList.toggle('hidden', !hasImportableSnapshot);");
+        expect(source).toContain("importButton.classList.toggle('hidden', !hasImportableSnapshot);");
+        expect(source).toContain('previewButton.disabled = !hasImportableSnapshot;');
         expect(source).toContain('previewButton.setAttribute(\'aria-disabled\', String(previewButton.disabled));');
         expect(source).toContain('importButton.setAttribute(\'aria-disabled\', \'true\');');
         expect(source).toContain('importButton.setAttribute(\'aria-disabled\', String(importButton.disabled));');
@@ -376,7 +457,7 @@ describe('registration roster import wiring', () => {
         expect(source).toContain('selectedOperationIds');
         expect(source).toContain('Conflicted rows are skipped automatically');
         expect(source).toContain('fields: rosterFieldDefinitions');
-        expect(source).toContain('setPlayerPrivateRosterProfileFields(currentTeamId, playerId, operation.privateRosterFields)');
+        expect(source).toContain('setPlayerPrivateRosterProfileFields(currentTeamId, playerId, operation.privateRosterFields || {}, operation.privateFamilyContacts || {})');
         expect(source).toContain('function getPlayerImportSourceType');
         expect(source).toContain('player.registrationSource?.externalPlayerId');
         expect(source).toContain('player.externalPlayerId');

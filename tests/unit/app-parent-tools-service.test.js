@@ -7,6 +7,7 @@ const dbMocks = vi.hoisted(() => ({
     approveTeamRegistration: vi.fn(),
     createFamilyShareToken: vi.fn(),
     createParentMembershipRequest: vi.fn(),
+    extendTeamRegistrationOffer: vi.fn(),
     createTeamMediaFolder: vi.fn(),
     createTeamMediaLink: vi.fn(),
     db: { _is_mock_db_instance: true }, // Mock db instance for runTransaction
@@ -25,6 +26,7 @@ const dbMocks = vi.hoisted(() => ({
     getTeam: vi.fn(),
     getTeamMediaFolders: vi.fn(),
     getTeamMediaItems: vi.fn(),
+    getTeamMediaItemsPage: vi.fn(),
     canAccessTeamChat: vi.fn(() => true),
     listCertificatesForPlayer: vi.fn(),
     listFamilyShareTokens: vi.fn(),
@@ -219,6 +221,7 @@ import {
     deleteTeamMediaItemForApp,
     updateTeamMediaItemForApp,
     approveTeamRegistrationForApp,
+    extendTeamRegistrationOfferForApp,
     rejectTeamRegistrationForApp,
     cancelRegistrationCheckout,
     initiateRegistrationCheckout,
@@ -250,9 +253,14 @@ describe('React app parent tools service', () => {
         const source = await import('node:fs/promises').then(({ readFile }) =>
             readFile(resolve(process.cwd(), 'apps/app/src/lib/parentToolsService.ts'), 'utf8')
         );
+        const adapterSource = await import('node:fs/promises').then(({ readFile }) =>
+            readFile(resolve(process.cwd(), 'apps/app/src/lib/adapters/legacyParentTools.ts'), 'utf8')
+        );
 
-        expect(source).toContain("from '../../../../js/firebase.js';");
+        expect(source).toContain("from './adapters/legacyParentTools';");
+        expect(adapterSource).toContain("from '@legacy/firebase.js';");
         expect(source).not.toContain("firebase.js?v=");
+        expect(adapterSource).not.toContain("firebase.js?v=");
     });
 
     it('builds legacy URLs used for current-site handoffs', () => {
@@ -264,8 +272,8 @@ describe('React app parent tools service', () => {
     });
 
     it('builds Apple and Google subscription URLs without altering private feed tokens', () => {
-        const privateFeedUrl = 'https://example.test/privateTeamCalendarIcs?teamId=team-1&token=abc123%2Bsafe&view=full';
-        expect(getAppleCalendarFeedUrl(privateFeedUrl)).toBe('webcal://example.test/privateTeamCalendarIcs?teamId=team-1&token=abc123%2Bsafe&view=full');
+        const privateFeedUrl = 'https://example.test/team-calendar.ics?teamId=team-1&token=abc123%2Bsafe&view=full';
+        expect(getAppleCalendarFeedUrl(privateFeedUrl)).toBe('webcal://example.test/team-calendar.ics?teamId=team-1&token=abc123%2Bsafe&view=full');
         expect(getGoogleCalendarFeedUrl(privateFeedUrl)).toBe(`https://calendar.google.com/calendar/render?cid=${encodeURIComponent(privateFeedUrl)}`);
     });
 
@@ -692,19 +700,19 @@ describe('React app parent tools service', () => {
 
     it('builds private calendar feed URLs from stored team subscription URLs or tokens', () => {
         expect(buildPrivateTeamCalendarFeedUrl('team-1', { privateCalendarFeedUrl: 'webcal://example.test/private.ics?teamId=team-1&token=stored' })).toBe('https://example.test/private.ics?teamId=team-1&token=stored');
-        expect(buildPrivateTeamCalendarFeedUrl('team-1', { calendarSubscriptionToken: 'stored-token' })).toBe('https://us-central1-all-plays-prod.cloudfunctions.net/privateTeamCalendarIcs?teamId=team-1&token=stored-token');
+        expect(buildPrivateTeamCalendarFeedUrl('team-1', { calendarSubscriptionToken: 'stored-token' })).toBe('https://us-central1-all-plays-prod.cloudfunctions.net/teamCalendarFeed?teamId=team-1&token=stored-token');
     });
 
     it('creates private calendar feed URLs with stored-team and native token fallback support', async () => {
         dbMocks.getTeam.mockResolvedValueOnce({ id: 'team-1', calendarSubscriptionToken: 'stored-token' });
-        await expect(getPrivateTeamCalendarFeedUrl('team-1')).resolves.toBe('https://us-central1-all-plays-prod.cloudfunctions.net/privateTeamCalendarIcs?teamId=team-1&token=stored-token');
+        await expect(getPrivateTeamCalendarFeedUrl('team-1')).resolves.toBe('https://us-central1-all-plays-prod.cloudfunctions.net/teamCalendarFeed?teamId=team-1&token=stored-token');
 
         dbMocks.getTeam.mockResolvedValueOnce(null);
-        await expect(getPrivateTeamCalendarFeedUrl('team-1')).resolves.toBe('https://us-central1-all-plays-prod.cloudfunctions.net/privateTeamCalendarIcs?teamId=team-1&token=native-token');
+        await expect(getPrivateTeamCalendarFeedUrl('team-1')).resolves.toBe('https://us-central1-all-plays-prod.cloudfunctions.net/teamCalendarFeed?teamId=team-1&token=native-token');
 
         dbMocks.getTeam.mockResolvedValueOnce(null);
         authMocks.getNativeAuthIdToken.mockRejectedValueOnce(new Error('native unavailable'));
-        await expect(getPrivateTeamCalendarFeedUrl('team-1')).resolves.toBe('https://us-central1-all-plays-prod.cloudfunctions.net/privateTeamCalendarIcs?teamId=team-1&token=firebase-token');
+        await expect(getPrivateTeamCalendarFeedUrl('team-1')).resolves.toBe('https://us-central1-all-plays-prod.cloudfunctions.net/teamCalendarFeed?teamId=team-1&token=firebase-token');
     });
 
     it('loads and mutates family share tokens using current website contracts', async () => {
@@ -820,6 +828,7 @@ describe('React app parent tools service', () => {
         ]);
         dbMocks.getPlayers.mockResolvedValue([{ id: 'player-9', name: 'Riley Runner', number: '12' }]);
         dbMocks.approveTeamRegistration.mockResolvedValue({ success: true });
+        dbMocks.extendTeamRegistrationOffer.mockResolvedValue({ success: true });
         dbMocks.rejectTeamRegistration.mockResolvedValue({ success: true });
 
         const queue = await loadTeamRegistrationQueue(user, 'team-coach', 'form-review');
@@ -843,6 +852,9 @@ describe('React app parent tools service', () => {
 
         await approveTeamRegistrationForApp(user, 'team-coach', 'form-review', 'reg-1', { playerId: 'player-9' });
         expect(dbMocks.approveTeamRegistration).toHaveBeenCalledWith('team-coach', 'form-review', 'reg-1', { playerId: 'player-9' });
+
+        await extendTeamRegistrationOfferForApp(user, 'team-coach', 'form-review', 'reg-1');
+        expect(dbMocks.extendTeamRegistrationOffer).toHaveBeenCalledWith('team-coach', 'form-review', 'reg-1', '');
 
         await rejectTeamRegistrationForApp(user, 'team-coach', 'form-review', 'reg-1', 'Not eligible');
         expect(dbMocks.rejectTeamRegistration).toHaveBeenCalledWith('team-coach', 'form-review', 'reg-1', 'Not eligible');
@@ -1003,14 +1015,18 @@ describe('React app parent tools service', () => {
             { id: 'folder-3', name: 'Highlights', visibility: 'team', order: 4, itemCount: 2 },
             { id: 'folder-private', name: 'Private', visibility: 'private', order: 1, itemCount: 9 }
         ]);
-        dbMocks.getTeamMediaItems.mockImplementation(async (teamId, folderId) => (folderId === 'folder-1' ? [
-            { id: 'bad', title: 'Bad', type: 'photo', url: 'javascript:alert(1)', order: 1 },
-            { id: 'photo-1', title: 'Tipoff', type: 'photo', url: 'https://img.example.test/photo.jpg', order: 0 }
-        ] : folderId === 'folder-2' ? [
-            { id: 'video-1', title: 'Replay', type: 'video_link', url: 'https://video.example.test/replay', order: 0 }
-        ] : folderId === 'folder-3' ? [
-            { id: 'highlight-1', title: 'Highlight', type: 'photo', url: 'https://img.example.test/highlight.jpg', order: 0 }
-        ] : []));
+        dbMocks.getTeamMediaItemsPage.mockImplementation(async (teamId, folderId, options = {}) => ({
+            items: folderId === 'folder-1' ? [
+                { id: 'bad', title: 'Bad', type: 'photo', url: 'javascript:alert(1)', order: 1 },
+                { id: 'photo-1', title: 'Tipoff', type: 'photo', url: 'https://img.example.test/photo.jpg', order: 0 }
+            ] : folderId === 'folder-2' ? [
+                { id: 'video-1', title: 'Replay', type: 'video_link', url: 'https://video.example.test/replay', order: 0 }
+            ] : folderId === 'folder-3' ? [
+                { id: 'highlight-1', title: 'Highlight', type: 'photo', url: 'https://img.example.test/highlight.jpg', order: 0 }
+            ] : [],
+            hasMore: folderId === 'folder-1',
+            nextCursor: folderId === 'folder-1' ? { id: `cursor-${options.pageSize || 24}` } : null
+        }));
         dbMocks.uploadTeamMediaPhoto.mockResolvedValue('photo-2');
         dbMocks.uploadTeamMediaFile.mockResolvedValue('file-1');
         dbMocks.createTeamMediaLink.mockResolvedValue('link-1');
@@ -1024,8 +1040,9 @@ describe('React app parent tools service', () => {
             folders: [
                 {
                     id: 'folder-1',
-                    itemCount: 1,
+                    itemCount: 4,
                     itemsLoaded: true,
+                    itemsHasMore: true,
                     items: [{ id: 'photo-1', title: 'Tipoff', type: 'photo', url: 'https://img.example.test/photo.jpg' }]
                 },
                 {
@@ -1042,8 +1059,8 @@ describe('React app parent tools service', () => {
                 }
             ]
         });
-        expect(dbMocks.getTeamMediaItems).toHaveBeenCalledTimes(1);
-        expect(dbMocks.getTeamMediaItems).toHaveBeenCalledWith('team-1', 'folder-1');
+        expect(dbMocks.getTeamMediaItemsPage).toHaveBeenCalledTimes(1);
+        expect(dbMocks.getTeamMediaItemsPage).toHaveBeenCalledWith('team-1', 'folder-1', { pageSize: 24, cursor: null });
 
         await expect(loadTeamMediaForApp(user, 'team-1', { folderIds: ['folder-2'] })).resolves.toMatchObject({
             folders: [
@@ -1052,8 +1069,8 @@ describe('React app parent tools service', () => {
                 { id: 'folder-3', itemCount: 2, itemsLoaded: false, items: [] }
             ]
         });
-        expect(dbMocks.getTeamMediaItems).toHaveBeenCalledTimes(2);
-        expect(dbMocks.getTeamMediaItems).toHaveBeenLastCalledWith('team-1', 'folder-2');
+        expect(dbMocks.getTeamMediaItemsPage).toHaveBeenCalledTimes(2);
+        expect(dbMocks.getTeamMediaItemsPage).toHaveBeenLastCalledWith('team-1', 'folder-2', { pageSize: 24, cursor: null });
 
         await expect(createTeamMediaAlbumForApp('team-1', { name: '  Spring photos  ', visibility: 'private' })).resolves.toBe('folder-new');
         await uploadParentTeamMediaPhoto('team-1', 'folder-1', photoFile);
@@ -1061,9 +1078,76 @@ describe('React app parent tools service', () => {
         await addParentTeamMediaLink('team-1', 'folder-1', 'Replay', 'https://video.example.test/replay');
         expect(dbMocks.canAccessTeamChat).toHaveBeenCalledWith(expect.objectContaining({ uid: 'user-1' }), { id: 'team-1', name: 'Bears' });
         expect(dbMocks.createTeamMediaFolder).toHaveBeenCalledWith('team-1', { name: 'Spring photos', visibility: 'private' });
-        expect(dbMocks.uploadTeamMediaPhoto).toHaveBeenCalledWith('team-1', 'folder-1', photoFile);
-        expect(dbMocks.uploadTeamMediaFile).toHaveBeenCalledWith('team-1', 'folder-1', docFile);
+        expect(dbMocks.uploadTeamMediaPhoto).toHaveBeenCalledWith('team-1', 'folder-1', photoFile, { returnItem: true });
+        expect(dbMocks.uploadTeamMediaFile).toHaveBeenCalledWith('team-1', 'folder-1', docFile, { returnItem: true });
         expect(dbMocks.createTeamMediaLink).toHaveBeenCalledWith('team-1', 'folder-1', { title: 'Replay', url: 'https://video.example.test/replay' });
+    });
+
+    it('returns normalized team media upload items so the app can merge them without rereading the album', async () => {
+        const photoFile = new File(['photo'], 'photo.jpg', { type: 'image/jpeg' });
+        const docFile = new File(['doc'], 'packet.pdf', { type: 'application/pdf' });
+        dbMocks.uploadTeamMediaPhoto.mockResolvedValue({
+            id: 'photo-2',
+            title: 'photo.jpg',
+            type: 'photo',
+            downloadUrl: 'https://img.example.test/photo-2.jpg',
+            order: 4
+        });
+        dbMocks.uploadTeamMediaFile.mockResolvedValue({
+            id: 'file-1',
+            title: 'packet.pdf',
+            type: 'file',
+            downloadUrl: 'https://files.example.test/packet.pdf',
+            order: 5
+        });
+
+        await expect(uploadParentTeamMediaPhoto('team-1', 'folder-1', photoFile)).resolves.toMatchObject({
+            id: 'photo-2',
+            title: 'photo.jpg',
+            type: 'photo',
+            url: 'https://img.example.test/photo-2.jpg'
+        });
+        await expect(uploadParentTeamMediaFile('team-1', 'folder-1', docFile)).resolves.toMatchObject({
+            id: 'file-1',
+            title: 'packet.pdf',
+            type: 'file',
+            url: 'https://files.example.test/packet.pdf'
+        });
+        expect(dbMocks.getTeamMediaItems).not.toHaveBeenCalled();
+    });
+
+    it('passes team media pagination cursors through the app media model', async () => {
+        const cursor = { id: 'cursor-1' };
+        const nextCursor = { id: 'cursor-2' };
+        dbMocks.getTeam.mockResolvedValue({ id: 'team-1', name: 'Bears' });
+        dbMocks.getTeamMediaFolders.mockResolvedValue([
+            { id: 'folder-1', name: 'Game photos', visibility: 'team', order: 1, itemCount: 40 }
+        ]);
+        dbMocks.getTeamMediaItemsPage.mockResolvedValue({
+            items: [
+                { id: 'photo-25', title: 'Second page', type: 'photo', url: 'https://img.example.test/photo-25.jpg', order: 25 }
+            ],
+            hasMore: true,
+            nextCursor
+        });
+
+        await expect(loadTeamMediaForApp(user, 'team-1', {
+            folderIds: ['folder-1'],
+            pageSize: 1,
+            cursorsByFolderId: { 'folder-1': cursor }
+        })).resolves.toMatchObject({
+            folders: [
+                {
+                    id: 'folder-1',
+                    itemCount: 40,
+                    itemsLoaded: true,
+                    itemsHasMore: true,
+                    itemsNextCursor: nextCursor,
+                    items: [{ id: 'photo-25', title: 'Second page' }]
+                }
+            ]
+        });
+        expect(dbMocks.getTeamMediaItemsPage).toHaveBeenCalledWith('team-1', 'folder-1', { pageSize: 1, cursor });
     });
 
     it('initiates Stripe checkout for registration and returns URL', async () => {

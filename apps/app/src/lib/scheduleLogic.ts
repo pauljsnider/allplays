@@ -1,3 +1,5 @@
+import { formatLongDate, formatShortDate, formatTimeOfDay } from './datetime';
+
 export type ParentScheduleFilter = 'upcoming-all' | 'upcoming-games' | 'upcoming-practices' | 'availability' | 'recent-results' | 'past-all';
 export type ScheduleViewMode = 'list' | 'compact' | 'calendar' | 'packets';
 export type ScheduleTimeRange = 'week' | 'month' | 'quarter' | 'all';
@@ -82,11 +84,13 @@ export type ScheduleRideOffer = {
 };
 
 export type PracticePacketBlock = {
+  drillId?: string | null;
   type?: string | null;
   duration?: string | number | null;
   drillTitle?: string | null;
   title?: string | null;
   description?: string | null;
+  notes?: string | null;
 };
 
 export type PracticeHomePacket = {
@@ -151,6 +155,8 @@ export type ParentScheduleEvent = {
   seasonLabel?: string | null;
   competitionType?: string | null;
   countsTowardSeasonRecord?: boolean | null;
+  tournament?: Record<string, any> | null;
+  statTrackerConfigId?: string | null;
   sourceType?: ScheduleSourceType | string | null;
   sourceLabel?: string | null;
   isImported?: boolean;
@@ -320,11 +326,11 @@ export function getLiveClockViewModel(event: Pick<ParentScheduleEvent, 'type' | 
 }
 
 export function formatEventDateLabel(date: Date) {
-  return date.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
+  return formatShortDate(date);
 }
 
 export function formatEventTimeLabel(date: Date) {
-  return date.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+  return formatTimeOfDay(date);
 }
 
 export function getScheduleTitle(event: Pick<ParentScheduleEvent, 'type' | 'title' | 'opponent'>) {
@@ -461,15 +467,34 @@ export function getStaffRsvpReminderMetadataTarget(eventId: string) {
   };
 }
 
-export function buildStaffRsvpReminderMetadata(userId: string | null | undefined, missingCount: number, emailCount: number, sentAt = new Date().toISOString()) {
+function normalizeNonNegativeCount(value: unknown) {
+  return Math.max(0, Number.parseInt(String(value || 0), 10) || 0);
+}
+
+export function buildStaffRsvpReminderMetadata(
+  userId: string | null | undefined,
+  missingCount: number,
+  emailCount: number,
+  sentAt = new Date().toISOString(),
+  pushMetrics: {
+    rsvpPushSuccessCount?: unknown;
+    rsvpPushFailureCount?: unknown;
+    rsvpPushTargetCount?: unknown;
+    rsvpPushError?: unknown;
+  } = {}
+) {
   return {
     sent: true,
     sentAt,
     lastAction: 'rsvp_reminder',
     lastSentAt: sentAt,
     lastSentBy: userId || null,
-    lastRsvpReminderCount: Math.max(0, Number.parseInt(String(missingCount || 0), 10) || 0),
-    lastRsvpEmailCount: Math.max(0, Number.parseInt(String(emailCount || 0), 10) || 0)
+    lastRsvpReminderCount: normalizeNonNegativeCount(missingCount),
+    lastRsvpEmailCount: normalizeNonNegativeCount(emailCount),
+    lastRsvpPushSuccessCount: normalizeNonNegativeCount(pushMetrics.rsvpPushSuccessCount),
+    lastRsvpPushFailureCount: normalizeNonNegativeCount(pushMetrics.rsvpPushFailureCount),
+    lastRsvpPushTargetCount: normalizeNonNegativeCount(pushMetrics.rsvpPushTargetCount),
+    lastRsvpPushError: compactString(pushMetrics.rsvpPushError) || null
   };
 }
 
@@ -518,6 +543,47 @@ export function getScheduleEventDetailPath(
   if (section) params.set('section', section);
   const query = params.toString();
   return `/schedule/${encodeURIComponent(event.teamId)}/${encodeURIComponent(event.id)}${query ? `?${query}` : ''}`;
+}
+
+export function getScheduleTournamentInfo(
+  event: Pick<ParentScheduleEvent, 'competitionType' | 'tournament'> & Record<string, any>
+) {
+  const tournament = event?.tournament && typeof event.tournament === 'object' ? event.tournament : {};
+  const isTournament = String(event?.competitionType || '').trim().toLowerCase() === 'tournament'
+    || Object.keys(tournament).length > 0;
+
+  if (!isTournament) {
+    return {
+      isTournament: false,
+      label: '',
+      details: '',
+      divisionName: '',
+      bracketName: '',
+      roundName: '',
+      poolName: ''
+    };
+  }
+
+  const divisionName = compactString(tournament.divisionName || event.divisionName);
+  const bracketName = compactString(tournament.bracketName || event.bracketName);
+  const roundName = compactString(tournament.roundName || event.roundName);
+  const poolName = compactString(tournament.poolName || event.poolName);
+  const labelParts = [divisionName, bracketName, roundName || poolName].filter(Boolean);
+  const detailParts = [
+    poolName && roundName ? `Pool: ${poolName}` : poolName,
+    tournament.gameLabel,
+    tournament.seedLabel
+  ].map(compactString).filter(Boolean);
+
+  return {
+    isTournament: true,
+    label: labelParts.join(' / ') || 'Tournament',
+    details: detailParts.join(' - '),
+    divisionName,
+    bracketName,
+    roundName,
+    poolName
+  };
 }
 
 export function getScheduleAssignmentStatus(assignment: Partial<ScheduleAssignment>, userId = '') {
@@ -930,7 +996,7 @@ export function getScheduleForecastHref(location: string | null | undefined, dat
 
   let query = `weather in ${normalizedLocation}`;
   if (date) {
-    const formattedDate = date.toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
+    const formattedDate = formatLongDate(date);
     query += ` on ${formattedDate}`;
   }
 

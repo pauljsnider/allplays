@@ -73,10 +73,11 @@ describe('notification target index core helpers', () => {
         });
     });
 
-    it('filters staff-only notification categories out of parent-only targets', () => {
-        expect(notificationAudienceAllowsRoles('access', ['parent'])).toBe(false);
+    it('keeps access and officiating available to parents and staff', () => {
+        expect(notificationAudienceAllowsRoles('access', ['parent'])).toBe(true);
         expect(notificationAudienceAllowsRoles('access', ['staff'])).toBe(true);
-        expect(notificationAudienceAllowsRoles('officiating', ['parent'])).toBe(false);
+        expect(notificationAudienceAllowsRoles('officiating', ['parent'])).toBe(true);
+        expect(notificationAudienceAllowsRoles('officiating', ['staff'])).toBe(true);
         expect(notificationAudienceAllowsRoles('fees', ['parent'])).toBe(true);
     });
 
@@ -102,20 +103,40 @@ describe('notification target index core helpers', () => {
 
         expect(targetResolverSource).toContain("firestore.collection(`teams/${teamId}/notificationRecipients`)");
         expect(targetResolverSource).toContain("where(`categories.${category}`, '==', true)");
-        expect(targetResolverSource).toContain('if (uid === actorUid) return null;');
+        expect(targetResolverSource).toContain('if (!uid || uid === actorUid || !eligibleUsers.has(uid)) return [];');
+        expect(targetResolverSource).toContain('if (data.categories && data.categories[category] !== true) return [];');
         expect(targetResolverSource).toContain('users/${uid}/notificationPreferences/${teamId}');
         expect(targetResolverSource).toContain('users/${uid}/notificationDevices');
         expect(targetResolverSource).toContain('if (!NOTIFICATION_CATEGORIES.includes(category)) return []');
         expect(targetResolverSource).toContain('canReceiveCategoryNotification(category, user, audienceContext)');
         expect(functionsSource).toContain("const albumVisibility = audienceContext?.staffOnly === true");
         expect(functionsSource).toContain("return ['private', 'staff', 'staff-only'].includes(normalized) ? 'private' : 'team';");
-        expect(functionsSource).toContain("if (albumVisibility !== 'private') return true;");
-        expect(functionsSource).toContain("return Array.isArray(user.roles) && user.roles.includes('staff');");
+        expect(functionsSource).toContain('if (hasMediaAudienceConstraints(audienceContext))');
+        expect(functionsSource).toContain('return mediaAudienceAllowsUser(user, audienceContext);');
+        expect(functionsSource).toContain("const isStaffUser = Array.isArray(user.roles) && user.roles.includes('staff');");
         expect(targetResolverSource).toContain('const missingUsers = users.filter');
         expect(targetResolverSource).toContain('teamNotificationRecipientIndexIsEmpty(teamId)');
         expect(targetResolverSource).toContain('if (targetSnap.empty && await teamNotificationRecipientIndexIsEmpty(teamId))');
-        expect(targetResolverSource).toContain('await backfillNotificationRecipientsForTeam(teamId, users);');
+        expect(targetResolverSource).toContain("await backfillNotificationRecipientsForTeam(teamId, users, { skipLegacyCleanup: true });");
         expect(targetResolverSource).toContain('getLegacyTargetsForCategory(teamId, category, missingUsers, actorUid, audienceContext)');
-        expect(functionsSource).toContain('buildTeamNotificationIndexRefs(target.teamId, target.uid, target.deviceId)');
+        expect(functionsSource).toContain('buildTeamNotificationTargetRef(target.teamId, target.uid, target.deviceId)');
+    });
+
+    it('uses indexed recipient docs before fallback reads for explicit user-id target resolution', () => {
+        const userIdResolverSource = functionsSource.slice(
+            functionsSource.indexOf('async function getTargetsForCategoryUserIds'),
+            functionsSource.indexOf('function buildTargetsFromNotificationRecipientDoc')
+        );
+
+        expect(userIdResolverSource).toContain('Array.from(eligibleUsers.keys())');
+        expect(userIdResolverSource).toContain('buildTeamNotificationRecipientRef(teamId, uid)');
+        expect(userIdResolverSource).toContain('firestore.getAll(...recipientRefs)');
+        expect(userIdResolverSource).toContain('buildTargetsFromNotificationRecipientDoc(docSnap');
+        expect(userIdResolverSource).toContain('const indexedUserIds = new Set(indexedTargets.map((target) => target.uid));');
+        expect(userIdResolverSource).toContain('!indexedUserIds.has(user.uid)');
+        expect(userIdResolverSource).toContain('eligibleUsers.has(user.uid)');
+        expect(userIdResolverSource).toContain('? await getLegacyTargetsForCategory(teamId, category, missingUsers, actorUid, audienceContext)');
+        expect(userIdResolverSource).toContain('return [...indexedTargets, ...fallbackTargets].filter');
+        expect(userIdResolverSource).toContain('if (!recipientUserIds.has(uid)) return false;');
     });
 });

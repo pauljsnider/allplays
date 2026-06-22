@@ -67,3 +67,28 @@ jobs:
 
       - name: Run notification functions coverage
         run: npm run test:functions:notifications
+
+  app-quality:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Setup Node
+        uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install app dependencies
+        run: npm ci --prefix apps/app
+
+      - name: Audit app dependencies
+        run: npm --prefix apps/app audit --audit-level=moderate
+
+      - name: Typecheck app
+        run: npm --prefix apps/app run typecheck
+
+      - name: Lint app
+        run: npm --prefix apps/app run lint -- --quiet

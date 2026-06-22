@@ -56,8 +56,8 @@ const LEGACY_CATEGORY_RESOLUTION_FIXTURES = Object.freeze([
         expectedCounts: {
             targetQueries: 1,
             parentQueries: 1,
-            preferenceGets: 8,
-            deviceGets: 8
+            preferenceGets: 4,
+            deviceGets: 4
         },
         expectedIndexedCounts: {
             preferenceGets: 1,
@@ -111,8 +111,8 @@ const LEGACY_CATEGORY_RESOLUTION_FIXTURES = Object.freeze([
         expectedCounts: {
             targetQueries: 1,
             parentQueries: 1,
-            preferenceGets: 4,
-            deviceGets: 4
+            preferenceGets: 1,
+            deviceGets: 1
         },
         expectedIndexedCounts: {
             preferenceGets: 0,

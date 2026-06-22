@@ -78,6 +78,14 @@ export async function getRegistrationSources() {
     return [];
 }
 
+export async function syncRegistrationProvider() {
+    return {
+        importedCount: 0,
+        players: [],
+        registrationSource: null
+    };
+}
+
 export async function inviteAdmin(teamId, email) {
     window.__lastAdminInvite = { teamId, email };
     return {

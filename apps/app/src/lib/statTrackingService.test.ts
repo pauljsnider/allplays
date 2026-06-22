@@ -1,5 +1,7 @@
+import { readFileSync } from 'node:fs';
 import { describe, expect, it, vi } from 'vitest';
-import { buildTrackerEventDocument, createStatTrackingService } from './statTrackingService';
+import { buildTrackerEventDocument } from './statTrackingEvent';
+import { createStatTrackingService } from './statTrackingService';
 
 function createDependencies() {
   return {
@@ -13,6 +15,14 @@ function createDependencies() {
 }
 
 describe('statTrackingService', () => {
+  it('keeps stat tracking helpers behind typed adapters and the extracted tracker event builder', () => {
+    const statTrackingServiceSource = readFileSync('src/lib/statTrackingService.ts', 'utf8');
+
+    expect(statTrackingServiceSource).not.toContain("../../../../js/");
+    expect(statTrackingServiceSource).toContain("./adapters/legacyStatTrackingDb");
+    expect(statTrackingServiceSource).toContain("./statTrackingEvent");
+  });
+
   it('builds legacy-compatible tracker event documents', () => {
     const event = buildTrackerEventDocument({
       text: '#4 Alex PTS +2',
@@ -153,6 +163,52 @@ describe('statTrackingService', () => {
     expect(service.getCurrentScore()).toEqual({ homeScore: 10, awayScore: 8 });
     expect(service.getEventLog()).toHaveLength(0);
     expect(await service.undoLastEvent('team-1', 'game-1', user)).toBeNull();
+  });
+
+  it('steps backward through standard tracker scoring events one undo at a time', async () => {
+    const dependencies = createDependencies();
+    const service = createStatTrackingService({
+      statConfig: { columns: ['PTS'] },
+      initialScore: { homeScore: 0, awayScore: 0 },
+      dependencies
+    });
+    const user = { uid: 'coach-1' };
+
+    await service.recordEvent('team-1', 'game-1', {
+      text: '#4 Alex PTS +2',
+      playerName: 'Alex',
+      playerNumber: '4',
+      undoData: {
+        type: 'stat',
+        playerId: 'player-1',
+        statKey: 'PTS',
+        value: 2
+      }
+    }, user);
+    await service.recordEvent('team-1', 'game-1', {
+      text: '#12 Sam PTS +3',
+      playerName: 'Sam',
+      playerNumber: '12',
+      undoData: {
+        type: 'stat',
+        playerId: 'player-2',
+        statKey: 'PTS',
+        value: 3
+      }
+    }, user);
+
+    expect(service.getCurrentScore()).toEqual({ homeScore: 5, awayScore: 0 });
+    expect(service.getEventLog().map((entry) => entry.playerName)).toEqual(['Alex', 'Sam']);
+
+    const firstUndo = await service.undoLastEvent('team-1', 'game-1', user);
+    expect(firstUndo?.playerName).toBe('Sam');
+    expect(service.getCurrentScore()).toEqual({ homeScore: 2, awayScore: 0 });
+    expect(service.getEventLog().map((entry) => entry.playerName)).toEqual(['Alex']);
+
+    const secondUndo = await service.undoLastEvent('team-1', 'game-1', user);
+    expect(secondUndo?.playerName).toBe('Alex');
+    expect(service.getCurrentScore()).toEqual({ homeScore: 0, awayScore: 0 });
+    expect(service.getEventLog()).toEqual([]);
   });
 
   it('rejects unknown stat columns before writing', async () => {
@@ -343,5 +399,43 @@ describe('statTrackingService', () => {
       uid: 'coach-1'
     });
     expect(service.getCurrentScore()).toEqual({ homeScore: 10, awayScore: 11 });
+  });
+
+  it('undoes opponent scoring without writing player aggregates', async () => {
+    const dependencies = createDependencies();
+    const service = createStatTrackingService({
+      statConfig: { columns: ['PTS'] },
+      initialScore: { homeScore: 10, awayScore: 8 },
+      dependencies
+    });
+    const user = { uid: 'coach-1' };
+
+    await service.recordEvent('team-1', 'game-1', {
+      text: 'Opponent PTS +2',
+      clock: '00:45',
+      period: 'Q2',
+      undoData: {
+        type: 'stat',
+        playerId: 'opponent',
+        statKey: 'PTS',
+        value: 2,
+        isOpponent: true
+      }
+    }, user);
+
+    expect(dependencies.setDoc).toHaveBeenCalledTimes(1);
+    expect(service.getCurrentScore()).toEqual({ homeScore: 10, awayScore: 10 });
+
+    dependencies.setDoc.mockClear();
+    dependencies.updateGameScore.mockClear();
+    const undone = await service.undoLastEvent('team-1', 'game-1', user);
+
+    expect(undone?.isOpponent).toBe(true);
+    expect(dependencies.setDoc).not.toHaveBeenCalled();
+    expect(dependencies.updateGameScore).toHaveBeenCalledWith('team-1', 'game-1', {
+      homeScore: 10,
+      awayScore: 8
+    }, user);
+    expect(service.getCurrentScore()).toEqual({ homeScore: 10, awayScore: 8 });
   });
 });

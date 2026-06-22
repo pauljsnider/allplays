@@ -1,3 +1,5 @@
+import { createLogger } from './logger';
+
 type CacheEntry<T> = {
   value?: T;
   promise?: Promise<T>;
@@ -9,6 +11,7 @@ const defaultTtlMs = 60 * 1000;
 const defaultMaxStaleMs = 24 * 60 * 60 * 1000;
 const storagePrefix = 'allplays:appDataCache:';
 const cache = new Map<string, CacheEntry<unknown>>();
+const logger = createLogger('app-data-cache');
 
 type LoadCachedAppDataOptions<T> = {
   ttlMs?: number;
@@ -74,7 +77,7 @@ export function loadCachedAppData<T>(
   ) {
     const refreshPromise = loadAndStoreCachedAppData(key, loader, existing, { ttlMs, persist, onRefresh });
     refreshPromise.catch((error) => {
-      console.warn('[app-data-cache] Background refresh failed:', error);
+      logger.warn('Background refresh failed.', { error });
     });
     return Promise.resolve(existing.value as T);
   }
@@ -153,7 +156,7 @@ function readStoredCacheEntry<T>(key: string, now: number, maxStaleMs: number): 
     const raw = storage.getItem(storageKey);
     parsed = raw ? JSON.parse(raw, reviveCacheValue) : null;
   } catch (error) {
-    console.warn('[app-data-cache] Unable to read cached data:', error);
+    logger.warn('Unable to read cached data.', { error });
     storage.removeItem(storageKey);
     return null;
   }
@@ -189,7 +192,7 @@ function writeStoredCacheEntry<T>(key: string, entry: CacheEntry<T>) {
     };
     storage.setItem(toStorageKey(key), JSON.stringify(stored, replaceCacheValue));
   } catch (error) {
-    console.warn('[app-data-cache] Unable to persist cached data:', error);
+    logger.warn('Unable to persist cached data.', { error });
   }
 }
 

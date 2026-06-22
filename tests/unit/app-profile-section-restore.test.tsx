@@ -13,6 +13,7 @@ const profileServiceMocks = vi.hoisted(() => ({
   loadNotificationPreferences: vi.fn(),
   loadNotificationTeams: vi.fn(),
   loadProfileAccessCodes: vi.fn(),
+  loadProfileAccessCodesPage: vi.fn(),
   loadProfileDocument: vi.fn(),
   normalizeNotificationPreferences: vi.fn((preferences?: any) => ({
     liveChat: preferences?.liveChat !== false,
@@ -33,7 +34,8 @@ const publicActionsMocks = vi.hoisted(() => ({
 const pushServiceMocks = vi.hoisted(() => ({
   enablePushNotificationsForUser: vi.fn(),
   getPushNotificationPermissionStatus: vi.fn(),
-  openPushNotificationSettings: vi.fn()
+  openPushNotificationSettings: vi.fn(),
+  runPushNotificationPrimer: vi.fn()
 }));
 
 const shellLayoutState = vi.hoisted(() => ({
@@ -129,6 +131,7 @@ describe('Profile section restore from URL', () => {
       updatedAt: { seconds: 1717200000 }
     });
     profileServiceMocks.loadProfileAccessCodes.mockResolvedValue([]);
+    profileServiceMocks.loadProfileAccessCodesPage.mockResolvedValue({ codes: [], nextCursor: null });
     profileServiceMocks.loadParentTeams.mockResolvedValue([]);
     profileServiceMocks.normalizeProfilePhoto.mockImplementation(async (file: File) => file);
     profileServiceMocks.saveProfileDocument.mockResolvedValue(undefined);
@@ -156,6 +159,7 @@ describe('Profile section restore from URL', () => {
     });
     pushServiceMocks.openPushNotificationSettings.mockResolvedValue(undefined);
     pushServiceMocks.enablePushNotificationsForUser.mockResolvedValue(undefined);
+    pushServiceMocks.runPushNotificationPrimer.mockResolvedValue(true);
     publicActionsMocks.sharePublicUrl.mockResolvedValue('shared');
     shellLayoutState.isDesktopWeb = false;
     shellLayoutState.isNative = false;

@@ -59,6 +59,41 @@ describe('practiceTimelineService', () => {
     expect(result.drillOptions.map((option) => `${option.source}:${option.title}`)).toEqual(['community:Warm-up', 'team:Pattern play']);
   });
 
+  it('keeps app-created team drill documents compatible with timeline picker options', async () => {
+    dbMocks.getTeamDrills.mockResolvedValue([
+      {
+        id: 'team-drill-1',
+        title: 'App-created pressing trap',
+        type: 'Tactical',
+        description: 'Created from the native team drills page.',
+        setup: {
+          duration: 18,
+          players: '10-12',
+          cones: 8
+        }
+      }
+    ]);
+
+    const result = await loadPracticeTimelineModel('team-1', 'practice-1', user);
+    const teamOption = result.drillOptions.find((option) => option.id === 'team-drill-1');
+
+    expect(teamOption).toEqual({
+      id: 'team-drill-1',
+      title: 'App-created pressing trap',
+      type: 'Tactical',
+      duration: 18,
+      description: 'Created from the native team drills page.',
+      source: 'team'
+    });
+    expect(createPracticeTimelineBlockFromOption(teamOption!, 0)).toMatchObject({
+      drillId: 'team-drill-1',
+      drillTitle: 'App-created pressing trap',
+      type: 'Tactical',
+      duration: 18,
+      description: 'Created from the native team drills page.'
+    });
+  });
+
   it('serializes normalized blocks with total duration when saving a timeline', async () => {
     const blockOne = createPracticeTimelineBlockFromOption({ id: 'drill-1', title: 'Warm-up', type: 'Warm-up', duration: 10, description: '', source: 'community' }, 0);
     const blockTwo = createPracticeTimelineBlockFromOption({ id: 'drill-2', title: 'Finishing', type: 'Technical', duration: 15, description: 'Shots', source: 'team' }, 1);

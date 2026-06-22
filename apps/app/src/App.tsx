@@ -3,6 +3,7 @@ import { Navigate, Route, Routes, useLocation, useNavigate } from 'react-router-
 import { AppShell } from './components/AppShell';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { ProtectedRouteSkeleton } from './components/PageSkeletons';
+import { ScrollRestoration } from './components/ScrollRestoration';
 import {
   addNativeBackButtonListener,
   dispatchNativeBackDismissEvent,
@@ -12,9 +13,9 @@ import {
   nativeBackExitPressWindowMs,
   type NativeBackButtonEvent
 } from './lib/nativeBackButton';
+import { addNativeDeepLinkListener } from './lib/nativeDeepLinkRouting';
 import { clearPendingPushRoute, readPendingPushRoute } from './lib/pushNotificationRouting';
-import { shouldReloadTeamsToHome } from './lib/reloadRouting';
-import { addPushNotificationOpenListener, ensureAndroidNotificationChannels } from './lib/pushService';
+import { readAuthBootstrapHint } from './lib/authBootstrapHint';
 import { useAuth } from './lib/useAuth';
 import type { AuthState } from './lib/types';
 
@@ -46,7 +47,7 @@ const TeamMedia = lazy(() => import('./pages/TeamMedia').then((module) => ({ def
 const Teams = lazy(() => import('./pages/Teams').then((module) => ({ default: module.Teams })));
 const VerifyPending = lazy(() => import('./pages/VerifyPending').then((module) => ({ default: module.VerifyPending })));
 
-const protectedRouteBootstrapGraceMs = 3000;
+const protectedRouteBootstrapGraceMs = 750;
 
 export default function App() {
   const auth = useAuth();
@@ -57,12 +58,6 @@ export default function App() {
   const lastNativeExitBackPressRef = useRef(0);
   const nativeExitNoticeTimeoutRef = useRef<number | null>(null);
   const [nativeExitNoticeVisible, setNativeExitNoticeVisible] = useState(false);
-  const shouldDefaultReloadToHome = shouldReloadTeamsToHome({
-    hasUser: Boolean(auth.user),
-    pathname: location.pathname,
-    search: location.search,
-    isReload: isBrowserReload()
-  });
 
   useEffect(() => {
     authUserRef.current = auth.user;
@@ -135,19 +130,47 @@ export default function App() {
   }, [navigate]);
 
   useEffect(() => {
-    let removeListener = async () => {};
+    let removeListener = () => {};
+    let disposed = false;
+
+    async function registerDeepLinkListener() {
+      removeListener = await addNativeDeepLinkListener((route) => {
+        navigate(route);
+      });
+      if (disposed) removeListener();
+    }
+
+    registerDeepLinkListener();
+    return () => {
+      disposed = true;
+      removeListener();
+    };
+  }, [navigate]);
+
+  useEffect(() => {
+    let active = true;
+    let removeListener = () => {};
 
     async function registerPushListener() {
+      // Dynamically import the push stack (Firebase messaging) so it stays out of
+      // the boot critical path; registration only needs to run after first paint.
+      const { addPushNotificationOpenListener, ensureAndroidNotificationChannels } = await import('./lib/pushService');
       await ensureAndroidNotificationChannels();
-      removeListener = await addPushNotificationOpenListener((route) => {
+      const remove = await addPushNotificationOpenListener((route) => {
         if (authUserRef.current) {
           navigate(route, { replace: true });
         }
       });
+      if (!active) {
+        remove();
+        return;
+      }
+      removeListener = remove;
     }
 
-    registerPushListener();
+    void registerPushListener();
     return () => {
+      active = false;
       removeListener();
     };
   }, [navigate]);
@@ -171,6 +194,7 @@ export default function App() {
 
   return (
     <Suspense fallback={<LoadingScreen />}>
+      <ScrollRestoration />
       <Routes>
         <Route path="/auth" element={<AuthPage auth={auth} />} />
         <Route path="/accept-invite" element={<AcceptInvite auth={auth} />} />
@@ -185,7 +209,7 @@ export default function App() {
         <Route path="/messages" element={<Protected auth={auth}><Messages auth={auth} /></Protected>} />
         <Route path="/messages/:teamId" element={<Protected auth={auth}><Messages auth={auth} /></Protected>} />
         <Route path="/ai" element={<Protected auth={auth}><PrivateAiChat auth={auth} /></Protected>} />
-        <Route path="/teams" element={shouldDefaultReloadToHome ? <Navigate to="/home" replace /> : <Protected auth={auth}><Teams auth={auth} /></Protected>} />
+        <Route path="/teams" element={<Protected auth={auth}><Teams auth={auth} /></Protected>} />
         <Route path="/teams/browse" element={<Protected auth={auth}><PublicTeamsBrowse /></Protected>} />
         <Route path="/teams/:teamId" element={<Protected auth={auth}><TeamDetail auth={auth} /></Protected>} />
         <Route path="/teams/:teamId/edit" element={<Protected auth={auth}><TeamSettings auth={auth} /></Protected>} />
@@ -216,16 +240,11 @@ export default function App() {
   );
 }
 
-function isBrowserReload() {
-  const navigation = performance.getEntriesByType?.('navigation')?.[0] as PerformanceNavigationTiming | undefined;
-  if (navigation?.type) return navigation.type === 'reload';
-  return (performance as Performance & { navigation?: { type?: number } }).navigation?.type === 1;
-}
-
 function Protected({ auth, children }: { auth: AuthState; children: ReactNode }) {
   const [bootstrapGraceExpired, setBootstrapGraceExpired] = useState(false);
   const location = useLocation();
   const navigate = useNavigate();
+  const hasAuthBootstrapHint = Boolean(readAuthBootstrapHint()?.uid);
 
   useEffect(() => {
     const timeoutId = window.setTimeout(() => {
@@ -234,6 +253,14 @@ function Protected({ auth, children }: { auth: AuthState; children: ReactNode })
 
     return () => window.clearTimeout(timeoutId);
   }, []);
+
+  if (auth.loading && !auth.user && hasAuthBootstrapHint) {
+    return (
+      <AppShell auth={auth}>
+        <ProtectedRouteLoadingState pathname={location.pathname} />
+      </AppShell>
+    );
+  }
 
   if (auth.loading && !auth.user) {
     return <LoadingScreen />;

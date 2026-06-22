@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+import '@testing-library/jest-dom/vitest';
 import { useCallback } from 'react';
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -83,6 +84,12 @@ describe('useChatMessages', () => {
         });
     });
 
+    it('falls back to the default conversation when the selected id is blank', async () => {
+        render(<MessagesProbe conversationId="" />);
+
+        expect(subscribeToTeamChatMessages).toHaveBeenCalledWith('team-1', 'team', expect.any(Function), expect.any(Function));
+    });
+
     it('subscribes to the selected conversation and exposes live messages', async () => {
         render(<MessagesProbe conversationId="staff" />);
 
@@ -126,6 +133,19 @@ describe('useChatMessages', () => {
         await waitFor(() => expect(loadOlderTeamChatMessages).toHaveBeenCalledWith('team-1', 'team', { cursor: 'oldest' }));
         await waitFor(() => expect(screen.getByTestId('message-ids').textContent?.startsWith('older-page')).toBe(true));
         expect(screen.getByTestId('has-more').textContent).toBe('false');
+    });
+
+    it('skips older message loading when the live page has no older cursor', async () => {
+        render(<MessagesProbe conversationId="team" />);
+        act(() => {
+            liveCallback?.([message('latest', 20)], { cursor: 'latest' });
+        });
+
+        await waitFor(() => expect(screen.getByTestId('has-more').textContent).toBe('false'));
+        fireEvent.click(screen.getByRole('button', { name: 'Load older' }));
+
+        expect(loadOlderTeamChatMessages).not.toHaveBeenCalled();
+        expect(screen.getByTestId('loading-older').textContent).toBe('false');
     });
 
     it('does not resubscribe when the user object changes identity but keeps the same uid', async () => {

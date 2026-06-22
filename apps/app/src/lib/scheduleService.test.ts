@@ -5,12 +5,13 @@ const mocks = vi.hoisted(() => {
   const transactionSet = vi.fn();
   const transactionGet = vi.fn();
   const transactionDelete = vi.fn();
+  const getDoc = vi.fn();
   const runTransactionMock = vi.fn(async (_db: unknown, callback: any) => callback({
     get: transactionGet,
     set: transactionSet,
     delete: transactionDelete
   }));
-  return { transactionSet, transactionGet, transactionDelete, runTransactionMock };
+  return { transactionSet, transactionGet, transactionDelete, getDoc, runTransactionMock };
 });
 
 vi.mock('./adapters/legacyScheduleDb', () => ({
@@ -20,10 +21,13 @@ vi.mock('./adapters/legacyScheduleDb', () => ({
   collectionGroup: vi.fn((_db: unknown, path: string) => ({ path, scope: 'collectionGroup' })),
   query: vi.fn((base: any, ...filters: any[]) => ({ base, filters })),
   where: vi.fn((field: string, op: string, value: any) => ({ field, op, value })),
+  getDoc: mocks.getDoc,
   getDocs: vi.fn(),
   runTransaction: mocks.runTransactionMock,
   increment: vi.fn((value: number) => ({ __increment: value })),
   serverTimestamp: vi.fn(() => ({ __serverTimestamp: true })),
+  deleteField: vi.fn(() => ({ __deleteField: true })),
+  Timestamp: { fromDate: vi.fn((value: Date) => value) },
   getAssignmentClaims: vi.fn(),
   claimOpenOfficiatingSlot: vi.fn(),
   getGame: vi.fn(),
@@ -40,9 +44,13 @@ vi.mock('./adapters/legacyScheduleDb', () => ({
   getTeams: vi.fn(),
   addGame: vi.fn(),
   addPractice: vi.fn(),
+  clearOccurrenceOverride: vi.fn(),
   createRideOffer: vi.fn(),
   claimAssignmentSlot: vi.fn(),
   respondToOfficiatingAssignment: vi.fn(),
+  updateEvent: vi.fn(),
+  updateOccurrence: vi.fn(),
+  updateSeries: vi.fn(),
   requestRideSpot: vi.fn(),
   listRideOffersForEvent: vi.fn(),
   updateRideRequestStatus: vi.fn(),
@@ -83,13 +91,51 @@ vi.mock('./adapters/legacyScheduleHelpers', () => ({
   isTrackedCalendarEvent: vi.fn(),
   filterVisiblePracticeSessions: vi.fn((items) => items),
   buildPracticePacketCompletionPayload: vi.fn(),
-  resolveMyRsvpByChildForGame: vi.fn(),
+  resolveMyRsvpByChildForGame: vi.fn((_events: any[], _teamId: string, _gameId: string, rsvps: any[]) => (
+    (Array.isArray(rsvps) ? rsvps : []).reduce<Record<string, string>>((acc, rsvp) => {
+      if (rsvp?.playerId && rsvp?.response) acc[rsvp.playerId] = rsvp.response;
+      return acc;
+    }, {})
+  )),
   buildGameDayRsvpBreakdown: vi.fn(),
   getPeriodsForFormation: vi.fn(() => []),
   getEventRideshareSummary: vi.fn(),
   mergeAssignmentsWithClaims: vi.fn(),
   hasScorekeepingTeamAccess: vi.fn(),
-  isTeamActive: vi.fn(() => true)
+  isTeamActive: vi.fn(() => true),
+  applyPracticeRecurrenceFields: vi.fn((payload: any) => {
+    const { practiceData, isRecurring, editingPracticeId = null, editingSeriesId = null, recurrenceConfig = {}, startDate, endDate, Timestamp, deleteField, generateSeriesId } = payload;
+    if (isRecurring) {
+      const { freq = 'weekly', interval = 1, byDays = [], endType = 'never', untilValue = '', countValue = 10 } = recurrenceConfig;
+      practiceData.isSeriesMaster = true;
+      practiceData.seriesId = editingPracticeId ? (editingSeriesId || practiceData.seriesId || generateSeriesId()) : generateSeriesId();
+      const startDay = new Date(startDate);
+      const endDay = new Date(endDate);
+      startDay.setHours(0, 0, 0, 0);
+      endDay.setHours(0, 0, 0, 0);
+      practiceData.startTime = startDate.toTimeString().slice(0, 5);
+      practiceData.endTime = endDate.toTimeString().slice(0, 5);
+      practiceData.endDayOffset = Math.max(0, Math.round((endDay.getTime() - startDay.getTime()) / 86400000));
+      practiceData.recurrence = { freq, interval, byDays };
+      if (endType === 'until' && untilValue) {
+        practiceData.recurrence.until = Timestamp.fromDate(new Date(untilValue));
+      } else if (endType === 'count') {
+        practiceData.recurrence.count = Number.parseInt(String(countValue), 10) || 10;
+      }
+      if (!editingPracticeId) {
+        practiceData.exDates = [];
+        practiceData.overrides = {};
+      }
+      return practiceData;
+    }
+      ['isSeriesMaster', 'recurrence', 'seriesId', 'startTime', 'endTime', 'endDayOffset', 'exDates', 'overrides'].forEach((fieldName) => {
+        if (editingPracticeId) {
+          practiceData[fieldName] = deleteField();
+        }
+      });
+      return practiceData;
+  }),
+  generateSeriesId: vi.fn(() => 'series-generated')
 }));
 
 vi.mock('./adapters/legacyAvailability', () => ({
@@ -109,17 +155,26 @@ vi.mock('./chatService', () => ({ sendTeamChatMessage: vi.fn() }));
 vi.mock('./chatLogic', () => ({ DEFAULT_TEAM_CONVERSATION_ID: 'team' }));
 vi.mock('./appDataCache', () => ({
   getCachedAppData: vi.fn(),
-  loadCachedAppData: vi.fn(),
+  loadCachedAppData: vi.fn((_key: string, loader: () => Promise<unknown>) => loader()),
   clearAppDataCache: vi.fn(),
   getParentScheduleSummaryCacheKey: (userId: string) => `app-schedule-summary:${userId}`
 }));
 
-import { broadcastLiveEvent, claimOpenOfficiatingSlot, releaseAssignmentClaim, respondToOfficiatingAssignment, updateGame, getGame, getGames, getPlayers, getPracticeSession, getPracticeSessions, getRsvpBreakdownByPlayer, getRsvps, getTeam, getTeams, submitRsvpForPlayer, updatePracticeAttendance, getDocs } from './adapters/legacyScheduleDb';
+import { addPractice, broadcastLiveEvent, claimOpenOfficiatingSlot, clearOccurrenceOverride, releaseAssignmentClaim, respondToOfficiatingAssignment, updateEvent, updateGame, updateOccurrence, getAssignmentClaims, getGame, getGames, getPlayers, getPracticeSession, getPracticeSessions, getRsvpBreakdownByPlayer, getRsvpSummaries, getRsvps, getTeam, getTeams, listRideOffersForEvent, submitRsvpForPlayer, updatePracticeAttendance, getDoc, getDocs } from './adapters/legacyScheduleDb';
 import { getNativeAuthIdToken } from './authService';
-import { fetchAndParseCalendar } from './adapters/legacyScheduleHelpers';
-import { getCachedAppData } from './appDataCache';
+import { expandRecurrence, fetchAndParseCalendar, isTeamActive } from './adapters/legacyScheduleHelpers';
+import { getCachedAppData, loadCachedAppData } from './appDataCache';
+import { mapScheduleEventRecord } from './firestore/mappers';
 import { loadProfileDocument } from './profileService';
-import { buildPlayerScoringLiveEvent, claimOfficialAssignmentItem, flushPendingLivePublishOperations, loadOfficialAssignments, loadParentSchedule, loadParentScheduleEventDetail, loadStaffPracticeAttendance, loadStaffScheduleRsvpBreakdown, publishLiveScoreUpdateEvent, recordPlayerGameStat, recordPlayerScoringStat, releaseParentScheduleAssignmentClaim, resolveLiveGameClockSnapshot, resolveParentGameRoute, respondToOfficialAssignmentItem, saveScheduledGameLineupDraftForApp, saveStaffPracticeAttendance, submitStaffScheduleRsvpOverride, undoRecordedPlayerGameStat, updateLiveGameClockState } from './scheduleService';
+import { buildPlayerScoringLiveEvent, claimOfficialAssignmentItem, createScheduledPracticeForApp, flushPendingLivePublishOperations, hydrateParentScheduleDetails, loadOfficialAssignments, loadParentSchedule, loadParentScheduleChildren, loadParentScheduleEventDetail, loadScheduledPracticeSeriesForEdit, loadStaffPracticeAttendance, loadStaffScheduleRsvpBreakdown, publishLiveScoreUpdateEvent, recordPlayerGameStat, recordPlayerScoringStat, releaseParentScheduleAssignmentClaim, resolveCachedParentScheduleEvents, resolveLiveGameClockSnapshot, resolveParentGameRoute, respondToOfficialAssignmentItem, revertScheduledPracticeOccurrenceForApp, saveScheduledGameLineupDraftForApp, saveStaffPracticeAttendance, submitStaffScheduleRsvpOverride, undoRecordedPlayerGameStat, updateLiveGameClockState, updateScheduledPracticeForApp } from './scheduleService';
+
+function playerSnapshot(id: string, data: Record<string, unknown> | null) {
+  return {
+    id,
+    exists: () => data !== null,
+    data: () => data
+  };
+}
 
 it('keeps schedule workflows behind typed legacy adapters', () => {
   const scheduleServiceSource = readFileSync('src/lib/scheduleService.ts', 'utf8');
@@ -129,13 +184,333 @@ it('keeps schedule workflows behind typed legacy adapters', () => {
   expect(scheduleServiceSource).toContain("./adapters/legacyScheduleDb");
   expect(scheduleServiceSource).toContain("./adapters/legacyScheduleHelpers");
   expect(scheduleServiceSource).toContain("./adapters/legacyAvailability");
+  expect(scheduleServiceSource).toContain("./statTrackingEvent");
+  expect(scheduleServiceSource).not.toContain("from './statTrackingService'");
   expect(scheduleServiceSource).toContain("./logger");
   expect(scheduleServiceSource).toContain("createLogger('schedule-service')");
+  expect(scheduleServiceSource).toContain("startUxTimer('parent schedule service load', {");
+  expect(scheduleServiceSource).toContain("operation: 'parent-schedule-load'");
   expect(scheduleServiceSource).not.toContain('console.');
   expect(scheduleServiceSource).not.toContain('await Promise.resolve();');
   expect(scheduleServiceSource).toContain('lock.waiters.push(resolve);');
   expect(scheduleEventDetailSource).not.toContain("../../../../js/");
   expect(scheduleEventDetailSource).toContain("../lib/adapters/legacyScheduleHelpers");
+});
+
+describe('parent schedule child scope', () => {
+  const parentUser = { uid: 'parent-1', email: 'parent@example.com', roles: ['parent'], parentOf: [] } as any;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(isTeamActive).mockImplementation((team: any) => (
+      team?.active !== false &&
+      team?.archived !== true &&
+      !['archived', 'inactive', 'disabled'].includes(String(team?.status || '').trim().toLowerCase())
+    ));
+  });
+
+  it('hydrates linked children from profile parentPlayerKeys when auth parentOf is empty', async () => {
+    vi.mocked(loadProfileDocument).mockResolvedValue({
+      parentOf: [],
+      parentTeamIds: ['team-1'],
+      parentPlayerKeys: ['team-1::player-1']
+    } as any);
+    vi.mocked(getTeam).mockResolvedValue({ id: 'team-1', name: 'Bears', active: true } as any);
+    vi.mocked(getDoc).mockResolvedValue(playerSnapshot('player-1', { name: 'Avery Lee', active: true }) as any);
+
+    const children = await loadParentScheduleChildren(parentUser);
+
+    expect(children).toEqual([
+      { teamId: 'team-1', teamName: 'Bears', playerId: 'player-1', playerName: 'Avery Lee' }
+    ]);
+    expect(getTeam).toHaveBeenCalledWith('team-1');
+    expect(getDoc).toHaveBeenCalledWith(expect.objectContaining({ path: 'teams/team-1/players/player-1' }));
+    expect(getPlayers).not.toHaveBeenCalled();
+  });
+
+  it('filters inactive teams and inactive roster players from parent child links', async () => {
+    vi.mocked(loadProfileDocument).mockResolvedValue({
+      parentOf: [
+        { teamId: 'team-active', playerId: 'player-active', teamName: 'Old Team', playerName: 'Old Player' },
+        { teamId: 'team-active', playerId: 'player-inactive', teamName: 'Old Team', playerName: 'Inactive Player' },
+        { teamId: 'team-archived', playerId: 'player-archived', teamName: 'Archived Team', playerName: 'Archived Player' }
+      ]
+    } as any);
+    vi.mocked(getTeam).mockImplementation(async (teamId: string) => ({
+      'team-active': { id: 'team-active', name: 'Active Team', active: true },
+      'team-archived': { id: 'team-archived', name: 'Archived Team', archived: true }
+    }[teamId] || null) as any);
+    vi.mocked(getDoc).mockImplementation(async (ref: any) => {
+      if (ref?.path === 'teams/team-active/players/player-active') {
+        return playerSnapshot('player-active', { name: 'Active Player', active: true }) as any;
+      }
+      if (ref?.path === 'teams/team-active/players/player-inactive') {
+        return playerSnapshot('player-inactive', { name: 'Inactive Player', active: false }) as any;
+      }
+      return playerSnapshot(String(ref?.path || '').split('/').pop() || 'missing', null) as any;
+    });
+
+    const children = await loadParentScheduleChildren(parentUser);
+
+    expect(children).toEqual([
+      { teamId: 'team-active', teamName: 'Active Team', playerId: 'player-active', playerName: 'Active Player' }
+    ]);
+    expect(getPlayers).not.toHaveBeenCalled();
+  });
+
+  it('filters missing parent-linked players even when legacy metadata exists', async () => {
+    vi.mocked(loadProfileDocument).mockResolvedValue({
+      parentOf: [
+        { teamId: 'team-active', playerId: 'player-missing', teamName: 'Old Team', playerName: 'Missing Player' }
+      ]
+    } as any);
+    vi.mocked(getTeam).mockResolvedValue({ id: 'team-active', name: 'Active Team', active: true } as any);
+    vi.mocked(getDoc).mockResolvedValue(playerSnapshot('player-missing', null) as any);
+
+    const children = await loadParentScheduleChildren(parentUser);
+
+    expect(children).toEqual([]);
+    expect(getDoc).toHaveBeenCalledWith(expect.objectContaining({ path: 'teams/team-active/players/player-missing' }));
+    expect(getPlayers).not.toHaveBeenCalled();
+  });
+});
+
+describe('scheduled practice writes', () => {
+  const coachUser = { uid: 'coach-1', email: 'coach@example.com', roles: ['coach'] } as any;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(getTeam).mockResolvedValue({ id: 'team-1', ownerId: 'coach-1', adminEmails: [], admins: [] } as any);
+  });
+
+  it('creates recurring practice payloads with the legacy recurrence shape', async () => {
+    vi.mocked(addPractice).mockResolvedValue('practice-1' as any);
+    const { applyPracticeRecurrenceFields: applyLegacyPracticeRecurrenceFields } = await import('../../../../js/edit-schedule-practice-payload.js');
+
+    await createScheduledPracticeForApp('team-1', {
+      title: 'Summer Skills',
+      startDate: new Date('2026-06-24T18:00:00.000Z'),
+      endDate: new Date('2026-06-24T19:30:00.000Z'),
+      location: 'Field 3',
+      notes: 'Bring pinnies',
+      recurrence: {
+        isRecurring: true,
+        freq: 'weekly',
+        interval: 1,
+        byDays: ['WE'],
+        endType: 'until',
+        untilValue: '2026-07-29'
+      }
+    }, coachUser);
+
+    const expectedPayload: Record<string, unknown> = {
+      type: 'practice',
+      title: 'Summer Skills',
+      date: new Date('2026-06-24T18:00:00.000Z'),
+      end: new Date('2026-06-24T19:30:00.000Z'),
+      opponent: null,
+      location: 'Field 3',
+      notes: 'Bring pinnies',
+      scheduleNotifications: {},
+      status: 'scheduled',
+      homeScore: 0,
+      awayScore: 0,
+      statTrackerConfigId: null,
+      createdBy: 'coach-1'
+    };
+    applyLegacyPracticeRecurrenceFields({
+      practiceData: expectedPayload,
+      isRecurring: true,
+      recurrenceConfig: {
+        freq: 'weekly',
+        interval: 1,
+        byDays: ['WE'],
+        endType: 'until',
+        untilValue: '2026-07-29',
+        countValue: 10
+      },
+      startDate: new Date('2026-06-24T18:00:00.000Z'),
+      endDate: new Date('2026-06-24T19:30:00.000Z'),
+      Timestamp: { fromDate: (value: Date) => value },
+      deleteField: () => ({ __deleteField: true }),
+      generateSeriesId: () => 'series-generated'
+    });
+
+    expect(addPractice).toHaveBeenCalledWith('team-1', expectedPayload);
+  });
+
+  it('writes single-occurrence practice edits as overrides', async () => {
+    await updateScheduledPracticeForApp('team-1', {
+      title: 'Special Session',
+      startDate: new Date(2026, 5, 24, 17, 15),
+      endDate: new Date(2026, 5, 24, 18, 45),
+      location: 'Indoor court',
+      notes: 'Film first 15 minutes'
+    }, coachUser, {
+      eventId: 'practice-master__2026-06-24',
+      scope: 'occurrence'
+    });
+
+    expect(updateOccurrence).toHaveBeenCalledWith('team-1', 'practice-master', '2026-06-24', {
+      title: 'Special Session',
+      startTime: '17:15',
+      endTime: '18:45',
+      location: 'Indoor court',
+      notes: 'Film first 15 minutes'
+    });
+  });
+
+  it('quotes Firestore override paths when native occurrence updates fall back to REST', async () => {
+    (globalThis as any).window = { location: { protocol: 'capacitor:' }, setTimeout, clearTimeout } as any;
+    (globalThis as any).fetch = vi.fn().mockResolvedValue({ ok: true, json: async () => ({}) } as any);
+    vi.mocked(getNativeAuthIdToken).mockResolvedValue('native-token' as any);
+    vi.mocked(updateOccurrence).mockRejectedValueOnce(new Error('timed out'));
+
+    await updateScheduledPracticeForApp('team-1', {
+      title: 'Special Session',
+      startDate: new Date(2026, 5, 24, 17, 15),
+      endDate: new Date(2026, 5, 24, 18, 45),
+      location: 'Indoor court',
+      notes: 'Film first 15 minutes'
+    }, coachUser, {
+      eventId: 'practice-master__2026-06-24',
+      scope: 'occurrence'
+    });
+
+    expect(globalThis.fetch).toHaveBeenCalledTimes(1);
+    const [requestUrl, requestInit] = vi.mocked(globalThis.fetch).mock.calls[0] as [string, RequestInit];
+    const payload = JSON.parse(String(requestInit.body || '{}'));
+
+    expect(requestUrl).toContain('updateMask.fieldPaths=overrides.%602026-06-24%60.title');
+    expect(requestUrl).toContain('updateMask.fieldPaths=overrides.%602026-06-24%60.startTime');
+    expect(requestInit.method).toBe('PATCH');
+    expect(payload.fields.overrides.mapValue.fields['2026-06-24']).toEqual({
+      mapValue: {
+        fields: {
+          title: { stringValue: 'Special Session' },
+          startTime: { stringValue: '17:15' },
+          endTime: { stringValue: '18:45' },
+          location: { stringValue: 'Indoor court' },
+          notes: { stringValue: 'Film first 15 minutes' }
+        }
+      }
+    });
+    expect(payload.fields.updatedBy).toEqual({ stringValue: 'coach-1' });
+    expect(typeof payload.fields.updatedAt.timestampValue).toBe('string');
+  });
+
+  it('reverts occurrence overrides without touching the series master', async () => {
+    await revertScheduledPracticeOccurrenceForApp('team-1', 'practice-master__2026-06-24', coachUser);
+    expect(clearOccurrenceOverride).toHaveBeenCalledWith('team-1', 'practice-master', '2026-06-24');
+  });
+
+  it('quotes Firestore override paths when native occurrence reverts fall back to REST', async () => {
+    (globalThis as any).window = { location: { protocol: 'capacitor:' }, setTimeout, clearTimeout } as any;
+    (globalThis as any).fetch = vi.fn().mockResolvedValue({ ok: true, json: async () => ({}) } as any);
+    vi.mocked(getNativeAuthIdToken).mockResolvedValue('native-token' as any);
+    vi.mocked(clearOccurrenceOverride).mockRejectedValueOnce(new Error('timed out'));
+
+    await revertScheduledPracticeOccurrenceForApp('team-1', 'practice-master__2026-06-24', coachUser);
+
+    expect(globalThis.fetch).toHaveBeenCalledTimes(1);
+    const [requestUrl, requestInit] = vi.mocked(globalThis.fetch).mock.calls[0] as [string, RequestInit];
+    const payload = JSON.parse(String(requestInit.body || '{}'));
+
+    expect(requestUrl).toContain('updateMask.fieldPaths=overrides.%602026-06-24%60');
+    expect(requestInit.method).toBe('PATCH');
+    expect(payload).toEqual({
+      fields: {
+        updatedAt: { timestampValue: payload.fields.updatedAt.timestampValue },
+        updatedBy: { stringValue: 'coach-1' }
+      }
+    });
+    expect(typeof payload.fields.updatedAt.timestampValue).toBe('string');
+  });
+
+  it('loads the recurring series master when editing a single occurrence as a series', async () => {
+    vi.mocked(getGame).mockResolvedValue({
+      id: 'practice-master',
+      type: 'practice',
+      title: 'Weekly Practice',
+      date: new Date('2026-06-17T18:00:00.000Z'),
+      end: new Date('2026-06-17T19:30:00.000Z'),
+      location: 'Field 2',
+      notes: 'Master note',
+      seriesId: 'series-1',
+      isSeriesMaster: true,
+      recurrence: { freq: 'weekly', interval: 1, byDays: ['WE'], count: 8 }
+    } as any);
+
+    const result = await loadScheduledPracticeSeriesForEdit('team-1', 'practice-master__2026-06-24', coachUser);
+
+    expect(result).toMatchObject({
+      eventId: 'practice-master',
+      seriesId: 'series-1',
+      input: {
+        title: 'Weekly Practice',
+        location: 'Field 2',
+        notes: 'Master note',
+        recurrence: {
+          isRecurring: true,
+          freq: 'weekly',
+          interval: 1,
+          byDays: ['WE'],
+          endType: 'count',
+          countValue: 8
+        }
+      }
+    });
+  });
+
+  it('loads recurrence until dates from Firestore Timestamp values', async () => {
+    vi.mocked(getGame).mockResolvedValue({
+      id: 'practice-master',
+      type: 'practice',
+      title: 'Weekly Practice',
+      date: new Date('2026-06-17T18:00:00.000Z'),
+      end: new Date('2026-06-17T19:30:00.000Z'),
+      location: 'Field 2',
+      notes: 'Master note',
+      seriesId: 'series-1',
+      isSeriesMaster: true,
+      recurrence: {
+        freq: 'weekly',
+        interval: 1,
+        byDays: ['WE'],
+        until: { toDate: () => new Date('2026-07-29T00:00:00.000Z') }
+      }
+    } as any);
+
+    const result = await loadScheduledPracticeSeriesForEdit('team-1', 'practice-master__2026-06-24', coachUser);
+
+    expect(result.input.recurrence).toMatchObject({
+      endType: 'until',
+      untilValue: '2026-07-29'
+    });
+  });
+
+  it('removes recurrence fields when a series is converted back to one-off', async () => {
+    await updateScheduledPracticeForApp('team-1', {
+      title: 'One-off practice',
+      startDate: new Date('2026-06-24T18:00:00.000Z'),
+      endDate: new Date('2026-06-24T19:30:00.000Z'),
+      location: 'Field 3',
+      notes: 'No recurrence',
+      recurrence: { isRecurring: false }
+    }, coachUser, {
+      eventId: 'practice-master',
+      seriesId: 'series-1',
+      scope: 'series'
+    });
+
+    expect(updateEvent).toHaveBeenCalledWith('team-1', 'practice-master', expect.objectContaining({
+      isSeriesMaster: { __deleteField: true },
+      recurrence: { __deleteField: true },
+      seriesId: { __deleteField: true },
+      overrides: { __deleteField: true },
+      exDates: { __deleteField: true }
+    }));
+  });
 });
 
 describe('parent game route resolution', () => {
@@ -149,9 +524,13 @@ describe('parent game route resolution', () => {
       ]
     } as any);
     vi.mocked(getTeams).mockResolvedValue([] as any);
+    vi.mocked(getDoc).mockImplementation(async (ref: any) => {
+      const playerId = String(ref?.path || '').split('/').pop() || '';
+      return playerSnapshot(playerId, { id: playerId, name: playerId === 'child-2' ? 'Blake' : 'Avery', active: true }) as any;
+    });
     vi.mocked(getGame).mockImplementation(async (teamId: string, gameId: string) => {
       if (teamId === 'team-bravo' && gameId === 'game-7') {
-        return { id: 'game-7', type: 'game' } as any;
+        return { id: 'game-7', type: 'game', date: new Date('2026-06-25T18:00:00.000Z') } as any;
       }
       return null as any;
     });
@@ -206,6 +585,84 @@ describe('parent game route resolution', () => {
     expect(getGames).not.toHaveBeenCalled();
     expect(getPracticeSessions).not.toHaveBeenCalled();
     expect(fetchAndParseCalendar).not.toHaveBeenCalled();
+  });
+});
+
+describe('parent schedule detail hydration', () => {
+  const user = { uid: 'parent-1', email: 'parent@example.com', roles: [] } as any;
+
+  function buildHydrationEvent(id: string, date: Date) {
+    return {
+      id,
+      teamId: 'team-1',
+      teamName: 'Bears',
+      type: 'game',
+      date,
+      location: 'Main Gym',
+      childId: 'player-1',
+      childName: 'Avery',
+      isDbGame: true,
+      isCancelled: false,
+      assignments: [],
+      availabilityPreferences: {},
+      myRsvp: 'not_responded',
+      myRsvpNote: null,
+      rsvpSummary: null,
+      rideshareSummary: null,
+      availabilityNotes: []
+    } as any;
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(loadCachedAppData).mockImplementation((_key: string, loader: () => Promise<unknown>) => loader());
+    vi.mocked(getRsvpSummaries).mockResolvedValue(new Map() as any);
+    vi.mocked(getRsvps).mockResolvedValue([
+      { userId: 'parent-1', playerId: 'player-1', response: 'going', note: 'Will be there.' }
+    ] as any);
+    vi.mocked(listRideOffersForEvent).mockResolvedValue([] as any);
+    vi.mocked(getAssignmentClaims).mockResolvedValue({} as any);
+  });
+
+  it('eagerly hydrates only near-term Home events', async () => {
+    const nearEvent = buildHydrationEvent('near-game', new Date(Date.now() + 24 * 60 * 60 * 1000));
+    const futureEvent = buildHydrationEvent('future-game', new Date(Date.now() + 30 * 24 * 60 * 60 * 1000));
+
+    await hydrateParentScheduleDetails({ children: [], events: [nearEvent, futureEvent] }, user);
+
+    expect(getRsvpSummaries).toHaveBeenCalledWith('team-1', ['near-game']);
+    expect(getRsvps).toHaveBeenCalledWith('team-1', 'near-game');
+    expect(getRsvps).not.toHaveBeenCalledWith('team-1', 'future-game');
+    expect(nearEvent.myRsvp).toBe('going');
+    expect(futureEvent.myRsvp).toBe('not_responded');
+  });
+
+  it('reuses cached per-event hydration details across repeated Home hydration passes', async () => {
+    const cached = new Map<string, Promise<unknown>>();
+    vi.mocked(loadCachedAppData).mockImplementation((key: string, loader: () => Promise<unknown>) => {
+      if (!cached.has(key)) {
+        cached.set(key, loader());
+      }
+      return cached.get(key) as Promise<unknown>;
+    });
+
+    await hydrateParentScheduleDetails({
+      children: [],
+      events: [buildHydrationEvent('game-1', new Date(Date.now() + 24 * 60 * 60 * 1000))]
+    }, user);
+    await hydrateParentScheduleDetails({
+      children: [],
+      events: [buildHydrationEvent('game-1', new Date(Date.now() + 24 * 60 * 60 * 1000))]
+    }, user);
+
+    expect(loadCachedAppData).toHaveBeenCalledWith(
+      'event-details:team-1:game-1',
+      expect.any(Function),
+      expect.objectContaining({ persist: false, ttlMs: 30000 })
+    );
+    expect(getRsvps).toHaveBeenCalledTimes(1);
+    expect(listRideOffersForEvent).toHaveBeenCalledTimes(1);
+    expect(getAssignmentClaims).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -411,6 +868,20 @@ describe('live game clock state', () => {
     }));
   });
 
+  it('rejects live clock updates for games whose scheduled date is long past (#2022)', async () => {
+    await expect(updateLiveGameClockState('team-1', 'game-1', {
+      liveClockMs: 135432,
+      liveClockRunning: true,
+      liveClockPeriod: 'Q2',
+      currentGame: {
+        liveStatus: 'scheduled',
+        date: new Date(Date.now() - 5 * 24 * 60 * 60 * 1000)
+      }
+    }, { uid: 'coach-1', email: 'coach@example.com' } as any)).rejects.toThrow('past games');
+
+    expect(updateGame).not.toHaveBeenCalled();
+  });
+
   it('stamps live score events with the resumed running game clock', async () => {
     (globalThis as any).window = { location: { protocol: 'https:' }, setTimeout, clearTimeout } as any;
     vi.useFakeTimers();
@@ -529,6 +1000,29 @@ describe('live score publishing', () => {
 
     await expect(publishLiveScoreUpdateEvent('team-1', 'game-1', { homeScore: 12, awayScore: 8 }, user)).rejects.toThrow('game is final');
     expect(mocks.transactionSet).not.toHaveBeenCalled();
+  });
+
+  it('rejects live score broadcasts for games whose scheduled date is long past (#2022)', async () => {
+    mocks.transactionGet.mockReset();
+    const fiveDaysAgo = new Date(Date.now() - 5 * 24 * 60 * 60 * 1000);
+    mocks.transactionGet.mockResolvedValueOnce({
+      exists: () => true,
+      data: () => ({ id: 'game-1', status: 'scheduled', liveStatus: 'scheduled', date: fiveDaysAgo })
+    });
+
+    await expect(publishLiveScoreUpdateEvent('team-1', 'game-1', { homeScore: 12, awayScore: 8 }, user)).rejects.toThrow('past games');
+    expect(mocks.transactionSet).not.toHaveBeenCalled();
+  });
+
+  it('allows live score broadcasts for a game scheduled today', async () => {
+    mocks.transactionGet.mockReset();
+    mocks.transactionGet.mockResolvedValue({
+      exists: () => true,
+      data: () => ({ id: 'game-1', status: 'scheduled', liveStatus: 'scheduled', date: new Date(), liveHasData: false, period: 'Q1' })
+    });
+
+    await expect(publishLiveScoreUpdateEvent('team-1', 'game-1', { homeScore: 5, awayScore: 3 }, user)).resolves.toBeDefined();
+    expect(mocks.transactionSet).toHaveBeenCalled();
   });
 });
 
@@ -1263,6 +1757,7 @@ describe('native parent schedule Firestore mapping', () => {
     vi.mocked(getPracticeSession).mockResolvedValue(null as any);
     vi.mocked(getPracticeSessions).mockResolvedValue([] as any);
     vi.mocked(getNativeAuthIdToken).mockResolvedValue('native-token' as any);
+    vi.mocked(getDoc).mockResolvedValue(playerSnapshot('child-1', { id: 'child-1', name: 'Avery', active: true }) as any);
   });
 
   it('maps a valid Firestore schedule event record through the native fallback path', async () => {
@@ -1388,5 +1883,187 @@ describe('native parent schedule Firestore mapping', () => {
     });
 
     expect(result.events).toEqual([]);
+  });
+});
+
+describe('team schedule game windowing (#2034)', () => {
+  const parentUser = {
+    uid: 'parent-1',
+    email: 'parent@example.com',
+    parentOf: [{ teamId: 'team-1', playerId: 'p1', playerName: 'Kid One' }]
+  } as any;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(loadProfileDocument).mockResolvedValue({
+      parentOf: [{ teamId: 'team-1', playerId: 'p1', playerName: 'Kid One' }]
+    } as any);
+    vi.mocked(getTeam).mockResolvedValue({ id: 'team-1', name: 'Team One' } as any);
+    vi.mocked(getTeams).mockResolvedValue([] as any);
+    vi.mocked(getGames).mockResolvedValue([] as any);
+    vi.mocked(getPracticeSessions).mockResolvedValue([] as any);
+    vi.mocked(getDoc).mockResolvedValue(playerSnapshot('p1', { id: 'p1', name: 'Kid One', active: true }) as any);
+  });
+
+  it('windows games to a recent startDate by default', async () => {
+    await loadParentSchedule(parentUser, { hydrateDetails: false, expandStaffPlayers: false });
+    expect(getGames).toHaveBeenCalledTimes(1);
+    const [teamId, options] = vi.mocked(getGames).mock.calls[0] as [string, any];
+    expect(teamId).toBe('team-1');
+    expect(options?.startDate).toBeInstanceOf(Date);
+    expect(options?.endDate ?? null).toBeNull();
+  });
+
+  it('loads full history (no startDate) when includePastGames is set', async () => {
+    await loadParentSchedule(parentUser, { hydrateDetails: false, expandStaffPlayers: false, includePastGames: true });
+    expect(getGames).toHaveBeenCalledTimes(1);
+    const [, options] = vi.mocked(getGames).mock.calls[0] as [string, any];
+    expect(options?.startDate ?? null).toBeNull();
+  });
+
+  it('maps legacy game reads through the schedule event mapper before building parent rows', async () => {
+    vi.mocked(getGames).mockResolvedValue([
+      {
+        id: 'game-1',
+        type: 'game',
+        date: new Date('2026-06-25T18:00:00.000Z'),
+        opponent: 'Tigers',
+        liveClockMs: '90000',
+        liveClockRunning: 'yes',
+        assignments: [{ role: 'Clock', value: 'Open' }]
+      },
+      {
+        id: 'bad-game',
+        type: 'game',
+        date: 'not-a-date',
+        opponent: 'Should drop'
+      }
+    ] as any);
+
+    const result = await loadParentSchedule(parentUser, { hydrateDetails: false, expandStaffPlayers: false });
+
+    expect(result.events.map((event) => event.id)).toEqual(['game-1']);
+    expect(result.events[0]).toMatchObject({
+      opponent: 'Tigers',
+      liveClockMs: 90000,
+      liveClockRunning: null,
+      assignments: [{ role: 'Clock', value: 'Open' }]
+    });
+  });
+
+  it('keeps recurring practice masters available during windowed schedule loads', async () => {
+    vi.mocked(getGames).mockResolvedValue([
+      {
+        id: 'game-1',
+        type: 'game',
+        date: new Date('2026-06-25T18:00:00.000Z'),
+        opponent: 'Tigers',
+        location: 'Field 1'
+      },
+      {
+        id: 'practice-master',
+        type: 'practice',
+        isSeriesMaster: true,
+        recurrence: { freq: 'weekly', interval: 1 },
+        date: new Date('2025-01-08T18:00:00.000Z'),
+        location: 'North Field',
+        title: 'Weekly Practice'
+      }
+    ] as any);
+    vi.mocked(expandRecurrence).mockReturnValue([
+      {
+        masterId: 'practice-master',
+        instanceDate: '2026-06-24',
+        date: new Date('2026-06-24T18:00:00.000Z'),
+        endDate: new Date('2026-06-24T19:30:00.000Z'),
+        location: 'North Field',
+        title: 'Weekly Practice'
+      }
+    ] as any);
+
+    const result = await loadParentSchedule(parentUser, { hydrateDetails: false, expandStaffPlayers: false });
+
+    expect(getGames).toHaveBeenCalledTimes(1);
+    expect(getDocs).not.toHaveBeenCalled();
+    expect(result.events).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        id: 'practice-master__2026-06-24',
+        type: 'practice',
+        isDbGame: true,
+        location: 'North Field'
+      })
+    ]));
+  });
+
+  it('preserves recurrence exception fields when mapping legacy recurring practice masters', () => {
+    const mapped = mapScheduleEventRecord({
+      id: 'practice-master',
+      type: 'practice',
+      isSeriesMaster: true,
+      recurrence: { freq: 'weekly', interval: 1, byDays: ['WE'] },
+      date: new Date('2025-01-08T18:00:00.000Z'),
+      end: new Date('2025-01-08T19:30:00.000Z'),
+      location: 'North Field',
+      title: 'Weekly Practice',
+      startTime: '18:00',
+      endDayOffset: 1,
+      exDates: ['2026-06-17'],
+      overrides: {
+        '2026-06-24': {
+          title: 'Adjusted Practice',
+          location: 'South Field'
+        }
+      }
+    });
+
+    expect(mapped).toMatchObject({
+      id: 'practice-master',
+      startTime: '18:00',
+      endDayOffset: 1,
+      exDates: ['2026-06-17'],
+      overrides: {
+        '2026-06-24': {
+          title: 'Adjusted Practice',
+          location: 'South Field'
+        }
+      }
+    });
+  });
+});
+
+describe('resolveCachedParentScheduleEvents (#2649)', () => {
+  beforeEach(() => {
+    vi.mocked(getCachedAppData).mockReset();
+  });
+
+  it('returns every matching child-event row for the route target from cached schedule data', () => {
+    vi.mocked(getCachedAppData).mockReturnValue({
+      children: [],
+      events: [
+        { id: 'e1', teamId: 't1', childId: 'c1' },
+        { id: 'e1', teamId: 't1', childId: 'c2' },
+        { id: 'e2', teamId: 't1', childId: 'c1' },
+        { id: 'e1', teamId: 't9', childId: 'c1' }
+      ]
+    } as never);
+
+    const result = resolveCachedParentScheduleEvents('u1', 't1', 'e1');
+
+    expect(result.map((event) => event.childId)).toEqual(['c1', 'c2']);
+    expect(getCachedAppData).toHaveBeenCalledWith('app-schedule-summary:u1');
+  });
+
+  it('returns empty without reading the cache when identifiers are blank', () => {
+    vi.mocked(getCachedAppData).mockReturnValue({ children: [], events: [{ id: 'e1', teamId: 't1', childId: 'c1' }] } as never);
+
+    expect(resolveCachedParentScheduleEvents('', 't1', 'e1')).toEqual([]);
+    expect(resolveCachedParentScheduleEvents('u1', '', 'e1')).toEqual([]);
+    expect(resolveCachedParentScheduleEvents('u1', 't1', '')).toEqual([]);
+    expect(getCachedAppData).not.toHaveBeenCalled();
+  });
+
+  it('returns empty on a cache miss', () => {
+    vi.mocked(getCachedAppData).mockReturnValue(null);
+    expect(resolveCachedParentScheduleEvents('u1', 't1', 'e1')).toEqual([]);
   });
 });

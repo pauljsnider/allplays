@@ -383,11 +383,21 @@ async function mockHomePlayerModules(page) {
                     return { code: 'ABCD1234', inviteUrl: 'https://allplays.ai/app#/accept-invite?code=ABCD1234&type=parent', status: 'pending', existingUser: false, autoLinked: false, teamName: 'Bears', playerName: 'Pat Star' };
                 }
 
+                export async function createStatTrackerConfigForApp() {
+                    return 'config-new';
+                }
+
                 export async function addRosterPlayerForApp() {
                     return { playerId: 'player-new' };
                 }
 
+                export async function archiveTeamTrackingItemForApp() {}
+
                 export async function deactivateRosterPlayerForApp() {}
+
+                export async function loadTeamTrackingAdmin() {
+                    return [];
+                }
 
                 export async function grantScorekeeperAccessForApp() {
                     return { success: true };
@@ -409,6 +419,10 @@ async function mockHomePlayerModules(page) {
                     return { success: true };
                 }
 
+                export async function saveTeamTrackingItemForApp() {
+                    return 'tracking-item-1';
+                }
+
                 export async function saveTeamScheduleNotificationsForApp(teamId, settings = {}) {
                     return {
                         enabled: settings.enabled !== false,
@@ -418,6 +432,10 @@ async function mockHomePlayerModules(page) {
                         summary: 'Team default reminder window: 24 hours before event start.'
                     };
                 }
+
+                export async function setPlayerTrackingStatusForApp() {}
+
+                export async function updateStatTrackerConfigForApp() {}
 
                 export async function loadTeamStaffPermissions() {
                     return null;
@@ -685,7 +703,7 @@ test('my teams opens from Home data with selected team, player, and chat routes'
     await expect(page.getByRole('link', { name: /Media/ })).toHaveAttribute('href', '#/teams/team-1/media');
     await expect(page.locator('a[href="#/players/team-1/player-1"]').first()).toBeVisible();
     await expect(page.locator('a[href="#/players/team-1/player-1"]').filter({ hasText: 'Pat Star' })).toBeVisible();
-    await expect(page.getByRole('button', { name: /Bears/ }).first()).toHaveAttribute('aria-pressed', 'true');
+    await expect(page.getByRole('link', { name: 'Open Bears' }).first()).toHaveAttribute('aria-current', 'page');
     await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1)).toBe(true);
 
     await page.locator('a[href="#/teams/team-1"]').first().click();

@@ -37,21 +37,16 @@ describe('React app auth/profile capability parity', () => {
         expect(appRoutes).not.toContain('if (auth.loading) {');
     });
 
-    it('defaults a browser refresh on My Teams back to Home', () => {
+    it('keeps My Teams as a first-class route without a reload redirect', () => {
         const appRoutes = readProjectFile('apps/app/src/App.tsx');
         const reloadRouting = readProjectFile('apps/app/src/lib/reloadRouting.ts');
 
-        expectContains(appRoutes, [
-            "import { shouldReloadTeamsToHome } from './lib/reloadRouting';",
-            'pathname: location.pathname',
-            'search: location.search',
-            'isReload: isBrowserReload()',
-            'shouldDefaultReloadToHome ? <Navigate to="/home" replace />'
-        ]);
+        expect(appRoutes).toContain('<Route path="/teams" element={<Protected auth={auth}><Teams auth={auth} /></Protected>} />');
+        expect(appRoutes).not.toContain("import { shouldReloadTeamsToHome } from './lib/reloadRouting';");
+        expect(appRoutes).not.toContain('shouldDefaultReloadToHome');
+        expect(appRoutes).not.toContain('isBrowserReload()');
         expectContains(reloadRouting, [
-            "pathname === '/teams'",
-            '!search',
-            'isReload'
+            'return false;'
         ]);
     });
 
@@ -68,6 +63,22 @@ describe('React app auth/profile capability parity', () => {
             "profile.teamMediaUploadTeamIds.filter((teamId): teamId is string => typeof teamId === 'string')",
             'mediaUploadTeamIds: Array.isArray(profile.mediaUploadTeamIds)',
             "profile.mediaUploadTeamIds.filter((teamId): teamId is string => typeof teamId === 'string')"
+        ]);
+    });
+
+    it('hydrates normalized parent scope keys into app auth users', () => {
+        const authService = readProjectFile('apps/app/src/lib/authService.ts');
+        const types = readProjectFile('apps/app/src/lib/types.ts');
+
+        expectContains(types, [
+            'parentTeamIds?: string[];',
+            'parentPlayerKeys?: string[];'
+        ]);
+        expectContains(authService, [
+            'Array.isArray(profile.parentTeamIds)',
+            'Array.isArray(profile.parentPlayerKeys)',
+            'parentTeamIds: Array.isArray(profile.parentTeamIds)',
+            'parentPlayerKeys: Array.isArray(profile.parentPlayerKeys)'
         ]);
     });
 

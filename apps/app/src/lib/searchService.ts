@@ -1,22 +1,21 @@
-import { isTeamActive } from '../../../../js/team-visibility.js';
 import {
-  executeBoundedPlayerSearch,
-  playerSearchFirestoreQueryBudget,
-  playerSearchResultLimit
-} from '../../../../js/player-search-budget.js';
-import {
-  db,
   collection,
+  db,
   doc,
+  executeBoundedPlayerSearch,
   getDoc,
   getDocs,
-  query,
-  where,
+  isTeamActive,
+  limit,
   orderBy,
-  limit
-} from '../../../../js/firebase.js';
+  playerSearchFirestoreQueryBudget,
+  playerSearchResultLimit,
+  query,
+  where
+} from './adapters/legacySearchDb';
 import { loadParentHomeSummary } from './homeService';
 import { searchHelpKnowledge } from './helpKnowledgeService';
+import { getPublicTeamsPage } from './publicTeamsService';
 import type { AuthState, AuthUser, UserRole } from './types';
 
 const teamsCacheTtlMs = 10 * 60 * 1000;
@@ -61,6 +60,7 @@ export type AppSearchTeam = {
   zip?: string | null;
   city?: string | null;
   state?: string | null;
+  location?: string | null;
   isPublic?: boolean;
   active?: boolean;
   archived?: boolean;
@@ -363,28 +363,20 @@ export async function searchAppTeams(queryText: string, appAccessTeams: AppSearc
   const firstToken = splitSearchTokens(rawQuery)[0] || '';
   if (!firstToken) return appAccessTeams.slice(0, teamSearchQueryLimit);
 
-  const prefixes = Array.from(new Set([
-    firstToken,
-    titleCaseWord(firstToken)
-  ].filter(Boolean))).slice(0, 2);
-
-  const publicTeamQueries = prefixes.map((prefix) => getDocs(query(
-    collection(db, 'teams'),
-    where('isPublic', '==', true),
-    orderBy('name'),
-    where('name', '>=', prefix),
-    where('name', '<=', `${prefix}\uf8ff`),
-    limit(teamSearchQueryLimit)
-  )));
-
   const localTeamsById = new Map(appAccessTeams.map((team) => [team.id, team]));
-  const snapshots = await Promise.allSettled(publicTeamQueries);
-  const rejected = snapshots.filter((snapshot) => snapshot.status === 'rejected').map((snapshot: any) => snapshot.reason).filter(Boolean);
-  const hasFulfilled = snapshots.some((snapshot) => snapshot.status === 'fulfilled');
+  const publicTeamsResult = await Promise.allSettled([
+    getPublicTeamsPage({ searchText: rawQuery, pageSize: teamSearchQueryLimit })
+  ]);
 
-  snapshots.forEach((snapshot: any) => {
-    if (snapshot.status !== 'fulfilled') return;
-    normalizeTeams((snapshot.value?.docs || []).map((doc: any) => ({ id: doc.id, ...(typeof doc.data === 'function' ? doc.data() || {} : {}) }))).forEach((team) => {
+  const rejected = publicTeamsResult
+    .filter((result) => result.status === 'rejected')
+    .map((result: any) => result.reason)
+    .filter(Boolean);
+  const hasFulfilled = publicTeamsResult.some((result) => result.status === 'fulfilled');
+
+  publicTeamsResult.forEach((result: any) => {
+    if (result.status !== 'fulfilled') return;
+    normalizePublicTeamSearchResults(result.value?.teams || []).forEach((team) => {
       if (canUserDiscoverTeamInAppSearch(team, user)) {
         localTeamsById.set(team.id, team);
       }
@@ -598,6 +590,14 @@ async function mergeParentHomeSearchTeams(teamsById: Map<string, AppSearchTeam>,
       return;
     }
 
+    if (hasSearchSafeParentHomeTeamMetadata(team)) {
+      const searchTeam = buildParentHomeSearchTeam(team);
+      if (canUserDiscoverTeamInAppSearch(searchTeam, user)) {
+        teamsById.set(searchTeam.id, searchTeam);
+      }
+      return;
+    }
+
     fallbackTeams.push({ ...team, teamId });
   });
 
@@ -607,14 +607,14 @@ async function mergeParentHomeSearchTeams(teamsById: Map<string, AppSearchTeam>,
     fallbackTeams.map((team) => getDoc(doc(db, 'teams', team.teamId)))
   );
 
-  snapshots.forEach((snapshot: any, index) => {
-    if (snapshot.status !== 'fulfilled') return;
-    const teamDoc = snapshot.value;
-    if (!teamDoc?.exists?.()) return;
+  fallbackTeams.forEach((homeTeam, index) => {
+    const snapshot: any = snapshots[index];
+    const teamDoc = snapshot?.status === 'fulfilled' ? snapshot.value : null;
+    const [firestoreTeam] = teamDoc?.exists?.()
+      ? normalizeTeams([{ id: homeTeam.teamId, ...(typeof teamDoc.data === 'function' ? teamDoc.data() || {} : {}) }])
+      : [];
 
-    const homeTeam = fallbackTeams[index];
-    const [firestoreTeam] = normalizeTeams([{ id: homeTeam.teamId, ...(typeof teamDoc.data === 'function' ? teamDoc.data() || {} : {}) }]);
-    if (!firestoreTeam || !isTeamActive(firestoreTeam)) return;
+    if (firestoreTeam && !isTeamActive(firestoreTeam)) return;
 
     const searchTeam = buildParentHomeSearchTeam(homeTeam, firestoreTeam);
     if (canUserDiscoverTeamInAppSearch(searchTeam, user)) {
@@ -666,7 +666,8 @@ function buildParentHomeSearchTeam(homeTeam: any, baseTeam?: AppSearchTeam): App
     zip: baseTeam?.zip || '',
     city: baseTeam?.city || '',
     state: baseTeam?.state || '',
-    isPublic: baseTeam?.isPublic,
+    location: baseTeam?.location || cleanString(homeTeam?.location),
+    isPublic: resolveParentHomeTeamIsPublic(homeTeam, baseTeam?.isPublic),
     active: homeTeam?.active ?? baseTeam?.active,
     archived: homeTeam?.archived ?? baseTeam?.archived,
     status: cleanString(homeTeam?.status) || baseTeam?.status,
@@ -677,6 +678,59 @@ function buildParentHomeSearchTeam(homeTeam: any, baseTeam?: AppSearchTeam): App
     streamAccessMode: baseTeam?.streamAccessMode,
     streamVolunteerEmails: baseTeam?.streamVolunteerEmails || [],
     teamPermissions: baseTeam?.teamPermissions || null
+  };
+}
+
+function hasSearchSafeParentHomeTeamMetadata(team: any) {
+  return cleanString(team?.teamName || team?.name) !== ''
+    && isTeamActive(team)
+    && typeof resolveParentHomeTeamIsPublic(team) === 'boolean';
+}
+
+function resolveParentHomeTeamIsPublic(team: any, fallbackIsPublic?: boolean) {
+  if (typeof team?.isPublic === 'boolean') return team.isPublic;
+  if (typeof team?.public === 'boolean') return team.public;
+
+  const visibility = cleanString(team?.searchVisibility || team?.visibility).toLowerCase();
+  if (visibility === 'private') return false;
+  if (visibility === 'public') return true;
+
+  return fallbackIsPublic;
+}
+
+function normalizePublicTeamSearchResults(teams: any[]): AppSearchTeam[] {
+  return (Array.isArray(teams) ? teams : [])
+    .map((team) => {
+      const location = cleanString(team?.location);
+      const parsedLocation = parseTeamSearchLocation(location);
+      return {
+        id: cleanString(team?.teamId || team?.id),
+        name: cleanString(team?.teamName || team?.name) || 'Team',
+        sport: cleanString(team?.sport),
+        zip: cleanString(team?.zip) || parsedLocation.zip,
+        city: cleanString(team?.city) || parsedLocation.city,
+        state: cleanString(team?.state) || parsedLocation.state,
+        location,
+        isPublic: true,
+        active: team?.active,
+        archived: team?.archived,
+        status: cleanString(team?.status),
+        photoUrl: getFirstUrl(team?.photoUrl, team?.teamPhotoUrl, team?.logoUrl, team?.imageUrl)
+      };
+    })
+    .filter((team) => team.id);
+}
+
+function parseTeamSearchLocation(location: string) {
+  if (!location) return { zip: '', city: '', state: '' };
+  if (/^\d{5}(?:-\d{4})?$/.test(location)) {
+    return { zip: location, city: '', state: '' };
+  }
+  const [city, state] = location.split(',').map((part) => cleanString(part));
+  return {
+    zip: '',
+    city: city || location,
+    state: state || ''
   };
 }
 
@@ -743,11 +797,12 @@ function rankTeamsForQuery(teams: AppSearchTeam[], queryText: string) {
 }
 
 function teamToSearchItem(team: AppSearchTeam): AppSearchItem {
+  const location = cleanString(team.location);
   return {
     id: `team:${team.id}`,
     kind: 'team',
     title: team.name || 'Team',
-    subtitle: [team.sport, team.zip || [team.city, team.state].filter(Boolean).join(', ')].filter(Boolean).join(' • '),
+    subtitle: [team.sport, team.zip || [team.city, team.state].filter(Boolean).join(', ') || location].filter(Boolean).join(' • '),
     route: `/teams/${encodeURIComponent(team.id)}`
   };
 }
@@ -950,6 +1005,13 @@ async function loadPlayerSearchDocsByTeam(rawQuery: string, prefixes: string[], 
   return buildPlayerSearchDocsFromSnapshots(snapshots, nameQueryCount, isNumeric, completedAllQueries);
 }
 
+// Player search runs scoped per-team queries against the teams the user can
+// already access (loadPlayerSearchDocsByTeam) rather than a global
+// collectionGroup('players') scan. The collectionGroup path is intentionally
+// absent: it was permission-denied for non-admins and re-paid a failed cascade
+// every session (#2036). Caller-side guards (min length, debounce in
+// AppSearchDialog) plus the session-level playerSearchCache keep repeat searches
+// from re-reading Firestore. See searchService.test.ts for the regression guard.
 async function loadPlayerSearchDocs(rawQuery: string, prefixes: string[], isNumeric: boolean, teamsById: Map<string, AppSearchTeam> = new Map()) {
   return loadPlayerSearchDocsByTeam(rawQuery, prefixes, isNumeric, teamsById);
 }

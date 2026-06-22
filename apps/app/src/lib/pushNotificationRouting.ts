@@ -5,13 +5,28 @@ type PushPayload = {
     category?: string;
     teamId?: string;
     conversationId?: string;
+    childId?: string;
     gameId?: string;
     eventId?: string;
+    batchId?: string;
+    recipientId?: string;
+    certificateId?: string;
     link?: string;
 };
 
 function normalizeValue(value: unknown) {
     return String(value || '').trim();
+}
+
+function getPushPayload(input: unknown) {
+    if (!input || typeof input !== 'object') {
+        return null;
+    }
+    const candidate = input as PushPayload & { data?: unknown };
+    if (candidate.data && typeof candidate.data === 'object') {
+        return candidate.data as PushPayload;
+    }
+    return candidate;
 }
 
 function encodeRouteParam(value: string) {
@@ -31,7 +46,7 @@ function buildMessagesRoute(teamId: string, conversationId?: string) {
     return `${route}?conversationId=${encodeRouteParam(normalizedConversationId)}`;
 }
 
-function buildScheduleEventRoute(teamId: string, eventId: string, section?: string) {
+function buildScheduleEventRoute(teamId: string, eventId: string, section?: string, childId?: string) {
     const normalizedTeamId = normalizeValue(teamId);
     const normalizedEventId = normalizeValue(eventId);
     if (!normalizedTeamId || !normalizedEventId) {
@@ -39,22 +54,30 @@ function buildScheduleEventRoute(teamId: string, eventId: string, section?: stri
     }
     const route = `/schedule/${encodeRouteParam(normalizedTeamId)}/${encodeRouteParam(normalizedEventId)}`;
     const normalizedSection = normalizeValue(section);
-    return normalizedSection ? `${route}?section=${encodeRouteParam(normalizedSection)}` : route;
+    return appendQuery(route, {
+        childId: normalizeValue(childId),
+        section: normalizedSection
+    });
+}
+
+function appendQuery(route: string, params: Record<string, string>) {
+    const query = new URLSearchParams();
+    Object.entries(params).forEach(([key, value]) => {
+        const normalized = normalizeValue(value);
+        if (normalized) {
+            query.set(key, normalized);
+        }
+    });
+    const queryString = query.toString();
+    return queryString ? `${route}?${queryString}` : route;
 }
 
 function normalizeAppRoute(route: unknown) {
     const value = normalizeValue(route);
-    if (!value.startsWith('/')) {
+    if (!value.startsWith('/') || value.startsWith('//')) {
         return '';
     }
     return value;
-}
-
-function readPayload(input: unknown): PushPayload {
-    if (!input || typeof input !== 'object') {
-        return {};
-    }
-    return input as PushPayload;
 }
 
 function buildLegacyLinkFallback(link: string) {
@@ -100,13 +123,25 @@ function buildLegacyLinkFallback(link: string) {
 }
 
 export function resolvePushNotificationRoute(input: unknown) {
-    const payload = readPayload(input);
+    const payload = getPushPayload(input);
+    if (!payload) {
+        return '/home';
+    }
+
     const appRoute = normalizeAppRoute(payload.appRoute);
+    if (appRoute) {
+        return appRoute;
+    }
+
     const category = normalizeValue(payload.category);
     const teamId = normalizeValue(payload.teamId);
     const conversationId = normalizeValue(payload.conversationId);
     const gameId = normalizeValue(payload.gameId);
     const eventId = normalizeValue(payload.eventId) || gameId;
+    const childId = normalizeValue(payload.childId);
+    const batchId = normalizeValue(payload.batchId);
+    const recipientId = normalizeValue(payload.recipientId);
+    const certificateId = normalizeValue(payload.certificateId);
 
     if (category === 'liveScore' && gameId) {
         if (teamId) {
@@ -114,25 +149,70 @@ export function resolvePushNotificationRoute(input: unknown) {
         }
         return `/games/${encodeRouteParam(gameId)}`;
     }
+    if (category === 'gameDay') {
+        if (teamId && eventId) {
+            return buildScheduleEventRoute(teamId, eventId, 'game');
+        }
+        if (eventId) {
+            return `/games/${encodeRouteParam(eventId)}`;
+        }
+    }
     if (category === 'practice') {
+        if (teamId && eventId) {
+            return buildScheduleEventRoute(teamId, eventId, 'game');
+        }
+        if (teamId) {
+            return `/schedule?teamId=${encodeRouteParam(teamId)}&section=game`;
+        }
+    }
+    if (category === 'rsvp') {
         if (appRoute) {
             return appRoute;
         }
         if (teamId && eventId) {
-            return buildScheduleEventRoute(teamId, eventId, 'game');
+            return buildScheduleEventRoute(teamId, eventId, 'availability', childId);
         }
+        if (teamId) {
+            return `/schedule?teamId=${encodeRouteParam(teamId)}`;
+        }
+        return '/schedule';
+    }
+    if (category === 'media') {
+        if (appRoute) {
+            return appRoute;
+        }
+        if (teamId) {
+            return `/teams/${encodeRouteParam(teamId)}/media`;
+        }
+        return '/teams';
     }
     if (category === 'liveChat' && teamId && conversationId) {
         return buildMessagesRoute(teamId, conversationId);
     }
-    if (category === 'liveScore' && gameId) {
-        if (teamId) {
-            return buildScheduleEventRoute(teamId, gameId, 'game');
-        }
-        return `/games/${encodeRouteParam(gameId)}`;
+    if (category === 'mentions' && teamId) {
+        return buildMessagesRoute(teamId, conversationId);
     }
-    if (appRoute) {
-        return appRoute;
+    if (category === 'fees') {
+        if (teamId && batchId) {
+            const route = `/teams/${encodeRouteParam(teamId)}/fees/${encodeRouteParam(batchId)}`;
+            return appendQuery(route, { recipientId });
+        }
+        return appendQuery('/parent-tools/fees', { teamId, batchId, recipientId });
+    }
+    if (category === 'access') {
+        return appendQuery('/parent-tools/access', { teamId });
+    }
+    if (category === 'rideshare') {
+        if (teamId && eventId) {
+            return buildScheduleEventRoute(teamId, eventId, 'rideshare', childId);
+        }
+        return teamId ? `/schedule?teamId=${encodeRouteParam(teamId)}&section=rideshare` : '/schedule?section=rideshare';
+    }
+    if (category === 'awards') {
+        return appendQuery('/parent-tools/certificates', { teamId, certificateId });
+    }
+    if (category === 'officiating') {
+        return teamId ? `/officials?teamId=${encodeRouteParam(teamId)}` : '/officials';
     }
 
     if (category === 'liveChat' && teamId) {

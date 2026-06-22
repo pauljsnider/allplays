@@ -97,7 +97,9 @@ describe('notifyFeeMarkedPaid trigger', () => {
         expect(harness.sendDirectTargetsNotification).toHaveBeenNthCalledWith(1, expect.objectContaining({
             targets: [{ uid: 'parent-1', token: 'parent-token', teamId: 'team-1' }],
             title: 'Payment received: Spring dues',
-            body: 'We received your $100.00 payment. Thank you!'
+            body: 'We received your $100.00 payment. Thank you!',
+            batchId: 'batch-1',
+            recipientId: 'recipient-1'
         }));
         expect(harness.sendDirectTargetsNotification).toHaveBeenNthCalledWith(2, expect.objectContaining({
             targets: [
@@ -142,11 +144,52 @@ describe('notifyFeeMarkedPaid trigger', () => {
         expect(harness.sendDirectTargetsNotification).toHaveBeenCalledTimes(2);
         expect(harness.sendDirectTargetsNotification).toHaveBeenNthCalledWith(1, expect.objectContaining({
             title: 'Fee paid: Spring dues',
-            body: 'Your fee balance is now marked as paid.'
+            body: 'Your fee balance is now marked as paid.',
+            batchId: 'batch-1',
+            recipientId: 'recipient-1'
         }));
         expect(harness.sendDirectTargetsNotification).toHaveBeenNthCalledWith(2, expect.objectContaining({
             title: 'Fee paid: Spring dues',
             body: "Pat Parent's fee balance is now marked as paid."
+        }));
+    });
+
+    it('does not duplicate the staff notification to a staff member who paid their own fee', async () => {
+        const harness = buildTriggerHarness({
+            targets: [
+                { uid: 'staff-payer', token: 'payer-token', teamId: 'team-1' },
+                { uid: 'staff-2', token: 'staff-2-token', teamId: 'team-1' }
+            ],
+            users: [
+                { uid: 'staff-payer', roles: ['staff', 'parent'] },
+                { uid: 'staff-2', roles: ['staff'] }
+            ]
+        });
+
+        await harness.trigger({
+            before: { exists: true, data: () => ({ status: 'unpaid', amountPaidCents: 0 }) },
+            after: {
+                exists: true,
+                data: () => ({
+                    status: 'paid',
+                    feeTitle: 'Tournament fee',
+                    userId: 'staff-payer',
+                    parentName: 'Coach Parent',
+                    manualPayment: { amountPaidCents: 7500 }
+                })
+            }
+        }, {
+            params: { teamId: 'team-1', batchId: 'batch-1', recipientId: 'recipient-1' }
+        });
+
+        expect(harness.sendDirectTargetsNotification).toHaveBeenCalledTimes(2);
+        expect(harness.sendDirectTargetsNotification).toHaveBeenNthCalledWith(1, expect.objectContaining({
+            targets: [{ uid: 'staff-payer', token: 'payer-token', teamId: 'team-1' }],
+            title: 'Payment received: Tournament fee'
+        }));
+        expect(harness.sendDirectTargetsNotification).toHaveBeenNthCalledWith(2, expect.objectContaining({
+            targets: [{ uid: 'staff-2', token: 'staff-2-token', teamId: 'team-1' }],
+            title: 'Fee paid: Tournament fee'
         }));
     });
 

@@ -6,9 +6,13 @@ import { MemoryRouter } from 'react-router-dom';
 
 const scheduleMocks = vi.hoisted(() => ({
     addTeamCalendarUrl: vi.fn(),
+    createScheduledGameForApp: vi.fn(),
+    createScheduledPracticeForApp: vi.fn(),
     createScheduleImportGame: vi.fn(),
     createScheduleImportPractice: vi.fn(),
+    finalizeScheduleImportBatch: vi.fn(),
     loadParentSchedule: vi.fn(),
+    loadScheduleStatTrackerConfigsForApp: vi.fn(),
     removeTeamCalendarUrl: vi.fn(),
     generateScheduleAiImportRows: vi.fn(),
     aiModuleLoads: 0,
@@ -21,6 +25,10 @@ const layoutState = vi.hoisted(() => ({
 }));
 
 vi.mock('../../apps/app/src/lib/scheduleService.ts', () => scheduleMocks);
+vi.mock('../../apps/app/src/lib/uxTiming.ts', () => ({
+    recordFirstMeaningfulRender: vi.fn(),
+    startScreenMountTimer: vi.fn(() => ({ end: vi.fn() }))
+}));
 vi.mock('../../apps/app/src/lib/scheduleAiImport.ts', async () => {
     scheduleMocks.aiModuleLoads += 1;
     return {
@@ -135,6 +143,23 @@ async function clickButton(container, text) {
     });
 }
 
+async function waitForButtonEnabled(container, text) {
+    const timeoutMs = 3000;
+    const startTime = Date.now();
+    while ((Date.now() - startTime) < timeoutMs) {
+        const button = queryButtonByText(container, text);
+        if (button && !button.disabled) return button;
+        await act(async () => {
+            if (vi.isFakeTimers()) {
+                await vi.advanceTimersByTimeAsync(10);
+                await Promise.resolve();
+                return;
+            }
+            await new Promise((resolve) => setTimeout(resolve, 10));
+        });
+    }
+    throw new Error(`Timed out waiting for enabled button: ${text}`);
+}
 
 async function changeInput(input, value) {
     await act(async () => {
@@ -167,8 +192,12 @@ beforeEach(() => {
     layoutState.isNative = false;
     layoutState.isMobileWeb = false;
     scheduleMocks.addTeamCalendarUrl.mockResolvedValue({ added: true, calendarUrls: ['https://example.com/team.ics'] });
+    scheduleMocks.createScheduledGameForApp.mockResolvedValue('game-new');
+    scheduleMocks.createScheduledPracticeForApp.mockResolvedValue('practice-new');
     scheduleMocks.createScheduleImportGame.mockResolvedValue('game-new');
     scheduleMocks.createScheduleImportPractice.mockResolvedValue('practice-new');
+    scheduleMocks.finalizeScheduleImportBatch.mockResolvedValue(undefined);
+    scheduleMocks.loadScheduleStatTrackerConfigsForApp.mockResolvedValue([{ id: 'cfg-basketball', name: 'Basketball' }]);
     scheduleMocks.removeTeamCalendarUrl.mockResolvedValue({ removed: true, calendarUrls: [] });
     scheduleMocks.generateScheduleAiImportRows.mockResolvedValue({ rows: [], errors: [] });
     vi.spyOn(window, 'confirm').mockReturnValue(true);
@@ -493,9 +522,7 @@ describe('React app desktop Schedule controls', () => {
             await Promise.resolve();
         });
         await waitForText(container, 'Loaded schedule.csv');
-        await act(async () => {
-            await new Promise((resolve) => setTimeout(resolve, 60));
-        });
+        await waitForButtonEnabled(container, 'Preview rows');
 
         await clickButton(container, 'Preview rows');
         await waitForText(container, 'Game vs Tigers');
@@ -505,11 +532,23 @@ describe('React app desktop Schedule controls', () => {
         await clickButton(container, 'Import rows');
         expect(scheduleMocks.createScheduleImportGame).toHaveBeenCalledWith('team-1', expect.objectContaining({
             eventType: 'game',
-            opponent: 'Tigers'
+            opponent: 'Tigers',
+            importBatch: expect.objectContaining({
+                batchId: expect.any(String),
+                totalCount: 2,
+                rowNumber: expect.any(Number),
+                importedBy: auth.user.uid
+            })
         }), auth.user);
         expect(scheduleMocks.createScheduleImportPractice).toHaveBeenCalledWith('team-1', expect.objectContaining({
             eventType: 'practice',
-            title: 'Speed Session'
+            title: 'Speed Session',
+            importBatch: expect.objectContaining({
+                batchId: expect.any(String),
+                totalCount: 2,
+                rowNumber: expect.any(Number),
+                importedBy: auth.user.uid
+            })
         }), auth.user);
         expect(scheduleMocks.loadParentSchedule).toHaveBeenCalledTimes(3);
         expect(scheduleMocks.loadParentSchedule).toHaveBeenLastCalledWith(auth.user, { hydrateDetails: false, expandStaffPlayers: false });
@@ -681,6 +720,92 @@ describe('React app desktop Schedule controls', () => {
         expect(container.textContent).toContain('Firestore write failed');
         expect(container.textContent).toContain('Game vs Tigers');
         expect(container.textContent).not.toContain('Row 3: Practice');
+        expect(scheduleMocks.finalizeScheduleImportBatch).not.toHaveBeenCalled();
+    });
+
+    it('finalizes large CSV imports with the successful import count after partial failures', async () => {
+        scheduleMocks.loadParentSchedule.mockResolvedValue({
+            children: [
+                { playerId: 'player-1', playerName: 'Pat', teamId: 'team-1', teamName: 'Bears' }
+            ],
+            events: [event({ isTeamStaff: true })]
+        });
+        scheduleMocks.createScheduleImportPractice.mockRejectedValueOnce(new Error('Practice write failed'));
+        scheduleMocks.createScheduleImportGame
+            .mockResolvedValueOnce('game-1')
+            .mockResolvedValueOnce('game-2')
+            .mockResolvedValueOnce('game-4');
+
+        const { container } = await renderSchedule();
+        await waitForText(container, 'Import schedule CSV');
+        const input = container.querySelector('input[aria-label="Schedule CSV file"]');
+        const file = new File([
+            'Type,Date,Start,Opponent,Location\n',
+            'Game,4/2/2026,6:30 PM,Tigers,Field 1\n',
+            'Game,4/3/2026,6:30 PM,Hawks,Field 2\n',
+            'Practice,4/4/2026,7:00 AM,,Field 3\n',
+            'Game,4/5/2026,8:00 AM,Lions,Field 4\n'
+        ], 'large-partial-schedule.csv', { type: 'text/csv' });
+
+        await act(async () => {
+            Object.defineProperty(input, 'files', { value: [file], configurable: true });
+            input.dispatchEvent(new Event('change', { bubbles: true }));
+            await Promise.resolve();
+        });
+        await waitForText(container, 'Loaded large-partial-schedule.csv');
+
+        await clickButton(container, 'Preview rows');
+        await waitForText(container, 'Game vs Tigers');
+        await clickButton(container, 'Import rows');
+
+        await waitForText(container, 'Imported 3 row(s); 1 row(s) failed and remain below for retry.');
+        expect(scheduleMocks.finalizeScheduleImportBatch).toHaveBeenCalledWith('team-1', expect.any(String), 3, auth.user);
+    });
+
+    it('clears stale tracker config selections when staff switch teams before creating a game', async () => {
+        scheduleMocks.loadParentSchedule.mockResolvedValue({
+            children: [
+                { playerId: 'player-1', playerName: 'Pat', teamId: 'team-1', teamName: 'Bears' },
+                { playerId: 'player-2', playerName: 'Sam', teamId: 'team-2', teamName: 'Wolves' }
+            ],
+            events: [
+                event({ teamId: 'team-1', teamName: 'Bears', isTeamStaff: true }),
+                event({ eventKey: 'team-2::game-2::player-2', id: 'game-2', teamId: 'team-2', teamName: 'Wolves', childId: 'player-2', childName: 'Sam', isTeamStaff: true })
+            ]
+        });
+        scheduleMocks.loadScheduleStatTrackerConfigsForApp.mockImplementation(async (teamId) => {
+            if (teamId === 'team-1') {
+                return [{ id: 'cfg-team-1', name: 'Bears Tracker' }];
+            }
+            if (teamId === 'team-2') {
+                return [{ id: 'cfg-team-2', name: 'Wolves Tracker' }];
+            }
+            return [];
+        });
+
+        const { container } = await renderSchedule();
+        await waitForText(container, 'Main Gym');
+        await clickButton(container, 'Filters and views');
+        await changeSelect(selectByLabel(container, 'Team'), 'team-1');
+        await waitForText(container, 'Add game for Bears');
+
+        const teamOnePanel = container.querySelector('section[aria-label="Create game"]');
+        const teamOneSelects = teamOnePanel.querySelectorAll('select');
+        await changeSelect(teamOneSelects[1], 'cfg-team-1');
+        expect(teamOneSelects[1].value).toBe('cfg-team-1');
+
+        await changeSelect(selectByLabel(container, 'Team'), 'team-2');
+        await waitForText(container, 'Add game for Wolves');
+
+        const teamTwoPanel = container.querySelector('section[aria-label="Create game"]');
+        const teamTwoSelects = teamTwoPanel.querySelectorAll('select');
+        expect(teamTwoSelects[1].value).toBe('');
+
+        await clickButton(container, 'Create game');
+
+        expect(scheduleMocks.createScheduledGameForApp).toHaveBeenCalledWith('team-2', expect.objectContaining({
+            statTrackerConfigId: ''
+        }), auth.user);
     });
 
 });

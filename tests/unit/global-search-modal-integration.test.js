@@ -17,8 +17,8 @@ const firebaseMocks = vi.hoisted(() => ({
     limit: vi.fn((count) => ({ type: 'limit', count }))
 }));
 
-vi.mock('../../js/db.js?v=53', () => dbMocks);
-vi.mock('../../js/firebase.js?v=18', () => firebaseMocks);
+vi.mock('../../js/db.js?v=64', () => dbMocks);
+vi.mock('../../js/firebase.js?v=19', () => firebaseMocks);
 vi.mock('../../js/utils.js?v=8', () => ({
     escapeHtml: (value) => String(value || '')
 }));
@@ -99,5 +99,86 @@ describe('legacy global search modal', () => {
         expect(dbMocks.discoverPublicTeams).toHaveBeenCalledWith({ searchText: 'be', pageSize: 20 });
         expect(document.body.textContent).toContain('Bearcats');
         expect(firebaseMocks.doc).toHaveBeenCalledWith(firebaseMocks.db, 'teams', 'team-access');
+    });
+
+    it('uses parent team link visibility summaries without per-team fallback reads', async () => {
+        const { setupHeaderSearch } = await import('../../js/global-search.js?v=8');
+
+        setupHeaderSearch({
+            user: {
+                uid: 'parent-1',
+                email: 'parent@example.com',
+                parentOf: [
+                    {
+                        teamId: 'team-summary',
+                        teamName: 'Summary Rockets',
+                        sport: 'Basketball',
+                        isPublic: false,
+                        active: true,
+                        status: 'active'
+                    },
+                    {
+                        teamId: 'team-private-visibility',
+                        teamName: 'Visibility Rockets',
+                        sport: 'Soccer',
+                        visibility: 'private',
+                        active: true,
+                        status: 'active'
+                    },
+                    {
+                        teamId: 'team-archived',
+                        teamName: 'Archived Rockets',
+                        sport: 'Soccer',
+                        isPublic: false,
+                        status: 'archived'
+                    }
+                ]
+            },
+            headerContainer: null
+        });
+
+        window.dispatchEvent(new KeyboardEvent('keydown', { key: 'k', ctrlKey: true, bubbles: true }));
+        await flushAsyncWork();
+        await flushAsyncWork();
+
+        expect(firebaseMocks.getDoc).not.toHaveBeenCalled();
+        expect(document.body.textContent).toContain('Summary Rockets');
+        expect(document.body.textContent).toContain('Visibility Rockets');
+        expect(document.body.textContent).not.toContain('Archived Rockets');
+    });
+
+    it('falls back to Firestore when parent links only mark app access without visibility', async () => {
+        const { setupHeaderSearch } = await import('../../js/global-search.js?v=8');
+
+        firebaseMocks.getDoc.mockResolvedValueOnce(firestoreDoc('team-app-access-only', {
+            name: 'Stored Access Rockets',
+            sport: 'Basketball',
+            isPublic: false,
+            active: true
+        }));
+
+        setupHeaderSearch({
+            user: {
+                uid: 'parent-1',
+                email: 'parent@example.com',
+                parentOf: [
+                    {
+                        teamId: 'team-app-access-only',
+                        teamName: 'Access Rockets',
+                        sport: 'Basketball',
+                        appAccess: true,
+                        active: true
+                    }
+                ]
+            },
+            headerContainer: null
+        });
+
+        window.dispatchEvent(new KeyboardEvent('keydown', { key: 'k', ctrlKey: true, bubbles: true }));
+        await flushAsyncWork();
+        await flushAsyncWork();
+
+        expect(firebaseMocks.doc).toHaveBeenCalledWith(firebaseMocks.db, 'teams', 'team-app-access-only');
+        expect(document.body.textContent).toContain('Stored Access Rockets');
     });
 });

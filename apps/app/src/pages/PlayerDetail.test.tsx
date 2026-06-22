@@ -160,6 +160,20 @@ describe('PlayerDetail athlete profile season selection', () => {
     cleanup();
   });
 
+  it('shows a retryable player detail error state and reloads on retry', async () => {
+    playerServiceMocks.loadParentPlayerDetail
+      .mockRejectedValueOnce(new Error('Player detail unavailable.'))
+      .mockResolvedValueOnce(buildDetailData());
+
+    renderPlayerDetail();
+
+    expect(await screen.findByText('Player detail unavailable.')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+
+    expect(await screen.findByText('Sam Player')).toBeTruthy();
+    expect(playerServiceMocks.loadParentPlayerDetail).toHaveBeenCalledTimes(2);
+  });
+
   it('preselects existing saved seasons and passes updated selections on save', async () => {
     playerServiceMocks.loadParentPlayerDetail.mockResolvedValue(buildDetailData({
       athleteProfile: {
@@ -220,8 +234,22 @@ describe('PlayerDetail athlete profile season selection', () => {
     fireEvent.click(currentSeason);
     fireEvent.click(screen.getByRole('button', { name: 'Save Athlete Profile' }));
 
-    expect(await screen.findByText('Select at least one linked season to build an athlete profile.')).toBeTruthy();
+    const status = await screen.findByText('Select at least one linked season to build an athlete profile.');
+    expect(status.closest('[role="alert"]')?.getAttribute('aria-live')).toBe('assertive');
     expect(playerServiceMocks.saveParentAthleteProfileDraft).not.toHaveBeenCalled();
+  });
+
+  it('uses descriptive alt text for the player photo', async () => {
+    playerServiceMocks.loadParentPlayerDetail.mockResolvedValue(buildDetailData({
+      player: {
+        ...buildDetailData().player,
+        photoUrl: 'https://cdn.example.test/player.jpg'
+      }
+    }));
+
+    renderPlayerDetail();
+
+    expect(await screen.findByAltText('Sam Player profile photo')).toBeTruthy();
   });
 
   it('preselects saved seasons from older profile shapes without seasonKey', async () => {

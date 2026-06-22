@@ -51,9 +51,9 @@ const managedModel = {
     zip: '66210',
     isPublic: true,
     active: true,
-    leagueUrl: null,
+    leagueUrl: 'https://league.example.test/standings',
     bracketUrl: null,
-    streamUrl: null,
+    streamUrl: 'https://www.youtube.com/watch?v=LJNfHqRRhBI',
     websiteUrl: '',
     editTeamUrl: '',
     mediaUrl: '',
@@ -160,6 +160,8 @@ describe('TeamSettings', () => {
     fireEvent.change(nameInput, { target: { value: 'Lady Bears' } });
     fireEvent.change(screen.getByPlaceholderText('Basketball'), { target: { value: 'Soccer' } });
     fireEvent.change(screen.getByPlaceholderText('66210'), { target: { value: '66210-1234' } });
+    fireEvent.change(screen.getByPlaceholderText('https://league.example.com/standings'), { target: { value: 'https://league.example.test/new' } });
+    fireEvent.change(screen.getByPlaceholderText('https://youtu.be/... or https://twitch.tv/...'), { target: { value: 'https://youtu.be/LJNfHqRRhBI' } });
     fireEvent.click(screen.getByRole('button', { name: 'Save team' }));
 
     await waitFor(() => expect(teamDetailServiceMocks.updateTeamSettingsForApp).toHaveBeenCalledWith('team-1', auth.user, {
@@ -167,9 +169,28 @@ describe('TeamSettings', () => {
       sport: 'Soccer',
       zip: '66210-1234',
       isPublic: true,
+      leagueUrl: 'https://league.example.test/new',
+      streamUrl: 'https://youtu.be/LJNfHqRRhBI',
       photoFile: null
     }));
     expect(await screen.findByText('Team detail page')).toBeTruthy();
+  });
+
+  it('shows inline validation for invalid livestream links', async () => {
+    render(
+      <MemoryRouter initialEntries={['/teams/team-1/edit']}>
+        <Routes>
+          <Route path="/teams/:teamId/edit" element={<TeamSettings auth={auth} />} />
+        </Routes>
+      </MemoryRouter>
+    );
+
+    expect(await screen.findByRole('heading', { name: 'Edit team' })).toBeTruthy();
+    fireEvent.change(screen.getByPlaceholderText('https://youtu.be/... or https://twitch.tv/...'), { target: { value: 'not a stream url' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save team' }));
+
+    expect(await screen.findByText('Livestream link must be a valid YouTube or Twitch URL.')).toBeTruthy();
+    expect(teamDetailServiceMocks.updateTeamSettingsForApp).not.toHaveBeenCalled();
   });
 
   it('keeps unsaved edits and does not reload when choosing a new photo', async () => {
@@ -222,6 +243,8 @@ describe('TeamSettings', () => {
       sport: 'Basketball',
       zip: '66210',
       isPublic: true,
+      leagueUrl: 'https://league.example.test/standings',
+      streamUrl: 'https://www.youtube.com/watch?v=LJNfHqRRhBI',
       photoFile: null
     }));
   });
@@ -263,13 +286,13 @@ describe('TeamSettings', () => {
     });
 
     expect(await screen.findByDisplayValue('Wolves')).toBeTruthy();
-    expect(screen.getByPlaceholderText('Basketball')).toHaveValue('Soccer');
+    expect((screen.getByPlaceholderText('Basketball') as HTMLInputElement).value).toBe('Soccer');
 
     teamOneLoad.resolve(managedModel);
 
     await waitFor(() => {
-      expect(screen.getByPlaceholderText('Team name')).toHaveValue('Wolves');
-      expect(screen.getByPlaceholderText('Basketball')).toHaveValue('Soccer');
+      expect((screen.getByPlaceholderText('Team name') as HTMLInputElement).value).toBe('Wolves');
+      expect((screen.getByPlaceholderText('Basketball') as HTMLInputElement).value).toBe('Soccer');
     });
   });
 });

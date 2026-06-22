@@ -1,4 +1,4 @@
-import { discoverPublicTeams } from '../../../../js/db.js';
+import { discoverPublicTeams } from './adapters/legacyPublicTeamsDb';
 import { type ParentHomeTeam } from './homeLogic';
 
 export type PublicTeamsPage = {
@@ -20,6 +20,9 @@ function mapPublicTeam(team: { id: string; name: string; sport?: string | null; 
         sport: team.sport ?? null,
         photoUrl: team.photoUrl ?? null,
         location: teamLocation(team),
+        city: team.city ?? null,
+        state: team.state ?? null,
+        zip: team.zip ?? null,
         appAccess: team.appAccess ?? false,
         webAccess: team.webAccess ?? true,
         isPublic: true,

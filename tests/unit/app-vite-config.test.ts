@@ -18,4 +18,19 @@ describe('app Vite config', () => {
         expect(manualChunks?.(reactModule)).toBe('vendor-react');
         expect(manualChunks?.(scopedModule)).toBe('vendor-@capacitor-core');
     });
+
+    it('exposes the legacy JS directory through the @legacy alias', () => {
+        expect(appViteConfig.resolve?.alias).toEqual(expect.objectContaining({
+            '@legacy': expect.stringContaining('/js')
+        }));
+    });
+
+    it('enables app coverage reports across source files', () => {
+        expect(appViteConfig.test?.coverage).toEqual(expect.objectContaining({
+            provider: 'v8',
+            all: true,
+            reporter: ['text', 'json', 'lcov'],
+            include: ['src/**/*.{ts,tsx}']
+        }));
+    });
 });

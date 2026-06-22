@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { MemoryRouter, Route, Routes, useLocation, useNavigate } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -10,10 +10,26 @@ const scheduleServiceMocks = vi.hoisted(() => ({
   cancelScheduledGameForApp: vi.fn(),
   claimParentScheduleAssignmentSlot: vi.fn(),
   createParentScheduleRideOffer: vi.fn(),
+  loadScheduleStatTrackerConfigsForApp: vi.fn<(...args: any[]) => Promise<any[]>>(() => Promise.resolve([{ id: 'cfg-basketball', name: 'Basketball' }])),
   loadParentPracticePacket: vi.fn(),
+  loadStaffPracticePacket: vi.fn<(...args: any[]) => Promise<any>>(() => Promise.resolve({
+    sessionId: 'session-1',
+    teamId: 'team-1',
+    eventId: 'practice-1',
+    title: 'Practice',
+    date: new Date('2026-06-04T18:00:00Z'),
+    location: 'Main Gym',
+    packetTitle: 'Practice home packet',
+    dueDate: null,
+    totalMinutes: 0,
+    homePacket: { blocks: [], totalMinutes: 0 },
+    completions: [],
+    children: [{ id: 'player-1', name: 'Avery Smith' }]
+  })),
   loadStaffPracticeAttendance: vi.fn(),
   loadParentScheduleAssignments: vi.fn(),
   loadParentScheduleEventDetail: vi.fn(),
+  resolveCachedParentScheduleEvents: vi.fn<(...args: any[]) => any[]>(() => [] as any[]),
   loadParentScheduleRideOffers: vi.fn(),
   loadStaffScheduleRsvpBreakdown: vi.fn(),
   loadStaffRsvpReminderPreview: vi.fn(),
@@ -34,10 +50,25 @@ const scheduleServiceMocks = vi.hoisted(() => ({
   undoRecordedPlayerGameStat: vi.fn(),
   saveScheduledGameLineupDraftForApp: vi.fn(),
   saveStaffPracticeAttendance: vi.fn(),
+  saveStaffPracticePacket: vi.fn<(...args: any[]) => Promise<any>>(() => Promise.resolve({
+    sessionId: 'session-1',
+    teamId: 'team-1',
+    eventId: 'practice-1',
+    title: 'Practice',
+    date: new Date('2026-06-04T18:00:00Z'),
+    location: 'Main Gym',
+    packetTitle: 'Practice home packet',
+    dueDate: null,
+    totalMinutes: 10,
+    homePacket: { blocks: [{ drillTitle: 'Home Drill 1', duration: 10 }], totalMinutes: 10 },
+    completions: [],
+    children: [{ id: 'player-1', name: 'Avery Smith' }]
+  })),
   completeGameWrapupForApp: vi.fn(),
   loadGameDayLiveEventsForApp: vi.fn<(...args: any[]) => Promise<any[]>>(() => Promise.resolve([] as any[])),
   saveGameDaySubstitutionForApp: vi.fn((_teamId, _gameId, _user, payload) => Promise.resolve(payload)),
   updateGameScore: vi.fn(),
+  updateScheduledGameForApp: vi.fn<(...args: any[]) => Promise<any>>(() => Promise.resolve({ updated: true, eventId: 'game-1' })),
   updateLiveGameClockState: vi.fn(),
   buildLiveGameClockPeriods: vi.fn((game: any) => game?.gamePlan?.numPeriods === 4 ? ['Q1', 'Q2', 'Q3', 'Q4'] : ['H1', 'H2']),
   resolveLiveGameClockSnapshot: vi.fn((game: any, now = new Date()) => {
@@ -278,6 +309,7 @@ describe('ScheduleEventDetail loading states', () => {
   afterEach(() => {
     cleanup();
     vi.clearAllMocks();
+    scheduleServiceMocks.resolveCachedParentScheduleEvents.mockReturnValue([]);
   });
 
   it('shows the shared event skeleton while event details are loading', () => {
@@ -294,6 +326,70 @@ describe('ScheduleEventDetail loading states', () => {
     expect(screen.getByRole('status', { name: 'Loading event' })).toBeTruthy();
     expect(screen.queryByText('This event is not available for your account.')).toBeNull();
     expect(screen.queryByText('Pulling parent actions and game-day details.')).toBeNull();
+  });
+
+  it('warm-starts from cached schedule events without a full-page skeleton (#2649)', () => {
+    scheduleServiceMocks.resolveCachedParentScheduleEvents.mockReturnValue([
+      buildEvent({ childId: 'player-1', childName: 'Avery Smith' })
+    ]);
+    scheduleServiceMocks.loadParentScheduleEventDetail.mockReturnValue(new Promise(() => {}));
+
+    render(
+      <MemoryRouter initialEntries={['/schedule/team-1/game-1']}>
+        <Routes>
+          <Route path="/schedule/:teamId/:eventId" element={<ScheduleEventDetail auth={auth} />} />
+        </Routes>
+      </MemoryRouter>
+    );
+
+    expect(screen.queryByRole('status', { name: 'Loading event' })).toBeNull();
+    expect(screen.getAllByText(/Avery Smith/).length).toBeGreaterThan(0);
+  });
+
+  it('clears a cached previous event while cold-loading a new route (#2649)', async () => {
+    scheduleServiceMocks.resolveCachedParentScheduleEvents.mockImplementation((_userId, _teamId, eventId) => (
+      eventId === 'game-1'
+        ? [buildEvent({ id: 'game-1', childId: 'player-1', childName: 'Cached Smith' })]
+        : []
+    ));
+    scheduleServiceMocks.loadParentScheduleEventDetail.mockReturnValue(new Promise(() => {}));
+
+    renderScheduleEventDetailWithRouteControls();
+
+    expect(screen.queryByRole('status', { name: 'Loading event' })).toBeNull();
+    expect(screen.getAllByText(/Cached Smith/).length).toBeGreaterThan(0);
+
+    fireEvent.click(screen.getByText('Switch game'));
+
+    await waitFor(() => {
+      expect(screen.getByRole('status', { name: 'Loading event' })).toBeTruthy();
+    });
+    expect(screen.queryByText(/Cached Smith/)).toBeNull();
+  });
+
+  it('reconciles a cached seed with the refreshed event details (#2649)', async () => {
+    scheduleServiceMocks.resolveCachedParentScheduleEvents.mockReturnValue([
+      buildEvent({ childId: 'player-1', childName: 'Avery Smith' })
+    ]);
+    scheduleServiceMocks.loadParentScheduleRideOffers.mockResolvedValue([]);
+    scheduleServiceMocks.loadParentScheduleAssignments.mockResolvedValue([]);
+    scheduleServiceMocks.loadParentScheduleEventDetail.mockResolvedValue({
+      events: [buildEvent({ childId: 'player-1', childName: 'Refreshed Smith' })],
+      children: []
+    });
+
+    render(
+      <MemoryRouter initialEntries={['/schedule/team-1/game-1']}>
+        <Routes>
+          <Route path="/schedule/:teamId/:eventId" element={<ScheduleEventDetail auth={auth} />} />
+        </Routes>
+      </MemoryRouter>
+    );
+
+    expect(screen.getAllByText(/Avery Smith/).length).toBeGreaterThan(0);
+    await waitFor(() => {
+      expect(screen.getAllByText(/Refreshed Smith/).length).toBeGreaterThan(0);
+    });
   });
 
   it('shows a consistent fetch error and retries the primary event load', async () => {
@@ -409,6 +505,7 @@ describe('ScheduleEventDetail route state', () => {
     expect(screen.getAllByRole('button', { name: 'Assignments' })[0].className).toContain('bg-primary-600');
     expect(screen.getByTestId('event-route').textContent).toBe('/schedule/team-1/game-1?childId=player-2&section=assignments');
   });
+
 });
 
 describe('ScheduleEventDetail rideshare permissions', () => {
@@ -629,6 +726,74 @@ describe('ScheduleEventDetail assignments', () => {
     expect((screen.getByRole('button', { name: 'Heart' }) as HTMLButtonElement).disabled).toBe(true);
     expect(liveGameReactionsServiceMocks.sendLiveGameReaction).not.toHaveBeenCalled();
   });
+
+  it('uses a single live clock ticker while sibling game-day panels stay stable', async () => {
+    const setIntervalSpy = vi.spyOn(window, 'setInterval');
+    const updatedAt = new Date(Date.now() - 60_000);
+    const readClockSeconds = (value: string | null | undefined) => {
+      const match = String(value || '').match(/(\d{2}):(\d{2})/);
+      if (!match) return null;
+      return Number(match[1]) * 60 + Number(match[2]);
+    };
+
+    try {
+      scheduleServiceMocks.loadParentScheduleEventDetail.mockResolvedValue({
+        events: [buildEvent({
+          liveStatus: 'live',
+          canUpdateScore: true,
+          liveClockMs: 60_000,
+          liveClockRunning: true,
+          liveClockPeriod: 'Q1',
+          liveClockUpdatedAt: updatedAt,
+          gamePlan: { numPeriods: 4 }
+        })],
+        children: []
+      });
+      scheduleServiceMocks.loadHomeScoringPlayers.mockResolvedValue([
+        { id: 'p1', name: 'Avery Smith', number: '12', points: 10, fouls: 1 }
+      ]);
+      scheduleServiceMocks.loadAutoFilledLineupDraftPreviewForApp.mockResolvedValue({ availablePlayers: [], goingPlayers: [], gamePlan: null });
+      scheduleServiceMocks.loadGameDayLiveEventsForApp.mockResolvedValue([]);
+
+      renderScheduleEventDetailWithRouteControls();
+
+      await waitFor(() => {
+        expect(screen.getByTestId('live-game-clock-panel')).toBeTruthy();
+      });
+
+      expect(setIntervalSpy.mock.calls.filter(([, delay]) => delay === 1000)).toHaveLength(1);
+      const initialHeaderClock = readClockSeconds(screen.getByLabelText('Live game clock').textContent);
+      const initialPanelClock = readClockSeconds(screen.getByTestId('live-game-clock-panel').textContent);
+      expect(initialHeaderClock).not.toBeNull();
+      expect(initialHeaderClock).toBe(initialPanelClock);
+
+      await waitFor(() => {
+        expect(screen.getByRole('button', { name: '#12 Avery Smith plus 2 points' })).toBeTruthy();
+        expect(screen.getByText('0 team fouls this period')).toBeTruthy();
+      });
+
+      const liveScoreEditor = screen.getByTestId('live-score-editor');
+      const foulTrackerPanel = screen.getByTestId('game-day-foul-panel');
+      const scoreEditorMarkup = liveScoreEditor.innerHTML;
+      const foulTrackerMarkup = foulTrackerPanel.innerHTML;
+
+      await act(async () => {
+        await new Promise((resolve) => window.setTimeout(resolve, 2_100));
+      });
+
+      const updatedHeaderClock = readClockSeconds(screen.getByLabelText('Live game clock').textContent);
+      const updatedPanelClock = readClockSeconds(screen.getByTestId('live-game-clock-panel').textContent);
+      expect(updatedHeaderClock).not.toBeNull();
+      expect(updatedHeaderClock).toBe(updatedPanelClock);
+      expect(updatedHeaderClock).toBeGreaterThan((initialHeaderClock ?? 0) + 1);
+      expect(screen.getByTestId('live-score-editor').innerHTML).toBe(scoreEditorMarkup);
+      expect(screen.getByTestId('game-day-foul-panel').innerHTML).toBe(foulTrackerMarkup);
+      expect(scheduleServiceMocks.loadHomeScoringPlayers).toHaveBeenCalledTimes(2);
+      expect(scheduleServiceMocks.loadGameDayLiveEventsForApp).toHaveBeenCalledTimes(1);
+    } finally {
+      setIntervalSpy.mockRestore();
+    }
+  }, 15000);
 
   it('starts the live clock and advances the period from the app game hub', async () => {
     scheduleServiceMocks.updateLiveGameClockState
@@ -1666,6 +1831,49 @@ describe('ScheduleEventDetail practice timeline', () => {
     await waitFor(() => {
       expect(screen.getByText('Shorten the water break', { exact: false })).toBeTruthy();
     });
+  });
+
+  it('preserves UTC midnight packet due dates as calendar dates in the date input', async () => {
+    scheduleServiceMocks.loadParentScheduleEventDetail.mockResolvedValue({
+      events: [buildEvent({
+        id: 'practice-1',
+        type: 'practice',
+        title: 'Thursday Practice',
+        isTeamStaff: true,
+        isTeamAdmin: true,
+        practiceSessionId: 'session-1'
+      })],
+      children: []
+    });
+    scheduleServiceMocks.loadParentPracticePacket.mockResolvedValue(null);
+    scheduleServiceMocks.loadStaffPracticeAttendance.mockResolvedValue(null);
+    scheduleServiceMocks.loadStaffPracticePacket.mockResolvedValue({
+      sessionId: 'session-1',
+      teamId: 'team-1',
+      eventId: 'practice-1',
+      title: 'Practice',
+      date: new Date('2026-06-04T18:00:00Z'),
+      location: 'Main Gym',
+      packetTitle: 'Practice home packet',
+      dueDate: '2026-05-24T00:00:00.000Z',
+      totalMinutes: 0,
+      homePacket: { blocks: [], totalMinutes: 0 },
+      completions: [],
+      children: [{ id: 'player-1', name: 'Avery Smith' }]
+    });
+
+    renderScheduleEventDetail();
+
+    await waitFor(() => {
+      expect(screen.getAllByRole('button', { name: 'More' }).length).toBeGreaterThan(0);
+    });
+    fireEvent.click(screen.getAllByRole('button', { name: 'More' })[0]);
+
+    await waitFor(() => {
+      expect(screen.getByText('Assign practice packet')).toBeTruthy();
+    });
+
+    expect(screen.getByLabelText('Due date')).toHaveValue('2026-05-24');
   });
 
   it('shows the practice packet first and hides the timeline for non-admin practice viewers', async () => {

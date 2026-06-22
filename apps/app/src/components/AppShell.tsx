@@ -30,14 +30,12 @@ import { useShellLayout } from '../lib/useShellLayout';
 import { recordUxTiming } from '../lib/uxTiming';
 import { openPublicUrl } from '../lib/publicActions';
 import { APP_BACK_DISMISS_EVENT } from '../lib/nativeBackButton';
-import {
-  countUnread,
-  markNotificationRead,
-  subscribeToNotificationInbox,
-  type NotificationInboxItem
-} from '../lib/notificationInboxService';
+import { updateAppIconBadge } from '../lib/badgeService';
+import type { NotificationInboxItem } from '../lib/notificationInboxService';
+import { loadNotificationInboxService } from '../lib/notificationInboxServiceLoader';
 import type { AuthState, NavItem } from '../lib/types';
 import { RoleBadge } from './Badges';
+import { Modal } from './Modal';
 
 const AppSearchDialog = lazy(() => import('./AppSearchDialog').then((module) => ({ default: module.AppSearchDialog })));
 const NotificationInboxSheet = lazy(() => import('./NotificationInboxSheet').then((module) => ({ default: module.NotificationInboxSheet })));
@@ -71,15 +69,26 @@ export function AppShell({ auth, children }: AppShellProps) {
   const [addTeamOpen, setAddTeamOpen] = useState(false);
   const [inboxOpen, setInboxOpen] = useState(false);
   const [inboxItems, setInboxItems] = useState<NotificationInboxItem[]>([]);
-  const [inboxState, setInboxState] = useState<'loading' | 'ready' | 'error'>('loading');
+  const [inboxState, setInboxState] = useState<'idle' | 'loading' | 'ready' | 'error'>('idle');
+  const [unreadCount, setUnreadCount] = useState(0);
+  const [unreadState, setUnreadState] = useState<'loading' | 'ready' | 'error'>('loading');
   const { isDesktopWeb } = useShellLayout();
   const navigate = useNavigate();
   const location = useLocation();
   const routeStartedAtRef = useRef(typeof performance !== 'undefined' ? performance.now() : Date.now());
+  const lastInboxUidRef = useRef<string | null>(auth.user?.uid ?? null);
   const isAiRoute = location.pathname === '/ai';
   const isMobileChatDetail = !isDesktopWeb && location.pathname.startsWith('/messages/') && location.pathname !== '/messages';
   const isDesktopMessages = isDesktopWeb && (location.pathname.startsWith('/messages') || isAiRoute);
-  const unreadCount = countUnread(inboxItems);
+  const unreadNotificationStatus = auth.user
+    ? unreadState === 'loading'
+      ? 'Loading notifications…'
+      : unreadState === 'error'
+        ? 'Could not load notifications'
+        : unreadCount > 0
+          ? `${unreadCount} unread notification${unreadCount === 1 ? '' : 's'}`
+          : 'No unread notifications'
+    : 'No unread notifications';
 
   useEffect(() => {
     const startedAt = routeStartedAtRef.current;
@@ -127,20 +136,101 @@ export function AppShell({ auth, children }: AppShellProps) {
 
   useEffect(() => {
     const uid = auth.user?.uid;
-    if (!uid) return;
-    setInboxState('loading');
-    const unsubscribe = subscribeToNotificationInbox(
-      uid,
-      (items) => {
-        setInboxItems(items);
-        setInboxState('ready');
-      },
-      () => {
-        setInboxState('error');
-      }
-    );
-    return unsubscribe;
+    if (!uid) {
+      setUnreadCount(0);
+      setUnreadState('ready');
+      return;
+    }
+    setUnreadState('loading');
+    let active = true;
+    let unsubscribe = () => {};
+    void loadNotificationInboxService()
+      .then((mod) => {
+        if (!active) return;
+        unsubscribe = mod.subscribeToUnreadNotificationCount(
+          uid,
+          (count) => {
+            setUnreadCount(count);
+            setUnreadState('ready');
+          },
+          () => {
+            setUnreadState('error');
+          }
+        );
+      })
+      .catch(() => {
+        if (active) setUnreadState('error');
+      });
+    return () => {
+      active = false;
+      unsubscribe();
+    };
   }, [auth.user?.uid]);
+
+  useEffect(() => {
+    if (!auth.user?.uid) {
+      if (auth.loading) {
+        return;
+      }
+      void updateAppIconBadge(0);
+      return;
+    }
+    if (unreadState !== 'ready') {
+      return;
+    }
+    void updateAppIconBadge(unreadCount);
+  }, [auth.loading, auth.user?.uid, unreadCount, unreadState]);
+
+  useEffect(() => {
+    const uid = auth.user?.uid;
+    if (lastInboxUidRef.current !== (uid ?? null)) {
+      lastInboxUidRef.current = uid ?? null;
+      setInboxItems([]);
+      setInboxState('idle');
+    }
+    if (!uid) {
+      setInboxItems([]);
+      setInboxState('idle');
+      return;
+    }
+    if (!inboxOpen) return;
+
+    setInboxState('loading');
+    let active = true;
+    let unsubscribe = () => {};
+    void loadNotificationInboxService()
+      .then((mod) => {
+        if (!active) return;
+        unsubscribe = mod.subscribeToNotificationInbox(
+          uid,
+          (items) => {
+            setInboxItems(items);
+            setInboxState('ready');
+          },
+          () => {
+            setInboxState('error');
+          }
+        );
+      })
+      .catch(() => {
+        if (active) setInboxState('error');
+      });
+
+    return () => {
+      active = false;
+      unsubscribe();
+    };
+  }, [auth.user?.uid, inboxOpen]);
+
+  const handleMarkNotificationRead = async (uid: string, itemId: string) => {
+    const mod = await loadNotificationInboxService();
+    await mod.markNotificationRead(uid, itemId);
+  };
+
+  const handleMarkAllNotificationsRead = async (uid: string, items: NotificationInboxItem[]) => {
+    const mod = await loadNotificationInboxService();
+    await mod.markAllNotificationsRead(uid, items);
+  };
 
   const addWorkflows = buildAddWorkflows();
 
@@ -155,6 +245,9 @@ export function AppShell({ auth, children }: AppShellProps) {
 
   return (
     <div className={isDesktopWeb ? `desktop-app-page ${isDesktopMessages ? 'desktop-app-page-messages' : ''}` : `app-page ${isMobileChatDetail ? 'app-page-chat-detail' : ''} ${isAiRoute ? 'app-page-ai' : ''}`}>
+      <div className="sr-only" role="status" aria-live="polite" aria-atomic="true" aria-label="Notification status" data-testid="app-shell-notification-status">
+        {unreadNotificationStatus}
+      </div>
       {isDesktopWeb ? (
         <>
           <header className="sticky top-0 z-40 border-b border-gray-200 bg-white/95 backdrop-blur">
@@ -371,10 +464,11 @@ export function AppShell({ auth, children }: AppShellProps) {
         <Suspense fallback={null}>
           <NotificationInboxSheet
             items={inboxItems}
-            inboxState={inboxState}
+            inboxState={inboxState === 'idle' ? 'loading' : inboxState}
             uid={auth.user?.uid ?? ''}
             onClose={() => setInboxOpen(false)}
-            onMarkRead={markNotificationRead}
+            onMarkRead={handleMarkNotificationRead}
+            onMarkAllRead={handleMarkAllNotificationsRead}
           />
         </Suspense>
       ) : null}
@@ -386,7 +480,7 @@ export function AppShell({ auth, children }: AppShellProps) {
       ) : null}
 
       {addTeamOpen ? (
-        <div className="fixed inset-0 z-50 flex items-end bg-gray-950/40 p-3 backdrop-blur-sm sm:items-center sm:justify-center" role="dialog" aria-modal="true" aria-label="Add workflow">
+        <Modal overlayClassName="z-50 flex items-end bg-gray-950/40 p-3 backdrop-blur-sm sm:items-center sm:justify-center" ariaLabel="Add workflow" onClose={() => setAddTeamOpen(false)}>
           <div className="add-workflow-panel w-full max-w-3xl rounded-2xl bg-white shadow-app-lg">
             <div className="flex items-center justify-between border-b border-gray-200 p-4">
               <div>
@@ -447,7 +541,7 @@ export function AppShell({ auth, children }: AppShellProps) {
               </div>
             </div>
           </div>
-        </div>
+        </Modal>
       ) : null}
     </div>
   );

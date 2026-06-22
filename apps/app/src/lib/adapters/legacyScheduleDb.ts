@@ -3,11 +3,13 @@ import {
     addPractice as legacyAddPractice,
     broadcastLiveEvent as legacyBroadcastLiveEvent,
     cancelOccurrence as legacyCancelOccurrence,
+    clearOccurrenceOverride as legacyClearOccurrenceOverride,
     cancelRideRequest as legacyCancelRideRequest,
     claimAssignmentSlot as legacyClaimAssignmentSlot,
     claimOpenOfficiatingSlot as legacyClaimOpenOfficiatingSlot,
     closeRideOffer as legacyCloseRideOffer,
     createRideOffer as legacyCreateRideOffer,
+    getConfigs as legacyGetConfigs,
     getAssignmentClaims as legacyGetAssignmentClaims,
     getGame as legacyGetGame,
     getGames as legacyGetGames,
@@ -28,36 +30,47 @@ import {
     requestRideSpot as legacyRequestRideSpot,
     respondToOfficiatingAssignment as legacyRespondToOfficiatingAssignment,
     submitRsvpForPlayer as legacySubmitRsvpForPlayer,
+    updateEvent as legacyUpdateEvent,
     updateGame as legacyUpdateGame,
+    updateOccurrence as legacyUpdateOccurrence,
     updatePracticeAttendance as legacyUpdatePracticeAttendance,
+    updatePracticeSession as legacyUpdatePracticeSession,
     updateRideRequestStatus as legacyUpdateRideRequestStatus,
+    updateSeries as legacyUpdateSeries,
     updateTeam as legacyUpdateTeam,
+    upsertPracticeSessionForEvent as legacyUpsertPracticeSessionForEvent,
     upsertPracticePacketCompletion as legacyUpsertPracticePacketCompletion,
     listRideOffersForEvent as legacyListRideOffersForEvent
-} from '../../../../../js/db.js';
+} from '@legacy/db.js';
 import {
     collection as legacyFirebaseCollection,
     collectionGroup as legacyFirebaseCollectionGroup,
     db as legacyFirebaseDb,
     doc as legacyFirebaseDoc,
+    deleteField as legacyFirebaseDeleteField,
+    getDoc as legacyFirebaseGetDoc,
     getDocs as legacyFirebaseGetDocs,
     increment as legacyFirebaseIncrement,
     query as legacyFirebaseQuery,
     runTransaction as legacyFirebaseRunTransaction,
     serverTimestamp as legacyFirebaseServerTimestamp,
+    Timestamp as legacyFirebaseTimestamp,
     where as legacyFirebaseWhere
-} from '../../../../../js/firebase.js';
+} from '@legacy/firebase.js';
 
 export const db = legacyFirebaseDb;
 export const doc = legacyFirebaseDoc;
 export const collection = legacyFirebaseCollection;
 export const collectionGroup = legacyFirebaseCollectionGroup;
+export const getDoc = legacyFirebaseGetDoc;
 export const getDocs = legacyFirebaseGetDocs;
 export const query = legacyFirebaseQuery;
 export const runTransaction = legacyFirebaseRunTransaction;
 export const where = legacyFirebaseWhere;
 export const increment = legacyFirebaseIncrement;
 export const serverTimestamp = legacyFirebaseServerTimestamp;
+export const deleteField = legacyFirebaseDeleteField;
+export const Timestamp = legacyFirebaseTimestamp;
 
 export async function getAssignmentClaims(teamId: string, gameId: string) {
     return await Promise.resolve(legacyGetAssignmentClaims(teamId, gameId));
@@ -71,8 +84,14 @@ export async function getGame(teamId: string, gameId: string) {
     return await Promise.resolve(legacyGetGame(teamId, gameId));
 }
 
-export async function getGames(teamId: string) {
-    return await Promise.resolve(legacyGetGames(teamId));
+export type GamesQueryOptions = { startDate?: Date | null; endDate?: Date | null };
+
+export async function getGames(teamId: string, options: GamesQueryOptions = {}) {
+    return await Promise.resolve(legacyGetGames(teamId, options));
+}
+
+export async function getConfigs(teamId: string) {
+    return await Promise.resolve(legacyGetConfigs(teamId));
 }
 
 export async function getPracticePacketCompletions(teamId: string, sessionId: string) {
@@ -87,8 +106,18 @@ export async function getPracticeSessionByEvent(teamId: string, eventId: string)
     return await Promise.resolve(legacyGetPracticeSessionByEvent(teamId, eventId));
 }
 
-export async function getPracticeSessions(teamId: string) {
-    return await Promise.resolve(legacyGetPracticeSessions(teamId));
+export type PracticeSessionsQueryOptions = { startDate?: Date | null; endDate?: Date | null };
+
+export async function getPracticeSessions(teamId: string, options: PracticeSessionsQueryOptions = {}) {
+    return await Promise.resolve(legacyGetPracticeSessions(teamId, options));
+}
+
+export async function updatePracticeSession(teamId: string, sessionId: string, payload: Record<string, unknown>) {
+    return await Promise.resolve(legacyUpdatePracticeSession(teamId, sessionId, payload));
+}
+
+export async function upsertPracticeSessionForEvent(teamId: string, eventId: string, payload: Record<string, unknown>) {
+    return await Promise.resolve(legacyUpsertPracticeSessionForEvent(teamId, eventId, payload));
 }
 
 export async function getPlayers(teamId: string, options?: { includeInactive?: boolean }) {
@@ -201,4 +230,20 @@ export async function cancelOccurrence(teamId: string, masterId: string, instanc
     return await Promise.resolve(payload === undefined
         ? legacyCancelOccurrence(teamId, masterId, instanceDate)
         : legacyCancelOccurrence(teamId, masterId, instanceDate, payload));
+}
+
+export async function updateEvent(teamId: string, eventId: string, payload: Record<string, unknown>) {
+    return await Promise.resolve(legacyUpdateEvent(teamId, eventId, payload));
+}
+
+export async function updateOccurrence(teamId: string, masterId: string, instanceDate: string, payload: Record<string, unknown>) {
+    return await Promise.resolve(legacyUpdateOccurrence(teamId, masterId, instanceDate, payload));
+}
+
+export async function clearOccurrenceOverride(teamId: string, masterId: string, instanceDate: string) {
+    return await Promise.resolve(legacyClearOccurrenceOverride(teamId, masterId, instanceDate));
+}
+
+export async function updateSeries(teamId: string, masterId: string, payload: Record<string, unknown>) {
+    return await Promise.resolve(legacyUpdateSeries(teamId, masterId, payload));
 }

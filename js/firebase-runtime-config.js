@@ -72,18 +72,19 @@ async function fetchFirebaseConfigFromHosting() {
 }
 
 export async function resolvePrimaryFirebaseConfig() {
-    const globalConfig = readGlobalConfig();
-    const inlineConfig = normalizeFirebaseConfig(
-        globalConfig.firebase || globalConfig.firebasePrimary || readWindowGlobal('ALLPLAYS_FIREBASE_CONFIG')
-    );
-    if (inlineConfig) {
-        return inlineConfig;
-    }
-
     try {
         const hostedConfig = await fetchFirebaseConfigFromHosting();
         return hostedConfig;
     } catch (error) {
+        const globalConfig = readGlobalConfig();
+        const inlineConfig = normalizeFirebaseConfig(
+            globalConfig.firebase || globalConfig.firebasePrimary || readWindowGlobal('ALLPLAYS_FIREBASE_CONFIG')
+        );
+        if (inlineConfig) {
+            console.warn('Falling back to inline Firebase config after hosted init lookup failed.', error);
+            return inlineConfig;
+        }
+
         console.warn('Falling back to bundled Firebase config.', error);
         return { ...DEFAULT_PRIMARY_FIREBASE_CONFIG };
     }

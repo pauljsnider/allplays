@@ -1,9 +1,9 @@
 import { describe, expect, it, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
-import { createInviteProcessor } from '../../js/accept-invite-flow.js';
+import { createInviteProcessor, getInviteDashboardUrl, isInviteAlreadyRedeemedError } from '../../js/accept-invite-flow.js';
 
 const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
-const ACCEPT_INVITE_DB_IMPORT = "import { validateAccessCode, redeemParentInvite, redeemHouseholdInvite, redeemAdminInviteAtomically, updateUserProfile, updateTeam, getTeam, getUserProfile, markAccessCodeAsUsed } from './js/db.js?v=53';";
+const ACCEPT_INVITE_DB_IMPORT = "import { validateAccessCode, redeemParentInvite, redeemHouseholdInvite, redeemAdminInviteAtomically, updateUserProfile, updateTeam, getTeam, getUserProfile, markAccessCodeAsUsed } from './js/db.js?v=64';";
 
 class MockClassList {
     constructor(initial = []) {
@@ -104,7 +104,7 @@ const URLSearchParams = deps.URLSearchParams;
 const setTimeout = deps.setTimeout;
 ` + match[1]
         .replace(
-            "import { isEmailSignInLink, completeEmailLinkSignIn, checkAuth, getRedirectUrl } from './js/auth.js?v=27';",
+            "import { isEmailSignInLink, completeEmailLinkSignIn, checkAuth, getRedirectUrl } from './js/auth.js?v=33';",
             'const { isEmailSignInLink, completeEmailLinkSignIn, checkAuth, getRedirectUrl } = deps.auth;'
         )
         .replace(
@@ -112,8 +112,8 @@ const setTimeout = deps.setTimeout;
             'const { validateAccessCode, redeemParentInvite, redeemHouseholdInvite, redeemAdminInviteAtomically, updateUserProfile, updateTeam, getTeam, getUserProfile, markAccessCodeAsUsed } = deps.db;'
         )
         .replace(
-            "import { createInviteProcessor } from './js/accept-invite-flow.js?v=6';",
-            'const { createInviteProcessor } = deps.acceptInviteFlow;'
+            "import { createInviteProcessor, getInviteDashboardUrl, isInviteAlreadyRedeemedError } from './js/accept-invite-flow.js?v=7';",
+            'const { createInviteProcessor, getInviteDashboardUrl, isInviteAlreadyRedeemedError } = deps.acceptInviteFlow;'
         )
         .replace(
             "import { renderHeader, renderFooter } from './js/utils.js?v=8';",
@@ -265,7 +265,9 @@ async function bootAcceptInvite({
                 renderFooter: vi.fn()
             },
             acceptInviteFlow: {
-                createInviteProcessor
+                createInviteProcessor,
+                getInviteDashboardUrl,
+                isInviteAlreadyRedeemedError
             }
         });
         await auth.pendingCheckAuth;
@@ -305,6 +307,21 @@ describe('accept-invite page parent flow', () => {
         expect(elements.get('success-state').classList.contains('hidden')).toBe(false);
         expect(elements.get('success-message').textContent).toContain("#22");
         expect(elements.get('success-message').textContent).toContain('Tigers');
+        expect(window.location.href).toBe('http://example.com/parent-dashboard.html');
+    });
+
+    it('routes an already-redeemed invite link to the dashboard instead of dead-ending (#1808)', async () => {
+        const { elements, window } = await bootAcceptInvite({
+            href: 'http://example.com/accept-invite.html?code=ab12cd34&type=parent',
+            authUser: { uid: 'parent-1', email: 'parent@example.com' },
+            authCallbackCount: 2,
+            dbOverrides: {
+                validateAccessCode: vi.fn().mockResolvedValue({ valid: false, message: 'Code already used' })
+            }
+        });
+
+        expect(elements.get('error-state').classList.contains('hidden')).toBe(true);
+        expect(elements.get('success-state').classList.contains('hidden')).toBe(false);
         expect(window.location.href).toBe('http://example.com/parent-dashboard.html');
     });
 
@@ -442,6 +459,37 @@ describe('accept-invite page admin flow', () => {
         await loggedOut.elements.get('code-form').dispatchEvent(new MockEvent('submit'));
 
         expect(loggedOut.window.location.href).toBe('http://example.com/login.html?code=NEW11122&type=admin');
+    });
+
+    it('routes same-device email-link reopen with an already-used invite code to the dashboard', async () => {
+        const { elements, window, auth, db } = await bootAcceptInvite({
+            href: 'http://example.com/accept-invite.html?code=exist111&type=admin',
+            authUser: null,
+            storageEntries: {
+                emailForSignIn: 'coach@example.com'
+            },
+            authOverrides: {
+                isEmailSignInLink: vi.fn(() => true),
+                completeEmailLinkSignIn: vi.fn().mockResolvedValue({
+                    user: {
+                        uid: 'admin-1',
+                        email: 'coach@example.com'
+                    }
+                })
+            },
+            dbOverrides: {
+                validateAccessCode: vi.fn().mockResolvedValue({
+                    valid: false,
+                    message: 'Code already used'
+                })
+            }
+        });
+
+        expect(auth.completeEmailLinkSignIn).toHaveBeenCalledWith('coach@example.com');
+        expect(db.validateAccessCode).toHaveBeenCalledWith('exist111');
+        expect(elements.get('error-state').classList.contains('hidden')).toBe(true);
+        expect(elements.get('success-state').classList.contains('hidden')).toBe(false);
+        expect(window.location.href).toBe('http://example.com/dashboard.html');
     });
 
     it('completes cross-device email-link admin redemption after the user confirms their email', async () => {

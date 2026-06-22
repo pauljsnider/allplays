@@ -29,6 +29,24 @@ describe('staff RSVP reminder helpers', () => {
     expect(preview.eligibleEmailCount).toBe(1);
   });
 
+  it('suppresses reminders for every active player covered by a family RSVP', () => {
+    const players = [
+      { id: 'p1', name: 'Avery', active: true, parents: [{ userId: 'family-1', email: 'family@example.com' }] },
+      { id: 'p2', name: 'Blake', active: true, parents: [{ userId: 'family-1', email: 'family@example.com' }] },
+      { id: 'p3', name: 'Casey', active: true, parents: [{ userId: 'family-2', email: 'casey@example.com' }] }
+    ];
+    const rsvps = [
+      { userId: 'family-1', response: 'going' },
+      { playerIds: ['p3'], response: 'not_responded' }
+    ];
+
+    const preview = buildStaffRsvpReminderPreview(players, rsvps);
+
+    expect(preview.players.map((player) => player.playerId)).toEqual(['p3']);
+    expect(preview.eligibleEmails).toEqual(['casey@example.com']);
+    expect(preview.missingPlayerCount).toBe(1);
+  });
+
   it('builds the team chat reminder text with event details and missing count', () => {
     expect(buildStaffRsvpReminderMessage({
       eventType: 'practice',
@@ -67,7 +85,32 @@ describe('staff RSVP reminder helpers', () => {
       lastSentAt: '2026-05-25T03:50:00.000Z',
       lastSentBy: 'coach-1',
       lastRsvpReminderCount: 2,
-      lastRsvpEmailCount: 4
+      lastRsvpEmailCount: 4,
+      lastRsvpPushSuccessCount: 0,
+      lastRsvpPushFailureCount: 0,
+      lastRsvpPushTargetCount: 0,
+      lastRsvpPushError: null
+    });
+  });
+
+  it('persists RSVP push metrics in reminder metadata', () => {
+    expect(buildStaffRsvpReminderMetadata('coach-1', 2, 4, '2026-05-25T03:50:00.000Z', {
+      rsvpPushSuccessCount: 3,
+      rsvpPushFailureCount: 1,
+      rsvpPushTargetCount: 4,
+      rsvpPushError: 'FCM partial failure'
+    })).toEqual({
+      sent: true,
+      sentAt: '2026-05-25T03:50:00.000Z',
+      lastAction: 'rsvp_reminder',
+      lastSentAt: '2026-05-25T03:50:00.000Z',
+      lastSentBy: 'coach-1',
+      lastRsvpReminderCount: 2,
+      lastRsvpEmailCount: 4,
+      lastRsvpPushSuccessCount: 3,
+      lastRsvpPushFailureCount: 1,
+      lastRsvpPushTargetCount: 4,
+      lastRsvpPushError: 'FCM partial failure'
     });
   });
 });
@@ -83,5 +126,16 @@ describe('staff RSVP reminder service wiring', () => {
     expect(serviceSource).toContain('const { players, rsvps } = await getRsvpBreakdownByPlayer(event.teamId, event.id);');
     expect(detailSource).toContain('event.isTeamRsvpReminderManager');
     expect(detailSource).not.toContain('event.isTeamStaff && event.isDbGame');
+  });
+
+  it('persists Cloud Function RSVP push metrics from app reminder sends', () => {
+    const serviceSource = readFileSync('apps/app/src/lib/scheduleService.ts', 'utf8');
+
+    expect(serviceSource).toContain('const rsvpPushMetrics = normalizeStaffRsvpReminderPushMetrics(emailResult);');
+    expect(serviceSource).toContain('await updateRsvpReminderMetadata(event, user, preview.missingPlayerCount, emailSentCount, rsvpPushMetrics);');
+    expect(serviceSource).toContain("'scheduleNotifications.lastRsvpPushSuccessCount': metadata.lastRsvpPushSuccessCount");
+    expect(serviceSource).toContain("'scheduleNotifications.lastRsvpPushFailureCount': metadata.lastRsvpPushFailureCount");
+    expect(serviceSource).toContain("'scheduleNotifications.lastRsvpPushTargetCount': metadata.lastRsvpPushTargetCount");
+    expect(serviceSource).toContain("'scheduleNotifications.lastRsvpPushError': metadata.lastRsvpPushError");
   });
 });

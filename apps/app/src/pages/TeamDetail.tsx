@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, type FormEvent } from 'react';
-import { Link, Navigate, useParams } from 'react-router-dom';
+import { Link, Navigate, useLocation, useParams } from 'react-router-dom';
 import type { LucideIcon } from 'lucide-react';
 import {
   Award,
@@ -28,12 +28,15 @@ import {
   Zap
 } from 'lucide-react';
 import { TeamDetailPageSkeleton } from '../components/PageSkeletons';
+import { DetailLoadErrorState } from '../components/DetailLoadErrorState';
 import { copyPublicText, openPublicUrl, sharePublicUrl } from '../lib/publicActions';
+import { toAppServiceError, type AppServiceError } from '../lib/appErrors';
 import { getEventDetailPath } from '../lib/homeLogic';
 import { buildPrivateTeamCalendarFeedUrl, getAppleCalendarFeedUrl, getGoogleCalendarFeedUrl } from '../lib/parentToolsService';
 import { createStaffRsvpReminderPreviewLoader, sendStaffRsvpReminder, type StaffRsvpReminderSendResult } from '../lib/scheduleService';
 import type { ParentScheduleEvent, StaffRsvpReminderPreview } from '../lib/scheduleLogic';
-import { addRosterPlayerForApp, buildPublicTeamGamesIcsUrl, canExposePublicFanFeed, createRosterParentInviteForApp, deactivateRosterPlayerForApp, grantScorekeeperAccessForApp, grantVideographerAccessForApp, inviteTeamAdminForApp, loadParentTeamDetail, loadRosterFieldDefinitionsForApp, loadTeamDetailInsights, loadTeamDetailSponsors, loadTeamRosterParentInvites, loadTeamStaffPermissions, reactivateRosterPlayerForApp, revokeScorekeeperAccessForApp, revokeTeamAdminAccessForApp, revokeVideographerAccessForApp, saveTeamScheduleNotificationsForApp, type CreateRosterParentInviteForAppResult, type InviteTeamAdminForAppResult, type TeamDetailEvent, type TeamDetailModel, type TeamDetailPlayer, type TeamRosterFieldDefinition, type TeamRosterParentInviteSummary, type TeamScorekeeperGrantTarget } from '../lib/teamDetailService';
+import { addRosterPlayerForApp, archiveTeamTrackingItemForApp, buildPublicTeamGamesIcsUrl, canExposePublicFanFeed, createRosterParentInviteForApp, createStatTrackerConfigForApp, deactivateRosterPlayerForApp, grantScorekeeperAccessForApp, grantVideographerAccessForApp, inviteTeamAdminForApp, loadParentTeamDetail, loadRosterFieldDefinitionsForApp, loadTeamDetailInsights, loadTeamDetailSponsors, loadTeamRosterParentInvites, loadTeamStaffPermissions, loadTeamTrackingAdmin, reactivateRosterPlayerForApp, revokeScorekeeperAccessForApp, revokeTeamAdminAccessForApp, revokeVideographerAccessForApp, saveTeamScheduleNotificationsForApp, saveTeamTrackingItemForApp, setPlayerTrackingStatusForApp, updateStatTrackerConfigForApp, type CreateRosterParentInviteForAppResult, type InviteTeamAdminForAppResult, type TeamDetailEvent, type TeamDetailModel, type TeamDetailPlayer, type TeamRosterFieldDefinition, type TeamRosterParentInviteSummary, type TeamScorekeeperGrantTarget, type TeamTrackingAdminItem } from '../lib/teamDetailService';
+import { buildStatTrackerConfigPayload, createBlankStatTrackerConfigColumnDraft, createEmptyStatTrackerConfigDraft, createStatTrackerConfigDraft, createStatTrackerConfigDraftFromPreset, getStatTrackerConfigPresetCatalog, validateStatTrackerConfigDraft, type StatTrackerConfigDraft } from '../lib/statTrackerConfigEditor';
 import type { AuthState } from '../lib/types';
 
 type TeamTab = 'overview' | 'schedule' | 'roster' | 'insights' | 'more';
@@ -48,10 +51,12 @@ const tabs: Array<{ id: TeamTab; label: string; icon: LucideIcon }> = [
 
 export function TeamDetail({ auth }: { auth: AuthState }) {
   const { teamId = '' } = useParams();
+  const location = useLocation();
   const authUserId = auth.user?.uid || '';
   const [model, setModel] = useState<TeamDetailModel | null>(null);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState('');
+  const [error, setError] = useState<AppServiceError | null>(null);
+  const [reloadVersion, setReloadVersion] = useState(0);
   const [activeTab, setActiveTab] = useState<TeamTab>('overview');
   const [staffPermissionsLoading, setStaffPermissionsLoading] = useState(false);
   const [staffPermissionsError, setStaffPermissionsError] = useState('');
@@ -65,13 +70,24 @@ export function TeamDetail({ auth }: { auth: AuthState }) {
   const [rosterInviteError, setRosterInviteError] = useState('');
   const [rosterInviteAttempted, setRosterInviteAttempted] = useState(false);
   const [rosterInviteSummaries, setRosterInviteSummaries] = useState<Record<string, TeamRosterParentInviteSummary>>({});
+  const [trackingLoading, setTrackingLoading] = useState(false);
+  const [trackingError, setTrackingError] = useState('');
+  const [trackingAttempted, setTrackingAttempted] = useState(false);
+  const [trackingItems, setTrackingItems] = useState<TeamTrackingAdminItem[]>([]);
+
+  useEffect(() => {
+    const nextTab = new URLSearchParams(location.search).get('tab');
+    if (nextTab === 'overview' || nextTab === 'schedule' || nextTab === 'roster' || nextTab === 'insights' || nextTab === 'more') {
+      setActiveTab(nextTab);
+    }
+  }, [location.search]);
 
   useEffect(() => {
     let cancelled = false;
     async function load() {
       if (!teamId) return;
       setLoading(true);
-      setError('');
+      setError(null);
       try {
         const nextModel = await loadParentTeamDetail(teamId, auth.user, { includeDeferredData: false });
         if (!cancelled) {
@@ -88,10 +104,14 @@ export function TeamDetail({ auth }: { auth: AuthState }) {
           setRosterInviteError('');
           setRosterInviteAttempted(false);
           setRosterInviteSummaries({});
+          setTrackingLoading(false);
+          setTrackingError('');
+          setTrackingAttempted(false);
+          setTrackingItems([]);
         }
       } catch (loadError: any) {
         if (!cancelled) {
-          setError(loadError?.message || 'Unable to load this team.');
+          setError(toAppServiceError(loadError, 'Unable to load this team.'));
           setModel(null);
           setStaffPermissionsError('');
           setStaffPermissionsLoading(false);
@@ -105,6 +125,10 @@ export function TeamDetail({ auth }: { auth: AuthState }) {
           setRosterInviteError('');
           setRosterInviteAttempted(false);
           setRosterInviteSummaries({});
+          setTrackingLoading(false);
+          setTrackingError('');
+          setTrackingAttempted(false);
+          setTrackingItems([]);
         }
       } finally {
         if (!cancelled) setLoading(false);
@@ -114,7 +138,7 @@ export function TeamDetail({ auth }: { auth: AuthState }) {
     return () => {
       cancelled = true;
     };
-  }, [authUserId, teamId]);
+  }, [authUserId, teamId, reloadVersion]);
 
   useEffect(() => {
     let cancelled = false;
@@ -219,6 +243,34 @@ export function TeamDetail({ auth }: { auth: AuthState }) {
   }, [activeTab, authUserId, model?.canManageTeam, teamId, rosterInviteLoading, rosterInviteAttempted, auth.user]);
 
   useEffect(() => {
+    let cancelled = false;
+    async function loadTrackingForRosterTab() {
+      if (!teamId || activeTab !== 'roster' || !model?.canManageTeam || trackingLoading || trackingAttempted) return;
+      setTrackingLoading(true);
+      setTrackingError('');
+      try {
+        const nextItems = await loadTeamTrackingAdmin(teamId, auth.user);
+        if (!cancelled) {
+          setTrackingItems(nextItems);
+          setTrackingAttempted(true);
+        }
+      } catch (loadError: any) {
+        if (!cancelled) {
+          setTrackingError(loadError?.message || 'Unable to load tracking items.');
+          setTrackingAttempted(true);
+        }
+      } finally {
+        if (!cancelled) setTrackingLoading(false);
+      }
+    }
+
+    void loadTrackingForRosterTab();
+    return () => {
+      cancelled = true;
+    };
+  }, [activeTab, authUserId, auth.user, model?.canManageTeam, teamId, trackingAttempted, trackingLoading]);
+
+  useEffect(() => {
     const scroll = () => {
       try {
         window.scrollTo({ top: 0, behavior: 'smooth' });
@@ -269,6 +321,20 @@ export function TeamDetail({ auth }: { auth: AuthState }) {
     }
   }
 
+  async function refreshTrackingItems() {
+    if (!teamId || !model?.canManageTeam) return;
+    setTrackingLoading(true);
+    setTrackingError('');
+    setTrackingAttempted(true);
+    try {
+      setTrackingItems(await loadTeamTrackingAdmin(teamId, auth.user));
+    } catch (loadError: any) {
+      setTrackingError(loadError?.message || 'Unable to load tracking items.');
+    } finally {
+      setTrackingLoading(false);
+    }
+  }
+
   const tabBadges = useMemo(() => ({
     overview: 0,
     schedule: model?.upcomingEvents.length || 0,
@@ -285,18 +351,16 @@ export function TeamDetail({ auth }: { auth: AuthState }) {
 
   if (error || !model) {
     return (
-      <div className="space-y-4">
-        <section className="app-card p-5">
-          <div className="flex items-start gap-3">
-            <Shield className="mt-0.5 h-5 w-5 flex-none text-rose-600" aria-hidden="true" />
-            <div>
-              <div className="text-sm font-black text-gray-950">Team unavailable</div>
-              <div className="mt-1 text-sm font-semibold text-gray-600">{error || 'Team not found.'}</div>
-              <Link to="/teams" className="secondary-button mt-3 !min-h-9 text-xs">Back to teams</Link>
-            </div>
-          </div>
-        </section>
-      </div>
+      <DetailLoadErrorState
+        icon={Shield}
+        title="Team unavailable"
+        error={error}
+        fallbackMessage="Team not found."
+        backTo="/teams"
+        backLabel="Back to teams"
+        onRetry={() => setReloadVersion((current) => current + 1)}
+        retrying={loading}
+      />
     );
   }
 
@@ -331,7 +395,7 @@ export function TeamDetail({ auth }: { auth: AuthState }) {
 
       {activeTab === 'overview' ? <OverviewTab model={model} /> : null}
       {activeTab === 'schedule' ? <ScheduleTab model={model} auth={auth} onOpenStatTrackerConfigs={() => setActiveTab('more')} /> : null}
-      {activeTab === 'roster' ? <RosterTab model={model} authUser={auth.user} onRefresh={refreshTeamDetail} rosterInviteLoading={rosterInviteLoading} rosterInviteError={rosterInviteError} rosterInviteSummaries={rosterInviteSummaries} onInviteCreated={refreshRosterInvites} /> : null}
+      {activeTab === 'roster' ? <RosterTab model={model} authUser={auth.user} onRefresh={refreshTeamDetail} rosterInviteLoading={rosterInviteLoading} rosterInviteError={rosterInviteError} rosterInviteSummaries={rosterInviteSummaries} onInviteCreated={refreshRosterInvites} trackingLoading={trackingLoading} trackingError={trackingError} trackingItems={trackingItems} onTrackingChanged={refreshTrackingItems} /> : null}
       {activeTab === 'insights' ? <InsightsTab model={model} loading={insightsLoading} error={insightsError} /> : null}
       {activeTab === 'more' ? <MoreTab model={model} auth={auth} staffPermissionsLoading={staffPermissionsLoading} staffPermissionsError={staffPermissionsError} sponsorsLoading={sponsorsLoading} sponsorsError={sponsorsError} onTeamDetailRefresh={refreshTeamDetail} /> : null}
     </div>
@@ -344,7 +408,7 @@ function TeamHero({ model }: { model: TeamDetailModel }) {
     <section className="app-card overflow-hidden">
       <div className="relative h-32 bg-gray-950 sm:h-44">
         {team.photoUrl ? (
-          <img src={team.photoUrl} alt="" className="h-full w-full object-cover opacity-90" />
+          <img src={team.photoUrl} alt={`${team.name} team photo`} className="h-full w-full object-cover opacity-90" />
         ) : (
           <div className="flex h-full w-full items-center justify-center bg-[linear-gradient(135deg,#111827_0%,#4338ca_50%,#047857_100%)]">
             <span className="text-5xl font-black text-white">{getInitials(team.name)}</span>
@@ -439,7 +503,11 @@ function RosterTab({
   rosterInviteLoading,
   rosterInviteError,
   rosterInviteSummaries,
-  onInviteCreated
+  onInviteCreated,
+  trackingLoading,
+  trackingError,
+  trackingItems,
+  onTrackingChanged
 }: {
   model: TeamDetailModel;
   authUser: AuthState['user'];
@@ -448,13 +516,20 @@ function RosterTab({
   rosterInviteError: string;
   rosterInviteSummaries: Record<string, TeamRosterParentInviteSummary>;
   onInviteCreated: () => Promise<void>;
+  trackingLoading: boolean;
+  trackingError: string;
+  trackingItems: TeamTrackingAdminItem[];
+  onTrackingChanged: () => Promise<void>;
 }) {
   const [pendingPlayerId, setPendingPlayerId] = useState('');
   const [status, setStatus] = useState<{ success: boolean; message: string } | null>(null);
 
   async function togglePlayerActiveState(player: TeamDetailPlayer) {
     const action = player.active ? 'deactivate' : 'reactivate';
-    const confirmed = window.confirm(`${action === 'deactivate' ? 'Deactivate' : 'Reactivate'} ${player.name}?`);
+    const confirmationMessage = player.active
+      ? `Deactivate ${player.name}?\n\nLinked parents may lose access to this team, including history, until the player is reactivated or parent scope is repaired.`
+      : `Reactivate ${player.name}?`;
+    const confirmed = window.confirm(confirmationMessage);
     if (!confirmed) return;
     setPendingPlayerId(player.id);
     setStatus(null);
@@ -495,6 +570,7 @@ function RosterTab({
           <div className="rounded-xl border border-gray-200 bg-gray-50 p-4 text-sm font-semibold text-gray-500">No players have been added yet.</div>
         )}
       </div>
+      {model.canManageTeam ? <TrackingAdminCard teamId={model.team.id} authUser={authUser} players={model.players} trackingLoading={trackingLoading} trackingError={trackingError} trackingItems={trackingItems} onTrackingChanged={onTrackingChanged} /> : null}
       {model.canManageTeam && model.inactivePlayers.length ? (
         <div className="mt-4 border-t border-gray-200 pt-4">
           <div className="flex items-center justify-between gap-3">
@@ -591,7 +667,7 @@ function AddPlayerCard({ teamId, authUser, onCreated }: {
           </button>
         )}
       </div>
-      {status ? <div className={`mt-3 text-xs font-black ${status.success ? 'text-emerald-700' : 'text-rose-700'}`} role="status">{status.message}</div> : null}
+      {status ? <div className={`mt-3 text-xs font-black ${status.success ? 'text-emerald-700' : 'text-rose-700'}`} role="status" aria-live="polite" aria-atomic="true">{status.message}</div> : null}
       {open ? (
         <form className="mt-3 space-y-3" onSubmit={submit}>
           <label className="block">
@@ -699,6 +775,192 @@ function RosterFieldInput({
   );
 }
 
+function TrackingAdminCard({
+  teamId,
+  authUser,
+  players,
+  trackingLoading,
+  trackingError,
+  trackingItems,
+  onTrackingChanged
+}: {
+  teamId: string;
+  authUser: AuthState['user'];
+  players: TeamDetailPlayer[];
+  trackingLoading: boolean;
+  trackingError: string;
+  trackingItems: TeamTrackingAdminItem[];
+  onTrackingChanged: () => Promise<void>;
+}) {
+  const [showArchived, setShowArchived] = useState(false);
+  const [editingItemId, setEditingItemId] = useState('');
+  const [name, setName] = useState('');
+  const [description, setDescription] = useState('');
+  const [visibility, setVisibility] = useState<'private' | 'public'>('private');
+  const [status, setStatus] = useState<'active' | 'archived'>('active');
+  const [submitting, setSubmitting] = useState(false);
+  const [busyKey, setBusyKey] = useState('');
+  const [statusMessage, setStatusMessage] = useState<{ success: boolean; message: string } | null>(null);
+
+  const visibleItems = trackingItems.filter((item) => showArchived || item.status !== 'archived');
+
+  function resetForm() {
+    setEditingItemId('');
+    setName('');
+    setDescription('');
+    setVisibility('private');
+    setStatus('active');
+  }
+
+  function beginEdit(item: TeamTrackingAdminItem) {
+    setEditingItemId(item.id);
+    setName(item.name);
+    setDescription(item.description);
+    setVisibility(item.visibility);
+    setStatus(item.status);
+    setStatusMessage(null);
+  }
+
+  async function submitItem(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (submitting) return;
+    setSubmitting(true);
+    setStatusMessage(null);
+    try {
+      await saveTeamTrackingItemForApp(teamId, authUser || null, { name, description, visibility, status }, editingItemId ? { itemId: editingItemId } : undefined);
+      await onTrackingChanged();
+      setStatusMessage({ success: true, message: editingItemId ? 'Tracking item updated.' : 'Tracking item created.' });
+      resetForm();
+    } catch (error: any) {
+      setStatusMessage({ success: false, message: error?.message || 'Unable to save tracking item.' });
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  async function archiveItem(item: TeamTrackingAdminItem) {
+    if (busyKey || !window.confirm(`Archive ${item.name || 'this item'}?`)) return;
+    setBusyKey(`archive:${item.id}`);
+    setStatusMessage(null);
+    try {
+      await archiveTeamTrackingItemForApp(teamId, authUser || null, item.id);
+      await onTrackingChanged();
+      setStatusMessage({ success: true, message: 'Tracking item archived.' });
+      if (editingItemId === item.id) resetForm();
+    } catch (error: any) {
+      setStatusMessage({ success: false, message: error?.message || 'Unable to archive tracking item.' });
+    } finally {
+      setBusyKey('');
+    }
+  }
+
+  async function togglePlayerStatus(item: TeamTrackingAdminItem, playerId: string, complete: boolean) {
+    if (busyKey) return;
+    const player = players.find((candidate) => candidate.id === playerId);
+    if (!player) return;
+    setBusyKey(`status:${item.id}:${playerId}`);
+    setStatusMessage(null);
+    try {
+      await setPlayerTrackingStatusForApp(teamId, authUser || null, item.id, player, !complete);
+      await onTrackingChanged();
+      setStatusMessage({ success: true, message: `${player.name} marked ${complete ? 'open' : 'done'} for ${item.name}.` });
+    } catch (error: any) {
+      setStatusMessage({ success: false, message: error?.message || 'Unable to update player tracking status.' });
+    } finally {
+      setBusyKey('');
+    }
+  }
+
+  return (
+    <div className="mt-4 rounded-xl border border-primary-100 bg-primary-50 p-3">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <div className="text-sm font-black text-gray-950">Tracking items</div>
+          <div className="mt-1 text-xs font-semibold text-gray-600">Manage legacy-compatible checklist items and each active player&apos;s completion status without leaving the app.</div>
+        </div>
+        <label className="flex items-center gap-2 text-xs font-semibold text-gray-600">
+          <input type="checkbox" className="rounded border-gray-300 text-primary-600 focus:ring-primary-500" checked={showArchived} onChange={(event) => setShowArchived(event.target.checked)} />
+          Show archived
+        </label>
+      </div>
+      {statusMessage ? <div className={`mt-3 text-xs font-black ${statusMessage.success ? 'text-emerald-700' : 'text-rose-700'}`} role="status" aria-live="polite" aria-atomic="true">{statusMessage.message}</div> : null}
+      <form className="mt-3 space-y-3 rounded-xl border border-white/80 bg-white p-3" onSubmit={submitItem}>
+        <div className="text-sm font-black text-gray-950">{editingItemId ? 'Edit tracking item' : 'Add tracking item'}</div>
+        <label className="block">
+          <span className="text-[11px] font-black uppercase tracking-[0.04em] text-primary-700">Name</span>
+          <input type="text" value={name} onChange={(event) => setName(event.target.value)} className="mt-2 min-h-10 w-full rounded-xl border border-primary-200 bg-white px-3 text-sm font-semibold text-gray-950 outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-100" placeholder="Medical release form" disabled={submitting} required />
+        </label>
+        <label className="block">
+          <span className="text-[11px] font-black uppercase tracking-[0.04em] text-primary-700">Description</span>
+          <textarea value={description} onChange={(event) => setDescription(event.target.value)} className="mt-2 min-h-24 w-full rounded-xl border border-primary-200 bg-white px-3 py-2 text-sm font-semibold text-gray-950 outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-100" placeholder="Optional instructions" disabled={submitting} />
+        </label>
+        <div className="grid gap-3 sm:grid-cols-2">
+          <label className="block">
+            <span className="text-[11px] font-black uppercase tracking-[0.04em] text-primary-700">Visibility</span>
+            <select value={visibility} onChange={(event) => setVisibility(event.target.value === 'public' ? 'public' : 'private')} className="mt-2 min-h-10 w-full rounded-xl border border-primary-200 bg-white px-3 text-sm font-semibold text-gray-950 outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-100" disabled={submitting}>
+              <option value="private">Private admin-only</option>
+              <option value="public">Public to team members</option>
+            </select>
+          </label>
+          <label className="block">
+            <span className="text-[11px] font-black uppercase tracking-[0.04em] text-primary-700">Status</span>
+            <select value={status} onChange={(event) => setStatus(event.target.value === 'archived' ? 'archived' : 'active')} className="mt-2 min-h-10 w-full rounded-xl border border-primary-200 bg-white px-3 text-sm font-semibold text-gray-950 outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-100" disabled={submitting}>
+              <option value="active">Active</option>
+              <option value="archived">Archived</option>
+            </select>
+          </label>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <button type="submit" className="primary-button !min-h-10 text-xs" disabled={submitting}>
+            {submitting ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <Save className="h-4 w-4" aria-hidden="true" />}
+            {editingItemId ? 'Save item' : 'Create item'}
+          </button>
+          {editingItemId ? <button type="button" className="secondary-button !min-h-10 text-xs" onClick={resetForm} disabled={submitting}>Reset</button> : null}
+        </div>
+      </form>
+      {trackingLoading ? <div className="mt-3 text-xs font-semibold text-gray-500">Loading tracking items…</div> : null}
+      {trackingError ? <div className="mt-3 text-xs font-black text-rose-700">{trackingError}</div> : null}
+      <div className="mt-3 space-y-3">
+        {visibleItems.length ? visibleItems.map((item) => (
+          <div key={item.id} className="rounded-xl border border-white/80 bg-white p-3">
+            <div className="flex flex-wrap items-start justify-between gap-2">
+              <div>
+                <div className="text-sm font-black text-gray-950">{item.name || 'Untitled item'}</div>
+                {item.description ? <div className="mt-1 text-xs font-semibold text-gray-500">{item.description}</div> : null}
+                <div className="mt-2 flex flex-wrap gap-2">
+                  <span className="rounded-full bg-primary-50 px-2 py-0.5 text-[10px] font-black uppercase tracking-[0.04em] text-primary-700">{item.visibility}</span>
+                  <span className={`rounded-full px-2 py-0.5 text-[10px] font-black uppercase tracking-[0.04em] ${item.status === 'archived' ? 'bg-gray-100 text-gray-700' : 'bg-emerald-50 text-emerald-700'}`}>{item.status}</span>
+                  <span className="rounded-full bg-gray-100 px-2 py-0.5 text-[10px] font-black text-gray-700">{item.completionSummary.complete}/{item.completionSummary.total} done</span>
+                </div>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <button type="button" className="secondary-button !min-h-8 text-xs" onClick={() => beginEdit(item)} disabled={submitting || Boolean(busyKey)}>Edit</button>
+                {item.status === 'active' ? <button type="button" className="secondary-button !min-h-8 text-xs !border-rose-200 !bg-rose-50 !text-rose-700" onClick={() => void archiveItem(item)} disabled={submitting || Boolean(busyKey)}>{busyKey === `archive:${item.id}` ? 'Archiving…' : 'Archive'}</button> : null}
+              </div>
+            </div>
+            <div className="mt-3 grid gap-2 sm:grid-cols-2">
+              {item.playerStatuses.length ? item.playerStatuses.map((playerStatus) => (
+                <div key={`${item.id}:${playerStatus.playerId}`} className="flex items-center justify-between gap-3 rounded-lg border border-gray-200 bg-gray-50 px-3 py-2">
+                  <div className="min-w-0 flex items-center gap-3">
+                    <PlayerPhoto name={playerStatus.playerName} photoUrl={playerStatus.photoUrl} small />
+                    <div className="min-w-0">
+                      <div className="truncate text-xs font-black text-gray-950">{playerStatus.playerNumber ? `#${playerStatus.playerNumber} ` : ''}{playerStatus.playerName}</div>
+                    </div>
+                  </div>
+                  <button type="button" className={`secondary-button !min-h-8 text-xs ${playerStatus.complete ? '!border-emerald-200 !bg-emerald-50 !text-emerald-700' : '!border-amber-200 !bg-amber-50 !text-amber-700'}`} onClick={() => void togglePlayerStatus(item, playerStatus.playerId, playerStatus.complete)} disabled={Boolean(busyKey)}>
+                    {busyKey === `status:${item.id}:${playerStatus.playerId}` ? <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" /> : null}
+                    {playerStatus.complete ? 'Done' : 'Open'}
+                  </button>
+                </div>
+              )) : <div className="rounded-xl border border-dashed border-gray-300 bg-gray-50 p-3 text-xs font-semibold text-gray-500">Add active roster players to manage statuses here.</div>}
+            </div>
+          </div>
+        )) : !trackingLoading ? <div className="rounded-xl border border-gray-200 bg-gray-50 p-4 text-sm font-semibold text-gray-500">No tracking items found.</div> : null}
+      </div>
+    </div>
+  );
+}
+
 function InsightsTab({ model, loading, error }: { model: TeamDetailModel; loading: boolean; error: string }) {
   return (
     <div className="space-y-4">
@@ -776,7 +1038,7 @@ function MoreTab({ model, auth, staffPermissionsLoading, staffPermissionsError, 
 
   return (
     <div className="space-y-4">
-      {model.canManageTeam ? <StatTrackerConfigsCard configs={statTrackerConfigs} orphanedAssignments={orphanedConfigAssignments} /> : null}
+      {model.canManageTeam ? <StatTrackerConfigsCard teamId={model.team.id} auth={auth} configs={statTrackerConfigs} orphanedAssignments={orphanedConfigAssignments} onSaved={onTeamDetailRefresh} /> : null}
       {model.canManageTeam && !model.staffPermissions && staffPermissionsLoading ? (
         <section className="app-card p-4">
           <div className="flex items-center gap-3 text-sm font-semibold text-gray-600">
@@ -859,18 +1121,229 @@ function MoreTab({ model, auth, staffPermissionsLoading, staffPermissionsError, 
   );
 }
 
-function StatTrackerConfigsCard({ configs, orphanedAssignments }: { configs: TeamDetailModel['statTrackerConfigs']; orphanedAssignments: TeamDetailModel['upcomingEvents'] }) {
+function StatTrackerConfigsCard({
+  teamId,
+  auth,
+  configs,
+  orphanedAssignments,
+  onSaved
+}: {
+  teamId: string;
+  auth: AuthState;
+  configs: TeamDetailModel['statTrackerConfigs'];
+  orphanedAssignments: TeamDetailModel['upcomingEvents'];
+  onSaved: () => Promise<void>;
+}) {
   const safeConfigs = configs || [];
+  const presetCatalog = getStatTrackerConfigPresetCatalog();
+  const [editingConfigId, setEditingConfigId] = useState('');
+  const [selectedPresetId, setSelectedPresetId] = useState('blank');
+  const [draft, setDraft] = useState<StatTrackerConfigDraft | null>(null);
+  const [submitting, setSubmitting] = useState(false);
+  const [status, setStatus] = useState<{ success: boolean; message: string } | null>(null);
+
+  function openCreateForm() {
+    setEditingConfigId('');
+    setSelectedPresetId('blank');
+    setDraft(createEmptyStatTrackerConfigDraft());
+    setStatus(null);
+  }
+
+  function openEditForm(config: TeamDetailModel['statTrackerConfigs'][number]) {
+    const nextDraft = createStatTrackerConfigDraft({
+      id: config.id,
+      name: config.name,
+      baseType: config.baseType,
+      columns: config.columns,
+      statDefinitions: config.statDefinitions
+    });
+    setEditingConfigId(config.id);
+    setSelectedPresetId('blank');
+    setDraft(nextDraft);
+    setStatus(null);
+  }
+
+  function closeEditor(options: { keepStatus?: boolean } = {}) {
+    setEditingConfigId('');
+    setSelectedPresetId('blank');
+    setDraft(null);
+    if (!options.keepStatus) {
+      setStatus(null);
+    }
+  }
+
+  function updateColumn(columnUiId: string, patch: { key?: string; label?: string }) {
+    setDraft((currentDraft) => currentDraft ? {
+      ...currentDraft,
+      columns: currentDraft.columns.map((column) => column.uiId === columnUiId ? { ...column, ...patch } : column)
+    } : currentDraft);
+  }
+
+  function moveColumn(columnUiId: string, direction: -1 | 1) {
+    setDraft((currentDraft) => {
+      if (!currentDraft) return currentDraft;
+      const index = currentDraft.columns.findIndex((column) => column.uiId === columnUiId);
+      const nextIndex = index + direction;
+      if (index < 0 || nextIndex < 0 || nextIndex >= currentDraft.columns.length) return currentDraft;
+      const columns = currentDraft.columns.slice();
+      const [column] = columns.splice(index, 1);
+      columns.splice(nextIndex, 0, column);
+      return { ...currentDraft, columns };
+    });
+  }
+
+  async function saveDraft() {
+    if (!draft || submitting) return;
+
+    const validation = validateStatTrackerConfigDraft(draft);
+    if (!validation.valid) {
+      setStatus({ success: false, message: validation.errors.join(' ') });
+      return;
+    }
+
+    const payload = buildStatTrackerConfigPayload(draft);
+    setSubmitting(true);
+    setStatus(null);
+    try {
+      if (editingConfigId) {
+        await updateStatTrackerConfigForApp(teamId, editingConfigId, auth.user || null, payload);
+      } else {
+        await createStatTrackerConfigForApp(teamId, auth.user || null, payload);
+      }
+      await onSaved();
+      setStatus({ success: true, message: editingConfigId ? 'Stat config saved.' : 'Stat config created.' });
+      closeEditor({ keepStatus: true });
+    } catch (error: any) {
+      setStatus({ success: false, message: error?.message || 'Unable to save this stat config.' });
+    } finally {
+      setSubmitting(false);
+    }
+  }
 
   return (
     <section className="app-card p-4">
       <div className="flex items-start justify-between gap-3">
         <div>
           <div className="text-sm font-black text-gray-950">Stat tracker configs</div>
-          <div className="mt-1 text-xs font-semibold leading-5 text-gray-500">Read-only view of this team&apos;s tracker setups, sport routing, and scheduled game assignments.</div>
+          <div className="mt-1 text-xs font-semibold leading-5 text-gray-500">Create a config from a sport preset or blank slate, then rename, reorder, add, or remove tracked columns without leaving the app.</div>
         </div>
-        <span className="rounded-full bg-gray-100 px-2.5 py-1 text-xs font-black text-gray-700">{safeConfigs.length} config{safeConfigs.length === 1 ? '' : 's'}</span>
+        <div className="flex flex-col items-end gap-2">
+          <span className="rounded-full bg-gray-100 px-2.5 py-1 text-xs font-black text-gray-700">{safeConfigs.length} config{safeConfigs.length === 1 ? '' : 's'}</span>
+          {!draft ? <button type="button" className="primary-button !min-h-9 px-3 text-xs" onClick={openCreateForm}>Create config</button> : null}
+        </div>
       </div>
+
+      {status ? <div className={`mt-3 rounded-xl border p-3 text-xs font-black ${status.success ? 'border-emerald-200 bg-emerald-50 text-emerald-700' : 'border-rose-200 bg-rose-50 text-rose-700'}`} role="status">{status.message}</div> : null}
+
+      {draft ? (
+        <div className="mt-3 rounded-xl border border-primary-100 bg-primary-50 p-3">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div>
+              <div className="text-sm font-black text-gray-950">{editingConfigId ? 'Edit stat config' : 'Create stat config'}</div>
+              <div className="mt-1 text-xs font-semibold text-gray-600">Column labels can change without changing stored stat keys. Basketball base type keeps the website tracker chooser working.</div>
+            </div>
+            <button type="button" className="secondary-button !min-h-9 px-3 text-xs" onClick={() => closeEditor()} disabled={submitting}>Cancel</button>
+          </div>
+
+          <div className="mt-3 grid gap-3 sm:grid-cols-2">
+            <label className="block">
+              <span className="text-[11px] font-black uppercase tracking-[0.04em] text-primary-700">Config name</span>
+              <input
+                type="text"
+                value={draft.name}
+                onChange={(event) => setDraft((currentDraft) => currentDraft ? { ...currentDraft, name: event.target.value } : currentDraft)}
+                className="mt-2 min-h-10 w-full rounded-xl border border-primary-200 bg-white px-3 text-sm font-semibold text-gray-950 outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-100"
+                placeholder="Basketball Standard"
+                disabled={submitting}
+              />
+            </label>
+            <label className="block">
+              <span className="text-[11px] font-black uppercase tracking-[0.04em] text-primary-700">Base sport</span>
+              <select
+                value={draft.baseType}
+                onChange={(event) => setDraft((currentDraft) => currentDraft ? { ...currentDraft, baseType: event.target.value } : currentDraft)}
+                className="mt-2 min-h-10 w-full rounded-xl border border-primary-200 bg-white px-3 text-sm font-semibold text-gray-950 outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-100"
+                disabled={submitting}
+              >
+                {['Basketball', 'Soccer', 'Baseball', 'Football', 'Volleyball', 'Custom'].map((baseType) => <option key={baseType} value={baseType}>{baseType}</option>)}
+              </select>
+            </label>
+          </div>
+
+          {!editingConfigId ? (
+            <div className="mt-3 rounded-xl border border-white/80 bg-white p-3">
+              <div className="text-[11px] font-black uppercase tracking-[0.04em] text-primary-700">Preset library</div>
+              <div className="mt-2 flex flex-col gap-2 sm:flex-row">
+                <select
+                  aria-label="Preset library"
+                  value={selectedPresetId}
+                  onChange={(event) => setSelectedPresetId(event.target.value)}
+                  className="min-h-10 flex-1 rounded-xl border border-primary-200 bg-white px-3 text-sm font-semibold text-gray-950 outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-100"
+                  disabled={submitting}
+                >
+                  {presetCatalog.map((preset) => <option key={preset.id} value={preset.id}>{preset.label}</option>)}
+                </select>
+                <button type="button" className="secondary-button !min-h-10 px-3 text-xs" onClick={() => {
+                  const presetDraft = createStatTrackerConfigDraftFromPreset(selectedPresetId);
+                  setDraft({ ...presetDraft, name: draft.name || presetDraft.name, baseType: presetDraft.baseType });
+                }} disabled={submitting}>Apply preset</button>
+              </div>
+            </div>
+          ) : null}
+
+          <div className="mt-3 rounded-xl border border-white/80 bg-white p-3">
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <div className="text-[11px] font-black uppercase tracking-[0.04em] text-primary-700">Columns</div>
+                <div className="mt-1 text-xs font-semibold text-gray-500">Keys power saved events. Labels control what coaches see in the tracker and reports.</div>
+              </div>
+              <button type="button" className="secondary-button !min-h-8 px-3 text-xs" onClick={() => setDraft((currentDraft) => currentDraft ? { ...currentDraft, columns: currentDraft.columns.concat(createBlankStatTrackerConfigColumnDraft()) } : currentDraft)} disabled={submitting}>Add column</button>
+            </div>
+            <div className="mt-3 space-y-2">
+              {draft.columns.length ? draft.columns.map((column, index) => (
+                <div key={column.uiId} className="rounded-xl border border-gray-200 bg-gray-50 p-3">
+                  <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto] sm:items-end">
+                    <label className="block">
+                      <span className="text-[11px] font-black uppercase tracking-[0.04em] text-gray-500">Label</span>
+                      <input
+                        type="text"
+                        value={column.label}
+                        onChange={(event) => updateColumn(column.uiId, { label: event.target.value })}
+                        className="mt-1 min-h-10 w-full rounded-xl border border-gray-200 bg-white px-3 text-sm font-semibold text-gray-950 outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-100"
+                        placeholder="PTS"
+                        disabled={submitting}
+                      />
+                    </label>
+                    <label className="block">
+                      <span className="text-[11px] font-black uppercase tracking-[0.04em] text-gray-500">Key</span>
+                      <input
+                        type="text"
+                        value={column.key}
+                        onChange={(event) => updateColumn(column.uiId, { key: event.target.value })}
+                        className="mt-1 min-h-10 w-full rounded-xl border border-gray-200 bg-white px-3 text-sm font-semibold text-gray-950 outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-100"
+                        placeholder="PTS"
+                        disabled={submitting}
+                      />
+                    </label>
+                    <div className="flex gap-2">
+                      <button type="button" className="secondary-button !min-h-10 px-3 text-xs" onClick={() => moveColumn(column.uiId, -1)} disabled={submitting || index === 0}>Up</button>
+                      <button type="button" className="secondary-button !min-h-10 px-3 text-xs" onClick={() => moveColumn(column.uiId, 1)} disabled={submitting || index === draft.columns.length - 1}>Down</button>
+                      <button type="button" className="secondary-button !min-h-10 px-3 text-xs !border-rose-200 !bg-rose-50 !text-rose-700" onClick={() => setDraft((currentDraft) => currentDraft ? { ...currentDraft, columns: currentDraft.columns.filter((entry) => entry.uiId !== column.uiId) } : currentDraft)} disabled={submitting}>Remove</button>
+                    </div>
+                  </div>
+                </div>
+              )) : <div className="rounded-xl border border-dashed border-gray-300 bg-gray-50 p-3 text-xs font-semibold text-gray-500">No columns yet. Add one manually or apply a preset.</div>}
+            </div>
+          </div>
+
+          <div className="mt-3 flex flex-wrap gap-2">
+            <button type="button" className="primary-button !min-h-10 px-3 text-xs" disabled={submitting} onClick={saveDraft}>
+              {submitting ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <Save className="h-4 w-4" aria-hidden="true" />}
+              {editingConfigId ? 'Save config' : 'Create config'}
+            </button>
+          </div>
+        </div>
+      ) : null}
 
       <div className="mt-3 space-y-3">
         {safeConfigs.length ? safeConfigs.map((config) => (
@@ -883,7 +1356,10 @@ function StatTrackerConfigsCard({ configs, orphanedAssignments }: { configs: Tea
                   {config.isBasketball ? <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-black uppercase tracking-[0.04em] text-amber-800">Basketball tracker routing</span> : null}
                 </div>
               </div>
-              <span className="rounded-full bg-primary-50 px-2.5 py-1 text-xs font-black text-primary-700">{formatConfigColumnSummary(config.columnCount, config.columnNames)}</span>
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="rounded-full bg-primary-50 px-2.5 py-1 text-xs font-black text-primary-700">{formatConfigColumnSummary(config.columnCount, config.columnNames)}</span>
+                <button type="button" className="secondary-button !min-h-8 px-3 text-xs" onClick={() => openEditForm(config)} disabled={submitting}>Edit</button>
+              </div>
             </div>
             <div className="mt-3 text-xs font-semibold text-gray-600">Columns: <span className="font-black text-gray-900">{config.columnNames.length ? config.columnNames.join(', ') : 'None configured'}</span></div>
             <div className="mt-3">
@@ -1980,7 +2456,7 @@ function InternalAction({ icon: Icon, label, detail, to }: { icon: LucideIcon; l
 function PlayerPhoto({ name, photoUrl, small = false }: { name: string; photoUrl?: string | null; small?: boolean }) {
   const sizeClass = small ? 'h-8 w-8 text-[10px]' : 'h-11 w-11 text-xs';
   if (photoUrl) {
-    return <img src={photoUrl} alt="" className={`${sizeClass} flex-none rounded-full object-cover ring-1 ring-gray-200`} loading="lazy" />;
+    return <img src={photoUrl} alt={`${name} player photo`} className={`${sizeClass} flex-none rounded-full object-cover ring-1 ring-gray-200`} loading="lazy" />;
   }
   return (
     <span className={`${sizeClass} flex flex-none items-center justify-center rounded-full bg-gray-900 font-black text-white`}>
@@ -1990,7 +2466,7 @@ function PlayerPhoto({ name, photoUrl, small = false }: { name: string; photoUrl
 }
 
 function SponsorImage({ sponsor }: { sponsor: { name: string; imageUrl: string | null } }) {
-  if (sponsor.imageUrl) return <img src={sponsor.imageUrl} alt="" className="h-12 w-12 flex-none rounded-xl object-cover" loading="lazy" />;
+  if (sponsor.imageUrl) return <img src={sponsor.imageUrl} alt={`${sponsor.name} sponsor logo`} className="h-12 w-12 flex-none rounded-xl object-cover" loading="lazy" />;
   return (
     <span className="flex h-12 w-12 flex-none items-center justify-center rounded-xl bg-white text-gray-500">
       <LinkIcon className="h-5 w-5" aria-hidden="true" />

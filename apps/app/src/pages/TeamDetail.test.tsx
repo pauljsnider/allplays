@@ -7,8 +7,10 @@ import type { AuthState } from '../lib/types';
 
 const teamDetailServiceMocks = vi.hoisted(() => ({
   addRosterPlayerForApp: vi.fn(),
+  archiveTeamTrackingItemForApp: vi.fn(),
   buildPublicTeamGamesIcsUrl: vi.fn(() => 'https://calendar.example.test/team.ics'),
   canExposePublicFanFeed: vi.fn(() => true),
+  createStatTrackerConfigForApp: vi.fn(),
   createRosterParentInviteForApp: vi.fn(),
   deactivateRosterPlayerForApp: vi.fn(),
   grantScorekeeperAccessForApp: vi.fn(),
@@ -20,11 +22,15 @@ const teamDetailServiceMocks = vi.hoisted(() => ({
   loadTeamDetailSponsors: vi.fn(),
   loadTeamRosterParentInvites: vi.fn(),
   loadTeamStaffPermissions: vi.fn(),
+  loadTeamTrackingAdmin: vi.fn(),
   reactivateRosterPlayerForApp: vi.fn(),
   revokeScorekeeperAccessForApp: vi.fn(),
   revokeTeamAdminAccessForApp: vi.fn(),
   revokeVideographerAccessForApp: vi.fn(),
-  saveTeamScheduleNotificationsForApp: vi.fn()
+  saveTeamScheduleNotificationsForApp: vi.fn(),
+  saveTeamTrackingItemForApp: vi.fn(),
+  setPlayerTrackingStatusForApp: vi.fn(),
+  updateStatTrackerConfigForApp: vi.fn()
 }));
 
 vi.mock('../lib/teamDetailService', () => teamDetailServiceMocks);
@@ -127,8 +133,11 @@ describe('TeamDetail', () => {
     teamDetailServiceMocks.loadTeamDetailSponsors.mockResolvedValue({ sponsors: [] });
     teamDetailServiceMocks.loadTeamRosterParentInvites.mockResolvedValue([]);
     teamDetailServiceMocks.loadTeamStaffPermissions.mockResolvedValue(null);
+    teamDetailServiceMocks.loadTeamTrackingAdmin.mockResolvedValue([]);
     teamDetailServiceMocks.inviteTeamAdminForApp.mockResolvedValue({ status: 'sent', email: 'coach@example.com' });
     teamDetailServiceMocks.addRosterPlayerForApp.mockResolvedValue({ playerId: 'player-2' });
+    teamDetailServiceMocks.archiveTeamTrackingItemForApp.mockResolvedValue(undefined);
+    teamDetailServiceMocks.createStatTrackerConfigForApp.mockResolvedValue('config-new');
     teamDetailServiceMocks.createRosterParentInviteForApp.mockResolvedValue({ code: 'ABCD1234', inviteUrl: 'https://allplays.ai/app#/accept-invite?code=ABCD1234&type=parent', status: 'pending', existingUser: false, autoLinked: false, teamName: 'Bears', playerName: 'Pat Star' });
     teamDetailServiceMocks.deactivateRosterPlayerForApp.mockResolvedValue(undefined);
     teamDetailServiceMocks.reactivateRosterPlayerForApp.mockResolvedValue(undefined);
@@ -138,6 +147,9 @@ describe('TeamDetail', () => {
     teamDetailServiceMocks.grantVideographerAccessForApp.mockResolvedValue({ success: true });
     teamDetailServiceMocks.revokeVideographerAccessForApp.mockResolvedValue({ success: true });
     teamDetailServiceMocks.saveTeamScheduleNotificationsForApp.mockResolvedValue(model.team.scheduleNotifications);
+    teamDetailServiceMocks.saveTeamTrackingItemForApp.mockResolvedValue('item-new');
+    teamDetailServiceMocks.setPlayerTrackingStatusForApp.mockResolvedValue(undefined);
+    teamDetailServiceMocks.updateStatTrackerConfigForApp.mockResolvedValue(undefined);
   });
 
   afterEach(() => {
@@ -157,6 +169,26 @@ describe('TeamDetail', () => {
 
     expect(screen.getByRole('status', { name: 'Loading team' })).toBeTruthy();
     expect(screen.queryByText('Getting the team photo, roster, schedule, standings, and parent-visible insights.')).toBeNull();
+  });
+
+  it('shows a retryable team detail error state and reloads on retry', async () => {
+    teamDetailServiceMocks.loadParentTeamDetail
+      .mockRejectedValueOnce(new Error('Team detail unavailable.'))
+      .mockResolvedValueOnce(model);
+
+    render(
+      <MemoryRouter initialEntries={['/teams/team-1']}>
+        <Routes>
+          <Route path="/teams/:teamId" element={<TeamDetail auth={auth} />} />
+        </Routes>
+      </MemoryRouter>
+    );
+
+    expect(await screen.findByText('Team detail unavailable.')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+
+    expect(await screen.findByRole('heading', { name: 'Bears' })).toBeTruthy();
+    expect(teamDetailServiceMocks.loadParentTeamDetail).toHaveBeenCalledTimes(2);
   });
 
   it('does not reload team detail when the auth object identity changes but the signed-in user does not', async () => {
@@ -201,7 +233,7 @@ describe('TeamDetail', () => {
         ]
       })
       .mockResolvedValueOnce(managedModel);
-    vi.spyOn(window, 'confirm')
+    const confirmSpy = vi.spyOn(window, 'confirm')
       .mockReturnValueOnce(true)
       .mockReturnValueOnce(true);
 
@@ -218,6 +250,7 @@ describe('TeamDetail', () => {
 
     fireEvent.click(await screen.findByRole('button', { name: 'Deactivate' }));
 
+    expect(confirmSpy).toHaveBeenCalledWith('Deactivate Pat Star?\n\nLinked parents may lose access to this team, including history, until the player is reactivated or parent scope is repaired.');
     await waitFor(() => expect(teamDetailServiceMocks.deactivateRosterPlayerForApp).toHaveBeenCalledWith('team-1', 'player-1'));
     expect(await screen.findByText('Pat Star deactivated.')).toBeTruthy();
     expect(await screen.findByText('Inactive roster')).toBeTruthy();
@@ -225,6 +258,7 @@ describe('TeamDetail', () => {
     const reactivateButtons = await screen.findAllByRole('button', { name: 'Reactivate' });
     fireEvent.click(reactivateButtons[0]);
 
+    expect(confirmSpy).toHaveBeenCalledWith('Reactivate Sam Bench?');
     await waitFor(() => expect(teamDetailServiceMocks.reactivateRosterPlayerForApp).toHaveBeenCalledWith('team-1', 'player-2'));
     expect(await screen.findByText('Sam Bench reactivated.')).toBeTruthy();
   });
@@ -305,7 +339,7 @@ describe('TeamDetail', () => {
     await waitFor(() => expect(teamDetailServiceMocks.loadRosterFieldDefinitionsForApp).toHaveBeenCalledWith('team-1', auth.user));
     fireEvent.change(screen.getByPlaceholderText('Player name'), { target: { value: 'Alex New' } });
     fireEvent.change(screen.getByPlaceholderText('Optional'), { target: { value: '14' } });
-    fireEvent.change(screen.getByRole('combobox'), { target: { value: '2028' } });
+    fireEvent.change(screen.getByRole('combobox', { name: 'Grad Year' }), { target: { value: '2028' } });
     fireEvent.click(screen.getByRole('button', { name: 'Save player' }));
 
     await waitFor(() => expect(teamDetailServiceMocks.addRosterPlayerForApp).toHaveBeenCalledWith('team-1', auth.user, {
@@ -317,7 +351,126 @@ describe('TeamDetail', () => {
       }
     }));
     await waitFor(() => expect(teamDetailServiceMocks.loadParentTeamDetail).toHaveBeenCalledTimes(2));
-    expect(await screen.findByText('Alex New added to roster.')).toBeTruthy();
+    const status = await screen.findByText('Alex New added to roster.');
+    expect(status.closest('[role="status"]')?.getAttribute('aria-live')).toBe('polite');
+  });
+
+  it('uses descriptive alt text for team and roster photos', async () => {
+    teamDetailServiceMocks.loadParentTeamDetail.mockResolvedValue({
+      ...model,
+      team: {
+        ...model.team,
+        photoUrl: 'https://cdn.example.test/team.jpg'
+      },
+      players: [
+        { ...model.players[0], photoUrl: 'https://cdn.example.test/player.jpg' }
+      ]
+    });
+
+    render(
+      <MemoryRouter initialEntries={['/teams/team-1']}>
+        <Routes>
+          <Route path="/teams/:teamId" element={<TeamDetail auth={auth} />} />
+        </Routes>
+      </MemoryRouter>
+    );
+
+    expect(await screen.findByAltText('Bears team photo')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: /roster/i }));
+    expect(await screen.findByAltText('Pat Star player photo')).toBeTruthy();
+  });
+
+  it('renders multiple tracking items with completion badges and lets staff manage statuses from the roster tab', async () => {
+    const managedModel = {
+      ...model,
+      canManageTeam: true
+    };
+    teamDetailServiceMocks.loadParentTeamDetail.mockResolvedValue(managedModel);
+    teamDetailServiceMocks.loadTeamTrackingAdmin
+      .mockResolvedValueOnce([
+        {
+          id: 'item-1',
+          name: 'Waiver',
+          description: 'Signed form',
+          visibility: 'public',
+          status: 'active',
+          active: true,
+          archived: false,
+          completionSummary: { total: 1, complete: 0, incomplete: 1 },
+          playerStatuses: [{ playerId: 'player-1', playerName: 'Pat Star', playerNumber: '9', photoUrl: null, complete: false }]
+        },
+        {
+          id: 'item-2',
+          name: 'Jersey',
+          description: '',
+          visibility: 'private',
+          status: 'active',
+          active: true,
+          archived: false,
+          completionSummary: { total: 1, complete: 1, incomplete: 0 },
+          playerStatuses: [{ playerId: 'player-1', playerName: 'Pat Star', playerNumber: '9', photoUrl: null, complete: true }]
+        }
+      ])
+      .mockResolvedValueOnce([
+        {
+          id: 'item-1',
+          name: 'Waiver',
+          description: 'Signed form',
+          visibility: 'public',
+          status: 'active',
+          active: true,
+          archived: false,
+          completionSummary: { total: 1, complete: 1, incomplete: 0 },
+          playerStatuses: [{ playerId: 'player-1', playerName: 'Pat Star', playerNumber: '9', photoUrl: null, complete: true }]
+        }
+      ])
+      .mockResolvedValueOnce([
+        {
+          id: 'item-1',
+          name: 'Waiver',
+          description: 'Signed form',
+          visibility: 'public',
+          status: 'active',
+          active: true,
+          archived: false,
+          completionSummary: { total: 1, complete: 1, incomplete: 0 },
+          playerStatuses: [{ playerId: 'player-1', playerName: 'Pat Star', playerNumber: '9', photoUrl: null, complete: true }]
+        }
+      ])
+      .mockResolvedValueOnce([]);
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+
+    render(
+      <MemoryRouter initialEntries={['/teams/team-1?tab=roster']}>
+        <Routes>
+          <Route path="/teams/:teamId" element={<TeamDetail auth={auth} />} />
+        </Routes>
+      </MemoryRouter>
+    );
+
+    expect(await screen.findByRole('heading', { name: 'Bears' })).toBeTruthy();
+    expect(await screen.findByText('Tracking items')).toBeTruthy();
+    expect(await screen.findByText('Waiver')).toBeTruthy();
+    expect(await screen.findByText('Jersey')).toBeTruthy();
+    expect(screen.getByText('0/1 done')).toBeTruthy();
+    expect(screen.getByText('1/1 done')).toBeTruthy();
+    await waitFor(() => expect(teamDetailServiceMocks.loadTeamTrackingAdmin).toHaveBeenCalledWith('team-1', auth.user));
+
+    fireEvent.click(screen.getByRole('button', { name: 'Open' }));
+    await waitFor(() => expect(teamDetailServiceMocks.setPlayerTrackingStatusForApp).toHaveBeenCalledWith('team-1', auth.user, 'item-1', expect.objectContaining({ id: 'player-1', number: '9' }), true));
+    expect(await screen.findByText('Pat Star marked done for Waiver.')).toBeTruthy();
+
+    fireEvent.change(screen.getByPlaceholderText('Medical release form'), { target: { value: 'Jersey check' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Create item' }));
+    await waitFor(() => expect(teamDetailServiceMocks.saveTeamTrackingItemForApp).toHaveBeenCalledWith('team-1', auth.user, {
+      name: 'Jersey check',
+      description: '',
+      visibility: 'private',
+      status: 'active'
+    }, undefined));
+
+    fireEvent.click(screen.getByRole('button', { name: 'Archive' }));
+    await waitFor(() => expect(teamDetailServiceMocks.archiveTeamTrackingItemForApp).toHaveBeenCalledWith('team-1', auth.user, 'item-1'));
   });
 
   it('links staff to the native certificates draft screen from the team more tab', async () => {
@@ -359,6 +512,67 @@ describe('TeamDetail', () => {
     fireEvent.click(screen.getByRole('button', { name: /more/i }));
 
     expect((await screen.findByText('Drill library')).closest('a')?.getAttribute('href')).toBe('/teams/team-1/drills');
+  });
+
+  it('lets staff create a stat config from a preset and edit an existing config in the app', async () => {
+    const managedModel = {
+      ...model,
+      canManageTeam: true,
+      statTrackerConfigs: [{
+        id: 'config-1',
+        name: 'Soccer Standard',
+        baseType: 'Soccer',
+        isBasketball: false,
+        columnCount: 5,
+        columnNames: ['GOALS', 'SHOTS', 'SHOTS_ON_TARGET', 'ASSISTS', 'SAVES'],
+        columns: ['GOALS', 'SHOTS', 'SHOTS_ON_TARGET', 'ASSISTS', 'SAVES'],
+        statDefinitions: [
+          { id: 'goals', label: 'GOALS', acronym: 'GOALS', type: 'base', group: 'Attack', scope: 'player', visibility: 'public', format: 'number', precision: 0, rankingOrder: 'desc', topStat: true },
+          { id: 'shots', label: 'SHOTS', acronym: 'SHOTS', type: 'base', group: 'General', scope: 'player', visibility: 'public', format: 'number', precision: 0, rankingOrder: 'desc', topStat: false }
+        ],
+        assignedUpcomingGames: []
+      }]
+    };
+    teamDetailServiceMocks.loadParentTeamDetail
+      .mockResolvedValueOnce({ ...managedModel, statTrackerConfigs: [] })
+      .mockResolvedValueOnce(managedModel)
+      .mockResolvedValueOnce(managedModel);
+
+    render(
+      <MemoryRouter initialEntries={['/teams/team-1?tab=more']}>
+        <Routes>
+          <Route path="/teams/:teamId" element={<TeamDetail auth={auth} />} />
+        </Routes>
+      </MemoryRouter>
+    );
+
+    expect(await screen.findByRole('heading', { name: 'Bears' })).toBeTruthy();
+    expect(await screen.findByRole('button', { name: 'Create config' })).toBeTruthy();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Create config' }));
+    fireEvent.change(screen.getByLabelText('Preset library'), { target: { value: 'basketball' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Apply preset' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Create config' }));
+
+    await waitFor(() => expect(teamDetailServiceMocks.createStatTrackerConfigForApp).toHaveBeenCalledWith('team-1', auth.user, expect.objectContaining({
+      name: 'Basketball Standard',
+      baseType: 'Basketball',
+      columns: ['PTS', 'REB', 'AST', 'FGM', 'FGA', 'TO']
+    })));
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Edit' }));
+    const labelInputs = screen.getAllByPlaceholderText('PTS');
+    fireEvent.change(labelInputs[0], { target: { value: 'Goals' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save config' }));
+
+    await waitFor(() => expect(teamDetailServiceMocks.updateStatTrackerConfigForApp).toHaveBeenCalledWith('team-1', 'config-1', auth.user, expect.objectContaining({
+      name: 'Soccer Standard',
+      baseType: 'Soccer',
+      columns: ['Goals', 'SHOTS', 'SHOTS_ON_TARGET', 'ASSISTS', 'SAVES'],
+      statDefinitions: expect.arrayContaining([
+        expect.objectContaining({ id: 'goals', label: 'Goals', acronym: 'Goals' })
+      ])
+    })));
   });
 
   it('loads roster invite summaries only once per roster visit when the result is empty', async () => {

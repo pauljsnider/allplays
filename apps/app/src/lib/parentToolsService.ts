@@ -1,17 +1,44 @@
 import {
+  addPendingFamilyMember,
   approveTeamRegistration,
+  buildPendingRegistrationRecord,
+  calculateRegistrationFeeSnapshot,
+  canAccessTeamChat,
+  canContributeTeamMedia,
+  canManageTeamMedia,
+  canReadTeamMediaAlbum,
+  cancelStripeRegistrationCheckout,
+  collection,
   createFamilyShareToken,
   createParentMembershipRequest,
   createRegistrationCheckoutSession,
   createTeamMediaFolder,
   createTeamMediaLink,
+  db,
+  decideRegistrationPlacement,
+  deleteTeamMediaItem,
   discoverPublicTeams,
+  doc,
+  extendTeamRegistrationOffer,
+  formatParentFeeAmount,
+  formatParentFeeDueDate,
+  getActiveRegistrationOptions,
+  getDoc,
+  getParentFeeStatusMeta,
+  getPaymentPlanChoices,
   getPlayers,
-  getTeamRegistrationForm,
+  getRegistrationGuardianDrafts,
+  getRegistrationPaymentNotice,
+  getRegistrationPlayerDraft,
+  getRegistrationSubmittedData,
   getTeam,
   getTeamMediaFolders,
-  getTeamMediaItems,
-  canAccessTeamChat,
+  getTeamMediaItemUrl,
+  getTeamMediaItemsPage,
+  getTeamRegistrationForm,
+  hasOnlineRegistrationCheckout,
+  initiateTeamFeeCheckout,
+  isSafeTeamMediaUrl,
   listCertificatesForPlayer,
   listFamilyShareTokens,
   listMyParentMembershipRequests,
@@ -19,52 +46,26 @@ import {
   listTeamRegistrationForms,
   listTeamRegistrationReviews,
   listTeamRegistrationReviewsPage,
-  rejectTeamRegistration,
-  revokeFamilyShareToken,
-  updateFamilyShareTokenCalendars,
-  uploadTeamMediaFile,
-  uploadTeamMediaPhoto,
-  deleteTeamMediaItem,
-  updateTeamMediaItem,
   moveTeamMediaItems,
-  setTeamMediaAlbumCover
-} from '../../../../js/db.js';
-import { addPendingFamilyMember, readFamilyMembers } from '../../../../js/family-plan.js';
-import { db, doc, collection, getDoc, serverTimestamp, runTransaction } from '../../../../js/firebase.js';
-import {
-  formatParentFeeAmount,
-  formatParentFeeDueDate,
-  getParentFeeStatusMeta,
   normalizeParentFeeRecord,
-  sortParentFeeRecords
-} from '../../../../js/parent-dashboard-fees.js';
-import { cancelStripeRegistrationCheckout, initiateTeamFeeCheckout } from '../../../../js/stripe-service.js';
-import {
-  buildPendingRegistrationRecord,
-  calculateRegistrationFeeSnapshot,
-  decideRegistrationPlacement,
-  getActiveRegistrationOptions,
-  getPaymentPlanChoices,
-  getRegistrationPaymentNotice,
-  hasOnlineRegistrationCheckout,
   normalizeRegistrationForm,
-  requiresRegistrationOption
-} from '../../../../js/registration-flow.js';
-import {
-  getRegistrationGuardianDrafts,
-  getRegistrationPlayerDraft,
-  getRegistrationSubmittedData,
-  normalizeRegistrationStatus
-} from '../../../../js/registration-review.js';
-import {
-  canContributeTeamMedia,
-  canManageTeamMedia,
-  canReadTeamMediaAlbum,
-  getTeamMediaItemUrl,
-  isSafeTeamMediaUrl,
-  sortByMediaOrder
-} from '../../../../js/team-media-utils.js';
+  normalizeRegistrationStatus,
+  readFamilyMembers,
+  rejectTeamRegistration,
+  requiresRegistrationOption,
+  revokeFamilyShareToken,
+  runTransaction,
+  serverTimestamp,
+  setTeamMediaAlbumCover,
+  sortByMediaOrder,
+  sortParentFeeRecords,
+  updateFamilyShareTokenCalendars,
+  updateTeamMediaItem,
+  uploadTeamMediaFile,
+  uploadTeamMediaPhoto
+} from './adapters/legacyParentTools';
 import { firebaseAuth, getNativeAuthIdToken } from './authService';
+import { formatCurrencyFromCents as formatCurrency } from './money';
 import { loadParentScheduleSummary } from './homeService';
 import { formatEventDateLabel, formatEventTimeLabel, getScheduleTitle, type ParentScheduleEvent } from './scheduleLogic';
 import type { AuthUser } from './types';
@@ -181,6 +182,8 @@ export type TeamRegistrationReviewCard = Record<string, any> & {
 export type TeamRegistrationQueueModel = {
   reviews: TeamRegistrationReviewCard[];
   rosterPlayers: TeamRegistrationRosterPlayer[];
+  waitlistedReviews?: TeamRegistrationReviewCard[];
+  totalWaitlisted?: number;
 };
 
 export type ParentCalendarTeam = {
@@ -241,6 +244,8 @@ export type TeamMediaFolder = Record<string, any> & {
   itemCount: number;
   items: TeamMediaItem[];
   itemsLoaded?: boolean;
+  itemsHasMore?: boolean;
+  itemsNextCursor?: any;
 };
 
 export type TeamMediaItem = Record<string, any> & {
@@ -522,13 +527,13 @@ export function buildPrivateTeamCalendarFeedUrl(teamId: string, team: Record<str
     || team?.teamCalendarToken;
   if (!teamId || !token) return '';
 
-  const configured = (window as any).__ALLPLAYS_CONFIG__?.privateTeamCalendarIcsFunctionUrl || (window as any).ALLPLAYS_PRIVATE_TEAM_CALENDAR_ICS_URL;
+  const configured = (window as any).__ALLPLAYS_CONFIG__?.teamCalendarFeedFunctionUrl || (window as any).ALLPLAYS_TEAM_CALENDAR_FEED_URL;
   const fallback = (window as any).__ALLPLAYS_CONFIG__?.calendarFetchFunctionUrl || (window as any).ALLPLAYS_CALENDAR_FUNCTION_URL;
   const baseUrl = typeof configured === 'string' && configured.trim()
     ? configured.trim()
     : typeof fallback === 'string' && fallback.includes('fetchCalendarIcs')
-      ? fallback.replace('fetchCalendarIcs', 'privateTeamCalendarIcs')
-      : 'https://us-central1-all-plays-prod.cloudfunctions.net/privateTeamCalendarIcs';
+      ? fallback.replace('fetchCalendarIcs', 'teamCalendarFeed')
+      : 'https://us-central1-all-plays-prod.cloudfunctions.net/teamCalendarFeed';
   const separator = baseUrl.includes('?') ? '&' : '?';
   return `${baseUrl}${separator}teamId=${encodeURIComponent(teamId)}&token=${encodeURIComponent(token)}`;
 }
@@ -540,13 +545,13 @@ export async function getPrivateTeamCalendarFeedUrl(teamId: string) {
   const token = await getNativeAuthIdToken(false).catch(() => null)
     || await firebaseAuth.currentUser?.getIdToken?.(false).catch(() => null);
   if (!teamId || !token) return '';
-  const configured = (window as any).__ALLPLAYS_CONFIG__?.privateTeamCalendarIcsFunctionUrl || (window as any).ALLPLAYS_PRIVATE_TEAM_CALENDAR_ICS_URL;
+  const configured = (window as any).__ALLPLAYS_CONFIG__?.teamCalendarFeedFunctionUrl || (window as any).ALLPLAYS_TEAM_CALENDAR_FEED_URL;
   const fallback = (window as any).__ALLPLAYS_CONFIG__?.calendarFetchFunctionUrl || (window as any).ALLPLAYS_CALENDAR_FUNCTION_URL;
   const baseUrl = typeof configured === 'string' && configured.trim()
     ? configured.trim()
     : typeof fallback === 'string' && fallback.includes('fetchCalendarIcs')
-      ? fallback.replace('fetchCalendarIcs', 'privateTeamCalendarIcs')
-      : 'https://us-central1-all-plays-prod.cloudfunctions.net/privateTeamCalendarIcs';
+      ? fallback.replace('fetchCalendarIcs', 'teamCalendarFeed')
+      : 'https://us-central1-all-plays-prod.cloudfunctions.net/teamCalendarFeed';
   const separator = baseUrl.includes('?') ? '&' : '?';
   return `${baseUrl}${separator}teamId=${encodeURIComponent(teamId)}&token=${encodeURIComponent(token)}`;
 }
@@ -725,6 +730,19 @@ export async function rejectTeamRegistrationForApp(
   return rejectTeamRegistration(teamId, formId, registrationId, decisionNote);
 }
 
+export async function extendTeamRegistrationOfferForApp(
+  user: AuthUser | null,
+  teamId: string,
+  formId: string,
+  registrationId: string,
+  decisionNote = ''
+) {
+  if (!canManageTeamRegistrations(user, teamId)) {
+    throw new Error('Admin access is required to manage waitlist registrations.');
+  }
+  return extendTeamRegistrationOffer(teamId, formId, registrationId, decisionNote);
+}
+
 export async function loadParentCertificates(user: AuthUser | null): Promise<ParentCertificateCard[]> {
   const children = normalizeFamilyChildren(user?.parentOf || []);
   const rows = await Promise.all(children.map(async (child: any) => {
@@ -817,7 +835,7 @@ function getPublicRegistrationTeamName(form: Record<string, any>) {
 export async function loadTeamMediaForApp(
   user: AuthUser | null,
   teamId: string,
-  options: { initialFolderId?: string; folderIds?: string[] } = {}
+  options: { initialFolderId?: string; folderIds?: string[]; pageSize?: number; cursorsByFolderId?: Record<string, any> } = {}
 ): Promise<TeamMediaModel> {
   if (!teamId) throw new Error('Team is required.');
   const team = await Promise.resolve(getTeam(teamId));
@@ -843,6 +861,7 @@ export async function loadTeamMediaForApp(
 
   const itemSets = new Map<string, TeamMediaItem[]>();
   const fallbackCounts = new Map<string, number>();
+  const pageStateByFolderId = new Map<string, { hasMore: boolean; nextCursor: any }>();
   await Promise.all(visibleFolders.map(async (folder: any) => {
     const folderId = compactString(folder?.id);
     if (!folderId) return;
@@ -852,10 +871,19 @@ export async function loadTeamMediaForApp(
       if (storedCount !== null) fallbackCounts.set(folderId, storedCount);
       return;
     }
-    const items = sortByMediaOrder(await Promise.resolve(getTeamMediaItems(teamId, folderId)).catch(() => []))
+    const page = await Promise.resolve(getTeamMediaItemsPage(teamId, folderId, {
+      pageSize: options.pageSize || 24,
+      cursor: options.cursorsByFolderId?.[folderId] || null
+    })).catch(() => ({ items: [], hasMore: false, nextCursor: null }));
+    const pageItems = Array.isArray(page?.items) ? page.items : [];
+    const items = sortByMediaOrder(pageItems)
       .map(toTeamMediaItem)
       .filter((item: TeamMediaItem) => item.url && isSafeTeamMediaUrl(item.url));
-    fallbackCounts.set(folderId, items.length);
+    fallbackCounts.set(folderId, storedCount !== null ? Math.max(storedCount, items.length) : items.length);
+    pageStateByFolderId.set(folderId, {
+      hasMore: page?.hasMore === true,
+      nextCursor: page?.nextCursor || page?.lastDoc || null
+    });
     itemSets.set(folderId, items);
   }));
 
@@ -866,9 +894,11 @@ export async function loadTeamMediaForApp(
     return {
       ...folder,
       id: folderId,
-      itemCount: loadedItems ? loadedItems.length : Number.isFinite(fallbackCount) ? fallbackCount : 0,
+      itemCount: Number.isFinite(fallbackCount) ? fallbackCount : loadedItems ? loadedItems.length : 0,
       items: loadedItems || [],
-      itemsLoaded: Boolean(loadedItems)
+      itemsLoaded: Boolean(loadedItems),
+      itemsHasMore: pageStateByFolderId.get(folderId)?.hasMore || false,
+      itemsNextCursor: pageStateByFolderId.get(folderId)?.nextCursor || null
     };
   });
 
@@ -882,11 +912,13 @@ export async function loadTeamMediaForApp(
 }
 
 export async function uploadParentTeamMediaPhoto(teamId: string, folderId: string, file: File) {
-  return uploadTeamMediaPhoto(teamId, folderId, file);
+  const result = await uploadTeamMediaPhoto(teamId, folderId, file, { returnItem: true });
+  return result && typeof result === 'object' ? toTeamMediaItem(result) : null;
 }
 
 export async function uploadParentTeamMediaFile(teamId: string, folderId: string, file: File) {
-  return uploadTeamMediaFile(teamId, folderId, file);
+  const result = await uploadTeamMediaFile(teamId, folderId, file, { returnItem: true });
+  return result && typeof result === 'object' ? toTeamMediaItem(result) : null;
 }
 
 export async function createTeamMediaAlbumForApp(teamId: string, draft: { name: string; visibility?: string }) {
@@ -1122,13 +1154,6 @@ function getArrayField(source: any, keys: string[]) {
     if (Array.isArray(source?.[key])) return source[key].filter(Boolean);
   }
   return [];
-}
-
-function formatCurrency(cents: number, currency = 'USD') {
-  return new Intl.NumberFormat('en-US', {
-    style: 'currency',
-    currency: currency || 'USD'
-  }).format((Number(cents) || 0) / 100);
 }
 
 function escapeIcs(value: unknown) {

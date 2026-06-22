@@ -4,7 +4,7 @@ import {
   subscribeToTeamChatMessages,
   type ChatMessage
 } from '../../../lib/chatService';
-import { getSortedChatMessages, mergeChatMessageLists } from '../../../lib/chatLogic';
+import { DEFAULT_TEAM_CONVERSATION_ID, getSortedChatMessages, mergeChatMessageLists } from '../../../lib/chatLogic';
 import type { AuthState } from '../../../lib/types';
 
 type UseChatMessagesParams = {
@@ -17,6 +17,10 @@ type UseChatMessagesParams = {
   onMessagesReset?: () => void;
   onMarkRead?: () => void;
 };
+
+function normalizeConversationId(conversationId: string) {
+  return String(conversationId || '').trim() || DEFAULT_TEAM_CONVERSATION_ID;
+}
 
 export function useChatMessages({
   teamId,
@@ -36,6 +40,7 @@ export function useChatMessages({
   const [loadingOlder, setLoadingOlder] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const initialSnapshotLoadedRef = useRef(false);
+  const conversationId = normalizeConversationId(selectedConversationId);
 
   const messages = useMemo(() => mergeChatMessageLists(olderMessages, liveMessages), [liveMessages, olderMessages]);
 
@@ -53,7 +58,7 @@ export function useChatMessages({
 
     const subscription = subscribeToTeamChatMessages(
       teamId,
-      selectedConversationId,
+      conversationId,
       (incomingMessages, oldestDoc) => {
         const isInitialSnapshot = !initialSnapshotLoadedRef.current;
         const wasNearBottom = onBeforeLiveUpdate?.() ?? true;
@@ -74,7 +79,7 @@ export function useChatMessages({
     return () => {
       subscription.unsubscribe();
     };
-  }, [onBeforeLiveUpdate, onLiveUpdateState, onMarkRead, onMessagesReset, selectedConversationId, team?.id, teamId, user?.uid]);
+  }, [conversationId, onBeforeLiveUpdate, onLiveUpdateState, onMarkRead, onMessagesReset, team?.id, teamId, user?.uid]);
 
   const loadOlderMessages = useCallback(async () => {
     if (loadingOlder || !hasMoreMessages) return;
@@ -82,13 +87,13 @@ export function useChatMessages({
     if (!cursor) return;
     setLoadingOlder(true);
     try {
-      const batch = await loadOlderTeamChatMessages(teamId, selectedConversationId, cursor);
+      const batch = await loadOlderTeamChatMessages(teamId, conversationId, cursor);
       if (batch.length < 50) setHasMoreMessages(false);
       setOlderMessages((current) => mergeChatMessageLists(getSortedChatMessages(batch), current));
     } finally {
       setLoadingOlder(false);
     }
-  }, [hasMoreMessages, liveOldestDoc, loadingOlder, olderMessages, selectedConversationId, teamId]);
+  }, [conversationId, hasMoreMessages, liveOldestDoc, loadingOlder, olderMessages, teamId]);
 
   return {
     liveMessages,

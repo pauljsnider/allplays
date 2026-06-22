@@ -169,6 +169,24 @@ describe('published certificate award helpers', () => {
         });
     });
 
+    it('builds encoded award notification destinations and falls back to the certificates view', () => {
+        const firestore = buildFirestoreForParentLookup();
+        const admin = { firestore: { FieldValue: { serverTimestamp: vi.fn(() => 'SERVER_TIMESTAMP') } } };
+        const helpers = getAwardHelpers()(firestore, admin);
+
+        expect(helpers.buildAwardNotificationDestination({
+            teamId: 'team 1',
+            certificateId: 'cert/1'
+        })).toEqual({
+            link: 'https://allplays.ai/app/#/parent-tools/certificates?teamId=team+1&certificateId=cert%2F1',
+            appRoute: '/parent-tools/certificates?teamId=team+1&certificateId=cert%2F1'
+        });
+        expect(helpers.buildAwardNotificationDestination({ teamId: 'team 1' })).toEqual({
+            link: 'https://allplays.ai/app/#/parent-tools/certificates?teamId=team+1',
+            appRoute: '/parent-tools/certificates?teamId=team+1'
+        });
+    });
+
     it('claims the first published notification send with a retry-safe transaction guard and marks it processed after send', async () => {
         const certificateRef = {
             path: 'teams/team-1/certificates/cert-1',
@@ -237,7 +255,8 @@ describe('getTargetsForCategory', () => {
                                 data: () => ({
                                     uid: 'parent-1',
                                     deviceId: 'device-1',
-                                    token: 'token-1'
+                                    token: 'token-1',
+                                    categories: { awards: true }
                                 })
                             }]
                         }))
@@ -253,7 +272,14 @@ describe('getTargetsForCategory', () => {
         );
 
         await expect(getTargetsForCategory('team-1', 'awards', null, {}, [{ uid: 'parent-1', roles: ['parent'] }])).resolves.toEqual([
-            { uid: 'parent-1', deviceId: 'device-1', token: 'token-1', teamId: 'team-1' }
+            {
+                uid: 'parent-1',
+                deviceId: 'device-1',
+                token: 'token-1',
+                teamId: 'team-1',
+                platform: '',
+                userAgent: ''
+            }
         ]);
     });
 });

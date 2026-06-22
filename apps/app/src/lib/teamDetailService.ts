@@ -1,43 +1,67 @@
 import {
   addPlayer,
-  getAggregatedStatsForGames,
+  addTeamAdminEmail,
+  buildPlayerLeaderboardSnapshot,
+  buildTeamStaffPermissionsViewModel,
+  buildTrackingStatusPayload,
+  calculateSeasonRecord,
+  collection,
+  computeNativeStandings,
+  createConfig,
+  db,
+  deactivatePlayer,
+  describeScheduleReminderWindow,
+  doc,
   getAdSpaceSponsors,
+  getAggregatedStatsForGames,
   getConfigs,
+  getDoc,
+  getDocs,
   getGames,
-  inviteParent,
   getLocalAttractionSponsors,
-  getPlayers,
   getPlayerTrackingStatuses,
+  getPlayers,
   getPublicTrackingItems,
   getRosterFieldDefinitions,
   getTeam,
-  updateTeam,
+  getVisiblePlayerTrackingSummary,
   grantScorekeeperAccess,
   grantVideographerAccess,
+  hasFullTeamAccess,
   inviteAdmin,
-  addTeamAdminEmail,
+  inviteExistingTeamAdmin,
+  inviteParent,
+  listSeasonLabels,
+  normalizeAdminEmailList,
+  normalizeRosterFieldDefinitions,
+  normalizeScheduleNotificationSettings,
+  normalizeStatTrackerConfig,
+  normalizeTrackingStatus,
+  query,
+  reactivatePlayer,
   revokeScorekeeperAccess,
   revokeVideographerAccess,
-  deactivatePlayer,
-  reactivatePlayer,
+  selectAnalyticsConfig,
+  sendInviteEmail,
+  serverTimestamp,
+  setDoc,
   setPlayerPrivateRosterProfileFields,
+  setTeamTrackingStatus,
+  splitRosterProfileValuesByVisibility,
+  summarizeTrackingStatus,
+  updateConfig,
+  updateDoc,
+  updateTeam,
   uploadPlayerPhoto,
-  uploadTeamPhoto
-} from '../../../../js/db.js';
-import { sendInviteEmail } from '../../../../js/auth.js';
-import { inviteExistingTeamAdmin } from '../../../../js/edit-team-admin-invites.js';
-import { collection, db, doc, getDoc, getDocs, query, where } from '../../../../js/firebase.js';
-import { normalizeRosterFieldDefinitions, splitRosterProfileValuesByVisibility, validateRosterProfileValues } from '../../../../js/roster-profile-fields.js';
-import { describeScheduleReminderWindow, normalizeScheduleNotificationSettings } from '../../../../js/schedule-notifications.js';
-import { calculateSeasonRecord, listSeasonLabels } from '../../../../js/season-record.js';
-import { computeNativeStandings } from '../../../../js/native-standings.js';
-import { buildPlayerLeaderboardSnapshot, normalizeStatTrackerConfig, selectAnalyticsConfig } from '../../../../js/stat-leaderboards.js';
-import { getVisiblePlayerTrackingSummary } from '../../../../js/player-tracking-summary.js';
-import { hasFullTeamAccess, normalizeAdminEmailList } from '../../../../js/team-access.js';
-import { buildTeamStaffPermissionsViewModel } from '../../../../js/team-staff-permissions.js';
+  uploadTeamPhoto,
+  validateRosterProfileValues,
+  where
+} from './adapters/legacyTeamDetail';
 import { firebaseAuth, getNativeAuthIdToken } from './authService';
 import { buildAppAcceptInviteUrl } from './inviteUrls';
+import { getNativeRestDedupKey, loadDedupedNativeRestRequest, shouldDedupNativeRestRequest } from './nativeRestDedup';
 import { sanitizeErrorForLogging } from './nativeRestLogging';
+import { normalizeOptionalHttpUrl, parseTeamLivestreamInput } from './teamLinks';
 import type { AuthUser } from './types';
 
 const primaryDataTimeoutMs = 5000;
@@ -119,6 +143,8 @@ export type TeamDetailStatTrackerConfig = {
   isBasketball: boolean;
   columnCount: number;
   columnNames: string[];
+  columns: string[];
+  statDefinitions: Array<Record<string, unknown>>;
   assignedUpcomingGames: Array<{
     gameId: string;
     title: string;
@@ -207,7 +233,16 @@ export type UpdateTeamSettingsForAppInput = {
   sport?: string;
   zip?: string;
   isPublic?: boolean;
+  leagueUrl?: string;
+  streamUrl?: string;
   photoFile?: File | null;
+};
+
+export type UpsertStatTrackerConfigForAppInput = {
+  name: string;
+  baseType: string;
+  columns: string[];
+  statDefinitions: Array<Record<string, unknown>>;
 };
 
 export type TeamDetailModel = {
@@ -262,6 +297,37 @@ export type TeamDetailModel = {
     practices: number;
     completedGames: number;
   };
+};
+
+export type TeamTrackingAdminPlayerStatus = {
+  playerId: string;
+  playerName: string;
+  playerNumber: string;
+  photoUrl: string | null;
+  complete: boolean;
+};
+
+export type TeamTrackingAdminItem = {
+  id: string;
+  name: string;
+  description: string;
+  visibility: 'private' | 'public';
+  status: 'active' | 'archived';
+  active: boolean;
+  archived: boolean;
+  playerStatuses: TeamTrackingAdminPlayerStatus[];
+  completionSummary: {
+    total: number;
+    complete: number;
+    incomplete: number;
+  };
+};
+
+export type TeamTrackingItemForAppInput = {
+  name: string;
+  description?: string;
+  visibility?: 'private' | 'public';
+  status?: 'active' | 'archived';
 };
 
 export type TeamDetailInsightsPayload = {
@@ -388,20 +454,26 @@ async function getNativeHeaders() {
 }
 
 async function nativeFirestoreRequest(path: string, init: RequestInit = {}) {
-  const response = await withTimeout(fetch(`${getFirestoreBaseUrl()}${path}`, {
-    ...init,
-    headers: {
-      ...(await getNativeHeaders()),
-      ...(init.headers || {})
+  const url = `${getFirestoreBaseUrl()}${path}`;
+  const runRequest = async () => {
+    const response = await withTimeout(fetch(url, {
+      ...init,
+      headers: {
+        ...(await getNativeHeaders()),
+        ...(init.headers || {})
+      }
+    }), 'Firestore REST request');
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      const error = new Error(payload?.error?.message || `Firestore request failed (${response.status}).`) as Error & { status?: number };
+      error.status = response.status;
+      throw error;
     }
-  }), 'Firestore REST request');
-  const payload = await response.json().catch(() => ({}));
-  if (!response.ok) {
-    const error = new Error(payload?.error?.message || `Firestore request failed (${response.status}).`) as Error & { status?: number };
-    error.status = response.status;
-    throw error;
-  }
-  return payload;
+    return payload;
+  };
+  return shouldDedupNativeRestRequest(path, init)
+    ? loadDedupedNativeRestRequest(getNativeRestDedupKey(url, init), runRequest)
+    : runRequest();
 }
 
 function decodeFirestoreValue(value: any): any {
@@ -448,6 +520,51 @@ async function nativeListCollection(path: string) {
     .filter(Boolean) as FirestoreDocument[];
 }
 
+function encodeFirestoreValue(value: any): Record<string, unknown> {
+  if (value === null || value === undefined) return { nullValue: 'NULL_VALUE' };
+  if (typeof value === 'string') return { stringValue: value };
+  if (typeof value === 'boolean') return { booleanValue: value };
+  if (typeof value === 'number') return Number.isInteger(value) ? { integerValue: String(value) } : { doubleValue: value };
+  if (value instanceof Date) return { timestampValue: value.toISOString() };
+  if (Array.isArray(value)) return { arrayValue: { values: value.map((entry) => encodeFirestoreValue(entry)) } };
+  if (typeof value === 'object') {
+    return {
+      mapValue: {
+        fields: Object.keys(value).reduce<Record<string, Record<string, unknown>>>((acc, key) => {
+          acc[key] = encodeFirestoreValue(value[key]);
+          return acc;
+        }, {})
+      }
+    };
+  }
+  return { stringValue: String(value) };
+}
+
+async function nativePatchDocument(path: string, data: Record<string, unknown>) {
+  const fields = Object.keys(data).reduce<Record<string, Record<string, unknown>>>((acc, key) => {
+    acc[key] = encodeFirestoreValue(data[key]);
+    return acc;
+  }, {});
+  const params = new URLSearchParams();
+  Object.keys(data).forEach((key) => params.append('updateMask.fieldPaths', key));
+  const suffix = params.toString() ? `?${params.toString()}` : '';
+  await nativeFirestoreRequest(`/${path}${suffix}`, {
+    method: 'PATCH',
+    body: JSON.stringify({ fields })
+  });
+}
+
+async function nativeCreateDocument(path: string, data: Record<string, unknown>) {
+  const fields = Object.keys(data).reduce<Record<string, Record<string, unknown>>>((acc, key) => {
+    acc[key] = encodeFirestoreValue(data[key]);
+    return acc;
+  }, {});
+  return decodeFirestoreDocument(await nativeFirestoreRequest(`/${path}`, {
+    method: 'POST',
+    body: JSON.stringify({ fields })
+  }));
+}
+
 async function nativeRunQuery(collectionId: string, fieldPath: string, op: 'EQUAL' | 'ARRAY_CONTAINS', value: string) {
   const payload = await nativeFirestoreRequest(':runQuery', {
     method: 'POST',
@@ -471,6 +588,16 @@ async function nativeRunQuery(collectionId: string, fieldPath: string, op: 'EQUA
 }
 
 async function readWithNativeFallback<T>(label: string, primary: () => Promise<T>, fallback: () => Promise<T>): Promise<T> {
+  try {
+    return await withTimeout(Promise.resolve(primary()), label);
+  } catch (error) {
+    if (!isNativeRuntime()) throw error;
+    console.warn(`[team-detail-service] Falling back to REST for ${label}:`, sanitizeErrorForLogging(error));
+    return fallback();
+  }
+}
+
+async function writeWithNativeFallback<T>(label: string, primary: () => Promise<T>, fallback: () => Promise<T>): Promise<T> {
   try {
     return await withTimeout(Promise.resolve(primary()), label);
   } catch (error) {
@@ -1010,6 +1137,14 @@ export async function updateTeamSettingsForApp(teamId: string, user: AuthUser | 
   const name = cleanString(input?.name);
   if (!name) throw new Error('Team name is required.');
 
+  const rawLeagueUrl = cleanString(input?.leagueUrl);
+  const leagueUrl = rawLeagueUrl ? normalizeOptionalHttpUrl(rawLeagueUrl) : null;
+  if (rawLeagueUrl && !leagueUrl) throw new Error('League link must be a valid http:// or https:// URL.');
+
+  const rawStreamUrl = cleanString(input?.streamUrl);
+  const parsedLivestream = parseTeamLivestreamInput(rawStreamUrl);
+  if (rawStreamUrl && !parsedLivestream) throw new Error('Livestream link must be a valid YouTube or Twitch URL.');
+
   let photoUrl = getFirstUrl(team?.photoUrl, team?.teamPhotoUrl, team?.logoUrl, team?.imageUrl) || null;
   if (input?.photoFile) {
     photoUrl = await uploadTeamPhoto(input.photoFile);
@@ -1021,8 +1156,68 @@ export async function updateTeamSettingsForApp(teamId: string, user: AuthUser | 
     zip: normalizeTeamZip(input?.zip),
     isPublic: input?.isPublic === true,
     photoUrl,
+    leagueUrl,
+    twitchChannel: parsedLivestream?.twitchChannel ?? null,
+    streamEmbedUrl: parsedLivestream?.streamEmbedUrl ?? null,
+    youtubeEmbedUrl: null,
     updatedAt: new Date()
   });
+
+  invalidateTeamDetailBaseSnapshotCache(normalizedTeamId);
+}
+
+export async function createStatTrackerConfigForApp(teamId: string, user: AuthUser | null, input: UpsertStatTrackerConfigForAppInput) {
+  const normalizedTeamId = cleanString(teamId);
+  if (!normalizedTeamId) throw new Error('Team ID is required.');
+
+  const { team } = await loadTeamDetailBaseSnapshot(normalizedTeamId);
+  if (!team || !hasFullTeamAccess(user, team)) {
+    throw new Error('You do not have permission to edit this team.');
+  }
+
+  const normalizedConfig = normalizeStatTrackerConfig(input || {});
+  normalizedConfig.createdAt = new Date();
+
+  const label = `create stat tracker config ${normalizedTeamId}`;
+  const createPromise = Promise.resolve(createConfig(normalizedTeamId, normalizedConfig));
+
+  let created: { id?: string } | FirestoreDocument | null = null;
+  try {
+    const id = await withTimeout(createPromise, label);
+    created = { id };
+  } catch (error) {
+    if (!isNativeRuntime()) throw error;
+    if (error instanceof Error && error.message === `${label} timed out.`) {
+      created = { id: await createPromise };
+    } else {
+      console.warn(`[team-detail-service] Falling back to REST for ${label}:`, sanitizeErrorForLogging(error));
+      created = await nativeCreateDocument(`teams/${encodeURIComponent(normalizedTeamId)}/statTrackerConfigs`, normalizedConfig);
+    }
+  }
+
+  invalidateTeamDetailBaseSnapshotCache(normalizedTeamId);
+  return cleanString((created as any)?.id);
+}
+
+export async function updateStatTrackerConfigForApp(teamId: string, configId: string, user: AuthUser | null, input: UpsertStatTrackerConfigForAppInput) {
+  const normalizedTeamId = cleanString(teamId);
+  const normalizedConfigId = cleanString(configId);
+  if (!normalizedTeamId) throw new Error('Team ID is required.');
+  if (!normalizedConfigId) throw new Error('Config ID is required.');
+
+  const { team } = await loadTeamDetailBaseSnapshot(normalizedTeamId);
+  if (!team || !hasFullTeamAccess(user, team)) {
+    throw new Error('You do not have permission to edit this team.');
+  }
+
+  const normalizedConfig = normalizeStatTrackerConfig(input || {});
+  normalizedConfig.updatedAt = new Date();
+
+  await writeWithNativeFallback(
+    `update stat tracker config ${normalizedTeamId}:${normalizedConfigId}`,
+    async () => updateConfig(normalizedTeamId, normalizedConfigId, normalizedConfig),
+    async () => nativePatchDocument(`teams/${encodeURIComponent(normalizedTeamId)}/statTrackerConfigs/${encodeURIComponent(normalizedConfigId)}`, normalizedConfig)
+  );
 
   invalidateTeamDetailBaseSnapshotCache(normalizedTeamId);
 }
@@ -1194,6 +1389,118 @@ export async function loadTeamRosterParentInvites(teamId: string, user: AuthUser
     players,
     pendingParentInvites,
     confirmedTeamMembers
+  });
+}
+
+export async function loadTeamTrackingAdmin(teamId: string, user: AuthUser | null): Promise<TeamTrackingAdminItem[]> {
+  const { team, players } = await loadTeamDetailBaseSnapshot(teamId);
+
+  if (!team || !hasFullTeamAccess(user, team)) {
+    throw new Error('Only team staff can manage tracking items.');
+  }
+
+  const normalizedTeamId = cleanString(teamId);
+  const itemSnapshot = await getDocs(collection(db, `teams/${normalizedTeamId}/trackingItems`));
+  const trackingItems = (itemSnapshot.docs as any[])
+    .map((itemDoc) => normalizeTeamTrackingItem({ id: itemDoc.id, ...itemDoc.data() }))
+    .filter((item): item is ReturnType<typeof normalizeTeamTrackingItem> => Boolean(item.id))
+    .sort((a, b) => a.name.localeCompare(b.name));
+
+  const activePlayers = normalizePlayers(players, []);
+  const trackingStatusesByItemId = new Map<string, any[]>();
+
+  if (trackingItems.length) {
+    await Promise.all(trackingItems.map(async (item) => {
+      const statusSnapshot = await getDocs(collection(db, `teams/${normalizedTeamId}/trackingItems/${item.id}/memberTracking`));
+      const statuses = (statusSnapshot.docs as any[])
+        .map((statusDoc) => normalizeTrackingStatus({
+          id: statusDoc.id,
+          ...statusDoc.data()
+        }))
+        .filter((status) => cleanString((status as any)?.trackingItemId || (status as any)?.itemId) === item.id);
+      trackingStatusesByItemId.set(item.id, statuses);
+    }));
+  }
+
+  return trackingItems.map((item) => buildTeamTrackingAdminItem(item, activePlayers, trackingStatusesByItemId.get(item.id) || []));
+}
+
+export async function saveTeamTrackingItemForApp(
+  teamId: string,
+  user: AuthUser | null,
+  input: TeamTrackingItemForAppInput,
+  options: { itemId?: string } = {}
+): Promise<string> {
+  const normalizedTeamId = cleanString(teamId);
+  const normalizedItemId = cleanString(options.itemId);
+  await assertTrackingAdminAccess(normalizedTeamId, user);
+  const itemPayload = normalizeTeamTrackingItemDraft(input);
+  const actorId = cleanString(user?.uid);
+
+  if (normalizedItemId) {
+    await updateDoc(doc(db, `teams/${normalizedTeamId}/trackingItems`, normalizedItemId), {
+      ...itemPayload,
+      teamId: normalizedTeamId,
+      updatedAt: serverTimestamp(),
+      updatedBy: actorId || null
+    });
+  } else {
+    const itemRef = doc(collection(db, `teams/${normalizedTeamId}/trackingItems`));
+    await setDoc(itemRef, {
+      ...itemPayload,
+      teamId: normalizedTeamId,
+      createdAt: serverTimestamp(),
+      createdBy: actorId || null,
+      updatedAt: serverTimestamp(),
+      updatedBy: actorId || null
+    });
+    invalidateTeamDetailBaseSnapshotCache(normalizedTeamId);
+    return itemRef.id;
+  }
+
+  invalidateTeamDetailBaseSnapshotCache(normalizedTeamId);
+  return normalizedItemId;
+}
+
+export async function archiveTeamTrackingItemForApp(teamId: string, user: AuthUser | null, itemId: string) {
+  const normalizedTeamId = cleanString(teamId);
+  const normalizedItemId = cleanString(itemId);
+  await assertTrackingAdminAccess(normalizedTeamId, user);
+
+  await updateDoc(doc(db, `teams/${normalizedTeamId}/trackingItems`, normalizedItemId), {
+    status: 'archived',
+    archived: true,
+    active: false,
+    updatedAt: serverTimestamp(),
+    updatedBy: cleanString(user?.uid) || null
+  });
+
+  invalidateTeamDetailBaseSnapshotCache(normalizedTeamId);
+}
+
+export async function setPlayerTrackingStatusForApp(
+  teamId: string,
+  user: AuthUser | null,
+  itemId: string,
+  player: TeamDetailPlayer,
+  complete: boolean
+) {
+  const normalizedTeamId = cleanString(teamId);
+  await assertTrackingAdminAccess(normalizedTeamId, user);
+
+  await setTeamTrackingStatus(normalizedTeamId, cleanString(itemId), cleanString(player.id), {
+    ...buildTrackingStatusPayload({
+      teamId: normalizedTeamId,
+      itemId: cleanString(itemId),
+      player: {
+        id: cleanString(player.id),
+        name: player.name,
+        number: player.number
+      },
+      complete,
+      actorId: cleanString(user?.uid) || null,
+      actorEmail: cleanString(user?.email || (user as any)?.profileEmail) || null
+    })
   });
 }
 
@@ -1404,6 +1711,72 @@ function normalizeTeamScheduleNotifications(settings: any): TeamScheduleNotifica
   };
 }
 
+async function assertTrackingAdminAccess(teamId: string, user: AuthUser | null) {
+  const { team } = await loadTeamDetailBaseSnapshot(teamId);
+  if (!team || !hasFullTeamAccess(user, team)) {
+    throw new Error('Only team staff can manage tracking items.');
+  }
+  return team;
+}
+
+function normalizeTeamTrackingItemDraft(input: TeamTrackingItemForAppInput) {
+  const name = cleanString(input?.name);
+  const description = cleanString(input?.description);
+  const visibility = input?.visibility === 'public' ? 'public' : 'private';
+  const status = input?.status === 'archived' ? 'archived' : 'active';
+
+  if (!name) {
+    throw new Error('Tracking item name is required.');
+  }
+
+  return {
+    name,
+    description,
+    visibility,
+    status,
+    active: status === 'active',
+    archived: status === 'archived'
+  };
+}
+
+function normalizeTeamTrackingItem(item: any): Omit<TeamTrackingAdminItem, 'playerStatuses' | 'completionSummary'> {
+  const status: 'active' | 'archived' = item?.status === 'archived' || item?.archived === true || item?.active === false ? 'archived' : 'active';
+  return {
+    id: cleanString(item?.id),
+    name: cleanString(item?.name || item?.title || item?.label),
+    description: cleanString(item?.description || item?.note),
+    visibility: item?.visibility === 'public' ? 'public' as const : 'private' as const,
+    status,
+    active: status === 'active',
+    archived: status === 'archived'
+  };
+}
+
+function buildTeamTrackingAdminItem(item: ReturnType<typeof normalizeTeamTrackingItem>, players: TeamDetailPlayer[], statuses: any[] = []): TeamTrackingAdminItem {
+  const statusByPlayerId = new Map<string, any>();
+  (Array.isArray(statuses) ? statuses : []).forEach((status) => {
+    const playerId = cleanString(status?.playerId || status?.id);
+    if (playerId) statusByPlayerId.set(playerId, status);
+  });
+
+  const playerStatuses = players.map((player) => {
+    const status = statusByPlayerId.get(player.id) || {};
+    return {
+      playerId: player.id,
+      playerName: player.name,
+      playerNumber: player.number,
+      photoUrl: player.photoUrl,
+      complete: status.complete === true || status.isComplete === true || cleanString(status.status).toLowerCase() === 'complete'
+    };
+  });
+
+  return {
+    ...item,
+    playerStatuses,
+    completionSummary: summarizeTrackingStatus(playerStatuses.map((playerStatus) => ({ complete: playerStatus.complete })))
+  };
+}
+
 function normalizePlayers(players: any[], linkedPlayerIds: string[], options: { inactiveOnly?: boolean } = {}): TeamDetailPlayer[] {
   const linked = new Set(linkedPlayerIds);
   const inactiveOnly = options.inactiveOnly === true;
@@ -1548,6 +1921,8 @@ function normalizeTeamStatTrackerConfig(config: any): TeamDetailStatTrackerConfi
     isBasketball: baseType.toLowerCase() === 'basketball',
     columnCount: columnNames.length,
     columnNames,
+    columns: normalized.columns || [],
+    statDefinitions: Array.isArray(normalized.statDefinitions) ? normalized.statDefinitions.map((definition: Record<string, unknown>) => ({ ...definition })) : [],
     assignedUpcomingGames: []
   };
 }

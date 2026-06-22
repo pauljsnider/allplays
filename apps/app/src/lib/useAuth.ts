@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { AuthState, AuthUser } from './types';
+import { clearAuthBootstrapHint, writeAuthBootstrapHint } from './authBootstrapHint';
 import { hydrateFirebaseUser, observeFirebaseUser, signOut } from './authService';
 
 export function useAuth(): AuthState {
@@ -23,6 +24,7 @@ export function useAuth(): AuthState {
     if (!currentUser) {
       setUser(null);
       setProfile(null);
+      clearAuthBootstrapHint();
       setLoading(false);
       return null;
     }
@@ -31,11 +33,13 @@ export function useAuth(): AuthState {
       const hydrated = await hydrateFirebaseUser(currentUser);
       setUser(hydrated.user);
       setProfile(hydrated.profile);
+      writeAuthBootstrapHint(hydrated.user);
       return hydrated.user;
     } catch (hydrateError: any) {
       setError(hydrateError?.message || 'Unable to load account profile.');
       setUser(null);
       setProfile(null);
+      clearAuthBootstrapHint();
       return null;
     } finally {
       setLoading(false);
@@ -50,6 +54,7 @@ export function useAuth(): AuthState {
       if (!firebaseUser) {
         setUser(null);
         setProfile(null);
+        clearAuthBootstrapHint();
         setLoading(false);
         return;
       }
@@ -58,10 +63,12 @@ export function useAuth(): AuthState {
         const hydrated = await hydrateFirebaseUser(firebaseUser);
         setUser(hydrated.user);
         setProfile(hydrated.profile);
+        writeAuthBootstrapHint(hydrated.user);
       } catch (hydrateError: any) {
         setError(hydrateError?.message || 'Unable to load account profile.');
         setUser(null);
         setProfile(null);
+        clearAuthBootstrapHint();
       } finally {
         setLoading(false);
       }
@@ -75,6 +82,7 @@ export function useAuth(): AuthState {
     const cleanup = signOut();
     setUser(null);
     setProfile(null);
+    clearAuthBootstrapHint();
     setLoading(false);
     try {
       await cleanup;
@@ -83,6 +91,7 @@ export function useAuth(): AuthState {
     } finally {
       setUser(null);
       setProfile(null);
+      clearAuthBootstrapHint();
       setLoading(false);
     }
   }, []);

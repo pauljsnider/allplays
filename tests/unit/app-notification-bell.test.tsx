@@ -14,8 +14,13 @@ const { useShellLayoutMock } = vi.hoisted(() => ({
 
 const inboxServiceMocks = vi.hoisted(() => ({
     subscribeToNotificationInbox: vi.fn(() => vi.fn()),
+    subscribeToUnreadNotificationCount: vi.fn(() => vi.fn()),
     countUnread: vi.fn((items: Array<{ readAt: unknown }>) => items.filter((i) => !i.readAt).length),
     markNotificationRead: vi.fn(() => Promise.resolve()),
+}));
+
+const { loadNotificationInboxServiceMock } = vi.hoisted(() => ({
+    loadNotificationInboxServiceMock: vi.fn(() => Promise.resolve(inboxServiceMocks)),
 }));
 
 vi.mock('../../apps/app/src/lib/useShellLayout', () => ({
@@ -31,7 +36,9 @@ vi.mock('../../apps/app/src/lib/nativeBackButton', () => ({
     addNativeBackListener: vi.fn(() => ({ remove: vi.fn() })),
 }));
 
-vi.mock('../../apps/app/src/lib/notificationInboxService', () => inboxServiceMocks);
+vi.mock('../../apps/app/src/lib/notificationInboxServiceLoader', () => ({
+    loadNotificationInboxService: loadNotificationInboxServiceMock,
+}));
 
 vi.mock('../../apps/app/src/components/AppSearchDialog', () => ({
     AppSearchDialog: ({ open }: { open: boolean }) =>
@@ -138,7 +145,9 @@ describe('Notification bell in AppShell', () => {
         });
         vi.stubGlobal('cancelAnimationFrame', vi.fn());
         inboxServiceMocks.subscribeToNotificationInbox.mockReturnValue(vi.fn());
+        inboxServiceMocks.subscribeToUnreadNotificationCount.mockReturnValue(vi.fn());
         inboxServiceMocks.markNotificationRead.mockResolvedValue(undefined);
+        loadNotificationInboxServiceMock.mockResolvedValue(inboxServiceMocks);
     });
 
     afterEach(() => {
@@ -159,13 +168,26 @@ describe('Notification bell in AppShell', () => {
         expect(bellButton.getAttribute('aria-label')).toBe('Notifications');
     });
 
-    it('subscribes to the notification inbox for the signed-in user', () => {
+    it('subscribes to unread counts on mount and defers the full inbox until opened', async () => {
         renderShell(true);
-        expect(inboxServiceMocks.subscribeToNotificationInbox).toHaveBeenCalledWith(
-            'user-1',
-            expect.any(Function),
-            expect.any(Function)
-        );
+        await waitFor(() => {
+            expect(inboxServiceMocks.subscribeToUnreadNotificationCount).toHaveBeenCalledWith(
+                'user-1',
+                expect.any(Function),
+                expect.any(Function)
+            );
+        });
+        expect(inboxServiceMocks.subscribeToNotificationInbox).not.toHaveBeenCalled();
+
+        fireEvent.click(screen.getByTestId('app-shell-notifications-trigger'));
+
+        await waitFor(() => {
+            expect(inboxServiceMocks.subscribeToNotificationInbox).toHaveBeenCalledWith(
+                'user-1',
+                expect.any(Function),
+                expect.any(Function)
+            );
+        });
     });
 
     it('does not show an unread badge when there are no unread items', () => {
@@ -175,13 +197,9 @@ describe('Notification bell in AppShell', () => {
     });
 
     it('shows the unread badge with the correct count when there are unread notifications', async () => {
-        inboxServiceMocks.subscribeToNotificationInbox.mockImplementation(
-            (_uid: string, callback: (items: Array<{ id: string; text: string; appRoute: string; readAt: unknown }>) => void) => {
-                callback([
-                    { id: 'n1', text: 'Game tonight', appRoute: '/schedule', readAt: null },
-                    { id: 'n2', text: 'Practice update', appRoute: '/schedule', readAt: 'some-ts' },
-                    { id: 'n3', text: 'New message', appRoute: '/messages', readAt: null },
-                ]);
+        inboxServiceMocks.subscribeToUnreadNotificationCount.mockImplementation(
+            (_uid: string, callback: (count: number) => void) => {
+                callback(2);
                 return vi.fn();
             }
         );
@@ -244,7 +262,9 @@ describe('Notification bell in AppShell', () => {
         fireEvent.click(screen.getByTestId('notification-item-notif-slow'));
 
         expect(screen.queryByRole('dialog', { name: 'Notifications' })).toBeNull();
-        expect(inboxServiceMocks.markNotificationRead).toHaveBeenCalledWith('user-1', 'notif-slow');
+        await waitFor(() => {
+            expect(inboxServiceMocks.markNotificationRead).toHaveBeenCalledWith('user-1', 'notif-slow');
+        });
     });
 
     it('closes the mobile inbox immediately when mark-read rejects', async () => {
@@ -283,16 +303,9 @@ describe('Notification bell in AppShell', () => {
     });
 
     it('caps the badge display at 99+ for very large unread counts', async () => {
-        const manyItems = Array.from({ length: 105 }, (_, i) => ({
-            id: `n${i}`,
-            text: `Notification ${i}`,
-            appRoute: '/home',
-            readAt: null,
-        }));
-
-        inboxServiceMocks.subscribeToNotificationInbox.mockImplementation(
-            (_uid: string, callback: (items: typeof manyItems) => void) => {
-                callback(manyItems);
+        inboxServiceMocks.subscribeToUnreadNotificationCount.mockImplementation(
+            (_uid: string, callback: (count: number) => void) => {
+                callback(105);
                 return vi.fn();
             }
         );
@@ -320,23 +333,24 @@ describe('Notification bell in AppShell', () => {
     });
 
     it('shows error state when the onError callback is invoked before any items load', async () => {
-        let capturedOnError: ((error: unknown) => void) | undefined;
-
-        inboxServiceMocks.subscribeToNotificationInbox.mockImplementation(
-            (_uid: string, _callback: unknown, onError: (error: unknown) => void) => {
-                capturedOnError = onError;
-                return vi.fn();
-            }
-        );
-
         renderShell(true);
 
-        // Trigger the error callback before any items arrive
-        act(() => {
-            capturedOnError?.(new Error('Firestore unavailable'));
+        fireEvent.click(screen.getByTestId('app-shell-notifications-trigger'));
+
+        await waitFor(() => {
+            expect(inboxServiceMocks.subscribeToNotificationInbox).toHaveBeenCalledWith(
+                'user-1',
+                expect.any(Function),
+                expect.any(Function)
+            );
         });
 
-        fireEvent.click(screen.getByTestId('app-shell-notifications-trigger'));
+        const onError = inboxServiceMocks.subscribeToNotificationInbox.mock.calls[0]?.[2] as ((error: unknown) => void) | undefined;
+        expect(onError).toBeTypeOf('function');
+
+        act(() => {
+            onError?.(new Error('Firestore unavailable'));
+        });
 
         await waitFor(() => {
             expect(screen.getByTestId('inbox-error-state')).toBeTruthy();

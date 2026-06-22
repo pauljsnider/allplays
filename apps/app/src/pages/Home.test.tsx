@@ -29,12 +29,18 @@ const scheduleServiceMocks = vi.hoisted(() => ({
   loadOfficialAssignmentsAccess: vi.fn()
 }));
 
+const uxTimingMocks = vi.hoisted(() => ({
+  recordFirstMeaningfulRender: vi.fn(),
+  startScreenMountTimer: vi.fn(() => ({ end: vi.fn() }))
+}));
+
 vi.mock('../components/PageSkeletons', () => ({
   HomePageSkeleton: () => <div>Loading Home</div>
 }));
 vi.mock('../lib/homeService', () => homeServiceMocks);
 vi.mock('../lib/socialService', () => socialServiceMocks);
 vi.mock('../lib/scheduleService', () => scheduleServiceMocks);
+vi.mock('../lib/uxTiming', () => uxTimingMocks);
 vi.mock('lucide-react', () => {
   const Icon = () => null;
   return {
@@ -314,6 +320,32 @@ describe('Home', () => {
     cleanup();
   });
 
+  it('waits for the initial secondary Home load to finish before recording first meaningful render', async () => {
+    let resolveBootstrap!: (value: { home: typeof baseHome; schedule: [] }) => void;
+    let resolveSecondary!: (value: typeof baseHome) => void;
+    homeServiceMocks.loadParentHomeSummaryBootstrap.mockImplementationOnce(() => new Promise((resolve) => {
+      resolveBootstrap = resolve;
+    }));
+    homeServiceMocks.loadParentHomeWithSecondaryData.mockImplementationOnce(() => new Promise((resolve) => {
+      resolveSecondary = resolve;
+    }));
+
+    renderHome(signedInAuth);
+
+    expect(uxTimingMocks.recordFirstMeaningfulRender).not.toHaveBeenCalled();
+
+    resolveBootstrap({ home: baseHome, schedule: [] });
+
+    expect(await screen.findByRole('heading', { name: 'Today for your players' })).toBeTruthy();
+    expect(uxTimingMocks.recordFirstMeaningfulRender).not.toHaveBeenCalled();
+
+    resolveSecondary(baseHome);
+
+    await waitFor(() => {
+      expect(uxTimingMocks.recordFirstMeaningfulRender).toHaveBeenCalledWith('home');
+    });
+  });
+
   it('renders the feed for signed-out users without crashing', async () => {
     renderHome(signedOutAuth, '/home?section=feed');
 
@@ -339,6 +371,46 @@ describe('Home', () => {
     expect(await screen.findByText('Home could not connect')).toBeTruthy();
     expect(screen.getByText('Check your connection and try loading Home again.')).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Retry loading Home' })).toBeTruthy();
+  });
+
+  it('renders secondary Home slices progressively via onPartial (#2037)', async () => {
+    let capturedOnPartial: ((model: typeof baseHome) => void) | undefined;
+    // Emit a partial slice, then never resolve — so anything rendered must have
+    // come from the progressive onPartial update, not the final result.
+    homeServiceMocks.loadParentHomeWithSecondaryData.mockImplementation((_user: unknown, options: any) => {
+      capturedOnPartial = options?.onPartial;
+      options?.onPartial?.({
+        ...baseHome,
+        fees: [{ teamId: 'team-1', id: 'fee-1', title: 'Spring dues', teamName: 'Team One' }]
+      });
+      return new Promise(() => {});
+    });
+
+    renderHome(signedInAuth);
+
+    expect(await screen.findByText('Spring dues')).toBeTruthy();
+    expect(capturedOnPartial).toBeTypeOf('function');
+  });
+
+  it('renders secondary Home details before social data finishes loading', async () => {
+    const largeHome = buildLargeHomeModel();
+    let resolveSocial!: (value: typeof baseSocial) => void;
+    homeServiceMocks.loadParentHomeWithSecondaryData.mockResolvedValueOnce(largeHome);
+    socialServiceMocks.loadSocialHome.mockImplementationOnce(() => new Promise((resolve) => {
+      resolveSocial = resolve;
+    }));
+
+    renderHome(signedInAuth);
+
+    expect(await screen.findByText('Falcons')).toBeTruthy();
+    expect(socialServiceMocks.loadSocialHome).toHaveBeenCalledWith(signedInAuth.user, largeHome);
+    expect(uxTimingMocks.recordFirstMeaningfulRender).not.toHaveBeenCalled();
+
+    resolveSocial(baseSocial);
+
+    await waitFor(() => {
+      expect(uxTimingMocks.recordFirstMeaningfulRender).toHaveBeenCalledWith('home');
+    });
   });
 
   it('refreshes the social feed with the async loading helper', async () => {

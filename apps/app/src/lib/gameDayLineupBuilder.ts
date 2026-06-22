@@ -1,7 +1,12 @@
-import { getApp } from '../../../../js/vendor/firebase-app.js';
-import { getAI, getGenerativeModel, GoogleAIBackend } from '../../../../js/vendor/firebase-ai.js';
-import { buildRotationPlanFromGamePlan, normalizeLineupsForGamePlanPlanner } from '../../../../js/game-plan-interop.js';
-import { buildGamePlanIntervals } from '../../../../js/game-plan-intervals.js';
+import {
+  buildGamePlanIntervals,
+  buildRotationPlanFromGamePlan,
+  getAI,
+  getApp,
+  getGenerativeModel,
+  GoogleAIBackend,
+  normalizeLineupsForGamePlanPlanner
+} from './adapters/legacyGameDayLineup';
 import { getLineupFormation, getLineupPeriodsForFormation, type AutoFilledLineupPlayer, type LineupFormationPosition } from './gameDayLineupPublish';
 
 export type LineupEditorPlayer = AutoFilledLineupPlayer & {

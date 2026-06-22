@@ -103,6 +103,44 @@ describe('officiating assignment helpers', () => {
       status: 'accepted',
       selfAssigned: true
     });
+    expect(claimed[1]).toMatchObject({
+      id: 'slot-2',
+      officialEmail: 'taken@example.com',
+      status: 'pending',
+      selfAssigned: false
+    });
+    expect(claimed.filter((slot) => slot.selfAssigned === true)).toHaveLength(1);
+  });
+
+  it('keeps self-assignment updates scoped to one claimant-owned open slot', () => {
+    const claimed = claimOfficiatingSlot([
+      { id: 'slot-1', position: 'Referee', status: 'open' },
+      { id: 'slot-2', position: 'AR1', officialUserId: 'official-2', officialEmail: 'taken@example.com', officialName: 'Taken Official', status: 'accepted' },
+      { id: 'slot-3', position: 'AR2', status: 'open' }
+    ], 'slot-3', {
+      uid: 'claimant-1',
+      email: 'Claimant@Example.com',
+      displayName: 'Casey Claimant'
+    });
+
+    expect(claimed[0]).toMatchObject({ id: 'slot-1', position: 'Referee', status: 'open', selfAssigned: false });
+    expect(claimed[1]).toMatchObject({
+      id: 'slot-2',
+      position: 'AR1',
+      officialUserId: 'official-2',
+      officialEmail: 'taken@example.com',
+      officialName: 'Taken Official',
+      status: 'accepted',
+      selfAssigned: false
+    });
+    expect(claimed[2]).toMatchObject({
+      id: 'slot-3',
+      officialUserId: 'claimant-1',
+      officialEmail: 'claimant@example.com',
+      officialName: 'Casey Claimant',
+      status: 'accepted',
+      selfAssigned: true
+    });
   });
 
   it('prevents claiming a filled slot', () => {

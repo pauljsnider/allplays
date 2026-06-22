@@ -10,17 +10,17 @@ const repoRoot = path.resolve(__dirname, '../..');
 
 const mocks = vi.hoisted(() => ({
     updateTeamMediaItem: vi.fn(),
-    getTeamMediaItems: vi.fn(),
+    getTeamMediaItemsPage: vi.fn(),
     getTeamMediaFolders: vi.fn(),
     getTeam: vi.fn(),
     checkAuth: vi.fn()
 }));
 
-vi.mock('../../js/db.js?v=53', () => {
+vi.mock('../../js/db.js?v=64', () => {
     return {
         getTeam: mocks.getTeam,
         getTeamMediaFolders: mocks.getTeamMediaFolders,
-        getTeamMediaItems: mocks.getTeamMediaItems,
+        getTeamMediaItemsPage: mocks.getTeamMediaItemsPage,
         createTeamMediaFolder: vi.fn(),
         updateTeamMediaFolder: vi.fn(),
         deleteTeamMediaFolder: vi.fn(),
@@ -37,7 +37,7 @@ vi.mock('../../js/db.js?v=53', () => {
     };
 });
 
-vi.mock('../../js/auth.js?v=25', () => {
+vi.mock('../../js/auth.js?v=33', () => {
     return {
         checkAuth: mocks.checkAuth
     };
@@ -67,9 +67,13 @@ describe('team media item renaming', () => {
 
         mocks.getTeam.mockResolvedValue({ id: 'team123', name: 'Test Team', adminEmails: ['admin@example.com'] });
         mocks.getTeamMediaFolders.mockResolvedValue([{ id: 'folderA', name: 'Album A', visibility: 'team' }]);
-        mocks.getTeamMediaItems.mockResolvedValue([
-            { id: 'item1', folderId: 'folderA', title: 'Original Photo', type: 'photo', url: 'https://example.com/photo1.jpg', uploadedBy: 'user123' },
-        ]);
+        mocks.getTeamMediaItemsPage.mockResolvedValue({
+            items: [
+                { id: 'item1', folderId: 'folderA', title: 'Original Photo', type: 'photo', url: 'https://example.com/photo1.jpg', uploadedBy: 'user123' },
+            ],
+            hasMore: false,
+            nextCursor: null
+        });
         mocks.checkAuth.mockImplementation((callback) => callback({ uid: 'user123', email: 'user@example.com' }));
         mocks.updateTeamMediaItem.mockResolvedValue(true);
     });
@@ -222,9 +226,13 @@ describe('team media item renaming', () => {
     });
 
     it('shows saved video-link items under the Videos filter', async () => {
-        mocks.getTeamMediaItems.mockResolvedValue([
-            { id: 'video1', folderId: 'folderA', title: 'Game Clip', type: 'video-link', url: 'https://youtu.be/abc123', uploadedBy: 'user123' }
-        ]);
+        mocks.getTeamMediaItemsPage.mockResolvedValue({
+            items: [
+                { id: 'video1', folderId: 'folderA', title: 'Game Clip', type: 'video-link', url: 'https://youtu.be/abc123', uploadedBy: 'user123' }
+            ],
+            hasMore: false,
+            nextCursor: null
+        });
 
         const module = await loadModule();
         await module.loadLibrary();
