@@ -33,6 +33,7 @@ const dbMocks = vi.hoisted(() => ({
 
 const firebaseMocks = vi.hoisted(() => ({
   collection: vi.fn(),
+  collectionGroup: vi.fn(),
   db: {},
   doc: vi.fn(),
   getDoc: vi.fn(),
@@ -204,13 +205,16 @@ describe('tracking admin helpers', () => {
     dbMocks.getGames.mockResolvedValue([]);
     dbMocks.getConfigs.mockResolvedValue([]);
     firebaseMocks.collection.mockImplementation((...parts) => parts.join('/'));
+    firebaseMocks.collectionGroup.mockImplementation((...parts) => ({ kind: 'collectionGroup', path: parts.join('/') }));
     firebaseMocks.doc.mockImplementation((...parts) => ({ path: parts.join('/') }));
+    firebaseMocks.where.mockImplementation((...parts) => ({ kind: 'where', parts }));
+    firebaseMocks.query.mockImplementation((target, ...constraints) => ({ target, constraints }));
     __resetTeamDetailBaseSnapshotCacheForTests();
   });
 
-  it('loads legacy tracking docs, excludes inactive players, and summarizes completion by item', async () => {
-    firebaseMocks.getDocs.mockImplementation(async (path) => {
-      if (String(path).endsWith('/trackingItems')) {
+  it('loads tracking statuses in one bulk read, excludes inactive players, and summarizes completion by item', async () => {
+    firebaseMocks.getDocs.mockImplementation(async (input) => {
+      if (typeof input === 'string' && input.endsWith('/trackingItems')) {
         return {
           docs: [
             { id: 'item-1', data: () => ({ name: 'Waiver', visibility: 'public', status: 'active', active: true, archived: false }) },
@@ -218,10 +222,11 @@ describe('tracking admin helpers', () => {
           ]
         };
       }
-      if (String(path).includes('/trackingItems/item-1/memberTracking')) {
+      if ((input as any)?.target?.kind === 'collectionGroup') {
         return {
           docs: [
-            { id: 'player-1', data: () => ({ playerId: 'player-1', status: 'complete', complete: true }) }
+            { id: 'status-1', data: () => ({ teamId: 'team-1', trackingItemId: 'item-1', playerId: 'player-1', status: 'complete', complete: true }) },
+            { id: 'status-2', data: () => ({ teamId: 'team-1', trackingItemId: 'item-2', playerId: 'player-1', status: 'open', complete: false }) }
           ]
         };
       }
@@ -244,6 +249,12 @@ describe('tracking admin helpers', () => {
       })
     ]);
     expect(items[0].playerStatuses.some((player) => player.playerId === 'player-2')).toBe(false);
+    expect(firebaseMocks.getDocs).toHaveBeenCalledTimes(2);
+    expect(firebaseMocks.collectionGroup).toHaveBeenCalledWith(firebaseMocks.db, 'memberTracking');
+    expect(firebaseMocks.query).toHaveBeenCalledWith(
+      { kind: 'collectionGroup', path: '[object Object]/memberTracking' },
+      { kind: 'where', parts: ['teamId', '==', 'team-1'] }
+    );
   });
 
   it('writes legacy-compatible tracking item docs when saving in the app', async () => {

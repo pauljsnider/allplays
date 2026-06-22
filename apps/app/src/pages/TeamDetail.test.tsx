@@ -380,7 +380,7 @@ describe('TeamDetail', () => {
     expect(await screen.findByAltText('Pat Star player photo')).toBeTruthy();
   });
 
-  it('lets team staff manage tracking items and player statuses from the roster tab', async () => {
+  it('renders multiple tracking items with completion badges and lets staff manage statuses from the roster tab', async () => {
     const managedModel = {
       ...model,
       canManageTeam: true
@@ -398,6 +398,17 @@ describe('TeamDetail', () => {
           archived: false,
           completionSummary: { total: 1, complete: 0, incomplete: 1 },
           playerStatuses: [{ playerId: 'player-1', playerName: 'Pat Star', playerNumber: '9', photoUrl: null, complete: false }]
+        },
+        {
+          id: 'item-2',
+          name: 'Jersey',
+          description: '',
+          visibility: 'private',
+          status: 'active',
+          active: true,
+          archived: false,
+          completionSummary: { total: 1, complete: 1, incomplete: 0 },
+          playerStatuses: [{ playerId: 'player-1', playerName: 'Pat Star', playerNumber: '9', photoUrl: null, complete: true }]
         }
       ])
       .mockResolvedValueOnce([
@@ -439,6 +450,10 @@ describe('TeamDetail', () => {
 
     expect(await screen.findByRole('heading', { name: 'Bears' })).toBeTruthy();
     expect(await screen.findByText('Tracking items')).toBeTruthy();
+    expect(await screen.findByText('Waiver')).toBeTruthy();
+    expect(await screen.findByText('Jersey')).toBeTruthy();
+    expect(screen.getByText('0/1 done')).toBeTruthy();
+    expect(screen.getByText('1/1 done')).toBeTruthy();
     await waitFor(() => expect(teamDetailServiceMocks.loadTeamTrackingAdmin).toHaveBeenCalledWith('team-1', auth.user));
 
     fireEvent.click(screen.getByRole('button', { name: 'Open' }));
