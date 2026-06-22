@@ -2080,10 +2080,12 @@ function LoadingSchedule() {
   return <SchedulePageSkeleton />;
 }
 
-function ScheduleList({ events, visibleCount, pageSize, onShowMore }: {
+function ScheduleList({ events, visibleCount, pageSize, canShowMore, loadingMore, onShowMore }: {
   events: CalendarScheduleEntry[];
   visibleCount: number;
   pageSize: number;
+  canShowMore: boolean;
+  loadingMore: boolean;
   onShowMore: () => void;
 }) {
   if (!events.length) {
@@ -2106,13 +2108,13 @@ function ScheduleList({ events, visibleCount, pageSize, onShowMore }: {
           <ScheduleEventCard key={event.eventKey} event={event} />
         ))}
       </div>
-      {remainingCount > 0 ? (
+      {canShowMore ? (
         <div className="rounded-xl border border-gray-200 bg-white p-3 text-center shadow-sm">
           <div className="text-xs font-bold text-gray-500">
             Showing {renderedEvents.length} of {events.length} events
           </div>
-          <button type="button" className="secondary-button mt-2 min-h-9 px-3 py-2 text-xs" onClick={onShowMore}>
-            Show {Math.min(pageSize, remainingCount)} more
+          <button type="button" className="secondary-button mt-2 min-h-9 px-3 py-2 text-xs" onClick={onShowMore} disabled={loadingMore}>
+            {loadingMore ? 'Loading more…' : `Show ${Math.min(pageSize, Math.max(remainingCount, pageSize))} more`}
           </button>
         </div>
       ) : null}
@@ -2120,10 +2122,12 @@ function ScheduleList({ events, visibleCount, pageSize, onShowMore }: {
   );
 }
 
-function CompactScheduleList({ events, visibleCount, pageSize, onShowMore }: {
+function CompactScheduleList({ events, visibleCount, pageSize, canShowMore, loadingMore, onShowMore }: {
   events: CalendarScheduleEntry[];
   visibleCount: number;
   pageSize: number;
+  canShowMore: boolean;
+  loadingMore: boolean;
   onShowMore: () => void;
 }) {
   if (!events.length) {
@@ -2166,13 +2170,13 @@ function CompactScheduleList({ events, visibleCount, pageSize, onShowMore }: {
           })}
         </div>
       </div>
-      {remainingCount > 0 ? (
+      {canShowMore ? (
         <div className="rounded-xl border border-gray-200 bg-white p-3 text-center shadow-sm">
           <div className="text-xs font-bold text-gray-500">
             Showing {renderedEvents.length} of {events.length} events
           </div>
-          <button type="button" className="secondary-button mt-2 min-h-9 px-3 py-2 text-xs" onClick={onShowMore}>
-            Show {Math.min(pageSize, remainingCount)} more
+          <button type="button" className="secondary-button mt-2 min-h-9 px-3 py-2 text-xs" onClick={onShowMore} disabled={loadingMore}>
+            {loadingMore ? 'Loading more…' : `Show ${Math.min(pageSize, Math.max(remainingCount, pageSize))} more`}
           </button>
         </div>
       ) : null}

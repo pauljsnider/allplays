@@ -180,4 +180,12 @@ describe('Schedule', () => {
     expect(source).toContain('aria-label="Close calendar events"');
     expect(source).toContain('>\n              Close\n            </button>');
   });
+
+  it('keeps list pagination props in sync with the parent schedule view', () => {
+    const source = readFileSync(resolveAppSourcePath('src/pages/Schedule.tsx'), 'utf8');
+
+    expect(source).toContain('function ScheduleList({ events, visibleCount, pageSize, canShowMore, loadingMore, onShowMore }');
+    expect(source).toContain('function CompactScheduleList({ events, visibleCount, pageSize, canShowMore, loadingMore, onShowMore }');
+    expect(source).toContain("{loadingMore ? 'Loading more…' : `Show ${Math.min(pageSize, Math.max(remainingCount, pageSize))} more`}");
+  });
 });
