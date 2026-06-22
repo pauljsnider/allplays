@@ -28,6 +28,26 @@ describe('Home async operation contract', () => {
         expect(refreshHomeSource).not.toContain('setLoading(');
     });
 
+    it('keeps Home summary, hydration, and refresh failures on the typed async path', () => {
+        const refreshHomeSource = getRefreshHomeSource();
+
+        expect(refreshHomeSource).toContain('const hasExistingHome = loadedHomeDetailsUserId === user.uid;');
+        expect(refreshHomeSource).toContain("const timer = startScreenMountTimer('home', {");
+        expect(refreshHomeSource).toContain('const summary = await loadParentHomeSummaryBootstrap(user, { force });');
+        expect(refreshHomeSource).toContain('setHome(summary.home);');
+        expect(refreshHomeSource).toContain('const secondaryHome = await loadParentHomeWithSecondaryData(user, {');
+        expect(refreshHomeSource).toContain('schedule: summary.schedule');
+        expect(refreshHomeSource).toContain('onPartial: (partial) => setHome(partial)');
+        expect(refreshHomeSource).toContain("getErrorMessage: (loadError) => getHomeLoadErrorMessage(toAppServiceError(loadError, 'Unable to load Home.'), hasExistingHome)");
+        expect(refreshHomeSource).toContain("const appError = toAppServiceError(loadError, 'Unable to load Home.');");
+        expect(refreshHomeSource).toContain('if (!hasExistingHome) {');
+        expect(refreshHomeSource).toContain('setHome(emptyHome());');
+        expect(refreshHomeSource).toContain('setSocial(emptySocialHome());');
+        expect(refreshHomeSource).toContain("getErrorMessage: (secondaryError) => getHomeSecondaryErrorMessage(toAppServiceError(secondaryError, 'Unable to refresh Home details.'))");
+        expect(refreshHomeSource).toContain("const appError = toAppServiceError(secondaryError, 'Unable to refresh Home details.');");
+        expect(refreshHomeSource).toContain("setSocialStatus({ tone: 'error', message: getHomeSecondaryErrorMessage(appError) });");
+    });
+
     it('surfaces typed, retryable Home load copy for network and permission failures', () => {
         expect(homeSource).toContain("import { toAppServiceError, type AppServiceError } from '../lib/appErrors';");
         expect(homeSource).toContain("if (error.type === 'network') return 'Unable to load Home while offline. Check your connection and try again.';");
