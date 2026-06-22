@@ -734,3 +734,100 @@ test('sendCategoryNotification suppresses duplicate sends with the same dedup ke
             cleanup();
         }
 });
+
+test('sendCategoryNotification keeps one allowed logical send fanned out to each device', async () => {
+        const { internals, env, cleanup } = loadNotificationInternals({
+            teamDoc: {
+                ownerId: 'coach-1',
+                adminEmails: []
+            },
+            indexedTargets: [
+                {
+                    uid: 'coach-1',
+                    deviceId: 'coach-phone',
+                    token: 'coach-phone-token',
+                    categories: { schedule: true }
+                },
+                {
+                    uid: 'coach-1',
+                    deviceId: 'coach-tablet',
+                    token: 'coach-tablet-token',
+                    categories: { schedule: true }
+                }
+            ]
+        });
+
+        try {
+            const result = await internals.sendCategoryNotification({
+                teamId: 'team-1',
+                category: 'schedule',
+                gameId: 'event-1',
+                title: 'Schedule changed',
+                body: 'Updated',
+                dedupKey: 'event:event-1:created'
+            });
+
+            assert.equal(result?.successCount, 2);
+            assert.equal(env.counts.dedupTransactions, 1);
+            assert.equal(env.messagingCalls.length, 1);
+            assert.deepEqual(env.messagingCalls[0].tokens, ['coach-phone-token', 'coach-tablet-token']);
+            assert.equal(env.auditWrites.length, 1);
+            assert.equal(env.auditWrites[0].value.targetCount, 2);
+        } finally {
+            cleanup();
+        }
+});
+
+test('sendCategoryNotification allows the same logical send after the dedup window expires', async () => {
+        const originalDateNow = Date.now;
+        let now = new Date('2026-06-21T15:00:00.000Z').getTime();
+        Date.now = () => now;
+
+        const { internals, env, cleanup } = loadNotificationInternals({
+            teamDoc: {
+                ownerId: 'coach-1',
+                adminEmails: []
+            },
+            indexedTargets: [
+                {
+                    uid: 'coach-1',
+                    deviceId: 'coach-device',
+                    token: 'coach-token',
+                    categories: { schedule: true }
+                }
+            ]
+        });
+
+        try {
+            const firstResult = await internals.sendCategoryNotification({
+                teamId: 'team-1',
+                category: 'schedule',
+                gameId: 'event-1',
+                title: 'Schedule changed',
+                body: 'Updated',
+                dedupKey: 'event:event-1:created'
+            });
+
+            now += (6 * 60 * 1000);
+
+            const secondResult = await internals.sendCategoryNotification({
+                teamId: 'team-1',
+                category: 'schedule',
+                gameId: 'event-1',
+                title: 'Schedule changed',
+                body: 'Updated after expiry',
+                dedupKey: 'event:event-1:created'
+            });
+
+            assert.equal(firstResult?.successCount, 1);
+            assert.equal(secondResult?.successCount, 1);
+            assert.equal(env.counts.dedupTransactions, 2);
+            assert.equal(env.messagingCalls.length, 2);
+            assert.deepEqual(env.messagingCalls.map((call) => call.body), ['Updated', 'Updated after expiry']);
+            assert.equal(env.auditWrites.length, 2);
+            assert.equal(env.dedupWrites.filter((write) => write.path.includes('/notificationSendLog/')).length, 2);
+        } finally {
+            Date.now = originalDateNow;
+            cleanup();
+        }
+});

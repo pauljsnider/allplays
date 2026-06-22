@@ -84,6 +84,28 @@ describe('validateAccessCode', () => {
         });
     });
 
+    it('passes native auth tokens to the backend callable when provided', async () => {
+        const { validateAccessCode } = await import('../../js/db.js');
+        callableMock.mockResolvedValue({
+            data: {
+                valid: true,
+                codeId: 'native-code',
+                type: 'standard',
+                data: {
+                    code: 'NATIVE123',
+                    type: 'standard'
+                }
+            }
+        });
+
+        await validateAccessCode('native123', { nativeAuthToken: ' firebase-id-token ' });
+
+        expect(callableMock).toHaveBeenCalledWith({
+            code: 'NATIVE123',
+            nativeAuthToken: 'firebase-id-token'
+        });
+    });
+
     // The Amazon Q feedback on "Hardcoded test API key" (PRRT_kwDOQe-T586EqR76) appears to be a false positive
     // as these are test-specific mock values/fixtures, not production credentials. No changes needed to constants.
 

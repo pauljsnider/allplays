@@ -27,6 +27,12 @@ function isAccessCodeInactive(data, nowMs = Date.now()) {
     isAccessCodeExpired(data?.expiresAt, nowMs);
 }
 
+const GENERIC_PREAUTH_ACCESS_CODE_MESSAGE = 'Invalid or expired access code';
+
+function buildGenericPreAuthAccessCodeValidationResult() {
+  return { valid: false, message: GENERIC_PREAUTH_ACCESS_CODE_MESSAGE };
+}
+
 function buildSafeAccessCodeData(data = {}) {
   return {
     code: data.code || '',
@@ -65,6 +71,8 @@ function validateAccessCodeCandidates(docs, nowMs = Date.now()) {
 }
 
 module.exports = {
+  GENERIC_PREAUTH_ACCESS_CODE_MESSAGE,
+  buildGenericPreAuthAccessCodeValidationResult,
   buildSafeAccessCodeData,
   getExpirationTime,
   isAccessCodeExpired,
