@@ -7475,7 +7475,9 @@ exports.notifyFeeMarkedPaid = functions.firestore
           body: wasPaymentRecorded
             ? `We received your ${paymentAmountDisplay} payment. Thank you!`
             : 'Your fee balance is now marked as paid.',
-          teamId
+          teamId,
+          batchId,
+          recipientId
         }));
       }
     }

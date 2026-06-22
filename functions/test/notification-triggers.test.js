@@ -674,14 +674,14 @@ test('notifyFeeMarkedPaid sends fees notifications to payer and staff and record
         const staffNotification = env.messagingCalls.find((call) => call.tokens.includes('coach-token'));
         assert.equal(payerNotification.title, 'Payment received: Tournament dues');
         assert.equal(payerNotification.body, 'We received your $25.00 payment. Thank you!');
-        assert.equal(payerNotification.data.appRoute, '/parent-tools/fees?teamId=team-1');
+        assert.equal(payerNotification.data.appRoute, '/parent-tools/fees?teamId=team-1&batchId=batch-1&recipientId=recipient-2');
         assert.equal(staffNotification.title, 'Fee paid: Tournament dues');
         assert.equal(staffNotification.body, 'Pat Parent paid $25.00.');
         assert.equal(staffNotification.data.appRoute, '/teams/team-1/fees/batch-1?recipientId=recipient-2');
         assert.equal(env.auditWrites.length, 2);
         assert.deepEqual(env.auditWrites.map((entry) => entry.value.category), ['fees', 'fees']);
         assert.deepEqual(env.auditWrites.map((entry) => entry.value.appRoute).sort(), [
-            '/parent-tools/fees?teamId=team-1',
+            '/parent-tools/fees?teamId=team-1&batchId=batch-1&recipientId=recipient-2',
             '/teams/team-1/fees/batch-1?recipientId=recipient-2'
         ]);
     } finally {
