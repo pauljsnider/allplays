@@ -12,6 +12,7 @@ function buildDocRef(...args) {
 
 function buildHarness({ commitControl } = {}) {
   const setCalls = [];
+  const deleteCalls = [];
   const updateCalls = [];
   const navigationCalls = [];
   const emailBodyCalls = [];
@@ -27,6 +28,9 @@ function buildHarness({ commitControl } = {}) {
       }),
       update: vi.fn((ref, data) => {
         updateCalls.push({ ref, data });
+      }),
+      delete: vi.fn((ref) => {
+        deleteCalls.push({ ref });
       }),
       commit: vi.fn(() => {
         if (batch.update.mock.calls.length > 0 && commitControl?.promise) {
@@ -99,6 +103,7 @@ function buildHarness({ commitControl } = {}) {
     },
     batches,
     setCalls,
+    deleteCalls,
     updateCalls,
     navigationCalls,
     emailBodyCalls,
@@ -300,6 +305,11 @@ describe('live tracker save-and-complete workflow', () => {
       {
         ref: { kind: 'doc', path: 'teams/team-1/games/game-9/aggregatedStats/p1' },
         data: { playerName: 'Alex', stats: { pts: 2 }, timeMs: 1000 }
+      }
+    ]);
+    expect(harness.deleteCalls).toEqual([
+      {
+        ref: { kind: 'doc', path: 'teams/team-1/games/game-9/privatePlayerStats/p1' }
       }
     ]);
     expect(harness.updateCalls).toEqual([

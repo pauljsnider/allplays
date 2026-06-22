@@ -20,6 +20,9 @@ function createFirestoreHarness({ commitFailuresByBatchIndex = {} } = {}) {
                 update(ref, data) {
                     this.operations.push({ type: 'update', ref, data });
                 },
+                delete(ref) {
+                    this.operations.push({ type: 'delete', ref });
+                },
                 async commit() {
                     this.commitCount += 1;
                     if (commitFailuresByBatchIndex[batchIndex]) {
@@ -91,7 +94,7 @@ describe('live broadcast tracker finish batch limits', () => {
         });
 
         expect(result.eventBatchSizes).toEqual([490]);
-        expect(result.aggregatedStatsBatchSizes).toEqual([25]);
+        expect(result.aggregatedStatsBatchSizes).toEqual([50]);
         expect(result.gameUpdateBatchSize).toBe(1);
         expect(harness.batches).toHaveLength(3);
 
@@ -102,13 +105,55 @@ describe('live broadcast tracker finish batch limits', () => {
         expect(eventBatch.operations.some((op) => op.ref.path.includes('/aggregatedStats/'))).toBe(false);
 
         expect(statsBatch.commitCount).toBe(1);
-        expect(statsBatch.operations).toHaveLength(25);
-        expect(statsBatch.operations.every((op) => op.type === 'set')).toBe(true);
-        expect(statsBatch.operations.every((op) => op.ref.path.includes('/aggregatedStats/'))).toBe(true);
+        expect(statsBatch.operations).toHaveLength(50);
+        expect(statsBatch.operations.every((op) => ['set', 'delete'].includes(op.type))).toBe(true);
+        expect(statsBatch.operations.filter((op) => op.type === 'set').every((op) => op.ref.path.includes('/aggregatedStats/'))).toBe(true);
+        expect(statsBatch.operations.filter((op) => op.type === 'delete').every((op) => op.ref.path.includes('/privatePlayerStats/'))).toBe(true);
 
         expect(gameUpdateBatch.commitCount).toBe(1);
         expect(gameUpdateBatch.operations).toEqual([
             expect.objectContaining({ type: 'update', ref: { path: 'teams/team-1/games/game-1' } })
+        ]);
+    });
+
+    it('deletes stale private player stats when a live finish plan has no private data', async () => {
+        const harness = createFirestoreHarness();
+
+        await commitFinishPlan({
+            finishPlan: {
+                eventWrites: [],
+                aggregatedStatsWrites: [
+                    {
+                        playerId: 'player-1',
+                        data: {
+                            playerName: 'Player 1',
+                            stats: { pts: 4 }
+                        }
+                    }
+                ],
+                gameUpdate: {
+                    homeScore: 4,
+                    awayScore: 2,
+                    status: 'completed'
+                }
+            },
+            db: harness.db,
+            currentTeamId: 'team-1',
+            currentGameId: 'game-1',
+            createBatch: harness.writeBatch,
+            createCollectionRef: harness.collection,
+            createDocRef: harness.doc
+        });
+
+        expect(harness.batches[0].operations).toEqual([
+            expect.objectContaining({
+                type: 'set',
+                ref: { path: 'teams/team-1/games/game-1/aggregatedStats/player-1' }
+            }),
+            {
+                type: 'delete',
+                ref: { path: 'teams/team-1/games/game-1/privatePlayerStats/player-1' }
+            }
         ]);
     });
 
@@ -119,9 +164,9 @@ describe('live broadcast tracker finish batch limits', () => {
         });
 
         expect(result.eventBatchSizes).toEqual([499]);
-        expect(result.aggregatedStatsBatchSizes).toEqual([450, 450, 5]);
-        expect(harness.batches).toHaveLength(5);
-        expect(harness.batches.map((batch) => batch.operations.length)).toEqual([499, 450, 450, 5, 1]);
+        expect(result.aggregatedStatsBatchSizes).toEqual([450, 450, 450, 450, 10]);
+        expect(harness.batches).toHaveLength(7);
+        expect(harness.batches.map((batch) => batch.operations.length)).toEqual([499, 450, 450, 450, 450, 10, 1]);
     });
 
     it('chunks more than 500 live log entries instead of rejecting the finish', async () => {
@@ -131,8 +176,8 @@ describe('live broadcast tracker finish batch limits', () => {
         });
 
         expect(result.eventBatchSizes).toEqual([500, 500, 1]);
-        expect(result.aggregatedStatsBatchSizes).toEqual([25]);
-        expect(harness.batches.map((batch) => batch.operations.length)).toEqual([500, 500, 1, 25, 1]);
+        expect(result.aggregatedStatsBatchSizes).toEqual([50]);
+        expect(harness.batches.map((batch) => batch.operations.length)).toEqual([500, 500, 1, 50, 1]);
         expect(harness.batches[0].operations[0].ref.path).toBe('teams/team-1/games/game-1/events/finish-log-000001');
         expect(harness.batches[0].operations[499].ref.path).toBe('teams/team-1/games/game-1/events/finish-log-000500');
         expect(harness.batches[1].operations[0].ref.path).toBe('teams/team-1/games/game-1/events/finish-log-000501');
