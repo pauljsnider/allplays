@@ -5,11 +5,11 @@ const functionsSource = readFileSync(new URL('../../functions/index.js', import.
 const firestoreIndexes = readFileSync(new URL('../../firestore.indexes.json', import.meta.url), 'utf8');
 
 describe('media and award notification contract', () => {
-    it('queues team-visible media items into hourly notification batches', () => {
+    it('queues visible and restricted media items into hourly notification batches', () => {
         expect(functionsSource).toContain('const TEAM_MEDIA_NOTIFICATION_BATCH_WINDOW_MS = 60 * 60 * 1000;');
         expect(functionsSource).toContain('function buildTeamMediaNotificationBatchMetadata({ teamId, itemId, item = {}, folder = {}, now = new Date() } = {})');
         expect(functionsSource).toContain("if (!normalizedTeamId || !normalizedItemId || !folderId || item.deleted === true) return null;");
-        expect(functionsSource).toContain("if (albumVisibility !== 'team') return null;");
+        expect(functionsSource).not.toContain("if (albumVisibility !== 'team') return null;");
         expect(functionsSource).toContain('batchId: buildTeamMediaNotificationBatchId(normalizedTeamId, folderId, windowStartAt)');
         expect(functionsSource).toContain('windowStartAt,');
         expect(functionsSource).toContain('dueAt');
@@ -25,7 +25,7 @@ describe('media and award notification contract', () => {
         expect(functionsSource).toContain(".where('dueAt', '<=', admin.firestore.Timestamp.fromDate(now))");
         expect(functionsSource).toContain('const batch = await claimTeamMediaNotificationBatch(batchRef, claimId, now);');
         expect(functionsSource).toContain('await markTeamMediaNotificationBatchSkipped(batchRef, claimId, \'album_not_found\');');
-        expect(functionsSource).toContain('await markTeamMediaNotificationBatchSkipped(batchRef, claimId, \'album_not_team_visible\');');
+        expect(functionsSource).not.toContain('await markTeamMediaNotificationBatchSkipped(batchRef, claimId, \'album_not_team_visible\');');
         expect(functionsSource).toContain("category: 'media'");
         expect(functionsSource).toContain('dedupKey: `team-media:${batch.id}`');
         expect(functionsSource).toContain('audienceContext');
