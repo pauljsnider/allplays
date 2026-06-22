@@ -228,6 +228,63 @@ test('getTargetsForCategory limits staff-only media notifications to staff recip
         }
 });
 
+test('getTargetsForCategory preserves eligible recipients for visible media albums while honoring restrictions', async () => {
+        const { internals, cleanup } = loadNotificationInternals({
+            teamDoc: {
+                ownerId: 'coach-1',
+                adminEmails: []
+            },
+            parentUserIds: ['parent-1', 'parent-2'],
+            indexedTargets: [
+                {
+                    uid: 'coach-1',
+                    deviceId: 'coach-device',
+                    token: 'coach-token',
+                    categories: { media: true }
+                },
+                {
+                    uid: 'parent-1',
+                    deviceId: 'parent-1-device',
+                    token: 'parent-1-token',
+                    categories: { media: true }
+                },
+                {
+                    uid: 'parent-2',
+                    deviceId: 'parent-2-device',
+                    token: 'parent-2-token',
+                    categories: { media: true }
+                }
+            ]
+        });
+
+        try {
+            const visibleTargets = await internals.getTargetsForCategory('team-1', 'media', null, {
+                albumVisibility: 'team'
+            });
+            const restrictedTargets = await internals.getTargetsForCategory('team-1', 'media', null, {
+                albumVisibility: 'team',
+                allowedUserIds: ['parent-2'],
+                allowedRoles: ['staff']
+            });
+            const staffOnlyTargets = await internals.getTargetsForCategory('team-1', 'media', null, {
+                albumVisibility: 'staff-only'
+            });
+
+            assert.deepEqual(visibleTargets.map((target) => target.token).sort(), [
+                'coach-token',
+                'parent-1-token',
+                'parent-2-token'
+            ]);
+            assert.deepEqual(restrictedTargets.map((target) => target.token).sort(), [
+                'coach-token',
+                'parent-2-token'
+            ]);
+            assert.deepEqual(staffOnlyTargets.map((target) => target.token), ['coach-token']);
+        } finally {
+            cleanup();
+        }
+});
+
 test('getTargetsForCategoryUserIds restricts RSVP targets to requested recipients with enabled preferences', async () => {
         const { internals, cleanup } = loadNotificationInternals({
             teamDoc: {
