@@ -5,6 +5,7 @@ const scheduleLogicSource = readFileSync(new URL('../../apps/app/src/lib/schedul
 const scheduleServiceSource = readFileSync(new URL('../../apps/app/src/lib/scheduleService.ts', import.meta.url), 'utf8');
 const teamDetailSource = readFileSync(new URL('../../apps/app/src/pages/TeamDetail.tsx', import.meta.url), 'utf8');
 const scheduleEventDetailSource = readFileSync(new URL('../../apps/app/src/pages/ScheduleEventDetail.tsx', import.meta.url), 'utf8');
+const staffRsvpReminderPanelSource = readFileSync(new URL('../../apps/app/src/components/schedule/StaffRsvpReminderPanel.tsx', import.meta.url), 'utf8');
 const functionsSource = readFileSync(new URL('../../functions/index.js', import.meta.url), 'utf8');
 const reminderTestSource = readFileSync(new URL('./schedule-rsvp-reminder.test.js', import.meta.url), 'utf8');
 const notificationContractTestSource = readFileSync(new URL('./schedule-rsvp-notification-contract.test.js', import.meta.url), 'utf8');
@@ -37,10 +38,12 @@ describe('issue 1966 schedule RSVP reminders source contract', () => {
     });
 
     it('keeps mobile schedule and team screens exposing the manager-only reminder action', () => {
-        expect(scheduleEventDetailSource).toContain('function StaffRsvpReminderPanel');
-        expect(scheduleEventDetailSource).toContain('event.isTeamRsvpReminderManager && event.isDbGame && !event.isCancelled');
-        expect(scheduleEventDetailSource).toContain('setPreview(await loadStaffRsvpReminderPreview(event, auth.user));');
-        expect(scheduleEventDetailSource).toContain('await sendStaffRsvpReminder(event, auth.user, auth.profile || {});');
+        expect(scheduleEventDetailSource).toContain("import { StaffRsvpReminderPanel } from '../components/schedule/StaffRsvpReminderPanel';");
+        expect(scheduleEventDetailSource).toContain('<StaffRsvpReminderPanel refreshToken={staffRsvp.refreshToken} />');
+        expect(staffRsvpReminderPanelSource).toContain('export function StaffRsvpReminderPanel');
+        expect(staffRsvpReminderPanelSource).toContain('event.isTeamRsvpReminderManager && event.isDbGame && !event.isCancelled');
+        expect(staffRsvpReminderPanelSource).toContain('setPreview(await loadStaffRsvpReminderPreview(event, auth.user));');
+        expect(staffRsvpReminderPanelSource).toContain('await sendStaffRsvpReminder(event, auth.user, auth.profile || {});');
         expect(teamDetailSource).toContain('function TeamEventReminderAction');
         expect(teamDetailSource).toContain('createStaffRsvpReminderPreviewLoader');
         expect(teamDetailSource).toContain('await reminderPreviewLoader.loadPreview(scheduleEvent, auth.user);');
