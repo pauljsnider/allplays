@@ -6406,11 +6406,28 @@ function getFeeReminderPlayerKey(recipient = {}, teamId = '') {
 
 function buildFeeReminderCandidateUserIds(recipient = {}, playerOwnerIds = []) {
   return Array.from(new Set([
-    recipient.userId,
-    recipient.accountUserId,
     recipient.parentUserId,
     ...playerOwnerIds
   ].map((value) => String(value || '').trim()).filter(Boolean)));
+}
+
+function resolveFeeReminderThresholdHours(team = {}) {
+  const reminderHours = Number.parseInt(team?.scheduleNotifications?.reminderHours, 10);
+  return [24, 48, 72].includes(reminderHours) ? reminderHours : 72;
+}
+
+function wasFeeReminderSentForThreshold(recipient = {}, reminderThresholdHours = 72) {
+  if (!recipient?.reminderSentAt) return false;
+  const sentThresholdHours = Number.parseInt(recipient?.reminderThresholdHours, 10);
+  if ([24, 48, 72].includes(sentThresholdHours)) {
+    return sentThresholdHours === reminderThresholdHours;
+  }
+  return reminderThresholdHours === 72;
+}
+
+function formatFeeReminderWindowLabel(reminderThresholdHours = 72) {
+  const reminderThresholdDays = Math.max(1, Math.round(reminderThresholdHours / 24));
+  return `${reminderThresholdDays} day${reminderThresholdDays === 1 ? '' : 's'} or less`;
 }
 
 async function resolveFeeReminderCandidateUserIds(teamId, recipient = {}) {
@@ -6429,27 +6446,44 @@ async function resolveFeeReminderCandidateUserIds(teamId, recipient = {}) {
 
 async function sendFeeUnpaidDueReminders() {
   const now = admin.firestore.Timestamp.now();
-  const threeDaysLater = admin.firestore.Timestamp.fromMillis(now.toMillis() + 3 * 24 * 60 * 60 * 1000);
+  const maxReminderThresholdLater = admin.firestore.Timestamp.fromMillis(now.toMillis() + 72 * 60 * 60 * 1000);
+  const teamReminderThresholdHours = new Map();
 
   // Use 'in' filter instead of '!=' to avoid Firestore inequality-on-different-field restriction
   const snap = await firestore.collectionGroup('feeRecipients')
     .where('status', 'in', ['unpaid', 'pending'])
     .where('dueDate', '>=', now)
-    .where('dueDate', '<=', threeDaysLater)
+    .where('dueDate', '<=', maxReminderThresholdLater)
     .get();
 
   const promises = snap.docs.map(async (doc) => {
     const data = doc.data();
-    // Skip if reminder already sent (deduplication guard)
-    if (data.reminderSentAt) return null;
     const pathParts = doc.ref.path.split('/');
     // Path structure: teams/{teamId}/feeBatches/{batchId}/feeRecipients/{recipientId}
     const teamId = pathParts[1];
     const batchId = pathParts[3];
     const recipientId = pathParts[5];
     if (!teamId) return null;
+
+    let reminderThresholdHours = teamReminderThresholdHours.get(teamId);
+    if (!reminderThresholdHours) {
+      const teamSnap = await firestore.collection('teams').doc(teamId).get();
+      reminderThresholdHours = resolveFeeReminderThresholdHours(teamSnap.exists ? teamSnap.data() : {});
+      teamReminderThresholdHours.set(teamId, reminderThresholdHours);
+    }
+
+    const dueDateMillis = typeof data?.dueDate?.toMillis === 'function'
+      ? data.dueDate.toMillis()
+      : coerceDate(data?.dueDate)?.getTime();
+    if (!Number.isFinite(dueDateMillis)) return null;
+
+    const reminderThresholdMillis = reminderThresholdHours * 60 * 60 * 1000;
+    if (dueDateMillis > now.toMillis() + reminderThresholdMillis) return null;
+    if (wasFeeReminderSentForThreshold(data, reminderThresholdHours)) return null;
+
     const title = data.feeTitle || data.title || 'Team fee due soon';
     const amountLabel = formatMoneyFromCents(getTeamFeeBalanceCents(data), data.currency || 'USD');
+    const reminderWindowLabel = formatFeeReminderWindowLabel(reminderThresholdHours);
 
     try {
       const candidateUserIds = await resolveFeeReminderCandidateUserIds(teamId, data);
@@ -6461,13 +6495,16 @@ async function sendFeeUnpaidDueReminders() {
       if (!payerTargets.length) return null;
 
       // Mark reminderSentAt only when targets exist, to prevent duplicate sends if function retries
-      await doc.ref.update({ reminderSentAt: admin.firestore.FieldValue.serverTimestamp() });
+      await doc.ref.update({
+        reminderSentAt: admin.firestore.FieldValue.serverTimestamp(),
+        reminderThresholdHours
+      });
 
       await sendDirectTargetsNotification({
         targets: payerTargets,
         category: 'fees',
         title: `Reminder: ${title} is due soon`,
-        body: `${amountLabel} is due in 3 days or less.`,
+        body: `${amountLabel} is due in ${reminderWindowLabel}.`,
         teamId,
         batchId,
         recipientId,
