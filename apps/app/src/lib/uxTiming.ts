@@ -1,4 +1,7 @@
+import { createLogger } from './logger';
 import { recordAppUxTiming } from './telemetry';
+
+const logger = createLogger('ux');
 
 /**
  * Canonical span labels for the app-performance metric set (see
@@ -58,7 +61,7 @@ export function startInteractionTimer(label: string, baseMeta: Record<string, un
 
 export function recordUxTiming(label: string, startedAt: number, meta: Record<string, unknown> = {}) {
   const durationMs = Math.round(now() - startedAt);
-  console.info(`[ux] ${label} ${JSON.stringify({ durationMs, ...meta })}`);
+  logger.info(label, { durationMs, ...meta });
   recordAppUxTiming(label, startedAt, meta);
 }
 
