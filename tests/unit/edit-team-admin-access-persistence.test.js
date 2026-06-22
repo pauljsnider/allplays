@@ -631,6 +631,9 @@ describe('edit team admin access persistence', () => {
         expect(html.indexOf('id="registrationProviderName"')).toBeGreaterThan(advancedIndex);
         expect(html).toContain('Registration Provider Connection');
         expect(html).toContain('Sports Connect live sync is unavailable until a connector is added.');
+        expect(html).toContain('function getRegistrationProviderCapability(provider, externalTeamId, source = {})');
+        expect(html).toContain("state: 'metadata_configured'");
+        expect(html).toContain("state: 'live_connected'");
         expect(html).toContain('Sync unavailable');
         expect(html).toContain('id="team-create-mode-registration"');
         expect(html).toContain('No registration sources are configured yet. Start with a blank team or load provider data before using this import path.');
@@ -1144,6 +1147,7 @@ describe('edit team admin access persistence', () => {
                 teamId: 'team-1',
                 providerId: null,
                 connectionStatus: 'metadata_configured',
+                providerCapability: 'metadata_configured',
                 syncEnabled: false,
                 lastSyncStatus: 'Registration metadata only. No live sync.',
                 lastSyncAt: '2026-05-10T18:30:00.000Z'
@@ -1208,6 +1212,7 @@ describe('edit team admin access persistence', () => {
                 externalTeamId: 'SC-987',
                 teamId: 'team-1',
                 connectionStatus: 'metadata_configured',
+                providerCapability: 'metadata_configured',
                 syncEnabled: false,
                 lastSyncStatus: 'Metadata saved; live sync unavailable'
             });
