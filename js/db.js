@@ -4813,6 +4813,9 @@ export async function listParentTeamFeeRecipients(userId, children = []) {
     ];
 
     const results = await Promise.allSettled(queries.map((feeQuery) => getDocs(feeQuery)));
+    if (results.length > 0 && results.every((result) => result.status === 'rejected')) {
+        throw results[0].reason;
+    }
     const feesByPath = new Map();
 
     results.forEach((result) => {

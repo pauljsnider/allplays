@@ -3,6 +3,8 @@ import { describe, expect, it } from 'vitest';
 
 const homeSource = readFileSync(new URL('../../apps/app/src/pages/Home.tsx', import.meta.url), 'utf8');
 const homeServiceSource = readFileSync(new URL('../../apps/app/src/lib/homeService.ts', import.meta.url), 'utf8');
+const scheduleServiceSource = readFileSync(new URL('../../apps/app/src/lib/scheduleService.ts', import.meta.url), 'utf8');
+const legacyDbSource = readFileSync(new URL('../../js/db.js', import.meta.url), 'utf8');
 
 function getRefreshHomeSource() {
     const start = homeSource.indexOf('  const refreshHome = async');
@@ -61,9 +63,18 @@ describe('Home async operation contract', () => {
     it('keeps secondary Home hydration partial while classifying service failures', () => {
         expect(homeServiceSource).toContain("throw toAppServiceError(error, 'Unable to load Home chat.');");
         expect(homeServiceSource).toContain("throw toAppServiceError(error, 'Unable to load Home fees.');");
-        expect(homeServiceSource).toContain("console.warn('[home] Schedule hydration failed:', rethrowIfPermissionError(error, 'Unable to hydrate Home schedule.'));");
-        expect(homeServiceSource).toContain("console.warn('[home] Chat inbox failed:', rethrowIfPermissionError(error, 'Unable to load Home chat.'));");
-        expect(homeServiceSource).toContain("console.warn('[home] Fees failed:', rethrowIfPermissionError(error, 'Unable to load Home fees.'));");
+        expect(homeServiceSource).toContain("console.warn('[home] Schedule hydration failed:', appError);");
+        expect(homeServiceSource).toContain("console.warn('[home] Chat inbox failed:', appError);");
+        expect(homeServiceSource).toContain("console.warn('[home] Fees failed:', appError);");
+        expect(homeServiceSource).toContain('throwIfAllSecondarySlicesFailed(secondaryErrors);');
         expect(homeServiceSource).toContain('onPartial?.(buildParentHomeModel(partialState));');
+    });
+
+    it('treats fully swallowed schedule and fee loader failures as real secondary failures', () => {
+        expect(scheduleServiceSource).toContain('const results = await Promise.allSettled([');
+        expect(scheduleServiceSource).toContain("if (firstRejected && results.every((result) => result.status === 'rejected')) {");
+        expect(scheduleServiceSource).toContain('throw firstRejected.reason;');
+        expect(legacyDbSource).toContain("if (results.length > 0 && results.every((result) => result.status === 'rejected')) {");
+        expect(legacyDbSource).toContain('throw results[0].reason;');
     });
 });
