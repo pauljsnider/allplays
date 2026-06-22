@@ -118,4 +118,15 @@ describe('logger', () => {
             }
         );
     });
+
+    it('redacts secrets from free-form log messages before writing to console', () => {
+        const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+        const logger = createLogger('schedule-service');
+
+        logger.warn('Fetch failed for https://example.test/callback?access_token=abc123&teamId=team-1#id_token=jwt456');
+
+        expect(warnSpy).toHaveBeenCalledWith(
+            '[schedule-service] Fetch failed for https://example.test/callback?access_token=[REDACTED]&teamId=team-1#id_token=[REDACTED]'
+        );
+    });
 });

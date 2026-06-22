@@ -107,7 +107,7 @@ function getConsoleMethod(level: LogLevel) {
 
 function writeLog(scope: string, level: LogLevel, message: string, context?: LogContext) {
     const method = getConsoleMethod(level);
-    const prefix = `[${scope}] ${message}`;
+    const prefix = `[${scope}] ${sanitizeForLogging(message)}`;
     if (!context || !Object.keys(context).length) {
         method(prefix);
         return;
