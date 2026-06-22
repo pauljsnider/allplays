@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
     mapChatConversationRecord,
+    mapChatMessageRecord,
     mapFirestoreDocument,
     mapGameReportAggregatedStatsRecord,
     mapGameReportEventRecords,
@@ -75,6 +76,59 @@ describe('firestore mappers', () => {
             isLegacy: false,
             updatedAt: null,
             lastMessageAt: null
+        });
+    });
+
+    it('normalizes chat messages with attachments, reactions, and timestamps at the Firestore boundary', () => {
+        const createdAt = { seconds: 1760965800, nanoseconds: 250000000 };
+        const editedAt = { toMillis: () => 1760966100123 };
+
+        expect(mapChatMessageRecord({
+            id: '',
+            clientMessageId: ' client-1 ',
+            text: ' Team update ',
+            senderId: ' coach-1 ',
+            attachments: [
+                { type: 'unknown', url: ' https://example.test/photo.jpg ', mimeType: ' image/jpeg ', size: '42' },
+                { type: 'image', url: '', mimeType: 'video/mp4', path: ' videos/clip.mp4 ' },
+                null
+            ],
+            reactions: {
+                thumbs_up: [' parent-1 ', 'parent-1', '', 'coach-1'],
+                empty: []
+            },
+            mentionedUids: [' player-1 ', 'player-1', null],
+            recipientIds: [' parent-1 ', 'parent-2', 'parent-1'],
+            targetType: 'staff',
+            createdAt,
+            editedAt
+        }, 'message-1')).toMatchObject({
+            id: 'message-1',
+            clientMessageId: 'client-1',
+            text: 'Team update',
+            senderId: 'coach-1',
+            targetType: 'staff',
+            recipientIds: ['parent-1', 'parent-2'],
+            mentionedUids: ['player-1'],
+            reactions: {
+                thumbs_up: ['parent-1', 'coach-1']
+            },
+            createdAt: new Date('2025-10-20T13:10:00.250Z'),
+            editedAt: new Date(1760966100123),
+            attachments: [
+                expect.objectContaining({
+                    type: 'image',
+                    url: 'https://example.test/photo.jpg',
+                    mimeType: 'image/jpeg',
+                    size: 42
+                }),
+                expect.objectContaining({
+                    type: 'image',
+                    url: null,
+                    path: 'videos/clip.mp4',
+                    mimeType: 'video/mp4'
+                })
+            ]
         });
     });
 
