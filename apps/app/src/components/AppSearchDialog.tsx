@@ -174,22 +174,13 @@ export function AppSearchDialog({ auth, open, onClose }: AppSearchDialogProps) {
               const initialTeamIds = new Set(accessibleTeams.map((team) => team.id));
               const hasExpandedScope = hydratedTeams.some((team) => !initialTeamIds.has(team.id));
               if (!hasExpandedScope) return;
+              setTeamsLoading(true);
               setPlayersLoading(true);
-              return searchAppPlayers(trimmedQuery, new Map(hydratedTeams.map((team) => [team.id, team])), auth.user)
-                .then((refreshedPlayers) => {
-                  applyPlayerResults({ status: 'fulfilled', value: refreshedPlayers });
-                })
-                .catch((error) => {
-                  applyPlayerResults({ status: 'rejected', reason: error });
-                })
-                .finally(() => {
-                  if (!disposed && requestId === searchRequestId.current) {
-                    setPlayersLoading(false);
-                  }
-                });
+              return runSearch(hydratedTeams);
             })
             .catch(() => {
               if (!disposed && requestId === searchRequestId.current) {
+                setTeamsLoading(false);
                 setPlayersLoading(false);
               }
             });
