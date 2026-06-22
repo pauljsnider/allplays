@@ -11,8 +11,11 @@ describe('logger', () => {
         const sanitized = sanitizeForLogging({
             Authorization: 'Bearer abc123',
             token: 'plain-token',
+            access_token: 'underscored-token',
+            api_key: 'underscored-api-key',
             nested: {
                 refreshToken: 'refresh-token',
+                id_token: 'nested-id-token',
                 message: 'Bearer nested-token-456 failed'
             }
         });
@@ -20,8 +23,11 @@ describe('logger', () => {
         expect(sanitized).toEqual({
             Authorization: '[REDACTED]',
             token: '[REDACTED]',
+            access_token: '[REDACTED]',
+            api_key: '[REDACTED]',
             nested: {
                 refreshToken: '[REDACTED]',
+                id_token: '[REDACTED]',
                 message: 'Bearer [REDACTED] failed'
             }
         });

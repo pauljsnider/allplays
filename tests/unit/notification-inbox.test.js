@@ -77,6 +77,8 @@ describe('notification inbox pipeline', () => {
         expect(appNotificationInboxServiceSource).toContain("httpsCallable(functions, 'markAllNotificationInboxRead')");
         expect(appNotificationInboxServiceSource).toContain("conversationId: getStringField(data, 'conversationId')");
         expect(appNotificationInboxServiceSource).not.toContain('writeBatch(db)');
+        expect(appNotificationInboxServiceSource).toContain("from './logger'");
+        expect(appNotificationInboxServiceSource).not.toContain('console.');
     });
 
     it('keeps notification inbox records owner-readable and server-writable only', () => {
