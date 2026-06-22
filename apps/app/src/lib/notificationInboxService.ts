@@ -9,6 +9,7 @@ import {
     onSnapshot,
     orderBy,
     query,
+    where,
     serverTimestamp,
     updateDoc
 } from './adapters/legacyNotificationInboxDb';
@@ -37,6 +38,35 @@ function getStringField(data: DocumentData, key: string): string {
 function buildNotificationText(title: string, body: string, legacyText: string): string {
     if (title && body) return `${title}: ${body}`;
     return title || body || legacyText;
+}
+
+/**
+ * Subscribe to the unread notification count only.
+ * Returns an unsubscribe function.
+ */
+export function subscribeToUnreadNotificationCount(
+    uid: string,
+    callback: (count: number) => void,
+    onError?: (error: unknown) => void
+): () => void {
+    const q = query(
+        collection(db, `users/${uid}/notificationInbox`),
+        where('readAt', '==', null)
+    );
+
+    return onSnapshot(
+        q,
+        (snapshot: QuerySnapshot<DocumentData>) => {
+            callback(snapshot.size);
+        },
+        (error: unknown) => {
+            if (onError) {
+                onError(error);
+            } else {
+                logger.error('Failed to subscribe to unread notification count.', { error });
+            }
+        }
+    );
 }
 
 /**

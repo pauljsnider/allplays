@@ -13,9 +13,16 @@ type SubscribeToNotificationInbox = (
   onError?: (error: unknown) => void
 ) => () => void;
 
-const { useShellLayoutMock, subscribeToNotificationInboxMock } = vi.hoisted(() => ({
+type SubscribeToUnreadNotificationCount = (
+  uid: string,
+  onCount: (count: number) => void,
+  onError?: (error: unknown) => void
+) => () => void;
+
+const { useShellLayoutMock, subscribeToNotificationInboxMock, subscribeToUnreadNotificationCountMock } = vi.hoisted(() => ({
   useShellLayoutMock: vi.fn(() => ({ isDesktopWeb: true })),
   subscribeToNotificationInboxMock: vi.fn<SubscribeToNotificationInbox>(() => vi.fn()),
+  subscribeToUnreadNotificationCountMock: vi.fn<SubscribeToUnreadNotificationCount>(() => vi.fn()),
 }));
 
 vi.mock('../lib/useShellLayout', () => ({
@@ -30,6 +37,7 @@ vi.mock('../lib/notificationInboxService', () => ({
   countUnread: (items: Array<{ readAt: unknown | null }>) => items.filter((item) => !item.readAt).length,
   markNotificationRead: vi.fn(),
   subscribeToNotificationInbox: subscribeToNotificationInboxMock,
+  subscribeToUnreadNotificationCount: subscribeToUnreadNotificationCountMock,
 }));
 
 vi.mock('./AppSearchDialog', () => ({
@@ -70,6 +78,8 @@ describe('AppShell', () => {
     useShellLayoutMock.mockReturnValue({ isDesktopWeb: true });
     subscribeToNotificationInboxMock.mockReset();
     subscribeToNotificationInboxMock.mockReturnValue(vi.fn());
+    subscribeToUnreadNotificationCountMock.mockReset();
+    subscribeToUnreadNotificationCountMock.mockReturnValue(vi.fn());
   });
 
   afterEach(() => {
@@ -117,8 +127,8 @@ describe('AppShell', () => {
     expect(screen.getByTestId('app-shell-notification-status').textContent).toBe('Loading notifications…');
   });
 
-  it('announces load failures instead of a false empty inbox state', () => {
-    subscribeToNotificationInboxMock.mockImplementation((_uid, _onItems, onError) => {
+  it('announces load failures instead of a false empty inbox state', async () => {
+    subscribeToUnreadNotificationCountMock.mockImplementation((_uid, _onCount, onError) => {
       onError?.(new Error('offline'));
       return vi.fn();
     });
@@ -131,7 +141,38 @@ describe('AppShell', () => {
       </MemoryRouter>
     );
 
-    expect(screen.getByTestId('app-shell-notification-status').textContent).toBe('Could not load notifications');
+    await waitFor(() => {
+      expect(screen.getByTestId('app-shell-notification-status').textContent).toBe('Could not load notifications');
+    });
+  });
+
+  it('does not subscribe to the full inbox until notifications are opened', async () => {
+    render(
+      <MemoryRouter initialEntries={['/home']}>
+        <Routes>
+          <Route path="/home" element={<AppShell auth={signedInAuth}><div>Home</div></AppShell>} />
+        </Routes>
+      </MemoryRouter>
+    );
+
+    await waitFor(() => {
+      expect(subscribeToUnreadNotificationCountMock).toHaveBeenCalledWith(
+        'user-123',
+        expect.any(Function),
+        expect.any(Function)
+      );
+    });
+    expect(subscribeToNotificationInboxMock).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByTestId('app-shell-notifications-trigger'));
+
+    await waitFor(() => {
+      expect(subscribeToNotificationInboxMock).toHaveBeenCalledWith(
+        'user-123',
+        expect.any(Function),
+        expect.any(Function)
+      );
+    });
   });
 
   it('keeps the mobile search trigger discoverable with a stable selector', () => {
