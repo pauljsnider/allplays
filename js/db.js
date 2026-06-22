@@ -6411,6 +6411,7 @@ export async function getUnreadChatCounts(userId, teamIds, options = {}) {
     const counts = {};
     const latestMessageAtByTeam = options?.latestMessageAtByTeam || {};
     const conversationIdsByTeam = options?.conversationIdsByTeam || {};
+    const conversationLookupByTeam = options?.conversationLookupByTeam || {};
     let userData = {};
 
     try {
@@ -6429,7 +6430,15 @@ export async function getUnreadChatCounts(userId, teamIds, options = {}) {
             const storedConversationIds = Array.isArray(conversationIdsByTeam?.[teamId])
                 ? conversationIdsByTeam[teamId]
                 : null;
-            const loadedConversationIds = storedConversationIds || (await getChatConversations(teamId)).map((conversation) => conversation?.id).filter(Boolean);
+            const conversationLookup = conversationLookupByTeam?.[teamId] || {};
+            const loadedConversationIds = storedConversationIds || (await getChatConversations(
+                teamId,
+                conversationLookup.user || null,
+                {
+                    team: conversationLookup.team || null,
+                    canModerate: conversationLookup.canModerate === true
+                }
+            )).map((conversation) => conversation?.id).filter(Boolean);
             const conversationIds = [
                 DEFAULT_TEAM_CONVERSATION_ID,
                 ...loadedConversationIds.filter((conversationId) => !isDefaultTeamConversation(conversationId))

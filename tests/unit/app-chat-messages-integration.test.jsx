@@ -2378,7 +2378,7 @@ describe('React app messages integration', () => {
         expect(chatMocks.unmuteTeamChat).toHaveBeenCalledWith('user-1', 'team-1', 'team');
     });
 
-    it('marks only the opened deep-linked conversation as read', async () => {
+    it('marks only the opened deep-linked conversation as read, including the view-return retry path', async () => {
         Object.defineProperty(document, 'visibilityState', {
             configurable: true,
             value: 'visible'
@@ -2405,6 +2405,15 @@ describe('React app messages integration', () => {
         });
 
         await renderMessages('/messages/team-1?conversationId=staff-conversation');
+
+        expect(chatMocks.markTeamChatRead).toHaveBeenCalledWith('user-1', 'team-1', 'staff-conversation');
+        expect(chatMocks.markTeamChatRead).not.toHaveBeenCalledWith('user-1', 'team-1');
+
+        chatMocks.markTeamChatRead.mockClear();
+        await act(async () => {
+            window.dispatchEvent(new Event('focus'));
+        });
+        await flush();
 
         expect(chatMocks.markTeamChatRead).toHaveBeenCalledWith('user-1', 'team-1', 'staff-conversation');
         expect(chatMocks.markTeamChatRead).not.toHaveBeenCalledWith('user-1', 'team-1');

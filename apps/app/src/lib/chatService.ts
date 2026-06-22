@@ -648,6 +648,21 @@ export async function loadChatInbox(user: AuthUser | null, options: ChatInboxLoa
     }
     return acc;
   }, {});
+  const previewInputs = accessibleTeams.map((team) => {
+    const canModerate = canModerateChat(userWithProfile, { ...team, id: team.id });
+    return {
+      team,
+      canModerate
+    };
+  });
+  const conversationLookupByTeam = previewInputs.reduce<Record<string, { user: AuthUser; team: Record<string, any>; canModerate: boolean }>>((acc, entry) => {
+    acc[entry.team.id] = {
+      user: userWithProfile,
+      team: entry.team,
+      canModerate: entry.canModerate
+    };
+    return acc;
+  }, {});
   const unreadCandidateTeamIds = accessibleTeams
     .filter((team) => {
       const latestMessageAt = latestMessageAtByTeam[team.id];
@@ -660,18 +675,13 @@ export async function loadChatInbox(user: AuthUser | null, options: ChatInboxLoa
     })
     .map((team) => team.id);
   const unreadCounts = await withTimeout(
-    Promise.resolve(getUnreadChatCounts(user.uid, unreadCandidateTeamIds, { latestMessageAtByTeam })),
+    Promise.resolve(getUnreadChatCounts(user.uid, unreadCandidateTeamIds, {
+      latestMessageAtByTeam,
+      conversationLookupByTeam
+    })),
     'Chat unread counts',
     3000
   ).catch(() => ({} as Record<string, number>));
-
-  const previewInputs = accessibleTeams.map((team) => {
-    const canModerate = canModerateChat(userWithProfile, { ...team, id: team.id });
-    return {
-      team,
-      canModerate
-    };
-  });
 
   const previews = includeLastMessages
     ? await Promise.all(previewInputs.map(async ({ team, canModerate }) => ({

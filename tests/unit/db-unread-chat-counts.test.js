@@ -350,16 +350,28 @@ describe('chat unread count helpers', () => {
             getChatConversations,
             console: { warn }
         });
+        const lookupUser = { uid: 'user-5', email: 'staff@example.com' };
+        const lookupTeam = { id: 'team-a', name: 'Bears' };
 
         await expect(getUnreadChatCounts('user-5', ['team-a'], {
             latestMessageAtByTeam: {
                 'team-a': { seconds: 250 }
+            },
+            conversationLookupByTeam: {
+                'team-a': {
+                    user: lookupUser,
+                    team: lookupTeam,
+                    canModerate: true
+                }
             }
         })).resolves.toEqual({
             'team-a': 3
         });
 
-        expect(getChatConversations).toHaveBeenCalledWith('team-a');
+        expect(getChatConversations).toHaveBeenCalledWith('team-a', lookupUser, {
+            team: lookupTeam,
+            canModerate: true
+        });
         expect(getUnreadChatCount).toHaveBeenNthCalledWith(1, 'user-5', 'team-a', expect.objectContaining({
             conversationId: 'team',
             latestMessageAt: { seconds: 250 }

@@ -1072,7 +1072,7 @@ function ChatWindow({
         hasMessages: messages.length > 0,
         hasLoadedSnapshot: initialSnapshotLoadedRef.current
       })) {
-        maybeMarkRead(auth.user, teamId, true);
+        maybeMarkRead(auth.user, teamId, true, effectiveConversationId);
       }
     };
     document.addEventListener('visibilitychange', handleReturn);
@@ -1081,7 +1081,7 @@ function ChatWindow({
       document.removeEventListener('visibilitychange', handleReturn);
       window.removeEventListener('focus', handleReturn);
     };
-  }, [auth.user?.uid, messages.length, teamId]);
+  }, [auth.user, effectiveConversationId, messages.length, teamId]);
 
   useEffect(() => {
     mountedRef.current = true;
