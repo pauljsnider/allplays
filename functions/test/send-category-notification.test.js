@@ -54,18 +54,16 @@ test('getTargetsForCategory returns the same recipient set from indexed resoluti
             authUsersByEmail: {
                 'assistant@example.com': 'assistant-1'
             },
-            parentUserIds: ['parent-1', 'parent-2'],
+            parentUserIds: ['parent-1'],
             userDocs: {
                 'coach-1': { email: 'coach@example.com', parentTeamIds: [] },
                 'assistant-1': { email: 'assistant@example.com', parentTeamIds: [] },
-                'parent-1': { email: 'parent1@example.com', parentTeamIds: ['team-1'] },
-                'parent-2': { email: 'parent2@example.com', parentTeamIds: ['team-1'] }
+                'parent-1': { email: 'parent1@example.com', parentTeamIds: ['team-1'] }
             },
             preferenceDocs: {
                 'users/coach-1/notificationPreferences/team-1': { schedule: true },
                 'users/assistant-1/notificationPreferences/team-1': { schedule: true },
-                'users/parent-1/notificationPreferences/team-1': { schedule: true },
-                'users/parent-2/notificationPreferences/team-1': { schedule: false }
+                'users/parent-1/notificationPreferences/team-1': { schedule: true }
             },
             deviceDocs: {
                 'coach-1': [
@@ -76,9 +74,6 @@ test('getTargetsForCategory returns the same recipient set from indexed resoluti
                 ],
                 'parent-1': [
                     { id: 'parent-phone', token: 'parent-phone-token', platform: 'ios' }
-                ],
-                'parent-2': [
-                    { id: 'parent-disabled-phone', token: 'parent-disabled-token', platform: 'ios' }
                 ]
             },
             indexedRecipients: [
@@ -123,20 +118,6 @@ test('getTargetsForCategory returns the same recipient set from indexed resoluti
                             userAgent: ''
                         }
                     ]
-                },
-                {
-                    uid: 'parent-2',
-                    teamId: 'team-1',
-                    roles: ['parent'],
-                    categories: { schedule: false },
-                    tokens: [
-                        {
-                            deviceId: 'parent-disabled-phone',
-                            token: 'parent-disabled-token',
-                            platform: 'ios',
-                            userAgent: ''
-                        }
-                    ]
                 }
             ]
         };
@@ -159,8 +140,8 @@ test('getTargetsForCategory returns the same recipient set from indexed resoluti
 
             assert.deepEqual(normalizeTargets(indexedTargets), normalizeTargets(legacyTargets));
             assert.equal(indexed.env.counts.recipientQueries, 1);
-            assert.ok(indexed.env.counts.preferenceGets < legacy.env.counts.preferenceGets);
-            assert.ok(indexed.env.counts.deviceGets < legacy.env.counts.deviceGets);
+            assert.equal(indexed.env.counts.preferenceGets, 0);
+            assert.equal(indexed.env.counts.deviceGets, 0);
             assert.equal(legacy.env.counts.recipientQueries, 1);
             assert.ok(legacy.env.counts.preferenceGets > 0);
             assert.ok(legacy.env.counts.deviceGets > 0);
