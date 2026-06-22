@@ -2009,7 +2009,7 @@ export function buildChatViewportSignature(scrollHeight: number, clientHeight: n
 
 function getPreferredConversationIdFromSearch(search: string) {
   const params = new URLSearchParams(search || '');
-  return String(params.get('conversationId') || '').trim();
+  return String(params.get('conversation') || params.get('conversationId') || '').trim();
 }
 
 function buildMessagesRoute(teamId: string, preferredConversationId?: string | null) {

@@ -313,6 +313,7 @@ describe('notifyTeamChatMessageCreated source wiring', () => {
     it('includes the conversation deep-link target in both mention and live chat payloads', () => {
         expect(notifyTeamChatMessageCreatedSource).toContain('conversationId');
         expect(functionsSource).toContain('conversationId: String(conversationId || \'\')');
+        expect(functionsSource).toContain('return `${route}?conversation=${encodeURIComponent(conversationId)}`;');
         expect(functionsSource).toContain('return `${route}?conversationId=${encodeURIComponent(conversationId)}`;');
     });
 });
@@ -328,7 +329,7 @@ describe('chat mention notification destinations', () => {
             category: 'mentions',
             teamId: 'team 1',
             conversationId: 'direct/user?2'
-        })).toBe('/messages/team%201?conversationId=direct%2Fuser%3F2');
+        })).toBe('/messages/team%201?conversation=direct%2Fuser%3F2');
     });
 
     it('keeps team-wide mention notifications on the default message route', () => {
