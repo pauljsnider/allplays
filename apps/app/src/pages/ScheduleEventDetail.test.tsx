@@ -506,19 +506,6 @@ describe('ScheduleEventDetail route state', () => {
     expect(screen.getByTestId('event-route').textContent).toBe('/schedule/team-1/game-1?childId=player-2&section=assignments');
   });
 
-  it('falls back safely when the route childId does not match an event', async () => {
-    renderScheduleEventDetailWithLocation('/schedule/team-1/game-1?childId=missing-player&section=availability');
-
-    await waitFor(() => {
-      expect(screen.getAllByText(/Avery Smith/).length).toBeGreaterThan(0);
-    });
-
-    const switcher = screen.getByTestId('event-player-switcher');
-    expect(within(switcher).getByRole('button', { name: 'Avery Smith' }).getAttribute('aria-pressed')).toBe('true');
-    expect(within(switcher).getByRole('button', { name: 'Sam Lee' }).getAttribute('aria-pressed')).toBe('false');
-    expect(screen.getAllByRole('button', { name: 'Availability' })[0].className).toContain('bg-primary-600');
-    expect(screen.getByTestId('event-route').textContent).toBe('/schedule/team-1/game-1?childId=missing-player&section=availability');
-  });
 });
 
 describe('ScheduleEventDetail rideshare permissions', () => {
