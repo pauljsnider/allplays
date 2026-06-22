@@ -6,7 +6,7 @@ describe('admin invite signup cache busting', () => {
     it('pins fresh module versions for the admin invite signup path', () => {
         const authSource = readFileSync(resolve(process.cwd(), 'js/auth.js'), 'utf8');
 
-        expect(authSource).toContain("import { executeEmailPasswordSignup } from './signup-flow.js?v=4';");
+        expect(authSource).toContain("import { executeEmailPasswordSignup } from './signup-flow.js?v=5';");
         expect(authSource).toContain("import { redeemAdminInviteAcceptance } from './admin-invite.js?v=5';");
         expect(authSource).toContain("from './db.js?v=58';");
     });
@@ -24,13 +24,13 @@ describe('admin invite signup cache busting', () => {
 
     it('bumps auth module consumers after signup flow changes', () => {
         const authConsumers = {
-            'login.html': 'auth.js?v=29',
-            'accept-invite.html': 'auth.js?v=29',
-            'edit-team.html': 'auth.js?v=29',
-            'js/admin.js': 'auth.js?v=29',
-            'js/live-game.js': 'auth.js?v=29',
-            'js/live-tracker.js': 'auth.js?v=29',
-            'js/track-basketball.js': 'auth.js?v=29'
+            'login.html': 'auth.js?v=30',
+            'accept-invite.html': 'auth.js?v=30',
+            'edit-team.html': 'auth.js?v=30',
+            'js/admin.js': 'auth.js?v=30',
+            'js/live-game.js': 'auth.js?v=30',
+            'js/live-tracker.js': 'auth.js?v=30',
+            'js/track-basketball.js': 'auth.js?v=30'
         };
 
         for (const [relativePath, expectedVersion] of Object.entries(authConsumers)) {
@@ -44,7 +44,7 @@ describe('admin invite signup cache busting', () => {
         const logoutImportMatches = utilsSource.match(/const \{ logout \} = await import\('\.\/auth\.js\?v=22'\);/g) || [];
 
         expect(logoutImportMatches).toHaveLength(1);
-        expect(utilsSource).not.toContain("const { logout } = await import('./auth.js?v=29');");
-        expect(utilsSource).not.toContain("const { logout } = await import('./auth.js?v=29');");
+        expect(utilsSource).not.toContain("const { logout } = await import('./auth.js?v=30');");
+        expect(utilsSource).not.toContain("const { logout } = await import('./auth.js?v=30');");
     });
 });

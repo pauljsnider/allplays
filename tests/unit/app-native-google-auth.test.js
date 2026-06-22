@@ -171,7 +171,7 @@ function createMemoryStorage() {
     };
 }
 
-function mockFirebaseAuthRest() {
+function mockFirebaseAuthRest({ isNewUser = false } = {}) {
     const fetchMock = vi.fn(async (url) => {
         const endpoint = String(url);
         if (endpoint.includes('accounts:signInWithIdp')) {
@@ -185,7 +185,7 @@ function mockFirebaseAuthRest() {
                     idToken: 'firebase-id-token',
                     refreshToken: 'firebase-refresh-token',
                     expiresIn: '3600',
-                    isNewUser: false
+                    isNewUser
                 })
             };
         }
@@ -298,5 +298,25 @@ describe('React app native Google auth', () => {
             skipNativeAuth: true
         });
         expect(firebaseMocks.signInWithCredential).not.toHaveBeenCalled();
+    });
+
+    it('passes the native REST ID token when validating a new Google account activation code', async () => {
+        mockFirebaseAuthRest({ isNewUser: true });
+        dbMocks.validateAccessCode.mockResolvedValue({
+            valid: true,
+            codeId: 'native-code',
+            type: 'standard',
+            data: { code: 'NATIVE123' }
+        });
+        dbMocks.markAccessCodeAsUsed.mockResolvedValue(undefined);
+        dbMocks.updateUserProfile.mockResolvedValue(undefined);
+        const { signInWithGoogleAccount } = await loadAuthService();
+
+        await signInWithGoogleAccount('native123');
+
+        expect(dbMocks.validateAccessCode).toHaveBeenCalledWith('NATIVE123', {
+            nativeAuthToken: 'firebase-id-token'
+        });
+        expect(dbMocks.markAccessCodeAsUsed).toHaveBeenCalledWith('native-code', 'native-google-user');
     });
 });
