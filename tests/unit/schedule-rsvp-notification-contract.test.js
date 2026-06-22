@@ -15,6 +15,24 @@ function getBuildPreEventReminderPayload() {
     );
 }
 
+function getSendCreatedScheduleEventNotification({ sendCategoryNotification }) {
+    const start = functionsSource.indexOf('async function sendCreatedScheduleEventNotification({ teamId, gameId, game })');
+    const end = functionsSource.indexOf('\nasync function sendScheduleImportBatchNotifications', start);
+    const slice = functionsSource.slice(start, end);
+    return new Function(
+        'sendCategoryNotification',
+        'getEventTitle',
+        'coerceDate',
+        'formatScheduleUpdateDate',
+        `${slice}; return sendCreatedScheduleEventNotification;`
+    )(
+        sendCategoryNotification,
+        (event) => event.title || event.name || 'Untitled event',
+        (value) => value ? new Date(value) : null,
+        () => 'Mon, Jun 22 at 6:00 PM'
+    );
+}
+
 describe('schedule and RSVP notification contract', () => {
     it('sends created-event notifications unless the event is draft or part of a large import batch', () => {
         expect(functionsSource).toContain('async function sendCreatedScheduleEventNotification({ teamId, gameId, game })');
@@ -37,6 +55,58 @@ describe('schedule and RSVP notification contract', () => {
         expect(functionsSource).toContain("eventIds.map((eventId) => markNotificationDedupSent(teamId, 'schedule', eventId))");
         expect(functionsSource).toContain('exports.notifyScheduleImportBatchCompleted = notifyScheduleImportBatchCompleted;');
         expect(functionsSource).toContain('exports._internal.notifyScheduleImportBatchCompleted = notifyScheduleImportBatchCompleted;');
+    });
+
+    it('sends recurring practice creation through the standard practice notification path', async () => {
+        const sentPayloads = [];
+        const sendCreatedScheduleEventNotification = getSendCreatedScheduleEventNotification({
+            sendCategoryNotification: async (payload) => {
+                sentPayloads.push(payload);
+                return { successCount: 1 };
+            }
+        });
+
+        await expect(sendCreatedScheduleEventNotification({
+            teamId: 'team-1',
+            gameId: 'practice-series-1',
+            game: {
+                type: 'practice',
+                title: 'Skills night',
+                date: '2026-06-22T23:00:00.000Z',
+                recurrence: { frequency: 'weekly' },
+                isSeriesMaster: true,
+                createdBy: 'coach-1'
+            }
+        })).resolves.toEqual({ successCount: 1 });
+
+        expect(sentPayloads).toEqual([{
+            teamId: 'team-1',
+            gameId: 'practice-series-1',
+            category: 'practice',
+            title: 'New practice: Skills night',
+            body: 'Mon, Jun 22 at 6:00 PM',
+            actorUid: 'coach-1'
+        }]);
+    });
+
+    it('suppresses imported events before sending created-event notifications', async () => {
+        const sentPayloads = [];
+        const sendCreatedScheduleEventNotification = getSendCreatedScheduleEventNotification({
+            sendCategoryNotification: async (payload) => {
+                sentPayloads.push(payload);
+                return { successCount: 1 };
+            }
+        });
+
+        await expect(sendCreatedScheduleEventNotification({
+            teamId: 'team-1',
+            gameId: 'imported-1',
+            game: {
+                title: 'Imported event',
+                source: 'csv_import'
+            }
+        })).resolves.toBeNull();
+        expect(sentPayloads).toEqual([]);
     });
 
     it('dispatches scheduled reminders to schedule push, public RSVP email, and RSVP push targets', () => {

@@ -26,6 +26,7 @@ const dbMocks = vi.hoisted(() => ({
     getTeam: vi.fn(),
     getTeamMediaFolders: vi.fn(),
     getTeamMediaItems: vi.fn(),
+    getTeamMediaItemsPage: vi.fn(),
     canAccessTeamChat: vi.fn(() => true),
     listCertificatesForPlayer: vi.fn(),
     listFamilyShareTokens: vi.fn(),
@@ -1014,14 +1015,18 @@ describe('React app parent tools service', () => {
             { id: 'folder-3', name: 'Highlights', visibility: 'team', order: 4, itemCount: 2 },
             { id: 'folder-private', name: 'Private', visibility: 'private', order: 1, itemCount: 9 }
         ]);
-        dbMocks.getTeamMediaItems.mockImplementation(async (teamId, folderId) => (folderId === 'folder-1' ? [
-            { id: 'bad', title: 'Bad', type: 'photo', url: 'javascript:alert(1)', order: 1 },
-            { id: 'photo-1', title: 'Tipoff', type: 'photo', url: 'https://img.example.test/photo.jpg', order: 0 }
-        ] : folderId === 'folder-2' ? [
-            { id: 'video-1', title: 'Replay', type: 'video_link', url: 'https://video.example.test/replay', order: 0 }
-        ] : folderId === 'folder-3' ? [
-            { id: 'highlight-1', title: 'Highlight', type: 'photo', url: 'https://img.example.test/highlight.jpg', order: 0 }
-        ] : []));
+        dbMocks.getTeamMediaItemsPage.mockImplementation(async (teamId, folderId, options = {}) => ({
+            items: folderId === 'folder-1' ? [
+                { id: 'bad', title: 'Bad', type: 'photo', url: 'javascript:alert(1)', order: 1 },
+                { id: 'photo-1', title: 'Tipoff', type: 'photo', url: 'https://img.example.test/photo.jpg', order: 0 }
+            ] : folderId === 'folder-2' ? [
+                { id: 'video-1', title: 'Replay', type: 'video_link', url: 'https://video.example.test/replay', order: 0 }
+            ] : folderId === 'folder-3' ? [
+                { id: 'highlight-1', title: 'Highlight', type: 'photo', url: 'https://img.example.test/highlight.jpg', order: 0 }
+            ] : [],
+            hasMore: folderId === 'folder-1',
+            nextCursor: folderId === 'folder-1' ? { id: `cursor-${options.pageSize || 24}` } : null
+        }));
         dbMocks.uploadTeamMediaPhoto.mockResolvedValue('photo-2');
         dbMocks.uploadTeamMediaFile.mockResolvedValue('file-1');
         dbMocks.createTeamMediaLink.mockResolvedValue('link-1');
@@ -1035,8 +1040,9 @@ describe('React app parent tools service', () => {
             folders: [
                 {
                     id: 'folder-1',
-                    itemCount: 1,
+                    itemCount: 4,
                     itemsLoaded: true,
+                    itemsHasMore: true,
                     items: [{ id: 'photo-1', title: 'Tipoff', type: 'photo', url: 'https://img.example.test/photo.jpg' }]
                 },
                 {
@@ -1053,8 +1059,8 @@ describe('React app parent tools service', () => {
                 }
             ]
         });
-        expect(dbMocks.getTeamMediaItems).toHaveBeenCalledTimes(1);
-        expect(dbMocks.getTeamMediaItems).toHaveBeenCalledWith('team-1', 'folder-1');
+        expect(dbMocks.getTeamMediaItemsPage).toHaveBeenCalledTimes(1);
+        expect(dbMocks.getTeamMediaItemsPage).toHaveBeenCalledWith('team-1', 'folder-1', { pageSize: 24, cursor: null });
 
         await expect(loadTeamMediaForApp(user, 'team-1', { folderIds: ['folder-2'] })).resolves.toMatchObject({
             folders: [
@@ -1063,8 +1069,8 @@ describe('React app parent tools service', () => {
                 { id: 'folder-3', itemCount: 2, itemsLoaded: false, items: [] }
             ]
         });
-        expect(dbMocks.getTeamMediaItems).toHaveBeenCalledTimes(2);
-        expect(dbMocks.getTeamMediaItems).toHaveBeenLastCalledWith('team-1', 'folder-2');
+        expect(dbMocks.getTeamMediaItemsPage).toHaveBeenCalledTimes(2);
+        expect(dbMocks.getTeamMediaItemsPage).toHaveBeenLastCalledWith('team-1', 'folder-2', { pageSize: 24, cursor: null });
 
         await expect(createTeamMediaAlbumForApp('team-1', { name: '  Spring photos  ', visibility: 'private' })).resolves.toBe('folder-new');
         await uploadParentTeamMediaPhoto('team-1', 'folder-1', photoFile);
@@ -1072,9 +1078,76 @@ describe('React app parent tools service', () => {
         await addParentTeamMediaLink('team-1', 'folder-1', 'Replay', 'https://video.example.test/replay');
         expect(dbMocks.canAccessTeamChat).toHaveBeenCalledWith(expect.objectContaining({ uid: 'user-1' }), { id: 'team-1', name: 'Bears' });
         expect(dbMocks.createTeamMediaFolder).toHaveBeenCalledWith('team-1', { name: 'Spring photos', visibility: 'private' });
-        expect(dbMocks.uploadTeamMediaPhoto).toHaveBeenCalledWith('team-1', 'folder-1', photoFile);
-        expect(dbMocks.uploadTeamMediaFile).toHaveBeenCalledWith('team-1', 'folder-1', docFile);
+        expect(dbMocks.uploadTeamMediaPhoto).toHaveBeenCalledWith('team-1', 'folder-1', photoFile, { returnItem: true });
+        expect(dbMocks.uploadTeamMediaFile).toHaveBeenCalledWith('team-1', 'folder-1', docFile, { returnItem: true });
         expect(dbMocks.createTeamMediaLink).toHaveBeenCalledWith('team-1', 'folder-1', { title: 'Replay', url: 'https://video.example.test/replay' });
+    });
+
+    it('returns normalized team media upload items so the app can merge them without rereading the album', async () => {
+        const photoFile = new File(['photo'], 'photo.jpg', { type: 'image/jpeg' });
+        const docFile = new File(['doc'], 'packet.pdf', { type: 'application/pdf' });
+        dbMocks.uploadTeamMediaPhoto.mockResolvedValue({
+            id: 'photo-2',
+            title: 'photo.jpg',
+            type: 'photo',
+            downloadUrl: 'https://img.example.test/photo-2.jpg',
+            order: 4
+        });
+        dbMocks.uploadTeamMediaFile.mockResolvedValue({
+            id: 'file-1',
+            title: 'packet.pdf',
+            type: 'file',
+            downloadUrl: 'https://files.example.test/packet.pdf',
+            order: 5
+        });
+
+        await expect(uploadParentTeamMediaPhoto('team-1', 'folder-1', photoFile)).resolves.toMatchObject({
+            id: 'photo-2',
+            title: 'photo.jpg',
+            type: 'photo',
+            url: 'https://img.example.test/photo-2.jpg'
+        });
+        await expect(uploadParentTeamMediaFile('team-1', 'folder-1', docFile)).resolves.toMatchObject({
+            id: 'file-1',
+            title: 'packet.pdf',
+            type: 'file',
+            url: 'https://files.example.test/packet.pdf'
+        });
+        expect(dbMocks.getTeamMediaItems).not.toHaveBeenCalled();
+    });
+
+    it('passes team media pagination cursors through the app media model', async () => {
+        const cursor = { id: 'cursor-1' };
+        const nextCursor = { id: 'cursor-2' };
+        dbMocks.getTeam.mockResolvedValue({ id: 'team-1', name: 'Bears' });
+        dbMocks.getTeamMediaFolders.mockResolvedValue([
+            { id: 'folder-1', name: 'Game photos', visibility: 'team', order: 1, itemCount: 40 }
+        ]);
+        dbMocks.getTeamMediaItemsPage.mockResolvedValue({
+            items: [
+                { id: 'photo-25', title: 'Second page', type: 'photo', url: 'https://img.example.test/photo-25.jpg', order: 25 }
+            ],
+            hasMore: true,
+            nextCursor
+        });
+
+        await expect(loadTeamMediaForApp(user, 'team-1', {
+            folderIds: ['folder-1'],
+            pageSize: 1,
+            cursorsByFolderId: { 'folder-1': cursor }
+        })).resolves.toMatchObject({
+            folders: [
+                {
+                    id: 'folder-1',
+                    itemCount: 40,
+                    itemsLoaded: true,
+                    itemsHasMore: true,
+                    itemsNextCursor: nextCursor,
+                    items: [{ id: 'photo-25', title: 'Second page' }]
+                }
+            ]
+        });
+        expect(dbMocks.getTeamMediaItemsPage).toHaveBeenCalledWith('team-1', 'folder-1', { pageSize: 1, cursor });
     });
 
     it('initiates Stripe checkout for registration and returns URL', async () => {

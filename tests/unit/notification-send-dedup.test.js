@@ -273,6 +273,42 @@ describe('notification send dedup guard — sendCategoryNotification', () => {
         );
     });
 
+    it('keeps an allowed deduped send scoped to the logical event while preserving all device tokens', async () => {
+        const harness = buildSendCategoryNotificationHarness({
+            canSend: true,
+            targets: [
+                { uid: 'parent-1', deviceId: 'ios-1', token: 'token-1' },
+                { uid: 'parent-1', deviceId: 'web-1', token: 'token-2' }
+            ]
+        });
+
+        const result = await harness.fn({
+            teamId: 'team-1',
+            category: 'schedule',
+            gameId: 'game-1',
+            dedupKey: 'schedule-import:batch-1',
+            title: 'Schedule imported',
+            body: 'Two new events were added.'
+        });
+
+        expect(harness.checkAndSetNotificationDedup).toHaveBeenCalledWith(
+            'team-1',
+            'schedule',
+            'game-1',
+            'schedule-import:batch-1'
+        );
+        expect(harness.sendEachForMulticast).toHaveBeenCalledWith(expect.objectContaining({
+            tokens: ['token-1', 'token-2']
+        }));
+        expect(harness.writeNotificationInboxRecords).toHaveBeenCalledWith(expect.objectContaining({
+            targets: [
+                { uid: 'parent-1', deviceId: 'ios-1', token: 'token-1' },
+                { uid: 'parent-1', deviceId: 'web-1', token: 'token-2' }
+            ]
+        }));
+        expect(result).toMatchObject({ successCount: 2, failureCount: 0 });
+    });
+
     it('does not run the dedup guard for liveChat sends', async () => {
         const harness = buildSendCategoryNotificationHarness({ canSend: false });
 

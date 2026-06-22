@@ -590,6 +590,14 @@ async function mergeParentHomeSearchTeams(teamsById: Map<string, AppSearchTeam>,
       return;
     }
 
+    if (hasSearchSafeParentHomeTeamMetadata(team)) {
+      const searchTeam = buildParentHomeSearchTeam(team);
+      if (canUserDiscoverTeamInAppSearch(searchTeam, user)) {
+        teamsById.set(searchTeam.id, searchTeam);
+      }
+      return;
+    }
+
     fallbackTeams.push({ ...team, teamId });
   });
 
@@ -599,14 +607,14 @@ async function mergeParentHomeSearchTeams(teamsById: Map<string, AppSearchTeam>,
     fallbackTeams.map((team) => getDoc(doc(db, 'teams', team.teamId)))
   );
 
-  snapshots.forEach((snapshot: any, index) => {
-    if (snapshot.status !== 'fulfilled') return;
-    const teamDoc = snapshot.value;
-    if (!teamDoc?.exists?.()) return;
+  fallbackTeams.forEach((homeTeam, index) => {
+    const snapshot: any = snapshots[index];
+    const teamDoc = snapshot?.status === 'fulfilled' ? snapshot.value : null;
+    const [firestoreTeam] = teamDoc?.exists?.()
+      ? normalizeTeams([{ id: homeTeam.teamId, ...(typeof teamDoc.data === 'function' ? teamDoc.data() || {} : {}) }])
+      : [];
 
-    const homeTeam = fallbackTeams[index];
-    const [firestoreTeam] = normalizeTeams([{ id: homeTeam.teamId, ...(typeof teamDoc.data === 'function' ? teamDoc.data() || {} : {}) }]);
-    if (!firestoreTeam || !isTeamActive(firestoreTeam)) return;
+    if (firestoreTeam && !isTeamActive(firestoreTeam)) return;
 
     const searchTeam = buildParentHomeSearchTeam(homeTeam, firestoreTeam);
     if (canUserDiscoverTeamInAppSearch(searchTeam, user)) {
@@ -659,7 +667,7 @@ function buildParentHomeSearchTeam(homeTeam: any, baseTeam?: AppSearchTeam): App
     city: baseTeam?.city || '',
     state: baseTeam?.state || '',
     location: baseTeam?.location || cleanString(homeTeam?.location),
-    isPublic: baseTeam?.isPublic,
+    isPublic: resolveParentHomeTeamIsPublic(homeTeam, baseTeam?.isPublic),
     active: homeTeam?.active ?? baseTeam?.active,
     archived: homeTeam?.archived ?? baseTeam?.archived,
     status: cleanString(homeTeam?.status) || baseTeam?.status,
@@ -671,6 +679,23 @@ function buildParentHomeSearchTeam(homeTeam: any, baseTeam?: AppSearchTeam): App
     streamVolunteerEmails: baseTeam?.streamVolunteerEmails || [],
     teamPermissions: baseTeam?.teamPermissions || null
   };
+}
+
+function hasSearchSafeParentHomeTeamMetadata(team: any) {
+  return cleanString(team?.teamName || team?.name) !== ''
+    && isTeamActive(team)
+    && typeof resolveParentHomeTeamIsPublic(team) === 'boolean';
+}
+
+function resolveParentHomeTeamIsPublic(team: any, fallbackIsPublic?: boolean) {
+  if (typeof team?.isPublic === 'boolean') return team.isPublic;
+  if (typeof team?.public === 'boolean') return team.public;
+
+  const visibility = cleanString(team?.searchVisibility || team?.visibility).toLowerCase();
+  if (visibility === 'private') return false;
+  if (visibility === 'public') return true;
+
+  return fallbackIsPublic;
 }
 
 function normalizePublicTeamSearchResults(teams: any[]): AppSearchTeam[] {

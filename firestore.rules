@@ -877,43 +877,6 @@ service cloud.firestore {
       );
     }
 
-    function isOnlyAddingCurrentOfficialAuthorization() {
-      let previousUserIds = resource.data.get('officiatingAuthorizedUserIds', []);
-      let nextUserIds = request.resource.data.get('officiatingAuthorizedUserIds', []);
-      let previousEmails = resource.data.get('officiatingAuthorizedEmails', []);
-      let nextEmails = request.resource.data.get('officiatingAuthorizedEmails', []);
-      let callerEmail = request.auth.token.email != null ? request.auth.token.email.lower() : '';
-      return nextUserIds.hasAll(previousUserIds) &&
-             nextUserIds.hasOnly(previousUserIds + [request.auth.uid]) &&
-             request.auth.uid in nextUserIds &&
-             nextEmails.hasAll(previousEmails) &&
-             (
-               (callerEmail == '' && nextEmails.hasOnly(previousEmails)) ||
-               (callerEmail != '' &&
-                nextEmails.hasOnly(previousEmails + [callerEmail]) &&
-                callerEmail in nextEmails)
-             );
-    }
-
-    function canClaimOpenOfficiatingSlot(teamId) {
-      return isTeamOwnerOrAdmin(teamId) ||
-             isParentForTeam(teamId);
-    }
-
-    function isOpenOfficiatingSelfAssignmentUpdate(teamId) {
-      return canClaimOpenOfficiatingSlot(teamId) &&
-             resource.data.get('officiatingSelfAssignmentEnabled', false) == true &&
-             request.resource.data.get('officiatingSelfAssignmentEnabled', false) == true &&
-             request.resource.data.diff(resource.data).affectedKeys().hasOnly([
-               'officiatingSlots',
-               'officiatingCoverageStatus',
-               'officiatingUpdatedAt',
-               'officiatingAuthorizedUserIds',
-               'officiatingAuthorizedEmails'
-             ]) &&
-             isOnlyAddingCurrentOfficialAuthorization();
-    }
-
     function canAccessTeamChat(teamId) {
       let team = get(/databases/$(database)/documents/teams/$(teamId)).data;
 
@@ -1904,7 +1867,6 @@ service cloud.firestore {
                         (isOfficialForGame() && isOfficialGameUpdate()) ||
                         isScorekeepingGameUpdate(teamId, gameId) ||
                         isVideographyGameUpdate(teamId, gameId);
-        allow update: if isOpenOfficiatingSelfAssignmentUpdate(teamId);
 
         // Events subcollection
         match /events/{eventId} {
