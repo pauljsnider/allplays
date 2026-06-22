@@ -60,6 +60,129 @@ test('notifyGameCreated sends a schedule notification once and records audit out
     }
 });
 
+test('notifyGameCreated sends one team summary for schedule import batches over three events', async () => {
+    const { moduleExports, env, cleanup } = loadNotificationInternals({
+        teamDoc: { ownerId: 'coach-1', name: 'Team Bears', adminEmails: [] },
+        parentUserIds: ['parent-1'],
+        indexedTargets: [
+            { uid: 'coach-1', deviceId: 'coach-device', token: 'coach-token', categories: { schedule: true } },
+            { uid: 'parent-1', deviceId: 'parent-device', token: 'parent-token', categories: { schedule: true } }
+        ]
+    });
+
+    try {
+        const importBatchId = 'schedule-import-1';
+        const importedEvents = [
+            { id: 'import-game-1', type: 'game', title: 'Game at Lions' },
+            { id: 'import-practice-1', type: 'practice', title: 'Tuesday practice' },
+            { id: 'import-game-2', type: 'game', title: 'Game vs Tigers' },
+            { id: 'import-practice-2', type: 'practice', title: 'Thursday practice' }
+        ];
+        let finalResult = null;
+
+        for (const [index, event] of importedEvents.entries()) {
+            const ref = env.firestoreState.doc(`teams/team-1/games/${event.id}`);
+            const snapshot = makeSnapshot(ref, {
+                title: event.title,
+                type: event.type,
+                date: `2026-06-2${index}T16:00:00.000Z`,
+                createdBy: 'coach-1',
+                importBatch: {
+                    batchId: importBatchId,
+                    totalCount: importedEvents.length,
+                    rowNumber: index + 1,
+                    importedBy: 'coach-1'
+                }
+            });
+            const context = { params: { teamId: 'team-1', gameId: event.id } };
+            const result = await moduleExports.notifyGameCreated(snapshot, context);
+
+            if (index < importedEvents.length - 1) {
+                assert.equal(result, null);
+            } else {
+                finalResult = result;
+            }
+        }
+
+        assert.deepEqual(finalResult, {
+            title: 'Schedule import complete',
+            body: 'Imported 4 schedule events for Team Bears (2 games, 2 practices).'
+        });
+        assert.equal(env.messagingCalls.length, 1);
+        assert.deepEqual(env.messagingCalls[0].tokens, ['parent-token']);
+        assert.equal(env.messagingCalls[0].title, 'Schedule import complete');
+        assert.equal(env.messagingCalls[0].body, 'Imported 4 schedule events for Team Bears (2 games, 2 practices).');
+        assert.equal(env.messagingCalls[0].data.category, 'schedule');
+        assert.equal(env.messagingCalls[0].data.appRoute, '/schedule?teamId=team-1');
+        assert.equal(env.auditWrites.length, 1);
+        assert.equal(env.auditWrites[0].value.body, 'Imported 4 schedule events for Team Bears (2 games, 2 practices).');
+
+        const scheduleDedupWrites = env.dedupWrites.filter((write) => (
+            write.path.startsWith('teams/team-1/notificationSendLog/')
+            && write.value?.category === 'schedule'
+        ));
+        assert.equal(scheduleDedupWrites.length, 5);
+        assert.equal(scheduleDedupWrites.some((write) => write.value.dedupKey === `import-batch:${importBatchId}`), true);
+        assert.deepEqual(
+            scheduleDedupWrites
+                .filter((write) => !write.value.dedupKey)
+                .map((write) => write.value.gameId)
+                .sort(),
+            importedEvents.map((event) => event.id).sort()
+        );
+    } finally {
+        cleanup();
+    }
+});
+
+test('notifyGameUpdated does not double-push an imported event after its batch summary', async () => {
+    const { moduleExports, env, cleanup } = loadNotificationInternals({
+        teamDoc: { ownerId: 'coach-1', name: 'Team Bears', adminEmails: [] },
+        parentUserIds: ['parent-1'],
+        indexedTargets: [
+            { uid: 'parent-1', deviceId: 'parent-device', token: 'parent-token', categories: { schedule: true } }
+        ]
+    });
+
+    try {
+        const importBatchId = 'schedule-import-2';
+        for (let index = 0; index < 4; index += 1) {
+            const gameId = `imported-event-${index + 1}`;
+            const ref = env.firestoreState.doc(`teams/team-1/games/${gameId}`);
+            const snapshot = makeSnapshot(ref, {
+                title: `Imported event ${index + 1}`,
+                type: 'game',
+                date: `2026-07-0${index + 1}T18:00:00.000Z`,
+                createdBy: 'coach-1',
+                importBatch: {
+                    batchId: importBatchId,
+                    totalCount: 4,
+                    rowNumber: index + 1,
+                    importedBy: 'coach-1'
+                }
+            });
+            await moduleExports.notifyGameCreated(snapshot, { params: { teamId: 'team-1', gameId } });
+        }
+
+        const updateRef = env.firestoreState.doc('teams/team-1/games/imported-event-1');
+        const updateResult = await moduleExports.notifyGameUpdated(
+            makeChange(
+                updateRef,
+                { title: 'Imported event 1', date: '2026-07-01T18:00:00.000Z', location: 'Field 1' },
+                { title: 'Imported event 1', date: '2026-07-01T19:00:00.000Z', location: 'Field 1', updatedBy: 'coach-1' }
+            ),
+            { params: { teamId: 'team-1', gameId: 'imported-event-1' } }
+        );
+
+        assert.equal(updateResult, null);
+        assert.equal(env.messagingCalls.length, 1);
+        assert.equal(env.messagingCalls[0].title, 'Schedule import complete');
+        assert.equal(env.auditWrites.length, 1);
+    } finally {
+        cleanup();
+    }
+});
+
 test('notifyGameCreated respects practice preferences and skips sends when the category is off', async () => {
     const { moduleExports, env, cleanup } = loadNotificationInternals({
         teamDoc: { ownerId: 'coach-1', adminEmails: [] },
