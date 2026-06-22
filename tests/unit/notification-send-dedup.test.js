@@ -237,6 +237,19 @@ describe('notification send dedup guard — checkAndSetNotificationDedup', () =>
 
         expect(first.mockFirestore.doc.mock.calls[0][0]).not.toBe(second.mockFirestore.doc.mock.calls[0][0]);
     });
+
+    it('uses a different Firestore dedup document for different notification categories', async () => {
+        const now = Date.now();
+        const first = createDedupHarness({ nowMs: now });
+        const second = createDedupHarness({ nowMs: now });
+
+        await first.fn('team-1', 'schedule', 'game-1');
+        await second.fn('team-1', 'practice', 'game-1');
+
+        expect(first.mockFirestore.doc.mock.calls[0][0]).not.toBe(second.mockFirestore.doc.mock.calls[0][0]);
+        expect([...first.store.values()][0]).toMatchObject({ category: 'schedule', gameId: 'game-1' });
+        expect([...second.store.values()][0]).toMatchObject({ category: 'practice', gameId: 'game-1' });
+    });
 });
 
 describe('notification send dedup guard — sendCategoryNotification', () => {
