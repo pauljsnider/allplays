@@ -80,6 +80,28 @@ describe('fee notification contract', () => {
         });
     });
 
+    it('builds a combined assignment summary when one parent owes multiple distinct fees', () => {
+        const { buildCombinedFeeAssignmentNotificationPayload } = getFeeAssignmentNotificationHelpers();
+
+        expect(buildCombinedFeeAssignmentNotificationPayload([
+            {
+                childName: 'Avery',
+                feeTitle: 'Spring dues',
+                amountCents: 2500,
+                dueDate: '2026-07-01T12:00:00.000Z'
+            },
+            {
+                childName: 'Blake',
+                feeTitle: 'Tournament hotel',
+                amountCents: 4000,
+                dueDate: '2026-07-15T12:00:00.000Z'
+            }
+        ])).toEqual({
+            title: 'New fees assigned: 2 team fees ($65.00 total)',
+            body: '$65.00 has been assigned for Avery and Blake, due Jul 1, 2026 and Jul 15, 2026.'
+        });
+    });
+
     it('resolves app-created child fee recipients and collapses each batch to one payer push', () => {
         expect(functionsSource).toContain('async function resolveFeeAssignmentPayerUserIds(teamId, recipient = {})');
         expect(functionsSource).toContain('playerId: playerId || recipient.playerId || recipient.childId');
