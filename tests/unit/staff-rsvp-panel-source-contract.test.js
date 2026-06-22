@@ -2,9 +2,9 @@ import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
 
 const detailSource = readFileSync(new URL('../../apps/app/src/pages/ScheduleEventDetail.tsx', import.meta.url), 'utf8');
-const playerRowSource = readFileSync(new URL('../../apps/app/src/components/schedule/StaffRsvpPlayerRow.tsx', import.meta.url), 'utf8');
 const breakdownPanelSource = readFileSync(new URL('../../apps/app/src/components/schedule/StaffRsvpBreakdownPanel.tsx', import.meta.url), 'utf8');
 const reminderPanelSource = readFileSync(new URL('../../apps/app/src/components/schedule/StaffRsvpReminderPanel.tsx', import.meta.url), 'utf8');
+const playerRowSource = readFileSync(new URL('../../apps/app/src/components/schedule/StaffRsvpPlayerRow.tsx', import.meta.url), 'utf8');
 
 describe('staff RSVP panel decomposition contract', () => {
     it('keeps the availability section wired through named staff RSVP panels', () => {
