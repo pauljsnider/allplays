@@ -1,6 +1,15 @@
 import { describe, expect, it } from 'vitest';
 
-import { mapChatConversationRecord, mapFirestoreDocument } from '../../apps/app/src/lib/firestore/mappers.ts';
+import {
+    mapChatConversationRecord,
+    mapFirestoreDocument,
+    mapGameReportAggregatedStatsRecord,
+    mapGameReportEventRecords,
+    mapGameReportGameRecord,
+    mapGameReportPlayerRecords,
+    mapGameReportTeamRecord,
+    mapGameReportTeamStatsRecord
+} from '../../apps/app/src/lib/firestore/mappers.ts';
 import type { FirestoreDocument } from '../../apps/app/src/lib/firestore/types.ts';
 
 describe('firestore mappers', () => {
@@ -67,5 +76,107 @@ describe('firestore mappers', () => {
             updatedAt: null,
             lastMessageAt: null
         });
+    });
+
+    it('normalizes partial and malformed game report payloads at the Firestore boundary', () => {
+        expect(mapGameReportTeamRecord({
+            id: ' ',
+            name: '  Hawks  ',
+            sport: ' basketball '
+        }, 'team-1')).toMatchObject({
+            id: 'team-1',
+            name: 'Hawks',
+            sport: 'basketball'
+        });
+
+        expect(mapGameReportPlayerRecords([
+            { id: ' p1 ', name: ' Ava ', number: ' 23 ', photoUrl: ' https://example.test/ava.png ' },
+            { id: '', name: 'Missing id' },
+            null
+        ])).toEqual([{
+            id: 'p1',
+            name: 'Ava',
+            number: '23',
+            photoUrl: 'https://example.test/ava.png'
+        }]);
+
+        expect(mapGameReportGameRecord({
+            id: '',
+            summary: '  Tight finish  ',
+            statSheetPhotoUrl: ' https://example.test/sheet.png ',
+            opponentStats: {
+                opponent1: { name: '  Riley ', number: ' 4 ', pts: 12 },
+                malformed: null
+            }
+        }, 'game-1')).toMatchObject({
+            id: 'game-1',
+            summary: 'Tight finish',
+            statSheetPhotoUrl: 'https://example.test/sheet.png',
+            opponentStats: {
+                opponent1: { name: '  Riley ', number: ' 4 ', pts: 12 },
+                malformed: {}
+            }
+        });
+
+        expect(mapGameReportAggregatedStatsRecord('p1', {
+            stats: {
+                pts: 8,
+                note: 'starter',
+                active: true,
+                empty: null,
+                nested: { value: 1 },
+                invalidNumber: Number.NaN
+            },
+            timeMs: '1234',
+            didNotPlay: true,
+            participated: 'yes',
+            participationStatus: ' appeared ',
+            participationSource: ' standard-tracker '
+        })).toEqual({
+            id: 'p1',
+            stats: {
+                pts: 8,
+                note: 'starter',
+                active: true,
+                empty: null
+            },
+            timeMs: 1234,
+            didNotPlay: true,
+            participated: false,
+            participationStatus: 'appeared',
+            participationSource: 'standard-tracker'
+        });
+
+        expect(mapGameReportTeamStatsRecord({
+            pts: 44,
+            rebounds: '31',
+            verified: false,
+            nested: { value: 1 }
+        })).toEqual({
+            pts: 44,
+            rebounds: '31',
+            verified: false
+        });
+
+        expect(mapGameReportEventRecords([
+            { id: ' e1 ', message: ' Tipoff ', period: '', gameTime: ' 08:00 ', timestamp: 'bad date' },
+            { id: 'e2', text: ' Ava scored ', clock: ' 07:31 ', timestamp: { seconds: 1, nanoseconds: 500000000 } },
+            {}
+        ])).toEqual([
+            expect.objectContaining({
+                id: 'e1',
+                text: 'Tipoff',
+                period: 'Q1',
+                clock: '08:00',
+                timestamp: null
+            }),
+            expect.objectContaining({
+                id: 'e2',
+                text: 'Ava scored',
+                period: 'Q1',
+                clock: '07:31',
+                timestamp: new Date(1500)
+            })
+        ]);
     });
 });
