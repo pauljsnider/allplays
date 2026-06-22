@@ -6626,17 +6626,49 @@ async function listFeeAssignmentBatchRecipients({ teamId, batchId, recipientId, 
   return recipients;
 }
 
+function getFeeAssignmentRecipientPlayerKey(teamId, recipient = {}) {
+  const playerId = resolveFeeRecipientPlayerId(teamId, recipient);
+  return getFeeReminderPlayerKey({
+    ...recipient,
+    playerId: playerId || recipient.playerId || recipient.childId
+  }, teamId);
+}
+
+async function loadFeeAssignmentUserParentPlayerKeys(uid) {
+  const normalizedUid = String(uid || '').trim();
+  if (!normalizedUid) return new Set();
+  try {
+    const userSnap = await firestore.doc(`users/${normalizedUid}`).get();
+    const user = userSnap.exists ? (userSnap.data() || {}) : {};
+    return new Set(
+      (Array.isArray(user.parentPlayerKeys) ? user.parentPlayerKeys : [])
+        .map((key) => String(key || '').trim())
+        .filter(Boolean)
+    );
+  } catch (error) {
+    functions.logger.warn('Failed to read fee assignment payer parent keys; falling back to current recipient.', {
+      uid: normalizedUid,
+      error: error?.message || error
+    });
+    return new Set();
+  }
+}
+
 async function filterFeeAssignmentRecipientsForUser({ teamId, uid, recipients, fallbackRecipient }) {
   const normalizedUid = String(uid || '').trim();
   if (!normalizedUid) return fallbackRecipient ? [fallbackRecipient] : [];
-  const matchedRecipients = [];
-  for (const recipient of Array.isArray(recipients) ? recipients : []) {
-    const payerUserIds = await resolveFeeAssignmentPayerUserIds(teamId, recipient);
-    if (payerUserIds.includes(normalizedUid)) {
-      matchedRecipients.push(recipient);
+  const parentPlayerKeys = await loadFeeAssignmentUserParentPlayerKeys(normalizedUid);
+  if (parentPlayerKeys.size) {
+    const fallbackPlayerKey = getFeeAssignmentRecipientPlayerKey(teamId, fallbackRecipient || {});
+    if (!fallbackPlayerKey || parentPlayerKeys.has(fallbackPlayerKey)) {
+      const matchedRecipients = (Array.isArray(recipients) ? recipients : [])
+        .filter((recipient) => parentPlayerKeys.has(getFeeAssignmentRecipientPlayerKey(teamId, recipient)));
+      if (matchedRecipients.length) {
+        return matchedRecipients;
+      }
     }
   }
-  return matchedRecipients.length ? matchedRecipients : (fallbackRecipient ? [fallbackRecipient] : []);
+  return fallbackRecipient ? [fallbackRecipient] : [];
 }
 
 function combineDirectNotificationResults(results = []) {

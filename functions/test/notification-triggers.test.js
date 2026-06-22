@@ -587,6 +587,8 @@ test('notifyFeeAssigned sends one combined batch assignment push when a parent h
         assert.deepEqual(env.messagingCalls[0].tokens, ['parent-token']);
         assert.equal(env.messagingCalls[0].title, 'New fees assigned: Spring dues ($50.00 total)');
         assert.equal(env.messagingCalls[0].body, '$50.00 has been assigned for Avery and Blake, due Jul 1, 2026.');
+        assert.equal(env.counts.parentQueries, 2);
+        assert.equal(env.counts.userRecordGets, 1);
     } finally {
         cleanup();
     }
