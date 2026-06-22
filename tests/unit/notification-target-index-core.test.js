@@ -121,4 +121,22 @@ describe('notification target index core helpers', () => {
         expect(targetResolverSource).toContain('getLegacyTargetsForCategory(teamId, category, missingUsers, actorUid, audienceContext)');
         expect(functionsSource).toContain('buildTeamNotificationTargetRef(target.teamId, target.uid, target.deviceId)');
     });
+
+    it('uses indexed recipient docs before fallback reads for explicit user-id target resolution', () => {
+        const userIdResolverSource = functionsSource.slice(
+            functionsSource.indexOf('async function getTargetsForCategoryUserIds'),
+            functionsSource.indexOf('function buildTargetsFromNotificationRecipientDoc')
+        );
+
+        expect(userIdResolverSource).toContain('Array.from(eligibleUsers.keys())');
+        expect(userIdResolverSource).toContain('buildTeamNotificationRecipientRef(teamId, uid)');
+        expect(userIdResolverSource).toContain('firestore.getAll(...recipientRefs)');
+        expect(userIdResolverSource).toContain('buildTargetsFromNotificationRecipientDoc(docSnap');
+        expect(userIdResolverSource).toContain('const indexedUserIds = new Set(indexedTargets.map((target) => target.uid));');
+        expect(userIdResolverSource).toContain('!indexedUserIds.has(user.uid)');
+        expect(userIdResolverSource).toContain('eligibleUsers.has(user.uid)');
+        expect(userIdResolverSource).toContain('? await getLegacyTargetsForCategory(teamId, category, missingUsers, actorUid, audienceContext)');
+        expect(userIdResolverSource).toContain('return [...indexedTargets, ...fallbackTargets].filter');
+        expect(userIdResolverSource).toContain('if (!recipientUserIds.has(uid)) return false;');
+    });
 });

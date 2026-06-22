@@ -3026,12 +3026,21 @@ function loadCachedEventHydrationDetails(teamId: string, gameId: string) {
   return loadCachedAppData(
     `event-details:${teamId}:${gameId}`,
     async () => {
-      const [rsvps, offers, claims] = await Promise.all([
-        loadRsvps(teamId, gameId).catch(() => []),
-        loadRideOffers(teamId, gameId).catch(() => []),
-        loadAssignmentClaims(teamId, gameId).catch(() => ({}))
+      const results = await Promise.allSettled([
+        loadRsvps(teamId, gameId),
+        loadRideOffers(teamId, gameId),
+        loadAssignmentClaims(teamId, gameId)
       ]);
-      return { rsvps, offers, claims };
+      const firstRejected = results.find((result) => result.status === 'rejected');
+      if (firstRejected && results.every((result) => result.status === 'rejected')) {
+        throw firstRejected.reason;
+      }
+      const [rsvpsResult, offersResult, claimsResult] = results;
+      return {
+        rsvps: rsvpsResult.status === 'fulfilled' ? rsvpsResult.value : [],
+        offers: offersResult.status === 'fulfilled' ? offersResult.value : [],
+        claims: claimsResult.status === 'fulfilled' ? claimsResult.value : {}
+      };
     },
     {
       ttlMs: scheduleHydrationCacheTtlMs,

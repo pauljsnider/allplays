@@ -1,5 +1,5 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from 'react';
-import { Link, Navigate, useNavigate, useParams } from 'react-router-dom';
+import { Link, Navigate, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import type { LucideIcon } from 'lucide-react';
 import {
   AlertCircle,
@@ -566,12 +566,17 @@ function AccessTool({ auth, onAccessChanged }: { auth: AuthState; onAccessChange
 }
 
 function FeesTool({ auth, refreshVersion }: { auth: AuthState; refreshVersion: number }) {
+  const [searchParams] = useSearchParams();
   const [fees, setFees] = useState<ParentFeeAppRecord[]>([]);
   const [filter, setFilter] = useState<'open' | 'all' | 'paid'>('open');
   const [payingFeeId, setPayingFeeId] = useState('');
   const [feeErrors, setFeeErrors] = useState<Record<string, string>>({});
   const { loading, error, run: runLoad } = useParentToolAsyncOperation();
   const payOperation = useAsyncOperation();
+  const requestedTeamId = String(searchParams.get('teamId') || '').trim();
+  const requestedBatchId = String(searchParams.get('batchId') || '').trim();
+  const requestedRecipientId = String(searchParams.get('recipientId') || '').trim();
+  const hasRequestedFee = Boolean(requestedTeamId || requestedBatchId || requestedRecipientId);
 
   const refresh = useCallback(async () => {
     return runLoad(
@@ -590,11 +595,31 @@ function FeesTool({ auth, refreshVersion }: { auth: AuthState; refreshVersion: n
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [auth.user?.uid, refreshVersion]);
 
-  const visibleFees = useMemo(() => fees.filter((fee) => {
-    if (filter === 'all') return true;
-    if (filter === 'paid') return fee.status === 'paid';
-    return !['paid', 'canceled', 'cancelled'].includes(String(fee.status || '').toLowerCase());
-  }), [fees, filter]);
+  useEffect(() => {
+    if (!hasRequestedFee) return;
+    setFilter((current) => (current === 'open' ? 'all' : current));
+  }, [hasRequestedFee, requestedBatchId, requestedRecipientId, requestedTeamId]);
+
+  const visibleFees = useMemo(() => {
+    const filteredFees = fees.filter((fee) => {
+      if (filter === 'all') return true;
+      if (filter === 'paid') return fee.status === 'paid';
+      return !['paid', 'canceled', 'cancelled'].includes(String(fee.status || '').toLowerCase());
+    });
+
+    if (!hasRequestedFee) {
+      return filteredFees;
+    }
+
+    const matchingFees = filteredFees.filter((fee) => {
+      if (requestedTeamId && String(fee.teamId || '') !== requestedTeamId) return false;
+      if (requestedBatchId && String(fee.batchId || '') !== requestedBatchId) return false;
+      if (requestedRecipientId && String(fee.recipientId || '') !== requestedRecipientId) return false;
+      return true;
+    });
+
+    return matchingFees.length ? matchingFees : filteredFees;
+  }, [fees, filter, hasRequestedFee, requestedBatchId, requestedRecipientId, requestedTeamId]);
 
   const openCount = fees.filter((fee) => !['paid', 'canceled', 'cancelled'].includes(String(fee.status || '').toLowerCase())).length;
   const balanceCents = visibleFees.reduce((sum, fee) => sum + Number(fee.balanceDueCents ?? fee.amountDueCents ?? 0), 0);

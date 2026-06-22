@@ -1,4 +1,16 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { readFileSync } from 'node:fs';
+
+const scheduleServiceSource = readFileSync(new URL('../../apps/app/src/lib/scheduleService.ts', import.meta.url), 'utf8');
+
+function getScheduleServiceSlice(startMarker, endMarker) {
+    const start = scheduleServiceSource.indexOf(startMarker);
+    const end = scheduleServiceSource.indexOf(endMarker, start);
+    if (start === -1 || end === -1) {
+        throw new Error(`Unable to extract schedule service slice: ${startMarker}`);
+    }
+    return scheduleServiceSource.slice(start, end);
+}
 
 const dbMocks = vi.hoisted(() => ({
     getAssignmentClaims: vi.fn(),
@@ -422,6 +434,27 @@ afterEach(() => {
 });
 
 describe('React app schedule service contract integration', () => {
+    it('routes parent schedule event detail reads through typed schedule mappers', () => {
+        const importSource = scheduleServiceSource.slice(0, scheduleServiceSource.indexOf('type StaffRsvpReminderContext'));
+        const nativeMapperSource = getScheduleServiceSlice('async function nativeGetScheduleEventDocument', 'const nativeDeleteFieldSentinel');
+        const readMapperSource = getScheduleServiceSlice('async function loadGames', 'async function loadPracticeSessions');
+        const targetedSource = getScheduleServiceSlice('async function buildTargetedTeamScheduleEvent', 'function resolveMyRsvpNotesByChildForGame');
+        const detailSource = getScheduleServiceSlice('export async function loadParentScheduleEventDetail', 'export async function loadParentPlayerSchedule');
+
+        expect(importSource).toContain("mapScheduleEventDocument, mapScheduleEventDocuments, mapScheduleEventRecord, mapScheduleEventRecords } from './firestore/mappers'");
+        expect(nativeMapperSource).toContain('return mapScheduleEventDocument(await nativeFirestoreRequest');
+        expect(nativeMapperSource).toContain('return mapScheduleEventDocuments((payload.documents || [])');
+        expect(readMapperSource).toContain('async () => mapScheduleEventRecords(await getGames(teamId, range))');
+        expect(readMapperSource).toContain('async () => mapScheduleEventRecord(await getGame(teamId, gameId), gameId)');
+        expect(readMapperSource).toContain('() => nativeGetScheduleEventDocument(`teams/${encodeURIComponent(teamId)}/games/${encodeURIComponent(gameId)}`)');
+        expect(targetedSource).toContain('loadGameById(teamId, eventId)');
+        expect(targetedSource).toContain('loadGameById(teamId, occurrenceMatch[1])');
+        expect(targetedSource).toContain('createScheduleEvent({');
+        expect(detailSource).toContain('let events = await buildTargetedTeamScheduleEvent(requestedTeamId, requestedEventId, teamChildren, user);');
+        expect(detailSource).toContain('const teamEvents = await buildTeamSchedule(requestedTeamId, teamChildren, user, { includePastGames: true });');
+        expect(detailSource).toContain('events = teamEvents.filter((event) => event.id === requestedEventId);');
+    });
+
     it('loads parent schedule data through existing site contracts without duplicating schemas', async () => {
         const result = await loadParentSchedule(user());
 

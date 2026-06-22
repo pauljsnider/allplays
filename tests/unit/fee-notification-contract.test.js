@@ -78,6 +78,7 @@ describe('fee notification contract', () => {
         expect(functionsSource).toContain('const staffFeeDestination = buildStaffFeeNotificationDestination({ teamId, batchId, recipientId });');
         expect(functionsSource).toContain('const paymentAmountCents = getFeePaymentAmountCents(before, after);');
         expect(functionsSource).toContain("title: wasPaymentRecorded ? `Payment received: ${title}` : `Fee paid: ${title}`");
+        expect(functionsSource).toContain("body: wasPaymentRecorded\n            ? `We received your ${paymentAmountDisplay} payment. Thank you!`\n            : 'Your fee balance is now marked as paid.',\n          teamId,\n          batchId,\n          recipientId");
         expect(functionsSource).toContain('const staffTargets = allFeeTargets.filter((target) => staffUserIds.has(target.uid) && target.uid !== payerUserId);');
         expect(functionsSource).toContain("title: `Fee paid: ${title}`");
         expect(functionsSource).toContain('appRouteOverride: staffFeeDestination.appRoute');

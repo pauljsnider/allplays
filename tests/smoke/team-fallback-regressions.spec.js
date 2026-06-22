@@ -307,8 +307,8 @@ export async function getTeam(teamId) {
 export async function getTeamMediaFolders() {
     throw permissionDenied();
 }
-export async function getTeamMediaItems() {
-    throw permissionDenied();
+export async function getTeamMediaItemsPage() {
+    return { items: [], hasMore: false, nextCursor: null };
 }
 export async function createTeamMediaFolder() {}
 export async function updateTeamMediaFolder() {}
@@ -332,8 +332,8 @@ export async function getTeam(teamId) {
 export async function getTeamMediaFolders() {
     return [{ id: 'folder-1', name: 'Highlights', order: 0 }];
 }
-export async function getTeamMediaItems() {
-    return [];
+export async function getTeamMediaItemsPage() {
+    return { items: [], hasMore: false, nextCursor: null };
 }
 export async function createTeamMediaFolder() {}
 export async function updateTeamMediaFolder() {}

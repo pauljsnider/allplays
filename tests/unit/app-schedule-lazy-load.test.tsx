@@ -16,6 +16,28 @@ describe('Schedule lazy-load guards', () => {
         expect(scheduleSource).not.toContain('const [loading, setLoading] = useState(true);');
     });
 
+    it('keeps Schedule reads on the shared async/cache/error path', () => {
+        const refreshStart = scheduleSource.indexOf('  const refreshSchedule = async');
+        const refreshEnd = scheduleSource.indexOf('\n\n  useEffect(() => {', refreshStart);
+        const refreshSource = scheduleSource.slice(refreshStart, refreshEnd);
+
+        expect(refreshSource).toContain("const timer = startScreenMountTimer('schedule', {");
+        expect(refreshSource).toContain('const cacheKey = getParentScheduleSummaryCacheKey(auth.user.uid);');
+        expect(refreshSource).toContain('const cached = getCachedAppData(cacheKey);');
+        expect(refreshSource).toContain('return runAsyncOperation(');
+        expect(refreshSource).toContain('() => loadCachedAppData(');
+        expect(refreshSource).toContain("() => loadParentSchedule(auth.user, { hydrateDetails: false, expandStaffPlayers: false })");
+        expect(refreshSource).toContain("getScheduleLoadErrorMessage(toAppServiceError(loadError, 'Unable to load schedule.'), hasExistingSchedule)");
+        expect(refreshSource).toContain('onSuccess: (result) => {');
+        expect(refreshSource).toContain('applyScheduleResult(result);');
+        expect(refreshSource).toContain('cacheHit: Boolean(cached) && !force');
+        expect(refreshSource).toContain('onError: (loadError) => {');
+        expect(refreshSource).toContain("const mappedError = toAppServiceError(loadError, 'Unable to load schedule.');");
+        expect(refreshSource).toContain('if (!hasExistingSchedule) {\n            applyScheduleResult({ children: [], events: [] });\n          }');
+        expect(refreshSource).not.toContain('setLoading(');
+        expect(refreshSource).not.toContain('finally {');
+    });
+
     it('loads staff AI and CSV helpers through on-demand dynamic imports', () => {
         expect(scheduleSource).toContain("scheduleCsvImportModulePromise = import('../lib/scheduleCsvImport')");
         expect(scheduleSource).toContain("scheduleAiImportModulePromise = import('../lib/scheduleAiImport')");
