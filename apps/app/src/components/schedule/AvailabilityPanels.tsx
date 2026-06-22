@@ -38,6 +38,11 @@ export function getAvailabilityNoteSaveState(rsvp: RsvpResponse, availabilityNot
   };
 }
 
+export function formatRsvpSummary(summary?: { going?: number; maybe?: number; notGoing?: number; notResponded?: number } | null) {
+  if (!summary) return 'No RSVPs yet';
+  return `${summary.going || 0} going · ${summary.maybe || 0} maybe · ${summary.notGoing || 0} out · ${summary.notResponded || 0} missing`;
+}
+
 export function QuickAvailabilityPanel({ event, rsvp, canSubmitRsvp, submitting, availabilityNote, onAvailabilityNoteChange, onSubmit }: {
   event: ParentScheduleEvent;
   rsvp: RsvpResponse;

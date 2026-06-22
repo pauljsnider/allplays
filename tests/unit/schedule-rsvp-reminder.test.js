@@ -120,12 +120,14 @@ describe('staff RSVP reminder service wiring', () => {
   it('gates reminders on backend-compatible managers instead of all team staff', () => {
     const serviceSource = readFileSync('apps/app/src/lib/scheduleService.ts', 'utf8');
     const detailSource = readFileSync('apps/app/src/pages/ScheduleEventDetail.tsx', 'utf8');
+    const reminderPanelSource = readFileSync('apps/app/src/components/schedule/StaffRsvpReminderPanel.tsx', 'utf8');
 
     expect(serviceSource).toContain('function isPublicRsvpReminderManager');
     expect(serviceSource).toContain('if (!event.isTeamRsvpReminderManager)');
     expect(serviceSource).toContain('const { players, rsvps } = await getRsvpBreakdownByPlayer(event.teamId, event.id);');
-    expect(detailSource).toContain('event.isTeamRsvpReminderManager');
-    expect(detailSource).not.toContain('event.isTeamStaff && event.isDbGame');
+    expect(detailSource).toContain('<StaffRsvpReminderPanel refreshToken={staffRsvp.refreshToken} />');
+    expect(reminderPanelSource).toContain('event.isTeamRsvpReminderManager');
+    expect(reminderPanelSource).not.toContain('event.isTeamStaff && event.isDbGame');
   });
 
   it('persists Cloud Function RSVP push metrics from app reminder sends', () => {

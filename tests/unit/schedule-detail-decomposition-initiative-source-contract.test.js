@@ -11,8 +11,12 @@ const rsvpHookSource = readSource('apps/app/src/hooks/schedule/useScheduleEventR
 const ridesHookSource = readSource('apps/app/src/hooks/schedule/useScheduleRideOffers.ts');
 const availabilityPanelsSource = readSource('apps/app/src/components/schedule/AvailabilityPanels.tsx');
 const staffRsvpRowSource = readSource('apps/app/src/components/schedule/StaffRsvpPlayerRow.tsx');
+const staffRsvpBreakdownPanelSource = readSource('apps/app/src/components/schedule/StaffRsvpBreakdownPanel.tsx');
+const staffRsvpReminderPanelSource = readSource('apps/app/src/components/schedule/StaffRsvpReminderPanel.tsx');
+const staffRsvpBreakdownHookSource = readSource('apps/app/src/hooks/schedule/useStaffRsvpBreakdown.ts');
 const summaryComponentTestSource = readSource('apps/app/src/components/schedule/ScheduleEventSummaryComponents.test.tsx');
 const rsvpHookTestSource = readSource('apps/app/src/hooks/schedule/useScheduleEventRsvp.test.tsx');
+const staffRsvpHookTestSource = readSource('apps/app/src/hooks/schedule/useStaffRsvpBreakdown.test.tsx');
 const ridesHookTestSource = readSource('apps/app/src/hooks/schedule/useScheduleRideOffers.test.tsx');
 
 describe('ScheduleEventDetail decomposition initiative source contract', () => {
@@ -70,7 +74,8 @@ describe('ScheduleEventDetail decomposition initiative source contract', () => {
             "import { DateTile } from '../components/schedule/DateTile';",
             "import { EventBrief } from '../components/schedule/EventBrief';",
             "import { EventSectionNav } from '../components/schedule/EventSectionNav';",
-            "import { StaffRsvpPlayerRow } from '../components/schedule/StaffRsvpPlayerRow';",
+            "import { StaffRsvpBreakdownPanel } from '../components/schedule/StaffRsvpBreakdownPanel';",
+            "import { StaffRsvpReminderPanel } from '../components/schedule/StaffRsvpReminderPanel';",
             'QuickAvailabilityPanel',
             'AvailabilityNotesList',
             'AttentionPanel'
@@ -82,6 +87,8 @@ describe('ScheduleEventDetail decomposition initiative source contract', () => {
             /^function DateTile\b/m,
             /^function EventBrief\b/m,
             /^function EventSectionNav\b/m,
+            /^function StaffRsvpBreakdownPanel\b/m,
+            /^function StaffRsvpReminderPanel\b/m,
             /^function QuickAvailabilityPanel\b/m,
             /^function AvailabilityNotesList\b/m,
             /^function AttentionPanel\b/m,
@@ -94,6 +101,27 @@ describe('ScheduleEventDetail decomposition initiative source contract', () => {
         expect(availabilityPanelsSource).toContain('export function AvailabilityNotesList');
         expect(availabilityPanelsSource).toContain('export function AttentionPanel');
         expect(staffRsvpRowSource).toContain('export function StaffRsvpPlayerRow');
+        expect(staffRsvpBreakdownPanelSource).toContain('export function StaffRsvpBreakdownPanel');
+        expect(staffRsvpReminderPanelSource).toContain('export function StaffRsvpReminderPanel');
         expect(summaryComponentTestSource).toContain("describe('Schedule event summary components'");
+    });
+
+    it('keeps staff RSVP admin workflow behind extracted panel and hook modules', () => {
+        expect(detailSource).toContain("import { useStaffRsvpBreakdown } from '../hooks/schedule/useStaffRsvpBreakdown';");
+        expect(detailSource).toContain('const staffRsvp = useStaffRsvpBreakdown();');
+        expect(detailSource).toContain('<StaffRsvpBreakdownPanel');
+        expect(detailSource).toContain('<StaffRsvpReminderPanel refreshToken={staffRsvp.refreshToken} />');
+        expect(detailSource).not.toMatch(/const\s+\[staffRsvpBreakdown\b/);
+        expect(detailSource).not.toMatch(/^function StaffRsvpBreakdownPanel\b/m);
+        expect(detailSource).not.toMatch(/^function StaffRsvpReminderPanel\b/m);
+
+        expect(staffRsvpBreakdownHookSource).toContain('export function useStaffRsvpBreakdown');
+        expect(staffRsvpBreakdownHookSource).toContain('useScheduleEventDetailContext()');
+        expect(staffRsvpBreakdownHookSource).toContain('loadStaffScheduleRsvpBreakdown');
+        expect(staffRsvpBreakdownHookSource).toContain('submitStaffScheduleRsvpOverride');
+        expect(staffRsvpHookTestSource).toContain("describe('useStaffRsvpBreakdown'");
+        expect(staffRsvpBreakdownPanelSource).toContain('StaffRsvpPlayerRow');
+        expect(staffRsvpReminderPanelSource).toContain('loadStaffRsvpReminderPreview');
+        expect(staffRsvpReminderPanelSource).toContain('sendStaffRsvpReminder');
     });
 });

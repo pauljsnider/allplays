@@ -14,11 +14,15 @@ describe('ScheduleEventDetail decomposition', () => {
 
         expect(source).toContain("from '../components/schedule/EventSectionNav'");
         expect(source).toContain("from '../components/schedule/AvailabilityPanels'");
+        expect(source).toContain("from '../components/schedule/StaffRsvpBreakdownPanel'");
+        expect(source).toContain("from '../components/schedule/StaffRsvpReminderPanel'");
         expect(source).toContain("from './schedule/ScheduleEventDetailContext'");
         expect(source).toContain("from '../hooks/schedule/useScheduleEventRsvp'");
+        expect(source).toContain("from '../hooks/schedule/useStaffRsvpBreakdown'");
         expect(source).toContain("from '../hooks/schedule/useScheduleRideOffers'");
         expect(source).toContain('<ScheduleEventDetailProvider value={{');
         expect(source).toContain('useScheduleEventRsvp({ availabilityNote })');
+        expect(source).toContain('useStaffRsvpBreakdown()');
         expect(source).toContain('useScheduleRideOffers()');
     });
 
@@ -27,6 +31,10 @@ describe('ScheduleEventDetail decomposition', () => {
             'apps/app/src/components/schedule/ScheduleEventSummaryComponents.test.tsx',
             'apps/app/src/hooks/schedule/useScheduleEventRsvp.ts',
             'apps/app/src/hooks/schedule/useScheduleEventRsvp.test.tsx',
+            'apps/app/src/hooks/schedule/useStaffRsvpBreakdown.ts',
+            'apps/app/src/hooks/schedule/useStaffRsvpBreakdown.test.tsx',
+            'apps/app/src/components/schedule/StaffRsvpBreakdownPanel.tsx',
+            'apps/app/src/components/schedule/StaffRsvpReminderPanel.tsx',
             'apps/app/src/hooks/schedule/useScheduleRideOffers.ts',
             'apps/app/src/hooks/schedule/useScheduleRideOffers.test.tsx'
         ].forEach((path) => {
