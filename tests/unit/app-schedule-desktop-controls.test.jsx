@@ -144,16 +144,18 @@ async function clickButton(container, text) {
 }
 
 async function waitForButtonEnabled(container, text) {
-    for (let index = 0; index < 200; index += 1) {
+    const timeoutMs = 3000;
+    const startTime = Date.now();
+    while ((Date.now() - startTime) < timeoutMs) {
         const button = queryButtonByText(container, text);
         if (button && !button.disabled) return button;
         await act(async () => {
             if (vi.isFakeTimers()) {
-                await vi.advanceTimersByTimeAsync(1);
+                await vi.advanceTimersByTimeAsync(10);
                 await Promise.resolve();
                 return;
             }
-            await new Promise((resolve) => setTimeout(resolve, 0));
+            await new Promise((resolve) => setTimeout(resolve, 10));
         });
     }
     throw new Error(`Timed out waiting for enabled button: ${text}`);

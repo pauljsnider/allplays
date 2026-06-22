@@ -11,6 +11,35 @@ function createSnapshot(data) {
 }
 
 describe('schedule import batch push notifications', () => {
+    it('does not send created-event pushes for draft schedule records', async () => {
+        const harness = loadNotificationInternals({
+            teamDoc: { ownerId: 'user-1' },
+            indexedTargets: [{
+                uid: 'user-1',
+                deviceId: 'device-1',
+                token: 'token-1',
+                categories: { schedule: true, practice: true }
+            }]
+        });
+
+        try {
+            const result = await harness.internals.notifyGameCreated(
+                createSnapshot({
+                    type: 'game',
+                    opponent: 'Falcons',
+                    status: 'draft',
+                    createdBy: 'coach-1'
+                }),
+                { params: { teamId: 'team-1', gameId: 'game-draft' } }
+            );
+
+            expect(result).toBeNull();
+            expect(harness.env.messagingCalls).toHaveLength(0);
+        } finally {
+            harness.cleanup();
+        }
+    });
+
     it('sends one schedule summary push for app imports larger than three events and suppresses follow-on updates', async () => {
         const harness = loadNotificationInternals({
             teamDoc: { ownerId: 'user-1' },
