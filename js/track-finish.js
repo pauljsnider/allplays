@@ -186,21 +186,23 @@ export async function commitStandardTrackerFinishData({
     }
 
     for (const { playerId, publicData, privateData } of aggregatedStatsWrites) {
-        const writeCount = privateData ? 2 : 1;
+        const writeCount = 2;
         if (statsBatchWriteCount > 0 && statsBatchWriteCount + writeCount > maxAggregatedStatsBatchWrites) {
             await commitStatsBatch();
         }
 
         ensureStatsBatch();
         const statsRef = doc(db, `teams/${teamId}/games/${gameId}/aggregatedStats`, playerId);
+        const privateStatsRef = doc(db, `teams/${teamId}/games/${gameId}/privatePlayerStats`, playerId);
         statsBatch.set(statsRef, publicData);
         statsBatchWriteCount += 1;
 
         if (privateData) {
-            const privateStatsRef = doc(db, `teams/${teamId}/games/${gameId}/privatePlayerStats`, playerId);
             statsBatch.set(privateStatsRef, privateData);
-            statsBatchWriteCount += 1;
+        } else {
+            statsBatch.delete(privateStatsRef);
         }
+        statsBatchWriteCount += 1;
     }
     await commitStatsBatch();
 
