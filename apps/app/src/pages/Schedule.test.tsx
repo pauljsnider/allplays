@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { cleanup, render, screen, waitFor } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { Schedule } from './Schedule';
@@ -65,6 +65,27 @@ function renderSchedule() {
       </Routes>
     </MemoryRouter>
   );
+}
+
+function buildScheduleEvent(index: number, overrides: Record<string, unknown> = {}) {
+  return {
+    eventKey: `team-1::event-${index}::player-1::2100-06-${String(index).padStart(2, '0')}T18:00:00.000Z::game`,
+    id: `event-${index}`,
+    teamId: 'team-1',
+    teamName: 'Bears',
+    type: 'game' as const,
+    date: new Date(`2100-06-${String(index).padStart(2, '0')}T18:00:00.000Z`),
+    location: 'Main Gym',
+    opponent: 'Rivals',
+    title: null,
+    childId: 'player-1',
+    childName: 'Pat',
+    isDbGame: true,
+    isCancelled: false,
+    myRsvp: 'not_responded' as const,
+    assignments: [],
+    ...overrides
+  };
 }
 
 function resolveAppSourcePath(relativePath: string) {
@@ -149,11 +170,61 @@ describe('Schedule', () => {
     expect(teamFilter.innerHTML).toContain('Bears');
     expect(playerFilter.innerHTML).toContain('Pat');
 
-    screen.getByRole('button', { name: 'Refresh schedule' }).click();
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh schedule' }));
 
     expect(await screen.findByText('Unable to refresh schedule while offline. Showing the last loaded schedule.')).toBeTruthy();
     expect(teamFilter.innerHTML).toContain('Bears');
     expect(playerFilter.innerHTML).toContain('Pat');
+  });
+
+  it('shows the remaining event count when only one more event is hidden', async () => {
+    scheduleServiceMocks.loadParentSchedule.mockResolvedValueOnce({
+      children: [
+        { playerId: 'player-1', playerName: 'Pat', teamId: 'team-1', teamName: 'Bears' }
+      ],
+      events: Array.from({ length: 21 }, (_, index) => buildScheduleEvent(index + 1))
+    });
+
+    renderSchedule();
+
+    expect(await screen.findByText('Showing 20 of 21 events')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Show 1 more' })).toBeTruthy();
+  });
+
+  it('requests older past-event pages for every linked team, even without events in the default window', async () => {
+    const seededPastEvent = buildScheduleEvent(1, {
+      eventKey: 'team-1::event-1::player-1::past::game',
+      date: new Date(Date.now() - (30 * 24 * 60 * 60 * 1000))
+    });
+    scheduleServiceMocks.loadParentSchedule
+      .mockResolvedValueOnce({
+        children: [
+          { playerId: 'player-1', playerName: 'Pat', teamId: 'team-1', teamName: 'Bears' },
+          { playerId: 'player-2', playerName: 'Sam', teamId: 'team-2', teamName: 'Wolves' }
+        ],
+        events: [seededPastEvent]
+      })
+      .mockResolvedValueOnce({
+        children: [],
+        events: []
+      });
+
+    renderSchedule();
+
+    expect(await screen.findByText('No events in this filter')).toBeTruthy();
+    fireEvent.change(screen.getAllByLabelText('Schedule filter')[0], { target: { value: 'past-all' } });
+
+    await waitFor(() => {
+      expect(scheduleServiceMocks.loadParentSchedule).toHaveBeenCalledTimes(2);
+    });
+
+    const secondCall = scheduleServiceMocks.loadParentSchedule.mock.calls[1];
+    const scheduleRangeByTeam = secondCall[1]?.scheduleRangeByTeam;
+    expect(scheduleRangeByTeam).toBeTruthy();
+    expect(Object.keys(scheduleRangeByTeam).sort()).toEqual(['team-1', 'team-2']);
+    expect(scheduleRangeByTeam['team-1'].endDate.getTime()).toBe(seededPastEvent.date.getTime() - 1);
+    expect(scheduleRangeByTeam['team-2'].endDate.getTime()).toBeGreaterThan(Date.now() - (410 * 24 * 60 * 60 * 1000));
+    expect(scheduleRangeByTeam['team-2'].endDate.getTime()).toBeLessThan(Date.now() - (390 * 24 * 60 * 60 * 1000));
   });
 
   it('shows permission-specific copy when a loaded schedule refresh is denied', async () => {
@@ -169,7 +240,7 @@ describe('Schedule', () => {
     renderSchedule();
 
     expect(await screen.findByText('No events in this filter')).toBeTruthy();
-    screen.getByRole('button', { name: 'Refresh schedule' }).click();
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh schedule' }));
 
     expect(await screen.findByText('Unable to refresh schedule because access was denied. Showing the last loaded schedule.')).toBeTruthy();
   });
@@ -179,5 +250,13 @@ describe('Schedule', () => {
 
     expect(source).toContain('aria-label="Close calendar events"');
     expect(source).toContain('>\n              Close\n            </button>');
+  });
+
+  it('keeps list pagination props in sync with the parent schedule view', () => {
+    const source = readFileSync(resolveAppSourcePath('src/pages/Schedule.tsx'), 'utf8');
+
+    expect(source).toContain('function ScheduleList({ events, visibleCount, pageSize, canShowMore, loadingMore, onShowMore }');
+    expect(source).toContain('function CompactScheduleList({ events, visibleCount, pageSize, canShowMore, loadingMore, onShowMore }');
+    expect(source).toContain("{loadingMore ? 'Loading more…' : `Show ${Math.min(pageSize, remainingCount || pageSize)} more`}");
   });
 });

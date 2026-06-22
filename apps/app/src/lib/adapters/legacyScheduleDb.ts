@@ -106,8 +106,10 @@ export async function getPracticeSessionByEvent(teamId: string, eventId: string)
     return await Promise.resolve(legacyGetPracticeSessionByEvent(teamId, eventId));
 }
 
-export async function getPracticeSessions(teamId: string) {
-    return await Promise.resolve(legacyGetPracticeSessions(teamId));
+export type PracticeSessionsQueryOptions = { startDate?: Date | null; endDate?: Date | null };
+
+export async function getPracticeSessions(teamId: string, options: PracticeSessionsQueryOptions = {}) {
+    return await Promise.resolve(legacyGetPracticeSessions(teamId, options));
 }
 
 export async function updatePracticeSession(teamId: string, sessionId: string, payload: Record<string, unknown>) {

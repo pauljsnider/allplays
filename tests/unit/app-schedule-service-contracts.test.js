@@ -432,7 +432,9 @@ describe('React app schedule service contract integration', () => {
         });
         expect(dbMocks.getGames).toHaveBeenCalledTimes(1);
         expect(dbMocks.getTrackedCalendarEventUids).not.toHaveBeenCalled();
-        expect(dbMocks.getPracticeSessions).toHaveBeenCalledWith('team-1');
+        expect(dbMocks.getPracticeSessions).toHaveBeenCalledWith('team-1', {
+            startDate: expect.any(Date)
+        });
         expect(utilsMocks.fetchAndParseCalendar).toHaveBeenCalledWith('mock://team-calendar');
         expect(dbMocks.getRsvpSummaries).toHaveBeenCalledWith('team-1', expect.arrayContaining(['game-1', 'practice-1', 'final-1']));
         expect(dbMocks.listRideOffersForEvent).toHaveBeenCalledWith('team-1', 'game-1', { fallbackGameIds: [] });
@@ -537,7 +539,7 @@ describe('React app schedule service contract integration', () => {
         expect(dbMocks.getGames).toHaveBeenCalledTimes(1);
         expect(dbMocks.getGames).toHaveBeenCalledWith('team-1', {});
         expect(dbMocks.getPracticeSessions).toHaveBeenCalledTimes(1);
-        expect(dbMocks.getPracticeSessions).toHaveBeenCalledWith('team-1');
+        expect(dbMocks.getPracticeSessions).toHaveBeenCalledWith('team-1', {});
         expect(result.children).toEqual([
             { teamId: 'team-1', teamName: 'Bears', playerId: 'player-1', playerName: 'Pat' },
             { teamId: 'team-1', teamName: 'Bears', playerId: 'player-2', playerName: 'Sam' }
