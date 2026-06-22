@@ -150,14 +150,7 @@ function getParentTeamLinks(user) {
 function hasSearchSafeParentTeamLinkMetadata(team) {
     return String(team?.teamName || team?.name || '').trim() !== ''
         && isTeamActive(team)
-        && (
-            typeof team?.isPublic === 'boolean'
-            || typeof team?.public === 'boolean'
-            || team?.fromAppAccess === true
-            || team?.appAccess === true
-            || String(team?.visibility || '').trim() !== ''
-            || String(team?.searchVisibility || '').trim() !== ''
-        );
+        && typeof resolveParentTeamLinkIsPublic(team) === 'boolean';
 }
 
 function buildParentTeamLinkSearchTeam(team) {
@@ -169,13 +162,24 @@ function buildParentTeamLinkSearchTeam(team) {
         city: String(team?.city || '').trim(),
         state: String(team?.state || '').trim(),
         location: String(team?.location || '').trim(),
-        isPublic: typeof team?.isPublic === 'boolean' ? team.isPublic : team?.public,
+        isPublic: resolveParentTeamLinkIsPublic(team),
         active: team?.active,
         archived: team?.archived,
         status: String(team?.status || '').trim(),
         photoUrl: team?.photoUrl || team?.teamPhotoUrl || team?.logoUrl || team?.imageUrl || '',
         fromAppAccess: true
     };
+}
+
+function resolveParentTeamLinkIsPublic(team) {
+    if (typeof team?.isPublic === 'boolean') return team.isPublic;
+    if (typeof team?.public === 'boolean') return team.public;
+
+    const visibility = String(team?.searchVisibility || team?.visibility || '').trim().toLowerCase();
+    if (visibility === 'private') return false;
+    if (visibility === 'public') return true;
+
+    return undefined;
 }
 
 function normalizeAccessibleTeams(teams) {

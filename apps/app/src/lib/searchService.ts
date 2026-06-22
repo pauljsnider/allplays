@@ -667,11 +667,7 @@ function buildParentHomeSearchTeam(homeTeam: any, baseTeam?: AppSearchTeam): App
     city: baseTeam?.city || '',
     state: baseTeam?.state || '',
     location: baseTeam?.location || cleanString(homeTeam?.location),
-    isPublic: typeof homeTeam?.isPublic === 'boolean'
-      ? homeTeam.isPublic
-      : typeof homeTeam?.public === 'boolean'
-        ? homeTeam.public
-        : baseTeam?.isPublic,
+    isPublic: resolveParentHomeTeamIsPublic(homeTeam, baseTeam?.isPublic),
     active: homeTeam?.active ?? baseTeam?.active,
     archived: homeTeam?.archived ?? baseTeam?.archived,
     status: cleanString(homeTeam?.status) || baseTeam?.status,
@@ -688,14 +684,18 @@ function buildParentHomeSearchTeam(homeTeam: any, baseTeam?: AppSearchTeam): App
 function hasSearchSafeParentHomeTeamMetadata(team: any) {
   return cleanString(team?.teamName || team?.name) !== ''
     && isTeamActive(team)
-    && (
-      typeof team?.isPublic === 'boolean'
-      || typeof team?.public === 'boolean'
-      || team?.fromAppAccess === true
-      || team?.appAccess === true
-      || cleanString(team?.visibility) !== ''
-      || cleanString(team?.searchVisibility) !== ''
-    );
+    && typeof resolveParentHomeTeamIsPublic(team) === 'boolean';
+}
+
+function resolveParentHomeTeamIsPublic(team: any, fallbackIsPublic?: boolean) {
+  if (typeof team?.isPublic === 'boolean') return team.isPublic;
+  if (typeof team?.public === 'boolean') return team.public;
+
+  const visibility = cleanString(team?.searchVisibility || team?.visibility).toLowerCase();
+  if (visibility === 'private') return false;
+  if (visibility === 'public') return true;
+
+  return fallbackIsPublic;
 }
 
 function normalizePublicTeamSearchResults(teams: any[]): AppSearchTeam[] {
