@@ -2,7 +2,7 @@ import { checkAuth } from './auth.js?v=32';
 import {
     getTeam,
     getTeamMediaFolders,
-    getTeamMediaItems,
+    getTeamMediaItemsPage,
     createTeamMediaFolder,
     updateTeamMediaFolder,
     deleteTeamMediaFolder,
@@ -15,8 +15,8 @@ import {
     moveTeamMediaItems,
     bulkDeleteTeamMediaItems,
     setTeamMediaAlbumCover,
-    updateTeamMediaItem // Add this new import
-} from './db.js?v=63';
+    updateTeamMediaItem
+} from './db.js?v=64';
 import {
     canContributeTeamMedia,
     canDeleteTeamMediaItem,
@@ -40,11 +40,14 @@ const state = {
     canContribute: false,
     folders: [],
     items: [],
+    itemPageState: new Map(),
     selectedFolderId: '',
     selectedMediaType: 'all',
     selectedIds: new Set(),
     actionInFlight: false
 };
+
+const TEAM_MEDIA_PAGE_SIZE = 24;
 
 const els = {
     title: document.getElementById('team-media-title'),
@@ -117,6 +120,56 @@ function getItemsForFolder(folderId) {
     return sortByMediaOrder(state.items
         .filter((item) => item.folderId === folderId)
         .filter((item) => isSafeTeamMediaUrl(getTeamMediaItemUrl(item))));
+}
+
+function getFolderPageState(folderId) {
+    return state.itemPageState.get(folderId) || { loaded: false, hasMore: false, nextCursor: null };
+}
+
+function getStoredMediaCount(folder = {}) {
+    const count = Number(folder.itemCount ?? folder.mediaCount ?? folder.totalItems);
+    return Number.isFinite(count) && count >= 0 ? count : null;
+}
+
+function getFolderItemCount(folder = {}) {
+    const loadedCount = getItemsForFolder(folder.id).length;
+    const storedCount = getStoredMediaCount(folder);
+    return storedCount === null ? loadedCount : Math.max(storedCount, loadedCount);
+}
+
+function mergeFolderPageItems(folderId, items = [], append = false) {
+    const existingItems = append ? state.items.filter((item) => item.folderId === folderId) : [];
+    const seen = new Set();
+    const mergedFolderItems = [...existingItems, ...items].filter((item) => {
+        const itemId = String(item?.id || '').trim();
+        if (!itemId || seen.has(itemId)) return false;
+        seen.add(itemId);
+        return true;
+    });
+    state.items = [
+        ...state.items.filter((item) => item.folderId !== folderId),
+        ...mergedFolderItems
+    ];
+}
+
+async function loadFolderItemsPage(folderId, { append = false } = {}) {
+    const cleanFolderId = String(folderId || '').trim();
+    if (!cleanFolderId) return;
+    const currentPageState = getFolderPageState(cleanFolderId);
+    if (append && !currentPageState.nextCursor) return;
+
+    const page = await getTeamMediaItemsPage(state.teamId, cleanFolderId, {
+        pageSize: TEAM_MEDIA_PAGE_SIZE,
+        cursor: append ? currentPageState.nextCursor : null
+    });
+    mergeFolderPageItems(cleanFolderId, Array.isArray(page.items) ? page.items : [], append);
+    state.itemPageState.set(cleanFolderId, {
+        loaded: true,
+        hasMore: page.hasMore === true,
+        nextCursor: page.nextCursor || page.lastDoc || null
+    });
+    state.selectedIds = new Set([...state.selectedIds].filter((id) => state.items.some((item) => item.id === id)));
+    render();
 }
 
 const MEDIA_TYPE_FILTERS = [
@@ -207,8 +260,8 @@ function renderAlbumCards() {
     }
 
     els.foldersList.innerHTML = state.folders.map((folder, folderIndex) => {
-        const items = getItemsForFolder(folder.id);
         const isSelected = getSelectedFolder()?.id === folder.id;
+        const itemCount = getFolderItemCount(folder);
         const folderControls = state.canManage ? `
             <div class="flex flex-wrap gap-2">
                 <button type="button" data-folder-move="up" data-folder-id="${escapeHtml(folder.id)}" ${folderIndex === 0 ? 'disabled' : ''} class="rounded-lg border px-3 py-1 text-xs font-semibold disabled:opacity-40">Up</button>
@@ -225,7 +278,7 @@ function renderAlbumCards() {
                             ${coverUrl ? `<img src="${escapeHtml(coverUrl)}" alt="${escapeHtml(folder.coverPhotoTitle || folder.name || 'Album cover')}" class="h-16 w-16 rounded-xl object-cover">` : ''}
                             <div>
                                 <h2 class="text-xl font-bold">${escapeHtml(folder.name || 'Untitled album')}</h2>
-                                <p class="mt-1 text-sm text-gray-500">${items.length} item${items.length === 1 ? '' : 's'}</p>
+                                <p class="mt-1 text-sm text-gray-500">${itemCount} item${itemCount === 1 ? '' : 's'}</p>
                             </div>
                         </div>
                         <span class="rounded-full ${folder.visibility === 'private' ? 'bg-amber-100 text-amber-800' : 'bg-green-100 text-green-800'} px-3 py-1 text-xs font-semibold">${escapeHtml(getVisibilityLabel(folder))}</span>
@@ -245,6 +298,8 @@ function renderAlbumDetail() {
     }
 
     const items = getItemsForFolder(folder.id);
+    const pageState = getFolderPageState(folder.id);
+    const folderItemCount = getFolderItemCount(folder);
     const counts = getMediaTypeCounts(items);
     const filteredItems = getFilteredItems(items);
     const selectedMediaTypeLabel = getSelectedMediaTypeLabel();
@@ -293,6 +348,10 @@ function renderAlbumDetail() {
                     </div>
                 </div>`;
         }).join('')}</div>`;
+    const loadMoreRow = pageState.hasMore ? `
+        <div class="flex justify-center">
+            <button type="button" data-load-more-media="${escapeHtml(folder.id)}" class="rounded-lg border border-indigo-200 px-4 py-2 text-sm font-semibold text-indigo-700 hover:bg-indigo-50">Load more</button>
+        </div>` : '';
 
     els.albumDetail.innerHTML = `
         <article class="mt-6 rounded-2xl border border-gray-200 bg-white shadow-sm">
@@ -300,12 +359,12 @@ function renderAlbumDetail() {
                 <div class="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
                     <div>
                         <h2 class="text-2xl font-bold">${escapeHtml(folder.name || 'Untitled album')}</h2>
-                        <p class="text-sm text-gray-500">${items.length} item${items.length === 1 ? '' : 's'} · ${escapeHtml(getVisibilityLabel(folder))}</p>
+                        <p class="text-sm text-gray-500">${items.length}${folderItemCount > items.length || pageState.hasMore ? ` of ${folderItemCount}` : ''} item${folderItemCount === 1 ? '' : 's'} · ${escapeHtml(getVisibilityLabel(folder))}</p>
                     </div>
                 </div>
                 <div class="mt-4 flex flex-wrap gap-2" aria-label="Media type filters">${filterTabs}</div>
             </header>
-            <div class="space-y-3 p-5">${itemRows}</div>
+            <div class="space-y-3 p-5">${itemRows}${loadMoreRow}</div>
         </article>`;
 }
 
@@ -340,14 +399,16 @@ export async function loadLibrary() {
         if (!state.canManage) {
             state.folders = state.folders.filter((folder) => canReadTeamMediaAlbum(folder, false));
         }
-        const itemSets = state.canManage
-            ? [await getTeamMediaItems(state.teamId)]
-            : await Promise.all(state.folders.map((folder) => getTeamMediaItems(state.teamId, folder.id)));
-        state.items = itemSets.flat();
         if (!state.folders.some((folder) => folder.id === state.selectedFolderId)) {
             state.selectedFolderId = state.folders[0]?.id || '';
         }
-        state.selectedIds = new Set([...state.selectedIds].filter((id) => state.items.some((item) => item.id === id)));
+        state.items = [];
+        state.itemPageState = new Map();
+        state.selectedIds.clear();
+        if (state.selectedFolderId) {
+            await loadFolderItemsPage(state.selectedFolderId);
+            return;
+        }
         render();
     } catch (error) {
         if (!isPermissionDenied(error)) {
@@ -356,6 +417,7 @@ export async function loadLibrary() {
         console.warn('Unable to load team media library; showing empty state:', error);
         state.folders = [];
         state.items = [];
+        state.itemPageState = new Map();
         state.selectedIds.clear();
         render();
         if (state.canManage) {
@@ -424,16 +486,22 @@ async function uploadSelectedFiles({ files, folderId, progressEl, validateFile, 
         }
     }
 
+    if (uploadedCount > 0) state.selectedFolderId = folderId;
     await loadLibrary();
     showAlert(`${uploadedCount} ${uploadedCount === 1 ? nounSingular : nounPlural} uploaded${failedCount ? `, ${failedCount} failed` : ''}.`, failedCount ? 'error' : 'success');
     return { uploadedCount, failedCount };
 }
 
-els.foldersList.addEventListener('click', (event) => {
+els.foldersList.addEventListener('click', async (event) => {
     const selectedButton = event.target.closest('[data-select-folder]');
     if (selectedButton) {
         state.selectedFolderId = selectedButton.dataset.selectFolder;
         state.selectedIds.clear();
+        if (!getFolderPageState(state.selectedFolderId).loaded) {
+            render();
+            await loadFolderItemsPage(state.selectedFolderId);
+            return;
+        }
         render();
         return;
     }
@@ -476,6 +544,12 @@ els.albumDetail.addEventListener('click', async (event) => {
         state.selectedMediaType = filterButton.dataset.mediaTypeFilter || 'all';
         state.selectedIds.clear();
         render();
+        return;
+    }
+
+    const loadMoreButton = event.target.closest('[data-load-more-media]');
+    if (loadMoreButton) {
+        await loadFolderItemsPage(loadMoreButton.dataset.loadMoreMedia, { append: true });
         return;
     }
 
