@@ -1,18 +1,20 @@
-import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 
 import { fixBundleVisualizerTooltip } from '../../apps/app/build/fixBundleVisualizerTooltip.js';
 
-const repoRoot = new URL('../../', import.meta.url);
-
-function readRepoFile(relativePath) {
-    return readFileSync(new URL(relativePath, repoRoot), 'utf8');
-}
+const brokenVisualizerHtml = `  y(() => {
+          const handleMouseOut = () => {
+              setShowTooltip(false);
+          };
+          document.addEventListener("mouseover", handleMouseOut);
+          return () => {
+              document.removeEventListener("mouseover", handleMouseOut);
+          };
+  }, []);`;
 
 describe('bundle visualizer tooltip patch', () => {
     it('replaces the document-level hover hide handler with a guarded version', () => {
-        const visualizerHtml = readRepoFile('apps/app/bundle-visualizer.html');
-        const patchedHtml = fixBundleVisualizerTooltip(visualizerHtml);
+        const patchedHtml = fixBundleVisualizerTooltip(brokenVisualizerHtml);
 
         expect(patchedHtml).not.toContain('const handleMouseOut = () => {');
         expect(patchedHtml).toContain('const handleMouseOut = (event) => {');
