@@ -581,6 +581,86 @@ describe('React app messages integration', () => {
         expect(container.textContent).toContain('Coach Jamie: Practice packet posted.');
     });
 
+    it('applies deferred preview updates incrementally without losing inbox ordering', async () => {
+        let onPreview;
+        chatMocks.loadChatInbox.mockImplementationOnce(async (_user, options = {}) => {
+            onPreview = options.onPreview;
+            return {
+                teams: [
+                    {
+                        id: 'team-1',
+                        name: 'Bears',
+                        sport: 'Basketball',
+                        role: 'Admin',
+                        canModerate: true,
+                        unreadCount: 0,
+                        lastMessage: null,
+                        preferredConversationId: null
+                    },
+                    {
+                        id: 'team-2',
+                        name: 'Thunder',
+                        sport: 'Soccer',
+                        role: 'Parent',
+                        canModerate: false,
+                        unreadCount: 1,
+                        lastMessage: null,
+                        preferredConversationId: null
+                    }
+                ]
+            };
+        });
+
+        const { container } = await renderMessages('/messages');
+
+        expect(Array.from(container.querySelectorAll('.message-row')).map((row) => row.textContent || '')).toEqual([
+            expect.stringContaining('Bears'),
+            expect.stringContaining('Thunder')
+        ]);
+        expect(container.textContent).toContain('No messages yet');
+
+        await act(async () => {
+            onPreview?.({
+                teamId: 'team-2',
+                lastMessage: chatMessage({
+                    id: 'last-2',
+                    text: 'Tournament schedule changed.',
+                    senderName: 'Morgan',
+                    createdAt: new Date('2026-05-21T15:00:00Z')
+                }),
+                preferredConversationId: null,
+                isMuted: false
+            });
+        });
+        await flush();
+
+        let rows = Array.from(container.querySelectorAll('.message-row')).map((row) => row.textContent || '');
+        expect(rows[0]).toContain('Thunder');
+        expect(rows[0]).toContain('Morgan: Tournament schedule changed.');
+        expect(rows[1]).toContain('Bears');
+        expect(rows[1]).toContain('No messages yet');
+
+        await act(async () => {
+            onPreview?.({
+                teamId: 'team-1',
+                lastMessage: chatMessage({
+                    id: 'last-1',
+                    text: 'Practice packet posted.',
+                    createdAt: new Date('2026-05-21T14:00:00Z')
+                }),
+                preferredConversationId: null,
+                isMuted: false
+            });
+        });
+        await flush();
+
+        rows = Array.from(container.querySelectorAll('.message-row')).map((row) => row.textContent || '');
+        expect(rows[0]).toContain('Thunder');
+        expect(rows[1]).toContain('Bears');
+        expect(container.textContent).toContain('Morgan: Tournament schedule changed.');
+        expect(container.textContent).toContain('Coach Jamie: Practice packet posted.');
+    });
+
     it('refreshes the inbox and keeps the latest preview copy visible', async () => {
         chatMocks.loadChatInbox
             .mockResolvedValueOnce({
