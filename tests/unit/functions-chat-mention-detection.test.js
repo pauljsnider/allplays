@@ -417,6 +417,33 @@ describe('buildTeamChatNotificationPlan', () => {
         expect(plan.liveChatTargets.some((target) => target.uid === 'alice-parent')).toBe(false);
     });
 
+    it('suppresses muted conversation participants from generic photo-only chat pushes', () => {
+        const plan = buildTeamChatNotificationPlan({
+            text: '',
+            actorUid: 'coach-1',
+            recipientContext: {
+                members: [
+                    { uid: 'coach-1', displayName: 'Coach Kim', roles: ['staff'] },
+                    { uid: 'muted-parent', displayName: 'Muted Parent', roles: ['parent'] },
+                    { uid: 'active-parent', displayName: 'Active Parent', roles: ['parent'] }
+                ],
+                mutedUids: ['muted-parent'],
+                targetsByCategory: {
+                    mentions: [],
+                    liveChat: [
+                        { uid: 'coach-1', deviceId: 'phone', token: 'coach-chat' },
+                        { uid: 'muted-parent', deviceId: 'phone', token: 'muted-chat' },
+                        { uid: 'active-parent', deviceId: 'phone', token: 'active-chat' }
+                    ]
+                }
+            }
+        });
+
+        expect(plan.mentionedUids).toEqual([]);
+        expect(plan.mentionTargets).toEqual([]);
+        expect(plan.liveChatTargets.map((target) => target.uid)).toEqual(['active-parent']);
+    });
+
     it('handles a large mixed team fixture from one preloaded recipient context', () => {
         const mentionedUserIds = ['user-12', 'user-87', 'user-301'];
         const members = Array.from({ length: 500 }, (_, index) => ({
