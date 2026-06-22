@@ -344,7 +344,7 @@
     <script type="module">
         import { renderHeader, renderFooter, escapeHtml } from './js/utils.js?v=8';
         import { checkAuth } from './js/auth.js?v=32';
-        import { getTeam, getUserProfile, getPlayers, getGames, getGameEvents, getAggregatedStatsForGames, getChatConversations, upsertChatConversation, getChatMessages, postChatMessage, editChatMessage, deleteChatMessage, getTeamEmailDrafts, saveTeamEmailDraft, getTeamEmailTemplates, saveTeamEmailTemplate, deleteTeamEmailTemplate, canAccessTeamChat, canModerateChat, updateChatLastRead, subscribeToChatMessages, sendTeamEmail, getSentTeamEmails, uploadChatImage, deleteUploadedChatAttachments, toggleChatReaction } from './js/db.js?v=63';
+        import { getTeam, getUserProfile, getPlayers, getGames, getGameEvents, getAggregatedStatsForGames, getChatConversations, upsertChatConversation, getChatMessages, postChatMessage, editChatMessage, deleteChatMessage, getTeamEmailDrafts, saveTeamEmailDraft, getTeamEmailTemplates, saveTeamEmailTemplate, deleteTeamEmailTemplate, canAccessTeamChat, canModerateChat, updateChatLastRead, subscribeToChatMessages, sendTeamEmail, getSentTeamEmails, uploadChatImage, deleteUploadedChatAttachments, toggleChatReaction } from './js/db.js?v=64';
         import { DEFAULT_TEAM_CONVERSATION_ID, buildDefaultTeamConversation, getConversationDisplayName, isDefaultTeamConversation } from './js/team-chat-conversations.js?v=1';
         import { shouldUpdateChatLastRead, shouldRetryChatLastReadOnViewReturn } from './js/team-chat-last-read.js?v=3';
         import {
@@ -2887,12 +2887,6 @@
 
             let mediaPayloads = [];
             try {
-                if (imageFiles.length > 0) {
-                    for (const file of imageFiles) {
-                        mediaPayloads.push(await uploadChatImage(teamId, file));
-                    }
-                }
-                pendingScrollToBottom = true;
                 const targetMetadata = buildRecipientTargetMetadata();
                 let conversationId = selectedConversationId;
                 if (isDefaultTeamConversation(conversationId) && targetMetadata.targetType !== 'full_team') {
@@ -2911,6 +2905,12 @@
                     selectedConversationId = conversationId;
                     await loadConversations();
                 }
+                if (imageFiles.length > 0) {
+                    for (const file of imageFiles) {
+                        mediaPayloads.push(await uploadChatImage(teamId, file, { conversationId }));
+                    }
+                }
+                pendingScrollToBottom = true;
                 await postChatMessage(teamId, {
                     text,
                     senderId: currentUser.uid,

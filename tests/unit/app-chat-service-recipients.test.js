@@ -764,8 +764,8 @@ describe('React app chat recipient service', () => {
         });
 
         expect(progress).toEqual(['uploading', 'uploading', 'posting']);
-        expect(dbMocks.uploadChatImage).toHaveBeenNthCalledWith(1, 'team-1', photo);
-        expect(dbMocks.uploadChatImage).toHaveBeenNthCalledWith(2, 'team-1', video);
+        expect(dbMocks.uploadChatImage).toHaveBeenNthCalledWith(1, 'team-1', photo, { conversationId: 'group-player-coach' });
+        expect(dbMocks.uploadChatImage).toHaveBeenNthCalledWith(2, 'team-1', video, { conversationId: 'group-player-coach' });
         expect(dbMocks.upsertChatConversation).toHaveBeenCalledWith('team-1', expect.objectContaining({
             type: 'group',
             participantIds: ['user-1', 'player:player-1', 'user:coach-1'],

@@ -1,17 +1,19 @@
-function sanitizePathSegment(value, fallback) {
+function sanitizePathSegment(value, fallback, { allowPercent = false } = {}) {
+    const pattern = allowPercent ? /[^%\w.\-]+/g : /[^\w.\-]+/g;
     const sanitized = String(value || fallback || '')
         .trim()
-        .replace(/[^\w.\-]+/g, '_')
+        .replace(pattern, '_')
         .replace(/^_+|_+$/g, '');
     return sanitized || fallback;
 }
 
-export function buildChatAttachmentFallbackPath(teamId, userId, fileName, ts = Date.now()) {
+export function buildChatAttachmentFallbackPath(teamId, conversationId, userId, fileName, ts = Date.now()) {
     const safeTeamId = sanitizePathSegment(teamId, 'unknown-team');
+    const safeConversationId = sanitizePathSegment(conversationId, 'team', { allowPercent: true });
     const safeUserId = sanitizePathSegment(userId, 'unknown-user');
     const safeName = sanitizePathSegment(fileName, 'attachment');
 
-    return `stat-sheets/team-chat/${safeTeamId}/${safeUserId}/${ts}_${safeName}`;
+    return `stat-sheets/team-chat/${safeTeamId}/${safeConversationId}/${safeUserId}/${ts}_${safeName}`;
 }
 
 export function buildStatSheetFallbackPath(teamId, userId, fileName, ts = Date.now()) {
