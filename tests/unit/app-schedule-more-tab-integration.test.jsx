@@ -46,6 +46,7 @@ const scheduleMocks = vi.hoisted(() => ({
     })),
     publishLiveScoreUpdateEvent: vi.fn(),
     recordPlayerScoringStat: vi.fn(),
+    resolveCachedParentScheduleEvents: vi.fn(() => []),
     saveScheduledGameLineupDraftForApp: vi.fn(),
     saveStaffPracticePacket: vi.fn(),
     updateGameScore: vi.fn(),
