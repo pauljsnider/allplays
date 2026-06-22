@@ -36,6 +36,7 @@ test('notifyGameCreated sends a schedule notification once and records audit out
         const snapshot = makeSnapshot(ref, {
             title: 'Game at Lions',
             type: 'game',
+            opponent: 'Lions',
             date: '2026-06-20T16:00:00.000Z',
             createdBy: 'coach-1'
         });
@@ -48,6 +49,8 @@ test('notifyGameCreated sends a schedule notification once and records audit out
         assert.equal(secondResult, null);
         assert.equal(env.counts.dedupTransactions, 2);
         assert.equal(env.messagingCalls.length, 1);
+        assert.equal(env.messagingCalls[0].title, 'New game: Game at Lions');
+        assert.equal(env.messagingCalls[0].body, 'Opponent: Lions. Starts Sat, Jun 20, 11:00 AM');
         assert.equal(env.messagingCalls[0].data.category, 'schedule');
         assert.equal(env.messagingCalls[0].data.eventId, 'game-1');
         assert.equal(env.messagingCalls[0].data.appRoute, '/schedule/team-1/game-1');
@@ -183,12 +186,21 @@ test('notifyGameUpdated does not double-push an imported event after its batch s
     }
 });
 
-test('notifyGameCreated respects practice preferences and skips sends when the category is off', async () => {
+test('notifyGameCreated respects schedule preferences for practices and skips sends when disabled', async () => {
     const { moduleExports, env, cleanup } = loadNotificationInternals({
         teamDoc: { ownerId: 'coach-1', adminEmails: [] },
+        parentUserIds: ['parent-1'],
         indexedTargets: [
-            { uid: 'coach-1', deviceId: 'coach-device', token: 'coach-token', categories: { schedule: true } }
-        ]
+            { uid: 'parent-1', deviceId: 'parent-device', token: 'parent-token', categories: { practice: true, schedule: false } }
+        ],
+        preferenceDocs: {
+            'users/parent-1/notificationPreferences/team-1': { schedule: false, practice: true }
+        },
+        deviceDocs: {
+            'parent-1': [
+                { id: 'parent-device', token: 'parent-token' }
+            ]
+        }
     });
 
     try {
@@ -217,8 +229,8 @@ test('notifyGameCreated sends a practice notification once and records audit out
         teamDoc: { ownerId: 'coach-1', adminEmails: [] },
         parentUserIds: ['parent-1'],
         indexedTargets: [
-            { uid: 'coach-1', deviceId: 'coach-device', token: 'coach-token', categories: { practice: true } },
-            { uid: 'parent-1', deviceId: 'parent-device', token: 'parent-token', categories: { practice: true } }
+            { uid: 'coach-1', deviceId: 'coach-device', token: 'coach-token', categories: { schedule: true } },
+            { uid: 'parent-1', deviceId: 'parent-device', token: 'parent-token', categories: { schedule: true } }
         ]
     });
 
@@ -239,10 +251,65 @@ test('notifyGameCreated sends a practice notification once and records audit out
         assert.equal(secondResult, null);
         assert.equal(env.counts.dedupTransactions, 2);
         assert.equal(env.messagingCalls.length, 1);
-        assert.equal(env.messagingCalls[0].data.category, 'practice');
+        assert.equal(env.messagingCalls[0].title, 'New practice: Thursday practice');
+        assert.equal(env.messagingCalls[0].body, 'Starts Mon, Jun 22, 11:00 AM');
+        assert.equal(env.messagingCalls[0].data.category, 'schedule');
+        assert.equal(env.messagingCalls[0].data.appRoute, '/schedule/team-1/practice-2');
         assert.equal(env.auditWrites.length, 1);
-        assert.equal(env.auditWrites[0].value.category, 'practice');
+        assert.equal(env.auditWrites[0].value.category, 'schedule');
         assert.equal(env.auditWrites[0].value.dedupGuardApplied, true);
+    } finally {
+        cleanup();
+    }
+});
+
+test('notifyGameCreated sends one schedule notification for a recurring practice series master', async () => {
+    const { moduleExports, env, cleanup } = loadNotificationInternals({
+        teamDoc: { ownerId: 'coach-1', adminEmails: [] },
+        parentUserIds: ['parent-1'],
+        indexedTargets: [
+            { uid: 'coach-1', deviceId: 'coach-device', token: 'coach-token', categories: { schedule: true } },
+            { uid: 'parent-1', deviceId: 'parent-device', token: 'parent-token', categories: { schedule: true } }
+        ]
+    });
+
+    try {
+        const ref = env.firestoreState.doc('teams/team-1/games/practice-series-1');
+        const snapshot = makeSnapshot(ref, {
+            title: 'Monday skills',
+            type: 'practice',
+            date: '2026-06-29T16:00:00.000Z',
+            createdBy: 'coach-1',
+            isSeriesMaster: true,
+            seriesId: 'series-1',
+            recurrence: {
+                freq: 'weekly',
+                interval: 1,
+                byDays: ['MO'],
+                count: 6
+            }
+        });
+        const context = { params: { teamId: 'team-1', gameId: 'practice-series-1' } };
+
+        const result = await moduleExports.notifyGameCreated(snapshot, context);
+
+        assert.equal(result?.successCount, 1);
+        assert.equal(env.messagingCalls.length, 1);
+        assert.deepEqual(env.messagingCalls[0].tokens, ['parent-token']);
+        assert.equal(env.messagingCalls[0].title, 'New practice series: Monday skills');
+        assert.equal(env.messagingCalls[0].body, 'Starts Mon, Jun 29, 11:00 AM');
+        assert.equal(env.messagingCalls[0].data.category, 'schedule');
+        assert.equal(env.messagingCalls[0].data.eventId, 'practice-series-1');
+        assert.equal(env.messagingCalls[0].data.appRoute, '/schedule/team-1/practice-series-1');
+        assert.equal(env.auditWrites.length, 1);
+        assert.equal(env.auditWrites[0].value.category, 'schedule');
+
+        const scheduleDedupWrites = env.dedupWrites.filter((write) => (
+            write.path.startsWith('teams/team-1/notificationSendLog/')
+            && write.value?.category === 'schedule'
+        ));
+        assert.equal(scheduleDedupWrites.length, 1);
+        assert.equal(scheduleDedupWrites[0].value.gameId, 'practice-series-1');
     } finally {
         cleanup();
     }
