@@ -271,8 +271,8 @@ describe('React app parent tools service', () => {
     });
 
     it('builds Apple and Google subscription URLs without altering private feed tokens', () => {
-        const privateFeedUrl = 'https://example.test/privateTeamCalendarIcs?teamId=team-1&token=abc123%2Bsafe&view=full';
-        expect(getAppleCalendarFeedUrl(privateFeedUrl)).toBe('webcal://example.test/privateTeamCalendarIcs?teamId=team-1&token=abc123%2Bsafe&view=full');
+        const privateFeedUrl = 'https://example.test/team-calendar.ics?teamId=team-1&token=abc123%2Bsafe&view=full';
+        expect(getAppleCalendarFeedUrl(privateFeedUrl)).toBe('webcal://example.test/team-calendar.ics?teamId=team-1&token=abc123%2Bsafe&view=full');
         expect(getGoogleCalendarFeedUrl(privateFeedUrl)).toBe(`https://calendar.google.com/calendar/render?cid=${encodeURIComponent(privateFeedUrl)}`);
     });
 
@@ -699,19 +699,19 @@ describe('React app parent tools service', () => {
 
     it('builds private calendar feed URLs from stored team subscription URLs or tokens', () => {
         expect(buildPrivateTeamCalendarFeedUrl('team-1', { privateCalendarFeedUrl: 'webcal://example.test/private.ics?teamId=team-1&token=stored' })).toBe('https://example.test/private.ics?teamId=team-1&token=stored');
-        expect(buildPrivateTeamCalendarFeedUrl('team-1', { calendarSubscriptionToken: 'stored-token' })).toBe('https://us-central1-all-plays-prod.cloudfunctions.net/privateTeamCalendarIcs?teamId=team-1&token=stored-token');
+        expect(buildPrivateTeamCalendarFeedUrl('team-1', { calendarSubscriptionToken: 'stored-token' })).toBe('https://us-central1-all-plays-prod.cloudfunctions.net/teamCalendarFeed?teamId=team-1&token=stored-token');
     });
 
     it('creates private calendar feed URLs with stored-team and native token fallback support', async () => {
         dbMocks.getTeam.mockResolvedValueOnce({ id: 'team-1', calendarSubscriptionToken: 'stored-token' });
-        await expect(getPrivateTeamCalendarFeedUrl('team-1')).resolves.toBe('https://us-central1-all-plays-prod.cloudfunctions.net/privateTeamCalendarIcs?teamId=team-1&token=stored-token');
+        await expect(getPrivateTeamCalendarFeedUrl('team-1')).resolves.toBe('https://us-central1-all-plays-prod.cloudfunctions.net/teamCalendarFeed?teamId=team-1&token=stored-token');
 
         dbMocks.getTeam.mockResolvedValueOnce(null);
-        await expect(getPrivateTeamCalendarFeedUrl('team-1')).resolves.toBe('https://us-central1-all-plays-prod.cloudfunctions.net/privateTeamCalendarIcs?teamId=team-1&token=native-token');
+        await expect(getPrivateTeamCalendarFeedUrl('team-1')).resolves.toBe('https://us-central1-all-plays-prod.cloudfunctions.net/teamCalendarFeed?teamId=team-1&token=native-token');
 
         dbMocks.getTeam.mockResolvedValueOnce(null);
         authMocks.getNativeAuthIdToken.mockRejectedValueOnce(new Error('native unavailable'));
-        await expect(getPrivateTeamCalendarFeedUrl('team-1')).resolves.toBe('https://us-central1-all-plays-prod.cloudfunctions.net/privateTeamCalendarIcs?teamId=team-1&token=firebase-token');
+        await expect(getPrivateTeamCalendarFeedUrl('team-1')).resolves.toBe('https://us-central1-all-plays-prod.cloudfunctions.net/teamCalendarFeed?teamId=team-1&token=firebase-token');
     });
 
     it('loads and mutates family share tokens using current website contracts', async () => {
