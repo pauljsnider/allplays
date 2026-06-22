@@ -32,4 +32,21 @@ describe('app legacy adapter boundary', () => {
         expect(scheduleAdapterSource).not.toMatch(directLegacyImportPattern);
         expect(playerAdapterSource).not.toMatch(directLegacyImportPattern);
     });
+
+    it('keeps ScheduleEventDetail RSVP helpers behind the schedule helper adapter', () => {
+        const detailSource = readRepoFile('apps/app/src/pages/ScheduleEventDetail.tsx');
+        const rsvpHookSource = readRepoFile('apps/app/src/hooks/schedule/useScheduleEventRsvp.ts');
+        const scheduleServiceSource = readRepoFile('apps/app/src/lib/scheduleService.ts');
+        const helperAdapterSource = readRepoFile('apps/app/src/lib/adapters/legacyScheduleHelpers.ts');
+
+        expect(directLegacyImportPattern.test(detailSource)).toBe(false);
+        expect(directLegacyImportPattern.test(rsvpHookSource)).toBe(false);
+        expect(directLegacyImportPattern.test(scheduleServiceSource)).toBe(false);
+        expect(detailSource).toContain("from '../lib/adapters/legacyScheduleHelpers'");
+        expect(rsvpHookSource).toContain("from '../../lib/scheduleService'");
+        expect(scheduleServiceSource).toContain("from './adapters/legacyScheduleHelpers'");
+        expect(helperAdapterSource).toContain("from '../../../../../js/parent-dashboard-rsvp.js'");
+        expect(helperAdapterSource).toContain('resolveMyRsvpByChildForGame');
+        expect(helperAdapterSource).toContain('buildGameDayRsvpBreakdown');
+    });
 });
