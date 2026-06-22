@@ -6334,11 +6334,35 @@ export async function clearChatMuted(userId, teamId, conversationId = DEFAULT_TE
  * @param {string} teamId - The team ID
  * @returns {Promise<number>} Number of unread messages
  */
-export async function getUnreadChatCount(userId, teamId) {
-    const userDoc = await getDoc(doc(db, 'users', userId));
-    const userData = userDoc.data();
+export async function getUnreadChatCount(userId, teamId, options = {}) {
+    const userData = options.userData || (await getDoc(doc(db, 'users', userId))).data();
     const lastRead = userData?.teamChatState?.[teamId]?.lastReadAt || userData?.chatLastRead?.[teamId] || null;
     const messagesRef = collection(db, 'teams', teamId, 'chatMessages');
+    const toMillis = (value) => {
+        if (!value) return 0;
+        if (typeof value?.toMillis === 'function') return value.toMillis();
+        if (value instanceof Date) return value.getTime();
+        if (typeof value?.seconds === 'number') {
+            return (value.seconds * 1000) + Math.floor(Number(value.nanoseconds || 0) / 1000000);
+        }
+        const parsed = new Date(value);
+        return Number.isNaN(parsed.getTime()) ? 0 : parsed.getTime();
+    };
+    let latestMessageAt = options.latestMessageAt;
+
+    if (latestMessageAt === undefined) {
+        const latestMessageSnapshot = await getDocs(query(messagesRef, orderBy('createdAt', 'desc'), limit(1)));
+        latestMessageAt = latestMessageSnapshot.docs[0]?.data?.()?.createdAt || null;
+    }
+
+    if (!latestMessageAt) {
+        return 0;
+    }
+
+    if (lastRead && toMillis(latestMessageAt) <= toMillis(lastRead)) {
+        return 0;
+    }
+
     const unreadConstraints = [];
 
     if (lastRead) {
@@ -6364,11 +6388,30 @@ export async function getUnreadChatCount(userId, teamId) {
  * @param {string[]} teamIds - Array of team IDs
  * @returns {Promise<Object>} Map of teamId to unread count
  */
-export async function getUnreadChatCounts(userId, teamIds) {
+export async function getUnreadChatCounts(userId, teamIds, options = {}) {
     const counts = {};
+    const latestMessageAtByTeam = options?.latestMessageAtByTeam || {};
+    let userData = {};
+
+    try {
+        const userDoc = await getDoc(doc(db, 'users', userId));
+        userData = userDoc.data() || {};
+    } catch (err) {
+        console.warn(`Failed to load chat state for user ${userId}:`, err);
+        teamIds.forEach((teamId) => {
+            counts[teamId] = 0;
+        });
+        return counts;
+    }
+
     await Promise.all(teamIds.map(async (teamId) => {
         try {
-            counts[teamId] = await getUnreadChatCount(userId, teamId);
+            counts[teamId] = await getUnreadChatCount(userId, teamId, {
+                userData,
+                latestMessageAt: Object.prototype.hasOwnProperty.call(latestMessageAtByTeam, teamId)
+                    ? latestMessageAtByTeam[teamId]
+                    : undefined
+            });
         } catch (err) {
             console.warn(`Failed to get unread count for team ${teamId}:`, err);
             counts[teamId] = 0;

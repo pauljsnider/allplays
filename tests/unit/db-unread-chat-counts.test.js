@@ -13,7 +13,7 @@ function getFunctionSource(functionName) {
     return dbSource.slice(start, end);
 }
 
-function buildGetUnreadChatCount({ db, getDoc, doc, collection, query, where, getCountFromServer }) {
+function buildGetUnreadChatCount({ db, getDoc, doc, collection, query, where, orderBy, limit, getDocs, getCountFromServer }) {
     const functionSource = getFunctionSource('getUnreadChatCount')
         .replace('export async function getUnreadChatCount', 'return async function getUnreadChatCount');
 
@@ -24,6 +24,9 @@ function buildGetUnreadChatCount({ db, getDoc, doc, collection, query, where, ge
         'collection',
         'query',
         'where',
+        'orderBy',
+        'limit',
+        'getDocs',
         'getCountFromServer',
         functionSource
     )(
@@ -33,19 +36,28 @@ function buildGetUnreadChatCount({ db, getDoc, doc, collection, query, where, ge
         collection,
         query,
         where,
+        orderBy,
+        limit,
+        getDocs,
         getCountFromServer
     );
 }
 
-function buildGetUnreadChatCounts({ getUnreadChatCount, console }) {
+function buildGetUnreadChatCounts({ db, getDoc, doc, getUnreadChatCount, console }) {
     const functionSource = getFunctionSource('getUnreadChatCounts')
         .replace('export async function getUnreadChatCounts', 'return async function getUnreadChatCounts');
 
     return new Function(
+        'db',
+        'getDoc',
+        'doc',
         'getUnreadChatCount',
         'console',
         functionSource
     )(
+        db,
+        getDoc,
+        doc,
         getUnreadChatCount,
         console
     );
@@ -97,7 +109,12 @@ describe('chat unread count helpers', () => {
         const messagesRef = { path: 'teams/team-1/chatMessages' };
         const collection = vi.fn(() => messagesRef);
         const where = vi.fn((field, op, value) => ({ field, op, value }));
+        const orderBy = vi.fn((field, direction) => ({ field, direction }));
+        const limit = vi.fn((value) => ({ limit: value }));
         const query = vi.fn((ref, ...constraints) => ({ ref, constraints }));
+        const getDocs = vi.fn().mockResolvedValue({
+            docs: [{ data: () => ({ createdAt: { seconds: 200 } }) }]
+        });
         const getCountFromServer = vi.fn()
             .mockResolvedValueOnce(makeCountSnapshot(7))
             .mockResolvedValueOnce(makeCountSnapshot(2));
@@ -109,15 +126,22 @@ describe('chat unread count helpers', () => {
             collection,
             query,
             where,
+            orderBy,
+            limit,
+            getDocs,
             getCountFromServer
         });
 
         await expect(getUnreadChatCount('user-1', 'team-1')).resolves.toBe(5);
         expect(getCountFromServer).toHaveBeenCalledTimes(2);
         expect(query).toHaveBeenNthCalledWith(1, messagesRef,
-            { field: 'createdAt', op: '>', value: lastRead }
+            { field: 'createdAt', direction: 'desc' },
+            { limit: 1 }
         );
         expect(query).toHaveBeenNthCalledWith(2, messagesRef,
+            { field: 'createdAt', op: '>', value: lastRead }
+        );
+        expect(query).toHaveBeenNthCalledWith(3, messagesRef,
             { field: 'createdAt', op: '>', value: lastRead },
             { field: 'senderId', op: '==', value: 'user-1' }
         );
@@ -131,7 +155,12 @@ describe('chat unread count helpers', () => {
         const messagesRef = { path: 'teams/team-9/chatMessages' };
         const collection = vi.fn(() => messagesRef);
         const where = vi.fn((field, op, value) => ({ field, op, value }));
+        const orderBy = vi.fn((field, direction) => ({ field, direction }));
+        const limit = vi.fn((value) => ({ limit: value }));
         const query = vi.fn((ref, ...constraints) => ({ ref, constraints }));
+        const getDocs = vi.fn().mockResolvedValue({
+            docs: [{ data: () => ({ createdAt: { seconds: 200 } }) }]
+        });
         const getCountFromServer = vi.fn()
             .mockResolvedValueOnce(makeCountSnapshot(4))
             .mockResolvedValueOnce(makeCountSnapshot(1));
@@ -143,35 +172,122 @@ describe('chat unread count helpers', () => {
             collection,
             query,
             where,
+            orderBy,
+            limit,
+            getDocs,
             getCountFromServer
         });
 
         await expect(getUnreadChatCount('user-2', 'team-9')).resolves.toBe(3);
-        expect(query).toHaveBeenNthCalledWith(1, messagesRef);
-        expect(query).toHaveBeenNthCalledWith(2, messagesRef,
+        expect(query).toHaveBeenNthCalledWith(1, messagesRef,
+            { field: 'createdAt', direction: 'desc' },
+            { limit: 1 }
+        );
+        expect(query).toHaveBeenNthCalledWith(2, messagesRef);
+        expect(query).toHaveBeenNthCalledWith(3, messagesRef,
             { field: 'senderId', op: '==', value: 'user-2' }
         );
         expect(getCountFromServer).toHaveBeenCalledTimes(2);
     });
 
-    it('keeps multi-team unread counts on the aggregate helper path', async () => {
+    it('skips count queries when the latest team message is already read', async () => {
+        const lastRead = { seconds: 300 };
+        const getDoc = vi.fn();
+        const doc = vi.fn();
+        const messagesRef = { path: 'teams/team-1/chatMessages' };
+        const collection = vi.fn(() => messagesRef);
+        const where = vi.fn((field, op, value) => ({ field, op, value }));
+        const orderBy = vi.fn((field, direction) => ({ field, direction }));
+        const limit = vi.fn((value) => ({ limit: value }));
+        const query = vi.fn((ref, ...constraints) => ({ ref, constraints }));
+        const getDocs = vi.fn().mockResolvedValue({
+            docs: [{ data: () => ({ createdAt: { seconds: 200 } }) }]
+        });
+        const getCountFromServer = vi.fn();
+
+        const getUnreadChatCount = buildGetUnreadChatCount({
+            db: {},
+            getDoc,
+            doc,
+            collection,
+            query,
+            where,
+            orderBy,
+            limit,
+            getDocs,
+            getCountFromServer
+        });
+
+        await expect(getUnreadChatCount('user-1', 'team-1', {
+            userData: {
+                teamChatState: {
+                    'team-1': {
+                        lastReadAt: lastRead
+                    }
+                }
+            }
+        })).resolves.toBe(0);
+        expect(getCountFromServer).not.toHaveBeenCalled();
+    });
+
+    it('reuses one user profile read and passes latest-message hints across teams', async () => {
         const getUnreadChatCount = vi.fn()
             .mockResolvedValueOnce(3)
             .mockRejectedValueOnce(new Error('index pending'));
+        const getDoc = vi.fn().mockResolvedValue({
+            data: () => ({ teamChatState: { 'team-a': { lastReadAt: { seconds: 100 } } } })
+        });
+        const doc = vi.fn(() => ({ path: 'users/user-3' }));
         const warn = vi.fn();
         const getUnreadChatCounts = buildGetUnreadChatCounts({
+            db: {},
+            getDoc,
+            doc,
             getUnreadChatCount,
             console: { warn }
         });
 
-        await expect(getUnreadChatCounts('user-3', ['team-a', 'team-b'])).resolves.toEqual({
+        await expect(getUnreadChatCounts('user-3', ['team-a', 'team-b'], {
+            latestMessageAtByTeam: {
+                'team-a': { seconds: 150 },
+                'team-b': { seconds: 250 }
+            }
+        })).resolves.toEqual({
             'team-a': 3,
             'team-b': 0
         });
+        expect(getDoc).toHaveBeenCalledTimes(1);
         expect(getUnreadChatCount).toHaveBeenCalledTimes(2);
-        expect(getUnreadChatCount).toHaveBeenNthCalledWith(1, 'user-3', 'team-a');
-        expect(getUnreadChatCount).toHaveBeenNthCalledWith(2, 'user-3', 'team-b');
+        expect(getUnreadChatCount).toHaveBeenNthCalledWith(1, 'user-3', 'team-a', expect.objectContaining({
+            userData: { teamChatState: { 'team-a': { lastReadAt: { seconds: 100 } } } },
+            latestMessageAt: { seconds: 150 }
+        }));
+        expect(getUnreadChatCount).toHaveBeenNthCalledWith(2, 'user-3', 'team-b', expect.objectContaining({
+            userData: { teamChatState: { 'team-a': { lastReadAt: { seconds: 100 } } } },
+            latestMessageAt: { seconds: 250 }
+        }));
         expect(warn).toHaveBeenCalledWith('Failed to get unread count for team team-b:', expect.any(Error));
+    });
+
+    it('returns zero counts when the shared user profile read fails', async () => {
+        const getUnreadChatCount = vi.fn();
+        const getDoc = vi.fn().mockRejectedValue(new Error('permission denied'));
+        const doc = vi.fn(() => ({ path: 'users/user-4' }));
+        const warn = vi.fn();
+        const getUnreadChatCounts = buildGetUnreadChatCounts({
+            db: {},
+            getDoc,
+            doc,
+            getUnreadChatCount,
+            console: { warn }
+        });
+
+        await expect(getUnreadChatCounts('user-4', ['team-a', 'team-b'])).resolves.toEqual({
+            'team-a': 0,
+            'team-b': 0
+        });
+        expect(getUnreadChatCount).not.toHaveBeenCalled();
+        expect(warn).toHaveBeenCalledWith('Failed to load chat state for user user-4:', expect.any(Error));
     });
 });
 

@@ -173,7 +173,9 @@ describe('React app chat recipient service', () => {
 
         expect(dbMocks.getUserTeamsWithAccess).toHaveBeenCalledWith('user-1', 'parent@example.com');
         expect(dbMocks.getParentTeams).toHaveBeenCalledWith('user-1');
-        expect(dbMocks.getUnreadChatCounts).toHaveBeenCalledWith('user-1', ['team-coach', 'team-parent']);
+        expect(dbMocks.getUnreadChatCounts).toHaveBeenCalledWith('user-1', ['team-coach', 'team-parent'], {
+            latestMessageAtByTeam: {}
+        });
         expect(dbMocks.canAccessTeamChat).not.toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ id: 'team-inactive-admin' }));
         expect(dbMocks.canAccessTeamChat).not.toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ id: 'team-inactive-parent' }));
         expect(dbMocks.canAccessTeamChat).toHaveBeenCalledWith(expect.objectContaining({
@@ -195,6 +197,65 @@ describe('React app chat recipient service', () => {
             unreadCount: 0,
             lastMessage: expect.objectContaining({ text: 'Staff note' })
         }));
+    });
+
+    it('only requests exact unread counts for teams whose known latest message is newer than last read', async () => {
+        dbMocks.getUserProfile.mockResolvedValue({
+            email: 'parent@example.com',
+            chatLastRead: {
+                'team-read': new Date('2026-05-21T13:00:00Z')
+            },
+            teamChatState: {
+                'team-read': {
+                    lastReadAt: new Date('2026-05-21T13:00:00Z')
+                }
+            }
+        });
+        dbMocks.getUserTeamsWithAccess.mockResolvedValue([
+            {
+                id: 'team-read',
+                name: 'Already Read',
+                sport: 'Soccer',
+                lastMessageAt: new Date('2026-05-21T12:00:00Z')
+            },
+            {
+                id: 'team-unread',
+                name: 'Needs Attention',
+                sport: 'Basketball',
+                lastMessageAt: new Date('2026-05-21T14:00:00Z')
+            },
+            {
+                id: 'team-unknown',
+                name: 'Unknown Timestamp',
+                sport: 'Baseball'
+            }
+        ]);
+        dbMocks.getParentTeams.mockResolvedValue([]);
+        dbMocks.getUnreadChatCounts.mockResolvedValue({
+            'team-unread': 4,
+            'team-unknown': 1
+        });
+        dbMocks.getChatMessages.mockResolvedValue([]);
+
+        const { loadChatInbox } = await import('../../apps/app/src/lib/chatService.ts');
+        const inbox = await loadChatInbox({
+            uid: 'user-1',
+            email: 'parent@example.com',
+            displayName: 'Pat Parent',
+            roles: ['parent']
+        });
+
+        expect(dbMocks.getUnreadChatCounts).toHaveBeenCalledWith('user-1', ['team-unread', 'team-unknown'], {
+            latestMessageAtByTeam: {
+                'team-read': new Date('2026-05-21T12:00:00Z'),
+                'team-unread': new Date('2026-05-21T14:00:00Z')
+            }
+        });
+        expect(inbox.teams).toEqual(expect.arrayContaining([
+            expect.objectContaining({ id: 'team-read', unreadCount: 0 }),
+            expect.objectContaining({ id: 'team-unread', unreadCount: 4 }),
+            expect.objectContaining({ id: 'team-unknown', unreadCount: 1 })
+        ]));
     });
 
     it('uses only the newest conversation lookup per team when timestamps are usable', async () => {

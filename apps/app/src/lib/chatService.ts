@@ -486,6 +486,13 @@ function getConversationActivityTime(conversation: ChatConversation | null | und
   return conversationTime ? conversationTime.getTime() : null;
 }
 
+function getTeamLatestMessageTime(team: Record<string, any>) {
+  return team?.lastMessageAt
+    || team?.chatLastMessageAt
+    || team?.lastChatMessageAt
+    || null;
+}
+
 async function getLatestConversationMessage(teamId: string, conversationId: string): Promise<ChatMessage | null> {
   try {
     const [message] = await withTimeout(Promise.resolve(getChatMessages(teamId, { limit: 1, conversationId })), `latest chat ${teamId}/${conversationId}`, 2500);
@@ -633,8 +640,26 @@ export async function loadChatInbox(user: AuthUser | null, options: ChatInboxLoa
 
   const userWithProfile = mapUserWithProfile(user, profile);
   const accessibleTeams = teams.filter((team) => isTeamActive(team) && canAccessTeamChat(userWithProfile, { ...team, id: team.id }));
+  const latestMessageAtByTeam = accessibleTeams.reduce<Record<string, unknown>>((acc, team) => {
+    const latestMessageAt = getTeamLatestMessageTime(team);
+    if (latestMessageAt) {
+      acc[team.id] = latestMessageAt;
+    }
+    return acc;
+  }, {});
+  const unreadCandidateTeamIds = accessibleTeams
+    .filter((team) => {
+      const latestMessageAt = latestMessageAtByTeam[team.id];
+      if (!latestMessageAt) return true;
+      const lastReadAt = getTeamChatStateEntry(profile, team.id).lastReadAt || profile?.chatLastRead?.[team.id] || null;
+      if (!lastReadAt) return true;
+      const latestTime = toDate(latestMessageAt)?.getTime() || 0;
+      const lastReadTime = toDate(lastReadAt)?.getTime() || 0;
+      return latestTime === 0 || latestTime > lastReadTime;
+    })
+    .map((team) => team.id);
   const unreadCounts = await withTimeout(
-    Promise.resolve(getUnreadChatCounts(user.uid, accessibleTeams.map((team) => team.id))),
+    Promise.resolve(getUnreadChatCounts(user.uid, unreadCandidateTeamIds, { latestMessageAtByTeam })),
     'Chat unread counts',
     3000
   ).catch(() => ({} as Record<string, number>));
