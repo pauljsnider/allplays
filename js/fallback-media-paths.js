@@ -6,12 +6,13 @@ function sanitizePathSegment(value, fallback) {
     return sanitized || fallback;
 }
 
-export function buildChatAttachmentFallbackPath(teamId, userId, fileName, ts = Date.now()) {
+export function buildChatAttachmentFallbackPath(teamId, conversationId, userId, fileName, ts = Date.now()) {
     const safeTeamId = sanitizePathSegment(teamId, 'unknown-team');
+    const safeConversationId = sanitizePathSegment(conversationId, 'team');
     const safeUserId = sanitizePathSegment(userId, 'unknown-user');
     const safeName = sanitizePathSegment(fileName, 'attachment');
 
-    return `stat-sheets/team-chat/${safeTeamId}/${safeUserId}/${ts}_${safeName}`;
+    return `stat-sheets/team-chat/${safeTeamId}/${safeConversationId}/${safeUserId}/${ts}_${safeName}`;
 }
 
 export function buildStatSheetFallbackPath(teamId, userId, fileName, ts = Date.now()) {

@@ -2887,12 +2887,6 @@
 
             let mediaPayloads = [];
             try {
-                if (imageFiles.length > 0) {
-                    for (const file of imageFiles) {
-                        mediaPayloads.push(await uploadChatImage(teamId, file));
-                    }
-                }
-                pendingScrollToBottom = true;
                 const targetMetadata = buildRecipientTargetMetadata();
                 let conversationId = selectedConversationId;
                 if (isDefaultTeamConversation(conversationId) && targetMetadata.targetType !== 'full_team') {
@@ -2911,6 +2905,12 @@
                     selectedConversationId = conversationId;
                     await loadConversations();
                 }
+                if (imageFiles.length > 0) {
+                    for (const file of imageFiles) {
+                        mediaPayloads.push(await uploadChatImage(teamId, file, { conversationId }));
+                    }
+                }
+                pendingScrollToBottom = true;
                 await postChatMessage(teamId, {
                     text,
                     senderId: currentUser.uid,

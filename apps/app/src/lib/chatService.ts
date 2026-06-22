@@ -943,7 +943,7 @@ async function getImageUploadSession(apiKey: string) {
   return createImageUploadSession(apiKey);
 }
 
-async function nativeUploadChatMedia(teamId: string, file: File): Promise<ChatAttachment> {
+async function nativeUploadChatMedia(teamId: string, file: File, conversationId = DEFAULT_TEAM_CONVERSATION_ID): Promise<ChatAttachment> {
   const imageConfig = resolveImageFirebaseConfig();
   const bucket = imageConfig.storageBucket;
   if (!imageConfig.apiKey || !bucket) {
@@ -953,7 +953,8 @@ async function nativeUploadChatMedia(teamId: string, file: File): Promise<ChatAt
   const safeName = String(file.name || 'media').replace(/[^\w.-]+/g, '_');
   const isVideo = String(file.type || '').toLowerCase().startsWith('video/');
   const mediaFolder = isVideo ? 'team-videos' : 'team-photos';
-  const path = `${mediaFolder}/${Date.now()}_chat_${teamId}_${safeName}`;
+  const safeConversationId = String(conversationId || DEFAULT_TEAM_CONVERSATION_ID).replace(/[^\w.-]+/g, '_') || DEFAULT_TEAM_CONVERSATION_ID;
+  const path = `${mediaFolder}/${Date.now()}_chat_${teamId}_${safeConversationId}_${safeName}`;
   const response = await withTimeout(fetch(`https://firebasestorage.googleapis.com/v0/b/${encodeURIComponent(bucket)}/o?uploadType=media&name=${encodeURIComponent(path)}`, {
     method: 'POST',
     headers: {
@@ -982,7 +983,7 @@ async function nativeUploadChatMedia(teamId: string, file: File): Promise<ChatAt
   };
 }
 
-export async function uploadTeamChatAttachment(teamId: string, file: File): Promise<ChatAttachment> {
+export async function uploadTeamChatAttachment(teamId: string, file: File, conversationId = DEFAULT_TEAM_CONVERSATION_ID): Promise<ChatAttachment> {
   if (!file.type.startsWith('image/') && !file.type.startsWith('video/')) {
     throw new Error('Choose image or video files only.');
   }
@@ -990,10 +991,10 @@ export async function uploadTeamChatAttachment(teamId: string, file: File): Prom
     throw new Error('Photos and videos must be 5MB or smaller each.');
   }
   if (isNativeRuntime()) {
-    return nativeUploadChatMedia(teamId, file);
+    return nativeUploadChatMedia(teamId, file, conversationId);
   }
   try {
-    return await withTimeout(Promise.resolve(uploadChatImage(teamId, file)), 'Chat media upload', chatUploadTimeoutMs) as ChatAttachment;
+    return await withTimeout(Promise.resolve(uploadChatImage(teamId, file, { conversationId })), 'Chat media upload', chatUploadTimeoutMs) as ChatAttachment;
   } catch (error) {
     throw error;
   }
@@ -1083,14 +1084,6 @@ export async function sendTeamChatMessage({
   });
   const uploadedAttachments: ChatAttachment[] = [];
   try {
-    for (const file of files) {
-      onProgress?.('uploading');
-      uploadedAttachments.push(await uploadTeamChatAttachment(teamId, file));
-    }
-    onProgress?.('posting');
-
-    const attachments = [...sharedAttachments, ...uploadedAttachments];
-
     const targetMetadata = buildChatAudienceMetadata({
       selectedConversation,
       selectedConversationId,
@@ -1114,6 +1107,14 @@ export async function sendTeamChatMessage({
       })), 'Chat conversation create') as ChatConversation;
       conversationId = createdConversation.id;
     }
+
+    for (const file of files) {
+      onProgress?.('uploading');
+      uploadedAttachments.push(await uploadTeamChatAttachment(teamId, file, conversationId));
+    }
+    onProgress?.('posting');
+
+    const attachments = [...sharedAttachments, ...uploadedAttachments];
 
     const payload = {
       clientMessageId: clientMessageId || null,

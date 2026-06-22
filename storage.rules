@@ -30,6 +30,30 @@ service firebase.storage {
       return isTeamOwnerOrAdmin(teamId) || isParentForTeam(teamId);
     }
 
+    function chatConversationPath(teamId, conversationId) {
+      return /databases/(default)/documents/teams/$(teamId)/chatConversations/$(conversationId);
+    }
+
+    function isChatConversationParticipant(teamId, conversationId) {
+      let conversationPath = chatConversationPath(teamId, conversationId);
+      let conversation = firestore.get(conversationPath).data;
+      let participantIds = conversation.get('participantIds', []);
+      return conversationId.size() > 0 &&
+        firestore.exists(conversationPath) &&
+        (conversation.get('type', '') == 'team' ||
+         request.auth.uid in participantIds ||
+         ('user:' + request.auth.uid) in participantIds ||
+         (request.auth.token.email != null &&
+          ('email:' + request.auth.token.email.lower()) in participantIds));
+    }
+
+    function canAccessChatAttachment(teamId, conversationId) {
+      return canAccessTeamMedia(teamId) &&
+        (conversationId == 'team' ||
+         isTeamOwnerOrAdmin(teamId) ||
+         isChatConversationParticipant(teamId, conversationId));
+    }
+
     function hasTeamMediaUploadGrant(teamId) {
       let userPath = /databases/(default)/documents/users/$(request.auth.uid);
       return isSignedIn() &&
@@ -109,13 +133,21 @@ service firebase.storage {
       allow update: if false;
     }
 
-    match /stat-sheets/team-chat/{teamId}/{userId}/{fileName} {
-      allow get: if canAccessTeamMedia(teamId);
+    match /stat-sheets/team-chat/{teamId}/{conversationId}/{userId}/{fileName} {
+      allow get: if canAccessChatAttachment(teamId, conversationId);
       allow list: if false;
-      allow create: if canAccessTeamMedia(teamId) &&
+      allow create: if canAccessChatAttachment(teamId, conversationId) &&
         request.auth.uid == userId &&
         request.resource.size > 0 &&
         request.resource.size <= 20 * 1024 * 1024;
+      allow delete: if isTeamOwnerOrAdmin(teamId) || request.auth.uid == userId;
+      allow update: if false;
+    }
+
+    match /stat-sheets/team-chat/{teamId}/{userId}/{fileName} {
+      allow get: if isTeamOwnerOrAdmin(teamId) || request.auth.uid == userId;
+      allow list: if false;
+      allow create: if false;
       allow delete: if isTeamOwnerOrAdmin(teamId) || request.auth.uid == userId;
       allow update: if false;
     }
