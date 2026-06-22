@@ -26,6 +26,13 @@ describe('app telemetry bridge', () => {
     delete window.__ALLPLAYS_REPORT_REACT_ERROR__;
     delete window.__ALLPLAYS_CONFIG__;
     delete window.ALLPLAYS_ERROR_TRACKING_DSN;
+    delete window.ALLPLAYS_ERROR_TRACKING_ENVIRONMENT;
+    delete window.ALLPLAYS_ERROR_TRACKING_RELEASE;
+    delete window.ALLPLAYS_SENTRY_DSN;
+    delete window.ALLPLAYS_SENTRY_ENVIRONMENT;
+    delete window.ALLPLAYS_SENTRY_RELEASE;
+    delete window.ALLPLAYS_ENVIRONMENT;
+    delete window.ALLPLAYS_RELEASE;
     document.body.innerHTML = '<div id="root"></div>';
   });
 
@@ -176,6 +183,19 @@ describe('app telemetry bridge', () => {
     }));
     expect(addEventListenerSpy).not.toHaveBeenCalledWith('error', expect.any(Function));
     expect(addEventListenerSpy).not.toHaveBeenCalledWith('unhandledrejection', expect.any(Function));
+  });
+
+  it('does not leak global fallback environment or release values into later DSN-only initialization', async () => {
+    window.ALLPLAYS_ERROR_TRACKING_DSN = 'https://public@example.ingest.sentry.io/clean';
+
+    const telemetry = await import('./telemetry');
+
+    expect(telemetry.initializeAppErrorTracking({ isProduction: false })).toBe(true);
+    expect(sentryMocks.init).toHaveBeenCalledWith(expect.objectContaining({
+      dsn: 'https://public@example.ingest.sentry.io/clean',
+      environment: undefined,
+      release: undefined
+    }));
   });
 
   it('reports React boundary failures without misclassifying generic TypeErrors as network errors', async () => {
