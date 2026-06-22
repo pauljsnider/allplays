@@ -13,6 +13,7 @@ const scheduleMocks = vi.hoisted(() => ({
     loadStaffPracticePacket: vi.fn(),
     loadParentSchedule: vi.fn(),
     loadParentScheduleEventDetail: vi.fn(),
+    resolveCachedParentScheduleEvents: vi.fn(() => []),
     loadParentScheduleAssignments: vi.fn().mockResolvedValue([]),
     loadParentScheduleRideOffers: vi.fn().mockResolvedValue([]),
     loadHomeScoringPlayers: vi.fn().mockResolvedValue([]),
@@ -187,6 +188,7 @@ async function clickButton(container, text) {
 
 beforeEach(() => {
     vi.clearAllMocks();
+    scheduleMocks.resolveCachedParentScheduleEvents.mockReturnValue([]);
     scheduleMocks.loadParentSchedule.mockResolvedValue({ events: [] });
     scheduleMocks.loadParentScheduleEventDetail.mockImplementation(async () => scheduleMocks.loadParentSchedule());
     scheduleMocks.loadScheduleStatTrackerConfigsForApp.mockResolvedValue([{ id: 'cfg-basketball', name: 'Basketball' }]);
