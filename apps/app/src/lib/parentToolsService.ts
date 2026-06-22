@@ -898,12 +898,12 @@ export async function loadTeamMediaForApp(
 }
 
 export async function uploadParentTeamMediaPhoto(teamId: string, folderId: string, file: File) {
-  const result = await uploadTeamMediaPhoto(teamId, folderId, file);
+  const result = await uploadTeamMediaPhoto(teamId, folderId, file, { returnItem: true });
   return result && typeof result === 'object' ? toTeamMediaItem(result) : null;
 }
 
 export async function uploadParentTeamMediaFile(teamId: string, folderId: string, file: File) {
-  const result = await uploadTeamMediaFile(teamId, folderId, file);
+  const result = await uploadTeamMediaFile(teamId, folderId, file, { returnItem: true });
   return result && typeof result === 'object' ? toTeamMediaItem(result) : null;
 }
 

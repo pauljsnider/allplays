@@ -1129,7 +1129,10 @@ export async function uploadTeamMediaPhoto(teamId, folderId, file, options = {})
         updatedAt: serverTimestamp()
     };
     const docRef = await addDoc(getTeamMediaItemsRef(cleanTeamId), mediaItem);
-    return { id: docRef.id, ...mediaItem, url: downloadUrl };
+    if (options?.returnItem === true) {
+        return { id: docRef.id, ...mediaItem, url: downloadUrl };
+    }
+    return docRef.id;
 }
 
 export async function uploadTeamMediaFile(teamId, folderId, file, options = {}) {
@@ -1177,7 +1180,10 @@ export async function uploadTeamMediaFile(teamId, folderId, file, options = {}) 
         updatedAt: serverTimestamp()
     };
     const docRef = await addDoc(getTeamMediaItemsRef(cleanTeamId), mediaItem);
-    return { id: docRef.id, ...mediaItem, url: downloadUrl };
+    if (options?.returnItem === true) {
+        return { id: docRef.id, ...mediaItem, url: downloadUrl };
+    }
+    return docRef.id;
 }
 
 export async function deleteTeamMediaItem(teamId, item) {

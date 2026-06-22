@@ -1072,8 +1072,8 @@ describe('React app parent tools service', () => {
         await addParentTeamMediaLink('team-1', 'folder-1', 'Replay', 'https://video.example.test/replay');
         expect(dbMocks.canAccessTeamChat).toHaveBeenCalledWith(expect.objectContaining({ uid: 'user-1' }), { id: 'team-1', name: 'Bears' });
         expect(dbMocks.createTeamMediaFolder).toHaveBeenCalledWith('team-1', { name: 'Spring photos', visibility: 'private' });
-        expect(dbMocks.uploadTeamMediaPhoto).toHaveBeenCalledWith('team-1', 'folder-1', photoFile);
-        expect(dbMocks.uploadTeamMediaFile).toHaveBeenCalledWith('team-1', 'folder-1', docFile);
+        expect(dbMocks.uploadTeamMediaPhoto).toHaveBeenCalledWith('team-1', 'folder-1', photoFile, { returnItem: true });
+        expect(dbMocks.uploadTeamMediaFile).toHaveBeenCalledWith('team-1', 'folder-1', docFile, { returnItem: true });
         expect(dbMocks.createTeamMediaLink).toHaveBeenCalledWith('team-1', 'folder-1', { title: 'Replay', url: 'https://video.example.test/replay' });
     });
 
