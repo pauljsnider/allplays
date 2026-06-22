@@ -11,7 +11,8 @@ describe('Sports Connect metadata-only product contract', () => {
 
         expect(workflow).toContain('Sports Connect live sync is not available today.');
         expect(workflow).toContain('It does not authenticate to Sports Connect, check provider health, or fetch roster/source data.');
-        expect(workflow).toContain('Click <strong>Re-import from Sports Connect</strong> only when provider data has already been stored in ALL PLAYS.');
+        expect(workflow).toContain('Use the roster or schedule import preview only when provider data has already been stored in ALL PLAYS.');
+        expect(workflow).toContain('These import previews work from saved snapshots; the disabled Sports Connect refresh control does not fetch new provider data.');
         expect(workflow).toContain('the import button does not pull fresh Sports Connect data immediately');
     });
 
