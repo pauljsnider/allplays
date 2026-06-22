@@ -69,12 +69,18 @@ export function addAggregatedStatsWritesToBatch({
 } = {}) {
   aggregatedStatsWrites.forEach(({ playerId, data, privateData }) => {
     const statsRef = createDocRef(db, `teams/${currentTeamId}/games/${currentGameId}/aggregatedStats`, playerId);
+    const privateStatsRef = createDocRef(db, `teams/${currentTeamId}/games/${currentGameId}/privatePlayerStats`, playerId);
     batch.set(statsRef, data);
     if (privateData) {
-      const privateStatsRef = createDocRef(db, `teams/${currentTeamId}/games/${currentGameId}/privatePlayerStats`, playerId);
       batch.set(privateStatsRef, privateData);
+    } else {
+      batch.delete(privateStatsRef);
     }
   });
+}
+
+function getAggregatedStatsWriteOperationCount() {
+  return 2;
 }
 
 export async function commitFinishPlan({
@@ -117,9 +123,19 @@ export async function commitFinishPlan({
   }
 
   const aggregatedStatsBatchSizes = [];
-  for (let i = 0; i < aggregatedStatsWrites.length; i += maxAggregatedStatsBatchWrites) {
+  for (let i = 0; i < aggregatedStatsWrites.length;) {
     const statsBatch = createBatch(db);
-    const statsChunk = aggregatedStatsWrites.slice(i, i + maxAggregatedStatsBatchWrites);
+    const statsChunk = [];
+    let statsBatchWriteCount = 0;
+    while (i < aggregatedStatsWrites.length) {
+      const writeCount = getAggregatedStatsWriteOperationCount(aggregatedStatsWrites[i]);
+      if (statsChunk.length > 0 && statsBatchWriteCount + writeCount > maxAggregatedStatsBatchWrites) {
+        break;
+      }
+      statsChunk.push(aggregatedStatsWrites[i]);
+      statsBatchWriteCount += writeCount;
+      i += 1;
+    }
     addAggregatedStatsWritesToBatch({
       aggregatedStatsWrites: statsChunk,
       batch: statsBatch,
@@ -128,7 +144,7 @@ export async function commitFinishPlan({
       currentGameId,
       createDocRef
     });
-    aggregatedStatsBatchSizes.push(statsChunk.length);
+    aggregatedStatsBatchSizes.push(statsBatchWriteCount);
     await statsBatch.commit();
   }
 
@@ -142,7 +158,7 @@ export async function commitFinishPlan({
     eventBatchSizes,
     gameUpdateBatchSize: 1,
     aggregatedStatsBatchSizes,
-    aggregatedStatsWriteCount: aggregatedStatsWrites.length
+    aggregatedStatsWriteCount: aggregatedStatsBatchSizes.reduce((total, size) => total + size, 0)
   };
 }
 
