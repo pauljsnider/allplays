@@ -24,6 +24,9 @@ function extractChunk(startMarker, endMarker) {
 const mergeNotificationWebpushOptions = new Function(
     `${extractChunk('function mergeNotificationWebpushOptions(', 'async function sendCategoryNotification(')}\nreturn mergeNotificationWebpushOptions;`
 )();
+const notificationRouteHelpers = new Function(
+    `${extractChunk('function buildScheduleSectionQuery', 'function buildTeamMediaNotificationAudienceContext')}\nreturn { buildNotificationLink, buildNotificationAppRoute };`
+)();
 
 describe('notification delivery metadata', () => {
     it('defines the five Android channels used by app startup and backend sends', () => {
@@ -46,6 +49,22 @@ describe('notification delivery metadata', () => {
         expect(options.android.notification.channelId).toBe('allplays_messages');
         expect(options.apns.payload.aps['thread-id']).toBe('messages-team-1');
         expect(options.apns.headers).toBeUndefined();
+    });
+
+    it('builds conversation deep links for mention notifications', () => {
+        const mentionLink = notificationRouteHelpers.buildNotificationLink({
+            category: 'mentions',
+            teamId: 'team 1',
+            conversationId: 'parents/thread 2'
+        });
+        const appRoute = notificationRouteHelpers.buildNotificationAppRoute({
+            category: 'mentions',
+            teamId: 'team 1',
+            conversationId: 'parents/thread 2'
+        });
+
+        expect(mentionLink).toBe('https://allplays.ai/team-chat.html?teamId=team%201&conversationId=parents%2Fthread%202');
+        expect(appRoute).toBe('/messages/team%201?conversationId=parents%2Fthread%202');
     });
 
     it('collapses rapid live score notifications by game on iOS', () => {
