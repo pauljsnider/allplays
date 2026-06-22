@@ -335,7 +335,13 @@ describe('React app TeamMedia upload flow', () => {
     expect(pendingResolvers).toHaveLength(2);
 
     await act(async () => {
-      pendingResolvers.splice(0).forEach((resolve) => resolve());
+      pendingResolvers.splice(0).forEach((resolve, index) => resolve({
+        id: `uploaded-photo-${index + 1}`,
+        title: files[index].name,
+        type: 'photo',
+        url: `https://example.test/${files[index].name}`,
+        order: index + 10,
+      }));
     });
 
     expect(container.textContent).toContain('Upload progress');
@@ -343,6 +349,7 @@ describe('React app TeamMedia upload flow', () => {
     expect(container.textContent).toContain('bench.png');
     expect((container.textContent.match(/Uploaded/g) || []).length).toBe(2);
     expect(container.textContent).toContain('2 photos uploaded.');
+    expect(parentToolsServiceMocks.loadTeamMediaForApp).toHaveBeenCalledTimes(1);
 
     await act(async () => root.unmount());
   });
