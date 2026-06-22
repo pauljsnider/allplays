@@ -6,7 +6,6 @@ import {
   buildTrackingStatusPayload,
   calculateSeasonRecord,
   collection,
-  collectionGroup,
   computeNativeStandings,
   createConfig,
   db,
@@ -1411,22 +1410,16 @@ export async function loadTeamTrackingAdmin(teamId: string, user: AuthUser | nul
   const trackingStatusesByItemId = new Map<string, any[]>();
 
   if (trackingItems.length) {
-    const statusSnapshot = await getDocs(query(
-      collectionGroup(db as any, 'memberTracking'),
-      where('teamId', '==', normalizedTeamId)
-    ));
-
-    (statusSnapshot.docs as any[]).forEach((statusDoc) => {
-      const normalizedStatus = normalizeTrackingStatus({
-        id: statusDoc.id,
-        ...statusDoc.data()
-      });
-      const itemId = cleanString((normalizedStatus as any)?.trackingItemId || (normalizedStatus as any)?.itemId);
-      if (!itemId) return;
-      const statuses = trackingStatusesByItemId.get(itemId) || [];
-      statuses.push(normalizedStatus);
-      trackingStatusesByItemId.set(itemId, statuses);
-    });
+    await Promise.all(trackingItems.map(async (item) => {
+      const statusSnapshot = await getDocs(collection(db, `teams/${normalizedTeamId}/trackingItems/${item.id}/memberTracking`));
+      const statuses = (statusSnapshot.docs as any[])
+        .map((statusDoc) => normalizeTrackingStatus({
+          id: statusDoc.id,
+          ...statusDoc.data()
+        }))
+        .filter((status) => cleanString((status as any)?.trackingItemId || (status as any)?.itemId) === item.id);
+      trackingStatusesByItemId.set(item.id, statuses);
+    }));
   }
 
   return trackingItems.map((item) => buildTeamTrackingAdminItem(item, activePlayers, trackingStatusesByItemId.get(item.id) || []));
