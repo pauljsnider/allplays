@@ -287,6 +287,29 @@ export function TeamMedia({ auth }: { auth: AuthState }) {
     setUploadQueue((current) => current.map((item) => item.id === id ? { ...item, status: nextStatus, errorMessage } : item));
   };
 
+  const mergeUploadedItemsIntoFolder = (folderId: string, uploadedItems: TeamMediaItem[]) => {
+    const cleanItems = uploadedItems.filter((item) => item?.id && item.url);
+    if (!folderId || !cleanItems.length) return false;
+    setModel((current) => current ? {
+      ...current,
+      folders: current.folders.map((folder) => {
+        if (folder.id !== folderId) return folder;
+        const existingIds = new Set(folder.items.map((item) => item.id));
+        const additions = cleanItems.filter((item) => !existingIds.has(item.id));
+        if (!additions.length) return folder;
+        const nextItems = [...folder.items, ...additions].sort(sortTeamMediaItemsForDisplay);
+        const currentCount = Number.isFinite(Number(folder.itemCount)) ? Number(folder.itemCount) : folder.items.length;
+        return {
+          ...folder,
+          items: nextItems,
+          itemCount: Math.max(nextItems.length, currentCount + additions.length),
+          itemsLoaded: true
+        };
+      })
+    } : current);
+    return true;
+  };
+
   const uploadPhotos = async (files: File[]) => {
     if (!files.length || !activeFolder || creatingAlbum) return;
     const queueItems = files.map((file, index) => createUploadQueueItem(file, 'photo', index));
@@ -298,6 +321,7 @@ export function TeamMedia({ auth }: { auth: AuthState }) {
     setMessage(`Uploading ${files.length} photo${files.length === 1 ? '' : 's'}...`);
     let uploaded = 0;
     let failed = 0;
+    const uploadedItems: TeamMediaItem[] = [];
     try {
       await runWithConcurrency(queueItems, PHOTO_UPLOAD_CONCURRENCY, async (queueItem, index) => {
         const file = files[index];
@@ -307,7 +331,8 @@ export function TeamMedia({ auth }: { auth: AuthState }) {
           return;
         }
         try {
-          await uploadParentTeamMediaPhoto(teamId, activeFolder.id, file);
+          const uploadedItem = await uploadParentTeamMediaPhoto(teamId, activeFolder.id, file);
+          if (uploadedItem) uploadedItems.push(uploadedItem);
           uploaded += 1;
           updateUploadQueueItem(queueItem.id, 'success');
         } catch {
@@ -318,7 +343,9 @@ export function TeamMedia({ auth }: { auth: AuthState }) {
 
       if (uploaded > 0) {
         const resultMessage = getPhotoUploadMessage(uploaded, failed);
-        await refresh({ showLoading: false, preferredFolderId: activeFolder.id, folderIdsToLoad: [activeFolder.id] });
+        if (!mergeUploadedItemsIntoFolder(activeFolder.id, uploadedItems)) {
+          await refresh({ showLoading: false, preferredFolderId: activeFolder.id, folderIdsToLoad: [activeFolder.id] });
+        }
         if (failed > 0) {
           setError(resultMessage);
           setMessage('');
@@ -346,6 +373,7 @@ export function TeamMedia({ auth }: { auth: AuthState }) {
     setMessage(`Uploading ${files.length} file${files.length === 1 ? '' : 's'}...`);
     let uploaded = 0;
     let failed = 0;
+    const uploadedItems: TeamMediaItem[] = [];
     try {
       for (const [index, queueItem] of queueItems.entries()) {
         const file = files[index];
@@ -355,7 +383,8 @@ export function TeamMedia({ auth }: { auth: AuthState }) {
           continue;
         }
         try {
-          await uploadParentTeamMediaFile(teamId, activeFolder.id, file);
+          const uploadedItem = await uploadParentTeamMediaFile(teamId, activeFolder.id, file);
+          if (uploadedItem) uploadedItems.push(uploadedItem);
           uploaded += 1;
           updateUploadQueueItem(queueItem.id, 'success');
         } catch (uploadError: any) {
@@ -365,7 +394,9 @@ export function TeamMedia({ auth }: { auth: AuthState }) {
       }
 
       if (uploaded > 0) {
-        await refresh({ showLoading: false, preferredFolderId: activeFolder.id, folderIdsToLoad: [activeFolder.id] });
+        if (!mergeUploadedItemsIntoFolder(activeFolder.id, uploadedItems)) {
+          await refresh({ showLoading: false, preferredFolderId: activeFolder.id, folderIdsToLoad: [activeFolder.id] });
+        }
         const resultMessage = getFileUploadMessage(uploaded, failed);
         if (failed > 0) {
           setError(resultMessage);
@@ -708,6 +739,15 @@ function createUploadQueueItem(file: File, kind: 'photo' | 'file', index: number
     status: 'uploading',
     errorMessage: ''
   };
+}
+
+function sortTeamMediaItemsForDisplay(a: TeamMediaItem, b: TeamMediaItem) {
+  const aOrder = Number(a.order);
+  const bOrder = Number(b.order);
+  if (Number.isFinite(aOrder) && Number.isFinite(bOrder) && aOrder !== bOrder) return aOrder - bOrder;
+  if (Number.isFinite(aOrder)) return -1;
+  if (Number.isFinite(bOrder)) return 1;
+  return String(a.title || '').localeCompare(String(b.title || ''));
 }
 
 async function runWithConcurrency<T>(items: T[], concurrency: number, worker: (item: T, index: number) => Promise<void>) {

@@ -1077,6 +1077,39 @@ describe('React app parent tools service', () => {
         expect(dbMocks.createTeamMediaLink).toHaveBeenCalledWith('team-1', 'folder-1', { title: 'Replay', url: 'https://video.example.test/replay' });
     });
 
+    it('returns normalized team media upload items so the app can merge them without rereading the album', async () => {
+        const photoFile = new File(['photo'], 'photo.jpg', { type: 'image/jpeg' });
+        const docFile = new File(['doc'], 'packet.pdf', { type: 'application/pdf' });
+        dbMocks.uploadTeamMediaPhoto.mockResolvedValue({
+            id: 'photo-2',
+            title: 'photo.jpg',
+            type: 'photo',
+            downloadUrl: 'https://img.example.test/photo-2.jpg',
+            order: 4
+        });
+        dbMocks.uploadTeamMediaFile.mockResolvedValue({
+            id: 'file-1',
+            title: 'packet.pdf',
+            type: 'file',
+            downloadUrl: 'https://files.example.test/packet.pdf',
+            order: 5
+        });
+
+        await expect(uploadParentTeamMediaPhoto('team-1', 'folder-1', photoFile)).resolves.toMatchObject({
+            id: 'photo-2',
+            title: 'photo.jpg',
+            type: 'photo',
+            url: 'https://img.example.test/photo-2.jpg'
+        });
+        await expect(uploadParentTeamMediaFile('team-1', 'folder-1', docFile)).resolves.toMatchObject({
+            id: 'file-1',
+            title: 'packet.pdf',
+            type: 'file',
+            url: 'https://files.example.test/packet.pdf'
+        });
+        expect(dbMocks.getTeamMediaItems).not.toHaveBeenCalled();
+    });
+
     it('initiates Stripe checkout for registration and returns URL', async () => {
         const mockCheckoutUrl = 'https://checkout.stripe.com/mock-session-123';
         dbMocks.createRegistrationCheckoutSession.mockResolvedValue({ checkoutUrl: mockCheckoutUrl });
