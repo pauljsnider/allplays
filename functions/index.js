@@ -7828,8 +7828,9 @@ exports.notifyFeeAssigned = functions.firestore
     try {
       const sendResults = [];
       for (const uid of claimedUserIds) {
-        const claimedTargets = claimedPayerTargets.filter((target) => String(target.uid || '').trim() === uid);
-        if (!claimedTargets.length) continue;
+        const claimedTargets = claimedPayerTargets;
+        const targetsForUser = claimedTargets.filter((target) => String(target.uid || '').trim() === uid);
+        if (!targetsForUser.length) continue;
         const recipientsForUser = await filterFeeAssignmentRecipientsForUser({
           teamId,
           uid,
@@ -7842,7 +7843,7 @@ exports.notifyFeeAssigned = functions.firestore
           const amountCents = getTeamFeeBalanceCents(data) || Number(data.amountCents || data.feeAmountCents || 0);
           const amountDisplay = amountCents > 0 ? ` (${formatMoneyFromCents(amountCents, data.currency || 'USD')})` : '';
           sendResults.push(await sendDirectTargetsNotification({
-            targets: claimedTargets,
+            targets: targetsForUser,
             category: 'fees',
             title: `New fee assigned: ${title}${amountDisplay}`,
             body: buildFeeAssignmentNotificationBody(data, amountDisplay ? amountDisplay.slice(2, -1) : ''),
@@ -7853,7 +7854,7 @@ exports.notifyFeeAssigned = functions.firestore
         }
         const payload = buildCombinedFeeAssignmentNotificationPayload(recipientsForUser);
         sendResults.push(await sendDirectTargetsNotification({
-          targets: claimedTargets,
+          targets: targetsForUser,
           category: 'fees',
           title: payload.title,
           body: payload.body,
