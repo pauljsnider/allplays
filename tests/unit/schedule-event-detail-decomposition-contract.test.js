@@ -15,6 +15,7 @@ describe('ScheduleEventDetail decomposition contract', () => {
             "import { DateTile } from '../components/schedule/DateTile';",
             "import { EventBrief } from '../components/schedule/EventBrief';",
             "import { EventSectionNav } from '../components/schedule/EventSectionNav';",
+            "import { StaffRsvpPlayerRow } from '../components/schedule/StaffRsvpPlayerRow';",
             'QuickAvailabilityPanel',
             'AvailabilityNotesList',
             'AttentionPanel'
@@ -26,6 +27,7 @@ describe('ScheduleEventDetail decomposition contract', () => {
             /^function DateTile\b/m,
             /^function EventBrief\b/m,
             /^function EventSectionNav\b/m,
+            /^function StaffRsvpPlayerRow\b/m,
             /^function QuickAvailabilityPanel\b/m,
             /^function AttentionPanel\b/m
         ].forEach((inlineDefinition) => {
@@ -54,5 +56,15 @@ describe('ScheduleEventDetail decomposition contract', () => {
         expect(ridesHook).toContain('loadParentScheduleRideOffers');
         expect(context).toContain('export function ScheduleEventDetailProvider');
         expect(context).toContain('export function useScheduleEventDetailContext');
+    });
+
+    it('keeps staff RSVP player rows in the extracted schedule component', () => {
+        const component = readRepoFile('apps/app/src/components/schedule/StaffRsvpPlayerRow.tsx');
+
+        expect(component).toContain('export function StaffRsvpPlayerRow');
+        expect(component).toContain('data-testid={`staff-rsvp-row-${player.playerId}`}');
+        expect(component).toContain("(['going', 'maybe', 'not_going'] as const).map");
+        expect(component).toContain("disabled={submitting || eventLocked}");
+        expect(component).toContain("{submitting && player.response !== response ? 'Saving' : rsvpLabels[response]}");
     });
 });
