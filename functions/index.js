@@ -4609,10 +4609,12 @@ function canReceiveCategoryNotification(category, user, audienceContext = {}) {
     ? 'private'
     : normalizeNotificationAlbumVisibility(audienceContext.albumVisibility);
   if (albumVisibility === 'private') {
+    const isStaffUser = Array.isArray(user.roles) && user.roles.includes('staff');
+    if (!isStaffUser) return false;
     if (hasMediaAudienceConstraints(audienceContext)) {
       return mediaAudienceAllowsUser(user, audienceContext);
     }
-    return Array.isArray(user.roles) && user.roles.includes('staff');
+    return true;
   }
   return mediaAudienceAllowsUser(user, audienceContext);
 }

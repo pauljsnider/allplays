@@ -340,7 +340,7 @@ describe('team media notification recipients', () => {
         ]);
     });
 
-    it('filters private album recipients by explicit visibility audience before send fanout', async () => {
+    it('keeps private album fanout staff-only even when explicit audience lists include parents', async () => {
         const harness = createHarness({
             candidateUsers: [
                 { uid: 'parent-1', roles: ['parent'] },
@@ -361,12 +361,6 @@ describe('team media notification recipients', () => {
         });
 
         expect(normalizeTargets(targets)).toEqual([
-            {
-                uid: 'parent-2',
-                deviceId: 'parent-2-device',
-                token: 'parent-2-token',
-                teamId: 'team-1'
-            },
             {
                 uid: 'staff-1',
                 deviceId: 'staff-device',
