@@ -555,7 +555,12 @@ export function buildOfflineRefundUpdate({ refundType = 'full', amount, method, 
     };
 }
 
-export function buildCancelRecipientUpdate({ note, actorId }) {
+export function buildCancelRecipientUpdate({ note, actorId, currentPaidCents }) {
+    const paidCents = Number(currentPaidCents);
+    if (Number.isFinite(paidCents) && paidCents > 0) {
+        throw new Error('Paid recipients must be refunded before canceling the balance.');
+    }
+
     const reason = normalizeString(note);
     const ledgerEntry = {
         type: 'cancellation',
@@ -823,6 +828,7 @@ function renderRecipients(container, countEl, recipients) {
         const outstanding = formatFeeCurrency(outstandingCents);
         const refundableCents = getRecipientRefundableCents(recipient);
         const canRefundOnline = isOnlineRefundEligible(recipient);
+        const canCancelRecipient = paidCents <= 0;
         const note = recipient.manualPayment?.note || recipient.adjustment?.note || recipient.canceled?.note || recipient.adminBilling?.note || recipient.adminBilling?.reason || recipient.notes || '';
         return `
             <article class="p-5" data-recipient-id="${escapeHtml(recipient.id)}" data-balance-cents="${balanceCents}" data-paid-cents="${paidCents}" data-status="${escapeHtml(normalizeFeeStatus(recipient.status))}">
@@ -865,8 +871,9 @@ function renderRecipients(container, countEl, recipients) {
                         </div>
                         <form data-action="cancel" class="rounded-xl border border-gray-200 bg-gray-50 p-3 space-y-2">
                             <div class="text-xs font-bold uppercase tracking-wide text-gray-500">Cancel recipient</div>
+                            ${canCancelRecipient ? '<p class="text-xs text-gray-500">Use this only when no payment has been recorded.</p>' : '<p class="text-xs text-amber-700">Refund paid recipients before canceling their balance.</p>'}
                             <input name="note" type="text" placeholder="Reason" class="w-full rounded-lg border-gray-300 text-sm" aria-label="Cancellation note">
-                            <button class="w-full rounded-lg bg-gray-700 px-3 py-2 text-sm font-semibold text-white hover:bg-gray-800">Cancel balance</button>
+                            <button class="w-full rounded-lg bg-gray-700 px-3 py-2 text-sm font-semibold text-white hover:bg-gray-800 disabled:cursor-not-allowed disabled:bg-gray-300" ${canCancelRecipient ? '' : 'disabled'}>Cancel balance</button>
                         </form>
                     </div>
                 </div>
@@ -1139,7 +1146,7 @@ async function renderManageMode({ container, teamId, batchId, team, user, getTea
             } else if (form.dataset.action === 'refund') {
                 await submitOnlineTeamFeeRefund(buildOnlineRefundRequest({ ...data, teamId, batchId, recipientId }));
             } else {
-                updates = buildCancelRecipientUpdate({ ...data, actorId: user.uid });
+                updates = buildCancelRecipientUpdate({ ...data, actorId: user.uid, currentPaidCents: article?.dataset?.paidCents });
                 await updateTeamFeeRecipient(teamId, batchId, recipientId, updates);
             }
             showMessage(form.dataset.action === 'refund' ? 'Stripe refund submitted.' : 'Fee recipient updated.', 'success');
