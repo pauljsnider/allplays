@@ -1,4 +1,7 @@
 import { Capacitor } from '@capacitor/core';
+import { createLogger } from './logger';
+
+const logger = createLogger('native');
 
 export async function initializeNativeAppearance() {
   if (!isNativeRuntime()) {
@@ -11,7 +14,7 @@ export async function initializeNativeAppearance() {
     await StatusBar.setStyle({ style: Style.Light });
     await StatusBar.setBackgroundColor({ color: '#ffffff' });
   } catch (error) {
-    console.warn('[native] Unable to configure status bar.', error);
+    logger.warn('Unable to configure status bar.', { error });
   }
 }
 
@@ -24,7 +27,7 @@ export async function hideNativeSplashScreen() {
     const { SplashScreen } = await import('@capacitor/splash-screen');
     await SplashScreen.hide({ fadeOutDuration: 150 });
   } catch (error) {
-    console.warn('[native] Unable to hide splash screen.', error);
+    logger.warn('Unable to hide splash screen.', { error });
   }
 }
 

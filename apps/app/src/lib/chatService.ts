@@ -40,6 +40,7 @@ import {
 } from './adapters/legacyChatService';
 import { firebaseAuth, getNativeAuthIdToken } from './authService';
 import { loadCachedAppData } from './appDataCache';
+import { createLogger } from './logger';
 import { getNativeRestDedupKey, loadDedupedNativeRestRequest, shouldDedupNativeRestRequest } from './nativeRestDedup';
 import {
   DEFAULT_TEAM_CONVERSATION_ID,
@@ -56,7 +57,6 @@ import {
   type ChatRecipientOption,
   type ChatTargetType
 } from './chatLogic';
-import { sanitizeErrorForLogging } from './nativeRestLogging';
 import { startInteractionTimer, UX_TIMING } from './uxTiming';
 import {
   mapChatConversationRecords,
@@ -82,6 +82,7 @@ const aiStatsGamesLimit = 10;
 const aiGamesContextLimit = 20;
 const aiEventsGamesLimit = 3;
 const aiEventsPerGameLimit = 25;
+const logger = createLogger('chat-service');
 
 export type ChatTeam = {
   id: string;
@@ -527,7 +528,7 @@ async function getLatestMessagePreview(teamId: string, user: AuthUser, team: Rec
     if (!isNativeRuntime()) {
       conversations = [buildDefaultTeamConversation(team)];
     } else {
-      console.warn('[chat-service] Latest inbox preview limited to team chat:', sanitizeErrorForLogging(error));
+      logger.warn('Latest inbox preview limited to team chat.', { error });
     }
   }
 
@@ -635,7 +636,7 @@ export async function loadChatInbox(user: AuthUser | null, options: ChatInboxLoa
     teams = [...map.values()];
   } catch (error) {
     if (!isNativeRuntime()) throw error;
-    console.warn('[chat-service] Falling back to REST team load:', sanitizeErrorForLogging(error));
+    logger.warn('Falling back to REST team load.', { error });
     teams = await nativeLoadUserTeams(user, profile);
   }
 
@@ -708,7 +709,7 @@ export async function loadChatInbox(user: AuthUser | null, options: ChatInboxLoa
           isMuted: isConversationMuted(profile, team.id, preview.conversationId || DEFAULT_TEAM_CONVERSATION_ID)
         });
       } catch (error) {
-        console.warn('[chat-service] Deferred inbox preview failed:', sanitizeErrorForLogging(error));
+        logger.warn('Deferred inbox preview failed.', { error });
       }
     });
   }
@@ -773,7 +774,7 @@ export async function loadChatConversations(teamId: string, user: AuthUser, team
     const conversations = await withTimeout(Promise.resolve(getChatConversations(teamId, user, { team, canModerate })), 'Chat conversations load') as ChatConversation[];
     return mapChatConversationRecords(conversations);
   } catch (error) {
-    console.warn('[chat-service] Falling back to default chat conversation:', sanitizeErrorForLogging(error));
+    logger.warn('Falling back to default chat conversation.', { error });
     return [buildDefaultTeamConversation(team) as ChatConversation];
   }
 }
@@ -856,7 +857,7 @@ export async function loadOlderTeamChatMessages(teamId: string, conversationId: 
     return mapChatMessageRecords(messages);
   } catch (error) {
     if (!isNativeRuntime()) throw error;
-    console.warn('[chat-service] Older chat history is limited in native REST fallback:', sanitizeErrorForLogging(error));
+    logger.warn('Older chat history is limited in native REST fallback.', { error });
     return [];
   }
 }
@@ -874,7 +875,7 @@ function writeImageUploadSession(session: ImageUploadSession) {
   try {
     window.localStorage?.setItem(imageUploadSessionKey, JSON.stringify(session));
   } catch (error) {
-    console.warn('[chat-service] Unable to persist chat image upload session:', sanitizeErrorForLogging(error));
+    logger.warn('Unable to persist chat image upload session.', { error });
   }
 }
 
@@ -937,7 +938,7 @@ async function getImageUploadSession(apiKey: string) {
     try {
       return await refreshImageUploadSession(existing);
     } catch (error) {
-      console.warn('[chat-service] Refreshing chat media upload auth failed:', sanitizeErrorForLogging(error));
+      logger.warn('Refreshing chat media upload auth failed.', { error });
     }
   }
   return createImageUploadSession(apiKey);
@@ -1147,7 +1148,7 @@ export async function sendTeamChatMessage({
       try {
         await deleteUploadedChatAttachments(uploadedAttachments);
       } catch (cleanupError) {
-        console.error('Failed to clean up uploaded chat attachments:', cleanupError);
+        logger.error('Failed to clean up uploaded chat attachments.', { error: cleanupError });
       }
     }
     throw error;
@@ -1300,7 +1301,7 @@ export async function editTeamChatMessage(teamId: string, messageId: string, tex
     return await withTimeout(Promise.resolve(editChatMessage(teamId, messageId, text, { conversationId })), 'Chat message edit');
   } catch (error) {
     if (!isNativeRuntime()) throw error;
-    console.warn('[chat-service] Falling back to REST chat message edit:', sanitizeErrorForLogging(error));
+    logger.warn('Falling back to REST chat message edit.', { error });
     return nativePatchDocument(getMessageDocumentPath(teamId, messageId, conversationId), {
       text,
       editedAt: new Date()
@@ -1313,7 +1314,7 @@ export async function deleteTeamChatMessage(teamId: string, messageId: string, c
     return await withTimeout(Promise.resolve(deleteChatMessage(teamId, messageId, { conversationId })), 'Chat message delete');
   } catch (error) {
     if (!isNativeRuntime()) throw error;
-    console.warn('[chat-service] Falling back to REST chat message delete:', sanitizeErrorForLogging(error));
+    logger.warn('Falling back to REST chat message delete.', { error });
     return nativePatchDocument(getMessageDocumentPath(teamId, messageId, conversationId), {
       deleted: true
     });
@@ -1325,7 +1326,7 @@ export async function toggleTeamChatReaction(teamId: string, messageId: string, 
     return await withTimeout(Promise.resolve(toggleChatReaction(teamId, messageId, reactionKey, userId, { conversationId })), 'Chat reaction update');
   } catch (error) {
     if (!isNativeRuntime()) throw error;
-    console.warn('[chat-service] Falling back to REST chat reaction update:', sanitizeErrorForLogging(error));
+    logger.warn('Falling back to REST chat reaction update.', { error });
     const path = getMessageDocumentPath(teamId, messageId, conversationId);
     const message = await nativeGetDocument(path);
     if (!message) throw new Error('Message not found.');
@@ -1351,10 +1352,10 @@ export async function markTeamChatRead(userId: string, teamId: string, conversat
     return await withTimeout(Promise.resolve(updateChatLastRead(userId, teamId, conversationId)), 'Chat last read update', 2500);
   } catch (error) {
     if (!isNativeRuntime()) {
-      console.warn('[chat-service] Failed to update chat last-read:', sanitizeErrorForLogging(error));
+      logger.warn('Failed to update chat last-read.', { error });
       return null;
     }
-    console.warn('[chat-service] Falling back to REST chat last-read update:', sanitizeErrorForLogging(error));
+    logger.warn('Falling back to REST chat last-read update.', { error });
     const userPath = `users/${encodeURIComponent(userId)}`;
     const profile = (await nativeGetDocument(userPath) || {}) as Record<string, any>;
     const lastReadAt = new Date();
@@ -1397,10 +1398,10 @@ export async function muteTeamChat(uid: string, teamId: string, conversationId =
     await withTimeout(Promise.resolve(updateChatMuted(uid, teamId, conversationId)), 'Chat mute update', 2500);
   } catch (error) {
     if (!isNativeRuntime()) {
-      console.warn('[chat-service] Failed to mute team chat:', sanitizeErrorForLogging(error));
+      logger.warn('Failed to mute team chat.', { error });
       throw error;
     }
-    console.warn('[chat-service] Falling back to REST chat mute update:', sanitizeErrorForLogging(error));
+    logger.warn('Falling back to REST chat mute update.', { error });
     const userPath = `users/${encodeURIComponent(uid)}`;
     const profile = (await nativeGetDocument(userPath) || {}) as Record<string, any>;
     const mutedAt = new Date();
@@ -1433,10 +1434,10 @@ export async function unmuteTeamChat(uid: string, teamId: string, conversationId
     await withTimeout(Promise.resolve(clearChatMuted(uid, teamId, conversationId)), 'Chat unmute update', 2500);
   } catch (error) {
     if (!isNativeRuntime()) {
-      console.warn('[chat-service] Failed to unmute team chat:', sanitizeErrorForLogging(error));
+      logger.warn('Failed to unmute team chat.', { error });
       throw error;
     }
-    console.warn('[chat-service] Falling back to REST chat unmute update:', sanitizeErrorForLogging(error));
+    logger.warn('Falling back to REST chat unmute update.', { error });
     const userPath = `users/${encodeURIComponent(uid)}`;
     const profile = (await nativeGetDocument(userPath) || {}) as Record<string, any>;
     const teamChatState = getTeamChatStateEntry(profile, teamId);
@@ -1537,7 +1538,7 @@ async function loadChatRecipientProfiles(players: any): Promise<Map<string, Reco
         return [recipientId, profile || {}] as const;
       }
     } catch (error) {
-      console.warn('[chat-service] Failed to hydrate chat recipient profile:', sanitizeErrorForLogging(error));
+      logger.warn('Failed to hydrate chat recipient profile.', { error });
     }
     return [recipientId, {}] as const;
   }));

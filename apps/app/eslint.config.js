@@ -54,7 +54,7 @@ export default [
       }],
       'jsx-a11y/alt-text': 'warn',
       'jsx-a11y/anchor-is-valid': 'warn',
-      'no-console': 'warn',
+      'no-console': 'error',
       'no-undef': 'off',
       'no-unsafe-optional-chaining': 'warn',
       'no-unsafe-finally': 'warn',
@@ -70,13 +70,11 @@ export default [
   },
   {
     files: [
-      'src/lib/appDataCache.ts',
-      'src/lib/notificationInboxService.ts',
-      'src/lib/profileService.ts',
-      'src/lib/scheduleService.ts'
+      'src/components/NotificationInboxSheet.tsx',
+      'src/pages/ScheduleEventDetail.tsx'
     ],
     rules: {
-      'no-console': 'error'
+      'no-console': 'warn'
     }
   },
   {

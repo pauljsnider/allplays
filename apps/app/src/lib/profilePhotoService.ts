@@ -6,7 +6,7 @@ import {
 } from '@capacitor/camera';
 import { Capacitor } from '@capacitor/core';
 import { resolveImageFirebaseConfig } from './adapters/legacyProfilePhotoDb';
-import { sanitizeErrorForLogging } from './nativeRestLogging';
+import { createLogger } from './logger';
 import { uploadUserPhoto } from './adapters/legacyProfilePhotoDb';
 
 const profileTimeoutMs = 8000;
@@ -15,6 +15,7 @@ const imageUploadSessionKey = 'allplays-image-upload-session';
 const profilePhotoMaxDimensionPx = 1024;
 const profilePhotoMaxBytes = 512 * 1024;
 const profilePhotoQuality = 0.82;
+const logger = createLogger('profile-photo-service');
 
 export type ProfilePhotoSource = 'camera' | 'photos';
 
@@ -239,7 +240,7 @@ function writeImageUploadSession(session: ImageUploadSession) {
   try {
     window.localStorage?.setItem(imageUploadSessionKey, JSON.stringify(session));
   } catch (error) {
-    console.warn('[profile-photo-service] Unable to persist image upload auth session:', sanitizeErrorForLogging(error));
+    logger.warn('Unable to persist image upload auth session.', { error });
   }
 }
 
@@ -253,7 +254,7 @@ async function getImageUploadSession(apiKey: string): Promise<ImageUploadSession
     try {
       return await refreshImageUploadSession(current);
     } catch (error) {
-      console.warn('[profile-photo-service] Image upload auth refresh failed, creating a new anonymous session:', sanitizeErrorForLogging(error));
+      logger.warn('Image upload auth refresh failed, creating a new anonymous session.', { error });
     }
   }
 
@@ -348,14 +349,14 @@ export async function uploadProfilePhoto(file: File) {
     try {
       return await nativeUploadProfilePhoto(file);
     } catch (error) {
-      console.warn('[profile-photo-service] Native profile photo upload failed, falling back to SDK upload:', sanitizeErrorForLogging(error));
+      logger.warn('Native profile photo upload failed, falling back to SDK upload.', { error });
     }
   }
 
   try {
     return await withTimeout(uploadUserPhoto(file) as Promise<string>, 'Profile photo upload', nativeImageUploadTimeoutMs);
   } catch (error) {
-    console.warn('[profile-photo-service] Falling back to REST profile photo upload:', sanitizeErrorForLogging(error));
+    logger.warn('Falling back to REST profile photo upload.', { error });
     return nativeUploadProfilePhoto(file);
   }
 }

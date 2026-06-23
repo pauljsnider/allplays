@@ -19,6 +19,7 @@ import {
   updatePassword,
   verifyPasswordResetCode
 } from './firebaseAuthRuntime';
+import { createLogger } from './logger';
 import type { AuthUser, UserRole } from './types';
 
 export const firebaseAuth = auth;
@@ -33,6 +34,7 @@ const signOutCleanupTimeoutMs = 2500;
 const firebaseAuthStorageDb = 'firebaseLocalStorageDb';
 const firebaseAuthStorageStore = 'firebaseLocalStorage';
 const nativeAuthSessionStorageKey = 'allplays-native-auth-session';
+const logger = createLogger('app-auth');
 
 type AuthDbModule = typeof import('../../../../js/db.js');
 type AdminInviteModule = typeof import('../../../../js/admin-invite.js');
@@ -205,7 +207,7 @@ async function runBestEffortAuthCleanup(label: string, cleanup: () => Promise<un
       signOutCleanupTimeoutMs
     );
   } catch (error) {
-    console.warn(`[app-auth] ${label} failed during sign-out:`, error);
+    logger.warn('Operation failed during sign-out.', { label, error });
   }
 }
 
@@ -263,7 +265,7 @@ function readNativeAuthSession(): NativeAuthSession | null {
     const rawSession = window.localStorage?.getItem(nativeAuthSessionStorageKey);
     return rawSession ? JSON.parse(rawSession) as NativeAuthSession : null;
   } catch (error) {
-    console.warn('[app-auth] Unable to read native auth fallback session:', error);
+    logger.warn('Unable to read native auth fallback session.', { error });
     return null;
   }
 }
@@ -272,7 +274,7 @@ function writeNativeAuthSession(session: NativeAuthSession) {
   try {
     window.localStorage?.setItem(nativeAuthSessionStorageKey, JSON.stringify(session));
   } catch (error) {
-    console.warn('[app-auth] Unable to update native auth fallback session:', error);
+    logger.warn('Unable to update native auth fallback session.', { error });
   }
 }
 
@@ -280,7 +282,7 @@ function clearNativeAuthSession() {
   try {
     window.localStorage?.removeItem(nativeAuthSessionStorageKey);
   } catch (error) {
-    console.warn('[app-auth] Unable to clear native auth fallback session:', error);
+    logger.warn('Unable to clear native auth fallback session.', { error });
   }
 }
 
@@ -304,7 +306,7 @@ async function clearFirebaseAuthStorageSession() {
       transaction.onabort = () => reject(transaction.error || new Error('Auth storage clear was aborted.'));
     });
   } catch (error) {
-    console.warn('[app-auth] Unable to clear Firebase auth storage session:', error);
+    logger.warn('Unable to clear Firebase auth storage session.', { error });
   } finally {
     database?.close();
   }
@@ -468,7 +470,7 @@ async function getNativeAccessCodeValidationOptions(result: UserCredential) {
   }
 
   const nativeAuthToken = await getNativeAuthIdToken().catch((error: unknown) => {
-    console.warn('[app-auth] Unable to attach native auth token for access code validation:', error);
+    logger.warn('Unable to attach native auth token for access code validation.', { error });
     return null;
   });
   return nativeAuthToken ? { nativeAuthToken } : undefined;
@@ -589,7 +591,7 @@ async function persistNativePluginAuthSession(nativeResult: NativePluginSignInRe
   const lookupPayload = await callFirebaseAuthRest('accounts:lookup', {
     idToken
   }).catch((error) => {
-    console.warn('[app-auth] Unable to load native Firebase auth profile:', error);
+    logger.warn('Unable to load native Firebase auth profile.', { error });
     return {};
   }) as { users?: NativeRestLookupUser[] };
   const lookupUser = Array.isArray(lookupPayload.users) ? lookupPayload.users[0] || {} : {};
@@ -722,7 +724,7 @@ async function signInWithNativeRestSession(email: string, password: string) {
   const lookupPayload = await callFirebaseAuthRest('accounts:lookup', {
     idToken: signInPayload.idToken
   }).catch((error) => {
-    console.warn('[app-auth] Unable to load native REST auth profile:', error);
+    logger.warn('Unable to load native REST auth profile.', { error });
     return {};
   }) as { users?: NativeRestLookupUser[] };
   const lookupUser = Array.isArray(lookupPayload.users) ? lookupPayload.users[0] || {} : {};
@@ -770,7 +772,7 @@ async function signInWithNativeGoogleRestSession(googleIdToken: string, googleAc
   const lookupPayload = await callFirebaseAuthRest('accounts:lookup', {
     idToken: signInPayload.idToken
   }).catch((error) => {
-    console.warn('[app-auth] Unable to load native Google REST auth profile:', error);
+    logger.warn('Unable to load native Google REST auth profile.', { error });
     return {};
   }) as { users?: NativeRestLookupUser[] };
   const lookupUser = Array.isArray(lookupPayload.users) ? lookupPayload.users[0] || {} : {};
@@ -856,14 +858,14 @@ async function cleanupFailedNewUser(user: FirebaseUser | null, context: string) 
     try {
       await user.delete();
     } catch (deleteError) {
-      console.error(`Error deleting user after ${context}:`, deleteError);
+      logger.error('Error deleting user after auth operation.', { context, error: deleteError });
     }
   }
 
   try {
     await firebaseSignOut(auth);
   } catch (signOutError) {
-    console.error(`Error signing out after ${context}:`, signOutError);
+    logger.error('Error signing out after auth operation.', { context, error: signOutError });
   }
 }
 
@@ -887,7 +889,7 @@ export async function hydrateFirebaseUser(user: FirebaseUser): Promise<HydratedU
       profileHydrationTimeoutMs
     ) || {};
   } catch (error) {
-    console.warn('[app-auth] Failed to load profile; continuing with auth identity:', error);
+    logger.warn('Failed to load profile; continuing with auth identity.', { error });
     profile = {
       email: user.email || ''
     };
@@ -909,7 +911,7 @@ export async function hydrateFirebaseUser(user: FirebaseUser): Promise<HydratedU
       };
     }
   } catch (error) {
-    console.warn('[app-auth] Failed to sync approved parent membership requests:', error);
+    logger.warn('Failed to sync approved parent membership requests.', { error });
   }
 
   if (!Array.isArray(profile.coachOf) || profile.coachOf.length === 0) {
@@ -926,7 +928,7 @@ export async function hydrateFirebaseUser(user: FirebaseUser): Promise<HydratedU
         };
       }
     } catch (error) {
-      console.warn('[app-auth] Failed to load owned teams:', error);
+      logger.warn('Failed to load owned teams.', { error });
     }
   }
 
@@ -982,7 +984,7 @@ export async function signInWithEmail(email: string, password: string) {
       email: normalizedEmail,
       lastLogin: new Date()
     }).catch((error: unknown) => {
-      console.warn('[app-auth] Unable to update native lastLogin before session restore:', error);
+      logger.warn('Unable to update native lastLogin before session restore.', { error });
     });
     return {
       user,
@@ -1037,7 +1039,7 @@ async function signInWithNativeGoogleCredential() {
     throw new Error('Native Google sign-in is only available in the iOS or Android app.');
   }
 
-  console.info('[app-auth] Native Google: requesting Google ID token.');
+  logger.info('Native Google: requesting Google ID token.');
   const result = await withTimeout(
     FirebaseAuthentication.signInWithGoogle(getNativeGoogleSignInOptions()) as Promise<NativePluginSignInResult>,
     'Native Google sign-in timed out.',
@@ -1049,7 +1051,7 @@ async function signInWithNativeGoogleCredential() {
     throw new Error('Google sign-in did not return an ID token.');
   }
 
-  console.info('[app-auth] Native Google: exchanging token with Firebase Auth REST.');
+  logger.info('Native Google: exchanging token with Firebase Auth REST.');
   const user = await signInWithNativeGoogleRestSession(idToken, accessToken);
   return {
     user,
@@ -1070,7 +1072,7 @@ async function processGoogleResult(result: UserCredential | null, activationCode
       photoUrl: result.user.photoURL || '',
       lastLogin: new Date()
     }).catch((error: unknown) => {
-      console.warn('[app-auth] Unable to update Google lastLogin; continuing sign-in:', error);
+      logger.warn('Unable to update Google lastLogin; continuing sign-in.', { error });
     });
     return result;
   }
@@ -1289,7 +1291,7 @@ export async function setCurrentUserPassword(newPassword: string) {
   await updateUserProfile(fallbackUser.uid, {
     hasPassword: true,
     passwordSetAt: new Date()
-  }).catch((error: unknown) => console.warn('[app-auth] Unable to mark native password as set:', error));
+  }).catch((error: unknown) => logger.warn('Unable to mark native password as set.', { error }));
 }
 
 export async function redeemInviteForUser(userId: string, code: string, authEmail?: string | null) {

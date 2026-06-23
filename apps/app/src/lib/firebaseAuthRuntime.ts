@@ -23,6 +23,9 @@ import {
   updatePassword,
   verifyPasswordResetCode
 } from './adapters/legacyFirebaseAuthSdk';
+import { createLogger } from './logger';
+
+const logger = createLogger('firebase');
 
 const firebaseConfig = await resolvePrimaryFirebaseConfig();
 const app = getApps().length ? getApp() : initializeApp(firebaseConfig);
@@ -58,7 +61,7 @@ function initializeFirebaseAuth(appInstance: typeof app) {
       persistence: indexedDBLocalPersistence
     });
   } catch (error) {
-    console.warn('[firebase] Native auth initialization fell back to getAuth:', error);
+    logger.warn('Native auth initialization fell back to getAuth.', { error });
     return getAuth(appInstance);
   }
 }

@@ -59,12 +59,13 @@ import {
 } from './adapters/legacyTeamDetail';
 import { firebaseAuth, getNativeAuthIdToken } from './authService';
 import { buildAppAcceptInviteUrl } from './inviteUrls';
+import { createLogger } from './logger';
 import { getNativeRestDedupKey, loadDedupedNativeRestRequest, shouldDedupNativeRestRequest } from './nativeRestDedup';
-import { sanitizeErrorForLogging } from './nativeRestLogging';
 import { normalizeOptionalHttpUrl, parseTeamLivestreamInput } from './teamLinks';
 import type { AuthUser } from './types';
 
 const primaryDataTimeoutMs = 5000;
+const logger = createLogger('team-detail-service');
 
 export type TeamDetailPlayer = {
   id: string;
@@ -592,7 +593,7 @@ async function readWithNativeFallback<T>(label: string, primary: () => Promise<T
     return await withTimeout(Promise.resolve(primary()), label);
   } catch (error) {
     if (!isNativeRuntime()) throw error;
-    console.warn(`[team-detail-service] Falling back to REST for ${label}:`, sanitizeErrorForLogging(error));
+    logger.warn('Falling back to REST.', { label, error });
     return fallback();
   }
 }
@@ -602,7 +603,7 @@ async function writeWithNativeFallback<T>(label: string, primary: () => Promise<
     return await withTimeout(Promise.resolve(primary()), label);
   } catch (error) {
     if (!isNativeRuntime()) throw error;
-    console.warn(`[team-detail-service] Falling back to REST for ${label}:`, sanitizeErrorForLogging(error));
+    logger.warn('Falling back to REST.', { label, error });
     return fallback();
   }
 }
@@ -1190,7 +1191,7 @@ export async function createStatTrackerConfigForApp(teamId: string, user: AuthUs
     if (error instanceof Error && error.message === `${label} timed out.`) {
       created = { id: await createPromise };
     } else {
-      console.warn(`[team-detail-service] Falling back to REST for ${label}:`, sanitizeErrorForLogging(error));
+      logger.warn('Falling back to REST.', { label, error });
       created = await nativeCreateDocument(`teams/${encodeURIComponent(normalizedTeamId)}/statTrackerConfigs`, normalizedConfig);
     }
   }

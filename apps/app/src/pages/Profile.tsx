@@ -45,6 +45,7 @@ import {
   type PushNotificationPermissionStatus
 } from '../lib/pushService';
 import { buildAppAcceptInviteUrl } from '../lib/inviteUrls';
+import { createLogger } from '../lib/logger';
 import { sharePublicUrl } from '../lib/publicActions';
 import { startAppInitialLoadTimer } from '../lib/telemetry';
 import { useShellLayout } from '../lib/useShellLayout';
@@ -74,6 +75,7 @@ const notificationPreferenceGroups = NOTIFICATION_PREFERENCE_GROUPS as readonly 
   categories: readonly { id: NotificationCategory; label: string }[];
 }[];
 const collapsedInviteCount = 3;
+const logger = createLogger('profile');
 const profileSections: Array<{ id: ProfileSectionId; label: string }> = [
   { id: 'account', label: 'Account' },
   { id: 'alerts', label: 'Alerts' },
@@ -190,7 +192,7 @@ export function Profile({ auth }: { auth: AuthState }) {
       setPushPermissionStatus(nextStatus);
       return nextStatus;
     } catch (error) {
-      console.warn('[profile] Unable to load push permission state:', error);
+      logger.warn('Unable to load push permission state.', { error });
       setPushPermissionStatus({
         state: 'unsupported',
         isNative: true,
@@ -275,7 +277,7 @@ export function Profile({ auth }: { auth: AuthState }) {
           loadedProfile = seededProfile as ProfileDocument;
         } else {
           loadedProfile = await loadProfileDocument(user.uid).catch((error) => {
-            console.warn('[profile] Unable to load profile:', error);
+            logger.warn('Unable to load profile.', { error });
             if (!cancelled) {
               setProfileStatus({ message: 'Profile details could not be loaded yet.', tone: 'error' });
               initialLoadTimer.end({
@@ -407,7 +409,7 @@ export function Profile({ auth }: { auth: AuthState }) {
           }
         }
       } catch (error) {
-        console.warn('[profile] Unable to load notification teams:', error);
+        logger.warn('Unable to load notification teams.', { error });
         if (!cancelled) {
           setNotificationTeams([]);
           setSelectedTeamId('');
@@ -460,7 +462,7 @@ export function Profile({ auth }: { auth: AuthState }) {
           setNotificationPreferencesErrorTeamId((current) => (current === selectedTeamId ? null : current));
         }
       } catch (error) {
-        console.warn('[profile] Unable to load notification preferences:', error);
+        logger.warn('Unable to load notification preferences.', { error });
         if (!cancelled) {
           // Fall back to default preferences so the selected team still has editable
           // toggles and game-day actions after a transient read failure, while
@@ -495,7 +497,7 @@ export function Profile({ auth }: { auth: AuthState }) {
 
       try {
         const page = await loadProfileAccessCodesPage(user.uid, { pageSize: collapsedInviteCount }).catch((error) => {
-          console.warn('[profile] Unable to load access codes:', error);
+          logger.warn('Unable to load access codes.', { error });
           setInviteStatus({ message: 'Unable to load invite history.', tone: 'error' });
           return { codes: [], nextCursor: null };
         });
@@ -547,7 +549,7 @@ export function Profile({ auth }: { auth: AuthState }) {
       setAccessCodesHasMore(Boolean(page.nextCursor));
       setAccessCodesLoaded(true);
     } catch (error) {
-      console.warn('[profile] Unable to load more access codes:', error);
+      logger.warn('Unable to load more access codes.', { error });
       setInviteStatus({ message: 'Unable to load more invite history.', tone: 'error' });
     } finally {
       setAccessCodesLoadingMore(false);
@@ -564,7 +566,7 @@ export function Profile({ auth }: { auth: AuthState }) {
 
       try {
         const teams = await loadParentTeams(user.uid).catch((error) => {
-          console.warn('[profile] Unable to load parent-linked teams:', error);
+          logger.warn('Unable to load parent-linked teams.', { error });
           setAccountMergeStatus({ message: 'Unable to load account merge options right now.', tone: 'error' });
           return [];
         });
@@ -732,7 +734,7 @@ export function Profile({ auth }: { auth: AuthState }) {
       setPhotoChanged(false);
       setProfileStatus({ message: 'Profile saved.', tone: 'success' });
       void auth.refresh().catch((error) => {
-        console.warn('[profile] Unable to refresh auth after profile save:', error);
+        logger.warn('Unable to refresh auth after profile save.', { error });
       });
     } catch (error: any) {
       setProfileStatus({ message: formatProfileSaveError(error), tone: 'error' });
@@ -1071,7 +1073,7 @@ export function Profile({ auth }: { auth: AuthState }) {
       setAccountMergeEmail('');
       setAccountMergeStatus({ message: 'Merge request pending verification. We will verify the other email before moving any account data.', tone: 'success' });
     } catch (error) {
-      console.error('[profile] Unable to request account merge:', error);
+      logger.error('Unable to request account merge.', { error });
       setAccountMergeStatus({ message: 'Unable to request merge right now. Please try again.', tone: 'error' });
     } finally {
       setBusy('');

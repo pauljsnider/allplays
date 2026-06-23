@@ -2,6 +2,9 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { AuthState, AuthUser } from './types';
 import { clearAuthBootstrapHint, writeAuthBootstrapHint } from './authBootstrapHint';
 import { hydrateFirebaseUser, observeFirebaseUser, signOut } from './authService';
+import { createLogger } from './logger';
+
+const logger = createLogger('app-auth');
 
 export function useAuth(): AuthState {
   const [user, setUser] = useState<AuthUser | null>(null);
@@ -87,7 +90,7 @@ export function useAuth(): AuthState {
     try {
       await cleanup;
     } catch (signOutError: any) {
-      console.warn('[app-auth] Sign-out cleanup did not complete cleanly:', signOutError);
+      logger.warn('Sign-out cleanup did not complete cleanly.', { error: signOutError });
     } finally {
       setUser(null);
       setProfile(null);

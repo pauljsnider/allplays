@@ -1,4 +1,5 @@
 import { acquireProfilePhoto } from './profilePhotoService'
+import { createLogger } from './logger'
 import {
   addAggregatedStatsWritesToBatch,
   buildTrackStatsheetApplyPlan,
@@ -20,6 +21,8 @@ import {
   validateTrackStatsheetApplyRows,
   writeBatch
 } from './adapters/legacyStatsheetImport'
+
+const logger = createLogger('statsheetImportService')
 
 export type TrackStatsheetReviewRow = {
   number: string;
@@ -273,7 +276,7 @@ export async function analyzeTrackStatsheetPhoto(file: File, roster: TrackStatsh
   try {
     response = JSON.parse(result.response.text() || '{}')
   } catch (parseError) {
-    console.warn('[statsheetImportService] Failed to parse AI response', parseError)
+    logger.warn('Failed to parse AI response.', { error: parseError })
   }
   return buildTrackStatsheetReviewModel(response, roster)
 }
