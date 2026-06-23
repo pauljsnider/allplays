@@ -24,6 +24,7 @@ describe('registration roster import planning', () => {
         expect(isExternallyLinkedRosterTeam({ registrationSource: { players: [{ id: 'p1' }] } })).toBe(true);
         expect(isExternallyLinkedRosterTeam({ registrationSource: { roster: [{ id: 'p1' }] } })).toBe(true);
         expect(isExternallyLinkedRosterTeam({ externalRosterPlayers: [{ id: 'p1' }] })).toBe(true);
+        expect(getRegistrationRosterPlayers({ registrationRosterSnapshot: { players: [{ id: 'p0' }] } })).toEqual([{ id: 'p0' }]);
         expect(getRegistrationRosterPlayers({ registrationSourceSnapshot: { rosterPlayers: [{ id: 'p1' }] } })).toEqual([{ id: 'p1' }]);
         expect(getRegistrationRosterPlayers({ registrationSource: { rosterPlayers: [{ id: 'p2' }] } })).toEqual([{ id: 'p2' }]);
     });
@@ -437,10 +438,11 @@ describe('registration roster import wiring', () => {
         expect(source).toContain("import { formatRegistrationRosterImportResults, getRegistrationRosterPlayers, hasConfiguredRegistrationProviderMetadata, isExternallyLinkedRosterTeam, planRegistrationRosterImport } from './js/edit-roster-registration-import.js?v=2';");
         expect(source).toContain('hasConfiguredRegistrationProviderMetadata(team)');
         expect(source).toContain('Registration provider metadata saved');
-        expect(source).toContain('This page uses saved snapshots only and does not fetch provider data live.');
-        expect(source).toContain('Sports Connect metadata is saved for this team, but provider-based roster import requires an existing registration roster snapshot already loaded in ALL PLAYS.');
-        expect(source).toContain('Provider-based roster import requires an existing registration roster snapshot already loaded in ALL PLAYS before import can proceed.');
-        expect(source).toContain('Confirm provider data has already been loaded into ALL PLAYS, then return here to preview and import the saved roster.');
+        expect(source).toContain('Use Edit Team to re-import from Sports Connect when the snapshot needs a refresh.');
+        expect(source).toContain('Sports Connect metadata is saved for this team, but provider-based roster import requires a stored roster snapshot.');
+        expect(source).toContain('Run Re-import from Sports Connect on Edit Team, then return here to preview it.');
+        expect(source).toContain('Provider-based roster import requires an existing registration roster snapshot before import can proceed.');
+        expect(source).toContain('Run Re-import from Sports Connect on Edit Team, then return here to preview and import the saved roster.');
         expect(source).toContain('Load or save a registration roster snapshot for this team before importing.');
         expect(source).not.toContain('provider connector stores a roster snapshot');
         expect(source).not.toContain('A live connector must create a stored roster snapshot');
