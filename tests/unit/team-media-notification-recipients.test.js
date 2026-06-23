@@ -82,7 +82,12 @@ function createHarness({ candidateUsers = [], indexedTargets = [], preferences =
         'function normalizeNotificationAlbumVisibility',
         '\nasync function pruneInvalidTokens'
     );
-    const firestore = createFirestoreMock({ indexedTargets, preferences, devices });
+    const rolesByUid = new Map(candidateUsers.map((user) => [user.uid, user.roles || []]));
+    const indexedTargetsWithRoles = indexedTargets.map((target) => ({
+        ...target,
+        roles: target.roles || rolesByUid.get(target.uid) || []
+    }));
+    const firestore = createFirestoreMock({ indexedTargets: indexedTargetsWithRoles, preferences, devices });
     const getCandidateUsersForTeam = vi.fn(async () => candidateUsers);
     const notificationAudienceAllowsRoles = vi.fn((category, roles = []) => {
         if (category !== 'media') return false;
