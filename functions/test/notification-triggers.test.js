@@ -315,6 +315,144 @@ test('notifyGameCreated sends one schedule notification for a recurring practice
     }
 });
 
+test('notifyRideOfferCreated notifies team parents except the driver and marks near events time-sensitive', async () => {
+    const { moduleExports, env, cleanup } = loadNotificationInternals({
+        teamDoc: { ownerId: 'coach-1', adminEmails: [] },
+        parentUserIds: ['driver-1', 'parent-2'],
+        gameDocs: {
+            'game-1': {
+                title: "Saturday's game",
+                date: new Date(Date.now() + (90 * 60 * 1000)).toISOString()
+            }
+        },
+        indexedTargets: [
+            { uid: 'driver-1', deviceId: 'driver-device', token: 'driver-token', categories: { rideshare: true } },
+            { uid: 'parent-2', deviceId: 'parent-device', token: 'parent-token', categories: { rideshare: true } }
+        ]
+    });
+
+    try {
+        const ref = env.firestoreState.doc('teams/team-1/games/game-1/rideOffers/offer-1');
+        const snapshot = makeSnapshot(ref, {
+            driverUserId: 'driver-1',
+            seatCapacity: 3,
+            seatCountConfirmed: 0,
+            status: 'open'
+        });
+
+        const result = await moduleExports.notifyRideOfferCreated(snapshot, {
+            params: { teamId: 'team-1', gameId: 'game-1', offerId: 'offer-1' }
+        });
+
+        assert.equal(result?.successCount, 1);
+        assert.equal(env.messagingCalls.length, 1);
+        assert.deepEqual(env.messagingCalls[0].tokens, ['parent-token']);
+        assert.equal(env.messagingCalls[0].title, "Ride offered to Saturday's game — 3 seats");
+        assert.equal(env.messagingCalls[0].data.category, 'rideshare');
+        assert.equal(env.messagingCalls[0].data.appRoute, '/schedule/team-1/game-1?section=rideshare');
+        assert.equal(env.messagingCalls[0].android?.priority, 'high');
+        assert.equal(env.messagingCalls[0].apns?.payload?.aps?.['interruption-level'], 'time-sensitive');
+        assert.equal(env.auditWrites[0].value.category, 'rideshare');
+    } finally {
+        cleanup();
+    }
+});
+
+test('notifyRideClaimCreated targets only the driver with remaining-seat copy', async () => {
+    const { moduleExports, env, cleanup } = loadNotificationInternals({
+        teamDoc: { ownerId: 'coach-1', adminEmails: [] },
+        parentUserIds: ['driver-1', 'parent-2'],
+        gameDocs: {
+            'game-1': {
+                title: "Saturday's game",
+                date: '2026-06-28T16:00:00.000Z'
+            }
+        },
+        rideOfferDocs: {
+            'game-1/offer-1': {
+                driverUserId: 'driver-1',
+                seatCapacity: 3,
+                seatCountConfirmed: 0,
+                status: 'open'
+            }
+        },
+        indexedTargets: [
+            { uid: 'driver-1', deviceId: 'driver-device', token: 'driver-token', categories: { rideshare: true } },
+            { uid: 'parent-2', deviceId: 'parent-device', token: 'parent-token', categories: { rideshare: true } }
+        ]
+    });
+
+    try {
+        const ref = env.firestoreState.doc('teams/team-1/games/game-1/rideOffers/offer-1/requests/request-1');
+        const snapshot = makeSnapshot(ref, {
+            parentUserId: 'parent-2',
+            childId: 'player-2',
+            childName: 'Sam Parker',
+            status: 'pending'
+        });
+
+        const result = await moduleExports.notifyRideClaimCreated(snapshot, {
+            params: { teamId: 'team-1', gameId: 'game-1', offerId: 'offer-1', requestId: 'request-1' }
+        });
+
+        assert.equal(result?.successCount, 1);
+        assert.equal(env.messagingCalls.length, 1);
+        assert.deepEqual(env.messagingCalls[0].tokens, ['driver-token']);
+        assert.equal(env.messagingCalls[0].title, 'Sam P. claimed a seat — 2 seats left');
+        assert.equal(env.messagingCalls[0].data.category, 'rideshare');
+        assert.equal(env.messagingCalls[0].data.appRoute, '/schedule/team-1/game-1?section=rideshare');
+        assert.equal(env.auditWrites[0].value.category, 'rideshare');
+    } finally {
+        cleanup();
+    }
+});
+
+test('notifyRideOfferCancelled targets only active claimants and respects rideshare preferences', async () => {
+    const { moduleExports, env, cleanup } = loadNotificationInternals({
+        teamDoc: { ownerId: 'coach-1', adminEmails: [] },
+        parentUserIds: ['driver-1', 'parent-2', 'parent-3'],
+        gameDocs: {
+            'game-1': {
+                title: "Saturday's game",
+                date: '2026-06-28T16:00:00.000Z'
+            }
+        },
+        rideRequestDocs: {
+            'game-1/offer-1': [
+                { id: 'request-1', parentUserId: 'parent-2', status: 'confirmed' },
+                { id: 'request-2', parentUserId: 'parent-3', status: 'pending' }
+            ]
+        },
+        indexedTargets: [
+            { uid: 'parent-2', deviceId: 'claimant-device', token: 'claimant-token', categories: { rideshare: true } },
+            { uid: 'parent-3', deviceId: 'opt-out-device', token: 'opt-out-token', categories: { rideshare: false } }
+        ]
+    });
+
+    try {
+        const ref = env.firestoreState.doc('teams/team-1/games/game-1/rideOffers/offer-1');
+        const result = await moduleExports.notifyRideOfferCancelled(
+            makeChange(ref, {
+                driverUserId: 'driver-1',
+                status: 'open'
+            }, {
+                driverUserId: 'driver-1',
+                status: 'cancelled'
+            }),
+            { params: { teamId: 'team-1', gameId: 'game-1', offerId: 'offer-1' } }
+        );
+
+        assert.equal(result?.successCount, 1);
+        assert.equal(env.messagingCalls.length, 1);
+        assert.deepEqual(env.messagingCalls[0].tokens, ['claimant-token']);
+        assert.equal(env.messagingCalls[0].title, "Ride canceled for Saturday's game");
+        assert.equal(env.messagingCalls[0].data.category, 'rideshare');
+        assert.equal(env.auditWrites[0].value.category, 'rideshare');
+    } finally {
+        cleanup();
+    }
+});
+
 test('notifyGameUpdated sends liveScore notifications and records once-only audit state', async () => {
     const { moduleExports, env, cleanup } = loadNotificationInternals({
         teamDoc: { ownerId: 'coach-1', adminEmails: [] },

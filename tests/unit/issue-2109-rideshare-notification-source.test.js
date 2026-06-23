@@ -12,9 +12,11 @@ const notificationRoutingTestSource = readFileSync(new URL('./app-notification-o
 describe('issue 2109 rideshare notification source contract', () => {
     it('keeps rideshare as a routed notification category for parents and staff', () => {
         expect(targetIndexSource).toContain("'rideshare'");
-        expect(targetIndexSource).toContain('rideshare: false');
+        expect(targetIndexSource).toContain('rideshare: true');
         expect(targetIndexSource).toContain("rideshare: Object.freeze(['parent', 'staff'])");
         expect(deliveryMetadataSource).toContain("rideshare: Object.freeze({ androidChannelId: ANDROID_NOTIFICATION_CHANNEL_IDS.team, iosThreadScope: 'team' })");
+        expect(deliveryMetadataSource).toContain("timeSensitive = false");
+        expect(deliveryMetadataSource).toContain("'interruption-level': 'time-sensitive'");
     });
 
     it('keeps server and app notification routes landing on the rideshare event tab', () => {
@@ -27,6 +29,10 @@ describe('issue 2109 rideshare notification source contract', () => {
     });
 
     it('keeps rideshare offer, request, decision, cancellation, and routing tests in place', () => {
+        expect(functionsSource).toContain("exports.notifyRideOfferCreated = notifyRideOfferCreated;");
+        expect(functionsSource).toContain("exports.notifyRideClaimCreated = notifyRideClaimCreated;");
+        expect(functionsSource).toContain("exports.notifyRideOfferCancelled = notifyRideOfferCancelled;");
+        expect(functionsSource).toContain("getTeamParentUserIds(teamId)");
         expect(scheduleServiceSource).toContain('export async function createParentScheduleRideOffer');
         expect(scheduleServiceSource).toContain('export async function requestParentScheduleRideSpot');
         expect(scheduleServiceSource).toContain('export async function updateParentScheduleRideRequestStatus');

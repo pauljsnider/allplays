@@ -24,7 +24,7 @@ describe('notification target index core helpers', () => {
             fees: true,
             practice: false,
             access: true,
-            rideshare: false,
+            rideshare: true,
             media: false,
             awards: false,
             officiating: false
@@ -65,7 +65,7 @@ describe('notification target index core helpers', () => {
                 fees: true,
                 practice: false,
                 access: true,
-                rideshare: false,
+                rideshare: true,
                 media: false,
                 awards: false,
                 officiating: false

@@ -613,7 +613,10 @@ function buildNotificationTestEnv({
                     title: message.notification?.title || '',
                     body: message.notification?.body || '',
                     data: { ...(message.data || {}) },
-                    webLink: message.webpush?.fcmOptions?.link || ''
+                    webLink: message.webpush?.fcmOptions?.link || '',
+                    android: message.android || null,
+                    apns: message.apns || null,
+                    webpush: message.webpush || null
                 });
                 const sendError = sendEachErrors.length ? sendEachErrors.shift() : null;
                 if (sendError) {

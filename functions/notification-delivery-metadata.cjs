@@ -113,23 +113,35 @@ function getNotificationDeliveryMetadata(category) {
   return NOTIFICATION_CATEGORY_DELIVERY[category] || null;
 }
 
-function buildNotificationDeliveryOptions({ category, teamId, gameId = null, eventId = null } = {}) {
+function buildNotificationDeliveryOptions({ category, teamId, gameId = null, eventId = null, timeSensitive = false } = {}) {
   const metadata = getNotificationDeliveryMetadata(category);
   if (!metadata) return {};
 
   const collapseTag = buildNotificationCollapseTag({ metadata, teamId, gameId, eventId });
   const android = metadata.androidChannelId
     ? {
+        ...(timeSensitive ? { priority: 'high' } : {}),
         notification: {
           channelId: metadata.androidChannelId,
+          ...(timeSensitive ? { priority: 'high' } : {}),
           ...(collapseTag ? { tag: collapseTag } : {})
         }
       }
     : undefined;
   const iosThreadId = buildIosThreadId({ metadata, teamId, gameId, eventId });
   const iosCollapseId = buildIosCollapseId({ metadata, teamId, gameId, eventId });
-  const aps = iosThreadId ? { 'thread-id': iosThreadId } : undefined;
-  const apnsHeaders = iosCollapseId ? { 'apns-collapse-id': iosCollapseId } : undefined;
+  const aps = iosThreadId || timeSensitive
+    ? {
+        ...(iosThreadId ? { 'thread-id': iosThreadId } : {}),
+        ...(timeSensitive ? { 'interruption-level': 'time-sensitive' } : {})
+      }
+    : undefined;
+  const apnsHeaders = iosCollapseId || timeSensitive
+    ? {
+        ...(iosCollapseId ? { 'apns-collapse-id': iosCollapseId } : {}),
+        ...(timeSensitive ? { 'apns-priority': '10' } : {})
+      }
+    : undefined;
   const apns = aps || apnsHeaders
     ? {
         ...(apnsHeaders ? { headers: apnsHeaders } : {}),
