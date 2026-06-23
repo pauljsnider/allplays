@@ -10,6 +10,8 @@ const contextSource = readSource('apps/app/src/pages/schedule/ScheduleEventDetai
 const rsvpHookSource = readSource('apps/app/src/hooks/schedule/useScheduleEventRsvp.ts');
 const ridesHookSource = readSource('apps/app/src/hooks/schedule/useScheduleRideOffers.ts');
 const availabilityPanelsSource = readSource('apps/app/src/components/schedule/AvailabilityPanels.tsx');
+const availabilityNotesListSource = readSource('apps/app/src/components/schedule/AvailabilityNotesList.tsx');
+const attentionPanelSource = readSource('apps/app/src/components/schedule/AttentionPanel.tsx');
 const compactMetaSource = readSource('apps/app/src/components/schedule/CompactMeta.tsx');
 const scheduleEventHeaderSource = readSource('apps/app/src/components/schedule/ScheduleEventHeader.tsx');
 const assignmentsSectionSource = readSource('apps/app/src/components/schedule/AssignmentsSection.tsx');
@@ -156,8 +158,10 @@ describe('ScheduleEventDetail decomposition initiative source contract', () => {
         expect(scoreStepperSource).toContain('aria-label={`${label} score down`}');
         expect(scheduleStatusSource).toContain('export function Status');
         expect(availabilityPanelsSource).toContain('export function QuickAvailabilityPanel');
-        expect(availabilityPanelsSource).toContain('export function AvailabilityNotesList');
-        expect(availabilityPanelsSource).toContain('export function AttentionPanel');
+        expect(availabilityPanelsSource).toContain("export { AvailabilityNotesList");
+        expect(availabilityPanelsSource).toContain("export { AttentionPanel");
+        expect(availabilityNotesListSource).toContain('export function AvailabilityNotesList');
+        expect(attentionPanelSource).toContain('export function AttentionPanel');
         expect(staffRsvpRowSource).toContain('export function StaffRsvpPlayerRow');
         expect(staffRsvpBreakdownPanelSource).toContain('export function StaffRsvpBreakdownPanel');
         expect(staffRsvpReminderPanelSource).toContain('export function StaffRsvpReminderPanel');
