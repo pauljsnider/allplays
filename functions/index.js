@@ -3400,9 +3400,8 @@ async function syncNotificationTargetsForDevice(uid, deviceId, rawDevice) {
 
 async function teamNotificationRecipientIndexIsEmpty(teamId) {
   const recipientSnap = await firestore.collection(`teams/${teamId}/notificationRecipients`)
-    .limit(1)
     .get();
-  return recipientSnap.empty;
+  return !(recipientSnap.docs || []).some((docSnap) => isAggregateNotificationRecipientDoc(docSnap));
 }
 
 function getNotificationRecipientRoles({ teamId, team, user, uid, email = '' }) {
@@ -4767,58 +4766,150 @@ async function backfillNotificationRecipientsForTeam(teamId, users, options = {}
   return writeCount;
 }
 
+function mergeNotificationResolutionUser(usersByUid, user) {
+  const uid = String(user?.uid || '').trim();
+  if (!uid) return;
+  const entry = usersByUid.get(uid) || { uid, roles: new Set() };
+  (Array.isArray(user?.roles) ? user.roles : []).forEach((role) => {
+    const normalizedRole = String(role || '').trim();
+    if (normalizedRole) {
+      entry.roles.add(normalizedRole);
+    }
+  });
+  usersByUid.set(uid, entry);
+}
+
+function getNotificationRecipientDocUid(docSnap) {
+  const data = docSnap?.data?.() || {};
+  return String(data.uid || docSnap?.id || '').trim();
+}
+
+function getNotificationRecipientUserFromDoc(docSnap) {
+  const data = docSnap?.data?.() || {};
+  const uid = getNotificationRecipientDocUid(docSnap);
+  if (!uid) return null;
+  return {
+    uid,
+    roles: Array.isArray(data.roles)
+      ? data.roles.map((role) => String(role || '').trim()).filter(Boolean)
+      : []
+  };
+}
+
+function isAggregateNotificationRecipientDoc(docSnap) {
+  const data = docSnap?.data?.() || {};
+  return Array.isArray(data.roles) || Array.isArray(data.tokens);
+}
+
+function isLegacyTargetNotificationRecipientDoc(docSnap) {
+  const data = docSnap?.data?.() || {};
+  return !isAggregateNotificationRecipientDoc(docSnap)
+    && !String(data.teamId || '').trim()
+    && String(data.uid || '').trim()
+    && String(data.deviceId || '').trim()
+    && String(data.token || '').trim();
+}
+
+function buildIndexedEligibleUsers(recipientDocs, category, audienceContext = {}, additionalUsers = []) {
+  const usersByUid = new Map();
+  (recipientDocs || []).forEach((docSnap) => {
+    mergeNotificationResolutionUser(usersByUid, getNotificationRecipientUserFromDoc(docSnap));
+  });
+  (Array.isArray(additionalUsers) ? additionalUsers : []).forEach((user) => {
+    mergeNotificationResolutionUser(usersByUid, user);
+  });
+
+  return new Map(Array.from(usersByUid.values())
+    .map((entry) => ({ uid: entry.uid, roles: Array.from(entry.roles) }))
+    .filter((user) => canReceiveCategoryNotification(category, user, audienceContext))
+    .map((user) => [user.uid, user]));
+}
+
+function notificationRecipientDocNeedsRoleBackfill(docSnap) {
+  const user = getNotificationRecipientUserFromDoc(docSnap);
+  return Boolean(user?.uid) && (!Array.isArray(user.roles) || user.roles.length === 0);
+}
+
 async function getTargetsForCategory(teamId, category, actorUid = null, audienceContext = {}, additionalUsers = []) {
   if (!NOTIFICATION_CATEGORIES.includes(category)) return [];
 
   const targetSnap = await firestore.collection(`teams/${teamId}/notificationRecipients`)
     .where(`categories.${category}`, '==', true)
     .get();
+  const categoryRecipientDocs = targetSnap.docs || [];
+  const indexedRecipientDocs = categoryRecipientDocs.filter(isAggregateNotificationRecipientDoc);
+  if (indexedRecipientDocs.length) {
+    additionalUsers = Array.isArray(additionalUsers) ? additionalUsers : [];
+    if (indexedRecipientDocs.some((docSnap) => notificationRecipientDocNeedsRoleBackfill(docSnap))) {
+      const candidateUsers = await getCandidateUsersForTeam(teamId);
+      additionalUsers = [...candidateUsers, ...additionalUsers];
+    }
+    const eligibleUsers = buildIndexedEligibleUsers(indexedRecipientDocs, category, audienceContext, additionalUsers);
+    const explicitlyEligibleLegacyRecipientDocs = categoryRecipientDocs.filter((docSnap) => (
+      isLegacyTargetNotificationRecipientDoc(docSnap)
+      && eligibleUsers.has(getNotificationRecipientDocUid(docSnap))
+    ));
+    return [...indexedRecipientDocs, ...explicitlyEligibleLegacyRecipientDocs]
+      .flatMap((docSnap) => buildTargetsFromNotificationRecipientDoc(docSnap, { teamId, category, actorUid, eligibleUsers }))
+      .filter(Boolean);
+  }
+
+  const legacyTargetRecipientDocs = categoryRecipientDocs.filter(isLegacyTargetNotificationRecipientDoc);
+  if (legacyTargetRecipientDocs.length) {
+    const candidateUsers = await getCandidateUsersForTeam(teamId);
+    const indexedAdditionalUsers = [
+      ...candidateUsers,
+      ...(Array.isArray(additionalUsers) ? additionalUsers : [])
+    ];
+    const eligibleUsers = buildIndexedEligibleUsers([], category, audienceContext, indexedAdditionalUsers);
+    const explicitlyEligibleLegacyRecipientDocs = legacyTargetRecipientDocs.filter((docSnap) => (
+      eligibleUsers.has(getNotificationRecipientDocUid(docSnap))
+    ));
+    if (explicitlyEligibleLegacyRecipientDocs.length) {
+      return explicitlyEligibleLegacyRecipientDocs
+        .flatMap((docSnap) => buildTargetsFromNotificationRecipientDoc(docSnap, { teamId, category, actorUid, eligibleUsers }))
+        .filter(Boolean);
+    }
+  }
+
+  const indexIsEmpty = typeof teamNotificationRecipientIndexIsEmpty === 'function'
+    ? await teamNotificationRecipientIndexIsEmpty(teamId)
+    : true;
+  if (!indexIsEmpty) {
+    const candidateUsers = categoryRecipientDocs.length ? await getCandidateUsersForTeam(teamId) : [];
+    const indexedAdditionalUsers = [
+      ...candidateUsers,
+      ...(Array.isArray(additionalUsers) ? additionalUsers : [])
+    ];
+    const eligibleUsers = buildIndexedEligibleUsers([], category, audienceContext, indexedAdditionalUsers);
+    const explicitlyEligibleLegacyRecipientDocs = categoryRecipientDocs.filter((docSnap) => (
+      !isAggregateNotificationRecipientDoc(docSnap)
+      && eligibleUsers.has(getNotificationRecipientDocUid(docSnap))
+    ));
+    if (explicitlyEligibleLegacyRecipientDocs.length) {
+      return explicitlyEligibleLegacyRecipientDocs
+        .flatMap((docSnap) => buildTargetsFromNotificationRecipientDoc(docSnap, { teamId, category, actorUid, eligibleUsers }))
+        .filter(Boolean);
+    }
+    return [];
+  }
+
   const candidateUsers = await getCandidateUsersForTeam(teamId);
   const mergedUsers = new Map();
-  const mergeUser = (user) => {
-    const uid = String(user?.uid || '').trim();
-    if (!uid) return;
-    const entry = mergedUsers.get(uid) || { uid, roles: new Set() };
-    const roles = Array.isArray(user?.roles) ? user.roles : [];
-    roles.forEach((role) => {
-      const normalizedRole = String(role || '').trim();
-      if (normalizedRole) {
-        entry.roles.add(normalizedRole);
-      }
-    });
-    mergedUsers.set(uid, entry);
-  };
-
-  candidateUsers.forEach(mergeUser);
-  (Array.isArray(additionalUsers) ? additionalUsers : []).forEach(mergeUser);
+  candidateUsers.forEach((user) => mergeNotificationResolutionUser(mergedUsers, user));
+  (Array.isArray(additionalUsers) ? additionalUsers : []).forEach((user) => mergeNotificationResolutionUser(mergedUsers, user));
 
   const users = Array.from(mergedUsers.values()).map((entry) => ({
     uid: entry.uid,
     roles: Array.from(entry.roles)
   }));
-  const eligibleUsers = new Map(users
-    .filter((user) => canReceiveCategoryNotification(category, user, audienceContext))
-    .map((user) => [user.uid, user]));
-  const indexedTargets = targetSnap.docs
-    .flatMap((docSnap) => buildTargetsFromNotificationRecipientDoc(docSnap, { teamId, category, actorUid, eligibleUsers }))
-    .filter(Boolean);
 
-  const indexedUserIds = new Set(indexedTargets.map((target) => target.uid));
-  const missingUsers = users.filter((user) => (
-    user?.uid
-    && user.uid !== actorUid
-    && !indexedUserIds.has(user.uid)
-    && eligibleUsers.has(user.uid)
-  ));
-  if (!missingUsers.length) {
-    return indexedTargets;
-  }
-
-  if (targetSnap.empty && await teamNotificationRecipientIndexIsEmpty(teamId)) {
+  if (typeof backfillNotificationRecipientsForTeam === 'function') {
     try {
       await backfillNotificationRecipientsForTeam(teamId, users, { skipLegacyCleanup: true });
     } catch (error) {
-      functions.logger.warn('Failed to backfill notification recipient index after empty lookup', {
+      const logger = typeof functions !== 'undefined' ? functions.logger : null;
+      logger?.warn?.('Failed to backfill notification recipient index after empty lookup', {
         teamId,
         category,
         error: error?.message || String(error || 'Unknown error')
@@ -4826,8 +4917,8 @@ async function getTargetsForCategory(teamId, category, actorUid = null, audience
     }
   }
 
-  const fallbackTargets = await getLegacyTargetsForCategory(teamId, category, missingUsers, actorUid, audienceContext);
-  return [...indexedTargets, ...fallbackTargets];
+  const fallbackTargets = await getLegacyTargetsForCategory(teamId, category, users, actorUid, audienceContext);
+  return fallbackTargets;
 }
 
 async function getTargetsForCategoryUserIds(teamId, category, userIds = [], actorUid = null, audienceContext = {}) {
@@ -5048,6 +5139,56 @@ function buildTargetsFromNotificationRecipientDoc(docSnap, { teamId, category, a
     .filter((entry) => entry.deviceId && entry.token);
 }
 
+async function pruneInvalidNotificationRecipientTokens(targets) {
+  const targetsByRecipient = new Map();
+  (Array.isArray(targets) ? targets : []).forEach((target) => {
+    const teamId = String(target?.teamId || '').trim();
+    const uid = String(target?.uid || '').trim();
+    if (!teamId || !uid) return;
+    const key = `${teamId}::${uid}`;
+    const entry = targetsByRecipient.get(key) || {
+      teamId,
+      uid,
+      invalidDeviceIds: new Set(),
+      invalidTokens: new Set()
+    };
+    const deviceId = String(target?.deviceId || '').trim();
+    const token = String(target?.token || '').trim();
+    if (deviceId) entry.invalidDeviceIds.add(deviceId);
+    if (token) entry.invalidTokens.add(token);
+    targetsByRecipient.set(key, entry);
+  });
+
+  if (!targetsByRecipient.size) return;
+
+  await Promise.allSettled(Array.from(targetsByRecipient.values()).map(async (entry) => {
+    const recipientRef = buildTeamNotificationRecipientRef(entry.teamId, entry.uid);
+    if (!recipientRef) return;
+
+    const recipientSnap = await recipientRef.get();
+    if (!recipientSnap.exists) return;
+
+    const data = recipientSnap.data() || {};
+    const tokens = Array.isArray(data.tokens) ? data.tokens : [];
+    const nextTokens = tokens.filter((tokenEntry) => {
+      const deviceId = String(tokenEntry?.deviceId || '').trim();
+      const token = String(tokenEntry?.token || '').trim();
+      return !(entry.invalidDeviceIds.has(deviceId) || entry.invalidTokens.has(token));
+    });
+
+    if (nextTokens.length === tokens.length) return;
+    if (!nextTokens.length) {
+      await recipientRef.delete();
+      return;
+    }
+
+    await recipientRef.update({
+      tokens: nextTokens,
+      updatedAt: admin.firestore.FieldValue.serverTimestamp()
+    });
+  }));
+}
+
 async function pruneInvalidTokens(sendResult, targets) {
   if (!sendResult || !Array.isArray(sendResult.responses)) return;
   const removableCodes = new Set([
@@ -5056,12 +5197,14 @@ async function pruneInvalidTokens(sendResult, targets) {
   ]);
 
   const removals = [];
+  const invalidTargets = [];
   sendResult.responses.forEach((response, index) => {
     if (response.success) return;
     const code = response.error?.code;
     if (!removableCodes.has(code)) return;
     const target = targets[index];
     if (!target?.uid || !target?.deviceId) return;
+    invalidTargets.push(target);
     removals.push(
       firestore.doc(`users/${target.uid}/notificationDevices/${target.deviceId}`).delete()
     );
@@ -5070,6 +5213,10 @@ async function pruneInvalidTokens(sendResult, targets) {
       removals.push(targetRef.delete());
     }
   });
+
+  if (invalidTargets.length) {
+    removals.push(pruneInvalidNotificationRecipientTokens(invalidTargets));
+  }
 
   if (removals.length) {
     await Promise.allSettled(removals);

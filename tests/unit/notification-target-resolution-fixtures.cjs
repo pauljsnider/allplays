@@ -48,10 +48,10 @@ const LEGACY_CATEGORY_RESOLUTION_FIXTURES = Object.freeze([
             }
         },
         expectedTargets: [
-            { uid: 'coach-1', deviceId: 'coach-phone', token: 'coach-phone-token' },
-            { uid: 'coach-1', deviceId: 'coach-watch', token: 'coach-watch-token' },
-            { uid: 'parent-1', deviceId: 'parent-1-phone', token: 'parent-1-phone-token' },
-            { uid: 'parent-3', deviceId: 'parent-3-tablet', token: 'parent-3-tablet-token' }
+            { uid: 'coach-1', roles: ['staff'], deviceId: 'coach-phone', token: 'coach-phone-token' },
+            { uid: 'coach-1', roles: ['staff'], deviceId: 'coach-watch', token: 'coach-watch-token' },
+            { uid: 'parent-1', roles: ['parent'], deviceId: 'parent-1-phone', token: 'parent-1-phone-token' },
+            { uid: 'parent-3', roles: ['parent'], deviceId: 'parent-3-tablet', token: 'parent-3-tablet-token' }
         ],
         expectedCounts: {
             targetQueries: 1,
@@ -60,8 +60,8 @@ const LEGACY_CATEGORY_RESOLUTION_FIXTURES = Object.freeze([
             deviceGets: 4
         },
         expectedIndexedCounts: {
-            preferenceGets: 1,
-            deviceGets: 1
+            preferenceGets: 0,
+            deviceGets: 0
         }
     },
     {
@@ -105,8 +105,8 @@ const LEGACY_CATEGORY_RESOLUTION_FIXTURES = Object.freeze([
             }
         },
         expectedTargets: [
-            { uid: 'coach-2', deviceId: 'coach-2-phone', token: 'coach-2-phone-token' },
-            { uid: 'coach-2', deviceId: 'coach-2-tablet', token: 'coach-2-tablet-token' }
+            { uid: 'coach-2', roles: ['staff'], deviceId: 'coach-2-phone', token: 'coach-2-phone-token' },
+            { uid: 'coach-2', roles: ['staff'], deviceId: 'coach-2-tablet', token: 'coach-2-tablet-token' }
         ],
         expectedCounts: {
             targetQueries: 1,
@@ -138,6 +138,7 @@ function normalizeResolvedTargets(targets = []) {
 function buildIndexedTargetsFromExpected(category, expectedTargets = []) {
     return expectedTargets.map((target) => ({
         uid: target.uid,
+        roles: target.roles || ['parent'],
         deviceId: target.deviceId,
         token: target.token,
         categories: {
