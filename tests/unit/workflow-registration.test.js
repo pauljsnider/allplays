@@ -29,9 +29,10 @@ describe('workflow registration guide', () => {
     it('tells admins imports depend on stored provider data rather than live pulls', () => {
         const source = readRepoFile('workflow-registration.html');
 
-        expect(source).toContain('<strong>Confirm live sync availability.</strong>');
+        expect(source).toContain('<strong>Review metadata-only support.</strong>');
         expect(source).toContain('Sports Connect live sync is not available today.');
-        expect(source).toContain('The refresh action remains disabled until a connector marks the provider as live connected.');
+        expect(source).toContain('The provider panel stores the selected provider and external Team ID only, so saved snapshots can be matched to the right ALL PLAYS team.');
+        expect(source).toContain('Until a connector exists, this setup does not authenticate to Sports Connect, check provider health, show live connection health, refresh snapshots, or fetch roster/source data.');
         expect(source).toContain('<strong>Open a stored-snapshot import.</strong>');
         expect(source).toContain('Use the roster or schedule import preview only when provider data has already been stored in ALL PLAYS.');
         expect(source).toContain('registration roster snapshot, registration source snapshot, registration schedule snapshot, or other loaded provider data is available for this team');
@@ -42,6 +43,9 @@ describe('workflow registration guide', () => {
         expect(source).not.toContain('Click <strong>Re-import from Sports Connect</strong> only when provider data has already been stored in ALL PLAYS.');
         expect(source).not.toContain('The backend fetches Sports Connect data using server-configured credentials');
         expect(source).not.toContain('For roster imports, run <strong>Sync now</strong>');
+        expect(source).not.toContain('Connected/Not Connected/Error');
+        expect(source).not.toContain('marks the provider as live connected');
+        expect(source).not.toContain('Re-import previews saved data only');
     });
 
     it('regenerates help index registration copy to avoid claiming Sports Connect live sync exists', () => {
