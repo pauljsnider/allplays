@@ -117,6 +117,60 @@ describe('roster CSV import planning', () => {
         expect(plan.operations[0].payload).not.toHaveProperty('contacts');
     });
 
+    it('accepts common contact header aliases and numbered suffix placement', () => {
+        const plan = planRosterCsvImport({
+            fields,
+            csvText: [
+                'Name,Parent First Name,Parent Last Name,Parent Email Address,Parent Mobile Phone,Guardian Full Name 2,Guardian Email 2,Emergency Contact Name,Emergency Contact Phone Number',
+                'Avery Lee,Pat,Lee,PAT@example.com,555-0101,Robin Lee,robin@example.com,Dr Smith,555-0999'
+            ].join('\n')
+        });
+
+        expect(plan.errors).toEqual([]);
+        expect(plan.operations).toHaveLength(1);
+        expect(plan.operations[0]).toMatchObject({
+            privateFamilyContacts: {
+                parents: [
+                    {
+                        name: 'Pat Lee',
+                        email: 'pat@example.com',
+                        phone: '555-0101',
+                        relation: 'Parent',
+                        source: 'roster-csv'
+                    },
+                    {
+                        name: 'Robin Lee',
+                        email: 'robin@example.com',
+                        phone: '',
+                        relation: 'Guardian',
+                        source: 'roster-csv'
+                    }
+                ],
+                contacts: [{
+                    name: 'Dr Smith',
+                    email: '',
+                    phone: '555-0999',
+                    relation: 'Emergency Contact',
+                    source: 'roster-csv'
+                }]
+            },
+            inviteRequests: [
+                { email: 'pat@example.com', displayName: 'Pat Lee', relation: 'Parent', phone: '555-0101' },
+                { email: 'robin@example.com', displayName: 'Robin Lee', relation: 'Guardian', phone: '' }
+            ]
+        });
+    });
+
+    it('rejects duplicate contact headers after alias normalization', () => {
+        const plan = planRosterCsvImport({
+            fields,
+            csvText: 'Name,Parent Phone,Parent Phone Number\nAvery Lee,555-0101,555-0102'
+        });
+
+        expect(plan.errors).toEqual(['Duplicate contact header for Parent Phone Number.']);
+        expect(plan.operations).toEqual([]);
+    });
+
     it('merges imported guardian contacts onto existing player updates without duplicates', () => {
         const plan = planRosterCsvImport({
             fields,
