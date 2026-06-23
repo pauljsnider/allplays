@@ -126,6 +126,8 @@ describe('TeamDrills', () => {
       eventId: 'practice-1',
       teamName: 'Bears',
       teamSport: 'Soccer',
+      date: new Date('2026-06-11T18:00:00Z'),
+      location: 'Main Field',
       blocks: [{
         order: 0,
         drillId: 'drill-1',
@@ -244,6 +246,8 @@ describe('TeamDrills', () => {
       eventId: 'practice-1',
       sessionId: 'session-1',
       user: auth.user,
+      date: new Date('2026-06-11T18:00:00Z'),
+      location: 'Main Field',
       blocks: [
         expect.objectContaining({ order: 0, drillTitle: 'Warm-up lanes', duration: 10 }),
         expect.objectContaining({ order: 1, drillTitle: 'Finishing ladder', duration: 18 })

@@ -35,6 +35,8 @@ describe('practiceTimelineService', () => {
   it('loads sorted timeline blocks plus community and team drill options', async () => {
     dbMocks.getPracticeSessionByEvent.mockResolvedValue({
       id: 'session-1',
+      date: { toDate: () => new Date('2026-06-11T18:00:00Z') },
+      location: 'Main Field',
       blocks: [
         { order: 2, drillId: 'drill-3', drillTitle: 'Scrimmage', duration: 20, type: 'Game' },
         { order: 0, drillId: 'drill-1', drillTitle: 'Warm-up', duration: 10, type: 'Warm-up' }
@@ -55,6 +57,8 @@ describe('practiceTimelineService', () => {
     const result = await loadPracticeTimelineModel('team-1', 'practice-1', user);
 
     expect(result.sessionId).toBe('session-1');
+    expect(result.date?.toISOString()).toBe('2026-06-11T18:00:00.000Z');
+    expect(result.location).toBe('Main Field');
     expect(result.blocks.map((block) => block.drillTitle)).toEqual(['Warm-up', 'Scrimmage']);
     expect(result.drillOptions.map((option) => `${option.source}:${option.title}`)).toEqual(['community:Warm-up', 'team:Pattern play']);
   });

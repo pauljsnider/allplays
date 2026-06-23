@@ -286,6 +286,8 @@ export function TeamDrills({ auth }: { auth: AuthState }) {
         user: auth.user,
         sessionId: practiceModel.sessionId,
         blocks: nextBlocks,
+        date: practiceModel.date,
+        location: practiceModel.location,
         title: `${practiceModel.teamName} practice`
       });
       setPracticeModel({
