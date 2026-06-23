@@ -33,6 +33,8 @@ export type PracticeTimelineModel = {
   eventId: string;
   teamName: string;
   teamSport: string;
+  date: Date | null;
+  location: string | null;
   blocks: PracticeTimelineBlock[];
   drillOptions: PracticeTimelineDrillOption[];
 };
@@ -56,6 +58,15 @@ function normalizeDuration(value: unknown, fallback = 10) {
   const parsed = Number.parseInt(String(value ?? '').trim(), 10);
   if (!Number.isFinite(parsed)) return fallback;
   return Math.max(1, parsed);
+}
+
+function normalizeDate(value: unknown): Date | null {
+  if (!value) return null;
+  if (value instanceof Date) return Number.isNaN(value.getTime()) ? null : value;
+  const timestampDate = typeof (value as any)?.toDate === 'function' ? (value as any).toDate() : null;
+  if (timestampDate instanceof Date && !Number.isNaN(timestampDate.getTime())) return timestampDate;
+  const parsed = new Date(String(value));
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
 }
 
 function normalizeNotesLog(value: unknown): PracticeTimelineNote[] {
@@ -153,6 +164,8 @@ export async function loadPracticeTimelineModel(teamId: string, eventId: string,
     eventId,
     teamName: normalizeString(team?.name) || 'Team',
     teamSport,
+    date: normalizeDate(session?.date),
+    location: normalizeString(session?.location) || null,
     blocks,
     drillOptions
   };

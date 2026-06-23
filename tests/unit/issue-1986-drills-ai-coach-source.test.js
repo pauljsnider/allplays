@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
 
 const teamDrillsServiceSource = readFileSync(new URL('../../apps/app/src/lib/teamDrillsService.ts', import.meta.url), 'utf8');
+const practiceAiCoachServiceSource = readFileSync(new URL('../../apps/app/src/lib/practiceAiCoachService.ts', import.meta.url), 'utf8');
 const teamDrillsServiceTestSource = readFileSync(new URL('../../apps/app/src/lib/teamDrillsService.test.ts', import.meta.url), 'utf8');
 const scheduleEventDetailSource = readFileSync(new URL('../../apps/app/src/pages/ScheduleEventDetail.tsx', import.meta.url), 'utf8');
 const practiceTimelineServiceTestSource = readFileSync(new URL('../../apps/app/src/lib/practiceTimelineService.test.ts', import.meta.url), 'utf8');
@@ -10,12 +11,13 @@ const starterDrillsTestSource = readFileSync(new URL('./practice-starter-drills.
 
 describe('issue 1986 drills AI coach source contract', () => {
     it('keeps the practice AI coach prompt grounded in team context and favorite drills', () => {
-        expect(teamDrillsServiceSource).toContain('export type PracticeAiCoachPromptInput');
-        expect(teamDrillsServiceSource).toContain('export function buildPracticeAiCoachPrompt');
-        expect(teamDrillsServiceSource).toContain('You are an assistant coach helping plan');
-        expect(teamDrillsServiceSource).toContain('Favorite drills to prefer when they fit:');
-        expect(teamDrillsServiceSource).toContain('Create a minute-by-minute practice plan with drill names, setup notes, coaching cues, and an adjustment for fewer players.');
-        expect(teamDrillsServiceSource).toContain('.slice(0, 5)');
+        expect(teamDrillsServiceSource).toContain("export { buildPracticeAiCoachPrompt } from './practiceAiCoachService';");
+        expect(practiceAiCoachServiceSource).toContain('export type PracticeAiCoachPromptInput');
+        expect(practiceAiCoachServiceSource).toContain('export function buildPracticeAiCoachPrompt');
+        expect(practiceAiCoachServiceSource).toContain('You are ALL PLAYS AI coach');
+        expect(practiceAiCoachServiceSource).toContain('drillLibraryCatalog');
+        expect(practiceAiCoachServiceSource).toContain('The total planned drill durations must equal exactly');
+        expect(practiceAiCoachServiceSource).toContain('maxPromptDrills = 80');
     });
 
     it('keeps live practice notes saving into the practice timeline', () => {
