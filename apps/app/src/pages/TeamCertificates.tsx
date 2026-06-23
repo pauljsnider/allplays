@@ -1,9 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, Navigate, useParams } from 'react-router-dom';
-import { Award, ExternalLink, Loader2, RefreshCw, Sparkles } from 'lucide-react';
+import { Award, Download, ExternalLink, Loader2, RefreshCw, Send, Sparkles } from 'lucide-react';
 import { renderCertificate } from '../lib/adapters/legacyCertificates';
+import { getCertificateFilename, renderNodeToPngBlob } from '../lib/adapters/legacyCertificateExport';
+import { buildCertificateAwardDraftsForApp, generateCertificateAwardNarrativesForApp, publishCertificateAwardsForApp, type CertificateAwardDraft } from '../lib/certificateAwardService';
 import { getCertificateStudioUrl, loadCertificateDraftComposer, saveCertificateDraftsForApp, type CertificateDraftComposerModel, type CertificateDraftPlayer, type CertificateDraftSharedState } from '../lib/certificateDraftService';
-import { openPublicUrl } from '../lib/publicActions';
+import { exportCertificatePngFile, openPublicUrl } from '../lib/publicActions';
 import { useAsyncOperation } from '../lib/useAsyncOperation';
 import type { AuthState } from '../lib/types';
 
@@ -16,6 +18,11 @@ export function TeamCertificates({ auth }: { auth: AuthState }) {
   const [hasResolvedInitialLoad, setHasResolvedInitialLoad] = useState(false);
   const { loading, error, setError, run: runPrimaryLoad } = useAsyncOperation();
   const [saving, setSaving] = useState(false);
+  const [generating, setGenerating] = useState(false);
+  const [publishing, setPublishing] = useState(false);
+  const [exportingDraftId, setExportingDraftId] = useState('');
+  const [drafts, setDrafts] = useState<CertificateAwardDraft[]>([]);
+  const [reviewConfirmed, setReviewConfirmed] = useState(false);
   const [success, setSuccess] = useState('');
   const previewRef = useRef<HTMLDivElement | null>(null);
   const activeLoadIdRef = useRef(0);
@@ -36,6 +43,8 @@ export function TeamCertificates({ auth }: { auth: AuthState }) {
           if (loadId !== activeLoadIdRef.current) return;
           setModel(nextModel);
           setShared(nextModel.shared);
+          setDrafts([]);
+          setReviewConfirmed(false);
           setSelectedPlayerIds(nextModel.players.map((player) => player.id));
           setPreviewPlayerId(nextModel.players[0]?.id || '');
         },
@@ -43,6 +52,8 @@ export function TeamCertificates({ auth }: { auth: AuthState }) {
           if (loadId !== activeLoadIdRef.current) return;
           setModel(null);
           setShared(null);
+          setDrafts([]);
+          setReviewConfirmed(false);
           setSelectedPlayerIds([]);
           setPreviewPlayerId('');
         },
@@ -74,17 +85,24 @@ export function TeamCertificates({ auth }: { auth: AuthState }) {
     return selectedPlayers.find((player) => player.id === previewPlayerId) || selectedPlayers[0] || null;
   }, [model, previewPlayerId, selectedPlayers]);
 
+  const previewDraft = useMemo(() => {
+    if (!drafts.length) return null;
+    return drafts.find((draft) => draft.playerId === previewPlayerId) || drafts[0] || null;
+  }, [drafts, previewPlayerId]);
+
+  const exportableDrafts = useMemo(() => drafts.filter((draft) => draft.includeInExport !== false), [drafts]);
+
   useEffect(() => {
-    if (!previewRef.current || !shared || !model || !previewPlayer) return;
+    if (!previewRef.current || !shared || !model || (!previewPlayer && !previewDraft)) return;
     previewRef.current.innerHTML = '';
     const previewNode = renderCertificate({
       shared,
       team: model.team,
-      draft: {
-        recipientName: previewPlayer.name,
-        playerNumber: previewPlayer.number,
+      draft: previewDraft || {
+        recipientName: previewPlayer?.name || 'Player',
+        playerNumber: previewPlayer?.number || '',
         awardTitle: shared.awardTitle,
-        description: 'Preview only. Save the draft to continue editing in the full web studio.',
+        description: 'Preview only. Create drafts before generating AI narratives, publishing, or exporting.',
         descriptionStatus: 'ready',
         status: 'draft'
       }
@@ -95,13 +113,14 @@ export function TeamCertificates({ auth }: { auth: AuthState }) {
     previewNode.style.transform = 'none';
     previewNode.style.transformOrigin = 'top left';
     previewRef.current.appendChild(previewNode);
-  }, [model, previewPlayer, shared]);
+  }, [model, previewDraft, previewPlayer, shared]);
 
   useEffect(() => {
-    if (!selectedPlayers.some((player) => player.id === previewPlayerId)) {
-      setPreviewPlayerId(selectedPlayers[0]?.id || '');
+    const previewIds = drafts.length ? drafts.map((draft) => draft.playerId) : selectedPlayers.map((player) => player.id);
+    if (!previewIds.includes(previewPlayerId)) {
+      setPreviewPlayerId(previewIds[0] || '');
     }
-  }, [previewPlayerId, selectedPlayers]);
+  }, [drafts, previewPlayerId, selectedPlayers]);
 
   if (!teamId) return <Navigate to="/teams" replace />;
 
@@ -116,11 +135,51 @@ export function TeamCertificates({ auth }: { auth: AuthState }) {
     await openPublicUrl(getCertificateStudioUrl(teamId));
   };
 
+  const updateDraft = (draftId: string, patch: Partial<CertificateAwardDraft>) => {
+    setDrafts((current) => current.map((draft) => draft.id === draftId ? { ...draft, ...patch } : draft));
+    setReviewConfirmed(false);
+  };
+
+  const mergeGeneratedDrafts = (generatedDrafts: CertificateAwardDraft[]) => {
+    setDrafts((current) => {
+      const generatedById = new Map(generatedDrafts.map((draft) => [draft.id, draft]));
+      if (!current.length) return generatedDrafts;
+      return current.map((draft) => generatedById.get(draft.id) || draft);
+    });
+  };
+
+  const runNarrativeGeneration = async (targetDrafts: CertificateAwardDraft[]) => {
+    if (!teamId || !shared || !targetDrafts.length) return;
+    setGenerating(true);
+    setError('');
+    setSuccess('');
+    setReviewConfirmed(false);
+    try {
+      const generatedDrafts = await generateCertificateAwardNarrativesForApp({
+        teamId,
+        user: auth.user,
+        shared,
+        drafts: targetDrafts
+      });
+      mergeGeneratedDrafts(generatedDrafts);
+      const errorCount = generatedDrafts.filter((draft) => draft.descriptionStatus === 'error').length;
+      setSuccess(errorCount
+        ? `${generatedDrafts.length - errorCount} narrative${generatedDrafts.length - errorCount === 1 ? '' : 's'} ready; ${errorCount} need manual review.`
+        : `${generatedDrafts.length} AI narrative${generatedDrafts.length === 1 ? '' : 's'} ready for review.`);
+    } catch (generationError: any) {
+      setError(generationError?.message || 'Unable to generate certificate narratives.');
+    } finally {
+      setGenerating(false);
+    }
+  };
+
   const onSaveDrafts = async () => {
     if (!teamId || !shared) return;
     setSaving(true);
     setError('');
     setSuccess('');
+    setDrafts([]);
+    setReviewConfirmed(false);
     try {
       const result = await saveCertificateDraftsForApp({
         teamId,
@@ -128,12 +187,98 @@ export function TeamCertificates({ auth }: { auth: AuthState }) {
         shared,
         selectedPlayers
       });
-      setSuccess(`Created ${result.certificateIds.length} draft${result.certificateIds.length === 1 ? '' : 's'} and opened the web studio for final edits.`);
-      await openPublicUrl(result.webUrl);
+      const nextDrafts = buildCertificateAwardDraftsForApp({
+        batchId: result.batchId,
+        certificateIds: result.certificateIds,
+        players: selectedPlayers,
+        shared
+      });
+      setDrafts(nextDrafts);
+      setPreviewPlayerId(nextDrafts[0]?.playerId || '');
+      setSuccess(`Created ${result.certificateIds.length} draft${result.certificateIds.length === 1 ? '' : 's'}. Generating AI narratives for review.`);
+      await runNarrativeGeneration(nextDrafts);
     } catch (saveError: any) {
       setError(saveError?.message || 'Unable to create certificate drafts.');
     } finally {
       setSaving(false);
+    }
+  };
+
+  const onRegenerateDraft = async (draft: CertificateAwardDraft) => {
+    updateDraft(draft.id, {
+      descriptionStatus: 'pending',
+      errorMessage: null
+    });
+    await runNarrativeGeneration([{ ...draft, descriptionStatus: 'pending', errorMessage: null }]);
+  };
+
+  const onRegenerateAllDrafts = async () => {
+    const pendingDrafts = drafts.map((draft) => ({
+      ...draft,
+      descriptionStatus: 'pending' as const,
+      errorMessage: null
+    }));
+    setDrafts(pendingDrafts);
+    setReviewConfirmed(false);
+    await runNarrativeGeneration(pendingDrafts);
+  };
+
+  const onPublishDrafts = async () => {
+    if (!teamId || !shared) return;
+    const publishDrafts = exportableDrafts;
+    if (!publishDrafts.length) {
+      setError('Select at least one certificate before publishing.');
+      return;
+    }
+    if (!window.confirm(`Publish ${publishDrafts.length} certificate${publishDrafts.length === 1 ? '' : 's'} for parent viewing?`)) {
+      return;
+    }
+
+    setPublishing(true);
+    setError('');
+    setSuccess('');
+    try {
+      const result = await publishCertificateAwardsForApp({
+        teamId,
+        user: auth.user,
+        shared,
+        drafts: publishDrafts,
+        reviewConfirmed
+      });
+      const publishedIds = new Set(result.publishedCertificateIds);
+      setDrafts((current) => current.map((draft) => publishedIds.has(draft.certificateId) ? { ...draft, status: 'published' } : draft));
+      setSuccess(`Published ${result.publishedCertificateIds.length} certificate${result.publishedCertificateIds.length === 1 ? '' : 's'} for parent viewing.`);
+    } catch (publishError: any) {
+      setError(publishError?.message || 'Unable to publish certificates.');
+    } finally {
+      setPublishing(false);
+    }
+  };
+
+  const onExportDraft = async (draft: CertificateAwardDraft) => {
+    if (!shared || !model) return;
+    setExportingDraftId(draft.id);
+    setError('');
+    setSuccess('');
+    const root = ensureCertificateExportRoot();
+    const node = renderCertificate({ shared, team: model.team, draft });
+    node.style.width = '2050px';
+    node.style.height = '1153px';
+    root.appendChild(node);
+    try {
+      const blob = await renderNodeToPngBlob(node);
+      const result = await exportCertificatePngFile(getCertificateFilename({
+        teamName: shared.teamNameOverride || model.team.name,
+        recipientName: draft.recipientName,
+        seasonLabel: shared.seasonLabel || 'season',
+        extension: 'png'
+      }), blob);
+      setSuccess(result === 'shared' ? 'Certificate export opened in the share sheet.' : 'Certificate PNG downloaded.');
+    } catch (exportError: any) {
+      setError(exportError?.message || 'Unable to export certificate.');
+    } finally {
+      node.remove();
+      setExportingDraftId('');
     }
   };
 
@@ -171,8 +316,8 @@ export function TeamCertificates({ auth }: { auth: AuthState }) {
       <div className="flex items-center justify-between gap-3">
         <div>
           <Link to={`/teams/${encodeURIComponent(teamId)}`} className="text-sm font-black text-primary-700">← Back to team</Link>
-          <h1 className="mt-2 text-2xl font-black text-gray-950">Awards drafts</h1>
-          <p className="mt-1 text-sm font-semibold text-gray-500">Pick a template, choose players, preview, then continue in the full web studio for AI, publish, and print.</p>
+          <h1 className="mt-2 text-2xl font-black text-gray-950">Awards studio</h1>
+          <p className="mt-1 text-sm font-semibold text-gray-500">Create drafts, generate AI narratives, review, publish, and export certificates.</p>
         </div>
         <button type="button" className="ghost-button !min-h-10" onClick={() => void onOpenWebsite()}>
           <ExternalLink className="h-4 w-4" aria-hidden="true" />
@@ -189,7 +334,7 @@ export function TeamCertificates({ auth }: { auth: AuthState }) {
             <span className="rounded-2xl bg-primary-50 p-2 text-primary-700"><Award className="h-5 w-5" aria-hidden="true" /></span>
             <div>
               <div className="text-sm font-black text-gray-950">Draft setup</div>
-              <div className="mt-1 text-sm font-semibold text-gray-500">This saves draft certificates only. Parents still see nothing until publish is finished on the website.</div>
+              <div className="mt-1 text-sm font-semibold text-gray-500">Drafts save first. Parents see nothing until you review and publish.</div>
             </div>
           </div>
 
@@ -219,6 +364,15 @@ export function TeamCertificates({ auth }: { auth: AuthState }) {
                 onChange={(event) => setShared((current) => current ? { ...current, footerUrl: event.target.value } : current)}
                 className="mt-1 w-full rounded-xl border border-gray-200 px-3 py-2 text-sm font-semibold text-gray-900"
                 placeholder="www.allplays.ai"
+              />
+            </label>
+            <label className="block md:col-span-2">
+              <span className="text-xs font-black uppercase tracking-[0.04em] text-gray-500">Narrative tone</span>
+              <input
+                value={shared.descriptionTone}
+                onChange={(event) => setShared((current) => current ? { ...current, descriptionTone: event.target.value } : current)}
+                className="mt-1 w-full rounded-xl border border-gray-200 px-3 py-2 text-sm font-semibold text-gray-900"
+                placeholder="celebratory and specific"
               />
             </label>
           </div>
@@ -269,15 +423,114 @@ export function TeamCertificates({ auth }: { auth: AuthState }) {
 
           <div className="mt-5 flex flex-wrap items-center gap-3 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-semibold text-amber-900">
             <Sparkles className="h-4 w-4" aria-hidden="true" />
-            AI narratives, publish, and print stay in the website flow for now.
+            {drafts.length
+              ? 'AI narratives are editable. Confirm review before publishing to parents.'
+              : 'Create drafts first, then AI narratives will appear here for review before publish.'}
           </div>
 
           <div className="mt-5 flex flex-wrap gap-3">
-            <button type="button" className="primary-button" disabled={saving || selectedPlayers.length === 0} onClick={() => void onSaveDrafts()}>
+            <button type="button" className="primary-button" disabled={saving || generating || publishing || selectedPlayers.length === 0} onClick={() => void onSaveDrafts()}>
               {saving ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <Award className="h-4 w-4" aria-hidden="true" />}
-              Create drafts
+              Create drafts & AI narratives
             </button>
           </div>
+
+          {drafts.length ? (
+            <div className="mt-6 border-t border-gray-200 pt-5">
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                <div>
+                  <div className="text-sm font-black text-gray-950">Review narratives</div>
+                  <div className="mt-1 text-sm font-semibold text-gray-500">{exportableDrafts.length} selected for publish/export</div>
+                </div>
+                <button
+                  type="button"
+                  className="ghost-button !min-h-9 text-xs"
+                  disabled={generating || publishing}
+                  onClick={() => void onRegenerateAllDrafts()}
+                >
+                  {generating ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <Sparkles className="h-4 w-4" aria-hidden="true" />}
+                  Regenerate all
+                </button>
+              </div>
+
+              <div className="mt-4 space-y-3">
+                {drafts.map((draft) => (
+                  <div key={draft.id} className="rounded-2xl border border-gray-200 bg-white p-3">
+                    <div className="flex flex-wrap items-center justify-between gap-3">
+                      <label className="flex min-w-0 items-center gap-3 text-sm font-black text-gray-950">
+                        <input
+                          type="checkbox"
+                          checked={draft.includeInExport !== false}
+                          onChange={(event) => updateDraft(draft.id, { includeInExport: event.target.checked })}
+                        />
+                        <span className="truncate">{draft.recipientName}</span>
+                      </label>
+                      <span className={`rounded-full px-2.5 py-1 text-xs font-black ${draft.status === 'published' ? 'bg-emerald-100 text-emerald-700' : draft.descriptionStatus === 'error' ? 'bg-rose-100 text-rose-700' : draft.descriptionStatus === 'ready' ? 'bg-primary-100 text-primary-700' : 'bg-amber-100 text-amber-800'}`}>
+                        {draft.status === 'published' ? 'Published' : draft.descriptionStatus === 'pending' ? 'Writing' : draft.descriptionStatus === 'needs-review' ? 'Review' : draft.descriptionStatus === 'error' ? 'Needs review' : 'Ready'}
+                      </span>
+                    </div>
+
+                    <div className="mt-3 grid gap-3 md:grid-cols-[minmax(0,0.8fr)_minmax(0,1.2fr)]">
+                      <label className="block">
+                        <span className="text-xs font-black uppercase tracking-[0.04em] text-gray-500">Award title</span>
+                        <input
+                          value={draft.awardTitle}
+                          onChange={(event) => updateDraft(draft.id, { awardTitle: event.target.value })}
+                          className="mt-1 w-full rounded-xl border border-gray-200 px-3 py-2 text-sm font-semibold text-gray-900"
+                        />
+                      </label>
+                      <label className="block">
+                        <span className="text-xs font-black uppercase tracking-[0.04em] text-gray-500">Narrative</span>
+                        <textarea
+                          value={draft.description}
+                          maxLength={350}
+                          onChange={(event) => updateDraft(draft.id, {
+                            description: event.target.value,
+                            descriptionSource: 'manual',
+                            descriptionStatus: 'ready',
+                            errorMessage: null
+                          })}
+                          className="mt-1 min-h-28 w-full rounded-xl border border-gray-200 px-3 py-2 text-sm font-semibold leading-5 text-gray-900"
+                          placeholder={draft.descriptionStatus === 'pending' ? 'AI narrative is being written...' : 'Add certificate narrative'}
+                        />
+                        <div className="mt-1 flex items-center justify-between gap-2 text-xs font-bold text-gray-500">
+                          <span>{draft.description.length}/350</span>
+                          {draft.errorMessage ? <span className="text-rose-700">{draft.errorMessage}</span> : null}
+                        </div>
+                      </label>
+                    </div>
+
+                    <div className="mt-3 flex flex-wrap gap-2">
+                      <button type="button" className="ghost-button !min-h-9 text-xs" disabled={generating || publishing} onClick={() => void onRegenerateDraft(draft)}>
+                        <RefreshCw className={`h-4 w-4 ${generating && draft.descriptionStatus === 'pending' ? 'animate-spin' : ''}`} aria-hidden="true" />
+                        Regenerate
+                      </button>
+                      <button type="button" className="ghost-button !min-h-9 text-xs" disabled={exportingDraftId === draft.id || generating} onClick={() => void onExportDraft(draft)}>
+                        {exportingDraftId === draft.id ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <Download className="h-4 w-4" aria-hidden="true" />}
+                        Export PNG
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              <div className="mt-4 rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3">
+                <label className="flex items-start gap-3 text-sm font-bold text-emerald-950">
+                  <input
+                    type="checkbox"
+                    checked={reviewConfirmed}
+                    onChange={(event) => setReviewConfirmed(event.target.checked)}
+                    className="mt-1"
+                  />
+                  <span>I reviewed these certificate descriptions and they are ready for parents.</span>
+                </label>
+                <button type="button" className="primary-button mt-3" disabled={!reviewConfirmed || generating || publishing || exportableDrafts.length === 0} onClick={() => void onPublishDrafts()}>
+                  {publishing ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <Send className="h-4 w-4" aria-hidden="true" />}
+                  Publish selected
+                </button>
+              </div>
+            </div>
+          ) : null}
         </section>
 
         <section className="app-card p-4">
@@ -287,14 +540,16 @@ export function TeamCertificates({ auth }: { auth: AuthState }) {
               <div className="mt-1 text-sm font-semibold text-gray-500">Uses the same certificate renderer as the website studio.</div>
             </div>
             <select
-              value={previewPlayer?.id || ''}
+              value={previewDraft?.playerId || previewPlayer?.id || ''}
               onChange={(event) => setPreviewPlayerId(event.target.value)}
               className="rounded-xl border border-gray-200 px-3 py-2 text-sm font-semibold text-gray-900"
-              disabled={selectedPlayers.length === 0}
+              disabled={(drafts.length ? drafts : selectedPlayers).length === 0}
             >
-              {(selectedPlayers.length ? selectedPlayers : model.players).map((player) => (
-                <option key={player.id} value={player.id}>{player.name}</option>
-              ))}
+              {drafts.length
+                ? drafts.map((draft) => <option key={draft.id} value={draft.playerId}>{draft.recipientName}</option>)
+                : (selectedPlayers.length ? selectedPlayers : model.players).map((player) => (
+                  <option key={player.id} value={player.id}>{player.name}</option>
+                ))}
             </select>
           </div>
           <div className="mt-4 rounded-[28px] border border-gray-200 bg-gray-50 p-3">
@@ -304,4 +559,20 @@ export function TeamCertificates({ auth }: { auth: AuthState }) {
       </div>
     </div>
   );
+}
+
+function ensureCertificateExportRoot() {
+  let root = document.getElementById('app-certificate-export-root') as HTMLDivElement | null;
+  if (root) return root;
+  root = document.createElement('div');
+  root.id = 'app-certificate-export-root';
+  root.style.position = 'fixed';
+  root.style.left = '-10000px';
+  root.style.top = '0';
+  root.style.width = '2050px';
+  root.style.height = '1153px';
+  root.style.pointerEvents = 'none';
+  root.setAttribute('aria-hidden', 'true');
+  document.body.appendChild(root);
+  return root;
 }

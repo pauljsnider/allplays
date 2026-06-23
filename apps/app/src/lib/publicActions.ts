@@ -16,6 +16,8 @@ export type CopyPublicTextResult = 'copied' | 'failed';
 
 export type ExportCalendarIcsResult = 'shared' | 'downloaded';
 
+export type ExportCertificatePngResult = 'shared' | 'downloaded';
+
 function isNativePluginAvailable(pluginName: string) {
   return Capacitor.isNativePlatform() && Boolean((Capacitor as any).isPluginAvailable?.(pluginName));
 }
@@ -108,7 +110,7 @@ export async function sharePublicUrl(input: SharePublicUrlInput): Promise<ShareP
 }
 
 export async function exportCalendarIcsFile(filename: string, icsText: string): Promise<ExportCalendarIcsResult> {
-  const safeFilename = sanitizeFileName(filename || 'all-plays-schedule.ics');
+  const safeFilename = sanitizeFileName(filename || 'all-plays-schedule.ics', 'ics', 'all-plays-schedule');
   const calendarText = String(icsText || '');
   if (!calendarText.trim()) throw new Error('Calendar export is empty.');
 
@@ -140,8 +142,39 @@ export async function exportCalendarIcsFile(filename: string, icsText: string): 
   return 'downloaded';
 }
 
-function downloadBlobFile(filename: string, fileText: string, contentType: string) {
-  const blob = new Blob([fileText], { type: contentType });
+export async function exportCertificatePngFile(filename: string, pngBlob: Blob): Promise<ExportCertificatePngResult> {
+  const safeFilename = sanitizeFileName(filename || 'all-plays-certificate.png', 'png', 'all-plays-certificate');
+  if (!pngBlob || pngBlob.size <= 0) throw new Error('Certificate export is empty.');
+
+  if (isNativePluginAvailable('Filesystem') && isNativePluginAvailable('Share')) {
+    const canShare = await Share.canShare?.();
+    if (canShare && canShare.value === false) {
+      throw new Error('Sharing is not available on this device. Try exporting from the website instead.');
+    }
+
+    const writeResult = await Filesystem.writeFile({
+      path: `certificate-exports/${Date.now()}-${safeFilename}`,
+      data: await blobToBase64(pngBlob),
+      directory: Directory.Cache,
+      recursive: true
+    });
+
+    await Share.share({
+      title: 'ALL PLAYS certificate export',
+      text: 'Share this certificate image with Files, AirPrint, or another app.',
+      files: [writeResult.uri],
+      dialogTitle: 'Export certificate'
+    });
+
+    return 'shared';
+  }
+
+  downloadBlobFile(safeFilename, pngBlob, 'image/png');
+  return 'downloaded';
+}
+
+function downloadBlobFile(filename: string, fileBody: Blob | string, contentType: string) {
+  const blob = fileBody instanceof Blob ? fileBody : new Blob([fileBody], { type: contentType });
   const url = URL.createObjectURL(blob);
   const link = document.createElement('a');
   link.href = url;
@@ -152,7 +185,18 @@ function downloadBlobFile(filename: string, fileText: string, contentType: strin
   window.setTimeout(() => URL.revokeObjectURL(url), 500);
 }
 
-function sanitizeFileName(value: string) {
-  const clean = String(value || 'all-plays-schedule.ics').trim().replace(/[^a-z0-9._-]+/gi, '-').replace(/^-+|-+$/g, '');
-  return clean.toLowerCase().endsWith('.ics') ? clean : `${clean || 'all-plays-schedule'}.ics`;
+async function blobToBase64(blob: Blob): Promise<string> {
+  const dataUrl = await new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || ''));
+    reader.onerror = () => reject(reader.error || new Error('Unable to read certificate export.'));
+    reader.readAsDataURL(blob);
+  });
+  return dataUrl.split(',')[1] || '';
+}
+
+function sanitizeFileName(value: string, extension: string, fallbackBase: string) {
+  const clean = String(value || `${fallbackBase}.${extension}`).trim().replace(/[^a-z0-9._-]+/gi, '-').replace(/^-+|-+$/g, '');
+  const suffix = `.${extension.toLowerCase()}`;
+  return clean.toLowerCase().endsWith(suffix) ? clean : `${clean || fallbackBase}.${extension}`;
 }

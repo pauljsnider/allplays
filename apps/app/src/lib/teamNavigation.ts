@@ -166,7 +166,7 @@ export function buildTeamNavigation(team: ParentHomeTeam): TeamNavigationSection
     {
       id: 'certificates',
       label: 'Certificates',
-      detail: 'Create drafts and preview in the app, then finish publish and print on the website',
+      detail: 'Create drafts, AI narratives, publish, and export',
       href: `/teams/${encodeURIComponent(teamId)}/certificates`,
       kind: 'native'
     }
