@@ -242,7 +242,7 @@ export function TeamCertificates({ auth }: { auth: AuthState }) {
         teamId,
         user: auth.user,
         shared,
-        drafts: publishDrafts,
+        drafts,
         reviewConfirmed
       });
       const publishedIds = new Set(result.publishedCertificateIds);

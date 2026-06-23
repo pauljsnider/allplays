@@ -219,6 +219,49 @@ describe('certificateAwardService', () => {
     });
   });
 
+  it('publishes only selected certificates without dropping the rest of the batch metadata', async () => {
+    const readyDrafts = [
+      {
+        ...draft,
+        description: 'Pat brought energy, confidence, and smart decisions to every match.',
+        descriptionSource: 'manual' as const,
+        descriptionStatus: 'ready' as const
+      },
+      {
+        ...draft,
+        id: 'cert-2',
+        certificateId: 'cert-2',
+        playerId: 'player-2',
+        recipientName: 'Sam Star',
+        includeInExport: false,
+        description: 'Sam led the group with effort.',
+        descriptionSource: 'manual' as const,
+        descriptionStatus: 'ready' as const
+      }
+    ];
+
+    const result = await publishCertificateAwardsForApp({
+      teamId: 'team-1',
+      user,
+      shared,
+      drafts: readyDrafts,
+      reviewConfirmed: true
+    });
+
+    expect(legacyDraftMocks.updateCertificate).toHaveBeenCalledTimes(1);
+    expect(legacyDraftMocks.updateCertificate).toHaveBeenCalledWith(
+      'team-1',
+      'cert-1',
+      expect.objectContaining({ status: 'published' }),
+      { action: 'published' }
+    );
+    expect(legacyDraftMocks.updateCertificateBatch).toHaveBeenCalledWith('team-1', 'batch-1', expect.objectContaining({
+      generatedCertificateIds: ['cert-1', 'cert-2'],
+      status: 'published'
+    }));
+    expect(result.publishedCertificateIds).toEqual(['cert-1']);
+  });
+
   it('builds publish payloads with normalized signers, colors, and truncated descriptions', () => {
     const payload = buildCertificateAwardPayloadForApp({
       draft: {
