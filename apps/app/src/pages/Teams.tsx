@@ -30,6 +30,7 @@ import { getEventDetailPath, getPlayerDetailPath, type ParentHomeModel, type Par
 import { loadParentHomeSummary, loadParentTeamsSummary } from '../lib/homeService';
 import { openPublicUrl } from '../lib/publicActions';
 import { PullToRefresh } from '../components/PullToRefresh';
+import { useAsyncOperation } from '../lib/useAsyncOperation';
 import { useRefreshOnResume } from '../lib/useRefreshOnResume';
 import { useShellLayout } from '../lib/useShellLayout';
 import {
@@ -63,15 +64,31 @@ export function Teams({ auth }: { auth: AuthState }) {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const [home, setHome] = useState<ParentHomeModel>(() => emptyHome());
-  const [loading, setLoading] = useState(true);
-  const [refreshing, setRefreshing] = useState(false);
-  const [error, setError] = useState('');
   const [teamsLoadError, setTeamsLoadError] = useState<AppServiceError | null>(null);
+  const [loadedTeamSummaryUserId, setLoadedTeamSummaryUserId] = useState<string | null>(null);
   const [loadedTeamUserId, setLoadedTeamUserId] = useState<string | null>(null);
   const activeLoadIdRef = useRef(0);
+  const hasStartedInitialTeamLoadRef = useRef(false);
+  const {
+    loading: teamSummaryLoading,
+    error: teamSummaryError,
+    clearError: clearTeamSummaryError,
+    run: runTeamSummaryLoad
+  } = useAsyncOperation();
+  const {
+    loading: teamEnrichmentLoading,
+    error: teamEnrichmentError,
+    clearError: clearTeamEnrichmentError,
+    run: runTeamEnrichmentLoad
+  } = useAsyncOperation();
   const selectedTeamId = searchParams.get('selectedTeamId') || '';
   const authUserId = auth.user?.uid || null;
+  const hasLoadedTeamSummary = Boolean(authUserId) && authUserId === loadedTeamSummaryUserId;
   const hasLoadedTeamDetails = Boolean(authUserId) && authUserId === loadedTeamUserId;
+  const isInitialTeamLoad = Boolean(authUserId) && !hasLoadedTeamSummary && !teamsLoadError;
+  const loading = isInitialTeamLoad && (teamSummaryLoading || !hasStartedInitialTeamLoadRef.current);
+  const refreshing = !loading && (teamSummaryLoading || teamEnrichmentLoading);
+  const error = teamSummaryError || teamEnrichmentError || '';
 
   const loadTeams = async ({ showLoading = false }: { showLoading?: boolean } = {}) => {
     const user = auth.user;
@@ -80,54 +97,73 @@ export function Teams({ auth }: { auth: AuthState }) {
     activeLoadIdRef.current = loadId;
     const hasExistingTeams = loadedTeamUserId === user.uid;
     if (showLoading) {
-      setLoading(true);
-    } else {
-      setRefreshing(true);
+      setLoadedTeamSummaryUserId(null);
     }
-    setError('');
+    clearTeamSummaryError();
+    clearTeamEnrichmentError();
     setTeamsLoadError(null);
-    try {
-      const fastHome = await loadParentTeamsSummary(user, { force: !showLoading });
-      if (loadId !== activeLoadIdRef.current) return;
-      const hasFastTeams = fastHome.teams.length > 0;
-      setHome(fastHome);
-      setTeamsLoadError(null);
-      setLoading(false);
-      setRefreshing(true);
-      try {
-        const enrichedHome = await loadParentHomeSummary(user, { force: !showLoading });
-        if (loadId !== activeLoadIdRef.current) return;
-        setHome((current) => mergeTeamSummary(current, enrichedHome));
-        setLoadedTeamUserId(user.uid);
-        setTeamsLoadError(null);
-      } catch (enrichError) {
-        if (loadId !== activeLoadIdRef.current) return;
-        const appError = toAppServiceError(enrichError, 'Unable to load teams.');
-        if (!hasExistingTeams && !hasFastTeams) {
-          setHome(emptyHome());
-          setLoadedTeamUserId(null);
+
+    const fastHome = await runTeamSummaryLoad(
+      () => loadParentTeamsSummary(user, { force: !showLoading }),
+      {
+        ignoreStale: true,
+        rethrow: false,
+        getErrorMessage: (loadError) => getTeamsLoadErrorMessage(toAppServiceError(loadError, 'Unable to load teams.'), hasExistingTeams),
+        onSuccess: (fastHome) => {
+          if (loadId !== activeLoadIdRef.current) return;
+          setHome(fastHome);
+          setLoadedTeamSummaryUserId(user.uid);
+          setTeamsLoadError(null);
+        },
+        onError: (loadError) => {
+          if (loadId !== activeLoadIdRef.current) return;
+          const appError = toAppServiceError(loadError, 'Unable to load teams.');
           setTeamsLoadError(appError);
-        } else {
-          setError(getTeamsLoadErrorMessage(appError, true));
+          if (!hasExistingTeams) {
+            setHome(emptyHome());
+            setLoadedTeamSummaryUserId(null);
+            setLoadedTeamUserId(null);
+          }
         }
       }
-    } catch (loadError: any) {
-      if (loadId !== activeLoadIdRef.current) return;
-      const appError = toAppServiceError(loadError, 'Unable to load teams.');
-      setError(getTeamsLoadErrorMessage(appError, hasExistingTeams));
-      setTeamsLoadError(appError);
-      if (!hasExistingTeams) {
-        setHome(emptyHome());
-        setLoadedTeamUserId(null);
+    );
+    if (!fastHome || loadId !== activeLoadIdRef.current) return;
+
+    const hasFastTeams = fastHome.teams.length > 0;
+    await runTeamEnrichmentLoad(
+      () => loadParentHomeSummary(user, { force: !showLoading }),
+      {
+        ignoreStale: true,
+        rethrow: false,
+        shouldHandleError: () => loadId === activeLoadIdRef.current,
+        getErrorMessage: (enrichError) => getTeamsLoadErrorMessage(toAppServiceError(enrichError, 'Unable to load teams.'), true),
+        onSuccess: (enrichedHome) => {
+          if (loadId !== activeLoadIdRef.current) return;
+          setHome((current) => mergeTeamSummary(current, enrichedHome));
+          setLoadedTeamSummaryUserId(user.uid);
+          setLoadedTeamUserId(user.uid);
+          setTeamsLoadError(null);
+        },
+        onError: (enrichError) => {
+          if (loadId !== activeLoadIdRef.current) return;
+          const appError = toAppServiceError(enrichError, 'Unable to load teams.');
+          if (!hasExistingTeams && !hasFastTeams) {
+            clearTeamEnrichmentError();
+            setHome(emptyHome());
+            setLoadedTeamUserId(null);
+            setTeamsLoadError(appError);
+          }
+        }
       }
-    } finally {
-      if (loadId !== activeLoadIdRef.current) return;
-      setLoading(false);
-      setRefreshing(false);
-    }
+    );
   };
 
   useEffect(() => {
+    if (!auth.user?.uid) {
+      hasStartedInitialTeamLoadRef.current = false;
+      return;
+    }
+    hasStartedInitialTeamLoadRef.current = true;
     loadTeams({ showLoading: true });
     return () => {
       activeLoadIdRef.current += 1;

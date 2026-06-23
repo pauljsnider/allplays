@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { useState } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { useAsyncOperation } from './useAsyncOperation';
@@ -51,6 +52,69 @@ function AsyncOperationHarness({
     );
 }
 
+function StaleOperationHarness({
+    firstOperation,
+    secondOperation,
+    onError
+}: {
+    firstOperation: () => Promise<string>;
+    secondOperation: () => Promise<string>;
+    onError: (error: unknown) => void;
+}) {
+    const { loading, error, run } = useAsyncOperation();
+    const [value, setValue] = useState('');
+
+    const options = {
+        ignoreStale: true,
+        rethrow: false,
+        getErrorMessage: (error: unknown) => error instanceof Error ? error.message : 'Failed',
+        onError,
+        onSuccess: setValue
+    };
+
+    return (
+        <div>
+            <div data-testid="loading">{String(loading)}</div>
+            <div data-testid="error">{error || ''}</div>
+            <div data-testid="value">{value}</div>
+            <button type="button" onClick={() => { void run(firstOperation, options); }}>Run first</button>
+            <button type="button" onClick={() => { void run(secondOperation, options); }}>Run second</button>
+        </div>
+    );
+}
+
+function GuardedErrorHarness({
+    operation,
+    shouldHandleError,
+    onError
+}: {
+    operation: () => Promise<string>;
+    shouldHandleError: (error: unknown) => boolean;
+    onError: (error: unknown) => void;
+}) {
+    const { loading, error, run } = useAsyncOperation();
+
+    return (
+        <div>
+            <div data-testid="loading">{String(loading)}</div>
+            <div data-testid="error">{error || ''}</div>
+            <button
+                type="button"
+                onClick={() => {
+                    void run(operation, {
+                        rethrow: false,
+                        getErrorMessage: (error: unknown) => error instanceof Error ? error.message : 'Failed',
+                        shouldHandleError,
+                        onError
+                    });
+                }}
+            >
+                Run guarded
+            </button>
+        </div>
+    );
+}
+
 describe('useAsyncOperation', () => {
     afterEach(() => {
         cleanup();
@@ -91,5 +155,70 @@ describe('useAsyncOperation', () => {
         expect(operation).toHaveBeenCalledTimes(1);
         expect(onError).toHaveBeenCalledWith(expect.any(Error));
         expect(onFinally).toHaveBeenCalledTimes(1);
+    });
+
+    it('can ignore stale failures without clearing the latest loading state', async () => {
+        const firstDeferred = createDeferred<string>();
+        const secondDeferred = createDeferred<string>();
+        const onError = vi.fn();
+
+        render(
+            <StaleOperationHarness
+                firstOperation={() => firstDeferred.promise}
+                secondOperation={() => secondDeferred.promise}
+                onError={onError}
+            />
+        );
+
+        fireEvent.click(screen.getByRole('button', { name: 'Run first' }));
+        await waitFor(() => {
+            expect(screen.getByTestId('loading').textContent).toBe('true');
+        });
+
+        fireEvent.click(screen.getByRole('button', { name: 'Run second' }));
+        firstDeferred.reject(new Error('stale failure'));
+
+        await waitFor(() => {
+            expect(screen.getByTestId('loading').textContent).toBe('true');
+        });
+        expect(screen.getByTestId('error').textContent).toBe('');
+        expect(onError).not.toHaveBeenCalled();
+
+        secondDeferred.resolve('latest value');
+
+        await waitFor(() => {
+            expect(screen.getByTestId('loading').textContent).toBe('false');
+            expect(screen.getByTestId('value').textContent).toBe('latest value');
+        });
+        expect(screen.getByTestId('error').textContent).toBe('');
+    });
+
+    it('can skip handling current-run errors when a caller guard rejects them', async () => {
+        const deferred = createDeferred<string>();
+        const onError = vi.fn();
+        const shouldHandleError = vi.fn(() => false);
+
+        render(
+            <GuardedErrorHarness
+                operation={() => deferred.promise}
+                shouldHandleError={shouldHandleError}
+                onError={onError}
+            />
+        );
+
+        fireEvent.click(screen.getByRole('button', { name: 'Run guarded' }));
+        await waitFor(() => {
+            expect(screen.getByTestId('loading').textContent).toBe('true');
+        });
+
+        const guardedError = new Error('guarded failure');
+        deferred.reject(guardedError);
+
+        await waitFor(() => {
+            expect(screen.getByTestId('loading').textContent).toBe('false');
+        });
+        expect(shouldHandleError).toHaveBeenCalledWith(guardedError);
+        expect(onError).not.toHaveBeenCalled();
+        expect(screen.getByTestId('error').textContent).toBe('');
     });
 });
