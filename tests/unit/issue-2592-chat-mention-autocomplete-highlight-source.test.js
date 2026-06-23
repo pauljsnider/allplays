@@ -40,5 +40,7 @@ describe('issue 2592 chat mention autocomplete and highlight source contract', (
         expect(chatLogicTestSource).toContain('filters mention suggestions from recipient options and inserts the selected mention');
         expect(messagesIntegrationTestSource).toContain('suggests teammate mentions from recipient options and inserts the selected mention');
         expect(messagesIntegrationTestSource).toContain('keeps mention suggestions visible for multi-word full-name queries');
+        expect(messagesIntegrationTestSource).toContain('does not keep teammate suggestions open after a completed mention or a bare at-sign');
+        expect(messagesIntegrationTestSource).toContain('replaces the rest of an active mention token during keyboard selection');
     });
 });

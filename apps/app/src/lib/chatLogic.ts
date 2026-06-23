@@ -73,6 +73,7 @@ export const chatReactionKeys = new Set(chatReactions.map((reaction) => reaction
 const aiMentionRegex = /@all\s*plays/ig;
 const chatMentionQueryRegex = /(^|\s)@([A-Za-z0-9 .'-]{1,40})$/;
 const chatMentionReplaceRegex = /(^|\s)@([A-Za-z0-9 .'-]{0,40})$/;
+const chatMentionSuffixRegex = /^[A-Za-z0-9.'-]*/;
 const chatMentionHighlightRegex = /(^|[\s([{"'])@([A-Za-z0-9][A-Za-z0-9.'-]*(?:\s+[A-Za-z0-9][A-Za-z0-9.'-]*){0,2})(?=$|[\s.,!?:;)\]}])/g;
 const urlRegex = /(\bhttps?:\/\/[^\s<]+[^\s<.,;:!?"'\])>]|\bwww\.[^\s<]+[^\s<.,;:!?"'\])>])/gi;
 const allowedChatHtmlTags = new Set(['strong', 'em', 'del', 'code', 'a', 'span']);
@@ -338,7 +339,9 @@ export function getChatMentionQuery(text: string, cursorPosition?: number) {
   const source = String(text || '');
   const match = source.slice(0, clampChatCursorPosition(source, cursorPosition)).match(chatMentionQueryRegex);
   if (!match) return null;
-  return String(match[2] || '').trim().toLowerCase();
+  const query = String(match[2] || '');
+  if (!query.trim() || /\s$/.test(query)) return null;
+  return query.trim().toLowerCase();
 }
 
 export function hasChatMentionTrigger(text: string, cursorPosition?: number) {
@@ -396,7 +399,10 @@ export function getChatMentionInsertion(text: string, mentionLabel: string, curs
   const safeCursorPosition = clampChatCursorPosition(source, cursorPosition);
   const beforeCursor = source.slice(0, safeCursorPosition);
   const afterCursor = source.slice(safeCursorPosition);
-  const normalizedAfterCursor = mention.endsWith(' ') ? afterCursor.replace(/^\s+/, ' ') : afterCursor;
+  const mentionSuffix = afterCursor.match(chatMentionSuffixRegex)?.[0] || '';
+  const normalizedAfterCursor = mention.endsWith(' ')
+    ? afterCursor.slice(mentionSuffix.length).replace(/^\s+/, '')
+    : afterCursor.slice(mentionSuffix.length);
   if (chatMentionReplaceRegex.test(beforeCursor)) {
     const nextBeforeCursor = beforeCursor.replace(chatMentionReplaceRegex, (_match, prefix) => `${prefix}${mention}`);
     return {
