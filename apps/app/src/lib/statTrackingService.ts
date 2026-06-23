@@ -1,4 +1,4 @@
-import { buildTrackerEventDocument, type TrackerEventDocument, type TrackerEventInput, type TrackerUndoData, type TrackerUser } from './statTrackingEvent';
+import { buildTrackerEventDocument, type TrackerEventDocument, type TrackerEventInput, type TrackerOpponentStatsEntry, type TrackerUndoData, type TrackerUser } from './statTrackingEvent';
 import { db, deleteDoc, doc, increment, setDoc, splitPlayerStatsByVisibility } from './adapters/legacyStatTrackingDb';
 
 export type TrackerScoreState = {
@@ -20,6 +20,9 @@ export type TrackerLogEntry = {
   aggregateDelta: number;
   aggregatePlayerId: string | null;
   isOpponent: boolean;
+  opponentStatsEntryId: string | null;
+  opponentStatsEntryBefore: TrackerOpponentStatsEntry | null;
+  opponentStatsEntryAfter: TrackerOpponentStatsEntry | null;
   playerName: string;
   playerNumber: string;
 };
@@ -31,6 +34,14 @@ type StatTrackingDependencies = {
   increment: typeof increment;
   db: typeof db;
   updateGameScore: (teamId: string, gameId: string, score: TrackerScoreState, user: TrackerUser) => Promise<unknown>;
+};
+
+type OpponentStatsEntryFallback = {
+  name?: unknown;
+  number?: unknown;
+  playerId?: unknown;
+  photoUrl?: unknown;
+  statKeys: string[];
 };
 
 const DEFAULT_SCORE: TrackerScoreState = { homeScore: 0, awayScore: 0 };
@@ -54,6 +65,11 @@ function normalizeText(value: unknown) {
 
 function normalizeStatKey(value: unknown) {
   return normalizeText(value).toLowerCase();
+}
+
+function normalizeStatsNumber(value: unknown) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
 }
 
 function isScoringStatKey(statKey: string) {
@@ -80,6 +96,72 @@ function collectAllowedStatKeys(config: TrackerStatConfig = {}) {
   });
 
   return keys;
+}
+
+function getConfiguredOpponentStatKeys(config: TrackerStatConfig = {}) {
+  const keys = new Set<string>();
+  (Array.isArray(config.columns) ? config.columns : []).forEach((column) => {
+    const normalized = normalizeStatKey(column);
+    if (normalized) keys.add(normalized);
+  });
+  keys.add('fouls');
+  return Array.from(keys);
+}
+
+function normalizeOpponentStatsEntry(
+  input: Partial<TrackerOpponentStatsEntry> | null | undefined,
+  fallback: OpponentStatsEntryFallback
+): TrackerOpponentStatsEntry {
+  const source = input && typeof input === 'object' ? input as Record<string, unknown> : {};
+  const entry: TrackerOpponentStatsEntry = {
+    name: normalizeText(source.name) || normalizeText(fallback.name),
+    number: normalizeText(source.number) || normalizeText(fallback.number),
+    playerId: normalizeText(source.playerId) || normalizeText(fallback.playerId) || null,
+    photoUrl: normalizeText(source.photoUrl) || normalizeText(fallback.photoUrl)
+  };
+  const statKeys = new Set(fallback.statKeys.map(normalizeStatKey).filter(Boolean));
+
+  Object.entries(source).forEach(([key, value]) => {
+    const normalizedKey = normalizeStatKey(key);
+    if (!normalizedKey || ['name', 'number', 'playerid', 'photourl'].includes(normalizedKey)) return;
+    statKeys.add(normalizedKey);
+    entry[normalizedKey] = normalizeStatsNumber(value);
+  });
+
+  statKeys.forEach((statKey) => {
+    if (entry[statKey] === undefined) entry[statKey] = 0;
+  });
+
+  return entry;
+}
+
+function buildFallbackOpponentStatsEntry({
+  input,
+  event,
+  statConfig,
+  statKey,
+  delta,
+  mode
+}: {
+  input: TrackerEventInput;
+  event: TrackerEventDocument;
+  statConfig: TrackerStatConfig;
+  statKey: string | null;
+  delta: number;
+  mode: 'before' | 'after';
+}) {
+  const statKeys = getConfiguredOpponentStatKeys(statConfig);
+  const seed: Partial<TrackerOpponentStatsEntry> = {
+    name: normalizeText(input.opponentPlayerName || input.playerName) || 'Opponent',
+    number: normalizeText(input.opponentPlayerNumber ?? input.playerNumber),
+    playerId: null,
+    photoUrl: normalizeText(input.opponentPlayerPhoto)
+  };
+  const entry = normalizeOpponentStatsEntry(null, { ...seed, statKeys });
+  if (statKey) {
+    entry[statKey] = mode === 'after' ? normalizeStatsNumber(delta) : 0;
+  }
+  return entry;
 }
 
 function buildParticipationPayload(playerName: string, playerNumber: string) {
@@ -116,6 +198,9 @@ function normalizeLogEntry(input: unknown): TrackerLogEntry | null {
     aggregateDelta: Number.isFinite(Number(entry.aggregateDelta)) ? Number(entry.aggregateDelta) : 0,
     aggregatePlayerId: entry.aggregatePlayerId ? normalizeText(entry.aggregatePlayerId) : null,
     isOpponent: entry.isOpponent === true,
+    opponentStatsEntryId: entry.opponentStatsEntryId ? normalizeText(entry.opponentStatsEntryId) : null,
+    opponentStatsEntryBefore: entry.opponentStatsEntryBefore ? { ...entry.opponentStatsEntryBefore } : null,
+    opponentStatsEntryAfter: entry.opponentStatsEntryAfter ? { ...entry.opponentStatsEntryAfter } : null,
     playerName: normalizeText(entry.playerName) || 'Player',
     playerNumber: normalizeText(entry.playerNumber)
   };
@@ -166,6 +251,27 @@ async function applyAggregateWrite({
   }
 }
 
+async function applyOpponentStatsWrite({
+  dependencies,
+  teamId,
+  gameId,
+  entryId,
+  entry
+}: {
+  dependencies: StatTrackingDependencies;
+  teamId: string;
+  gameId: string;
+  entryId: string;
+  entry: TrackerOpponentStatsEntry;
+}) {
+  const gameRef = dependencies.doc(dependencies.db, `teams/${teamId}/games`, gameId);
+  await dependencies.setDoc(gameRef, {
+    opponentStats: {
+      [entryId]: entry
+    }
+  }, { merge: true });
+}
+
 export function createStatTrackingService({
   statConfig = {},
   initialScore,
@@ -203,21 +309,47 @@ export function createStatTrackingService({
     const scoreBefore = { ...currentScore };
     const scoreAfter = { ...scoreBefore };
     if (event.type === 'stat' && statKey && isScoringStatKey(statKey) && delta !== 0) {
-      if (event.isOpponent) {
+      const scoreSide = input.teamSide === 'away' ? 'away' : 'home';
+      if (scoreSide === 'away') {
         scoreAfter.awayScore = normalizeScoreValue(scoreAfter.awayScore + delta);
       } else {
-        const teamSide = input.teamSide === 'away' ? 'away' : 'home';
-        if (teamSide === 'away') {
-          scoreAfter.awayScore = normalizeScoreValue(scoreAfter.awayScore + delta);
-        } else {
-          scoreAfter.homeScore = normalizeScoreValue(scoreAfter.homeScore + delta);
-        }
+        scoreAfter.homeScore = normalizeScoreValue(scoreAfter.homeScore + delta);
       }
     }
 
     const eventId = nextEventId();
     const eventRef = dependencies.doc(dependencies.db, `teams/${teamId}/games/${gameId}/events`, eventId);
+    const opponentStatsEntryId = event.type === 'stat' && event.isOpponent
+      ? normalizeText(input.opponentStatsEntryId || event.playerId)
+      : '';
+    const opponentStatsEntryBefore = opponentStatsEntryId
+      ? normalizeOpponentStatsEntry(input.opponentStatsEntryBefore || buildFallbackOpponentStatsEntry({
+        input,
+        event,
+        statConfig,
+        statKey,
+        delta,
+        mode: 'before'
+      }), {
+        ...buildFallbackOpponentStatsEntry({ input, event, statConfig, statKey, delta, mode: 'before' }),
+        statKeys: getConfiguredOpponentStatKeys(statConfig)
+      })
+      : null;
+    const opponentStatsEntryAfter = opponentStatsEntryId
+      ? normalizeOpponentStatsEntry(input.opponentStatsEntryAfter || buildFallbackOpponentStatsEntry({
+        input,
+        event,
+        statConfig,
+        statKey,
+        delta,
+        mode: 'after'
+      }), {
+        ...buildFallbackOpponentStatsEntry({ input, event, statConfig, statKey, delta, mode: 'after' }),
+        statKeys: getConfiguredOpponentStatKeys(statConfig)
+      })
+      : null;
     let aggregateApplied = false;
+    let opponentStatsApplied = false;
     let scoreApplied = false;
 
     await dependencies.setDoc(eventRef, event);
@@ -236,6 +368,17 @@ export function createStatTrackingService({
           statConfig
         });
         aggregateApplied = true;
+      }
+
+      if (opponentStatsEntryId && opponentStatsEntryAfter) {
+        await applyOpponentStatsWrite({
+          dependencies,
+          teamId,
+          gameId,
+          entryId: opponentStatsEntryId,
+          entry: opponentStatsEntryAfter
+        });
+        opponentStatsApplied = true;
       }
 
       if (scoreAfter.homeScore !== scoreBefore.homeScore || scoreAfter.awayScore !== scoreBefore.awayScore) {
@@ -259,6 +402,15 @@ export function createStatTrackingService({
           statConfig
         });
       }
+      if (opponentStatsApplied && opponentStatsEntryId && opponentStatsEntryBefore) {
+        await applyOpponentStatsWrite({
+          dependencies,
+          teamId,
+          gameId,
+          entryId: opponentStatsEntryId,
+          entry: opponentStatsEntryBefore
+        });
+      }
       await dependencies.deleteDoc(eventRef);
       throw error;
     }
@@ -273,6 +425,9 @@ export function createStatTrackingService({
       aggregateDelta: event.type === 'stat' ? delta : 0,
       aggregatePlayerId: event.type === 'stat' ? event.playerId : null,
       isOpponent: event.isOpponent,
+      opponentStatsEntryId: opponentStatsEntryId || null,
+      opponentStatsEntryBefore,
+      opponentStatsEntryAfter,
       playerName: normalizeText(input.playerName) || 'Player',
       playerNumber: normalizeText(input.playerNumber)
     };
@@ -288,6 +443,7 @@ export function createStatTrackingService({
 
     const eventRef = dependencies.doc(dependencies.db, `teams/${teamId}/games/${gameId}/events`, entry.eventId);
     let aggregateReverted = false;
+    let opponentStatsReverted = false;
     let scoreReverted = false;
 
     try {
@@ -313,6 +469,22 @@ export function createStatTrackingService({
       }
 
       if (
+        entry.event.type === 'stat'
+        && entry.isOpponent
+        && entry.opponentStatsEntryId
+        && entry.opponentStatsEntryBefore
+      ) {
+        await applyOpponentStatsWrite({
+          dependencies,
+          teamId,
+          gameId,
+          entryId: entry.opponentStatsEntryId,
+          entry: entry.opponentStatsEntryBefore
+        });
+        opponentStatsReverted = true;
+      }
+
+      if (
         entry.scoreAfter.homeScore !== entry.scoreBefore.homeScore
         || entry.scoreAfter.awayScore !== entry.scoreBefore.awayScore
       ) {
@@ -333,6 +505,15 @@ export function createStatTrackingService({
           statKey: entry.aggregateStatKey,
           delta: entry.aggregateDelta,
           statConfig
+        });
+      }
+      if (opponentStatsReverted && entry.opponentStatsEntryId && entry.opponentStatsEntryAfter) {
+        await applyOpponentStatsWrite({
+          dependencies,
+          teamId,
+          gameId,
+          entryId: entry.opponentStatsEntryId,
+          entry: entry.opponentStatsEntryAfter
         });
       }
       if (scoreReverted) {

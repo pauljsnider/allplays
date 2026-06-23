@@ -348,6 +348,7 @@ export type ScheduleHomeScoringPlayer = {
   id: string;
   name: string;
   number: string;
+  photoUrl?: string;
   points: number;
   fouls: number;
   stats?: Record<string, number>;
@@ -1970,6 +1971,10 @@ function normalizePlayerNumber(player: any) {
   return compactString(player?.number ?? player?.num ?? player?.jerseyNumber ?? player?.playerNumber ?? '');
 }
 
+function normalizePlayerPhotoUrl(player: any) {
+  return compactString(player?.photoUrl || player?.photo);
+}
+
 function isActiveRosterPlayer(player: any) {
   return player?.active !== false && player?.archived !== true && (!player?.status || player.status === 'active');
 }
@@ -2011,9 +2016,31 @@ export async function loadHomeScoringPlayers(teamId: string, gameId: string): Pr
         id,
         name: normalizePlayerName(player),
         number: normalizePlayerNumber(player),
+        photoUrl: normalizePlayerPhotoUrl(player),
         points: normalizeGameScoreValue(stats.pts),
         fouls: normalizeGameScoreValue(stats.fouls),
         stats
+      };
+    })
+    .filter(Boolean) as ScheduleHomeScoringPlayer[];
+}
+
+export async function loadOpponentScoringPlayers(teamId: string): Promise<ScheduleHomeScoringPlayer[]> {
+  if (!teamId) return [];
+  const players = await loadPlayers(teamId);
+  return (Array.isArray(players) ? players : [])
+    .filter(isActiveRosterPlayer)
+    .map((player: any) => {
+      const id = compactString(player?.id);
+      if (!id) return null;
+      return {
+        id,
+        name: normalizePlayerName(player),
+        number: normalizePlayerNumber(player),
+        photoUrl: normalizePlayerPhotoUrl(player),
+        points: 0,
+        fouls: 0,
+        stats: {}
       };
     })
     .filter(Boolean) as ScheduleHomeScoringPlayer[];

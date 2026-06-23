@@ -3,6 +3,7 @@ import { Link, useParams } from 'react-router-dom';
 import { ChevronLeft, RotateCcw } from 'lucide-react';
 import {
   loadHomeScoringPlayers,
+  loadOpponentScoringPlayers,
   loadParentScheduleEventDetail,
   loadScorekeeperStatTrackerConfigsForApp,
   updateGameScore,
@@ -13,10 +14,13 @@ import { type ParentScheduleEvent } from '../lib/scheduleLogic';
 import { createDefaultStatTrackingService, type TrackerLogEntry, type TrackerScoreState } from '../lib/statTrackingService';
 import {
   applyStandardTrackerTallyDelta,
+  buildStandardTrackerOpponentStatsEntry,
   buildStandardTrackerTallies,
   buildStandardTrackerViewModel,
   type StandardTrackerCell,
   type StandardTrackerColumn,
+  type StandardTrackerPlayer,
+  type StandardTrackerRosterPlayerInput,
   type StandardTrackerTallies
 } from '../lib/standardTrackerViewModel';
 import { readStandardTrackerSession, writeStandardTrackerSession } from '../lib/standardTrackerSession';
@@ -55,6 +59,36 @@ function getPlayerLabel(player: { name: string; number?: string | null }) {
   return `${player.number ? `#${player.number} ` : ''}${player.name}`;
 }
 
+function getOpponentName(event: ParentScheduleEvent | null) {
+  return String(event?.opponentTeamName || event?.opponent || 'Opponent').trim() || 'Opponent';
+}
+
+function getTeamScoreSide(event: ParentScheduleEvent | null): 'home' | 'away' {
+  return event?.isHome === false ? 'away' : 'home';
+}
+
+function getOpponentScoreSide(event: ParentScheduleEvent | null): 'home' | 'away' {
+  return event?.isHome === false ? 'home' : 'away';
+}
+
+function buildOpponentPlayers(event: ParentScheduleEvent | null, linkedRoster: ScheduleHomeScoringPlayer[]): StandardTrackerRosterPlayerInput[] {
+  if (linkedRoster.length > 0) {
+    return linkedRoster.map((player) => ({
+      ...player,
+      playerId: player.id,
+      photoUrl: player.photoUrl || ''
+    }));
+  }
+  return [{
+    id: 'opponent',
+    playerId: null,
+    name: getOpponentName(event),
+    number: '',
+    photoUrl: String(event?.opponentTeamPhoto || ''),
+    stats: {}
+  }];
+}
+
 function getLogEntryLabel(entry: TrackerLogEntry | null | undefined) {
   if (!entry) return 'Last stat';
   const statKey = String(entry.aggregateStatKey || entry.event?.statKey || 'stat').toUpperCase();
@@ -70,8 +104,10 @@ export function StandardTracker({ auth }: { auth: AuthState }) {
   const [event, setEvent] = useState<ParentScheduleEvent | null>(null);
   const [config, setConfig] = useState<ScheduleStatTrackerConfigOption | null>(null);
   const [players, setPlayers] = useState<ScheduleHomeScoringPlayer[]>([]);
+  const [opponentPlayers, setOpponentPlayers] = useState<StandardTrackerRosterPlayerInput[]>([]);
   const [score, setScore] = useState<TrackerScoreState>({ homeScore: 0, awayScore: 0 });
   const [tallies, setTallies] = useState<StandardTrackerTallies>({});
+  const [opponentTallies, setOpponentTallies] = useState<StandardTrackerTallies>({});
   const [eventLog, setEventLog] = useState<TrackerLogEntry[]>([]);
   const [status, setStatus] = useState<TrackerStatus | null>(null);
   const [loading, setLoading] = useState(true);
@@ -82,13 +118,19 @@ export function StandardTracker({ auth }: { auth: AuthState }) {
 
   const backTarget = `/schedule/${encodeURIComponent(decodedTeamId)}/${encodeURIComponent(decodedEventId)}?section=game`;
 
-  const persistSession = useCallback((nextScore: TrackerScoreState, nextTallies: StandardTrackerTallies, nextLog: TrackerLogEntry[]) => {
+  const persistSession = useCallback((
+    nextScore: TrackerScoreState,
+    nextTallies: StandardTrackerTallies,
+    nextOpponentTallies: StandardTrackerTallies,
+    nextLog: TrackerLogEntry[]
+  ) => {
     writeStandardTrackerSession({
       teamId: decodedTeamId,
       gameId: decodedEventId,
       statTrackerConfigId: config?.id || event?.statTrackerConfigId || null,
       score: nextScore,
       tallies: nextTallies,
+      opponentTallies: nextOpponentTallies,
       eventLog: nextLog
     });
   }, [config?.id, decodedEventId, decodedTeamId, event?.statTrackerConfigId]);
@@ -118,15 +160,20 @@ export function StandardTracker({ auth }: { auth: AuthState }) {
           setEvent(loadedEvent);
           setConfig(null);
           setPlayers([]);
+          setOpponentPlayers([]);
           setTallies({});
+          setOpponentTallies({});
           setEventLog([]);
           setAccessDenied(true);
           return;
         }
 
-        const [configs, roster] = await Promise.all([
+        const [configs, roster, linkedOpponentRoster] = await Promise.all([
           loadScorekeeperStatTrackerConfigsForApp(decodedTeamId, signedInUser, loadedEvent),
-          loadHomeScoringPlayers(decodedTeamId, decodedEventId)
+          loadHomeScoringPlayers(decodedTeamId, decodedEventId),
+          loadedEvent.opponentTeamId
+            ? loadOpponentScoringPlayers(loadedEvent.opponentTeamId).catch(() => [])
+            : Promise.resolve([])
         ]);
         if (cancelled) return;
 
@@ -136,8 +183,12 @@ export function StandardTracker({ auth }: { auth: AuthState }) {
         const canRestoreSession = Boolean(session && scoresMatch(session.score, baseScore));
         const loadedViewModel = buildStandardTrackerViewModel({ config: trackerConfig || {}, roster });
         const loadedTallies = buildStandardTrackerTallies(loadedViewModel.rows.map((row) => row.player), loadedViewModel.columns);
+        const loadedOpponentPlayers = buildOpponentPlayers(loadedEvent, linkedOpponentRoster);
+        const loadedOpponentViewModel = buildStandardTrackerViewModel({ config: trackerConfig || {}, roster: loadedOpponentPlayers });
+        const loadedOpponentTallies = buildStandardTrackerTallies(loadedOpponentViewModel.rows.map((row) => row.player), loadedOpponentViewModel.columns);
         const restoredScore = canRestoreSession ? session?.score || baseScore : baseScore;
         const restoredTallies = canRestoreSession ? session?.tallies || loadedTallies : loadedTallies;
+        const restoredOpponentTallies = canRestoreSession ? session?.opponentTallies || loadedOpponentTallies : loadedOpponentTallies;
         const restoredLog = canRestoreSession ? session?.eventLog || [] : [];
 
         serviceRef.current = createDefaultStatTrackingService({
@@ -149,8 +200,10 @@ export function StandardTracker({ auth }: { auth: AuthState }) {
         setEvent(loadedEvent);
         setConfig(trackerConfig);
         setPlayers(roster);
+        setOpponentPlayers(loadedOpponentPlayers);
         setScore(restoredScore);
         setTallies(restoredTallies);
+        setOpponentTallies(restoredOpponentTallies);
         setEventLog(restoredLog);
       } catch (error: any) {
         if (!cancelled) {
@@ -174,36 +227,71 @@ export function StandardTracker({ auth }: { auth: AuthState }) {
     tallies
   }), [config, players, tallies]);
 
-  const recordCell = async (cell: StandardTrackerCell) => {
+  const opponentViewModel = useMemo(() => buildStandardTrackerViewModel({
+    config: config || {},
+    roster: opponentPlayers,
+    tallies: opponentTallies
+  }), [config, opponentPlayers, opponentTallies]);
+
+  const recordCell = async (cell: StandardTrackerCell, options: { isOpponent?: boolean; player?: StandardTrackerPlayer } = {}) => {
     if (!auth.user || !event || !serviceRef.current || savingCellId || undoing) return;
-    const cellId = `${cell.playerId}:${cell.column.key}`;
+    const isOpponent = options.isOpponent === true;
+    const player = options.player;
+    if (isOpponent && !player) return;
+    const cellId = `${isOpponent ? 'opponent' : 'team'}:${cell.playerId}:${cell.column.key}`;
     setSavingCellId(cellId);
     setStatus(null);
     try {
       const playerLabel = getPlayerLabel({ name: cell.playerName, number: cell.playerNumber });
+      const nextTallies = isOpponent
+        ? tallies
+        : applyStandardTrackerTallyDelta(tallies, cell.playerId, cell.column.key, 1);
+      const nextOpponentTallies = isOpponent
+        ? applyStandardTrackerTallyDelta(opponentTallies, cell.playerId, cell.column.key, 1)
+        : opponentTallies;
+      const opponentStatsEntryBefore = isOpponent && player
+        ? buildStandardTrackerOpponentStatsEntry({
+          player,
+          columns: opponentViewModel.columns,
+          tallies: opponentTallies
+        })
+        : undefined;
+      const opponentStatsEntryAfter = isOpponent && player
+        ? buildStandardTrackerOpponentStatsEntry({
+          player,
+          columns: opponentViewModel.columns,
+          tallies: nextOpponentTallies
+        })
+        : undefined;
       const entry = await serviceRef.current.recordEvent(decodedTeamId, decodedEventId, {
-        text: `${playerLabel} ${cell.column.label} +1`,
+        text: `${isOpponent ? 'Opponent ' : ''}${playerLabel} ${cell.column.label} +1`,
         period: getTrackerPeriod(event),
         timestamp: Date.now(),
         playerName: cell.playerName,
         playerNumber: cell.playerNumber,
-        teamSide: event.isHome === false ? 'away' : 'home',
+        opponentPlayerName: isOpponent ? cell.playerName : undefined,
+        opponentPlayerNumber: isOpponent ? cell.playerNumber : undefined,
+        opponentPlayerPhoto: isOpponent ? player?.photoUrl || '' : undefined,
+        opponentStatsEntryId: isOpponent ? cell.playerId : undefined,
+        opponentStatsEntryBefore,
+        opponentStatsEntryAfter,
+        teamSide: isOpponent ? getOpponentScoreSide(event) : getTeamScoreSide(event),
         undoData: {
           type: 'stat',
           playerId: cell.playerId,
           statKey: cell.column.key,
           value: 1,
-          isOpponent: false
+          isOpponent
         }
       }, auth.user);
       const nextScore = entry.scoreAfter;
-      const nextTallies = applyStandardTrackerTallyDelta(tallies, cell.playerId, cell.column.key, 1);
       const nextLog = serviceRef.current.getEventLog();
       setScore(nextScore);
       setTallies(nextTallies);
+      setOpponentTallies(nextOpponentTallies);
       setEventLog(nextLog);
-      persistSession(nextScore, nextTallies, nextLog);
-      setStatus({ tone: 'success', message: `${playerLabel} ${cell.column.label} +1 recorded.` });
+      persistSession(nextScore, nextTallies, nextOpponentTallies, nextLog);
+      setStatus({ tone: 'success', message: `${isOpponent ? 'Opponent ' : ''}${playerLabel} ${cell.column.label} +1 recorded.` });
     } catch (error: any) {
       setStatus({ tone: 'error', message: error?.message || 'Unable to record stat.' });
     } finally {
@@ -222,14 +310,18 @@ export function StandardTracker({ auth }: { auth: AuthState }) {
         return;
       }
       const nextScore = undone.scoreBefore;
-      const nextTallies = undone.aggregatePlayerId && undone.aggregateStatKey
+      const nextTallies = !undone.isOpponent && undone.aggregatePlayerId && undone.aggregateStatKey
         ? applyStandardTrackerTallyDelta(tallies, undone.aggregatePlayerId, undone.aggregateStatKey, -undone.aggregateDelta)
         : tallies;
+      const nextOpponentTallies = undone.isOpponent && undone.aggregatePlayerId && undone.aggregateStatKey
+        ? applyStandardTrackerTallyDelta(opponentTallies, undone.aggregatePlayerId, undone.aggregateStatKey, -undone.aggregateDelta)
+        : opponentTallies;
       const nextLog = serviceRef.current.getEventLog();
       setScore(nextScore);
       setTallies(nextTallies);
+      setOpponentTallies(nextOpponentTallies);
       setEventLog(nextLog);
-      persistSession(nextScore, nextTallies, nextLog);
+      persistSession(nextScore, nextTallies, nextOpponentTallies, nextLog);
       setStatus({ tone: 'success', message: `Undid ${getLogEntryLabel(undone)}.` });
     } catch (error: any) {
       setStatus({ tone: 'error', message: error?.message || 'Unable to undo last stat.' });
@@ -315,7 +407,7 @@ export function StandardTracker({ auth }: { auth: AuthState }) {
                   </div>
                   <div className="grid gap-2" style={{ gridTemplateColumns: `repeat(${Math.min(3, row.cells.length)}, minmax(0, 1fr))` }}>
                     {row.cells.map((cell) => {
-                      const cellId = `${cell.playerId}:${cell.column.key}`;
+                      const cellId = `team:${cell.playerId}:${cell.column.key}`;
                       const busy = savingCellId === cellId;
                       return (
                         <button
@@ -338,6 +430,51 @@ export function StandardTracker({ auth }: { auth: AuthState }) {
           ) : (
             <TrackerStatusPanel tone="info" message={viewModel.columns.length ? 'No active roster players found.' : 'No tracker columns found.'} />
           )}
+
+          {opponentViewModel.columns.length && opponentViewModel.rows.length ? (
+            <section className="space-y-3" data-testid="standard-tracker-opponent-grid">
+              <div className="flex items-center justify-between gap-3 px-1">
+                <div>
+                  <div className="text-xs font-black uppercase tracking-[0.04em] text-rose-700">Opponent</div>
+                  <div className="text-sm font-semibold text-gray-500">{getOpponentName(event)}</div>
+                </div>
+                {opponentViewModel.totals.length ? (
+                  <div className="text-right text-xs font-black uppercase tracking-[0.04em] text-gray-500">
+                    {opponentViewModel.totals.map((total) => `${total.label} ${total.value}`).join(' / ')}
+                  </div>
+                ) : null}
+              </div>
+              {opponentViewModel.rows.map((row) => (
+                <div key={row.player.id} className="rounded-2xl border border-rose-100 bg-white p-3 shadow-sm" data-testid={`standard-tracker-opponent-row-${row.player.id}`}>
+                  <div className="mb-3 flex items-center justify-between gap-3">
+                    <div className="min-w-0">
+                      <div className="truncate text-base font-black text-gray-950">{getPlayerLabel(row.player)}</div>
+                      <div className="text-xs font-semibold text-gray-500">{row.cells.reduce((sum, cell) => sum + cell.value, 0)} tracked stats</div>
+                    </div>
+                  </div>
+                  <div className="grid gap-2" style={{ gridTemplateColumns: `repeat(${Math.min(3, row.cells.length)}, minmax(0, 1fr))` }}>
+                    {row.cells.map((cell) => {
+                      const cellId = `opponent:${cell.playerId}:${cell.column.key}`;
+                      const busy = savingCellId === cellId;
+                      return (
+                        <button
+                          key={cell.column.key}
+                          type="button"
+                          className="min-h-16 rounded-xl border border-rose-100 bg-rose-50 px-2 py-2 text-center transition hover:border-rose-300 hover:bg-rose-100 disabled:opacity-60"
+                          onClick={() => void recordCell(cell, { isOpponent: true, player: row.player })}
+                          disabled={Boolean(savingCellId) || undoing}
+                          aria-label={`Opponent ${getPlayerLabel(row.player)} ${cell.column.label} add one`}
+                        >
+                          <span className="block break-words text-[11px] font-black uppercase tracking-[0.04em] text-rose-700">{cell.column.label}</span>
+                          <span className="mt-1 block text-lg font-black tabular-nums text-gray-950">{busy ? '...' : `+1 / ${cell.value}`}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              ))}
+            </section>
+          ) : null}
         </>
       ) : null}
     </div>
