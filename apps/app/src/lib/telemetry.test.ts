@@ -329,6 +329,61 @@ describe('app telemetry bridge', () => {
     }));
   });
 
+  it('normalizes non-Error handled failures before sending them to the tracker', async () => {
+    const capture = vi.fn();
+    window.AllPlaysTelemetry = { capture };
+    window.__ALLPLAYS_CONFIG__ = {
+      errorTrackingDsn: 'https://public@example.ingest.sentry.io/non-error'
+    };
+
+    const telemetry = await import('./telemetry');
+    telemetry.initializeAppErrorTracking();
+
+    telemetry.captureHandledAppError('native auth bridge', {
+      name: 'BridgeFailure',
+      message: 'Native auth failed with token=unsafe-token',
+      status: 401,
+      details: {
+        clientSecret: 'unsafe-secret'
+      }
+    }, {
+      accessToken: 'unsafe-context-token',
+      retryUrl: 'https://example.test/retry?password=unsafe-password'
+    });
+
+    await Promise.resolve();
+
+    expect(capture).toHaveBeenCalledWith(
+      'app_load_error',
+      expect.objectContaining({
+        label: 'native auth bridge',
+        accessToken: '[REDACTED]',
+        retryUrl: 'https://example.test/retry?password=[REDACTED]',
+        errorName: 'BridgeFailure',
+        errorType: 'unknown',
+        status: 401
+      }),
+      { flush: true }
+    );
+
+    const capturedError = sentryMocks.captureException.mock.calls[0][0] as Error & { cause?: unknown };
+    expect(capturedError).toBeInstanceOf(Error);
+    expect(capturedError.name).toBe('BridgeFailure');
+    expect(capturedError.message).toBe('Native auth failed with token=[REDACTED]');
+    expect(capturedError.cause).toEqual(expect.objectContaining({
+      name: 'BridgeFailure',
+      message: 'Native auth failed with token=[REDACTED]',
+      details: {
+        clientSecret: '[REDACTED]'
+      }
+    }));
+    expect(sentryMocks.scope.setContext).toHaveBeenCalledWith('allplays', expect.objectContaining({
+      label: 'native auth bridge',
+      accessToken: '[REDACTED]',
+      retryUrl: 'https://example.test/retry?password=[REDACTED]'
+    }));
+  });
+
   it('captures production unhandled errors and promise rejections through the tracker', async () => {
     window.__ALLPLAYS_CONFIG__ = {
       errorTrackingDsn: 'https://public@example.ingest.sentry.io/999'
@@ -361,7 +416,7 @@ describe('app telemetry bridge', () => {
     expect(sentryMocks.scope.setContext).toHaveBeenCalledWith('allplays', expect.objectContaining({
       label: 'unhandled promise rejection',
       reason: expect.objectContaining({
-        message: 'token=leak-me'
+        message: 'token=[REDACTED]'
       })
     }));
   });

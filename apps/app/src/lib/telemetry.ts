@@ -1,7 +1,7 @@
 import * as Sentry from '@sentry/browser';
 import type { ErrorEvent as SentryErrorEvent } from '@sentry/browser';
 import type { ReactErrorBoundaryReport } from '../components/ErrorBoundary';
-import { createLogger } from './logger';
+import { createLogger, isSensitiveLogKey, normalizeErrorForLogging, redactedValue, sanitizeForLogging } from './logger';
 
 const logger = createLogger('error-tracking');
 
@@ -194,9 +194,10 @@ export function installReactErrorTelemetry() {
 }
 
 export function captureAppTelemetryEvent(name: string, properties: TelemetryProperties = {}, options: TelemetryOptions = {}) {
+  const sanitizedProperties = sanitizeTelemetryProperties(properties);
   void ensureTelemetryPipeline().then((api) => {
     try {
-      api?.capture?.(name, properties, options);
+      api?.capture?.(name, sanitizedProperties, options);
     } catch (_error) {
       // Telemetry is best-effort and must never break the app.
     }
@@ -235,6 +236,13 @@ function getTelemetryApi(): AppTelemetryApi | null {
   }
 
   return window.AllPlaysTelemetry ?? null;
+}
+
+function sanitizeTelemetryProperties(properties: TelemetryProperties): TelemetryProperties {
+  const sanitized = sanitizeForLogging(properties);
+  return sanitized && typeof sanitized === 'object' && !Array.isArray(sanitized)
+    ? sanitized as TelemetryProperties
+    : {};
 }
 
 function resolveErrorTrackingConfig() {
@@ -334,8 +342,10 @@ function normalizeError(error: unknown, fallbackMessage: string) {
     return error;
   }
 
-  const message = getErrorMessage(error) || fallbackMessage;
+  const normalizedLogError = normalizeErrorForLogging(error, fallbackMessage);
+  const message = normalizedLogError.message || fallbackMessage;
   const normalized = new Error(message);
+  normalized.name = normalizedLogError.name || 'Error';
   const sanitizedCause = sanitizeForTracking(error);
   if (sanitizedCause !== undefined) {
     (normalized as Error & { cause?: unknown }).cause = sanitizedCause;
@@ -349,7 +359,7 @@ function sanitizeForTracking(value: unknown, keyHint = '', seen = new WeakSet<ob
   }
 
   if (typeof value === 'string') {
-    return shouldRedactKey(keyHint) ? '[REDACTED]' : redactSensitiveText(value);
+    return shouldRedactKey(keyHint) ? redactedValue : redactSensitiveText(value);
   }
 
   if (typeof value !== 'object') {
@@ -392,20 +402,20 @@ function sanitizeForTracking(value: unknown, keyHint = '', seen = new WeakSet<ob
 }
 
 function shouldRedactKey(key: string) {
-  return /(authorization|token|secret|password|cookie|api[-_]?key)/i.test(key);
+  return isSensitiveLogKey(key);
 }
 
 function redactSensitiveText(value: string) {
-  return value
-    .replace(/Bearer\s+[^\s"',}]+/gi, 'Bearer [REDACTED]')
-    .replace(/([?&](?:token|access_token|refresh_token|id_token|auth|authorization|apikey|api_key)=)[^&\s]+/gi, '$1[REDACTED]');
+  const sanitized = sanitizeForLogging(value);
+  return typeof sanitized === 'string' ? sanitized : value;
 }
 
 function summarizeError(error: unknown) {
-  const message = getErrorMessage(error);
+  const normalizedLogError = normalizeErrorForLogging(error);
+  const message = normalizedLogError.message;
   const type = getErrorType(error, message);
   const summary: TelemetryProperties = {
-    errorName: getErrorName(error),
+    errorName: normalizedLogError.name,
     errorType: type
   };
 
@@ -419,29 +429,6 @@ function summarizeError(error: unknown) {
   }
 
   return summary;
-}
-
-function getErrorName(error: unknown) {
-  if (error instanceof Error && error.name) {
-    return error.name;
-  }
-  if (error && typeof error === 'object' && 'name' in error && typeof (error as { name?: unknown }).name === 'string') {
-    return (error as { name: string }).name;
-  }
-  return 'UnknownError';
-}
-
-function getErrorMessage(error: unknown) {
-  if (typeof error === 'string') {
-    return error;
-  }
-  if (error instanceof Error) {
-    return error.message || '';
-  }
-  if (error && typeof error === 'object' && 'message' in error && typeof (error as { message?: unknown }).message === 'string') {
-    return (error as { message: string }).message;
-  }
-  return '';
 }
 
 function getErrorStatus(error: unknown) {
