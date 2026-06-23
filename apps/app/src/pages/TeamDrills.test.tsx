@@ -284,7 +284,8 @@ describe('TeamDrills', () => {
     expect(await screen.findByText('Loading drill library')).toBeTruthy();
     expect(screen.queryByText('Drill library temporarily unavailable.')).toBeNull();
 
-    resolveRetry?.(createPage({ drills: [createDrill({ title: 'Recovery rondo' })], favoriteIds: [] }));
+    expect(resolveRetry).not.toBeNull();
+    resolveRetry!(createPage({ drills: [createDrill({ title: 'Recovery rondo' })], favoriteIds: [] }));
 
     expect(await screen.findByRole('heading', { name: 'Bears drills' })).toBeTruthy();
     expect(await screen.findByText('Recovery rondo')).toBeTruthy();
