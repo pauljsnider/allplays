@@ -47,8 +47,8 @@ describe('issue 1966 schedule RSVP reminders source contract', () => {
         expect(staffRsvpReminderPanelSource).toContain('await sendStaffRsvpReminder(event, auth.user, auth.profile || {});');
         expect(teamDetailSource).toContain('function TeamEventReminderAction');
         expect(teamDetailSource).toContain('createStaffRsvpReminderPreviewLoader');
-        expect(teamDetailSource).toContain('await reminderPreviewLoader.loadPreview(scheduleEvent, auth.user);');
-        expect(teamDetailSource).toContain('await sendStaffRsvpReminder(scheduleEvent, auth.user, auth.profile || {});');
+        expect(teamDetailSource).toContain('() => reminderPreviewLoader.loadPreview(scheduleEvent, user),');
+        expect(teamDetailSource).toContain('() => sendStaffRsvpReminder(scheduleEvent, user, auth.profile || {}) as Promise<StaffRsvpReminderSendResult>,');
         expect(teamDetailIntegrationTestSource).toContain('loads RSVP reminder previews only when a manager opens a specific schedule row action');
     });
 
