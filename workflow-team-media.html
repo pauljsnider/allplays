@@ -135,6 +135,7 @@
                 <li>Bulk operations: select all, move to another album, reorder, delete (admin only)</li>
                 <li>Deletion rights: uploader self-delete vs admin moderation rights</li>
                 <li>Visibility rules: which albums each role can see</li>
+                <li>Multi-file/document uploads, album covers, approval, filters, and media notifications</li>
               </ul>
 
               <h2 id="who-is-this-for">Who Is This For</h2>
@@ -158,6 +159,8 @@
                 <li><strong>Upload season photos</strong> — admin or enabled members upload photos to an existing album in batches with per-file progress.</li>
                 <li><strong>Share highlights with parents</strong> — verify albums are set to Member-visible and that photo content is ready; parents see the gallery on their next visit.</li>
                 <li><strong>Manage and curate existing content</strong> — set album covers, reorder items, bulk-move photos to a different album, or remove unwanted items.</li>
+                <li><strong>Upload documents or multiple files</strong> — add batches of photos or supported team media documents, then review upload status and approvals.</li>
+                <li><strong>Send media through team chat</strong> — share a media item or photo post to team chat after confirming the album audience.</li>
                 <li><strong>Browse as a parent</strong> — access <code>team.html</code> and open the Media section to see all member-visible albums and their contents.</li>
               </ul>
 
@@ -247,6 +250,17 @@
                   <strong>Delete a single item.</strong> Select the item's delete control (visible based on your role and whether you uploaded the item), then confirm in the dialog. Deletion is permanent for photos (removed from Firebase Storage and Firestore). Removing a video link deletes the Firestore record only — the video remains on the external platform.
                 </li>
               </ol>
+
+              <h2 id="latest-media-updates">Latest Media Updates</h2>
+              <ul class="ml-6 list-disc space-y-1">
+                <li><strong>Multi-file uploads:</strong> photo uploads can run in batches, with upload concurrency capped so one large batch does not overwhelm the browser or storage rules.</li>
+                <li><strong>Document uploads:</strong> team media can include supported document-style uploads alongside photos and video links when the team uses albums for packets, flyers, or event files.</li>
+                <li><strong>Album organization:</strong> admins can set album covers, filter media by type, move items between albums, delete individual items, and bulk delete selected items.</li>
+                <li><strong>Approval and moderation:</strong> member uploads can require approval before broad visibility, and upload IDs are preserved across legacy and app upload paths.</li>
+                <li><strong>Chat sharing:</strong> team media photo posts can be shared into team chat, and the shared chat attachment is normalized so viewers open the correct team media item.</li>
+                <li><strong>Visibility-aware notifications:</strong> parent pushes are suppressed for staff-only albums, media notifications respect album audience, and unopened albums are not prefetched unnecessarily.</li>
+                <li><strong>Performance:</strong> album reads are paginated and loaded on demand, download URLs are cached after upload, and media galleries avoid loading unopened albums.</li>
+              </ul>
 
               <h2 id="common-questions">Common Questions</h2>
               <ul class="ml-6 list-disc space-y-1">

@@ -132,6 +132,7 @@
                 <li>Audit metadata stored on all imported records</li>
                 <li>Reordering and archiving options without losing historical records</li>
                 <li>What happens to waitlisted applicants when capacity is increased manually</li>
+                <li>Recent payment, screening, export, and review queue improvements</li>
               </ul>
 
               <h2 id="who-is-this-for">Who Is This For</h2>
@@ -157,6 +158,7 @@
                 <li><strong>Import schedule from Sports Connect</strong> — confirm a registration schedule snapshot or other loaded provider data exists, preview the conflict table, and commit selected rows.</li>
                 <li><strong>Import roster from Sports Connect</strong> — run the manual provider pull from <code>Edit Team</code> when needed, review Add/Update/Conflict classification per row, and commit selected rows from the stored roster snapshot.</li>
                 <li><strong>Refresh provider data</strong> — confirm the Sports Connect Team ID mapping in <code>Edit Team</code>, then use <strong>Re-import from Sports Connect</strong> to update the saved provider snapshot and connection state.</li>
+                <li><strong>Reconcile payments and exports</strong> — use the fee breakdown, payment snapshot, selectable export columns, and review CSV export when finance or registrar teams need a clean list.</li>
               </ul>
 
               <h2 id="step-by-step">Step-by-Step Workflow</h2>
@@ -237,6 +239,19 @@
                   <strong>Roster import — preview and commit.</strong> After triggering a roster import, a preview table appears from a stored registration roster snapshot or other loaded provider data already saved in ALL PLAYS. Each row shows the player record and its import classification: <strong>Add</strong> (new player not found on your roster), <strong>Update</strong> (player exists on roster with changed fields), <strong>Unchanged</strong> (player exists with no differences), or <strong>Conflict</strong> (ambiguous match — excluded automatically). Conflict rows require manual resolution in <code>edit-roster.html</code> after the import. Uncheck any safe Add or Update rows you want to skip. Click <strong>Commit</strong> to apply selected rows. Source metadata is stored on all applied records for audit purposes.
                 </li>
               </ol>
+
+              <h2 id="latest-registration-updates">Latest Registration Updates</h2>
+              <ul class="ml-6 list-disc space-y-1">
+                <li><strong>Server-side capacity writes:</strong> public registration capacity updates now happen on the backend so concurrent applicants cannot bypass capacity or waitlist rules.</li>
+                <li><strong>Checkout safety:</strong> registration Stripe checkout uses retry-safe attempt tokens, rolls capacity back when checkout creation fails, and recomputes fees server-side before redirecting to Stripe.</li>
+                <li><strong>Async payment handling:</strong> async Stripe payment methods remain pending after <code>checkout.session.completed</code> and move to paid only after the async payment succeeds.</li>
+                <li><strong>Payment reminders:</strong> failed registration payment reminder emails and reminder backlog draining keep admins from manually chasing every failed checkout.</li>
+                <li><strong>Waitlist offers:</strong> waitlist offers can be accepted and then moved through the normal enrolled/roster approval process.</li>
+                <li><strong>Screening controls:</strong> background check settings, manual screening, and staff-grant blocking prevent staff permissions from being granted before screening clears.</li>
+                <li><strong>Review queue scale:</strong> cursor pagination bounds Firestore reads for large registration review queues.</li>
+                <li><strong>Exports:</strong> registration review CSV export and selectable export columns help admins reconcile applicants, guardians, fee/payment snapshots, linked roster players, and decision notes.</li>
+                <li><strong>Form editor groundwork:</strong> registration form editor services and admin setup coverage are in place for richer form configuration parity.</li>
+              </ul>
 
               <h2 id="common-questions">Common Questions</h2>
               <ul class="ml-6 list-disc space-y-1">

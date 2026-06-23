@@ -10,8 +10,8 @@ const VALID_CATS = new Set([
     'tracking', 'broadcast', 'schedule', 'roster',
     'payments', 'registration', 'media', 'ai', 'platform'
 ]);
-const ALL_RELEASE_IDS   = ['may-2026', 'mar-2026', 'feb-2026', 'jan-2026', 'dec-2025'];
-const OLDER_RELEASE_IDS = ['mar-2026', 'feb-2026', 'jan-2026', 'dec-2025'];
+const ALL_RELEASE_IDS   = ['jun-2026', 'may-2026', 'mar-2026', 'feb-2026', 'jan-2026', 'dec-2025'];
+const OLDER_RELEASE_IDS = ['may-2026', 'mar-2026', 'feb-2026', 'jan-2026', 'dec-2025'];
 
 function extractDataCatsValues(source) {
     return [...source.matchAll(/data-cats="([^"]+)"/g)].map((m) => m[1]);
@@ -26,7 +26,7 @@ function extractWorkflowLinkTargets(source) {
 }
 
 describe('changelog page — release structure', () => {
-    it('contains all five release sections with expected IDs', () => {
+    it('contains all six release sections with expected IDs', () => {
         for (const id of ALL_RELEASE_IDS) {
             expect(html, `missing release section id="${id}"`).toContain(`id="${id}"`);
         }
@@ -35,6 +35,7 @@ describe('changelog page — release structure', () => {
     it('each release section has a dated label and subtitle', () => {
         expect(html).toContain('class="release-date"');
         expect(html).toContain('class="release-subtitle"');
+        expect(html).toContain('May 12-June 23, 2026');
         expect(html).toContain('May 2026');
         expect(html).toContain('March 2026');
         expect(html).toContain('February 2026');
@@ -50,11 +51,11 @@ describe('changelog page — release structure', () => {
 });
 
 describe('changelog page — collapse / expand default state', () => {
-    it('may-2026 release body starts expanded (no collapsed class)', () => {
-        // The collapsed body pattern must NOT appear for may-2026
-        expect(html).not.toMatch(/class="release-body collapsed"\s+id="body-may-2026"/);
-        expect(html).not.toMatch(/id="body-may-2026"\s+class="release-body collapsed"/);
-        expect(html).toContain('id="body-may-2026"');
+    it('jun-2026 release body starts expanded (no collapsed class)', () => {
+        // The collapsed body pattern must NOT appear for the latest release.
+        expect(html).not.toMatch(/class="release-body collapsed"\s+id="body-jun-2026"/);
+        expect(html).not.toMatch(/id="body-jun-2026"\s+class="release-body collapsed"/);
+        expect(html).toContain('id="body-jun-2026"');
     });
 
     it('older release bodies start collapsed', () => {
@@ -65,9 +66,9 @@ describe('changelog page — collapse / expand default state', () => {
         }
     });
 
-    it('may-2026 toggle button starts without collapsed class', () => {
-        // The toggle for may-2026 should NOT have collapsed on the button
-        const togglePattern = /class="release-toggle\s*collapsed"[^>]*data-target="body-may-2026"/;
+    it('jun-2026 toggle button starts without collapsed class', () => {
+        // The toggle for the latest release should NOT have collapsed on the button.
+        const togglePattern = /class="release-toggle\s*collapsed"[^>]*data-target="body-jun-2026"/;
         expect(html).not.toMatch(togglePattern);
     });
 

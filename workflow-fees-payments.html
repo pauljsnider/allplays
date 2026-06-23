@@ -130,6 +130,7 @@
                 <li>When online Stripe collection is available and how Pay online is gated</li>
                 <li>Recording offline payments and balance adjustments</li>
                 <li>Canceling a fee for a specific recipient</li>
+                <li>Refunds, due reminders, and paid-recipient protections</li>
                 <li>Parent invoice view: what they see, when the Pay button appears</li>
                 <li>Fee recipient status states: Paid, Unpaid, Partial, Canceled</li>
               </ul>
@@ -168,6 +169,9 @@
               <h3>6. Parent asks why Pay online is not showing</h3>
               <p>Use this path when walking a parent through their invoice or troubleshooting why the Pay button is not appearing. For manual/offline fees created from <code>team-fees.html</code>, parents should follow the offline instructions shown on the fee. Pay online appears only when the fee is an online Stripe collection record with an unpaid balance.</p>
 
+              <h3>7. Refund, remind, or protect a paid recipient</h3>
+              <p>Use this path when a family has already paid, needs a refund, or is approaching a due date. Paid recipients are filtered out of active collection queues, paid fees cannot be canceled accidentally, and due reminders include the amount and deep link parents need to act.</p>
+
               <h2 id="step-by-step">Step-by-Step Workflow</h2>
 
               <h3>Admin: Creating and managing fees</h3>
@@ -197,7 +201,7 @@
                   <strong>Apply a manual balance adjustment.</strong> Use <strong>Add Adjustment</strong> with type set to Manual Adjustment for any situation that does not fit the standard payment flow. Enter a positive amount to credit the recipient's account (reducing what they owe) or a negative amount to add a charge (increasing what they owe). A reason is required for every adjustment — write a clear explanation that you or another admin will be able to understand months from now. Example reasons: <em>10% early-payment discount applied</em>, <em>Partial scholarship — board approved 2026-04-15</em>, <em>Correction: previous entry overstated amount by $20</em>, <em>Late registration surcharge per team policy</em>. These reasons are stored on the fee record and constitute the audit trail for any financial discrepancies.
                 </li>
                 <li>
-                  <strong>Cancel a fee for a recipient.</strong> Open the recipient's fee record and choose <strong>Cancel Fee</strong>. Add a reason note explaining why the fee is being canceled. Once canceled, the fee status changes to Canceled and the outstanding balance is removed from the parent's invoice view — it no longer appears as money owed. Canceled fees remain visible in the admin fee management view for record-keeping purposes. You cannot uncancelce a fee — if you cancel in error, create a new fee record for that recipient.
+                  <strong>Cancel a fee for a recipient.</strong> Open the recipient's fee record and choose <strong>Cancel Fee</strong>. Add a reason note explaining why the fee is being canceled. Once canceled, the fee status changes to Canceled and the outstanding balance is removed from the parent's invoice view — it no longer appears as money owed. Canceled fees remain visible in the admin fee management view for record-keeping purposes. You cannot uncancel a fee — if you cancel in error, create a new fee record for that recipient. A recipient who has already paid cannot be canceled; use a refund or adjustment path instead.
                 </li>
               </ol>
 
@@ -230,6 +234,17 @@
                   <strong>Use installments as optional invoice detail.</strong> Line items and installments can explain what the fee covers and when payments are expected. If your online Stripe setup supports collecting installment-sized amounts, generate the appropriate checkout link when that installment is ready to collect.
                 </li>
               </ol>
+
+              <h2 id="latest-fee-updates">Latest Fee Updates</h2>
+              <ul class="ml-6 list-disc space-y-1">
+                <li><strong>Refund visibility:</strong> Stripe and offline refunds are tracked, and parent fee cards show refund status so families understand why a balance changed.</li>
+                <li><strong>Due reminders:</strong> unpaid fees due soon can trigger reminder email/push flows with recipient-specific deep links and amounts.</li>
+                <li><strong>Payment notifications:</strong> parents receive push notifications when fees are assigned or marked paid; staff and payers can be notified when online payments settle.</li>
+                <li><strong>Checkout guardrails:</strong> online checkout is restricted to player-linked parents, manual overpayments are blocked, stale Stripe team-fee webhooks are rejected, and paid fee deep links route to the correct recipient view.</li>
+                <li><strong>Installment setup:</strong> app fee workflows include installment setup and previews, matching the invoice-style parent view.</li>
+                <li><strong>Collection queues:</strong> paid recipients are filtered from active queues, unpaid fees are prioritized, and fee assignment pushes are combined by parent to avoid duplicate notifications.</li>
+                <li><strong>Staff sharing:</strong> admins can share staff-facing Stripe checkout links when an online collection record is eligible.</li>
+              </ul>
 
               <h2 id="common-questions">Common Questions</h2>
 

@@ -153,6 +153,16 @@
   <li><strong>Non-basketball, no broadcast needed:</strong> Standard Tracker</li>
   <li><strong>Volunteer with streaming access:</strong> Stream and Score (opens automatically)</li>
 </ul>
+<h2 id="latest-tracking-updates">Latest Tracking Updates</h2>
+<p>The June update expanded live tracking into the app and tightened several finish/replay edge cases.</p>
+<ul class="ml-6 list-disc space-y-1">
+  <li><strong>Native app controls:</strong> app game detail supports live score controls, live clock controls, basketball foul tracking, standard stat entry, opponent stat entry, substitutions, wrap-up recap, and statsheet photo import.</li>
+  <li><strong>Sport-config periods:</strong> live tracker periods render from the team's sport configuration instead of assuming a fixed basketball quarter model.</li>
+  <li><strong>Baseball/softball planning:</strong> baseball and softball game-plan formations now support diamond positioning, and baseball scoring includes walk events in app flows.</li>
+  <li><strong>Finish reliability:</strong> playing time finalization, stale private stat cleanup, retry idempotency, and zero-stat/DNP handling were hardened so completed reports reflect real participation.</li>
+  <li><strong>Statsheet import safety:</strong> unsupported stats are no longer zeroed, unmatched rows default to review, and score sheet mappings can be checked before applying.</li>
+  <li><strong>Live routing:</strong> liveScore pushes, gameId-only links, and completed live games route users back to the correct game detail, live view, or match report.</li>
+</ul>
 
 <h2 id="starting-a-live-tracker-session">Starting a Live Tracker Session</h2>
 <p>Before tip-off, spend two minutes setting up the tracker correctly. A proper setup prevents the most common mid-game issues.</p>

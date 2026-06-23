@@ -313,6 +313,8 @@
 <li>Track player completion status with roster tracking items.</li>
 <li>Send household invites and revoke household contact access.</li>
 <li>Preview roster import conflicts before applying changes.</li>
+<li>Import family contact fields safely and review contact conflicts.</li>
+<li>Manage athlete profile media, photos, highlight clips, and profile sharing.</li>
 </ul>
 <h2 id="who-is-this-for">Who Is This For</h2>
 <ul class="ml-6 list-disc space-y-1">
@@ -340,6 +342,9 @@
 <li>Invite another caregiver to access a player: Use <strong>Household Invite</strong> from Parent Dashboard.</li>
 <li>Revoke a household contact's access: Use <strong>Revoke Access</strong> in Parent Dashboard.</li>
 <li>Import roster from an external source: Use <strong>Roster Import</strong> with conflict preview.</li>
+<li>Import roster CSV family contacts: map contact columns, review sibling-safe conflicts, then apply only safe rows.</li>
+<li>Print roster or staff visibility output: use the roster print actions after confirming active/inactive filters.</li>
+<li>Add profile media: open the athlete profile from the player row and add headshots, media uploads, or highlight clips.</li>
 </ul>
 <h2 id="step-by-step-workflow">Step-by-Step Workflow</h2>
 <ol class="ml-6 list-decimal space-y-1">
@@ -414,12 +419,30 @@
 <li>Uncheck safe add/update rows you want to skip. Conflict rows are automatically excluded — they are not applied.</li>
 <li>Select <strong>Apply</strong>. Source metadata and import audit fields are stored on applied records.</li>
 </ol>
+<h2 id="roster-contact-imports">Roster Contact Imports and CSV Exports</h2>
+<p>Roster import now supports family contact columns in addition to player fields. Use this when a registration export or league roster includes guardian names, emails, phone numbers, and relationship labels.</p>
+<ul class="ml-6 list-disc space-y-1">
+<li><strong>Supported contact mapping:</strong> CSV headers can map parent/guardian names, emails, phones, and relationship fields into the player profile and invite/contact workflow.</li>
+<li><strong>Sibling-safe conflicts:</strong> shared parent contacts across siblings are handled as expected. A shared guardian email is not automatically treated as a duplicate player conflict.</li>
+<li><strong>Conflict review:</strong> ambiguous contact matches are flagged in preview and excluded from automatic apply. Resolve those manually before importing again.</li>
+<li><strong>Roster AI import:</strong> AI-assisted roster parsing can draft player rows from text or images, but admins still review every add/update/conflict before applying.</li>
+<li><strong>Current roster export:</strong> use the roster CSV export when you need a snapshot of active player, staff visibility, or contact data for reconciliation outside ALL PLAYS.</li>
+</ul>
 <h2 id="athlete-profiles">Athlete Profile Name Prefill</h2>
 <p>When creating a new athlete profile that is linked to an existing player record, the name field is now pre-filled from the player record that matches the <code>teamId</code> and <code>playerId</code> parameters in the URL. This avoids the most common source of name mismatches between the player roster record and the athlete profile display name.</p>
 <ul class="ml-6 list-disc space-y-1">
 <li>The prefill applies only when creating a new profile where no name has been saved yet. Existing saved profile names are never overwritten by the prefill — edits you have already made are preserved.</li>
 <li>If the profile builder is opened without both <code>teamId</code> and <code>playerId</code> in the URL, the prefill cannot run and the name field will be blank. Confirm the URL contains both parameters if you expect prefill to work.</li>
 <li>This feature removes a common manual step during onboarding flows where the admin creates profiles for multiple players in sequence and must type the same name that already exists on the roster record.</li>
+</ul>
+<h2 id="athlete-profile-media">Athlete Profile Media and Sharing</h2>
+<p>Athlete profiles can now hold richer media and sharing context for families and coaches.</p>
+<ul class="ml-6 list-disc space-y-1">
+<li><strong>Profile photos:</strong> upload or capture a headshot, with oversized mobile captures resized before upload.</li>
+<li><strong>Media uploads:</strong> add profile media drafts and highlight clip uploads tied to the athlete profile.</li>
+<li><strong>Season selection:</strong> use the profile quick editor to choose the season context before saving profile details.</li>
+<li><strong>Publish sharing:</strong> athlete profile publish sharing and profile invite links can use native sharing in the app when available.</li>
+<li><strong>Privacy:</strong> sensitive player and household fields remain private, and profile media reads are scoped to authorized viewers.</li>
 </ul>
 <h2 id="parent-dashboard-roster">Parent Dashboard and Roster Visibility</h2>
 <p>Parents and coaches see different views of the roster and schedule. Understanding what each role can see prevents confusion about missing items or missing controls.</p>

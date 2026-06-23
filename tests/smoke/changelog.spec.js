@@ -17,16 +17,17 @@ test('changelog page structure and default collapse state', async ({ page, baseU
     await expect(page.getByRole('heading', { name: 'Changelog' })).toBeVisible();
     await expect(page.getByRole('link', { name: '← Help Center' })).toBeVisible();
 
-    // May 2026 is expanded — its body container is visible
-    await expect(page.locator('#body-may-2026')).toBeVisible();
+    // The latest six-week catch-up is expanded — its body container is visible
+    await expect(page.locator('#body-jun-2026')).toBeVisible();
 
     // All older releases are collapsed on load
-    for (const id of ['body-mar-2026', 'body-feb-2026', 'body-jan-2026', 'body-dec-2025']) {
+    for (const id of ['body-may-2026', 'body-mar-2026', 'body-feb-2026', 'body-jan-2026', 'body-dec-2025']) {
         await expect(page.locator(`#${id}`), `${id} should be hidden on load`).toBeHidden();
     }
 
-    // Sidebar TOC lists all five release months
+    // Sidebar TOC lists all release periods
     const toc = page.locator('#cl-toc');
+    await expect(toc).toContainText('May 12-June 23, 2026');
     await expect(toc).toContainText('May 2026');
     await expect(toc).toContainText('March 2026');
     await expect(toc).toContainText('February 2026');
@@ -85,7 +86,9 @@ test('changelog search filters entries and shows result count', async ({ page, b
     // An unrelated entry title should be hidden (zero points for generic terms, specific ones work)
     // Search for something very specific to may-2026 only
     await search.fill('stripe checkout');
-    const stripeEntry = page.locator('.entry', { hasText: 'Team Fees' });
+    const stripeEntry = page.locator('.entry').filter({
+        has: page.locator('.entry-title', { hasText: 'Team Fees & Payments (Stripe)' })
+    });
     await expect(stripeEntry).toBeVisible();
 });
 
@@ -105,9 +108,9 @@ test('changelog search clear restores all entries', async ({ page, baseURL }) =>
     await expect(clearBtn).toBeHidden();
     await expect(status).toHaveText('');
 
-    // May 2026 remains visible and all its entries are restored
-    await expect(page.locator('#body-may-2026')).toBeVisible();
-    await expect(page.locator('#body-may-2026 .entry').first()).toBeVisible();
+    // The latest release remains visible and all its entries are restored
+    await expect(page.locator('#body-jun-2026')).toBeVisible();
+    await expect(page.locator('#body-jun-2026 .entry').first()).toBeVisible();
 });
 
 test('changelog search no-results state', async ({ page, baseURL }) => {
@@ -144,11 +147,13 @@ test('changelog category filter chips hide non-matching entries', async ({ page,
     expect(statusText).toMatch(/\d+ result/i);
 
     // The known payments entry should be visible
-    const paymentsEntry = page.locator('.entry', { hasText: 'Team Fees' });
+    const paymentsEntry = page.locator('.entry').filter({
+        has: page.locator('.entry-title', { hasText: 'Fee refunds, reminders, and guardrails' })
+    });
     await expect(paymentsEntry).toBeVisible();
 
     // A platform-only entry should be hidden
-    const platformEntry = page.locator('.entry', { hasText: 'Edit Config Access Guard' });
+    const platformEntry = page.locator('.entry', { hasText: 'Native app parity wave' });
     await expect(platformEntry).toBeHidden();
 
     // Click All to restore

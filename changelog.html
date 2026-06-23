@@ -161,17 +161,284 @@
 
 
       <!-- ════════════════════════════════════════════════════════════════
+           JUNE 2026
+           ════════════════════════════════════════════════════════════════ -->
+      <section class="release" id="jun-2026">
+        <p class="release-date">May 12-June 23, 2026</p>
+        <h2 class="release-title">Six-Week Feature Catch-Up</h2>
+        <p class="release-subtitle">Native app parity, notification inbox and push routing, Sports Connect manual provider pulls, schedule sharing, roster contact imports, richer team media, fee reminders and refunds, tracker reliability, and broad security/performance hardening.</p>
+        <button class="release-toggle" data-target="body-jun-2026">
+          <svg width="12" height="12" viewBox="0 0 12 12" fill="none"><path d="M2 4l4 4 4-4" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          Collapse
+        </button>
+        <div class="release-body" id="body-jun-2026">
+
+        <p class="group-heading">Top Highlights</p>
+
+        <div class="entry" data-cats="platform">
+          <div class="entry-header">
+            <span class="cat cat-platform">Platform</span>
+            <span class="entry-title">Native app parity wave</span>
+          </div>
+          <p class="entry-body">The React/Capacitor app gained full workflows for team settings, admin invites, roster creation and editing, custom roster fields, schedule creation, practice recurrence, team fees, registration review, team media, drills, game wrap-up, app tracking controls, awards publishing, and in-app help search.</p>
+          <a class="entry-link" href="workflow-choose-home-dashboard.html">→ Dashboard workflow</a>
+        </div>
+
+        <div class="entry" data-cats="platform schedule payments media">
+          <div class="entry-header">
+            <span class="cat cat-platform">Platform</span>
+            <span class="entry-title">Notification inbox, badges, and push categories</span>
+          </div>
+          <p class="entry-body">A notification bell with unread badge, inbox sheet, delivery metadata, retry behavior, category preferences, recipient indexes, route-aware push deep links, and native app badge support now covers schedule reminders, game-day status, chat mentions, fees, media, awards, rideshare, officiating, and home packet activity.</p>
+          <a class="entry-link" href="workflow-communication.html">→ Communication workflow</a>
+        </div>
+
+        <div class="entry" data-cats="registration">
+          <div class="entry-header">
+            <span class="cat cat-registration">Registration</span>
+            <span class="entry-title">Sports Connect manual pulls and registration editor improvements</span>
+          </div>
+          <p class="entry-body">Registration setup now stores provider mappings, supports manual Sports Connect provider pulls through the backend, gates unavailable import entry points, and adds form-editor service groundwork plus clearer review queue and waitlist behavior.</p>
+          <a class="entry-link" href="workflow-registration.html">→ Registration workflow</a>
+        </div>
+
+        <div class="entry" data-cats="schedule">
+          <div class="entry-header">
+            <span class="cat cat-schedule">Schedule</span>
+            <span class="entry-title">Schedule sharing, calendar export, and tournament metadata</span>
+          </div>
+          <p class="entry-body">Teams can share fan feeds, export individual schedule events, preserve team context through calendar and Help links, show tournament/bracket metadata, publish organization draft schedule slots, and surface more schedule actions directly in the app.</p>
+          <a class="entry-link" href="workflow-schedule.html">→ Schedule workflow</a>
+        </div>
+
+        <p class="group-heading">Mobile App</p>
+
+        <div class="entry" data-cats="platform schedule">
+          <div class="entry-header">
+            <span class="cat cat-platform">Platform</span>
+            <span class="entry-title">Team and schedule operations in the app</span>
+          </div>
+          <p class="entry-body">Mobile users can edit team settings, league and livestream links, team admins, staff permissions, scorekeeper and videographer grants, schedule games, create recurring practices, cancel recurring practice occurrences, add practice attendance, and open calendar export/share actions without falling back to legacy pages.</p>
+          <a class="entry-link" href="workflow-team-setup.html">→ Team Setup workflow</a>
+        </div>
+
+        <div class="entry" data-cats="roster platform">
+          <div class="entry-header">
+            <span class="cat cat-roster">Roster</span>
+            <span class="entry-title">Roster and profile management in the app</span>
+          </div>
+          <p class="entry-body">The app now supports player creation, staff roster detail editing, custom roster fields, deactivate/reactivate controls, tracking item management, roster AI import helpers, family contact import support, profile invite sharing, headshot capture, athlete media uploads, and profile recovery states.</p>
+          <a class="entry-link" href="workflow-roster.html">→ Roster workflow</a>
+        </div>
+
+        <div class="entry" data-cats="tracking platform">
+          <div class="entry-header">
+            <span class="cat cat-tracking">Game Tracking</span>
+            <span class="entry-title">Tracking and game-day parity in the app</span>
+          </div>
+          <p class="entry-body">Native game flows added live score controls, clock controls, basketball foul tracking, standard stat entry, opponent stat entry, statsheet photo import, substitutions, wrap-up recap, live broadcast routing, live chat, reactions, and game-day deep links that land on the correct event or game hub tab.</p>
+          <a class="entry-link" href="workflow-track-game.html">→ Track Game workflow</a>
+        </div>
+
+        <div class="entry" data-cats="payments registration">
+          <div class="entry-header">
+            <span class="cat cat-payments">Payments</span>
+            <span class="entry-title">Registration and fee workflows in the app</span>
+          </div>
+          <p class="entry-body">Parents and admins can handle public registration, registration detail/status views, in-app Stripe checkout, offline registration submission, registration payment instructions, review queues, waitlist promotions, fee batch creation, offline payments, balance adjustments, installment setup, and fee checkout link sharing.</p>
+          <a class="entry-link" href="workflow-fees-payments.html">→ Fees &amp; Payments workflow</a>
+        </div>
+
+        <p class="group-heading">Schedule, RSVP &amp; Officials</p>
+
+        <div class="entry" data-cats="schedule">
+          <div class="entry-header">
+            <span class="cat cat-schedule">Schedule</span>
+            <span class="entry-title">RSVP, staff override, and reminder upgrades</span>
+          </div>
+          <p class="entry-body">Recurring team practice RSVP events now expand correctly, staff RSVP overrides collapse once handled, availability notes can be saved without retapping RSVP, inline team RSVP reminders and mobile staff reminders are available, and schedule reminder defaults no longer rewrite existing events unnecessarily.</p>
+          <a class="entry-link" href="workflow-communication.html">→ Communication workflow</a>
+        </div>
+
+        <div class="entry" data-cats="schedule platform">
+          <div class="entry-header">
+            <span class="cat cat-schedule">Schedule</span>
+            <span class="entry-title">Officials can complete more of the game flow</span>
+          </div>
+          <p class="entry-body">Officials can receive assignment notifications, claim eligible open slots, submit quick final scores and notes from official cards, and show submitted final results consistently. Admin views now include official status, team officials summaries, and a team officials modal.</p>
+          <a class="entry-link" href="workflow-schedule.html">→ Schedule workflow</a>
+        </div>
+
+        <div class="entry" data-cats="schedule ai">
+          <div class="entry-header">
+            <span class="cat cat-schedule">Schedule</span>
+            <span class="entry-title">Practice packets, forecast links, and AI scheduling drafts</span>
+          </div>
+          <p class="entry-body">Coaches gained practice packet management, assigned-parent packet targeting, due-tomorrow packet reminders, staff packet completion notifications, forecast links on schedule event detail, and AI-assisted schedule import drafts for schedule cleanup.</p>
+          <a class="entry-link" href="workflow-schedule.html">→ Schedule workflow</a>
+        </div>
+
+        <p class="group-heading">Roster, Profiles &amp; Household Access</p>
+
+        <div class="entry" data-cats="roster">
+          <div class="entry-header">
+            <span class="cat cat-roster">Roster</span>
+            <span class="entry-title">Roster imports now understand family contacts</span>
+          </div>
+          <p class="entry-body">Roster import support now includes family contact headers, player profile fields, sibling-safe contact conflict handling, empty-state clarity, CSV contact validation, roster AI import parsing, and current roster CSV export.</p>
+          <a class="entry-link" href="workflow-roster.html">→ Roster workflow</a>
+        </div>
+
+        <div class="entry" data-cats="roster media">
+          <div class="entry-header">
+            <span class="cat cat-roster">Roster</span>
+            <span class="entry-title">Athlete profile media and sharing</span>
+          </div>
+          <p class="entry-body">Athlete profiles can now include headshots, highlight clips, uploaded media drafts, season selection in the quick editor, publish sharing, and direct parent/certificate share-link fallbacks while protecting sensitive player and household fields.</p>
+          <a class="entry-link" href="workflow-roster.html#athlete-profiles">→ Roster: Athlete Profiles</a>
+        </div>
+
+        <div class="entry" data-cats="roster platform">
+          <div class="entry-header">
+            <span class="cat cat-roster">Roster</span>
+            <span class="entry-title">Household access, account merge, and invite polish</span>
+          </div>
+          <p class="entry-body">Parents can create and revoke household invites from Parent Tools, pending household invite revocation is exposed, invite redirects survive login, redeemed invite links route to dashboards, account merge requests and previews were added, and invite creation avoids caching recipient emails in the sender browser.</p>
+          <a class="entry-link" href="workflow-join-team.html">→ Join Team workflow</a>
+        </div>
+
+        <p class="group-heading">Team Media &amp; Communication</p>
+
+        <div class="entry" data-cats="media">
+          <div class="entry-header">
+            <span class="cat cat-media">Media</span>
+            <span class="entry-title">Team media uploads, organization, and moderation</span>
+          </div>
+          <p class="entry-body">Team Media added multi-photo and document uploads, album creation in the app, media type filters, album cover selection, item move, individual delete, bulk delete, upload approval, upload size and concurrency guards, pagination, lazy album loading, preserved upload IDs, and safer Storage access.</p>
+          <a class="entry-link" href="workflow-team-media.html">→ Team Media workflow</a>
+        </div>
+
+        <div class="entry" data-cats="media platform">
+          <div class="entry-header">
+            <span class="cat cat-media">Media</span>
+            <span class="entry-title">Media sharing and visibility-aware notifications</span>
+          </div>
+          <p class="entry-body">Media can be shared into team chat, photo posts are normalized for chat, staff-only album pushes are suppressed, notifications respect album visibility/audience, members avoid unopened album prefetches, and download URLs are cached after upload and legacy reads.</p>
+          <a class="entry-link" href="workflow-communication.html">→ Communication workflow</a>
+        </div>
+
+        <div class="entry" data-cats="platform">
+          <div class="entry-header">
+            <span class="cat cat-platform">Platform</span>
+            <span class="entry-title">Chat mentions, mutes, and team email</span>
+          </div>
+          <p class="entry-body">Team chat now has keyboard @mention autocomplete, mention detection across message writes, mention push dedupe, per-conversation mute toggles, conversation-scoped reads, latest-message pinning on mobile, parallel attachment uploads, optimistic sends, and team email drafts, history, templates, and attachments.</p>
+          <a class="entry-link" href="workflow-communication.html">→ Communication workflow</a>
+        </div>
+
+        <p class="group-heading">Fees, Registration &amp; Payments</p>
+
+        <div class="entry" data-cats="payments">
+          <div class="entry-header">
+            <span class="cat cat-payments">Payments</span>
+            <span class="entry-title">Fee refunds, reminders, and guardrails</span>
+          </div>
+          <p class="entry-body">Team Fees added Stripe and offline refunds, parent-visible refund cards, unpaid/paid queue cleanup, fee payment summary export, due-reminder emails and push notifications, paid-payer/staff notifications, amount/deep-link details, overpayment prevention, player-linked checkout restrictions, and blocking cancellation for paid recipients.</p>
+          <a class="entry-link" href="workflow-fees-payments.html">→ Fees &amp; Payments workflow</a>
+        </div>
+
+        <div class="entry" data-cats="registration payments">
+          <div class="entry-header">
+            <span class="cat cat-registration">Registration</span>
+            <span class="entry-title">Registration payment and capacity protections</span>
+          </div>
+          <p class="entry-body">Registration checkout now uses server-side capacity writes, server-side fee recomputation, retry-safe checkout attempt tokens, async Stripe handling, rollback when checkout creation fails, failed-payment reminder emails, cancellation capacity release, and clearer fee breakdown and payment instructions.</p>
+          <a class="entry-link" href="workflow-registration.html">→ Registration workflow</a>
+        </div>
+
+        <div class="entry" data-cats="registration">
+          <div class="entry-header">
+            <span class="cat cat-registration">Registration</span>
+            <span class="entry-title">Registration review, screening, and exports</span>
+          </div>
+          <p class="entry-body">Admins now have background check settings, manual screening, staff-grant blocking until screening clears, selectable registration export columns, review CSV export, cursor pagination in the review queue, direct form reads for detail views, and waitlist offers that can be accepted.</p>
+          <a class="entry-link" href="workflow-registration.html">→ Registration workflow</a>
+        </div>
+
+        <p class="group-heading">Game Tracking, Live View &amp; Reports</p>
+
+        <div class="entry" data-cats="tracking">
+          <div class="entry-header">
+            <span class="cat cat-tracking">Game Tracking</span>
+            <span class="entry-title">Live tracker reliability and sport-specific scoring</span>
+          </div>
+          <p class="entry-body">Live tracking now resumes clocks, restores logs, uses sport-config periods, saves playing time correctly, clears stale private stats on finish, keeps goal controls available until a stat config is selected, applies goal events to viewer stats, and supports player +2, baseball walk scoring, and baseball/softball game-plan formations.</p>
+          <a class="entry-link" href="workflow-live-tracker.html">→ Live Tracker workflow</a>
+        </div>
+
+        <div class="entry" data-cats="tracking broadcast">
+          <div class="entry-header">
+            <span class="cat cat-broadcast">Broadcasting</span>
+            <span class="entry-title">Live game viewing, reports, and safety</span>
+          </div>
+          <p class="entry-body">Families get watch/replay CTAs on schedule cards, completed live games link directly to match reports, mobile live games default to Video, audio announcements were added, liveScore pushes route correctly, and live chat/reactions require sign-in or shareable game visibility.</p>
+          <a class="entry-link" href="workflow-live-watch-replay.html">→ Live Watch &amp; Replay workflow</a>
+        </div>
+
+        <div class="entry" data-cats="tracking">
+          <div class="entry-header">
+            <span class="cat cat-tracking">Game Tracking</span>
+            <span class="entry-title">Statsheet, DNP, and report cleanup</span>
+          </div>
+          <p class="entry-body">Statsheet imports no longer zero unsupported stats, unmatched rows default to review, DNP/zero-stat participation is handled more consistently, postgame player performance defaults to participants, postgame reports hide empty tabs, and malformed report fields are normalized before rendering.</p>
+          <a class="entry-link" href="workflow-postgame.html">→ Postgame workflow</a>
+        </div>
+
+        <p class="group-heading">Platform, Search &amp; Hardening</p>
+
+        <div class="entry" data-cats="platform">
+          <div class="entry-header">
+            <span class="cat cat-platform">Platform</span>
+            <span class="entry-title">Performance and mobile ergonomics</span>
+          </div>
+          <p class="entry-body">The app added persistent local cache, pull-to-refresh, app shell during auth bootstrap, retry/skeleton/error states, lazy-loaded heavy panels, smaller push/inbox boot bundles, reduced query fan-out, cached schedule/team/media reads, native back navigation, accessibility announcements, and uxTiming/performance baseline instrumentation.</p>
+          <a class="entry-link" href="workflow-choose-home-dashboard.html">→ Dashboard workflow</a>
+        </div>
+
+        <div class="entry" data-cats="platform">
+          <div class="entry-header">
+            <span class="cat cat-platform">Platform</span>
+            <span class="entry-title">Search, discovery, and help routing</span>
+          </div>
+          <p class="entry-body">Public team discovery became search-first with location search, mobile browse cards are actionable, app search routes Browse Teams natively, help results open inside the app with role filters and preserved team context, and page-reference coverage now protects shipped page links.</p>
+          <a class="entry-link" href="help.html">→ Help Center</a>
+        </div>
+
+        <div class="entry" data-cats="platform">
+          <div class="entry-header">
+            <span class="cat cat-platform">Platform</span>
+            <span class="entry-title">Security and privacy hardening</span>
+          </div>
+          <p class="entry-body">The release tightened calendar proxy host validation, public registration checkout capability, profile/player/contact reads, private team media Storage, fallback upload paths, team-fee billing metadata, access-code reads, admin invite creation, targeted chat membership changes, game reads, chat sanitization, logger redaction, and hosted Firebase config secret scanning.</p>
+          <a class="entry-link" href="workflow-admin-ops.html">→ Admin operations workflow</a>
+        </div>
+
+        </div><!-- /release-body jun-2026 -->
+      </section>
+
+
+      <!-- ════════════════════════════════════════════════════════════════
            MAY 2026
            ════════════════════════════════════════════════════════════════ -->
       <section class="release" id="may-2026">
         <p class="release-date">May 2026</p>
         <h2 class="release-title">Spring 2026 Release</h2>
         <p class="release-subtitle">New sports, full payment pipeline, registration management, team media, live-tracker resilience, broadcasting overhaul, calendar feeds, org scheduling tools, and roster access improvements.</p>
-        <button class="release-toggle" data-target="body-may-2026">
+        <button class="release-toggle collapsed" data-target="body-may-2026">
           <svg width="12" height="12" viewBox="0 0 12 12" fill="none"><path d="M2 4l4 4 4-4" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
-          Collapse
+          Expand
         </button>
-        <div class="release-body" id="body-may-2026">
+        <div class="release-body collapsed" id="body-may-2026">
 
         <p class="group-heading">Latest Updates</p>
 
