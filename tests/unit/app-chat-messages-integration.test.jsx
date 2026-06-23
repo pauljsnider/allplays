@@ -1037,6 +1037,70 @@ describe('React app messages integration', () => {
         expect(composer.value).toBe('Can @Coach Jamie ');
     });
 
+    it('does not keep teammate suggestions open after a completed mention or a bare at-sign', async () => {
+        const { container } = await renderMessages('/messages/team-1');
+        const composer = container.querySelector('.chat-composer-textarea');
+
+        await setFieldValue(composer, '@');
+        expect(container.querySelector('[aria-label="Mention suggestions"]')).toBeNull();
+
+        await setFieldValue(composer, 'Can @co');
+        expect(container.querySelector('[aria-label="Mention suggestions"]')).toBeTruthy();
+
+        await click(container, '@Coach Jamie');
+
+        expect(composer.value).toBe('Can @Coach Jamie ');
+        expect(container.querySelector('[aria-label="Mention suggestions"]')).toBeNull();
+    });
+
+    it('replaces the rest of an active mention token during keyboard selection', async () => {
+        const { container } = await renderMessages('/messages/team-1');
+        const composer = container.querySelector('.chat-composer-textarea');
+
+        await setFieldValue(composer, 'Hi @coac team');
+
+        await act(async () => {
+            composer.focus();
+            composer.setSelectionRange(7, 7);
+            composer.dispatchEvent(new Event('select', { bubbles: true }));
+        });
+        await flush();
+
+        expect(container.querySelector('[aria-label="Mention suggestions"]')).toBeTruthy();
+
+        await act(async () => {
+            composer.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+        });
+        await flush();
+
+        expect(composer.value).toBe('Hi @Coach Jamie team');
+        expect(container.querySelector('[aria-label="Mention suggestions"]')).toBeNull();
+    });
+
+    it('uses the clicked cursor position when keyboard-selecting a mention from the middle of a draft', async () => {
+        const { container } = await renderMessages('/messages/team-1');
+        const composer = container.querySelector('.chat-composer-textarea');
+
+        await setFieldValue(composer, 'Need @coach and @pa');
+
+        await act(async () => {
+            composer.focus();
+            composer.setSelectionRange(17, 17);
+            composer.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+        });
+        await flush();
+
+        expect(container.querySelector('[aria-label="Mention suggestions"]')).toBeTruthy();
+
+        await act(async () => {
+            composer.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+        });
+        await flush();
+
+        expect(composer.value).toBe('Need @coach and @Pat ');
+        expect(container.querySelector('[aria-label="Mention suggestions"]')).toBeNull();
+    });
+
     it('does not recompute existing message html while the composer changes', async () => {
         const chatLogic = await import('../../apps/app/src/lib/chatLogic.ts');
         const formatSpy = vi.spyOn(chatLogic, 'formatChatMessageHtml');

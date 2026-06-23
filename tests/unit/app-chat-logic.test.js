@@ -7,6 +7,7 @@ import {
     buildChatMentionSuggestions,
     extractAllPlaysQuestion,
     formatChatMessageHtml,
+    getChatMentionInsertion,
     getChatMentionQuery,
     getChatMemberDisplayName,
     getAudienceSummaryText,
@@ -68,12 +69,23 @@ describe('React app chat logic', () => {
             { id: 'player:player-1', name: 'Pat Star', detail: '#9' },
             { id: 'email:parent@example.com', name: 'parent@example.com', detail: 'Email' }
         ];
+        const partialMention = 'Hi @coac team';
+        const partialCursor = partialMention.indexOf('c team');
 
         expect(getChatMentionQuery('Can @co')).toBe('co');
+        expect(getChatMentionQuery(partialMention, partialCursor)).toBe('coac');
+        expect(getChatMentionQuery('@')).toBeNull();
+        expect(getChatMentionQuery('@ ')).toBeNull();
+        expect(getChatMentionQuery('Can @Coach Jamie ')).toBeNull();
+        expect(buildChatMentionSuggestions(options, '@')).toEqual([]);
         expect(buildChatMentionSuggestions(options, 'Can @co')).toEqual([
             { id: 'user:coach-1', label: 'Coach Jamie', detail: 'Staff' }
         ]);
         expect(insertChatMention('Can @co', 'Coach Jamie')).toBe('Can @Coach Jamie ');
+        expect(getChatMentionInsertion(partialMention, 'Coach Jamie', partialCursor)).toEqual({
+            text: 'Hi @Coach Jamie team',
+            cursorPosition: 16
+        });
         expect(insertChatMention('No trigger', 'Pat Star')).toBe('No trigger @Pat Star ');
     });
 

@@ -71,7 +71,9 @@ export const chatReactions: Array<{ key: ChatReactionKey; emoji: string; label: 
 export const chatReactionKeys = new Set(chatReactions.map((reaction) => reaction.key));
 
 const aiMentionRegex = /@all\s*plays/ig;
-const chatMentionTriggerRegex = /(^|\s)@([A-Za-z0-9 .'-]{0,40})$/;
+const chatMentionQueryRegex = /(^|\s)@([A-Za-z0-9 .'-]{0,40})$/;
+const chatMentionReplaceRegex = /(^|\s)@([A-Za-z0-9 .'-]{0,40})$/;
+const chatMentionSuffixRegex = /^[A-Za-z0-9.'-]*/;
 const chatMentionHighlightRegex = /(^|[\s([{"'])@([A-Za-z0-9][A-Za-z0-9.'-]*(?:\s+[A-Za-z0-9][A-Za-z0-9.'-]*){0,2})(?=$|[\s.,!?:;)\]}])/g;
 const urlRegex = /(\bhttps?:\/\/[^\s<]+[^\s<.,;:!?"'\])>]|\bwww\.[^\s<]+[^\s<.,;:!?"'\])>])/gi;
 const allowedChatHtmlTags = new Set(['strong', 'em', 'del', 'code', 'a', 'span']);
@@ -326,22 +328,38 @@ export function extractAllPlaysQuestion(text: string) {
   return String(text || '').replace(aiMentionRegex, '').trim();
 }
 
-export function getChatMentionQuery(text: string) {
-  const match = String(text || '').match(chatMentionTriggerRegex);
-  if (!match) return null;
-  return String(match[2] || '').trim().toLowerCase();
+function clampChatCursorPosition(text: string, cursorPosition?: number) {
+  if (typeof cursorPosition !== 'number' || Number.isNaN(cursorPosition)) {
+    return text.length;
+  }
+  return Math.min(Math.max(0, cursorPosition), text.length);
 }
 
-export function hasChatMentionTrigger(text: string) {
-  return getChatMentionQuery(text) !== null;
+export function getChatMentionQuery(text: string, cursorPosition?: number) {
+  const source = String(text || '');
+  const safeCursorPosition = clampChatCursorPosition(source, cursorPosition);
+  const beforeCursor = source.slice(0, safeCursorPosition);
+  const match = beforeCursor.match(chatMentionQueryRegex);
+  if (!match) return null;
+  const prefixQuery = String(match[2] || '');
+  const suffixQuery = source.slice(safeCursorPosition).match(chatMentionSuffixRegex)?.[0] || '';
+  const query = `${prefixQuery}${suffixQuery}`.trim();
+  if (/\s$/.test(prefixQuery)) return null;
+  if (!query) return null;
+  return query.toLowerCase();
+}
+
+export function hasChatMentionTrigger(text: string, cursorPosition?: number) {
+  return getChatMentionQuery(text, cursorPosition) !== null;
 }
 
 export function buildChatMentionSuggestions(
   recipientOptions: ChatRecipientOption[] = [],
   text = '',
-  limit = 5
+  limit = 5,
+  cursorPosition?: number
 ): ChatMentionSuggestion[] {
-  const query = getChatMentionQuery(text);
+  const query = getChatMentionQuery(text, cursorPosition);
   if (query === null) return [];
 
   const seen = new Set<string>();
@@ -373,16 +391,40 @@ export function buildChatMentionSuggestions(
     .slice(0, limit);
 }
 
-export function insertChatMention(text: string, mentionLabel: string) {
+export function getChatMentionInsertion(text: string, mentionLabel: string, cursorPosition?: number) {
   const label = String(mentionLabel || '').replace(/^@+/, '').replace(/\s+/g, ' ').trim();
-  if (!label) return text;
+  if (!label) {
+    return {
+      text: String(text || ''),
+      cursorPosition: clampChatCursorPosition(String(text || ''), cursorPosition)
+    };
+  }
   const mention = `@${label} `;
   const source = String(text || '');
-  if (chatMentionTriggerRegex.test(source)) {
-    return source.replace(chatMentionTriggerRegex, (_match, prefix) => `${prefix}${mention}`);
+  const safeCursorPosition = clampChatCursorPosition(source, cursorPosition);
+  const beforeCursor = source.slice(0, safeCursorPosition);
+  const afterCursor = source.slice(safeCursorPosition);
+  const mentionSuffix = afterCursor.match(chatMentionSuffixRegex)?.[0] || '';
+  const normalizedAfterCursor = mention.endsWith(' ')
+    ? afterCursor.slice(mentionSuffix.length).replace(/^\s+/, '')
+    : afterCursor.slice(mentionSuffix.length);
+  if (chatMentionReplaceRegex.test(beforeCursor)) {
+    const nextBeforeCursor = beforeCursor.replace(chatMentionReplaceRegex, (_match, prefix) => `${prefix}${mention}`);
+    return {
+      text: `${nextBeforeCursor}${normalizedAfterCursor}`,
+      cursorPosition: nextBeforeCursor.length
+    };
   }
   const spacer = source.trim() ? ' ' : '';
-  return `${source}${spacer}${mention}`;
+  const insertedText = `${beforeCursor}${spacer}${mention}${normalizedAfterCursor}`;
+  return {
+    text: insertedText,
+    cursorPosition: beforeCursor.length + spacer.length + mention.length
+  };
+}
+
+export function insertChatMention(text: string, mentionLabel: string, cursorPosition?: number) {
+  return getChatMentionInsertion(text, mentionLabel, cursorPosition).text;
 }
 
 export function getMessageSenderLabel(message: any, currentUserId = '') {
