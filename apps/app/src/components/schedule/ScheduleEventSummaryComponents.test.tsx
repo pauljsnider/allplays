@@ -6,6 +6,7 @@ import { DateTile } from './DateTile';
 import { EventBrief } from './EventBrief';
 import { EventSectionNav } from './EventSectionNav';
 import { PlayerInitials } from './PlayerInitials';
+import { ScheduleEventHeader } from './ScheduleEventHeader';
 
 describe('Schedule event summary components', () => {
   it('renders the date tile month, day, and weekday', () => {
@@ -23,6 +24,33 @@ describe('Schedule event summary components', () => {
 
     rerender(<PlayerInitials name="   " />);
     expect(screen.getByText('P')).toBeTruthy();
+  });
+
+  it('renders the extracted event header with representative props', () => {
+    render(
+      <ScheduleEventHeader
+        date={new Date('2026-06-19T18:00:00.000Z')}
+        teamName="Tigers"
+        eventType="game"
+        title="Tigers vs Lions"
+        timeLabel="Arrive 5:30 PM · Starts 6:00 PM"
+        location="North Field"
+        playerSummary={<div>Avery Smith · Tigers</div>}
+        rsvpLabel="Going"
+        rsvpClassName="border-emerald-200 bg-emerald-50 text-emerald-700"
+        briefPieces={['Final 3-1', 'Home']}
+      />
+    );
+
+    expect(screen.getByText('Tigers')).toBeTruthy();
+    expect(screen.getByText('game')).toBeTruthy();
+    expect(screen.getByRole('heading', { name: 'Tigers vs Lions' })).toBeTruthy();
+    expect(screen.getByText('Arrive 5:30 PM · Starts 6:00 PM')).toBeTruthy();
+    expect(screen.getByText('North Field')).toBeTruthy();
+    expect(screen.getByText('Avery Smith · Tigers')).toBeTruthy();
+    expect(screen.getByText('Going')).toBeTruthy();
+    expect(screen.getByText('Final 3-1')).toBeTruthy();
+    expect(screen.getByText('Home')).toBeTruthy();
   });
 
   it('renders event brief pills only when summary pieces exist', () => {
