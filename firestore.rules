@@ -2330,8 +2330,11 @@ service cloud.firestore {
     // The tokenId is a 40-char hex string that serves as a bearer credential.
     match /familyShareTokens/{tokenId} {
       // Anyone who has the token ID can read it (to validate and load the family page).
+      // Legacy revoked tokens may use revoked/revokedAt without active=false, so honor all revocation markers.
       // Owner can always read their own tokens (including revoked ones).
-      allow get: if resource.data.get('active', false) == true ||
+      allow get: if (resource.data.get('active', true) == true &&
+                     resource.data.get('revoked', false) != true &&
+                     resource.data.get('revokedAt', null) == null) ||
                     (isSignedIn() && resource.data.ownerUserId == request.auth.uid) ||
                     isGlobalAdmin();
       // Only the owner can list their own tokens (rule applied per-document).
