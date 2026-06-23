@@ -228,6 +228,30 @@ describe('parent schedule child scope', () => {
     expect(getPlayers).not.toHaveBeenCalled();
   });
 
+  it('loads parent-linked players without requiring a browser window for timeout guards', async () => {
+    const previousWindow = (globalThis as any).window;
+    delete (globalThis as any).window;
+    vi.mocked(loadProfileDocument).mockResolvedValue({
+      parentOf: [],
+      parentTeamIds: ['team-1'],
+      parentPlayerKeys: ['team-1::player-1']
+    } as any);
+    vi.mocked(getTeam).mockResolvedValue({ id: 'team-1', name: 'Bears', active: true } as any);
+    vi.mocked(getDoc).mockResolvedValue(playerSnapshot('player-1', { name: 'Avery Lee', active: true }) as any);
+
+    try {
+      await expect(loadParentScheduleChildren(parentUser)).resolves.toEqual([
+        { teamId: 'team-1', teamName: 'Bears', playerId: 'player-1', playerName: 'Avery Lee' }
+      ]);
+    } finally {
+      if (previousWindow === undefined) {
+        delete (globalThis as any).window;
+      } else {
+        (globalThis as any).window = previousWindow;
+      }
+    }
+  });
+
   it('filters inactive teams and inactive roster players from parent child links', async () => {
     vi.mocked(loadProfileDocument).mockResolvedValue({
       parentOf: [
@@ -2116,10 +2140,11 @@ describe('team schedule game windowing (#2034)', () => {
       {
         masterId: 'practice-master',
         instanceDate: '2026-06-24',
-        date: new Date('2026-06-24T18:00:00.000Z'),
+        date: '2026-06-24T18:00:00.000Z',
         endDate: new Date('2026-06-24T19:30:00.000Z'),
         location: 'North Field',
-        title: 'Weekly Practice'
+        title: 'Weekly Practice',
+        notes: 'Bring water'
       }
     ] as any);
 
@@ -2132,7 +2157,8 @@ describe('team schedule game windowing (#2034)', () => {
         id: 'practice-master__2026-06-24',
         type: 'practice',
         isDbGame: true,
-        location: 'North Field'
+        location: 'North Field',
+        notes: 'Bring water'
       })
     ]));
   });
