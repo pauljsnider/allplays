@@ -65,7 +65,7 @@ function redactBearerTokens(value: string) {
 
 function redactSensitiveQueryParams(value: string) {
     return value.replace(
-        /([?&#](?:access[_-]?token|id[_-]?token|refresh[_-]?token|auth[_-]?token|api[_-]?key|client[_-]?secret|token|password|secret)=)[^&#\s"',}]+/gi,
+        /([?&#](?:access[_-]?token|id[_-]?token|refresh[_-]?token|auth|auth[_-]?token|api[_-]?key|client[_-]?secret|token|password|secret)=)[^&#\s"',}]+/gi,
         `$1${redactedValue}`
     );
 }
