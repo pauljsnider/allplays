@@ -2331,7 +2331,7 @@ service cloud.firestore {
     match /familyShareTokens/{tokenId} {
       // Anyone who has the token ID can read it (to validate and load the family page).
       // Owner can always read their own tokens (including revoked ones).
-      allow get: if resource.data.get('active', false) == true ||
+      allow get: if resource.data.get('active', true) == true ||
                     (isSignedIn() && resource.data.ownerUserId == request.auth.uid) ||
                     isGlobalAdmin();
       // Only the owner can list their own tokens (rule applied per-document).
