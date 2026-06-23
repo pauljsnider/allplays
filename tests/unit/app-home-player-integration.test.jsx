@@ -806,8 +806,8 @@ describe('React app Home and player drill-in integration', () => {
         expect(buttonByText(container, 'Athlete Profile').getAttribute('aria-pressed')).toBe('true');
 
         expect(container.textContent).toContain('Custom athlete profile headshot');
-        expect(container.textContent).toContain('Manual highlight clip');
-        expect(container.textContent).toContain('Existing clips stay on the profile.');
+        expect(container.textContent).toContain('Uploaded clip');
+        expect(container.textContent).toContain('Old clip');
         await attachAthleteHeadshotFile(container, 'new-headshot.png');
         await attachAthleteHighlightClipFile(container, 'highlight.mp4');
         expect(container.textContent).toContain('New headshot selected. Save to publish it.');
