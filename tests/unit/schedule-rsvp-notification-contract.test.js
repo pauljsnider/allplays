@@ -16,7 +16,7 @@ function getBuildPreEventReminderPayload() {
 }
 
 function getSendCreatedScheduleEventNotification({ sendCategoryNotification }) {
-    const start = functionsSource.indexOf('async function sendCreatedScheduleEventNotification({ teamId, gameId, game })');
+    const start = functionsSource.indexOf('function buildCreatedScheduleEventNotificationPayload(game = {})');
     const end = functionsSource.indexOf('\nasync function sendScheduleImportBatchNotifications', start);
     const slice = functionsSource.slice(start, end);
     return new Function(
@@ -35,9 +35,11 @@ function getSendCreatedScheduleEventNotification({ sendCategoryNotification }) {
 
 describe('schedule and RSVP notification contract', () => {
     it('sends created-event notifications unless the event is draft or part of a large import batch', () => {
+        expect(functionsSource).toContain('function buildCreatedScheduleEventNotificationPayload(game = {})');
         expect(functionsSource).toContain('async function sendCreatedScheduleEventNotification({ teamId, gameId, game })');
         expect(functionsSource).toContain('if (game.source || game.sourceMetadata) return null;');
-        expect(functionsSource).toContain("const category = isPractice ? 'practice' : 'schedule';");
+        expect(functionsSource).toContain('const isPracticeSeries = isPractice && (game.isSeriesMaster === true || Boolean(game.recurrence));');
+        expect(functionsSource).toContain("category: 'schedule'");
         expect(functionsSource).toContain('title: payload.title');
         expect(functionsSource).toContain('const notifyGameCreated = functions.firestore');
         expect(functionsSource).toContain(".document('teams/{teamId}/games/{gameId}')");
@@ -57,7 +59,7 @@ describe('schedule and RSVP notification contract', () => {
         expect(functionsSource).toContain('exports._internal.notifyScheduleImportBatchCompleted = notifyScheduleImportBatchCompleted;');
     });
 
-    it('sends recurring practice creation through the standard practice notification path', async () => {
+    it('sends recurring practice creation through the standard schedule notification path', async () => {
         const sentPayloads = [];
         const sendCreatedScheduleEventNotification = getSendCreatedScheduleEventNotification({
             sendCategoryNotification: async (payload) => {
@@ -82,9 +84,9 @@ describe('schedule and RSVP notification contract', () => {
         expect(sentPayloads).toEqual([{
             teamId: 'team-1',
             gameId: 'practice-series-1',
-            category: 'practice',
-            title: 'New practice: Skills night',
-            body: 'Mon, Jun 22 at 6:00 PM',
+            category: 'schedule',
+            title: 'New practice series: Skills night',
+            body: 'Starts Mon, Jun 22 at 6:00 PM',
             actorUid: 'coach-1'
         }]);
     });
