@@ -98,6 +98,12 @@ function finiteNumber(value: unknown, fallback = 0): number {
     return Number.isFinite(parsed) ? parsed : fallback;
 }
 
+function finiteNullableNumber(value: unknown): number | null {
+    if (value == null || (typeof value === 'string' && value.trim() === '')) return null;
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : null;
+}
+
 function asArray(value: unknown): unknown[] {
     return Array.isArray(value) ? value : [];
 }
@@ -265,7 +271,7 @@ export async function getPaidGames(userId: string, playerId: string): Promise<Ma
 
 export async function getCapSetting(userId: string, playerId: string): Promise<number | null> {
     const capSetting = await Promise.resolve(legacyGetCapSetting(userId, playerId));
-    return Number.isFinite(Number(capSetting)) ? Number(capSetting) : null;
+    return finiteNullableNumber(capSetting);
 }
 
 export async function getStatOptionsForTeam(teamId: string): Promise<PlayerStatOption[]> {
