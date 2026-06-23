@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
     mapGameReportEventRecord,
     mapGameReportGameRecord,
+    mapGameReportOpponentStatsRecord,
     mapGameReportPlayerRecords,
     mapGameReportTeamRecord
 } from '../../apps/app/src/lib/firestore/mappers.ts';
@@ -40,6 +41,27 @@ describe('game report Firestore record boundary', () => {
             number: '9',
             photoUrl: 'https://img.example.test/ava.jpg'
         }]);
+    });
+
+    it('normalizes opponent stat rows without leaking metadata into stats', () => {
+        expect(mapGameReportOpponentStatsRecord({
+            name: ' Opponent Guard ',
+            number: 5,
+            notes: ' linked ',
+            playerId: ' opponent-player-1 ',
+            photoUrl: '',
+            pts: 14,
+            assists: '6',
+            malformed: { invalid: true }
+        })).toEqual({
+            name: 'Opponent Guard',
+            number: '5',
+            notes: 'linked',
+            playerId: 'opponent-player-1',
+            photoUrl: null,
+            pts: 14,
+            assists: '6'
+        });
     });
 
     it('defaults event timeline records without leaking malformed rows', () => {

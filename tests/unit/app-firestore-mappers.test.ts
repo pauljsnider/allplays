@@ -7,6 +7,7 @@ import {
     mapGameReportAggregatedStatsRecord,
     mapGameReportEventRecords,
     mapGameReportGameRecord,
+    mapGameReportOpponentStatsRecord,
     mapGameReportPlayerRecords,
     mapGameReportTeamRecord,
     mapGameReportTeamStatsRecord
@@ -159,7 +160,15 @@ describe('firestore mappers', () => {
             summary: '  Tight finish  ',
             statSheetPhotoUrl: ' https://example.test/sheet.png ',
             opponentStats: {
-                opponent1: { name: '  Riley ', number: ' 4 ', pts: 12 },
+                opponent1: {
+                    name: '  Riley ',
+                    number: ' 4 ',
+                    notes: ' linked roster player ',
+                    playerId: ' opponent-player-1 ',
+                    photoUrl: 8,
+                    pts: 12,
+                    nested: { value: 1 }
+                },
                 malformed: null
             }
         }, 'game-1')).toMatchObject({
@@ -167,9 +176,42 @@ describe('firestore mappers', () => {
             summary: 'Tight finish',
             statSheetPhotoUrl: 'https://example.test/sheet.png',
             opponentStats: {
-                opponent1: { name: '  Riley ', number: ' 4 ', pts: 12 },
-                malformed: {}
+                opponent1: {
+                    name: 'Riley',
+                    number: '4',
+                    notes: 'linked roster player',
+                    playerId: 'opponent-player-1',
+                    photoUrl: '8',
+                    pts: 12
+                },
+                malformed: {
+                    name: null,
+                    number: null,
+                    notes: null,
+                    playerId: null,
+                    photoUrl: null
+                }
             }
+        });
+
+        expect(mapGameReportOpponentStatsRecord({
+            name: { invalid: true },
+            number: 0,
+            photoUrl: false,
+            playerId: ' roster-opponent-1 ',
+            notes: ' ',
+            pts: 8,
+            fouls: '3',
+            ignored: Number.NaN,
+            nested: { value: 1 }
+        })).toEqual({
+            name: null,
+            number: null,
+            notes: null,
+            playerId: 'roster-opponent-1',
+            photoUrl: null,
+            pts: 8,
+            fouls: '3'
         });
 
         expect(mapGameReportAggregatedStatsRecord('p1', {

@@ -297,12 +297,24 @@ export function mapGameReportPlayerRecords(value: unknown): GameReportPlayerFire
     }).filter((entry) => Boolean(entry.id));
 }
 
+export function mapGameReportOpponentStatsRecord(value: unknown): GameReportOpponentFirestoreRecord {
+    const source = asLooseObject(value);
+    return {
+        ...asGameReportStatsRecord(source),
+        name: asTrimmedString(source.name),
+        number: asTrimmedString(source.number),
+        notes: asTrimmedString(source.notes),
+        playerId: asTrimmedString(source.playerId),
+        photoUrl: asTrimmedString(source.photoUrl)
+    };
+}
+
 export function mapGameReportGameRecord(value: unknown, fallbackGameId = ''): GameReportGameFirestoreRecord {
     const source = asLooseObject(value);
     const opponentStatsSource = asObject(source.opponentStats);
     const opponentStats = opponentStatsSource
         ? Object.entries(opponentStatsSource).reduce<Record<string, GameReportOpponentFirestoreRecord>>((acc, [key, entry]) => {
-            acc[key] = asLooseObject(entry);
+            acc[key] = mapGameReportOpponentStatsRecord(entry);
             return acc;
         }, {})
         : {};
