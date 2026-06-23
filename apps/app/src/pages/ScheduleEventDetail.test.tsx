@@ -1868,7 +1868,50 @@ describe('ScheduleEventDetail staff RSVP overrides', () => {
     cleanup();
   });
 
-  it('renders staff breakdown controls and refreshes counts after an override', async () => {
+  it('shows only missing-player overrides by default and expands responded sections on demand', async () => {
+    scheduleServiceMocks.loadParentScheduleEventDetail.mockResolvedValue({
+      events: [buildEvent({ isTeamAdmin: true, isTeamRsvpReminderManager: true })],
+      children: []
+    });
+    scheduleServiceMocks.loadStaffScheduleRsvpBreakdown.mockResolvedValue({
+      grouped: {
+        going: [{ playerId: 'p1', playerName: 'Avery Smith', playerNumber: '1', response: 'going' }],
+        maybe: [{ playerId: 'p2', playerName: 'Blake Jones', playerNumber: '2', response: 'maybe' }],
+        not_going: [{ playerId: 'p3', playerName: 'Casey Brown', playerNumber: '3', response: 'not_going' }],
+        not_responded: [{ playerId: 'p4', playerName: 'Devon Lee', playerNumber: '4', response: 'not_responded' }]
+      },
+      counts: { going: 1, maybe: 1, notGoing: 1, notResponded: 1, total: 4 }
+    });
+    scheduleServiceMocks.loadStaffRsvpReminderPreview.mockResolvedValue({
+      missingPlayerCount: 1,
+      eligibleEmailCount: 1,
+      players: [{ playerId: 'p4', playerName: 'Devon Lee', parentEmails: ['devon@example.com'] }]
+    });
+
+    renderScheduleEventDetail();
+
+    await waitFor(() => {
+      expect(screen.getByText('Staff RSVP overrides')).toBeTruthy();
+    });
+    expect(screen.getByTestId('staff-rsvp-row-p4')).toBeTruthy();
+    expect(screen.queryByTestId('staff-rsvp-row-p1')).toBeNull();
+    expect(screen.queryByTestId('staff-rsvp-row-p2')).toBeNull();
+    expect(screen.queryByTestId('staff-rsvp-row-p3')).toBeNull();
+
+    const disclosure = screen.getByRole('button', { name: 'Show responded players (1 going · 1 maybe · 1 out · 0 missing)' });
+    expect(disclosure).toHaveAttribute('aria-expanded', 'false');
+
+    fireEvent.click(disclosure);
+
+    await waitFor(() => {
+      expect(screen.getByTestId('staff-rsvp-row-p1')).toBeTruthy();
+    });
+    expect(screen.getByTestId('staff-rsvp-row-p2')).toBeTruthy();
+    expect(screen.getByTestId('staff-rsvp-row-p3')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Hide responded players' })).toHaveAttribute('aria-expanded', 'true');
+  });
+
+  it('lets staff override a responded player after expanding and refreshes the counts', async () => {
     scheduleServiceMocks.loadParentScheduleEventDetail.mockResolvedValue({
       events: [buildEvent({ isTeamAdmin: true, isTeamRsvpReminderManager: true })],
       children: []
@@ -1885,15 +1928,15 @@ describe('ScheduleEventDetail staff RSVP overrides', () => {
       })
       .mockResolvedValueOnce({
         grouped: {
-          going: [
-            { playerId: 'p1', playerName: 'Avery Smith', playerNumber: '1', response: 'going' },
-            { playerId: 'p4', playerName: 'Devon Lee', playerNumber: '4', response: 'going' }
+          going: [],
+          maybe: [
+            { playerId: 'p1', playerName: 'Avery Smith', playerNumber: '1', response: 'maybe' },
+            { playerId: 'p2', playerName: 'Blake Jones', playerNumber: '2', response: 'maybe' }
           ],
-          maybe: [{ playerId: 'p2', playerName: 'Blake Jones', playerNumber: '2', response: 'maybe' }],
           not_going: [{ playerId: 'p3', playerName: 'Casey Brown', playerNumber: '3', response: 'not_going' }],
-          not_responded: []
+          not_responded: [{ playerId: 'p4', playerName: 'Devon Lee', playerNumber: '4', response: 'not_responded' }]
         },
-        counts: { going: 2, maybe: 1, notGoing: 1, notResponded: 0, total: 4 }
+        counts: { going: 0, maybe: 2, notGoing: 1, notResponded: 1, total: 4 }
       });
     scheduleServiceMocks.loadStaffRsvpReminderPreview
       .mockResolvedValueOnce({
@@ -1902,33 +1945,32 @@ describe('ScheduleEventDetail staff RSVP overrides', () => {
         players: [{ playerId: 'p4', playerName: 'Devon Lee', parentEmails: ['devon@example.com'] }]
       })
       .mockResolvedValueOnce({
-        missingPlayerCount: 0,
-        eligibleEmailCount: 0,
-        players: []
+        missingPlayerCount: 1,
+        eligibleEmailCount: 1,
+        players: [{ playerId: 'p4', playerName: 'Devon Lee', parentEmails: ['devon@example.com'] }]
       });
-    scheduleServiceMocks.submitStaffScheduleRsvpOverride.mockResolvedValue({ playerId: 'p4', response: 'going' });
+    scheduleServiceMocks.submitStaffScheduleRsvpOverride.mockResolvedValue({ playerId: 'p1', response: 'maybe' });
 
     renderScheduleEventDetail();
 
     await waitFor(() => {
       expect(screen.getByText('Staff RSVP overrides')).toBeTruthy();
     });
-    await waitFor(() => {
-      expect(screen.getByText('1 no-response player · 1 eligible parent/guardian email.')).toBeTruthy();
-    });
 
-    const noResponseRow = screen.getByTestId('staff-rsvp-row-p4');
-    fireEvent.click(within(noResponseRow).getByRole('button', { name: 'Going' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Show responded players (1 going · 1 maybe · 1 out · 0 missing)' }));
+
+    const respondedRow = await screen.findByTestId('staff-rsvp-row-p1');
+    fireEvent.click(within(respondedRow).getByRole('button', { name: 'Maybe' }));
 
     await waitFor(() => {
-      expect(scheduleServiceMocks.submitStaffScheduleRsvpOverride).toHaveBeenCalledWith(expect.any(Object), auth.user, 'p4', 'going');
+      expect(scheduleServiceMocks.submitStaffScheduleRsvpOverride).toHaveBeenCalledWith(expect.any(Object), auth.user, 'p1', 'maybe');
     });
     expect(scheduleServiceMocks.invalidateStaffRsvpAvailabilityEvent).toHaveBeenCalledWith(expect.objectContaining({ id: 'game-1' }));
     await waitFor(() => {
-      expect(screen.getByText('Devon Lee marked going.')).toBeTruthy();
+      expect(screen.getByText('Avery Smith marked maybe.')).toBeTruthy();
     });
     await waitFor(() => {
-      expect(screen.getAllByText('2 going · 1 maybe · 1 out · 0 missing').length).toBeGreaterThan(0);
+      expect(screen.getAllByText('0 going · 2 maybe · 1 out · 1 missing').length).toBeGreaterThan(0);
     });
     await waitFor(() => {
       expect(scheduleServiceMocks.loadStaffRsvpReminderPreview).toHaveBeenCalledTimes(2);

@@ -1,3 +1,4 @@
+import { useEffect, useState } from 'react';
 import { StaffRsvpPlayerRow } from './StaffRsvpPlayerRow';
 import {
   formatRsvpSummary,
@@ -18,6 +19,11 @@ export function StaffRsvpBreakdownPanel({ breakdown, loading, error, submittingP
   onOverride: (player: StaffScheduleRsvpRow, response: Exclude<RsvpResponse, 'not_responded'>) => Promise<void>;
 }) {
   const { event } = useScheduleEventDetailContext();
+  const [showRespondedPlayers, setShowRespondedPlayers] = useState(false);
+
+  useEffect(() => {
+    setShowRespondedPlayers(Boolean(breakdown) && breakdown.grouped.not_responded.length === 0);
+  }, [breakdown]);
 
   if (!event.isTeamAdmin || !event.isDbGame) return null;
   if (loading && !breakdown) {
@@ -28,19 +34,41 @@ export function StaffRsvpBreakdownPanel({ breakdown, loading, error, submittingP
   }
   if (!breakdown) return null;
 
+  const hasMissingPlayers = breakdown.grouped.not_responded.length > 0;
+  const respondedPlayerCount = breakdown.grouped.going.length + breakdown.grouped.maybe.length + breakdown.grouped.not_going.length;
+  const visibleGroups = hasMissingPlayers && !showRespondedPlayers
+    ? (['not_responded'] as const)
+    : (['not_responded', 'going', 'maybe', 'not_going'] as const);
+  const respondedSummary = formatRsvpSummary({
+    going: breakdown.counts.going,
+    maybe: breakdown.counts.maybe,
+    notGoing: breakdown.counts.notGoing,
+    notResponded: 0
+  });
+
   return (
     <div className="mt-3 rounded-xl border border-gray-200 bg-white p-3">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <div className="text-sm font-black text-gray-950">Staff RSVP overrides</div>
-          <div className="mt-1 text-xs font-semibold leading-5 text-gray-600">Review every player, including no response, and update availability inline.</div>
+          <div className="mt-1 text-xs font-semibold leading-5 text-gray-600">Start with missing responses, then expand responded players when you need to correct an existing RSVP.</div>
         </div>
         <span className="inline-flex min-h-8 items-center rounded-full border border-primary-100 bg-primary-50 px-3 text-xs font-black text-primary-700">
           {formatRsvpSummary(breakdown.counts)}
         </span>
       </div>
+      {hasMissingPlayers && respondedPlayerCount > 0 ? (
+        <button
+          type="button"
+          className="mt-3 inline-flex min-h-9 items-center rounded-full border border-gray-200 bg-white px-3 text-xs font-black text-gray-700 transition hover:border-primary-200 hover:bg-primary-50 hover:text-primary-700"
+          aria-expanded={showRespondedPlayers}
+          onClick={() => setShowRespondedPlayers((current) => !current)}
+        >
+          {showRespondedPlayers ? 'Hide responded players' : `Show responded players (${respondedSummary})`}
+        </button>
+      ) : null}
       <div className="mt-3 space-y-3">
-        {(['not_responded', 'going', 'maybe', 'not_going'] as const).map((responseKey) => {
+        {visibleGroups.map((responseKey) => {
           const rows = breakdown.grouped[responseKey];
           if (!rows.length) return null;
           return (
