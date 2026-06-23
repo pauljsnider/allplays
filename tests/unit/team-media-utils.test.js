@@ -205,7 +205,7 @@ describe('team media bulk actions', () => {
         expect(isSafeTeamMediaUrl('not a url')).toBe(false);
     });
 
-    it('identifies uploaded photo items and uploader metadata', () => {
+    it('identifies uploaded photo items and ignores persisted download URLs when storage re-authorization is required', () => {
         const item = {
             downloadUrl: 'https://cdn.example.com/photo.png',
             type: 'photo',
@@ -213,6 +213,15 @@ describe('team media bulk actions', () => {
         };
 
         expect(getTeamMediaItemUrl(item)).toBe('https://cdn.example.com/photo.png');
+        expect(getTeamMediaItemUrl({
+            storagePath: 'team-media/team-1/folder-1/user-1/photo.png',
+            downloadUrl: 'https://cdn.example.com/stale-token.png'
+        })).toBe('');
+        expect(getTeamMediaItemUrl({
+            storagePath: 'team-media/team-1/folder-1/user-1/photo.png',
+            url: 'https://cdn.example.com/fresh-session.png',
+            downloadUrl: 'https://cdn.example.com/stale-token.png'
+        })).toBe('https://cdn.example.com/fresh-session.png');
         expect(isSafeTeamMediaPhoto(item)).toBe(true);
         expect(isSafeTeamMediaPhoto({ url: 'https://cdn.example.com/photo.jpg?token=1' })).toBe(true);
         expect(isSafeTeamMediaPhoto({ url: 'javascript:alert(1)', type: 'photo' })).toBe(false);

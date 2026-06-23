@@ -16,7 +16,7 @@ import {
     bulkDeleteTeamMediaItems,
     setTeamMediaAlbumCover,
     updateTeamMediaItem
-} from './db.js?v=64';
+} from './db.js?v=65';
 import {
     canContributeTeamMedia,
     canDeleteTeamMediaItem,
@@ -30,7 +30,7 @@ import {
     isSupportedTeamMediaImage,
     isTeamMediaDocument,
     sortByMediaOrder
-} from './team-media-utils.js?v=3';
+} from './team-media-utils.js?v=4';
 
 const state = {
     teamId: '',
