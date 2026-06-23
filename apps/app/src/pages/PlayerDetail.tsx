@@ -1175,6 +1175,14 @@ function AthleteProfileBuilderCard({ data, auth, onChanged, onShareStateChange }
     canSharePublicProfile,
     persistedPublicProfileUrl
   };
+  const saveDisabled = saving || headshotBusy;
+  const saveLabel = headshotBusy
+    ? 'Preparing'
+    : saving
+      ? 'Saving'
+      : privacy === 'public'
+        ? 'Publish Athlete Profile'
+        : 'Save Athlete Profile';
 
   useLayoutEffect(() => {
     onShareStateChange({
@@ -1317,6 +1325,10 @@ function AthleteProfileBuilderCard({ data, auth, onChanged, onShareStateChange }
   const submit = async (event: FormEvent) => {
     event.preventDefault();
     if (headshotError || highlightClipError) return;
+    if (headshotBusy) {
+      setStatus({ tone: 'error', message: 'Finish preparing the athlete headshot before saving.' });
+      return;
+    }
     if (!selectedSeasonKeys.length) {
       setStatus({ tone: 'error', message: 'Select at least one linked season to build an athlete profile.' });
       return;
@@ -1651,9 +1663,9 @@ function AthleteProfileBuilderCard({ data, auth, onChanged, onShareStateChange }
         </div>
         {status?.tone === 'error' ? <Status tone={status.tone} message={status.message} /> : null}
         <div className="athlete-profile-actions grid gap-2 sm:grid-cols-2">
-          <button type="submit" className="primary-button justify-center" disabled={saving}>
-            {saving ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <Save className="h-4 w-4" aria-hidden="true" />}
-            {saving ? 'Saving' : privacy === 'public' ? 'Publish Athlete Profile' : 'Save Athlete Profile'}
+          <button type="submit" className="primary-button justify-center" disabled={saveDisabled}>
+            {saveDisabled ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <Save className="h-4 w-4" aria-hidden="true" />}
+            {saveLabel}
           </button>
           {canSharePublicProfile ? (
             <button type="button" className="secondary-button justify-center" onClick={shareProfile}>
