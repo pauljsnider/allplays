@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import {
   buildAppRegistrationFormAdminPayload,
-  buildRegistrationFormEditorDraft
+  buildRegistrationFormEditorDraft,
+  toRegistrationFeeCents,
+  validateRegistrationFormEditorDraft
 } from './registrationFormAdmin';
 
 describe('registrationFormAdmin', () => {
@@ -38,7 +40,10 @@ describe('registrationFormAdmin', () => {
         providerName: 'Checkr'
       },
       waiverText: 'I accept the risk.',
-      status: 'published'
+      status: 'published',
+      published: true,
+      isOpen: true,
+      isClosed: false
     });
 
     expect(draft).toMatchObject({
@@ -65,7 +70,7 @@ describe('registrationFormAdmin', () => {
       { id: 'academy', label: 'Academy', description: '', capacityLimit: '', active: false, waitlistEnabled: false }
     ]);
     expect(draft.discountRules).toEqual([
-      { id: 'discount_1', type: 'quantity', label: 'Sibling discount', amountType: 'fixed', amountValue: 25, minimumQuantity: 2, active: true }
+      { id: 'discount_1', type: 'quantity', label: 'Sibling discount', amountType: 'fixed', amountValue: 25, earlyBirdDeadline: '', minimumQuantity: 2, active: true }
     ]);
   });
 
@@ -109,7 +114,7 @@ describe('registrationFormAdmin', () => {
       { id: 'half-day', label: 'Half day', capacityLimit: null, active: false, waitlistEnabled: false, sortOrder: 1 }
     ]);
     expect(result.payload.discountRules).toEqual([
-      { id: 'discount_1', type: 'quantity', label: 'Sibling discount', amountType: 'fixed', amountValue: 2500, minimumQuantity: 2, active: true, sortOrder: 0 }
+      { id: 'discount_1', type: 'quantity', label: 'Sibling discount', amountType: 'fixed', amountValue: 2500, earlyBirdDeadline: '', minimumQuantity: 2, active: true, sortOrder: 0 }
     ]);
     expect(result.normalizedForm.registrationOptions[0]).toMatchObject({
       id: 'full-day',
@@ -122,6 +127,57 @@ describe('registrationFormAdmin', () => {
     expect(result.feeSnapshot).toMatchObject({
       originalFeeAmountCents: 20000,
       finalAmountDueCents: 20000
+    });
+    expect(result.publishState).toEqual({
+      status: 'published',
+      published: true,
+      isOpen: true,
+      isClosed: false
+    });
+  });
+
+  it('round-trips web-created closed fixtures without reopening them for submissions', () => {
+    const draft = buildRegistrationFormEditorDraft({
+      id: 'form-web',
+      teamId: 'team-1',
+      programName: 'Closed Spring Registration',
+      feeAmountCents: 14999,
+      participantFields: [{ id: 'participant_1', label: 'Player name', type: 'text', required: true }],
+      guardianFields: [{ id: 'guardian_1', label: 'Guardian email', type: 'email', required: true }],
+      registrationOptions: [
+        { id: 'travel', label: 'Travel', capacityLimit: 12, active: true, waitlistEnabled: true, sortOrder: 0 }
+      ],
+      paymentSettings: { offlinePaymentEnabled: true, onlineCheckoutEnabled: false },
+      installmentPlan: { enabled: true, title: 'Two payments', installmentCount: 2, firstDueDate: '2026-07-01', intervalDays: 30 },
+      waiverText: 'Closed form waiver.',
+      status: 'closed',
+      published: true
+    });
+    const result = buildAppRegistrationFormAdminPayload(draft, { teamId: 'team-1' });
+
+    expect(draft).toMatchObject({
+      formId: 'form-web',
+      status: 'closed',
+      published: false,
+      isOpen: false,
+      isClosed: true,
+      feeAmount: '149.99'
+    });
+    expect(result.errors).toEqual([]);
+    expect(result.payload).toMatchObject({
+      status: 'closed',
+      published: false,
+      feeAmountCents: 14999,
+      waiverText: 'Closed form waiver.'
+    });
+    expect(result.payload.registrationOptions).toEqual([
+      { id: 'travel', label: 'Travel', capacityLimit: 12, active: true, waitlistEnabled: true, sortOrder: 0 }
+    ]);
+    expect(result.publishState).toEqual({
+      status: 'closed',
+      published: false,
+      isOpen: false,
+      isClosed: true
     });
   });
 
@@ -139,5 +195,38 @@ describe('registrationFormAdmin', () => {
       'Waiver text is required.'
     ]);
     expect(result.normalizedForm.published).toBe(false);
+  });
+
+  it('validates editor-only setup errors before saving', () => {
+    expect(validateRegistrationFormEditorDraft({
+      teamId: '',
+      title: '',
+      waiverText: '',
+      feeAmount: 'not money',
+      status: 'paused' as any,
+      installmentPlan: { enabled: true, installmentCount: 3, firstDueDate: '', intervalDays: 30 }
+    })).toEqual([
+      'Team is required.',
+      'Title is required.',
+      'Waiver text is required.',
+      'Fee amount must be a valid dollar amount.',
+      'Registration status is invalid.',
+      'First installment due date is required when payment plans are enabled.'
+    ]);
+
+    expect(validateRegistrationFormEditorDraft({
+      teamId: 'team-1',
+      title: 'Free clinic',
+      waiverText: 'Accepted.',
+      feeAmount: '-1'
+    })).toEqual(['Fee amount must be zero or greater.']);
+  });
+
+  it('converts registration fee inputs to cents consistently', () => {
+    expect(toRegistrationFeeCents('125.50')).toBe(12550);
+    expect(toRegistrationFeeCents('$1,234.56')).toBe(123456);
+    expect(toRegistrationFeeCents('19.995')).toBe(2000);
+    expect(toRegistrationFeeCents('')).toBe(0);
+    expect(toRegistrationFeeCents('-5')).toBe(0);
   });
 });

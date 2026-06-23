@@ -1174,7 +1174,7 @@ window.startRegistrationFormAdmin = function (formId = '') {
     activeRegistrationOptions = Array.isArray(form.registrationOptions) ? form.registrationOptions.map(option => ({ ...option })) : [];
     renderRegistrationOptionsEditor();
     document.getElementById('registration-waiver').value = form.waiverText || '';
-    document.getElementById('registration-status').value = form.status === 'published' || form.published === true ? 'published' : 'draft';
+    document.getElementById('registration-status').value = getRegistrationAdminStatus(form);
     document.getElementById('registration-form-message').textContent = '';
     editor.classList.remove('hidden');
 };
@@ -1297,7 +1297,10 @@ function renderRegistrationFormsList() {
     }
 
     list.innerHTML = activeRegistrationForms.map(form => {
-        const published = form.status === 'published' || form.published === true;
+        const status = getRegistrationAdminStatus(form);
+        const published = status === 'published';
+        const closed = status === 'closed';
+        const statusLabel = status === 'closed' ? 'Closed' : published ? 'Published' : 'Draft';
         const link = getAdminRegistrationShareUrl(activeRegistrationTeam.id, form.id, window.location.origin);
         const teamIdArg = inlineJsString(activeRegistrationTeam.id);
         const formIdArg = inlineJsString(form.id);
@@ -1306,14 +1309,21 @@ function renderRegistrationFormsList() {
                 <div class="flex items-start justify-between gap-3">
                     <div>
                         <p class="font-semibold text-gray-900">${escapeHtml(form.programName || form.title || 'Untitled form')}</p>
-                        <p class="text-xs text-gray-500">${escapeHtml(form.programType || 'season')} • ${published ? 'Published' : 'Draft'}</p>
+                        <p class="text-xs text-gray-500">${escapeHtml(form.programType || 'season')} • ${statusLabel}</p>
                     </div>
                     <button onclick="window.startRegistrationFormAdmin(${formIdArg})" class="text-sm text-indigo-600 hover:text-indigo-800">Edit</button>
                 </div>
-                ${published ? `<div class="mt-2 rounded bg-green-50 p-2 text-xs text-green-800 break-all">${escapeHtml(link)} <button onclick="window.copyRegistrationLinkAdmin(${teamIdArg}, ${formIdArg})" class="ml-2 font-semibold underline">Copy</button></div>` : '<p class="mt-2 text-xs text-gray-500">Publish to generate a parent-facing registration link.</p>'}
+                ${published ? `<div class="mt-2 rounded bg-green-50 p-2 text-xs text-green-800 break-all">${escapeHtml(link)} <button onclick="window.copyRegistrationLinkAdmin(${teamIdArg}, ${formIdArg})" class="ml-2 font-semibold underline">Copy</button></div>` : closed ? '<p class="mt-2 text-xs text-amber-700">Closed forms keep review history but do not accept new registrations.</p>' : '<p class="mt-2 text-xs text-gray-500">Publish to generate a parent-facing registration link.</p>'}
             </div>
         `;
     }).join('');
+}
+
+function getRegistrationAdminStatus(form = {}) {
+    const status = String(form.status || '').trim().toLowerCase();
+    if (status === 'closed') return 'closed';
+    if (status === 'published' || status === 'open' || form.published === true) return 'published';
+    return 'draft';
 }
 
 async function saveRegistrationForm(event) {
@@ -1382,7 +1392,9 @@ async function saveRegistrationForm(event) {
         return;
     }
 
-    message.textContent = payload.published ? 'Registration form saved and published.' : 'Registration form saved as draft.';
+    message.textContent = payload.status === 'closed'
+        ? 'Registration form saved and closed.'
+        : payload.published ? 'Registration form saved and published.' : 'Registration form saved as draft.';
     if (activeRegistrationTeam?.id === teamId) {
         await loadRegistrationFormsForActiveTeam();
         document.getElementById('registration-form-editor').classList.add('hidden');
