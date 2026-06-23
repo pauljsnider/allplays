@@ -44,11 +44,18 @@ export type TeamFeeRosterPlayer = {
   parentEmail: string;
 };
 
+export type TeamFeeInstallmentPlanInput = {
+  installmentCount: string | number;
+  firstDueDate: string;
+  intervalDays?: string | number | null;
+};
+
 export type CreateTeamFeeBatchInput = {
   teamId: string;
   title: string;
   amount: string | number;
   dueDate: string;
+  installmentPlan?: TeamFeeInstallmentPlanInput | null;
   recipientIds?: string[];
   applyToWholeRoster?: boolean;
   user: AuthUser | null;
@@ -93,6 +100,11 @@ export type TeamFeeInstallmentPreview = {
   amountCents: number;
   dueDate: string;
   label: string;
+};
+
+export type TeamFeeInstallmentDraft = {
+  dueDate: string;
+  amountCents: number;
 };
 
 const REFUND_METHOD_LABELS: Record<string, string> = {
@@ -164,6 +176,13 @@ export function buildTeamFeeInstallmentSchedule({
     intervalDays: interval,
     installments
   };
+}
+
+export function buildTeamFeeInstallmentDraft(input: TeamFeeInstallmentScheduleInput): TeamFeeInstallmentDraft[] {
+  const schedule = buildTeamFeeInstallmentSchedule(input);
+  const installments = schedule.installments.map(({ dueDate, amountCents }) => ({ dueDate, amountCents }));
+  assertInstallmentDraftMatchesTotal(installments, schedule.totalAmountCents);
+  return installments;
 }
 
 function toSignedFeeCents(value: string | number | null | undefined) {
@@ -379,7 +398,7 @@ export async function loadTeamFeeManagementModel(teamId: string, batchId: string
   };
 }
 
-export async function createTeamFeeBatchForApp({ teamId, title, amount, dueDate, recipientIds = [], applyToWholeRoster = false, user }: CreateTeamFeeBatchInput) {
+export async function createTeamFeeBatchForApp({ teamId, title, amount, dueDate, installmentPlan = null, recipientIds = [], applyToWholeRoster = false, user }: CreateTeamFeeBatchInput) {
   if (!teamId) throw new Error('Missing team context.');
   const team = await Promise.resolve(getTeam(teamId));
   if (!hasFullTeamAccess(user, team)) throw new Error('You do not have access to create team fees.');
@@ -407,6 +426,13 @@ export async function createTeamFeeBatchForApp({ teamId, title, amount, dueDate,
 
   if (!selectedPlayers.length) throw new Error('Select at least one roster recipient.');
 
+  const installments = installmentPlan ? buildTeamFeeInstallmentDraft({
+    amount,
+    installmentCount: installmentPlan.installmentCount,
+    firstDueDate: installmentPlan.firstDueDate,
+    intervalDays: installmentPlan.intervalDays
+  }) : [];
+
   const draft = {
     title: cleanTitle,
     amountCents,
@@ -414,7 +440,7 @@ export async function createTeamFeeBatchForApp({ teamId, title, amount, dueDate,
     notes: '',
     recipientIds: selectedPlayers.map((player) => player.id),
     lineItems: [],
-    installments: [],
+    installments,
     collectionMode: 'offline_manual',
     offlinePaymentInstructions: OFFLINE_TEAM_FEE_INSTRUCTIONS
   };
@@ -434,7 +460,7 @@ export async function createTeamFeeBatchForApp({ teamId, title, amount, dueDate,
     collectionMode: 'offline_manual',
     offlinePaymentInstructions: OFFLINE_TEAM_FEE_INSTRUCTIONS,
     lineItems: [],
-    installments: []
+    installments
   }));
 
   return createTeamFeeBatch(teamId, draft, recipients, user || {});
@@ -612,4 +638,28 @@ function normalizeRosterPlayerParentContact(player: any) {
   ).toLowerCase();
 
   return { parentName, parentEmail };
+}
+
+function assertInstallmentDraftMatchesTotal(installments: TeamFeeInstallmentDraft[], totalAmountCents: number) {
+  let previousDueDate = '';
+  const sum = installments.reduce((total, installment) => {
+    const dueDate = normalizeString(installment.dueDate);
+    if (!parseInstallmentDate(dueDate)) {
+      throw new Error('Installment due dates must be valid dates.');
+    }
+    if (previousDueDate && dueDate <= previousDueDate) {
+      throw new Error('Installment due dates must be in order.');
+    }
+    previousDueDate = dueDate;
+
+    const amountCents = Number(installment.amountCents);
+    if (!Number.isInteger(amountCents) || amountCents <= 0) {
+      throw new Error('Installment amounts must be positive cents.');
+    }
+    return total + amountCents;
+  }, 0);
+
+  if (sum !== totalAmountCents) {
+    throw new Error('Installments must add up to the total fee amount.');
+  }
 }

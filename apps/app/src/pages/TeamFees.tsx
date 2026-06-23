@@ -2,6 +2,7 @@ import { FormEvent, useEffect, useMemo, useState } from 'react';
 import { Link, Navigate, useNavigate, useParams } from 'react-router-dom';
 import { CheckCircle2, DollarSign, Loader2, RefreshCw, Shield } from 'lucide-react';
 import {
+  buildTeamFeeInstallmentSchedule,
   createTeamFeeBatchForApp,
   initiateStaffTeamFeeCheckout,
   loadTeamFeeManagementModel,
@@ -54,6 +55,10 @@ export function TeamFees({ auth }: { auth: AuthState }) {
   const [createTitle, setCreateTitle] = useState('');
   const [createAmount, setCreateAmount] = useState('');
   const [createDueDate, setCreateDueDate] = useState(todayIsoDate());
+  const [createInstallmentPlanEnabled, setCreateInstallmentPlanEnabled] = useState(false);
+  const [createInstallmentCount, setCreateInstallmentCount] = useState('3');
+  const [createInstallmentFirstDueDate, setCreateInstallmentFirstDueDate] = useState(todayIsoDate());
+  const [createInstallmentIntervalDays, setCreateInstallmentIntervalDays] = useState('30');
   const [createForWholeRoster, setCreateForWholeRoster] = useState(true);
   const [selectedRecipientIds, setSelectedRecipientIds] = useState<string[]>([]);
   const [createError, setCreateError] = useState('');
@@ -106,6 +111,27 @@ export function TeamFees({ auth }: { auth: AuthState }) {
     [recipients]
   );
 
+  const installmentPreview = useMemo(() => {
+    if (!createInstallmentPlanEnabled) return { installments: [], error: '' };
+    if (!String(createAmount || '').trim() || !String(createInstallmentFirstDueDate || '').trim()) {
+      return { installments: [], error: '' };
+    }
+
+    try {
+      return {
+        installments: buildTeamFeeInstallmentSchedule({
+          amount: createAmount,
+          installmentCount: createInstallmentCount,
+          firstDueDate: createInstallmentFirstDueDate,
+          intervalDays: createInstallmentIntervalDays
+        }).installments,
+        error: ''
+      };
+    } catch (previewError: any) {
+      return { installments: [], error: previewError?.message || 'Unable to preview installment schedule.' };
+    }
+  }, [createAmount, createInstallmentCount, createInstallmentFirstDueDate, createInstallmentIntervalDays, createInstallmentPlanEnabled]);
+
   const isRecipientSubmitting = (recipientId: string) => {
     return submittingId === `payment:${recipientId}`
       || submittingId === `adjustment:${recipientId}`
@@ -133,6 +159,11 @@ export function TeamFees({ auth }: { auth: AuthState }) {
       : current.filter((id) => id !== recipientId));
   };
 
+  const updateCreateDueDate = (nextDueDate: string) => {
+    setCreateDueDate(nextDueDate);
+    setCreateInstallmentFirstDueDate((current) => current && current !== createDueDate ? current : nextDueDate);
+  };
+
   const submitCreateBatch = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     setCreateError('');
@@ -144,6 +175,11 @@ export function TeamFees({ auth }: { auth: AuthState }) {
         title: createTitle,
         amount: createAmount,
         dueDate: createDueDate,
+        installmentPlan: createInstallmentPlanEnabled ? {
+          installmentCount: createInstallmentCount,
+          firstDueDate: createInstallmentFirstDueDate,
+          intervalDays: createInstallmentIntervalDays
+        } : null,
         recipientIds: selectedRecipientIds,
         applyToWholeRoster: createForWholeRoster,
         user: auth.user
@@ -151,6 +187,10 @@ export function TeamFees({ auth }: { auth: AuthState }) {
       setCreateTitle('');
       setCreateAmount('');
       setCreateDueDate(todayIsoDate());
+      setCreateInstallmentPlanEnabled(false);
+      setCreateInstallmentCount('3');
+      setCreateInstallmentFirstDueDate(todayIsoDate());
+      setCreateInstallmentIntervalDays('30');
       setCreateForWholeRoster(true);
       setSelectedRecipientIds([]);
       setSuccess(`Created fee batch ${createTitle.trim() || 'Team fee'}.`);
@@ -350,8 +390,56 @@ export function TeamFees({ auth }: { auth: AuthState }) {
               <input className="mt-1 w-full rounded-2xl border border-gray-200 bg-white px-3 py-3 text-sm font-bold text-gray-900" inputMode="decimal" value={createAmount} onChange={(event) => setCreateAmount(event.target.value)} disabled={isCreateSubmitting} placeholder="25.00" />
             </label>
             <label className="text-xs font-black uppercase tracking-[0.06em] text-gray-500">Due date
-              <input className="mt-1 w-full rounded-2xl border border-gray-200 bg-white px-3 py-3 text-sm font-bold text-gray-900" type="date" value={createDueDate} onChange={(event) => setCreateDueDate(event.target.value)} disabled={isCreateSubmitting} />
+              <input className="mt-1 w-full rounded-2xl border border-gray-200 bg-white px-3 py-3 text-sm font-bold text-gray-900" type="date" value={createDueDate} onChange={(event) => updateCreateDueDate(event.target.value)} disabled={isCreateSubmitting} />
             </label>
+          </div>
+
+          <div className="mt-4 rounded-2xl border border-gray-200 bg-white p-3">
+            <label className="flex items-start gap-3 text-sm font-bold text-gray-900">
+              <input
+                className="mt-1 h-4 w-4 rounded border-gray-300"
+                type="checkbox"
+                checked={createInstallmentPlanEnabled}
+                onChange={(event) => {
+                  setCreateInstallmentPlanEnabled(event.target.checked);
+                  if (event.target.checked && !createInstallmentFirstDueDate) setCreateInstallmentFirstDueDate(createDueDate);
+                }}
+                disabled={isCreateSubmitting}
+              />
+              <span>
+                Add installment schedule
+                <span className="mt-1 block text-xs font-semibold text-gray-500">Parents will see each due date and amount on the same fee record.</span>
+              </span>
+            </label>
+
+            {createInstallmentPlanEnabled ? (
+              <div className="mt-3 space-y-3">
+                <div className="grid gap-3 md:grid-cols-3">
+                  <label className="text-xs font-black uppercase tracking-[0.06em] text-gray-500">Installments
+                    <input className="mt-1 w-full rounded-2xl border border-gray-200 bg-white px-3 py-3 text-sm font-bold text-gray-900" type="number" min="2" max="12" step="1" value={createInstallmentCount} onChange={(event) => setCreateInstallmentCount(event.target.value)} disabled={isCreateSubmitting} />
+                  </label>
+                  <label className="text-xs font-black uppercase tracking-[0.06em] text-gray-500">First due date
+                    <input className="mt-1 w-full rounded-2xl border border-gray-200 bg-white px-3 py-3 text-sm font-bold text-gray-900" type="date" value={createInstallmentFirstDueDate} onChange={(event) => setCreateInstallmentFirstDueDate(event.target.value)} disabled={isCreateSubmitting} />
+                  </label>
+                  <label className="text-xs font-black uppercase tracking-[0.06em] text-gray-500">Days apart
+                    <input className="mt-1 w-full rounded-2xl border border-gray-200 bg-white px-3 py-3 text-sm font-bold text-gray-900" type="number" min="1" max="366" step="1" value={createInstallmentIntervalDays} onChange={(event) => setCreateInstallmentIntervalDays(event.target.value)} disabled={isCreateSubmitting} />
+                  </label>
+                </div>
+
+                {installmentPreview.error ? <div className="rounded-xl border border-amber-200 bg-amber-50 p-2 text-xs font-bold text-amber-700">{installmentPreview.error}</div> : null}
+                {installmentPreview.installments.length ? (
+                  <div className="grid gap-2 sm:grid-cols-3" aria-label="Installment schedule preview">
+                    {installmentPreview.installments.map((installment) => (
+                      <div key={`${installment.installmentNumber}-${installment.dueDate}`} className="rounded-2xl border border-gray-200 bg-gray-50 p-3">
+                        <div className="text-[11px] font-black uppercase tracking-[0.06em] text-gray-500">{installment.label}</div>
+                        <div className="mt-1 text-sm font-black text-gray-950">{formatMoney(installment.amountCents)}</div>
+                        <div className="mt-0.5 text-xs font-semibold text-gray-500">Due {installment.dueDate}</div>
+                      </div>
+                    ))}
+                  </div>
+                ) : null}
+              </div>
+            ) : null}
           </div>
 
           <div className="mt-4 rounded-2xl border border-gray-200 bg-white p-3">
