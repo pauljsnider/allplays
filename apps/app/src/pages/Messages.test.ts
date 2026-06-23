@@ -133,9 +133,9 @@ describe('direct thread mount telemetry', () => {
   });
 
   it('keeps Messages email composer dispatches on the shared action creators', () => {
-    const source = readFileSync(resolveAppSourcePath('src/pages/Messages.tsx'), 'utf8');
+    const source = readFileSync(resolveAppSourcePath('src/pages/messages/components/ChatWindow.tsx'), 'utf8');
 
-    expect(source).toContain("import { emailComposerActions } from './messages/state/emailReducer';");
+    expect(source).toContain("import { emailComposerActions, emailReducer, initialEmailComposerState } from '../state/emailReducer';");
     expect(source).toContain("emailDispatch(emailComposerActions.setTemplates(await loadTeamEmailTemplates(teamId)));");
     expect(source).toContain("emailDispatch(emailComposerActions.setDrafts(await loadTeamEmailDrafts(teamId)));");
     expect(source).toContain("emailDispatch(emailComposerActions.clearSelectedDraft());");

@@ -6,7 +6,10 @@ function readSource(path) {
 }
 
 const functionsSource = readSource('functions/index.js');
-const messagesSource = readSource('apps/app/src/pages/Messages.tsx');
+const messagesSource = [
+    readSource('apps/app/src/pages/Messages.tsx'),
+    readSource('apps/app/src/pages/messages/components/ChatWindow.tsx')
+].join('\n');
 const chatServiceSource = readSource('apps/app/src/lib/chatService.ts');
 const chatLogicSource = readSource('apps/app/src/lib/chatLogic.ts');
 
