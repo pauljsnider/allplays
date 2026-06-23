@@ -717,6 +717,65 @@ test('notifyTeamChatMessageCreated honors conversation mutes while preserving di
     }
 });
 
+test('notifyTeamChatMessageCreated detects roster name mentions and does not double-push live chat', async () => {
+    const { moduleExports, env, cleanup } = loadNotificationInternals({
+        teamDoc: { ownerId: 'coach-1', adminEmails: [] },
+        parentUserIds: ['parent-2'],
+        userDocs: {
+            'coach-1': { displayName: 'Coach Prime' },
+            'parent-1': {
+                displayName: 'Pat Parent',
+                teamChatState: {
+                    'team-1': {
+                        mutedConversations: {
+                            'thread-9': true
+                        }
+                    }
+                }
+            },
+            'parent-2': { displayName: 'Taylor Parent' }
+        },
+        playerDocs: {
+            'player-1': {
+                name: 'Avery Smith',
+                parents: [{ userId: 'parent-1', name: 'Pat Parent' }]
+            }
+        },
+        indexedTargets: [
+            { uid: 'coach-1', deviceId: 'coach-device', token: 'coach-token', categories: { liveChat: true, mentions: true } },
+            { uid: 'parent-1', deviceId: 'parent-device', token: 'parent-token', categories: { mentions: true, liveChat: false } },
+            { uid: 'parent-2', deviceId: 'parent-2-device', token: 'parent-2-token', categories: { liveChat: true, mentions: true } }
+        ]
+    });
+
+    try {
+        const ref = env.firestoreState.doc('teams/team-1/chatMessages/message-2594');
+        const snapshot = makeSnapshot(ref, {
+            text: 'Can @Avery Smith bring both jerseys?',
+            senderId: 'coach-1',
+            senderName: 'Coach Prime',
+            conversationId: 'thread-9'
+        });
+        const context = { params: { teamId: 'team-1', messageId: 'message-2594' } };
+
+        const result = await moduleExports.notifyTeamChatMessageCreated(snapshot, context);
+
+        assert.equal(result.length, 2);
+        assert.deepEqual(env.messagingCalls.map((call) => `${call.data.category}:${call.tokens[0]}`).sort(), [
+            'liveChat:parent-2-token',
+            'mentions:parent-token'
+        ]);
+        assert.equal(env.messagingCalls.filter((call) => call.tokens.includes('parent-token')).length, 1);
+        const mentionCall = env.messagingCalls.find((call) => call.data.category === 'mentions');
+        assert.equal(mentionCall.data.appRoute, '/messages/team-1?conversation=thread-9');
+        assert.equal(mentionCall.data.conversationId, 'thread-9');
+        assert.equal(mentionCall.webLink, 'https://allplays.ai/team-chat.html?teamId=team-1&conversationId=thread-9');
+        assert.deepEqual(env.updatedDocs, [{ path: 'teams/team-1/chatMessages/message-2594', value: { mentionedUids: ['parent-1'] } }]);
+    } finally {
+        cleanup();
+    }
+});
+
 test('notifyOfficiatingNotificationCreated mirrors assignment records to the linked official', async () => {
     const { moduleExports, env, cleanup } = loadNotificationInternals({
         teamDoc: { ownerId: 'coach-1', adminEmails: [] },

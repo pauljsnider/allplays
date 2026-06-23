@@ -448,6 +448,20 @@ function buildNotificationTestEnv({
             };
         }
 
+        if (path === `teams/${teamId}/players`) {
+            return {
+                async get() {
+                    const docs = Object.entries(playerDocs).map(([playerId, player]) => makeDocSnapshot({
+                        id: playerId,
+                        ref: doc(`${path}/${playerId}`),
+                        data: player,
+                        exists: true
+                    }));
+                    return makeQuerySnapshot(docs);
+                }
+            };
+        }
+
         if (path === `teams/${teamId}/notificationAudit`) {
             return {
                 async add(value) {
