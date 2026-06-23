@@ -90,8 +90,19 @@ export function Composer({
         pendingCursorPositionRef.current = null;
     }, [onCursorChange, text]);
 
-    const syncCursorPosition = () => {
-        const nextCursorPosition = textareaRef.current?.selectionStart ?? text.length;
+    useEffect(() => {
+        const textarea = textareaRef.current;
+        if (!textarea) return;
+
+        const handleNativeSelect = () => {
+            onCursorChange(textarea.selectionStart ?? textarea.value.length);
+        };
+
+        textarea.addEventListener('select', handleNativeSelect);
+        return () => textarea.removeEventListener('select', handleNativeSelect);
+    }, [onCursorChange]);
+
+    const syncCursorPosition = (nextCursorPosition = textareaRef.current?.selectionStart ?? text.length) => {
         onCursorChange(nextCursorPosition);
         return nextCursorPosition;
     };
@@ -165,9 +176,9 @@ export function Composer({
                         onTextChange(event.target.value);
                         onCursorChange(event.target.selectionStart ?? event.target.value.length);
                     }}
-                    onClick={syncCursorPosition}
-                    onKeyUp={syncCursorPosition}
-                    onSelect={syncCursorPosition}
+                    onClick={(event) => syncCursorPosition(event.currentTarget.selectionStart ?? event.currentTarget.value.length)}
+                    onKeyUp={(event) => syncCursorPosition(event.currentTarget.selectionStart ?? event.currentTarget.value.length)}
+                    onSelect={(event) => syncCursorPosition(event.currentTarget.selectionStart ?? event.currentTarget.value.length)}
                     rows={1}
                     maxLength={2000}
                     className="chat-composer-textarea"
