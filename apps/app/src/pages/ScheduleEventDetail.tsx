@@ -1,4 +1,4 @@
-import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from 'react';
+import { createContext, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from 'react';
 import { Link, useParams, useSearchParams } from 'react-router-dom';
 import { CalendarDays, ChevronDown, ChevronLeft, ClipboardCheck, ExternalLink, FileText, Radio, RefreshCw, Share2, Users, Video, type LucideIcon } from 'lucide-react';
 import {
@@ -1056,6 +1056,12 @@ function LiveGameChatPanel({ auth, event }: { auth: AuthState; event: ParentSche
   const [loading, setLoading] = useState(true);
   const [sending, setSending] = useState(false);
   const [status, setStatus] = useState<{ tone: 'success' | 'error'; message: string } | null>(null);
+  const messagesScrollRef = useRef<HTMLDivElement | null>(null);
+  const messagesContentRef = useRef<HTMLDivElement | null>(null);
+  const messagesEndRef = useRef<HTMLDivElement | null>(null);
+  const stickToLatestRef = useRef(true);
+  const shouldFollowLatestRef = useRef(true);
+  const scheduledScrollTimeoutsRef = useRef<number[]>([]);
 
   useEffect(() => {
     void loadLiveGameChatModule().then(setChatModule);
@@ -1064,13 +1070,66 @@ function LiveGameChatPanel({ auth, event }: { auth: AuthState; event: ParentSche
   const canChat = chatModule ? chatModule.canUseLiveGameChat(event, { now: new Date() }) : false;
   const chatNotice = chatModule ? chatModule.getLiveGameChatNotice(event, { now: new Date() }) : null;
   const canSend = canChat && Boolean(messageText.trim()) && !sending;
+  const latestMessageId = messages[messages.length - 1]?.id || '';
+
+  const scrollToLatest = useCallback(() => {
+    const container = messagesScrollRef.current;
+    if (!container) return;
+
+    const nextHeight = Math.max(container.scrollHeight, messagesContentRef.current?.scrollHeight || 0);
+    container.scrollTop = Math.max(0, nextHeight - container.clientHeight);
+    if (typeof messagesEndRef.current?.scrollIntoView === 'function') {
+      messagesEndRef.current.scrollIntoView({ block: 'end', behavior: 'auto' });
+    }
+    stickToLatestRef.current = true;
+  }, []);
+
+  const clearScheduledScrolls = useCallback(() => {
+    scheduledScrollTimeoutsRef.current.forEach((timerId) => window.clearTimeout(timerId));
+    scheduledScrollTimeoutsRef.current = [];
+  }, []);
+
+  const scheduleScrollToLatest = useCallback(() => {
+    clearScheduledScrolls();
+    const followIfNeeded = () => {
+      const container = messagesScrollRef.current;
+      if (!container) return;
+      if (stickToLatestRef.current || isLiveGameChatNearBottom(container)) {
+        scrollToLatest();
+      }
+    };
+
+    followIfNeeded();
+    [120, 300, 700].forEach((delay) => {
+      let timerId = 0;
+      timerId = window.setTimeout(() => {
+        scheduledScrollTimeoutsRef.current = scheduledScrollTimeoutsRef.current.filter((id) => id !== timerId);
+        followIfNeeded();
+      }, delay);
+      scheduledScrollTimeoutsRef.current.push(timerId);
+    });
+  }, [clearScheduledScrolls, scrollToLatest]);
+
+  const handleMessagesScroll = useCallback(() => {
+    stickToLatestRef.current = isLiveGameChatNearBottom(messagesScrollRef.current);
+  }, []);
+
+  useLayoutEffect(() => {
+    if (!messages.length || !shouldFollowLatestRef.current) return;
+    scheduleScrollToLatest();
+  }, [latestMessageId, messages.length, scheduleScrollToLatest]);
+
+  useEffect(() => clearScheduledScrolls, [clearScheduledScrolls]);
 
   useEffect(() => {
     if (!chatModule || !event.isDbGame || !event.teamId || !event.id) return undefined;
 
     setLoading(true);
     setStatus(null);
+    stickToLatestRef.current = true;
+    shouldFollowLatestRef.current = true;
     const unsubscribe = chatModule.subscribeToLiveGameChat(event.teamId, event.id, (nextMessages) => {
+      shouldFollowLatestRef.current = stickToLatestRef.current || isLiveGameChatNearBottom(messagesScrollRef.current);
       setMessages(sortLiveGameChatMessages(nextMessages));
       setLoading(false);
     }, (subscribeError: any) => {
@@ -1087,6 +1146,7 @@ function LiveGameChatPanel({ auth, event }: { auth: AuthState; event: ParentSche
     submitEvent.preventDefault();
     if (!chatModule || !canChat || !event.teamId || !event.id || !messageText.trim() || sending) return;
 
+    shouldFollowLatestRef.current = stickToLatestRef.current || isLiveGameChatNearBottom(messagesScrollRef.current);
     setSending(true);
     setStatus(null);
     try {
@@ -1119,20 +1179,29 @@ function LiveGameChatPanel({ auth, event }: { auth: AuthState; event: ParentSche
       </div>
 
       <div className="mt-3 rounded-2xl border border-white/80 bg-white p-3 shadow-sm">
-        <div className="max-h-64 space-y-2 overflow-y-auto pr-1" aria-label="Live chat messages">
-          {loading ? (
-            <div className="text-sm font-semibold text-gray-500">Loading live chat…</div>
-          ) : messages.length ? messages.map((message) => (
-            <article key={message.id} className="rounded-xl border border-gray-100 bg-gray-50 p-2.5" data-testid={`live-chat-message-${message.id}`}>
-              <div className="flex items-center justify-between gap-2">
-                <div className="truncate text-sm font-black text-gray-950">{message.senderName || 'Fan'}</div>
-                <div className="text-[11px] font-semibold text-gray-500">{formatLiveGameChatTimestamp(message.createdAt)}</div>
-              </div>
-              <div className="mt-1 text-sm font-semibold leading-5 text-gray-700">{String(message.text || '').trim() || ' '}</div>
-            </article>
-          )) : (
-            <div className="text-sm font-semibold text-gray-500">No messages yet. Start the game-day chat.</div>
-          )}
+        <div
+          ref={messagesScrollRef}
+          className="max-h-64 overflow-y-auto pr-1"
+          aria-label="Live chat messages"
+          data-testid="live-game-chat-messages"
+          onScroll={handleMessagesScroll}
+        >
+          <div ref={messagesContentRef} className="space-y-2">
+            {loading ? (
+              <div className="text-sm font-semibold text-gray-500">Loading live chat…</div>
+            ) : messages.length ? messages.map((message) => (
+              <article key={message.id} className="rounded-xl border border-gray-100 bg-gray-50 p-2.5" data-testid={`live-chat-message-${message.id}`}>
+                <div className="flex items-center justify-between gap-2">
+                  <div className="truncate text-sm font-black text-gray-950">{message.senderName || 'Fan'}</div>
+                  <div className="text-[11px] font-semibold text-gray-500">{formatLiveGameChatTimestamp(message.createdAt)}</div>
+                </div>
+                <div className="mt-1 text-sm font-semibold leading-5 text-gray-700">{String(message.text || '').trim() || ' '}</div>
+              </article>
+            )) : (
+              <div className="text-sm font-semibold text-gray-500">No messages yet. Start the game-day chat.</div>
+            )}
+            <div ref={messagesEndRef} aria-hidden="true" />
+          </div>
         </div>
 
         <form className="mt-3 space-y-2" onSubmit={sendMessage}>
@@ -3738,6 +3807,15 @@ function GameHubDestinationCard({ destination, onShare }: {
 
 function sortLiveGameChatMessages(messages: LiveGameChatMessage[]) {
   return [...messages].sort((left, right) => getLiveGameChatTimestampValue(left.createdAt) - getLiveGameChatTimestampValue(right.createdAt));
+}
+
+export function isLiveGameChatNearBottom(
+  container: Pick<HTMLElement, 'scrollHeight' | 'scrollTop' | 'clientHeight'> | null,
+  threshold = 96
+) {
+  if (!container) return true;
+  const distanceFromBottom = Math.max(0, container.scrollHeight - container.scrollTop - container.clientHeight);
+  return distanceFromBottom <= threshold;
 }
 
 function getLiveGameChatTimestampValue(value: unknown) {

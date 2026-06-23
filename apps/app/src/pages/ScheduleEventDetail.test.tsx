@@ -183,7 +183,13 @@ const statsheetImportServiceMocks = vi.hoisted(() => ({
 
 vi.mock('../lib/statsheetImportService', () => statsheetImportServiceMocks);
 
-import { ScheduleEventDetail, shouldAutosaveGeneratedLineupDraft, shouldAutosaveLineupDraft, shouldPersistLineupDraft } from './ScheduleEventDetail';
+import {
+  ScheduleEventDetail,
+  isLiveGameChatNearBottom,
+  shouldAutosaveGeneratedLineupDraft,
+  shouldAutosaveLineupDraft,
+  shouldPersistLineupDraft
+} from './ScheduleEventDetail';
 import type { PracticeTimelineBlock } from '../lib/practiceTimelineService';
 import type { AuthState } from '../lib/types';
 
@@ -310,6 +316,38 @@ function renderScheduleEventDetailWithLocation(initialEntry = '/schedule/team-1/
     </MemoryRouter>
   );
 }
+
+function installScrollMetrics(
+  element: HTMLElement,
+  metrics: { scrollHeight: number; clientHeight: number }
+) {
+  Object.defineProperty(element, 'scrollHeight', {
+    configurable: true,
+    get: () => metrics.scrollHeight
+  });
+  Object.defineProperty(element, 'clientHeight', {
+    configurable: true,
+    get: () => metrics.clientHeight
+  });
+  return metrics;
+}
+
+function buildLiveChatMessages(count: number) {
+  return Array.from({ length: count }, (_, index) => ({
+    id: `m${index + 1}`,
+    text: `Message ${index + 1}`,
+    senderName: `Parent ${index + 1}`,
+    createdAt: `2026-06-04T18:${String(index + 1).padStart(2, '0')}:00.000Z`
+  }));
+}
+
+describe('ScheduleEventDetail live chat scroll helpers', () => {
+  it('treats live chat positions within 96 pixels of the bottom as near bottom', () => {
+    expect(isLiveGameChatNearBottom(null)).toBe(true);
+    expect(isLiveGameChatNearBottom({ scrollHeight: 1000, clientHeight: 400, scrollTop: 504 })).toBe(true);
+    expect(isLiveGameChatNearBottom({ scrollHeight: 1000, clientHeight: 400, scrollTop: 503 })).toBe(false);
+  });
+});
 
 describe('ScheduleEventDetail loading states', () => {
   afterEach(() => {
@@ -1056,6 +1094,120 @@ describe('ScheduleEventDetail assignments', () => {
     const unsubscribe = liveGameChatServiceMocks.subscribeToLiveGameChat.mock.results[0]?.value as ReturnType<typeof vi.fn>;
     unmount();
     expect(unsubscribe).toHaveBeenCalled();
+  });
+
+  it('keeps mobile live chat pinned to latest messages unless the viewer scrolls up', async () => {
+    let chatCallback: (messages: Array<{ id: string; text?: string | null; senderName?: string | null; createdAt?: unknown }>) => void = () => {};
+    liveGameChatServiceMocks.subscribeToLiveGameChat.mockImplementation((_teamId, _gameId, callback) => {
+      chatCallback = callback;
+      return vi.fn();
+    });
+    liveGameChatServiceMocks.sendLiveGameChatMessage.mockResolvedValue({ id: 'sent-1' });
+    scheduleServiceMocks.loadParentScheduleEventDetail.mockResolvedValue({
+      events: [buildEvent({ liveStatus: 'live', status: 'live' })],
+      children: []
+    });
+
+    renderScheduleEventDetail();
+
+    await waitFor(() => {
+      expect(screen.getAllByRole('button', { name: 'Game' }).length).toBeGreaterThan(0);
+    });
+    fireEvent.click(screen.getAllByRole('button', { name: 'Game' })[0]);
+    fireEvent.click(screen.getByRole('button', { name: 'Live chat' }));
+
+    await waitFor(() => {
+      expect(liveGameChatServiceMocks.subscribeToLiveGameChat).toHaveBeenCalledTimes(1);
+    });
+
+    const scroller = screen.getByTestId('live-game-chat-messages') as HTMLDivElement;
+    const metrics = installScrollMetrics(scroller, { scrollHeight: 520, clientHeight: 160 });
+
+    await act(async () => {
+      chatCallback(buildLiveChatMessages(8));
+    });
+    await waitFor(() => {
+      expect(scroller.scrollTop).toBe(360);
+    });
+
+    scroller.scrollTop = 330;
+    fireEvent.scroll(scroller);
+    metrics.scrollHeight = 600;
+    await act(async () => {
+      chatCallback(buildLiveChatMessages(9));
+    });
+    await waitFor(() => {
+      expect(scroller.scrollTop).toBe(440);
+    });
+
+    fireEvent.change(screen.getByLabelText('Live chat message'), { target: { value: "Let's go Bears" } });
+    fireEvent.click(screen.getByRole('button', { name: 'Send' }));
+    await waitFor(() => {
+      expect(liveGameChatServiceMocks.sendLiveGameChatMessage).toHaveBeenCalledWith('team-1', 'game-1', expect.objectContaining({
+        text: "Let's go Bears",
+        user: auth.user
+      }));
+    });
+
+    const messagesWithSentEcho = [
+      ...buildLiveChatMessages(9),
+      {
+        id: 'sent-1',
+        text: "Let's go Bears",
+        senderName: 'Coach Carter',
+        createdAt: '2026-06-04T18:10:00.000Z'
+      }
+    ];
+    metrics.scrollHeight = 680;
+    await act(async () => {
+      chatCallback(messagesWithSentEcho);
+    });
+    await waitFor(() => {
+      expect(scroller.scrollTop).toBe(520);
+    });
+
+    scroller.scrollTop = 160;
+    fireEvent.scroll(scroller);
+    metrics.scrollHeight = 760;
+    await act(async () => {
+      chatCallback([
+        ...messagesWithSentEcho,
+        {
+          id: 'm11',
+          text: 'Inbound while reading older messages',
+          senderName: 'Parent 11',
+          createdAt: '2026-06-04T18:11:00.000Z'
+        }
+      ]);
+    });
+    await waitFor(() => {
+      expect(screen.getByTestId('live-chat-message-m11')).toBeTruthy();
+    });
+    expect(scroller.scrollTop).toBe(160);
+
+    scroller.scrollTop = 590;
+    fireEvent.scroll(scroller);
+    metrics.scrollHeight = 840;
+    await act(async () => {
+      chatCallback([
+        ...messagesWithSentEcho,
+        {
+          id: 'm11',
+          text: 'Inbound while reading older messages',
+          senderName: 'Parent 11',
+          createdAt: '2026-06-04T18:11:00.000Z'
+        },
+        {
+          id: 'm12',
+          text: 'Back at the latest',
+          senderName: 'Parent 12',
+          createdAt: '2026-06-04T18:12:00.000Z'
+        }
+      ]);
+    });
+    await waitFor(() => {
+      expect(scroller.scrollTop).toBe(680);
+    });
   });
 
   it('shows the locked live chat notice and disables the composer when chat is unavailable', async () => {
