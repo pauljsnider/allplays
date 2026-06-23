@@ -14,6 +14,11 @@ describe('family share token Firestore rules', () => {
         expect(familyShareTokenRules).not.toContain("resource.data.get('active', false) == true");
     });
 
+    it('blocks anonymous reads when legacy revocation flags are present', () => {
+        expect(familyShareTokenRules).toContain("resource.data.get('revoked', false) != true");
+        expect(familyShareTokenRules).toContain("resource.data.get('revokedAt', null) == null");
+    });
+
     it('still reserves revoked-token access for owners and global admins', () => {
         expect(familyShareTokenRules).toContain("isSignedIn() && resource.data.ownerUserId == request.auth.uid");
         expect(familyShareTokenRules).toContain('isGlobalAdmin()');
