@@ -23,11 +23,23 @@ const teamDrillsServiceMocks = vi.hoisted(() => ({
   setTeamDrillFavorite: vi.fn()
 }));
 
+const practiceAiCoachServiceMocks = vi.hoisted(() => ({
+  generatePracticeAiCoachPlan: vi.fn()
+}));
+
+const practiceTimelineServiceMocks = vi.hoisted(() => ({
+  getPracticeTimelineTotalMinutes: vi.fn((blocks) => (Array.isArray(blocks) ? blocks : []).reduce((sum, block) => sum + (Number.parseInt(String(block?.duration ?? 0), 10) || 0), 0)),
+  loadPracticeTimelineModel: vi.fn(),
+  savePracticeTimelineForApp: vi.fn()
+}));
+
 const publicActionsMocks = vi.hoisted(() => ({
   openPublicUrl: vi.fn()
 }));
 
 vi.mock('../lib/teamDrillsService', () => teamDrillsServiceMocks);
+vi.mock('../lib/practiceAiCoachService', () => practiceAiCoachServiceMocks);
+vi.mock('../lib/practiceTimelineService', () => practiceTimelineServiceMocks);
 vi.mock('../lib/publicActions', () => publicActionsMocks);
 
 const auth: AuthState = {
@@ -108,10 +120,54 @@ describe('TeamDrills', () => {
       drills: [createDrill({ id: 'drill-2', title: 'Finishing ladder', type: 'Technical', level: 'Advanced', skills: ['finishing'], description: 'Close-range finishing.' })]
     });
     teamDrillsServiceMocks.setTeamDrillFavorite.mockResolvedValue(undefined);
+    practiceTimelineServiceMocks.loadPracticeTimelineModel.mockResolvedValue({
+      sessionId: 'session-1',
+      teamId: 'team-1',
+      eventId: 'practice-1',
+      teamName: 'Bears',
+      teamSport: 'Soccer',
+      date: new Date('2026-06-11T18:00:00Z'),
+      location: 'Main Field',
+      blocks: [{
+        order: 0,
+        drillId: 'drill-1',
+        drillTitle: 'Warm-up lanes',
+        type: 'Warm-up',
+        duration: 10,
+        description: 'Start clean.',
+        notes: '',
+        notesLog: []
+      }],
+      drillOptions: [{
+        id: 'drill-2',
+        title: 'Finishing ladder',
+        type: 'Technical',
+        duration: 12,
+        description: 'Close-range finishing.',
+        source: 'team'
+      }]
+    });
+    practiceTimelineServiceMocks.savePracticeTimelineForApp.mockResolvedValue('session-1');
+    practiceAiCoachServiceMocks.generatePracticeAiCoachPlan.mockResolvedValue({
+      assistantMessage: 'Use quality touches before finishing.',
+      errors: [],
+      blocks: [{
+        order: 0,
+        drillId: 'drill-2',
+        drillTitle: 'Finishing ladder',
+        type: 'Technical',
+        duration: 12,
+        description: 'Close-range finishing.',
+        notes: 'Rotate every two reps.',
+        notesLog: []
+      }]
+    });
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
   });
 
   afterEach(() => {
     cleanup();
+    vi.restoreAllMocks();
   });
 
   it('passes search and filter selections into the bounded community drill query', async () => {
@@ -120,7 +176,7 @@ describe('TeamDrills', () => {
     expect(await screen.findByRole('heading', { name: 'Bears drills' })).toBeTruthy();
     fireEvent.change(screen.getByLabelText('Search drills'), { target: { value: 'finish' } });
     fireEvent.change(screen.getByLabelText('Category'), { target: { value: 'Technical' } });
-    fireEvent.change(screen.getByLabelText('Skill level'), { target: { value: 'Advanced' } });
+    fireEvent.change(screen.getByLabelText(/^Skill level$/i), { target: { value: 'Advanced' } });
     fireEvent.click(screen.getByRole('button', { name: 'Apply' }));
 
     await waitFor(() => expect(teamDrillsServiceMocks.loadTeamDrillLibraryPage).toHaveBeenLastCalledWith('team-1', auth.user, {
@@ -155,6 +211,50 @@ describe('TeamDrills', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Apply' }));
 
     expect(await screen.findByText('No team favorites match the current search and filter combination.')).toBeTruthy();
+  });
+
+  it('generates an editable AI coach proposal and waits for acceptance before saving the timeline', async () => {
+    renderTeamDrills();
+
+    expect(await screen.findByRole('heading', { name: 'Bears drills' })).toBeTruthy();
+    fireEvent.change(screen.getByLabelText('Practice event ID'), { target: { value: 'practice-1' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Load practice' }));
+
+    await waitFor(() => expect(practiceTimelineServiceMocks.loadPracticeTimelineModel).toHaveBeenCalledWith('team-1', 'practice-1', auth.user));
+    expect(await screen.findByText('Current timeline: 1 block · 10 min')).toBeTruthy();
+
+    fireEvent.change(screen.getByLabelText('Practice focus'), { target: { value: '60 minute shooting plan' } });
+    fireEvent.change(screen.getByLabelText('Coach skill level'), { target: { value: 'Intermediate' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Generate proposal' }));
+
+    await waitFor(() => expect(practiceAiCoachServiceMocks.generatePracticeAiCoachPlan).toHaveBeenCalledWith(expect.objectContaining({
+      teamName: 'Bears',
+      sport: 'Soccer',
+      skillLevel: 'Intermediate',
+      targetMinutes: '10',
+      coachRequest: '60 minute shooting plan',
+      planScope: 'append'
+    })));
+    expect(practiceTimelineServiceMocks.savePracticeTimelineForApp).not.toHaveBeenCalled();
+
+    expect(await screen.findByDisplayValue('Finishing ladder')).toBeTruthy();
+    fireEvent.change(screen.getByLabelText('Proposal block 1 minutes'), { target: { value: '18' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Accept timeline' }));
+
+    await waitFor(() => expect(practiceTimelineServiceMocks.savePracticeTimelineForApp).toHaveBeenCalledWith(expect.objectContaining({
+      teamId: 'team-1',
+      eventId: 'practice-1',
+      sessionId: 'session-1',
+      user: auth.user,
+      date: new Date('2026-06-11T18:00:00Z'),
+      location: 'Main Field',
+      blocks: [
+        expect.objectContaining({ order: 0, drillTitle: 'Warm-up lanes', duration: 10 }),
+        expect.objectContaining({ order: 1, drillTitle: 'Finishing ladder', duration: 18 })
+      ]
+    })));
+    expect(window.confirm).toHaveBeenCalledWith('Accept this AI proposal and append these AI blocks to the practice timeline?');
+    expect(await screen.findByText('Practice timeline updated.')).toBeTruthy();
   });
 
   it('shows the access guard when the user cannot manage team drills', async () => {
