@@ -302,12 +302,14 @@
 <li>How to complete team foundation settings in one pass</li>
 <li>How to invite staff and handle invite delivery issues</li>
 <li>How to delegate scorekeeping and streaming to confirmed members</li>
+<li>How to use <strong>Import from registration system</strong> when provider source teams are configured</li>
 <li>How to preview prior roster rollover options during team creation</li>
 <li>How to verify what families and players will see</li>
 <li>How to recover from common setup and access problems</li>
 <li>Grant scoped scorekeeper and videographer access.</li>
 <li>View the team staff and permissions overview.</li>
 <li>Configure a registration provider (Sports Connect).</li>
+<li>Edit team settings, league/livestream links, reminder defaults, and staff grants from the app.</li>
 </ul>
 <h2 id="who-is-this-for">Who Is This For</h2>
 <ul class="ml-6 list-disc space-y-1">
@@ -324,9 +326,12 @@
 <h2 id="choose-your-path">Choose Your Path</h2>
 <ul class="ml-6 list-disc space-y-1">
 <li>Create a new team: Open <strong>My Teams</strong> (<code>dashboard.html</code>) and select <strong>Create New Team</strong></li>
+<li>Import from registration system: choose this create mode when a provider source team is configured. If no sources are configured, start with a blank team or load provider data first.</li>
 <li>Update an existing team: Open <strong>My Teams</strong>, select the team, then choose <strong>Edit</strong></li>
 <li>Manage staff access only: Open <strong>Edit Team</strong> and go to <strong>Admin Access</strong></li>
 <li>Delegate volunteer duties only: Open <strong>Edit Team</strong> and go to <strong>Team Permissions</strong></li>
+<li>Refresh Sports Connect data: Save the provider Team ID, then run <strong>Re-import from Sports Connect</strong>.</li>
+<li>Use native app setup: edit team settings, league/livestream links, admins, and helper grants from the app team detail screens.</li>
 </ul>
 <h2 id="step-by-step-workflow">Step-by-Step Workflow</h2>
 <ol class="ml-6 list-decimal space-y-1">
@@ -334,6 +339,7 @@
 </ol>
 <ul class="ml-6 list-disc space-y-1">
 <li>New team: <code>dashboard.html</code> -&gt; <strong>Create New Team</strong></li>
+<li>Registration import: select <strong>Import from registration system</strong>, then choose the configured source team. If no sources are configured, the import option stays unavailable and the manual create path remains selected.</li>
 <li>Existing team: <code>dashboard.html</code> -&gt; team card -&gt; <strong>Edit</strong></li>
 </ul>
 <ol class="ml-6 list-decimal space-y-1">
@@ -428,9 +434,18 @@
 <ol class="ml-6 list-decimal space-y-1">
 <li>Open <strong>Edit Team</strong> and select <strong>Sports Connect</strong> (or your provider) in the registration provider field.</li>
 <li>Enter the external Team ID / mapping field, then save the team so the provider card keeps that mapping.</li>
-<li>The provider card stores metadata only today. A future connector is required before ALL PLAYS can fetch live Sports Connect data.</li>
-<li>Use roster or schedule import previews only when a roster/schedule snapshot or other provider data is already loaded into ALL PLAYS. The disabled Sports Connect refresh control does not fetch new provider data.</li>
+<li>Use <strong>Re-import from Sports Connect</strong> to run a manual backend provider pull using server-configured credentials. A successful pull stores fresh registration source and roster snapshots and updates connection state.</li>
+<li>Open roster or schedule import previews after the provider pull succeeds. Import previews still show add/update/unchanged/conflict rows before anything is committed.</li>
+<li>If the provider disconnects, legacy provider state is cleared so stale Sports Connect metadata does not keep appearing as active setup.</li>
 </ol>
+<h2 id="latest-team-setup-updates">Latest Team Setup Updates</h2>
+<ul class="ml-6 list-disc space-y-1">
+<li><strong>Native team editing:</strong> the app can edit team settings, league links, livestream links, team admins, scoped scorekeeper grants, videographer grants, and team reminder defaults.</li>
+<li><strong>Staff visibility:</strong> the team staff and permissions overview separates owners/admins, pending admin invites, scorekeepers, videographers, and empty states.</li>
+<li><strong>Pending invites:</strong> invited admins stay pending until redemption, and invite creation is restricted to team admins.</li>
+<li><strong>Public discovery:</strong> public team browsing is search-first with location search, and private team visibility is protected in search and homepage surfaces.</li>
+<li><strong>Team setup performance:</strong> staff permissions, insights, alerts, and secondary team detail panels load on demand so the first team view opens faster.</li>
+</ul>
 <ol class="ml-6 list-decimal space-y-1">
 <li>Handle invite outcomes.</li>
 </ol>

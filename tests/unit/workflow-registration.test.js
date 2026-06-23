@@ -45,7 +45,7 @@ describe('workflow registration guide', () => {
         expect(source).not.toContain('Re-import previews saved data only');
     });
 
-    it('regenerates help index registration copy to avoid claiming Sports Connect live sync exists', () => {
+    it('regenerates help index registration copy for manual Sports Connect provider pulls', () => {
         const helpCenter = readRepoFile('help.html');
         const teamSetup = readRepoFile('workflow-team-setup.html');
         const appIndex = readRepoFile('apps/app/src/lib/helpKnowledgeIndex.ts');
@@ -53,44 +53,43 @@ describe('workflow registration guide', () => {
 
         expect(teamSetup).toContain('Configure registration provider metadata');
         expect(teamSetup).toContain('Enter the external Team ID / mapping field, then save the team so the provider card keeps that mapping.');
-        expect(teamSetup).toContain('The provider card stores metadata only today. A future connector is required before ALL PLAYS can fetch live Sports Connect data.');
-        expect(teamSetup).toContain('Use roster or schedule import previews only when a roster/schedule snapshot or other provider data is already loaded into ALL PLAYS.');
-        expect(teamSetup).toContain('The disabled Sports Connect refresh control does not fetch new provider data.');
+        expect(teamSetup).toContain('Use <strong>Re-import from Sports Connect</strong> to run a manual backend provider pull using server-configured credentials.');
+        expect(teamSetup).toContain('A successful pull stores fresh registration source and roster snapshots and updates connection state.');
+        expect(teamSetup).toContain('Open roster or schedule import previews after the provider pull succeeds.');
         expect(teamSetup).not.toContain('any sync notes you want stored with the team');
+        expect(teamSetup).not.toContain('A future connector is required before ALL PLAYS can fetch live Sports Connect data.');
         expect(teamSetup).not.toContain('Connect a registration provider (such as Sports Connect) to sync roster and schedule data.');
-        expect(teamSetup).not.toContain('Use the manual re-import entry point to trigger a fresh sync when needed.');
+        expect(teamSetup).not.toContain('The disabled Sports Connect refresh control does not fetch new provider data.');
 
-        expect(helpCenter).toContain('store Sports Connect metadata');
-        expect(helpCenter).toContain('preview roster or schedule snapshot imports before committing changes');
+        expect(helpCenter).toContain('Sports Connect manual pulls');
+        expect(helpCenter).toContain('run Sports Connect manual provider pulls');
         expect(helpCenter).not.toContain('sync Sports Connect roster data');
         expect(helpCenter).not.toContain('run backend Sports Connect sync');
         expect(helpCenter).not.toContain('import rosters and schedules through the backend Sports Connect sync workflow');
 
         const registrationManifest = readHelpManifest().find((item) => item.id === 'registration');
-        expect(registrationManifest.summary).toContain('store Sports Connect metadata');
+        expect(registrationManifest.summary).toContain('run Sports Connect manual provider pulls');
         expect(registrationManifest.summary).not.toContain('sync Sports Connect roster data');
-        expect(registrationManifest.searchText).toContain('Configure Sports Connect metadata before stored snapshot imports');
-        expect(registrationManifest.searchText).toContain('metadata-only import previews disabled refresh');
+        expect(registrationManifest.searchText).toContain('Configuring Sports Connect manual provider pulls');
+        expect(registrationManifest.searchText).toContain('pull Sports Connect provider snapshots on demand');
+        expect(registrationManifest.searchText).toContain('The backend fetches Sports Connect data using server-configured credentials');
         expect(registrationManifest.searchText).not.toContain('Run backend Sports Connect roster sync before roster snapshot imports');
         expect(registrationManifest.searchText).not.toContain('run backend Sports Connect sync');
 
-        expect(appIndex).toContain('store Sports Connect metadata');
-        expect(appIndex).toContain('Configuring Sports Connect as metadata-only provider setup');
-        expect(appIndex).toContain('Roster and schedule imports require a registration roster snapshot, registration schedule snapshot, or other provider data already loaded for the team.');
+        expect(appIndex).toContain('run Sports Connect manual provider pulls');
+        expect(appIndex).toContain('Configuring Sports Connect manual provider pulls');
+        expect(appIndex).toContain('Use the roster or schedule import preview after provider data has been stored in ALL PLAYS.');
         expect(appIndex).toContain('Configure registration provider metadata');
-        expect(appIndex).toContain('The provider card stores metadata only today. A future connector is required before ALL PLAYS can fetch live Sports Connect data.');
-        expect(appIndex).toContain('Use roster or schedule import previews only when a roster/schedule snapshot or other provider data is already loaded into ALL PLAYS.');
-        expect(appIndex).toContain('The disabled Sports Connect refresh control does not fetch new provider data.');
-        expect(appIndex).not.toContain('A successful sync updates the provider status and stores roster/source snapshots');
+        expect(appIndex).toContain('Use Re-import from Sports Connect to run a manual backend provider pull using server-configured credentials.');
+        expect(appIndex).toContain('A successful pull stores fresh registration source and roster snapshots and updates connection state.');
         expect(appIndex).not.toContain('Sync now pulls fresh Sports Connect data through the backend before import preview.');
-        expect(appIndex).not.toContain('connection status monitoring');
         expect(appIndex).not.toContain('pull the latest data immediately without waiting for any scheduled sync');
         expect(appIndex).not.toContain('Connect a registration provider (such as Sports Connect) to sync roster and schedule data.');
-        expect(appIndex).not.toContain('trigger a fresh sync when needed.');
+        expect(appIndex).not.toContain('The disabled Sports Connect refresh control does not fetch new provider data.');
 
-        expect(capabilities).toContain('Sports Connect metadata import workflow');
-        expect(capabilities).toContain('Sports Connect metadata');
-        expect(capabilities).not.toContain('Sports Connect sync');
+        expect(capabilities).toContain('Sports Connect manual provider pull workflow');
+        expect(capabilities).toContain('Sports Connect manual pulls');
+        expect(capabilities).not.toContain('Sports Connect metadata import workflow');
         expect(capabilities).not.toContain('Sports Connect sync workflow');
     });
 });
