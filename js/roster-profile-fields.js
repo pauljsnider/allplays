@@ -174,6 +174,17 @@ function parseCheckboxValue(value) {
     return null;
 }
 
+function parseIsoDateValue(label, rawValue) {
+    const value = String(rawValue ?? '').trim();
+    if (value === '') return { value: '' };
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return { error: `${label} must use YYYY-MM-DD format.` };
+    const date = new Date(`${value}T00:00:00Z`);
+    if (Number.isNaN(date.getTime()) || date.toISOString().slice(0, 10) !== value) {
+        return { error: `${label} must be a valid date.` };
+    }
+    return { value };
+}
+
 function parseRosterCsvFieldValue(field, rawValue) {
     const value = String(rawValue ?? '').trim();
     if (value === '') return { value: field.type === 'checkbox' ? false : '' };
@@ -185,12 +196,7 @@ function parseRosterCsvFieldValue(field, rawValue) {
     }
 
     if (field.type === 'date') {
-        if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return { error: `${field.label} must use YYYY-MM-DD format.` };
-        const date = new Date(`${value}T00:00:00Z`);
-        if (Number.isNaN(date.getTime()) || date.toISOString().slice(0, 10) !== value) {
-            return { error: `${field.label} must be a valid date.` };
-        }
-        return { value };
+        return parseIsoDateValue(field.label, value);
     }
 
     if (field.type === 'menu') {
@@ -267,6 +273,82 @@ const CONTACT_FIELD_ALIASES = new Map([
     ['relationship', 'relation']
 ]);
 
+const PROFILE_HEADER_ALIASES = new Map([
+    ['position', { profileField: 'position' }],
+    ['primaryposition', { profileField: 'position' }],
+    ['playerposition', { profileField: 'position' }],
+    ['pos', { profileField: 'position' }],
+    ['birthdate', { profileField: 'birthDate' }],
+    ['dateofbirth', { profileField: 'birthDate' }],
+    ['dob', { profileField: 'birthDate' }],
+    ['birthday', { profileField: 'birthDate' }],
+    ['gender', { profileField: 'gender' }],
+    ['sex', { profileField: 'gender' }],
+    ['street', { profileField: 'address', addressField: 'street' }],
+    ['streetaddress', { profileField: 'address', addressField: 'street' }],
+    ['address', { profileField: 'address', addressField: 'address1' }],
+    ['homeaddress', { profileField: 'address', addressField: 'address1' }],
+    ['address1', { profileField: 'address', addressField: 'address1' }],
+    ['addressline1', { profileField: 'address', addressField: 'address1' }],
+    ['line1', { profileField: 'address', addressField: 'address1' }],
+    ['address2', { profileField: 'address', addressField: 'address2' }],
+    ['addressline2', { profileField: 'address', addressField: 'address2' }],
+    ['line2', { profileField: 'address', addressField: 'address2' }],
+    ['street2', { profileField: 'address', addressField: 'address2' }],
+    ['unit', { profileField: 'address', addressField: 'address2' }],
+    ['apt', { profileField: 'address', addressField: 'address2' }],
+    ['apartment', { profileField: 'address', addressField: 'address2' }],
+    ['suite', { profileField: 'address', addressField: 'address2' }],
+    ['city', { profileField: 'address', addressField: 'city' }],
+    ['town', { profileField: 'address', addressField: 'city' }],
+    ['state', { profileField: 'address', addressField: 'state' }],
+    ['province', { profileField: 'address', addressField: 'state' }],
+    ['zip', { profileField: 'address', addressField: 'zip' }],
+    ['zipcode', { profileField: 'address', addressField: 'zip' }],
+    ['postalcode', { profileField: 'address', addressField: 'zip' }],
+    ['postal', { profileField: 'address', addressField: 'zip' }],
+    ['rosterstatus', { profileField: 'rosterStatus', statusMode: 'status' }],
+    ['playerstatus', { profileField: 'rosterStatus', statusMode: 'status' }],
+    ['participantstatus', { profileField: 'rosterStatus', statusMode: 'status' }],
+    ['memberstatus', { profileField: 'rosterStatus', statusMode: 'status' }],
+    ['playertype', { profileField: 'rosterStatus', statusMode: 'status' }],
+    ['participanttype', { profileField: 'rosterStatus', statusMode: 'status' }],
+    ['membertype', { profileField: 'rosterStatus', statusMode: 'status' }],
+    ['rostertype', { profileField: 'rosterStatus', statusMode: 'status' }],
+    ['rosterrole', { profileField: 'rosterStatus', statusMode: 'status' }],
+    ['staffstatus', { profileField: 'rosterStatus', statusMode: 'staffFlag' }],
+    ['nonplayerstatus', { profileField: 'rosterStatus', statusMode: 'nonPlayerFlag' }],
+    ['staff', { profileField: 'rosterStatus', statusMode: 'staffFlag' }],
+    ['isstaff', { profileField: 'rosterStatus', statusMode: 'staffFlag' }],
+    ['staffmember', { profileField: 'rosterStatus', statusMode: 'staffFlag' }],
+    ['nonplayer', { profileField: 'rosterStatus', statusMode: 'nonPlayerFlag' }],
+    ['isnonplayer', { profileField: 'rosterStatus', statusMode: 'nonPlayerFlag' }],
+    ['notaplayer', { profileField: 'rosterStatus', statusMode: 'nonPlayerFlag' }]
+]);
+
+const ROSTER_STATUS_VALUE_ALIASES = new Map([
+    ['player', 'player'],
+    ['athlete', 'player'],
+    ['participant', 'player'],
+    ['rosterplayer', 'player'],
+    ['activeplayer', 'player'],
+    ['staff', 'staff'],
+    ['coach', 'staff'],
+    ['headcoach', 'staff'],
+    ['assistantcoach', 'staff'],
+    ['manager', 'staff'],
+    ['teammanager', 'staff'],
+    ['admin', 'staff'],
+    ['administrator', 'staff'],
+    ['volunteer', 'staff'],
+    ['trainer', 'staff'],
+    ['nonplayer', 'non-player'],
+    ['nonathlete', 'non-player'],
+    ['notplayer', 'non-player'],
+    ['notaplayer', 'non-player'],
+    ['benchstaff', 'staff']
+]);
+
 function getContactHeaderMapping(normalizedHeader = '', label = '') {
     for (const group of CONTACT_HEADER_GROUPS) {
         if (!normalizedHeader.startsWith(group.prefix)) continue;
@@ -286,6 +368,16 @@ function getContactHeaderMapping(normalizedHeader = '', label = '') {
         };
     }
     return null;
+}
+
+function getProfileHeaderMapping(normalizedHeader = '', label = '') {
+    const profile = PROFILE_HEADER_ALIASES.get(normalizedHeader);
+    if (!profile) return null;
+    return {
+        type: 'profile',
+        label,
+        ...profile
+    };
 }
 
 function normalizeImportedContact(contact = {}) {
@@ -357,6 +449,59 @@ function buildRosterCsvContactPlan(contactValues = new Map(), rowNumber = 0) {
     return { guardians, contacts, familyContacts, inviteRequests, errors };
 }
 
+function normalizeRosterStatusProfile(status = '') {
+    const rosterStatus = String(status || '').trim();
+    const isStaff = rosterStatus === 'staff';
+    const nonPlayer = isStaff || rosterStatus === 'non-player';
+    return { rosterStatus, isStaff, nonPlayer };
+}
+
+function normalizeRosterStatusValue(rawValue, mapping = {}) {
+    const value = String(rawValue ?? '').trim();
+    if (!value) return { value: null };
+    const normalized = normalizeHeaderKey(value);
+    const alias = ROSTER_STATUS_VALUE_ALIASES.get(normalized);
+    if (alias) return { value: normalizeRosterStatusProfile(alias) };
+
+    if (mapping.statusMode === 'staffFlag' || mapping.statusMode === 'nonPlayerFlag') {
+        const parsed = parseCheckboxValue(value);
+        if (parsed === null) return { error: `${mapping.label} must be yes/no or a supported roster status.` };
+        const status = parsed
+            ? mapping.statusMode === 'staffFlag' ? 'staff' : 'non-player'
+            : 'player';
+        return { value: normalizeRosterStatusProfile(status) };
+    }
+
+    return { value: normalizeRosterStatusProfile(value) };
+}
+
+function parseRosterCsvProfileValue(mapping = {}, rawValue) {
+    const value = String(rawValue ?? '').trim();
+    if (!value) return { value: null };
+    if (mapping.profileField === 'birthDate') return parseIsoDateValue(mapping.label, value);
+    if (mapping.profileField === 'rosterStatus') return normalizeRosterStatusValue(value, mapping);
+    return { value };
+}
+
+function getProfileMappingDedupeKey(mapping = {}) {
+    if (mapping.profileField === 'address') return `address.${mapping.addressField}`;
+    return mapping.profileField || '';
+}
+
+function mergeProfileImportValues(existingProfile = {}, profileValues = {}, addressValues = {}) {
+    const nextProfile = {
+        ...existingProfile,
+        ...profileValues
+    };
+    if (Object.keys(addressValues).length > 0) {
+        nextProfile.address = {
+            ...(existingProfile.address || {}),
+            ...addressValues
+        };
+    }
+    return nextProfile;
+}
+
 export function planRosterCsvImport({ csvText = '', fields = [], existingPlayers = [] } = {}) {
     const errors = [];
     const normalizedFields = normalizeRosterFieldDefinitions(fields);
@@ -392,6 +537,8 @@ export function planRosterCsvImport({ csvText = '', fields = [], existingPlayers
         if (contact) return { index, ...contact };
         const field = fieldByHeader.get(normalized);
         if (field) return { index, type: 'field', field, label: header };
+        const profile = getProfileHeaderMapping(normalized, header);
+        if (profile) return { index, ...profile };
         return { index, type: 'unknown', label: header };
     });
 
@@ -402,9 +549,10 @@ export function planRosterCsvImport({ csvText = '', fields = [], existingPlayers
     const seenTypes = new Set();
     const seenFields = new Set();
     const seenContacts = new Set();
+    const seenProfileFields = new Set();
     mappings.forEach((mapping) => {
         if (mapping.type === 'unknown') {
-            errors.push(`Unknown CSV header "${mapping.label}". Use Name, Number, a supported parent/guardian contact header, or a configured roster field label/key.`);
+            errors.push(`Unknown CSV header "${mapping.label}". Use Name, Number, a supported player profile header, a supported parent/guardian contact header, or a configured roster field label/key.`);
         } else if (mapping.type === 'name' || mapping.type === 'number') {
             if (seenTypes.has(mapping.type)) errors.push(`Duplicate ${mapping.type === 'name' ? 'name' : 'number'} header.`);
             seenTypes.add(mapping.type);
@@ -415,6 +563,10 @@ export function planRosterCsvImport({ csvText = '', fields = [], existingPlayers
             const contactKey = `${mapping.contactKey}:${mapping.contactField}`;
             if (seenContacts.has(contactKey)) errors.push(`Duplicate contact header for ${mapping.label}.`);
             seenContacts.add(contactKey);
+        } else if (mapping.type === 'profile') {
+            const profileKey = getProfileMappingDedupeKey(mapping);
+            if (seenProfileFields.has(profileKey)) errors.push(`Duplicate player profile header for ${mapping.label}.`);
+            seenProfileFields.add(profileKey);
         }
     });
 
@@ -430,12 +582,28 @@ export function planRosterCsvImport({ csvText = '', fields = [], existingPlayers
         let name = '';
         let number = '';
         const contactValues = new Map();
+        const profileValues = {};
+        const addressValues = {};
         const hasNumberColumn = mappings.some((mapping) => mapping.type === 'number');
         mappings.forEach((mapping) => {
             const rawValue = row[mapping.index] ?? '';
             if (mapping.type === 'name') name = String(rawValue || '').trim();
             if (mapping.type === 'number') number = String(rawValue || '').trim();
             if (mapping.type === 'field') values[mapping.field.key] = rawValue;
+            if (mapping.type === 'profile') {
+                const parsed = parseRosterCsvProfileValue(mapping, rawValue);
+                if (parsed.error) {
+                    errors.push(`Row ${rowNumber}: ${parsed.error}`);
+                } else if (parsed.value !== null && parsed.value !== '') {
+                    if (mapping.profileField === 'address') {
+                        addressValues[mapping.addressField] = parsed.value;
+                    } else if (mapping.profileField === 'rosterStatus') {
+                        Object.assign(profileValues, parsed.value);
+                    } else {
+                        profileValues[mapping.profileField] = parsed.value;
+                    }
+                }
+            }
             if (mapping.type === 'contact') {
                 const existing = contactValues.get(mapping.contactKey) || {
                     bucket: mapping.contactBucket,
@@ -476,7 +644,7 @@ export function planRosterCsvImport({ csvText = '', fields = [], existingPlayers
         const existing = matches[0];
         const existingProfile = existing?.profile || {};
         const profile = {
-            ...existingProfile,
+            ...mergeProfileImportValues(existingProfile, profileValues, addressValues),
             customFields: {
                 ...(existingProfile.customFields || {}),
                 ...publicValues
@@ -484,6 +652,7 @@ export function planRosterCsvImport({ csvText = '', fields = [], existingPlayers
         };
         const payload = { name, profile };
         if (hasNumberColumn) payload.number = number;
+        if (Object.prototype.hasOwnProperty.call(profileValues, 'position')) payload.position = profileValues.position;
         const mergedGuardians = mergeImportedContacts(existing?.guardians || existing?.parents || existing?.familyContacts || [], contactPlan.guardians);
         const mergedContacts = mergeImportedContacts(existing?.contacts || [], contactPlan.contacts);
         const privateRosterFields = Object.keys(privateValues).length > 0 ? privateValues : null;
