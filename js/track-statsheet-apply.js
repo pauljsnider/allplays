@@ -14,7 +14,7 @@ export function validateTrackStatsheetApplyRows(homeRows = []) {
     if (includedHome.length === 0) {
         return {
             ok: false,
-            alertMessage: 'Please include at least one home player.'
+            alertMessage: 'Please review or map at least one home player before applying.'
         };
     }
 
