@@ -350,6 +350,7 @@ export type ScheduleHomeScoringPlayer = {
   number: string;
   points: number;
   fouls: number;
+  stats?: Record<string, number>;
 };
 
 export type PlayerGameStatInput = {
@@ -1336,6 +1337,8 @@ export type ScheduleStatTrackerConfigOption = {
   name: string;
   baseType?: string | null;
   isBasketball?: boolean;
+  columns?: string[];
+  statDefinitions?: Array<{ id?: string; label?: string; acronym?: string; scope?: string; visibility?: string }>;
 };
 
 function normalizeScheduleImportBatch(input: ScheduleImportNormalizedRow['importBatch']) {
@@ -1519,7 +1522,19 @@ export async function loadScheduleStatTrackerConfigsForApp(teamId: string, user:
       id: compactString(config?.id),
       name: compactString(config?.name) || compactString(config?.label) || compactString(config?.baseType) || 'Tracker config',
       baseType: compactString(config?.baseType) || null,
-      isBasketball: config?.isBasketball === true || compactString(config?.baseType).toLowerCase() === 'basketball'
+      isBasketball: config?.isBasketball === true || compactString(config?.baseType).toLowerCase() === 'basketball',
+      columns: (Array.isArray(config?.columns) ? config.columns : [])
+        .map((column: unknown) => compactString(column))
+        .filter(Boolean),
+      statDefinitions: (Array.isArray(config?.statDefinitions) ? config.statDefinitions : [])
+        .map((definition: any) => ({
+          id: compactString(definition?.id),
+          label: compactString(definition?.label),
+          acronym: compactString(definition?.acronym),
+          scope: compactString(definition?.scope),
+          visibility: compactString(definition?.visibility)
+        }))
+        .filter((definition: { id: string; label: string; acronym: string }) => definition.id || definition.label || definition.acronym)
     }))
     .filter((config) => config.id)
     .sort((first, second) => first.name.localeCompare(second.name));
@@ -1944,6 +1959,15 @@ async function loadAggregatedStats(teamId: string, gameId: string) {
   );
 }
 
+function normalizeAggregatedStatTotals(stats: Record<string, unknown> = {}) {
+  return Object.entries(stats).reduce<Record<string, number>>((totals, [key, value]) => {
+    const normalizedKey = compactString(key).toLowerCase();
+    if (!normalizedKey) return totals;
+    totals[normalizedKey] = normalizeGameScoreValue(value);
+    return totals;
+  }, {});
+}
+
 export async function loadHomeScoringPlayers(teamId: string, gameId: string): Promise<ScheduleHomeScoringPlayer[]> {
   if (!teamId || !gameId) return [];
   const [players, statRows] = await Promise.all([
@@ -1956,13 +1980,14 @@ export async function loadHomeScoringPlayers(teamId: string, gameId: string): Pr
     .map((player: any) => {
       const id = compactString(player?.id);
       if (!id) return null;
-      const stats = (statsByPlayerId.get(id) || {}) as Record<string, unknown>;
+      const stats = normalizeAggregatedStatTotals((statsByPlayerId.get(id) || {}) as Record<string, unknown>);
       return {
         id,
         name: normalizePlayerName(player),
         number: normalizePlayerNumber(player),
         points: normalizeGameScoreValue(stats.pts),
-        fouls: normalizeGameScoreValue(stats.fouls)
+        fouls: normalizeGameScoreValue(stats.fouls),
+        stats
       };
     })
     .filter(Boolean) as ScheduleHomeScoringPlayer[];

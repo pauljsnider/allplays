@@ -38,6 +38,7 @@ const PublicTeamsBrowse = lazy(() => import('./pages/PublicTeamsBrowse').then((m
 const ResetPassword = lazy(() => import('./pages/ResetPassword').then((module) => ({ default: module.ResetPassword })));
 const Schedule = lazy(() => import('./pages/Schedule').then((module) => ({ default: module.Schedule })));
 const ScheduleEventDetail = lazy(() => import('./pages/ScheduleEventDetail').then((module) => ({ default: module.ScheduleEventDetail })));
+const StandardTracker = lazy(() => import('./pages/StandardTracker').then((module) => ({ default: module.StandardTracker })));
 const TeamDetail = lazy(() => import('./pages/TeamDetail').then((module) => ({ default: module.TeamDetail })));
 const TeamSettings = lazy(() => import('./pages/TeamSettings').then((module) => ({ default: module.TeamSettings })));
 const TeamCertificates = lazy(() => import('./pages/TeamCertificates').then((module) => ({ default: module.TeamCertificates })));
@@ -205,6 +206,7 @@ export default function App() {
         <Route path="/home" element={<Protected auth={auth}><Home auth={auth} /></Protected>} />
         <Route path="/officials" element={<Protected auth={auth}><Officials auth={auth} /></Protected>} />
         <Route path="/schedule" element={<Protected auth={auth}><Schedule auth={auth} /></Protected>} />
+        <Route path="/schedule/:teamId/:eventId/track" element={<Protected auth={auth}><StandardTracker auth={auth} /></Protected>} />
         <Route path="/schedule/:teamId/:eventId" element={<Protected auth={auth}><ScheduleEventDetail auth={auth} /></Protected>} />
         <Route path="/messages" element={<Protected auth={auth}><Messages auth={auth} /></Protected>} />
         <Route path="/messages/:teamId" element={<Protected auth={auth}><Messages auth={auth} /></Protected>} />

@@ -211,6 +211,58 @@ describe('statTrackingService', () => {
     expect(service.getEventLog()).toEqual([]);
   });
 
+  it('hydrates a restored tracker log so undo can revert the last app session event', async () => {
+    const dependencies = createDependencies();
+    const user = { uid: 'coach-1' };
+    const service = createStatTrackingService({
+      statConfig: { columns: ['GOALS'] },
+      initialScore: { homeScore: 2, awayScore: 0 },
+      initialEventLog: [{
+        eventId: 'restored-event-1',
+        event: {
+          text: '#4 Alex GOALS +1',
+          gameTime: '',
+          period: 'H1',
+          timestamp: 2001,
+          type: 'stat',
+          playerId: 'player-1',
+          statKey: 'goals',
+          value: 1,
+          isOpponent: false,
+          createdBy: 'coach-1'
+        },
+        scoreBefore: { homeScore: 1, awayScore: 0 },
+        scoreAfter: { homeScore: 2, awayScore: 0 },
+        aggregateStatKey: 'GOALS',
+        aggregateDelta: 1,
+        aggregatePlayerId: 'player-1',
+        isOpponent: false,
+        playerName: 'Alex',
+        playerNumber: '4'
+      }],
+      dependencies
+    });
+
+    expect(service.getCurrentScore()).toEqual({ homeScore: 2, awayScore: 0 });
+    expect(service.getEventLog()).toHaveLength(1);
+
+    const undone = await service.undoLastEvent('team-1', 'game-1', user);
+
+    expect(undone?.eventId).toBe('restored-event-1');
+    expect(dependencies.setDoc).toHaveBeenCalledWith({ path: 'teams/team-1/games/game-1/aggregatedStats/player-1' }, expect.objectContaining({
+      stats: {
+        goals: { __increment: -1 }
+      }
+    }), { merge: true });
+    expect(dependencies.updateGameScore).toHaveBeenCalledWith('team-1', 'game-1', {
+      homeScore: 1,
+      awayScore: 0
+    }, user);
+    expect(dependencies.deleteDoc).toHaveBeenCalledWith({ path: 'teams/team-1/games/game-1/events/restored-event-1' });
+    expect(service.getCurrentScore()).toEqual({ homeScore: 1, awayScore: 0 });
+    expect(service.getEventLog()).toEqual([]);
+  });
+
   it('rejects unknown stat columns before writing', async () => {
     const dependencies = createDependencies();
     const service = createStatTrackingService({
