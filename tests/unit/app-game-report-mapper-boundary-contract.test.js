@@ -19,6 +19,7 @@ describe('game report Firestore mapper boundary', () => {
             expect(serviceSource).toContain(mapperName);
             expect(mapperSource).toContain(`export function ${mapperName}`);
         });
+        expect(mapperSource).toContain('export function mapGameReportOpponentStatsRecord');
     });
 
     it('keeps the report service typed to normalized mapper records', () => {
@@ -33,5 +34,6 @@ describe('game report Firestore mapper boundary', () => {
             expect(serviceSource).toContain(typeName);
             expect(typeSource).toContain(`export type ${typeName}`);
         });
+        expect(typeSource).toContain('export type GameReportOpponentFirestoreRecord');
     });
 });
