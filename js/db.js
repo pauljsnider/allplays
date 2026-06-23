@@ -7803,6 +7803,137 @@ function resolveRsvpPlayerIds(rsvp, fallbackByUser) {
 }
 export { buildCoachOverrideRsvpDocId };
 
+const RSVP_PRIVATE_NOTE_FIELDS = [
+    'note',
+    'notes',
+    'adminNote',
+    'adminOnlyNote',
+    'privateNote',
+    'availabilityNote',
+    'privateAvailabilityNote'
+];
+
+function stripRsvpPrivateNoteFields(rsvp = {}) {
+    const sanitized = { ...rsvp };
+    RSVP_PRIVATE_NOTE_FIELDS.forEach((fieldName) => {
+        delete sanitized[fieldName];
+    });
+    return sanitized;
+}
+
+function normalizeRsvpNoteText(note) {
+    return typeof note === 'string' ? note.trim() : '';
+}
+
+function getRsvpNoteVisibility(team) {
+    const preferences = normalizeAvailabilityPreferences(team?.availabilityPreferences);
+    return preferences.noteVisibility === 'team' ? 'team' : 'admins';
+}
+
+function mapRsvpNoteSnapshot(docSnap) {
+    const data = docSnap.data() || {};
+    return {
+        id: docSnap.id,
+        ...data,
+        note: normalizeRsvpNoteText(data.note) || null
+    };
+}
+
+function mergeRsvpNotesIntoRsvps(rsvps = [], notes = []) {
+    const notesById = new Map(
+        (Array.isArray(notes) ? notes : [])
+            .filter((note) => note?.id)
+            .map((note) => [note.id, note])
+    );
+    return (Array.isArray(rsvps) ? rsvps : []).map((rsvp) => {
+        const sanitized = stripRsvpPrivateNoteFields(rsvp);
+        const note = notesById.get(sanitized.id);
+        if (!note) return sanitized;
+        return {
+            ...sanitized,
+            note: normalizeRsvpNoteText(note.note) || null
+        };
+    });
+}
+
+async function getRsvpNoteDocs(noteQuery) {
+    const snap = await getDocs(noteQuery);
+    return snap.docs.map(mapRsvpNoteSnapshot);
+}
+
+async function loadTeamRsvpNoteVisibility(teamId) {
+    try {
+        return getRsvpNoteVisibility(await getTeam(teamId));
+    } catch (_) {
+        return 'admins';
+    }
+}
+
+async function loadAccessibleRsvpNotes(teamId, gameId) {
+    const notesById = new Map();
+    const addNotes = (notes) => {
+        (Array.isArray(notes) ? notes : []).forEach((note) => {
+            if (note?.id) notesById.set(note.id, note);
+        });
+    };
+    const notesRef = collection(db, `teams/${teamId}/games/${gameId}/rsvpNotes`);
+
+    try {
+        addNotes(await getRsvpNoteDocs(notesRef));
+        return [...notesById.values()];
+    } catch (_) {
+        // Parent users cannot list admin-only note docs. Fall back to explicitly
+        // authorized shared notes and the current user's own note docs.
+    }
+
+    if (await loadTeamRsvpNoteVisibility(teamId) === 'team') {
+        try {
+            addNotes(await getRsvpNoteDocs(query(notesRef, where('visibility', '==', 'team'))));
+        } catch (_) {}
+    }
+
+    const currentUserId = auth.currentUser?.uid || '';
+    if (currentUserId) {
+        try {
+            addNotes(await getRsvpNoteDocs(query(notesRef, where('userId', '==', currentUserId))));
+        } catch (_) {}
+    }
+
+    return [...notesById.values()];
+}
+
+async function loadRsvpNotesByIds(teamId, gameId, rsvpIds = []) {
+    const uniqueIds = uniqueNonEmptyIds(rsvpIds);
+    if (uniqueIds.length === 0) return [];
+    const results = await Promise.allSettled(uniqueIds.map(async (rsvpId) => {
+        const snap = await getDoc(doc(db, `teams/${teamId}/games/${gameId}/rsvpNotes`, rsvpId));
+        return snap.exists() ? mapRsvpNoteSnapshot(snap) : null;
+    }));
+    return results
+        .filter((result) => result.status === 'fulfilled' && result.value)
+        .map((result) => result.value);
+}
+
+async function mergeRsvpNotesForExistingRsvps(teamId, gameId, rsvps = []) {
+    const notes = await loadRsvpNotesByIds(teamId, gameId, (Array.isArray(rsvps) ? rsvps : []).map((rsvp) => rsvp?.id));
+    return mergeRsvpNotesIntoRsvps(rsvps, notes);
+}
+
+async function writeRsvpNote(teamId, gameId, rsvpId, { userId, displayName, playerIds, response, note, respondedAt }) {
+    const visibility = await loadTeamRsvpNoteVisibility(teamId);
+    const noteRef = doc(db, `teams/${teamId}/games/${gameId}/rsvpNotes`, rsvpId);
+    await setDoc(noteRef, {
+        userId,
+        displayName: displayName || null,
+        playerIds: playerIds || [],
+        response: response || 'not_responded',
+        respondedAt: respondedAt || null,
+        note: normalizeRsvpNoteText(note) || null,
+        visibility,
+        updatedAt: Timestamp.now()
+    }, { merge: true });
+}
+
 async function computeRsvpSummary(teamId, gameId, options = {}) {
     const { freshRoster = false } = options;
     const [rsvps, roster] = await Promise.all([
@@ -7887,13 +8018,21 @@ export async function submitRsvp(teamId, gameId, userId, { displayName, playerId
     }
 
     const rsvpRef = doc(db, `teams/${teamId}/games/${gameId}/rsvps`, effectiveUserId);
+    const respondedAt = Timestamp.now();
     await setDoc(rsvpRef, {
         userId: effectiveUserId,
         displayName: displayName || null,
         playerIds: playerIds || [],
         response, // 'going' | 'maybe' | 'not_going'
-        respondedAt: Timestamp.now(),
-        note: note || null
+        respondedAt
+    });
+    await writeRsvpNote(teamId, gameId, effectiveUserId, {
+        userId: effectiveUserId,
+        displayName,
+        playerIds,
+        response,
+        note,
+        respondedAt
     });
 
     // Best effort: aggregate summary if caller can read RSVPs.
@@ -7940,13 +8079,21 @@ export async function submitRsvpForPlayer(teamId, gameId, userId, { displayName,
 
     const docId = buildCoachOverrideRsvpDocId(effectiveUserId, normalizedPlayerId);
     const rsvpRef = doc(db, `teams/${teamId}/games/${gameId}/rsvps`, docId);
+    const respondedAt = Timestamp.now();
     await setDoc(rsvpRef, {
         userId: effectiveUserId,
         displayName: displayName || null,
         playerIds: [normalizedPlayerId],
         response, // 'going' | 'maybe' | 'not_going'
-        respondedAt: Timestamp.now(),
-        note: note || null
+        respondedAt
+    });
+    await writeRsvpNote(teamId, gameId, docId, {
+        userId: effectiveUserId,
+        displayName,
+        playerIds: [normalizedPlayerId],
+        response,
+        note,
+        respondedAt
     });
     if (docId !== effectiveUserId) {
         const legacyRsvpRef = doc(db, `teams/${teamId}/games/${gameId}/rsvps`, effectiveUserId);
@@ -7983,7 +8130,9 @@ export async function submitRsvpForPlayer(teamId, gameId, userId, { displayName,
 export async function getRsvps(teamId, gameId) {
     const rsvpsRef = collection(db, `teams/${teamId}/games/${gameId}/rsvps`);
     const snap = await getDocs(rsvpsRef);
-    return snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    const rsvps = snap.docs.map(d => stripRsvpPrivateNoteFields({ id: d.id, ...d.data() }));
+    const notes = await loadAccessibleRsvpNotes(teamId, gameId);
+    return mergeRsvpNotesIntoRsvps(rsvps, notes);
 }
 
 export async function getMyRsvp(teamId, gameId, userId, playerIds = []) {
@@ -7993,7 +8142,9 @@ export async function getMyRsvp(teamId, gameId, userId, playerIds = []) {
 
     if (linkedPlayerIds.length === 0) {
         const snap = await getDoc(directRsvpRef);
-        return snap.exists() ? { id: snap.id, ...snap.data() } : null;
+        if (!snap.exists()) return null;
+        const [merged] = await mergeRsvpNotesForExistingRsvps(teamId, gameId, [{ id: snap.id, ...snap.data() }]);
+        return merged || null;
     }
 
     const [directResult, ...overrideResults] = await Promise.allSettled([
@@ -8006,28 +8157,31 @@ export async function getMyRsvp(teamId, gameId, userId, playerIds = []) {
         .map((result) => ({ id: result.value.id, ...result.value.data() }));
 
     if (overrideRsvps.length > 0) {
-        const responses = Array.from(new Set(overrideRsvps.map((rsvp) => normalizeRsvpResponse(rsvp.response))));
+        const rsvpsWithNotes = await mergeRsvpNotesForExistingRsvps(teamId, gameId, overrideRsvps);
+        const responses = Array.from(new Set(rsvpsWithNotes.map((rsvp) => normalizeRsvpResponse(rsvp.response))));
         if (responses.length === 1) {
             return {
                 id: `${userId}__linkedPlayers`,
                 userId,
-                playerIds: overrideRsvps.flatMap((rsvp) => extractDirectRsvpPlayerIds(rsvp)),
+                playerIds: rsvpsWithNotes.flatMap((rsvp) => extractDirectRsvpPlayerIds(rsvp)),
                 response: responses[0],
-                playerRsvps: overrideRsvps
+                playerRsvps: rsvpsWithNotes
             };
         }
         return {
             id: `${userId}__linkedPlayers`,
             userId,
-            playerIds: overrideRsvps.flatMap((rsvp) => extractDirectRsvpPlayerIds(rsvp)),
+            playerIds: rsvpsWithNotes.flatMap((rsvp) => extractDirectRsvpPlayerIds(rsvp)),
             response: 'mixed',
-            playerRsvps: overrideRsvps
+            playerRsvps: rsvpsWithNotes
         };
     }
 
     if (directResult.status === 'rejected') throw directResult.reason;
     const snap = directResult.value;
-    return snap.exists() ? { id: snap.id, ...snap.data() } : null;
+    if (!snap.exists()) return null;
+    const [merged] = await mergeRsvpNotesForExistingRsvps(teamId, gameId, [{ id: snap.id, ...snap.data() }]);
+    return merged || null;
 }
 
 export async function getRsvpSummary(teamId, gameId) {

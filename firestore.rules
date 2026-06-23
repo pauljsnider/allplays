@@ -1944,11 +1944,86 @@ service cloud.firestore {
             return rsvpId == request.auth.uid ||
                    rsvpId.matches('^' + request.auth.uid + '__[A-Za-z0-9_-]+$');
           }
+          function isRsvpStatusPayloadSafe(data) {
+            return !data.keys().hasAny([
+              'note',
+              'notes',
+              'adminNote',
+              'adminOnlyNote',
+              'privateNote',
+              'availabilityNote',
+              'privateAvailabilityNote'
+            ]);
+          }
           allow create, update: if (isTeamOwnerOrAdmin(teamId) || isParentForTeam(teamId)) &&
                                    isSignedIn() && isOwnRsvpDoc() &&
-                                   request.resource.data.userId == request.auth.uid;
+                                   request.resource.data.userId == request.auth.uid &&
+                                   isRsvpStatusPayloadSafe(request.resource.data);
           allow delete: if (isTeamOwnerOrAdmin(teamId) || isParentForTeam(teamId)) &&
                            isSignedIn() && isOwnRsvpDoc();
+        }
+
+        // Restricted RSVP notes. Parent-readable RSVP docs intentionally carry status only.
+        match /rsvpNotes/{rsvpId} {
+          function isOwnRsvpNoteDoc(data) {
+            return isSignedIn() &&
+                   (data.userId == request.auth.uid ||
+                    rsvpId == request.auth.uid ||
+                    rsvpId.matches('^' + request.auth.uid + '__[A-Za-z0-9_-]+$'));
+          }
+          function teamAllowsTeamVisibleRsvpNotes(teamId) {
+            return get(/databases/$(database)/documents/teams/$(teamId)).data
+                     .get('availabilityPreferences', {})
+                     .get('noteVisibility', 'admins') == 'team';
+          }
+          function isTeamVisibleRsvpNote(teamId, data) {
+            return data.get('visibility', 'admins') == 'team' &&
+                   teamAllowsTeamVisibleRsvpNotes(teamId);
+          }
+          function canReadRsvpNote(teamId, data) {
+            return isTeamOwnerOrAdmin(teamId) ||
+                   isOwnRsvpNoteDoc(data) ||
+                   (isParentForTeam(teamId) && isTeamVisibleRsvpNote(teamId, data));
+          }
+          function isRsvpNotePayloadValid(teamId, data) {
+            return data.keys().hasOnly([
+                     'userId',
+                     'displayName',
+                     'playerIds',
+                     'playerId',
+                     'childId',
+                     'response',
+                     'note',
+                     'visibility',
+                     'respondedAt',
+                     'updatedAt',
+                     'createdAt'
+                   ]) &&
+                   data.keys().hasAll(['userId', 'note', 'visibility', 'updatedAt']) &&
+                   data.userId is string &&
+                   data.userId.size() > 0 &&
+                   (!('displayName' in data) || data.displayName == null || data.displayName is string) &&
+                   (!('playerIds' in data) || data.playerIds is list) &&
+                   (!('playerId' in data) || data.playerId == null || data.playerId is string) &&
+                   (!('childId' in data) || data.childId == null || data.childId is string) &&
+                   (!('response' in data) || data.response in ['going', 'maybe', 'not_going', 'not_responded']) &&
+                   (data.note == null || (data.note is string && data.note.size() <= 2000)) &&
+                   data.visibility in ['admins', 'team'] &&
+                   (data.visibility == 'admins' || teamAllowsTeamVisibleRsvpNotes(teamId)) &&
+                   data.updatedAt is timestamp &&
+                   (!('respondedAt' in data) || data.respondedAt == null || data.respondedAt is timestamp) &&
+                   (!('createdAt' in data) || data.createdAt == null || data.createdAt is timestamp);
+          }
+          function canWriteRsvpNote(teamId, rsvpId, data) {
+            return isRsvpNotePayloadValid(teamId, data) &&
+                   (isTeamOwnerOrAdmin(teamId) ||
+                    (isParentForTeam(teamId) &&
+                     data.userId == request.auth.uid &&
+                     isOwnRsvpNoteDoc(data)));
+          }
+          allow read: if canReadRsvpNote(teamId, resource.data);
+          allow create, update: if isSignedIn() && canWriteRsvpNote(teamId, rsvpId, request.resource.data);
+          allow delete: if isTeamOwnerOrAdmin(teamId) || isOwnRsvpNoteDoc(resource.data);
         }
 
         // Rideshare offers for games/practices.
