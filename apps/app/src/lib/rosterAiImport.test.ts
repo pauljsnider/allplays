@@ -109,6 +109,7 @@ describe('rosterAiImport', () => {
     const result = normalizeRosterAiImportResponse({
       operations: [
         { action: 'add', player: { name: 'Avery Ace', number: '10' } },
+        { action: 'add', player: { name: 'Avary Ace', number: '10' } },
         { action: 'add', player: { name: 'Avery Ace', number: '11' } },
         { action: 'add', player: { name: 'Riley Runner', number: '12' } }
       ]
@@ -118,14 +119,16 @@ describe('rosterAiImport', () => {
 
     expect(result.rows[0].errors[0]).toContain('Possible duplicate');
     expect(result.rows[0].duplicatePlayerId).toBe('p1');
-    expect(result.rows[1].errors).toEqual([]);
+    expect(result.rows[1].errors[0]).toContain('Possible duplicate');
+    expect(result.rows[1].duplicatePlayerId).toBe('p1');
+    expect(result.rows[2].errors).toEqual([]);
 
     const plan = buildRosterAiImportCommitPlan(result.rows);
     expect(plan.addPlayers).toEqual([
       { name: 'Avery Ace', number: '11' },
       { name: 'Riley Runner', number: '12' }
     ]);
-    expect(plan.skippedRows.map((row) => row.rowNumber)).toEqual([1]);
+    expect(plan.skippedRows.map((row) => row.rowNumber)).toEqual([1, 2]);
   });
 
   it('updates and removes preview rows before building a commit plan', () => {

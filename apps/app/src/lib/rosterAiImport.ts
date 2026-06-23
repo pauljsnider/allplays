@@ -253,7 +253,9 @@ function validateRosterAiPreviewRow(row: RosterAiImportPreviewRow, currentPlayer
 
 function findExistingPlayerDuplicate(normalizedName: string, number: string, currentPlayers: NormalizedCurrentPlayer[]) {
   return currentPlayers.find((player) => {
-    if (!player.active || !normalizedName || player.normalizedName !== normalizedName) return false;
+    if (!player.active || !normalizedName) return false;
+    if (number && player.number === number) return true;
+    if (player.normalizedName !== normalizedName) return false;
     return number ? player.number === number : !player.number;
   });
 }
