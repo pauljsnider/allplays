@@ -27,6 +27,7 @@ describe('app legacy adapter initiative source contract', () => {
         const adapterFiles = readdirSync(join(repoRoot, 'apps/app/src/lib/adapters')).sort();
 
         expect(adapterFiles).toEqual(expect.arrayContaining([
+            'legacyAuth.ts',
             'legacyChatService.ts',
             'legacyGameReport.ts',
             'legacyHomeFees.ts',
@@ -44,11 +45,14 @@ describe('app legacy adapter initiative source contract', () => {
         const parentToolsAdapterSource = readRepoFile('apps/app/src/lib/adapters/legacyParentTools.ts');
         const chatAdapterSource = readRepoFile('apps/app/src/lib/adapters/legacyChatService.ts');
         const gameReportAdapterSource = readRepoFile('apps/app/src/lib/adapters/legacyGameReport.ts');
+        const authAdapterSource = readRepoFile('apps/app/src/lib/adapters/legacyAuth.ts');
 
         expect(viteConfigSource).toContain("'@legacy': path.resolve(__dirname, '../../js')");
         expect(parentToolsAdapterSource).toContain("import * as legacyDb from '@legacy/db.js';");
         expect(chatAdapterSource).toContain("import * as legacyDb from '@legacy/db.js';");
         expect(gameReportAdapterSource).toContain("from '@legacy/game-report-stats.js';");
+        expect(authAdapterSource).toContain("import('@legacy/db.js')");
+        expect(authAdapterSource).toContain("import('@legacy/admin-invite.js')");
     });
 
     it('keeps direct ../../../../js references limited to known app-shell exceptions and adapter shims', () => {
@@ -60,15 +64,15 @@ describe('app legacy adapter initiative source contract', () => {
             'apps/app/src/lib/adapters/legacyPlayerProfile.ts',
             'apps/app/src/lib/adapters/legacyRosterPrivacy.ts',
             'apps/app/src/lib/adapters/legacyScheduleHelpers.ts',
-            'apps/app/src/lib/authService.ts',
             'apps/app/src/lib/pushService.ts',
             'apps/app/src/lib/telemetry.ts'
         ]);
     });
 
-    it('routes migrated parent tools, chat, schedule, player, and game report services through adapters', () => {
+    it('routes migrated parent tools, auth, chat, schedule, player, and game report services through adapters', () => {
         const servicePaths = [
             'apps/app/src/lib/parentToolsService.ts',
+            'apps/app/src/lib/authService.ts',
             'apps/app/src/lib/chatService.ts',
             'apps/app/src/lib/scheduleService.ts',
             'apps/app/src/lib/playerService.ts',
@@ -80,6 +84,7 @@ describe('app legacy adapter initiative source contract', () => {
         });
 
         expect(readRepoFile('apps/app/src/lib/parentToolsService.ts')).toContain("from './adapters/legacyParentTools'");
+        expect(readRepoFile('apps/app/src/lib/authService.ts')).toContain("from './adapters/legacyAuth'");
         expect(readRepoFile('apps/app/src/lib/chatService.ts')).toContain("from './adapters/legacyChatService'");
         expect(readRepoFile('apps/app/src/lib/scheduleService.ts')).toContain("from './adapters/legacyScheduleDb'");
         expect(readRepoFile('apps/app/src/lib/scheduleService.ts')).toContain("from './adapters/legacyScheduleHelpers'");
