@@ -992,6 +992,143 @@ test('notifyOpenOfficiatingSlots sends notifications when a game is created with
     }
 });
 
+test('sendFeeUnpaidDueReminders sends eligible unpaid parent fee reminders with amount due date and fee route', async () => {
+    const { moduleExports, env, cleanup } = loadNotificationInternals({
+        teamDoc: { ownerId: 'coach-1', adminEmails: [] },
+        userDocs: {
+            'parent-1': { parentPlayerKeys: ['team-1::player-1'] }
+        },
+        indexedTargets: [
+            { uid: 'parent-1', deviceId: 'parent-device', token: 'parent-token', categories: { fees: true } }
+        ],
+        nowMillis: Date.parse('2026-06-28T12:00:00.000Z')
+    });
+
+    try {
+        const ref = env.firestoreState.doc('teams/team-1/feeBatches/batch-1/feeRecipients/recipient-1');
+        await ref.set({
+            status: 'unpaid',
+            playerKey: 'team-1::player-1',
+            feeTitle: 'Tournament dues',
+            amountCents: 4500,
+            dueDate: '2026-06-30T12:00:00.000Z'
+        });
+
+        await moduleExports.sendFeeUnpaidDueReminders();
+
+        assert.equal(env.messagingCalls.length, 1);
+        assert.deepEqual(env.messagingCalls[0].tokens, ['parent-token']);
+        assert.equal(env.messagingCalls[0].title, 'Reminder: Tournament dues is due soon');
+        assert.equal(env.messagingCalls[0].body, '$45.00 is due Jun 30, 2026 (3 days or less).');
+        assert.equal(env.messagingCalls[0].data.category, 'fees');
+        assert.equal(env.messagingCalls[0].data.appRoute, '/parent-tools/fees?teamId=team-1&batchId=batch-1&recipientId=recipient-1');
+        assert.equal(env.messagingCalls[0].webLink, 'https://allplays.ai/app/#/parent-tools/fees?teamId=team-1&batchId=batch-1&recipientId=recipient-1');
+        assert.deepEqual(env.updatedDocs.map((write) => write.path), [
+            'teams/team-1/feeBatches/batch-1/feeRecipients/recipient-1'
+        ]);
+        assert.equal(env.updatedDocs[0].value.reminderThresholdHours, 72);
+    } finally {
+        cleanup();
+    }
+});
+
+test('sendFeeUnpaidDueReminders excludes paid fees and parents with disabled fee notifications', async () => {
+    const { moduleExports, env, cleanup } = loadNotificationInternals({
+        teamDoc: { ownerId: 'coach-1', adminEmails: [] },
+        userDocs: {
+            'parent-1': { parentPlayerKeys: ['team-1::player-1'] },
+            'parent-2': { parentPlayerKeys: ['team-1::player-2'] },
+            'parent-3': { parentPlayerKeys: ['team-1::player-3'] }
+        },
+        indexedTargets: [
+            { uid: 'parent-1', deviceId: 'parent-device', token: 'parent-token', categories: { fees: true } },
+            { uid: 'parent-2', deviceId: 'paid-device', token: 'paid-token', categories: { fees: true } },
+            { uid: 'parent-3', deviceId: 'disabled-device', token: 'disabled-token', categories: { fees: false } }
+        ],
+        nowMillis: Date.parse('2026-06-28T12:00:00.000Z')
+    });
+
+    try {
+        await env.firestoreState.doc('teams/team-1/feeBatches/batch-1/feeRecipients/eligible').set({
+            status: 'pending',
+            playerKey: 'team-1::player-1',
+            feeTitle: 'Open dues',
+            amountCents: 2500,
+            dueDate: '2026-06-29T12:00:00.000Z'
+        });
+        await env.firestoreState.doc('teams/team-1/feeBatches/batch-1/feeRecipients/paid').set({
+            status: 'paid',
+            playerKey: 'team-1::player-2',
+            feeTitle: 'Paid dues',
+            amountCents: 2500,
+            dueDate: '2026-06-29T12:00:00.000Z'
+        });
+        await env.firestoreState.doc('teams/team-1/feeBatches/batch-1/feeRecipients/disabled').set({
+            status: 'unpaid',
+            playerKey: 'team-1::player-3',
+            feeTitle: 'Silent dues',
+            amountCents: 2500,
+            dueDate: '2026-06-29T12:00:00.000Z'
+        });
+
+        await moduleExports.sendFeeUnpaidDueReminders();
+
+        assert.equal(env.messagingCalls.length, 1);
+        assert.deepEqual(env.messagingCalls[0].tokens, ['parent-token']);
+        assert.equal(env.messagingCalls[0].title, 'Reminder: Open dues is due soon');
+        assert.deepEqual(env.updatedDocs.map((write) => write.path), [
+            'teams/team-1/feeBatches/batch-1/feeRecipients/eligible'
+        ]);
+    } finally {
+        cleanup();
+    }
+});
+
+test('sendFeeUnpaidDueReminders dedupes repeated scheduler runs without suppressing different fees', async () => {
+    const { moduleExports, env, cleanup } = loadNotificationInternals({
+        teamDoc: { ownerId: 'coach-1', adminEmails: [] },
+        userDocs: {
+            'parent-1': { parentPlayerKeys: ['team-1::player-1'] }
+        },
+        indexedTargets: [
+            { uid: 'parent-1', deviceId: 'parent-device', token: 'parent-token', categories: { fees: true } }
+        ],
+        nowMillis: Date.parse('2026-06-28T12:00:00.000Z')
+    });
+
+    try {
+        await env.firestoreState.doc('teams/team-1/feeBatches/batch-1/feeRecipients/recipient-a').set({
+            status: 'unpaid',
+            playerKey: 'team-1::player-1',
+            feeTitle: 'Tournament dues',
+            amountCents: 4500,
+            dueDate: '2026-06-30T12:00:00.000Z'
+        });
+        await env.firestoreState.doc('teams/team-1/feeBatches/batch-2/feeRecipients/recipient-b').set({
+            status: 'unpaid',
+            playerKey: 'team-1::player-1',
+            feeTitle: 'Uniform dues',
+            amountCents: 3000,
+            dueDate: '2026-06-30T12:00:00.000Z'
+        });
+
+        await moduleExports.sendFeeUnpaidDueReminders();
+        await moduleExports.sendFeeUnpaidDueReminders();
+
+        assert.equal(env.messagingCalls.length, 2);
+        assert.deepEqual(env.messagingCalls.map((call) => call.data.appRoute).sort(), [
+            '/parent-tools/fees?teamId=team-1&batchId=batch-1&recipientId=recipient-a',
+            '/parent-tools/fees?teamId=team-1&batchId=batch-2&recipientId=recipient-b'
+        ]);
+        assert.deepEqual(env.updatedDocs.map((write) => write.path).sort(), [
+            'teams/team-1/feeBatches/batch-1/feeRecipients/recipient-a',
+            'teams/team-1/feeBatches/batch-2/feeRecipients/recipient-b'
+        ]);
+    } finally {
+        cleanup();
+    }
+});
+
 test('notifyFeeAssigned sends fees notifications only to opted-in payer targets', async () => {
     const { moduleExports, env, cleanup } = loadNotificationInternals({
         teamDoc: { ownerId: 'coach-1', adminEmails: [] },

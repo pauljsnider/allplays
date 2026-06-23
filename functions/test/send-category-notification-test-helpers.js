@@ -104,7 +104,8 @@ function buildNotificationTestEnv({
     preferenceDocs = {},
     deviceDocs = {},
     invalidTokenResponses = [],
-    sendEachErrors = []
+    sendEachErrors = [],
+    nowMillis = Date.parse('2026-06-28T12:00:00.000Z')
 } = {}) {
     const dedupWrites = [];
     const inboxWrites = [];
@@ -180,6 +181,65 @@ function buildNotificationTestEnv({
 
     function clone(value) {
         return value == null ? value : JSON.parse(JSON.stringify(value));
+    }
+
+    function makeTimestamp(millis) {
+        return {
+            toDate: () => new Date(millis),
+            toMillis: () => millis
+        };
+    }
+
+    function comparableMillis(value) {
+        if (typeof value?.toMillis === 'function') {
+            return value.toMillis();
+        }
+        if (value instanceof Date) {
+            return value.getTime();
+        }
+        if (typeof value === 'string' || typeof value === 'number') {
+            const millis = new Date(value).getTime();
+            return Number.isFinite(millis) ? millis : Number(value);
+        }
+        return NaN;
+    }
+
+    function matchesQueryFilter(data, filter) {
+        const actual = data?.[filter.field];
+        if (filter.op === 'in') {
+            return Array.isArray(filter.value) && filter.value.includes(actual);
+        }
+        if (filter.op === '==') {
+            return actual === filter.value;
+        }
+        if (filter.op === '>=' || filter.op === '<=') {
+            const actualMillis = comparableMillis(actual);
+            const expectedMillis = comparableMillis(filter.value);
+            if (!Number.isFinite(actualMillis) || !Number.isFinite(expectedMillis)) {
+                return false;
+            }
+            return filter.op === '>='
+                ? actualMillis >= expectedMillis
+                : actualMillis <= expectedMillis;
+        }
+        return false;
+    }
+
+    function makeQuery(getDocs) {
+        const filters = [];
+        return {
+            where(field, op, value) {
+                filters.push({ field, op, value });
+                return this;
+            },
+            async get() {
+                const docs = getDocs().filter((docSnap) => {
+                    const data = docSnap.data() || {};
+                    return filters.every((filter) => matchesQueryFilter(data, filter));
+                });
+                return makeQuerySnapshot(docs);
+            }
+        };
     }
 
     function isDeleteSentinel(value) {
@@ -568,6 +628,19 @@ function buildNotificationTestEnv({
     const firestoreState = {
         doc,
         collection,
+        collectionGroup(name) {
+            if (name !== 'feeRecipients') {
+                return makeQuery(() => []);
+            }
+            return makeQuery(() => Array.from(docStore.entries())
+                .filter(([path]) => /\/feeRecipients\/[^/]+$/.test(path))
+                .map(([path, data]) => makeDocSnapshot({
+                    id: path.split('/').pop(),
+                    ref: doc(path),
+                    data,
+                    exists: true
+                })));
+        },
         async getAll(...refs) {
             return Promise.all(refs.map((ref) => ref.get()));
         },
@@ -602,10 +675,9 @@ function buildNotificationTestEnv({
             delete: () => ({ __delete: true })
         },
         Timestamp: {
-            fromDate: (date) => ({
-                toDate: () => new Date(date),
-                toMillis: () => new Date(date).getTime()
-            })
+            now: () => makeTimestamp(nowMillis),
+            fromDate: (date) => makeTimestamp(new Date(date).getTime()),
+            fromMillis: (millis) => makeTimestamp(millis)
         }
     });
 
