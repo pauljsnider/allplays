@@ -713,14 +713,22 @@ export type PublishScheduledGameLineupResult = {
   notificationError: string | null;
 };
 
+function getTimerScope() {
+  if (typeof window !== 'undefined' && typeof window.setTimeout === 'function' && typeof window.clearTimeout === 'function') {
+    return window;
+  }
+  return globalThis;
+}
+
 function withTimeout<T>(promise: Promise<T>, label: string, timeoutMs = primaryDataTimeoutMs): Promise<T> {
-  let timeoutId: number | undefined;
+  const timers = getTimerScope();
+  let timeoutId: ReturnType<typeof setTimeout> | undefined;
   const timeout = new Promise<T>((_, reject) => {
-    timeoutId = window.setTimeout(() => reject(new Error(`${label} timed out.`)), timeoutMs);
+    timeoutId = timers.setTimeout(() => reject(new Error(`${label} timed out.`)), timeoutMs);
   });
 
   return Promise.race([promise, timeout]).finally(() => {
-    if (timeoutId) window.clearTimeout(timeoutId);
+    if (timeoutId !== undefined) timers.clearTimeout(timeoutId);
   });
 }
 
