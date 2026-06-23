@@ -2,45 +2,41 @@ import { useCallback, useEffect, useState } from 'react';
 import { CalendarDays, Copy, Download, Loader2, RefreshCw } from 'lucide-react';
 import { exportCalendarIcsFile, openPublicUrl } from '../../lib/publicActions';
 import { buildParentScheduleIcs, getAppleCalendarFeedUrl, getCalendarEventShareText, getGoogleCalendarFeedUrl, getPrivateTeamCalendarFeedUrl, loadParentCalendarTools, type ParentCalendarTeam } from '../../lib/parentToolsService';
-import { useAsyncOperation } from '../../lib/useAsyncOperation';
 import type { ParentScheduleEvent } from '../../lib/scheduleLogic';
 import type { AuthState } from '../../lib/types';
-import { LoadingBlock, MetricCard, RetryableStatus, Status, ToolHeader, copyText } from './shared';
-import { toAppServiceError, type AppServiceError } from '../../lib/appErrors';
+import { LoadingBlock, MetricCard, RetryableStatus, Status, ToolHeader, copyText, useParentToolAsyncOperation } from './shared';
 
 export function CalendarTool({ auth, refreshVersion }: { auth: AuthState; refreshVersion: number }) {
     const [events, setEvents] = useState<ParentScheduleEvent[]>([]);
     const [teams, setTeams] = useState<ParentCalendarTeam[]>([]);
     const [busyTeamId, setBusyTeamId] = useState('');
     const [message, setMessage] = useState('');
-    const [error, setError] = useState<AppServiceError | null>(null);
-    const loadOperation = useAsyncOperation();
-    const exportOperation = useAsyncOperation();
-    const feedOperation = useAsyncOperation();
+    const loadOperation = useParentToolAsyncOperation();
+    const exportOperation = useParentToolAsyncOperation();
+    const feedOperation = useParentToolAsyncOperation();
     const runLoad = loadOperation.run;
     const runExport = exportOperation.run;
     const runFeed = feedOperation.run;
     const loading = loadOperation.loading;
     const exporting = exportOperation.loading;
+    const error = loadOperation.error ?? exportOperation.error ?? feedOperation.error;
 
     const refresh = useCallback(async (options: { force?: boolean } = {}) => {
-        setError(null);
+        loadOperation.clearError();
+        exportOperation.clearError();
+        feedOperation.clearError();
         setMessage('');
         return runLoad(
             () => loadParentCalendarTools(auth.user, options),
+            'Unable to load calendar tools.',
             {
-                rethrow: false,
-                getErrorMessage: (loadError) => String(toAppServiceError(loadError, 'Unable to load calendar tools.').message || 'Unable to load calendar tools.'),
                 onSuccess: (model) => {
                     setEvents(model.events);
                     setTeams(model.teams);
-                },
-                onError: (loadError) => {
-                    setError(toAppServiceError(loadError, 'Unable to load calendar tools.'));
                 }
             }
         );
-    }, [auth.user, runLoad]);
+    }, [auth.user, exportOperation, feedOperation, loadOperation, runLoad]);
 
     useEffect(() => {
         void refresh(refreshVersion > 0 ? { force: true } : {});
@@ -51,18 +47,15 @@ export function CalendarTool({ auth, refreshVersion }: { auth: AuthState; refres
             setMessage('No events to export yet.');
             return;
         }
-        setError(null);
+        exportOperation.clearError();
+        feedOperation.clearError();
         setMessage('');
         await runExport(
             () => exportCalendarIcsFile('all-plays-family-schedule.ics', buildParentScheduleIcs(events)),
+            'Unable to export the calendar file. Try again or use the Apple or Google calendar links instead.',
             {
-                rethrow: false,
-                getErrorMessage: (downloadError) => String(toAppServiceError(downloadError, 'Unable to export the calendar file. Try again or use the Apple or Google calendar links instead.').message || 'Unable to export the calendar file. Try again or use the Apple or Google calendar links instead.'),
                 onSuccess: () => {
                     setMessage('Calendar file ready to share.');
-                },
-                onError: (downloadError) => {
-                    setError(toAppServiceError(downloadError, 'Unable to export the calendar file. Try again or use the Apple or Google calendar links instead.'));
                 }
             }
         );
@@ -79,7 +72,8 @@ export function CalendarTool({ auth, refreshVersion }: { auth: AuthState; refres
 
     const openFeed = async (team: ParentCalendarTeam, target: 'copy' | 'apple' | 'google') => {
         setBusyTeamId(team.teamId);
-        setError(null);
+        exportOperation.clearError();
+        feedOperation.clearError();
         setMessage('');
         await runFeed(
             async () => {
@@ -91,12 +85,8 @@ export function CalendarTool({ auth, refreshVersion }: { auth: AuthState; refres
                 }
                 await openPublicUrl(target === 'apple' ? getAppleCalendarFeedUrl(feedUrl) : getGoogleCalendarFeedUrl(feedUrl));
             },
+            'Unable to open calendar feed.',
             {
-                rethrow: false,
-                getErrorMessage: (feedError) => String(toAppServiceError(feedError, 'Unable to open calendar feed.').message || 'Unable to open calendar feed.'),
-                onError: (feedError) => {
-                    setError(toAppServiceError(feedError, 'Unable to open calendar feed.'));
-                },
                 onFinally: () => {
                     setBusyTeamId('');
                 }

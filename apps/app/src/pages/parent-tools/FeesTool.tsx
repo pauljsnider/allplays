@@ -3,10 +3,8 @@ import { DollarSign, ExternalLink, Loader2, RefreshCw } from 'lucide-react';
 import { useSearchParams } from 'react-router-dom';
 import { openPublicUrl } from '../../lib/publicActions';
 import { initiateParentTeamFeeCheckout, loadParentFeesForApp, type ParentFeeAppRecord } from '../../lib/parentToolsService';
-import { useAsyncOperation } from '../../lib/useAsyncOperation';
 import type { AuthState } from '../../lib/types';
-import { EmptyState, LoadingBlock, MetricCard, RetryableStatus, ToolHeader, formatDetailAmount, formatMoney, getParentToolErrorMessage, useParentToolAsyncOperation } from './shared';
-import { toAppServiceError } from '../../lib/appErrors';
+import { EmptyState, LoadingBlock, MetricCard, RetryableStatus, ToolHeader, formatDetailAmount, formatMoney, useParentToolAsyncOperation } from './shared';
 
 export function FeesTool({ auth, refreshVersion }: { auth: AuthState; refreshVersion: number }) {
     const [searchParams] = useSearchParams();
@@ -15,7 +13,7 @@ export function FeesTool({ auth, refreshVersion }: { auth: AuthState; refreshVer
     const [payingFeeId, setPayingFeeId] = useState('');
     const [feeErrors, setFeeErrors] = useState<Record<string, string>>({});
     const { loading, error, run: runLoad } = useParentToolAsyncOperation();
-    const payOperation = useAsyncOperation();
+    const payOperation = useParentToolAsyncOperation();
     const requestedTeamId = String(searchParams.get('teamId') || '').trim();
     const requestedBatchId = String(searchParams.get('batchId') || '').trim();
     const requestedRecipientId = String(searchParams.get('recipientId') || '').trim();
@@ -71,6 +69,7 @@ export function FeesTool({ auth, refreshVersion }: { auth: AuthState; refreshVer
         const reusableCheckoutUrl = Boolean(fee.checkoutUrl) && (!checkoutStatus || checkoutStatus === 'open');
         setPayingFeeId(feeKey);
         setFeeErrors((current) => ({ ...current, [feeKey]: '' }));
+        payOperation.clearError();
         await payOperation.run(
             async () => {
                 if (fee.paymentAction === 'checkoutUrl' || (!fee.paymentAction && reusableCheckoutUrl)) {
@@ -87,11 +86,10 @@ export function FeesTool({ auth, refreshVersion }: { auth: AuthState; refreshVer
                 }
                 await openPublicUrl(String(fee.checkoutUrl));
             },
+            'Unable to open checkout. Please try again.',
             {
-                rethrow: false,
-                getErrorMessage: (payError) => getParentToolErrorMessage(toAppServiceError(payError, 'Unable to open checkout. Please try again.'), 'Unable to open checkout. Please try again.'),
                 onError: (payError) => {
-                    setFeeErrors((current) => ({ ...current, [feeKey]: getParentToolErrorMessage(toAppServiceError(payError, 'Unable to open checkout. Please try again.'), 'Unable to open checkout. Please try again.') }));
+                    setFeeErrors((current) => ({ ...current, [feeKey]: String(payError.message || 'Unable to open checkout. Please try again.') }));
                 },
                 onFinally: () => {
                     setPayingFeeId('');

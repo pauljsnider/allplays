@@ -7,6 +7,7 @@ import { useAsyncOperation } from '../../lib/useAsyncOperation';
 type ParentToolAsyncOptions<T> = {
     onSuccess?: (value: T) => void | Promise<void>;
     onError?: (error: AppServiceError) => void | Promise<void>;
+    onFinally?: () => void | Promise<void>;
     clearError?: boolean;
 };
 
@@ -40,6 +41,9 @@ export function useParentToolAsyncOperation() {
                 const appError = toAppServiceError(taskError, fallbackMessage);
                 setError(appError);
                 await options.onError?.(appError);
+            },
+            onFinally: async () => {
+                await options.onFinally?.();
             }
         });
     }, [clearOperationError, runOperation]);

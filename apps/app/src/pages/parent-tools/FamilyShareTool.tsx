@@ -2,10 +2,8 @@ import { useCallback, useEffect, useState, type FormEvent } from 'react';
 import { Copy, Loader2, RefreshCw, Share2 } from 'lucide-react';
 import { createParentFamilyShare, loadFamilyShareModel, revokeParentFamilyShare, updateParentFamilyShareCalendars, type FamilyShareTokenCard } from '../../lib/parentToolsService';
 import { sharePublicUrl } from '../../lib/publicActions';
-import { useAsyncOperation } from '../../lib/useAsyncOperation';
 import type { AuthState } from '../../lib/types';
-import { EmptyState, LoadingBlock, RetryableStatus, Status, ToolHeader, copyText, splitLines } from './shared';
-import { toAppServiceError, type AppServiceError } from '../../lib/appErrors';
+import { EmptyState, LoadingBlock, RetryableStatus, Status, ToolHeader, copyText, splitLines, useParentToolAsyncOperation } from './shared';
 
 export function FamilyShareTool({ auth, refreshVersion }: { auth: AuthState; refreshVersion: number }) {
     const [tokens, setTokens] = useState<FamilyShareTokenCard[]>([]);
@@ -15,31 +13,28 @@ export function FamilyShareTool({ auth, refreshVersion }: { auth: AuthState; ref
     const [editingTokenId, setEditingTokenId] = useState('');
     const [pendingRevokeToken, setPendingRevokeToken] = useState<FamilyShareTokenCard | null>(null);
     const [message, setMessage] = useState('');
-    const [error, setError] = useState<AppServiceError | null>(null);
-    const loadOperation = useAsyncOperation();
-    const saveOperation = useAsyncOperation();
+    const loadOperation = useParentToolAsyncOperation();
+    const saveOperation = useParentToolAsyncOperation();
     const runLoad = loadOperation.run;
     const runSave = saveOperation.run;
     const loading = loadOperation.loading;
     const saving = saveOperation.loading;
+    const error = loadOperation.error ?? saveOperation.error;
 
     const refresh = useCallback(async () => {
-        setError(null);
+        loadOperation.clearError();
+        saveOperation.clearError();
         return runLoad(
             () => loadFamilyShareModel(auth.user),
+            'Unable to load family share links.',
             {
-                rethrow: false,
-                getErrorMessage: (loadError) => String(toAppServiceError(loadError, 'Unable to load family share links.').message || 'Unable to load family share links.'),
                 onSuccess: (model) => {
                     setChildren(model.children);
                     setTokens(model.tokens);
-                },
-                onError: (loadError) => {
-                    setError(toAppServiceError(loadError, 'Unable to load family share links.'));
                 }
             }
         );
-    }, [auth.user, runLoad]);
+    }, [auth.user, loadOperation, runLoad, saveOperation]);
 
     useEffect(() => {
         void refresh();
@@ -47,41 +42,33 @@ export function FamilyShareTool({ auth, refreshVersion }: { auth: AuthState; ref
 
     const create = async (event: FormEvent) => {
         event.preventDefault();
-        setError(null);
+        saveOperation.clearError();
         setMessage('');
         await runSave(
             () => createParentFamilyShare(auth.user, label || 'Family share', splitLines(calendarText)),
+            'Unable to create family share link.',
             {
-                rethrow: false,
-                getErrorMessage: (createError) => String(toAppServiceError(createError, 'Unable to create family share link.').message || 'Unable to create family share link.'),
                 onSuccess: async (result) => {
                     setMessage('Family link created.');
                     setLabel('');
                     setCalendarText('');
                     await copyText(result.url, setMessage);
                     await refresh();
-                },
-                onError: (createError) => {
-                    setError(toAppServiceError(createError, 'Unable to create family share link.'));
                 }
             }
         );
     };
 
     const revoke = async (tokenId: string) => {
-        setError(null);
+        saveOperation.clearError();
         setMessage('');
         await runSave(
             () => revokeParentFamilyShare(tokenId),
+            'Unable to revoke family share link.',
             {
-                rethrow: false,
-                getErrorMessage: (revokeError) => String(toAppServiceError(revokeError, 'Unable to revoke family share link.').message || 'Unable to revoke family share link.'),
                 onSuccess: async () => {
                     setMessage('Family link revoked.');
                     await refresh();
-                },
-                onError: (revokeError) => {
-                    setError(toAppServiceError(revokeError, 'Unable to revoke family share link.'));
                 },
                 onFinally: () => {
                     setPendingRevokeToken(null);
@@ -91,20 +78,16 @@ export function FamilyShareTool({ auth, refreshVersion }: { auth: AuthState; ref
     };
 
     const saveCalendars = async (tokenId: string, value: string) => {
-        setError(null);
+        saveOperation.clearError();
         setMessage('');
         await runSave(
             () => updateParentFamilyShareCalendars(tokenId, splitLines(value)),
+            'Unable to update calendar links.',
             {
-                rethrow: false,
-                getErrorMessage: (saveError) => String(toAppServiceError(saveError, 'Unable to update calendar links.').message || 'Unable to update calendar links.'),
                 onSuccess: async () => {
                     setEditingTokenId('');
                     setMessage('Calendar links updated.');
                     await refresh();
-                },
-                onError: (saveError) => {
-                    setError(toAppServiceError(saveError, 'Unable to update calendar links.'));
                 }
             }
         );

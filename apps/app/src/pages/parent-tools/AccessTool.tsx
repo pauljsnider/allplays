@@ -12,9 +12,8 @@ import {
     type ParentAccessRequest,
     type ParentAccessTeam
 } from '../../lib/parentToolsAccessService';
-import { useAsyncOperation } from '../../lib/useAsyncOperation';
 import type { AuthState } from '../../lib/types';
-import { EmptyState, LoadingBlock, RetryableStatus, Status, ToolHeader, getParentToolErrorMessage } from './shared';
+import { EmptyState, LoadingBlock, RetryableStatus, Status, ToolHeader, getParentToolErrorMessage, useParentToolAsyncOperation } from './shared';
 
 export function AccessTool({ auth, onAccessChanged }: { auth: AuthState; onAccessChanged: () => void }) {
     const [teams, setTeams] = useState<ParentAccessTeam[]>([]);
@@ -26,14 +25,11 @@ export function AccessTool({ auth, onAccessChanged }: { auth: AuthState; onAcces
     const [relation, setRelation] = useState('Parent');
     const [redeemCode, setRedeemCode] = useState('');
     const [message, setMessage] = useState('');
-    const [loadError, setLoadError] = useState<AppServiceError | null>(null);
-    const [manualLookupError, setManualLookupError] = useState<AppServiceError | null>(null);
-    const [actionError, setActionError] = useState<AppServiceError | null>(null);
-    const accessLoadOperation = useAsyncOperation();
-    const teamLoadOperation = useAsyncOperation();
-    const playerLoadOperation = useAsyncOperation();
-    const submitOperation = useAsyncOperation();
-    const redeemOperation = useAsyncOperation();
+    const accessLoadOperation = useParentToolAsyncOperation();
+    const teamLoadOperation = useParentToolAsyncOperation();
+    const playerLoadOperation = useParentToolAsyncOperation();
+    const submitOperation = useParentToolAsyncOperation();
+    const redeemOperation = useParentToolAsyncOperation();
     const runAccessLoad = accessLoadOperation.run;
     const runTeamLoad = teamLoadOperation.run;
     const runPlayerLoad = playerLoadOperation.run;
@@ -45,25 +41,26 @@ export function AccessTool({ auth, onAccessChanged }: { auth: AuthState; onAcces
     const loadingPlayers = playerLoadOperation.loading;
     const saving = submitOperation.loading;
     const redeeming = redeemOperation.loading;
+    const loadError = accessLoadOperation.error;
+    const manualLookupError = teamLoadOperation.error ?? playerLoadOperation.error;
+    const actionError = submitOperation.error ?? redeemOperation.error;
 
     const loadTeams = useCallback(async () => {
-        setManualLookupError(null);
-        setActionError(null);
+        teamLoadOperation.clearError();
+        playerLoadOperation.clearError();
+        submitOperation.clearError();
+        redeemOperation.clearError();
         return runTeamLoad(
             () => loadParentAccessTeams(),
+            'Unable to load public teams.',
             {
-                rethrow: false,
-                getErrorMessage: (error) => getParentToolErrorMessage(toAppServiceError(error, 'Unable to load public teams.'), 'Unable to load public teams.'),
                 onSuccess: (rows) => {
                     setTeams(rows);
                     setSelectedTeamId((current) => rows.some((team) => team.id === current) ? current : '');
-                },
-                onError: (error) => {
-                    setManualLookupError(toAppServiceError(error, 'Unable to load public teams.'));
                 }
             }
         );
-    }, [runTeamLoad]);
+    }, [playerLoadOperation, redeemOperation, runTeamLoad, submitOperation, teamLoadOperation]);
 
     const openManualRequest = useCallback(() => {
         setManualRequestOpen(true);
@@ -73,24 +70,22 @@ export function AccessTool({ auth, onAccessChanged }: { auth: AuthState; onAcces
     }, [loadTeams, loadingTeams, teams.length]);
 
     const refresh = useCallback(async () => {
-        setLoadError(null);
-        setManualLookupError(null);
-        setActionError(null);
+        accessLoadOperation.clearError();
+        teamLoadOperation.clearError();
+        playerLoadOperation.clearError();
+        submitOperation.clearError();
+        redeemOperation.clearError();
         setMessage('');
         return runAccessLoad(
             () => loadParentAccessModel(auth.user),
+            'Unable to load team access.',
             {
-                rethrow: false,
-                getErrorMessage: (error) => getParentToolErrorMessage(toAppServiceError(error, 'Unable to load team access.'), 'Unable to load team access.'),
                 onSuccess: (model) => {
                     setRequests(model.requests);
-                },
-                onError: (error) => {
-                    setLoadError(toAppServiceError(error, 'Unable to load team access.'));
                 }
             }
         );
-    }, [auth.user, runAccessLoad]);
+    }, [accessLoadOperation, auth.user, playerLoadOperation, redeemOperation, runAccessLoad, submitOperation, teamLoadOperation]);
 
     useEffect(() => {
         void refresh();
@@ -105,22 +100,16 @@ export function AccessTool({ auth, onAccessChanged }: { auth: AuthState; onAcces
     }, [auth.user?.uid]);
 
     const loadPlayersForTeam = useCallback(async (teamId: string) => {
-        setManualLookupError(null);
         const rows = await runPlayerLoad(
             () => loadParentAccessPlayers(teamId),
+            'Unable to load players for this team.',
             {
-                rethrow: false,
-                getErrorMessage: (error) => getParentToolErrorMessage(toAppServiceError(error, 'Unable to load players for this team.'), 'Unable to load players for this team.'),
-                onError: (error) => {
-                    setManualLookupError(toAppServiceError(error, 'Unable to load players for this team.'));
+                onSuccess: (result) => {
+                    setPlayers(result);
+                    setSelectedPlayerId(result[0]?.id || '');
                 }
             }
         );
-        if (rows) {
-            setPlayers(rows);
-            setSelectedPlayerId(rows[0]?.id || '');
-            return;
-        }
     }, [runPlayerLoad]);
 
     useEffect(() => {
@@ -128,40 +117,39 @@ export function AccessTool({ auth, onAccessChanged }: { auth: AuthState; onAcces
         async function loadPlayers() {
             setPlayers([]);
             setSelectedPlayerId('');
-            if (!selectedTeamId) return;
+            if (!selectedTeamId) {
+                playerLoadOperation.clearError();
+                return;
+            }
             const rows = await runPlayerLoad(
                 () => loadParentAccessPlayers(selectedTeamId),
+                'Unable to load players for this team.',
                 {
-                    rethrow: false,
-                    getErrorMessage: (error) => getParentToolErrorMessage(toAppServiceError(error, 'Unable to load players for this team.'), 'Unable to load players for this team.'),
-                    onError: (error) => {
-                        if (!cancelled) {
-                            setManualLookupError(toAppServiceError(error, 'Unable to load players for this team.'));
-                        }
+                    onSuccess: (result) => {
+                        if (cancelled) return;
+                        setPlayers(result);
+                        setSelectedPlayerId(result[0]?.id || '');
                     }
                 }
             );
-            if (!cancelled && rows) {
-                setManualLookupError(null);
-                setPlayers(rows);
-                setSelectedPlayerId(rows[0]?.id || '');
-            }
+            if (cancelled || !rows) return;
         }
         void loadPlayers();
         return () => {
             cancelled = true;
         };
-    }, [runPlayerLoad, selectedTeamId]);
+    }, [playerLoadOperation, runPlayerLoad, selectedTeamId]);
 
     const redeem = async (event: FormEvent) => {
         event.preventDefault();
         const currentUser = auth.user;
         if (!currentUser?.uid) {
-            setActionError(toAppServiceError(new Error('Sign in to redeem an invite code.'), 'Sign in to redeem an invite code.'));
+            redeemOperation.setError(toAppServiceError(new Error('Sign in to redeem an invite code.'), 'Sign in to redeem an invite code.'));
             return;
         }
 
-        setActionError(null);
+        submitOperation.clearError();
+        redeemOperation.clearError();
         setMessage('');
         await runRedeem(
             () => redeemSignedInInvite({
@@ -170,17 +158,13 @@ export function AccessTool({ auth, onAccessChanged }: { auth: AuthState; onAcces
                 email: currentUser.email,
                 refresh: auth.refresh
             }),
+            'Unable to redeem this invite code.',
             {
-                rethrow: false,
-                getErrorMessage: (error) => getParentToolErrorMessage(toAppServiceError(error, 'Unable to redeem this invite code.'), 'Unable to redeem this invite code.'),
                 onSuccess: async (result) => {
                     await refresh();
                     onAccessChanged();
                     setRedeemCode('');
                     setMessage(result.message);
-                },
-                onError: (error) => {
-                    setActionError(toAppServiceError(error, 'Unable to redeem this invite code.'));
                 }
             }
         );
@@ -189,23 +173,20 @@ export function AccessTool({ auth, onAccessChanged }: { auth: AuthState; onAcces
     const submit = async (event: FormEvent) => {
         event.preventDefault();
         if (!selectedTeamId || !selectedPlayerId) {
-            setActionError(toAppServiceError(new Error('Choose a team and player first.'), 'Choose a team and player first.'));
+            submitOperation.setError(toAppServiceError(new Error('Choose a team and player first.'), 'Choose a team and player first.'));
             return;
         }
-        setActionError(null);
+        submitOperation.clearError();
+        redeemOperation.clearError();
         setMessage('');
         await runSubmit(
             () => submitParentAccessRequest(selectedTeamId, selectedPlayerId, relation),
+            'Unable to send access request.',
             {
-                rethrow: false,
-                getErrorMessage: (error) => getParentToolErrorMessage(toAppServiceError(error, 'Unable to send access request.'), 'Unable to send access request.'),
                 onSuccess: async () => {
                     await refresh();
                     onAccessChanged();
                     setMessage('Access request sent.');
-                },
-                onError: (error) => {
-                    setActionError(toAppServiceError(error, 'Unable to send access request.'));
                 }
             }
         );
@@ -246,7 +227,7 @@ export function AccessTool({ auth, onAccessChanged }: { auth: AuthState; onAcces
                         </form>
                         {manualRequestOpen ? (
                             <form className="mt-3 grid gap-3 lg:grid-cols-[1fr_1fr_auto]" onSubmit={submit}>
-                                {manualLookupError ? <div className="lg:col-span-3"><RetryableStatus error={manualLookupError} fallbackMessage="Unable to load public teams." onRetry={selectedTeamId ? () => { void loadPlayersForTeam(selectedTeamId); } : loadTeams} retrying={loadingTeams || loadingPlayers} /></div> : null}
+                                {manualLookupError ? <div className="lg:col-span-3"><RetryableStatus error={manualLookupError} fallbackMessage="Unable to load public teams." onRetry={playerLoadOperation.error && selectedTeamId ? () => { void loadPlayersForTeam(selectedTeamId); } : loadTeams} retrying={loadingTeams || loadingPlayers} /></div> : null}
                                 <div className="min-w-0">
                                     <label className="app-label" htmlFor="parent-access-team">Team</label>
                                     <select id="parent-access-team" aria-label="Team" className="auth-input mt-1" value={selectedTeamId} onChange={(event) => setSelectedTeamId(event.target.value)} disabled={loadingTeams || !teams.length}>
