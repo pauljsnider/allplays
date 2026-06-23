@@ -1,4 +1,4 @@
-import { useCallback, useState } from 'react';
+import { useCallback, useRef, useState } from 'react';
 
 type UseAsyncOperationRunOptions<T> = {
     clearError?: boolean;
@@ -7,6 +7,8 @@ type UseAsyncOperationRunOptions<T> = {
     onSuccess?: (value: T) => void | Promise<void>;
     onError?: (error: unknown) => void | Promise<void>;
     onFinally?: () => void | Promise<void>;
+    ignoreStale?: boolean;
+    shouldHandleError?: (error: unknown) => boolean;
     rethrow?: boolean;
 };
 
@@ -20,6 +22,7 @@ function getDefaultErrorMessage(error: unknown) {
 export function useAsyncOperation() {
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
+    const latestRunIdRef = useRef(0);
 
     const clearError = useCallback(() => {
         setError(null);
@@ -34,9 +37,15 @@ export function useAsyncOperation() {
             onSuccess,
             onError,
             onFinally,
+            ignoreStale = false,
+            shouldHandleError,
             rethrow = true
         }: UseAsyncOperationRunOptions<T> = {}
     ) {
+        const runId = latestRunIdRef.current + 1;
+        latestRunIdRef.current = runId;
+        const isCurrentRun = () => !ignoreStale || latestRunIdRef.current === runId;
+
         setLoading(true);
         if (shouldClearError) {
             setError(null);
@@ -44,18 +53,24 @@ export function useAsyncOperation() {
 
         try {
             const value = await operation();
-            await onSuccess?.(value);
+            if (isCurrentRun()) {
+                await onSuccess?.(value);
+            }
             return value;
         } catch (error) {
-            setError(errorMessage || getErrorMessage?.(error) || getDefaultErrorMessage(error));
-            await onError?.(error);
+            if (isCurrentRun() && (shouldHandleError?.(error) ?? true)) {
+                setError(errorMessage || getErrorMessage?.(error) || getDefaultErrorMessage(error));
+                await onError?.(error);
+            }
             if (rethrow) {
                 throw error;
             }
             return null;
         } finally {
-            setLoading(false);
-            await onFinally?.();
+            if (isCurrentRun()) {
+                setLoading(false);
+                await onFinally?.();
+            }
         }
     }, []);
 
