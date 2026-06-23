@@ -360,11 +360,22 @@ describe('team schedule filtering', () => {
         expect(events.map((event) => event.id)).toEqual(requestedSummaryIds);
         expect(events[1]).toMatchObject({
             id: 'practice-series__2026-01-12',
+            realGameId: 'practice-series',
             isPractice: true,
             myRsvp: 'going',
             rsvpSummary: { going: 1, maybe: 0, notGoing: 0 }
         });
         expect(events[1].date.toISOString()).toBe('2026-01-12T18:00:00.000Z');
+    });
+
+    it('uses real game IDs for live, report, and share actions while keeping occurrence RSVP ids', () => {
+        const source = readFileSync(new URL('../../team.html', import.meta.url), 'utf8');
+
+        expect(source).toContain("realGameId: game.id || game.gameId || id");
+        expect(source).toContain('live-game.html?teamId=${currentTeamId}&gameId=${game.realGameId || game.gameId || game.id}');
+        expect(source).toContain('game.html#teamId=${currentTeamId}&gameId=${game.realGameId || game.gameId || game.id}');
+        expect(source).toContain('data-share-game-id="${game.realGameId || game.gameId || game.id}"');
+        expect(source).toContain('data-game-id="${escapeAttr(game.gameId || game.id)}"');
     });
 
     it('wires the team availability filter and RSVP controls into team.html', () => {

@@ -2375,6 +2375,7 @@
                     type: 'db',
                     id,
                     gameId: id,
+                    realGameId: game.id || game.gameId || id,
                     title,
                     date: gameDate,
                     opponent: game.opponent,
@@ -2772,12 +2773,12 @@
                             </div>
                             <div class="flex flex-col items-end gap-2">
                                 ${(isLive || isUpcoming) ? `
-                                  <a href="live-game.html?teamId=${currentTeamId}&gameId=${game.gameId || game.id}"
+                                  <a href="live-game.html?teamId=${currentTeamId}&gameId=${game.realGameId || game.gameId || game.id}"
                                      class="inline-flex items-center gap-2 ${isLive ? 'bg-red-500 hover:bg-red-600' : 'bg-slate-800 hover:bg-slate-900'} text-white px-4 py-2 rounded-lg font-semibold shadow transition">
                                       ${isLive ? '<span class="w-2 h-2 bg-white rounded-full animate-pulse"></span>' : '<span class="text-xs">👁️</span>'}
                                       ${isLive ? 'Live Now' : 'View Live'}
                                   </a>
-                                  <button data-share-game-id="${game.gameId || game.id}" data-share-mode="live"
+                                  <button data-share-game-id="${game.realGameId || game.gameId || game.id}" data-share-mode="live"
                                      class="inline-flex items-center gap-2 bg-white text-slate-700 px-4 py-2 rounded-lg font-semibold shadow border border-gray-200 hover:bg-gray-50 transition">
                                       <span class="text-xs">🔗</span>
                                       Share
@@ -2804,14 +2805,14 @@
                                             <div class="text-2xl md:text-3xl font-bold font-mono ${lost ? 'text-red-600' : 'text-gray-700'}">${game.awayScore}</div>
                                         </div>
                                       </div>
-                                      <a href="game.html#teamId=${currentTeamId}&gameId=${game.gameId || game.id}"
+                                      <a href="game.html#teamId=${currentTeamId}&gameId=${game.realGameId || game.gameId || game.id}"
                                          class="inline-flex items-center gap-1 text-sm text-primary-600 hover:text-primary-700 transition font-medium">
                                         <span>View Report</span>
                                         <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"></path>
                                         </svg>
                                       </a>
-                                      <button data-share-game-id="${game.gameId || game.id}" data-share-mode="report"
+                                      <button data-share-game-id="${game.realGameId || game.gameId || game.id}" data-share-mode="report"
                                          class="inline-flex items-center gap-1 text-sm text-slate-600 hover:text-slate-800 transition font-medium">
                                         <span>Share Report</span>
                                         <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -2819,7 +2820,7 @@
                                         </svg>
                                       </button>
                                       ${game.liveStatus === 'completed' ? `
-                                      <a href="live-game.html?teamId=${currentTeamId}&gameId=${game.gameId || game.id}&replay=true"
+                                      <a href="live-game.html?teamId=${currentTeamId}&gameId=${game.realGameId || game.gameId || game.id}&replay=true"
                                          class="inline-flex items-center gap-1 text-sm text-teal-600 hover:text-teal-700 transition font-medium">
                                         <span>Replay</span>
                                         <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
