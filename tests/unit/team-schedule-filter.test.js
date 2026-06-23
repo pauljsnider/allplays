@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi, afterEach } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { filterScheduleEventsForPrint, getDefaultSchedulePrintOptions } from '../../js/schedule-print.js';
 
@@ -18,6 +18,39 @@ function loadGetFilteredScheduleEvents() {
         let scheduleViewFilter = context.scheduleViewFilter;
         ${functionSource}
         return getFilteredScheduleEvents();
+    `);
+}
+
+function loadGetAllEvents() {
+    const source = readFileSync(new URL('../../team.html', import.meta.url), 'utf8');
+    const start = source.indexOf('async function getAllEvents(team, dbGames) {');
+    const end = source.indexOf('\n\n        async function renderSchedule(team, dbGames) {', start);
+
+    if (start === -1 || end === -1) {
+        throw new Error('Could not locate getAllEvents() in team.html');
+    }
+
+    const functionSource = source.slice(start, end);
+    return new Function('context', `
+        let currentTeamId = context.currentTeamId;
+        let currentUser = context.currentUser;
+        let currentTeamAccessInfo = context.currentTeamAccessInfo;
+        let getTrackedCalendarEventUids = context.getTrackedCalendarEventUids;
+        let fetchAndParseCalendar = context.fetchAndParseCalendar;
+        let isTrackedCalendarEvent = context.isTrackedCalendarEvent;
+        let isPracticeEvent = context.isPracticeEvent;
+        let extractOpponent = context.extractOpponent;
+        let normalizeAvailabilityPreferences = context.normalizeAvailabilityPreferences;
+        let canManageTeamAvailability = context.canManageTeamAvailability;
+        let getRsvpSummaries = context.getRsvpSummaries;
+        let buildAvailabilityNoteRows = context.buildAvailabilityNoteRows;
+        let getRsvps = context.getRsvps;
+        let getMyRsvp = context.getMyRsvp;
+        let isAvailabilityLocked = context.isAvailabilityLocked;
+        let expandRecurrence = context.expandRecurrence;
+        let console = context.console || globalThis.console;
+        ${functionSource}
+        return getAllEvents(context.team, context.dbGames);
     `);
 }
 
@@ -43,6 +76,10 @@ function hoursFromNow(offsetHours) {
 }
 
 describe('team schedule filtering', () => {
+    afterEach(() => {
+        vi.useRealTimers();
+    });
+
     it('defaults the team page schedule to all upcoming events while keeping recent results manual', () => {
         const source = readFileSync(new URL('../../team.html', import.meta.url), 'utf8');
         const getFilteredScheduleEvents = loadGetFilteredScheduleEvents();
@@ -252,6 +289,93 @@ describe('team schedule filtering', () => {
         expect(all.map((event) => event.opponent || event.title)).toEqual(['Practice', 'In Range']);
         expect(games.map((event) => event.opponent)).toEqual(['In Range']);
         expect(practices.map((event) => event.title)).toEqual(['Practice']);
+    });
+
+    it('expands recurring practice masters into per-occurrence RSVP events on the team page', async () => {
+        vi.useFakeTimers();
+        vi.setSystemTime(new Date('2026-01-10T12:00:00Z'));
+
+        const getAllEvents = loadGetAllEvents();
+        const requestedSummaryIds = [];
+        const requestedMyRsvpIds = [];
+
+        const events = await getAllEvents({
+            currentTeamId: 'team-1',
+            currentUser: {
+                uid: 'parent-1',
+                parentTeamIds: ['team-1']
+            },
+            currentTeamAccessInfo: {
+                accessLevel: 'parent',
+                hasAccess: true
+            },
+            team: {
+                name: 'Team 1',
+                availabilityPreferences: { noteVisibility: 'staff' },
+                calendarUrls: []
+            },
+            dbGames: [
+                {
+                    id: 'practice-series',
+                    type: 'practice',
+                    isSeriesMaster: true,
+                    date: new Date('2026-01-05T18:00:00Z'),
+                    recurrence: {
+                        freq: 'weekly',
+                        interval: 1,
+                        byDays: ['MO'],
+                        count: 3
+                    },
+                    status: 'scheduled',
+                    location: 'Main Field'
+                }
+            ],
+            getTrackedCalendarEventUids: async () => [],
+            fetchAndParseCalendar: async () => [],
+            isTrackedCalendarEvent: () => false,
+            isPracticeEvent: () => false,
+            extractOpponent: () => 'Opponent',
+            normalizeAvailabilityPreferences: (prefs) => prefs,
+            canManageTeamAvailability: () => false,
+            getRsvpSummaries: async (_teamId, gameIds) => {
+                requestedSummaryIds.push(...gameIds);
+                return new Map([[gameIds[1], { going: 1, maybe: 0, notGoing: 0 }]]);
+            },
+            buildAvailabilityNoteRows: () => [],
+            getRsvps: async () => [],
+            getMyRsvp: async (_teamId, gameId) => {
+                requestedMyRsvpIds.push(gameId);
+                return gameId === 'practice-series__2026-01-12' ? { response: 'going' } : null;
+            },
+            isAvailabilityLocked: () => false,
+            expandRecurrence: (await import('../../js/utils.js')).expandRecurrence
+        });
+
+        expect(requestedSummaryIds).toEqual([
+            'practice-series__2026-01-05',
+            'practice-series__2026-01-12',
+            'practice-series__2026-01-19'
+        ]);
+        expect(requestedMyRsvpIds).toEqual(requestedSummaryIds);
+        expect(events.map((event) => event.id)).toEqual(requestedSummaryIds);
+        expect(events[1]).toMatchObject({
+            id: 'practice-series__2026-01-12',
+            realGameId: 'practice-series',
+            isPractice: true,
+            myRsvp: 'going',
+            rsvpSummary: { going: 1, maybe: 0, notGoing: 0 }
+        });
+        expect(events[1].date.toISOString()).toBe('2026-01-12T18:00:00.000Z');
+    });
+
+    it('uses real game IDs for live, report, and share actions while keeping occurrence RSVP ids', () => {
+        const source = readFileSync(new URL('../../team.html', import.meta.url), 'utf8');
+
+        expect(source).toContain("realGameId: game.id || game.gameId || id");
+        expect(source).toContain('live-game.html?teamId=${currentTeamId}&gameId=${game.realGameId || game.gameId || game.id}');
+        expect(source).toContain('game.html#teamId=${currentTeamId}&gameId=${game.realGameId || game.gameId || game.id}');
+        expect(source).toContain('data-share-game-id="${game.realGameId || game.gameId || game.id}"');
+        expect(source).toContain('data-game-id="${escapeAttr(game.gameId || game.id)}"');
     });
 
     it('wires the team availability filter and RSVP controls into team.html', () => {

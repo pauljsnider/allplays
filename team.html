@@ -326,7 +326,7 @@
     <script type="module">
         import { getTeam, getPlayers, getGames, getConfigs, getTrackedCalendarEventUids, getUnreadChatCounts, getUserProfile, getAllUsers, saveTeamAvailabilityPreferences, grantScorekeeperAccess, revokeScorekeeperAccess, grantStreamScoreAccess, revokeStreamScoreAccess, getRsvps, getRsvpSummaries, submitRsvp, getMyRsvp, getLocalAttractionSponsors, getAdSpaceSponsors, postChatMessage, getPublicTrackingItems, getPlayerTrackingStatuses } from './js/db.js?v=65';
         import { normalizeExternalWebsiteUrl, selectRotatingSponsor } from './js/local-attractions.js?v=2';
-        import { renderHeader, renderFooter, getUrlParams, formatDate, formatShortDate, formatTime, fetchAndParseCalendar, extractOpponent, isPracticeEvent, isTrackedCalendarEvent, escapeHtml, shareOrCopy } from './js/utils.js?v=11';
+        import { renderHeader, renderFooter, getUrlParams, formatDate, formatShortDate, formatTime, fetchAndParseCalendar, extractOpponent, isPracticeEvent, isTrackedCalendarEvent, expandRecurrence, escapeHtml, shareOrCopy } from './js/utils.js?v=11';
         import { fetchLeagueStandings } from './js/league-standings.js?v=1';
         import { computeNativeStandings } from './js/native-standings.js?v=1';
         import { computeTournamentPoolStandings } from './js/tournament-standings.js?v=3';
@@ -2256,6 +2256,35 @@
 
         async function getAllEvents(team, dbGames) {
             let allEvents = [];
+            const scheduleEntries = [];
+
+            for (const game of (dbGames || [])) {
+                const id = game.id || game.gameId;
+                const isRecurringPractice = game.type === 'practice' && game.isSeriesMaster && game.recurrence;
+
+                if (isRecurringPractice) {
+                    for (const occ of expandRecurrence(game)) {
+                        scheduleEntries.push({
+                            game,
+                            id: `${occ.masterId}__${occ.instanceDate}`,
+                            date: occ.date instanceof Date ? occ.date : new Date(occ.date),
+                            title: occ.title || game.title || 'Practice',
+                            location: occ.location || game.location || 'TBD',
+                            notes: occ.notes ?? game.notes
+                        });
+                    }
+                    continue;
+                }
+
+                scheduleEntries.push({
+                    game,
+                    id,
+                    date: game.date?.toDate ? game.date.toDate() : new Date(game.date),
+                    title: game.title || null,
+                    location: game.location || 'TBD',
+                    notes: game.notes
+                });
+            }
 
             const trackedUids = await getTrackedCalendarEventUids(currentTeamId);
 
@@ -2271,10 +2300,9 @@
                             const isCancelled = event.status?.toUpperCase() === 'CANCELLED' ||
                                 event.summary?.includes('[CANCELED]');
 
-                            const hasConflict = dbGames.some(dbGame => {
-                                const dbDate = dbGame.date.toDate ? dbGame.date.toDate() : new Date(dbGame.date);
+                            const hasConflict = scheduleEntries.some((entry) => {
                                 const eventDate = event.dtstart;
-                                return Math.abs(dbDate - eventDate) < 60000;
+                                return Math.abs(entry.date - eventDate) < 60000;
                             });
 
                             if (hasConflict) return;
@@ -2313,7 +2341,7 @@
                 linkedPlayerIds.length > 0
             );
             const canSeeTeamNotes = canReadRsvps && (isTeamAdmin || (availabilityPreferences.noteVisibility === 'team' && currentTeamAccessInfo?.hasAccess));
-            const dbGameIds = (dbGames || []).map((game) => game.id || game.gameId).filter(Boolean);
+            const dbGameIds = scheduleEntries.map((entry) => entry.id).filter(Boolean);
             let rsvpSummaries = new Map();
             if (canReadRsvps) {
                 try {
@@ -2323,9 +2351,8 @@
                 }
             }
 
-            for (const game of dbGames) {
-                const gameDate = game.date.toDate ? game.date.toDate() : new Date(game.date);
-                const id = game.id || game.gameId;
+            for (const entry of scheduleEntries) {
+                const { game, date: gameDate, id, title, location, notes } = entry;
                 const isPractice = game.type === 'practice';
                 const isCancelled = String(game.status || '').toLowerCase() === 'cancelled';
                 let availabilityNotes = [];
@@ -2348,9 +2375,11 @@
                     type: 'db',
                     id,
                     gameId: id,
+                    realGameId: game.id || game.gameId || id,
+                    title,
                     date: gameDate,
                     opponent: game.opponent,
-                    location: game.location || 'TBD',
+                    location,
                     status: game.status,
                     liveStatus: game.liveStatus,
                     homeScore: game.homeScore,
@@ -2358,7 +2387,7 @@
                     isHome: game.isHome,
                     kitColor: game.kitColor,
                     arrivalTime: game.arrivalTime,
-                    notes: game.notes,
+                    notes,
                     assignments: game.assignments,
                     rsvpSummary: rsvpSummaries.get(id) || game.rsvpSummary,
                     myRsvp,
@@ -2744,12 +2773,12 @@
                             </div>
                             <div class="flex flex-col items-end gap-2">
                                 ${(isLive || isUpcoming) ? `
-                                  <a href="live-game.html?teamId=${currentTeamId}&gameId=${game.gameId || game.id}"
+                                  <a href="live-game.html?teamId=${currentTeamId}&gameId=${game.realGameId || game.gameId || game.id}"
                                      class="inline-flex items-center gap-2 ${isLive ? 'bg-red-500 hover:bg-red-600' : 'bg-slate-800 hover:bg-slate-900'} text-white px-4 py-2 rounded-lg font-semibold shadow transition">
                                       ${isLive ? '<span class="w-2 h-2 bg-white rounded-full animate-pulse"></span>' : '<span class="text-xs">👁️</span>'}
                                       ${isLive ? 'Live Now' : 'View Live'}
                                   </a>
-                                  <button data-share-game-id="${game.gameId || game.id}" data-share-mode="live"
+                                  <button data-share-game-id="${game.realGameId || game.gameId || game.id}" data-share-mode="live"
                                      class="inline-flex items-center gap-2 bg-white text-slate-700 px-4 py-2 rounded-lg font-semibold shadow border border-gray-200 hover:bg-gray-50 transition">
                                       <span class="text-xs">🔗</span>
                                       Share
@@ -2776,14 +2805,14 @@
                                             <div class="text-2xl md:text-3xl font-bold font-mono ${lost ? 'text-red-600' : 'text-gray-700'}">${game.awayScore}</div>
                                         </div>
                                       </div>
-                                      <a href="game.html#teamId=${currentTeamId}&gameId=${game.gameId || game.id}"
+                                      <a href="game.html#teamId=${currentTeamId}&gameId=${game.realGameId || game.gameId || game.id}"
                                          class="inline-flex items-center gap-1 text-sm text-primary-600 hover:text-primary-700 transition font-medium">
                                         <span>View Report</span>
                                         <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"></path>
                                         </svg>
                                       </a>
-                                      <button data-share-game-id="${game.gameId || game.id}" data-share-mode="report"
+                                      <button data-share-game-id="${game.realGameId || game.gameId || game.id}" data-share-mode="report"
                                          class="inline-flex items-center gap-1 text-sm text-slate-600 hover:text-slate-800 transition font-medium">
                                         <span>Share Report</span>
                                         <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -2791,7 +2820,7 @@
                                         </svg>
                                       </button>
                                       ${game.liveStatus === 'completed' ? `
-                                      <a href="live-game.html?teamId=${currentTeamId}&gameId=${game.gameId || game.id}&replay=true"
+                                      <a href="live-game.html?teamId=${currentTeamId}&gameId=${game.realGameId || game.gameId || game.id}&replay=true"
                                          class="inline-flex items-center gap-1 text-sm text-teal-600 hover:text-teal-700 transition font-medium">
                                         <span>Replay</span>
                                         <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
