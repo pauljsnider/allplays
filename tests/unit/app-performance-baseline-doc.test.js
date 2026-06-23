@@ -5,8 +5,9 @@ import { join } from 'node:path';
 const doc = readFileSync(join(process.cwd(), 'docs/app-performance-baseline.md'), 'utf8');
 
 describe('app performance baseline documentation', () => {
-    it('documents the app performance metric set from issue 2050', () => {
+    it('documents the app performance metric set from issue 2896', () => {
         [
+            'issue #2896',
             'Cold-start TTI (Home)',
             'Warm resume time',
             'Firestore reads / Home mount',
@@ -17,6 +18,30 @@ describe('app performance baseline documentation', () => {
             'Chat send latency'
         ].forEach((metric) => {
             expect(doc).toContain(metric);
+        });
+    });
+
+    it('defines repeatable desktop, throttled web, and mobile measurement profiles', () => {
+        [
+            '| Desktop web |',
+            '| Throttled 4G web |',
+            '| Mid-range Android |',
+            '| iPhone |',
+            'DevTools "Slow 4G" plus 4x CPU throttle',
+            'Numbers are medians of 3 runs'
+        ].forEach((needle) => {
+            expect(doc).toContain(needle);
+        });
+    });
+
+    it('keeps fillable baseline and after-fix templates for every profile', () => {
+        [
+            '## Baseline template',
+            '## After-fix template',
+            '| Profile | Cold-start TTI Home | Warm resume | Reads / Home mount | Reads / Schedule mount | Reads / Messages mount | Entry chunk gzip | RSVP tap latency | Chat send latency | Notes |',
+            '| Profile | Fix / SHA | Cold-start TTI Home | Warm resume | Reads / Home mount | Reads / Schedule mount | Reads / Messages mount | Entry chunk gzip | RSVP tap latency | Chat send latency | Delta / notes |'
+        ].forEach((needle) => {
+            expect(doc).toContain(needle);
         });
     });
 
