@@ -4824,12 +4824,12 @@ async function getTargetsForCategory(teamId, category, actorUid = null, audience
     .get();
   const indexedRecipientDocs = (targetSnap.docs || []).filter(isAggregateNotificationRecipientDoc);
   if (indexedRecipientDocs.length) {
-    let indexedAdditionalUsers = Array.isArray(additionalUsers) ? additionalUsers : [];
+    additionalUsers = Array.isArray(additionalUsers) ? additionalUsers : [];
     if (indexedRecipientDocs.some((docSnap) => notificationRecipientDocNeedsRoleBackfill(docSnap))) {
       const candidateUsers = await getCandidateUsersForTeam(teamId);
-      indexedAdditionalUsers = [...candidateUsers, ...indexedAdditionalUsers];
+      additionalUsers = [...candidateUsers, ...additionalUsers];
     }
-    const eligibleUsers = buildIndexedEligibleUsers(indexedRecipientDocs, category, audienceContext, indexedAdditionalUsers);
+    const eligibleUsers = buildIndexedEligibleUsers(indexedRecipientDocs, category, audienceContext, additionalUsers);
     return indexedRecipientDocs
       .flatMap((docSnap) => buildTargetsFromNotificationRecipientDoc(docSnap, { teamId, category, actorUid, eligibleUsers }))
       .filter(Boolean);
