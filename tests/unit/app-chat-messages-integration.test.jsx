@@ -1077,6 +1077,30 @@ describe('React app messages integration', () => {
         expect(container.querySelector('[aria-label="Mention suggestions"]')).toBeNull();
     });
 
+    it('uses the clicked cursor position when keyboard-selecting a mention from the middle of a draft', async () => {
+        const { container } = await renderMessages('/messages/team-1');
+        const composer = container.querySelector('.chat-composer-textarea');
+
+        await setFieldValue(composer, 'Need @coach and @pa');
+
+        await act(async () => {
+            composer.focus();
+            composer.setSelectionRange(17, 17);
+            composer.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+        });
+        await flush();
+
+        expect(container.querySelector('[aria-label="Mention suggestions"]')).toBeTruthy();
+
+        await act(async () => {
+            composer.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+        });
+        await flush();
+
+        expect(composer.value).toBe('Need @coach and @Pat ');
+        expect(container.querySelector('[aria-label="Mention suggestions"]')).toBeNull();
+    });
+
     it('does not recompute existing message html while the composer changes', async () => {
         const chatLogic = await import('../../apps/app/src/lib/chatLogic.ts');
         const formatSpy = vi.spyOn(chatLogic, 'formatChatMessageHtml');
