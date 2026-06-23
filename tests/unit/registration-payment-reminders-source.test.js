@@ -24,7 +24,14 @@ describe('registration failed payment reminder wiring', () => {
         expect(source).toContain('exports.queueDueRegistrationFailedPaymentReminders = functions.pubsub');
         expect(source).toContain(".schedule('every 6 hours')");
         expect(source).toContain(".collectionGroup('registrations')");
-        expect(source).toContain(".where('paymentReminder.nextReminderAt', '<=', nowIso)");
+        expect(source).toContain(".where('paymentReminder.nextReminderAt', '<=', dueIso)");
+        expect(source).toContain(".orderBy('paymentReminder.nextReminderAt')");
+        expect(source).toContain('query = query.startAfter(cursor);');
+        expect(source).toContain('drainDueReminderPages({');
+        expect(source).toContain('REGISTRATION_PAYMENT_REMINDER_MAX_PAGES_PER_RUN');
+        expect(source).toContain('REGISTRATION_PAYMENT_REMINDER_MAX_RUNTIME_MS');
+        expect(source).toContain('queuedCount');
+        expect(source).not.toContain(".where('paymentReminder.nextReminderAt', '<=', nowIso)\n    .limit(50)\n    .get();");
         expect(source).toContain('shouldStopRegistrationPaymentReminders(registration)');
         expect(source).toContain("sequence: `followup_${reminderNumber}`");
     });
