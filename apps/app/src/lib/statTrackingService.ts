@@ -103,6 +103,24 @@ function createEventIdFactory() {
   };
 }
 
+function normalizeLogEntry(input: unknown): TrackerLogEntry | null {
+  const entry = input as Partial<TrackerLogEntry> | null | undefined;
+  if (!entry || !entry.eventId || !entry.event) return null;
+  const event = entry.event as TrackerEventDocument;
+  return {
+    eventId: normalizeText(entry.eventId),
+    event: { ...event },
+    scoreBefore: normalizeScoreState(entry.scoreBefore),
+    scoreAfter: normalizeScoreState(entry.scoreAfter),
+    aggregateStatKey: entry.aggregateStatKey ? normalizeStatKey(entry.aggregateStatKey) : null,
+    aggregateDelta: Number.isFinite(Number(entry.aggregateDelta)) ? Number(entry.aggregateDelta) : 0,
+    aggregatePlayerId: entry.aggregatePlayerId ? normalizeText(entry.aggregatePlayerId) : null,
+    isOpponent: entry.isOpponent === true,
+    playerName: normalizeText(entry.playerName) || 'Player',
+    playerNumber: normalizeText(entry.playerNumber)
+  };
+}
+
 async function applyAggregateWrite({
   dependencies,
   teamId,
@@ -150,17 +168,21 @@ async function applyAggregateWrite({
 
 export function createStatTrackingService({
   statConfig = {},
-  initialScore = DEFAULT_SCORE,
+  initialScore,
+  initialEventLog = [],
   dependencies
 }: {
   statConfig?: TrackerStatConfig;
   initialScore?: Partial<TrackerScoreState>;
+  initialEventLog?: TrackerLogEntry[];
   dependencies: StatTrackingDependencies;
 }) {
-  const eventLog: TrackerLogEntry[] = [];
+  const eventLog: TrackerLogEntry[] = (Array.isArray(initialEventLog) ? initialEventLog : [])
+    .map(normalizeLogEntry)
+    .filter(Boolean) as TrackerLogEntry[];
   const allowedStatKeys = collectAllowedStatKeys(statConfig);
   const nextEventId = createEventIdFactory();
-  let currentScore = normalizeScoreState(initialScore);
+  let currentScore = normalizeScoreState(initialScore || eventLog[eventLog.length - 1]?.scoreAfter || DEFAULT_SCORE);
 
   async function recordEvent(teamId: string, gameId: string, input: TrackerEventInput, user: TrackerUser) {
     if (!teamId || !gameId) {
@@ -348,6 +370,7 @@ export function createStatTrackingService({
 export function createDefaultStatTrackingService(options: {
   statConfig?: TrackerStatConfig;
   initialScore?: Partial<TrackerScoreState>;
+  initialEventLog?: TrackerLogEntry[];
   updateGameScore: StatTrackingDependencies['updateGameScore'];
 }) {
   return createStatTrackingService({
