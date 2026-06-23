@@ -19,13 +19,14 @@ describe('issue 1963 roster AI import source contract', () => {
         expect(rosterAiImportSource).toContain("return { rows: [], errors: ['Paste roster text or upload a roster image before using AI import.'] };");
     });
 
-    it('keeps prompt and normalization rules preventing duplicate active-player imports', () => {
+    it('keeps prompt and normalization rules for safe add-only active-player imports', () => {
         expect(rosterAiImportSource).toContain('Current players in roster: ${currentPlayers.length}');
-        expect(rosterAiImportSource).toContain('Use action "update" with playerId and changes');
-        expect(rosterAiImportSource).toContain('Never add a second active player for a likely update to an existing player.');
+        expect(rosterAiImportSource).toContain('Use action "add" for each extracted player row.');
+        expect(rosterAiImportSource).toContain('Do not update, delete, deactivate, or reactivate existing players.');
         expect(rosterAiImportSource).toContain('normalizeRosterAiOperation(operation, index + 1, currentPlayers)');
+        expect(rosterAiImportSource).toContain('findExistingPlayerDuplicate(normalizedName, number, currentPlayers)');
         expect(rosterAiImportSource).toContain('if (row.errors.length) {');
-        expect(rosterAiImportTestSource).toContain('normalizes add and update operations into preview rows');
+        expect(rosterAiImportTestSource).toContain('normalizes clean add operations into preview rows');
         expect(rosterAiImportTestSource).toContain('flags likely duplicate adds and excludes errored rows from the commit plan');
     });
 
