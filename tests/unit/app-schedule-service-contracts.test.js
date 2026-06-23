@@ -469,7 +469,11 @@ describe('React app schedule service contract integration', () => {
             startDate: expect.any(Date)
         });
         expect(utilsMocks.fetchAndParseCalendar).toHaveBeenCalledWith('mock://team-calendar');
-        expect(dbMocks.getRsvpSummaries).toHaveBeenCalledWith('team-1', expect.arrayContaining(['game-1', 'practice-1', 'final-1']));
+        expect(dbMocks.getRsvpSummaries).not.toHaveBeenCalled();
+        expect(dbMocks.getRsvps).toHaveBeenCalledWith('team-1', 'game-1');
+        expect(dbMocks.getRsvps).toHaveBeenCalledWith('team-1', 'practice-1');
+        expect(dbMocks.getRsvps).toHaveBeenCalledWith('team-1', 'final-1');
+        expect(dbMocks.getRsvps).toHaveBeenCalledTimes(3);
         expect(dbMocks.listRideOffersForEvent).toHaveBeenCalledWith('team-1', 'game-1', { fallbackGameIds: [] });
         expect(dbMocks.getAssignmentClaims).toHaveBeenCalledWith('team-1', 'game-1');
 
@@ -649,7 +653,7 @@ describe('React app schedule service contract integration', () => {
         expect(dbMocks.getPracticeSessions).not.toHaveBeenCalled();
         expect(utilsMocks.fetchAndParseCalendar).not.toHaveBeenCalled();
         expect(dbMocks.getPracticeSessionByEvent).not.toHaveBeenCalled();
-        expect(dbMocks.getRsvpSummaries).toHaveBeenCalledWith('team-1', ['game-1']);
+        expect(dbMocks.getRsvpSummaries).not.toHaveBeenCalled();
         expect(dbMocks.getRsvps).toHaveBeenCalledTimes(1);
         expect(dbMocks.getRsvps).toHaveBeenCalledWith('team-1', 'game-1');
         expect(dbMocks.listRideOffersForEvent).toHaveBeenCalledTimes(1);
@@ -672,6 +676,7 @@ describe('React app schedule service contract integration', () => {
             myRsvp: 'going',
             myRsvpNote: 'Needs a ride home',
             teamNotificationEmail: 'team-notify@example.com',
+            rsvpSummary: { going: 1, maybe: 1, notGoing: 0, notResponded: 0, total: 2 },
             rideshareSummary: { offerCount: 1, seatsLeft: 2, requests: 1, pending: 1, confirmed: 0, isFull: false }
         });
         expect(result.events.find((event) => event.childId === 'player-2')).toMatchObject({
