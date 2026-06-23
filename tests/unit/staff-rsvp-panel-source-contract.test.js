@@ -9,9 +9,10 @@ const playerRowSource = readFileSync(new URL('../../apps/app/src/components/sche
 describe('staff RSVP panel decomposition contract', () => {
     it('keeps the availability section wired through named staff RSVP panels', () => {
         expect(detailSource).toContain('<StaffRsvpBreakdownPanel');
-        expect(detailSource).toContain('<StaffRsvpReminderPanel refreshToken={staffRsvp.refreshToken} />');
+        expect(detailSource).toContain('<StaffRsvpReminderPanel refreshToken={staffRsvp.refreshToken} staffRsvpLoader={staffRsvpLoader} />');
         expect(detailSource).toContain('onOverride={staffRsvp.submitOverride}');
-        expect(detailSource).toContain('const staffRsvp = useStaffRsvpBreakdown();');
+        expect(detailSource).toContain('const staffRsvpLoader = useMemo(() => createStaffRsvpAvailabilityLoader(), [event.teamId, event.id]);');
+        expect(detailSource).toContain('const staffRsvp = useStaffRsvpBreakdown(staffRsvpLoader);');
         expect(detailSource).toContain('const rsvpWorkflow = useScheduleEventRsvp({ availabilityNote });');
     });
 
@@ -31,7 +32,7 @@ describe('staff RSVP panel decomposition contract', () => {
         expect(reminderPanelSource).toContain('const { auth, event } = useScheduleEventDetailContext();');
         expect(reminderPanelSource).toContain('const [preview, setPreview] = useState<StaffRsvpReminderPreview | null>(null);');
         expect(reminderPanelSource).toContain('const canLoad = Boolean(auth.user && event.isTeamRsvpReminderManager && event.isDbGame && !event.isCancelled);');
-        expect(reminderPanelSource).toContain('setPreview(await loadStaffRsvpReminderPreview(event, auth.user));');
+        expect(reminderPanelSource).toContain('staffRsvpLoader.loadReminderPreview(event, auth.user)');
         expect(reminderPanelSource).toContain('const result: StaffRsvpReminderSendResult = await sendStaffRsvpReminder(event, auth.user, auth.profile || {});');
         expect(reminderPanelSource).toContain('setStatus(`RSVP reminder sent to team chat and ${result.emailSentCount} parent/guardian ${result.emailSentCount === 1 ? \'email\' : \'emails\'}.`);');
     });

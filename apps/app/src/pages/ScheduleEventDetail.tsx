@@ -36,6 +36,7 @@ import {
   updateLiveGameClockState,
   buildLiveGameClockPeriods,
   resolveLiveGameClockSnapshot,
+  createStaffRsvpAvailabilityLoader,
   type PracticeAttendancePlayer,
   type StaffPracticeAttendance,
   type StaffPracticePacket,
@@ -874,7 +875,8 @@ function AvailabilitySection({ event, rsvp, availabilityNote, onAvailabilityNote
   onSelectSection: (sectionId: EventDetailSectionId) => void;
 }) {
   const rsvpWorkflow = useScheduleEventRsvp({ availabilityNote });
-  const staffRsvp = useStaffRsvpBreakdown();
+  const staffRsvpLoader = useMemo(() => createStaffRsvpAvailabilityLoader(), [event.teamId, event.id]);
+  const staffRsvp = useStaffRsvpBreakdown(staffRsvpLoader);
 
   return (
     <section className="app-card overflow-hidden p-0">
@@ -908,7 +910,7 @@ function AvailabilitySection({ event, rsvp, availabilityNote, onAvailabilityNote
           status={staffRsvp.status}
           onOverride={staffRsvp.submitOverride}
         />
-        <StaffRsvpReminderPanel refreshToken={staffRsvp.refreshToken} />
+        <StaffRsvpReminderPanel refreshToken={staffRsvp.refreshToken} staffRsvpLoader={staffRsvpLoader} />
         <AvailabilityNotesList event={event} />
         {!event.isDbGame ? <div className="mt-2 text-xs font-semibold text-gray-500">Availability opens after this event is tracked in the schedule.</div> : null}
         {event.availabilityLocked ? <div className="mt-2 text-xs font-semibold text-amber-700">Availability locked {String(event.availabilityCutoffLabel || '').toLowerCase()}.</div> : null}

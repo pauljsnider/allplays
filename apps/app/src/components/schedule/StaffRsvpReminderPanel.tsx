@@ -1,13 +1,13 @@
 import { useCallback, useEffect, useState } from 'react';
 import {
-  loadStaffRsvpReminderPreview,
   sendStaffRsvpReminder,
+  type StaffRsvpAvailabilityLoader,
   type StaffRsvpReminderSendResult
 } from '../../lib/scheduleService';
 import { type StaffRsvpReminderPreview } from '../../lib/scheduleLogic';
 import { useScheduleEventDetailContext } from '../../pages/schedule/ScheduleEventDetailContext';
 
-export function StaffRsvpReminderPanel({ refreshToken = 0 }: { refreshToken?: number }) {
+export function StaffRsvpReminderPanel({ refreshToken = 0, staffRsvpLoader }: { refreshToken?: number; staffRsvpLoader: StaffRsvpAvailabilityLoader }) {
   const { auth, event } = useScheduleEventDetailContext();
   const [preview, setPreview] = useState<StaffRsvpReminderPreview | null>(null);
   const [loading, setLoading] = useState(false);
@@ -22,14 +22,14 @@ export function StaffRsvpReminderPanel({ refreshToken = 0 }: { refreshToken?: nu
     setLoading(true);
     setError(null);
     try {
-      setPreview(await loadStaffRsvpReminderPreview(event, auth.user));
+      setPreview(await staffRsvpLoader.loadReminderPreview(event, auth.user));
     } catch (loadError: any) {
       setError(loadError?.message || 'Unable to load RSVP reminder preview.');
       setPreview(null);
     } finally {
       setLoading(false);
     }
-  }, [auth.user, canLoad, event.eventKey, event.teamId, event.id]);
+  }, [auth.user, canLoad, event.eventKey, event.teamId, event.id, staffRsvpLoader]);
 
   useEffect(() => {
     setStatus(null);
@@ -37,6 +37,7 @@ export function StaffRsvpReminderPanel({ refreshToken = 0 }: { refreshToken?: nu
       refreshPreview();
     } else {
       setPreview(null);
+      setLoading(false);
     }
   }, [canLoad, refreshPreview, refreshToken]);
 

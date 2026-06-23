@@ -124,8 +124,9 @@ describe('staff RSVP reminder service wiring', () => {
 
     expect(serviceSource).toContain('function isPublicRsvpReminderManager');
     expect(serviceSource).toContain('if (!event.isTeamRsvpReminderManager)');
-    expect(serviceSource).toContain('const { players, rsvps } = await getRsvpBreakdownByPlayer(event.teamId, event.id);');
-    expect(detailSource).toContain('<StaffRsvpReminderPanel refreshToken={staffRsvp.refreshToken} />');
+    expect(serviceSource).toContain('return (await loadStaffRsvpEventData(event)).reminderPreview;');
+    expect(serviceSource).toContain('export function createStaffRsvpAvailabilityLoader');
+    expect(detailSource).toContain('<StaffRsvpReminderPanel refreshToken={staffRsvp.refreshToken} staffRsvpLoader={staffRsvpLoader} />');
     expect(reminderPanelSource).toContain('event.isTeamRsvpReminderManager');
     expect(reminderPanelSource).not.toContain('event.isTeamStaff && event.isDbGame');
   });

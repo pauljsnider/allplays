@@ -16,6 +16,14 @@ const scheduleMocks = vi.hoisted(() => ({
     resolveCachedParentScheduleEvents: vi.fn(() => []),
     loadParentScheduleAssignments: vi.fn().mockResolvedValue([]),
     loadParentScheduleRideOffers: vi.fn().mockResolvedValue([]),
+    loadStaffScheduleRsvpBreakdown: vi.fn(),
+    loadStaffRsvpReminderPreview: vi.fn(),
+    invalidateStaffRsvpAvailabilityEvent: vi.fn(),
+    createStaffRsvpAvailabilityLoader: vi.fn(() => ({
+        loadBreakdown: (...args) => scheduleMocks.loadStaffScheduleRsvpBreakdown(...args),
+        loadReminderPreview: (...args) => scheduleMocks.loadStaffRsvpReminderPreview(...args),
+        invalidateEvent: (...args) => scheduleMocks.invalidateStaffRsvpAvailabilityEvent(...args)
+    })),
     loadHomeScoringPlayers: vi.fn().mockResolvedValue([]),
     loadAutoFilledLineupDraftPreviewForApp: vi.fn(),
     loadGameDayLiveEventsForApp: vi.fn().mockResolvedValue([]),
@@ -23,6 +31,32 @@ const scheduleMocks = vi.hoisted(() => ({
         const activePeriod = String(game?.liveClockPeriod || game?.period || '').trim();
         return activePeriod ? [activePeriod] : ['H1', 'H2'];
     }),
+    createStaffRsvpAvailabilityLoader: vi.fn(() => ({
+        loadBreakdown: vi.fn().mockResolvedValue({
+            grouped: {
+                going: [],
+                maybe: [],
+                not_going: [],
+                not_responded: []
+            },
+            counts: {
+                going: 0,
+                maybe: 0,
+                notGoing: 0,
+                notResponded: 0,
+                total: 0
+            }
+        }),
+        loadReminderPreview: vi.fn().mockResolvedValue({
+            totalPlayers: 0,
+            respondedCount: 0,
+            missingCount: 0,
+            missingPlayers: [],
+            reminderMessage: '',
+            targetLabel: 'staff'
+        }),
+        invalidateEvent: vi.fn()
+    })),
     resolveLiveGameClockSnapshot: vi.fn((game, now = new Date()) => ({
         persistedClockMs: Number(game?.liveClockMs ?? game?.gameClockMs ?? 0) || 0,
         effectiveClockMs: Number(game?.liveClockMs ?? game?.gameClockMs ?? 0) || 0,
