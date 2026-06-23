@@ -206,6 +206,10 @@ export function isTrackedCalendarEvent(event, trackedUids) {
     return Boolean(event?.uid) && Array.isArray(trackedUids) && trackedUids.includes(event.uid);
 }
 
+export function expandRecurrence(events = []) {
+    return Array.isArray(events) ? events : [];
+}
+
 export function escapeHtml(value) {
     return String(value ?? '');
 }
