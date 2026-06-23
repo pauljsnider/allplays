@@ -10,7 +10,9 @@ const logger = createLogger('ux');
  */
 export const UX_TIMING = {
   appStartup: 'app startup',
+  appStartToHomeRender: 'app start to home first meaningful render',
   firstMeaningfulRender: 'first meaningful render',
+  warmResume: 'warm resume to interactive',
   homeMount: 'home mount load',
   scheduleMount: 'schedule mount load',
   messagesMount: 'messages mount load',
@@ -40,6 +42,18 @@ export function startUxTimer(label: string, baseMeta: Record<string, unknown> = 
 }
 
 /**
+ * Times the app-shell startup boundary. This keeps startup spans in uxTiming
+ * while telemetry remains the transport layer.
+ */
+export function startAppStartupTimer(baseMeta: Record<string, unknown> = {}) {
+  return startUxTimer(UX_TIMING.appStartup, {
+    category: 'startup',
+    stage: 'startup',
+    ...baseMeta
+  });
+}
+
+/**
  * Times a top-level app screen load using stable labels and bounded metadata so
  * local logs and telemetry payloads can compare before/after screen work.
  */
@@ -57,6 +71,13 @@ export function startScreenMountTimer(route: ScreenMountRoute, baseMeta: Record<
  */
 export function startInteractionTimer(label: string, baseMeta: Record<string, unknown> = {}) {
   return startUxTimer(label, { category: 'interaction', ...baseMeta });
+}
+
+export function startWarmResumeTimer(baseMeta: Record<string, unknown> = {}) {
+  return startUxTimer(UX_TIMING.warmResume, {
+    category: 'resume',
+    ...baseMeta
+  });
 }
 
 export function recordUxTiming(label: string, startedAt: number, meta: Record<string, unknown> = {}) {
@@ -79,6 +100,9 @@ export function recordFirstMeaningfulRender(route: string, meta: Record<string, 
   firstMeaningfulRenderRecorded = true;
   // performance.now() is relative to navigation start, so passing 0 yields
   // "time since the page began loading".
+  if (route === 'home') {
+    recordUxTiming(UX_TIMING.appStartToHomeRender, 0, { category: 'startup', route, ...meta });
+  }
   recordUxTiming(UX_TIMING.firstMeaningfulRender, 0, { route, ...meta });
 }
 
