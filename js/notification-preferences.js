@@ -24,7 +24,7 @@ export const DEFAULT_NOTIFICATION_PREFERENCES = Object.freeze({
     fees: true,
     practice: false,
     access: true,
-    rideshare: false,
+    rideshare: true,
     media: false,
     awards: false,
     officiating: false

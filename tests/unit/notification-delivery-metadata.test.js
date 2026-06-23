@@ -132,13 +132,13 @@ describe('notification delivery metadata', () => {
             icon: '/img/logo_small.png',
             badge: '/img/logo_small.png'
         });
-        expect(firstSendPath).toContain('buildNotificationDeliveryOptions({ category, teamId, gameId, eventId: eventId || gameId })');
+        expect(firstSendPath).toContain('buildNotificationDeliveryOptions({ category, teamId, gameId, eventId: eventId || gameId, timeSensitive })');
         expect(firstSendPath).toContain('const mergeWebpushOptions = typeof mergeNotificationWebpushOptions === \'function\'');
         expect(firstSendPath).toContain('if (!runtimeDeliveryOptions?.webpush) return baseWebpush;');
         expect(firstSendPath).toContain('...deliveryOptions');
         expect(firstSendPath).toContain('webpush: mergeWebpushOptions({');
         expect(firstSendPath).toContain('notification: WEB_PUSH_NOTIFICATION_ASSETS');
-        expect(secondSendPath).toContain('buildNotificationDeliveryOptions({ category, teamId, gameId, eventId: eventId || gameId })');
+        expect(secondSendPath).toContain('buildNotificationDeliveryOptions({ category, teamId, gameId, eventId: eventId || gameId, timeSensitive })');
         expect(secondSendPath).toContain('const mergeWebpushOptions = typeof mergeNotificationWebpushOptions === \'function\'');
         expect(secondSendPath).toContain('if (!runtimeDeliveryOptions?.webpush) return baseWebpush;');
         expect(secondSendPath).toContain('...deliveryOptions');

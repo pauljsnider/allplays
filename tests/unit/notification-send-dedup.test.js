@@ -358,7 +358,8 @@ describe('notification send dedup guard — sendCategoryNotification', () => {
             category: 'liveChat',
             teamId: 'team-1',
             gameId: 'game-1',
-            eventId: 'game-1'
+            eventId: 'game-1',
+            timeSensitive: false
         });
     });
 
@@ -383,7 +384,8 @@ describe('notification send dedup guard — sendCategoryNotification', () => {
             category: 'mentions',
             teamId: 'team-1',
             gameId: 'game-1',
-            eventId: 'message-1'
+            eventId: 'message-1',
+            timeSensitive: false
         });
     });
 
