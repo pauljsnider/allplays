@@ -248,6 +248,54 @@ test('getTargetsForCategory does not legacy-scan missing users once the recipien
         }
 });
 
+test('getTargetsForCategory resolves legacy per-device recipient docs with candidate-user roles', async () => {
+        const { internals, env, cleanup } = loadNotificationInternals({
+            teamDoc: {
+                ownerId: 'coach-1',
+                adminEmails: []
+            },
+            parentUserIds: ['parent-1'],
+            notificationRecipientDocs: [
+                {
+                    id: 'coach-1__coach-device',
+                    data: {
+                        uid: 'coach-1',
+                        deviceId: 'coach-device',
+                        token: 'coach-token',
+                        categories: { schedule: true }
+                    }
+                },
+                {
+                    id: 'parent-1__parent-device',
+                    data: {
+                        uid: 'parent-1',
+                        deviceId: 'parent-device',
+                        token: 'parent-token',
+                        categories: { schedule: true }
+                    }
+                }
+            ]
+        });
+
+        try {
+            const targets = await internals.getTargetsForCategory('team-1', 'schedule');
+
+            assert.equal(targets.length, 2);
+            assert.equal(env.counts.recipientQueries, 1);
+            assert.equal(env.counts.teamDocGets, 1);
+            assert.equal(env.counts.parentQueries, 1);
+            assert.equal(env.counts.recipientCollectionGets, 0);
+            assert.equal(env.counts.preferenceGets, 0);
+            assert.equal(env.counts.deviceGets, 0);
+            assert.deepEqual(targets.map((target) => `${target.uid}:${target.deviceId}:${target.token}`).sort(), [
+                'coach-1:coach-device:coach-token',
+                'parent-1:parent-device:parent-token'
+            ]);
+        } finally {
+            cleanup();
+        }
+});
+
 test('getTargetsForCategory falls back to legacy resolution and backfills recipients when the team index is empty', async () => {
         const { internals, env, cleanup } = loadNotificationInternals({
             teamDoc: {

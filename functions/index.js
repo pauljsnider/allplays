@@ -4807,6 +4807,11 @@ function buildIndexedEligibleUsers(recipientDocs, category, audienceContext = {}
     .map((user) => [user.uid, user]));
 }
 
+function notificationRecipientDocNeedsRoleBackfill(docSnap) {
+  const user = getNotificationRecipientUserFromDoc(docSnap);
+  return Boolean(user?.uid) && (!Array.isArray(user.roles) || user.roles.length === 0);
+}
+
 async function getTargetsForCategory(teamId, category, actorUid = null, audienceContext = {}, additionalUsers = []) {
   if (!NOTIFICATION_CATEGORIES.includes(category)) return [];
 
@@ -4815,7 +4820,12 @@ async function getTargetsForCategory(teamId, category, actorUid = null, audience
     .get();
   const indexedRecipientDocs = targetSnap.docs || [];
   if (indexedRecipientDocs.length) {
-    const eligibleUsers = buildIndexedEligibleUsers(indexedRecipientDocs, category, audienceContext, additionalUsers);
+    let indexedAdditionalUsers = Array.isArray(additionalUsers) ? additionalUsers : [];
+    if (indexedRecipientDocs.some((docSnap) => notificationRecipientDocNeedsRoleBackfill(docSnap))) {
+      const candidateUsers = await getCandidateUsersForTeam(teamId);
+      indexedAdditionalUsers = [...candidateUsers, ...indexedAdditionalUsers];
+    }
+    const eligibleUsers = buildIndexedEligibleUsers(indexedRecipientDocs, category, audienceContext, indexedAdditionalUsers);
     return indexedRecipientDocs
       .flatMap((docSnap) => buildTargetsFromNotificationRecipientDoc(docSnap, { teamId, category, actorUid, eligibleUsers }))
       .filter(Boolean);
