@@ -149,6 +149,23 @@ describe('team media notification audience resolver', () => {
         })).toEqual(['staff-1', 'staff-parent-1']);
     });
 
+    it('treats null audience fields as absent so populated aliases still apply', () => {
+        expect(resolveIds({
+            visibility: 'team',
+            allowedUserIds: null,
+            visibleToUserIds: ['parent-2'],
+            visibleToRoles: ['staff']
+        })).toEqual(['parent-2', 'staff-1', 'staff-parent-1']);
+
+        expect(resolveIds({
+            audienceContext: {
+                allowedUserIds: null,
+                visibleToUserIds: ['parent-2'],
+                visibleToRoles: ['staff']
+            }
+        })).toEqual(['parent-2', 'staff-1', 'staff-parent-1']);
+    });
+
     it('keeps standard visible albums on the current eligible audience', () => {
         expect(resolveTeamMediaAlbumNotificationAudience({ visibility: 'team' }, users)).toEqual(users);
         expect(resolveTeamMediaAlbumNotificationAudience({}, users)).toEqual(users);

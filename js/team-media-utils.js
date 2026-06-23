@@ -117,7 +117,7 @@ function normalizeTeamMediaAudienceRoles(value) {
 }
 
 function getTeamMediaAudienceValue(source = {}, keys = []) {
-    return keys.reduce((selected, key) => (selected === undefined ? source?.[key] : selected), undefined);
+    return keys.reduce((selected, key) => (selected == null ? source?.[key] : selected), undefined);
 }
 
 function getTeamMediaAudienceAccessLevel(user = {}) {
