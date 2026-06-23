@@ -10,12 +10,15 @@ function readRepoFile(path) {
 
 describe('Messages page decomposition', () => {
     it('keeps chat data loading and email composer state in focused modules', () => {
-        const source = readRepoFile('apps/app/src/pages/Messages.tsx');
+        const source = [
+            readRepoFile('apps/app/src/pages/Messages.tsx'),
+            readRepoFile('apps/app/src/pages/messages/components/ChatWindow.tsx')
+        ].join('\n');
 
-        expect(source).toContain("from './messages/hooks/useChatSheets'");
-        expect(source).toContain("from './messages/hooks/useChatTeam'");
-        expect(source).toContain("from './messages/hooks/useChatMessages'");
-        expect(source).toContain("from './messages/state/emailReducer'");
+        expect(source).toContain("from '../hooks/useChatSheets'");
+        expect(source).toContain("from '../hooks/useChatTeam'");
+        expect(source).toContain("from '../hooks/useChatMessages'");
+        expect(source).toContain("from '../state/emailReducer'");
         expect(source).toContain('useReducer(emailReducer, initialEmailComposerState)');
     });
 

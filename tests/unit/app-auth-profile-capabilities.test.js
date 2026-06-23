@@ -373,7 +373,10 @@ describe('React app auth/profile capability parity', () => {
 
     it('covers team-chat.html messaging, conversations, media, reactions, targeting, and AI assistant features', () => {
         const legacyTeamChat = readProjectFile('team-chat.html');
-        const messagesPage = readProjectFile('apps/app/src/pages/Messages.tsx');
+        const messagesPage = [
+            readProjectFile('apps/app/src/pages/Messages.tsx'),
+            readProjectFile('apps/app/src/pages/messages/components/ChatWindow.tsx')
+        ].join('\n');
         const chatService = readProjectFile('apps/app/src/lib/chatService.ts');
         const chatLogic = readProjectFile('apps/app/src/lib/chatLogic.ts');
 
