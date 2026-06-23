@@ -30,7 +30,9 @@ import {
   buildRosterAiImportCommitPlan,
   buildRosterAiImportPrompt,
   generateRosterAiImportRows,
-  normalizeRosterAiImportResponse
+  normalizeRosterAiImportResponse,
+  removeRosterAiImportPreviewRow,
+  updateRosterAiImportPreviewRow
 } from './rosterAiImport';
 
 describe('rosterAiImport', () => {
@@ -49,15 +51,15 @@ describe('rosterAiImport', () => {
     expect(prompt).toContain('Avery Ace');
     expect(prompt).toContain('roster is attached as an image');
     expect(prompt).toContain('Only varsity players');
-    expect(prompt).toContain('Use action "update" with playerId and changes');
-    expect(prompt).toContain('Never add a second active player');
+    expect(prompt).toContain('Use action "add" for each extracted player row');
+    expect(prompt).toContain('Do not update, delete, deactivate, or reactivate');
   });
 
-  it('normalizes add and update operations into preview rows', () => {
+  it('normalizes clean add operations into preview rows', () => {
     const result = normalizeRosterAiImportResponse({
       operations: [
         { action: 'add', player: { name: 'Jordan New', number: '#23' }, reason: 'new row' },
-        { action: 'update', playerId: 'p1', changes: { name: 'Avery Ace', number: '11' }, reason: 'same player corrected number' }
+        { action: 'add', player: { name: 'Avery Ace Jr.', number: '11' }, reason: 'same player corrected number' }
       ]
     }, {
       currentPlayers: [{ id: 'p1', name: 'Avery Ace', number: '10' }]
@@ -68,71 +70,87 @@ describe('rosterAiImport', () => {
       {
         rowNumber: 1,
         action: 'add',
-        playerId: '',
         name: 'Jordan New',
         number: '23',
-        changes: {},
         reason: 'new row',
+        duplicatePlayerId: '',
+        duplicatePlayerName: '',
         errors: []
       },
       {
         rowNumber: 2,
-        action: 'update',
-        playerId: 'p1',
-        name: 'Avery Ace',
+        action: 'add',
+        name: 'Avery Ace Jr.',
         number: '11',
-        changes: { number: '11' },
         reason: 'same player corrected number',
+        duplicatePlayerId: '',
+        duplicatePlayerName: '',
         errors: []
       }
     ]);
   });
 
-  it('preserves the current jersey number when an update only changes the name', () => {
+  it('normalizes messy OCR-ish names with suffixes, hyphens, and apostrophes', () => {
     const result = normalizeRosterAiImportResponse({
       operations: [
-        { action: 'update', playerId: 'p1', changes: { name: 'Jane Doe' }, reason: 'fixed spelling' }
+        { action: 'add', player: { name: "  Kai O'Neil-Smith III  ", number: ' #07 ' }, reason: 'OCR row' },
+        { action: 'add', player: { name: 'Mia-Lynn Carter Jr.', number: '' }, reason: 'no visible number' }
       ]
-    }, {
-      currentPlayers: [{ id: 'p1', name: 'Jane Do', number: '23' }]
     });
 
     expect(result.errors).toEqual([]);
-    expect(result.rows).toEqual([
-      {
-        rowNumber: 1,
-        action: 'update',
-        playerId: 'p1',
-        name: 'Jane Doe',
-        number: '23',
-        changes: { name: 'Jane Doe' },
-        reason: 'fixed spelling',
-        errors: []
-      }
+    expect(result.rows.map((row) => ({ name: row.name, number: row.number }))).toEqual([
+      { name: "Kai O'Neil-Smith III", number: '07' },
+      { name: 'Mia-Lynn Carter Jr.', number: '' }
     ]);
-
-    const plan = buildRosterAiImportCommitPlan(result.rows);
-    expect(plan.updatePlayers).toEqual([{ playerId: 'p1', changes: { name: 'Jane Doe' } }]);
   });
 
   it('flags likely duplicate adds and excludes errored rows from the commit plan', () => {
     const result = normalizeRosterAiImportResponse({
       operations: [
         { action: 'add', player: { name: 'Avery Ace', number: '10' } },
-        { action: 'add', player: { name: 'Riley Runner', number: '12' } },
-        { action: 'update', playerId: 'missing', changes: { number: '44' } }
+        { action: 'add', player: { name: 'Avary Ace', number: '10' } },
+        { action: 'add', player: { name: 'Avery Ace', number: '11' } },
+        { action: 'add', player: { name: 'Riley Runner', number: '12' } }
       ]
     }, {
       currentPlayers: [{ id: 'p1', name: 'Avery Ace', number: '10' }]
     });
 
     expect(result.rows[0].errors[0]).toContain('Possible duplicate');
-    expect(result.rows[2].errors[0]).toContain('was not found');
+    expect(result.rows[0].duplicatePlayerId).toBe('p1');
+    expect(result.rows[1].errors[0]).toContain('Possible duplicate');
+    expect(result.rows[1].duplicatePlayerId).toBe('p1');
+    expect(result.rows[2].errors).toEqual([]);
 
     const plan = buildRosterAiImportCommitPlan(result.rows);
-    expect(plan.addPlayers).toEqual([{ name: 'Riley Runner', number: '12' }]);
-    expect(plan.updatePlayers).toEqual([]);
-    expect(plan.skippedRows.map((row) => row.rowNumber)).toEqual([1, 3]);
+    expect(plan.addPlayers).toEqual([
+      { name: 'Avery Ace', number: '11' },
+      { name: 'Riley Runner', number: '12' }
+    ]);
+    expect(plan.skippedRows.map((row) => row.rowNumber)).toEqual([1, 2]);
+  });
+
+  it('updates and removes preview rows before building a commit plan', () => {
+    const currentPlayers = [{ id: 'p1', name: 'Avery Ace', number: '10' }];
+    const result = normalizeRosterAiImportResponse({
+      operations: [
+        { action: 'add', player: { name: 'Avery Ace', number: '10' } },
+        { action: 'add', player: { name: 'Riley Runner', number: '12' } }
+      ]
+    }, { currentPlayers });
+
+    const edited = updateRosterAiImportPreviewRow(result.rows, 1, { name: 'Jordan New', number: '#23' }, currentPlayers);
+    expect(edited[0]).toMatchObject({
+      name: 'Jordan New',
+      number: '23',
+      duplicatePlayerId: '',
+      errors: []
+    });
+
+    const removed = removeRosterAiImportPreviewRow(edited, 2);
+    expect(removed.map((row) => row.rowNumber)).toEqual([1]);
+    expect(buildRosterAiImportCommitPlan(removed).addPlayers).toEqual([{ name: 'Jordan New', number: '23' }]);
   });
 
   it('generates rows through Firebase AI without persisting them', async () => {

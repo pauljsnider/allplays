@@ -15,15 +15,12 @@ export type RosterAiImportInput = {
 
 export type RosterAiImportPreviewRow = {
   rowNumber: number;
-  action: 'add' | 'update';
-  playerId: string;
+  action: 'add';
   name: string;
   number: string;
-  changes: {
-    name?: string;
-    number?: string;
-  };
   reason: string;
+  duplicatePlayerId: string;
+  duplicatePlayerName: string;
   errors: string[];
 };
 
@@ -34,15 +31,12 @@ export type RosterAiImportResult = {
 
 export type RosterAiImportCommitPlan = {
   addPlayers: Array<{ name: string; number: string }>;
-  updatePlayers: Array<{ playerId: string; changes: { name?: string; number?: string } }>;
   skippedRows: RosterAiImportPreviewRow[];
 };
 
 type RosterAiOperation = {
   action?: string;
   player?: Record<string, unknown>;
-  playerId?: string;
-  changes?: Record<string, unknown>;
   reason?: string;
 };
 
@@ -92,16 +86,15 @@ ${text ? `- Pasted roster text or instructions:\n${text}` : '- No extra text ins
 OUTPUT RULES:
 1. Return strict JSON only with an operations array.
 2. Extract all players from the ${hasImage ? 'image' : 'text'} using common formats like "#10 John Smith", "23 Jane Doe", "Name - 15", and "Name (15)".
-3. Skip headers, blank lines, team names, coaches, and non-player text.
-4. Leave number empty when no jersey number is provided.
-5. Compare extracted players to current player records before choosing an action.
-6. Use action "update" with playerId and changes when a row matches an existing player by same number, same normalized name, or likely name/number correction.
-7. Use action "add" with player only when no reasonable active roster match exists.
-8. Never add a second active player for a likely update to an existing player.
-9. Put uncertainty or skipped-row notes in reason.
+3. Skip headers, blank lines, team names, coaches, guardians, phone numbers, emails, and non-player text.
+4. Preserve suffixes and punctuation in names, including Jr., III, hyphens, and apostrophes.
+5. Leave number empty when no jersey number is provided.
+6. Use action "add" for each extracted player row. Do not update, delete, deactivate, or reactivate existing players.
+7. Put uncertainty, filters used, OCR ambiguity, or skipped-row notes in reason.
+8. If no players are found, return {"operations":[]}.
 
 JSON shape:
-{"operations":[{"action":"add","player":{"name":"John Smith","number":"10"},"reason":"read from row 1"},{"action":"update","playerId":"abc123","changes":{"name":"Jane Doe","number":"23"},"reason":"same jersey number as existing player"}]}`;
+{"operations":[{"action":"add","player":{"name":"John Smith","number":"10"},"reason":"read from row 1"}]}`;
 }
 
 export function normalizeRosterAiImportResponse(response: unknown, input: Partial<RosterAiImportInput> = {}): RosterAiImportResult {
@@ -125,7 +118,6 @@ export function normalizeRosterAiImportResponse(response: unknown, input: Partia
 export function buildRosterAiImportCommitPlan(rows: RosterAiImportPreviewRow[] = [], selectedRowNumbers?: number[]): RosterAiImportCommitPlan {
   const selected = selectedRowNumbers ? new Set(selectedRowNumbers) : null;
   const addPlayers: RosterAiImportCommitPlan['addPlayers'] = [];
-  const updatePlayers: RosterAiImportCommitPlan['updatePlayers'] = [];
   const skippedRows: RosterAiImportPreviewRow[] = [];
 
   rows.forEach((row) => {
@@ -136,12 +128,30 @@ export function buildRosterAiImportCommitPlan(rows: RosterAiImportPreviewRow[] =
     }
     if (row.action === 'add') {
       addPlayers.push({ name: row.name, number: row.number });
-      return;
     }
-    updatePlayers.push({ playerId: row.playerId, changes: row.changes });
   });
 
-  return { addPlayers, updatePlayers, skippedRows };
+  return { addPlayers, skippedRows };
+}
+
+export function updateRosterAiImportPreviewRow(
+  rows: RosterAiImportPreviewRow[] = [],
+  rowNumber: number,
+  changes: { name?: string; number?: string },
+  currentPlayers: RosterAiImportCurrentPlayer[] = []
+): RosterAiImportPreviewRow[] {
+  const nextRows = rows.map((row) => row.rowNumber === rowNumber
+    ? {
+        ...row,
+        name: Object.prototype.hasOwnProperty.call(changes, 'name') ? compactText(changes.name) : row.name,
+        number: Object.prototype.hasOwnProperty.call(changes, 'number') ? normalizeJerseyNumber(changes.number) : row.number
+      }
+    : row);
+  return validateRosterAiPreviewRows(nextRows, normalizeCurrentPlayers(currentPlayers));
+}
+
+export function removeRosterAiImportPreviewRow(rows: RosterAiImportPreviewRow[] = [], rowNumber: number): RosterAiImportPreviewRow[] {
+  return rows.filter((row) => row.rowNumber !== rowNumber);
 }
 
 export function buildRosterAiImportSchema() {
@@ -158,17 +168,9 @@ export function buildRosterAiImportSchema() {
               },
               optionalProperties: ['number']
             }),
-            playerId: Schema.string(),
-            changes: Schema.object({
-              properties: {
-                name: Schema.string(),
-                number: Schema.string()
-              },
-              optionalProperties: ['name', 'number']
-            }),
             reason: Schema.string()
           },
-          optionalProperties: ['player', 'playerId', 'changes', 'reason']
+          optionalProperties: ['player', 'reason']
         })
       })
     }
@@ -185,35 +187,16 @@ function normalizeRosterAiOperation(
   if (action === 'add') {
     const name = compactText(operation.player?.name || '');
     const number = normalizeJerseyNumber(operation.player?.number);
-    const errors = validateAddPlayer(name, number, currentPlayers);
-    return {
+    return validateRosterAiPreviewRow({
       rowNumber,
       action: 'add',
-      playerId: '',
       name,
       number,
-      changes: {},
       reason,
-      errors
-    };
-  }
-  if (action === 'update') {
-    const playerId = compactText(operation.playerId || '');
-    const currentPlayer = currentPlayers.find((player) => player.id === playerId);
-    const name = compactText(operation.changes?.name || currentPlayer?.name || '');
-    const number = normalizeJerseyNumber(operation.changes?.number ?? currentPlayer?.number ?? '');
-    const changes = buildUpdateChanges(operation.changes || {}, currentPlayer);
-    const errors = validateUpdatePlayer(playerId, changes, currentPlayer);
-    return {
-      rowNumber,
-      action: 'update',
-      playerId,
-      name,
-      number,
-      changes,
-      reason,
-      errors
-    };
+      duplicatePlayerId: '',
+      duplicatePlayerName: '',
+      errors: []
+    }, currentPlayers);
   }
   return null;
 }
@@ -242,32 +225,39 @@ function validateAddPlayer(name: string, number: string, currentPlayers: Normali
   const errors: string[] = [];
   if (!name) errors.push('Player name is required.');
   const normalizedName = normalizeName(name);
-  const duplicate = currentPlayers.find((player) => player.active && (
-    (number && player.number === number) ||
-    (normalizedName && player.normalizedName === normalizedName)
-  ));
+  const duplicate = findExistingPlayerDuplicate(normalizedName, number, currentPlayers);
   if (duplicate) {
-    errors.push(`Possible duplicate of existing roster player ${duplicate.name}. Use update instead of add.`);
+    errors.push(`Possible duplicate of existing roster player ${duplicate.name}${duplicate.number ? ` #${duplicate.number}` : ''}.`);
   }
   return errors;
 }
 
-function validateUpdatePlayer(playerId: string, changes: Record<string, string>, currentPlayer: NormalizedCurrentPlayer | undefined) {
-  const errors: string[] = [];
-  if (!playerId) errors.push('Update operation is missing playerId.');
-  if (playerId && !currentPlayer) errors.push(`Player ${playerId} was not found in the current roster.`);
-  if (!Object.keys(changes).length) errors.push('Update operation has no name or number changes.');
-  return errors;
+function validateRosterAiPreviewRows(rows: RosterAiImportPreviewRow[], currentPlayers: NormalizedCurrentPlayer[]) {
+  return rows.map((row) => validateRosterAiPreviewRow(row, currentPlayers));
 }
 
-function buildUpdateChanges(changes: Record<string, unknown>, currentPlayer: NormalizedCurrentPlayer | undefined) {
-  const nextName = compactText(changes.name || '');
-  const hasNumberChange = Object.prototype.hasOwnProperty.call(changes, 'number');
-  const nextNumber = hasNumberChange ? normalizeJerseyNumber(changes.number) : currentPlayer?.number || '';
-  const result: Record<string, string> = {};
-  if (nextName && nextName !== currentPlayer?.name) result.name = nextName;
-  if (hasNumberChange && nextNumber !== (currentPlayer?.number || '')) result.number = nextNumber;
-  return result;
+function validateRosterAiPreviewRow(row: RosterAiImportPreviewRow, currentPlayers: NormalizedCurrentPlayer[]): RosterAiImportPreviewRow {
+  const name = compactText(row.name);
+  const number = normalizeJerseyNumber(row.number);
+  const normalizedName = normalizeName(name);
+  const duplicate = findExistingPlayerDuplicate(normalizedName, number, currentPlayers);
+  return {
+    ...row,
+    name,
+    number,
+    duplicatePlayerId: duplicate?.id || '',
+    duplicatePlayerName: duplicate?.name || '',
+    errors: validateAddPlayer(name, number, currentPlayers)
+  };
+}
+
+function findExistingPlayerDuplicate(normalizedName: string, number: string, currentPlayers: NormalizedCurrentPlayer[]) {
+  return currentPlayers.find((player) => {
+    if (!player.active || !normalizedName) return false;
+    if (number && player.number === number) return true;
+    if (player.normalizedName !== normalizedName) return false;
+    return number ? player.number === number : !player.number;
+  });
 }
 
 function getRosterAiImportModel() {
