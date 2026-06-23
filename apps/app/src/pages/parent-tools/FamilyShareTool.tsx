@@ -17,13 +17,15 @@ export function FamilyShareTool({ auth, refreshVersion }: { auth: AuthState; ref
     const saveOperation = useParentToolAsyncOperation();
     const runLoad = loadOperation.run;
     const runSave = saveOperation.run;
+    const clearLoadError = loadOperation.clearError;
+    const clearSaveError = saveOperation.clearError;
     const loading = loadOperation.loading;
     const saving = saveOperation.loading;
     const error = loadOperation.error ?? saveOperation.error;
 
     const refresh = useCallback(async () => {
-        loadOperation.clearError();
-        saveOperation.clearError();
+        clearLoadError();
+        clearSaveError();
         return runLoad(
             () => loadFamilyShareModel(auth.user),
             'Unable to load family share links.',
@@ -34,7 +36,7 @@ export function FamilyShareTool({ auth, refreshVersion }: { auth: AuthState; ref
                 }
             }
         );
-    }, [auth.user, loadOperation, runLoad, saveOperation]);
+    }, [auth.user, clearLoadError, clearSaveError, runLoad]);
 
     useEffect(() => {
         void refresh();
@@ -42,7 +44,7 @@ export function FamilyShareTool({ auth, refreshVersion }: { auth: AuthState; ref
 
     const create = async (event: FormEvent) => {
         event.preventDefault();
-        saveOperation.clearError();
+        clearSaveError();
         setMessage('');
         await runSave(
             () => createParentFamilyShare(auth.user, label || 'Family share', splitLines(calendarText)),
@@ -60,7 +62,7 @@ export function FamilyShareTool({ auth, refreshVersion }: { auth: AuthState; ref
     };
 
     const revoke = async (tokenId: string) => {
-        saveOperation.clearError();
+        clearSaveError();
         setMessage('');
         await runSave(
             () => revokeParentFamilyShare(tokenId),
@@ -78,7 +80,7 @@ export function FamilyShareTool({ auth, refreshVersion }: { auth: AuthState; ref
     };
 
     const saveCalendars = async (tokenId: string, value: string) => {
-        saveOperation.clearError();
+        clearSaveError();
         setMessage('');
         await runSave(
             () => updateParentFamilyShareCalendars(tokenId, splitLines(value)),

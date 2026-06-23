@@ -17,14 +17,17 @@ export function CalendarTool({ auth, refreshVersion }: { auth: AuthState; refres
     const runLoad = loadOperation.run;
     const runExport = exportOperation.run;
     const runFeed = feedOperation.run;
+    const clearLoadError = loadOperation.clearError;
+    const clearExportError = exportOperation.clearError;
+    const clearFeedError = feedOperation.clearError;
     const loading = loadOperation.loading;
     const exporting = exportOperation.loading;
     const error = loadOperation.error ?? exportOperation.error ?? feedOperation.error;
 
     const refresh = useCallback(async (options: { force?: boolean } = {}) => {
-        loadOperation.clearError();
-        exportOperation.clearError();
-        feedOperation.clearError();
+        clearLoadError();
+        clearExportError();
+        clearFeedError();
         setMessage('');
         return runLoad(
             () => loadParentCalendarTools(auth.user, options),
@@ -36,7 +39,7 @@ export function CalendarTool({ auth, refreshVersion }: { auth: AuthState; refres
                 }
             }
         );
-    }, [auth.user, exportOperation, feedOperation, loadOperation, runLoad]);
+    }, [auth.user, clearExportError, clearFeedError, clearLoadError, runLoad]);
 
     useEffect(() => {
         void refresh(refreshVersion > 0 ? { force: true } : {});
@@ -47,8 +50,8 @@ export function CalendarTool({ auth, refreshVersion }: { auth: AuthState; refres
             setMessage('No events to export yet.');
             return;
         }
-        exportOperation.clearError();
-        feedOperation.clearError();
+        clearExportError();
+        clearFeedError();
         setMessage('');
         await runExport(
             () => exportCalendarIcsFile('all-plays-family-schedule.ics', buildParentScheduleIcs(events)),
@@ -72,8 +75,8 @@ export function CalendarTool({ auth, refreshVersion }: { auth: AuthState; refres
 
     const openFeed = async (team: ParentCalendarTeam, target: 'copy' | 'apple' | 'google') => {
         setBusyTeamId(team.teamId);
-        exportOperation.clearError();
-        feedOperation.clearError();
+        clearExportError();
+        clearFeedError();
         setMessage('');
         await runFeed(
             async () => {

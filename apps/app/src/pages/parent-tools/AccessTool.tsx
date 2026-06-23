@@ -35,21 +35,32 @@ export function AccessTool({ auth, onAccessChanged }: { auth: AuthState; onAcces
     const runPlayerLoad = playerLoadOperation.run;
     const runSubmit = submitOperation.run;
     const runRedeem = redeemOperation.run;
+    const clearAccessLoadError = accessLoadOperation.clearError;
+    const clearTeamLoadError = teamLoadOperation.clearError;
+    const clearPlayerLoadError = playerLoadOperation.clearError;
+    const clearSubmitError = submitOperation.clearError;
+    const clearRedeemError = redeemOperation.clearError;
+    const setSubmitError = submitOperation.setError;
+    const setRedeemError = redeemOperation.setError;
 
     const loading = accessLoadOperation.loading;
     const loadingTeams = teamLoadOperation.loading;
     const loadingPlayers = playerLoadOperation.loading;
     const saving = submitOperation.loading;
     const redeeming = redeemOperation.loading;
-    const loadError = accessLoadOperation.error;
-    const manualLookupError = teamLoadOperation.error ?? playerLoadOperation.error;
-    const actionError = submitOperation.error ?? redeemOperation.error;
+    const { error: loadError } = accessLoadOperation;
+    const { error: teamLoadError } = teamLoadOperation;
+    const { error: playerLoadError } = playerLoadOperation;
+    const { error: submitError } = submitOperation;
+    const { error: redeemError } = redeemOperation;
+    const manualLookupError = teamLoadError ?? playerLoadError;
+    const actionError = submitError ?? redeemError;
 
     const loadTeams = useCallback(async () => {
-        teamLoadOperation.clearError();
-        playerLoadOperation.clearError();
-        submitOperation.clearError();
-        redeemOperation.clearError();
+        clearTeamLoadError();
+        clearPlayerLoadError();
+        clearSubmitError();
+        clearRedeemError();
         return runTeamLoad(
             () => loadParentAccessTeams(),
             'Unable to load public teams.',
@@ -60,18 +71,18 @@ export function AccessTool({ auth, onAccessChanged }: { auth: AuthState; onAcces
                 }
             }
         );
-    }, [playerLoadOperation, redeemOperation, runTeamLoad, submitOperation, teamLoadOperation]);
+    }, [clearPlayerLoadError, clearRedeemError, clearSubmitError, clearTeamLoadError, runTeamLoad]);
 
     const openManualRequest = useCallback(() => {
         setManualRequestOpen(true);
     }, []);
 
     const refresh = useCallback(async () => {
-        accessLoadOperation.clearError();
-        teamLoadOperation.clearError();
-        playerLoadOperation.clearError();
-        submitOperation.clearError();
-        redeemOperation.clearError();
+        clearAccessLoadError();
+        clearTeamLoadError();
+        clearPlayerLoadError();
+        clearSubmitError();
+        clearRedeemError();
         setMessage('');
         return runAccessLoad(
             () => loadParentAccessModel(auth.user),
@@ -82,7 +93,7 @@ export function AccessTool({ auth, onAccessChanged }: { auth: AuthState; onAcces
                 }
             }
         );
-    }, [accessLoadOperation, auth.user, playerLoadOperation, redeemOperation, runAccessLoad, submitOperation, teamLoadOperation]);
+    }, [auth.user, clearAccessLoadError, clearPlayerLoadError, clearRedeemError, clearSubmitError, clearTeamLoadError, runAccessLoad]);
 
     useEffect(() => {
         void refresh();
@@ -120,7 +131,7 @@ export function AccessTool({ auth, onAccessChanged }: { auth: AuthState; onAcces
             setPlayers([]);
             setSelectedPlayerId('');
             if (!selectedTeamId) {
-                playerLoadOperation.clearError();
+                clearPlayerLoadError();
                 return;
             }
             const rows = await runPlayerLoad(
@@ -140,18 +151,18 @@ export function AccessTool({ auth, onAccessChanged }: { auth: AuthState; onAcces
         return () => {
             cancelled = true;
         };
-    }, [playerLoadOperation, runPlayerLoad, selectedTeamId]);
+    }, [clearPlayerLoadError, runPlayerLoad, selectedTeamId]);
 
     const redeem = async (event: FormEvent) => {
         event.preventDefault();
         const currentUser = auth.user;
         if (!currentUser?.uid) {
-            redeemOperation.setError(toAppServiceError(new Error('Sign in to redeem an invite code.'), 'Sign in to redeem an invite code.'));
+            setRedeemError(toAppServiceError(new Error('Sign in to redeem an invite code.'), 'Sign in to redeem an invite code.'));
             return;
         }
 
-        submitOperation.clearError();
-        redeemOperation.clearError();
+        clearSubmitError();
+        clearRedeemError();
         setMessage('');
         await runRedeem(
             () => redeemSignedInInvite({
@@ -175,11 +186,11 @@ export function AccessTool({ auth, onAccessChanged }: { auth: AuthState; onAcces
     const submit = async (event: FormEvent) => {
         event.preventDefault();
         if (!selectedTeamId || !selectedPlayerId) {
-            submitOperation.setError(toAppServiceError(new Error('Choose a team and player first.'), 'Choose a team and player first.'));
+            setSubmitError(toAppServiceError(new Error('Choose a team and player first.'), 'Choose a team and player first.'));
             return;
         }
-        submitOperation.clearError();
-        redeemOperation.clearError();
+        clearSubmitError();
+        clearRedeemError();
         setMessage('');
         await runSubmit(
             () => submitParentAccessRequest(selectedTeamId, selectedPlayerId, relation),
@@ -229,7 +240,7 @@ export function AccessTool({ auth, onAccessChanged }: { auth: AuthState; onAcces
                         </form>
                         {manualRequestOpen ? (
                             <form className="mt-3 grid gap-3 lg:grid-cols-[1fr_1fr_auto]" onSubmit={submit}>
-                                {manualLookupError ? <div className="lg:col-span-3"><RetryableStatus error={manualLookupError} fallbackMessage="Unable to load public teams." onRetry={playerLoadOperation.error && selectedTeamId ? () => { void loadPlayersForTeam(selectedTeamId); } : loadTeams} retrying={loadingTeams || loadingPlayers} /></div> : null}
+                                {manualLookupError ? <div className="lg:col-span-3"><RetryableStatus error={manualLookupError} fallbackMessage="Unable to load public teams." onRetry={playerLoadError && selectedTeamId ? () => { void loadPlayersForTeam(selectedTeamId); } : loadTeams} retrying={loadingTeams || loadingPlayers} /></div> : null}
                                 <div className="min-w-0">
                                     <label className="app-label" htmlFor="parent-access-team">Team</label>
                                     <select id="parent-access-team" aria-label="Team" className="auth-input mt-1" value={selectedTeamId} onChange={(event) => setSelectedTeamId(event.target.value)} disabled={loadingTeams || !teams.length}>

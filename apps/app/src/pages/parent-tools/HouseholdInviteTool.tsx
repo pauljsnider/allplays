@@ -18,6 +18,9 @@ export function HouseholdInviteTool({ auth, refreshVersion }: { auth: AuthState;
     const submitOperation = useParentToolAsyncOperation();
     const runLoad = loadOperation.run;
     const runSubmit = submitOperation.run;
+    const clearLoadError = loadOperation.clearError;
+    const clearSubmitError = submitOperation.clearError;
+    const setSubmitError = submitOperation.setError;
     const loading = loadOperation.loading;
     const saving = submitOperation.loading;
     const error = loadOperation.error ?? submitOperation.error;
@@ -25,8 +28,8 @@ export function HouseholdInviteTool({ auth, refreshVersion }: { auth: AuthState;
     const pendingMembers = useMemo(() => members.filter((member) => String(member.status || '').toLowerCase() === 'pending'), [members]);
 
     const refresh = useCallback(async () => {
-        loadOperation.clearError();
-        submitOperation.clearError();
+        clearLoadError();
+        clearSubmitError();
         return runLoad(
             () => loadParentHouseholdInviteModel(auth.user),
             'Unable to load household invites.',
@@ -38,7 +41,7 @@ export function HouseholdInviteTool({ auth, refreshVersion }: { auth: AuthState;
                 }
             }
         );
-    }, [auth.user, loadOperation, runLoad, submitOperation]);
+    }, [auth.user, clearLoadError, clearSubmitError, runLoad]);
 
     useEffect(() => {
         void refresh();
@@ -49,18 +52,18 @@ export function HouseholdInviteTool({ auth, refreshVersion }: { auth: AuthState;
         const trimmedEmail = email.trim();
         const trimmedRelation = relation.trim();
         if (!playerKey) {
-            submitOperation.setError(toAppServiceError(new Error('Choose a linked player first.'), 'Choose a linked player first.'));
+            setSubmitError(toAppServiceError(new Error('Choose a linked player first.'), 'Choose a linked player first.'));
             return;
         }
         if (!trimmedEmail || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmedEmail)) {
-            submitOperation.setError(toAppServiceError(new Error('Enter a valid email for the household contact.'), 'Enter a valid email for the household contact.'));
+            setSubmitError(toAppServiceError(new Error('Enter a valid email for the household contact.'), 'Enter a valid email for the household contact.'));
             return;
         }
         if (!trimmedRelation) {
-            submitOperation.setError(toAppServiceError(new Error('Enter the household contact relation.'), 'Enter the household contact relation.'));
+            setSubmitError(toAppServiceError(new Error('Enter the household contact relation.'), 'Enter the household contact relation.'));
             return;
         }
-        submitOperation.clearError();
+        clearSubmitError();
         setMessage('');
         setCreatedInvite(null);
         await runSubmit(
