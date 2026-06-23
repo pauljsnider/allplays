@@ -4576,7 +4576,7 @@ async function dispatchDueTeamMediaNotificationBatches(now = new Date()) {
       const folder = folderSnap.data() || {};
       const audienceContext = buildTeamMediaNotificationAudienceContext({
         ...folder,
-        visibility: folder.visibility || batch.albumVisibility
+        visibility: folder.visibility || batch.albumVisibility || batch.audienceContext?.albumVisibility
       });
       const albumVisibility = audienceContext.albumVisibility;
 
