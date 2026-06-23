@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { FormEvent } from 'react';
-import { Link, useNavigate, useSearchParams } from 'react-router-dom';
+import { Link, useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import { CheckCircle2, KeyRound, LogIn, ShieldCheck, UserPlus, XCircle } from 'lucide-react';
 import { AuthFrame } from '../components/AuthFrame';
 import {
@@ -26,6 +26,7 @@ function readEmailForSignIn() {
 
 export function AcceptInvite({ auth }: { auth: AuthState }) {
   const [searchParams] = useSearchParams();
+  const location = useLocation();
   const navigate = useNavigate();
   const pendingInvite = readPendingInvite();
   const urlCode = (searchParams.get('code') || '').trim().toUpperCase();
@@ -35,32 +36,42 @@ export function AcceptInvite({ auth }: { auth: AuthState }) {
   const [email, setEmail] = useState(readEmailForSignIn);
   const [state, setState] = useState<'idle' | 'processing' | 'email-link' | 'success' | 'error'>('idle');
   const [message, setMessage] = useState('');
-  const [pendingRedirectPath, setPendingRedirectPath] = useState('');
   const processedKeyRef = useRef('');
   const redirectTimerRef = useRef<number | null>(null);
+  const currentPathnameRef = useRef(location.pathname);
 
   const authUrl = useMemo(() => {
     return buildInviteAuthUrl(code, inviteType);
   }, [code, inviteType]);
 
   useEffect(() => {
-    if (!pendingRedirectPath) {
-      return undefined;
-    }
+    currentPathnameRef.current = location.pathname;
+  }, [location.pathname]);
 
-    if (redirectTimerRef.current !== null) {
-      window.clearTimeout(redirectTimerRef.current);
-    }
-
-    redirectTimerRef.current = window.setTimeout(() => navigate(pendingRedirectPath, { replace: true }), 700);
-
+  useEffect(() => {
     return () => {
       if (redirectTimerRef.current !== null) {
         window.clearTimeout(redirectTimerRef.current);
         redirectTimerRef.current = null;
       }
     };
-  }, [navigate, pendingRedirectPath]);
+  }, []);
+
+  function scheduleRedirect(path: string) {
+    if (!path) return;
+
+    if (redirectTimerRef.current !== null) {
+      window.clearTimeout(redirectTimerRef.current);
+    }
+
+    redirectTimerRef.current = window.setTimeout(() => {
+      redirectTimerRef.current = null;
+      if (!isCurrentInviteRoute(currentPathnameRef.current)) {
+        return;
+      }
+      navigate(path, { replace: true });
+    }, 700);
+  }
 
   async function redeem(codeToRedeem: string) {
     const normalizedCode = normalizeInviteCode(codeToRedeem);
@@ -88,7 +99,7 @@ export function AcceptInvite({ auth }: { auth: AuthState }) {
       });
       setState('success');
       setMessage(result.message);
-      setPendingRedirectPath(result.redirectPath);
+      scheduleRedirect(result.redirectPath);
     } catch (error: any) {
       processedKeyRef.current = '';
       setState('error');
@@ -131,11 +142,11 @@ export function AcceptInvite({ auth }: { auth: AuthState }) {
         clearPendingInvite();
         setState('success');
         setMessage(inviteResult?.message || 'Invite accepted.');
-        setPendingRedirectPath(mapLegacyRedirectToAppRoute(inviteResult?.redirectUrl));
+        scheduleRedirect(mapLegacyRedirectToAppRoute(inviteResult?.redirectUrl));
       } else {
         setState('success');
         setMessage('Signed in successfully.');
-        setPendingRedirectPath('/home');
+        scheduleRedirect('/home');
       }
     } catch (error: any) {
       setState('error');
@@ -198,6 +209,17 @@ export function AcceptInvite({ auth }: { auth: AuthState }) {
       {state === 'error' ? <Status icon={XCircle} message={message} tone="error" /> : null}
     </AuthFrame>
   );
+}
+
+function isCurrentInviteRoute(fallbackPathname: string) {
+  if (typeof window !== 'undefined') {
+    const hashPath = window.location.hash.replace(/^#/, '').split('?')[0];
+    if (hashPath) {
+      return hashPath === '/accept-invite';
+    }
+  }
+
+  return fallbackPathname === '/accept-invite';
 }
 
 function buildInviteAuthUrl(code: string, inviteType: string) {
