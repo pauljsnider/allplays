@@ -396,6 +396,33 @@ describe('PlayerDetail athlete profile season selection', () => {
     expect(screen.getByText('• 1 highlight clip')).toBeTruthy();
   });
 
+  it('shows saved athlete clip titles in the profile builder', async () => {
+    playerServiceMocks.loadParentPlayerDetail.mockResolvedValue(buildDetailData({
+      athleteProfile: {
+        profile: {
+          id: 'profile-1',
+          athlete: { name: 'Sam Player' },
+          bio: {},
+          privacy: 'public',
+          clips: [{ id: 'clip-old', source: 'upload', title: 'Old clip', url: 'https://example.test/old.mp4' }],
+          seasons: [{ seasonKey: 'team-current::player-current' }]
+        },
+        shareUrl: 'https://allplays.ai/athlete-profile.html?profileId=profile-1',
+        builderUrl: 'https://allplays.ai/athlete-profile-builder.html?teamId=team-current&playerId=player-current&profileId=profile-1',
+        seasonOptions: buildDetailData().athleteProfile.seasonOptions
+      }
+    }));
+
+    renderPlayerDetail();
+
+    await screen.findByText('Sam Player');
+    fireEvent.click(screen.getByRole('button', { name: 'Profile' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Athlete Profile' }));
+
+    expect(await screen.findByText('Old clip')).toBeTruthy();
+    expect(screen.getByText('https://example.test/old.mp4')).toBeTruthy();
+  });
+
   it('switches the athlete profile save CTA with the selected privacy option', async () => {
     renderPlayerDetail();
 

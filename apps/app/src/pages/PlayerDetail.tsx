@@ -1516,6 +1516,9 @@ function AthleteProfileBuilderCard({ data, auth, onChanged, onShareStateChange }
                     <div className="text-xs font-black uppercase tracking-[0.04em] text-gray-500">
                       {clip.pendingUpload ? 'Pending upload' : clip.source === 'upload' ? 'Uploaded clip' : 'External link'}
                     </div>
+                    <p className="mt-1 truncate text-sm font-bold text-gray-900">
+                      {clip.title || (clip.pendingUpload ? clip.file?.name : '') || 'Untitled clip'}
+                    </p>
                     <p className="mt-1 truncate text-xs font-semibold text-gray-500">
                       {clip.pendingUpload ? clip.file?.name || 'Selected clip' : clip.url || 'Add a URL before saving'}
                     </p>
