@@ -122,11 +122,13 @@ describe('fee notification contract', () => {
         expect(functionsSource).toContain(".where('status', 'in', ['unpaid', 'pending'])");
         expect(functionsSource).toContain(".where('dueDate', '>=', now)");
         expect(functionsSource).toContain(".where('dueDate', '<=', maxReminderThresholdLater)");
-        expect(functionsSource).toContain('if (wasFeeReminderSentForThreshold(data, reminderThresholdHours)) return null;');
+        expect(functionsSource).toContain('function isFeeDueReminderCandidateEligible(recipient = {}, {');
+        expect(functionsSource).toContain('return !wasFeeReminderSentForThreshold(recipient, reminderThresholdHours);');
+        expect(functionsSource).toContain('async function resolveEligibleFeeReminderRecipient({');
         expect(functionsSource).toContain('const allTargets = await getTargetsForCategory(teamId, \'fees\', null);');
-        expect(functionsSource).toContain('const payerTargets = allTargets.filter((t) => candidateUserIdSet.has(t.uid));');
+        expect(functionsSource).toContain('const payerTargets = allTargets.filter((target) => candidateUserIdSet.has(target.uid));');
         expect(functionsSource).toContain('reminderThresholdHours');
-        expect(functionsSource).toContain('const reminderWindowLabel = formatFeeReminderWindowLabel(reminderThresholdHours);');
+        expect(functionsSource).toContain('const body = buildFeeReminderNotificationBody(data, amountLabel, reminderThresholdHours);');
         expect(functionsSource).toContain("title: `Reminder: ${title} is due soon`");
     });
 
