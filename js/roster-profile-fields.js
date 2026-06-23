@@ -433,14 +433,18 @@ function collectContactIdentityConflictErrors(contacts = [], rowNumber = 0) {
     const checkIdentity = (seen, identityField, identityLabel, contact) => {
         const identityValue = normalizeContactConflictValue(contact[identityField]);
         if (!identityValue) return;
-        const existing = seen.get(identityValue);
-        if (!existing) {
-            seen.set(identityValue, contact);
+        const existingContacts = seen.get(identityValue) || [];
+        if (existingContacts.length === 0) {
+            seen.set(identityValue, [contact]);
             return;
         }
-        const conflictFields = getContactConflictFields(existing, contact, identityField);
-        if (conflictFields.length === 0) return;
-        errors.push(`Row ${rowNumber}: contact ${identityLabel} ${identityValue} has conflicting ${conflictFields.join('/')} values (${describeContactConflict(existing)} vs ${describeContactConflict(contact)}).`);
+        for (const existing of existingContacts) {
+            const conflictFields = getContactConflictFields(existing, contact, identityField);
+            if (conflictFields.length === 0) continue;
+            errors.push(`Row ${rowNumber}: contact ${identityLabel} ${identityValue} has conflicting ${conflictFields.join('/')} values (${describeContactConflict(existing)} vs ${describeContactConflict(contact)}).`);
+            break;
+        }
+        existingContacts.push(contact);
     };
 
     contacts.forEach((contact) => {

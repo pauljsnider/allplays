@@ -328,6 +328,21 @@ describe('roster CSV import planning', () => {
         ]);
     });
 
+    it('compares populated duplicate contacts after a sparse duplicate identity', () => {
+        const plan = planRosterCsvImport({
+            fields,
+            csvText: [
+                'Name,Parent Email,Parent 2 Name,Parent 2 Email,Parent 3 Name,Parent 3 Email',
+                'Avery Lee,family@example.com,Pat Lee,family@example.com,Robin Lee,family@example.com'
+            ].join('\n')
+        });
+
+        expect(plan.operations).toEqual([]);
+        expect(plan.errors).toEqual([
+            'Row 2: contact email family@example.com has conflicting name values (Pat Lee (Parent) vs Robin Lee (Parent)).'
+        ]);
+    });
+
     it('merges imported guardian contacts onto existing player updates without duplicates', () => {
         const plan = planRosterCsvImport({
             fields,
