@@ -2,9 +2,12 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState, type FormEvent, 
 import { Link, useParams } from 'react-router-dom';
 import {
   AlertCircle,
+  ArrowDown,
+  ArrowUp,
   Award,
   BarChart3,
   CalendarDays,
+  Camera,
   CheckCircle2,
   ChevronLeft,
   ChevronRight,
@@ -13,6 +16,8 @@ import {
   Edit3,
   ExternalLink,
   FileVideo,
+  ImagePlus,
+  Link2,
   Mail,
   Loader2,
   Plus,
@@ -39,6 +44,9 @@ import {
   sendParentCoParentInvite,
   toggleParentPlayerIncentiveRule,
   updateParentPlayerEditableProfile,
+  normalizeAthleteProfileHighlightClipUrl,
+  type AthleteProfileHighlightClipDraft,
+  type AthleteProfileHighlightClipUpload,
   type ParentPlayerDetailData,
   type ParentPlayerStatRow
 } from '../lib/playerService';
@@ -56,9 +64,24 @@ import {
 } from '../lib/scheduleLogic';
 import { sharePublicUrl } from '../lib/publicActions';
 import type { AuthState } from '../lib/types';
+import type { ProfilePhotoSource } from '../lib/profilePhotoService';
 
 type PlayerSectionId = 'overview' | 'schedule' | 'performance' | 'profile';
 type AthleteProfilePrivacy = 'private' | 'public';
+type AthleteProfileClipDraftState = {
+  id: string;
+  source: 'external' | 'upload';
+  mediaType: 'link' | 'image' | 'video';
+  title: string;
+  label: string;
+  url: string;
+  storagePath: string;
+  mimeType: string;
+  sizeBytes: number | null;
+  uploadedAtMs: number | null;
+  pendingUpload: boolean;
+  file: File | null;
+};
 
 const playerSections: Array<{ id: PlayerSectionId; label: string }> = [
   { id: 'overview', label: 'Overview' },
@@ -116,6 +139,160 @@ function isPersistedPublicProfileReady(
   options: { hasUnsavedPublishChanges?: boolean; saving?: boolean } = {}
 ) {
   return hasPersistedPublicProfile(profile, shareUrl) && !hasPendingPublicProfilePublish(options);
+}
+
+function createAthleteProfileClipId() {
+  if (globalThis.crypto?.randomUUID) {
+    return `clip_${globalThis.crypto.randomUUID()}`;
+  }
+  return `clip_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function compactString(value: unknown) {
+  return String(value || '').trim();
+}
+
+function nullableNumber(value: unknown) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function inferClipMediaTypeFromFile(file: File): 'image' | 'video' | 'link' {
+  const type = compactString(file?.type).toLowerCase();
+  if (type.startsWith('image/')) return 'image';
+  if (type.startsWith('video/')) return 'video';
+  return 'link';
+}
+
+function normalizeExistingAthleteClip(clip: Record<string, any>, index: number): AthleteProfileClipDraftState | null {
+  const url = compactString(clip?.url);
+  if (!url) return null;
+  const source = clip?.source === 'upload' ? 'upload' : 'external';
+  const mediaType = ['image', 'video', 'link'].includes(compactString(clip?.mediaType).toLowerCase())
+    ? compactString(clip?.mediaType).toLowerCase() as 'image' | 'video' | 'link'
+    : source === 'upload' ? 'video' : 'link';
+
+  return {
+    id: compactString(clip?.id) || `clip_${index + 1}`,
+    source,
+    mediaType,
+    title: compactString(clip?.title),
+    label: compactString(clip?.label),
+    url,
+    storagePath: compactString(clip?.storagePath),
+    mimeType: compactString(clip?.mimeType),
+    sizeBytes: nullableNumber(clip?.sizeBytes),
+    uploadedAtMs: nullableNumber(clip?.uploadedAtMs),
+    pendingUpload: false,
+    file: null
+  };
+}
+
+function normalizeExistingAthleteClips(clips: unknown): AthleteProfileClipDraftState[] {
+  return (Array.isArray(clips) ? clips : [])
+    .map((clip, index) => normalizeExistingAthleteClip(clip, index))
+    .filter((clip): clip is AthleteProfileClipDraftState => !!clip);
+}
+
+function createExternalAthleteClip(): AthleteProfileClipDraftState {
+  return {
+    id: createAthleteProfileClipId(),
+    source: 'external',
+    mediaType: 'link',
+    title: '',
+    label: '',
+    url: '',
+    storagePath: '',
+    mimeType: '',
+    sizeBytes: null,
+    uploadedAtMs: null,
+    pendingUpload: false,
+    file: null
+  };
+}
+
+function createPendingAthleteClip(file: File): AthleteProfileClipDraftState {
+  const title = compactString(file.name).replace(/\.[^.]+$/, '');
+  return {
+    id: createAthleteProfileClipId(),
+    source: 'upload',
+    mediaType: inferClipMediaTypeFromFile(file),
+    title,
+    label: '',
+    url: '',
+    storagePath: '',
+    mimeType: compactString(file.type),
+    sizeBytes: nullableNumber(file.size),
+    uploadedAtMs: null,
+    pendingUpload: true,
+    file
+  };
+}
+
+function buildAthleteProfileClipSignature(clips: AthleteProfileClipDraftState[]) {
+  return JSON.stringify(clips.map((clip) => ({
+    id: clip.id,
+    source: clip.source,
+    mediaType: clip.mediaType,
+    title: clip.title,
+    label: clip.label,
+    url: clip.url,
+    storagePath: clip.storagePath,
+    mimeType: clip.mimeType,
+    sizeBytes: clip.sizeBytes,
+    uploadedAtMs: clip.uploadedAtMs,
+    pendingUpload: clip.pendingUpload,
+    fileName: clip.file?.name || '',
+    fileSize: clip.file?.size || null
+  })));
+}
+
+function buildAthleteProfileClipSaveState(clips: AthleteProfileClipDraftState[]) {
+  const draftClips: AthleteProfileHighlightClipDraft[] = [];
+  const highlightClipUploads: AthleteProfileHighlightClipUpload[] = [];
+
+  clips.forEach((clip) => {
+    if (clip.pendingUpload) {
+      if (!clip.file) {
+        throw new Error('One highlight clip could not be found. Re-add it and try again.');
+      }
+      draftClips.push({
+        id: clip.id,
+        source: 'upload',
+        mediaType: clip.mediaType,
+        title: clip.title,
+        label: clip.label,
+        pendingUpload: true
+      });
+      highlightClipUploads.push({
+        id: clip.id,
+        file: clip.file,
+        title: clip.title,
+        label: clip.label
+      });
+      return;
+    }
+
+    const url = clip.source === 'external'
+      ? normalizeAthleteProfileHighlightClipUrl(clip.url)
+      : compactString(clip.url);
+    if (!url) return;
+
+    draftClips.push({
+      id: clip.id,
+      source: clip.source,
+      mediaType: clip.mediaType,
+      title: clip.title,
+      label: clip.label,
+      url,
+      storagePath: clip.storagePath,
+      mimeType: clip.mimeType,
+      sizeBytes: clip.sizeBytes,
+      uploadedAtMs: clip.uploadedAtMs
+    });
+  });
+
+  return { draftClips, highlightClipUploads };
 }
 
 export function PlayerDetail({ auth }: { auth: AuthState }) {
@@ -897,6 +1074,7 @@ function AthleteProfileBuilderCard({ data, auth, onChanged, onShareStateChange }
     }
     return currentSeasonKey ? [currentSeasonKey] : [];
   }, [currentSeasonKey, existing]);
+  const initialClipDrafts = useMemo(() => normalizeExistingAthleteClips(existing?.clips), [existing?.clips]);
   const [name, setName] = useState(existing?.athlete?.name || data.player.name || data.child.playerName || '');
   const [headline, setHeadline] = useState(existing?.athlete?.headline || '');
   const [position, setPosition] = useState(existing?.bio?.position || '');
@@ -911,9 +1089,11 @@ function AthleteProfileBuilderCard({ data, auth, onChanged, onShareStateChange }
   const [status, setStatus] = useState<{ tone: 'error' | 'success'; message: string } | null>(null);
   const [headshotFile, setHeadshotFile] = useState<File | null>(null);
   const [headshotError, setHeadshotError] = useState('');
+  const [headshotBusy, setHeadshotBusy] = useState(false);
   const [resetHeadshot, setResetHeadshot] = useState(false);
-  const [highlightClipFile, setHighlightClipFile] = useState<File | null>(null);
+  const [clipDrafts, setClipDrafts] = useState<AthleteProfileClipDraftState[]>(initialClipDrafts);
   const [highlightClipError, setHighlightClipError] = useState('');
+  const headshotInputRef = useRef<HTMLInputElement | null>(null);
   const persistedPrivacy = existing?.privacy === 'public' ? 'public' : 'private';
   const existingHeadshotUrl = existing?.profilePhotoUrl || '';
   const linkedHeadshotUrl = data.player.photoUrl || '';
@@ -935,10 +1115,10 @@ function AthleteProfileBuilderCard({ data, auth, onChanged, onShareStateChange }
       dominantHand ? `${dominantHand} hand` : '',
       achievements,
       selectedSeasonKeys.length ? `${selectedSeasonKeys.length} season${selectedSeasonKeys.length === 1 ? '' : 's'} of stats and game clips` : '',
-      (existing?.clips?.length || 0) + (highlightClipFile ? 1 : 0) ? `${(existing?.clips?.length || 0) + (highlightClipFile ? 1 : 0)} highlight clip${(existing?.clips?.length || 0) + (highlightClipFile ? 1 : 0) === 1 ? '' : 's'}` : ''
+      clipDrafts.length ? `${clipDrafts.length} highlight clip${clipDrafts.length === 1 ? '' : 's'}` : ''
     ].filter(Boolean);
     return items;
-  }, [achievements, data.child.playerName, dominantHand, existing?.clips?.length, graduationYear, headline, highlightClipFile, hometown, name, position, selectedSeasonKeys.length]);
+  }, [achievements, clipDrafts.length, data.child.playerName, dominantHand, graduationYear, headline, hometown, name, position, selectedSeasonKeys.length]);
   const normalizedExistingName = existing?.athlete?.name || data.player.name || data.child.playerName || '';
   const normalizedExistingHeadline = existing?.athlete?.headline || '';
   const normalizedExistingPosition = existing?.bio?.position || '';
@@ -948,6 +1128,8 @@ function AthleteProfileBuilderCard({ data, auth, onChanged, onShareStateChange }
   const normalizedExistingAchievements = existing?.bio?.achievements || '';
   const normalizedInitialSelectedSeasonKeys = [...initialSelectedSeasonKeys].sort();
   const normalizedSelectedSeasonKeys = [...selectedSeasonKeys].sort();
+  const normalizedInitialClipSignature = buildAthleteProfileClipSignature(initialClipDrafts);
+  const normalizedClipSignature = buildAthleteProfileClipSignature(clipDrafts);
   const hasUnsavedPublishChanges = (
     privacy !== persistedPrivacy ||
     name !== normalizedExistingName ||
@@ -959,9 +1141,9 @@ function AthleteProfileBuilderCard({ data, auth, onChanged, onShareStateChange }
     achievements !== normalizedExistingAchievements ||
     normalizedInitialSelectedSeasonKeys.length !== normalizedSelectedSeasonKeys.length ||
     normalizedInitialSelectedSeasonKeys.some((seasonKey, index) => seasonKey !== normalizedSelectedSeasonKeys[index]) ||
+    normalizedInitialClipSignature !== normalizedClipSignature ||
     !!headshotFile ||
-    resetHeadshot ||
-    !!highlightClipFile
+    resetHeadshot
   );
   const normalizedShareUrl = String(data.athleteProfile.shareUrl || '').trim();
   const persistedPublicProfileUrl = getPersistedPublicProfileUrl(existing, normalizedShareUrl);
@@ -1014,12 +1196,122 @@ function AthleteProfileBuilderCard({ data, auth, onChanged, onShareStateChange }
     setSelectedSeasonKeys(initialSelectedSeasonKeys);
   }, [initialSelectedSeasonKeys]);
 
+  useEffect(() => {
+    setClipDrafts(initialClipDrafts);
+    setHighlightClipError('');
+  }, [initialClipDrafts]);
+
   const toggleSeasonKey = (seasonKey: string) => {
     setSelectedSeasonKeys((current) => (
       current.includes(seasonKey)
         ? current.filter((key) => key !== seasonKey)
         : [...current, seasonKey]
     ));
+  };
+
+  const prepareHeadshotFile = async (file: File | null, options: { normalize?: boolean } = {}) => {
+    if (!file) {
+      setHeadshotFile(null);
+      setHeadshotError('');
+      return;
+    }
+    if (!String(file.type || '').startsWith('image/')) {
+      setHeadshotFile(null);
+      setHeadshotError('Choose an image file for the athlete headshot.');
+      return;
+    }
+
+    setHeadshotBusy(true);
+    setHeadshotError('');
+    try {
+      const nextFile = options.normalize === false
+        ? file
+        : await import('../lib/profilePhotoService').then((module) => module.normalizeProfilePhoto(file));
+      setHeadshotFile(nextFile);
+      setResetHeadshot(false);
+    } catch (error: any) {
+      setHeadshotFile(null);
+      setHeadshotError(error?.message || 'Athlete headshot could not be prepared right now.');
+    } finally {
+      setHeadshotBusy(false);
+    }
+  };
+
+  const chooseNativeHeadshot = async (source: ProfilePhotoSource) => {
+    setHeadshotBusy(true);
+    setHeadshotError('');
+    try {
+      const { acquireProfilePhoto } = await import('../lib/profilePhotoService');
+      const file = await acquireProfilePhoto(source);
+      await prepareHeadshotFile(file, { normalize: false });
+    } catch (error: any) {
+      if (error?.code === 'cancelled') {
+        return;
+      }
+      if (error?.code === 'unavailable' && source === 'photos') {
+        headshotInputRef.current?.click();
+        return;
+      }
+      const message = error?.code === 'permission-denied'
+        ? source === 'camera'
+          ? 'Camera permission was denied. Allow camera access to take a headshot.'
+          : 'Photo permission was denied. Allow photo library access to choose a headshot.'
+        : error?.message || 'Athlete headshot could not be selected right now.';
+      setHeadshotError(message);
+    } finally {
+      setHeadshotBusy(false);
+    }
+  };
+
+  const addExternalClip = () => {
+    setClipDrafts((current) => [...current, createExternalAthleteClip()]);
+    setHighlightClipError('');
+  };
+
+  const addUploadClips = (files: File[]) => {
+    if (!files.length) return;
+    const nextClips: AthleteProfileClipDraftState[] = [];
+    for (const file of files) {
+      const type = String(file.type || '');
+      if (!type.startsWith('image/') && !type.startsWith('video/')) {
+        setHighlightClipError('Choose image or video files for highlight clips.');
+        return;
+      }
+      if (file.size > 100 * 1024 * 1024) {
+        setHighlightClipError('Choose highlight clips under 100 MB.');
+        return;
+      }
+      nextClips.push(createPendingAthleteClip(file));
+    }
+    setClipDrafts((current) => [...current, ...nextClips]);
+    setHighlightClipError('');
+  };
+
+  const updateClipDraft = (clipId: string, patch: Partial<AthleteProfileClipDraftState>) => {
+    setClipDrafts((current) => current.map((clip) => (
+      clip.id === clipId ? { ...clip, ...patch } : clip
+    )));
+    setHighlightClipError('');
+  };
+
+  const removeClipDraft = (clipId: string) => {
+    setClipDrafts((current) => current.filter((clip) => clip.id !== clipId));
+    setHighlightClipError('');
+  };
+
+  const moveClipDraft = (clipId: string, direction: -1 | 1) => {
+    setClipDrafts((current) => {
+      const index = current.findIndex((clip) => clip.id === clipId);
+      const nextIndex = index + direction;
+      if (index < 0 || nextIndex < 0 || nextIndex >= current.length) {
+        return current;
+      }
+      const next = [...current];
+      const [clip] = next.splice(index, 1);
+      next.splice(nextIndex, 0, clip);
+      return next;
+    });
+    setHighlightClipError('');
   };
 
   const submit = async (event: FormEvent) => {
@@ -1029,11 +1321,18 @@ function AthleteProfileBuilderCard({ data, auth, onChanged, onShareStateChange }
       setStatus({ tone: 'error', message: 'Select at least one linked season to build an athlete profile.' });
       return;
     }
+    let clipSaveState: ReturnType<typeof buildAthleteProfileClipSaveState>;
+    try {
+      clipSaveState = buildAthleteProfileClipSaveState(clipDrafts);
+    } catch (error: any) {
+      setHighlightClipError(error?.message || 'Check the highlight clips and try again.');
+      return;
+    }
     setSaving(true);
     setStatus(null);
     setAwaitingPersistedPublish(isPublishingNewPublicProfile);
     try {
-      await saveParentAthleteProfileDraft({
+      const savedProfile = await saveParentAthleteProfileDraft({
         user: auth.user,
         teamId: data.child.teamId,
         playerId: data.child.playerId,
@@ -1043,7 +1342,7 @@ function AthleteProfileBuilderCard({ data, auth, onChanged, onShareStateChange }
           bio: { position, graduationYear, hometown, dominantHand, achievements },
           privacy,
           selectedSeasonKeys,
-          clips: existing?.clips || [],
+          clips: clipSaveState.draftClips,
           profilePhoto: existing?.profilePhotoUrl ? {
             url: existing.profilePhotoUrl,
             storagePath: existing.profilePhotoPath,
@@ -1054,11 +1353,14 @@ function AthleteProfileBuilderCard({ data, auth, onChanged, onShareStateChange }
         },
         profilePhotoFile: headshotFile,
         resetProfilePhoto: resetHeadshot,
-        highlightClipFile
+        highlightClipUploads: clipSaveState.highlightClipUploads
       });
       setHeadshotFile(null);
       setResetHeadshot(false);
-      setHighlightClipFile(null);
+      if (Array.isArray(savedProfile.profile?.clips)) {
+        setClipDrafts(normalizeExistingAthleteClips(savedProfile.profile.clips));
+      }
+      setHighlightClipError('');
       setStatus({ tone: 'success', message: 'Athlete profile saved.' });
       await onChanged();
     } catch (error: any) {
@@ -1129,22 +1431,36 @@ function AthleteProfileBuilderCard({ data, auth, onChanged, onShareStateChange }
             </div>
           </div>
           <div className="mt-3 grid gap-2 sm:grid-cols-2">
+            <button
+              type="button"
+              className="secondary-button justify-center"
+              disabled={headshotBusy}
+              onClick={() => void chooseNativeHeadshot('camera')}
+            >
+              {headshotBusy ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <Camera className="h-4 w-4" aria-hidden="true" />}
+              Take photo
+            </button>
+            <button
+              type="button"
+              className="secondary-button justify-center"
+              disabled={headshotBusy}
+              onClick={() => void chooseNativeHeadshot('photos')}
+            >
+              <ImagePlus className="h-4 w-4" aria-hidden="true" />
+              Photo library
+            </button>
             <label className="secondary-button justify-center">
-              <span>Choose headshot</span>
+              <ImagePlus className="h-4 w-4" aria-hidden="true" />
+              <span>Browse file</span>
               <input
+                ref={headshotInputRef}
                 type="file"
                 accept="image/*"
                 className="sr-only"
                 onChange={(event) => {
                   const file = event.currentTarget.files?.[0] || null;
-                  if (file && !String(file.type || '').startsWith('image/')) {
-                    setHeadshotFile(null);
-                    setHeadshotError('Choose an image file for the athlete headshot.');
-                    return;
-                  }
-                  setHeadshotFile(file);
-                  setResetHeadshot(false);
-                  setHeadshotError('');
+                  void prepareHeadshotFile(file);
+                  event.currentTarget.value = '';
                 }}
               />
             </label>
@@ -1168,50 +1484,103 @@ function AthleteProfileBuilderCard({ data, auth, onChanged, onShareStateChange }
               <FileVideo className="h-5 w-5" aria-hidden="true" />
             </div>
             <div className="min-w-0 flex-1">
-              <div className="text-xs font-black uppercase tracking-[0.04em] text-gray-500">Manual highlight clip</div>
-              <p className="mt-1 text-sm font-semibold text-gray-700">Add one image or video highlight. It publishes when you save.</p>
-              {highlightClipFile ? <p className="mt-1 truncate text-xs font-semibold text-primary-700">{highlightClipFile.name} selected. Save to publish it.</p> : null}
-              {existing?.clips?.length ? <p className="mt-1 text-xs font-semibold text-gray-500">Existing clips stay on the profile.</p> : null}
+              <div className="text-xs font-black uppercase tracking-[0.04em] text-gray-500">Highlight clips</div>
+              <p className="mt-1 text-sm font-semibold text-gray-700">Add links or upload image/video highlights, then drag the order with move controls.</p>
             </div>
           </div>
           <div className="mt-3 grid gap-2 sm:grid-cols-2">
+            <button type="button" className="secondary-button justify-center" onClick={addExternalClip}>
+              <Link2 className="h-4 w-4" aria-hidden="true" />
+              Add link
+            </button>
             <label className="secondary-button justify-center">
-              <span>Choose highlight clip</span>
+              <FileVideo className="h-4 w-4" aria-hidden="true" />
+              <span>Upload clips</span>
               <input
                 type="file"
                 accept="video/*,image/*"
+                multiple
                 className="sr-only"
                 onChange={(event) => {
-                  const file = event.currentTarget.files?.[0] || null;
-                  if (file) {
-                    const fileType = String(file.type || '');
-                    if (!fileType.startsWith('image/') && !fileType.startsWith('video/')) {
-                      setHighlightClipFile(null);
-                      setHighlightClipError('Choose an image or video file for the highlight clip.');
-                      return;
-                    }
-                    if (file.size > 100 * 1024 * 1024) {
-                      setHighlightClipFile(null);
-                      setHighlightClipError('Choose a highlight clip under 100 MB.');
-                      return;
-                    }
-                  }
-                  setHighlightClipFile(file);
-                  setHighlightClipError('');
+                  addUploadClips(Array.from(event.currentTarget.files || []));
+                  event.currentTarget.value = '';
                 }}
               />
             </label>
-            <button
-              type="button"
-              className="secondary-button justify-center"
-              disabled={!highlightClipFile && !highlightClipError}
-              onClick={() => {
-                setHighlightClipFile(null);
-                setHighlightClipError('');
-              }}
-            >
-              Clear selected clip
-            </button>
+          </div>
+          <div className="mt-3 space-y-2">
+            {clipDrafts.length ? clipDrafts.map((clip, index) => (
+              <div key={clip.id} className="rounded-xl border border-gray-200 bg-gray-50 p-3">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <div className="text-xs font-black uppercase tracking-[0.04em] text-gray-500">
+                      {clip.pendingUpload ? 'Pending upload' : clip.source === 'upload' ? 'Uploaded clip' : 'External link'}
+                    </div>
+                    <p className="mt-1 truncate text-xs font-semibold text-gray-500">
+                      {clip.pendingUpload ? clip.file?.name || 'Selected clip' : clip.url || 'Add a URL before saving'}
+                    </p>
+                  </div>
+                  <div className="flex flex-none items-center gap-1">
+                    <button
+                      type="button"
+                      className="icon-button h-8 w-8"
+                      aria-label="Move clip up"
+                      disabled={index === 0}
+                      onClick={() => moveClipDraft(clip.id, -1)}
+                    >
+                      <ArrowUp className="h-4 w-4" aria-hidden="true" />
+                    </button>
+                    <button
+                      type="button"
+                      className="icon-button h-8 w-8"
+                      aria-label="Move clip down"
+                      disabled={index === clipDrafts.length - 1}
+                      onClick={() => moveClipDraft(clip.id, 1)}
+                    >
+                      <ArrowDown className="h-4 w-4" aria-hidden="true" />
+                    </button>
+                    <button
+                      type="button"
+                      className="icon-button h-8 w-8 text-rose-600"
+                      aria-label="Remove clip"
+                      onClick={() => removeClipDraft(clip.id)}
+                    >
+                      <Trash2 className="h-4 w-4" aria-hidden="true" />
+                    </button>
+                  </div>
+                </div>
+                <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                  <TextField
+                    label="Clip title"
+                    value={clip.title}
+                    onChange={(value) => updateClipDraft(clip.id, { title: value })}
+                    placeholder="Fast break"
+                  />
+                  <TextField
+                    label="Note"
+                    value={clip.label}
+                    onChange={(value) => updateClipDraft(clip.id, { label: value })}
+                    placeholder="Optional context"
+                  />
+                </div>
+                {clip.source === 'external' ? (
+                  <label className="mt-2 block">
+                    <span className="text-xs font-black uppercase tracking-[0.04em] text-gray-500">Clip URL</span>
+                    <input
+                      type="url"
+                      value={clip.url}
+                      onChange={(event) => updateClipDraft(clip.id, { url: event.currentTarget.value })}
+                      placeholder="https://www.youtube.com/watch?v=..."
+                      className="mt-1 block w-full rounded-xl border border-gray-200 bg-white px-3 py-2 text-sm font-semibold text-gray-800 outline-none focus:border-primary-300 focus:ring-2 focus:ring-primary-100"
+                    />
+                  </label>
+                ) : null}
+              </div>
+            )) : (
+              <div className="rounded-xl border border-dashed border-gray-300 bg-gray-50 p-3 text-sm font-semibold text-gray-500">
+                No highlight clips yet.
+              </div>
+            )}
           </div>
           {highlightClipError ? <p className="mt-2 text-xs font-bold text-rose-600">{highlightClipError}</p> : null}
         </div>

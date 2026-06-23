@@ -79,7 +79,13 @@ const appDataCacheMocks = vi.hoisted(() => ({
 
 vi.mock('./appDataCache', () => appDataCacheMocks);
 
-import { loadParentPlayerDetail, saveParentAthleteProfileDraft, savePlayerCustomRosterFieldValues, saveStaffPlayerRosterDetails } from './playerService';
+import {
+  loadParentPlayerDetail,
+  normalizeAthleteProfileHighlightClipUrl,
+  saveParentAthleteProfileDraft,
+  savePlayerCustomRosterFieldValues,
+  saveStaffPlayerRosterDetails
+} from './playerService';
 
 describe('saveParentAthleteProfileDraft', () => {
   beforeEach(() => {
@@ -154,7 +160,7 @@ describe('saveParentAthleteProfileDraft', () => {
         bio: {},
         privacy: 'public',
         profilePhoto: null,
-        clips: [{ id: 'existing-clip', title: 'Existing clip' }]
+        clips: [{ id: 'existing-clip', source: 'external', mediaType: 'link', title: 'Existing clip', url: 'https://video.example/existing' }]
       },
       profilePhotoFile: headshot,
       highlightClipFile: clip,
@@ -173,7 +179,13 @@ describe('saveParentAthleteProfileDraft', () => {
           mediaType: 'image'
         }),
         clips: [
-          { id: 'existing-clip', title: 'Existing clip' },
+          expect.objectContaining({
+            id: 'existing-clip',
+            source: 'external',
+            mediaType: 'link',
+            title: 'Existing clip',
+            url: 'https://video.example/existing'
+          }),
           expect.objectContaining({
             source: 'upload',
             mediaType: 'video',
@@ -266,6 +278,189 @@ describe('saveParentAthleteProfileDraft', () => {
     })).rejects.toThrow('Choose a highlight clip under 100 MB.');
 
     expect(legacyPlayerDbMocks.uploadAthleteProfileMedia).not.toHaveBeenCalled();
+    expect(legacyPlayerDbMocks.saveAthleteProfile).not.toHaveBeenCalled();
+  });
+
+  it('saves ordered legacy-compatible clip lists with add remove reorder and upload placeholders', async () => {
+    const clip = new File(['clip-data'], 'putback.mp4', { type: 'video/mp4' });
+    legacyPlayerDbMocks.uploadAthleteProfileMedia.mockResolvedValueOnce({
+      url: 'https://cdn.example.com/putback.mp4',
+      storagePath: 'athlete-profile-media/parent-1/profile-1/putback.mp4',
+      mediaType: 'video',
+      mimeType: 'video/mp4',
+      sizeBytes: clip.size,
+      uploadedAtMs: 300
+    });
+    legacyPlayerDbMocks.saveAthleteProfile.mockImplementation(async (_userId, nextDraft, options) => ({
+      id: options.profileId,
+      ...nextDraft
+    }));
+
+    await saveParentAthleteProfileDraft({
+      user: {
+        uid: 'parent-1',
+        parentOf: [{ teamId: 'team-current', playerId: 'player-current' }]
+      } as any,
+      teamId: 'team-current',
+      playerId: 'player-current',
+      profileId: 'profile-1',
+      draft: {
+        athlete: { name: 'Sam Player' },
+        bio: {},
+        privacy: 'private',
+        clips: [
+          {
+            id: 'clip-youtube',
+            source: 'external',
+            mediaType: 'link',
+            title: 'Corner three',
+            label: 'Semifinal',
+            url: ' https://www.youtube.com/watch?v=LJNfHqRRhBI&t=30s '
+          },
+          {
+            id: 'clip-upload-new',
+            source: 'upload',
+            mediaType: 'video',
+            title: 'Putback',
+            label: 'Finals',
+            pendingUpload: true
+          },
+          {
+            id: 'clip-kept',
+            source: 'upload',
+            mediaType: 'video',
+            title: 'Existing kept clip',
+            label: '',
+            url: 'https://cdn.example.com/kept.mp4',
+            storagePath: 'athlete-profile-media/parent-1/profile-1/kept.mp4',
+            mimeType: 'video/mp4',
+            sizeBytes: 2048,
+            uploadedAtMs: 100
+          }
+        ]
+      },
+      highlightClipUploads: [{ id: 'clip-upload-new', file: clip, title: 'Putback', label: 'Finals' }]
+    });
+
+    expect(legacyPlayerDbMocks.uploadAthleteProfileMedia).toHaveBeenCalledWith('parent-1', 'profile-1', clip, { kind: 'clip' });
+    expect(legacyPlayerDbMocks.saveAthleteProfile).toHaveBeenCalledWith(
+      'parent-1',
+      expect.objectContaining({
+        clips: [
+          {
+            id: 'clip-youtube',
+            source: 'external',
+            mediaType: 'link',
+            title: 'Corner three',
+            label: 'Semifinal',
+            url: 'https://www.youtube.com/watch?v=LJNfHqRRhBI&t=30s',
+            storagePath: '',
+            mimeType: '',
+            sizeBytes: null,
+            uploadedAtMs: null
+          },
+          {
+            id: 'clip-upload-new',
+            source: 'upload',
+            mediaType: 'video',
+            title: 'Putback',
+            label: 'Finals',
+            url: 'https://cdn.example.com/putback.mp4',
+            storagePath: 'athlete-profile-media/parent-1/profile-1/putback.mp4',
+            mimeType: 'video/mp4',
+            sizeBytes: clip.size,
+            uploadedAtMs: 300
+          },
+          {
+            id: 'clip-kept',
+            source: 'upload',
+            mediaType: 'video',
+            title: 'Existing kept clip',
+            label: '',
+            url: 'https://cdn.example.com/kept.mp4',
+            storagePath: 'athlete-profile-media/parent-1/profile-1/kept.mp4',
+            mimeType: 'video/mp4',
+            sizeBytes: 2048,
+            uploadedAtMs: 100
+          }
+        ]
+      }),
+      { profileId: 'profile-1' }
+    );
+  });
+
+  it('validates external athlete profile clip links before save', async () => {
+    expect(normalizeAthleteProfileHighlightClipUrl(' https://youtu.be/LJNfHqRRhBI ')).toBe('https://youtu.be/LJNfHqRRhBI');
+    expect(normalizeAthleteProfileHighlightClipUrl('https://www.youtube.com/watch?v=LJNfHqRRhBI&t=30s')).toBe('https://www.youtube.com/watch?v=LJNfHqRRhBI&t=30s');
+    expect(normalizeAthleteProfileHighlightClipUrl('https://www.hudl.com/video/3/123')).toBe('https://www.hudl.com/video/3/123');
+    expect(() => normalizeAthleteProfileHighlightClipUrl('javascript:alert(1)')).toThrow('http or https');
+    expect(() => normalizeAthleteProfileHighlightClipUrl('not a url')).toThrow('valid highlight clip link');
+
+    await expect(saveParentAthleteProfileDraft({
+      user: {
+        uid: 'parent-1',
+        parentOf: [{ teamId: 'team-current', playerId: 'player-current' }]
+      } as any,
+      teamId: 'team-current',
+      playerId: 'player-current',
+      profileId: 'profile-1',
+      draft: {
+        athlete: { name: 'Sam Player' },
+        bio: {},
+        privacy: 'private',
+        clips: [{ id: 'clip-bad', source: 'external', url: 'ftp://video.example/clip.mp4' }]
+      }
+    })).rejects.toThrow('http or https');
+
+    expect(legacyPlayerDbMocks.uploadAthleteProfileMedia).not.toHaveBeenCalled();
+    expect(legacyPlayerDbMocks.saveAthleteProfile).not.toHaveBeenCalled();
+  });
+
+  it('cleans up uploaded athlete profile media when clip link validation fails', async () => {
+    const headshot = new File(['headshot'], 'headshot.png', { type: 'image/png' });
+    const clip = new File(['clip-data'], 'putback.mp4', { type: 'video/mp4' });
+    legacyPlayerDbMocks.deleteAthleteProfileMediaByPath.mockResolvedValue(undefined);
+    legacyPlayerDbMocks.uploadAthleteProfileMedia
+      .mockResolvedValueOnce({
+        url: 'https://cdn.example.com/headshot.png',
+        storagePath: 'athlete-profile-media/parent-1/profile-1/headshot.png',
+        mediaType: 'image',
+        mimeType: 'image/png',
+        sizeBytes: headshot.size,
+        uploadedAtMs: 100
+      })
+      .mockResolvedValueOnce({
+        url: 'https://cdn.example.com/putback.mp4',
+        storagePath: 'athlete-profile-media/parent-1/profile-1/putback.mp4',
+        mediaType: 'video',
+        mimeType: 'video/mp4',
+        sizeBytes: clip.size,
+        uploadedAtMs: 200
+      });
+
+    await expect(saveParentAthleteProfileDraft({
+      user: {
+        uid: 'parent-1',
+        parentOf: [{ teamId: 'team-current', playerId: 'player-current' }]
+      } as any,
+      teamId: 'team-current',
+      playerId: 'player-current',
+      profileId: 'profile-1',
+      draft: {
+        athlete: { name: 'Sam Player' },
+        bio: {},
+        privacy: 'private',
+        clips: [
+          { id: 'clip-bad', source: 'external', url: 'ftp://video.example/clip.mp4' },
+          { id: 'clip-upload-new', source: 'upload', mediaType: 'video', pendingUpload: true }
+        ]
+      },
+      profilePhotoFile: headshot,
+      highlightClipUploads: [{ id: 'clip-upload-new', file: clip, title: 'Putback' }]
+    })).rejects.toThrow('http or https');
+
+    expect(legacyPlayerDbMocks.deleteAthleteProfileMediaByPath).toHaveBeenCalledWith('athlete-profile-media/parent-1/profile-1/headshot.png');
+    expect(legacyPlayerDbMocks.deleteAthleteProfileMediaByPath).toHaveBeenCalledWith('athlete-profile-media/parent-1/profile-1/putback.mp4');
     expect(legacyPlayerDbMocks.saveAthleteProfile).not.toHaveBeenCalled();
   });
 });

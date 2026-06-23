@@ -142,6 +142,27 @@ export type ParentPlayerDetailData = {
   athleteProfile: ParentAthleteProfileData;
 };
 
+export type AthleteProfileHighlightClipDraft = {
+  id?: string;
+  source?: 'external' | 'upload';
+  mediaType?: 'link' | 'image' | 'video';
+  title?: string;
+  label?: string;
+  url?: string;
+  storagePath?: string;
+  mimeType?: string;
+  sizeBytes?: number | null;
+  uploadedAtMs?: number | null;
+  pendingUpload?: boolean;
+};
+
+export type AthleteProfileHighlightClipUpload = {
+  id?: string;
+  file: File;
+  title?: string;
+  label?: string;
+};
+
 export async function loadParentPlayerDetail(user: AuthUser | null, teamId: string, playerId: string): Promise<ParentPlayerDetailData> {
   if (!user?.uid) {
     throw new Error('Player details require a signed-in user.');
@@ -509,7 +530,8 @@ export async function saveParentAthleteProfileDraft({
   profilePhotoFile,
   resetProfilePhoto = false,
   highlightClipFile = null,
-  highlightClipTitle = ''
+  highlightClipTitle = '',
+  highlightClipUploads = []
 }: {
   user: AuthUser | null;
   teamId: string;
@@ -520,6 +542,7 @@ export async function saveParentAthleteProfileDraft({
   resetProfilePhoto?: boolean;
   highlightClipFile?: File | null;
   highlightClipTitle?: string;
+  highlightClipUploads?: AthleteProfileHighlightClipUpload[];
 }) {
   assertLinkedParent(user, teamId, playerId);
   const seasonKey = buildParentSeasonKey(teamId, playerId);
@@ -528,41 +551,30 @@ export async function saveParentAthleteProfileDraft({
     : [seasonKey];
   const workingProfileId = profileId || createLocalId('profile');
   let uploadedProfilePhoto: Record<string, any> | null = null;
-  let uploadedHighlightClip: Record<string, any> | null = null;
+  const uploadedHighlightClips: Array<Record<string, any>> = [];
+  const uploadRequests = buildHighlightClipUploadRequests(highlightClipUploads, highlightClipFile, highlightClipTitle);
   if (profilePhotoFile) validateImageFile(profilePhotoFile);
-  if (highlightClipFile) validateHighlightClipFile(highlightClipFile);
+  uploadRequests.forEach((upload) => validateHighlightClipFile(upload.file));
   if (profilePhotoFile) {
     uploadedProfilePhoto = await uploadAthleteProfileMedia(user!.uid, workingProfileId, profilePhotoFile, { kind: 'profile-photo' });
   }
-  if (highlightClipFile) {
-    try {
-      uploadedHighlightClip = await uploadAthleteProfileMedia(user!.uid, workingProfileId, highlightClipFile, { kind: 'clip' });
-    } catch (error) {
-      if (uploadedProfilePhoto?.storagePath) {
-        await deleteAthleteProfileMediaByPath(uploadedProfilePhoto.storagePath).catch(() => undefined);
-      }
-      throw error;
+  try {
+    for (const upload of uploadRequests) {
+      const uploaded = await uploadAthleteProfileMedia(user!.uid, workingProfileId, upload.file, { kind: 'clip' });
+      uploadedHighlightClips.push(buildUploadedHighlightClip(upload, uploaded));
     }
+  } catch (error) {
+    await cleanupUploadedAthleteProfileMedia([
+      uploadedProfilePhoto?.storagePath,
+      ...uploadedHighlightClips.map((clip) => clip.storagePath)
+    ]);
+    throw error;
   }
   const profilePhoto = uploadedProfilePhoto || (resetProfilePhoto ? null : draft.profilePhoto);
-  const clips = [
-    ...(Array.isArray(draft.clips) ? draft.clips : []),
-    ...(uploadedHighlightClip ? [{
-      id: createLocalId('clip'),
-      source: 'upload',
-      mediaType: uploadedHighlightClip.mediaType,
-      title: String(highlightClipTitle || '').trim() || fileTitle(highlightClipFile?.name || ''),
-      label: '',
-      url: uploadedHighlightClip.url,
-      storagePath: uploadedHighlightClip.storagePath,
-      mimeType: uploadedHighlightClip.mimeType,
-      sizeBytes: uploadedHighlightClip.sizeBytes,
-      uploadedAtMs: uploadedHighlightClip.uploadedAtMs
-    }] : [])
-  ];
 
   let saved;
   try {
+    const clips = buildAthleteProfileHighlightClips(draft.clips, uploadedHighlightClips);
     saved = await saveAthleteProfile(user!.uid, {
       ...draft,
       profilePhoto,
@@ -570,12 +582,10 @@ export async function saveParentAthleteProfileDraft({
       selectedSeasonKeys
     }, { profileId: workingProfileId });
   } catch (error) {
-    if (uploadedProfilePhoto?.storagePath) {
-      await deleteAthleteProfileMediaByPath(uploadedProfilePhoto.storagePath).catch(() => undefined);
-    }
-    if (uploadedHighlightClip?.storagePath) {
-      await deleteAthleteProfileMediaByPath(uploadedHighlightClip.storagePath).catch(() => undefined);
-    }
+    await cleanupUploadedAthleteProfileMedia([
+      uploadedProfilePhoto?.storagePath,
+      ...uploadedHighlightClips.map((clip) => clip.storagePath)
+    ]);
     throw error;
   }
   return {
@@ -585,11 +595,156 @@ export async function saveParentAthleteProfileDraft({
   };
 }
 
+export function normalizeAthleteProfileHighlightClipUrl(value: unknown) {
+  const trimmed = String(value || '').trim();
+  if (!trimmed) {
+    throw new Error('Enter a highlight clip link.');
+  }
+
+  try {
+    const parsed = new URL(trimmed);
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+      throw new Error('Enter a valid http or https highlight clip link.');
+    }
+    return parsed.toString();
+  } catch (error) {
+    if (error instanceof Error && error.message.includes('http or https')) {
+      throw error;
+    }
+    throw new Error('Enter a valid highlight clip link.');
+  }
+}
+
 function createLocalId(prefix: string) {
   if (globalThis.crypto?.randomUUID) {
     return `${prefix}_${globalThis.crypto.randomUUID()}`;
   }
   return `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
+}
+
+function buildHighlightClipUploadRequests(
+  highlightClipUploads: AthleteProfileHighlightClipUpload[],
+  highlightClipFile: File | null,
+  highlightClipTitle: string
+) {
+  const requests = (Array.isArray(highlightClipUploads) ? highlightClipUploads : [])
+    .filter((upload) => upload?.file)
+    .map((upload) => ({
+      id: String(upload.id || createLocalId('clip')).trim(),
+      file: upload.file,
+      title: String(upload.title || '').trim(),
+      label: String(upload.label || '').trim()
+    }));
+
+  if (highlightClipFile) {
+    requests.push({
+      id: createLocalId('clip'),
+      file: highlightClipFile,
+      title: String(highlightClipTitle || '').trim(),
+      label: ''
+    });
+  }
+
+  return requests;
+}
+
+function buildUploadedHighlightClip(upload: { id: string; file: File; title: string; label: string }, uploaded: Record<string, any>) {
+  return {
+    id: upload.id,
+    source: 'upload',
+    mediaType: uploaded.mediaType,
+    title: upload.title || fileTitle(upload.file?.name || ''),
+    label: upload.label,
+    url: uploaded.url,
+    storagePath: uploaded.storagePath,
+    mimeType: uploaded.mimeType,
+    sizeBytes: uploaded.sizeBytes,
+    uploadedAtMs: uploaded.uploadedAtMs
+  };
+}
+
+function buildAthleteProfileHighlightClips(rawClips: unknown, uploadedClips: Array<Record<string, any>>) {
+  const uploadsById = new Map(uploadedClips.map((clip) => [String(clip.id || '').trim(), clip]));
+  const consumedUploadIds = new Set<string>();
+  const clips: Array<Record<string, any>> = [];
+
+  (Array.isArray(rawClips) ? rawClips : []).forEach((rawClip, index) => {
+    if (!rawClip || typeof rawClip !== 'object') return;
+    const clip = rawClip as AthleteProfileHighlightClipDraft;
+    const clipId = String(clip.id || '').trim();
+    if (clip.pendingUpload) {
+      const uploaded = uploadsById.get(clipId);
+      if (!uploaded) {
+        throw new Error('One highlight clip could not be found. Re-add it and try again.');
+      }
+      consumedUploadIds.add(clipId);
+      clips.push(uploaded);
+      return;
+    }
+
+    const normalized = normalizeAthleteProfileHighlightClipDraft(clip, index);
+    if (normalized) {
+      clips.push(normalized);
+    }
+  });
+
+  uploadedClips.forEach((clip) => {
+    const clipId = String(clip.id || '').trim();
+    if (!consumedUploadIds.has(clipId)) {
+      clips.push(clip);
+    }
+  });
+
+  return clips;
+}
+
+function normalizeAthleteProfileHighlightClipDraft(clip: AthleteProfileHighlightClipDraft, index: number) {
+  const source = clip.source === 'upload' ? 'upload' : 'external';
+  const rawUrl = String(clip.url || '').trim();
+  if (!rawUrl) return null;
+  const url = source === 'external'
+    ? normalizeAthleteProfileHighlightClipUrl(rawUrl)
+    : rawUrl;
+
+  return {
+    id: String(clip.id || '').trim() || createLocalId(`clip_${index + 1}`),
+    source,
+    mediaType: normalizeHighlightClipMediaType(clip.mediaType, clip.mimeType, url, source),
+    title: String(clip.title || '').trim(),
+    label: String(clip.label || '').trim(),
+    url,
+    storagePath: String(clip.storagePath || '').trim(),
+    mimeType: String(clip.mimeType || '').trim(),
+    sizeBytes: Number.isFinite(Number(clip.sizeBytes)) ? Number(clip.sizeBytes) : null,
+    uploadedAtMs: Number.isFinite(Number(clip.uploadedAtMs)) ? Number(clip.uploadedAtMs) : null
+  };
+}
+
+function normalizeHighlightClipMediaType(
+  mediaType: unknown,
+  mimeType: unknown,
+  url: string,
+  source: 'external' | 'upload'
+) {
+  const explicit = String(mediaType || '').trim().toLowerCase();
+  if (explicit === 'image' || explicit === 'video' || explicit === 'link') {
+    return source === 'external' && explicit === 'link' ? 'link' : explicit;
+  }
+
+  const mime = String(mimeType || '').trim().toLowerCase();
+  if (mime.startsWith('image/')) return 'image';
+  if (mime.startsWith('video/')) return 'video';
+
+  const lowerUrl = String(url || '').toLowerCase();
+  if (/\.(png|jpe?g|gif|webp|avif)(\?|#|$)/.test(lowerUrl)) return 'image';
+  if (/\.(mp4|webm|mov|m4v|ogg)(\?|#|$)/.test(lowerUrl)) return 'video';
+  return 'link';
+}
+
+async function cleanupUploadedAthleteProfileMedia(paths: Array<string | null | undefined>) {
+  await Promise.all(paths
+    .filter((path): path is string => !!path)
+    .map((path) => deleteAthleteProfileMediaByPath(path).catch(() => undefined)));
 }
 
 function normalizePrivateProfile(profile: any): ParentPlayerPrivateProfile | null {
