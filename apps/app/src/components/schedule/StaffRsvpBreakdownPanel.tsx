@@ -22,7 +22,11 @@ export function StaffRsvpBreakdownPanel({ breakdown, loading, error, submittingP
   const [showRespondedPlayers, setShowRespondedPlayers] = useState(false);
 
   useEffect(() => {
-    setShowRespondedPlayers(Boolean(breakdown) && breakdown.grouped.not_responded.length === 0);
+    if (!breakdown) {
+      setShowRespondedPlayers(false);
+      return;
+    }
+    setShowRespondedPlayers(breakdown.grouped.not_responded.length === 0);
   }, [breakdown]);
 
   if (!event.isTeamAdmin || !event.isDbGame) return null;
