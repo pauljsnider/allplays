@@ -4,6 +4,9 @@ import { cleanup, fireEvent, render, screen, within } from '@testing-library/rea
 import { Users } from 'lucide-react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { StaffPracticeAttendance } from '../../lib/scheduleService';
+import type { ParentScheduleEvent } from '../../lib/scheduleLogic';
+import { AttentionPanel } from './AttentionPanel';
+import { AvailabilityNotesList } from './AvailabilityNotesList';
 import { CompactMeta } from './CompactMeta';
 import { PracticeAttendancePanel } from './PracticeAttendancePanel';
 import { ScoreStepper } from './ScoreStepper';
@@ -26,6 +29,14 @@ function buildAttendance(overrides: Partial<StaffPracticeAttendance> = {}): Staf
     ],
     ...overrides
   };
+}
+
+function buildAvailabilityNotesEvent(overrides: Partial<ParentScheduleEvent>): ParentScheduleEvent {
+  return {
+    availabilityNotesVisible: true,
+    availabilityNotes: [],
+    ...overrides
+  } as unknown as ParentScheduleEvent;
 }
 
 describe('ScheduleEventDetail presentational components', () => {
@@ -112,5 +123,70 @@ describe('ScheduleEventDetail presentational components', () => {
     within(screen.getByTestId('practice-attendance-row-p2')).getAllByRole('button').forEach((button) => {
       expect(button).toHaveProperty('disabled', true);
     });
+  });
+
+  it('renders no availability notes panel when notes are hidden or empty', () => {
+    const hiddenEvent = buildAvailabilityNotesEvent({
+      availabilityNotesVisible: false,
+      availabilityNotes: [
+        { displayName: 'Avery Smith', response: 'going', note: 'Can arrive early.' }
+      ]
+    });
+    const { rerender } = render(<AvailabilityNotesList event={hiddenEvent} />);
+
+    expect(screen.queryByText('Availability notes')).toBeNull();
+
+    rerender(<AvailabilityNotesList event={buildAvailabilityNotesEvent({ availabilityNotes: [] })} />);
+
+    expect(screen.queryByText('Availability notes')).toBeNull();
+  });
+
+  it('renders populated availability notes with RSVP labels', () => {
+    render(
+      <AvailabilityNotesList
+        event={buildAvailabilityNotesEvent({
+          availabilityNotes: [
+            { displayName: 'Avery Smith', response: 'going', note: 'Can arrive early.' },
+            { displayName: 'Blake Jones', response: 'not_going', note: 'Out sick.' }
+          ]
+        })}
+      />
+    );
+
+    expect(screen.getByText('Availability notes')).toBeTruthy();
+    expect(screen.getByText('Avery Smith')).toBeTruthy();
+    expect(screen.getByText('Going')).toBeTruthy();
+    expect(screen.getByText('Can arrive early.')).toBeTruthy();
+    expect(screen.getByText('Blake Jones')).toBeTruthy();
+    expect(screen.getByText("Can't go")).toBeTruthy();
+    expect(screen.getByText('Out sick.')).toBeTruthy();
+  });
+
+  it('renders the empty attention state when no items need action', () => {
+    render(<AttentionPanel items={[]} onSelectSection={vi.fn()} />);
+
+    expect(screen.getByText('All caught up')).toBeTruthy();
+    expect(screen.getByText('No parent actions need attention right now.')).toBeTruthy();
+  });
+
+  it('renders attention items and routes section selection', () => {
+    const onSelectSection = vi.fn();
+    render(
+      <AttentionPanel
+        items={[
+          { title: 'RSVP needed', detail: 'Tell coaches if Avery can attend.', section: 'availability' },
+          { title: 'Ride requested', detail: 'Review rideshare details.', section: 'rideshare' }
+        ]}
+        onSelectSection={onSelectSection}
+      />
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: /RSVP needed/i }));
+    fireEvent.click(screen.getByRole('button', { name: 'Ride requested' }));
+
+    expect(screen.getByText('Needs attention')).toBeTruthy();
+    expect(screen.getByText('Tell coaches if Avery can attend.')).toBeTruthy();
+    expect(onSelectSection).toHaveBeenNthCalledWith(1, 'availability');
+    expect(onSelectSection).toHaveBeenNthCalledWith(2, 'rideshare');
   });
 });

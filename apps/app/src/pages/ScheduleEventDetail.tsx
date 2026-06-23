@@ -92,16 +92,14 @@ import { ScoreStepper } from '../components/schedule/ScoreStepper';
 import { Status } from '../components/schedule/ScheduleStatus';
 import { StaffRsvpBreakdownPanel } from '../components/schedule/StaffRsvpBreakdownPanel';
 import { StaffRsvpReminderPanel } from '../components/schedule/StaffRsvpReminderPanel';
+import { AttentionPanel, type AttentionItem, type ScheduleEventDetailSectionId } from '../components/schedule/AttentionPanel';
+import { AvailabilityNotesList } from '../components/schedule/AvailabilityNotesList';
 import {
-  AttentionPanel,
-  AvailabilityNotesList,
   QuickAvailabilityPanel,
   formatRsvpSummary,
   getAvailabilityNoteSaveState,
   rsvpBadgeClasses,
-  rsvpLabels,
-  type AttentionItem,
-  type ScheduleEventDetailSectionId
+  rsvpLabels
 } from '../components/schedule/AvailabilityPanels';
 import {
   formatEventDateLabel,
