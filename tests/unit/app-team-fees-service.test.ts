@@ -22,6 +22,7 @@ vi.mock('../../js/team-access.js', () => ({
 import {
     createTeamFeeBatchForApp,
     buildBalanceAdjustmentUpdate,
+    buildTeamFeeInstallmentDraft,
     buildOfflineTeamFeeRefundUpdate,
     buildTeamFeeInstallmentSchedule,
     buildManualPaymentUpdate,
@@ -280,6 +281,22 @@ describe('React app team fee offline payment service', () => {
         });
     });
 
+    it('serializes installment previews to the legacy fee draft shape', () => {
+        const draftInstallments = buildTeamFeeInstallmentDraft({
+            amount: '100.01',
+            installmentCount: 3,
+            firstDueDate: '2026-07-15',
+            intervalDays: 14
+        });
+
+        expect(draftInstallments).toEqual([
+            { dueDate: '2026-07-15', amountCents: 3334 },
+            { dueDate: '2026-07-29', amountCents: 3334 },
+            { dueDate: '2026-08-12', amountCents: 3333 }
+        ]);
+        expect(draftInstallments[0]).not.toHaveProperty('label');
+    });
+
     it('defaults null installment spacing to 30 days', () => {
         const preview = buildTeamFeeInstallmentSchedule({
             amount: '90.00',
@@ -318,6 +335,41 @@ describe('React app team fee offline payment service', () => {
             firstDueDate: '2026-07-15',
             intervalDays: 0
         })).toThrow('between 1 and 366 days');
+    });
+
+    it('keeps installment balance math correct after a partial payment and adjustment', () => {
+        const installments = buildTeamFeeInstallmentDraft({
+            amount: '100.00',
+            installmentCount: 4,
+            firstDueDate: '2026-07-01',
+            intervalDays: 30
+        });
+
+        expect(installments.map((installment) => installment.amountCents)).toEqual([2500, 2500, 2500, 2500]);
+
+        const paymentUpdate = buildManualPaymentUpdate({
+            amount: '37.50',
+            date: '2026-07-20',
+            currentBalanceCents: 10000,
+            currentPaidCents: 0
+        });
+        expect(paymentUpdate).toMatchObject({
+            status: 'partial',
+            amountPaidCents: 3750,
+            remainingBalanceCents: 6250
+        });
+
+        const adjustmentUpdate = buildBalanceAdjustmentUpdate({
+            amount: '12.50',
+            note: 'Scholarship credit',
+            currentBalanceCents: 10000,
+            currentPaidCents: paymentUpdate.amountPaidCents
+        });
+        expect(adjustmentUpdate).toMatchObject({
+            status: 'partial',
+            amountDueCents: 8750,
+            remainingBalanceCents: 5000
+        });
     });
 
     it('loads batches and recipients only for fee managers', async () => {
@@ -412,6 +464,51 @@ describe('React app team fee offline payment service', () => {
                 parentEmail: 'dana@example.com',
                 amountCents: 2500,
                 dueDate: '2026-06-15',
+                status: 'unpaid'
+            })
+        ], expect.objectContaining({ uid: 'coach-1' }));
+    });
+
+    it('creates an installment fee batch using the legacy document shape', async () => {
+        dbMocks.getTeam.mockResolvedValue({ id: 'team-1', name: 'Bears', ownerId: 'coach-1' });
+        dbMocks.getPlayers.mockResolvedValue([
+            { id: 'player-1', name: 'Pat Star', number: '12', active: true }
+        ]);
+        dbMocks.createTeamFeeBatch.mockResolvedValue({ id: 'batch-installments' });
+
+        const result = await createTeamFeeBatchForApp({
+            teamId: 'team-1',
+            title: 'Season dues',
+            amount: '100.01',
+            dueDate: '2026-07-15',
+            installmentPlan: {
+                installmentCount: 3,
+                firstDueDate: '2026-07-15',
+                intervalDays: 14
+            },
+            applyToWholeRoster: true,
+            user: { uid: 'coach-1', email: 'coach@example.com', displayName: 'Coach', roles: [] }
+        });
+
+        const legacyInstallments = [
+            { dueDate: '2026-07-15', amountCents: 3334 },
+            { dueDate: '2026-07-29', amountCents: 3334 },
+            { dueDate: '2026-08-12', amountCents: 3333 }
+        ];
+
+        expect(result).toEqual({ id: 'batch-installments' });
+        expect(dbMocks.createTeamFeeBatch).toHaveBeenCalledWith('team-1', expect.objectContaining({
+            title: 'Season dues',
+            amountCents: 10001,
+            dueDate: '2026-07-15',
+            installments: legacyInstallments,
+            collectionMode: 'offline_manual'
+        }), [
+            expect.objectContaining({
+                playerId: 'player-1',
+                amountCents: 10001,
+                dueDate: '2026-07-15',
+                installments: legacyInstallments,
                 status: 'unpaid'
             })
         ], expect.objectContaining({ uid: 'coach-1' }));

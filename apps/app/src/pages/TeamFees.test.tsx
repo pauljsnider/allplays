@@ -6,6 +6,26 @@ import { TeamFees } from './TeamFees';
 import type { AuthState } from '../lib/types';
 
 const teamFeesServiceMocks = vi.hoisted(() => ({
+  buildTeamFeeInstallmentSchedule: vi.fn(({ amount, installmentCount, firstDueDate, intervalDays = 30 }: any) => {
+    const totalAmountCents = Math.round(Number(String(amount || '').replace(/[$,]/g, '').trim()) * 100);
+    const count = Number.parseInt(String(installmentCount || ''), 10);
+    const interval = Number.parseInt(String(intervalDays || 30), 10);
+    const baseAmountCents = Math.floor(totalAmountCents / count);
+    const remainderCents = totalAmountCents % count;
+    const firstDate = new Date(`${firstDueDate}T00:00:00.000Z`);
+    const installments = Array.from({ length: count }, (_, index) => {
+      const dueDate = new Date(firstDate.getTime());
+      dueDate.setUTCDate(dueDate.getUTCDate() + (index * interval));
+      return {
+        installmentNumber: index + 1,
+        amountCents: baseAmountCents + (index < remainderCents ? 1 : 0),
+        dueDate: dueDate.toISOString().slice(0, 10),
+        label: `Installment ${index + 1} of ${count}`
+      };
+    });
+
+    return { totalAmountCents, installmentCount: count, intervalDays: interval, installments };
+  }),
   createTeamFeeBatchForApp: vi.fn(),
   initiateStaffTeamFeeCheckout: vi.fn(),
   loadTeamFeeManagementModel: vi.fn(),
@@ -238,6 +258,51 @@ describe('TeamFees recipient queue', () => {
       amount: '15.00',
       applyToWholeRoster: false,
       recipientIds: ['player-1']
+    }));
+  });
+
+  it('creates a fee batch with a generated installment schedule from the native form', async () => {
+    teamFeesServiceMocks.loadTeamFeeManagementModel.mockResolvedValue({
+      team: { id: 'team-1', name: 'Bears' },
+      batches: [],
+      selectedBatch: null,
+      canManageFees: true,
+      rosterPlayers: [
+        { id: 'player-1', name: 'Pat Star', number: '12' }
+      ],
+      recipients: []
+    });
+
+    renderTeamFees('/teams/team-1/fees');
+
+    fireEvent.change(await screen.findByPlaceholderText('Tournament dues'), { target: { value: 'Season dues' } });
+    fireEvent.change(screen.getByPlaceholderText('25.00'), { target: { value: '100.01' } });
+    fireEvent.change(screen.getByLabelText('Due date'), { target: { value: '2026-07-15' } });
+    fireEvent.click(screen.getByRole('checkbox', { name: /Add installment schedule/ }));
+    fireEvent.change(screen.getByLabelText('Installments'), { target: { value: '3' } });
+    fireEvent.change(screen.getByLabelText('First due date'), { target: { value: '2026-07-15' } });
+    fireEvent.change(screen.getByLabelText('Days apart'), { target: { value: '14' } });
+
+    const preview = screen.getByLabelText('Installment schedule preview');
+    expect(within(preview).getByText('Installment 1 of 3')).toBeTruthy();
+    expect(within(preview).getAllByText('$33.34')).toHaveLength(2);
+    expect(within(preview).getByText('$33.33')).toBeTruthy();
+    expect(within(preview).getByText('Due 2026-08-12')).toBeTruthy();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Create fee batch' }));
+
+    expect(await screen.findByText('Created fee batch Season dues.')).toBeTruthy();
+    expect(teamFeesServiceMocks.createTeamFeeBatchForApp).toHaveBeenCalledWith(expect.objectContaining({
+      teamId: 'team-1',
+      title: 'Season dues',
+      amount: '100.01',
+      dueDate: '2026-07-15',
+      installmentPlan: {
+        installmentCount: '3',
+        firstDueDate: '2026-07-15',
+        intervalDays: '14'
+      },
+      applyToWholeRoster: true
     }));
   });
 
