@@ -30,6 +30,7 @@ describe('issue 1966 schedule RSVP reminders source contract', () => {
         expect(scheduleServiceSource).toContain('function assertStaffRsvpReminderEvent');
         expect(scheduleServiceSource).toContain('if (!event.isTeamRsvpReminderManager)');
         expect(scheduleServiceSource).toContain('export async function loadStaffRsvpReminderPreview');
+        expect(scheduleServiceSource).toContain('export function createStaffRsvpAvailabilityLoader');
         expect(scheduleServiceSource).toContain('export function createStaffRsvpReminderPreviewLoader');
         expect(scheduleServiceSource).toContain('export async function sendStaffRsvpReminder');
         expect(scheduleServiceSource).toContain('const emailResult = await sendPublicRsvpReminderEmailsNativeSafe(event);');
@@ -39,10 +40,10 @@ describe('issue 1966 schedule RSVP reminders source contract', () => {
 
     it('keeps mobile schedule and team screens exposing the manager-only reminder action', () => {
         expect(scheduleEventDetailSource).toContain("import { StaffRsvpReminderPanel } from '../components/schedule/StaffRsvpReminderPanel';");
-        expect(scheduleEventDetailSource).toContain('<StaffRsvpReminderPanel refreshToken={staffRsvp.refreshToken} />');
+        expect(scheduleEventDetailSource).toContain('<StaffRsvpReminderPanel refreshToken={staffRsvp.refreshToken} staffRsvpLoader={staffRsvpLoader} />');
         expect(staffRsvpReminderPanelSource).toContain('export function StaffRsvpReminderPanel');
         expect(staffRsvpReminderPanelSource).toContain('event.isTeamRsvpReminderManager && event.isDbGame && !event.isCancelled');
-        expect(staffRsvpReminderPanelSource).toContain('setPreview(await loadStaffRsvpReminderPreview(event, auth.user));');
+        expect(staffRsvpReminderPanelSource).toContain('staffRsvpLoader.loadReminderPreview(event, auth.user)');
         expect(staffRsvpReminderPanelSource).toContain('await sendStaffRsvpReminder(event, auth.user, auth.profile || {});');
         expect(teamDetailSource).toContain('function TeamEventReminderAction');
         expect(teamDetailSource).toContain('createStaffRsvpReminderPreviewLoader');

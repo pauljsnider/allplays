@@ -262,6 +262,13 @@ export type StaffRsvpReminderSendResult = StaffRsvpReminderPreview & {
   rsvpPushError: string | null;
 };
 
+type StaffRsvpEventData = {
+  breakdown: StaffScheduleRsvpBreakdown;
+  reminderPreview: StaffRsvpReminderPreview;
+};
+
+export type StaffRsvpAvailabilityLoader = ReturnType<typeof createStaffRsvpAvailabilityLoader>;
+
 export type ParentPracticePacketChild = {
   id: string;
   name: string;
@@ -3521,21 +3528,30 @@ function normalizeStaffScheduleRsvpBreakdown(value: any): StaffScheduleRsvpBreak
   };
 }
 
-export async function loadStaffScheduleRsvpBreakdown(event: ParentScheduleEvent, user: AuthUser | null): Promise<StaffScheduleRsvpBreakdown> {
-  assertStaffRsvpManagementEvent(event, user);
-
+async function loadStaffRsvpEventData(event: ParentScheduleEvent): Promise<StaffRsvpEventData> {
   try {
-    const breakdown = await withTimeout(Promise.resolve(getRsvpBreakdownByPlayer(event.teamId, event.id)), 'Staff RSVP breakdown');
-    return normalizeStaffScheduleRsvpBreakdown(breakdown);
+    const source = await withTimeout(Promise.resolve(getRsvpBreakdownByPlayer(event.teamId, event.id)), 'Staff RSVP event data');
+    return {
+      breakdown: normalizeStaffScheduleRsvpBreakdown(source),
+      reminderPreview: buildStaffRsvpReminderPreview(source?.players, source?.rsvps)
+    };
   } catch (error) {
     if (!isNativeRuntime()) throw error;
-    logScheduleWarning('Falling back to REST RSVP breakdown load.', 'staff-rsvp-breakdown-load', error, { fallback: 'rest', teamId: event.teamId, gameId: event.id });
+    logScheduleWarning('Falling back to REST staff RSVP event data load.', 'staff-rsvp-event-data-load', error, { fallback: 'rest', teamId: event.teamId, gameId: event.id });
     const [players, rsvps] = await Promise.all([
       loadPlayers(event.teamId),
       loadRsvps(event.teamId, event.id)
     ]);
-    return normalizeStaffScheduleRsvpBreakdown(buildGameDayRsvpBreakdown({ players, rsvps }));
+    return {
+      breakdown: normalizeStaffScheduleRsvpBreakdown(buildGameDayRsvpBreakdown({ players, rsvps })),
+      reminderPreview: buildStaffRsvpReminderPreview(players, rsvps)
+    };
   }
+}
+
+export async function loadStaffScheduleRsvpBreakdown(event: ParentScheduleEvent, user: AuthUser | null): Promise<StaffScheduleRsvpBreakdown> {
+  assertStaffRsvpManagementEvent(event, user);
+  return (await loadStaffRsvpEventData(event)).breakdown;
 }
 
 export async function submitStaffScheduleRsvpOverride(event: ParentScheduleEvent, user: AuthUser | null, playerId: string, response: Exclude<RsvpResponse, 'not_responded'>) {
@@ -4713,15 +4729,43 @@ function assertStaffRsvpReminderEvent(event: ParentScheduleEvent, user: AuthUser
   if (event.isCancelled) throw new Error('RSVP reminders are unavailable for cancelled events.');
 }
 
-async function loadStaffRsvpReminderData(event: ParentScheduleEvent) {
-  const { players, rsvps } = await getRsvpBreakdownByPlayer(event.teamId, event.id);
-  return { players, rsvps };
-}
-
 export async function loadStaffRsvpReminderPreview(event: ParentScheduleEvent, user: AuthUser | null): Promise<StaffRsvpReminderPreview> {
   assertStaffRsvpReminderEvent(event, user);
-  const { players, rsvps } = await loadStaffRsvpReminderData(event);
-  return buildStaffRsvpReminderPreview(players, rsvps);
+  return (await loadStaffRsvpEventData(event)).reminderPreview;
+}
+
+function getStaffRsvpEventDataCacheKey(event: ParentScheduleEvent) {
+  return `${compactString(event.teamId)}:${compactString(event.id)}`;
+}
+
+export function createStaffRsvpAvailabilityLoader() {
+  const eventDataByEventKey = new Map<string, Promise<StaffRsvpEventData>>();
+
+  const getEventData = (event: ParentScheduleEvent) => {
+    const eventKey = getStaffRsvpEventDataCacheKey(event);
+    const existing = eventDataByEventKey.get(eventKey);
+    if (existing) return existing;
+    const nextLoad = loadStaffRsvpEventData(event).catch((error) => {
+      eventDataByEventKey.delete(eventKey);
+      throw error;
+    });
+    eventDataByEventKey.set(eventKey, nextLoad);
+    return nextLoad;
+  };
+
+  return {
+    async loadBreakdown(event: ParentScheduleEvent, user: AuthUser | null): Promise<StaffScheduleRsvpBreakdown> {
+      assertStaffRsvpManagementEvent(event, user);
+      return (await getEventData(event)).breakdown;
+    },
+    async loadReminderPreview(event: ParentScheduleEvent, user: AuthUser | null): Promise<StaffRsvpReminderPreview> {
+      assertStaffRsvpReminderEvent(event, user);
+      return (await getEventData(event)).reminderPreview;
+    },
+    invalidateEvent(event: ParentScheduleEvent) {
+      eventDataByEventKey.delete(getStaffRsvpEventDataCacheKey(event));
+    }
+  };
 }
 
 export function createStaffRsvpReminderPreviewLoader() {

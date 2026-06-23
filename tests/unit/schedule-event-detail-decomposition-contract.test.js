@@ -90,7 +90,8 @@ describe('ScheduleEventDetail decomposition contract', () => {
         expect(page).toContain("import { RideshareSection } from '../components/schedule/RideshareSection';");
         expect(page).toContain('<ScheduleEventDetailProvider value={{');
         expect(page).toContain('const rsvpWorkflow = useScheduleEventRsvp({ availabilityNote });');
-        expect(page).toContain('const staffRsvp = useStaffRsvpBreakdown();');
+        expect(page).toContain('const staffRsvpLoader = useMemo(() => createStaffRsvpAvailabilityLoader(), [event.teamId, event.id]);');
+        expect(page).toContain('const staffRsvp = useStaffRsvpBreakdown(staffRsvpLoader);');
         expect(page).toContain('<RideshareSection />');
         expect(page).not.toMatch(/^function RideshareSection\b/m);
         expect(page).not.toMatch(/^function RideOfferCard\b/m);
@@ -120,7 +121,7 @@ describe('ScheduleEventDetail decomposition contract', () => {
         expect(page).toContain("import { StaffRsvpReminderPanel } from '../components/schedule/StaffRsvpReminderPanel';");
         expect(page).toContain("import { useStaffRsvpBreakdown } from '../hooks/schedule/useStaffRsvpBreakdown';");
         expect(page).toContain('<StaffRsvpBreakdownPanel');
-        expect(page).toContain('<StaffRsvpReminderPanel refreshToken={staffRsvp.refreshToken} />');
+        expect(page).toContain('<StaffRsvpReminderPanel refreshToken={staffRsvp.refreshToken} staffRsvpLoader={staffRsvpLoader} />');
         expect(page).not.toMatch(/^function StaffRsvpBreakdownPanel\b/m);
         expect(page).not.toMatch(/^function StaffRsvpReminderPanel\b/m);
         expect(page).not.toMatch(/const\s+\[staffRsvpBreakdown\b/);
@@ -128,13 +129,14 @@ describe('ScheduleEventDetail decomposition contract', () => {
         expect(page).not.toMatch(/sendStaffRsvpReminder\(/);
 
         expect(breakdownHook).toContain('export function useStaffRsvpBreakdown');
-        expect(breakdownHook).toContain('loadStaffScheduleRsvpBreakdown');
+        expect(breakdownHook).toContain('staffRsvpLoader.loadBreakdown');
+        expect(breakdownHook).toContain('staffRsvpLoader.invalidateEvent(event)');
         expect(breakdownHook).toContain('submitStaffScheduleRsvpOverride');
         expect(breakdownHook).toContain('setRefreshToken((current) => current + 1)');
         expect(breakdownPanel).toContain('export function StaffRsvpBreakdownPanel');
         expect(breakdownPanel).toContain('StaffRsvpPlayerRow');
         expect(reminderPanel).toContain('export function StaffRsvpReminderPanel');
-        expect(reminderPanel).toContain('loadStaffRsvpReminderPreview');
+        expect(reminderPanel).toContain('staffRsvpLoader.loadReminderPreview');
         expect(reminderPanel).toContain('sendStaffRsvpReminder');
     });
 

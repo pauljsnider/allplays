@@ -33,6 +33,12 @@ const scheduleServiceMocks = vi.hoisted(() => ({
   loadParentScheduleRideOffers: vi.fn(),
   loadStaffScheduleRsvpBreakdown: vi.fn(),
   loadStaffRsvpReminderPreview: vi.fn(),
+  invalidateStaffRsvpAvailabilityEvent: vi.fn(),
+  createStaffRsvpAvailabilityLoader: vi.fn(() => ({
+    loadBreakdown: (...args: any[]) => scheduleServiceMocks.loadStaffScheduleRsvpBreakdown(...args),
+    loadReminderPreview: (...args: any[]) => scheduleServiceMocks.loadStaffRsvpReminderPreview(...args),
+    invalidateEvent: (...args: any[]) => scheduleServiceMocks.invalidateStaffRsvpAvailabilityEvent(...args)
+  })),
   loadAutoFilledLineupDraftPreviewForApp: vi.fn<(...args: any[]) => Promise<any>>(() => Promise.resolve({ availablePlayers: [] as any[], goingPlayers: [] as any[], gamePlan: null as any })),
   markParentPracticePacketComplete: vi.fn(),
   publishGamePlanForApp: vi.fn(),
@@ -1488,7 +1494,7 @@ describe('ScheduleEventDetail staff RSVP overrides', () => {
 
   it('renders staff breakdown controls and refreshes counts after an override', async () => {
     scheduleServiceMocks.loadParentScheduleEventDetail.mockResolvedValue({
-      events: [buildEvent({ isTeamAdmin: true })],
+      events: [buildEvent({ isTeamAdmin: true, isTeamRsvpReminderManager: true })],
       children: []
     });
     scheduleServiceMocks.loadStaffScheduleRsvpBreakdown
@@ -1513,12 +1519,26 @@ describe('ScheduleEventDetail staff RSVP overrides', () => {
         },
         counts: { going: 2, maybe: 1, notGoing: 1, notResponded: 0, total: 4 }
       });
+    scheduleServiceMocks.loadStaffRsvpReminderPreview
+      .mockResolvedValueOnce({
+        missingPlayerCount: 1,
+        eligibleEmailCount: 1,
+        players: [{ playerId: 'p4', playerName: 'Devon Lee', parentEmails: ['devon@example.com'] }]
+      })
+      .mockResolvedValueOnce({
+        missingPlayerCount: 0,
+        eligibleEmailCount: 0,
+        players: []
+      });
     scheduleServiceMocks.submitStaffScheduleRsvpOverride.mockResolvedValue({ playerId: 'p4', response: 'going' });
 
     renderScheduleEventDetail();
 
     await waitFor(() => {
       expect(screen.getByText('Staff RSVP overrides')).toBeTruthy();
+    });
+    await waitFor(() => {
+      expect(screen.getByText('1 no-response player · 1 eligible parent/guardian email.')).toBeTruthy();
     });
 
     const noResponseRow = screen.getByTestId('staff-rsvp-row-p4');
@@ -1527,11 +1547,15 @@ describe('ScheduleEventDetail staff RSVP overrides', () => {
     await waitFor(() => {
       expect(scheduleServiceMocks.submitStaffScheduleRsvpOverride).toHaveBeenCalledWith(expect.any(Object), auth.user, 'p4', 'going');
     });
+    expect(scheduleServiceMocks.invalidateStaffRsvpAvailabilityEvent).toHaveBeenCalledWith(expect.objectContaining({ id: 'game-1' }));
     await waitFor(() => {
       expect(screen.getByText('Devon Lee marked going.')).toBeTruthy();
     });
     await waitFor(() => {
       expect(screen.getAllByText('2 going · 1 maybe · 1 out · 0 missing').length).toBeGreaterThan(0);
+    });
+    await waitFor(() => {
+      expect(scheduleServiceMocks.loadStaffRsvpReminderPreview).toHaveBeenCalledTimes(2);
     });
     expect(scheduleServiceMocks.loadStaffScheduleRsvpBreakdown.mock.calls.length).toBeGreaterThanOrEqual(2);
   });

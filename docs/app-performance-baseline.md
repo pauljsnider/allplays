@@ -1,10 +1,11 @@
 # App Performance Baseline & Verification
 
 This is the capstone measurement doc for the ALL PLAYS app-performance push
-(issues #2029, #2032, #2033, #2034, #2035, #2036, #2037, #2038, #2043). It
-defines the metric set, the repeatable measurement procedure, and a before/after
-table to fill in as each fix lands, so the effort is *verified* rather than
-assumed.
+(issues #2029, #2032, #2033, #2034, #2035, #2036, #2037, #2038, #2043) and the
+repeatable baseline workflow for issue #2896. It defines the metric set, the
+device/network profiles, the repeatable measurement procedure, and baseline /
+after-fix tables to fill in as each fix lands, so the effort is *verified*
+rather than assumed.
 
 > Status: **baseline template**. Capture the "Before" column from `master` prior
 > to merging the perf fixes, then re-measure after each fix and update the table.
@@ -49,22 +50,74 @@ Open the app with the network panel filtered to `firestore.googleapis.com`
 page and count distinct collection list/get requests. The hydration fan-out
 issue (#2033) tracks the 3×20-event scenario (~180 reads) explicitly.
 
+## Test profiles
+
+Run the same metric set on each profile. Record exact browser/device versions,
+network conditions, build SHA, account/team fixture, and any seeded data notes
+beside the result.
+
+| Profile | Environment | Network and CPU | Capture tools |
+| --- | --- | --- | --- |
+| Desktop web | Chrome stable on a developer workstation | Online, no throttling | DevTools Performance, console `app_ux_timing`, build log |
+| Throttled 4G web | Chrome stable on a developer workstation | DevTools "Slow 4G" plus 4x CPU throttle | DevTools Performance/Lighthouse, console `app_ux_timing`, build log |
+| Mid-range Android | Physical mid-range Android or representative emulator | Normal Wi-Fi unless testing a named carrier profile | Native REST logs, console telemetry, manual stopwatch for resume |
+| iPhone | Physical iPhone or current simulator | Normal Wi-Fi unless testing a named carrier profile | Xcode console, telemetry, manual stopwatch for resume |
+
 ## Measurement procedure (repeatable)
 
-1. **Web (throttled 4G, desktop Chrome):**
+1. **Prepare the app once per SHA:**
    - `npm run app:build && npm run app:preview`.
-   - DevTools → Performance/Lighthouse with "Slow 4G" + 4× CPU throttle.
-   - Record cold-start TTI, entry chunk gzip (from the build log), and the
-     `app_ux_timing` console spans for first meaningful render / RSVP / chat.
-2. **iPhone (physical or simulator):** `npm run mobile:run:ios`, launch from
-   cold, capture the resume case by backgrounding 6+ minutes then reopening.
-3. **Mid-range Android:** `npm run mobile:run:android`, same procedure.
-4. Record each number in the table below; keep the device/profile in the notes.
+   - Use the same test account, organization/team, and seeded Home/Schedule/
+     Messages data across baseline and after-fix runs.
+   - Record the entry chunk gzip size from the build output or bundle-size check.
+2. **Desktop web:**
+   - Open the preview URL in Chrome with no throttling.
+   - Capture cold-start Home TTI, warm resume, Firestore reads for Home /
+     Schedule / Messages, RSVP tap latency, and chat send latency.
+3. **Throttled 4G web:**
+   - Repeat the desktop web steps with DevTools "Slow 4G" plus 4x CPU throttle.
+   - Use the same Chrome profile state for the baseline and after-fix runs.
+4. **Mid-range Android:**
+   - `npm run mobile:run:android`, launch from cold, then capture the resume case
+     by backgrounding 6+ minutes and reopening.
+   - Capture Firestore reads from native REST logs and latency spans from console
+     telemetry.
+5. **iPhone:**
+   - `npm run mobile:run:ios`, launch from cold, then capture the resume case by
+     backgrounding 6+ minutes and reopening.
+   - Capture Firestore reads from native REST logs and latency spans from Xcode
+     console telemetry.
+6. Record each number in the templates below. Numbers are medians of 3 runs, and
+   each run should start from a clean app launch unless the row explicitly says
+   warm resume.
+
+## Baseline template
+
+Fill this table from `master` at the start of the push without changing the
+measurement method.
+
+| Profile | Cold-start TTI Home | Warm resume | Reads / Home mount | Reads / Schedule mount | Reads / Messages mount | Entry chunk gzip | RSVP tap latency | Chat send latency | Notes |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| Desktop web | _tbd_ | _tbd_ | _tbd_ | _tbd_ | _tbd_ | _tbd_ | _tbd_ | _tbd_ | |
+| Throttled 4G web | _tbd_ | _tbd_ | _tbd_ | _tbd_ | _tbd_ | _tbd_ | _tbd_ | _tbd_ | |
+| Mid-range Android | _tbd_ | _tbd_ | _tbd_ | _tbd_ | _tbd_ | _tbd_ | _tbd_ | _tbd_ | |
+| iPhone | _tbd_ | _tbd_ | _tbd_ | _tbd_ | _tbd_ | _tbd_ | _tbd_ | _tbd_ | |
+
+## After-fix template
+
+Copy this table for each performance PR or milestone and fill it with the same
+profiles, account/team fixture, and capture steps used for the baseline.
+
+| Profile | Fix / SHA | Cold-start TTI Home | Warm resume | Reads / Home mount | Reads / Schedule mount | Reads / Messages mount | Entry chunk gzip | RSVP tap latency | Chat send latency | Delta / notes |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| Desktop web | _tbd_ | _tbd_ | _tbd_ | _tbd_ | _tbd_ | _tbd_ | _tbd_ | _tbd_ | _tbd_ | |
+| Throttled 4G web | _tbd_ | _tbd_ | _tbd_ | _tbd_ | _tbd_ | _tbd_ | _tbd_ | _tbd_ | _tbd_ | |
+| Mid-range Android | _tbd_ | _tbd_ | _tbd_ | _tbd_ | _tbd_ | _tbd_ | _tbd_ | _tbd_ | _tbd_ | |
+| iPhone | _tbd_ | _tbd_ | _tbd_ | _tbd_ | _tbd_ | _tbd_ | _tbd_ | _tbd_ | _tbd_ | |
 
 ## Baseline → After
 
-Fill the "Before" column from `master` at the start of the push; update the
-remaining columns as fixes land. Numbers are medians of 3 runs.
+Keep this summary table current as fixes land. Numbers are medians of 3 runs.
 
 | Metric | Before | After #2029 (bundle) | After #2033/#2037 (Home) | Target |
 | --- | --- | --- | --- | --- |
