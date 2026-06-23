@@ -287,34 +287,6 @@ async function nativeRunQuery(collectionId: string, fieldPath: string, op: 'EQUA
     : [];
 }
 
-async function nativeRunDocumentIdBatchQuery(collectionId: string, documentIds: string[]) {
-  const payload = await nativeFirestoreRequest(':runQuery', {
-    method: 'POST',
-    body: JSON.stringify({
-      structuredQuery: {
-        from: [{ collectionId }],
-        where: {
-          fieldFilter: {
-            field: { fieldPath: '__name__' },
-            op: 'IN',
-            value: {
-              arrayValue: {
-                values: documentIds.map((documentId) => ({
-                  referenceValue: `projects/${getProjectId()}/databases/(default)/documents/${collectionId}/${documentId}`
-                }))
-              }
-            }
-          }
-        }
-      }
-    })
-  });
-
-  return Array.isArray(payload)
-    ? payload.map((entry) => decodeFirestoreDocument(entry.document)).filter(Boolean)
-    : [];
-}
-
 function getProfileParentTeamIds(profile: ProfileDocument) {
   return [...new Set((Array.isArray((profile as any).parentOf) ? (profile as any).parentOf : [])
     .map((link: any) => link?.teamId)
@@ -331,8 +303,15 @@ async function nativeLoadTeamsByIds(teamIds: string[]) {
     (_, index) => teamIds.slice(index * nativeBatchTeamLookupSize, (index + 1) * nativeBatchTeamLookupSize)
   );
 
-  const results = await Promise.all(chunks.map((chunk) => nativeRunDocumentIdBatchQuery('teams', chunk).catch(() => [])));
-  return results.flat();
+  const results = [] as any[];
+  for (const chunk of chunks) {
+    const teams = await Promise.all(
+      chunk.map((teamId) => nativeGetDocument(`teams/${encodeURIComponent(teamId)}`).catch(() => null))
+    );
+    results.push(...teams.filter(Boolean));
+  }
+
+  return results;
 }
 
 function filterActiveTeams(teams: any[]) {

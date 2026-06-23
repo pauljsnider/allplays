@@ -37,6 +37,16 @@ vi.mock('../../../../js/notification-preferences.js', () => ({
 vi.mock('../../../../js/firebase-runtime-config.js', () => ({
     resolveImageFirebaseConfig: vi.fn(() => ({ apiKey: 'key', storageBucket: 'bucket' }))
 }));
+vi.mock('@capacitor/camera', () => ({
+    Camera: {},
+    CameraResultType: {},
+    CameraSource: {}
+}), { virtual: true });
+vi.mock('@capacitor/core', () => ({
+    Capacitor: {
+        isNativePlatform: vi.fn(() => false)
+    }
+}), { virtual: true });
 vi.mock('./authService', () => ({
     firebaseAuth: { app: { options: { projectId: 'demo-project' } } },
     getNativeAuthIdToken: vi.fn()
@@ -125,7 +135,7 @@ describe('loadProfileDocument telemetry', () => {
     });
 });
 
-describe('native parent-team fallback batching', () => {
+describe('native parent-team fallback hydration', () => {
     beforeEach(() => {
         vi.clearAllMocks();
         vi.mocked(getNativeAuthIdToken).mockResolvedValue('native-token');
@@ -163,7 +173,6 @@ describe('native parent-team fallback batching', () => {
             if (url.endsWith(':runQuery')) {
                 const body = JSON.parse(String(init?.body || '{}'));
                 const fieldPath = body?.structuredQuery?.where?.fieldFilter?.field?.fieldPath;
-                const op = body?.structuredQuery?.where?.fieldFilter?.op;
 
                 if (fieldPath === 'ownerId' || fieldPath === 'adminEmails') {
                     return {
@@ -171,41 +180,45 @@ describe('native parent-team fallback batching', () => {
                         json: async () => ([])
                     };
                 }
+            }
 
-                if (fieldPath === '__name__' && op === 'IN') {
-                    return {
-                        ok: true,
-                        json: async () => ([
-                            {
-                                document: {
-                                    name: 'projects/demo-project/databases/(default)/documents/teams/team-3',
-                                    fields: {
-                                        name: { stringValue: 'Cougars' },
-                                        isActive: { booleanValue: true }
-                                    }
-                                }
-                            },
-                            {
-                                document: {
-                                    name: 'projects/demo-project/databases/(default)/documents/teams/team-1',
-                                    fields: {
-                                        name: { stringValue: 'Bears' },
-                                        isActive: { booleanValue: true }
-                                    }
-                                }
-                            },
-                            {
-                                document: {
-                                    name: 'projects/demo-project/databases/(default)/documents/teams/team-2',
-                                    fields: {
-                                        name: { stringValue: 'Archived Team' },
-                                        isActive: { booleanValue: false }
-                                    }
-                                }
-                            }
-                        ])
-                    };
-                }
+            if (url.endsWith('/documents/teams/team-1')) {
+                return {
+                    ok: true,
+                    json: async () => ({
+                        name: 'projects/demo-project/databases/(default)/documents/teams/team-1',
+                        fields: {
+                            name: { stringValue: 'Bears' },
+                            isActive: { booleanValue: true }
+                        }
+                    })
+                };
+            }
+
+            if (url.endsWith('/documents/teams/team-2')) {
+                return {
+                    ok: true,
+                    json: async () => ({
+                        name: 'projects/demo-project/databases/(default)/documents/teams/team-2',
+                        fields: {
+                            name: { stringValue: 'Archived Team' },
+                            isActive: { booleanValue: false }
+                        }
+                    })
+                };
+            }
+
+            if (url.endsWith('/documents/teams/team-3')) {
+                return {
+                    ok: true,
+                    json: async () => ({
+                        name: 'projects/demo-project/databases/(default)/documents/teams/team-3',
+                        fields: {
+                            name: { stringValue: 'Cougars' },
+                            isActive: { booleanValue: true }
+                        }
+                    })
+                };
             }
 
             throw new Error(`Unexpected fetch: ${url}`);
@@ -215,7 +228,7 @@ describe('native parent-team fallback batching', () => {
         return fetchMock;
     }
 
-    it('batches native fallback team hydration for notification teams', async () => {
+    it('uses per-document team reads for notification teams so parent hydration stays rule-compatible', async () => {
         dbMocks.getUserTeamsWithAccess.mockRejectedValue(new Error('sdk failed'));
         dbMocks.getParentTeams.mockRejectedValue(new Error('sdk failed'));
         const fetchMock = mockNativeProfileFallbackFetch();
@@ -225,19 +238,13 @@ describe('native parent-team fallback batching', () => {
             { id: 'team-3', name: 'Cougars' }
         ]);
 
-        expect(fetchMock).toHaveBeenCalledWith(
-            expect.stringContaining(':runQuery'),
-            expect.objectContaining({
-                method: 'POST',
-                body: expect.stringContaining('"fieldPath":"__name__"')
-            })
-        );
-        expect(fetchMock.mock.calls.some(([url]) => String(url).includes('/documents/teams/team-1'))).toBe(false);
-        expect(fetchMock.mock.calls.some(([url]) => String(url).includes('/documents/teams/team-2'))).toBe(false);
-        expect(fetchMock.mock.calls.some(([url]) => String(url).includes('/documents/teams/team-3'))).toBe(false);
+        expect(fetchMock.mock.calls.some(([, init]) => String(init?.body || '').includes('"fieldPath":"__name__"'))).toBe(false);
+        expect(fetchMock.mock.calls.some(([url]) => String(url).includes('/documents/teams/team-1'))).toBe(true);
+        expect(fetchMock.mock.calls.some(([url]) => String(url).includes('/documents/teams/team-2'))).toBe(true);
+        expect(fetchMock.mock.calls.some(([url]) => String(url).includes('/documents/teams/team-3'))).toBe(true);
     });
 
-    it('reuses the batched native fallback loader for parent teams', async () => {
+    it('reuses the per-document fallback loader for parent teams', async () => {
         dbMocks.getParentTeams.mockRejectedValue(new Error('sdk failed'));
         const fetchMock = mockNativeProfileFallbackFetch();
 
@@ -247,8 +254,8 @@ describe('native parent-team fallback batching', () => {
         ]);
 
         const batchQueryCalls = fetchMock.mock.calls.filter(([, init]) => String(init?.body || '').includes('"fieldPath":"__name__"'));
-        expect(batchQueryCalls).toHaveLength(1);
-        expect(fetchMock.mock.calls.some(([url]) => String(url).includes('/documents/teams/team-1'))).toBe(false);
+        expect(batchQueryCalls).toHaveLength(0);
+        expect(fetchMock.mock.calls.some(([url]) => String(url).includes('/documents/teams/team-1'))).toBe(true);
     });
 });
 
