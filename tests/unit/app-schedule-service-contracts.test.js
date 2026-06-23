@@ -1078,8 +1078,8 @@ describe('React app schedule service contract integration', () => {
 
         await expect(loadScheduleStatTrackerConfigsForApp('team-1', { uid: 'coach-1', email: 'coach@example.com' }))
             .resolves.toEqual([
-                { id: 'cfg-b', name: 'Basketball', baseType: 'Basketball', isBasketball: true },
-                { id: 'cfg-z', name: 'Zone Tracker', baseType: 'Soccer', isBasketball: false }
+                { id: 'cfg-b', name: 'Basketball', baseType: 'Basketball', isBasketball: true, columns: [], statDefinitions: [] },
+                { id: 'cfg-z', name: 'Zone Tracker', baseType: 'Soccer', isBasketball: false, columns: [], statDefinitions: [] }
             ]);
     });
 
