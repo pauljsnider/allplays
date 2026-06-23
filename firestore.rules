@@ -1965,11 +1965,14 @@ service cloud.firestore {
 
         // Restricted RSVP notes. Parent-readable RSVP docs intentionally carry status only.
         match /rsvpNotes/{rsvpId} {
+          function isOwnRsvpNoteId() {
+            return isSignedIn() &&
+                   (rsvpId == request.auth.uid ||
+                    rsvpId.matches('^' + request.auth.uid + '__[A-Za-z0-9_-]+$'));
+          }
           function isOwnRsvpNoteDoc(data) {
             return isSignedIn() &&
-                   (data.userId == request.auth.uid ||
-                    rsvpId == request.auth.uid ||
-                    rsvpId.matches('^' + request.auth.uid + '__[A-Za-z0-9_-]+$'));
+                   (data.userId == request.auth.uid || isOwnRsvpNoteId());
           }
           function teamAllowsTeamVisibleRsvpNotes(teamId) {
             return get(/databases/$(database)/documents/teams/$(teamId)).data
@@ -2019,7 +2022,7 @@ service cloud.firestore {
                    (isTeamOwnerOrAdmin(teamId) ||
                     (isParentForTeam(teamId) &&
                      data.userId == request.auth.uid &&
-                     isOwnRsvpNoteDoc(data)));
+                     isOwnRsvpNoteId()));
           }
           allow read: if canReadRsvpNote(teamId, resource.data);
           allow create, update: if isSignedIn() && canWriteRsvpNote(teamId, rsvpId, request.resource.data);

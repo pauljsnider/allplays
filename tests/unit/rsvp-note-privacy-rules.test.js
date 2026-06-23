@@ -42,13 +42,16 @@ describe('RSVP note privacy Firestore rules', () => {
     expect(noteBlock).toContain('allow read: if canReadRsvpNote(teamId, resource.data);');
   });
 
-  it('requires an explicit safe RSVP note document shape for writes', () => {
+  it('requires an explicit safe RSVP note document shape and writer-owned ID for writes', () => {
     const noteBlock = extractNestedBlock(gamesBlock, 'match /rsvpNotes/{rsvpId} {');
 
     expect(noteBlock).toContain('function isRsvpNotePayloadValid(teamId, data)');
+    expect(noteBlock).toContain('function isOwnRsvpNoteId()');
     expect(noteBlock).toContain("data.keys().hasAll(['userId', 'note', 'visibility', 'updatedAt'])");
     expect(noteBlock).toContain("data.visibility in ['admins', 'team']");
     expect(noteBlock).toContain("(data.visibility == 'admins' || teamAllowsTeamVisibleRsvpNotes(teamId))");
+    expect(noteBlock).toContain('data.userId == request.auth.uid &&\n                     isOwnRsvpNoteId()');
+    expect(noteBlock).not.toContain('data.userId == request.auth.uid &&\n                     isOwnRsvpNoteDoc(data)');
     expect(noteBlock).toContain('allow create, update: if isSignedIn() && canWriteRsvpNote(teamId, rsvpId, request.resource.data);');
   });
 });
