@@ -45,7 +45,7 @@ describe('app Firestore boundary initiative source contract', () => {
         expect(firestoreMappersSource).toContain('export function mapScheduleEventDocuments(documents: FirestoreDocument[] | null | undefined): ScheduleEventFirestoreRecord[]');
 
         expect(scheduleServiceSource).toContain("import { mapFirestoreDocument, mapScheduleEventDocument, mapScheduleEventDocuments, mapScheduleEventRecord, mapScheduleEventRecords } from './firestore/mappers';");
-        expect(scheduleServiceSource).toContain('import type { FirestoreDecodedDocument, FirestoreDocument as NativeFirestoreDocument } from \'./firestore/types\';');
+        expect(scheduleServiceSource).toContain('import type { FirestoreDecodedDocument, FirestoreDocument as NativeFirestoreDocument, ScheduleEventFirestoreRecord } from \'./firestore/types\';');
         expect(scheduleServiceSource).toContain('return mapScheduleEventDocument(await nativeFirestoreRequest(`/${path}`) as NativeFirestoreDocument);');
         expect(scheduleServiceSource).toContain('async () => mapScheduleEventRecords(await getGames(teamId, range))');
         expect(scheduleServiceSource).toContain('async () => mapScheduleEventRecord(await getGame(teamId, gameId), gameId)');
