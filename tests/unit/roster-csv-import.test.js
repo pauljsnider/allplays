@@ -66,9 +66,150 @@ describe('roster CSV import planning', () => {
 
         const invalid = planRosterCsvImport({ fields, csvText: 'Name,Favorite Snack\nAvery Lee,Crackers' });
         expect(invalid.errors).toEqual([
-            'Unknown CSV header "Favorite Snack". Use Name, Number, a supported parent/guardian contact header, or a configured roster field label/key.'
+            'Unknown CSV header "Favorite Snack". Use Name, Number, a supported player profile header, a supported parent/guardian contact header, or a configured roster field label/key.'
         ]);
         expect(invalid.operations).toEqual([]);
+    });
+
+    it('maps common unconfigured player profile columns into the import payload', () => {
+        const plan = planRosterCsvImport({
+            fields: [],
+            existingPlayers: [{
+                id: 'p1',
+                name: 'Avery Lee',
+                number: '3',
+                profile: {
+                    address: { city: 'Old City' },
+                    customFields: { grade: '6' }
+                }
+            }],
+            csvText: [
+                'Name,Jersey,Position,Date of Birth,Gender,Street,Address1,Address Line 2,City,State,Zip,Roster Status',
+                'Avery Lee,4,Forward,2014-02-03,Female,123 Main,PO Box 8,Apt 2,Kansas City,MO,64110,Player',
+                'Coach Kim,,Coach,,Female,,,,,,,Staff'
+            ].join('\n')
+        });
+
+        expect(plan.errors).toEqual([]);
+        expect(plan.operations).toHaveLength(2);
+        expect(plan.operations[0]).toMatchObject({
+            type: 'update',
+            playerId: 'p1',
+            payload: {
+                name: 'Avery Lee',
+                number: '4',
+                position: 'Forward',
+                profile: {
+                    position: 'Forward',
+                    birthDate: '2014-02-03',
+                    gender: 'Female',
+                    address: {
+                        street: '123 Main',
+                        address1: 'PO Box 8',
+                        address2: 'Apt 2',
+                        city: 'Kansas City',
+                        state: 'MO',
+                        zip: '64110'
+                    },
+                    rosterStatus: 'player',
+                    isStaff: false,
+                    nonPlayer: false,
+                    customFields: { grade: '6' }
+                }
+            }
+        });
+        expect(plan.operations[1]).toMatchObject({
+            type: 'add',
+            payload: {
+                name: 'Coach Kim',
+                position: 'Coach',
+                profile: {
+                    position: 'Coach',
+                    gender: 'Female',
+                    rosterStatus: 'staff',
+                    isStaff: true,
+                    nonPlayer: true
+                }
+            }
+        });
+    });
+
+    it('keeps configured roster fields ahead of built-in profile aliases', () => {
+        const plan = planRosterCsvImport({
+            fields: [
+                { key: 'position', label: 'Position', type: 'text', active: true },
+                { key: 'gender', label: 'Gender', type: 'text', active: true }
+            ],
+            csvText: 'Name,Position,Gender\nAvery Lee,Forward,Female'
+        });
+
+        expect(plan.errors).toEqual([]);
+        expect(plan.operations).toHaveLength(1);
+        expect(plan.operations[0]).toMatchObject({
+            payload: {
+                name: 'Avery Lee',
+                profile: {
+                    customFields: {
+                        position: 'Forward',
+                        gender: 'Female'
+                    }
+                }
+            }
+        });
+        expect(plan.operations[0].payload).not.toHaveProperty('position');
+        expect(plan.operations[0].payload.profile).not.toHaveProperty('gender');
+    });
+
+    it('normalizes staff and non-player status flag aliases', () => {
+        const staffPlan = planRosterCsvImport({
+            fields: [],
+            csvText: [
+                'Name,Staff?',
+                'Coach Kim,yes',
+                'Avery Lee,no'
+            ].join('\n')
+        });
+
+        expect(staffPlan.errors).toEqual([]);
+        expect(staffPlan.operations.map((operation) => operation.payload.profile)).toEqual([
+            expect.objectContaining({ rosterStatus: 'staff', isStaff: true, nonPlayer: true }),
+            expect.objectContaining({ rosterStatus: 'player', isStaff: false, nonPlayer: false })
+        ]);
+
+        const nonPlayerPlan = planRosterCsvImport({
+            fields: [],
+            csvText: [
+                'Name,Non Player',
+                'Alex Manager,true',
+                'Avery Lee,false'
+            ].join('\n')
+        });
+
+        expect(nonPlayerPlan.errors).toEqual([]);
+        expect(nonPlayerPlan.operations.map((operation) => operation.payload.profile)).toEqual([
+            expect.objectContaining({ rosterStatus: 'non-player', isStaff: false, nonPlayer: true }),
+            expect.objectContaining({ rosterStatus: 'player', isStaff: false, nonPlayer: false })
+        ]);
+    });
+
+    it('rejects invalid built-in profile dates, status flags, and duplicate profile aliases', () => {
+        const duplicate = planRosterCsvImport({
+            fields: [],
+            csvText: 'Name,DOB,Birthday\nAvery Lee,2014-02-03,2014-02-03'
+        });
+        expect(duplicate.errors).toEqual(['Duplicate player profile header for Birthday.']);
+        expect(duplicate.operations).toEqual([]);
+
+        const invalid = planRosterCsvImport({
+            fields: [],
+            csvText: 'Name,DOB,Staff?\nAvery Lee,02/03/2014,maybe'
+        });
+
+        expect(invalid.operations).toEqual([]);
+        expect(invalid.errors).toEqual([
+            'Row 2: DOB must use YYYY-MM-DD format.',
+            'Row 2: Staff? must be yes/no or a supported roster status.'
+        ]);
     });
 
     it('imports parent, guardian, and contact columns with invite metadata', () => {
@@ -230,7 +371,8 @@ describe('roster CSV import planning', () => {
     it('describes parent and guardian contact columns in the roster CSV import UI', () => {
         const page = readFileSync('edit-roster.html', 'utf8');
 
+        expect(page).toContain('profile columns such as Position, DOB, Gender, or Address');
         expect(page).toContain('parent/guardian/contact columns such as Parent Email or Guardian Phone');
-        expect(page).toContain('Name,Number,Parent Name,Parent Email,Grade');
+        expect(page).toContain('Name,Number,Position,DOB,Parent Name,Parent Email,Grade');
     });
 });
