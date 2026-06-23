@@ -13,6 +13,17 @@ const sensitiveKeys = new Set([
     'password'
 ]);
 
+const sensitiveKeyFragments = [
+    'authorization',
+    'proxyauthorization',
+    'cookie',
+    'setcookie',
+    'token',
+    'apikey',
+    'secret',
+    'password'
+];
+
 const redactedValue = '[REDACTED]';
 
 function normalizeSensitiveKey(key: string) {
@@ -21,11 +32,32 @@ function normalizeSensitiveKey(key: string) {
 
 function isSensitiveKey(key: string) {
     const lowerKey = key.toLowerCase();
-    return sensitiveKeys.has(lowerKey) || sensitiveKeys.has(normalizeSensitiveKey(lowerKey));
+    const normalizedKey = normalizeSensitiveKey(lowerKey);
+    return sensitiveKeys.has(lowerKey)
+        || sensitiveKeys.has(normalizedKey)
+        || sensitiveKeyFragments.some((fragment) => normalizedKey.includes(fragment));
 }
 
 export type LogLevel = 'debug' | 'info' | 'warn' | 'error';
 export type LogContext = Record<string, unknown>;
+export type NormalizedLogError = {
+    name: string;
+    message: string;
+    [key: string]: unknown;
+};
+
+const errorMetadataKeys = [
+    'status',
+    'code',
+    'type',
+    'cause',
+    'details',
+    'request',
+    'response',
+    'config',
+    'headers',
+    'init'
+] as const;
 
 function redactBearerTokens(value: string) {
     return value.replace(/Bearer\s+[^\s"',}]+/gi, `Bearer ${redactedValue}`);
@@ -33,8 +65,15 @@ function redactBearerTokens(value: string) {
 
 function redactSensitiveQueryParams(value: string) {
     return value.replace(
-        /([?&#](?:access[_-]?token|id[_-]?token|refresh[_-]?token|auth[_-]?token|api[_-]?key|client[_-]?secret|token|password|secret)=)[^&#\s"',}]+/gi,
+        /([?&#](?:access[_-]?token|id[_-]?token|refresh[_-]?token|auth|auth[_-]?token|api[_-]?key|client[_-]?secret|token|password|secret)=)[^&#\s"',}]+/gi,
         `$1${redactedValue}`
+    );
+}
+
+function redactSensitiveAssignments(value: string) {
+    return value.replace(
+        /\b((?:access|id|refresh|auth)[_-]?token|authorization|token|api[_-]?key|client[_-]?secret|secret|password)\s*=\s*[^&#\s"',}]+/gi,
+        `$1=${redactedValue}`
     );
 }
 
@@ -46,7 +85,9 @@ function sanitizeValue(value: unknown, seen: WeakSet<object>, depth: number, key
     if (value == null) return value;
 
     if (typeof value === 'string') {
-        return isSensitiveKey(keyHint) ? redactedValue : redactSensitiveQueryParams(redactBearerTokens(value));
+        return isSensitiveKey(keyHint)
+            ? redactedValue
+            : redactSensitiveAssignments(redactSensitiveQueryParams(redactBearerTokens(value)));
     }
 
     if (typeof value !== 'object') {
@@ -55,6 +96,10 @@ function sanitizeValue(value: unknown, seen: WeakSet<object>, depth: number, key
 
     if (isHeadersLike(value)) {
         return sanitizeValue(Object.fromEntries(value.entries()), seen, depth + 1, keyHint);
+    }
+
+    if (value instanceof Error) {
+        return normalizeErrorValue(value, seen, depth, 'Unknown error');
     }
 
     if (seen.has(value)) {
@@ -71,21 +116,6 @@ function sanitizeValue(value: unknown, seen: WeakSet<object>, depth: number, key
         return value.map((entry) => sanitizeValue(entry, seen, depth + 1, keyHint));
     }
 
-    if (value instanceof Error) {
-        const error = value as Error & Record<string, unknown>;
-        const sanitizedError: Record<string, unknown> = {
-            name: sanitizeValue(error.name || 'Error', seen, depth + 1, 'name'),
-            message: sanitizeValue(error.message || 'Unknown error', seen, depth + 1, 'message')
-        };
-
-        ['status', 'code', 'cause', 'details', 'request', 'response', 'config', 'headers', 'init'].forEach((key) => {
-            if (error[key] !== undefined) {
-                sanitizedError[key] = sanitizeValue(error[key], seen, depth + 1, key);
-            }
-        });
-        return sanitizedError;
-    }
-
     return Object.entries(value as Record<string, unknown>).reduce<Record<string, unknown>>((acc, [key, entryValue]) => {
         acc[key] = isSensitiveKey(key)
             ? redactedValue
@@ -96,6 +126,78 @@ function sanitizeValue(value: unknown, seen: WeakSet<object>, depth: number, key
 
 export function sanitizeForLogging(value: unknown) {
     return sanitizeValue(value, new WeakSet<object>(), 0);
+}
+
+export function normalizeErrorForLogging(error: unknown, fallbackMessage = 'Unknown error') {
+    return normalizeErrorValue(error, new WeakSet<object>(), 0, fallbackMessage);
+}
+
+export function isSensitiveLogKey(key: string) {
+    return isSensitiveKey(key);
+}
+
+function normalizeErrorValue(
+    error: unknown,
+    seen: WeakSet<object>,
+    depth: number,
+    fallbackMessage: string
+): NormalizedLogError {
+    if (error && typeof error === 'object') {
+        if (seen.has(error)) {
+            return { name: 'Error', message: '[Circular]' };
+        }
+        seen.add(error);
+    }
+
+    const normalizedError: NormalizedLogError = {
+        name: String(sanitizeValue(getErrorName(error), seen, depth + 1, 'name') || 'Error'),
+        message: String(sanitizeValue(getErrorMessage(error, fallbackMessage), seen, depth + 1, 'message') || fallbackMessage)
+    };
+
+    if (error && typeof error === 'object') {
+        const errorRecord = error as Record<string, unknown>;
+        errorMetadataKeys.forEach((key) => {
+            if (errorRecord[key] !== undefined) {
+                normalizedError[key] = sanitizeValue(errorRecord[key], seen, depth + 1, key);
+            }
+        });
+
+        if (!(error instanceof Error) && !errorMetadataKeys.some((key) => errorRecord[key] !== undefined)) {
+            normalizedError.value = Object.entries(errorRecord).reduce<Record<string, unknown>>((acc, [key, entryValue]) => {
+                acc[key] = isSensitiveKey(key)
+                    ? redactedValue
+                    : sanitizeValue(entryValue, seen, depth + 1, key);
+                return acc;
+            }, {});
+        }
+    } else if (typeof error !== 'string' && error !== undefined) {
+        normalizedError.value = sanitizeValue(error, seen, depth + 1);
+    }
+
+    return normalizedError;
+}
+
+function getErrorName(error: unknown) {
+    if (error instanceof Error && error.name) {
+        return error.name;
+    }
+    if (error && typeof error === 'object' && 'name' in error && typeof (error as { name?: unknown }).name === 'string') {
+        return (error as { name: string }).name;
+    }
+    return 'Error';
+}
+
+function getErrorMessage(error: unknown, fallbackMessage: string) {
+    if (typeof error === 'string') {
+        return error;
+    }
+    if (error instanceof Error && error.message) {
+        return error.message;
+    }
+    if (error && typeof error === 'object' && 'message' in error && typeof (error as { message?: unknown }).message === 'string') {
+        return (error as { message: string }).message;
+    }
+    return fallbackMessage;
 }
 
 function getConsoleMethod(level: LogLevel) {

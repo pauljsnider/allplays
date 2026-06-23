@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { createLogger, sanitizeForLogging } from './logger';
+import { createLogger, normalizeErrorForLogging, sanitizeForLogging } from './logger';
 
 describe('logger', () => {
     beforeEach(() => {
@@ -16,6 +16,8 @@ describe('logger', () => {
             nested: {
                 refreshToken: 'refresh-token',
                 id_token: 'nested-id-token',
+                clientSecret: 'nested-client-secret',
+                passwordHash: 'nested-password-hash',
                 message: 'Bearer nested-token-456 failed'
             }
         });
@@ -28,6 +30,8 @@ describe('logger', () => {
             nested: {
                 refreshToken: '[REDACTED]',
                 id_token: '[REDACTED]',
+                clientSecret: '[REDACTED]',
+                passwordHash: '[REDACTED]',
                 message: 'Bearer [REDACTED] failed'
             }
         });
@@ -35,7 +39,7 @@ describe('logger', () => {
 
     it('redacts secret URL parameters inside free-form strings', () => {
         const sanitized = sanitizeForLogging({
-            message: 'Fetch failed for https://example.test/callback?access_token=abc123&teamId=team-1#id_token=jwt456',
+            message: 'Fetch failed for https://example.test/callback?auth=callback-secret&access_token=abc123&teamId=team-1#id_token=jwt456',
             retryUrl: 'https://example.test/retry?client_secret=client-secret&status=pending',
             nested: [
                 'https://example.test/session?auth-token=native-secret&view=home',
@@ -44,7 +48,7 @@ describe('logger', () => {
         });
 
         expect(sanitized).toEqual({
-            message: 'Fetch failed for https://example.test/callback?access_token=[REDACTED]&teamId=team-1#id_token=[REDACTED]',
+            message: 'Fetch failed for https://example.test/callback?auth=[REDACTED]&access_token=[REDACTED]&teamId=team-1#id_token=[REDACTED]',
             retryUrl: 'https://example.test/retry?client_secret=[REDACTED]&status=pending',
             nested: [
                 'https://example.test/session?auth-token=[REDACTED]&view=home',
@@ -89,6 +93,33 @@ describe('logger', () => {
                 nested: {
                     password: '[REDACTED]'
                 }
+            }
+        });
+    });
+
+    it('normalizes non-Error thrown values with sanitized metadata', () => {
+        expect(normalizeErrorForLogging('Native auth failed with token=unsafe-token')).toEqual({
+            name: 'Error',
+            message: 'Native auth failed with token=[REDACTED]'
+        });
+
+        expect(normalizeErrorForLogging({
+            name: 'RestFailure',
+            message: 'Upload failed for https://example.test?client_secret=unsafe-secret',
+            status: 403,
+            code: 'permission-denied',
+            details: {
+                authorization: 'Bearer detail-secret',
+                retryUrl: 'https://example.test/retry?password=unsafe-password'
+            }
+        })).toEqual({
+            name: 'RestFailure',
+            message: 'Upload failed for https://example.test?client_secret=[REDACTED]',
+            status: 403,
+            code: 'permission-denied',
+            details: {
+                authorization: '[REDACTED]',
+                retryUrl: 'https://example.test/retry?password=[REDACTED]'
             }
         });
     });
