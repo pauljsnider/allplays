@@ -112,6 +112,26 @@ describe('ParentTools access', () => {
             { id: 'player-1', name: 'Sam Player', number: '12' }
         ]);
         parentToolsAccessServiceMocks.submitParentAccessRequest.mockResolvedValue(undefined);
+        parentToolsServiceMocks.loadParentCalendarTools.mockResolvedValue({
+            events: [],
+            teams: []
+        });
+        parentToolsServiceMocks.loadFamilyShareModel.mockResolvedValue({
+            children: [],
+            tokens: []
+        });
+        parentToolsServiceMocks.loadParentHouseholdInviteModel.mockResolvedValue({
+            linkedPlayers: [
+                {
+                    teamId: 'team-1',
+                    teamName: 'Bears',
+                    playerId: 'player-1',
+                    playerName: 'Sam Player',
+                    playerNumber: '12'
+                }
+            ],
+            members: []
+        });
         inviteRedemptionMocks.redeemSignedInInvite.mockResolvedValue({
             code: 'AB12CD34',
             redirectPath: '/home',
@@ -216,7 +236,7 @@ describe('ParentTools access', () => {
         fireEvent.click(screen.getByRole('button', { name: 'Request access without a code' }));
 
         expect(await screen.findByText('Network hiccup.')).toBeTruthy();
-        const retryButton = screen.getByRole('button', { name: 'Retry loading public teams' });
+        const retryButton = screen.getByRole('button', { name: 'Retry' });
         expect(retryButton).toBeTruthy();
         fireEvent.click(retryButton);
 
@@ -410,6 +430,34 @@ describe('ParentTools access', () => {
 
         fireEvent.click(screen.getByRole('button', { name: 'Refresh' }));
         await waitFor(() => expect(parentToolsServiceMocks.loadParentCalendarTools).toHaveBeenNthCalledWith(3, auth.user, { force: true }));
+    });
+
+    it('keeps parent tool refresh effects stable during local rerenders', async () => {
+        renderParentTools();
+
+        await screen.findByText('Request player access');
+        expect(parentToolsAccessServiceMocks.loadParentAccessModel).toHaveBeenCalledTimes(1);
+        fireEvent.change(screen.getByPlaceholderText('XXXXXXXX'), { target: { value: 'stays-local' } });
+        expect(parentToolsAccessServiceMocks.loadParentAccessModel).toHaveBeenCalledTimes(1);
+
+        fireEvent.click(screen.getByRole('button', { name: 'Calendar' }));
+        await screen.findByText('No team schedules');
+        expect(parentToolsServiceMocks.loadParentCalendarTools).toHaveBeenCalledTimes(1);
+        fireEvent.click(screen.getByRole('button', { name: 'Copy agenda' }));
+        expect(await screen.findByText('No events to copy yet.')).toBeTruthy();
+        expect(parentToolsServiceMocks.loadParentCalendarTools).toHaveBeenCalledTimes(1);
+
+        fireEvent.click(screen.getByRole('button', { name: 'Share' }));
+        await screen.findByText('No family links');
+        expect(parentToolsServiceMocks.loadFamilyShareModel).toHaveBeenCalledTimes(1);
+        fireEvent.change(screen.getByPlaceholderText('Label, like Grandma or babysitter'), { target: { value: 'Grandma' } });
+        expect(parentToolsServiceMocks.loadFamilyShareModel).toHaveBeenCalledTimes(1);
+
+        fireEvent.click(screen.getByRole('button', { name: 'Household' }));
+        await screen.findByText('No pending household invites');
+        expect(parentToolsServiceMocks.loadParentHouseholdInviteModel).toHaveBeenCalledTimes(1);
+        fireEvent.change(screen.getByPlaceholderText('Household contact email'), { target: { value: 'guardian@example.com' } });
+        expect(parentToolsServiceMocks.loadParentHouseholdInviteModel).toHaveBeenCalledTimes(1);
     });
 
     it('opens reusable team fee checkout links when legacy fee payloads omit paymentAction', async () => {

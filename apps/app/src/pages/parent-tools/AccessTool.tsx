@@ -20,6 +20,7 @@ export function AccessTool({ auth, onAccessChanged }: { auth: AuthState; onAcces
     const [requests, setRequests] = useState<ParentAccessRequest[]>([]);
     const [players, setPlayers] = useState<ParentAccessPlayer[]>([]);
     const [manualRequestOpen, setManualRequestOpen] = useState(false);
+    const [manualTeamsRequested, setManualTeamsRequested] = useState(false);
     const [selectedTeamId, setSelectedTeamId] = useState('');
     const [selectedPlayerId, setSelectedPlayerId] = useState('');
     const [relation, setRelation] = useState('Parent');
@@ -75,6 +76,7 @@ export function AccessTool({ auth, onAccessChanged }: { auth: AuthState; onAcces
 
     const openManualRequest = useCallback(() => {
         setManualRequestOpen(true);
+        setManualTeamsRequested(false);
     }, []);
 
     const refresh = useCallback(async () => {
@@ -101,6 +103,7 @@ export function AccessTool({ auth, onAccessChanged }: { auth: AuthState; onAcces
 
     useEffect(() => {
         setManualRequestOpen(false);
+        setManualTeamsRequested(false);
         setTeams([]);
         setPlayers([]);
         setSelectedTeamId('');
@@ -108,9 +111,10 @@ export function AccessTool({ auth, onAccessChanged }: { auth: AuthState; onAcces
     }, [auth.user?.uid]);
 
     useEffect(() => {
-        if (!manualRequestOpen || teams.length || loadingTeams) return;
+        if (!manualRequestOpen || manualTeamsRequested || teams.length || loadingTeams) return;
+        setManualTeamsRequested(true);
         void loadTeams();
-    }, [loadTeams, loadingTeams, manualRequestOpen, teams.length]);
+    }, [loadTeams, loadingTeams, manualRequestOpen, manualTeamsRequested, teams.length]);
 
     const loadPlayersForTeam = useCallback(async (teamId: string) => {
         const rows = await runPlayerLoad(
