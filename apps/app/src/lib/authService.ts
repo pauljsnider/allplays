@@ -19,6 +19,13 @@ import {
   updatePassword,
   verifyPasswordResetCode
 } from './firebaseAuthRuntime';
+import {
+  loadLegacyAdminInvite,
+  loadLegacyAuthDb,
+  loadLegacyInviteFlow,
+  loadLegacyParentMembershipUtils,
+  loadLegacySignupFlow
+} from './adapters/legacyAuth';
 import { createLogger } from './logger';
 import type { AuthUser, UserRole } from './types';
 
@@ -35,43 +42,6 @@ const firebaseAuthStorageDb = 'firebaseLocalStorageDb';
 const firebaseAuthStorageStore = 'firebaseLocalStorage';
 const nativeAuthSessionStorageKey = 'allplays-native-auth-session';
 const logger = createLogger('app-auth');
-
-type AuthDbModule = typeof import('../../../../js/db.js');
-type AdminInviteModule = typeof import('../../../../js/admin-invite.js');
-type InviteFlowModule = typeof import('../../../../js/accept-invite-flow.js');
-type SignupFlowModule = typeof import('../../../../js/signup-flow.js');
-type ParentMembershipUtilsModule = typeof import('../../../../js/parent-membership-utils.js');
-
-let authDbPromise: Promise<AuthDbModule> | null = null;
-let adminInvitePromise: Promise<AdminInviteModule> | null = null;
-let inviteFlowPromise: Promise<InviteFlowModule> | null = null;
-let signupFlowPromise: Promise<SignupFlowModule> | null = null;
-let parentMembershipUtilsPromise: Promise<ParentMembershipUtilsModule> | null = null;
-
-function loadAuthDb() {
-  authDbPromise ||= import('../../../../js/db.js');
-  return authDbPromise;
-}
-
-function loadAdminInvite() {
-  adminInvitePromise ||= import('../../../../js/admin-invite.js');
-  return adminInvitePromise;
-}
-
-function loadInviteFlow() {
-  inviteFlowPromise ||= import('../../../../js/accept-invite-flow.js');
-  return inviteFlowPromise;
-}
-
-function loadSignupFlow() {
-  signupFlowPromise ||= import('../../../../js/signup-flow.js');
-  return signupFlowPromise;
-}
-
-function loadParentMembershipUtils() {
-  parentMembershipUtilsPromise ||= import('../../../../js/parent-membership-utils.js');
-  return parentMembershipUtilsPromise;
-}
 
 type FirebaseUser = {
   uid: string;
@@ -881,7 +851,7 @@ export async function hydrateFirebaseUser(user: FirebaseUser): Promise<HydratedU
   }
 
   let profile: Record<string, unknown> = {};
-  const dbModule = await loadAuthDb();
+  const dbModule = await loadLegacyAuthDb();
   try {
     profile = await withTimeout(
       Promise.resolve(dbModule.getUserProfile(user.uid)),
@@ -896,7 +866,7 @@ export async function hydrateFirebaseUser(user: FirebaseUser): Promise<HydratedU
   }
 
   try {
-    const { mergeApprovedParentMembershipRequests } = await loadParentMembershipUtils();
+    const { mergeApprovedParentMembershipRequests } = await loadLegacyParentMembershipUtils();
     const approvedRequests = await withTimeout(
       Promise.resolve(dbModule.listMyParentMembershipRequests(user.uid)),
       'Parent membership sync timed out.',
@@ -976,7 +946,7 @@ export function getCurrentFirebaseUser(): FirebaseUser | null {
 
 export async function signInWithEmail(email: string, password: string) {
   const normalizedEmail = normalizeEmail(email);
-  const { updateUserProfile } = await loadAuthDb();
+  const { updateUserProfile } = await loadLegacyAuthDb();
 
   if (isNativeRuntime()) {
     const user = await signInWithNativeRestSession(normalizedEmail, password);
@@ -1009,9 +979,9 @@ export async function signUpWithEmail(email: string, password: string, activatio
     { redeemAdminInviteAcceptance },
     { executeEmailPasswordSignup }
   ] = await Promise.all([
-    loadAuthDb(),
-    loadAdminInvite(),
-    loadSignupFlow()
+    loadLegacyAuthDb(),
+    loadLegacyAdminInvite(),
+    loadLegacySignupFlow()
   ]);
 
   return executeEmailPasswordSignup({
@@ -1063,7 +1033,7 @@ async function processGoogleResult(result: UserCredential | null, activationCode
   if (!result?.user) {
     return null;
   }
-  const dbModule = await loadAuthDb();
+  const dbModule = await loadLegacyAuthDb();
 
   if (!isNewFirebaseUser(result.user)) {
     await dbModule.updateUserProfile(result.user.uid, {
@@ -1098,7 +1068,7 @@ async function processGoogleResult(result: UserCredential | null, activationCode
     if (validation.type === 'parent_invite') {
       await dbModule.redeemParentInvite(result.user.uid, validation.data?.code || code, result.user.email);
     } else if (validation.type === 'admin_invite') {
-      const { redeemAdminInviteAcceptance } = await loadAdminInvite();
+      const { redeemAdminInviteAcceptance } = await loadLegacyAdminInvite();
       await redeemAdminInviteAcceptance({
         userId: result.user.uid,
         userEmail: result.user.email,
@@ -1251,7 +1221,7 @@ export function isEmailLink(url: string) {
 
 export async function completeEmailLink(email: string, url: string) {
   const result = await signInWithEmailLink(auth, email.trim(), url) as UserCredential;
-  const { updateUserProfile } = await loadAuthDb();
+  const { updateUserProfile } = await loadLegacyAuthDb();
   await updateUserProfile(result.user.uid, {
     email: email.trim(),
     lastLogin: new Date(),
@@ -1261,7 +1231,7 @@ export async function completeEmailLink(email: string, url: string) {
 }
 
 export async function setCurrentUserPassword(newPassword: string) {
-  const { updateUserProfile } = await loadAuthDb();
+  const { updateUserProfile } = await loadLegacyAuthDb();
   const user = auth.currentUser;
   if (user) {
     await updatePassword(user, newPassword);
@@ -1304,8 +1274,8 @@ export async function redeemInviteForUser(userId: string, code: string, authEmai
     dbModule,
     { createInviteProcessor }
   ] = await Promise.all([
-    loadAuthDb(),
-    loadInviteFlow()
+    loadLegacyAuthDb(),
+    loadLegacyInviteFlow()
   ]);
   const processInvite = createInviteProcessor({
     validateAccessCode: dbModule.validateAccessCode,
