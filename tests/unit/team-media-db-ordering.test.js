@@ -196,7 +196,7 @@ describe('team media db ordering', () => {
         });
     });
 
-    it('re-resolves storage-backed media URLs and strips legacy cached download URLs', async () => {
+    it('re-resolves storage-backed media URLs and strips legacy cached url fields', async () => {
         firebaseMocks.getDocs.mockResolvedValueOnce({
             docs: [{
                 id: 'media-cached',
@@ -205,6 +205,8 @@ describe('team media db ordering', () => {
                     type: 'photo',
                     storagePath: 'team-media/team-1/folder-1/user-1/already-cached.jpg',
                     downloadUrl: 'https://cdn.example.test/already-cached.jpg',
+                    url: 'https://cdn.example.test/already-cached-persisted.jpg',
+                    src: 'https://cdn.example.test/already-cached-src.jpg',
                     order: 0,
                     deleted: false
                 })
@@ -234,6 +236,8 @@ describe('team media db ordering', () => {
             { path: 'teams/team-1/mediaItems/media-cached' },
             {
                 downloadUrl: 'DELETE_FIELD',
+                url: 'DELETE_FIELD',
+                src: 'DELETE_FIELD',
                 updatedAt: 'server-ts'
             }
         );
@@ -250,7 +254,47 @@ describe('team media db ordering', () => {
             })
         ]);
         expect(items[0]).not.toHaveProperty('downloadUrl');
+        expect(items[0]).not.toHaveProperty('src');
         expect(items[1]).not.toHaveProperty('downloadUrl');
+    });
+
+    it('drops persisted storage urls when fresh authorization cannot be resolved', async () => {
+        firebaseMocks.getDocs.mockResolvedValueOnce({
+            docs: [{
+                id: 'media-stale',
+                data: () => ({
+                    folderId: 'folder-1',
+                    type: 'photo',
+                    storagePath: 'team-media/team-1/folder-1/user-1/stale.jpg',
+                    url: 'https://cdn.example.test/stale-persisted.jpg',
+                    src: 'https://cdn.example.test/stale-src.jpg',
+                    order: 0,
+                    deleted: false
+                })
+            }]
+        });
+        firebaseMocks.getDownloadURL.mockRejectedValueOnce(new Error('storage/unauthorized'));
+
+        const { getTeamMediaItems } = await import('../../js/db.js');
+        const items = await getTeamMediaItems('team-1', 'folder-1');
+
+        expect(firebaseMocks.updateDoc).toHaveBeenCalledWith(
+            { path: 'teams/team-1/mediaItems/media-stale' },
+            {
+                url: 'DELETE_FIELD',
+                src: 'DELETE_FIELD',
+                updatedAt: 'server-ts'
+            }
+        );
+        expect(items).toEqual([
+            expect.objectContaining({
+                id: 'media-stale',
+                storagePath: 'team-media/team-1/folder-1/user-1/stale.jpg'
+            })
+        ]);
+        expect(items[0]).not.toHaveProperty('url');
+        expect(items[0]).not.toHaveProperty('src');
+        expect(items[0]).not.toHaveProperty('downloadUrl');
     });
 
     it('returns bounded media item pages with stable folder order and cursor metadata', async () => {

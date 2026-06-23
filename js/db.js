@@ -950,12 +950,22 @@ export async function getTeamMediaFolders(teamId, options = {}) {
     }));
 }
 
-async function removeLegacyTeamMediaDownloadUrl(teamId, itemId) {
-    return updateDoc(doc(db, `teams/${teamId}/mediaItems`, itemId), {
-        downloadUrl: deleteField(),
+async function removeLegacyTeamMediaUrls(teamId, itemId, item = {}) {
+    const legacyUrlFields = ['downloadUrl', 'url', 'src']
+        .filter((field) => String(item?.[field] || '').trim());
+    if (legacyUrlFields.length === 0) {
+        return Promise.resolve();
+    }
+
+    const updatePayload = {
         updatedAt: serverTimestamp()
-    }).catch((error) => {
-        console.warn('Unable to remove legacy cached team media download URL:', error);
+    };
+    legacyUrlFields.forEach((field) => {
+        updatePayload[field] = deleteField();
+    });
+
+    return updateDoc(doc(db, `teams/${teamId}/mediaItems`, itemId), updatePayload).catch((error) => {
+        console.warn('Unable to remove legacy cached team media URL fields:', error);
     });
 }
 
@@ -966,11 +976,12 @@ async function resolveAuthorizedTeamMediaItem(teamId, item) {
         return item;
     }
 
-    if (String(item.downloadUrl || '').trim()) {
-        removeLegacyTeamMediaDownloadUrl(teamId, item.id);
-    }
+    removeLegacyTeamMediaUrls(teamId, item.id, item);
 
-    const { downloadUrl, ...sanitizedItem } = item;
+    const sanitizedItem = { ...item };
+    delete sanitizedItem.downloadUrl;
+    delete sanitizedItem.url;
+    delete sanitizedItem.src;
 
     try {
         const url = await getDownloadURL(ref(storage, item.storagePath));
