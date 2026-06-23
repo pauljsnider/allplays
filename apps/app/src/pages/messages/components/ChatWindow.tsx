@@ -1290,8 +1290,14 @@ export function ChatWindow({
 
   const insertRecipientMention = (mentionLabel: string, cursorPosition?: number) => {
     const nextInsertionCursor = typeof cursorPosition === 'number' ? cursorPosition : composerCursorPosition;
-    setText((current) => getChatMentionInsertion(current, mentionLabel, nextInsertionCursor).text);
-    setComposerCursorPosition(nextInsertionCursor);
+    if (typeof nextInsertionCursor !== 'number') {
+      setText((current) => insertChatMention(current, mentionLabel));
+      setComposerCursorPosition(undefined);
+      return;
+    }
+    const insertion = getChatMentionInsertion(text, mentionLabel, nextInsertionCursor);
+    setText(insertion.text);
+    setComposerCursorPosition(insertion.cursorPosition);
   };
 
   const handleToggleReaction = useCallback(async (messageId: string, reactionKey: string) => {

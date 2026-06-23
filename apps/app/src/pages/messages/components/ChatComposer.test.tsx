@@ -2,7 +2,7 @@
 import { fireEvent, render, screen } from '@testing-library/react';
 import { useMemo, useState } from 'react';
 import { describe, expect, it, vi } from 'vitest';
-import { buildChatMentionSuggestions, getChatMentionInsertion, hasChatMentionTrigger, type ChatRecipientOption } from '../../../lib/chatLogic';
+import { buildChatMentionSuggestions, getChatMentionInsertion, hasChatMentionTrigger, insertChatMention, type ChatRecipientOption } from '../../../lib/chatLogic';
 import { Composer } from './ChatComposer';
 
 const recipientOptions: ChatRecipientOption[] = [
@@ -47,6 +47,10 @@ function ComposerHarness({ initialText, initialCursorPosition }: { initialText: 
                 onTeamEmail={vi.fn()}
                 onMention={vi.fn()}
                 onRecipientMention={(mentionLabel, nextCursorPosition) => {
+                    if (typeof nextCursorPosition !== 'number') {
+                        setText((current) => insertChatMention(current, mentionLabel));
+                        return;
+                    }
                     setText((current) => getChatMentionInsertion(current, mentionLabel, nextCursorPosition).text);
                 }}
             />
@@ -76,6 +80,20 @@ describe('Composer mention autocomplete', () => {
         fireEvent.keyDown(textarea, { key: 'Enter' });
 
         expect(screen.getByDisplayValue('Hi @Bob Brown team')).toBeTruthy();
+        expect(screen.getByTestId('submit-count').textContent).toBe('0');
+    });
+
+    it('falls back to mention insertion without a tracked cursor position', () => {
+        render(<ComposerHarness initialText="Can @al" />);
+
+        const textarea = screen.getByPlaceholderText('Message Bears') as HTMLTextAreaElement;
+        textarea.focus();
+
+        expect(screen.getByLabelText('Mention suggestions')).toBeTruthy();
+
+        fireEvent.keyDown(textarea, { key: 'Enter' });
+
+        expect(screen.getByDisplayValue('Can @Alice Adams ')).toBeTruthy();
         expect(screen.getByTestId('submit-count').textContent).toBe('0');
     });
 });
