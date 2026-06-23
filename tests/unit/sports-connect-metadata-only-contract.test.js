@@ -21,15 +21,18 @@ describe('Sports Connect metadata-only product contract', () => {
         expect(workflow).not.toContain('Re-import previews saved data only');
     });
 
-    it('keeps Edit Team metadata-only Sports Connect refresh disabled until a live connector marks it available', () => {
+    it('keeps Edit Team Sports Connect setup metadata-only with no live fetch path', () => {
         const editTeam = readSource('edit-team.html');
 
         expect(editTeam).toContain('Selecting Sports Connect saves metadata only; it does not fetch live provider data today.');
-        expect(editTeam).toContain("const hasLiveConnection = ['live_connected', 'sync_success'].includes(source?.connectionStatus) && source?.syncEnabled === true;");
-        expect(editTeam).toContain("canRefresh: true,");
+        expect(editTeam).toContain('Sports Connect metadata-only setup saved');
+        expect(editTeam).toContain('No live Sports Connect fetch runs from Edit Team yet');
+        expect(editTeam).toContain('Metadata only');
         expect(editTeam).toContain("canRefresh: false,");
         expect(editTeam).toContain('refreshButton.disabled = !capability.canRefresh;');
-        expect(editTeam).toContain('Sports Connect metadata is saved for reference only. Live refresh and re-import require a future provider connector.');
+        expect(editTeam).not.toContain("canRefresh: true,");
+        expect(editTeam).not.toContain("state: 'live_connected'");
+        expect(editTeam).not.toContain('await syncRegistrationProvider(currentTeamId)');
     });
 
     it('prevents saved client metadata from choosing the Sports Connect backend endpoint', () => {
