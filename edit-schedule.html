@@ -78,6 +78,25 @@
             </div>
         </div>
 
+        <div id="schedule-sharing-panel" class="mb-6 bg-white border border-emerald-200 rounded-lg p-4 shadow-sm">
+            <div class="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
+                <div>
+                    <h3 class="font-semibold text-emerald-900">Schedule Sharing</h3>
+                    <p class="text-sm text-emerald-800">Open the team schedule sharing controls for live calendar sync and public games-only fan feeds.</p>
+                </div>
+                <div class="flex flex-wrap gap-2">
+                    <a id="edit-schedule-sync-calendar-link" href="team.html"
+                        class="inline-flex items-center justify-center rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm font-semibold text-emerald-700 hover:bg-emerald-100">
+                        Sync Calendar
+                    </a>
+                    <a id="edit-schedule-fan-feed-link" href="team.html"
+                        class="inline-flex items-center justify-center rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm font-semibold text-emerald-700 hover:bg-emerald-100">
+                        Fan Feed
+                    </a>
+                </div>
+            </div>
+        </div>
+
         <div id="registration-schedule-import" class="hidden mb-6 bg-emerald-50 border border-emerald-200 rounded-lg p-4">
             <div class="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
                 <div>
@@ -1775,6 +1794,9 @@
             setupOpponentSearch();
             document.getElementById('team-name-display').textContent = team.name;
             document.getElementById('organization-schedule-link').href = `organization-schedule.html#teamId=${currentTeamId}`;
+            const teamScheduleUrl = `team.html#teamId=${encodeURIComponent(currentTeamId)}`;
+            document.getElementById('edit-schedule-sync-calendar-link').href = teamScheduleUrl;
+            document.getElementById('edit-schedule-fan-feed-link').href = teamScheduleUrl;
 
             // Fetch unread count and render banner
             let unreadCount = 0;
