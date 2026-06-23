@@ -89,7 +89,8 @@ describe('app legacy adapter boundary', () => {
         expect(detailSource).toContain("from '../lib/adapters/legacyScheduleHelpers'");
         expect(rsvpHookSource).toContain("from '../../lib/scheduleService'");
         expect(scheduleServiceSource).toContain("from './adapters/legacyScheduleHelpers'");
-        expect(helperAdapterSource).toContain("from '../../../../../js/parent-dashboard-rsvp.js'");
+        expect(helperAdapterSource).toContain("from '@legacy/parent-dashboard-rsvp.js'");
+        expect(helperAdapterSource).not.toContain('../../../../../js/');
         expect(helperAdapterSource).toContain('resolveMyRsvpByChildForGame');
         expect(helperAdapterSource).toContain('buildGameDayRsvpBreakdown');
     });

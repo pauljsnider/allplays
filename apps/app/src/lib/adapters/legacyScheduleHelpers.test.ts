@@ -6,18 +6,18 @@ const mocks = vi.hoisted(() => ({
     getSubstitutionOptions: vi.fn()
 }));
 
-vi.mock('../../../../../js/schedule-notifications.js', () => ({
+vi.mock('@legacy/schedule-notifications.js', () => ({
     sendPublicRsvpReminderEmails: vi.fn()
 }));
-vi.mock('../../../../../js/admin-user-official-links.js', () => ({
+vi.mock('@legacy/admin-user-official-links.js', () => ({
     normalizeOfficialLinkEmail: vi.fn((value: unknown) => value),
     normalizeOfficialLinkPhone: vi.fn((value: unknown) => value)
 }));
-vi.mock('../../../../../js/officiating-utils.js', () => ({
+vi.mock('@legacy/officiating-utils.js', () => ({
     getAssignedOfficiatingSlots: vi.fn(() => []),
     getOpenOfficiatingSlots: vi.fn(() => [])
 }));
-vi.mock('../../../../../js/utils.js', () => ({
+vi.mock('@legacy/utils.js', () => ({
     expandRecurrence: mocks.expandRecurrence,
     extractOpponent: vi.fn(() => ''),
     fetchAndParseCalendar: vi.fn(async () => []),
@@ -26,41 +26,41 @@ vi.mock('../../../../../js/utils.js', () => ({
     isPracticeEvent: vi.fn(() => false),
     isTrackedCalendarEvent: vi.fn(() => false)
 }));
-vi.mock('../../../../../js/parent-dashboard-practice-sessions.js', () => ({
+vi.mock('@legacy/parent-dashboard-practice-sessions.js', () => ({
     filterVisiblePracticeSessions: vi.fn(() => [])
 }));
-vi.mock('../../../../../js/parent-dashboard-packets.js', () => ({
+vi.mock('@legacy/parent-dashboard-packets.js', () => ({
     buildPracticePacketCompletionPayload: vi.fn(() => ({}))
 }));
-vi.mock('../../../../../js/parent-dashboard-rsvp.js', () => ({
+vi.mock('@legacy/parent-dashboard-rsvp.js', () => ({
     resolveMyRsvpByChildForGame: vi.fn(() => ({}))
 }));
-vi.mock('../../../../../js/game-day-rsvp-breakdown.js', () => ({
+vi.mock('@legacy/game-day-rsvp-breakdown.js', () => ({
     buildGameDayRsvpBreakdown: vi.fn(() => ({ grouped: {}, counts: {} }))
 }));
-vi.mock('../../../../../js/game-day-periods.js', () => ({
+vi.mock('@legacy/game-day-periods.js', () => ({
     getPeriodsForFormation: vi.fn(() => [])
 }));
-vi.mock('../../../../../js/rideshare-helpers.js', () => ({
+vi.mock('@legacy/rideshare-helpers.js', () => ({
     getEventRideshareSummary: vi.fn(() => ({}))
 }));
-vi.mock('../../../../../js/snack-helpers.js', () => ({
+vi.mock('@legacy/snack-helpers.js', () => ({
     mergeAssignmentsWithClaims: vi.fn(() => [])
 }));
-vi.mock('../../../../../js/team-access.js', () => ({
+vi.mock('@legacy/team-access.js', () => ({
     hasScorekeepingTeamAccess: vi.fn(() => false)
 }));
-vi.mock('../../../../../js/team-visibility.js', () => ({
+vi.mock('@legacy/team-visibility.js', () => ({
     isTeamActive: vi.fn(() => true)
 }));
-vi.mock('../../../../../js/game-day-live-substitutions.js', () => ({
+vi.mock('@legacy/game-day-live-substitutions.js', () => ({
     applyLiveSubstitution: vi.fn(() => null),
     getSubstitutionOptions: mocks.getSubstitutionOptions
 }));
-vi.mock('../../../../../js/game-plan-interop.js', () => ({
+vi.mock('@legacy/game-plan-interop.js', () => ({
     buildRotationPlanFromGamePlan: vi.fn(() => ({}))
 }));
-vi.mock('../../../../../js/edit-schedule-practice-payload.js', () => ({
+vi.mock('@legacy/edit-schedule-practice-payload.js', () => ({
     applyPracticeRecurrenceFields: vi.fn((payload: Record<string, unknown>) => payload.practiceData)
 }));
 
@@ -70,6 +70,8 @@ describe('legacyScheduleHelpers', () => {
     it('keeps normalizeArray accepting unknown values for legacy payload normalization', () => {
         const source = readFileSync('src/lib/adapters/legacyScheduleHelpers.ts', 'utf8');
         expect(source).toContain('function normalizeArray<T = unknown>(value: unknown): T[]');
+        expect(source).toContain("from '@legacy/");
+        expect(source).not.toContain('../../../../../js/');
     });
 
     it('normalizes recurring practice occurrences to the fields consumed by scheduleService', () => {

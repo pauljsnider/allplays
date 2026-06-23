@@ -1,6 +1,6 @@
-import { sendPublicRsvpReminderEmails as legacySendPublicRsvpReminderEmails } from '../../../../../js/schedule-notifications.js';
-import { normalizeOfficialLinkEmail as legacyNormalizeOfficialLinkEmail, normalizeOfficialLinkPhone as legacyNormalizeOfficialLinkPhone } from '../../../../../js/admin-user-official-links.js';
-import { getAssignedOfficiatingSlots as legacyGetAssignedOfficiatingSlots, getOpenOfficiatingSlots as legacyGetOpenOfficiatingSlots } from '../../../../../js/officiating-utils.js';
+import { sendPublicRsvpReminderEmails as legacySendPublicRsvpReminderEmails } from '@legacy/schedule-notifications.js';
+import { normalizeOfficialLinkEmail as legacyNormalizeOfficialLinkEmail, normalizeOfficialLinkPhone as legacyNormalizeOfficialLinkPhone } from '@legacy/admin-user-official-links.js';
+import { getAssignedOfficiatingSlots as legacyGetAssignedOfficiatingSlots, getOpenOfficiatingSlots as legacyGetOpenOfficiatingSlots } from '@legacy/officiating-utils.js';
 import {
     expandRecurrence as legacyExpandRecurrence,
     extractOpponent as legacyExtractOpponent,
@@ -9,22 +9,22 @@ import {
     getCalendarEventTrackingId as legacyGetCalendarEventTrackingId,
     isPracticeEvent as legacyIsPracticeEvent,
     isTrackedCalendarEvent as legacyIsTrackedCalendarEvent
-} from '../../../../../js/utils.js';
-import { filterVisiblePracticeSessions as legacyFilterVisiblePracticeSessions } from '../../../../../js/parent-dashboard-practice-sessions.js';
-import { buildPracticePacketCompletionPayload as legacyBuildPracticePacketCompletionPayload } from '../../../../../js/parent-dashboard-packets.js';
-import { resolveMyRsvpByChildForGame as legacyResolveMyRsvpByChildForGame } from '../../../../../js/parent-dashboard-rsvp.js';
-import { buildGameDayRsvpBreakdown as legacyBuildGameDayRsvpBreakdown } from '../../../../../js/game-day-rsvp-breakdown.js';
-import { getPeriodsForFormation as legacyGetPeriodsForFormation } from '../../../../../js/game-day-periods.js';
-import { getEventRideshareSummary as legacyGetEventRideshareSummary } from '../../../../../js/rideshare-helpers.js';
-import { mergeAssignmentsWithClaims as legacyMergeAssignmentsWithClaims } from '../../../../../js/snack-helpers.js';
-import { hasScorekeepingTeamAccess as legacyHasScorekeepingTeamAccess } from '../../../../../js/team-access.js';
-import { isTeamActive as legacyIsTeamActive } from '../../../../../js/team-visibility.js';
+} from '@legacy/utils.js';
+import { filterVisiblePracticeSessions as legacyFilterVisiblePracticeSessions } from '@legacy/parent-dashboard-practice-sessions.js';
+import { buildPracticePacketCompletionPayload as legacyBuildPracticePacketCompletionPayload } from '@legacy/parent-dashboard-packets.js';
+import { resolveMyRsvpByChildForGame as legacyResolveMyRsvpByChildForGame } from '@legacy/parent-dashboard-rsvp.js';
+import { buildGameDayRsvpBreakdown as legacyBuildGameDayRsvpBreakdown } from '@legacy/game-day-rsvp-breakdown.js';
+import { getPeriodsForFormation as legacyGetPeriodsForFormation } from '@legacy/game-day-periods.js';
+import { getEventRideshareSummary as legacyGetEventRideshareSummary } from '@legacy/rideshare-helpers.js';
+import { mergeAssignmentsWithClaims as legacyMergeAssignmentsWithClaims } from '@legacy/snack-helpers.js';
+import { hasScorekeepingTeamAccess as legacyHasScorekeepingTeamAccess } from '@legacy/team-access.js';
+import { isTeamActive as legacyIsTeamActive } from '@legacy/team-visibility.js';
 import {
     applyLiveSubstitution as legacyApplyLiveSubstitution,
     getSubstitutionOptions as legacyGetSubstitutionOptions
-} from '../../../../../js/game-day-live-substitutions.js';
-import { buildRotationPlanFromGamePlan as legacyBuildRotationPlanFromGamePlan } from '../../../../../js/game-plan-interop.js';
-import { applyPracticeRecurrenceFields as legacyApplyPracticeRecurrenceFields } from '../../../../../js/edit-schedule-practice-payload.js';
+} from '@legacy/game-day-live-substitutions.js';
+import { buildRotationPlanFromGamePlan as legacyBuildRotationPlanFromGamePlan } from '@legacy/game-plan-interop.js';
+import { applyPracticeRecurrenceFields as legacyApplyPracticeRecurrenceFields } from '@legacy/edit-schedule-practice-payload.js';
 
 type LegacyRecord = Record<string, unknown>;
 
