@@ -2,7 +2,7 @@
 import { readFileSync } from 'node:fs';
 import { JSDOM } from 'jsdom';
 import { describe, it, expect } from 'vitest'; // Import Vitest globals
-import { buildManualPaymentUpdate, buildBalanceAdjustmentUpdate, buildOnlineRefundRequest, getRecipientRefundableCents, getRecipientStripePaymentRefs, isOnlineRefundEligible, buildOfflineRefundUpdate, buildTeamFeePaymentSummaryRows, serializeTeamFeePaymentSummaryCsv, buildTeamFeePaymentSummaryCsv, escapeCsvValue, registerTeamFeesAdminPageHandlers, normalizeTeamFeeDraft } from '../../js/team-fees-admin.js'; // Adjusted path
+import { buildManualPaymentUpdate, buildBalanceAdjustmentUpdate, buildOnlineRefundRequest, getRecipientRefundableCents, getRecipientStripePaymentRefs, isOnlineRefundEligible, buildOfflineRefundUpdate, buildTeamFeePaymentSummaryRows, serializeTeamFeePaymentSummaryCsv, buildTeamFeePaymentSummaryCsv, escapeCsvValue, registerTeamFeesAdminPageHandlers, normalizeTeamFeeDraft, buildCancelRecipientUpdate } from '../../js/team-fees-admin.js'; // Adjusted path
 
 describe('team fees admin page routing', () => {
     it('reinitializes when same-page manage links update the hash', () => {
@@ -21,8 +21,8 @@ describe('team fees admin page routing', () => {
         const adminSource = readFileSync(new URL('../../js/team-fees-admin.js', import.meta.url), 'utf8');
         const pageSource = readFileSync(new URL('../../team-fees.html', import.meta.url), 'utf8');
 
-        expect(adminSource).toContain("import('./db.js?v=64')");
-        expect(pageSource).toContain('<script type="module" src="./js/team-fees-admin.js?v=9"></script>');
+        expect(adminSource).toContain("import('./db.js?v=65')");
+        expect(pageSource).toContain('<script type="module" src="./js/team-fees-admin.js?v=10"></script>');
     });
 });
 
@@ -328,6 +328,34 @@ describe('buildOfflineRefundUpdate', () => {
         expect(() => buildOfflineRefundUpdate({ refundType: 'partial', amount: '6.00', method: 'cash', note: 'Too much', currentBalanceCents: '1000', currentPaidCents: '500' })).toThrow('Refund amount cannot exceed');
         expect(() => buildOfflineRefundUpdate({ refundType: 'partial', amount: '1.00', method: 'card', note: 'Bad method', currentBalanceCents: '1000', currentPaidCents: '500' })).toThrow('Select cash or check');
         expect(() => buildOfflineRefundUpdate({ refundType: 'partial', amount: '1.00', method: 'cash', note: '', currentBalanceCents: '1000', currentPaidCents: '500' })).toThrow('Enter an admin note');
+    });
+});
+
+describe('buildCancelRecipientUpdate', () => {
+    it('blocks cancellation when a recipient still has recorded payments', () => {
+        expect(() => buildCancelRecipientUpdate({
+            note: 'Trying to void a paid recipient',
+            actorId: 'admin-1',
+            currentPaidCents: '2500'
+        })).toThrow('Paid recipients must be refunded before canceling the balance.');
+
+        expect(buildCancelRecipientUpdate({
+            note: 'Waived before payment',
+            actorId: 'admin-1',
+            currentPaidCents: '0'
+        })).toMatchObject({
+            status: 'canceled',
+            amountDueCents: 0,
+            remainingBalanceCents: 0
+        });
+    });
+
+    it('keeps the paid recipient cancel action disabled in the manage view', () => {
+        const source = readFileSync(new URL('../../js/team-fees-admin.js', import.meta.url), 'utf8');
+
+        expect(source).toContain('const canCancelRecipient = paidCents <= 0;');
+        expect(source).toContain('Refund paid recipients before canceling their balance.');
+        expect(source).toContain("${canCancelRecipient ? '' : 'disabled'}");
     });
 });
 
