@@ -7069,15 +7069,22 @@ function detectMentionedUids(text, members, options = {}) {
   const mentioned = new Set();
   const sourceText = String(text || '');
   const normalizedMembers = Array.isArray(members)
-    ? members.map((member) => {
-      const memberName = String(member?.displayName || member?.name || '').toLowerCase().trim().replace(/\s+/g, ' ');
-      return {
-        uid: member?.uid,
-        fullName: memberName,
-        compactName: memberName.replace(/\s+/g, ''),
-        firstName: memberName.split(' ')[0] || ''
-      };
-    }).filter((member) => member.uid && member.fullName)
+    ? members.flatMap((member) => {
+      const names = [
+        member?.displayName,
+        member?.name,
+        ...(Array.isArray(member?.mentionNames) ? member.mentionNames : [])
+      ];
+      return names.map((name) => {
+        const memberName = String(name || '').toLowerCase().trim().replace(/\s+/g, ' ');
+        return {
+          uid: member?.uid,
+          fullName: memberName,
+          compactName: memberName.replace(/\s+/g, ''),
+          firstName: memberName.split(' ')[0] || ''
+        };
+      }).filter((memberName) => memberName.uid && memberName.fullName);
+    })
     : [];
 
   for (const match of sourceText.matchAll(teamChatMentionStartRegex)) {
@@ -7098,6 +7105,10 @@ function detectMentionedUids(text, members, options = {}) {
 
     let matchedReservedMention = false;
     for (const candidate of candidateLabels) {
+      if (candidate.name === 'all plays') {
+        matchedReservedMention = true;
+        break;
+      }
       if (candidate.name !== 'all' && candidate.name !== 'team') continue;
       if (!allowReservedMentions) {
         matchedReservedMention = true;
@@ -7120,6 +7131,95 @@ function detectMentionedUids(text, members, options = {}) {
     }
   }
   return [...mentioned];
+}
+
+function normalizeTeamChatMentionName(value) {
+  return String(value || '').trim().replace(/\s+/g, ' ');
+}
+
+function getTeamChatMentionNames(source = {}, keys = []) {
+  return Array.from(new Set(
+    keys
+      .map((key) => normalizeTeamChatMentionName(source?.[key]))
+      .filter(Boolean)
+  ));
+}
+
+function getTeamChatRosterPlayerMentionNames(player = {}) {
+  return getTeamChatMentionNames(player, ['displayName', 'fullName', 'name', 'playerName', 'childName']);
+}
+
+function getTeamChatRosterContactMentionNames(contact = {}) {
+  return getTeamChatMentionNames(contact, [
+    'displayName',
+    'fullName',
+    'name',
+    'parentName',
+    'guardianName'
+  ]);
+}
+
+function getTeamChatRosterContactUid(contact = {}) {
+  return String(
+    contact.userId
+    || contact.uid
+    || contact.parentUserId
+    || contact.guardianUserId
+    || ''
+  ).trim();
+}
+
+function getTeamChatRosterContactEmail(contact = {}) {
+  return String(
+    contact.email
+    || contact.parentEmail
+    || contact.guardianEmail
+    || ''
+  ).trim().toLowerCase();
+}
+
+function getTeamChatRosterContacts(player = {}) {
+  return [
+    player,
+    ...(Array.isArray(player.parents) ? player.parents : []),
+    ...(Array.isArray(player.guardians) ? player.guardians : []),
+    ...(Array.isArray(player.familyContacts) ? player.familyContacts : []),
+    ...(Array.isArray(player.contacts) ? player.contacts : [])
+  ];
+}
+
+function normalizeTeamChatParticipantSelector(value) {
+  const raw = String(value || '').trim();
+  if (!raw) return null;
+  const separatorIndex = raw.indexOf(':');
+  if (separatorIndex > 0) {
+    const kind = raw.slice(0, separatorIndex).trim().toLowerCase();
+    const id = raw.slice(separatorIndex + 1).trim();
+    if (!id) return null;
+    if (kind === 'email') return { kind: 'email', id: id.toLowerCase() };
+    if (kind === 'player') return { kind: 'player', id };
+    if (kind === 'user') return { kind: 'user', id };
+  }
+  if (/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(raw)) {
+    return { kind: 'email', id: raw.toLowerCase() };
+  }
+  return { kind: 'user', id: raw };
+}
+
+function addTeamChatMemberRole(users, uid, role, aliases = []) {
+  const normalizedUid = String(uid || '').trim();
+  if (!normalizedUid) return;
+  const entry = users.get(normalizedUid) || {
+    uid: normalizedUid,
+    roles: new Set(),
+    mentionNames: new Set()
+  };
+  entry.roles.add(role);
+  (Array.isArray(aliases) ? aliases : []).forEach((alias) => {
+    const normalizedAlias = normalizeTeamChatMentionName(alias);
+    if (normalizedAlias) entry.mentionNames.add(normalizedAlias);
+  });
+  users.set(normalizedUid, entry);
 }
 
 async function buildTeamChatNotificationContext(teamId, options = {}) {
@@ -7176,43 +7276,94 @@ async function buildTeamChatNotificationContext(teamId, options = {}) {
   const scopedParticipantIds = effectiveTargetType === 'individuals'
     ? Array.from(new Set([...conversationParticipantIds, ...normalizedRecipientIds]))
     : [];
+  const scopedParticipantSelectors = scopedParticipantIds
+    .map(normalizeTeamChatParticipantSelector)
+    .filter(Boolean);
   const scopedParticipantUids = new Set(
-    scopedParticipantIds
-      .filter((id) => !id.toLowerCase().startsWith('email:'))
-      .map((id) => id.toLowerCase().startsWith('user:') ? id.slice(5).trim() : id)
+    scopedParticipantSelectors
+      .filter((selector) => selector.kind === 'user')
+      .map((selector) => selector.id)
       .filter(Boolean)
   );
   const scopedParticipantEmails = Array.from(new Set(
-    scopedParticipantIds
-      .filter((id) => id.toLowerCase().startsWith('email:'))
-      .map((id) => id.slice(6).trim().toLowerCase())
+    scopedParticipantSelectors
+      .filter((selector) => selector.kind === 'email')
+      .map((selector) => selector.id)
       .filter(Boolean)
   ));
+  const scopedParticipantPlayerIds = new Set(
+    scopedParticipantSelectors
+      .filter((selector) => selector.kind === 'player')
+      .map((selector) => selector.id)
+      .filter(Boolean)
+  );
   const users = new Map();
-  const addRole = (uid, role) => {
-    const normalizedUid = String(uid || '').trim();
-    if (!normalizedUid) return;
-    const entry = users.get(normalizedUid) || { uid: normalizedUid, roles: new Set() };
-    entry.roles.add(role);
-    users.set(normalizedUid, entry);
-  };
+  const addRole = (uid, role, aliases = []) => addTeamChatMemberRole(users, uid, role, aliases);
 
   addRole(team.ownerId, 'staff');
 
-  const [parentSnap, indexedTargetSnap, adminUserIds, participantEmailUserIds] = await Promise.all([
+  const [parentSnap, indexedTargetSnap, adminUserIds, participantEmailUserIds, playersSnap] = await Promise.all([
     firestore.collection('users').where('parentTeamIds', 'array-contains', teamId).get(),
     firestore.collection(`teams/${teamId}/notificationTargets`).get(),
     getUserIdsByEmails(team.adminEmails || []),
-    scopedParticipantEmails.length > 0 ? getUserIdsByEmails(scopedParticipantEmails) : Promise.resolve([])
+    scopedParticipantEmails.length > 0 ? getUserIdsByEmails(scopedParticipantEmails) : Promise.resolve([]),
+    firestore.collection(`teams/${teamId}/players`).get()
   ]);
 
   parentSnap.forEach((docSnap) => addRole(docSnap.id, 'parent'));
   adminUserIds.forEach((uid) => addRole(uid, 'staff'));
   participantEmailUserIds.forEach((uid) => scopedParticipantUids.add(uid));
 
+  const rosterContactAliasesByEmail = new Map();
+  const scopedRosterContactEmails = new Set();
+  const activePlayers = Array.isArray(playersSnap?.docs)
+    ? playersSnap.docs.map((docSnap) => ({ id: docSnap.id, ...(docSnap.data() || {}) }))
+      .filter((player) => player.active !== false)
+    : [];
+
+  activePlayers.forEach((player) => {
+    const playerAliases = getTeamChatRosterPlayerMentionNames(player);
+    if (!playerAliases.length) return;
+    const playerId = String(player.id || player.playerId || '').trim();
+    const playerIsScoped = scopedParticipantPlayerIds.has(playerId);
+    getTeamChatRosterContacts(player).forEach((contact) => {
+      const contactAliases = Array.from(new Set([
+        ...playerAliases,
+        ...getTeamChatRosterContactMentionNames(contact)
+      ]));
+      const uid = getTeamChatRosterContactUid(contact);
+      const email = getTeamChatRosterContactEmail(contact);
+      if (uid) {
+        addRole(uid, 'parent', contactAliases);
+        if (playerIsScoped) scopedParticipantUids.add(uid);
+      }
+      if (email) {
+        const existingAliases = rosterContactAliasesByEmail.get(email) || new Set();
+        contactAliases.forEach((alias) => existingAliases.add(alias));
+        rosterContactAliasesByEmail.set(email, existingAliases);
+        if (playerIsScoped) scopedRosterContactEmails.add(email);
+      }
+    });
+  });
+
+  const rosterEmailUserIdEntries = await Promise.all(
+    Array.from(rosterContactAliasesByEmail.entries()).map(async ([email, aliasSet]) => ({
+      email,
+      aliases: Array.from(aliasSet),
+      uids: await getUserIdsByEmails([email])
+    }))
+  );
+  rosterEmailUserIdEntries.forEach(({ email, aliases, uids }) => {
+    (Array.isArray(uids) ? uids : []).forEach((uid) => {
+      addRole(uid, 'parent', aliases);
+      if (scopedRosterContactEmails.has(email)) scopedParticipantUids.add(uid);
+    });
+  });
+
   let members = Array.from(users.values()).map((entry) => ({
     uid: entry.uid,
-    roles: Array.from(entry.roles)
+    roles: Array.from(entry.roles),
+    mentionNames: Array.from(entry.mentionNames || [])
   }));
 
   if (effectiveTargetType === 'staff') {
@@ -7283,8 +7434,16 @@ async function buildTeamChatNotificationContext(teamId, options = {}) {
     return {
       ...member,
       displayName: includeMentions
-        ? String(userRecord.displayName || userRecord.fullName || userRecord.name || '').trim()
+        ? String(userRecord.displayName || userRecord.fullName || userRecord.name || member.mentionNames?.[0] || '').trim()
         : '',
+      mentionNames: includeMentions
+        ? Array.from(new Set([
+          String(userRecord.displayName || '').trim(),
+          String(userRecord.fullName || '').trim(),
+          String(userRecord.name || '').trim(),
+          ...(Array.isArray(member.mentionNames) ? member.mentionNames : [])
+        ].filter(Boolean)))
+        : [],
       muted: conversationMuted || Boolean(normalizedConversationId === 'team' && chatMuted && chatMuted[teamId])
     };
   });
