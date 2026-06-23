@@ -11,7 +11,6 @@ import {
   getPlayers,
   getRsvps,
   getRsvpBreakdownByPlayer,
-  getRsvpSummaries,
   getTeam,
   getTeams,
   addGame,
@@ -2442,21 +2441,6 @@ function normalizeAssignments(assignments: any[]): ScheduleAssignment[] {
     .filter((assignment) => assignment.role || assignment.value);
 }
 
-async function loadRsvpSummaryMap(teamId: string, gameIds: string[]) {
-  try {
-    return await withTimeout(Promise.resolve(getRsvpSummaries(teamId, gameIds)), `RSVP summaries ${teamId}`);
-  } catch (error) {
-    if (!isNativeRuntime()) throw error;
-    logScheduleWarning(`Falling back to local RSVP summaries for ${teamId}.`, 'rsvp-summary-local-fallback', error, { fallback: 'local', teamId });
-    const map = new Map<string, ScheduleRsvpSummary>();
-    await Promise.all(gameIds.map(async (gameId) => {
-      const rsvps = await loadRsvps(teamId, gameId).catch(() => []);
-      map.set(gameId, summarizeRsvps(rsvps));
-    }));
-    return map;
-  }
-}
-
 function summarizeRsvps(rsvps: any[]): ScheduleRsvpSummary {
   return (Array.isArray(rsvps) ? rsvps : []).reduce<Required<ScheduleRsvpSummary>>((acc, rsvp) => {
     const response = normalizeRsvpResponse(rsvp?.response);
@@ -3090,19 +3074,6 @@ async function hydrateEventDetails(events: ParentScheduleEvent[], user: AuthUser
       .map((event) => `${event.teamId}::${event.id}`)
   )];
 
-  const gameIdsByTeam = new Map<string, string[]>();
-  uniqueEventKeys.forEach((key) => {
-    const [teamId, gameId] = key.split('::');
-    if (!teamId || !gameId) return;
-    if (!gameIdsByTeam.has(teamId)) gameIdsByTeam.set(teamId, []);
-    gameIdsByTeam.get(teamId)?.push(gameId);
-  });
-
-  const summaryMapsByTeam = new Map<string, Map<string, ScheduleRsvpSummary>>();
-  await Promise.all([...gameIdsByTeam.entries()].map(async ([teamId, gameIds]) => {
-    summaryMapsByTeam.set(teamId, await loadRsvpSummaryMap(teamId, gameIds).catch(() => new Map()));
-  }));
-
   await Promise.all(uniqueEventKeys.map(async (key) => {
     const [teamId, gameId] = key.split('::');
     const matchingEvents = events.filter((event) => event.teamId === teamId && event.id === gameId);
@@ -3112,7 +3083,7 @@ async function hydrateEventDetails(events: ParentScheduleEvent[], user: AuthUser
     const { rsvps, offers, claims } = await loadCachedEventHydrationDetails(teamId, gameId);
     const myRsvpByChild = resolveMyRsvpByChildForGame(events, teamId, gameId, rsvps, user.uid);
     const myRsvpNotesByChild = resolveMyRsvpNotesByChildForGame(events, teamId, gameId, rsvps, user.uid);
-    const summary = summaryMapsByTeam.get(teamId)?.get(gameId) || firstEvent.rsvpSummary || summarizeRsvps(rsvps);
+    const summary = firstEvent.rsvpSummary || summarizeRsvps(rsvps);
     const rideshareSummary = getEventRideshareSummary(offers) as ScheduleRideSummary;
     const assignments = mergeAssignmentsWithClaims(firstEvent.assignments, claims) as ScheduleAssignment[];
     const preferences = firstEvent.availabilityPreferences || {};
