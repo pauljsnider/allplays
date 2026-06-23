@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 
@@ -23,6 +24,15 @@ describe('app Vite config', () => {
         expect(appViteConfig.resolve?.alias).toEqual(expect.objectContaining({
             '@legacy': expect.stringContaining('/js')
         }));
+    });
+
+    it('resolves config-relative paths without CommonJS directory globals', () => {
+        const viteConfigSource = readFileSync(new URL('../../apps/app/vite.config.ts', import.meta.url), 'utf8');
+
+        expect(viteConfigSource).not.toContain('__dirname');
+        expect(viteConfigSource).toContain('fileURLToPath(import.meta.url)');
+        expect(viteConfigSource).toContain("path.resolve(appDirectory, '../../js')");
+        expect(viteConfigSource).toContain("path.resolve(appDirectory, 'bundle-visualizer.html')");
     });
 
     it('enables app coverage reports across source files', () => {
