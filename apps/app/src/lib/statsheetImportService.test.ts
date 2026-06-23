@@ -69,13 +69,52 @@ describe('buildTrackStatsheetReviewModel', () => {
 
     expect(review.shouldSwap).toBe(true)
     expect(review.homeRows).toEqual([
-      expect.objectContaining({ number: '12', name: 'Avery Smith', mappedPlayerId: 'p1', totalPoints: 10, fouls: 3 })
+      expect.objectContaining({ number: '12', name: 'Avery Smith', include: true, mappedPlayerId: 'p1', totalPoints: 10, fouls: 3 })
     ])
     expect(review.visitorRows).toEqual([
       expect.objectContaining({ number: '99', name: 'Unknown', mappedPlayerId: '' })
     ])
     expect(review.homeScore).toBe(41)
     expect(review.awayScore).toBe(53)
+  })
+
+  it('defaults unmatched home rows to review-only while including unique roster matches', () => {
+    const review = buildTrackStatsheetReviewModel({
+      scores: { homeFinal: 19, visitorFinal: 24 },
+      homePlayers: [
+        { number: '12', name: 'Avery Smith', totalPoints: 10, fouls: 3 },
+        { number: '55', name: 'Mystery Player', totalPoints: 7, fouls: 1 }
+      ],
+      visitorPlayers: [{ number: '10', name: 'River Stone', totalPoints: 24, fouls: 2 }]
+    }, [
+      { id: 'p1', number: '12', name: 'Avery Smith' },
+      { id: 'p2', number: '5', name: 'Mia Diaz' }
+    ])
+
+    expect(review.homeRows).toEqual([
+      expect.objectContaining({ name: 'Avery Smith', include: true, mappedPlayerId: 'p1' }),
+      expect.objectContaining({ name: 'Mystery Player', include: false, mappedPlayerId: '' })
+    ])
+    expect(review.visitorRows).toEqual([
+      expect.objectContaining({ name: 'River Stone', include: true, mappedPlayerId: '' })
+    ])
+  })
+
+  it('leaves all home rows review-only when no unique roster matches are found', () => {
+    const review = buildTrackStatsheetReviewModel({
+      homePlayers: [
+        { number: '55', name: 'Mystery Player', totalPoints: 7, fouls: 1 },
+        { number: '56', name: 'Unknown Guard', totalPoints: 4, fouls: 0 }
+      ]
+    }, [
+      { id: 'p1', number: '12', name: 'Avery Smith' }
+    ])
+
+    expect(review.homeMatches).toBe(0)
+    expect(review.homeRows).toEqual([
+      expect.objectContaining({ name: 'Mystery Player', include: false, mappedPlayerId: '' }),
+      expect.objectContaining({ name: 'Unknown Guard', include: false, mappedPlayerId: '' })
+    ])
   })
 })
 
@@ -111,7 +150,9 @@ describe('analyzeTrackStatsheetPhoto', () => {
       homeMatches: 0,
       visitorMatches: 0
     })
-    expect(warnSpy).toHaveBeenCalledWith('[statsheetImportService] Failed to parse AI response', expect.any(SyntaxError))
+    expect(warnSpy).toHaveBeenCalledWith('[statsheetImportService] Failed to parse AI response.', expect.objectContaining({
+      error: expect.objectContaining({ name: 'SyntaxError' })
+    }))
 
     warnSpy.mockRestore()
     globalThis.FileReader = originalFileReader
@@ -119,6 +160,23 @@ describe('analyzeTrackStatsheetPhoto', () => {
 })
 
 describe('applyTrackStatsheetImportForApp', () => {
+  it('prevents saving when every home row is still review-only', async () => {
+    await expect(applyTrackStatsheetImportForApp({
+      teamId: 'team-1',
+      gameId: 'game-1',
+      roster: [{ id: 'p1', name: 'Avery Smith', number: '12' }],
+      columns: ['PTS'],
+      homeRows: [{ number: '55', name: 'Mystery Player', fouls: 1, totalPoints: 7, include: false, mappedPlayerId: '' }],
+      visitorRows: [],
+      homeScore: 7,
+      awayScore: 0,
+      file: null
+    })).rejects.toThrow('Please review or map at least one home player before applying.')
+
+    expect(firebaseMocks.getDocs).not.toHaveBeenCalled()
+    expect(firebaseMocks.writeBatch).not.toHaveBeenCalled()
+  })
+
   it('returns a replacement confirmation instead of writing over existing game data', async () => {
     firebaseMocks.getDocs
       .mockResolvedValueOnce({ size: 1, docs: [{ ref: { path: 'event-1' } }] })

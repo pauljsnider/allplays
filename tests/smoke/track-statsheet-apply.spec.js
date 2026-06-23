@@ -643,24 +643,38 @@ test('defers score and side controls until statsheet analysis completes', async 
     await expect(page.locator('#visitor-score-input')).toHaveValue('24');
 });
 
-test('blocks apply until every included home row is mapped, then saves report data', async ({ page, baseURL }) => {
+test('applies matched rows while unmatched home rows stay available for review', async ({ page, baseURL }) => {
     await seedScenario(page, baseURL, createScenario());
     await analyzeStatsheet(page, baseURL);
 
-    await page.locator('#apply-btn').click();
+    const unmatchedRow = page.locator('#home-rows tr').nth(1);
+    await expect(unmatchedRow.locator('input[data-field="include"]')).not.toBeChecked();
+    await expect(unmatchedRow.locator('select[data-field="mappedPlayerId"]')).toHaveValue('');
 
-    const blockedState = await page.evaluate((storeKey) => JSON.parse(localStorage.getItem(storeKey) || '{}'), STORE_KEY);
-    expect(blockedState.alerts).toContain('Please map every included home row to a roster player or uncheck it.');
-    expect(blockedState.commitCalls).toBe(0);
-
-    await page.locator('#home-rows tr').nth(1).locator('select[data-field="mappedPlayerId"]').selectOption('p2');
     await page.locator('#apply-btn').click();
 
     await expect(page.locator('#apply-status')).toHaveText('Stats saved! Now you can add a game summary.');
     await expect(page.locator('#summary-section')).not.toHaveClass(/hidden/);
     await expect(page.locator('#apply-btn')).toBeVisible();
 
+    const matchedOnlyState = await page.evaluate((storeKey) => JSON.parse(localStorage.getItem(storeKey) || '{}'), STORE_KEY);
+    expect(matchedOnlyState.alerts || []).not.toContain('Please map every included home row to a roster player or uncheck it.');
+    expect(matchedOnlyState.commitCalls).toBe(1);
+    expect(matchedOnlyState.aggregatedStats).toEqual({
+        p1: {
+            playerName: 'Ava Cole',
+            playerNumber: '3',
+            participated: true,
+            participationStatus: 'appeared',
+            participationSource: 'statsheet-import',
+            stats: { pts: 12, fouls: 2 }
+        }
+    });
+
+    await unmatchedRow.locator('input[data-field="include"]').check();
+    await unmatchedRow.locator('select[data-field="mappedPlayerId"]').selectOption('p2');
     await page.locator('#home-score-input').fill('21');
+
     await page.locator('#apply-btn').click();
     await expect(page.locator('#apply-status')).toHaveText('Stats saved! Now you can add a game summary.');
 
@@ -694,6 +708,35 @@ test('blocks apply until every included home row is mapped, then saves report da
         statsheet_2: { name: 'Kai North', number: '11', pts: 9, fouls: 2 }
     });
 
+});
+
+test('prevents apply when analysis finds no uniquely matched home rows', async ({ page, baseURL }) => {
+    await seedScenario(page, baseURL, createScenario({
+        aiResponse: {
+            homePlayers: [
+                { number: '55', name: 'Mystery Player', totalPoints: 7, fouls: 1 },
+                { number: '56', name: 'Unknown Guard', totalPoints: 4, fouls: 0 }
+            ],
+            visitorPlayers: [
+                { number: '10', name: 'River Stone', totalPoints: 11, fouls: 2 }
+            ],
+            scores: {
+                homeFinal: 11,
+                visitorFinal: 11
+            }
+        }
+    }));
+    await analyzeStatsheet(page, baseURL);
+
+    await expect(page.locator('#home-rows input[data-field="include"]')).toHaveCount(2);
+    await expect(page.locator('#home-rows input[data-field="include"]').first()).not.toBeChecked();
+    await expect(page.locator('#home-rows input[data-field="include"]').nth(1)).not.toBeChecked();
+
+    await page.locator('#apply-btn').click();
+
+    const savedState = await page.evaluate((storeKey) => JSON.parse(localStorage.getItem(storeKey) || '{}'), STORE_KEY);
+    expect(savedState.alerts).toContain('Please review or map at least one home player before applying.');
+    expect(savedState.commitCalls).toBe(0);
 });
 
 test('keeps zero-stat statsheet import appearances in player history', async ({ page, baseURL }) => {
@@ -759,6 +802,7 @@ test('respects overwrite confirmation and renders rewritten stats on the game re
     }));
 
     await analyzeStatsheet(page, baseURL);
+    await page.locator('#home-rows tr').nth(1).locator('input[data-field="include"]').check();
     await page.locator('#home-rows tr').nth(1).locator('select[data-field="mappedPlayerId"]').selectOption('p2');
 
     await page.locator('#apply-btn').click();
