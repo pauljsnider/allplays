@@ -10,7 +10,9 @@ import {
     mapGameReportOpponentStatsRecord,
     mapGameReportPlayerRecords,
     mapGameReportTeamRecord,
-    mapGameReportTeamStatsRecord
+    mapGameReportTeamStatsRecord,
+    mapScheduleEventDocument,
+    mapScheduleEventRecords
 } from '../../apps/app/src/lib/firestore/mappers.ts';
 import type { FirestoreDocument } from '../../apps/app/src/lib/firestore/types.ts';
 
@@ -131,6 +133,96 @@ describe('firestore mappers', () => {
                 })
             ]
         });
+    });
+
+    it('maps schedule game and practice documents through typed event records', () => {
+        const gameDocument: FirestoreDocument = {
+            name: 'projects/allplays/databases/(default)/documents/teams/team-1/games/game-1',
+            fields: {
+                type: { stringValue: 'game' },
+                date: { timestampValue: '2026-06-20T18:00:00.000Z' },
+                opponent: { stringValue: ' Tigers ' },
+                location: { stringValue: ' Main Gym ' },
+                liveClockMs: { integerValue: '120000' },
+                liveClockRunning: { booleanValue: true },
+                assignments: {
+                    arrayValue: {
+                        values: [
+                            {
+                                mapValue: {
+                                    fields: {
+                                        role: { stringValue: 'Scoreboard' },
+                                        value: { stringValue: 'Open' }
+                                    }
+                                }
+                            }
+                        ]
+                    }
+                },
+                sourceMetadata: {
+                    mapValue: {
+                        fields: {
+                            sourceType: { stringValue: 'registration' }
+                        }
+                    }
+                }
+            }
+        };
+        const practiceDocument: FirestoreDocument = {
+            name: 'projects/allplays/databases/(default)/documents/teams/team-1/games/practice-1',
+            fields: {
+                type: { stringValue: 'practice' },
+                date: { timestampValue: '2026-06-21T19:00:00.000Z' },
+                title: { stringValue: ' Skills Session ' },
+                location: { stringValue: ' North Field ' }
+            }
+        };
+
+        expect(mapScheduleEventDocument(gameDocument)).toMatchObject({
+            id: 'game-1',
+            type: 'game',
+            date: new Date('2026-06-20T18:00:00.000Z'),
+            opponent: 'Tigers',
+            location: 'Main Gym',
+            liveClockMs: 120000,
+            liveClockRunning: true,
+            assignments: [{ role: 'Scoreboard', value: 'Open' }],
+            sourceMetadata: { sourceType: 'registration' }
+        });
+        expect(mapScheduleEventDocument(practiceDocument)).toMatchObject({
+            id: 'practice-1',
+            type: 'practice',
+            date: new Date('2026-06-21T19:00:00.000Z'),
+            title: 'Skills Session',
+            location: 'North Field',
+            opponent: null,
+            assignments: [],
+            sourceMetadata: null,
+            exDates: []
+        });
+    });
+
+    it('rejects invalid schedule event documents at the mapper boundary', () => {
+        expect(mapScheduleEventRecords([
+            { id: 'valid-practice', type: 'practice', date: new Date('2026-06-21T19:00:00.000Z') },
+            { id: 'missing-date', type: 'game' },
+            { id: 'bad-date', type: 'game', date: 'not a date' },
+            { id: 'unsupported-type', type: 'meeting', date: new Date('2026-06-22T19:00:00.000Z') },
+            { type: 'game', date: new Date('2026-06-23T19:00:00.000Z') }
+        ])).toEqual([
+            expect.objectContaining({
+                id: 'valid-practice',
+                type: 'practice',
+                date: new Date('2026-06-21T19:00:00.000Z')
+            })
+        ]);
+        expect(mapScheduleEventDocument({
+            name: 'projects/allplays/databases/(default)/documents/teams/team-1/games/bad-game',
+            fields: {
+                type: { stringValue: 'game' },
+                date: { stringValue: 'not-a-date' }
+            }
+        })).toBeNull();
     });
 
     it('normalizes partial and malformed game report payloads at the Firestore boundary', () => {
