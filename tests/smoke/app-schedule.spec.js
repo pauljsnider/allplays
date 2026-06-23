@@ -879,6 +879,18 @@ async function mockScheduleModules(page, options = {}) {
                     return { missingPlayerCount: 0, eligibleEmailCount: 0, emailSentCount: 0, players: [] };
                 }
 
+                export function createStaffRsvpAvailabilityLoader() {
+                    return {
+                        loadBreakdown(event, user) {
+                            return loadStaffScheduleRsvpBreakdown(event, user);
+                        },
+                        loadReminderPreview(event, user) {
+                            return loadStaffRsvpReminderPreview(event, user);
+                        },
+                        invalidateEvent() {}
+                    };
+                }
+
                 export function summarizeParentScheduleRideOffers(offers) {
                     return summarizeRideOffers(offers);
                 }
