@@ -17,6 +17,33 @@ export type ScheduleRsvpSummary = {
   total?: number;
 };
 
+export type ScheduleTournamentStandingRow = {
+  rank: string;
+  teamName: string;
+  record: string;
+  points: number | null;
+};
+
+export type ScheduleTournamentStandingInfo = {
+  groupName: string;
+  rows: ScheduleTournamentStandingRow[];
+  isOverridden: boolean;
+  note: string;
+};
+
+export type ScheduleTournamentInfo = {
+  isTournament: boolean;
+  label: string;
+  details: string;
+  divisionName: string;
+  bracketName: string;
+  roundName: string;
+  poolName: string;
+  matchupLabel: string;
+  positionLabel: string;
+  standings: ScheduleTournamentStandingInfo | null;
+};
+
 export type StaffRsvpReminderPreviewPlayer = {
   playerId: string;
   playerName: string;
@@ -350,8 +377,227 @@ function compactString(value: unknown) {
   return String(value || '').trim();
 }
 
+function compactFirst(values: unknown[]) {
+  return values.map(compactString).find(Boolean) || '';
+}
+
 export function uniqueNonEmptyStrings(values: unknown[]) {
   return [...new Set(values.map(compactString).filter(Boolean))];
+}
+
+function getObjectValue(value: unknown): Record<string, any> {
+  return value && typeof value === 'object' ? value as Record<string, any> : {};
+}
+
+function normalizePositiveInteger(value: unknown) {
+  const parsed = Number.parseInt(String(value ?? ''), 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+}
+
+function getTournamentPoolLabel(source: Record<string, any> = {}, context: Record<string, any> = {}) {
+  const divisionName = compactFirst([
+    source.divisionName,
+    source.division,
+    context.divisionName,
+    context.division
+  ]);
+  const poolName = compactFirst([source.poolName, context.poolName]);
+  if (divisionName && poolName) return `${divisionName} / ${poolName}`;
+  return poolName || divisionName;
+}
+
+function describeScheduleTournamentSource(sourceInput: unknown, contextInput: unknown = {}) {
+  const source = getObjectValue(sourceInput);
+  const context = getObjectValue(contextInput);
+  const sourceType = compactString(source.sourceType).toLowerCase() || 'team';
+
+  if (sourceType === 'pool_seed' || sourceType === 'poolseed') {
+    const poolName = getTournamentPoolLabel(source, context) || 'Pool';
+    const seed = normalizePositiveInteger(source.seed);
+    return seed ? `${poolName} #${seed}` : poolName;
+  }
+
+  if (sourceType === 'game_result') {
+    const outcome = compactString(source.outcome).toLowerCase() === 'loser' ? 'Loser' : 'Winner';
+    const gameId = compactFirst([source.gameId, source.sourceRef, source.ref]);
+    return `${outcome} ${gameId || 'game'}`;
+  }
+
+  if (sourceType === 'winner' || sourceType === 'loser') {
+    const gameId = compactFirst([source.gameId, source.sourceRef, source.ref]);
+    return `${sourceType === 'loser' ? 'Loser' : 'Winner'} ${gameId || 'game'}`;
+  }
+
+  if (sourceType === 'seed') {
+    const teamName = compactFirst([source.teamName, source.name]);
+    if (teamName) return teamName;
+    const seed = normalizePositiveInteger(source.seed);
+    return seed ? `Seed #${seed}` : 'Seed';
+  }
+
+  return compactFirst([source.teamName, source.label, source.name]);
+}
+
+function getScheduleTournamentMatchupLabel(tournament: Record<string, any>) {
+  const resolved = getObjectValue(tournament.resolved);
+  const matchupLabel = compactString(resolved.matchupLabel);
+  if (matchupLabel) return matchupLabel;
+
+  const slotAssignments = getObjectValue(tournament.slotAssignments);
+  const homeLabel = compactFirst([
+    resolved.homeLabel,
+    resolved.homeTeamName,
+    describeScheduleTournamentSource(slotAssignments.home, tournament)
+  ]);
+  const awayLabel = compactFirst([
+    resolved.awayLabel,
+    resolved.awayTeamName,
+    describeScheduleTournamentSource(slotAssignments.away, tournament)
+  ]);
+
+  if (homeLabel && awayLabel) return `${homeLabel} vs ${awayLabel}`;
+  return homeLabel || awayLabel;
+}
+
+function getScheduleTournamentPositionLabel(tournament: Record<string, any>) {
+  const gameNumber = normalizePositiveInteger(tournament.gameNumber);
+  const positionParts = uniqueNonEmptyStrings([
+    tournament.gameLabel,
+    tournament.bracketGameLabel,
+    gameNumber ? `Game ${gameNumber}` : '',
+    tournament.bracketGameId,
+    tournament.bracketPosition,
+    tournament.position
+  ]);
+  return positionParts.join(' / ');
+}
+
+function normalizeTournamentStandingRow(rowInput: unknown, index: number): ScheduleTournamentStandingRow | null {
+  const row = getObjectValue(rowInput);
+  const teamName = compactFirst([row.teamName, row.team, row.name, typeof rowInput === 'string' ? rowInput : '']);
+  if (!teamName) return null;
+
+  const rank = compactFirst([row.displayRank, row.rank, row.seed]) || String(index + 1);
+  const wins = Number(row.wins ?? row.win);
+  const losses = Number(row.losses ?? row.loss);
+  const ties = Number(row.ties ?? row.tie);
+  const hasRecordParts = Number.isFinite(wins) && Number.isFinite(losses);
+  const record = compactString(row.record) || (hasRecordParts
+    ? `${wins}-${losses}${Number.isFinite(ties) && ties > 0 ? `-${ties}` : ''}`
+    : '');
+  const points = Number(row.points);
+
+  return {
+    rank,
+    teamName,
+    record,
+    points: Number.isFinite(points) ? points : null
+  };
+}
+
+function normalizeTournamentStandingInfo(value: unknown, fallbackGroupName: string): ScheduleTournamentStandingInfo | null {
+  const group = getObjectValue(value);
+  const rowSource = Array.isArray(value)
+    ? value
+    : Array.isArray(group.rows)
+      ? group.rows
+      : Array.isArray(group.computedRows)
+        ? group.computedRows
+        : Array.isArray(group.standings)
+          ? group.standings
+          : [];
+  const rows = rowSource
+    .map((row, index) => normalizeTournamentStandingRow(row, index))
+    .filter(Boolean) as ScheduleTournamentStandingRow[];
+
+  if (!rows.length) return null;
+
+  const groupName = compactFirst([
+    group.poolName,
+    group.groupName,
+    group.name,
+    group.label,
+    fallbackGroupName
+  ]) || 'Tournament standings';
+  const override = getObjectValue(group.override);
+  const isOverridden = group.isOverridden === true || Object.keys(override).length > 0;
+  const note = isOverridden
+    ? 'Final ranking'
+    : group.unresolvedTie
+      ? 'Tie unresolved'
+      : compactString(group.note);
+
+  return {
+    groupName,
+    rows,
+    isOverridden,
+    note
+  };
+}
+
+function getTournamentStandingCandidates(source: unknown, fallbackGroupName: string, poolName: string) {
+  if (!source) return [];
+  if (Array.isArray(source)) return [{ value: source, fallbackGroupName }];
+  const sourceObject = getObjectValue(source);
+  if (Array.isArray(sourceObject.rows) || Array.isArray(sourceObject.computedRows) || Array.isArray(sourceObject.standings)) {
+    return [{ value: sourceObject, fallbackGroupName }];
+  }
+
+  const values = Object.entries(sourceObject).map(([key, value]) => ({
+    key,
+    value,
+    objectValue: getObjectValue(value)
+  }));
+  const normalizedFallback = compactString(fallbackGroupName).toLowerCase();
+  const normalizedPool = compactString(poolName).toLowerCase();
+  const preferred = values.find(({ key, objectValue }) => {
+    const names = [
+      key,
+      objectValue.poolName,
+      objectValue.groupName,
+      objectValue.name,
+      objectValue.label
+    ].map((item) => compactString(item).toLowerCase()).filter(Boolean);
+    return names.includes(normalizedFallback) || (normalizedPool && names.includes(normalizedPool));
+  });
+
+  const toCandidate = (item: { key: string; value: unknown; objectValue: Record<string, any> }) => ({
+    value: item.value,
+    fallbackGroupName: compactFirst([
+      item.objectValue.poolName,
+      item.objectValue.groupName,
+      item.objectValue.name,
+      item.objectValue.label,
+      item.key,
+      fallbackGroupName
+    ])
+  });
+
+  return preferred
+    ? [toCandidate(preferred), ...values.filter((item) => item.value !== preferred.value).map(toCandidate)]
+    : values.map(toCandidate);
+}
+
+function getScheduleTournamentStandingInfo(event: Record<string, any>, tournament: Record<string, any>, fallbackGroupName: string, poolName: string) {
+  const sources = [
+    tournament.standings,
+    tournament.poolStandings,
+    tournament.standingRows,
+    tournament.standingsRows,
+    event.tournamentStandings,
+    event.poolStandings,
+    event.standings
+  ];
+
+  for (const source of sources) {
+    const candidates = getTournamentStandingCandidates(source, fallbackGroupName, poolName);
+    for (const candidate of candidates) {
+      const standings = normalizeTournamentStandingInfo(candidate.value, candidate.fallbackGroupName);
+      if (standings) return standings;
+    }
+  }
+
+  return null;
 }
 
 function uniqueEligibleEmails(values: unknown[]) {
@@ -547,7 +793,7 @@ export function getScheduleEventDetailPath(
 
 export function getScheduleTournamentInfo(
   event: Pick<ParentScheduleEvent, 'competitionType' | 'tournament'> & Record<string, any>
-) {
+): ScheduleTournamentInfo {
   const tournament = event?.tournament && typeof event.tournament === 'object' ? event.tournament : {};
   const isTournament = String(event?.competitionType || '').trim().toLowerCase() === 'tournament'
     || Object.keys(tournament).length > 0;
@@ -560,20 +806,28 @@ export function getScheduleTournamentInfo(
       divisionName: '',
       bracketName: '',
       roundName: '',
-      poolName: ''
+      poolName: '',
+      matchupLabel: '',
+      positionLabel: '',
+      standings: null
     };
   }
 
-  const divisionName = compactString(tournament.divisionName || event.divisionName);
-  const bracketName = compactString(tournament.bracketName || event.bracketName);
-  const roundName = compactString(tournament.roundName || event.roundName);
-  const poolName = compactString(tournament.poolName || event.poolName);
+  const divisionName = compactFirst([tournament.divisionName, tournament.division, event.divisionName, event.division]);
+  const bracketName = compactFirst([tournament.bracketName, tournament.bracket, tournament.groupName, event.bracketName, event.bracket]);
+  const roundName = compactFirst([tournament.roundName, tournament.round, event.roundName, event.round]);
+  const poolName = compactFirst([tournament.poolName, tournament.pool, event.poolName, event.pool]);
   const labelParts = [divisionName, bracketName, roundName || poolName].filter(Boolean);
+  const groupName = getTournamentPoolLabel(tournament, tournament) || labelParts.join(' / ');
+  const matchupLabel = getScheduleTournamentMatchupLabel(tournament);
+  const positionLabel = getScheduleTournamentPositionLabel(tournament);
   const detailParts = [
     poolName && roundName ? `Pool: ${poolName}` : poolName,
-    tournament.gameLabel,
-    tournament.seedLabel
+    positionLabel,
+    tournament.seedLabel,
+    matchupLabel && !compactString(tournament.gameLabel) ? matchupLabel : ''
   ].map(compactString).filter(Boolean);
+  const standings = getScheduleTournamentStandingInfo(event, tournament, groupName || poolName || divisionName || bracketName, poolName);
 
   return {
     isTournament: true,
@@ -582,7 +836,10 @@ export function getScheduleTournamentInfo(
     divisionName,
     bracketName,
     roundName,
-    poolName
+    poolName,
+    matchupLabel,
+    positionLabel,
+    standings
   };
 }
 
