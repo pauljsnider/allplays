@@ -39,7 +39,18 @@ const scheduleServiceMocks = vi.hoisted(() => ({
   sendStaffRsvpReminder: vi.fn()
 }));
 
+const rosterAiImportMocks = vi.hoisted(() => ({
+  buildRosterAiImportCommitPlan: vi.fn((rows: any[] = []) => ({
+    addPlayers: rows.filter((row) => !row.errors?.length).map((row) => ({ name: row.name, number: row.number })),
+    skippedRows: rows.filter((row) => row.errors?.length)
+  })),
+  generateRosterAiImportRows: vi.fn(),
+  removeRosterAiImportPreviewRow: vi.fn((rows: any[] = [], rowNumber: number) => rows.filter((row) => row.rowNumber !== rowNumber)),
+  updateRosterAiImportPreviewRow: vi.fn((rows: any[] = [], rowNumber: number, changes: any) => rows.map((row) => row.rowNumber === rowNumber ? { ...row, ...changes, errors: [], duplicatePlayerId: '', duplicatePlayerName: '' } : row))
+}));
+
 vi.mock('../lib/teamDetailService', () => teamDetailServiceMocks);
+vi.mock('../lib/rosterAiImport', () => rosterAiImportMocks);
 vi.mock('../lib/publicActions', () => ({
   copyPublicText: vi.fn(),
   openPublicUrl: vi.fn(),
@@ -170,6 +181,7 @@ describe('TeamDetail', () => {
       emailSentCount: 0,
       chatMessageSent: true
     });
+    rosterAiImportMocks.generateRosterAiImportRows.mockResolvedValue({ rows: [], errors: [] });
   });
 
   afterEach(() => {
@@ -424,6 +436,84 @@ describe('TeamDetail', () => {
     await waitFor(() => expect(teamDetailServiceMocks.loadParentTeamDetail).toHaveBeenCalledTimes(2));
     const status = await screen.findByText('Alex New added to roster.');
     expect(status.closest('[role="status"]')?.getAttribute('aria-live')).toBe('polite');
+  });
+
+  it('lazy-loads roster AI import, previews editable rows, and writes through the manual add service', async () => {
+    const managedModel = {
+      ...model,
+      canManageTeam: true
+    };
+    teamDetailServiceMocks.loadParentTeamDetail
+      .mockResolvedValueOnce(managedModel)
+      .mockResolvedValueOnce({
+        ...managedModel,
+        players: [
+          ...managedModel.players,
+          { id: 'player-3', name: 'Alex New', number: '14', photoUrl: null, position: '', isLinked: false, active: true }
+        ]
+      });
+    rosterAiImportMocks.generateRosterAiImportRows.mockResolvedValue({
+      errors: [],
+      rows: [
+        {
+          rowNumber: 1,
+          action: 'add',
+          name: 'Pat Star',
+          number: '9',
+          reason: 'read from photo row 1',
+          duplicatePlayerId: 'player-1',
+          duplicatePlayerName: 'Pat Star',
+          errors: ['Possible duplicate of existing roster player Pat Star #9.']
+        },
+        {
+          rowNumber: 2,
+          action: 'add',
+          name: 'Alex New',
+          number: '14',
+          reason: 'read from photo row 2',
+          duplicatePlayerId: '',
+          duplicatePlayerName: '',
+          errors: []
+        }
+      ]
+    });
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true);
+
+    render(
+      <MemoryRouter initialEntries={['/teams/team-1?tab=roster']}>
+        <Routes>
+          <Route path="/teams/:teamId" element={<TeamDetail auth={auth} />} />
+        </Routes>
+      </MemoryRouter>
+    );
+
+    expect(await screen.findByRole('heading', { name: 'Bears' })).toBeTruthy();
+    expect(rosterAiImportMocks.generateRosterAiImportRows).not.toHaveBeenCalled();
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Import roster' }));
+    fireEvent.change(screen.getByLabelText('Roster text or AI instructions'), { target: { value: '#14 Alex New' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Generate preview' }));
+
+    await waitFor(() => expect(rosterAiImportMocks.generateRosterAiImportRows).toHaveBeenCalledWith({
+      text: '#14 Alex New',
+      imageFile: null,
+      currentPlayers: [managedModel.players[0], managedModel.inactivePlayers[0]]
+    }));
+    expect(await screen.findByText('Possible duplicate of existing roster player Pat Star #9.')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Import reviewed players' })).toBeDisabled();
+
+    fireEvent.click(screen.getAllByRole('button', { name: 'Remove' })[0]);
+    expect(await screen.findByDisplayValue('Alex New')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Import reviewed players' }));
+
+    expect(confirmSpy).toHaveBeenCalledWith('Import 1 reviewed player row to Bears?');
+    await waitFor(() => expect(teamDetailServiceMocks.addRosterPlayerForApp).toHaveBeenCalledWith('team-1', auth.user, {
+      name: 'Alex New',
+      number: '14',
+      rosterFieldValues: {}
+    }));
+    await waitFor(() => expect(teamDetailServiceMocks.loadParentTeamDetail).toHaveBeenCalledTimes(2));
+    expect(await screen.findByText('Imported 1 player: #14 Alex New.')).toBeTruthy();
   });
 
   it('uses descriptive alt text for team and roster photos', async () => {

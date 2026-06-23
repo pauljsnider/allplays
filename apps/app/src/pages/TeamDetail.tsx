@@ -41,6 +41,10 @@ import { buildStatTrackerConfigPayload, createBlankStatTrackerConfigColumnDraft,
 import type { AuthState } from '../lib/types';
 
 type TeamTab = 'overview' | 'schedule' | 'roster' | 'insights' | 'more';
+type RosterAiImportModule = typeof import('../lib/rosterAiImport');
+type RosterAiImportPreviewRow = import('../lib/rosterAiImport').RosterAiImportPreviewRow;
+
+let rosterAiImportModulePromise: Promise<RosterAiImportModule> | null = null;
 
 const tabs: Array<{ id: TeamTab; label: string; icon: LucideIcon }> = [
   { id: 'overview', label: 'Overview', icon: Trophy },
@@ -49,6 +53,13 @@ const tabs: Array<{ id: TeamTab; label: string; icon: LucideIcon }> = [
   { id: 'insights', label: 'Insights', icon: BarChart3 },
   { id: 'more', label: 'More', icon: Ticket }
 ];
+
+function loadRosterAiImportModule() {
+  if (!rosterAiImportModulePromise) {
+    rosterAiImportModulePromise = import('../lib/rosterAiImport');
+  }
+  return rosterAiImportModulePromise;
+}
 
 export function TeamDetail({ auth }: { auth: AuthState }) {
   const { teamId = '' } = useParams();
@@ -566,6 +577,7 @@ function RosterTab({
       {model.canManageTeam && rosterInviteLoading ? <div className="mt-3 text-xs font-semibold text-gray-500">Loading parent invite status…</div> : null}
       {model.canManageTeam && rosterInviteError ? <div className="mt-3 text-xs font-black text-rose-700">{rosterInviteError}</div> : null}
       {model.canManageTeam ? <AddPlayerCard teamId={model.team.id} authUser={authUser} onCreated={onRefresh} /> : null}
+      {model.canManageTeam ? <RosterAiImportCard teamId={model.team.id} teamName={model.team.name} authUser={authUser} currentPlayers={[...model.players, ...model.inactivePlayers]} onImported={onRefresh} /> : null}
       <div className="mt-3 grid gap-2 sm:grid-cols-2">
         {model.players.length ? model.players.map((player) => <PlayerRow key={player.id} teamId={model.team.id} teamName={model.team.name} authUser={authUser} player={player} canManageTeam={model.canManageTeam} pending={pendingPlayerId === player.id} onToggleActive={togglePlayerActiveState} inviteSummary={rosterInviteSummaries[player.id]} onInviteCreated={onInviteCreated} />) : (
           <div className="rounded-xl border border-gray-200 bg-gray-50 p-4 text-sm font-semibold text-gray-500">No players have been added yet.</div>
@@ -587,6 +599,227 @@ function RosterTab({
         </div>
       ) : null}
     </section>
+  );
+}
+
+function RosterAiImportCard({
+  teamId,
+  teamName,
+  authUser,
+  currentPlayers,
+  onImported
+}: {
+  teamId: string;
+  teamName: string;
+  authUser: AuthState['user'];
+  currentPlayers: TeamDetailPlayer[];
+  onImported: () => Promise<void>;
+}) {
+  const [open, setOpen] = useState(false);
+  const [text, setText] = useState('');
+  const [imageFile, setImageFile] = useState<File | null>(null);
+  const [imageName, setImageName] = useState('');
+  const [previewRows, setPreviewRows] = useState<RosterAiImportPreviewRow[]>([]);
+  const [errors, setErrors] = useState<string[]>([]);
+  const [processing, setProcessing] = useState(false);
+  const [importing, setImporting] = useState(false);
+  const [status, setStatus] = useState<{ success: boolean; message: string } | null>(null);
+
+  const duplicateCount = previewRows.filter((row) => row.duplicatePlayerId).length;
+  const invalidCount = previewRows.filter((row) => row.errors.length > 0).length;
+
+  function clearDraft() {
+    setText('');
+    setImageFile(null);
+    setImageName('');
+    setPreviewRows([]);
+    setErrors([]);
+  }
+
+  async function generatePreview() {
+    if (processing) return;
+    setProcessing(true);
+    setErrors([]);
+    setStatus(null);
+    try {
+      const { generateRosterAiImportRows } = await loadRosterAiImportModule();
+      const result = await generateRosterAiImportRows({
+        text,
+        imageFile,
+        currentPlayers
+      });
+      setPreviewRows(result.rows);
+      setErrors(result.errors);
+      if (result.rows.length) {
+        setStatus({ success: true, message: `AI drafted ${result.rows.length} player row${result.rows.length === 1 ? '' : 's'} for review.` });
+      }
+    } catch (error: any) {
+      setPreviewRows([]);
+      setErrors([error?.message || 'Unable to generate roster import preview.']);
+    } finally {
+      setProcessing(false);
+    }
+  }
+
+  async function updatePreviewRow(rowNumber: number, changes: { name?: string; number?: string }) {
+    const { updateRosterAiImportPreviewRow } = await loadRosterAiImportModule();
+    setPreviewRows((rows) => updateRosterAiImportPreviewRow(rows, rowNumber, changes, currentPlayers));
+  }
+
+  async function removePreviewRow(rowNumber: number) {
+    const { removeRosterAiImportPreviewRow } = await loadRosterAiImportModule();
+    setPreviewRows((rows) => removeRosterAiImportPreviewRow(rows, rowNumber));
+  }
+
+  async function importRows() {
+    if (importing) return;
+    if (!previewRows.length) {
+      setErrors(['Generate and review player rows before importing.']);
+      return;
+    }
+    if (invalidCount > 0) {
+      setErrors(['Fix or remove duplicate/invalid rows before importing.']);
+      return;
+    }
+    const confirmed = window.confirm(`Import ${previewRows.length} reviewed player row${previewRows.length === 1 ? '' : 's'} to ${teamName}?`);
+    if (!confirmed) return;
+
+    setImporting(true);
+    setErrors([]);
+    setStatus(null);
+    try {
+      const { buildRosterAiImportCommitPlan } = await loadRosterAiImportModule();
+      const plan = buildRosterAiImportCommitPlan(previewRows);
+      const successful: string[] = [];
+      const failed: string[] = [];
+
+      for (const player of plan.addPlayers) {
+        try {
+          await addRosterPlayerForApp(teamId, authUser || null, {
+            name: player.name,
+            number: player.number,
+            rosterFieldValues: {}
+          });
+          successful.push(player.number ? `#${player.number} ${player.name}` : player.name);
+        } catch (error: any) {
+          failed.push(`${player.name}: ${error?.message || 'Unable to add player.'}`);
+        }
+      }
+
+      if (successful.length) await onImported();
+      if (failed.length) {
+        setStatus({ success: false, message: `Imported ${successful.length} player${successful.length === 1 ? '' : 's'}${successful.length ? `: ${successful.join(', ')}` : ''}. ${failed.length} failed: ${failed.join(' ')}` });
+      } else {
+        setStatus({ success: true, message: `Imported ${successful.length} player${successful.length === 1 ? '' : 's'}: ${successful.join(', ')}.` });
+        clearDraft();
+        setOpen(false);
+      }
+    } catch (error: any) {
+      setErrors([error?.message || 'Unable to import reviewed roster rows.']);
+    } finally {
+      setImporting(false);
+    }
+  }
+
+  return (
+    <div className="mt-3 rounded-xl border border-violet-100 bg-violet-50 p-3">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <div className="text-sm font-black text-gray-950">Import roster with AI</div>
+          <div className="mt-1 text-xs font-semibold text-gray-600">Paste roster text or upload one photo, edit the preview, then create player records.</div>
+        </div>
+        {!open ? (
+          <button type="button" className="secondary-button !min-h-10 text-xs" onClick={() => setOpen(true)}>
+            <Zap className="h-4 w-4" aria-hidden="true" />
+            Import roster
+          </button>
+        ) : (
+          <button type="button" className="secondary-button !min-h-10 text-xs" onClick={() => setOpen(false)} disabled={processing || importing}>
+            Cancel
+          </button>
+        )}
+      </div>
+      {status ? <div className={`mt-3 text-xs font-black ${status.success ? 'text-emerald-700' : 'text-rose-700'}`} role="status" aria-live="polite" aria-atomic="true">{status.message}</div> : null}
+      {open ? (
+        <div className="mt-3 space-y-3">
+          <label className="block">
+            <span className="text-[11px] font-black uppercase tracking-[0.04em] text-violet-700">Roster text or AI instructions</span>
+            <textarea
+              className="mt-2 min-h-28 w-full rounded-xl border border-violet-200 bg-white px-3 py-2 text-sm font-semibold text-gray-950 outline-none focus:border-violet-500 focus:ring-2 focus:ring-violet-100"
+              placeholder="Paste roster rows, or add instructions like 'only varsity' when uploading a photo."
+              value={text}
+              onChange={(event) => setText(event.target.value)}
+              disabled={processing || importing}
+              aria-label="Roster text or AI instructions"
+            />
+          </label>
+          <label className="block">
+            <span className="text-[11px] font-black uppercase tracking-[0.04em] text-violet-700">Roster photo</span>
+            <input
+              type="file"
+              accept="image/png,image/jpeg,image/webp,image/heic,image/heif"
+              className="mt-2 block w-full text-sm font-semibold text-gray-600 file:mr-4 file:rounded-xl file:border-0 file:bg-white file:px-3 file:py-2 file:text-sm file:font-black file:text-violet-700"
+              onChange={(event) => {
+                const file = event.target.files?.[0] || null;
+                setImageFile(file);
+                setImageName(file?.name || '');
+                setPreviewRows([]);
+                setErrors([]);
+              }}
+              disabled={processing || importing}
+              aria-label="Roster photo"
+            />
+            {imageName ? <div className="mt-1 text-[11px] font-semibold text-gray-500"><ImageIcon className="mr-1 inline h-3 w-3" aria-hidden="true" />{imageName}</div> : null}
+          </label>
+
+          {errors.length ? (
+            <div className="rounded-xl border border-rose-200 bg-rose-50 p-3 text-xs font-bold text-rose-700" role="alert">
+              {errors.map((item) => <div key={item}>{item}</div>)}
+            </div>
+          ) : null}
+
+          {previewRows.length ? (
+            <div className="space-y-2">
+              <div className="text-xs font-black uppercase tracking-[0.08em] text-gray-500">
+                Editable preview {previewRows.length} row{previewRows.length === 1 ? '' : 's'}{duplicateCount ? `, ${duplicateCount} duplicate ${duplicateCount === 1 ? 'flag' : 'flags'}` : ''}
+              </div>
+              {previewRows.map((row) => (
+                <div key={row.rowNumber} className={`rounded-xl border p-3 ${row.errors.length ? 'border-amber-200 bg-amber-50' : 'border-violet-200 bg-white'}`}>
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="text-xs font-black uppercase tracking-[0.08em] text-gray-500">Row {row.rowNumber}</div>
+                    <button type="button" className="text-xs font-black text-rose-700" onClick={() => void removePreviewRow(row.rowNumber)} disabled={processing || importing}>Remove</button>
+                  </div>
+                  <div className="mt-2 grid gap-2 sm:grid-cols-[1fr_8rem]">
+                    <label className="block">
+                      <span className="text-[11px] font-black uppercase tracking-[0.04em] text-gray-500">Name</span>
+                      <input className="mt-1 min-h-10 w-full rounded-lg border border-gray-200 bg-white px-3 text-sm font-semibold text-gray-950 outline-none focus:border-violet-500 focus:ring-2 focus:ring-violet-100" value={row.name} onChange={(event) => void updatePreviewRow(row.rowNumber, { name: event.target.value })} disabled={processing || importing} aria-label={`Row ${row.rowNumber} player name`} />
+                    </label>
+                    <label className="block">
+                      <span className="text-[11px] font-black uppercase tracking-[0.04em] text-gray-500">Number</span>
+                      <input className="mt-1 min-h-10 w-full rounded-lg border border-gray-200 bg-white px-3 text-sm font-semibold text-gray-950 outline-none focus:border-violet-500 focus:ring-2 focus:ring-violet-100" value={row.number} onChange={(event) => void updatePreviewRow(row.rowNumber, { number: event.target.value })} disabled={processing || importing} aria-label={`Row ${row.rowNumber} jersey number`} />
+                    </label>
+                  </div>
+                  {row.reason ? <div className="mt-2 text-xs font-semibold text-gray-500">{row.reason}</div> : null}
+                  {row.errors.length ? <ul className="mt-2 list-disc pl-4 text-xs font-bold text-amber-800">{row.errors.map((item) => <li key={item}>{item}</li>)}</ul> : null}
+                </div>
+              ))}
+            </div>
+          ) : null}
+
+          <div className="flex flex-wrap gap-2">
+            <button type="button" className="secondary-button !min-h-10 text-xs" onClick={() => void generatePreview()} disabled={processing || importing}>
+              {processing ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <Zap className="h-4 w-4" aria-hidden="true" />}
+              Generate preview
+            </button>
+            <button type="button" className="primary-button !min-h-10 text-xs" onClick={() => void importRows()} disabled={!previewRows.length || invalidCount > 0 || processing || importing}>
+              {importing ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <Save className="h-4 w-4" aria-hidden="true" />}
+              Import reviewed players
+            </button>
+            <button type="button" className="secondary-button !min-h-10 text-xs" onClick={clearDraft} disabled={processing || importing}>Clear</button>
+          </div>
+        </div>
+      ) : null}
+    </div>
   );
 }
 
