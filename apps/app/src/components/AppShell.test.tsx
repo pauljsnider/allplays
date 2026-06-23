@@ -63,13 +63,16 @@ vi.mock('./NotificationInboxSheet', () => ({
     items,
     inboxState,
     onClose,
+    onRetry,
   }: {
     items: Array<{ id: string; text: string }>;
     inboxState: 'loading' | 'ready' | 'error';
     onClose: () => void;
+    onRetry?: () => void;
   }) => (
     <div role="dialog" aria-label="Notifications">
       <button type="button" aria-label="Close notifications" onClick={onClose}>Close</button>
+      {onRetry ? <button type="button" onClick={onRetry}>Retry notifications</button> : null}
       <div data-testid="notification-inbox-sheet-state">{inboxState}</div>
       {items.map((item) => (
         <div key={item.id}>{item.text}</div>
@@ -264,6 +267,56 @@ describe('AppShell', () => {
         expect.any(Function)
       );
     });
+  });
+
+  it('retries the open notification inbox subscription without closing the sheet', async () => {
+    const firstUnsubscribe = vi.fn();
+    const secondUnsubscribe = vi.fn();
+    subscribeToNotificationInboxMock
+      .mockReturnValueOnce(firstUnsubscribe)
+      .mockReturnValueOnce(secondUnsubscribe);
+
+    render(
+      <MemoryRouter initialEntries={['/home']}>
+        <Routes>
+          <Route path="/home" element={<AppShell auth={signedInAuth}><div>Home</div></AppShell>} />
+        </Routes>
+      </MemoryRouter>
+    );
+
+    fireEvent.click(screen.getByTestId('app-shell-notifications-trigger'));
+
+    await waitFor(() => {
+      expect(subscribeToNotificationInboxMock).toHaveBeenCalledTimes(1);
+    });
+
+    const onError = subscribeToNotificationInboxMock.mock.calls[0]?.[2] as ((error: unknown) => void) | undefined;
+    act(() => {
+      onError?.(new Error('offline'));
+    });
+
+    await waitFor(() => {
+      expect(screen.getByTestId('notification-inbox-sheet-state').textContent).toBe('error');
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Retry notifications' }));
+
+    await waitFor(() => {
+      expect(subscribeToNotificationInboxMock).toHaveBeenCalledTimes(2);
+    });
+    expect(firstUnsubscribe).toHaveBeenCalledTimes(1);
+    expect(screen.getByRole('dialog', { name: 'Notifications' })).toBeTruthy();
+    expect(screen.getByTestId('notification-inbox-sheet-state').textContent).toBe('loading');
+
+    const onRetryItems = subscribeToNotificationInboxMock.mock.calls[1]?.[1] as ((items: NotificationInboxItem[]) => void) | undefined;
+    act(() => {
+      onRetryItems?.([]);
+    });
+
+    await waitFor(() => {
+      expect(screen.getByTestId('notification-inbox-sheet-state').textContent).toBe('ready');
+    });
+    expect(screen.getByRole('dialog', { name: 'Notifications' })).toBeTruthy();
   });
 
   it('clears cached inbox items when the signed-in uid changes while the sheet is closed', async () => {
