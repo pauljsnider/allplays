@@ -50,6 +50,8 @@ const firebaseMocks = vi.hoisted(() => {
     let nextDocId = 1;
     return {
         db: { _is_mock_db_instance: true },
+        functions: { _is_mock_functions_instance: true },
+        httpsCallable: vi.fn(),
         serverTimestamp: vi.fn(() => ({ _serverTimestamp: true })),
         collection: vi.fn((db, ...segments) => ({ path: segments.join('/') })),
         getDoc: vi.fn(),
@@ -323,76 +325,35 @@ describe('React app parent tools service', () => {
             waiverAccepted: true,
             selectedOption: { id: 'opt-1', countKey: 'opt-1-key' },
             selectedPaymentPlanId: 'pay_full',
+            quantity: 2,
+            checkoutAttemptToken: 'attempt-token-123456',
             submittedAt: new Date(),
         };
-
-        const mockForm = {
-            id: formId,
-            teamId,
-            programName: 'Summer Camp',
-            registrationOptions: [
-                { id: 'opt-1', countKey: 'opt-1-key', capacityLimit: 10, waitlistEnabled: true, active: true },
-            ],
-            registrationOptionCounts: {
-                'opt-1-key': { enrolled: 9, waitlisted: 0 },
-            },
-        };
-
-        dbMocks.getDoc.mockImplementation((docRef) => {
-            if (docRef.path.includes(`teams/${teamId}/registrationForms/${formId}`)) {
-                return Promise.resolve({
-                    exists: () => true,
-                    data: () => mockForm,
-                    id: formId,
-                });
-            }
-            return Promise.resolve({ exists: () => false, data: () => null });
+        const submitPublicRegistration = vi.fn().mockResolvedValue({
+            data: { success: true, status: 'pending', registrationId: 'reg-1', feeSnapshot: { finalAmountDueCents: 5000 } }
         });
-
-        // Mock runTransaction
-        firebaseMocks.runTransaction.mockImplementation(async (db, updateFunction) => {
-            const mockTransaction = {
-                get: (docRef) => dbMocks.getDoc(docRef),
-                update: dbMocks.updateDoc,
-                set: dbMocks.setDoc,
-            };
-            return updateFunction(mockTransaction);
-        });
-
-        registrationMocks.decideRegistrationPlacement.mockReturnValue({
-            status: 'pending',
-            message: 'Placement pending',
-            selectedOption: { id: 'opt-1', countKey: 'opt-1-key' },
-            nextCounts: { enrolled: 10, waitlisted: 0 },
-        });
+        firebaseMocks.httpsCallable.mockReturnValue(submitPublicRegistration);
 
         const result = await submitOfflineRegistration(teamId, formId, registrationRecord);
 
-        expect(result).toEqual({ success: true, status: 'pending', registrationId: expect.any(String), feeSnapshot: expect.any(Object) });
-        expect(firebaseMocks.runTransaction).toHaveBeenCalledTimes(1);
-
-        // Verify that updateDoc was called on the formRef with updated counts
-        expect(dbMocks.updateDoc).toHaveBeenCalledWith(
-            expect.objectContaining({ path: `teams/${teamId}/registrationForms/${formId}` }),
+        expect(result).toEqual({ success: true, status: 'pending', registrationId: 'reg-1', feeSnapshot: { finalAmountDueCents: 5000 } });
+        expect(firebaseMocks.httpsCallable).toHaveBeenCalledWith(firebaseMocks.functions, 'submitPublicRegistration');
+        expect(submitPublicRegistration).toHaveBeenCalledWith(
             expect.objectContaining({
-                'registrationOptionCounts.opt-1-key.enrolled': 10,
-                'registrationOptionCounts.opt-1-key.waitlisted': 0,
-                registrationCapacityUpdateId: expect.any(String),
-                updatedAt: { _serverTimestamp: true },
-            })
-        );
-
-        // Verify that setDoc was called to add the new registration record
-        expect(dbMocks.setDoc).toHaveBeenCalledWith(
-            expect.objectContaining({ path: expect.stringContaining(`teams/${teamId}/registrationForms/${formId}/registrations/`) }),
-            expect.objectContaining({
+                teamId,
+                formId,
                 participant: registrationRecord.participant,
                 guardian: registrationRecord.guardian,
                 waiverAccepted: true,
-                selectedOption: expect.objectContaining({ id: 'opt-1' }),
-                status: 'pending',
+                selectedOptionId: 'opt-1',
+                selectedPaymentPlanId: 'pay_full',
+                quantity: 2,
+                checkoutAttemptToken: 'attempt-token-123456'
             })
         );
+        expect(firebaseMocks.runTransaction).not.toHaveBeenCalled();
+        expect(dbMocks.updateDoc).not.toHaveBeenCalled();
+        expect(dbMocks.setDoc).not.toHaveBeenCalled();
     });
 
     it('handles waitlisted placement correctly', async () => {
@@ -406,68 +367,24 @@ describe('React app parent tools service', () => {
             selectedPaymentPlanId: 'pay_full',
             submittedAt: new Date(),
         };
-
-        const mockForm = {
-            id: formId,
-            teamId,
-            programName: 'Summer Camp',
-            registrationOptions: [
-                { id: 'opt-1', countKey: 'opt-1-key', capacityLimit: 10, waitlistEnabled: true, active: true },
-            ],
-            registrationOptionCounts: {
-                'opt-1-key': { enrolled: 10, waitlisted: 0 }, // Form is full
-            },
-        };
-
-        dbMocks.getDoc.mockImplementation((docRef) => {
-            if (docRef.path.includes(`teams/${teamId}/registrationForms/${formId}`)) {
-                return Promise.resolve({
-                    exists: () => true,
-                    data: () => mockForm,
-                    id: formId,
-                });
-            }
-            return Promise.resolve({ exists: () => false, data: () => null });
+        const submitPublicRegistration = vi.fn().mockResolvedValue({
+            data: { success: true, status: 'waitlisted', registrationId: 'reg-waitlist', feeSnapshot: { finalAmountDueCents: 5000 } }
         });
-
-        firebaseMocks.runTransaction.mockImplementation(async (db, updateFunction) => {
-            const mockTransaction = {
-                get: (docRef) => dbMocks.getDoc(docRef),
-                update: dbMocks.updateDoc,
-                set: dbMocks.setDoc,
-            };
-            return updateFunction(mockTransaction);
-        });
-
-        registrationMocks.decideRegistrationPlacement.mockReturnValue({
-            status: 'waitlisted',
-            message: 'Placement waitlisted',
-            selectedOption: { id: 'opt-1', countKey: 'opt-1-key' },
-            nextCounts: { enrolled: 10, waitlisted: 1 },
-        });
+        firebaseMocks.httpsCallable.mockReturnValue(submitPublicRegistration);
 
         const result = await submitOfflineRegistration(teamId, formId, registrationRecord);
 
-        expect(result).toEqual({ success: true, status: 'waitlisted', registrationId: expect.any(String), feeSnapshot: expect.any(Object) });
-        expect(dbMocks.updateDoc).toHaveBeenCalledWith(
-            expect.objectContaining({ path: `teams/${teamId}/registrationForms/${formId}` }),
+        expect(result).toEqual({ success: true, status: 'waitlisted', registrationId: 'reg-waitlist', feeSnapshot: { finalAmountDueCents: 5000 } });
+        expect(submitPublicRegistration).toHaveBeenCalledWith(
             expect.objectContaining({
-                'registrationOptionCounts.opt-1-key.enrolled': 10,
-                'registrationOptionCounts.opt-1-key.waitlisted': 1,
-                registrationCapacityUpdateId: expect.any(String),
-                updatedAt: { _serverTimestamp: true },
+                teamId,
+                formId,
+                selectedOptionId: 'opt-1'
             })
         );
-        expect(dbMocks.setDoc).toHaveBeenCalledWith(
-            expect.any(Object),
-            expect.objectContaining({
-                participant: registrationRecord.participant,
-                guardian: registrationRecord.guardian,
-                waiverAccepted: true,
-                selectedOption: expect.objectContaining({ id: 'opt-1' }),
-                status: 'waitlisted',
-            })
-        );
+        expect(firebaseMocks.runTransaction).not.toHaveBeenCalled();
+        expect(dbMocks.updateDoc).not.toHaveBeenCalled();
+        expect(dbMocks.setDoc).not.toHaveBeenCalled();
     });
 
     it('throws an error if placement is blocked', async () => {
@@ -481,49 +398,22 @@ describe('React app parent tools service', () => {
             selectedPaymentPlanId: 'pay_full',
             submittedAt: new Date(),
         };
-
-        const mockForm = {
-            id: formId,
-            teamId,
-            programName: 'Summer Camp',
-            registrationOptions: [
-                { id: 'opt-2', countKey: 'opt-2-key', capacityLimit: 10, waitlistEnabled: false, active: true },
-            ],
-            registrationOptionCounts: {
-                'opt-2-key': { enrolled: 10, waitlisted: 0 }, // Form is full, no waitlist
-            },
-        };
-
-        dbMocks.getDoc.mockImplementation((docRef) => {
-            if (docRef.path.includes(`teams/${teamId}/registrationForms/${formId}`)) {
-                return Promise.resolve({
-                    exists: () => true,
-                    data: () => mockForm,
-                    id: formId,
-                });
-            }
-            return Promise.resolve({ exists: () => false, data: () => null });
-        });
-
-        firebaseMocks.runTransaction.mockImplementation(async (db, updateFunction) => {
-            const mockTransaction = {
-                get: (docRef) => dbMocks.getDoc(docRef),
-                update: dbMocks.updateDoc,
-                set: dbMocks.setDoc,
-            };
-            return updateFunction(mockTransaction);
-        });
-
-        registrationMocks.decideRegistrationPlacement.mockReturnValue({
-            status: 'blocked',
+        const submitPublicRegistration = vi.fn().mockRejectedValue({
+            code: 'functions/failed-precondition',
+            details: { reason: 'option-full' },
             message: 'Option is full and not accepting waitlist registrations.',
-            selectedOption: { id: 'opt-2', countKey: 'opt-2-key' },
-            nextCounts: { enrolled: 10, waitlisted: 0 },
         });
+        firebaseMocks.httpsCallable.mockReturnValue(submitPublicRegistration);
 
         await expect(submitOfflineRegistration(teamId, formId, registrationRecord)).rejects.toThrow(
             'Option is full and not accepting waitlist registrations.'
         );
+        expect(submitPublicRegistration).toHaveBeenCalledWith(expect.objectContaining({
+            teamId,
+            formId,
+            selectedOptionId: 'opt-2'
+        }));
+        expect(firebaseMocks.runTransaction).not.toHaveBeenCalled();
         expect(dbMocks.updateDoc).not.toHaveBeenCalled();
         expect(dbMocks.setDoc).not.toHaveBeenCalled();
     });

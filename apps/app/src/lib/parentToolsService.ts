@@ -2,21 +2,18 @@ import {
   addPendingFamilyMember,
   acceptTeamRegistrationOffer,
   approveTeamRegistration,
-  buildPendingRegistrationRecord,
   calculateRegistrationFeeSnapshot,
   canAccessTeamChat,
   canContributeTeamMedia,
   canManageTeamMedia,
   canReadTeamMediaAlbum,
   cancelStripeRegistrationCheckout,
-  collection,
   createFamilyShareToken,
   createParentMembershipRequest,
   createRegistrationCheckoutSession,
   createTeamMediaFolder,
   createTeamMediaLink,
   db,
-  decideRegistrationPlacement,
   deleteTeamMediaItem,
   discoverPublicTeams,
   doc,
@@ -38,6 +35,8 @@ import {
   getTeamMediaItemsPage,
   getTeamRegistrationForm,
   hasOnlineRegistrationCheckout,
+  functions,
+  httpsCallable,
   initiateTeamFeeCheckout,
   isSafeTeamMediaUrl,
   listCertificatesForPlayer,
@@ -55,8 +54,6 @@ import {
   rejectTeamRegistration,
   requiresRegistrationOption,
   revokeFamilyShareToken,
-  runTransaction,
-  serverTimestamp,
   setTeamMediaAlbumCover,
   sortByMediaOrder,
   sortParentFeeRecords,
@@ -313,64 +310,28 @@ export function getFamilyShareUrl(tokenId: string) {
 export async function submitOfflineRegistration(teamId: string, formId: string, submission: Record<string, any>) {
   if (!teamId || !formId || !submission) throw new Error('Registration submission is incomplete.');
 
-  const formRef = doc(db, 'teams', teamId, 'registrationForms', formId);
-  const registrationRef = doc(collection(db, 'teams', teamId, 'registrationForms', formId, 'registrations'));
-
-  return runTransaction(db, async (transaction: any) => {
-    const formSnap = await transaction.get(formRef);
-    if (!formSnap.exists()) throw new Error('Registration form could not be found.');
-
-    const formData = formSnap.data() || {};
-    const latestForm = normalizeRegistrationForm(formData, { teamId, formId });
-    let status = 'pending';
-    let selectedOption = submission.selectedOption || null;
-    let feeSnapshot = submission.feeSnapshot || calculateRegistrationFeeSnapshot(latestForm, { quantity: submission.quantity || 1, now: new Date() });
-
-    if (requiresRegistrationOption(latestForm)) {
-      const placement = decideRegistrationPlacement({
-        form: latestForm,
-        selectedOptionId: submission.selectedOptionId || submission.selectedOption?.id,
-        counts: formData.registrationOptionCounts || {}
-      });
-      if (placement.status === 'blocked') {
-        const error = new Error(placement.message || 'Registration option is not available.');
-        (error as any).code = placement.reason === 'option-full' ? 'option-full' : 'invalid-option';
-        throw error;
-      }
-      const selectedCountKey = placement.selectedOption.countKey;
-      const optionCounts = formData.registrationOptionCounts || null;
-      if (!optionCounts || typeof optionCounts !== 'object' || !optionCounts[selectedCountKey] || typeof optionCounts[selectedCountKey] !== 'object') {
-        throw new Error('Registration form capacity tracking is not properly configured.');
-      }
-      const countPath = `registrationOptionCounts.${selectedCountKey}`;
-      transaction.update(formRef, {
-        [`${countPath}.enrolled`]: placement.nextCounts.enrolled,
-        [`${countPath}.waitlisted`]: placement.nextCounts.waitlisted,
-        registrationCapacityUpdateId: registrationRef.id,
-        updatedAt: serverTimestamp()
-      });
-      status = placement.status;
-      selectedOption = placement.selectedOption;
-      feeSnapshot = calculateRegistrationFeeSnapshot(latestForm, { quantity: submission.quantity || 1, now: new Date() });
-    }
-
-    const registrationRecord = buildPendingRegistrationRecord({
-      form: latestForm,
+  const submitPublicRegistration = httpsCallable(functions, 'submitPublicRegistration');
+  try {
+    const result = await submitPublicRegistration({
+      teamId,
+      formId,
       participant: submission.participant,
       guardian: submission.guardian,
       waiverAccepted: submission.waiverAccepted,
-      selectedOption,
-      selectedPaymentPlanId: submission.selectedPaymentPlanId,
-      status,
-      feeSnapshot,
-      checkoutAttemptToken: submission.checkoutAttemptToken,
-      now: serverTimestamp()
+      selectedOptionId: submission.selectedOptionId || submission.selectedOption?.id || '',
+      selectedPaymentPlanId: submission.selectedPaymentPlanId || 'pay_full',
+      quantity: submission.quantity || submission.feeSnapshot?.quantity || 1,
+      checkoutAttemptToken: submission.checkoutAttemptToken || ''
     });
-
-    transaction.set(registrationRef, registrationRecord);
-
-    return { success: true, status, registrationId: registrationRef.id, feeSnapshot: registrationRecord.feeSnapshot };
-  });
+    return result?.data || {};
+  } catch (error: any) {
+    const code = String(error?.code || '').replace(/^functions\//, '');
+    const details = error?.details || {};
+    if (details.reason === 'option-full' || details.reason === 'missing-option' || code === 'failed-precondition' || code === 'invalid-argument' || code === 'resource-exhausted') {
+      throw new Error(error?.message || 'Registration could not be submitted.');
+    }
+    throw error;
+  }
 }
 
 export function getRegistrationUrl(teamId: string, formId: string) {
