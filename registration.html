@@ -97,11 +97,10 @@
     <div id="footer-container"></div>
 
     <script type="module">
-        import { db, doc, getDoc, collection, addDoc, serverTimestamp, runTransaction } from './js/firebase.js?v=19';
+        import { db, doc, getDoc, getFunctions, httpsCallable } from './js/firebase.js?v=19';
         import { renderHeader, renderFooter } from './js/utils.js?v=8';
         import { cancelStripeRegistrationCheckout, initiateStripeCheckout } from './js/stripe-service.js';
         import {
-            buildPendingRegistrationRecord,
             calculateRegistrationFeeSnapshot,
             collectFieldValues,
             decideRegistrationPlacement,
@@ -527,9 +526,7 @@
                 confirmationMessage.classList.remove('hidden');
             } catch (error) {
                 console.error(error);
-                errorMessage.textContent = error.code === 'option-full'
-                    ? error.message
-                    : 'Registration could not be submitted. Please try again.';
+                errorMessage.textContent = getPublicRegistrationErrorMessage(error, 'Registration could not be submitted. Please try again.');
                 errorMessage.classList.remove('hidden');
                 submitButton.disabled = false;
                 spinner.classList.add('hidden');
@@ -538,62 +535,37 @@
         });
 
         async function submitRegistrationWithoutCapacity(submission) {
-            const registrationRef = await addDoc(collection(db, 'teams', teamId, 'registrationForms', formId, 'registrations'), buildPendingRegistrationRecord({
-                form: activeForm,
-                ...submission,
-                now: serverTimestamp()
-            }));
-            return { status: 'pending', registrationId: registrationRef.id };
+            return submitRegistrationToServer(submission);
         }
 
         async function submitRegistrationWithCapacity(submission) {
-            const formRef = doc(db, 'teams', teamId, 'registrationForms', formId);
-            const registrationRef = doc(collection(db, 'teams', teamId, 'registrationForms', formId, 'registrations'));
+            return submitRegistrationToServer(submission);
+        }
 
-            return runTransaction(db, async (transaction) => {
-                const formSnap = await transaction.get(formRef);
-                if (!formSnap.exists()) {
-                    throw new Error('Registration form could not be found.');
-                }
-
-                const formData = formSnap.data() || {};
-                const latestForm = normalizeRegistrationForm(formData, { teamId, formId });
-                const placement = decideRegistrationPlacement({
-                    form: latestForm,
-                    selectedOptionId: submission.selectedOptionId,
-                    counts: formData.registrationOptionCounts || {}
-                });
-
-                if (placement.status === 'blocked') {
-                    const error = new Error(placement.message);
-                    error.code = placement.reason === 'option-full' ? 'option-full' : 'invalid-option';
-                    throw error;
-                }
-
-                const optionCounts = formData.registrationOptionCounts || null;
-                const selectedCountKey = placement.selectedOption.countKey;
-                if (!optionCounts || typeof optionCounts !== 'object' || !optionCounts[selectedCountKey] || typeof optionCounts[selectedCountKey] !== 'object') {
-                    throw new Error('Registration form capacity tracking is not properly configured.');
-                }
-
-                const countPath = `registrationOptionCounts.${placement.selectedOption.countKey}`;
-                transaction.update(formRef, {
-                    [`${countPath}.enrolled`]: placement.nextCounts.enrolled,
-                    [`${countPath}.waitlisted`]: placement.nextCounts.waitlisted,
-                    registrationCapacityUpdateId: registrationRef.id,
-                    updatedAt: serverTimestamp()
-                });
-                transaction.set(registrationRef, buildPendingRegistrationRecord({
-                    form: latestForm,
-                    ...submission,
-                    selectedOption: placement.selectedOption,
-                    status: placement.status,
-                    feeSnapshot: calculateRegistrationFeeSnapshot(latestForm, { quantity: submission.feeSnapshot?.quantity || 1, now: new Date() }),
-                    now: serverTimestamp()
-                }));
-
-                return { status: placement.status, registrationId: registrationRef.id };
+        async function submitRegistrationToServer(submission) {
+            const functions = getFunctions();
+            const submitPublicRegistration = httpsCallable(functions, 'submitPublicRegistration');
+            const result = await submitPublicRegistration({
+                teamId,
+                formId,
+                participant: submission.participant,
+                guardian: submission.guardian,
+                waiverAccepted: submission.waiverAccepted,
+                selectedPaymentPlanId: submission.selectedPaymentPlanId,
+                selectedOptionId: submission.selectedOptionId,
+                quantity: submission.feeSnapshot?.quantity || 1,
+                checkoutAttemptToken: submission.checkoutAttemptToken || ''
             });
+            return result?.data || {};
+        }
+
+        function getPublicRegistrationErrorMessage(error, fallback) {
+            const details = error?.details || {};
+            const code = String(error?.code || '').replace(/^functions\//, '');
+            if (details.reason === 'option-full' || details.reason === 'missing-option' || code === 'failed-precondition' || code === 'invalid-argument' || code === 'resource-exhausted') {
+                return error?.message || fallback;
+            }
+            return fallback;
         }
 
         let preparedCheckoutRegistration = null;
@@ -737,7 +709,7 @@
                 }
             } catch (error) {
                 console.error('Stripe payment initiation error:', error);
-                showFormError('Failed to initiate payment. Please try again later.');
+                showFormError(getPublicRegistrationErrorMessage(error, 'Failed to initiate payment. Please try again later.'));
             } finally {
                 payRegistrationButton.disabled = false;
                 paymentLoadingState.classList.add('hidden');

@@ -29,7 +29,7 @@ const {
   buildTeamFeePaidUpdate,
   buildTeamFeeStripeRefundUpdate
 } = require('./team-fees-core.cjs');
-const { createInMemoryRateLimiter } = require('./rate-limit.cjs');
+const { createInMemoryRateLimiter, getRequestIp } = require('./rate-limit.cjs');
 const { buildPublicGamesIcs, canExposeEmptyPublicFeed, isPublicFanGame } = require('./public-calendar-core.cjs');
 const {
   buildTeamCalendarIcs,
@@ -136,6 +136,11 @@ const checkStripeWebhookRateLimit = createInMemoryRateLimiter({
   windowMs: 60_000,
   maxRequests: 120,
   maxKeys: 2_000
+});
+const checkPublicRegistrationSubmissionRateLimit = createInMemoryRateLimiter({
+  windowMs: 10 * 60_000,
+  maxRequests: 3,
+  maxKeys: 5_000
 });
 
 function getStripeConfig() {
@@ -338,6 +343,485 @@ function buildRegistrationCheckoutUrls(appUrl, input) {
     cancelUrl: `${baseUrl}/registration.html?${params.toString()}&status=cancelled`
   };
 }
+
+function normalizePublicRegistrationInput(data = {}) {
+  return {
+    teamId: normalizeFirestoreId(data.teamId, 'teamId'),
+    formId: normalizeFirestoreId(data.formId, 'formId'),
+    participant: normalizePublicRegistrationFlatObject(data.participant),
+    guardian: normalizePublicRegistrationFlatObject(data.guardian),
+    waiverAccepted: data.waiverAccepted === true,
+    selectedOptionId: String(data.selectedOptionId || data.selectedOption?.id || '').trim(),
+    selectedPaymentPlanId: String(data.selectedPaymentPlanId || 'pay_full').trim() || 'pay_full',
+    quantity: Math.max(1, Math.floor(Number(data.quantity || data.feeSnapshot?.quantity || 1) || 1)),
+    checkoutAttemptToken: normalizeCheckoutAttemptToken(data.checkoutAttemptToken)
+  };
+}
+
+function normalizePublicRegistrationFlatObject(value = {}) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
+  return Object.entries(value).reduce((result, [key, rawValue]) => {
+    const cleanKey = String(key || '').trim();
+    if (!cleanKey || rawValue == null || typeof rawValue === 'object') return result;
+    result[cleanKey] = String(rawValue).trim();
+    return result;
+  }, {});
+}
+
+function normalizePublicRegistrationForm(form = {}, context = {}) {
+  const registrationOptionCounts = form.registrationOptionCounts || {};
+  const feeAmountCents = Math.max(0, Math.round(Number(form.feeAmountCents || 0)));
+  return {
+    id: context.formId || form.id || '',
+    teamId: context.teamId || form.teamId || '',
+    programName: String(form.programName || form.title || form.name || '').trim(),
+    description: String(form.description || form.programDescription || '').trim(),
+    season: String(form.season || '').trim(),
+    feeAmountCents,
+    currency: String(form.currency || 'USD').trim() || 'USD',
+    installmentPlan: normalizePublicRegistrationInstallmentPlan(form.installmentPlan),
+    participantFields: normalizePublicRegistrationFields(form.participantFields || form.playerFields || []),
+    guardianFields: normalizePublicRegistrationFields(form.guardianFields || []),
+    waiverText: String(form.waiverText || form.waiver || '').trim(),
+    status: String(form.status || '').trim(),
+    published: form.published === true || form.status === 'published',
+    paymentSettings: normalizeRegistrationPaymentSettings(form.paymentSettings),
+    discountRules: normalizePublicRegistrationDiscountRules(form.discountRules || []),
+    backgroundCheck: normalizePublicRegistrationBackgroundCheck(form.backgroundCheck),
+    registrationOptions: normalizePublicRegistrationOptions(form.registrationOptions || form.options || []),
+    registrationOptionCounts
+  };
+}
+
+function normalizeRegistrationPaymentSettings(settings = {}) {
+  return {
+    offlinePaymentEnabled: settings?.offlinePaymentEnabled === true,
+    onlineCheckoutEnabled: settings?.onlineCheckoutEnabled === true
+  };
+}
+
+function normalizePublicRegistrationInstallmentPlan(plan = null) {
+  if (!plan || plan.enabled !== true) return null;
+  const installmentCount = Math.max(2, Math.min(12, Math.floor(Number(plan.installmentCount) || 0)));
+  const intervalDays = Math.max(1, Math.min(365, Math.floor(Number(plan.intervalDays) || 30)));
+  const firstDueDate = String(plan.firstDueDate || '').trim();
+  if (!firstDueDate) return null;
+  return {
+    enabled: true,
+    title: String(plan.title || 'Installment plan').trim() || 'Installment plan',
+    installmentCount,
+    firstDueDate,
+    intervalDays
+  };
+}
+
+function normalizePublicRegistrationFields(fields = []) {
+  if (!Array.isArray(fields)) return [];
+  return fields
+    .map((field, index) => ({
+      id: String(field?.id || field?.key || `field_${index + 1}`).trim(),
+      label: String(field?.label || field?.name || field?.id || field?.key || `Field ${index + 1}`).trim(),
+      required: field?.required === true
+    }))
+    .filter((field) => field.id && field.label);
+}
+
+function normalizePublicRegistrationBackgroundCheck(settings = {}) {
+  const enabled = settings?.enabled === true || settings?.backgroundCheckEnabled === true;
+  const status = String(settings?.initialScreeningStatus || 'pending').trim().toLowerCase().replace(/[ _]+/g, '-');
+  const allowedStatuses = ['pending', 'submitted', 'cleared', 'flagged', 'expired', 'rejected'];
+  return {
+    enabled,
+    initialScreeningStatus: enabled && allowedStatuses.includes(status) ? status : 'pending',
+    providerName: String(settings?.providerName || '').trim()
+  };
+}
+
+function normalizePublicRegistrationOptions(options = []) {
+  if (!Array.isArray(options)) return [];
+  return options
+    .map((option, index) => {
+      const id = String(option?.id || option?.key || `option_${index + 1}`).trim();
+      const title = String(option?.title || option?.name || option?.label || `Option ${index + 1}`).trim();
+      const capacityNumber = Number(option?.capacityLimit ?? option?.capacity ?? option?.maxRegistrations);
+      const capacityLimit = Number.isFinite(capacityNumber) && capacityNumber > 0 ? Math.floor(capacityNumber) : null;
+      return {
+        id,
+        countKey: buildPublicRegistrationOptionCountKey(id),
+        title,
+        description: String(option?.description || '').trim(),
+        capacityLimit,
+        waitlistEnabled: option?.waitlistEnabled === true || option?.waitlist === true,
+        active: option?.active !== false && option?.status !== 'inactive' && option?.status !== 'archived',
+        feeAmountCents: Number.isFinite(Number(option?.feeAmountCents)) ? Math.max(0, Math.round(Number(option.feeAmountCents))) : undefined
+      };
+    })
+    .filter((option) => option.id && option.title);
+}
+
+function buildPublicRegistrationOptionCountKey(optionId = '') {
+  const key = String(optionId || '').trim().replace(/[^A-Za-z0-9_-]/g, '_');
+  return key || 'option';
+}
+
+function getActivePublicRegistrationOptions(form = {}, counts = {}) {
+  return (form.registrationOptions || []).filter((option) => {
+    if (!option.active) return false;
+    const optionCounts = counts[option.countKey] || counts[option.id] || {};
+    const enrolledCount = Number(optionCounts.enrolled || 0);
+    if (!option.capacityLimit || enrolledCount < option.capacityLimit) return true;
+    return option.waitlistEnabled === true;
+  });
+}
+
+function publicRegistrationRequiresOption(form = {}) {
+  return (form.registrationOptions || []).some((option) => option.active !== false);
+}
+
+function getConfiguredPublicRegistrationOptionById(form = {}, selectedOptionId = '') {
+  return (form.registrationOptions || [])
+    .filter((option) => option.active !== false)
+    .find((option) => option.id === selectedOptionId) || null;
+}
+
+function decidePublicRegistrationPlacement({ form, selectedOptionId, counts = {} }) {
+  const selectedOption = getConfiguredPublicRegistrationOptionById(form, selectedOptionId);
+  if (!selectedOption) {
+    return { status: 'blocked', reason: 'missing-option', message: 'Please select a registration option.' };
+  }
+
+  const optionCounts = counts[selectedOption.countKey] || counts[selectedOption.id] || {};
+  const enrolledCount = Number(optionCounts.enrolled || 0);
+  const waitlistedCount = Number(optionCounts.waitlisted || 0);
+  const hasCapacity = !selectedOption.capacityLimit || enrolledCount < selectedOption.capacityLimit;
+
+  if (hasCapacity) {
+    return {
+      status: 'pending',
+      selectedOption,
+      nextCounts: { enrolled: enrolledCount + 1, waitlisted: waitlistedCount }
+    };
+  }
+
+  if (selectedOption.waitlistEnabled) {
+    return {
+      status: 'waitlisted',
+      selectedOption,
+      nextCounts: { enrolled: enrolledCount, waitlisted: waitlistedCount + 1 }
+    };
+  }
+
+  return {
+    status: 'blocked',
+    reason: 'option-full',
+    selectedOption,
+    message: `${selectedOption.title} is full and is not accepting waitlist registrations.`
+  };
+}
+
+function normalizePublicRegistrationDiscountRules(rules = []) {
+  if (!Array.isArray(rules)) return [];
+  return rules
+    .map((rule, index) => {
+      const type = String(rule?.type || '').toLowerCase();
+      const amountType = rule?.amountType === 'percent' ? 'percent' : 'fixed';
+      const amountValue = Math.max(0, Number(rule?.amountValue || 0));
+      const earlyBirdDeadline = String(rule?.earlyBirdDeadline || '').trim();
+      const minimumQuantity = Math.max(1, Math.floor(Number(rule?.minimumQuantity || 1)));
+      if (!['early_bird', 'quantity'].includes(type) || amountValue <= 0) return null;
+      return {
+        id: String(rule?.id || `discount_${index + 1}`).trim(),
+        type,
+        label: String(rule?.label || (type === 'early_bird' ? 'Early bird discount' : 'Sibling/cart discount')).trim(),
+        amountType,
+        amountValue,
+        earlyBirdDeadline,
+        minimumQuantity,
+        active: rule?.active !== false
+      };
+    })
+    .filter(Boolean);
+}
+
+function calculatePublicRegistrationFeeSnapshot(form = {}, options = {}) {
+  const currency = String(form.currency || 'USD').trim() || 'USD';
+  const originalFeeAmountCents = Math.max(0, Math.round(Number(form.feeAmountCents || 0)));
+  const quantity = Math.max(1, Math.floor(Number(options.quantity || 1)));
+  const submittedAt = options.now instanceof Date ? options.now : new Date();
+  const subtotalAmountCents = originalFeeAmountCents * quantity;
+  let finalAmountDueCents = subtotalAmountCents;
+  const appliedDiscounts = [];
+
+  normalizePublicRegistrationDiscountRules(form.discountRules || []).forEach((rule) => {
+    if (!rule.active || !isPublicRegistrationDiscountEligible(rule, { quantity, now: submittedAt })) return;
+    const discountAmountCents = rule.amountType === 'percent'
+      ? Math.round(finalAmountDueCents * (rule.amountValue / 100))
+      : Math.round(rule.amountValue);
+    const appliedAmountCents = Math.min(finalAmountDueCents, Math.max(0, discountAmountCents));
+    if (appliedAmountCents <= 0) return;
+    finalAmountDueCents -= appliedAmountCents;
+    appliedDiscounts.push({
+      id: rule.id,
+      type: rule.type,
+      label: rule.label,
+      amountType: rule.amountType,
+      amountValue: rule.amountValue,
+      amountCents: appliedAmountCents
+    });
+  });
+
+  return {
+    currency,
+    quantity,
+    originalFeeAmountCents,
+    subtotalAmountCents,
+    appliedDiscounts,
+    finalAmountDueCents
+  };
+}
+
+function isPublicRegistrationDiscountEligible(rule, { quantity, now }) {
+  if (rule.type === 'quantity') return quantity >= rule.minimumQuantity;
+  if (rule.type === 'early_bird') {
+    const deadline = Date.parse(`${rule.earlyBirdDeadline}T23:59:59.999`);
+    return Number.isFinite(deadline) && now.getTime() <= deadline;
+  }
+  return false;
+}
+
+function buildPublicRegistrationPaymentPlanSnapshot(form = {}, selectedPaymentPlanId = 'pay_full') {
+  const totalBalanceDueCents = Math.max(0, Math.round(Number(form.feeAmountCents) || 0));
+  const useInstallments = selectedPaymentPlanId === 'installments' && form.installmentPlan?.enabled === true;
+  const schedule = useInstallments
+    ? buildPublicRegistrationInstallmentSchedule(totalBalanceDueCents, form.installmentPlan)
+    : [{ label: 'Pay in full', dueDate: form.installmentPlan?.firstDueDate || '', amountCents: totalBalanceDueCents }];
+  return {
+    id: useInstallments ? 'installments' : 'pay_full',
+    type: useInstallments ? 'installments' : 'pay_full',
+    title: useInstallments ? form.installmentPlan.title : 'Pay in full',
+    installmentCount: schedule.length,
+    totalBalanceDueCents,
+    schedule
+  };
+}
+
+function buildPublicRegistrationInstallmentSchedule(totalBalanceDueCents = 0, plan = {}) {
+  const count = Math.max(2, Math.min(12, Math.floor(Number(plan.installmentCount) || 2)));
+  const baseAmount = Math.floor(totalBalanceDueCents / count);
+  const remainder = totalBalanceDueCents - (baseAmount * count);
+  const firstDate = parsePublicRegistrationLocalDate(plan.firstDueDate);
+  const intervalDays = Math.max(1, Math.floor(Number(plan.intervalDays) || 30));
+  return Array.from({ length: count }, (_, index) => {
+    const dueDate = firstDate ? addPublicRegistrationDays(firstDate, intervalDays * index) : null;
+    return {
+      label: `Installment ${index + 1}`,
+      dueDate: dueDate ? dueDate.toISOString().slice(0, 10) : String(plan.firstDueDate || ''),
+      amountCents: baseAmount + (index === count - 1 ? remainder : 0)
+    };
+  });
+}
+
+function parsePublicRegistrationLocalDate(value = '') {
+  const match = String(value || '').match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!match) return null;
+  return new Date(Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3])));
+}
+
+function addPublicRegistrationDays(date, days) {
+  const next = new Date(date.getTime());
+  next.setUTCDate(next.getUTCDate() + days);
+  return next;
+}
+
+function validatePublicRegistrationSubmission(form, input) {
+  if (!form?.published) {
+    throwPublicRegistrationError('failed-precondition', 'This registration form is not accepting submissions.');
+  }
+  validatePublicRegistrationRequiredFields(form.participantFields || [], input.participant || {}, 'Participant');
+  validatePublicRegistrationRequiredFields(form.guardianFields || [], input.guardian || {}, 'Guardian');
+  if (input.waiverAccepted !== true) {
+    throwPublicRegistrationError('invalid-argument', 'Waiver acceptance is required.');
+  }
+  if (form.installmentPlan?.enabled === true && !['pay_full', 'installments'].includes(input.selectedPaymentPlanId)) {
+    throwPublicRegistrationError('invalid-argument', 'Please select a payment plan.');
+  }
+  if (form.installmentPlan?.enabled !== true && input.selectedPaymentPlanId !== 'pay_full') {
+    throwPublicRegistrationError('invalid-argument', 'Please select a payment plan.');
+  }
+  if (form.paymentSettings?.onlineCheckoutEnabled === true && !input.checkoutAttemptToken) {
+    throwPublicRegistrationError('invalid-argument', 'A checkout attempt token is required.');
+  }
+}
+
+function validatePublicRegistrationRequiredFields(fields, values, groupLabel) {
+  for (const field of fields) {
+    if (field.required && !String(values[field.id] || '').trim()) {
+      throwPublicRegistrationError('invalid-argument', `${groupLabel} ${field.label} is required.`);
+    }
+  }
+}
+
+function buildPublicPendingRegistrationRecord({ form, input, selectedOption = null, status = 'pending', feeSnapshot, now }) {
+  const paymentPlanForm = {
+    ...form,
+    feeAmountCents: feeSnapshot.finalAmountDueCents ?? form.feeAmountCents
+  };
+  const record = {
+    teamId: form.teamId,
+    formId: form.id,
+    programName: form.programName,
+    feeAmountCents: form.feeAmountCents,
+    currency: form.currency,
+    paymentSettings: normalizeRegistrationPaymentSettings(form.paymentSettings),
+    feeSnapshot,
+    participant: input.participant,
+    guardian: input.guardian,
+    waiverAccepted: input.waiverAccepted === true,
+    waiverText: form.waiverText,
+    paymentPlan: buildPublicRegistrationPaymentPlanSnapshot(paymentPlanForm, input.selectedPaymentPlanId),
+    status,
+    submittedAt: now,
+    source: 'public-registration'
+  };
+
+  if (input.checkoutAttemptToken) {
+    record.checkoutAttemptToken = input.checkoutAttemptToken;
+  }
+
+  if (form.backgroundCheck?.enabled === true) {
+    record.screeningRequired = true;
+    record.screeningStatus = form.backgroundCheck.initialScreeningStatus;
+    record.screeningProvider = form.backgroundCheck.providerName;
+    record.screeningProviderReference = '';
+  }
+
+  if (selectedOption) {
+    record.selectedOption = {
+      id: selectedOption.id,
+      countKey: selectedOption.countKey,
+      title: selectedOption.title,
+      feeAmountCents: selectedOption.feeAmountCents ?? form.feeAmountCents,
+      capacityLimit: selectedOption.capacityLimit,
+      waitlistEnabled: selectedOption.waitlistEnabled === true
+    };
+  }
+
+  if (status === 'waitlisted') {
+    record.waitlistedAt = now;
+  }
+
+  return record;
+}
+
+function getHeaderValue(headers = {}, name = '') {
+  const direct = headers[name] || headers[name.toLowerCase()];
+  return Array.isArray(direct) ? direct[0] : String(direct || '');
+}
+
+function buildPublicRegistrationRateLimitBoundary(input, context = {}) {
+  const rawRequest = context.rawRequest || {};
+  const requestIp = getRequestIp(rawRequest);
+  const appCheck = String(context.app?.appId || getHeaderValue(rawRequest.headers, 'x-firebase-appcheck') || '').trim();
+  const email = String(input.guardian?.email || input.guardian?.guardianEmail || '').trim().toLowerCase();
+  return [
+    input.teamId,
+    input.formId,
+    email || 'no-email',
+    appCheck || requestIp || 'unknown'
+  ].join('|');
+}
+
+function assertPublicRegistrationRateLimit(input, context = {}) {
+  const boundary = buildPublicRegistrationRateLimitBoundary(input, context);
+  const rateLimit = checkPublicRegistrationSubmissionRateLimit({ ip: boundary });
+  if (!rateLimit.allowed) {
+    throwPublicRegistrationError('resource-exhausted', 'Too many registration attempts. Please wait a few minutes and try again.', {
+      reason: 'rate-limited',
+      retryAfterSeconds: rateLimit.retryAfterSeconds
+    });
+  }
+}
+
+function throwPublicRegistrationError(code, message, details = {}) {
+  throw new functions.https.HttpsError(code, message, details);
+}
+
+exports.submitPublicRegistration = functions.https.onCall(async (data, context = {}) => {
+  let input;
+  try {
+    input = normalizePublicRegistrationInput(data || {});
+  } catch (error) {
+    throwPublicRegistrationError('invalid-argument', error.message || 'Invalid registration submission.');
+  }
+
+  assertPublicRegistrationRateLimit(input, context);
+
+  const formRef = buildRegistrationFormRef(input);
+  const registrationRef = formRef.collection('registrations').doc();
+  let result = null;
+
+  await firestore.runTransaction(async (transaction) => {
+    const formSnap = await transaction.get(formRef);
+    if (!formSnap.exists) {
+      throwPublicRegistrationError('not-found', 'Registration form not found.');
+    }
+
+    const formData = formSnap.data() || {};
+    const latestForm = normalizePublicRegistrationForm(formData, input);
+    validatePublicRegistrationSubmission(latestForm, input);
+
+    let status = 'pending';
+    let selectedOption = null;
+    if (publicRegistrationRequiresOption(latestForm)) {
+      const placement = decidePublicRegistrationPlacement({
+        form: latestForm,
+        selectedOptionId: input.selectedOptionId,
+        counts: formData.registrationOptionCounts || {}
+      });
+      if (placement.status === 'blocked') {
+        throwPublicRegistrationError('failed-precondition', placement.message || 'Registration option is not available.', {
+          reason: placement.reason || 'invalid-option'
+        });
+      }
+
+      selectedOption = placement.selectedOption;
+      const selectedCountKey = selectedOption.countKey;
+      const optionCounts = formData.registrationOptionCounts || null;
+      if (!optionCounts || typeof optionCounts !== 'object' || !optionCounts[selectedCountKey] || typeof optionCounts[selectedCountKey] !== 'object') {
+        throwPublicRegistrationError('failed-precondition', 'Registration form capacity tracking is not properly configured.');
+      }
+
+      const countPath = `registrationOptionCounts.${selectedCountKey}`;
+      transaction.update(formRef, {
+        [`${countPath}.enrolled`]: placement.nextCounts.enrolled,
+        [`${countPath}.waitlisted`]: placement.nextCounts.waitlisted,
+        registrationCapacityUpdateId: registrationRef.id,
+        updatedAt: admin.firestore.FieldValue.serverTimestamp()
+      });
+      status = placement.status;
+    }
+
+    const feeSnapshot = calculatePublicRegistrationFeeSnapshot(latestForm, { quantity: input.quantity, now: new Date() });
+    const registrationRecord = buildPublicPendingRegistrationRecord({
+      form: latestForm,
+      input,
+      selectedOption,
+      status,
+      feeSnapshot,
+      now: admin.firestore.FieldValue.serverTimestamp()
+    });
+
+    transaction.set(registrationRef, registrationRecord);
+    result = {
+      success: true,
+      status,
+      registrationId: registrationRef.id,
+      feeSnapshot: registrationRecord.feeSnapshot
+    };
+  });
+
+  return result;
+});
 
 function isServerDiscountRuleEligible(rule, { now }) {
   if (rule.type === 'quantity') return true; // quantity discounts always apply (single registration = quantity 1 satisfies minimum >= 1)
@@ -873,14 +1357,18 @@ async function releaseRegistrationCheckoutCapacity(input, statusUpdate = {}, opt
       transaction.update(formRef, updates);
     }
 
-    const nextPublicCheckoutCapability = createRawPublicCheckoutCapability();
-
-    transaction.set(registrationRef, {
+    const capacityReleaseUpdate = {
       ...registrationUpdate,
       registrationCapacityReleased: true,
-      capacityReleasedAt: now,
-      publicCheckoutCapabilityHash: hashPublicCheckoutCapability(nextPublicCheckoutCapability)
-    }, { merge: true });
+      capacityReleasedAt: now
+    };
+    let nextPublicCheckoutCapability = '';
+    if (options.suppressPublicCheckoutCapabilityRotation !== true) {
+      nextPublicCheckoutCapability = createRawPublicCheckoutCapability();
+      capacityReleaseUpdate.publicCheckoutCapabilityHash = hashPublicCheckoutCapability(nextPublicCheckoutCapability);
+    }
+
+    transaction.set(registrationRef, capacityReleaseUpdate, { merge: true });
 
     return { released, nextPublicCheckoutCapability };
   });
@@ -2416,7 +2904,8 @@ exports.createStripeRegistrationCheckout = functions.https.onCall(async (data) =
           ...resolvedInput,
           publicCheckoutCapability: resolvedInput.publicCheckoutCapability || issuedPublicCheckoutCapability
         }, {}, {
-          retryCapacityReservationId: retryCapacityReservation.retryCapacityReservationId
+          retryCapacityReservationId: retryCapacityReservation.retryCapacityReservationId,
+          suppressPublicCheckoutCapabilityRotation: true
         });
       } catch (releaseError) {
         functions.logger.error('Failed to roll back registration retry capacity after Stripe checkout creation failed.', {
