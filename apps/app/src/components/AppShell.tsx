@@ -693,7 +693,7 @@ function buildAddWorkflows(): AddWorkflow[] {
     {
       id: 'awards',
       label: 'Awards',
-      detail: 'Select a team to draft certificates and preview them',
+      detail: 'Select a team to create, publish, and export awards',
       section: 'Team Ops',
       icon: ClipboardList,
       kind: 'native',

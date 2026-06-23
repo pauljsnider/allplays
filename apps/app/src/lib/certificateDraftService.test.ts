@@ -10,12 +10,16 @@ import {
 const dbMocks = vi.hoisted(() => ({
   createCertificate: vi.fn(),
   createCertificateBatch: vi.fn(),
+  getAggregatedStatsForGames: vi.fn(),
+  getCertificate: vi.fn(),
   getCertificateDefaults: vi.fn(),
+  getGames: vi.fn(),
   getPlayers: vi.fn(),
   getTeam: vi.fn(),
   getUserByEmail: vi.fn(),
   getUserProfile: vi.fn(),
   setCertificateDefaults: vi.fn(),
+  updateCertificate: vi.fn(),
   updateCertificateBatch: vi.fn()
 }));
 
@@ -68,6 +72,7 @@ describe('certificateDraftService', () => {
     awardTitle: 'Most Improved',
     seasonLabel: 'Spring 2026',
     footerUrl: 'www.allplays.ai',
+    descriptionTone: 'celebratory and specific',
     colorMode: 'team',
     customColors: {
       borderColor: '#ffcc00',
@@ -111,7 +116,8 @@ describe('certificateDraftService', () => {
         name: 'Pat Star',
         number: '9',
         photoUrl: 'https://img/player-1.png',
-        active: true
+        active: true,
+        customDescriptionHint: ''
       }
     ]);
     expect(model.templates).toEqual([
@@ -234,6 +240,7 @@ describe('certificateDraftService', () => {
       descriptionSource: 'manual',
       seasonLabel: 'Spring 2026',
       footerUrl: 'www.allplays.ai',
+      descriptionTone: 'celebratory and specific',
       status: 'draft'
     });
   });

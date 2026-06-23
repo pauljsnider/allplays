@@ -17,11 +17,57 @@ const certificateDraftServiceMocks = vi.hoisted(() => ({
   saveCertificateDraftsForApp: vi.fn()
 }));
 
+const certificateAwardServiceMocks = vi.hoisted(() => ({
+  buildCertificateAwardDraftsForApp: vi.fn(({ batchId, certificateIds, players, shared }) => players.map((player: any, index: number) => ({
+    id: certificateIds[index],
+    certificateId: certificateIds[index],
+    batchId,
+    playerId: player.id,
+    recipientName: player.name,
+    playerNumber: player.number,
+    playerPhotoUrl: player.photoUrl || null,
+    awardTitle: shared.awardTitle,
+    description: '',
+    descriptionSource: 'ai',
+    descriptionStatus: 'pending',
+    statsWindow: shared.statsWindow,
+    includeInExport: true,
+    errorMessage: null,
+    status: 'draft',
+    customDescriptionHint: player.customDescriptionHint || ''
+  }))),
+  generateCertificateAwardNarrativesForApp: vi.fn(async ({ drafts }) => drafts.map((draft: any) => ({
+    ...draft,
+    description: `AI narrative for ${draft.recipientName}`,
+    descriptionSource: 'ai',
+    descriptionStatus: 'ready',
+    errorMessage: null
+  }))),
+  publishCertificateAwardsForApp: vi.fn(async ({ drafts }) => ({
+    publishedCertificateIds: drafts.map((draft: any) => draft.certificateId),
+    batchIds: Array.from(new Set(drafts.map((draft: any) => draft.batchId))),
+    parentVisibility: drafts.map((draft: any) => ({
+      teamId: 'team-1',
+      playerId: draft.playerId,
+      certificateId: draft.certificateId,
+      status: 'published'
+    }))
+  }))
+}));
+
+const certificateExportMocks = vi.hoisted(() => ({
+  getCertificateFilename: vi.fn(() => 'bears-pat-player-spring-2026.png'),
+  renderNodeToPngBlob: vi.fn(async () => new Blob(['png'], { type: 'image/png' }))
+}));
+
 const publicActionMocks = vi.hoisted(() => ({
+  exportCertificatePngFile: vi.fn(async () => 'downloaded'),
   openPublicUrl: vi.fn()
 }));
 
 vi.mock('../lib/certificateDraftService', () => certificateDraftServiceMocks);
+vi.mock('../lib/certificateAwardService', () => certificateAwardServiceMocks);
+vi.mock('../lib/adapters/legacyCertificateExport', () => certificateExportMocks);
 vi.mock('../lib/publicActions', () => publicActionMocks);
 vi.mock('../lib/adapters/legacyCertificates', () => ({
   renderCertificate: vi.fn(() => {
@@ -84,6 +130,7 @@ const composerModel = {
     awardTitle: 'Most Improved Player',
     seasonLabel: 'Spring 2026',
     footerUrl: 'www.allplays.ai',
+    descriptionTone: 'celebratory and specific',
     colorMode: 'team',
     customColors: {
       borderColor: '#111111',
@@ -104,6 +151,7 @@ const composerModel = {
 describe('TeamCertificates', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
     certificateDraftServiceMocks.loadCertificateDraftComposer.mockResolvedValue(composerModel);
     certificateDraftServiceMocks.saveCertificateDraftsForApp.mockResolvedValue({
       batchId: 'batch-1',
@@ -113,6 +161,7 @@ describe('TeamCertificates', () => {
   });
 
   afterEach(() => {
+    vi.restoreAllMocks();
     cleanup();
   });
 
@@ -134,7 +183,7 @@ describe('TeamCertificates', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
 
-    expect(await screen.findByRole('heading', { name: 'Awards drafts' })).toBeTruthy();
+    expect(await screen.findByRole('heading', { name: 'Awards studio' })).toBeTruthy();
     await waitFor(() => {
       expect(certificateDraftServiceMocks.loadCertificateDraftComposer).toHaveBeenCalledTimes(2);
     });
@@ -151,15 +200,15 @@ describe('TeamCertificates', () => {
       </MemoryRouter>
     );
 
-    expect(await screen.findByRole('heading', { name: 'Awards drafts' })).toBeTruthy();
+    expect(await screen.findByRole('heading', { name: 'Awards studio' })).toBeTruthy();
 
-    fireEvent.click(screen.getByRole('button', { name: 'Create drafts' }));
+    fireEvent.click(screen.getByRole('button', { name: /create drafts/i }));
 
     expect(await screen.findByText('Unable to create certificate drafts.')).toBeTruthy();
     expect(publicActionMocks.openPublicUrl).not.toHaveBeenCalled();
   });
 
-  it('opens the awards web studio for AI narratives, publish, and print continuation', async () => {
+  it('keeps an explicit awards web studio escape hatch', async () => {
     render(
       <MemoryRouter initialEntries={['/teams/team-1/certificates']}>
         <Routes>
@@ -168,13 +217,91 @@ describe('TeamCertificates', () => {
       </MemoryRouter>
     );
 
-    expect(await screen.findByRole('heading', { name: 'Awards drafts' })).toBeTruthy();
+    expect(await screen.findByRole('heading', { name: 'Awards studio' })).toBeTruthy();
 
     fireEvent.click(screen.getByRole('button', { name: 'Open website' }));
 
     await waitFor(() => {
       expect(publicActionMocks.openPublicUrl).toHaveBeenCalledWith('https://allplays.ai/certificates.html#teamId=team-1');
     });
+  });
+
+  it('creates drafts, generates editable narratives, and does not hand off to the website', async () => {
+    render(
+      <MemoryRouter initialEntries={['/teams/team-1/certificates']}>
+        <Routes>
+          <Route path="/teams/:teamId/certificates" element={<TeamCertificates auth={auth} />} />
+        </Routes>
+      </MemoryRouter>
+    );
+
+    expect(await screen.findByRole('heading', { name: 'Awards studio' })).toBeTruthy();
+
+    fireEvent.click(screen.getByRole('button', { name: /create drafts/i }));
+
+    expect(await screen.findByDisplayValue('AI narrative for Pat Player')).toBeTruthy();
+    expect(certificateDraftServiceMocks.saveCertificateDraftsForApp).toHaveBeenCalledWith(expect.objectContaining({
+      teamId: 'team-1',
+      selectedPlayers: [expect.objectContaining({ id: 'player-1' })]
+    }));
+    expect(certificateAwardServiceMocks.generateCertificateAwardNarrativesForApp).toHaveBeenCalledWith(expect.objectContaining({
+      teamId: 'team-1',
+      drafts: [expect.objectContaining({ certificateId: 'cert-1' })]
+    }));
+    expect(publicActionMocks.openPublicUrl).not.toHaveBeenCalled();
+  });
+
+  it('requires explicit review confirmation before publishing generated awards', async () => {
+    render(
+      <MemoryRouter initialEntries={['/teams/team-1/certificates']}>
+        <Routes>
+          <Route path="/teams/:teamId/certificates" element={<TeamCertificates auth={auth} />} />
+        </Routes>
+      </MemoryRouter>
+    );
+
+    expect(await screen.findByRole('heading', { name: 'Awards studio' })).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: /create drafts/i }));
+    expect(await screen.findByDisplayValue('AI narrative for Pat Player')).toBeTruthy();
+
+    const publishButton = screen.getByRole('button', { name: /publish selected/i });
+    expect(publishButton).toBeDisabled();
+
+    fireEvent.click(screen.getByLabelText('I reviewed these certificate descriptions and they are ready for parents.'));
+    fireEvent.click(screen.getByRole('button', { name: /publish selected/i }));
+
+    await waitFor(() => {
+      expect(certificateAwardServiceMocks.publishCertificateAwardsForApp).toHaveBeenCalledWith(expect.objectContaining({
+        teamId: 'team-1',
+        reviewConfirmed: true,
+        drafts: [expect.objectContaining({
+          certificateId: 'cert-1',
+          description: 'AI narrative for Pat Player'
+        })]
+      }));
+    });
+    expect(await screen.findByText('Published 1 certificate for parent viewing.')).toBeTruthy();
+  });
+
+  it('shows export failures without changing the drafted award', async () => {
+    publicActionMocks.exportCertificatePngFile.mockRejectedValueOnce(new Error('Native certificate share failed.'));
+
+    render(
+      <MemoryRouter initialEntries={['/teams/team-1/certificates']}>
+        <Routes>
+          <Route path="/teams/:teamId/certificates" element={<TeamCertificates auth={auth} />} />
+        </Routes>
+      </MemoryRouter>
+    );
+
+    expect(await screen.findByRole('heading', { name: 'Awards studio' })).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: /create drafts/i }));
+    expect(await screen.findByDisplayValue('AI narrative for Pat Player')).toBeTruthy();
+
+    fireEvent.click(screen.getByRole('button', { name: /export png/i }));
+
+    expect(await screen.findByText('Native certificate share failed.')).toBeTruthy();
+    expect(screen.getByDisplayValue('AI narrative for Pat Player')).toBeTruthy();
   });
 
   it('ignores stale certificate loads after navigating to a different team', async () => {
