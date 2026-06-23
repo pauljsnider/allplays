@@ -135,6 +135,7 @@ export function Teams({ auth }: { auth: AuthState }) {
       {
         ignoreStale: true,
         rethrow: false,
+        shouldHandleError: () => loadId === activeLoadIdRef.current,
         getErrorMessage: (enrichError) => getTeamsLoadErrorMessage(toAppServiceError(enrichError, 'Unable to load teams.'), true),
         onSuccess: (enrichedHome) => {
           if (loadId !== activeLoadIdRef.current) return;

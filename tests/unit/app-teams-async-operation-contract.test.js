@@ -42,6 +42,7 @@ describe('Teams async operation contract', () => {
         expect(loadTeamsSource).toContain('setHome(emptyHome());');
         expect(loadTeamsSource).toContain('const hasFastTeams = fastHome.teams.length > 0;');
         expect(loadTeamsSource).toContain("getTeamsLoadErrorMessage(toAppServiceError(enrichError, 'Unable to load teams.'), true)");
+        expect(loadTeamsSource).toContain('shouldHandleError: () => loadId === activeLoadIdRef.current');
         expect(loadTeamsSource).toContain('if (!hasExistingTeams && !hasFastTeams) {');
         expect(loadTeamsSource).toContain('setHome((current) => mergeTeamSummary(current, enrichedHome));');
     });

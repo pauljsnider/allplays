@@ -8,6 +8,7 @@ type UseAsyncOperationRunOptions<T> = {
     onError?: (error: unknown) => void | Promise<void>;
     onFinally?: () => void | Promise<void>;
     ignoreStale?: boolean;
+    shouldHandleError?: (error: unknown) => boolean;
     rethrow?: boolean;
 };
 
@@ -37,6 +38,7 @@ export function useAsyncOperation() {
             onError,
             onFinally,
             ignoreStale = false,
+            shouldHandleError,
             rethrow = true
         }: UseAsyncOperationRunOptions<T> = {}
     ) {
@@ -56,7 +58,7 @@ export function useAsyncOperation() {
             }
             return value;
         } catch (error) {
-            if (isCurrentRun()) {
+            if (isCurrentRun() && (shouldHandleError?.(error) ?? true)) {
                 setError(errorMessage || getErrorMessage?.(error) || getDefaultErrorMessage(error));
                 await onError?.(error);
             }

@@ -83,6 +83,38 @@ function StaleOperationHarness({
     );
 }
 
+function GuardedErrorHarness({
+    operation,
+    shouldHandleError,
+    onError
+}: {
+    operation: () => Promise<string>;
+    shouldHandleError: (error: unknown) => boolean;
+    onError: (error: unknown) => void;
+}) {
+    const { loading, error, run } = useAsyncOperation();
+
+    return (
+        <div>
+            <div data-testid="loading">{String(loading)}</div>
+            <div data-testid="error">{error || ''}</div>
+            <button
+                type="button"
+                onClick={() => {
+                    void run(operation, {
+                        rethrow: false,
+                        getErrorMessage: (error: unknown) => error instanceof Error ? error.message : 'Failed',
+                        shouldHandleError,
+                        onError
+                    });
+                }}
+            >
+                Run guarded
+            </button>
+        </div>
+    );
+}
+
 describe('useAsyncOperation', () => {
     afterEach(() => {
         cleanup();
@@ -158,6 +190,35 @@ describe('useAsyncOperation', () => {
             expect(screen.getByTestId('loading').textContent).toBe('false');
             expect(screen.getByTestId('value').textContent).toBe('latest value');
         });
+        expect(screen.getByTestId('error').textContent).toBe('');
+    });
+
+    it('can skip handling current-run errors when a caller guard rejects them', async () => {
+        const deferred = createDeferred<string>();
+        const onError = vi.fn();
+        const shouldHandleError = vi.fn(() => false);
+
+        render(
+            <GuardedErrorHarness
+                operation={() => deferred.promise}
+                shouldHandleError={shouldHandleError}
+                onError={onError}
+            />
+        );
+
+        fireEvent.click(screen.getByRole('button', { name: 'Run guarded' }));
+        await waitFor(() => {
+            expect(screen.getByTestId('loading').textContent).toBe('true');
+        });
+
+        const guardedError = new Error('guarded failure');
+        deferred.reject(guardedError);
+
+        await waitFor(() => {
+            expect(screen.getByTestId('loading').textContent).toBe('false');
+        });
+        expect(shouldHandleError).toHaveBeenCalledWith(guardedError);
+        expect(onError).not.toHaveBeenCalled();
         expect(screen.getByTestId('error').textContent).toBe('');
     });
 });
