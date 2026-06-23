@@ -1,4 +1,4 @@
-import { AlertCircle, Bell, CheckCheck, Loader2, X } from 'lucide-react';
+import { AlertCircle, Bell, CheckCheck, Loader2, RotateCcw, X } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import type { NotificationInboxItem } from '../lib/notificationInboxService';
 
@@ -7,11 +7,12 @@ interface NotificationInboxSheetProps {
     inboxState: 'loading' | 'ready' | 'error';
     uid: string;
     onClose: () => void;
+    onRetry?: () => void;
     onMarkRead: (uid: string, itemId: string) => Promise<void>;
     onMarkAllRead?: (uid: string, items: NotificationInboxItem[]) => Promise<void>;
 }
 
-export function NotificationInboxSheet({ items, inboxState, uid, onClose, onMarkRead, onMarkAllRead }: NotificationInboxSheetProps) {
+export function NotificationInboxSheet({ items, inboxState, uid, onClose, onRetry, onMarkRead, onMarkAllRead }: NotificationInboxSheetProps) {
     const navigate = useNavigate();
     const unreadItems = items.filter((item) => !item.readAt);
 
@@ -58,6 +59,17 @@ export function NotificationInboxSheet({ items, inboxState, uid, onClose, onMark
                     <AlertCircle className="h-10 w-10 text-red-300" aria-hidden="true" />
                     <p className="text-sm font-semibold text-gray-500">Could not load notifications</p>
                     <p className="text-xs text-gray-400">Check your connection and try again.</p>
+                    {onRetry ? (
+                        <button
+                            type="button"
+                            className="primary-button !h-10 !min-h-10 text-sm"
+                            onClick={onRetry}
+                            data-testid="notification-inbox-retry"
+                        >
+                            <RotateCcw className="h-4 w-4" aria-hidden="true" />
+                            Retry
+                        </button>
+                    ) : null}
                 </div>
             );
         }
@@ -79,7 +91,18 @@ export function NotificationInboxSheet({ items, inboxState, uid, onClose, onMark
                         data-testid="notification-inbox-error-banner"
                     >
                         <AlertCircle className="h-4 w-4 flex-none" aria-hidden="true" />
-                        Could not refresh — showing cached notifications.
+                        <span className="min-w-0 flex-1">Could not refresh — showing cached notifications.</span>
+                        {onRetry ? (
+                            <button
+                                type="button"
+                                className="ghost-button !h-8 !min-h-8 flex-none !border-red-200 !bg-white !px-2 !text-xs !text-red-700 hover:!bg-red-50"
+                                onClick={onRetry}
+                                data-testid="notification-inbox-retry"
+                            >
+                                <RotateCcw className="h-3.5 w-3.5" aria-hidden="true" />
+                                Retry
+                            </button>
+                        ) : null}
                     </div>
                 )}
                 <ul role="list" className="divide-y divide-gray-100">
