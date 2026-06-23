@@ -148,10 +148,18 @@ describe('detectMentionedUids', () => {
         expect(detectMentionedUids('Heads up @all', members)).toEqual([]);
         expect(detectMentionedUids('Heads up @team', members, { allowReservedMentions: true }).sort()).toEqual(['u1', 'u2']);
     });
+
+    it('does not treat the ALL PLAYS assistant mention as reserved @all', () => {
+        const members = [
+            { uid: 'u1', displayName: 'Alice' },
+            { uid: 'u2', displayName: 'Bob' }
+        ];
+        expect(detectMentionedUids('@ALL PLAYS who needs RSVP help?', members, { allowReservedMentions: true })).toEqual([]);
+    });
 });
 
 describe('buildTeamChatNotificationContext', () => {
-    function createTeamChatNotificationContextHarness({ conversationDocs = {}, emailUserIds = ['assistant-1'] } = {}) {
+    function createTeamChatNotificationContextHarness({ conversationDocs = {}, emailUserIds = ['assistant-1'], playerDocs = [] } = {}) {
         const teamData = { ownerId: 'coach-1', adminEmails: ['assistant@example.com'] };
         const parentDocs = [{ id: 'parent-1' }];
         const targetDocs = [
@@ -189,6 +197,20 @@ describe('buildTeamChatNotificationContext', () => {
                 if (path === 'teams/team-1/notificationTargets') {
                     return {
                         get: async () => ({ forEach: (callback) => targetDocs.forEach((doc) => callback(doc)) })
+                    };
+                }
+                if (path === 'teams/team-1/players') {
+                    return {
+                        get: async () => ({
+                            docs: playerDocs.map((player, index) => ({
+                                id: player.id || `player-${index + 1}`,
+                                data: () => player
+                            })),
+                            forEach: (callback) => playerDocs.forEach((player, index) => callback({
+                                id: player.id || `player-${index + 1}`,
+                                data: () => player
+                            }))
+                        })
                     };
                 }
                 throw new Error(`Unexpected collection path: ${path}`);
@@ -257,6 +279,52 @@ describe('buildTeamChatNotificationContext', () => {
         expect(context.members.map((member) => member.uid).sort()).toEqual(['coach-1', 'parent-1']);
         expect(context.targetsByCategory.mentions.map((target) => target.uid).sort()).toEqual(['coach-1', 'parent-1']);
         expect(context.targetsByCategory.liveChat.map((target) => target.uid).sort()).toEqual(['coach-1', 'parent-1']);
+    });
+
+    it('adds active roster player names as mention aliases for linked contacts', async () => {
+        const buildTeamChatNotificationContext = createTeamChatNotificationContextHarness({
+            playerDocs: [
+                {
+                    id: 'player-1',
+                    name: 'Avery Smith',
+                    parents: [{ userId: 'parent-1', name: 'Pat Parent' }]
+                }
+            ]
+        });
+
+        const context = await buildTeamChatNotificationContext('team-1', {
+            includeMentions: true,
+            conversationId: 'team'
+        });
+
+        const parent = context.members.find((member) => member.uid === 'parent-1');
+        expect(parent.mentionNames).toEqual(expect.arrayContaining(['Avery Smith', 'Pat Parent']));
+    });
+
+    it('resolves player-scoped conversation participants to their linked contact users', async () => {
+        const buildTeamChatNotificationContext = createTeamChatNotificationContextHarness({
+            conversationDocs: {
+                'teams/team-1/chatConversations/player_thread': {
+                    participantIds: ['coach-1', 'player:player-1']
+                }
+            },
+            playerDocs: [
+                {
+                    id: 'player-1',
+                    name: 'Avery Smith',
+                    parents: [{ userId: 'parent-1', name: 'Pat Parent' }]
+                }
+            ]
+        });
+
+        const context = await buildTeamChatNotificationContext('team-1', {
+            includeMentions: true,
+            conversationId: 'player_thread',
+            targetType: 'individuals'
+        });
+
+        expect(context.members.map((member) => member.uid).sort()).toEqual(['coach-1', 'parent-1']);
+        expect(context.targetsByCategory.mentions.map((target) => target.uid).sort()).toEqual(['coach-1', 'parent-1']);
     });
 });
 
@@ -538,6 +606,11 @@ describe('buildTeamChatNotificationPlan', () => {
             actorUid: 'coach-1',
             recipientContext
         });
+        const staffAllPlan = buildTeamChatNotificationPlan({
+            text: 'Heads up @all',
+            actorUid: 'coach-1',
+            recipientContext
+        });
         const parentPlan = buildTeamChatNotificationPlan({
             text: 'Heads up @team',
             actorUid: 'player-1',
@@ -546,6 +619,8 @@ describe('buildTeamChatNotificationPlan', () => {
 
         expect(staffPlan.mentionedUids.sort()).toEqual(['player-1', 'player-2']);
         expect(staffPlan.liveChatTargets).toEqual([]);
+        expect(staffAllPlan.mentionedUids.sort()).toEqual(['player-1', 'player-2']);
+        expect(staffAllPlan.liveChatTargets).toEqual([]);
         expect(parentPlan.mentionedUids).toEqual([]);
         expect(parentPlan.liveChatTargets.map((target) => target.uid).sort()).toEqual(['player-2']);
     });
