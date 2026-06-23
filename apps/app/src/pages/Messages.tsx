@@ -104,7 +104,7 @@ import { voiceRecognition, type VoiceListenerHandle } from '../lib/voiceService'
 import { useChatSheets } from './messages/hooks/useChatSheets';
 import { useChatTeam } from './messages/hooks/useChatTeam';
 import { useChatMessages } from './messages/hooks/useChatMessages';
-import { emailReducer, initialEmailComposerState } from './messages/state/emailReducer';
+import { emailComposerActions, emailReducer, initialEmailComposerState } from './messages/state/emailReducer';
 
 type StatusTone = 'neutral' | 'success' | 'error';
 
@@ -1371,7 +1371,7 @@ function ChatWindow({
     if (!canModerate) return;
     setEmailLoadingTemplates(true);
     try {
-      emailDispatch({ type: 'setTemplates', templates: await loadTeamEmailTemplates(teamId) });
+      emailDispatch(emailComposerActions.setTemplates(await loadTeamEmailTemplates(teamId)));
       if (!suppressErrorStatus) {
         setEmailStatus(null);
       }
@@ -1388,7 +1388,7 @@ function ChatWindow({
     if (!canModerate) return;
     setEmailLoadingDrafts(true);
     try {
-      emailDispatch({ type: 'setDrafts', drafts: await loadTeamEmailDrafts(teamId) });
+      emailDispatch(emailComposerActions.setDrafts(await loadTeamEmailDrafts(teamId)));
       if (!suppressErrorStatus) {
         setEmailStatus(null);
       }
@@ -1404,10 +1404,10 @@ function ChatWindow({
   const openEmailSheet = () => {
     if (!canModerate) return;
     openTeamEmailSheet();
-    emailDispatch({ type: 'updateTemplateName', templateName: '' });
+    emailDispatch(emailComposerActions.updateTemplateName(''));
     setEmailStatus(null);
     setEmailHistoryStatus(null);
-    emailDispatch({ type: 'clearSelectedDraft' });
+    emailDispatch(emailComposerActions.clearSelectedDraft());
     void ensureRecipientOptionsLoaded().catch(() => undefined);
     if (emailSheetLoadedForTeamRef.current !== teamId) {
       emailSheetLoadedForTeamRef.current = teamId;
@@ -1425,14 +1425,14 @@ function ChatWindow({
     }
     setSelectedRecipientTarget('individuals');
     setSelectedRecipientIds(draft.recipientIds);
-    emailDispatch({ type: 'selectDraft', draftId: draft.id });
+    emailDispatch(emailComposerActions.selectDraft(draft.id));
     setEmailStatus({ tone: 'success', message: `Restored draft “${draft.subject || 'Untitled draft'}”. This replaced the current email composer.` });
   };
 
   const handleApplyEmailTemplate = (templateId: string) => {
     const template = emailState.templates.find((item) => item.id === templateId);
     if (!template) return;
-    emailDispatch({ type: 'applyTemplate', templateId: template.id });
+    emailDispatch(emailComposerActions.applyTemplate(template.id));
     setEmailStatus({ tone: 'success', message: `Applied template “${template.name}”.` });
   };
 
@@ -1447,8 +1447,8 @@ function ChatWindow({
         subject: emailState.subject,
         body: emailState.body
       });
-      emailDispatch({ type: 'updateTemplateName', templateName: '' });
-      emailDispatch({ type: 'setTemplates', templates: [savedTemplate, ...emailState.templates.filter((item) => item.id !== savedTemplate.id)] });
+      emailDispatch(emailComposerActions.updateTemplateName(''));
+      emailDispatch(emailComposerActions.setTemplates([savedTemplate, ...emailState.templates.filter((item) => item.id !== savedTemplate.id)]));
       setEmailStatus({ tone: 'success', message: `Saved template “${savedTemplate.name}”.` });
       void reloadEmailTemplates({ suppressErrorStatus: true });
     } catch (saveError: any) {
@@ -1475,7 +1475,7 @@ function ChatWindow({
         authorName: profile?.fullName || auth.user?.displayName || null
       });
       if (savedDraft?.id) {
-        emailDispatch({ type: 'saveDraft', draft: savedDraft });
+        emailDispatch(emailComposerActions.saveDraft(savedDraft));
       }
       setEmailStatus({ tone: 'success', message: `Saved draft “${savedDraft?.subject || emailState.subject || 'Untitled draft'}”. No email was sent.` });
       void reloadEmailDrafts({ suppressErrorStatus: true });
@@ -1510,7 +1510,7 @@ function ChatWindow({
         targetType: emailAudienceMetadata.targetType,
         recipientIds: emailAudienceMetadata.recipientIds
       });
-      emailDispatch({ type: 'clearComposer' });
+      emailDispatch(emailComposerActions.clearComposer());
       setEmailStatus({ tone: 'success', message: `Queued ${Number(result?.recipientCount || 0)} recipient${Number(result?.recipientCount || 0) === 1 ? '' : 's'} for backend email delivery.` });
       await reloadSentEmailHistory({ suppressErrorStatus: true });
     } catch (sendError: any) {
@@ -1966,9 +1966,9 @@ function ChatWindow({
           sentEmails={sentEmails}
           audienceSummary={getAudienceSummaryText(emailAudienceMetadata, recipientOptions)}
           audienceMetadata={emailAudienceMetadata}
-          onSubjectChange={(subject) => emailDispatch({ type: 'updateSubject', subject })}
-          onBodyChange={(body) => emailDispatch({ type: 'updateBody', body })}
-          onTemplateNameChange={(templateName) => emailDispatch({ type: 'updateTemplateName', templateName })}
+          onSubjectChange={(subject) => emailDispatch(emailComposerActions.updateSubject(subject))}
+          onBodyChange={(body) => emailDispatch(emailComposerActions.updateBody(body))}
+          onTemplateNameChange={(templateName) => emailDispatch(emailComposerActions.updateTemplateName(templateName))}
           onApplyDraft={handleApplyEmailDraft}
           onSaveDraft={handleSaveEmailDraft}
           onApplyTemplate={handleApplyEmailTemplate}

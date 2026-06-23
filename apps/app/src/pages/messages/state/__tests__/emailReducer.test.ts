@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { emailReducer, initialEmailComposerState } from '../emailReducer';
+import { emailComposerActions, emailReducer, initialEmailComposerState } from '../emailReducer';
 import type { TeamEmailDraft, TeamEmailTemplate } from '../../../../lib/chatService';
 
 function draft(overrides: Partial<TeamEmailDraft> = {}): TeamEmailDraft {
@@ -24,6 +24,29 @@ function template(overrides: Partial<TeamEmailTemplate> = {}): TeamEmailTemplate
 }
 
 describe('emailReducer', () => {
+  it('exposes named actions for composer edits, draft selection, template application, and draft deletion', () => {
+    const withDrafts = emailReducer(initialEmailComposerState, emailComposerActions.setDrafts([draft()]));
+    const selected = emailReducer(withDrafts, emailComposerActions.selectDraft('draft-1'));
+    const edited = emailReducer(
+      emailReducer(selected, emailComposerActions.updateSubject('Updated practice reminder')),
+      emailComposerActions.updateBody('Bring cleats, water, and a jacket.')
+    );
+    const withTemplate = emailReducer(edited, emailComposerActions.setTemplates([template()]));
+    const applied = emailReducer(withTemplate, emailComposerActions.applyTemplate('template-1'));
+
+    expect(applied).toMatchObject({
+      selectedDraftId: 'draft-1',
+      subject: 'Week ahead',
+      body: 'Here is the plan.'
+    });
+    expect(emailReducer(applied, emailComposerActions.deleteDraft('draft-1'))).toMatchObject({
+      drafts: [],
+      selectedDraftId: '',
+      subject: '',
+      body: ''
+    });
+  });
+
   it('starts with empty composer fields and applies direct subject and body edits', () => {
     expect(initialEmailComposerState).toMatchObject({
       drafts: [],
