@@ -624,16 +624,23 @@ describe('parent schedule detail hydration', () => {
     vi.mocked(getAssignmentClaims).mockResolvedValue({} as any);
   });
 
-  it('eagerly hydrates only near-term Home events', async () => {
+  it('eagerly hydrates only near-term Home events without preloading duplicate RSVP summaries', async () => {
     const nearEvent = buildHydrationEvent('near-game', new Date(Date.now() + 24 * 60 * 60 * 1000));
     const futureEvent = buildHydrationEvent('future-game', new Date(Date.now() + 30 * 24 * 60 * 60 * 1000));
 
     await hydrateParentScheduleDetails({ children: [], events: [nearEvent, futureEvent] }, user);
 
-    expect(getRsvpSummaries).toHaveBeenCalledWith('team-1', ['near-game']);
+    expect(getRsvpSummaries).not.toHaveBeenCalled();
     expect(getRsvps).toHaveBeenCalledWith('team-1', 'near-game');
     expect(getRsvps).not.toHaveBeenCalledWith('team-1', 'future-game');
     expect(nearEvent.myRsvp).toBe('going');
+    expect(nearEvent.rsvpSummary).toEqual({
+      going: 1,
+      maybe: 0,
+      notGoing: 0,
+      notResponded: 0,
+      total: 1
+    });
     expect(futureEvent.myRsvp).toBe('not_responded');
   });
 
