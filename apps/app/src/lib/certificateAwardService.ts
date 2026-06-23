@@ -172,7 +172,8 @@ export async function publishCertificateAwardsForApp({
   if (!user?.uid) throw new Error('You must be signed in to publish certificates.');
   if (!reviewConfirmed) throw new Error('Review and confirm certificate descriptions before publishing.');
 
-  const publishDrafts = (Array.isArray(drafts) ? drafts : []).filter((draft) => draft?.includeInExport !== false);
+  const sourceDrafts = Array.isArray(drafts) ? drafts : [];
+  const publishDrafts = sourceDrafts.filter((draft) => draft?.includeInExport !== false);
   if (!publishDrafts.length) throw new Error('Select at least one certificate before publishing.');
   if (publishDrafts.some((draft) => !draft.certificateId)) {
     throw new Error('Create certificate drafts before publishing.');
@@ -197,7 +198,7 @@ export async function publishCertificateAwardsForApp({
 
   const batchIds = Array.from(new Set(publishDrafts.map((draft) => draft.batchId).filter(Boolean)));
   for (const batchId of batchIds) {
-    const batchDrafts = publishDrafts.filter((draft) => draft.batchId === batchId);
+    const batchDrafts = sourceDrafts.filter((draft) => draft.batchId === batchId && draft.certificateId);
     await updateCertificateBatch(teamId, batchId, {
       generatedCertificateIds: batchDrafts.map((draft) => draft.certificateId),
       shared,
