@@ -33,7 +33,7 @@
   "devDependencies": {
     "@capacitor/cli": "^8.4.1",
     "@playwright/test": "^1.61.0",
-    "@sentry/browser": "^10.59.0",
+    "@sentry/browser": "^10.60.0",
     "@testing-library/react": "^16.3.2",
     "react": "^19.2.7",
     "react-dom": "^19.2.7",
@@ -47,7 +47,7 @@
     "@capacitor/app": "^8.1.0",
     "@capacitor/browser": "^8.0.3",
     "@capacitor/camera": "^8.2.0",
-    "@capacitor/core": "^8.3.4",
+    "@capacitor/core": "^8.4.1",
     "@capacitor/filesystem": "^8.1.2",
     "@capacitor/ios": "^8.4.1",
     "@capacitor/share": "^8.0.1",
