@@ -11,6 +11,7 @@ const rsvpHookSource = readSource('apps/app/src/hooks/schedule/useScheduleEventR
 const ridesHookSource = readSource('apps/app/src/hooks/schedule/useScheduleRideOffers.ts');
 const availabilityPanelsSource = readSource('apps/app/src/components/schedule/AvailabilityPanels.tsx');
 const compactMetaSource = readSource('apps/app/src/components/schedule/CompactMeta.tsx');
+const scheduleEventHeaderSource = readSource('apps/app/src/components/schedule/ScheduleEventHeader.tsx');
 const assignmentsSectionSource = readSource('apps/app/src/components/schedule/AssignmentsSection.tsx');
 const gameReportSectionsSource = readSource('apps/app/src/components/schedule/GameReportSections.tsx');
 const gameReportContentSource = readSource('apps/app/src/components/schedule/GameReportSectionContent.tsx');
@@ -108,9 +109,8 @@ describe('ScheduleEventDetail decomposition initiative source contract', () => {
 
     it('keeps reusable schedule UI out of the detail page body', () => {
         [
-            "import { DateTile } from '../components/schedule/DateTile';",
             "import { CompactMeta } from '../components/schedule/CompactMeta';",
-            "import { EventBrief } from '../components/schedule/EventBrief';",
+            "import { ScheduleEventHeader } from '../components/schedule/ScheduleEventHeader';",
             "import { GameReportSections } from '../components/schedule/GameReportSections';",
             "import { PlayerSwitcher } from '../components/schedule/PlayerSwitcher';",
             "import { PracticeAttendancePanel } from '../components/schedule/PracticeAttendancePanel';",
@@ -129,8 +129,6 @@ describe('ScheduleEventDetail decomposition initiative source contract', () => {
 
         [
             /^function CompactMeta\b/m,
-            /^function DateTile\b/m,
-            /^function EventBrief\b/m,
             /^function EventSectionNav\b/m,
             /^function GameReportSections\b/m,
             /^function PlayerSwitcher\b/m,
@@ -149,6 +147,9 @@ describe('ScheduleEventDetail decomposition initiative source contract', () => {
         });
 
         expect(compactMetaSource).toContain('export function CompactMeta');
+        expect(scheduleEventHeaderSource).toContain("import { DateTile } from './DateTile';");
+        expect(scheduleEventHeaderSource).toContain("import { EventBrief } from './EventBrief';");
+        expect(scheduleEventHeaderSource).toContain('export function ScheduleEventHeader');
         expect(practiceAttendancePanelSource).toContain('export function PracticeAttendancePanel');
         expect(practiceAttendancePanelSource).toContain('data-testid={`practice-attendance-row-${player.playerId}`}');
         expect(scoreStepperSource).toContain('export function ScoreStepper');
