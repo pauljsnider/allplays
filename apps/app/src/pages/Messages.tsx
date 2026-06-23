@@ -104,7 +104,8 @@ import { voiceRecognition, type VoiceListenerHandle } from '../lib/voiceService'
 import { useChatSheets } from './messages/hooks/useChatSheets';
 import { useChatTeam } from './messages/hooks/useChatTeam';
 import { useChatMessages } from './messages/hooks/useChatMessages';
-import { emailComposerActions, emailReducer, initialEmailComposerState } from './messages/state/emailReducer';
+import { emailReducer, initialEmailComposerState } from './messages/state/emailReducer';
+import { emailComposerActions } from './messages/state/emailReducer';
 
 type StatusTone = 'neutral' | 'success' | 'error';
 
