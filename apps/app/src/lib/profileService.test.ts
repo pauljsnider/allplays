@@ -41,12 +41,12 @@ vi.mock('@capacitor/camera', () => ({
     Camera: {},
     CameraResultType: {},
     CameraSource: {}
-}), { virtual: true });
+}));
 vi.mock('@capacitor/core', () => ({
     Capacitor: {
         isNativePlatform: vi.fn(() => false)
     }
-}), { virtual: true });
+}));
 vi.mock('./authService', () => ({
     firebaseAuth: { app: { options: { projectId: 'demo-project' } } },
     getNativeAuthIdToken: vi.fn()
