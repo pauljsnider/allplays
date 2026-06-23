@@ -26,7 +26,10 @@ describe('Messages decomposition contract', () => {
         const messages = readRepoFile('apps/app/src/pages/Messages.tsx');
         const reducer = readRepoFile('apps/app/src/pages/messages/state/emailReducer.ts');
 
-        expect(messages).toContain("import { emailReducer, initialEmailComposerState } from './messages/state/emailReducer';");
+        expect(messages).toContain("from './messages/state/emailReducer';");
+        expect(messages).toContain('emailComposerActions');
+        expect(messages).toContain('emailReducer');
+        expect(messages).toContain('initialEmailComposerState');
         expect(messages).toMatch(/const\s+\[emailState,\s*emailDispatch\]\s*=\s*useReducer\(emailReducer,\s*initialEmailComposerState\);/);
         expect(messages).not.toMatch(/const\s+\[emailSubject\b/);
         expect(messages).not.toMatch(/const\s+\[emailBody\b/);

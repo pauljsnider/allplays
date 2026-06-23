@@ -53,9 +53,11 @@ describe('app Firestore boundary initiative source contract', () => {
 
     it('keeps game report Firestore records typed and mapped before report assembly', () => {
         expect(firestoreTypesSource).toContain('export type GameReportGameFirestoreRecord = {');
+        expect(firestoreTypesSource).toContain('export type GameReportOpponentFirestoreRecord = {');
         expect(firestoreTypesSource).toContain('export type GameReportAggregatedStatsFirestoreRecord = {');
         expect(firestoreTypesSource).toContain('export type GameReportEventFirestoreRecord = {');
         expect(firestoreMappersSource).toContain('export function mapGameReportGameRecord(value: unknown, fallbackGameId = \'\'): GameReportGameFirestoreRecord');
+        expect(firestoreMappersSource).toContain('export function mapGameReportOpponentStatsRecord(value: unknown): GameReportOpponentFirestoreRecord');
         expect(firestoreMappersSource).toContain('export function mapGameReportAggregatedStatsRecord(id: string, value: unknown): GameReportAggregatedStatsFirestoreRecord');
         expect(firestoreMappersSource).toContain('export function mapGameReportEventRecords(value: unknown): GameReportEventFirestoreRecord[]');
 

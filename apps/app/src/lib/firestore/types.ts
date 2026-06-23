@@ -164,6 +164,7 @@ export type GameReportOpponentFirestoreRecord = {
     name?: string | null;
     number?: string | null;
     notes?: string | null;
+    playerId?: string | null;
     photoUrl?: string | null;
     [key: string]: unknown;
 };

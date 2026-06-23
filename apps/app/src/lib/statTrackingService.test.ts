@@ -117,6 +117,37 @@ describe('statTrackingService', () => {
     expect(service.getEventLog()).toHaveLength(1);
   });
 
+  it('accepts legacy custom stat column keys with punctuation', async () => {
+    const dependencies = createDependencies();
+    const service = createStatTrackingService({
+      statConfig: { columns: ['3-Pt', 'FG%'] },
+      initialScore: { homeScore: 0, awayScore: 0 },
+      dependencies
+    });
+
+    const result = await service.recordEvent('team-1', 'game-1', {
+      text: '#4 Alex 3-Pt +1',
+      playerName: 'Alex',
+      playerNumber: '4',
+      undoData: {
+        type: 'stat',
+        playerId: 'player-1',
+        statKey: '3-Pt',
+        value: 1,
+        isOpponent: false
+      }
+    }, {
+      uid: 'coach-1'
+    });
+
+    expect(result.aggregateStatKey).toBe('3-pt');
+    expect(dependencies.setDoc).toHaveBeenCalledWith({ path: 'teams/team-1/games/game-1/aggregatedStats/player-1' }, expect.objectContaining({
+      stats: {
+        '3pt': { __increment: 1 }
+      }
+    }), { merge: true });
+  });
+
   it('undoes the last event by reversing aggregates before deleting the event doc and restoring score', async () => {
     const dependencies = createDependencies();
     const service = createStatTrackingService({
@@ -208,6 +239,58 @@ describe('statTrackingService', () => {
     const secondUndo = await service.undoLastEvent('team-1', 'game-1', user);
     expect(secondUndo?.playerName).toBe('Alex');
     expect(service.getCurrentScore()).toEqual({ homeScore: 0, awayScore: 0 });
+    expect(service.getEventLog()).toEqual([]);
+  });
+
+  it('hydrates a restored tracker log so undo can revert the last app session event', async () => {
+    const dependencies = createDependencies();
+    const user = { uid: 'coach-1' };
+    const service = createStatTrackingService({
+      statConfig: { columns: ['GOALS'] },
+      initialScore: { homeScore: 2, awayScore: 0 },
+      initialEventLog: [{
+        eventId: 'restored-event-1',
+        event: {
+          text: '#4 Alex GOALS +1',
+          gameTime: '',
+          period: 'H1',
+          timestamp: 2001,
+          type: 'stat',
+          playerId: 'player-1',
+          statKey: 'goals',
+          value: 1,
+          isOpponent: false,
+          createdBy: 'coach-1'
+        },
+        scoreBefore: { homeScore: 1, awayScore: 0 },
+        scoreAfter: { homeScore: 2, awayScore: 0 },
+        aggregateStatKey: 'GOALS',
+        aggregateDelta: 1,
+        aggregatePlayerId: 'player-1',
+        isOpponent: false,
+        playerName: 'Alex',
+        playerNumber: '4'
+      }],
+      dependencies
+    });
+
+    expect(service.getCurrentScore()).toEqual({ homeScore: 2, awayScore: 0 });
+    expect(service.getEventLog()).toHaveLength(1);
+
+    const undone = await service.undoLastEvent('team-1', 'game-1', user);
+
+    expect(undone?.eventId).toBe('restored-event-1');
+    expect(dependencies.setDoc).toHaveBeenCalledWith({ path: 'teams/team-1/games/game-1/aggregatedStats/player-1' }, expect.objectContaining({
+      stats: {
+        goals: { __increment: -1 }
+      }
+    }), { merge: true });
+    expect(dependencies.updateGameScore).toHaveBeenCalledWith('team-1', 'game-1', {
+      homeScore: 1,
+      awayScore: 0
+    }, user);
+    expect(dependencies.deleteDoc).toHaveBeenCalledWith({ path: 'teams/team-1/games/game-1/events/restored-event-1' });
+    expect(service.getCurrentScore()).toEqual({ homeScore: 1, awayScore: 0 });
     expect(service.getEventLog()).toEqual([]);
   });
 

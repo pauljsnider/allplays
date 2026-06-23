@@ -67,7 +67,10 @@ describe('Messages decomposition initiative source contract', () => {
     });
 
     it('keeps team email composer transitions in the reducer with dedicated reducer tests', () => {
-        expect(messagesSource).toContain("import { emailReducer, initialEmailComposerState } from './messages/state/emailReducer';");
+        expect(messagesSource).toContain("from './messages/state/emailReducer';");
+        expect(messagesSource).toContain('emailComposerActions');
+        expect(messagesSource).toContain('emailReducer');
+        expect(messagesSource).toContain('initialEmailComposerState');
         expect(messagesSource).toMatch(/useReducer\(emailReducer,\s*initialEmailComposerState\)/);
         expect(messagesSource).not.toMatch(/const\s+\[emailSubject\b/);
         expect(messagesSource).not.toMatch(/const\s+\[emailBody\b/);
@@ -83,6 +86,7 @@ describe('Messages decomposition initiative source contract', () => {
             expect(emailReducerSource).toContain(action);
         });
         expect(emailReducerSource).toContain('function clearDraftComposer(state: EmailComposerState, drafts = state.drafts): EmailComposerState');
+        expect(emailReducerSource).toContain('export const emailComposerActions = {');
         expect(emailReducerTestSource).toContain("describe('emailReducer'");
     });
 

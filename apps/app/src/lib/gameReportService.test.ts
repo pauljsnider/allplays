@@ -15,12 +15,14 @@ const firebaseMocks = vi.hoisted(() => ({
   getDocs: vi.fn()
 }));
 
-vi.mock('../../../../js/db.js', () => dbMocks);
-vi.mock('../../../../js/firebase.js', () => firebaseMocks);
-vi.mock('../../../../js/game-report-stats.js', () => ({
+const gameReportStatsMocks = vi.hoisted(() => ({
   resolveReportStatColumns: vi.fn(() => ({ statKeys: [], statLabels: {} })),
   resolveOpponentReportStatColumns: vi.fn(() => ({ oppKeys: [], oppLabels: {} }))
 }));
+
+vi.mock('../../../../js/db.js', () => dbMocks);
+vi.mock('../../../../js/firebase.js', () => firebaseMocks);
+vi.mock('../../../../js/game-report-stats.js', () => gameReportStatsMocks);
 vi.mock('../../../../js/live-game-video.js', () => ({
   buildHighlightShareUrl: vi.fn(() => ''),
   normalizeGameRecapHighlightClips: vi.fn(() => [])
@@ -80,12 +82,14 @@ describe('gameReportService', () => {
       statSheetPhotoUrl: 123,
       opponentStats: {
         'opp-1': {
-          name: 'Opponent Guard',
+          name: ' Opponent Guard ',
           number: 5,
+          notes: ' linked ',
+          playerId: ' opponent-player-1 ',
           pts: 11,
           fouls: '2',
           assists: { invalid: true },
-          photoUrl: false
+          photoUrl: ' https://img.example.test/opponent.png '
         },
         'opp-2': 'bad-payload'
       }
@@ -130,7 +134,7 @@ describe('gameReportService', () => {
         id: 'opp-1',
         name: 'Opponent Guard',
         number: '5',
-        photoUrl: undefined,
+        photoUrl: 'https://img.example.test/opponent.png',
         stats: { pts: 11, fouls: '2' }
       },
       {
@@ -141,6 +145,12 @@ describe('gameReportService', () => {
         stats: {}
       }
     ]);
+    expect(gameReportStatsMocks.resolveOpponentReportStatColumns).toHaveBeenCalledWith(expect.objectContaining({
+      opponentStats: {
+        'opp-1': { pts: 11, fouls: '2' },
+        'opp-2': {}
+      }
+    }));
     expect(report.teamStats).toEqual({ turnovers: 7, assists: '11' });
     expect(report.plays).toEqual([
       {

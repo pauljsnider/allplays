@@ -795,6 +795,29 @@ describe('ScheduleEventDetail assignments', () => {
     }
   }, 15000);
 
+  it('links staff scorekeepers from the app game hub to the standard tracker route', async () => {
+    scheduleServiceMocks.loadParentScheduleEventDetail.mockResolvedValue({
+      events: [buildEvent({
+        canUpdateScore: true,
+        statTrackerConfigId: 'cfg-soccer',
+        homeScore: 1,
+        awayScore: 0
+      })],
+      children: []
+    });
+    scheduleServiceMocks.loadHomeScoringPlayers.mockResolvedValue([]);
+    scheduleServiceMocks.loadAutoFilledLineupDraftPreviewForApp.mockResolvedValue({ availablePlayers: [], goingPlayers: [], gamePlan: null });
+    scheduleServiceMocks.loadGameDayLiveEventsForApp.mockResolvedValue([]);
+    scheduleHubMocks.buildGameHubDestinations.mockReturnValue([]);
+
+    renderScheduleEventDetailWithRouteControls();
+
+    const launchLink = await screen.findByTestId('standard-tracker-launch');
+
+    expect(launchLink.textContent).toContain('Standard tracker');
+    expect(launchLink.getAttribute('href')).toBe('/schedule/team-1/game-1/track');
+  });
+
   it('starts the live clock and advances the period from the app game hub', async () => {
     scheduleServiceMocks.updateLiveGameClockState
       .mockResolvedValueOnce({

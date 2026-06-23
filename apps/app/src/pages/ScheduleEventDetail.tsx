@@ -1267,6 +1267,7 @@ function GameHubSection({ auth, event, childEvents, onScoreUpdated, onLiveClockU
   const canPublishLineup = Boolean(!isPractice && event.isDbGame && event.isTeamStaff);
   const notifiesCounterpartTeam = Boolean(event.opponentTeamId || event.sharedScheduleOpponentTeamId);
   const hubDestinations = isPractice ? buildPracticeHubDestinations(event) : buildGameHubDestinations(event);
+  const standardTrackerHref = `/schedule/${encodeURIComponent(event.teamId)}/${encodeURIComponent(event.id)}/track`;
 
   useEffect(() => {
     setOpenPanels({});
@@ -1376,6 +1377,12 @@ function GameHubSection({ auth, event, childEvents, onScoreUpdated, onLiveClockU
 
             {canUpdateScore ? <LiveGameClockPanel auth={auth} event={event} onLiveClockUpdated={onLiveClockUpdated} /> : null}
           </LiveGameClockTickerProvider>
+          {canUpdateScore ? (
+            <Link to={standardTrackerHref} className="secondary-button mt-3 min-h-11 w-full justify-center px-4 text-sm" data-testid="standard-tracker-launch">
+              <ClipboardCheck className="h-4 w-4" aria-hidden="true" />
+              Standard tracker
+            </Link>
+          ) : null}
           {canUpdateScore ? <LiveScoreEditor auth={auth} event={event} onScoreUpdated={onScoreUpdated} /> : null}
           {canUpdateScore ? <GameDayFoulTrackerPanel auth={auth} event={event} /> : null}
 
