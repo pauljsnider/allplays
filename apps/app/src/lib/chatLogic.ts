@@ -345,7 +345,7 @@ export function getChatMentionQuery(text: string, cursorPosition?: number) {
   const suffixQuery = source.slice(safeCursorPosition).match(chatMentionSuffixRegex)?.[0] || '';
   const query = `${prefixQuery}${suffixQuery}`.trim();
   if (/\s$/.test(prefixQuery)) return null;
-  if (!query && !beforeCursor.endsWith('@')) return null;
+  if (!query) return null;
   return query.toLowerCase();
 }
 
