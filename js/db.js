@@ -4950,6 +4950,8 @@ export async function updateTeamFeeRecipient(teamId, batchId, recipientId, updat
     const safeLedgerEntries = Array.isArray(ledgerEntries) ? sanitizeTeamFeeRecipientValue(ledgerEntries) : [];
     const isManualPaymentUpdate = Object.prototype.hasOwnProperty.call(recipientUpdates, 'manualPayment')
         || safeLedgerEntries.some((entry) => entry?.type === 'offline_payment');
+    const isCancellationUpdate = recipientUpdates.status === 'canceled'
+        || safeLedgerEntries.some((entry) => entry?.type === 'cancellation');
     const explicitAdminBilling = adminBilling && typeof adminBilling === 'object' && !Array.isArray(adminBilling)
         ? adminBilling
         : null;
@@ -5001,7 +5003,7 @@ export async function updateTeamFeeRecipient(teamId, batchId, recipientId, updat
         updatePayload.paymentLedger = arrayUnion(...safeLedgerEntries);
     }
 
-    if (isManualPaymentUpdate) {
+    if (isManualPaymentUpdate || isCancellationUpdate) {
         await runTransaction(db, async (transaction) => {
             const recipientSnapshot = await transaction.get(recipientRef);
             if (!recipientSnapshot.exists()) {
@@ -5012,16 +5014,23 @@ export async function updateTeamFeeRecipient(teamId, batchId, recipientId, updat
             const amountDueCents = Number.isFinite(Number(amountDueRaw)) ? Math.max(0, Number(amountDueRaw)) : 0;
             const priorPaidRaw = recipient.amountPaidCents ?? recipient.paidAmountCents ?? 0;
             const priorPaidCents = Number.isFinite(Number(priorPaidRaw)) ? Math.max(0, Number(priorPaidRaw)) : 0;
-            const remainingBalanceCents = Math.max(0, amountDueCents - priorPaidCents);
-            const manualPaymentAmountRaw = recipientUpdates.manualPayment?.amountPaidCents
-                ?? safeLedgerEntries.find((entry) => entry?.type === 'offline_payment')?.amountCents;
-            const manualPaymentAmountCents = Number(manualPaymentAmountRaw);
 
-            if (!Number.isFinite(manualPaymentAmountCents)) {
-                throw new Error('Manual payment amount is required.');
+            if (isManualPaymentUpdate) {
+                const remainingBalanceCents = Math.max(0, amountDueCents - priorPaidCents);
+                const manualPaymentAmountRaw = recipientUpdates.manualPayment?.amountPaidCents
+                    ?? safeLedgerEntries.find((entry) => entry?.type === 'offline_payment')?.amountCents;
+                const manualPaymentAmountCents = Number(manualPaymentAmountRaw);
+
+                if (!Number.isFinite(manualPaymentAmountCents)) {
+                    throw new Error('Manual payment amount is required.');
+                }
+                if (manualPaymentAmountCents > remainingBalanceCents) {
+                    throw new Error('Manual payment amount cannot exceed the remaining balance.');
+                }
             }
-            if (manualPaymentAmountCents > remainingBalanceCents) {
-                throw new Error('Manual payment amount cannot exceed the remaining balance.');
+
+            if (isCancellationUpdate && priorPaidCents > 0) {
+                throw new Error('Paid recipients must be refunded before canceling the balance.');
             }
 
             transaction.update(recipientRef, updatePayload);

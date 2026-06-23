@@ -254,14 +254,65 @@ describe('updateTeamFeeRecipient manual payment validation', () => {
         expect(payload.paymentLedger[0]).not.toHaveProperty('stripeRefundId');
     });
 
-    it('preserves cancellation reasons in admin billing metadata before sanitizing parent-readable fields', async () => {
-        const updateDoc = vi.fn(async () => undefined);
-        const setDoc = vi.fn(async () => undefined);
+    it('rejects cancellation when the latest stored recipient has a recorded payment', async () => {
+        const updateDoc = vi.fn();
+        const transactionUpdate = vi.fn();
+        const runTransaction = vi.fn(async (_db, handler) => handler({
+            get: vi.fn(async () => ({
+                exists: () => true,
+                data: () => ({ amountDueCents: 2500, amountPaidCents: 500 })
+            })),
+            update: transactionUpdate,
+            set: vi.fn()
+        }));
         const updateTeamFeeRecipient = buildUpdateTeamFeeRecipient({
             doc: vi.fn((_db, ...parts) => ({ path: parts.join('/') })),
             updateDoc,
-            setDoc,
-            runTransaction: vi.fn(),
+            setDoc: vi.fn(async () => undefined),
+            runTransaction,
+            serverTimestamp: vi.fn(() => 'server-ts'),
+            arrayUnion: vi.fn((...entries) => entries),
+            deleteField: vi.fn(() => 'deleted')
+        });
+
+        await expect(updateTeamFeeRecipient('team-1', 'batch-1', 'recipient-1', {
+            status: 'canceled',
+            amountDueCents: 0,
+            remainingBalanceCents: 0,
+            canceled: {
+                note: 'Family moved away',
+                canceledBy: 'coach-7'
+            },
+            ledgerEntries: [{
+                type: 'cancellation',
+                amountCents: 0,
+                reason: 'Family moved away',
+                canceledBy: 'coach-7'
+            }]
+        })).rejects.toThrow('Paid recipients must be refunded before canceling the balance.');
+
+        expect(runTransaction).toHaveBeenCalledTimes(1);
+        expect(updateDoc).not.toHaveBeenCalled();
+        expect(transactionUpdate).not.toHaveBeenCalled();
+    });
+
+    it('preserves cancellation reasons in admin billing metadata before sanitizing parent-readable fields', async () => {
+        const updateDoc = vi.fn(async () => undefined);
+        const transactionUpdate = vi.fn();
+        const transactionSet = vi.fn();
+        const runTransaction = vi.fn(async (_db, handler) => handler({
+            get: vi.fn(async () => ({
+                exists: () => true,
+                data: () => ({ amountDueCents: 2500, amountPaidCents: 0 })
+            })),
+            update: transactionUpdate,
+            set: transactionSet
+        }));
+        const updateTeamFeeRecipient = buildUpdateTeamFeeRecipient({
+            doc: vi.fn((_db, ...parts) => ({ path: parts.join('/') })),
+            updateDoc,
+            setDoc: vi.fn(async () => undefined),
+            runTransaction,
             serverTimestamp: vi.fn(() => 'server-ts'),
             arrayUnion: vi.fn((...entries) => entries),
             deleteField: vi.fn(() => 'deleted')
@@ -283,7 +334,9 @@ describe('updateTeamFeeRecipient manual payment validation', () => {
             }]
         });
 
-        expect(updateDoc).toHaveBeenCalledWith(
+        expect(runTransaction).toHaveBeenCalledTimes(1);
+        expect(updateDoc).not.toHaveBeenCalled();
+        expect(transactionUpdate).toHaveBeenCalledWith(
             { path: 'teams/team-1/feeBatches/batch-1/feeRecipients/recipient-1' },
             expect.objectContaining({
                 status: 'canceled',
@@ -297,11 +350,11 @@ describe('updateTeamFeeRecipient manual payment validation', () => {
                 }]
             })
         );
-        const payload = updateDoc.mock.calls[0][1];
+        const payload = transactionUpdate.mock.calls[0][1];
         expect(payload.canceled).not.toHaveProperty('note');
         expect(payload.paymentLedger[0]).not.toHaveProperty('reason');
         expect(payload.paymentLedger[0]).not.toHaveProperty('canceledBy');
-        expect(setDoc).toHaveBeenCalledWith(
+        expect(transactionSet).toHaveBeenCalledWith(
             { path: 'teams/team-1/feeBatches/batch-1/feeRecipients/recipient-1/adminBilling/latest' },
             expect.objectContaining({
                 type: 'cancellation',
