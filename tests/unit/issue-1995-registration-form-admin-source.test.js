@@ -38,6 +38,6 @@ describe('issue 1995 registration form admin source contract', () => {
         expect(legacyAdminTestSource).toContain('emits the option, waiver, fee, and payment-plan shape consumed by app and legacy registration flows');
         expect(legacyAdminTestSource).toContain('creates a shareable public registration URL for published forms');
         expect(capabilitySource).toContain('legacy still owns setup');
-        expect(workflowRegistrationTestSource).toContain('metadata-only provider setup');
+        expect(workflowRegistrationTestSource).toContain('manual provider pulls');
     });
 });

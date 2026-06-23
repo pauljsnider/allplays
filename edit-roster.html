@@ -55,7 +55,7 @@
                         <div class="flex items-start justify-between gap-3">
                             <div>
                                 <h3 id="registration-roster-import-title" class="font-semibold text-emerald-900">Import stored registration roster</h3>
-                                <p id="registration-roster-import-description" class="text-sm text-emerald-800">Preview players and guardian/contact records from the latest stored registration snapshot before importing. This uses saved provider data only and does not fetch Sports Connect live.</p>
+                                <p id="registration-roster-import-description" class="text-sm text-emerald-800">Preview players and guardian/contact records from the latest stored registration snapshot before importing. Use Edit Team to re-import from Sports Connect when the snapshot needs a refresh.</p>
                                 <p id="registration-roster-import-status" class="mt-2 text-sm text-emerald-700"></p>
                             </div>
                             <button id="registration-roster-preview-btn" type="button"
@@ -947,10 +947,10 @@
                 ? 'Registration provider metadata saved'
                 : 'Import stored registration roster';
             description.textContent = hasImportableSnapshot
-                ? 'Preview players and guardian/contact records from the latest stored registration snapshot before importing. This uses saved provider data only and does not fetch Sports Connect live.'
+                ? 'Preview players and guardian/contact records from the latest stored registration snapshot before importing. Use Edit Team to re-import from Sports Connect when the snapshot needs a refresh.'
                 : (hasConfiguredMetadata
-                    ? 'Sports Connect metadata is saved for this team, but provider-based roster import requires an existing registration roster snapshot already loaded in ALL PLAYS. This page uses saved snapshots only and does not fetch provider data live.'
-                    : 'Provider-based roster import requires an existing registration roster snapshot already loaded in ALL PLAYS before import can proceed. Save or load a registration roster snapshot for this team, then return here to preview it.');
+                    ? 'Sports Connect metadata is saved for this team, but provider-based roster import requires a stored roster snapshot. Run Re-import from Sports Connect on Edit Team, then return here to preview it.'
+                    : 'Provider-based roster import requires an existing registration roster snapshot before import can proceed. Save or load a registration roster snapshot for this team, then return here to preview it.');
 
             previewButton.classList.toggle('hidden', !hasImportableSnapshot);
             importButton.classList.toggle('hidden', !hasImportableSnapshot);
@@ -963,7 +963,7 @@
             status.textContent = hasImportableSnapshot
                 ? `${sourcePlayers.length} player${sourcePlayers.length === 1 ? '' : 's'} available in the latest stored roster snapshot. Preview before importing.`
                 : (hasConfiguredMetadata
-                    ? 'Import unavailable: no stored registration roster snapshot exists for this team yet. Confirm provider data has already been loaded into ALL PLAYS, then return here to preview and import the saved roster.'
+                    ? 'Import unavailable: no stored registration roster snapshot exists for this team yet. Run Re-import from Sports Connect on Edit Team, then return here to preview and import the saved roster.'
                     : 'No registration roster snapshot is available yet. Load or save a registration roster snapshot for this team before importing.');
         }
 

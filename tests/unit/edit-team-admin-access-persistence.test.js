@@ -630,11 +630,13 @@ describe('edit team admin access persistence', () => {
         expect(html.indexOf('id="teamColorPrimary"')).toBeGreaterThan(advancedIndex);
         expect(html.indexOf('id="registrationProviderName"')).toBeGreaterThan(advancedIndex);
         expect(html).toContain('Registration Provider Connection');
-        expect(html).toContain('Sports Connect live sync is unavailable until a connector is added.');
+        expect(html).toContain('manually pull Sports Connect roster snapshots when needed.');
         expect(html).toContain('function getRegistrationProviderCapability(provider, externalTeamId, source = {})');
-        expect(html).toContain("state: 'metadata_configured'");
+        expect(html).toContain("state: 'sync_ready'");
+        expect(html).toContain("state: 'sync_success'");
+        expect(html).toContain("state: 'sync_error'");
         expect(html).not.toContain("state: 'live_connected'");
-        expect(html).toContain('Metadata only');
+        expect(html).toContain('Re-import');
         expect(html).toContain('id="team-create-mode-registration"');
         expect(html).toContain('No registration sources are configured yet. Start with a blank team or load provider data before using this import path.');
         expect(html).toContain('registrationMode.setAttribute(\'aria-disabled\', String(registrationMode.disabled));');
@@ -655,9 +657,9 @@ describe('edit team admin access persistence', () => {
     it('blocks Sports Connect roster import until a stored provider snapshot exists', () => {
         const html = readFileSync(new URL('../../edit-roster.html', import.meta.url), 'utf8');
 
-        expect(html).toContain('Sports Connect metadata is saved for this team, but provider-based roster import requires an existing registration roster snapshot already loaded in ALL PLAYS.');
+        expect(html).toContain('Sports Connect metadata is saved for this team, but provider-based roster import requires a stored roster snapshot.');
         expect(html).toContain('Import unavailable: no stored registration roster snapshot exists for this team yet.');
-        expect(html).toContain('Confirm provider data has already been loaded into ALL PLAYS, then return here to preview the saved roster.');
+        expect(html).toContain('Run Re-import from Sports Connect on Edit Team, then return here to preview and import the saved roster.');
         expect(html).not.toContain('provider connector stores a roster snapshot');
         expect(html).not.toContain('A live connector must create a stored roster snapshot');
         expect(html).not.toContain('Sports Connect live import requires a provider connector');
@@ -1128,11 +1130,11 @@ describe('edit team admin access persistence', () => {
             expect(env.elements.get('registrationProviderName').value).toBe('Sports Connect');
             expect(env.elements.get('registrationExternalTeamId').value).toBe('SC-123');
             expect(env.elements.get('registrationCopiedTeamId').value).toBe('team-1');
-            expect(env.elements.get('registrationLastSyncStatus').value).toBe('Sports Connect metadata-only setup saved');
-            expect(env.elements.get('registration-connection-status').textContent).toBe('Sports Connect metadata-only setup saved');
-            expect(env.elements.get('registration-sync-status').textContent).toBe('Sports Connect metadata-only setup saved');
+            expect(env.elements.get('registrationLastSyncStatus').value).toBe('Ready to fetch Sports Connect data');
+            expect(env.elements.get('registration-connection-status').textContent).toBe('Ready to fetch Sports Connect data');
+            expect(env.elements.get('registration-sync-status').textContent).toBe('Ready to fetch Sports Connect data');
             expect(env.elements.get('registration-sync-time').textContent).toContain('2026');
-            expect(env.elements.get('registration-refresh-btn').disabled).toBe(true);
+            expect(env.elements.get('registration-refresh-btn').disabled).toBe(false);
 
             env.elements.get('registrationProviderName').value = 'League Apps';
             env.elements.get('registrationExternalTeamId').value = 'LA-456';
@@ -1166,7 +1168,7 @@ describe('edit team admin access persistence', () => {
         }
     });
 
-    it('saves Sports Connect metadata as configured but not live synced', async () => {
+    it('saves Sports Connect metadata as configured and blocks manual pull until mapping is saved', async () => {
         const initialState = {
             currentUser: { uid: 'owner-1', email: 'owner@example.com' },
             team: {
@@ -1190,7 +1192,7 @@ describe('edit team admin access persistence', () => {
             db: {
                 async syncRegistrationProvider() {
                     syncCalls += 1;
-                    throw new Error('sync should stay unavailable');
+                    throw new Error('sync should wait until the mapping is saved');
                 }
             }
         });
@@ -1199,12 +1201,12 @@ describe('edit team admin access persistence', () => {
             env.elements.get('registrationExternalTeamId').value = 'SC-987';
             await env.elements.get('registrationProviderName').dispatchEvent(new MockEvent('change'));
 
-            expect(env.elements.get('registrationLastSyncStatus').value).toBe('Sports Connect metadata-only setup saved');
-            expect(env.elements.get('registration-connection-status').textContent).toBe('Sports Connect metadata-only setup saved');
-            expect(env.elements.get('registration-sync-status').textContent).toBe('Sports Connect metadata-only setup saved');
-            expect(env.elements.get('registration-connection-help').textContent).toContain('future provider connector');
+            expect(env.elements.get('registrationLastSyncStatus').value).toBe('Ready to fetch Sports Connect data');
+            expect(env.elements.get('registration-connection-status').textContent).toBe('Ready to fetch Sports Connect data');
+            expect(env.elements.get('registration-sync-status').textContent).toBe('Ready to fetch Sports Connect data');
+            expect(env.elements.get('registration-connection-help').textContent).toContain('Save this Sports Connect provider mapping before running the provider pull.');
             expect(env.elements.get('registration-refresh-btn').disabled).toBe(true);
-            expect(env.elements.get('registration-refresh-btn').textContent).toBe('Metadata only');
+            expect(env.elements.get('registration-refresh-btn').textContent).toBe('Re-import from Sports Connect');
             await env.elements.get('registration-refresh-btn').click();
             expect(syncCalls).toBe(0);
 
@@ -1215,17 +1217,17 @@ describe('edit team admin access persistence', () => {
                 providerId: 'sports-connect',
                 externalTeamId: 'SC-987',
                 teamId: 'team-1',
-                connectionStatus: 'metadata_configured',
-                providerCapability: 'metadata_configured',
-                syncEnabled: false,
-                lastSyncStatus: 'Sports Connect metadata-only setup saved'
+                connectionStatus: 'sync_ready',
+                providerCapability: 'sync_ready',
+                syncEnabled: true,
+                lastSyncStatus: 'Ready to fetch Sports Connect data'
             });
         } finally {
             env.cleanup();
         }
     });
 
-    it('keeps Sports Connect connector guidance visible even when prior sync metadata contains an error', async () => {
+    it('shows successful Sports Connect manual fetch status after reloading the persisted snapshot', async () => {
         const initialState = {
             currentUser: { uid: 'owner-1', email: 'owner@example.com' },
             team: {
@@ -1244,20 +1246,107 @@ describe('edit team admin access persistence', () => {
                     provider: 'sports-connect',
                     externalTeamId: 'SC-987',
                     teamId: 'team-1',
-                    connectionStatus: 'metadata_configured',
-                    syncEnabled: false,
-                    lastSyncStatus: 'error',
-                    lastSyncError: 'Connector failed upstream'
+                    providerId: 'sports-connect',
+                    connectionStatus: 'sync_ready',
+                    syncEnabled: true,
+                    lastSyncStatus: 'Ready to fetch Sports Connect data'
                 }
             },
             updateCalls: []
         };
 
-        const env = await bootEditTeam(initialState);
+        let syncCalls = 0;
+        const env = await bootEditTeam(initialState, undefined, {
+            db: {
+                async syncRegistrationProvider(teamId) {
+                    syncCalls += 1;
+                    env.state.team.registrationSource = {
+                        ...env.state.team.registrationSource,
+                        connectionStatus: 'sync_success',
+                        lastSyncStatus: 'success',
+                        lastSyncAt: '2026-06-23T15:00:00.000Z',
+                        lastSyncError: null,
+                        playerCount: 2
+                    };
+                    env.state.team.registrationRosterSnapshot = {
+                        provider: 'Sports Connect',
+                        externalTeamId: 'SC-987',
+                        players: [
+                            { externalPlayerId: 'athlete-1', name: 'Avery Lee' },
+                            { externalPlayerId: 'athlete-2', name: 'Sam Jones' }
+                        ]
+                    };
+                    return { success: true, teamId, playerCount: 2, fetchedAt: '2026-06-23T15:00:00.000Z' };
+                }
+            }
+        });
         try {
-            expect(env.elements.get('registration-sync-status').textContent).toBe('Sports Connect metadata-only setup saved');
-            expect(env.elements.get('registration-connection-help').textContent).toContain('future provider connector');
-            expect(env.elements.get('registration-connection-help').textContent).not.toContain('Connector failed upstream');
+            expect(env.elements.get('registration-refresh-btn').disabled).toBe(false);
+
+            await env.elements.get('registration-refresh-btn').click();
+
+            expect(syncCalls).toBe(1);
+            expect(env.elements.get('registration-sync-status').textContent).toBe('Sports Connect connected');
+            expect(env.elements.get('registration-connection-status').textContent).toBe('Sports Connect connected');
+            expect(env.elements.get('registration-connection-help').textContent).toContain('2 roster players saved for roster import');
+            expect(env.state.team.registrationRosterSnapshot.players).toHaveLength(2);
+        } finally {
+            env.cleanup();
+        }
+    });
+
+    it('shows failed Sports Connect manual fetch status after reloading the persisted error', async () => {
+        const initialState = {
+            currentUser: { uid: 'owner-1', email: 'owner@example.com' },
+            team: {
+                id: 'team-1',
+                ownerId: 'owner-1',
+                name: 'Sharks',
+                description: 'Travel team',
+                sport: 'Basketball',
+                notificationEmail: 'notify@example.com',
+                leagueUrl: '',
+                standingsConfig: { enabled: false, rankingMode: 'points', tiebreakers: [] },
+                zip: '66209',
+                isPublic: true,
+                adminEmails: [],
+                registrationSource: {
+                    provider: 'sports-connect',
+                    externalTeamId: 'SC-987',
+                    teamId: 'team-1',
+                    providerId: 'sports-connect',
+                    connectionStatus: 'sync_ready',
+                    syncEnabled: true,
+                    lastSyncStatus: 'Ready to fetch Sports Connect data'
+                }
+            },
+            updateCalls: []
+        };
+
+        let syncCalls = 0;
+        const env = await bootEditTeam(initialState, undefined, {
+            db: {
+                async syncRegistrationProvider() {
+                    syncCalls += 1;
+                    env.state.team.registrationSource = {
+                        ...env.state.team.registrationSource,
+                        connectionStatus: 'sync_error',
+                        lastSyncStatus: 'error',
+                        lastSyncAt: '2026-06-23T15:05:00.000Z',
+                        lastSyncError: 'Connector failed upstream'
+                    };
+                    throw new Error('Connector failed upstream');
+                }
+            }
+        });
+        try {
+            await env.elements.get('registration-refresh-btn').click();
+
+            expect(syncCalls).toBe(1);
+            expect(env.elements.get('registration-sync-status').textContent).toBe('Sports Connect sync failed');
+            expect(env.elements.get('registration-connection-status').textContent).toBe('Sports Connect sync failed');
+            expect(env.elements.get('registration-connection-help').textContent).toContain('Sports Connect import failed: Connector failed upstream');
+            expect(env.alerts.at(-1)).toContain('Sports Connect import failed: Connector failed upstream');
         } finally {
             env.cleanup();
         }
