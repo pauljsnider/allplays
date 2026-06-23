@@ -2,7 +2,10 @@ import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
 
 const chatLogicSource = readFileSync(new URL('../../apps/app/src/lib/chatLogic.ts', import.meta.url), 'utf8');
-const messagesSource = readFileSync(new URL('../../apps/app/src/pages/Messages.tsx', import.meta.url), 'utf8');
+const messagesSource = [
+    readFileSync(new URL('../../apps/app/src/pages/Messages.tsx', import.meta.url), 'utf8'),
+    readFileSync(new URL('../../apps/app/src/pages/messages/components/ChatWindow.tsx', import.meta.url), 'utf8')
+].join('\n');
 const chatLogicTestSource = readFileSync(new URL('./app-chat-logic.test.js', import.meta.url), 'utf8');
 const messagesIntegrationTestSource = readFileSync(new URL('./app-chat-messages-integration.test.jsx', import.meta.url), 'utf8');
 

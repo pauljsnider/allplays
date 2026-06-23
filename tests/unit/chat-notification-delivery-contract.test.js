@@ -3,7 +3,10 @@ import { describe, expect, it } from 'vitest';
 
 const functionsSource = readFileSync(new URL('../../functions/index.js', import.meta.url), 'utf8');
 const chatServiceSource = readFileSync(new URL('../../apps/app/src/lib/chatService.ts', import.meta.url), 'utf8');
-const messagesSource = readFileSync(new URL('../../apps/app/src/pages/Messages.tsx', import.meta.url), 'utf8');
+const messagesSource = [
+    readFileSync(new URL('../../apps/app/src/pages/Messages.tsx', import.meta.url), 'utf8'),
+    readFileSync(new URL('../../apps/app/src/pages/messages/components/ChatWindow.tsx', import.meta.url), 'utf8')
+].join('\n');
 
 describe('team chat notification delivery contract', () => {
     it('builds one recipient context for mentions and live chat with per-conversation mute state', () => {

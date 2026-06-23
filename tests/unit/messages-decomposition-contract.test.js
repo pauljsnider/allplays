@@ -10,27 +10,31 @@ function readRepoFile(relativePath) {
 describe('Messages decomposition contract', () => {
     it('keeps chat state domains in extracted hooks', () => {
         const messages = readRepoFile('apps/app/src/pages/Messages.tsx');
+        const chatWindow = readRepoFile('apps/app/src/pages/messages/components/ChatWindow.tsx');
 
-        expect(messages).toContain("import { useChatSheets } from './messages/hooks/useChatSheets';");
-        expect(messages).toContain("import { useChatTeam } from './messages/hooks/useChatTeam';");
-        expect(messages).toContain("import { useChatMessages } from './messages/hooks/useChatMessages';");
-        expect(messages).toContain('} = useChatSheets();');
-        expect(messages).toContain('} = useChatTeam({');
-        expect(messages).toContain('} = useChatMessages({');
+        expect(messages).toContain("import { ChatWindow, TeamAvatar } from './messages/components/ChatWindow';");
+        expect(chatWindow).toContain("import { useChatSheets } from '../hooks/useChatSheets';");
+        expect(chatWindow).toContain("import { useChatTeam } from '../hooks/useChatTeam';");
+        expect(chatWindow).toContain("import { useChatMessages } from '../hooks/useChatMessages';");
+        expect(chatWindow).toContain('} = useChatSheets();');
+        expect(chatWindow).toContain('} = useChatTeam({');
+        expect(chatWindow).toContain('} = useChatMessages({');
 
         const useStateCount = (messages.match(/\buseState(?:<|\()/g) || []).length;
-        expect(useStateCount).toBeLessThan(40);
+        expect(useStateCount).toBeLessThan(10);
+        expect(messages.split('\n').length).toBeLessThan(1600);
     });
 
     it('keeps email composer transitions in the reducer instead of separate page state', () => {
         const messages = readRepoFile('apps/app/src/pages/Messages.tsx');
+        const chatWindow = readRepoFile('apps/app/src/pages/messages/components/ChatWindow.tsx');
         const reducer = readRepoFile('apps/app/src/pages/messages/state/emailReducer.ts');
 
-        expect(messages).toContain("from './messages/state/emailReducer';");
-        expect(messages).toContain('emailComposerActions');
-        expect(messages).toContain('emailReducer');
-        expect(messages).toContain('initialEmailComposerState');
-        expect(messages).toMatch(/const\s+\[emailState,\s*emailDispatch\]\s*=\s*useReducer\(emailReducer,\s*initialEmailComposerState\);/);
+        expect(chatWindow).toContain("from '../state/emailReducer';");
+        expect(chatWindow).toContain('emailComposerActions');
+        expect(chatWindow).toContain('emailReducer');
+        expect(chatWindow).toContain('initialEmailComposerState');
+        expect(chatWindow).toMatch(/const\s+\[emailState,\s*emailDispatch\]\s*=\s*useReducer\(emailReducer,\s*initialEmailComposerState\);/);
         expect(messages).not.toMatch(/const\s+\[emailSubject\b/);
         expect(messages).not.toMatch(/const\s+\[emailBody\b/);
         expect(messages).not.toMatch(/const\s+\[emailDrafts\b/);

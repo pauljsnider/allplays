@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import '@testing-library/jest-dom/vitest';
-import { fireEvent, render, screen } from '@testing-library/react';
-import { describe, expect, it } from 'vitest';
+import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { afterEach, describe, expect, it } from 'vitest';
 import { useChatSheets } from './useChatSheets';
 
 function HookProbe() {
@@ -36,6 +36,10 @@ function expectSheetState(testId: string, state: boolean) {
 }
 
 describe('useChatSheets', () => {
+    afterEach(() => {
+        cleanup();
+    });
+
     it('opens and closes each extracted sheet without leaking state', () => {
         render(<HookProbe />);
 
@@ -80,11 +84,11 @@ describe('useChatSheets', () => {
 
         fireEvent.click(screen.getByRole('button', { name: 'Open conversation' }));
         fireEvent.click(screen.getByRole('button', { name: 'Open email' }));
-        expect(screen.getByTestId('conversation')).toHaveTextContent('true');
-        expect(screen.getByTestId('email')).toHaveTextContent('true');
+        expectSheetState('conversation', true);
+        expectSheetState('email', true);
 
         fireEvent.click(screen.getByRole('button', { name: 'Close email' }));
-        expect(screen.getByTestId('conversation')).toHaveTextContent('true');
-        expect(screen.getByTestId('email')).toHaveTextContent('false');
+        expectSheetState('conversation', true);
+        expectSheetState('email', false);
     });
 });

@@ -6,6 +6,7 @@ function readSource(path) {
 }
 
 const messagesSource = readSource('apps/app/src/pages/Messages.tsx');
+const chatWindowSource = readSource('apps/app/src/pages/messages/components/ChatWindow.tsx');
 const chatMessagesHookSource = readSource('apps/app/src/pages/messages/hooks/useChatMessages.ts');
 const chatTeamHookSource = readSource('apps/app/src/pages/messages/hooks/useChatTeam.ts');
 const chatSheetsHookSource = readSource('apps/app/src/pages/messages/hooks/useChatSheets.ts');
@@ -17,11 +18,12 @@ const emailReducerTestSource = readSource('apps/app/src/pages/messages/state/__t
 
 describe('Messages decomposition initiative source contract', () => {
     it('keeps live message subscription and pagination state in useChatMessages', () => {
-        expect(messagesSource).toContain("import { useChatMessages } from './messages/hooks/useChatMessages';");
-        expect(messagesSource).toContain('} = useChatMessages({');
-        expect(messagesSource).not.toMatch(/const\s+\[liveMessages\b/);
-        expect(messagesSource).not.toMatch(/const\s+\[olderMessages\b/);
-        expect(messagesSource).not.toMatch(/subscribeToTeamChatMessages\(/);
+        expect(messagesSource).toContain("import { ChatWindow, TeamAvatar } from './messages/components/ChatWindow';");
+        expect(chatWindowSource).toContain("import { useChatMessages } from '../hooks/useChatMessages';");
+        expect(chatWindowSource).toContain('} = useChatMessages({');
+        expect(chatWindowSource).not.toMatch(/const\s+\[liveMessages\b/);
+        expect(chatWindowSource).not.toMatch(/const\s+\[olderMessages\b/);
+        expect(chatWindowSource).not.toMatch(/subscribeToTeamChatMessages\(/);
 
         expect(chatMessagesHookSource).toContain('subscribeToTeamChatMessages(');
         expect(chatMessagesHookSource).toContain('loadOlderTeamChatMessages(teamId, conversationId, cursor)');
@@ -32,10 +34,10 @@ describe('Messages decomposition initiative source contract', () => {
     });
 
     it('keeps team context, conversation switching, and preferred conversation selection in useChatTeam', () => {
-        expect(messagesSource).toContain("import { useChatTeam } from './messages/hooks/useChatTeam';");
-        expect(messagesSource).toContain('} = useChatTeam({');
-        expect(messagesSource).not.toMatch(/const\s+\[conversations\b/);
-        expect(messagesSource).not.toMatch(/const\s+\[selectedConversationId\b/);
+        expect(chatWindowSource).toContain("import { useChatTeam } from '../hooks/useChatTeam';");
+        expect(chatWindowSource).toContain('} = useChatTeam({');
+        expect(chatWindowSource).not.toMatch(/const\s+\[conversations\b/);
+        expect(chatWindowSource).not.toMatch(/const\s+\[selectedConversationId\b/);
 
         expect(chatTeamHookSource).toContain('loadChatTeamContext(teamId, user)');
         expect(chatTeamHookSource).toContain('loadChatConversations(teamId, user, context.team, context.canModerate)');
@@ -46,10 +48,10 @@ describe('Messages decomposition initiative source contract', () => {
     });
 
     it('keeps transient mobile sheet state in useChatSheets', () => {
-        expect(messagesSource).toContain("import { useChatSheets } from './messages/hooks/useChatSheets';");
-        expect(messagesSource).toContain('} = useChatSheets();');
-        expect(messagesSource).not.toMatch(/const\s+\[showConversationSheet\b/);
-        expect(messagesSource).not.toMatch(/const\s+\[showEmailSheet\b/);
+        expect(chatWindowSource).toContain("import { useChatSheets } from '../hooks/useChatSheets';");
+        expect(chatWindowSource).toContain('} = useChatSheets();');
+        expect(chatWindowSource).not.toMatch(/const\s+\[showConversationSheet\b/);
+        expect(chatWindowSource).not.toMatch(/const\s+\[showEmailSheet\b/);
 
         [
             'showConversationSheet',
@@ -67,11 +69,11 @@ describe('Messages decomposition initiative source contract', () => {
     });
 
     it('keeps team email composer transitions in the reducer with dedicated reducer tests', () => {
-        expect(messagesSource).toContain("from './messages/state/emailReducer';");
-        expect(messagesSource).toContain('emailComposerActions');
-        expect(messagesSource).toContain('emailReducer');
-        expect(messagesSource).toContain('initialEmailComposerState');
-        expect(messagesSource).toMatch(/useReducer\(emailReducer,\s*initialEmailComposerState\)/);
+        expect(chatWindowSource).toContain("from '../state/emailReducer';");
+        expect(chatWindowSource).toContain('emailComposerActions');
+        expect(chatWindowSource).toContain('emailReducer');
+        expect(chatWindowSource).toContain('initialEmailComposerState');
+        expect(chatWindowSource).toMatch(/useReducer\(emailReducer,\s*initialEmailComposerState\)/);
         expect(messagesSource).not.toMatch(/const\s+\[emailSubject\b/);
         expect(messagesSource).not.toMatch(/const\s+\[emailBody\b/);
         expect(messagesSource).not.toMatch(/const\s+\[selectedEmailDraftId\b/);
@@ -93,9 +95,10 @@ describe('Messages decomposition initiative source contract', () => {
     it('keeps the Messages page state budget below the decomposition ceiling', () => {
         const useStateCount = (messagesSource.match(/\buseState(?:<|\()/g) || []).length;
 
-        expect(useStateCount).toBeLessThan(39);
-        expect(messagesSource).toContain('const visibleMessages = useMemo(');
-        expect(messagesSource).toContain('const emailAudienceMetadata = useMemo(() => buildEmailAudienceMetadata({');
-        expect(messagesSource).toContain('const mediaEntries = useMemo(() => collectThreadMedia(visibleMessages), [visibleMessages]);');
+        expect(useStateCount).toBeLessThan(10);
+        expect(messagesSource.split('\n').length).toBeLessThan(1600);
+        expect(chatWindowSource).toContain('const visibleMessages = useMemo(');
+        expect(chatWindowSource).toContain('const emailAudienceMetadata = useMemo(() => buildEmailAudienceMetadata({');
+        expect(chatWindowSource).toContain('const mediaEntries = useMemo(() => collectThreadMedia(visibleMessages), [visibleMessages]);');
     });
 });

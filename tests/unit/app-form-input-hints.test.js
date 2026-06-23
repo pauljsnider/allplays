@@ -36,7 +36,10 @@ describe('app form mobile input hints', () => {
   });
 
   test('messages search and composers expose search/send enter key hints', () => {
-    const source = readSource('apps/app/src/pages/Messages.tsx');
+    const source = [
+      readSource('apps/app/src/pages/Messages.tsx'),
+      readSource('apps/app/src/pages/messages/components/ChatWindow.tsx')
+    ].join('\n');
 
     expect(source).toContain('placeholder="Search team chats"');
     expect(source).toContain('enterKeyHint="search"');
