@@ -1672,6 +1672,9 @@ export async function createTeam(teamData) {
 export async function updateTeam(teamId, teamData) {
     teamData.updatedAt = Timestamp.now();
     const docRef = doc(db, "teams", teamId);
+    if (teamData.registrationSource === null) {
+        teamData.registrationProvider = deleteField();
+    }
     Object.assign(teamData, buildPublicTeamSearchFields(teamData));
     await updateDoc(docRef, teamData);
 }

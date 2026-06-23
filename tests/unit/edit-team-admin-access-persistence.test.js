@@ -1092,7 +1092,7 @@ describe('edit team admin access persistence', () => {
     });
 
 
-    it('allows admins to edit and clear registration provider metadata without external calls', async () => {
+    it('allows admins to edit and clear legacy registration provider metadata without external calls', async () => {
         const initialState = {
             currentUser: { uid: 'owner-1', email: 'owner@example.com' },
             team: {
@@ -1107,7 +1107,7 @@ describe('edit team admin access persistence', () => {
                 zip: '66209',
                 isPublic: true,
                 adminEmails: [],
-                registrationSource: {
+                registrationProvider: {
                     provider: 'sports-connect',
                     externalTeamId: 'SC-123',
                     sourceId: 'sports-connect',
