@@ -117,6 +117,37 @@ describe('statTrackingService', () => {
     expect(service.getEventLog()).toHaveLength(1);
   });
 
+  it('accepts legacy custom stat column keys with punctuation', async () => {
+    const dependencies = createDependencies();
+    const service = createStatTrackingService({
+      statConfig: { columns: ['3-Pt', 'FG%'] },
+      initialScore: { homeScore: 0, awayScore: 0 },
+      dependencies
+    });
+
+    const result = await service.recordEvent('team-1', 'game-1', {
+      text: '#4 Alex 3-Pt +1',
+      playerName: 'Alex',
+      playerNumber: '4',
+      undoData: {
+        type: 'stat',
+        playerId: 'player-1',
+        statKey: '3-Pt',
+        value: 1,
+        isOpponent: false
+      }
+    }, {
+      uid: 'coach-1'
+    });
+
+    expect(result.aggregateStatKey).toBe('3-pt');
+    expect(dependencies.setDoc).toHaveBeenCalledWith({ path: 'teams/team-1/games/game-1/aggregatedStats/player-1' }, expect.objectContaining({
+      stats: {
+        '3pt': { __increment: 1 }
+      }
+    }), { merge: true });
+  });
+
   it('undoes the last event by reversing aggregates before deleting the event doc and restoring score', async () => {
     const dependencies = createDependencies();
     const service = createStatTrackingService({

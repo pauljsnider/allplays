@@ -9,7 +9,7 @@ import type { AuthState } from '../lib/types';
 const scheduleServiceMocks = vi.hoisted(() => ({
   loadHomeScoringPlayers: vi.fn(),
   loadParentScheduleEventDetail: vi.fn(),
-  loadScheduleStatTrackerConfigsForApp: vi.fn(),
+  loadScorekeeperStatTrackerConfigsForApp: vi.fn(),
   updateGameScore: vi.fn()
 }));
 
@@ -145,7 +145,7 @@ function configureDefaultMocks() {
     events: [buildEvent()],
     children: []
   });
-  scheduleServiceMocks.loadScheduleStatTrackerConfigsForApp.mockResolvedValue([
+  scheduleServiceMocks.loadScorekeeperStatTrackerConfigsForApp.mockResolvedValue([
     {
       id: 'cfg-soccer',
       name: 'Soccer standard',
@@ -208,6 +208,10 @@ describe('StandardTracker', () => {
     renderTracker();
 
     expect(await screen.findByTestId('standard-tracker-grid')).toBeTruthy();
+    expect(scheduleServiceMocks.loadScorekeeperStatTrackerConfigsForApp).toHaveBeenCalledWith('team-1', auth.user, expect.objectContaining({
+      id: 'game-1',
+      canUpdateScore: true
+    }));
     expect(statTrackingMocks.createDefaultStatTrackingService).toHaveBeenCalledWith(expect.objectContaining({
       statConfig: expect.objectContaining({ id: 'cfg-soccer', columns: ['GOALS', 'SHOTS'] }),
       initialScore: { homeScore: 1, awayScore: 0 }
@@ -248,6 +252,10 @@ describe('StandardTracker', () => {
   });
 
   it('hydrates a restored app tracker session before allowing undo', async () => {
+    scheduleServiceMocks.loadParentScheduleEventDetail.mockResolvedValue({
+      events: [buildEvent({ homeScore: 2, awayScore: 0 })],
+      children: []
+    });
     window.localStorage.setItem(getStandardTrackerSessionKey('team-1', 'game-1'), JSON.stringify({
       version: 1,
       teamId: 'team-1',
@@ -300,6 +308,43 @@ describe('StandardTracker', () => {
     });
   });
 
+  it('discards restored tracker sessions when the saved score is behind the loaded game score', async () => {
+    scheduleServiceMocks.loadParentScheduleEventDetail.mockResolvedValue({
+      events: [buildEvent({ homeScore: 4, awayScore: 2 })],
+      children: []
+    });
+    window.localStorage.setItem(getStandardTrackerSessionKey('team-1', 'game-1'), JSON.stringify({
+      version: 1,
+      teamId: 'team-1',
+      gameId: 'game-1',
+      statTrackerConfigId: 'cfg-soccer',
+      score: { homeScore: 2, awayScore: 0 },
+      tallies: { p1: { goals: 2, shots: 2 } },
+      eventLog: [{
+        eventId: 'stale-goal-2',
+        scoreBefore: { homeScore: 1, awayScore: 0 },
+        scoreAfter: { homeScore: 2, awayScore: 0 },
+        aggregateStatKey: 'goals',
+        aggregateDelta: 1,
+        aggregatePlayerId: 'p1',
+        event: { type: 'stat', statKey: 'goals', value: 1 },
+        playerName: 'Avery Smith',
+        playerNumber: '12'
+      }],
+      updatedAt: Date.now()
+    }));
+
+    renderTracker();
+
+    expect(await screen.findByTestId('standard-tracker-grid')).toBeTruthy();
+    expect(statTrackingMocks.createDefaultStatTrackingService).toHaveBeenCalledWith(expect.objectContaining({
+      initialScore: { homeScore: 4, awayScore: 2 },
+      initialEventLog: []
+    }));
+    expect(screen.getByText('4-2')).toBeTruthy();
+    expect(within(screen.getByRole('button', { name: '#12 Avery Smith GOALS add one' })).getByText('+1 / 0')).toBeTruthy();
+  });
+
   it('blocks parent-only access before loading tracker config or roster', async () => {
     scheduleServiceMocks.loadParentScheduleEventDetail.mockResolvedValue({
       events: [buildEvent({ canUpdateScore: false })],
@@ -310,7 +355,7 @@ describe('StandardTracker', () => {
 
     expect(await screen.findByText('Tracker access is limited to staff scorekeepers for scheduled games.')).toBeTruthy();
     expect(screen.queryByTestId('standard-tracker-grid')).toBeNull();
-    expect(scheduleServiceMocks.loadScheduleStatTrackerConfigsForApp).not.toHaveBeenCalled();
+    expect(scheduleServiceMocks.loadScorekeeperStatTrackerConfigsForApp).not.toHaveBeenCalled();
     expect(scheduleServiceMocks.loadHomeScoringPlayers).not.toHaveBeenCalled();
     expect(statTrackingMocks.createDefaultStatTrackingService).not.toHaveBeenCalled();
   });

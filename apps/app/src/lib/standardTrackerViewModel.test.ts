@@ -49,4 +49,22 @@ describe('standardTrackerViewModel', () => {
     expect(nextTallies).toEqual({ p1: { pts: 5 } });
     expect(tallies).toEqual({ p1: { pts: 4 } });
   });
+
+  it('preserves legacy custom column punctuation so tracking validation accepts taps', () => {
+    const model = buildStandardTrackerViewModel({
+      config: {
+        columns: ['3-Pt', 'FG%']
+      },
+      roster: [{ id: 'p1', name: 'Avery Smith', stats: { '3-pt': 2, 'fg%': 50 } }]
+    });
+
+    expect(model.columns).toEqual([
+      { key: '3-pt', label: '3-Pt' },
+      { key: 'fg%', label: 'FG%' }
+    ]);
+    expect(model.rows[0].cells.map((cell) => `${cell.column.key}:${cell.value}`)).toEqual(['3-pt:2', 'fg%:50']);
+    expect(applyStandardTrackerTallyDelta({ p1: { '3-pt': 2 } }, 'p1', '3-Pt', 1)).toEqual({
+      p1: { '3-pt': 3 }
+    });
+  });
 });

@@ -1508,10 +1508,7 @@ export type UpdateScheduledPracticeOptions = {
   instanceDate?: string | null;
 };
 
-export async function loadScheduleStatTrackerConfigsForApp(teamId: string, user: AuthUser | null): Promise<ScheduleStatTrackerConfigOption[]> {
-  const normalizedTeamId = compactString(teamId);
-  if (!normalizedTeamId) throw new Error('Team is required.');
-  await requireScheduleImportStaff(normalizedTeamId, user);
+async function readScheduleStatTrackerConfigOptions(normalizedTeamId: string): Promise<ScheduleStatTrackerConfigOption[]> {
   const configs = await readWithNativeFallback(
     `schedule stat tracker configs ${normalizedTeamId}`,
     () => Promise.resolve(getConfigs(normalizedTeamId)),
@@ -1538,6 +1535,35 @@ export async function loadScheduleStatTrackerConfigsForApp(teamId: string, user:
     }))
     .filter((config) => config.id)
     .sort((first, second) => first.name.localeCompare(second.name));
+}
+
+export async function loadScheduleStatTrackerConfigsForApp(teamId: string, user: AuthUser | null): Promise<ScheduleStatTrackerConfigOption[]> {
+  const normalizedTeamId = compactString(teamId);
+  if (!normalizedTeamId) throw new Error('Team is required.');
+  await requireScheduleImportStaff(normalizedTeamId, user);
+  return readScheduleStatTrackerConfigOptions(normalizedTeamId);
+}
+
+export async function loadScorekeeperStatTrackerConfigsForApp(
+  teamId: string,
+  user: AuthUser | null,
+  event: Pick<ParentScheduleEvent, 'teamId' | 'type' | 'isDbGame' | 'isCancelled' | 'canUpdateScore'> | null | undefined
+): Promise<ScheduleStatTrackerConfigOption[]> {
+  const normalizedTeamId = compactString(teamId);
+  if (!normalizedTeamId) throw new Error('Team is required.');
+  if (!user?.uid) throw new Error('You need to sign in before loading tracker setup.');
+  const eventTeamId = compactString(event?.teamId);
+  const canLoadForScorekeeping = Boolean(
+    eventTeamId === normalizedTeamId
+    && event?.type === 'game'
+    && event.isDbGame
+    && !event.isCancelled
+    && event.canUpdateScore
+  );
+  if (!canLoadForScorekeeping) {
+    throw new Error('You do not have permission to load tracker setup for this game.');
+  }
+  return readScheduleStatTrackerConfigOptions(normalizedTeamId);
 }
 
 export async function createScheduledGameForApp(teamId: string, input: ScheduleGameFormInput, user: AuthUser | null) {

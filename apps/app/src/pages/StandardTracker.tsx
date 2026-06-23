@@ -4,7 +4,7 @@ import { ChevronLeft, RotateCcw } from 'lucide-react';
 import {
   loadHomeScoringPlayers,
   loadParentScheduleEventDetail,
-  loadScheduleStatTrackerConfigsForApp,
+  loadScorekeeperStatTrackerConfigsForApp,
   updateGameScore,
   type ScheduleHomeScoringPlayer,
   type ScheduleStatTrackerConfigOption
@@ -40,6 +40,11 @@ function getSavedScore(event: ParentScheduleEvent | null): TrackerScoreState {
     homeScore: normalizeScoreValue(event?.homeScore),
     awayScore: normalizeScoreValue(event?.awayScore)
   };
+}
+
+function scoresMatch(first: TrackerScoreState, second: TrackerScoreState) {
+  return normalizeScoreValue(first.homeScore) === normalizeScoreValue(second.homeScore)
+    && normalizeScoreValue(first.awayScore) === normalizeScoreValue(second.awayScore);
 }
 
 function getTrackerPeriod(event: ParentScheduleEvent | null) {
@@ -120,7 +125,7 @@ export function StandardTracker({ auth }: { auth: AuthState }) {
         }
 
         const [configs, roster] = await Promise.all([
-          loadScheduleStatTrackerConfigsForApp(decodedTeamId, signedInUser),
+          loadScorekeeperStatTrackerConfigsForApp(decodedTeamId, signedInUser, loadedEvent),
           loadHomeScoringPlayers(decodedTeamId, decodedEventId)
         ]);
         if (cancelled) return;
@@ -128,11 +133,12 @@ export function StandardTracker({ auth }: { auth: AuthState }) {
         const trackerConfig = configs.find((candidate) => candidate.id === loadedEvent.statTrackerConfigId) || null;
         const baseScore = getSavedScore(loadedEvent);
         const session = readStandardTrackerSession(decodedTeamId, decodedEventId, trackerConfig?.id || loadedEvent.statTrackerConfigId || null);
+        const canRestoreSession = Boolean(session && scoresMatch(session.score, baseScore));
         const loadedViewModel = buildStandardTrackerViewModel({ config: trackerConfig || {}, roster });
         const loadedTallies = buildStandardTrackerTallies(loadedViewModel.rows.map((row) => row.player), loadedViewModel.columns);
-        const restoredScore = session?.score || baseScore;
-        const restoredTallies = session?.tallies || loadedTallies;
-        const restoredLog = session?.eventLog || [];
+        const restoredScore = canRestoreSession ? session?.score || baseScore : baseScore;
+        const restoredTallies = canRestoreSession ? session?.tallies || loadedTallies : loadedTallies;
+        const restoredLog = canRestoreSession ? session?.eventLog || [] : [];
 
         serviceRef.current = createDefaultStatTrackingService({
           statConfig: trackerConfig || {},

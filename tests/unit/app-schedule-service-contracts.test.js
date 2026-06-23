@@ -228,7 +228,7 @@ vi.mock('../../js/snack-helpers.js', () => ({
     }))
 }));
 
-import { addTeamCalendarUrl, cancelPracticeOccurrenceForApp, createScheduledGameForApp, createScheduleImportGame, createScheduleImportPractice, createStaffRsvpReminderPreviewLoader, loadParentPlayerSchedule, loadParentSchedule, loadParentScheduleEventDetail, loadScheduleStatTrackerConfigsForApp, parseRecurringPracticeOccurrenceId, removeTeamCalendarUrl, updateScheduledGameForApp } from '../../apps/app/src/lib/scheduleService.ts';
+import { addTeamCalendarUrl, cancelPracticeOccurrenceForApp, createScheduledGameForApp, createScheduleImportGame, createScheduleImportPractice, createStaffRsvpReminderPreviewLoader, loadParentPlayerSchedule, loadParentSchedule, loadParentScheduleEventDetail, loadScheduleStatTrackerConfigsForApp, loadScorekeeperStatTrackerConfigsForApp, parseRecurringPracticeOccurrenceId, removeTeamCalendarUrl, updateScheduledGameForApp } from '../../apps/app/src/lib/scheduleService.ts';
 import { clearAppDataCache } from '../../apps/app/src/lib/appDataCache.ts';
 import { getScheduleForecastHref, getScheduleMapHref } from '../../apps/app/src/lib/scheduleLogic.ts';
 
@@ -1081,6 +1081,43 @@ describe('React app schedule service contract integration', () => {
                 { id: 'cfg-b', name: 'Basketball', baseType: 'Basketball', isBasketball: true, columns: [], statDefinitions: [] },
                 { id: 'cfg-z', name: 'Zone Tracker', baseType: 'Soccer', isBasketball: false, columns: [], statDefinitions: [] }
             ]);
+    });
+
+    it('loads tracker configs for delegated scorekeeping without requiring schedule staff access', async () => {
+        dbMocks.getConfigs.mockResolvedValue([
+            { id: 'cfg-custom', name: 'Custom Tracker', columns: ['3-Pt'], statDefinitions: [] }
+        ]);
+
+        await expect(loadScorekeeperStatTrackerConfigsForApp('team-1', { uid: 'scorekeeper-1', email: 'helper@example.com' }, {
+            id: 'game-1',
+            teamId: 'team-1',
+            type: 'game',
+            isDbGame: true,
+            isCancelled: false,
+            canUpdateScore: true
+        })).resolves.toEqual([
+            {
+                id: 'cfg-custom',
+                name: 'Custom Tracker',
+                baseType: null,
+                isBasketball: false,
+                columns: ['3-Pt'],
+                statDefinitions: []
+            }
+        ]);
+        expect(dbMocks.getTeam).not.toHaveBeenCalled();
+    });
+
+    it('rejects scorekeeper tracker config loads outside an authorized game context', async () => {
+        await expect(loadScorekeeperStatTrackerConfigsForApp('team-1', { uid: 'scorekeeper-1' }, {
+            id: 'game-1',
+            teamId: 'team-1',
+            type: 'game',
+            isDbGame: true,
+            isCancelled: true,
+            canUpdateScore: true
+        })).rejects.toThrow('You do not have permission to load tracker setup for this game.');
+        expect(dbMocks.getConfigs).not.toHaveBeenCalled();
     });
 
     it('redacts bearer tokens from native REST fallback warning logs', async () => {

@@ -69,7 +69,7 @@ function normalizeLookupKey(value: unknown) {
 }
 
 export function normalizeStandardTrackerStatKey(value: unknown) {
-  return normalizeText(value).toLowerCase().replace(/[^a-z0-9_]+/g, '_').replace(/^_+|_+$/g, '');
+  return normalizeText(value).toLowerCase();
 }
 
 function normalizePlayerName(player: StandardTrackerRosterPlayerInput) {
