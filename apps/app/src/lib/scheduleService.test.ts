@@ -644,6 +644,29 @@ describe('parent schedule detail hydration', () => {
     expect(futureEvent.myRsvp).toBe('not_responded');
   });
 
+  it('preserves denormalized RSVP summaries without preloading duplicate summaries', async () => {
+    const nearEvent = buildHydrationEvent('near-game', new Date(Date.now() + 24 * 60 * 60 * 1000));
+    nearEvent.rsvpSummary = {
+      going: 8,
+      maybe: 1,
+      notGoing: 2,
+      notResponded: 3,
+      total: 14
+    };
+
+    await hydrateParentScheduleDetails({ children: [], events: [nearEvent] }, user);
+
+    expect(getRsvpSummaries).not.toHaveBeenCalled();
+    expect(getRsvps).toHaveBeenCalledWith('team-1', 'near-game');
+    expect(nearEvent.rsvpSummary).toEqual({
+      going: 8,
+      maybe: 1,
+      notGoing: 2,
+      notResponded: 3,
+      total: 14
+    });
+  });
+
   it('reuses cached per-event hydration details across repeated Home hydration passes', async () => {
     const cached = new Map<string, Promise<unknown>>();
     vi.mocked(loadCachedAppData).mockImplementation((key: string, loader: () => Promise<unknown>) => {
