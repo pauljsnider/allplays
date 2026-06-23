@@ -406,6 +406,51 @@ function getContactDedupeKey(contact = {}) {
     return `name:${String(contact.name || '').trim().toLowerCase()}:${String(contact.relation || '').trim().toLowerCase()}`;
 }
 
+function normalizeContactConflictValue(value) {
+    return String(value || '').trim().toLowerCase();
+}
+
+function describeContactConflict(contact = {}) {
+    const name = String(contact.name || contact.email || contact.phone || 'unnamed contact').trim();
+    const relation = String(contact.relation || '').trim();
+    return relation ? `${name} (${relation})` : name;
+}
+
+function getContactConflictFields(existing = {}, candidate = {}, identityField = '') {
+    return ['name', 'relation', 'email', 'phone'].filter((field) => {
+        if (field === identityField) return false;
+        const existingValue = normalizeContactConflictValue(existing[field]);
+        const candidateValue = normalizeContactConflictValue(candidate[field]);
+        return existingValue && candidateValue && existingValue !== candidateValue;
+    });
+}
+
+function collectContactIdentityConflictErrors(contacts = [], rowNumber = 0) {
+    const errors = [];
+    const seenByEmail = new Map();
+    const seenByPhone = new Map();
+
+    const checkIdentity = (seen, identityField, identityLabel, contact) => {
+        const identityValue = normalizeContactConflictValue(contact[identityField]);
+        if (!identityValue) return;
+        const existing = seen.get(identityValue);
+        if (!existing) {
+            seen.set(identityValue, contact);
+            return;
+        }
+        const conflictFields = getContactConflictFields(existing, contact, identityField);
+        if (conflictFields.length === 0) return;
+        errors.push(`Row ${rowNumber}: contact ${identityLabel} ${identityValue} has conflicting ${conflictFields.join('/')} values (${describeContactConflict(existing)} vs ${describeContactConflict(contact)}).`);
+    };
+
+    contacts.forEach((contact) => {
+        checkIdentity(seenByEmail, 'email', 'email', contact);
+        checkIdentity(seenByPhone, 'phone', 'phone', contact);
+    });
+
+    return errors;
+}
+
 function mergeImportedContacts(existingContacts = [], importedContacts = []) {
     const merged = [];
     const seen = new Set();
@@ -438,6 +483,7 @@ function buildRosterCsvContactPlan(contactValues = new Map(), rowNumber = 0) {
         }
     });
     const familyContacts = [...guardians, ...contacts];
+    errors.push(...collectContactIdentityConflictErrors(familyContacts, rowNumber));
     const inviteRequests = familyContacts
         .filter((contact) => contact.email)
         .map((contact) => ({
