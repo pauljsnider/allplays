@@ -1372,6 +1372,7 @@ function CoParentInviteCard({ data, auth }: { data: ParentPlayerDetailData; auth
 }
 
 type IncentivePanelId = 'overview' | 'rules' | 'history';
+type PlayerIncentiveRule = ParentPlayerDetailData['incentives']['currentRules'][number];
 
 const incentivePanels: Array<{ id: IncentivePanelId; label: string }> = [
   { id: 'overview', label: 'Overview' },
@@ -1393,7 +1394,7 @@ function IncentivesCard({ data, auth, onChanged }: { data: ParentPlayerDetailDat
   const [amount, setAmount] = useState('1.00');
   const [threshold, setThreshold] = useState('3');
   const [thresholdOp, setThresholdOp] = useState<'gt' | 'gte'>('gt');
-  const [editingRule, setEditingRule] = useState<Record<string, any> | null>(null);
+  const [editingRule, setEditingRule] = useState<PlayerIncentiveRule | null>(null);
   const [cap, setCap] = useState(incentives.maxPerGameCents !== null ? String(Math.round(incentives.maxPerGameCents / 100)) : '');
   const [busy, setBusy] = useState('');
   const [status, setStatus] = useState<{ tone: 'error' | 'success'; message: string } | null>(null);
@@ -1459,7 +1460,7 @@ function IncentivesCard({ data, auth, onChanged }: { data: ParentPlayerDetailDat
     setBuilderOpen(false);
   };
 
-  const editRule = (rule: Record<string, any>) => {
+  const editRule = (rule: PlayerIncentiveRule) => {
     setEditingRule(rule);
     setStatKey(rule.statKey || statOptions[0]?.key || 'pts');
     setType(rule.type === 'threshold' ? 'threshold' : 'per_unit');
@@ -1682,7 +1683,10 @@ function IncentivesCard({ data, auth, onChanged }: { data: ParentPlayerDetailDat
                         Edit
                       </button>
                       <button type="button" className="ghost-button !h-8 !min-h-8 !px-2 text-xs" disabled={busy === `toggle-${rule.id}`} onClick={() => run(`toggle-${rule.id}`, () => toggleParentPlayerIncentiveRule(auth.user, data.child.teamId, data.child.playerId, rule))}>{rule.active === false ? 'Enable' : 'Disable'}</button>
-                      <button type="button" className="ghost-button !h-8 !min-h-8 !px-2 text-xs" disabled={busy === `retire-${rule.id}`} onClick={() => run(`retire-${rule.id}`, () => retireParentPlayerIncentiveRule(auth.user, data.child.teamId, data.child.playerId, rule.id), 'Rule stopped.')}>
+                      <button type="button" className="ghost-button !h-8 !min-h-8 !px-2 text-xs" disabled={!rule.id || busy === `retire-${rule.id}`} onClick={() => {
+                        const ruleId = rule.id;
+                        return ruleId ? run(`retire-${ruleId}`, () => retireParentPlayerIncentiveRule(auth.user, data.child.teamId, data.child.playerId, ruleId), 'Rule stopped.') : undefined;
+                      }}>
                         <Trash2 className="h-3.5 w-3.5" aria-hidden="true" />
                       </button>
                     </div>
@@ -1964,7 +1968,7 @@ function getIncentiveStatLabel(statOptions: Array<{ key: string; label: string }
   return statOptions.find((option) => option.key === statKey)?.label || String(statKey || '').toUpperCase() || 'STAT';
 }
 
-function formatIncentiveRule(rule: Record<string, any>, statOptions = defaultStatOptions) {
+function formatIncentiveRule(rule: PlayerIncentiveRule, statOptions = defaultStatOptions) {
   const stat = getIncentiveStatLabel(statOptions, rule.statKey || '');
   const amount = formatMoney(Number(rule.amountCents || 0));
   if (rule.type === 'threshold') {

@@ -24,14 +24,22 @@ describe('app legacy adapter boundary', () => {
         const playerServiceSource = readRepoFile('apps/app/src/lib/playerService.ts');
         const scheduleAdapterSource = readRepoFile('apps/app/src/lib/adapters/legacyScheduleDb.ts');
         const playerAdapterSource = readRepoFile('apps/app/src/lib/adapters/legacyPlayerDb.ts');
+        const playerProfileAdapterSource = readRepoFile('apps/app/src/lib/adapters/legacyPlayerProfile.ts');
+        const rosterPrivacyAdapterSource = readRepoFile('apps/app/src/lib/adapters/legacyRosterPrivacy.ts');
 
         expect(scheduleServiceSource).toContain("from './adapters/legacyScheduleDb'");
         expect(playerServiceSource).toContain("from './adapters/legacyPlayerDb'");
+        expect(playerServiceSource).toContain("from './adapters/legacyPlayerProfile'");
+        expect(playerServiceSource).toContain("from './adapters/legacyRosterPrivacy'");
         expect(scheduleAdapterSource).toContain("from '@legacy/db.js'");
         expect(scheduleAdapterSource).toContain("from '@legacy/firebase.js'");
         expect(playerAdapterSource).toContain("from '@legacy/db.js'");
+        expect(playerProfileAdapterSource).toContain("from '@legacy/parent-incentives.js'");
+        expect(rosterPrivacyAdapterSource).toContain("from '@legacy/roster-profile-fields.js'");
         expect(scheduleAdapterSource).not.toMatch(directLegacyImportPattern);
         expect(playerAdapterSource).not.toMatch(directLegacyImportPattern);
+        expect(playerProfileAdapterSource).not.toMatch(directLegacyImportPattern);
+        expect(rosterPrivacyAdapterSource).not.toMatch(directLegacyImportPattern);
     });
 
     it('keeps migrated app service clusters behind typed legacy adapters', () => {

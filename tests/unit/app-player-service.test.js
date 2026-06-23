@@ -25,21 +25,16 @@ const scheduleMocks = vi.hoisted(() => ({
     loadParentPlayerSchedule: vi.fn()
 }));
 
-const profileStatMocks = vi.hoisted(() => ({
-    collectPlayerVideoClips: vi.fn()
-}));
-
-const trackingMocks = vi.hoisted(() => ({
-    getVisiblePlayerTrackingSummary: vi.fn()
-}));
-
-const incentiveMocks = vi.hoisted(() => ({
+const playerProfileMocks = vi.hoisted(() => ({
+    buildAthleteProfileShareUrl: vi.fn(() => 'https://allplays.ai/athlete-profile.html?profileId=profile-1'),
     calculateEarnings: vi.fn(),
+    collectPlayerVideoClips: vi.fn(),
     getApplicableRulesForGame: vi.fn(),
     getCapSetting: vi.fn(),
     getIncentiveRules: vi.fn(),
     getPaidGames: vi.fn(),
     getStatOptionsForTeam: vi.fn(),
+    getVisiblePlayerTrackingSummary: vi.fn(),
     isCurrentRuleVersion: vi.fn(),
     markGamePaid: vi.fn(),
     retireIncentiveRule: vi.fn(),
@@ -48,10 +43,21 @@ const incentiveMocks = vi.hoisted(() => ({
     toggleIncentiveRule: vi.fn()
 }));
 
-vi.mock('../../js/db.js', () => dbMocks);
-vi.mock('../../js/player-profile-stats.js', () => profileStatMocks);
-vi.mock('../../js/player-tracking-summary.js', () => trackingMocks);
-vi.mock('../../js/parent-incentives.js', () => incentiveMocks);
+const rosterPrivacyMocks = vi.hoisted(() => ({
+    canViewRosterField: vi.fn(() => true),
+    getRosterProfileValues: vi.fn(() => ({})),
+    normalizeRosterFieldDefinitions: vi.fn(() => []),
+    splitRosterProfileValuesByVisibility: vi.fn(() => ({ publicValues: {}, privateValues: {} })),
+    validateRosterProfileValues: vi.fn(() => [])
+}));
+
+const profileStatMocks = playerProfileMocks;
+const trackingMocks = playerProfileMocks;
+const incentiveMocks = playerProfileMocks;
+
+vi.mock('../../apps/app/src/lib/adapters/legacyPlayerDb', () => dbMocks);
+vi.mock('../../apps/app/src/lib/adapters/legacyPlayerProfile', () => playerProfileMocks);
+vi.mock('../../apps/app/src/lib/adapters/legacyRosterPrivacy', () => rosterPrivacyMocks);
 vi.mock('../../apps/app/src/lib/scheduleService.ts', () => scheduleMocks);
 
 import {
@@ -301,7 +307,7 @@ describe('React app parent player detail service', () => {
     });
 
     it('keeps the player page usable when optional profile data fails', async () => {
-        dbMocks.getTeam.mockRejectedValue(new Error('team unavailable'));
+        dbMocks.getTeam.mockResolvedValue(null);
         dbMocks.getPlayers.mockRejectedValue(new Error('players unavailable'));
         dbMocks.getGames.mockRejectedValue(new Error('games unavailable'));
         dbMocks.getAggregatedStatsForPlayer.mockRejectedValue(new Error('stats unavailable'));

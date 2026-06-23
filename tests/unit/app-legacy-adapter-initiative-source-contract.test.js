@@ -39,7 +39,9 @@ describe('app legacy adapter initiative source contract', () => {
             'legacyHomeFees.ts',
             'legacyParentTools.ts',
             'legacyPlayerDb.ts',
+            'legacyPlayerProfile.ts',
             'legacyProfile.ts',
+            'legacyRosterPrivacy.ts',
             'legacyScheduleDb.ts',
             'legacyScheduleHelpers.ts',
             'legacyTeamDetail.ts'
@@ -52,6 +54,8 @@ describe('app legacy adapter initiative source contract', () => {
         const chatAdapterSource = readRepoFile('apps/app/src/lib/adapters/legacyChatService.ts');
         const gameReportAdapterSource = readRepoFile('apps/app/src/lib/adapters/legacyGameReport.ts');
         const authAdapterSource = readRepoFile('apps/app/src/lib/adapters/legacyAuth.ts');
+        const playerProfileAdapterSource = readRepoFile('apps/app/src/lib/adapters/legacyPlayerProfile.ts');
+        const rosterPrivacyAdapterSource = readRepoFile('apps/app/src/lib/adapters/legacyRosterPrivacy.ts');
 
         expect(viteConfigSource).toContain("'@legacy': path.resolve(__dirname, '../../js')");
         expect(parentToolsAdapterSource).toContain("import * as legacyDb from '@legacy/db.js';");
@@ -59,6 +63,8 @@ describe('app legacy adapter initiative source contract', () => {
         expect(gameReportAdapterSource).toContain("from '@legacy/game-report-stats.js';");
         expect(authAdapterSource).toContain("import('@legacy/db.js')");
         expect(authAdapterSource).toContain("import('@legacy/admin-invite.js')");
+        expect(playerProfileAdapterSource).toContain("from '@legacy/parent-incentives.js'");
+        expect(rosterPrivacyAdapterSource).toContain("from '@legacy/roster-profile-fields.js'");
     });
 
     it('keeps direct ../../../../js references behind adapter shims', () => {
@@ -107,6 +113,8 @@ describe('app legacy adapter initiative source contract', () => {
         expect(readRepoFile('apps/app/src/lib/scheduleService.ts')).toContain("from './adapters/legacyScheduleDb'");
         expect(readRepoFile('apps/app/src/lib/scheduleService.ts')).toContain("from './adapters/legacyScheduleHelpers'");
         expect(readRepoFile('apps/app/src/lib/playerService.ts')).toContain("from './adapters/legacyPlayerDb'");
+        expect(readRepoFile('apps/app/src/lib/playerService.ts')).toContain("from './adapters/legacyPlayerProfile'");
+        expect(readRepoFile('apps/app/src/lib/playerService.ts')).toContain("from './adapters/legacyRosterPrivacy'");
         expect(readRepoFile('apps/app/src/lib/gameReportService.ts')).toContain("from './adapters/legacyGameReport'");
     });
 });
