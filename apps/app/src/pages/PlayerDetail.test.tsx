@@ -24,15 +24,22 @@ const playerServiceMocks = vi.hoisted(() => ({
   saveParentPlayerIncentiveRule: vi.fn(),
   sendParentCoParentInvite: vi.fn(),
   toggleParentPlayerIncentiveRule: vi.fn(),
-  updateParentPlayerEditableProfile: vi.fn()
+  updateParentPlayerEditableProfile: vi.fn(),
+  normalizeAthleteProfileHighlightClipUrl: vi.fn((url: string) => String(url || '').trim())
 }));
 
 const publicActionMocks = vi.hoisted(() => ({
   sharePublicUrl: vi.fn()
 }));
 
+const profilePhotoServiceMocks = vi.hoisted(() => ({
+  acquireProfilePhoto: vi.fn(),
+  normalizeProfilePhoto: vi.fn(async (file: File) => file)
+}));
+
 vi.mock('../lib/playerService', () => playerServiceMocks);
 vi.mock('../lib/publicActions', () => publicActionMocks);
+vi.mock('../lib/profilePhotoService', () => profilePhotoServiceMocks);
 
 import { PlayerDetail } from './PlayerDetail';
 import type { AuthState } from '../lib/types';
@@ -375,7 +382,7 @@ describe('PlayerDetail athlete profile season selection', () => {
           athlete: { name: 'Sam Player', headline: '2028 Guard' },
           bio: { position: 'Guard', hometown: 'Kansas City' },
           privacy: 'private',
-          clips: [{ id: 'clip-1', title: 'Step back' }],
+          clips: [{ id: 'clip-1', title: 'Step back', url: 'https://example.test/step-back.mp4' }],
           seasons: [{ seasonKey: 'team-current::player-current' }]
         },
         shareUrl: 'https://allplays.ai/athlete-profile.html?profileId=profile-1',
@@ -394,6 +401,60 @@ describe('PlayerDetail athlete profile season selection', () => {
     expect(screen.getByText('Publishing makes this read-only athlete profile public at the share link.')).toBeTruthy();
     expect(screen.getByText('• 1 season of stats and game clips')).toBeTruthy();
     expect(screen.getByText('• 1 highlight clip')).toBeTruthy();
+  });
+
+  it('shows saved athlete clip titles in the profile builder', async () => {
+    playerServiceMocks.loadParentPlayerDetail.mockResolvedValue(buildDetailData({
+      athleteProfile: {
+        profile: {
+          id: 'profile-1',
+          athlete: { name: 'Sam Player' },
+          bio: {},
+          privacy: 'public',
+          clips: [{ id: 'clip-old', source: 'upload', title: 'Old clip', url: 'https://example.test/old.mp4' }],
+          seasons: [{ seasonKey: 'team-current::player-current' }]
+        },
+        shareUrl: 'https://allplays.ai/athlete-profile.html?profileId=profile-1',
+        builderUrl: 'https://allplays.ai/athlete-profile-builder.html?teamId=team-current&playerId=player-current&profileId=profile-1',
+        seasonOptions: buildDetailData().athleteProfile.seasonOptions
+      }
+    }));
+
+    renderPlayerDetail();
+
+    await screen.findByText('Sam Player');
+    fireEvent.click(screen.getByRole('button', { name: 'Profile' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Athlete Profile' }));
+
+    expect(await screen.findByText('Old clip')).toBeTruthy();
+    expect(screen.getByText('https://example.test/old.mp4')).toBeTruthy();
+  });
+
+  it('prevents saving while an athlete headshot is still preparing', async () => {
+    const normalizeDeferred = createDeferred<File>();
+    const headshotFile = new File(['headshot-bytes'], 'new-headshot.png', { type: 'image/png' });
+    profilePhotoServiceMocks.normalizeProfilePhoto.mockImplementationOnce(() => normalizeDeferred.promise);
+
+    renderPlayerDetail();
+
+    await screen.findByText('Sam Player');
+    fireEvent.click(screen.getByRole('button', { name: 'Profile' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Athlete Profile' }));
+    await screen.findByText('Athlete Profile Builder');
+
+    fireEvent.change(screen.getByLabelText('Browse file'), { target: { files: [headshotFile] } });
+
+    const preparingButton = await screen.findByRole('button', { name: 'Preparing' });
+    expect((preparingButton as HTMLButtonElement).disabled).toBe(true);
+
+    fireEvent.submit(preparingButton.closest('form') as HTMLFormElement);
+
+    expect(await screen.findByText('Finish preparing the athlete headshot before saving.')).toBeTruthy();
+    expect(playerServiceMocks.saveParentAthleteProfileDraft).not.toHaveBeenCalled();
+
+    normalizeDeferred.resolve(headshotFile);
+    expect(await screen.findByText('New headshot selected. Save to publish it.')).toBeTruthy();
+    expect((screen.getByRole('button', { name: 'Save Athlete Profile' }) as HTMLButtonElement).disabled).toBe(false);
   });
 
   it('switches the athlete profile save CTA with the selected privacy option', async () => {

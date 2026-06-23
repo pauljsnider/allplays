@@ -40,9 +40,15 @@ const playerMocks = vi.hoisted(() => ({
     updateParentPlayerEditableProfile: vi.fn()
 }));
 
+const profilePhotoServiceMocks = vi.hoisted(() => ({
+    acquireProfilePhoto: vi.fn(),
+    normalizeProfilePhoto: vi.fn(async (file) => file)
+}));
+
 vi.mock('../../apps/app/src/lib/homeService.ts', () => homeMocks);
 vi.mock('../../apps/app/src/lib/socialService.ts', () => socialMocks);
 vi.mock('../../apps/app/src/lib/playerService.ts', () => playerMocks);
+vi.mock('../../apps/app/src/lib/profilePhotoService', () => profilePhotoServiceMocks);
 
 import { Home } from '../../apps/app/src/pages/Home.tsx';
 import { PlayerDetail } from '../../apps/app/src/pages/PlayerDetail.tsx';
@@ -157,6 +163,12 @@ async function clickButtonByAriaLabel(container, label) {
         buttonByAriaLabel(container, label).dispatchEvent(new MouseEvent('click', { bubbles: true }));
     });
     await flush();
+}
+
+async function clickAllButtonsByAriaLabel(container, label) {
+    while (Array.from(container.querySelectorAll('button')).some((candidate) => candidate.getAttribute('aria-label') === label)) {
+        await clickButtonByAriaLabel(container, label);
+    }
 }
 
 async function clickLastButton(container, text) {
@@ -806,12 +818,16 @@ describe('React app Home and player drill-in integration', () => {
         expect(buttonByText(container, 'Athlete Profile').getAttribute('aria-pressed')).toBe('true');
 
         expect(container.textContent).toContain('Custom athlete profile headshot');
-        expect(container.textContent).toContain('Manual highlight clip');
-        expect(container.textContent).toContain('Existing clips stay on the profile.');
+        expect(container.textContent).toContain('Highlight clips');
+        expect(container.textContent).toContain('Uploaded clip');
+        expect(container.textContent).toContain('Clip title');
+        expect(container.textContent).toContain('Note');
         await attachAthleteHeadshotFile(container, 'new-headshot.png');
+        await waitForText(container, 'New headshot selected. Save to publish it.');
+        await waitForText(container, 'new-headshot.png');
         await attachAthleteHighlightClipFile(container, 'highlight.mp4');
-        expect(container.textContent).toContain('New headshot selected. Save to publish it.');
-        expect(container.textContent).toContain('highlight.mp4 selected. Save to publish it.');
+        await waitForText(container, 'Pending upload');
+        await waitForText(container, 'highlight.mp4');
         await clickButton(container, 'Publish Athlete Profile');
         await waitForText(container, 'Saved');
         expect(playerMocks.saveParentAthleteProfileDraft).toHaveBeenCalledWith(expect.objectContaining({
@@ -821,9 +837,14 @@ describe('React app Home and player drill-in integration', () => {
             profileId: 'profile-1',
             profilePhotoFile: expect.objectContaining({ name: 'new-headshot.png', type: 'image/png' }),
             resetProfilePhoto: false,
-            highlightClipFile: expect.objectContaining({ name: 'highlight.mp4', type: 'video/mp4' }),
+            highlightClipUploads: [expect.objectContaining({
+                file: expect.objectContaining({ name: 'highlight.mp4', type: 'video/mp4' })
+            })],
             draft: expect.objectContaining({
-                clips: [{ id: 'clip-old', source: 'upload', title: 'Old clip', url: 'https://example.test/old.mp4' }]
+                clips: [
+                    expect.objectContaining({ id: 'clip-old', source: 'upload', title: 'Old clip', url: 'https://example.test/old.mp4' }),
+                    expect.objectContaining({ source: 'upload', pendingUpload: true })
+                ]
             })
         }));
         expect(playerMocks.loadParentPlayerDetail).toHaveBeenCalledTimes(2);
@@ -835,14 +856,14 @@ describe('React app Home and player drill-in integration', () => {
         await attachAthleteHeadshotFile(container, 'notes.txt', 'text/plain');
         await waitForText(container, 'Choose an image file for the athlete headshot.');
         await attachAthleteHighlightClipFile(container, 'notes.txt', 'text/plain');
-        await waitForText(container, 'Choose an image or video file for the highlight clip.');
+        await waitForText(container, 'Choose image or video files for highlight clips.');
         await clickButton(container, 'Use linked season photo');
-        await clickButton(container, 'Clear selected clip');
+        await clickAllButtonsByAriaLabel(container, 'Remove clip');
         await clickButton(container, 'Publish Athlete Profile');
         expect(playerMocks.saveParentAthleteProfileDraft).toHaveBeenLastCalledWith(expect.objectContaining({
             profilePhotoFile: null,
             resetProfilePhoto: true,
-            highlightClipFile: null
+            highlightClipUploads: []
         }));
 
         await clickButton(container, 'Incentives');
