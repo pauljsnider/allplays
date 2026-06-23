@@ -278,6 +278,36 @@ describe('React app public URL actions', () => {
         await expect(exportCalendarIcsFile('family.ics', 'BEGIN:VCALENDAR\r\nEND:VCALENDAR')).rejects.toThrow('Native share failed.');
     });
 
+    it('writes and shares a native certificate PNG export', async () => {
+        installNativeCapacitor(['Filesystem', 'Share']);
+        filesystemMocks.writeFile.mockResolvedValueOnce({ uri: 'file:///cache/certificate.png' });
+        const { exportCertificatePngFile } = await loadPublicActions();
+
+        const result = await exportCertificatePngFile('Pat Star Award.png', new Blob(['cert'], { type: 'image/png' }));
+
+        expect(result).toBe('shared');
+        expect(filesystemMocks.writeFile).toHaveBeenCalledWith(expect.objectContaining({
+            path: expect.stringMatching(/^certificate-exports\/\d+-Pat-Star-Award\.png$/),
+            data: 'Y2VydA==',
+            directory: 'CACHE',
+            recursive: true
+        }));
+        expect(shareMocks.share).toHaveBeenCalledWith({
+            title: 'ALL PLAYS certificate export',
+            text: 'Share this certificate image with Files, AirPrint, or another app.',
+            files: ['file:///cache/certificate.png'],
+            dialogTitle: 'Export certificate'
+        });
+    });
+
+    it('throws when the native certificate export handoff fails', async () => {
+        installNativeCapacitor(['Filesystem', 'Share']);
+        shareMocks.share.mockRejectedValueOnce(new Error('Native certificate share failed.'));
+        const { exportCertificatePngFile } = await loadPublicActions();
+
+        await expect(exportCertificatePngFile('award.png', new Blob(['cert'], { type: 'image/png' }))).rejects.toThrow('Native certificate share failed.');
+    });
+
     it('reports native share cancellation without showing a false failure', async () => {
         const abortError = Object.assign(new Error('cancelled'), { name: 'AbortError' });
         installNativeCapacitor(['Share']);

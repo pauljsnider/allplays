@@ -473,7 +473,7 @@ describe('TeamDetail', () => {
     await waitFor(() => expect(teamDetailServiceMocks.archiveTeamTrackingItemForApp).toHaveBeenCalledWith('team-1', auth.user, 'item-1'));
   });
 
-  it('links staff to the native certificates draft screen from the team more tab', async () => {
+  it('links staff to the native awards studio from the team more tab', async () => {
     teamDetailServiceMocks.loadParentTeamDetail.mockResolvedValue({
       ...model,
       canManageTeam: true
@@ -491,7 +491,7 @@ describe('TeamDetail', () => {
     fireEvent.click(screen.getByRole('button', { name: /more/i }));
 
     expect((await screen.findByRole('link', { name: /edit team/i })).getAttribute('href')).toBe('/teams/team-1/edit');
-    expect((await screen.findByRole('link', { name: /awards drafts/i })).getAttribute('href')).toBe('/teams/team-1/certificates');
+    expect((await screen.findByRole('link', { name: /awards studio/i })).getAttribute('href')).toBe('/teams/team-1/certificates');
   });
 
   it('links staff to the native drill library from the team more tab', async () => {

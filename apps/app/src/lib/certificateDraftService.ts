@@ -27,6 +27,7 @@ export type CertificateDraftPlayer = {
   number: string;
   photoUrl: string | null;
   active: boolean;
+  customDescriptionHint?: string;
 };
 
 export type CertificateDraftSharedState = {
@@ -35,6 +36,7 @@ export type CertificateDraftSharedState = {
   awardTitle: string;
   seasonLabel: string;
   footerUrl: string;
+  descriptionTone: string;
   colorMode: 'team' | 'template' | 'custom';
   customColors: {
     borderColor: string;
@@ -97,7 +99,8 @@ export async function loadCertificateDraftComposer(teamId: string, user: AuthUse
       name: String(player.name || player.playerName || 'Player'),
       number: String(player.number || ''),
       photoUrl: player.photoUrl ? String(player.photoUrl) : null,
-      active: player.active !== false
+      active: player.active !== false,
+      customDescriptionHint: String(player.customDescriptionHint || '').trim()
     }))
     .filter((player) => player.id);
 
@@ -153,7 +156,8 @@ export async function saveCertificateDraftsForApp({
       name: String(player?.name || 'Player').trim() || 'Player',
       number: String(player?.number || '').trim(),
       photoUrl: player?.photoUrl ? String(player.photoUrl) : null,
-      active: player?.active !== false
+      active: player?.active !== false,
+      customDescriptionHint: String(player?.customDescriptionHint || '').trim()
     }))
     .filter((player) => player.id);
 
@@ -219,6 +223,7 @@ export function buildCertificatePayloadForApp({
     description: '',
     descriptionSource: 'manual',
     statsWindow: shared.statsWindow,
+    descriptionTone: shared.descriptionTone,
     seasonLabel: shared.seasonLabel || '',
     footerUrl: shared.footerUrl || '',
     fonts: shared.fonts || null,
@@ -250,6 +255,7 @@ function buildInitialSharedState(team: Record<string, any>, defaults: Record<str
     awardTitle: defaults?.awardTitle || '',
     seasonLabel: defaults?.seasonLabel || '',
     footerUrl: defaults?.footerUrl || '',
+    descriptionTone: defaults?.descriptionTone || 'celebratory and specific',
     colorMode: defaults?.colorMode || (team?.colors ? 'team' : 'template'),
     customColors: {
       ...getDefaultCustomColors(team),
@@ -273,6 +279,7 @@ function normalizeSharedState(shared: Partial<CertificateDraftSharedState>, team
     awardTitle: String(shared?.awardTitle || '').trim(),
     seasonLabel: String(shared?.seasonLabel || '').trim(),
     footerUrl: String(shared?.footerUrl || '').trim(),
+    descriptionTone: String(shared?.descriptionTone || 'celebratory and specific').trim() || 'celebratory and specific',
     colorMode: shared?.colorMode === 'custom' || shared?.colorMode === 'template' ? shared.colorMode : 'team',
     customColors: {
       ...getDefaultCustomColors(team),

@@ -1,12 +1,16 @@
 import {
   createCertificate as legacyCreateCertificate,
   createCertificateBatch as legacyCreateCertificateBatch,
+  getAggregatedStatsForGames as legacyGetAggregatedStatsForGames,
   getCertificateDefaults as legacyGetCertificateDefaults,
+  getCertificate as legacyGetCertificate,
+  getGames as legacyGetGames,
   getPlayers as legacyGetPlayers,
   getTeam as legacyGetTeam,
   getUserByEmail as legacyGetUserByEmail,
   getUserProfile as legacyGetUserProfile,
   setCertificateDefaults as legacySetCertificateDefaults,
+  updateCertificate as legacyUpdateCertificate,
   updateCertificateBatch as legacyUpdateCertificateBatch
 } from '@legacy/db.js';
 import { buildDefaultSigners as legacyBuildDefaultSigners, normalizeSigners as legacyNormalizeSigners } from '@legacy/certificates/signers.js';
@@ -21,12 +25,16 @@ import { hasFullTeamAccess as legacyHasFullTeamAccess } from '@legacy/team-acces
  */
 export const createCertificate = legacyCreateCertificate as (...args: any[]) => Promise<any>;
 export const createCertificateBatch = legacyCreateCertificateBatch as (...args: any[]) => Promise<any>;
+export const getAggregatedStatsForGames = legacyGetAggregatedStatsForGames as (...args: any[]) => Promise<any>;
+export const getCertificate = legacyGetCertificate as (...args: any[]) => Promise<any>;
 export const getCertificateDefaults = legacyGetCertificateDefaults as (...args: any[]) => Promise<any>;
+export const getGames = legacyGetGames as (...args: any[]) => Promise<any>;
 export const getPlayers = legacyGetPlayers as (...args: any[]) => Promise<any>;
 export const getTeam = legacyGetTeam as (...args: any[]) => Promise<any>;
 export const getUserByEmail = legacyGetUserByEmail as (...args: any[]) => Promise<any>;
 export const getUserProfile = legacyGetUserProfile as (...args: any[]) => Promise<any>;
 export const setCertificateDefaults = legacySetCertificateDefaults as (...args: any[]) => Promise<any>;
+export const updateCertificate = legacyUpdateCertificate as (...args: any[]) => Promise<any>;
 export const updateCertificateBatch = legacyUpdateCertificateBatch as (...args: any[]) => Promise<any>;
 export const buildDefaultSigners = legacyBuildDefaultSigners as (...args: any[]) => any;
 export const normalizeSigners = legacyNormalizeSigners as (...args: any[]) => any;
