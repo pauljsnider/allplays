@@ -1,15 +1,18 @@
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 import { visualizer } from 'rollup-plugin-visualizer';
 import { patchBundleVisualizerTooltipFile } from './build/fixBundleVisualizerTooltip.js';
+
+const appDirectory = path.dirname(fileURLToPath(import.meta.url));
 
 // https://vitejs.dev/config/
 const bundleVisualizerTooltipFixPlugin = {
   name: 'bundle-visualizer-tooltip-fix',
   apply: 'build',
   writeBundle() {
-    patchBundleVisualizerTooltipFile(path.resolve(__dirname, 'bundle-visualizer.html'));
+    patchBundleVisualizerTooltipFile(path.resolve(appDirectory, 'bundle-visualizer.html'));
   }
 };
 
@@ -17,7 +20,7 @@ export default defineConfig({
   base: './',
   resolve: {
     alias: {
-      '@legacy': path.resolve(__dirname, '../../js')
+      '@legacy': path.resolve(appDirectory, '../../js')
     }
   },
   plugins: [

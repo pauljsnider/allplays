@@ -57,7 +57,7 @@ describe('app legacy adapter initiative source contract', () => {
         const playerProfileAdapterSource = readRepoFile('apps/app/src/lib/adapters/legacyPlayerProfile.ts');
         const rosterPrivacyAdapterSource = readRepoFile('apps/app/src/lib/adapters/legacyRosterPrivacy.ts');
 
-        expect(viteConfigSource).toContain("'@legacy': path.resolve(__dirname, '../../js')");
+        expect(viteConfigSource).toContain("'@legacy': path.resolve(appDirectory, '../../js')");
         expect(parentToolsAdapterSource).toContain("import * as legacyDb from '@legacy/db.js';");
         expect(chatAdapterSource).toContain("import * as legacyDb from '@legacy/db.js';");
         expect(gameReportAdapterSource).toContain("from '@legacy/game-report-stats.js';");
