@@ -71,7 +71,7 @@ export const chatReactions: Array<{ key: ChatReactionKey; emoji: string; label: 
 export const chatReactionKeys = new Set(chatReactions.map((reaction) => reaction.key));
 
 const aiMentionRegex = /@all\s*plays/ig;
-const chatMentionQueryRegex = /(^|\s)@([A-Za-z0-9 .'-]{1,40})$/;
+const chatMentionQueryRegex = /(^|\s)@([A-Za-z0-9 .'-]{0,40})$/;
 const chatMentionReplaceRegex = /(^|\s)@([A-Za-z0-9 .'-]{0,40})$/;
 const chatMentionSuffixRegex = /^[A-Za-z0-9.'-]*/;
 const chatMentionHighlightRegex = /(^|[\s([{"'])@([A-Za-z0-9][A-Za-z0-9.'-]*(?:\s+[A-Za-z0-9][A-Za-z0-9.'-]*){0,2})(?=$|[\s.,!?:;)\]}])/g;
@@ -344,7 +344,8 @@ export function getChatMentionQuery(text: string, cursorPosition?: number) {
   const prefixQuery = String(match[2] || '');
   const suffixQuery = source.slice(safeCursorPosition).match(chatMentionSuffixRegex)?.[0] || '';
   const query = `${prefixQuery}${suffixQuery}`.trim();
-  if (!query || /\s$/.test(prefixQuery)) return null;
+  if (/\s$/.test(prefixQuery)) return null;
+  if (!query && !beforeCursor.endsWith('@')) return null;
   return query.toLowerCase();
 }
 

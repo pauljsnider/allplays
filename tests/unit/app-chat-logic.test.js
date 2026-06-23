@@ -74,9 +74,13 @@ describe('React app chat logic', () => {
 
         expect(getChatMentionQuery('Can @co')).toBe('co');
         expect(getChatMentionQuery(partialMention, partialCursor)).toBe('coac');
-        expect(getChatMentionQuery('@')).toBeNull();
+        expect(getChatMentionQuery('@')).toBe('');
         expect(getChatMentionQuery('@ ')).toBeNull();
         expect(getChatMentionQuery('Can @Coach Jamie ')).toBeNull();
+        expect(buildChatMentionSuggestions(options, '@')).toEqual([
+            { id: 'user:coach-1', label: 'Coach Jamie', detail: 'Staff' },
+            { id: 'player:player-1', label: 'Pat Star', detail: '#9' }
+        ]);
         expect(buildChatMentionSuggestions(options, 'Can @co')).toEqual([
             { id: 'user:coach-1', label: 'Coach Jamie', detail: 'Staff' }
         ]);
