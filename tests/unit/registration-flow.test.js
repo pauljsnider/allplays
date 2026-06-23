@@ -347,10 +347,10 @@ describe('public registration flow', () => {
         });
     });
 
-    it('wires registration page to public form reads and pending registration writes', () => {
+    it('wires registration page to public form reads and server-owned pending registration submission', () => {
         const page = fs.readFileSync('registration.html', 'utf8');
         expect(page).toContain("doc(db, 'teams', teamId, 'registrationForms', formId)");
-        expect(page).toContain("collection(db, 'teams', teamId, 'registrationForms', formId, 'registrations')");
+        expect(page).not.toContain("collection(db, 'teams', teamId, 'registrationForms', formId, 'registrations')");
         expect(page).toContain('registration-options-section');
         expect(page).toContain('registration-payment-section');
         expect(page).toContain('getRegistrationPaymentNotice');
@@ -375,8 +375,10 @@ describe('public registration flow', () => {
         expect(page).toContain('preparedCheckoutRegistration = { retryKey, result, checkoutAttemptToken };');
         expect(page).toContain('await releaseCancelledStripeRegistration(result.registrationId, checkoutAttemptToken);');
         expect(page).toContain('preparedCheckoutRegistration = null;');
-        expect(page).toContain('return { status: \'pending\', registrationId: registrationRef.id };');
-        expect(page).toContain('return { status: placement.status, registrationId: registrationRef.id };');
+        expect(page).toContain("httpsCallable(functions, 'submitPublicRegistration')");
+        expect(page).toContain('return result?.data || {};');
+        expect(page).toContain('getPublicRegistrationErrorMessage');
+        expect(page).toContain("code === 'resource-exhausted'");
         expect(page).toContain("paymentLoadingState.classList.add('hidden');");
         expect(page).toContain('cancelStripeRegistrationCheckout({ teamId, formId, registrationId, checkoutAttemptToken, publicCheckoutCapability });');
         expect(page).toContain('releaseCancelledStripeRegistration(cancelledRegistrationId, cancelledCheckoutAttemptToken, cancelledPublicCheckoutCapability)');
@@ -384,10 +386,9 @@ describe('public registration flow', () => {
         expect(page).toContain('? preparedCheckoutRegistration.checkoutAttemptToken');
         expect(page).toContain(': createCheckoutAttemptToken();');
         expect(page).toContain('checkoutAttemptToken,');
-        expect(page).toContain('runTransaction(db, async (transaction)');
+        expect(page).not.toContain('runTransaction(db, async (transaction)');
+        expect(page).not.toContain('addDoc(');
         expect(page).toContain('decideRegistrationPlacement');
-        expect(page).toContain('registrationCapacityUpdateId: registrationRef.id');
-        expect(page).toContain('Registration form capacity tracking is not properly configured.');
         expect(page).toContain('option-full');
         expect(page).toContain('waiver-accepted');
         expect(page).toContain('confirmation-message');
@@ -397,9 +398,9 @@ describe('public registration flow', () => {
 
         const rules = fs.readFileSync('firestore.rules', 'utf8');
         expect(rules).toContain('match /registrationForms/{formId}');
-        expect(rules).toContain('allow create: if (');
+        expect(rules).toContain('allow update: if isTeamOwnerOrAdmin(teamId);');
+        expect(rules).toContain("allow create: if isTeamOwnerOrAdmin(teamId) && request.resource.data.status == 'pending';");
         expect(rules).toContain('function registrationFormPath(teamId, formId)');
-        expect(rules).toContain('isPublishedRegistrationForm(get(formPath).data)');
         expect(rules).toContain("data.status in ['pending', 'waitlisted']");
         expect(rules).toContain("'paymentSettings'");
         expect(rules).toContain("'selectedOption'");
@@ -413,12 +414,9 @@ describe('public registration flow', () => {
         expect(rules).toContain("!data.keys().hasAny(['screeningRequired', 'screeningStatus', 'screeningProvider', 'screeningProviderReference'])");
         expect(rules).toContain("data.screeningStatus == get(registrationFormPath(teamId, formId)).data.get('backgroundCheck', {}).get('initialScreeningStatus', 'pending')");
         expect(rules).toContain('isRegistrationFeeSnapshotValid');
-        expect(rules).toContain('isPublicRegistrationCapacityCounterUpdate');
-        expect(rules).toContain('registrationCapacityUpdateId');
-        expect(rules).toContain('existsAfter(registrationPath)');
-        expect(rules).toContain('isPublicPendingRegistrationCreate(teamId, formId, registrationId)');
-        expect(rules).toContain("affectedKeys().hasOnly(['registrationOptionCounts', 'registrationCapacityUpdateId', 'updatedAt'])");
-        expect(rules).toContain("afterOption.diff(beforeOption).affectedKeys().hasOnly(['enrolled', 'waitlisted'])");
+        expect(rules).not.toContain('isPublicRegistrationCapacityCounterUpdate');
+        expect(rules).not.toContain('isPublicPendingRegistrationCreate');
+        expect(rules).not.toContain('existsAfter(registrationPath)');
         expect(rules).toContain('data.waiverAccepted == true');
         expect(rules).toContain('hasOnlyFlatStringValues(data.participant)');
         expect(rules).toContain('hasOnlyFlatStringValues(data.guardian)');
@@ -725,7 +723,7 @@ describe('public registration flow', () => {
     it('omits raw registration identifiers from public Stripe return URLs', () => {
         const functionsSource = fs.readFileSync('functions/index.js', 'utf8');
         const urlBuilderStart = functionsSource.indexOf('function buildRegistrationCheckoutUrls');
-        const urlBuilderEnd = functionsSource.indexOf('function isServerDiscountRuleEligible');
+        const urlBuilderEnd = functionsSource.indexOf('function normalizePublicRegistrationInput');
         const urlBuilder = functionsSource.slice(urlBuilderStart, urlBuilderEnd);
         const page = fs.readFileSync('registration.html', 'utf8');
 

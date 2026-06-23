@@ -68,9 +68,11 @@ export const setTeamMediaAlbumCover = (...args: any[]) => callLegacyDb('setTeamM
 export const addPendingFamilyMember = legacy_addPendingFamilyMember as (...args: any[]) => any;
 export const readFamilyMembers = legacy_readFamilyMembers as (...args: any[]) => any;
 export const db: unknown = legacyFirebase.db;
+export const functions: unknown = legacyFirebase.functions;
 export const doc = (...args: any[]) => callLegacyFirebase('doc', args);
 export const collection = (...args: any[]) => callLegacyFirebase('collection', args);
 export const getDoc = (...args: any[]) => callLegacyFirebase('getDoc', args);
+export const httpsCallable = (...args: any[]) => callLegacyFirebase('httpsCallable', args);
 export const serverTimestamp = (...args: any[]) => callLegacyFirebase('serverTimestamp', args);
 export const runTransaction = (...args: any[]) => callLegacyFirebase('runTransaction', args);
 export const formatParentFeeAmount = legacy_formatParentFeeAmount as (...args: any[]) => any;
