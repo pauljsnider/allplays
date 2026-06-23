@@ -218,7 +218,7 @@ export function ensureTelemetryPipeline(): Promise<AppTelemetryApi | null> {
     return Promise.resolve(null);
   }
 
-  telemetryPromise = import('../../../../js/telemetry.js')
+  telemetryPromise = import('@legacy/telemetry.js')
     .catch(() => null)
     .then(() => getTelemetryApi());
 
