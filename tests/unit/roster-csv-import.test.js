@@ -312,6 +312,37 @@ describe('roster CSV import planning', () => {
         expect(plan.operations).toEqual([]);
     });
 
+    it('rejects contact identity conflicts within a CSV row', () => {
+        const plan = planRosterCsvImport({
+            fields,
+            csvText: [
+                'Name,Parent Name,Parent Email,Guardian Name,Guardian Email,Contact Name,Contact Phone,Emergency Contact Name,Emergency Contact Phone',
+                'Avery Lee,Pat Lee,family@example.com,Robin Lee,family@example.com,Aunt Kim,555-0101,Uncle Kim,555-0101'
+            ].join('\n')
+        });
+
+        expect(plan.operations).toEqual([]);
+        expect(plan.errors).toEqual([
+            'Row 2: contact email family@example.com has conflicting name/relation values (Pat Lee (Parent) vs Robin Lee (Guardian)).',
+            'Row 2: contact phone 555-0101 has conflicting name/relation values (Aunt Kim (Contact) vs Uncle Kim (Emergency Contact)).'
+        ]);
+    });
+
+    it('compares populated duplicate contacts after a sparse duplicate identity', () => {
+        const plan = planRosterCsvImport({
+            fields,
+            csvText: [
+                'Name,Parent Email,Parent 2 Name,Parent 2 Email,Parent 3 Name,Parent 3 Email',
+                'Avery Lee,family@example.com,Pat Lee,family@example.com,Robin Lee,family@example.com'
+            ].join('\n')
+        });
+
+        expect(plan.operations).toEqual([]);
+        expect(plan.errors).toEqual([
+            'Row 2: contact email family@example.com has conflicting name values (Pat Lee (Parent) vs Robin Lee (Parent)).'
+        ]);
+    });
+
     it('merges imported guardian contacts onto existing player updates without duplicates', () => {
         const plan = planRosterCsvImport({
             fields,
