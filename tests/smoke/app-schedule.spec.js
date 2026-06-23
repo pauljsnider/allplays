@@ -82,6 +82,10 @@ async function mockScheduleModules(page, options = {}) {
             assignments: [],
             packets: []
         };
+        window.__trackerCalls = {
+            recordEvents: [],
+            undoEvents: []
+        };
         window.__openedPublicUrls = [];
         window.__sharedPayloads = [];
         window.__copiedAgenda = '';
@@ -145,6 +149,7 @@ async function mockScheduleModules(page, options = {}) {
             contentType: 'application/javascript',
             body: `
                 function baseEvent(overrides) {
+                    const linkedOpponent = ${JSON.stringify(options.linkedOpponent === true)};
                     return {
                         eventKey: overrides.eventKey,
                         id: overrides.id,
@@ -155,13 +160,16 @@ async function mockScheduleModules(page, options = {}) {
                         endDate: overrides.endDate || new Date(overrides.date.getTime() + 60 * 60 * 1000),
                         location: overrides.location || 'Main Gym',
                         opponent: overrides.opponent || 'Falcons',
-                        opponentTeamName: overrides.opponentTeamName || null,
-                        opponentTeamPhoto: null,
+                        opponentTeamId: overrides.opponentTeamId ?? (linkedOpponent ? 'opp-team-1' : null),
+                        opponentTeamName: overrides.opponentTeamName || (linkedOpponent ? 'Ravens Academy' : null),
+                        opponentTeamPhoto: overrides.opponentTeamPhoto || (linkedOpponent ? 'https://allplays.ai/ravens.png' : null),
                         title: overrides.title || null,
                         childId: overrides.childId,
                         childName: overrides.childName,
                         isDbGame: overrides.isDbGame !== false,
                         isCancelled: false,
+                        canUpdateScore: overrides.canUpdateScore !== false,
+                        statTrackerConfigId: overrides.statTrackerConfigId || 'tracker-config-1',
                         status: overrides.status || 'scheduled',
                         liveStatus: overrides.liveStatus || null,
                         homeScore: overrides.homeScore ?? null,
@@ -314,6 +322,21 @@ async function mockScheduleModules(page, options = {}) {
                     ];
                 }
 
+                export async function loadScorekeeperStatTrackerConfigsForApp() {
+                    return [
+                        {
+                            id: 'tracker-config-1',
+                            name: 'Basketball Standard',
+                            baseType: 'Basketball',
+                            columns: ['GOALS', 'SHOTS'],
+                            statDefinitions: [
+                                { id: 'goals', label: 'GOALS' },
+                                { id: 'shots', label: 'SHOTS' }
+                            ]
+                        }
+                    ];
+                }
+
                 export async function loadScheduledPracticeSeriesForEdit(teamId, eventId, user) {
                     window.__scheduleCalls.practiceSeriesLoads = (window.__scheduleCalls.practiceSeriesLoads || []).concat({ teamId, eventId, userId: user?.uid || null });
                     return {
@@ -345,11 +368,37 @@ async function mockScheduleModules(page, options = {}) {
                     return { success: true };
                 }
 
-                export async function loadHomeScoringPlayers() {
+                export async function loadHomeScoringPlayers(teamId = 'team-1', gameId = 'game-1') {
+                    window.__scheduleCalls.trackerRosters = (window.__scheduleCalls.trackerRosters || []).concat({ teamId, gameId });
                     return [
-                        { id: 'player-1', name: 'Pat', number: '7', points: 12 },
-                        { id: 'player-2', name: 'Sam', number: '8', points: 4 }
+                        { id: 'player-1', name: 'Pat', number: '7', points: 12, fouls: 0, stats: { goals: 1, shots: 2 } },
+                        { id: 'player-2', name: 'Sam', number: '8', points: 4, fouls: 0, stats: { goals: 0, shots: 1 } }
                     ];
+                }
+
+                export async function loadOpponentScoringPlayers(teamId = '') {
+                    window.__scheduleCalls.opponentRosters = (window.__scheduleCalls.opponentRosters || []).concat({ teamId });
+                    if (teamId === 'opp-team-1') {
+                        return [
+                            { id: 'opp-9', name: 'Taylor Guard', number: '9', photoUrl: 'https://allplays.ai/opp-9.png', points: 0, fouls: 0, stats: {} }
+                        ];
+                    }
+                    return [];
+                }
+
+                export async function loadOpponentStatsForGame(teamId = 'team-1', gameId = 'game-1') {
+                    window.__scheduleCalls.opponentStats = (window.__scheduleCalls.opponentStats || []).concat({ teamId, gameId });
+                    return {
+                        'opp-9': {
+                            name: 'Taylor Guard',
+                            number: '9',
+                            playerId: 'opp-9',
+                            photoUrl: 'https://allplays.ai/opp-9.png',
+                            goals: 0,
+                            shots: 0,
+                            fouls: 0
+                        }
+                    };
                 }
 
                 export async function recordPlayerScoringStat(teamId, gameId, playerId, stat) {
@@ -837,6 +886,98 @@ async function mockScheduleModules(page, options = {}) {
         });
     });
 
+    await page.route(/\/src\/lib\/statTrackingService\.ts(\?.*)?$/, async (route) => {
+        await route.fulfill({
+            status: 200,
+            contentType: 'application/javascript',
+            body: `
+                function normalizeScore(score = {}) {
+                    return {
+                        homeScore: Math.max(0, Number(score.homeScore || 0)),
+                        awayScore: Math.max(0, Number(score.awayScore || 0))
+                    };
+                }
+
+                function normalizeStatKey(value) {
+                    return String(value || '').trim().toLowerCase();
+                }
+
+                function isScoringStatKey(statKey) {
+                    return ['pts', 'points', 'goals', 'goal'].includes(statKey);
+                }
+
+                export function createDefaultStatTrackingService(options = {}) {
+                    let currentScore = normalizeScore(options.initialScore);
+                    const log = Array.isArray(options.initialEventLog) ? [...options.initialEventLog] : [];
+                    return {
+                        async recordEvent(teamId, gameId, input, user) {
+                            const statKey = normalizeStatKey(input?.undoData?.statKey);
+                            const value = Number(input?.undoData?.value || 0);
+                            const scoreBefore = { ...currentScore };
+                            const scoreAfter = { ...currentScore };
+                            if (isScoringStatKey(statKey)) {
+                                if (input?.teamSide === 'away') scoreAfter.awayScore += value;
+                                else scoreAfter.homeScore += value;
+                            }
+                            const entry = {
+                                eventId: 'smoke-event-' + (log.length + 1),
+                                event: {
+                                    text: input?.text || '',
+                                    period: input?.period || '',
+                                    statKey,
+                                    value,
+                                    isOpponent: input?.undoData?.isOpponent === true
+                                },
+                                scoreBefore,
+                                scoreAfter,
+                                aggregateStatKey: statKey,
+                                aggregateDelta: value,
+                                aggregatePlayerId: input?.undoData?.playerId || null,
+                                isOpponent: input?.undoData?.isOpponent === true,
+                                opponentStatsEntryId: input?.opponentStatsEntryId || null,
+                                opponentStatsEntryBefore: input?.opponentStatsEntryBefore || null,
+                                opponentStatsEntryAfter: input?.opponentStatsEntryAfter || null,
+                                playerName: input?.playerName || 'Player',
+                                playerNumber: input?.playerNumber || ''
+                            };
+                            currentScore = scoreAfter;
+                            log.push(entry);
+                            window.__trackerCalls.recordEvents.push({ teamId, gameId, input, userId: user?.uid || null, scoreAfter });
+                            return entry;
+                        },
+                        async undoLastEvent(teamId, gameId, user) {
+                            const entry = log.pop() || null;
+                            if (entry) currentScore = { ...entry.scoreBefore };
+                            window.__trackerCalls.undoEvents.push({ teamId, gameId, userId: user?.uid || null, entry });
+                            return entry;
+                        },
+                        getEventLog() {
+                            return log.map((entry) => ({ ...entry, event: { ...entry.event } }));
+                        },
+                        getCurrentScore() {
+                            return { ...currentScore };
+                        }
+                    };
+                }
+
+                export function buildTrackerEventDocument(input, user) {
+                    return {
+                        text: input?.text || '',
+                        gameTime: input?.clock || input?.gameTime || '',
+                        period: input?.period || 'Q1',
+                        timestamp: Number(input?.timestamp || Date.now()),
+                        type: input?.undoData?.type || 'game_log',
+                        playerId: input?.undoData?.playerId || null,
+                        statKey: normalizeStatKey(input?.undoData?.statKey) || null,
+                        value: Number(input?.undoData?.value || 0),
+                        isOpponent: input?.undoData?.isOpponent === true,
+                        createdBy: user?.uid || ''
+                    };
+                }
+            `
+        });
+    });
+
     await page.route(/\/src\/lib\/gameReportService\.ts(\?.*)?$/, async (route) => {
         await route.fulfill({
             status: 200,
@@ -937,6 +1078,48 @@ test('app schedule loads agenda filters, player select, calendar, export, and ga
     await page.locator('.schedule-web-sidebar').getByRole('button', { name: 'Packets' }).click();
     await expect(page.getByText('1 practice packet needs review')).toBeVisible();
     await expect(page.getByText('2 drills · 20 min')).toBeVisible();
+});
+
+test('app standard tracker records linked opponent stat entry', async ({ page, baseURL }) => {
+    await mockScheduleModules(page, { isCoach: true, linkedOpponent: true });
+    await page.goto(appUrl(baseURL, '/schedule/team-1/game-1/track'), { waitUntil: 'domcontentloaded' });
+
+    await waitForScheduleRoute(page, page.getByTestId('standard-tracker-opponent-grid'));
+    await expect(page.getByText('Ravens Academy')).toBeVisible();
+    await page.getByRole('button', { name: 'Opponent #9 Taylor Guard GOALS add one' }).click();
+
+    await expect(page.getByText('0-1')).toBeVisible();
+    await expect(page.getByText('Opponent #9 Taylor Guard GOALS +1 recorded.')).toBeVisible();
+    await expect.poll(() => page.evaluate(() => window.__trackerCalls.recordEvents[0]?.input)).toMatchObject({
+        text: 'Opponent #9 Taylor Guard GOALS +1',
+        teamSide: 'away',
+        opponentStatsEntryId: 'opp-9',
+        opponentStatsEntryBefore: {
+            name: 'Taylor Guard',
+            number: '9',
+            playerId: 'opp-9',
+            photoUrl: 'https://allplays.ai/opp-9.png',
+            goals: 0,
+            shots: 0,
+            fouls: 0
+        },
+        opponentStatsEntryAfter: {
+            name: 'Taylor Guard',
+            number: '9',
+            playerId: 'opp-9',
+            photoUrl: 'https://allplays.ai/opp-9.png',
+            goals: 1,
+            shots: 0,
+            fouls: 0
+        },
+        undoData: {
+            type: 'stat',
+            playerId: 'opp-9',
+            statKey: 'goals',
+            value: 1,
+            isOpponent: true
+        }
+    });
 });
 
 test('calendar day selection opens a visible event picker for multiple events', async ({ page, baseURL }) => {
@@ -1165,9 +1348,10 @@ test('app schedule event detail exposes parent actions and RSVP', async ({ page,
     expect(await page.evaluate(() => window.__sharedPayloads[1]?.text)).toContain('https://allplays.ai/game.html#teamId=team-1&gameId=game-1');
     expect(await page.evaluate(() => window.__scheduleCalls.gameReport)).toEqual({ teamId: 'team-1', gameId: 'game-1' });
     await page.getByRole('button', { name: 'Players' }).click();
-    await expect(page.getByText('#7 Pat')).toBeVisible();
-    await expect(page.getByText('12')).toBeVisible();
-    await expect(page.getByRole('link', { name: /#7 Pat/ })).toHaveAttribute('href', /https:\/\/allplays\.ai\/player\.html#teamId=team-1&gameId=game-1&playerId=player-1/);
+    const playerLink = page.getByRole('link', { name: /#7 Pat/ });
+    await expect(playerLink).toBeVisible();
+    await expect(playerLink).toContainText('12');
+    await expect(playerLink).toHaveAttribute('href', /https:\/\/allplays\.ai\/player\.html#teamId=team-1&gameId=game-1&playerId=player-1/);
     await page.getByRole('button', { name: 'Plays' }).click();
     await expect(page.getByText('Pat scored in transition')).toBeVisible();
     await page.getByRole('button', { name: 'Opponent' }).click();

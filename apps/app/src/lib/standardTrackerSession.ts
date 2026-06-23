@@ -11,6 +11,7 @@ export type StandardTrackerSessionState = {
   statTrackerConfigId: string | null;
   score: TrackerScoreState;
   tallies: StandardTrackerTallies;
+  opponentTallies: StandardTrackerTallies;
   eventLog: TrackerLogEntry[];
   updatedAt: number;
 };
@@ -79,6 +80,7 @@ export function readStandardTrackerSession(teamId: string, gameId: string, statT
       statTrackerConfigId: parsedConfigId || null,
       score: normalizeScore(parsed.score),
       tallies: normalizeTallies(parsed.tallies),
+      opponentTallies: normalizeTallies(parsed.opponentTallies),
       eventLog: Array.isArray(parsed.eventLog) ? parsed.eventLog as TrackerLogEntry[] : [],
       updatedAt: normalizeScoreValue(parsed.updatedAt)
     };
@@ -100,6 +102,7 @@ export function writeStandardTrackerSession(state: Omit<StandardTrackerSessionSt
     statTrackerConfigId: normalizeText(state.statTrackerConfigId) || null,
     score: normalizeScore(state.score),
     tallies: normalizeTallies(state.tallies),
+    opponentTallies: normalizeTallies(state.opponentTallies),
     eventLog: Array.isArray(state.eventLog) ? state.eventLog : [],
     updatedAt: Date.now()
   };
