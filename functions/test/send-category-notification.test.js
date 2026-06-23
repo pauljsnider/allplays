@@ -522,6 +522,94 @@ test('getTargetsForCategory preserves eligible recipients for visible media albu
         }
 });
 
+test('sendCategoryNotification suppresses parent pushes for staff-only media albums while keeping staff recipients', async () => {
+        const { internals, env, cleanup } = loadNotificationInternals({
+            teamDoc: {
+                ownerId: 'coach-1',
+                adminEmails: []
+            },
+            parentUserIds: ['parent-1'],
+            indexedTargets: [
+                {
+                    uid: 'coach-1',
+                    roles: ['staff'],
+                    deviceId: 'coach-device',
+                    token: 'coach-token',
+                    categories: { media: true }
+                },
+                {
+                    uid: 'parent-1',
+                    roles: ['parent'],
+                    deviceId: 'parent-device',
+                    token: 'parent-token',
+                    categories: { media: true }
+                }
+            ]
+        });
+
+        try {
+            const result = await internals.sendCategoryNotification({
+                teamId: 'team-1',
+                category: 'media',
+                title: 'New team media',
+                body: 'Private film has 1 new media item.',
+                dedupKey: 'team-media:private-film',
+                audienceContext: { albumVisibility: 'staff-only' }
+            });
+
+            assert.equal(result?.successCount, 1);
+            assert.deepEqual(env.messagingCalls[0]?.tokens, ['coach-token']);
+            assert.deepEqual(env.inboxWrites.map((write) => write.uid), ['coach-1']);
+            assert.equal(env.auditWrites[0]?.value.targetCount, 1);
+        } finally {
+            cleanup();
+        }
+});
+
+test('sendCategoryNotification preserves visible media album behavior for parents and staff', async () => {
+        const { internals, env, cleanup } = loadNotificationInternals({
+            teamDoc: {
+                ownerId: 'coach-1',
+                adminEmails: []
+            },
+            parentUserIds: ['parent-1'],
+            indexedTargets: [
+                {
+                    uid: 'coach-1',
+                    roles: ['staff'],
+                    deviceId: 'coach-device',
+                    token: 'coach-token',
+                    categories: { media: true }
+                },
+                {
+                    uid: 'parent-1',
+                    roles: ['parent'],
+                    deviceId: 'parent-device',
+                    token: 'parent-token',
+                    categories: { media: true }
+                }
+            ]
+        });
+
+        try {
+            const result = await internals.sendCategoryNotification({
+                teamId: 'team-1',
+                category: 'media',
+                title: 'New team media',
+                body: 'Game highlights has 1 new media item.',
+                dedupKey: 'team-media:game-highlights',
+                audienceContext: { albumVisibility: 'team' }
+            });
+
+            assert.equal(result?.successCount, 2);
+            assert.deepEqual(env.messagingCalls[0]?.tokens.sort(), ['coach-token', 'parent-token']);
+            assert.deepEqual(env.inboxWrites.map((write) => write.uid).sort(), ['coach-1', 'parent-1']);
+            assert.equal(env.auditWrites[0]?.value.targetCount, 2);
+        } finally {
+            cleanup();
+        }
+});
+
 test('getTargetsForCategoryUserIds restricts RSVP targets to requested recipients with enabled preferences', async () => {
         const { internals, cleanup } = loadNotificationInternals({
             teamDoc: {
