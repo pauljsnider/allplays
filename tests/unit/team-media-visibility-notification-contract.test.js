@@ -54,11 +54,15 @@ describe('team media visibility notification contract', () => {
 
     it('passes media audience context through indexed and legacy target lookups', () => {
         expect(functionsSource).toContain('canReceiveCategoryNotification(category, user, audienceContext)');
-        expect(functionsSource).toContain('getLegacyTargetsForCategory(teamId, category, missingUsers, actorUid, audienceContext)');
+        expect(functionsSource).toContain('if (indexedRecipientDocs.some((docSnap) => notificationRecipientDocNeedsRoleBackfill(docSnap))) {');
+        expect(functionsSource).toContain('additionalUsers = [...candidateUsers, ...additionalUsers];');
+        expect(functionsSource).toContain('buildIndexedEligibleUsers(indexedRecipientDocs, category, audienceContext, additionalUsers)');
+        expect(functionsSource).toContain('const explicitlyEligibleLegacyRecipientDocs = categoryRecipientDocs.filter((docSnap) => (');
+        expect(functionsSource).toContain('getLegacyTargetsForCategory(teamId, category, users, actorUid, audienceContext)');
         expect(functionsSource).toContain('async function getTargetsForCategory(teamId, category, actorUid = null, audienceContext = {}, additionalUsers = []) {');
-        expect(functionsSource).toContain('const eligibleUsers = new Map(users');
-        expect(functionsSource).toContain('eligibleUsers.has(user.uid)');
-        expect(functionsSource).toContain('const fallbackTargets = await getLegacyTargetsForCategory(teamId, category, missingUsers, actorUid, audienceContext);');
+        expect(functionsSource).toContain('const categoryRecipientDocs = targetSnap.docs || [];');
+        expect(functionsSource).toContain('const indexedRecipientDocs = categoryRecipientDocs.filter(isAggregateNotificationRecipientDoc);');
+        expect(functionsSource).toContain('const fallbackTargets = await getLegacyTargetsForCategory(teamId, category, users, actorUid, audienceContext);');
         expect(functionsSource).toContain('audienceContext: metadata.audienceContext || { albumVisibility: metadata.albumVisibility }');
         expect(functionsSource).toContain('folder.allowedUserIds || folder.audienceUserIds || folder.visibleToUserIds || folder.userIds');
         expect(functionsSource).toContain('folder.allowedRoles || folder.audienceRoles || folder.visibleToRoles || folder.roles');
