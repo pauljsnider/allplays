@@ -5345,24 +5345,42 @@ function buildScheduleImportSummaryPayload({ totalCount, gameCount, practiceCoun
   };
 }
 
-async function sendCreatedScheduleEventNotification({ teamId, gameId, game }) {
-  if (game.source || game.sourceMetadata) return null;
-
+function buildCreatedScheduleEventNotificationPayload(game = {}) {
   const isPractice = String(game.type || '').toLowerCase() === 'practice';
-  const category = isPractice ? 'practice' : 'schedule';
+  const isPracticeSeries = isPractice && (game.isSeriesMaster === true || Boolean(game.recurrence));
   const eventTitle = getEventTitle(game);
+  const opponent = isPractice ? '' : String(game.opponent || '').trim();
   const dateValue = coerceDate(game.date);
   const timeZone = String(game.timeZone || game.timezone || '').trim() || 'America/Chicago';
   const dateLabel = dateValue ? formatScheduleUpdateDate(dateValue, timeZone) : '';
-  const title = isPractice ? `New practice: ${eventTitle}` : `New game: ${eventTitle}`;
-  const body = dateLabel || (isPractice ? 'Practice scheduled' : 'Game scheduled');
+  const details = [];
+
+  if (opponent) {
+    details.push(`Opponent: ${opponent}`);
+  }
+  if (dateLabel) {
+    details.push(`Starts ${dateLabel}`);
+  }
+
+  return {
+    title: isPracticeSeries
+      ? `New practice series: ${eventTitle}`
+      : (isPractice ? `New practice: ${eventTitle}` : `New game: ${eventTitle}`),
+    body: details.join('. ') || (isPractice ? 'Practice scheduled' : 'Game scheduled')
+  };
+}
+
+async function sendCreatedScheduleEventNotification({ teamId, gameId, game }) {
+  if (game.source || game.sourceMetadata) return null;
+
+  const payload = buildCreatedScheduleEventNotificationPayload(game);
 
   return sendCategoryNotification({
     teamId,
     gameId,
-    category,
-    title,
-    body,
+    category: 'schedule',
+    title: payload.title,
+    body: payload.body,
     actorUid: game.createdBy || null
   });
 }
