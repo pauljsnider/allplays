@@ -3400,9 +3400,8 @@ async function syncNotificationTargetsForDevice(uid, deviceId, rawDevice) {
 
 async function teamNotificationRecipientIndexIsEmpty(teamId) {
   const recipientSnap = await firestore.collection(`teams/${teamId}/notificationRecipients`)
-    .limit(1)
     .get();
-  return recipientSnap.empty;
+  return !(recipientSnap.docs || []).some((docSnap) => isAggregateNotificationRecipientDoc(docSnap));
 }
 
 function getNotificationRecipientRoles({ teamId, team, user, uid, email = '' }) {
@@ -4792,6 +4791,11 @@ function getNotificationRecipientUserFromDoc(docSnap) {
   };
 }
 
+function isAggregateNotificationRecipientDoc(docSnap) {
+  const data = docSnap?.data?.() || {};
+  return Array.isArray(data.roles) || Array.isArray(data.tokens);
+}
+
 function buildIndexedEligibleUsers(recipientDocs, category, audienceContext = {}, additionalUsers = []) {
   const usersByUid = new Map();
   (recipientDocs || []).forEach((docSnap) => {
@@ -4818,7 +4822,7 @@ async function getTargetsForCategory(teamId, category, actorUid = null, audience
   const targetSnap = await firestore.collection(`teams/${teamId}/notificationRecipients`)
     .where(`categories.${category}`, '==', true)
     .get();
-  const indexedRecipientDocs = targetSnap.docs || [];
+  const indexedRecipientDocs = (targetSnap.docs || []).filter(isAggregateNotificationRecipientDoc);
   if (indexedRecipientDocs.length) {
     let indexedAdditionalUsers = Array.isArray(additionalUsers) ? additionalUsers : [];
     if (indexedRecipientDocs.some((docSnap) => notificationRecipientDocNeedsRoleBackfill(docSnap))) {

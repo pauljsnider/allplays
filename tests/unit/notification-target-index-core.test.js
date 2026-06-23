@@ -109,7 +109,9 @@ describe('notification target index core helpers', () => {
         expect(targetResolverSource).toContain('users/${uid}/notificationDevices');
         expect(targetResolverSource).toContain('if (!NOTIFICATION_CATEGORIES.includes(category)) return []');
         expect(targetResolverSource).toContain('canReceiveCategoryNotification(category, user, audienceContext)');
-        expect(targetResolverSource).toContain('const indexedRecipientDocs = targetSnap.docs || [];');
+        expect(targetResolverSource).toContain('function isAggregateNotificationRecipientDoc(docSnap) {');
+        expect(targetResolverSource).toContain('return Array.isArray(data.roles) || Array.isArray(data.tokens);');
+        expect(targetResolverSource).toContain('const indexedRecipientDocs = (targetSnap.docs || []).filter(isAggregateNotificationRecipientDoc);');
         expect(targetResolverSource).toContain('if (indexedRecipientDocs.length) {');
         expect(targetResolverSource).toContain('buildIndexedEligibleUsers(indexedRecipientDocs, category, audienceContext, additionalUsers)');
         expect(functionsSource).toContain("const albumVisibility = audienceContext?.staffOnly === true");
@@ -118,6 +120,7 @@ describe('notification target index core helpers', () => {
         expect(functionsSource).toContain('return mediaAudienceAllowsUser(user, audienceContext);');
         expect(functionsSource).toContain("const isStaffUser = Array.isArray(user.roles) && user.roles.includes('staff');");
         expect(targetResolverSource).toContain('teamNotificationRecipientIndexIsEmpty(teamId)');
+        expect(functionsSource).toContain('some((docSnap) => isAggregateNotificationRecipientDoc(docSnap))');
         expect(targetResolverSource).toContain('if (!indexIsEmpty) {');
         expect(targetResolverSource).toContain("await backfillNotificationRecipientsForTeam(teamId, users, { skipLegacyCleanup: true });");
         expect(targetResolverSource).toContain('getLegacyTargetsForCategory(teamId, category, users, actorUid, audienceContext)');

@@ -354,6 +354,79 @@ test('getTargetsForCategory falls back to legacy resolution and backfills recipi
         }
 });
 
+test('getTargetsForCategory falls back when category matches only legacy per-device recipient docs', async () => {
+        const { internals, env, cleanup } = loadNotificationInternals({
+            teamDoc: {
+                ownerId: 'coach-1',
+                adminEmails: []
+            },
+            parentUserIds: ['parent-1'],
+            userDocs: {
+                'coach-1': { email: 'coach@example.com', parentTeamIds: [] },
+                'parent-1': { email: 'parent@example.com', parentTeamIds: ['team-1'] }
+            },
+            notificationRecipientDocs: [
+                {
+                    id: 'coach-1__coach-device',
+                    data: {
+                        uid: 'coach-1',
+                        teamId: 'team-1',
+                        deviceId: 'coach-device',
+                        token: 'stale-coach-token',
+                        categories: { schedule: true }
+                    }
+                },
+                {
+                    id: 'parent-1__parent-device',
+                    data: {
+                        uid: 'parent-1',
+                        teamId: 'team-1',
+                        deviceId: 'parent-device',
+                        token: 'stale-parent-token',
+                        categories: { schedule: true }
+                    }
+                }
+            ],
+            preferenceDocs: {
+                'users/coach-1/notificationPreferences/team-1': { schedule: true },
+                'users/parent-1/notificationPreferences/team-1': { schedule: true }
+            },
+            deviceDocs: {
+                'coach-1': [
+                    { id: 'coach-device', token: 'coach-token', platform: 'ios' }
+                ],
+                'parent-1': [
+                    { id: 'parent-device', token: 'parent-token', platform: 'android' }
+                ]
+            }
+        });
+
+        try {
+            const targets = await internals.getTargetsForCategory('team-1', 'schedule');
+
+            assert.equal(targets.length, 2);
+            assert.equal(env.counts.recipientQueries, 1);
+            assert.equal(env.counts.recipientCollectionGets, 1);
+            assert.equal(env.counts.preferenceGets, 4);
+            assert.equal(env.counts.deviceGets, 4);
+            assert.deepEqual(targets.map((target) => `${target.uid}:${target.deviceId}:${target.token}`).sort(), [
+                'coach-1:coach-device:coach-token',
+                'parent-1:parent-device:parent-token'
+            ]);
+            assert.deepEqual(
+                env.dedupWrites
+                    .filter((write) => write.path.includes('/notificationRecipients/'))
+                    .map((write) => write.path)
+                    .sort(),
+                [
+                    'teams/team-1/notificationRecipients/coach-1',
+                    'teams/team-1/notificationRecipients/parent-1'
+                ]);
+        } finally {
+            cleanup();
+        }
+});
+
 test('getTargetsForCategory limits staff-only media notifications to staff recipients', async () => {
         const { internals, env, cleanup } = loadNotificationInternals({
             teamDoc: {
