@@ -30,7 +30,8 @@ import {
 import { TeamDetailPageSkeleton } from '../components/PageSkeletons';
 import { DetailLoadErrorState } from '../components/DetailLoadErrorState';
 import { copyPublicText, openPublicUrl, sharePublicUrl } from '../lib/publicActions';
-import { toAppServiceError, type AppServiceError } from '../lib/appErrors';
+import { isRetryableAppServiceError, toAppServiceError, type AppServiceError } from '../lib/appErrors';
+import { useAppAsyncOperation } from '../lib/useAsyncOperation';
 import { getEventDetailPath } from '../lib/homeLogic';
 import { buildPrivateTeamCalendarFeedUrl, getAppleCalendarFeedUrl, getGoogleCalendarFeedUrl } from '../lib/parentToolsService';
 import { createStaffRsvpReminderPreviewLoader, sendStaffRsvpReminder, type StaffRsvpReminderSendResult } from '../lib/scheduleService';
@@ -2149,39 +2150,38 @@ function TeamEventStatConfigSummary({ event, onOpenStatTrackerConfigs }: { event
 
 function TeamEventReminderAction({ event, model, auth, reminderPreviewLoader }: { event: TeamDetailEvent; model: TeamDetailModel; auth: AuthState; reminderPreviewLoader: ReturnType<typeof createStaffRsvpReminderPreviewLoader> }) {
   const [preview, setPreview] = useState<StaffRsvpReminderPreview | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [sending, setSending] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const { loading, error: previewError, clearError: clearPreviewError, run: runPreviewOperation } = useAppAsyncOperation();
+  const { loading: sending, error: sendError, clearError: clearSendError, run: runSendOperation } = useAppAsyncOperation();
   const [revealed, setRevealed] = useState(false);
   const scheduleEvent = useMemo(() => buildTeamReminderScheduleEvent(event, model), [event, model]);
   const canLoad = Boolean(auth.user && scheduleEvent && model.canManageTeam && event.date.getTime() >= Date.now() && event.status.toLowerCase() !== 'completed');
 
   useEffect(() => {
     setPreview(null);
-    setLoading(false);
-    setSending(false);
     setStatus(null);
-    setError(null);
+    clearPreviewError();
+    clearSendError();
     setRevealed(false);
-  }, [auth.user?.uid, canLoad, scheduleEvent?.eventKey]);
+  }, [auth.user?.uid, canLoad, clearPreviewError, clearSendError, scheduleEvent?.eventKey]);
 
   if (!scheduleEvent || !canLoad) return null;
 
   const loadPreview = async () => {
-    if (!auth.user || loading || sending) return;
+    const user = auth.user;
+    if (!user || loading || sending) return;
     setRevealed(true);
-    setLoading(true);
-    setError(null);
+    clearSendError();
     setStatus(null);
-    try {
-      const nextPreview = await reminderPreviewLoader.loadPreview(scheduleEvent, auth.user);
-      setPreview(nextPreview);
-    } catch (loadError: any) {
-      setError(loadError?.message || 'Unable to load RSVP reminder preview.');
-    } finally {
-      setLoading(false);
-    }
+    await runPreviewOperation(
+      () => reminderPreviewLoader.loadPreview(scheduleEvent, user),
+      {
+        fallbackMessage: 'Unable to load RSVP reminder preview.',
+        onSuccess: (nextPreview) => {
+          setPreview(nextPreview);
+        }
+      }
+    );
   };
 
   if (!revealed) {
@@ -2203,13 +2203,13 @@ function TeamEventReminderAction({ event, model, auth, reminderPreviewLoader }: 
     );
   }
 
-  if (error && !preview) {
+  if (previewError && !preview) {
     return (
       <div className="mt-3 rounded-xl border border-rose-200 bg-rose-50 p-3">
-        <div className="text-xs font-bold text-rose-700">{error}</div>
-        <button type="button" className="secondary-button mt-2 !min-h-9 px-3 text-xs" onClick={loadPreview}>
+        <div className="text-xs font-bold text-rose-700">{previewError.message}</div>
+        {isRetryableAppServiceError(previewError) ? <button type="button" className="secondary-button mt-2 !min-h-9 px-3 text-xs" onClick={loadPreview}>
           Retry reminder preview
-        </button>
+        </button> : null}
       </div>
     );
   }
@@ -2225,21 +2225,22 @@ function TeamEventReminderAction({ event, model, auth, reminderPreviewLoader }: 
   }
 
   const sendReminder = async () => {
-    if (!auth.user || sending) return;
+    const user = auth.user;
+    if (!user || sending) return;
     const confirmed = window.confirm(`Send an RSVP reminder to ${preview.missingPlayerCount} no-response ${preview.missingPlayerCount === 1 ? 'player' : 'players'}? ${preview.eligibleEmailCount} eligible parent/guardian ${preview.eligibleEmailCount === 1 ? 'email' : 'emails'} will be targeted.`);
     if (!confirmed) return;
-    setSending(true);
-    setError(null);
+    clearPreviewError();
     setStatus(null);
-    try {
-      const result: StaffRsvpReminderSendResult = await sendStaffRsvpReminder(scheduleEvent, auth.user, auth.profile || {});
-      setPreview(result);
-      setStatus(`RSVP reminder sent to team chat and ${result.emailSentCount} parent/guardian ${result.emailSentCount === 1 ? 'email' : 'emails'}.`);
-    } catch (sendError: any) {
-      setError(sendError?.message || 'Unable to send RSVP reminder.');
-    } finally {
-      setSending(false);
-    }
+    await runSendOperation(
+      () => sendStaffRsvpReminder(scheduleEvent, user, auth.profile || {}) as Promise<StaffRsvpReminderSendResult>,
+      {
+        fallbackMessage: 'Unable to send RSVP reminder.',
+        onSuccess: (result) => {
+          setPreview(result);
+          setStatus(`RSVP reminder sent to team chat and ${result.emailSentCount} parent/guardian ${result.emailSentCount === 1 ? 'email' : 'emails'}.`);
+        }
+      }
+    );
   };
 
   return (
@@ -2253,7 +2254,7 @@ function TeamEventReminderAction({ event, model, auth, reminderPreviewLoader }: 
         </button>
       </div>
       {status ? <div className="mt-2 text-xs font-bold text-emerald-700">{status}</div> : null}
-      {error ? <div className="mt-2 text-xs font-bold text-rose-700">{error}</div> : null}
+      {sendError ? <div className="mt-2 text-xs font-bold text-rose-700">{sendError.message}</div> : null}
     </div>
   );
 }

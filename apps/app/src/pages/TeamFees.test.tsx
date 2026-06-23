@@ -492,4 +492,25 @@ describe('TeamFees recipient queue', () => {
     expect(await screen.findByText('Admin access required')).toBeTruthy();
     expect(screen.queryByRole('button', { name: 'Save adjustment' })).toBeNull();
   });
+
+  it('retries a retryable team fee load failure from the shared error state', async () => {
+    teamFeesServiceMocks.loadTeamFeeManagementModel
+      .mockRejectedValueOnce(new Error('Team fees temporarily unavailable.'))
+      .mockResolvedValueOnce({
+        team: { id: 'team-1', name: 'Bears' },
+        batches: [],
+        selectedBatch: null,
+        canManageFees: true,
+        rosterPlayers: [],
+        recipients: []
+      });
+
+    renderTeamFees('/teams/team-1/fees');
+
+    expect(await screen.findByText('Team fees temporarily unavailable.')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+
+    expect(await screen.findByRole('heading', { name: 'Manage fee balances' })).toBeTruthy();
+    expect(teamFeesServiceMocks.loadTeamFeeManagementModel).toHaveBeenCalledTimes(2);
+  });
 });

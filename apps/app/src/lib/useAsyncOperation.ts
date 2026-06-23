@@ -1,4 +1,5 @@
 import { useCallback, useRef, useState } from 'react';
+import { toAppServiceError, type AppServiceError } from './appErrors';
 
 type UseAsyncOperationRunOptions<T> = {
     clearError?: boolean;
@@ -18,6 +19,11 @@ function getDefaultErrorMessage(error: unknown) {
     }
     return 'Something went wrong.';
 }
+
+type UseAppAsyncOperationRunOptions<T> = Omit<UseAsyncOperationRunOptions<T>, 'errorMessage' | 'getErrorMessage' | 'onError'> & {
+    fallbackMessage: string;
+    onError?: (error: AppServiceError) => void | Promise<void>;
+};
 
 export function useAsyncOperation() {
     const [loading, setLoading] = useState(false);
@@ -73,6 +79,65 @@ export function useAsyncOperation() {
             }
         }
     }, []);
+
+    return {
+        loading,
+        error,
+        clearError,
+        setError,
+        run
+    };
+}
+
+export function useAppAsyncOperation() {
+    const {
+        loading,
+        clearError: clearAsyncError,
+        run: runAsyncOperation
+    } = useAsyncOperation();
+    const [error, setError] = useState<AppServiceError | null>(null);
+
+    const clearError = useCallback(() => {
+        setError(null);
+        clearAsyncError();
+    }, [clearAsyncError]);
+
+    const run = useCallback(async function runAppAsyncOperation<T>(
+        operation: () => Promise<T>,
+        {
+            fallbackMessage,
+            clearError: shouldClearError = true,
+            onSuccess,
+            onError,
+            onFinally,
+            ignoreStale,
+            shouldHandleError,
+            rethrow = false
+        }: UseAppAsyncOperationRunOptions<T>
+    ) {
+        if (shouldClearError) {
+            setError(null);
+            clearAsyncError();
+        }
+
+        return runAsyncOperation(operation, {
+            clearError: false,
+            ignoreStale,
+            onFinally,
+            onSuccess: async (value) => {
+                setError(null);
+                await onSuccess?.(value);
+            },
+            onError: async (operationError) => {
+                const appError = toAppServiceError(operationError, fallbackMessage);
+                setError(appError);
+                await onError?.(appError);
+            },
+            shouldHandleError,
+            getErrorMessage: (operationError) => toAppServiceError(operationError, fallbackMessage).message,
+            rethrow
+        });
+    }, [clearAsyncError, runAsyncOperation]);
 
     return {
         loading,

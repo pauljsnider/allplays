@@ -22,6 +22,7 @@ import {
   Upload,
   Video
 } from 'lucide-react';
+import { isRetryableAppServiceError, toAppServiceError } from '../lib/appErrors';
 import { openPublicUrl, sharePublicUrl } from '../lib/publicActions';
 import { sendTeamChatMessage, type ChatAttachment } from '../lib/chatService';
 import { DEFAULT_TEAM_CONVERSATION_ID } from '../lib/chatLogic';
@@ -40,6 +41,7 @@ import {
   type TeamMediaItem,
   type TeamMediaModel
 } from '../lib/parentToolsService';
+import { useAppAsyncOperation } from '../lib/useAsyncOperation';
 import type { AuthState } from '../lib/types';
 
 export function TeamMedia({ auth }: { auth: AuthState }) {
@@ -67,6 +69,7 @@ export function TeamMedia({ auth }: { auth: AuthState }) {
   const postingItemIdRef = useRef('');
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
+  const { error: loadError, clearError: clearLoadError, run: runLoadOperation } = useAppAsyncOperation();
 
   const refresh = async ({
     showLoading = model === null,
@@ -84,43 +87,51 @@ export function TeamMedia({ auth }: { auth: AuthState }) {
     if (!teamId) return;
     if (showLoading) setLoading(true);
     setError('');
-    try {
-      const loadOptions: { initialFolderId: string; folderIds: string[]; cursorsByFolderId?: Record<string, any> } = {
-        initialFolderId: preferredFolderId || activeFolderId,
-        folderIds: folderIdsToLoad
-      };
-      if (Object.keys(cursorsByFolderId).length) loadOptions.cursorsByFolderId = cursorsByFolderId;
-      const nextModel = await loadTeamMediaForApp(auth.user, teamId, loadOptions);
-      const mergedFolders = nextModel.folders.map((folder) => {
-        const cachedFolder = model?.folders.find((currentFolder) => currentFolder.id === folder.id && (currentFolder.itemsLoaded || currentFolder.items.length));
-        if (folder.itemsLoaded || folder.items.length) {
-          return mergeTeamMediaFolderItems(folder, cachedFolder, append && folderIdsToLoad.includes(folder.id));
+    const loadOptions: { initialFolderId: string; folderIds: string[]; cursorsByFolderId?: Record<string, any> } = {
+      initialFolderId: preferredFolderId || activeFolderId,
+      folderIds: folderIdsToLoad
+    };
+    if (Object.keys(cursorsByFolderId).length) loadOptions.cursorsByFolderId = cursorsByFolderId;
+    await runLoadOperation(
+      () => loadTeamMediaForApp(auth.user, teamId, loadOptions),
+      {
+        fallbackMessage: 'Unable to load media.',
+        clearError: showLoading,
+        onSuccess: (nextModel) => {
+          const mergedFolders = nextModel.folders.map((folder) => {
+            const cachedFolder = model?.folders.find((currentFolder) => currentFolder.id === folder.id && (currentFolder.itemsLoaded || currentFolder.items.length));
+            if (folder.itemsLoaded || folder.items.length) {
+              return mergeTeamMediaFolderItems(folder, cachedFolder, append && folderIdsToLoad.includes(folder.id));
+            }
+            return cachedFolder ? {
+              ...folder,
+              items: cachedFolder.items,
+              itemCount: cachedFolder.itemCount,
+              itemsLoaded: true,
+              itemsHasMore: cachedFolder.itemsHasMore,
+              itemsNextCursor: cachedFolder.itemsNextCursor
+            } : folder;
+          });
+          setModel({
+            ...nextModel,
+            folders: mergedFolders
+          });
+          setActiveFolderId((current) => {
+            if (preferredFolderId && nextModel.folders.some((folder) => folder.id === preferredFolderId)) return preferredFolderId;
+            if (current && nextModel.folders.some((folder) => folder.id === current)) return current;
+            return nextModel.folders[0]?.id || '';
+          });
+          setSelectedIds((current) => current.filter((itemId) => mergedFolders.some((folder) => folder.items.some((item) => item.id === itemId))));
+        },
+        onError: (nextError) => {
+          setError(nextError.message);
+          if (showLoading) setModel(null);
+        },
+        onFinally: () => {
+          if (showLoading) setLoading(false);
         }
-        return cachedFolder ? {
-          ...folder,
-          items: cachedFolder.items,
-          itemCount: cachedFolder.itemCount,
-          itemsLoaded: true,
-          itemsHasMore: cachedFolder.itemsHasMore,
-          itemsNextCursor: cachedFolder.itemsNextCursor
-        } : folder;
-      });
-      setModel({
-        ...nextModel,
-        folders: mergedFolders
-      });
-      setActiveFolderId((current) => {
-        if (preferredFolderId && nextModel.folders.some((folder) => folder.id === preferredFolderId)) return preferredFolderId;
-        if (current && nextModel.folders.some((folder) => folder.id === current)) return current;
-        return nextModel.folders[0]?.id || '';
-      });
-      setSelectedIds((current) => current.filter((itemId) => mergedFolders.some((folder) => folder.items.some((item) => item.id === itemId))));
-    } catch (loadError: any) {
-      setError(loadError?.message || 'Unable to load media.');
-      if (showLoading) setModel(null);
-    } finally {
-      if (showLoading) setLoading(false);
-    }
+      }
+    );
   };
 
   const handleLoadMoreItems = async () => {
@@ -165,7 +176,7 @@ export function TeamMedia({ auth }: { auth: AuthState }) {
       } : current);
       setMessage('Media item renamed.');
     } catch (renameError: any) {
-      setError(renameError?.message || 'Unable to rename media item.');
+      setError(toAppServiceError(renameError, 'Unable to rename media item.').message);
     } finally {
       setRenamingItemId('');
     }
@@ -185,7 +196,7 @@ export function TeamMedia({ auth }: { auth: AuthState }) {
       setMessage('Media item deleted.');
       await refresh({ showLoading: false, preferredFolderId: activeFolder?.id || '', folderIdsToLoad: activeFolder?.id ? [activeFolder.id] : [] });
     } catch (deleteError: any) {
-      setError(deleteError?.message || 'Unable to delete media item.');
+      setError(toAppServiceError(deleteError, 'Unable to delete media item.').message);
     } finally {
       setDeletingItemId('');
     }
@@ -208,7 +219,7 @@ export function TeamMedia({ auth }: { auth: AuthState }) {
       const destinationName = model?.folders.find((folder) => folder.id === targetFolderId)?.name || 'the selected album';
       setMessage(`Media item moved to ${destinationName}.`);
     } catch (moveError: any) {
-      setError(moveError?.message || 'Unable to move media item.');
+      setError(toAppServiceError(moveError, 'Unable to move media item.').message);
     } finally {
       setMovingItemId('');
     }
@@ -234,7 +245,7 @@ export function TeamMedia({ auth }: { auth: AuthState }) {
       setMessage('Album cover saved.');
       await refresh({ showLoading: false, preferredFolderId: activeFolder.id, folderIdsToLoad: [activeFolder.id] });
     } catch (coverError: any) {
-      setError(coverError?.message || 'Unable to save album cover.');
+      setError(toAppServiceError(coverError, 'Unable to save album cover.').message);
     } finally {
       setCoverItemId('');
     }
@@ -271,7 +282,7 @@ export function TeamMedia({ auth }: { auth: AuthState }) {
       setMessage('Photo posted to team chat.');
       return true;
     } catch (postError: any) {
-      setError(postError?.message || 'Unable to post photo to team chat. Try again.');
+      setError(toAppServiceError(postError, 'Unable to post photo to team chat. Try again.').message);
       return false;
     } finally {
       postingItemIdRef.current = '';
@@ -320,7 +331,7 @@ export function TeamMedia({ auth }: { auth: AuthState }) {
       await refresh({ showLoading: false, preferredFolderId: activeFolder?.id || '', folderIdsToLoad: activeFolder?.id ? [activeFolder.id] : [] });
       setMessage(`${deleteCount} media item${deleteCount === 1 ? '' : 's'} deleted.`);
     } catch (deleteError: any) {
-      setError(deleteError?.message || 'Unable to delete selected media items.');
+      setError(toAppServiceError(deleteError, 'Unable to delete selected media items.').message);
     } finally {
       setDeletingItemId('');
     }
@@ -470,7 +481,7 @@ export function TeamMedia({ auth }: { auth: AuthState }) {
       setAlbumName('');
       await refresh({ showLoading: false, preferredFolderId: String(folderId || ''), folderIdsToLoad: folderId ? [String(folderId)] : [] });
     } catch (albumError: any) {
-      setError(albumError?.message || 'Unable to create album. Check your connection and permissions, then try again.');
+      setError(toAppServiceError(albumError, 'Unable to create album. Check your connection and permissions, then try again.').message);
     } finally {
       setCreatingAlbum(false);
     }
@@ -489,7 +500,7 @@ export function TeamMedia({ auth }: { auth: AuthState }) {
       setLinkUrl('');
       await refresh({ showLoading: false, preferredFolderId: activeFolder.id, folderIdsToLoad: [activeFolder.id] });
     } catch (linkError: any) {
-      setError(linkError?.message || 'Unable to add media link.');
+      setError(toAppServiceError(linkError, 'Unable to add media link.').message);
     } finally {
       setUploading('');
     }
@@ -514,7 +525,11 @@ export function TeamMedia({ auth }: { auth: AuthState }) {
           <ChevronLeft className="h-4 w-4" aria-hidden="true" />
           Teams
         </Link>
-        <Status tone="error" message={error || 'Media is not available.'} />
+        <Status tone="error" message={loadError?.message || error || 'Media is not available.'} />
+        {isRetryableAppServiceError(loadError) ? <button type="button" className="primary-button !min-h-9 text-xs" onClick={() => {
+          clearLoadError();
+          void refresh({ showLoading: true });
+        }}>Retry</button> : null}
       </div>
     );
   }

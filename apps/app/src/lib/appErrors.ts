@@ -71,3 +71,8 @@ export function toAppServiceError(error: unknown, fallbackMessage: string) {
         { status: getStatus(error), cause: error }
     );
 }
+
+export function isRetryableAppServiceError(error: unknown) {
+    const appError = isAppServiceError(error) ? error : null;
+    return appError?.type === 'network' || appError?.type === 'unknown';
+}
