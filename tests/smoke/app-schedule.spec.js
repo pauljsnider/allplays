@@ -386,6 +386,21 @@ async function mockScheduleModules(page, options = {}) {
                     return [];
                 }
 
+                export async function loadOpponentStatsForGame(teamId = 'team-1', gameId = 'game-1') {
+                    window.__scheduleCalls.opponentStats = (window.__scheduleCalls.opponentStats || []).concat({ teamId, gameId });
+                    return {
+                        'opp-9': {
+                            name: 'Taylor Guard',
+                            number: '9',
+                            playerId: 'opp-9',
+                            photoUrl: 'https://allplays.ai/opp-9.png',
+                            goals: 0,
+                            shots: 0,
+                            fouls: 0
+                        }
+                    };
+                }
+
                 export async function recordPlayerScoringStat(teamId, gameId, playerId, stat) {
                     const player = (await loadHomeScoringPlayers()).find((candidate) => candidate.id === playerId);
                     const points = Number(stat?.value || 0);
