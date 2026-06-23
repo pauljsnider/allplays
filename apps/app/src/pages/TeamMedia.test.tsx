@@ -113,6 +113,20 @@ describe('TeamMedia bulk delete', () => {
     vi.unstubAllGlobals();
   });
 
+  it('retries a retryable media load failure from the shared error state', async () => {
+    parentToolsServiceMocks.loadTeamMediaForApp
+      .mockRejectedValueOnce(new Error('Media temporarily unavailable.'))
+      .mockResolvedValueOnce(createModel());
+
+    renderTeamMedia();
+
+    expect(await screen.findByText('Media temporarily unavailable.')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+
+    expect(await screen.findByText('Bears media')).toBeTruthy();
+    expect(parentToolsServiceMocks.loadTeamMediaForApp).toHaveBeenCalledTimes(2);
+  });
+
   it('lets a manager select items, bulk delete them, and refresh the same filtered view', async () => {
     parentToolsServiceMocks.loadTeamMediaForApp
       .mockResolvedValueOnce(createModel())

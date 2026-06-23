@@ -266,6 +266,32 @@ describe('TeamDrills', () => {
     expect(screen.getByText('Only team owners, team admins, and global admins can browse and favorite drills for a team.')).toBeTruthy();
   });
 
+  it('shows the loading state while retrying a retryable community drill load failure', async () => {
+    let resolveRetry: ((value: ReturnType<typeof createPage>) => void) | null = null;
+    const retryPromise = new Promise<ReturnType<typeof createPage>>((resolve) => {
+      resolveRetry = resolve;
+    });
+
+    teamDrillsServiceMocks.loadTeamDrillLibraryPage
+      .mockRejectedValueOnce(new Error('Drill library temporarily unavailable.'))
+      .mockImplementationOnce(() => retryPromise);
+
+    renderTeamDrills();
+
+    expect(await screen.findByText('Drill library temporarily unavailable.')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+
+    expect(await screen.findByText('Loading drill library')).toBeTruthy();
+    expect(screen.queryByText('Drill library temporarily unavailable.')).toBeNull();
+
+    expect(resolveRetry).not.toBeNull();
+    resolveRetry!(createPage({ drills: [createDrill({ title: 'Recovery rondo' })], favoriteIds: [] }));
+
+    expect(await screen.findByRole('heading', { name: 'Bears drills' })).toBeTruthy();
+    expect(await screen.findByText('Recovery rondo')).toBeTruthy();
+    expect(teamDrillsServiceMocks.loadTeamDrillLibraryPage).toHaveBeenCalledTimes(2);
+  });
+
   it('deduplicates repeated drill ids when load more returns an already rendered drill', async () => {
     teamDrillsServiceMocks.loadTeamDrillLibraryPage
       .mockResolvedValueOnce(createPage({

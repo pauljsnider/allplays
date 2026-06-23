@@ -12,7 +12,9 @@ import {
   type TeamFeeManagementModel,
   type TeamFeeRecipientSummary
 } from '../lib/teamFeesService';
+import { isRetryableAppServiceError, toAppServiceError } from '../lib/appErrors';
 import { copyPublicText, sharePublicUrl } from '../lib/publicActions';
+import { useAppAsyncOperation } from '../lib/useAsyncOperation';
 import type { AuthState } from '../lib/types';
 
 type RecipientFormState = {
@@ -50,7 +52,6 @@ export function TeamFees({ auth }: { auth: AuthState }) {
   const [model, setModel] = useState<TeamFeeManagementModel | null>(null);
   const [loading, setLoading] = useState(true);
   const [submittingId, setSubmittingId] = useState('');
-  const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
   const [createTitle, setCreateTitle] = useState('');
   const [createAmount, setCreateAmount] = useState('');
@@ -63,26 +64,33 @@ export function TeamFees({ auth }: { auth: AuthState }) {
   const [selectedRecipientIds, setSelectedRecipientIds] = useState<string[]>([]);
   const [createError, setCreateError] = useState('');
   const [formByRecipient, setFormByRecipient] = useState<Record<string, RecipientFormState>>({});
+  const { error: loadError, clearError: clearLoadError, run: runLoadOperation } = useAppAsyncOperation();
+  const { run: runMutationOperation } = useAppAsyncOperation();
 
   const selectedBatchId = model?.selectedBatch?.id || '';
 
   const refresh = async () => {
     if (!teamId) return;
     setLoading(true);
-    setError('');
-    try {
-      const nextModel = await loadTeamFeeManagementModel(teamId, batchId || undefined, auth.user);
-      setModel(nextModel);
-      setFormByRecipient((current) => seedRecipientForms(current, nextModel.recipients));
-      if (nextModel.selectedBatch?.id && nextModel.selectedBatch.id !== batchId) {
-        navigate(`/teams/${encodeURIComponent(teamId)}/fees/${encodeURIComponent(nextModel.selectedBatch.id)}`, { replace: true });
+    await runLoadOperation(
+      () => loadTeamFeeManagementModel(teamId, batchId || undefined, auth.user),
+      {
+        fallbackMessage: 'Unable to load team fees.',
+        onSuccess: (nextModel) => {
+          setModel(nextModel);
+          setFormByRecipient((current) => seedRecipientForms(current, nextModel.recipients));
+          if (nextModel.selectedBatch?.id && nextModel.selectedBatch.id !== batchId) {
+            navigate(`/teams/${encodeURIComponent(teamId)}/fees/${encodeURIComponent(nextModel.selectedBatch.id)}`, { replace: true });
+          }
+        },
+        onError: () => {
+          setModel(null);
+        },
+        onFinally: () => {
+          setLoading(false);
+        }
       }
-    } catch (loadError: any) {
-      setError(loadError?.message || 'Unable to load team fees.');
-      setModel(null);
-    } finally {
-      setLoading(false);
-    }
+    );
   };
 
   useEffect(() => {
@@ -170,20 +178,29 @@ export function TeamFees({ auth }: { auth: AuthState }) {
     setSuccess('');
     setSubmittingId('create-batch');
     try {
-      const batch = await createTeamFeeBatchForApp({
-        teamId,
-        title: createTitle,
-        amount: createAmount,
-        dueDate: createDueDate,
-        installmentPlan: createInstallmentPlanEnabled ? {
-          installmentCount: createInstallmentCount,
-          firstDueDate: createInstallmentFirstDueDate,
-          intervalDays: createInstallmentIntervalDays
-        } : null,
-        recipientIds: selectedRecipientIds,
-        applyToWholeRoster: createForWholeRoster,
-        user: auth.user
-      });
+      const batch = await runMutationOperation(
+        () => createTeamFeeBatchForApp({
+          teamId,
+          title: createTitle,
+          amount: createAmount,
+          dueDate: createDueDate,
+          installmentPlan: createInstallmentPlanEnabled ? {
+            installmentCount: createInstallmentCount,
+            firstDueDate: createInstallmentFirstDueDate,
+            intervalDays: createInstallmentIntervalDays
+          } : null,
+          recipientIds: selectedRecipientIds,
+          applyToWholeRoster: createForWholeRoster,
+          user: auth.user
+        }),
+        {
+          fallbackMessage: 'Unable to create fee batch.',
+          onError: (submitError) => {
+            setCreateError(submitError.message);
+          }
+        }
+      );
+      if (!batch) return;
       setCreateTitle('');
       setCreateAmount('');
       setCreateDueDate(todayIsoDate());
@@ -195,8 +212,6 @@ export function TeamFees({ auth }: { auth: AuthState }) {
       setSelectedRecipientIds([]);
       setSuccess(`Created fee batch ${createTitle.trim() || 'Team fee'}.`);
       navigate(`/teams/${encodeURIComponent(teamId)}/fees/${encodeURIComponent(batch.id)}`);
-    } catch (submitError: any) {
-      setCreateError(submitError?.message || 'Unable to create fee batch.');
     } finally {
       setSubmittingId('');
     }
@@ -209,19 +224,26 @@ export function TeamFees({ auth }: { auth: AuthState }) {
     setSuccess('');
     setSubmittingId(`payment:${recipient.id}`);
     try {
-      await recordOfflineTeamFeePayment({
-        teamId,
-        batchId: selectedBatchId,
-        recipient,
-        amount: form.paymentAmount,
-        date: form.paymentDate,
-        note: form.paymentNote,
-        user: auth.user
-      });
+      const result = await runMutationOperation(
+        () => recordOfflineTeamFeePayment({
+          teamId,
+          batchId: selectedBatchId,
+          recipient,
+          amount: form.paymentAmount,
+          date: form.paymentDate,
+          note: form.paymentNote,
+          user: auth.user
+        }),
+        {
+          fallbackMessage: 'Unable to record payment.',
+          onError: (submitError) => {
+            updateForm(recipient.id, { paymentError: submitError.message });
+          }
+        }
+      );
+      if (!result && result !== undefined) return;
       setSuccess(`Recorded ${formatMoney(Number(form.paymentAmount) * 100)} for ${recipient.playerName}.`);
       await refresh();
-    } catch (submitError: any) {
-      updateForm(recipient.id, { paymentError: submitError?.message || 'Unable to record payment.' });
     } finally {
       setSubmittingId('');
     }
@@ -234,18 +256,25 @@ export function TeamFees({ auth }: { auth: AuthState }) {
     setSuccess('');
     setSubmittingId(`adjustment:${recipient.id}`);
     try {
-      await recordTeamFeeBalanceAdjustment({
-        teamId,
-        batchId: selectedBatchId,
-        recipient,
-        amount: form.adjustmentAmount,
-        note: form.adjustmentReason,
-        user: auth.user
-      });
+      const result = await runMutationOperation(
+        () => recordTeamFeeBalanceAdjustment({
+          teamId,
+          batchId: selectedBatchId,
+          recipient,
+          amount: form.adjustmentAmount,
+          note: form.adjustmentReason,
+          user: auth.user
+        }),
+        {
+          fallbackMessage: 'Unable to save adjustment.',
+          onError: (submitError) => {
+            updateForm(recipient.id, { adjustmentError: submitError.message });
+          }
+        }
+      );
+      if (!result && result !== undefined) return;
       setSuccess(`Adjusted ${recipient.playerName} by ${formatSignedMoney(form.adjustmentAmount)}.`);
       await refresh();
-    } catch (submitError: any) {
-      updateForm(recipient.id, { adjustmentError: submitError?.message || 'Unable to save adjustment.' });
     } finally {
       setSubmittingId('');
     }
@@ -259,20 +288,27 @@ export function TeamFees({ auth }: { auth: AuthState }) {
     setSubmittingId(`refund:${recipient.id}`);
     try {
       const refundAmount = form.refundType === 'full' ? centsToAmount(recipient.amountPaidCents) : form.refundAmount;
-      await recordOfflineTeamFeeRefund({
-        teamId,
-        batchId: selectedBatchId,
-        recipient,
-        refundType: form.refundType,
-        amount: refundAmount,
-        method: form.refundMethod,
-        note: form.refundNote,
-        user: auth.user
-      });
+      const result = await runMutationOperation(
+        () => recordOfflineTeamFeeRefund({
+          teamId,
+          batchId: selectedBatchId,
+          recipient,
+          refundType: form.refundType,
+          amount: refundAmount,
+          method: form.refundMethod,
+          note: form.refundNote,
+          user: auth.user
+        }),
+        {
+          fallbackMessage: 'Unable to record refund.',
+          onError: (submitError) => {
+            updateForm(recipient.id, { refundError: submitError.message });
+          }
+        }
+      );
+      if (!result && result !== undefined) return;
       setSuccess(`Recorded ${form.refundType} refund for ${recipient.playerName}.`);
       await refresh();
-    } catch (submitError: any) {
-      updateForm(recipient.id, { refundError: submitError?.message || 'Unable to record refund.' });
     } finally {
       setSubmittingId('');
     }
@@ -316,7 +352,7 @@ export function TeamFees({ auth }: { auth: AuthState }) {
       if (result === 'cancelled') return;
       throw new Error('Unable to share checkout link.');
     } catch (shareError: any) {
-      updateForm(recipient.id, { checkoutError: shareError?.message || 'Unable to share checkout link.' });
+      updateForm(recipient.id, { checkoutError: toAppServiceError(shareError, 'Unable to share checkout link.').message });
     } finally {
       setSubmittingId('');
     }
@@ -335,7 +371,7 @@ export function TeamFees({ auth }: { auth: AuthState }) {
       }
       setSuccess(`Copied checkout link for ${recipient.playerName}.`);
     } catch (copyError: any) {
-      updateForm(recipient.id, { checkoutError: copyError?.message || 'Unable to copy checkout link.' });
+      updateForm(recipient.id, { checkoutError: toAppServiceError(copyError, 'Unable to copy checkout link.').message });
     } finally {
       setSubmittingId('');
     }
@@ -351,8 +387,11 @@ export function TeamFees({ auth }: { auth: AuthState }) {
     );
   }
 
-  if (error || !model) {
-    return <StatusCard title="Team fees unavailable" message={error || 'Team fees could not be loaded.'} backTo={`/teams/${encodeURIComponent(teamId)}`} />;
+  if (loadError || !model) {
+    return <StatusCard title="Team fees unavailable" message={loadError?.message || 'Team fees could not be loaded.'} backTo={`/teams/${encodeURIComponent(teamId)}`} onRetry={isRetryableAppServiceError(loadError) ? () => {
+      clearLoadError();
+      void refresh();
+    } : undefined} />;
   }
 
   if (!model.canManageFees) {
@@ -708,7 +747,7 @@ function Metric({ label, value, urgent = false }: { label: string; value: string
   );
 }
 
-function StatusCard({ title, message, backTo }: { title: string; message: string; backTo: string }) {
+function StatusCard({ title, message, backTo, onRetry }: { title: string; message: string; backTo: string; onRetry?: () => void }) {
   return (
     <section className="app-card p-5">
       <div className="flex items-start gap-3">
@@ -716,7 +755,10 @@ function StatusCard({ title, message, backTo }: { title: string; message: string
         <div>
           <div className="text-sm font-black text-gray-950">{title}</div>
           <div className="mt-1 text-sm font-semibold text-gray-600">{message}</div>
-          <Link to={backTo} className="secondary-button mt-3 !min-h-9 text-xs">Back to team</Link>
+          <div className="mt-3 flex flex-wrap gap-2">
+            {onRetry ? <button type="button" className="primary-button !min-h-9 text-xs" onClick={onRetry}>Retry</button> : null}
+            <Link to={backTo} className="secondary-button !min-h-9 text-xs">Back to team</Link>
+          </div>
         </div>
       </div>
     </section>

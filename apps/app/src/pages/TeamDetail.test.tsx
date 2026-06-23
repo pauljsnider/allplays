@@ -33,6 +33,12 @@ const teamDetailServiceMocks = vi.hoisted(() => ({
   updateStatTrackerConfigForApp: vi.fn()
 }));
 
+const scheduleServiceMocks = vi.hoisted(() => ({
+  loadPreview: vi.fn(),
+  createStaffRsvpReminderPreviewLoader: vi.fn(),
+  sendStaffRsvpReminder: vi.fn()
+}));
+
 vi.mock('../lib/teamDetailService', () => teamDetailServiceMocks);
 vi.mock('../lib/publicActions', () => ({
   copyPublicText: vi.fn(),
@@ -47,10 +53,7 @@ vi.mock('../lib/parentToolsService', () => ({
   getAppleCalendarFeedUrl: vi.fn(() => 'webcal://calendar.example.test/private.ics'),
   getGoogleCalendarFeedUrl: vi.fn(() => 'https://calendar.google.com/calendar/render')
 }));
-vi.mock('../lib/scheduleService', () => ({
-  createStaffRsvpReminderPreviewLoader: vi.fn(() => ({ loadPreview: vi.fn() })),
-  sendStaffRsvpReminder: vi.fn()
-}));
+vi.mock('../lib/scheduleService', () => scheduleServiceMocks);
 
 const auth: AuthState = {
   user: {
@@ -150,6 +153,23 @@ describe('TeamDetail', () => {
     teamDetailServiceMocks.saveTeamTrackingItemForApp.mockResolvedValue('item-new');
     teamDetailServiceMocks.setPlayerTrackingStatusForApp.mockResolvedValue(undefined);
     teamDetailServiceMocks.updateStatTrackerConfigForApp.mockResolvedValue(undefined);
+    scheduleServiceMocks.loadPreview.mockReset();
+    scheduleServiceMocks.createStaffRsvpReminderPreviewLoader.mockReset();
+    scheduleServiceMocks.sendStaffRsvpReminder.mockReset();
+    scheduleServiceMocks.createStaffRsvpReminderPreviewLoader.mockReturnValue({ loadPreview: scheduleServiceMocks.loadPreview });
+    scheduleServiceMocks.loadPreview.mockResolvedValue({
+      missingPlayerCount: 0,
+      eligibleEmailCount: 0,
+      emailRecipientCount: 0,
+      chatRecipientCount: 0,
+      skippedPlayers: []
+    });
+    scheduleServiceMocks.sendStaffRsvpReminder.mockResolvedValue({
+      missingPlayerCount: 0,
+      eligibleEmailCount: 0,
+      emailSentCount: 0,
+      chatMessageSent: true
+    });
   });
 
   afterEach(() => {
@@ -189,6 +209,57 @@ describe('TeamDetail', () => {
 
     expect(await screen.findByRole('heading', { name: 'Bears' })).toBeTruthy();
     expect(teamDetailServiceMocks.loadParentTeamDetail).toHaveBeenCalledTimes(2);
+  });
+
+  it('retries a retryable RSVP reminder preview failure from the shared error state', async () => {
+    const futureDate = new Date(Date.now() + 24 * 60 * 60 * 1000);
+    const managedModel = {
+      ...model,
+      canManageTeam: true,
+      upcomingEvents: [{
+        id: 'game-next',
+        title: 'Bears vs Tigers',
+        type: 'game',
+        date: futureDate,
+        location: 'Main Gym',
+        opponent: 'Tigers',
+        status: 'scheduled',
+        isCancelled: false,
+        homeScore: null,
+        awayScore: null,
+        statTrackerConfigId: '',
+        statTrackerConfigExists: false,
+        statTrackerConfigLabel: 'No stat config',
+        statTrackerConfigIsBasketball: false
+      }]
+    };
+    teamDetailServiceMocks.loadParentTeamDetail.mockResolvedValue(managedModel);
+    scheduleServiceMocks.loadPreview
+      .mockRejectedValueOnce(new Error('Reminder preview temporarily unavailable.'))
+      .mockResolvedValueOnce({
+        missingPlayerCount: 0,
+        eligibleEmailCount: 0,
+        emailRecipientCount: 0,
+        chatRecipientCount: 0,
+        skippedPlayers: []
+      });
+
+    render(
+      <MemoryRouter initialEntries={['/teams/team-1?tab=schedule']}>
+        <Routes>
+          <Route path="/teams/:teamId" element={<TeamDetail auth={auth} />} />
+        </Routes>
+      </MemoryRouter>
+    );
+
+    expect(await screen.findByText('Bears vs Tigers')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Review reminder' }));
+
+    expect(await screen.findByText('Reminder preview temporarily unavailable.')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Retry reminder preview' }));
+
+    expect(await screen.findByText('All player RSVPs are in.')).toBeTruthy();
+    expect(scheduleServiceMocks.loadPreview).toHaveBeenCalledTimes(2);
   });
 
   it('does not reload team detail when the auth object identity changes but the signed-in user does not', async () => {

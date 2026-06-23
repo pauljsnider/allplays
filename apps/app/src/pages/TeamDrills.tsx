@@ -4,8 +4,10 @@ import { ChevronLeft, ExternalLink, Heart, Loader2, Save, Search, Shield, Sparkl
 import { DRILL_LEVELS, DRILL_TYPES, DRILL_TYPE_COLORS } from '../lib/adapters/legacyDrills';
 import { generatePracticeAiCoachPlan, type PracticeAiCoachPlanResult } from '../lib/practiceAiCoachService';
 import { getPracticeTimelineTotalMinutes, loadPracticeTimelineModel, savePracticeTimelineForApp, type PracticeTimelineBlock, type PracticeTimelineModel } from '../lib/practiceTimelineService';
+import { isRetryableAppServiceError, toAppServiceError } from '../lib/appErrors';
 import { openPublicUrl } from '../lib/publicActions';
 import { filterDrillSummaries, loadFavoriteDrills, loadTeamDrillLibraryPage, setTeamDrillFavorite, type TeamDrillSummary } from '../lib/teamDrillsService';
+import { useAppAsyncOperation } from '../lib/useAsyncOperation';
 import type { AuthState } from '../lib/types';
 
 type DrillTab = 'community' | 'favorites';
@@ -53,6 +55,7 @@ export function TeamDrills({ auth }: { auth: AuthState }) {
   const [coachAcceptMode, setCoachAcceptMode] = useState<'replace' | 'append'>('replace');
   const [coachSaving, setCoachSaving] = useState(false);
   const [coachStatus, setCoachStatus] = useState('');
+  const { error: loadError, clearError: clearLoadError, run: runLoadOperation } = useAppAsyncOperation();
 
   useEffect(() => {
     let cancelled = false;
@@ -61,30 +64,37 @@ export function TeamDrills({ auth }: { auth: AuthState }) {
       if (!teamId) return;
       setLoading(true);
       setError('');
-      try {
-        const page = await loadTeamDrillLibraryPage(teamId, auth.user, {
+      await runLoadOperation(
+        () => loadTeamDrillLibraryPage(teamId, auth.user, {
           searchText,
           type: typeFilter,
           level: levelFilter
-        });
-        if (cancelled) return;
-        setTeamName(page.team.name);
-        setTeamSport(page.team.sport);
-        setCanManageDrills(page.canManageDrills);
-        setCommunityDrills(page.drills);
-        setFavoriteIds(page.favoriteIds);
-        setNextCursor(page.nextCursor);
-        setFavoriteDrills(null);
-      } catch (loadError: any) {
-        if (cancelled) return;
-        setError(loadError?.message || 'Unable to load the community drill library.');
-        setCommunityDrills([]);
-        setFavoriteIds([]);
-        setNextCursor(null);
-        setFavoriteDrills(null);
-      } finally {
-        if (!cancelled) setLoading(false);
-      }
+        }),
+        {
+          fallbackMessage: 'Unable to load the community drill library.',
+          onSuccess: (page) => {
+            if (cancelled) return;
+            setTeamName(page.team.name);
+            setTeamSport(page.team.sport);
+            setCanManageDrills(page.canManageDrills);
+            setCommunityDrills(page.drills);
+            setFavoriteIds(page.favoriteIds);
+            setNextCursor(page.nextCursor);
+            setFavoriteDrills(null);
+          },
+          onError: (nextError) => {
+            if (cancelled) return;
+            setError(nextError.message);
+            setCommunityDrills([]);
+            setFavoriteIds([]);
+            setNextCursor(null);
+            setFavoriteDrills(null);
+          },
+          onFinally: () => {
+            if (!cancelled) setLoading(false);
+          }
+        }
+      );
     }
 
     void loadInitialPage();
@@ -107,7 +117,7 @@ export function TeamDrills({ auth }: { auth: AuthState }) {
         setFavoriteDrills(model.drills);
       } catch (loadError: any) {
         if (cancelled) return;
-        setError(loadError?.message || 'Unable to load favorite drills.');
+        setError(toAppServiceError(loadError, 'Unable to load favorite drills.').message);
       } finally {
         if (!cancelled) setFavoritesLoading(false);
       }
@@ -148,7 +158,7 @@ export function TeamDrills({ auth }: { auth: AuthState }) {
       setFavoriteIds(page.favoriteIds);
       setNextCursor(page.nextCursor);
     } catch (loadError: any) {
-      setError(loadError?.message || 'Unable to load more drills.');
+      setError(toAppServiceError(loadError, 'Unable to load more drills.').message);
     } finally {
       setLoadingMore(false);
     }
@@ -181,7 +191,7 @@ export function TeamDrills({ auth }: { auth: AuthState }) {
       if (favoriteDrills) {
         setFavoriteDrills(favoriteDrills);
       }
-      setError(toggleError?.message || 'Unable to update drill favorite.');
+      setError(toAppServiceError(toggleError, 'Unable to update drill favorite.').message);
     } finally {
       setFavoriteBusyId('');
     }
@@ -213,7 +223,7 @@ export function TeamDrills({ auth }: { auth: AuthState }) {
       setCoachAcceptMode(model.blocks.length ? 'append' : 'replace');
     } catch (loadError: any) {
       setPracticeModel(null);
-      setPracticeError(loadError?.message || 'Unable to load that practice session.');
+      setPracticeError(toAppServiceError(loadError, 'Unable to load that practice session.').message);
     } finally {
       setPracticeLoading(false);
     }
@@ -248,7 +258,7 @@ export function TeamDrills({ auth }: { auth: AuthState }) {
       }
       setCoachProposal(result);
     } catch (coachError: any) {
-      setPracticeError(coachError?.message || 'AI practice coach could not generate a proposal. Try again.');
+      setPracticeError(toAppServiceError(coachError, 'AI practice coach could not generate a proposal. Try again.').message);
     } finally {
       setCoachGenerating(false);
     }
@@ -298,7 +308,7 @@ export function TeamDrills({ auth }: { auth: AuthState }) {
       setCoachProposal(null);
       setCoachStatus('Practice timeline updated.');
     } catch (saveError: any) {
-      setPracticeError(saveError?.message || 'Unable to save the AI practice proposal.');
+      setPracticeError(toAppServiceError(saveError, 'Unable to save the AI practice proposal.').message);
     } finally {
       setCoachSaving(false);
     }
@@ -319,8 +329,38 @@ export function TeamDrills({ auth }: { auth: AuthState }) {
     );
   }
 
-  if (error && !communityDrills.length && selectedTab === 'community') {
-    return <StatusCard title="Drill library unavailable" message={error} backTo={`/teams/${encodeURIComponent(teamId)}`} />;
+  if ((loadError || error) && !communityDrills.length && selectedTab === 'community') {
+    return <StatusCard title="Drill library unavailable" message={loadError?.message || error} backTo={`/teams/${encodeURIComponent(teamId)}`} onRetry={isRetryableAppServiceError(loadError) ? () => {
+      setLoading(true);
+      clearLoadError();
+      setError('');
+      void runLoadOperation(() => loadTeamDrillLibraryPage(teamId, auth.user, {
+        searchText,
+        type: typeFilter,
+        level: levelFilter
+      }), {
+        fallbackMessage: 'Unable to load the community drill library.',
+        onSuccess: (page) => {
+          setTeamName(page.team.name);
+          setTeamSport(page.team.sport);
+          setCanManageDrills(page.canManageDrills);
+          setCommunityDrills(page.drills);
+          setFavoriteIds(page.favoriteIds);
+          setNextCursor(page.nextCursor);
+          setFavoriteDrills(null);
+        },
+        onError: (nextError) => {
+          setError(nextError.message);
+          setCommunityDrills([]);
+          setFavoriteIds([]);
+          setNextCursor(null);
+          setFavoriteDrills(null);
+        },
+        onFinally: () => {
+          setLoading(false);
+        }
+      });
+    } : undefined} />;
   }
 
   if (!canManageDrills) {
@@ -715,7 +755,7 @@ function DrillDetailModal({
   );
 }
 
-function StatusCard({ title, message, backTo }: { title: string; message: string; backTo: string }) {
+function StatusCard({ title, message, backTo, onRetry }: { title: string; message: string; backTo: string; onRetry?: () => void }) {
   return (
     <section className="app-card p-5">
       <div className="flex items-start gap-3">
@@ -723,7 +763,10 @@ function StatusCard({ title, message, backTo }: { title: string; message: string
         <div>
           <div className="text-sm font-black text-gray-950">{title}</div>
           <div className="mt-1 text-sm font-semibold text-gray-600">{message}</div>
-          <Link to={backTo} className="secondary-button mt-3 !min-h-9 text-xs">Back</Link>
+          <div className="mt-3 flex flex-wrap gap-2">
+            {onRetry ? <button type="button" className="primary-button !min-h-9 text-xs" onClick={onRetry}>Retry</button> : null}
+            <Link to={backTo} className="secondary-button !min-h-9 text-xs">Back</Link>
+          </div>
         </div>
       </div>
     </section>
