@@ -655,9 +655,12 @@ describe('edit team admin access persistence', () => {
     it('blocks Sports Connect roster import until a stored provider snapshot exists', () => {
         const html = readFileSync(new URL('../../edit-roster.html', import.meta.url), 'utf8');
 
-        expect(html).toContain('Sports Connect metadata is saved for this team, but roster import is unavailable until a provider connector stores a roster snapshot.');
-        expect(html).toContain('Import unavailable: Sports Connect has metadata only. A live connector must create a stored roster snapshot before this page can preview or import players.');
-        expect(html).toContain('No stored registration roster snapshot is available yet. Sports Connect live import requires a provider connector before preview is possible.');
+        expect(html).toContain('Sports Connect metadata is saved for this team, but provider-based roster import requires an existing registration roster snapshot already loaded in ALL PLAYS.');
+        expect(html).toContain('Import unavailable: no stored registration roster snapshot exists for this team yet.');
+        expect(html).toContain('Confirm provider data has already been loaded into ALL PLAYS, then return here to preview the saved roster.');
+        expect(html).not.toContain('provider connector stores a roster snapshot');
+        expect(html).not.toContain('A live connector must create a stored roster snapshot');
+        expect(html).not.toContain('Sports Connect live import requires a provider connector');
         expect(html).toContain("previewButton.disabled = !hasImportableSnapshot;");
         expect(html).toContain("importButton.disabled = true;");
     });
