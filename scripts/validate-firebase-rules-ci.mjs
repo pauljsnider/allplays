@@ -75,6 +75,9 @@ export function validateFirebaseRulesCi() {
     assertIncludes(firestoreRules, 'allow delete: if isTeamOwnerOrAdmin(teamId);', 'Firestore media item delete rules');
     assertIncludes(firestoreRules, 'match /adminBilling/{billingId}', 'Firestore team fee admin billing rules');
     assertIncludes(firestoreRules, 'allow read, create, update, delete: if isTeamOwnerOrAdmin(teamId);', 'Firestore team fee admin billing admin-only rules');
+    assertIncludes(firestoreRules, 'match /rsvpNotes/{rsvpId}', 'Firestore restricted RSVP note rules');
+    assertIncludes(firestoreRules, 'function isRsvpStatusPayloadSafe(data)', 'Firestore RSVP status note exclusion helper');
+    assertIncludes(firestoreRules, 'allow read: if canReadRsvpNote(teamId, resource.data);', 'Firestore restricted RSVP note read rules');
 
     assertIncludes(deployProd, 'firestore:rules', 'Production deploy');
     assertIncludes(deployProd, 'firestore:indexes', 'Production deploy');

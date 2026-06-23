@@ -618,8 +618,18 @@ describe('parent schedule detail hydration', () => {
     vi.mocked(loadCachedAppData).mockImplementation((_key: string, loader: () => Promise<unknown>) => loader());
     vi.mocked(getRsvpSummaries).mockResolvedValue(new Map() as any);
     vi.mocked(getRsvps).mockResolvedValue([
-      { userId: 'parent-1', playerId: 'player-1', response: 'going', note: 'Will be there.' }
+      { id: 'parent-1__player-1', userId: 'parent-1', playerId: 'player-1', response: 'going' }
     ] as any);
+    vi.mocked(getDoc).mockImplementation(async (ref: any) => {
+      if (String(ref?.path || '').endsWith('/rsvpNotes/parent-1__player-1')) {
+        return playerSnapshot('parent-1__player-1', {
+          userId: 'parent-1',
+          playerIds: ['player-1'],
+          note: 'Will be there.'
+        }) as any;
+      }
+      return playerSnapshot('', null) as any;
+    });
     vi.mocked(listRideOffersForEvent).mockResolvedValue([] as any);
     vi.mocked(getAssignmentClaims).mockResolvedValue({} as any);
   });
@@ -634,6 +644,7 @@ describe('parent schedule detail hydration', () => {
     expect(getRsvps).toHaveBeenCalledWith('team-1', 'near-game');
     expect(getRsvps).not.toHaveBeenCalledWith('team-1', 'future-game');
     expect(nearEvent.myRsvp).toBe('going');
+    expect(nearEvent.myRsvpNote).toBe('Will be there.');
     expect(nearEvent.rsvpSummary).toEqual({
       going: 1,
       maybe: 0,
