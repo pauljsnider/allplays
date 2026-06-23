@@ -1371,6 +1371,155 @@ describe('ScheduleEventDetail assignments', () => {
     });
   });
 
+  it('keeps lineup builder loaded during live score updates', async () => {
+    scheduleServiceMocks.loadParentScheduleEventDetail.mockResolvedValue({
+      events: [buildEvent({
+        liveStatus: 'live',
+        status: 'live',
+        canUpdateScore: true,
+        isTeamStaff: true,
+        homeScore: 41,
+        awayScore: 38,
+        gamePlan: {
+          formationId: 'basketball-5v5',
+          lineups: { 'Q1-pg': 'p1' },
+          publishedLineups: {},
+          publishedVersion: 0
+        }
+      })],
+      children: []
+    });
+    scheduleServiceMocks.loadHomeScoringPlayers.mockResolvedValue([]);
+    scheduleServiceMocks.loadAutoFilledLineupDraftPreviewForApp.mockResolvedValue({
+      formationId: 'basketball-5v5',
+      formationName: 'Basketball 5v5',
+      numPeriods: 4,
+      positions: [],
+      availablePlayers: [{ id: 'p1', name: 'Avery Smith', number: '1' }],
+      goingPlayers: [{ id: 'p1', name: 'Avery Smith', number: '1' }],
+      gamePlan: {
+        formationId: 'basketball-5v5',
+        lineups: { 'Q1-pg': 'p1' },
+        publishedLineups: {},
+        publishedVersion: 0
+      }
+    });
+    scheduleServiceMocks.updateGameScore.mockResolvedValue({ homeScore: 42, awayScore: 38 });
+
+    renderScheduleEventDetail();
+
+    await waitFor(() => {
+      expect(screen.getAllByRole('button', { name: 'Game' }).length).toBeGreaterThan(0);
+    });
+    fireEvent.click(screen.getAllByRole('button', { name: 'Game' })[0]);
+    fireEvent.click(screen.getByRole('button', { name: 'Lineup builder' }));
+
+    await waitFor(() => {
+      expect(scheduleServiceMocks.loadAutoFilledLineupDraftPreviewForApp).toHaveBeenCalledTimes(1);
+      expect(screen.getByRole('button', { name: /#1 Avery Smith/i })).toBeTruthy();
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Home score up' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save score' }));
+
+    await waitFor(() => {
+      expect(scheduleServiceMocks.updateGameScore).toHaveBeenCalledWith('team-1', 'game-1', { homeScore: 42, awayScore: 38 }, auth.user);
+    });
+    await waitFor(() => {
+      expect(scheduleServiceMocks.loadAutoFilledLineupDraftPreviewForApp).toHaveBeenCalledTimes(1);
+      expect(screen.getByRole('button', { name: /#1 Avery Smith/i })).toBeTruthy();
+    });
+    expect(screen.queryByText('Loading lineup builder…')).toBeNull();
+  });
+
+  it('keeps live substitutions loaded during live clock updates', async () => {
+    const gamePlan = {
+      formationId: 'basketball-5v5',
+      numPeriods: 4,
+      periodDuration: 8,
+      lineups: {
+        'Q1-pg': 'p1',
+        'Q1-sg': 'p2',
+        'Q1-sf': 'p3',
+        'Q1-pf': 'p4',
+        'Q1-c': 'p5'
+      },
+      isPublished: true,
+      publishedLineups: {
+        'Q1-pg': 'p1',
+        'Q1-sg': 'p2',
+        'Q1-sf': 'p3',
+        'Q1-pf': 'p4',
+        'Q1-c': 'p5'
+      }
+    };
+    const players = [
+      { id: 'p1', name: 'Avery Smith', number: '1' },
+      { id: 'p2', name: 'Blake Jones', number: '2' },
+      { id: 'p3', name: 'Casey Brown', number: '3' },
+      { id: 'p4', name: 'Devon Lee', number: '4' },
+      { id: 'p5', name: 'Emerson Fox', number: '5' },
+      { id: 'p6', name: 'Finley Ray', number: '6' }
+    ];
+    scheduleServiceMocks.loadParentScheduleEventDetail.mockResolvedValue({
+      events: [buildEvent({
+        liveStatus: 'live',
+        status: 'live',
+        canUpdateScore: true,
+        isTeamStaff: true,
+        gamePlan,
+        rotationPlan: { Q1: { pg: 'p1', sg: 'p2', sf: 'p3', pf: 'p4', c: 'p5' } }
+      })],
+      children: []
+    });
+    scheduleServiceMocks.loadAutoFilledLineupDraftPreviewForApp.mockResolvedValue({
+      availablePlayers: players,
+      goingPlayers: players,
+      gamePlan
+    });
+    scheduleServiceMocks.loadGameDayLiveEventsForApp.mockResolvedValue([]);
+    scheduleServiceMocks.updateLiveGameClockState.mockResolvedValue({
+      liveClockMs: 0,
+      liveClockRunning: true,
+      liveClockPeriod: 'Q1',
+      liveClockUpdatedAt: '2026-06-04T18:00:00.000Z'
+    });
+
+    renderScheduleEventDetail();
+
+    await waitFor(() => {
+      expect(screen.getAllByRole('button', { name: 'Game' }).length).toBeGreaterThan(0);
+    });
+    fireEvent.click(screen.getAllByRole('button', { name: 'Game' })[0]);
+    fireEvent.click(screen.getByRole('button', { name: 'Live substitutions' }));
+
+    await waitFor(() => {
+      expect(scheduleServiceMocks.loadAutoFilledLineupDraftPreviewForApp).toHaveBeenCalledTimes(1);
+      expect(scheduleServiceMocks.loadGameDayLiveEventsForApp).toHaveBeenCalledTimes(2);
+      expect(screen.getByLabelText('Out')).toBeTruthy();
+      expect(screen.getByLabelText('In')).toBeTruthy();
+    });
+    const initialLiveEventLoadCount = scheduleServiceMocks.loadGameDayLiveEventsForApp.mock.calls.length;
+
+    fireEvent.click(screen.getByRole('button', { name: 'Start clock' }));
+
+    await waitFor(() => {
+      expect(scheduleServiceMocks.updateLiveGameClockState).toHaveBeenCalledWith(
+        'team-1',
+        'game-1',
+        expect.objectContaining({ liveClockRunning: true, liveClockPeriod: 'Q1' }),
+        auth.user
+      );
+    });
+    await waitFor(() => {
+      expect(scheduleServiceMocks.loadAutoFilledLineupDraftPreviewForApp).toHaveBeenCalledTimes(1);
+      expect(scheduleServiceMocks.loadGameDayLiveEventsForApp).toHaveBeenCalledTimes(initialLiveEventLoadCount);
+      expect(screen.getByLabelText('Out')).toBeTruthy();
+      expect(screen.getByLabelText('In')).toBeTruthy();
+      expect(screen.getByText('1 periods')).toBeTruthy();
+    });
+  });
+
   it('resets deferred game hub panels before rendering a switched event', async () => {
     scheduleServiceMocks.loadParentScheduleEventDetail.mockImplementation(async (_user, { eventId }) => ({
       events: [eventId === 'game-2'
