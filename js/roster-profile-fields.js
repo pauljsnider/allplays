@@ -238,32 +238,61 @@ function getExistingPlayersByName(existingPlayers = []) {
     return byName;
 }
 
+const CONTACT_HEADER_GROUPS = [
+    { prefix: 'emergencycontact', bucket: 'contacts', defaultRelation: 'Emergency Contact' },
+    { prefix: 'familycontact', bucket: 'contacts', defaultRelation: 'Family Contact' },
+    { prefix: 'guardian', bucket: 'guardians', defaultRelation: 'Guardian' },
+    { prefix: 'mother', bucket: 'guardians', defaultRelation: 'Mother' },
+    { prefix: 'father', bucket: 'guardians', defaultRelation: 'Father' },
+    { prefix: 'parent', bucket: 'guardians', defaultRelation: 'Parent' },
+    { prefix: 'contact', bucket: 'contacts', defaultRelation: 'Contact' }
+];
+
+const CONTACT_FIELD_ALIASES = new Map([
+    ['name', 'name'],
+    ['fullname', 'name'],
+    ['firstname', 'firstName'],
+    ['first', 'firstName'],
+    ['lastname', 'lastName'],
+    ['last', 'lastName'],
+    ['email', 'email'],
+    ['emailaddress', 'email'],
+    ['phone', 'phone'],
+    ['phonenumber', 'phone'],
+    ['mobile', 'phone'],
+    ['mobilephone', 'phone'],
+    ['cell', 'phone'],
+    ['cellphone', 'phone'],
+    ['relation', 'relation'],
+    ['relationship', 'relation']
+]);
+
 function getContactHeaderMapping(normalizedHeader = '', label = '') {
-    const match = normalizedHeader.match(/^(parent|guardian|mother|father|contact)(\d*)(name|email|phone|relation)$/);
-    if (!match) return null;
-    const [, group, suffix, field] = match;
-    const contactKey = `${group}${suffix || '1'}`;
-    const defaultRelation = group === 'mother'
-        ? 'Mother'
-        : group === 'father'
-            ? 'Father'
-            : group === 'guardian'
-                ? 'Guardian'
-                : group === 'contact'
-                    ? 'Contact'
-                    : 'Parent';
-    return {
-        type: 'contact',
-        label,
-        contactKey,
-        contactField: field,
-        contactBucket: group === 'contact' ? 'contacts' : 'guardians',
-        defaultRelation
-    };
+    for (const group of CONTACT_HEADER_GROUPS) {
+        if (!normalizedHeader.startsWith(group.prefix)) continue;
+        const remainder = normalizedHeader.slice(group.prefix.length);
+        const match = remainder.match(/^(\d*)([a-z]+)(\d*)$/);
+        if (!match) continue;
+        const [, leadingSuffix, fieldToken, trailingSuffix] = match;
+        const field = CONTACT_FIELD_ALIASES.get(fieldToken);
+        if (!field) continue;
+        return {
+            type: 'contact',
+            label,
+            contactKey: `${group.prefix}${leadingSuffix || trailingSuffix || '1'}`,
+            contactField: field,
+            contactBucket: group.bucket,
+            defaultRelation: group.defaultRelation
+        };
+    }
+    return null;
 }
 
 function normalizeImportedContact(contact = {}) {
-    const name = String(contact.name || '').trim();
+    const name = String(contact.name || '').trim() || [contact.firstName, contact.lastName]
+        .map((part) => String(part || '').trim())
+        .filter(Boolean)
+        .join(' ');
     const email = String(contact.email || '').trim().toLowerCase();
     const phone = String(contact.phone || '').trim();
     const relation = String(contact.relation || contact.defaultRelation || 'Parent').trim() || 'Parent';
