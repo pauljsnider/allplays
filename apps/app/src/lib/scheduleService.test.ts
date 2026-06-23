@@ -1,5 +1,5 @@
 import { readFileSync } from 'node:fs';
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 const mocks = vi.hoisted(() => {
   const transactionSet = vi.fn();
@@ -166,7 +166,7 @@ import { expandRecurrence, fetchAndParseCalendar, isTeamActive } from './adapter
 import { getCachedAppData, loadCachedAppData } from './appDataCache';
 import { mapScheduleEventRecord } from './firestore/mappers';
 import { loadProfileDocument } from './profileService';
-import { buildPlayerScoringLiveEvent, claimOfficialAssignmentItem, createScheduledPracticeForApp, flushPendingLivePublishOperations, hydrateParentScheduleDetails, loadOfficialAssignments, loadParentSchedule, loadParentScheduleChildren, loadParentScheduleEventDetail, loadScheduledPracticeSeriesForEdit, loadStaffPracticeAttendance, loadStaffScheduleRsvpBreakdown, publishLiveScoreUpdateEvent, recordPlayerGameStat, recordPlayerScoringStat, releaseParentScheduleAssignmentClaim, resolveCachedParentScheduleEvents, resolveLiveGameClockSnapshot, resolveParentGameRoute, respondToOfficialAssignmentItem, revertScheduledPracticeOccurrenceForApp, saveScheduledGameLineupDraftForApp, saveStaffPracticeAttendance, submitStaffScheduleRsvpOverride, undoRecordedPlayerGameStat, updateLiveGameClockState, updateScheduledPracticeForApp } from './scheduleService';
+import { buildPlayerScoringLiveEvent, claimOfficialAssignmentItem, createScheduledPracticeForApp, createStaffRsvpAvailabilityLoader, flushPendingLivePublishOperations, hydrateParentScheduleDetails, loadOfficialAssignments, loadParentSchedule, loadParentScheduleChildren, loadParentScheduleEventDetail, loadScheduledPracticeSeriesForEdit, loadStaffPracticeAttendance, loadStaffScheduleRsvpBreakdown, publishLiveScoreUpdateEvent, recordPlayerGameStat, recordPlayerScoringStat, releaseParentScheduleAssignmentClaim, resolveCachedParentScheduleEvents, resolveLiveGameClockSnapshot, resolveParentGameRoute, respondToOfficialAssignmentItem, revertScheduledPracticeOccurrenceForApp, saveScheduledGameLineupDraftForApp, saveStaffPracticeAttendance, submitStaffScheduleRsvpOverride, undoRecordedPlayerGameStat, updateLiveGameClockState, updateScheduledPracticeForApp } from './scheduleService';
 
 function playerSnapshot(id: string, data: Record<string, unknown> | null) {
   return {
@@ -1591,11 +1591,64 @@ describe('staff RSVP management', () => {
     isCancelled: false,
     availabilityLocked: false,
     isTeamAdmin: true,
-    isTeamStaff: true
+    isTeamStaff: true,
+    isTeamRsvpReminderManager: true
   } as any;
+  let restoreTestWindow: (() => void) | null = null;
+
+  function installTestWindow() {
+    const previousWindow = (globalThis as any).window;
+    (globalThis as any).window = {
+      setTimeout: globalThis.setTimeout,
+      clearTimeout: globalThis.clearTimeout,
+      location: { protocol: 'http:' }
+    };
+    return () => {
+      if (previousWindow === undefined) {
+        delete (globalThis as any).window;
+      } else {
+        (globalThis as any).window = previousWindow;
+      }
+    };
+  }
+
+  function buildSharedRsvpSource(missingPlayerId = 'p2') {
+    const goingRow = { playerId: 'p1', playerName: 'Avery Smith', response: 'going' };
+    const missingRow = { playerId: missingPlayerId, playerName: missingPlayerId === 'p2' ? 'Devon Lee' : 'Blake Jones', response: 'not_responded' };
+    const notResponded = missingPlayerId ? [missingRow] : [];
+    return {
+      players: [
+        { id: 'p1', name: 'Avery Smith', active: true, parents: [{ email: 'avery@example.com' }] },
+        { id: 'p2', name: 'Devon Lee', active: true, parents: [{ email: 'devon@example.com' }] }
+      ],
+      rsvps: missingPlayerId
+        ? [{ playerId: 'p1', response: 'going' }]
+        : [{ playerId: 'p1', response: 'going' }, { playerId: 'p2', response: 'going' }],
+      grouped: {
+        going: missingPlayerId ? [goingRow] : [goingRow, { playerId: 'p2', playerName: 'Devon Lee', response: 'going' }],
+        maybe: [],
+        not_going: [],
+        not_responded: notResponded
+      },
+      counts: {
+        going: missingPlayerId ? 1 : 2,
+        maybe: 0,
+        notGoing: 0,
+        notResponded: notResponded.length,
+        total: 2
+      }
+    };
+  }
 
   beforeEach(() => {
     vi.clearAllMocks();
+    restoreTestWindow?.();
+    restoreTestWindow = installTestWindow();
+  });
+
+  afterEach(() => {
+    restoreTestWindow?.();
+    restoreTestWindow = null;
   });
 
   it('maps staff RSVP breakdown rows including no-response players', async () => {
@@ -1616,6 +1669,54 @@ describe('staff RSVP management', () => {
     expect(result.grouped.not_responded).toEqual([
       expect.objectContaining({ playerId: 'p4', playerName: 'Devon Lee', response: 'not_responded' })
     ]);
+  });
+
+  it('reuses one in-flight staff RSVP event-data load for breakdown and reminder preview', async () => {
+    let resolveEventData!: (value: any) => void;
+    vi.mocked(getRsvpBreakdownByPlayer).mockImplementation(() => new Promise((resolve) => {
+      resolveEventData = resolve;
+    }));
+
+    const loader = createStaffRsvpAvailabilityLoader();
+    const breakdownPromise = loader.loadBreakdown(event, user as any);
+    const previewPromise = loader.loadReminderPreview(event, user as any);
+
+    expect(getRsvpBreakdownByPlayer).toHaveBeenCalledTimes(1);
+    expect(getRsvpBreakdownByPlayer).toHaveBeenCalledWith('team-1', 'game-1');
+
+    resolveEventData(buildSharedRsvpSource('p2'));
+    const [breakdown, preview] = await Promise.all([breakdownPromise, previewPromise]);
+
+    expect(breakdown.counts).toMatchObject({ going: 1, notResponded: 1, total: 2 });
+    expect(preview.missingPlayerCount).toBe(1);
+    expect(preview.eligibleEmailCount).toBe(1);
+    expect(preview.players[0]).toMatchObject({ playerId: 'p2', playerName: 'Devon Lee' });
+  });
+
+  it('invalidates the shared staff RSVP event-data load before refreshes', async () => {
+    vi.mocked(getRsvpBreakdownByPlayer)
+      .mockResolvedValueOnce(buildSharedRsvpSource('p2') as any)
+      .mockResolvedValueOnce(buildSharedRsvpSource('') as any);
+
+    const loader = createStaffRsvpAvailabilityLoader();
+    await expect(loader.loadBreakdown(event, user as any)).resolves.toMatchObject({
+      counts: { going: 1, maybe: 0, notGoing: 0, notResponded: 1, total: 2 }
+    });
+    await expect(loader.loadReminderPreview(event, user as any)).resolves.toMatchObject({
+      missingPlayerCount: 1,
+      eligibleEmailCount: 1
+    });
+    expect(getRsvpBreakdownByPlayer).toHaveBeenCalledTimes(1);
+
+    loader.invalidateEvent(event);
+
+    const [breakdown, preview] = await Promise.all([
+      loader.loadBreakdown(event, user as any),
+      loader.loadReminderPreview(event, user as any)
+    ]);
+    expect(getRsvpBreakdownByPlayer).toHaveBeenCalledTimes(2);
+    expect(breakdown.counts).toMatchObject({ going: 2, notResponded: 0, total: 2 });
+    expect(preview.missingPlayerCount).toBe(0);
   });
 
   it('submits staff RSVP overrides for the selected player instead of event.childId', async () => {

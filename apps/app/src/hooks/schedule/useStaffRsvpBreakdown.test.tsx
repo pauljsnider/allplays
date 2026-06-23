@@ -73,8 +73,16 @@ function buildEvent(overrides: Record<string, unknown> = {}) {
     } as any;
 }
 
-function StaffRsvpProbe() {
-    const workflow = useStaffRsvpBreakdown();
+function createStaffRsvpLoader() {
+    return {
+        loadBreakdown: vi.fn((event: any, user: any) => loadStaffScheduleRsvpBreakdown(event, user)),
+        loadReminderPreview: vi.fn(),
+        invalidateEvent: vi.fn()
+    };
+}
+
+function StaffRsvpProbe({ staffRsvpLoader }: { staffRsvpLoader: ReturnType<typeof createStaffRsvpLoader> }) {
+    const workflow = useStaffRsvpBreakdown(staffRsvpLoader);
     const { event } = useScheduleEventDetailContext();
 
     return (
@@ -93,6 +101,8 @@ function StaffRsvpProbe() {
 }
 
 function renderProbe(eventOverrides: Record<string, unknown> = {}) {
+    const staffRsvpLoader = createStaffRsvpLoader();
+
     function Harness() {
         const [events, setEvents] = useState([buildEvent(eventOverrides)]);
 
@@ -106,12 +116,15 @@ function renderProbe(eventOverrides: Record<string, unknown> = {}) {
                     updateEvents: (updater) => setEvents((current) => updater(current))
                 }}
             >
-                <StaffRsvpProbe />
+                <StaffRsvpProbe staffRsvpLoader={staffRsvpLoader} />
             </ScheduleEventDetailProvider>
         );
     }
 
-    return render(<Harness />);
+    return {
+        ...render(<Harness />),
+        staffRsvpLoader
+    };
 }
 
 describe('useStaffRsvpBreakdown', () => {
@@ -129,11 +142,12 @@ describe('useStaffRsvpBreakdown', () => {
             total: 1
         }));
 
-        renderProbe();
+        const { staffRsvpLoader } = renderProbe();
 
         await waitFor(() => {
             expect(screen.getByTestId('row-count').textContent).toBe('1');
         });
+        expect(staffRsvpLoader.loadBreakdown).toHaveBeenCalledTimes(1);
         expect(loadStaffScheduleRsvpBreakdown).toHaveBeenCalledWith(expect.objectContaining({ id: 'game-1' }), auth.user);
         expect(screen.getByTestId('loading').textContent).toBe('false');
     });
@@ -156,7 +170,7 @@ describe('useStaffRsvpBreakdown', () => {
             }));
         vi.mocked(submitStaffScheduleRsvpOverride).mockResolvedValue({ going: 1, maybe: 0, notGoing: 0, notResponded: 0, total: 1 } as any);
 
-        renderProbe();
+        const { staffRsvpLoader } = renderProbe();
 
         await waitFor(() => {
             expect(screen.getByTestId('row-count').textContent).toBe('1');
@@ -166,6 +180,8 @@ describe('useStaffRsvpBreakdown', () => {
         await waitFor(() => {
             expect(submitStaffScheduleRsvpOverride).toHaveBeenCalledWith(expect.objectContaining({ id: 'game-1' }), auth.user, 'player-1', 'going');
         });
+        expect(staffRsvpLoader.invalidateEvent).toHaveBeenCalledWith(expect.objectContaining({ id: 'game-1' }));
+        expect(staffRsvpLoader.loadBreakdown).toHaveBeenCalledTimes(2);
         await waitFor(() => {
             expect(screen.getByText('Avery Smith marked going.')).toBeTruthy();
         });

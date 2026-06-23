@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import {
-  loadStaffScheduleRsvpBreakdown,
   submitStaffScheduleRsvpOverride,
+  type StaffRsvpAvailabilityLoader,
   type StaffScheduleRsvpBreakdown,
   type StaffScheduleRsvpRow
 } from '../../lib/scheduleService';
@@ -15,7 +15,7 @@ export type StaffRsvpOverrideStatus = {
   message: string;
 };
 
-export function useStaffRsvpBreakdown() {
+export function useStaffRsvpBreakdown(staffRsvpLoader: StaffRsvpAvailabilityLoader) {
   const { auth, event, updateEvents } = useScheduleEventDetailContext();
   const [breakdown, setBreakdown] = useState<StaffScheduleRsvpBreakdown | null>(null);
   const [loading, setLoading] = useState(false);
@@ -33,7 +33,7 @@ export function useStaffRsvpBreakdown() {
     if (showLoading) setLoading(true);
     setError(null);
     try {
-      const nextBreakdown = await loadStaffScheduleRsvpBreakdown(event, auth.user);
+      const nextBreakdown = await staffRsvpLoader.loadBreakdown(event, auth.user);
       setBreakdown(nextBreakdown);
       return nextBreakdown;
     } catch (loadError: any) {
@@ -43,7 +43,7 @@ export function useStaffRsvpBreakdown() {
     } finally {
       if (showLoading) setLoading(false);
     }
-  }, [auth.user, event.eventKey, event.teamId, event.id, event.isTeamAdmin, event.isDbGame]);
+  }, [auth.user, event.eventKey, event.teamId, event.id, event.isTeamAdmin, event.isDbGame, staffRsvpLoader]);
 
   useEffect(() => {
     setStatus(null);
@@ -64,6 +64,7 @@ export function useStaffRsvpBreakdown() {
     setError(null);
     try {
       await submitStaffScheduleRsvpOverride(event, auth.user, player.playerId, response);
+      staffRsvpLoader.invalidateEvent(event);
       const nextBreakdown = await refreshBreakdown(false);
       if (nextBreakdown) {
         updateEvents((current) => current.map((currentEvent) => {

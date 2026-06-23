@@ -1,16 +1,12 @@
 // @vitest-environment jsdom
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import {
-    loadStaffRsvpReminderPreview,
-    sendStaffRsvpReminder
-} from '../../lib/scheduleService';
+import { sendStaffRsvpReminder } from '../../lib/scheduleService';
 import { ScheduleEventDetailProvider } from '../../pages/schedule/ScheduleEventDetailContext';
 import { StaffRsvpReminderPanel } from './StaffRsvpReminderPanel';
 import type { AuthState } from '../../lib/types';
 
 vi.mock('../../lib/scheduleService', () => ({
-    loadStaffRsvpReminderPreview: vi.fn(),
     sendStaffRsvpReminder: vi.fn()
 }));
 
@@ -55,20 +51,31 @@ function buildEvent(overrides: Record<string, unknown> = {}) {
     } as any;
 }
 
-function renderPanel(eventOverrides: Record<string, unknown> = {}) {
-    return render(
-        <ScheduleEventDetailProvider
-            value={{
-                auth,
-                event: buildEvent(eventOverrides),
-                childEvents: [buildEvent(eventOverrides)],
-                refreshEvent: vi.fn(),
-                updateEvents: vi.fn()
-            }}
-        >
-            <StaffRsvpReminderPanel />
-        </ScheduleEventDetailProvider>
-    );
+function createStaffRsvpLoader() {
+    return {
+        loadBreakdown: vi.fn(),
+        loadReminderPreview: vi.fn(),
+        invalidateEvent: vi.fn()
+    };
+}
+
+function renderPanel(eventOverrides: Record<string, unknown> = {}, staffRsvpLoader = createStaffRsvpLoader()) {
+    return {
+        ...render(
+            <ScheduleEventDetailProvider
+                value={{
+                    auth,
+                    event: buildEvent(eventOverrides),
+                    childEvents: [buildEvent(eventOverrides)],
+                    refreshEvent: vi.fn(),
+                    updateEvents: vi.fn()
+                }}
+            >
+                <StaffRsvpReminderPanel staffRsvpLoader={staffRsvpLoader} />
+            </ScheduleEventDetailProvider>
+        ),
+        staffRsvpLoader
+    };
 }
 
 describe('StaffRsvpReminderPanel', () => {
@@ -79,18 +86,20 @@ describe('StaffRsvpReminderPanel', () => {
     });
 
     it('loads reminder preview and sends a confirmed reminder', async () => {
-        vi.mocked(loadStaffRsvpReminderPreview).mockResolvedValue(preview);
+        const staffRsvpLoader = createStaffRsvpLoader();
+        staffRsvpLoader.loadReminderPreview.mockResolvedValue(preview);
         vi.mocked(sendStaffRsvpReminder).mockResolvedValue({
             ...preview,
             emailSentCount: 3
         });
         vi.spyOn(window, 'confirm').mockReturnValue(true);
 
-        renderPanel();
+        renderPanel({}, staffRsvpLoader);
 
         await waitFor(() => {
             expect(screen.getByText('Staff RSVP reminder')).toBeTruthy();
         });
+        expect(staffRsvpLoader.loadReminderPreview).toHaveBeenCalledWith(expect.objectContaining({ id: 'game-1' }), auth.user);
         expect(screen.getByText('2 no-response players · 3 eligible parent/guardian emails.')).toBeTruthy();
 
         fireEvent.click(screen.getByRole('button', { name: 'Send reminder' }));
@@ -102,15 +111,16 @@ describe('StaffRsvpReminderPanel', () => {
     });
 
     it('does not render when there are no missing player RSVPs', async () => {
-        vi.mocked(loadStaffRsvpReminderPreview).mockResolvedValue({
+        const staffRsvpLoader = createStaffRsvpLoader();
+        staffRsvpLoader.loadReminderPreview.mockResolvedValue({
             ...preview,
             missingPlayerCount: 0
         });
 
-        renderPanel();
+        renderPanel({}, staffRsvpLoader);
 
         await waitFor(() => {
-            expect(loadStaffRsvpReminderPreview).toHaveBeenCalled();
+            expect(staffRsvpLoader.loadReminderPreview).toHaveBeenCalled();
         });
         expect(screen.queryByText('Staff RSVP reminder')).toBeNull();
     });
