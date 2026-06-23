@@ -25,7 +25,8 @@ describe('app schedule RSVP adapter boundary', () => {
 
         expect(scheduleServiceSource).toContain("from './adapters/legacyScheduleHelpers';");
         expect(rsvpHookSource).toContain("import { submitParentScheduleRsvp } from '../../lib/scheduleService';");
-        expect(helperAdapterSource).toContain("from '../../../../../js/parent-dashboard-rsvp.js'");
+        expect(helperAdapterSource).toContain("from '@legacy/parent-dashboard-rsvp.js'");
+        expect(helperAdapterSource).not.toContain('../../../../../js/');
         expect(helperAdapterSource).toContain('resolveMyRsvpByChildForGame');
         expect(helperAdapterSource).toContain('normalizeArray(events)');
         expect(helperAdapterSource).toContain('normalizeArray(rsvps)');
@@ -34,8 +35,9 @@ describe('app schedule RSVP adapter boundary', () => {
     it('keeps schedule notification and RSVP breakdown helpers behind the same adapter surface', () => {
         const helperAdapterSource = readSource('apps/app/src/lib/adapters/legacyScheduleHelpers.ts');
 
-        expect(helperAdapterSource).toContain("from '../../../../../js/schedule-notifications.js'");
-        expect(helperAdapterSource).toContain("from '../../../../../js/game-day-rsvp-breakdown.js'");
+        expect(helperAdapterSource).toContain("from '@legacy/schedule-notifications.js'");
+        expect(helperAdapterSource).toContain("from '@legacy/game-day-rsvp-breakdown.js'");
+        expect(helperAdapterSource).not.toContain('../../../../../js/');
         expect(helperAdapterSource).toContain('export async function sendPublicRsvpReminderEmails');
         expect(helperAdapterSource).toContain('export function buildGameDayRsvpBreakdown');
     });
