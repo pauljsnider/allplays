@@ -156,7 +156,7 @@ describe('registrationFormAdminService', () => {
     });
   });
 
-  it('updates closed registration forms without changing their publish state', async () => {
+  it('updates closed registration forms without reopening public submissions', async () => {
     const result = await saveRegistrationFormEditorForApp({
       user: coachUser,
       teamId: 'team-1',
@@ -186,7 +186,7 @@ describe('registrationFormAdminService', () => {
       created: false,
       publishState: {
         status: 'closed',
-        published: true,
+        published: false,
         isOpen: false,
         isClosed: true
       }
@@ -197,7 +197,7 @@ describe('registrationFormAdminService', () => {
         programName: 'Spring Soccer Waitlist',
         feeAmountCents: 9999,
         status: 'closed',
-        published: true,
+        published: false,
         updatedAt: 'server-timestamp',
         updatedBy: 'coach-1'
       })

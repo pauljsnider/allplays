@@ -236,7 +236,7 @@ describe('admin registration form setup', () => {
         ]);
     });
 
-    it('preserves closed published forms and normalizes open status aliases', () => {
+    it('preserves closed forms as unavailable and normalizes open status aliases', () => {
         const closedPayload = buildAdminRegistrationFormPayload({
             title: 'Spring Soccer',
             waiverText: 'Accepted.',
@@ -251,7 +251,7 @@ describe('admin registration form setup', () => {
 
         expect(closedPayload).toMatchObject({
             status: 'closed',
-            published: true,
+            published: false,
             feeAmountCents: 123456
         });
         expect(openPayload).toMatchObject({
@@ -259,7 +259,7 @@ describe('admin registration form setup', () => {
             published: true
         });
         expect(normalizeAdminRegistrationFormStatus('paused')).toBe('draft');
-        expect(isPublishedAdminRegistrationFormStatus('closed')).toBe(true);
+        expect(isPublishedAdminRegistrationFormStatus('closed')).toBe(false);
     });
 
     it('converts admin registration fee inputs to safe cents', () => {

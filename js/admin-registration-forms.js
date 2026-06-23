@@ -74,7 +74,7 @@ export function normalizeAdminRegistrationFormStatus(status = 'draft') {
 
 export function isPublishedAdminRegistrationFormStatus(status = 'draft') {
     const normalized = normalizeAdminRegistrationFormStatus(status);
-    return normalized === 'published' || normalized === 'closed';
+    return normalized === 'published';
 }
 
 export function parseAdminRegistrationFeeAmountCents(value = '') {

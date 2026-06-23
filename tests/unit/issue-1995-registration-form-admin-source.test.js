@@ -48,16 +48,16 @@ describe('issue 1995 registration form admin source contract', () => {
     it('keeps regression coverage for setup, editing, validation, and workflow scope', () => {
         expect(appAdminTestSource).toContain('hydrates an existing registration form into app-editable draft state');
         expect(appAdminTestSource).toContain('builds legacy-compatible app setup payloads with options, fees, waivers, payment plans, waitlists, and editable fixed discounts');
-        expect(appAdminTestSource).toContain('round-trips web-created closed fixtures without reopening them');
+        expect(appAdminTestSource).toContain('round-trips web-created closed fixtures without reopening them for submissions');
         expect(appAdminTestSource).toContain('returns validation errors without throwing so the app editor can show inline setup problems');
         expect(appAdminTestSource).toContain('validates editor-only setup errors before saving');
         expect(appAdminTestSource).toContain('converts registration fee inputs to cents consistently');
         expect(appAdminServiceTestSource).toContain('loads a web-created registration form into the app editor model');
         expect(appAdminServiceTestSource).toContain('creates published registration forms with legacy-compatible payload metadata');
-        expect(appAdminServiceTestSource).toContain('updates closed registration forms without changing their publish state');
+        expect(appAdminServiceTestSource).toContain('updates closed registration forms without reopening public submissions');
         expect(legacyAdminTestSource).toContain('builds draft and published form payloads with metadata, fields, waiver, and fee');
         expect(legacyAdminTestSource).toContain('emits the option, waiver, fee, and payment-plan shape consumed by app and legacy registration flows');
-        expect(legacyAdminTestSource).toContain('preserves closed published forms and normalizes open status aliases');
+        expect(legacyAdminTestSource).toContain('preserves closed forms as unavailable and normalizes open status aliases');
         expect(legacyAdminTestSource).toContain('creates a shareable public registration URL for published forms');
         expect(capabilitySource).toContain('legacy still owns setup');
         expect(workflowRegistrationTestSource).toContain('manual provider pulls');

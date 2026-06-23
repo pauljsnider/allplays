@@ -136,7 +136,7 @@ describe('registrationFormAdmin', () => {
     });
   });
 
-  it('round-trips web-created closed fixtures without reopening them', () => {
+  it('round-trips web-created closed fixtures without reopening them for submissions', () => {
     const draft = buildRegistrationFormEditorDraft({
       id: 'form-web',
       teamId: 'team-1',
@@ -158,7 +158,7 @@ describe('registrationFormAdmin', () => {
     expect(draft).toMatchObject({
       formId: 'form-web',
       status: 'closed',
-      published: true,
+      published: false,
       isOpen: false,
       isClosed: true,
       feeAmount: '149.99'
@@ -166,7 +166,7 @@ describe('registrationFormAdmin', () => {
     expect(result.errors).toEqual([]);
     expect(result.payload).toMatchObject({
       status: 'closed',
-      published: true,
+      published: false,
       feeAmountCents: 14999,
       waiverText: 'Closed form waiver.'
     });
@@ -175,7 +175,7 @@ describe('registrationFormAdmin', () => {
     ]);
     expect(result.publishState).toEqual({
       status: 'closed',
-      published: true,
+      published: false,
       isOpen: false,
       isClosed: true
     });
