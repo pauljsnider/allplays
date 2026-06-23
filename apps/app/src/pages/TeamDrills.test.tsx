@@ -266,15 +266,25 @@ describe('TeamDrills', () => {
     expect(screen.getByText('Only team owners, team admins, and global admins can browse and favorite drills for a team.')).toBeTruthy();
   });
 
-  it('retries a retryable community drill load failure from the shared error state', async () => {
+  it('shows the loading state while retrying a retryable community drill load failure', async () => {
+    let resolveRetry: ((value: ReturnType<typeof createPage>) => void) | null = null;
+    const retryPromise = new Promise<ReturnType<typeof createPage>>((resolve) => {
+      resolveRetry = resolve;
+    });
+
     teamDrillsServiceMocks.loadTeamDrillLibraryPage
       .mockRejectedValueOnce(new Error('Drill library temporarily unavailable.'))
-      .mockResolvedValueOnce(createPage({ drills: [createDrill({ title: 'Recovery rondo' })], favoriteIds: [] }));
+      .mockImplementationOnce(() => retryPromise);
 
     renderTeamDrills();
 
     expect(await screen.findByText('Drill library temporarily unavailable.')).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+
+    expect(await screen.findByText('Loading drill library')).toBeTruthy();
+    expect(screen.queryByText('Drill library temporarily unavailable.')).toBeNull();
+
+    resolveRetry?.(createPage({ drills: [createDrill({ title: 'Recovery rondo' })], favoriteIds: [] }));
 
     expect(await screen.findByRole('heading', { name: 'Bears drills' })).toBeTruthy();
     expect(await screen.findByText('Recovery rondo')).toBeTruthy();

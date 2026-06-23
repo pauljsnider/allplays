@@ -331,6 +331,7 @@ export function TeamDrills({ auth }: { auth: AuthState }) {
 
   if ((loadError || error) && !communityDrills.length && selectedTab === 'community') {
     return <StatusCard title="Drill library unavailable" message={loadError?.message || error} backTo={`/teams/${encodeURIComponent(teamId)}`} onRetry={isRetryableAppServiceError(loadError) ? () => {
+      setLoading(true);
       clearLoadError();
       setError('');
       void runLoadOperation(() => loadTeamDrillLibraryPage(teamId, auth.user, {
@@ -354,6 +355,9 @@ export function TeamDrills({ auth }: { auth: AuthState }) {
           setFavoriteIds([]);
           setNextCursor(null);
           setFavoriteDrills(null);
+        },
+        onFinally: () => {
+          setLoading(false);
         }
       });
     } : undefined} />;
