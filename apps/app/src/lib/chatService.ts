@@ -75,6 +75,7 @@ import type { AuthUser } from './types';
 
 const primaryDataTimeoutMs = 5000;
 const chatUploadTimeoutMs = 25000;
+const chatAttachmentUploadConcurrency = 3;
 const chatPreviewCacheTtlMs = 20 * 1000;
 const deferredInboxPreviewConcurrency = 3;
 const imageUploadSessionKey = 'allplays-chat-image-upload-session';
@@ -1001,6 +1002,55 @@ export async function uploadTeamChatAttachment(teamId: string, file: File, conve
   }
 }
 
+async function uploadTeamChatAttachments({
+  teamId,
+  files,
+  conversationId,
+  onUploadStart,
+  uploadedAttachments
+}: {
+  teamId: string;
+  files: File[];
+  conversationId: string;
+  onUploadStart?: () => void;
+  uploadedAttachments: Array<ChatAttachment | undefined>;
+}): Promise<ChatAttachment[]> {
+  if (files.length === 0) return [];
+
+  const orderedAttachments: Array<ChatAttachment | undefined> = new Array(files.length);
+  const workerCount = Math.min(chatAttachmentUploadConcurrency, files.length);
+  let nextFileIndex = 0;
+  let firstError: unknown;
+  let hasError = false;
+
+  async function uploadNextAttachment() {
+    while (nextFileIndex < files.length && !hasError) {
+      const index = nextFileIndex;
+      nextFileIndex += 1;
+      const file = files[index];
+      onUploadStart?.();
+      try {
+        const attachment = await uploadTeamChatAttachment(teamId, file, conversationId);
+        orderedAttachments[index] = attachment;
+        uploadedAttachments[index] = attachment;
+      } catch (error) {
+        if (!hasError) {
+          hasError = true;
+          firstError = error;
+        }
+      }
+    }
+  }
+
+  await Promise.all(Array.from({ length: workerCount }, () => uploadNextAttachment()));
+
+  if (hasError) {
+    throw firstError;
+  }
+
+  return orderedAttachments.filter((attachment): attachment is ChatAttachment => Boolean(attachment));
+}
+
 async function nativePostChatMessage(teamId: string, input: {
   clientMessageId?: string | null;
   text: string;
@@ -1083,7 +1133,7 @@ export async function sendTeamChatMessage({
     attachments: files.length,
     target: selectedRecipientTarget
   });
-  const uploadedAttachments: ChatAttachment[] = [];
+  const uploadedAttachments: Array<ChatAttachment | undefined> = [];
   try {
     const targetMetadata = buildChatAudienceMetadata({
       selectedConversation,
@@ -1109,13 +1159,16 @@ export async function sendTeamChatMessage({
       conversationId = createdConversation.id;
     }
 
-    for (const file of files) {
-      onProgress?.('uploading');
-      uploadedAttachments.push(await uploadTeamChatAttachment(teamId, file, conversationId));
-    }
+    const orderedUploadedAttachments = await uploadTeamChatAttachments({
+      teamId,
+      files,
+      conversationId,
+      onUploadStart: () => onProgress?.('uploading'),
+      uploadedAttachments
+    });
     onProgress?.('posting');
 
-    const attachments = [...sharedAttachments, ...uploadedAttachments];
+    const attachments = [...sharedAttachments, ...orderedUploadedAttachments];
 
     const payload = {
       clientMessageId: clientMessageId || null,
@@ -1144,9 +1197,10 @@ export async function sendTeamChatMessage({
     };
   } catch (error) {
     interaction.end({ error: (error as Error)?.message || 'Chat send failed' });
-    if (uploadedAttachments.length > 0) {
+    const cleanupAttachments = uploadedAttachments.filter((attachment): attachment is ChatAttachment => Boolean(attachment));
+    if (cleanupAttachments.length > 0) {
       try {
-        await deleteUploadedChatAttachments(uploadedAttachments);
+        await deleteUploadedChatAttachments(cleanupAttachments);
       } catch (cleanupError) {
         logger.error('Failed to clean up uploaded chat attachments.', { error: cleanupError });
       }
