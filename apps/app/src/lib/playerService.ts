@@ -38,8 +38,12 @@ import {
   saveCapSetting,
   saveIncentiveRule,
   toggleIncentiveRule,
-  type LegacyIncentiveRule,
-  type LegacyStatOption
+  type PlayerEarningsBreakdownItem,
+  type PlayerIncentiveRule,
+  type PlayerPaidGameRecord,
+  type PlayerStatOption,
+  type PlayerTrackingSummary,
+  type PlayerVideoClip
 } from './adapters/legacyPlayerProfile';
 import {
   canViewRosterField,
@@ -47,7 +51,8 @@ import {
   normalizeRosterFieldDefinitions,
   splitRosterProfileValuesByVisibility,
   validateRosterProfileValues,
-  type LegacyRosterFieldDefinition
+  type RosterFieldDefinition,
+  type RosterProfileValues
 } from './adapters/legacyRosterPrivacy';
 import { getOpenScheduleAssignments, normalizeRsvpResponse, type ParentScheduleEvent } from './scheduleLogic';
 import { loadParentPlayerSchedule, type ParentScheduleChild } from './scheduleService';
@@ -68,9 +73,9 @@ export type ParentPlayerPrivateProfile = {
 };
 
 export type ParentPlayerIncentiveData = {
-  rules: Array<Record<string, any>>;
-  currentRules: Array<Record<string, any>>;
-  statOptions: Array<{ key: string; label: string }>;
+  rules: PlayerIncentiveRule[];
+  currentRules: PlayerIncentiveRule[];
+  statOptions: PlayerStatOption[];
   maxPerGameCents: number | null;
   seasonGameEarnings: Array<{
     event: ParentScheduleEvent;
@@ -78,7 +83,7 @@ export type ParentPlayerIncentiveData = {
     totalCents: number;
     uncappedTotalCents: number;
     wasCapped: boolean;
-    breakdown: Array<Record<string, any>>;
+    breakdown: PlayerEarningsBreakdownItem[];
     paid: boolean;
     paidAmountCents: number;
   }>;
@@ -99,8 +104,6 @@ export type ParentAthleteProfileData = {
     playerName: string;
   }>;
 };
-
-type CustomRosterFieldDefinition = LegacyRosterFieldDefinition;
 
 export type ParentPlayerDetailData = {
   child: ParentScheduleChild;
@@ -131,9 +134,9 @@ export type ParentPlayerDetailData = {
     openAssignments: number;
   };
   statRows: ParentPlayerStatRow[];
-  clips: Array<Record<string, any>>;
+  clips: PlayerVideoClip[];
   certificates: Array<Record<string, any>>;
-  trackingSummary: Array<Record<string, any>>;
+  trackingSummary: PlayerTrackingSummary[];
   privateProfile: ParentPlayerPrivateProfile | null;
   incentives: ParentPlayerIncentiveData;
   athleteProfile: ParentAthleteProfileData;
@@ -217,14 +220,14 @@ export async function loadParentPlayerDetail(user: AuthUser | null, teamId: stri
     stats: await getAggregatedStatsForPlayer(resolvedTeamId, event.id, resolvedPlayerId).catch(() => ({})) || {}
   })));
 
-  const clips = collectPlayerVideoClips(Array.isArray(games) ? games : [], {
+  const clips = collectPlayerVideoClips(games, {
     teamId: resolvedTeamId,
     playerId: resolvedPlayerId
   }).slice(0, 8);
 
   const trackingSummary = getVisiblePlayerTrackingSummary({
-    items: trackingItems || [],
-    statuses: trackingStatuses || [],
+    items: trackingItems,
+    statuses: trackingStatuses,
     playerIds: [resolvedPlayerId]
   });
 
@@ -257,10 +260,10 @@ export async function loadParentPlayerDetail(user: AuthUser | null, teamId: stri
     trackingSummary,
     privateProfile: normalizePrivateProfile(privateProfile),
     incentives: buildPlayerIncentiveData({
-      rules: Array.isArray(incentiveRules) ? incentiveRules : [],
-      paidGames: paidGames instanceof Map ? paidGames : new Map(),
-      statOptions: Array.isArray(statOptions) ? statOptions : [],
-      maxPerGameCents: typeof maxPerGameCents === 'number' ? maxPerGameCents : null,
+      rules: incentiveRules,
+      paidGames,
+      statOptions,
+      maxPerGameCents,
       statRows
     }),
     athleteProfile: buildAthleteProfileData({
@@ -300,7 +303,7 @@ export async function savePlayerCustomRosterFieldValues({
   ]);
 
   const player = (Array.isArray(players) ? players : []).find((candidate: any) => candidate?.id === playerId) || {};
-  const normalizedFields = normalizeRosterFieldDefinitions(rosterFieldDefinitions) as CustomRosterFieldDefinition[];
+  const normalizedFields = normalizeRosterFieldDefinitions(rosterFieldDefinitions);
   const filteredValues = normalizeCustomRosterFieldInput(values, normalizedFields);
   const validationErrors = validateRosterProfileValues(normalizedFields, filteredValues);
   if (validationErrors.length > 0) {
@@ -477,7 +480,7 @@ export async function saveParentPlayerIncentiveRule({
   });
 }
 
-export async function toggleParentPlayerIncentiveRule(user: AuthUser | null, teamId: string, playerId: string, rule: Record<string, any>) {
+export async function toggleParentPlayerIncentiveRule(user: AuthUser | null, teamId: string, playerId: string, rule: PlayerIncentiveRule) {
   assertLinkedParent(user, teamId, playerId);
   return toggleIncentiveRule(user!.uid, rule);
 }
@@ -604,9 +607,9 @@ function buildPlayerIncentiveData({
   maxPerGameCents,
   statRows
 }: {
-  rules: LegacyIncentiveRule[];
-  paidGames: Map<string, Record<string, any>>;
-  statOptions: LegacyStatOption[];
+  rules: PlayerIncentiveRule[];
+  paidGames: Map<string, PlayerPaidGameRecord>;
+  statOptions: PlayerStatOption[];
   maxPerGameCents: number | null;
   statRows: ParentPlayerStatRow[];
 }): ParentPlayerIncentiveData {
@@ -741,12 +744,12 @@ function buildVisibleCustomRosterFields({
   privateProfile,
   access
 }: {
-  definitions: any[];
+  definitions: unknown;
   player: LegacyPlayerRecord;
   privateProfile: LegacyPlayerPrivateProfileRecord | null;
   access: { isLinkedParent: boolean; isTeamStaff: boolean; canEditRosterDetails: boolean; canEditCustomRosterFields: boolean };
 }) {
-  const normalizedFields = normalizeRosterFieldDefinitions(definitions) as CustomRosterFieldDefinition[];
+  const normalizedFields = normalizeRosterFieldDefinitions(definitions);
   if (!normalizedFields.length) return [];
 
   const mergedValues = {
@@ -773,13 +776,13 @@ function buildVisibleCustomRosterFields({
     }));
 }
 
-function normalizeCustomRosterFieldValue(type: string, value: unknown) {
+function normalizeCustomRosterFieldValue(type: RosterFieldDefinition['type'], value: unknown) {
   if (type === 'checkbox') return value === true;
   return String(value ?? '').trim();
 }
 
-function normalizeCustomRosterFieldInput(values: Record<string, unknown>, fields: Array<{ key: string; type: string }>) {
-  const normalized: Record<string, unknown> = {};
+function normalizeCustomRosterFieldInput(values: Record<string, unknown>, fields: Array<Pick<RosterFieldDefinition, 'key' | 'type'>>): RosterProfileValues {
+  const normalized: RosterProfileValues = {};
   fields.forEach((field) => {
     if (!Object.prototype.hasOwnProperty.call(values || {}, field.key)) return;
     if (field.type === 'checkbox') {
