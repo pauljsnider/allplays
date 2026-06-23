@@ -15,7 +15,8 @@ describe('notification recipient index initiative source contract', () => {
 
     it('keeps a migration fallback that backfills the index when a team has no indexed recipients yet', () => {
         expect(functionsSource).toContain('async function backfillNotificationRecipientsForTeam(teamId, users, options = {})');
-        expect(functionsSource).toContain('if (targetSnap.empty && await teamNotificationRecipientIndexIsEmpty(teamId)) {');
+        expect(functionsSource).toContain('const indexIsEmpty = typeof teamNotificationRecipientIndexIsEmpty === \'function\'');
+        expect(functionsSource).toContain('if (!indexIsEmpty) {');
         expect(functionsSource).toContain('await backfillNotificationRecipientsForTeam(teamId, users, { skipLegacyCleanup: true });');
         expect(functionsSource).toContain('Failed to backfill notification recipient index after empty lookup');
     });

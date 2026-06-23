@@ -39,10 +39,12 @@ describe('notification recipient index foundation', () => {
 
     it('falls back to live preference/device reads and backfills after empty indexed lookups', () => {
         expect(functionsSource).toContain('async function getTargetsForCategory(teamId, category');
+        expect(functionsSource).toContain('const indexedRecipientDocs = targetSnap.docs || [];');
+        expect(functionsSource).toContain('const eligibleUsers = buildIndexedEligibleUsers(indexedRecipientDocs, category, audienceContext, additionalUsers);');
         expect(functionsSource).toContain('await teamNotificationRecipientIndexIsEmpty(teamId)');
         expect(functionsSource).toContain('await backfillNotificationRecipientsForTeam(teamId, users, { skipLegacyCleanup: true })');
-        expect(functionsSource).toContain('const fallbackTargets = await getLegacyTargetsForCategory(teamId, category, missingUsers, actorUid, audienceContext);');
-        expect(functionsSource).toContain('return [...indexedTargets, ...fallbackTargets];');
+        expect(functionsSource).toContain('const fallbackTargets = await getLegacyTargetsForCategory(teamId, category, users, actorUid, audienceContext);');
+        expect(functionsSource).toContain('return fallbackTargets;');
     });
 
     it('deduplicates non-chat sends with a short-lived send log and records audit metadata', () => {

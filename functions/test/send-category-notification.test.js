@@ -33,7 +33,8 @@ test('getTargetsForCategory uses indexed targets without legacy per-user device 
 
             assert.equal(targets.length, 2);
             assert.equal(env.counts.recipientQueries, 1);
-            assert.equal(env.counts.parentQueries, 1);
+            assert.equal(env.counts.parentQueries, 0);
+            assert.equal(env.counts.teamDocGets, 0);
             assert.equal(env.counts.recipientCollectionGets, 0);
             assert.equal(env.counts.preferenceGets, 0);
             assert.equal(env.counts.deviceGets, 0);
@@ -140,6 +141,7 @@ test('getTargetsForCategory returns the same recipient set from indexed resoluti
 
             assert.deepEqual(normalizeTargets(indexedTargets), normalizeTargets(legacyTargets));
             assert.equal(indexed.env.counts.recipientQueries, 1);
+            assert.equal(indexed.env.counts.parentQueries, 0);
             assert.equal(indexed.env.counts.preferenceGets, 0);
             assert.equal(indexed.env.counts.deviceGets, 0);
             assert.equal(legacy.env.counts.recipientQueries, 1);
@@ -191,8 +193,9 @@ test('getTargetsForCategory does not backfill repeatedly when the recipient coll
             assert.deepEqual(targets, []);
             assert.equal(env.counts.recipientQueries, 1);
             assert.equal(env.counts.recipientCollectionGets, 1);
-            assert.equal(env.counts.preferenceGets, 2);
-            assert.equal(env.counts.deviceGets, 2);
+            assert.equal(env.counts.parentQueries, 0);
+            assert.equal(env.counts.preferenceGets, 0);
+            assert.equal(env.counts.deviceGets, 0);
             assert.equal(
                 env.dedupWrites.filter((write) => write.path.includes('/notificationRecipients/'))
                     .length,
@@ -203,7 +206,7 @@ test('getTargetsForCategory does not backfill repeatedly when the recipient coll
         }
 });
 
-test('getTargetsForCategory falls back only for users missing from the notification target index', async () => {
+test('getTargetsForCategory does not legacy-scan missing users once the recipient index exists', async () => {
         const { internals, env, cleanup } = loadNotificationInternals({
             teamDoc: {
                 ownerId: 'coach-1',
@@ -231,14 +234,14 @@ test('getTargetsForCategory falls back only for users missing from the notificat
         try {
             const targets = await internals.getTargetsForCategory('team-1', 'schedule');
 
-            assert.equal(targets.length, 2);
+            assert.equal(targets.length, 1);
             assert.equal(env.counts.recipientQueries, 1);
-            assert.equal(env.counts.parentQueries, 1);
+            assert.equal(env.counts.parentQueries, 0);
             assert.equal(env.counts.recipientCollectionGets, 0);
-            assert.equal(env.counts.preferenceGets, 1);
-            assert.equal(env.counts.deviceGets, 1);
+            assert.equal(env.counts.preferenceGets, 0);
+            assert.equal(env.counts.deviceGets, 0);
             assert.deepEqual(targets.map((target) => target.token).sort(), [
-                'coach-token', 'parent-token'
+                'coach-token'
             ]);
         } finally {
             cleanup();
@@ -313,6 +316,7 @@ test('getTargetsForCategory limits staff-only media notifications to staff recip
             indexedTargets: [
                 {
                     uid: 'coach-1',
+                    roles: ['staff'],
                     deviceId: 'coach-device',
                     token: 'coach-token',
                     categories: { media: true }
@@ -331,7 +335,7 @@ test('getTargetsForCategory limits staff-only media notifications to staff recip
 
             assert.deepEqual(targets.map((target) => target.token), ['coach-token']);
             assert.equal(env.counts.recipientQueries, 1);
-            assert.equal(env.counts.parentQueries, 1);
+            assert.equal(env.counts.parentQueries, 0);
             assert.equal(env.counts.preferenceGets, 0);
             assert.equal(env.counts.deviceGets, 0);
         } finally {
@@ -349,6 +353,7 @@ test('getTargetsForCategory preserves eligible recipients for visible media albu
             indexedTargets: [
                 {
                     uid: 'coach-1',
+                    roles: ['staff'],
                     deviceId: 'coach-device',
                     token: 'coach-token',
                     categories: { media: true }
@@ -795,6 +800,7 @@ test('sendCategoryNotification prunes invalid tokens from both notification inde
 
             assert.equal(result?.failureCount, 1);
             assert.deepEqual(env.deletedPaths.sort(), [
+                'teams/team-1/notificationRecipients/coach-1',
                 'teams/team-1/notificationTargets/coach-1__coach-device',
                 'users/coach-1/notificationDevices/coach-device'
             ]);
