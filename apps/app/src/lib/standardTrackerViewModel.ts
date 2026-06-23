@@ -13,12 +13,15 @@ export type StandardTrackerConfigInput = {
 
 export type StandardTrackerRosterPlayerInput = {
   id?: string | null;
+  playerId?: string | null;
   name?: string | null;
   displayName?: string | null;
   firstName?: string | null;
   lastName?: string | null;
   number?: string | number | null;
   playerNumber?: string | number | null;
+  photoUrl?: string | null;
+  photo?: string | null;
   active?: boolean;
   archived?: boolean;
   status?: string | null;
@@ -34,8 +37,10 @@ export type StandardTrackerColumn = {
 
 export type StandardTrackerPlayer = {
   id: string;
+  playerId: string | null;
   name: string;
   number: string;
+  photoUrl: string;
   stats: Record<string, number>;
 };
 
@@ -60,6 +65,14 @@ export type StandardTrackerViewModel = {
   totals: Array<StandardTrackerColumn & { value: number }>;
 };
 
+export type StandardTrackerOpponentStatsEntry = {
+  name: string;
+  number: string;
+  playerId: string | null;
+  photoUrl: string;
+  [statKey: string]: string | number | null;
+};
+
 function normalizeText(value: unknown) {
   return String(value || '').trim();
 }
@@ -81,6 +94,10 @@ function normalizePlayerName(player: StandardTrackerRosterPlayerInput) {
 
 function normalizePlayerNumber(player: StandardTrackerRosterPlayerInput) {
   return normalizeText(player.number ?? player.playerNumber ?? '');
+}
+
+function normalizePlayerPhotoUrl(player: StandardTrackerRosterPlayerInput) {
+  return normalizeText(player.photoUrl || player.photo);
 }
 
 function normalizeStatTotals(stats: Record<string, unknown> | null | undefined) {
@@ -141,8 +158,10 @@ export function buildStandardTrackerPlayers(roster: StandardTrackerRosterPlayerI
       }
       return {
         id,
+        playerId: normalizeText(player.playerId) || null,
         name: normalizePlayerName(player),
         number: normalizePlayerNumber(player),
+        photoUrl: normalizePlayerPhotoUrl(player),
         stats
       };
     })
@@ -175,6 +194,31 @@ export function applyStandardTrackerTallyDelta(tallies: StandardTrackerTallies, 
     ...tallies,
     [normalizedPlayerId]: playerTallies
   };
+}
+
+export function buildStandardTrackerOpponentStatsEntry({
+  player,
+  columns,
+  tallies
+}: {
+  player: StandardTrackerPlayer;
+  columns: StandardTrackerColumn[];
+  tallies: StandardTrackerTallies;
+}): StandardTrackerOpponentStatsEntry {
+  const stats = tallies[player.id] || {};
+  const entry: StandardTrackerOpponentStatsEntry = {
+    name: player.name || '',
+    number: player.number || '',
+    playerId: player.playerId || null,
+    photoUrl: player.photoUrl || ''
+  };
+
+  columns.forEach((column) => {
+    entry[column.key] = Math.max(0, Number(stats[column.key] || 0));
+  });
+  entry.fouls = Math.max(0, Number(stats.fouls || 0));
+
+  return entry;
 }
 
 export function buildStandardTrackerViewModel({

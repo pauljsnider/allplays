@@ -348,9 +348,18 @@ export type ScheduleHomeScoringPlayer = {
   id: string;
   name: string;
   number: string;
+  photoUrl?: string;
   points: number;
   fouls: number;
   stats?: Record<string, number>;
+};
+
+export type ScheduleOpponentStatsEntry = {
+  name?: string | null;
+  number?: string | null;
+  playerId?: string | null;
+  photoUrl?: string | null;
+  [key: string]: unknown;
 };
 
 export type PlayerGameStatInput = {
@@ -1970,6 +1979,10 @@ function normalizePlayerNumber(player: any) {
   return compactString(player?.number ?? player?.num ?? player?.jerseyNumber ?? player?.playerNumber ?? '');
 }
 
+function normalizePlayerPhotoUrl(player: any) {
+  return compactString(player?.photoUrl || player?.photo);
+}
+
 function isActiveRosterPlayer(player: any) {
   return player?.active !== false && player?.archived !== true && (!player?.status || player.status === 'active');
 }
@@ -2011,12 +2024,59 @@ export async function loadHomeScoringPlayers(teamId: string, gameId: string): Pr
         id,
         name: normalizePlayerName(player),
         number: normalizePlayerNumber(player),
+        photoUrl: normalizePlayerPhotoUrl(player),
         points: normalizeGameScoreValue(stats.pts),
         fouls: normalizeGameScoreValue(stats.fouls),
         stats
       };
     })
     .filter(Boolean) as ScheduleHomeScoringPlayer[];
+}
+
+export async function loadOpponentScoringPlayers(teamId: string): Promise<ScheduleHomeScoringPlayer[]> {
+  if (!teamId) return [];
+  const players = await loadPlayers(teamId);
+  return (Array.isArray(players) ? players : [])
+    .filter(isActiveRosterPlayer)
+    .map((player: any) => {
+      const id = compactString(player?.id);
+      if (!id) return null;
+      return {
+        id,
+        name: normalizePlayerName(player),
+        number: normalizePlayerNumber(player),
+        photoUrl: normalizePlayerPhotoUrl(player),
+        points: 0,
+        fouls: 0,
+        stats: {}
+      };
+    })
+    .filter(Boolean) as ScheduleHomeScoringPlayer[];
+}
+
+export async function loadOpponentStatsForGame(teamId: string, gameId: string): Promise<Record<string, ScheduleOpponentStatsEntry>> {
+  const normalizedTeamId = compactString(teamId);
+  const normalizedGameId = compactString(gameId);
+  if (!normalizedTeamId || !normalizedGameId) return {};
+
+  const game = await readWithNativeFallback(
+    `game opponent stats ${normalizedTeamId}/${normalizedGameId}`,
+    () => Promise.resolve(getGame(normalizedTeamId, normalizedGameId)),
+    () => nativeGetDocument(`teams/${encodeURIComponent(normalizedTeamId)}/games/${encodeURIComponent(normalizedGameId)}`)
+  ).catch(() => null);
+  const opponentStats = game && typeof game === 'object' ? (game as Record<string, unknown>).opponentStats : null;
+  if (!opponentStats || typeof opponentStats !== 'object' || Array.isArray(opponentStats)) {
+    return {};
+  }
+
+  return Object.entries(opponentStats).reduce<Record<string, ScheduleOpponentStatsEntry>>((acc, [entryId, entry]) => {
+    const normalizedEntryId = compactString(entryId);
+    if (!normalizedEntryId || !entry || typeof entry !== 'object' || Array.isArray(entry)) {
+      return acc;
+    }
+    acc[normalizedEntryId] = { ...(entry as Record<string, unknown>) };
+    return acc;
+  }, {});
 }
 
 function getProfileArray(profile: Record<string, unknown>, key: string) {
