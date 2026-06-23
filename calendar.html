@@ -109,6 +109,9 @@
                     <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"></path></svg>
                     Sync Calendar
                 </button>
+                <button id="public-games-feed" hidden class="inline-flex items-center gap-1 px-3 py-1.5 text-xs font-medium text-emerald-700 bg-emerald-50 rounded-lg hover:bg-emerald-100 transition border border-emerald-200">
+                    Fan Feed
+                </button>
             </div>
         </div>
 
@@ -421,6 +424,14 @@
                                 end: game.endDate?.toDate ? game.endDate.toDate() : (game.endDate ? new Date(game.endDate) : null), // Add this line
                                 location: game.location || 'TBD',
                                 status: game.status,
+                                visibility: game.visibility,
+                                isPublic: game.isPublic,
+                                public: game.public,
+                                isPrivate: game.isPrivate,
+                                private: game.private,
+                                shareable: game.shareable,
+                                isShareable: game.isShareable,
+                                publicCalendar: game.publicCalendar,
                                 isHome: game.isHome,
                                 kitColor: game.kitColor,
                                 arrivalTime: game.arrivalTime,
@@ -555,6 +566,7 @@
                 return true;
             });
 
+            updatePublicGamesFeedButton();
             render();
         }
 
@@ -977,6 +989,93 @@
             }
         }
 
+        function isShareableFanGame(game = {}) {
+            const visibility = String(game?.visibility || '').toLowerCase();
+            if (visibility === 'private' || game?.isPrivate === true || game?.private === true) return false;
+            return visibility === 'public' ||
+                game?.isPublic === true ||
+                game?.public === true ||
+                game?.shareable === true ||
+                game?.isShareable === true ||
+                game?.publicCalendar === true;
+        }
+
+        function isPublicFanFeedGame(team = {}, game = {}) {
+            if (String(game?.type || 'game').toLowerCase() !== 'game') return false;
+            if (String(game?.visibility || '').toLowerCase() === 'private') return false;
+            if (game?.isPrivate === true || game?.private === true) return false;
+            if (String(game?.status || '').toLowerCase() === 'deleted') return false;
+            if (String(game?.liveStatus || '').toLowerCase() === 'deleted') return false;
+            return (team?.isPublic !== false && team?.active !== false) || isShareableFanGame(game);
+        }
+
+        function getSelectedPublicGamesFeedTeam() {
+            if (!currentTeamFilter) return null;
+            return calendarTeams.find((team) => team.id === currentTeamFilter) || null;
+        }
+
+        function canExposePublicFanFeed(team = {}) {
+            if (!team?.id) return false;
+            return (allEvents || []).some((event) => event.teamId === team.id && isPublicFanFeedGame(team, event));
+        }
+
+        function getPublicGamesFeedUrl(team) {
+            if (!team?.id) return '';
+            const configuredUrl = window.__ALLPLAYS_CONFIG__?.publicTeamGamesIcsFunctionUrl || window.ALLPLAYS_PUBLIC_GAMES_ICS_URL;
+            const fallbackUrl = window.__ALLPLAYS_CONFIG__?.calendarFetchFunctionUrl || window.ALLPLAYS_CALENDAR_FUNCTION_URL;
+            const baseUrl = (typeof configuredUrl === 'string' && configuredUrl.trim())
+                ? configuredUrl.trim()
+                : (typeof fallbackUrl === 'string' && fallbackUrl.includes('fetchCalendarIcs')
+                    ? fallbackUrl.replace('fetchCalendarIcs', 'publicTeamGamesIcs')
+                    : 'https://us-central1-all-plays-prod.cloudfunctions.net/publicTeamGamesIcs');
+            const separator = baseUrl.includes('?') ? '&' : '?';
+            return `${baseUrl}${separator}teamId=${encodeURIComponent(team.id)}`;
+        }
+
+        function updatePublicGamesFeedButton() {
+            const button = document.getElementById('public-games-feed');
+            if (!button) return;
+            const team = getSelectedPublicGamesFeedTeam();
+            button.hidden = !team || !canExposePublicFanFeed(team);
+        }
+
+        async function copyPublicGamesFeedUrl() {
+            const team = getSelectedPublicGamesFeedTeam();
+            const feedUrl = team ? getPublicGamesFeedUrl(team) : '';
+            if (!team || !feedUrl) {
+                alert('Select a team with public games before copying the Fan Feed link.');
+                return;
+            }
+            try {
+                if (navigator.share) {
+                    await navigator.share({
+                        title: `${team.name || 'Team'} public games`,
+                        text: 'Subscribe to the public games-only calendar feed.',
+                        url: feedUrl
+                    });
+                    return;
+                }
+                if (navigator.clipboard?.writeText) {
+                    await navigator.clipboard.writeText(feedUrl);
+                } else {
+                    const input = document.createElement('textarea');
+                    input.value = feedUrl;
+                    input.setAttribute('readonly', '');
+                    input.style.position = 'fixed';
+                    input.style.left = '-9999px';
+                    document.body.appendChild(input);
+                    input.select();
+                    const copied = document.execCommand('copy');
+                    document.body.removeChild(input);
+                    if (!copied) throw new Error('Copy command failed');
+                }
+                alert('Fan Feed URL copied.');
+            } catch (error) {
+                console.error('Failed to copy public games feed URL:', error);
+                alert('Could not copy the Fan Feed link.');
+            }
+        }
+
         document.getElementById('sync-calendar-apple')?.addEventListener('click', () => {
             const feedUrl = getCurrentCalendarFeedUrl();
             if (!feedUrl) {
@@ -998,6 +1097,7 @@
         document.getElementById('sync-calendar-copy')?.addEventListener('click', () => {
             copyPrivateCalendarFeedUrl(getCurrentCalendarFeedUrl());
         });
+        document.getElementById('public-games-feed')?.addEventListener('click', copyPublicGamesFeedUrl);
 
         // ===== ICS EXPORT =====
         function exportIcs() {

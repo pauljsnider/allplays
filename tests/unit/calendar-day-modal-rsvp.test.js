@@ -156,7 +156,8 @@ function createEnvironment() {
         'sync-calendar-apple',
         'sync-calendar-google',
         'sync-calendar-copy',
-        'sync-calendar-feedback'
+        'sync-calendar-feedback',
+        'public-games-feed'
     ];
     const elements = new Map(ids.map((id) => [id, new MockElement(id)]));
     elements.get('team-filter').value = '';

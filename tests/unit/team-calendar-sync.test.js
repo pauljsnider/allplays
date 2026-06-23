@@ -9,6 +9,10 @@ function readCalendarPage() {
     return readFileSync(new URL('../../calendar.html', import.meta.url), 'utf8');
 }
 
+function readEditSchedulePage() {
+    return readFileSync(new URL('../../edit-schedule.html', import.meta.url), 'utf8');
+}
+
 function readWorkflowSchedule() {
     return readFileSync(new URL('../../workflow-schedule.html', import.meta.url), 'utf8');
 }
@@ -67,6 +71,19 @@ describe('all teams calendar sync controls', () => {
         expect(source).toContain('Copy Link');
     });
 
+    it('keeps schedule-editor sharing links available for current-team sync and fan feeds', () => {
+        const source = readEditSchedulePage();
+
+        expect(source).toContain('id="schedule-sharing-panel"');
+        expect(source).toContain('id="edit-schedule-sync-calendar-link"');
+        expect(source).toContain('Sync Calendar');
+        expect(source).toContain('id="edit-schedule-fan-feed-link"');
+        expect(source).toContain('Fan Feed');
+        expect(source).toContain('const teamScheduleUrl = `team.html#teamId=${encodeURIComponent(currentTeamId)}`;');
+        expect(source).toContain("document.getElementById('edit-schedule-sync-calendar-link').href = teamScheduleUrl;");
+        expect(source).toContain("document.getElementById('edit-schedule-fan-feed-link').href = teamScheduleUrl;");
+    });
+
     it('builds selected-team private subscription links and wires modal actions', () => {
         const source = readCalendarPage();
 
@@ -80,5 +97,22 @@ describe('all teams calendar sync controls', () => {
         expect(source).toContain('navigator.clipboard.writeText(feedUrl)');
         expect(source).toContain('onclick="openSyncCalendarModal()"');
         expect(source).toContain('Select a team before opening a live calendar subscription.');
+    });
+
+    it('adds selected-team Fan Feed controls to the calendar export area', () => {
+        const source = readCalendarPage();
+
+        expect(source).toContain('id="public-games-feed"');
+        expect(source).toContain('Fan Feed');
+        expect(source).toContain('function getSelectedPublicGamesFeedTeam()');
+        expect(source).toContain('function getPublicGamesFeedUrl(team)');
+        expect(source).toContain('publicTeamGamesIcs');
+        expect(source).toContain('visibility: game.visibility');
+        expect(source).toContain('shareable: game.shareable');
+        expect(source).toContain('isShareable: game.isShareable');
+        expect(source).toContain('publicCalendar: game.publicCalendar');
+        expect(source).toContain("document.getElementById('public-games-feed')?.addEventListener('click', copyPublicGamesFeedUrl);");
+        expect(source).toContain('updatePublicGamesFeedButton();');
+        expect(source).toContain('Select a team with public games before copying the Fan Feed link.');
     });
 });
