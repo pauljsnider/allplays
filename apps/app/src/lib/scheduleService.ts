@@ -354,6 +354,14 @@ export type ScheduleHomeScoringPlayer = {
   stats?: Record<string, number>;
 };
 
+export type ScheduleOpponentStatsEntry = {
+  name?: string | null;
+  number?: string | null;
+  playerId?: string | null;
+  photoUrl?: string | null;
+  [key: string]: unknown;
+};
+
 export type PlayerGameStatInput = {
   statKey: 'pts' | 'fouls';
   value: 1 | 2;
@@ -2044,6 +2052,31 @@ export async function loadOpponentScoringPlayers(teamId: string): Promise<Schedu
       };
     })
     .filter(Boolean) as ScheduleHomeScoringPlayer[];
+}
+
+export async function loadOpponentStatsForGame(teamId: string, gameId: string): Promise<Record<string, ScheduleOpponentStatsEntry>> {
+  const normalizedTeamId = compactString(teamId);
+  const normalizedGameId = compactString(gameId);
+  if (!normalizedTeamId || !normalizedGameId) return {};
+
+  const game = await readWithNativeFallback(
+    `game opponent stats ${normalizedTeamId}/${normalizedGameId}`,
+    () => Promise.resolve(getGame(normalizedTeamId, normalizedGameId)),
+    () => nativeGetDocument(`teams/${encodeURIComponent(normalizedTeamId)}/games/${encodeURIComponent(normalizedGameId)}`)
+  ).catch(() => null);
+  const opponentStats = game && typeof game === 'object' ? (game as Record<string, unknown>).opponentStats : null;
+  if (!opponentStats || typeof opponentStats !== 'object' || Array.isArray(opponentStats)) {
+    return {};
+  }
+
+  return Object.entries(opponentStats).reduce<Record<string, ScheduleOpponentStatsEntry>>((acc, [entryId, entry]) => {
+    const normalizedEntryId = compactString(entryId);
+    if (!normalizedEntryId || !entry || typeof entry !== 'object' || Array.isArray(entry)) {
+      return acc;
+    }
+    acc[normalizedEntryId] = { ...(entry as Record<string, unknown>) };
+    return acc;
+  }, {});
 }
 
 function getProfileArray(profile: Record<string, unknown>, key: string) {

@@ -9,6 +9,7 @@ import type { AuthState } from '../lib/types';
 const scheduleServiceMocks = vi.hoisted(() => ({
   loadHomeScoringPlayers: vi.fn(),
   loadOpponentScoringPlayers: vi.fn(),
+  loadOpponentStatsForGame: vi.fn(),
   loadParentScheduleEventDetail: vi.fn(),
   loadScorekeeperStatTrackerConfigsForApp: vi.fn(),
   updateGameScore: vi.fn()
@@ -163,6 +164,7 @@ function configureDefaultMocks() {
     { id: 'p2', name: 'Blake Jones', number: '7', points: 0, fouls: 0, stats: { goals: 1, shots: 0 } }
   ]);
   scheduleServiceMocks.loadOpponentScoringPlayers.mockResolvedValue([]);
+  scheduleServiceMocks.loadOpponentStatsForGame.mockResolvedValue({});
 }
 
 function renderTracker(authOverride = auth) {
@@ -253,7 +255,7 @@ describe('StandardTracker', () => {
     });
   });
 
-  it('records linked opponent roster stats with opponentStats metadata', async () => {
+  it('hydrates persisted opponent tallies before recording linked roster stats', async () => {
     scheduleServiceMocks.loadParentScheduleEventDetail.mockResolvedValue({
       events: [buildEvent({
         opponent: 'Ravens',
@@ -266,6 +268,17 @@ describe('StandardTracker', () => {
     scheduleServiceMocks.loadOpponentScoringPlayers.mockResolvedValue([
       { id: 'opp-9', name: 'Taylor Guard', number: '9', photoUrl: 'https://img.example/opp-9.png', points: 0, fouls: 0, stats: { goals: 0, shots: 0 } }
     ]);
+    scheduleServiceMocks.loadOpponentStatsForGame.mockResolvedValue({
+      'opp-9': {
+        name: 'Taylor Guard',
+        number: '9',
+        playerId: 'opp-9',
+        photoUrl: 'https://img.example/opp-9.png',
+        goals: 2,
+        shots: 1,
+        fouls: 0
+      }
+    });
     scheduleServiceMocks.loadHomeScoringPlayers.mockImplementation(async () => {
       return [
         { id: 'p1', name: 'Avery Smith', number: '12', points: 0, fouls: 0, stats: { goals: 0, shots: 2 } },
@@ -278,6 +291,8 @@ describe('StandardTracker', () => {
     expect(await screen.findByTestId('standard-tracker-opponent-grid')).toBeTruthy();
     expect(scheduleServiceMocks.loadHomeScoringPlayers).toHaveBeenCalledWith('team-1', 'game-1');
     expect(scheduleServiceMocks.loadOpponentScoringPlayers).toHaveBeenCalledWith('opp-team-1');
+    expect(scheduleServiceMocks.loadOpponentStatsForGame).toHaveBeenCalledWith('team-1', 'game-1');
+    expect(within(screen.getByTestId('standard-tracker-opponent-row-opp-9')).getByText('+1 / 2')).toBeTruthy();
 
     fireEvent.click(screen.getByRole('button', { name: 'Opponent #9 Taylor Guard GOALS add one' }));
 
@@ -297,8 +312,8 @@ describe('StandardTracker', () => {
           number: '9',
           playerId: 'opp-9',
           photoUrl: 'https://img.example/opp-9.png',
-          goals: 0,
-          shots: 0,
+          goals: 2,
+          shots: 1,
           fouls: 0
         },
         opponentStatsEntryAfter: {
@@ -306,8 +321,8 @@ describe('StandardTracker', () => {
           number: '9',
           playerId: 'opp-9',
           photoUrl: 'https://img.example/opp-9.png',
-          goals: 1,
-          shots: 0,
+          goals: 3,
+          shots: 1,
           fouls: 0
         },
         undoData: expect.objectContaining({
@@ -321,14 +336,14 @@ describe('StandardTracker', () => {
 
     await waitFor(() => {
       expect(screen.getByText('1-1')).toBeTruthy();
-      expect(within(screen.getByTestId('standard-tracker-opponent-row-opp-9')).getByText('+1 / 1')).toBeTruthy();
+      expect(within(screen.getByTestId('standard-tracker-opponent-row-opp-9')).getByText('+1 / 3')).toBeTruthy();
       expect(screen.getByText('Opponent #9 Taylor Guard GOALS +1 recorded.')).toBeTruthy();
     });
 
     const savedSession = JSON.parse(window.localStorage.getItem(getStandardTrackerSessionKey('team-1', 'game-1')) || '{}');
     expect(savedSession).toMatchObject({
       score: { homeScore: 1, awayScore: 1 },
-      opponentTallies: { 'opp-9': { goals: 1, shots: 0 } }
+      opponentTallies: { 'opp-9': { goals: 3, shots: 1 } }
     });
   });
 

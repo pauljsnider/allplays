@@ -4,10 +4,12 @@ import { ChevronLeft, RotateCcw } from 'lucide-react';
 import {
   loadHomeScoringPlayers,
   loadOpponentScoringPlayers,
+  loadOpponentStatsForGame,
   loadParentScheduleEventDetail,
   loadScorekeeperStatTrackerConfigsForApp,
   updateGameScore,
   type ScheduleHomeScoringPlayer,
+  type ScheduleOpponentStatsEntry,
   type ScheduleStatTrackerConfigOption
 } from '../lib/scheduleService';
 import { type ParentScheduleEvent } from '../lib/scheduleLogic';
@@ -71,12 +73,41 @@ function getOpponentScoreSide(event: ParentScheduleEvent | null): 'home' | 'away
   return event?.isHome === false ? 'home' : 'away';
 }
 
-function buildOpponentPlayers(event: ParentScheduleEvent | null, linkedRoster: ScheduleHomeScoringPlayer[]): StandardTrackerRosterPlayerInput[] {
+function normalizeOpponentStatsValue(value: unknown) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : 0;
+}
+
+function buildOpponentStatsLookup(opponentStats: Record<string, ScheduleOpponentStatsEntry>) {
+  const lookup = new Map<string, Record<string, number>>();
+
+  Object.entries(opponentStats || {}).forEach(([entryId, entry]) => {
+    const stats = Object.entries(entry || {}).reduce<Record<string, number>>((acc, [key, value]) => {
+      if (['name', 'number', 'playerId', 'photoUrl'].includes(key)) return acc;
+      acc[String(key).trim().toLowerCase()] = normalizeOpponentStatsValue(value);
+      return acc;
+    }, {});
+    const exactEntryId = String(entryId || '').trim();
+    const playerId = String(entry?.playerId || '').trim();
+    if (exactEntryId) lookup.set(exactEntryId, stats);
+    if (playerId) lookup.set(playerId, stats);
+  });
+
+  return lookup;
+}
+
+function buildOpponentPlayers(
+  event: ParentScheduleEvent | null,
+  linkedRoster: ScheduleHomeScoringPlayer[],
+  opponentStats: Record<string, ScheduleOpponentStatsEntry>
+): StandardTrackerRosterPlayerInput[] {
+  const statsLookup = buildOpponentStatsLookup(opponentStats);
   if (linkedRoster.length > 0) {
     return linkedRoster.map((player) => ({
       ...player,
       playerId: player.id,
-      photoUrl: player.photoUrl || ''
+      photoUrl: player.photoUrl || '',
+      stats: statsLookup.get(player.id) || player.stats || {}
     }));
   }
   return [{
@@ -85,7 +116,7 @@ function buildOpponentPlayers(event: ParentScheduleEvent | null, linkedRoster: S
     name: getOpponentName(event),
     number: '',
     photoUrl: String(event?.opponentTeamPhoto || ''),
-    stats: {}
+    stats: statsLookup.get('opponent') || {}
   }];
 }
 
@@ -168,12 +199,13 @@ export function StandardTracker({ auth }: { auth: AuthState }) {
           return;
         }
 
-        const [configs, roster, linkedOpponentRoster] = await Promise.all([
+        const [configs, roster, linkedOpponentRoster, opponentStats] = await Promise.all([
           loadScorekeeperStatTrackerConfigsForApp(decodedTeamId, signedInUser, loadedEvent),
           loadHomeScoringPlayers(decodedTeamId, decodedEventId),
           loadedEvent.opponentTeamId
             ? loadOpponentScoringPlayers(loadedEvent.opponentTeamId).catch(() => [])
-            : Promise.resolve([])
+            : Promise.resolve([]),
+          loadOpponentStatsForGame(decodedTeamId, decodedEventId).catch(() => ({}))
         ]);
         if (cancelled) return;
 
@@ -183,7 +215,7 @@ export function StandardTracker({ auth }: { auth: AuthState }) {
         const canRestoreSession = Boolean(session && scoresMatch(session.score, baseScore));
         const loadedViewModel = buildStandardTrackerViewModel({ config: trackerConfig || {}, roster });
         const loadedTallies = buildStandardTrackerTallies(loadedViewModel.rows.map((row) => row.player), loadedViewModel.columns);
-        const loadedOpponentPlayers = buildOpponentPlayers(loadedEvent, linkedOpponentRoster);
+        const loadedOpponentPlayers = buildOpponentPlayers(loadedEvent, linkedOpponentRoster, opponentStats);
         const loadedOpponentViewModel = buildStandardTrackerViewModel({ config: trackerConfig || {}, roster: loadedOpponentPlayers });
         const loadedOpponentTallies = buildStandardTrackerTallies(loadedOpponentViewModel.rows.map((row) => row.player), loadedOpponentViewModel.columns);
         const restoredScore = canRestoreSession ? session?.score || baseScore : baseScore;
