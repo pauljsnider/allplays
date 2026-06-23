@@ -254,6 +254,45 @@ describe('Schedule', () => {
     expect(screen.getByRole('button', { name: 'Show 1 more' })).toBeTruthy();
   });
 
+  it('renders web-created tournament game metadata read-only in the schedule list', async () => {
+    scheduleServiceMocks.loadParentSchedule.mockResolvedValueOnce({
+      children: [
+        { playerId: 'player-1', playerName: 'Pat', teamId: 'team-1', teamName: 'Bears' }
+      ],
+      events: [
+        buildScheduleEvent(1, {
+          competitionType: 'tournament',
+          tournament: {
+            divisionName: '10U Gold',
+            bracketName: 'Gold Bracket',
+            roundName: 'Semifinal',
+            poolName: 'Pool A',
+            slotAssignments: {
+              home: { sourceType: 'pool_seed', poolName: 'Pool A', seed: 1 },
+              away: { sourceType: 'game_result', gameId: 'R1G2', outcome: 'winner' }
+            },
+            standings: {
+              poolName: '10U Gold / Pool A',
+              rows: [
+                { rank: 1, teamName: 'Tigers', wins: 2, losses: 0, points: 6 },
+                { rank: 2, teamName: 'Lions', record: '1-1', points: 3 }
+              ],
+              isOverridden: true
+            }
+          }
+        })
+      ]
+    });
+
+    renderSchedule();
+
+    expect((await screen.findAllByText('10U Gold / Gold Bracket / Semifinal')).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/Pool: Pool A/).length).toBeGreaterThan(0);
+    expect(screen.getAllByText('10U Gold / Pool A standings').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('#1 Tigers (2-0, 6 pts)').length).toBeGreaterThan(0);
+    expect(screen.queryByRole('button', { name: /create tournament/i })).toBeNull();
+  });
+
   it('requests older past-event pages for every linked team, even without events in the default window', async () => {
     const seededPastEvent = buildScheduleEvent(1, {
       eventKey: 'team-1::event-1::player-1::past::game',

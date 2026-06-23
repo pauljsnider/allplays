@@ -23,6 +23,7 @@ import {
   getParentScheduleTeamOptions,
   getPracticePacketRows,
   getScheduleTitle,
+  getScheduleTournamentInfo,
   getScheduleMapHref,
   getScheduleForecastHref,
   getScheduleTaskDetailSection,
@@ -35,6 +36,8 @@ import {
   type PracticePacketScheduleRow,
   type RsvpResponse,
   type ScheduleTimeRange,
+  type ScheduleTournamentInfo,
+  type ScheduleTournamentStandingRow,
   type ScheduleViewMode
 } from '../lib/scheduleLogic';
 import type { AuthState } from '../lib/types';
@@ -1851,6 +1854,7 @@ function ScheduleNextUpCard({ event }: { event: ParentScheduleEvent | null }) {
 
   const rsvp = normalizeRsvpResponse(event.myRsvp);
   const actionText = getEventPrimaryActionText(event, rsvp);
+  const tournamentInfo = getScheduleTournamentInfo(event);
 
   return (
     <Link to={getEventDetailPath(event)} className="schedule-next-card block rounded-xl border border-primary-100 bg-primary-50 p-4 transition hover:border-primary-200 hover:bg-primary-100">
@@ -1858,6 +1862,9 @@ function ScheduleNextUpCard({ event }: { event: ParentScheduleEvent | null }) {
         <div className="min-w-0">
           <div className="app-label text-primary-700">Next up</div>
           <div className="mt-1 truncate text-lg font-black text-gray-950">{getScheduleTitle(event)}</div>
+          {tournamentInfo.isTournament ? (
+            <div className="mt-0.5 truncate text-xs font-black text-indigo-700">{tournamentInfo.label}</div>
+          ) : null}
           <div className="mt-1 text-sm font-bold text-gray-700">{formatEventDateLabel(event.date)} · {formatEventTimeLabel(event.date)}</div>
           <div className="mt-0.5 truncate text-xs font-semibold text-gray-600">{event.childName} · {event.location || 'Location TBD'}</div>
         </div>
@@ -2188,6 +2195,7 @@ function CompactScheduleList({ events, visibleCount, pageSize, canShowMore, load
         <div className="divide-y divide-gray-100">
           {renderedEvents.map((event) => {
             const rsvp = normalizeRsvpResponse(event.myRsvp);
+            const tournamentInfo = getScheduleTournamentInfo(event);
             return (
               <Link key={event.eventKey} to={getEventDetailPath(event)} className="compact-schedule-row grid grid-cols-[82px_minmax(0,1fr)_auto] gap-3 px-3 py-2.5 transition hover:bg-primary-50">
                 <div className="text-xs font-black text-gray-700">
@@ -2197,6 +2205,9 @@ function CompactScheduleList({ events, visibleCount, pageSize, canShowMore, load
                 <div className="min-w-0">
                   <div className="truncate text-sm font-black text-gray-950">{getScheduleTitle(event)}</div>
                   <div className="mt-0.5 truncate text-xs font-semibold text-gray-500">{getScheduleChildLabel(event)} · {event.teamName} · {event.location || 'TBD'}</div>
+                  {tournamentInfo.isTournament ? (
+                    <div className="mt-0.5 truncate text-xs font-bold text-indigo-700">{tournamentInfo.label}</div>
+                  ) : null}
                 </div>
                 <span className={`self-center rounded-full border px-2 py-1 text-[10px] font-extrabold uppercase tracking-[0.04em] ${rsvpBadgeClasses[rsvp]}`}>
                   {rsvpLabels[rsvp]}
@@ -2283,6 +2294,7 @@ function ScheduleEventCard({ event }: {
   const mapHref = getScheduleMapHref(event.location);
   const forecastHref = getScheduleForecastHref(event.location, event.date);
   const childLabel = getScheduleChildLabel(event);
+  const tournamentInfo = getScheduleTournamentInfo(event);
 
   return (
     <>
@@ -2303,6 +2315,11 @@ function ScheduleEventCard({ event }: {
             <div className="truncate text-xs font-semibold leading-5 text-gray-500">
               {event.location || 'TBD'}
             </div>
+            {tournamentInfo.isTournament ? (
+              <div className="truncate text-xs font-bold leading-5 text-indigo-700">
+                {tournamentInfo.label}{tournamentInfo.details ? ` - ${tournamentInfo.details}` : ''}
+              </div>
+            ) : null}
           </div>
           <div className="flex w-[72px] flex-none flex-col items-end gap-1 text-right">
             <span className="text-xs font-black text-gray-700">{formatEventTimeLabel(event.date)}</span>
@@ -2356,6 +2373,8 @@ function ScheduleEventCard({ event }: {
             </div>
             <div className="mt-1 text-xs font-semibold text-gray-500">For {childLabel} · {event.teamName}</div>
 
+            <TournamentScheduleSummary info={tournamentInfo} />
+
             {actionPills.length ? (
               <div className="schedule-card-pills mt-3 flex flex-wrap gap-1.5">
                 {actionPills.map((pill) => (
@@ -2380,6 +2399,48 @@ function ScheduleEventCard({ event }: {
       </article>
     </>
   );
+}
+
+function TournamentScheduleSummary({ info }: { info: ScheduleTournamentInfo }) {
+  if (!info.isTournament) return null;
+
+  const standingsRows = info.standings?.rows.slice(0, 4) || [];
+  const hiddenStandingCount = Math.max((info.standings?.rows.length || 0) - standingsRows.length, 0);
+  const showMatchup = Boolean(info.matchupLabel && !info.details.includes(info.matchupLabel));
+
+  return (
+    <div className="mt-3 rounded-lg border border-indigo-100 bg-indigo-50 px-3 py-2" aria-label="Tournament information">
+      <div className="text-xs font-black text-indigo-950">{info.label}</div>
+      {info.details ? <div className="mt-0.5 text-xs font-semibold text-indigo-800">{info.details}</div> : null}
+      {showMatchup ? <div className="mt-0.5 text-xs font-semibold text-indigo-800">{info.matchupLabel}</div> : null}
+      {info.standings ? (
+        <div className="mt-2 border-t border-indigo-100 pt-2">
+          <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] font-black uppercase tracking-[0.04em] text-indigo-900">
+            <span>{info.standings.groupName} standings</span>
+            {info.standings.note ? <span className="rounded-full bg-white px-2 py-0.5 text-indigo-700">{info.standings.note}</span> : null}
+          </div>
+          <div className="mt-1 grid gap-1 sm:grid-cols-2">
+            {standingsRows.map((row) => (
+              <div key={`${row.rank}-${row.teamName}`} className="truncate text-xs font-semibold text-indigo-900">
+                #{row.rank} {row.teamName}{formatTournamentStandingMeta(row)}
+              </div>
+            ))}
+            {hiddenStandingCount ? (
+              <div className="text-xs font-semibold text-indigo-700">+{hiddenStandingCount} more</div>
+            ) : null}
+          </div>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function formatTournamentStandingMeta(row: ScheduleTournamentStandingRow) {
+  const parts = [
+    row.record,
+    row.points !== null ? `${row.points} pts` : ''
+  ].filter(Boolean);
+  return parts.length ? ` (${parts.join(', ')})` : '';
 }
 
 function getEventDetailPath(event: ParentScheduleEvent | CalendarScheduleEntry) {
@@ -2582,6 +2643,7 @@ function CalendarEventPickerRow({ entry }: { entry: CalendarScheduleEntry }) {
   const needsRsvp = entry.childRsvps.some((child) => normalizeRsvpResponse(child.myRsvp) === 'not_responded') || rsvp === 'not_responded';
   const childLabel = entry.childNames.length ? entry.childNames.join(', ') : entry.childName;
   const actionLabel = entry.type === 'practice' ? 'Open practice' : 'Open game';
+  const tournamentInfo = getScheduleTournamentInfo(entry);
 
   return (
     <Link to={getEventDetailPath(entry)} className="block rounded-2xl border border-gray-200 bg-white p-3 shadow-sm transition hover:border-primary-200 hover:bg-primary-50" onClick={(event) => event.stopPropagation()}>
@@ -2597,6 +2659,9 @@ function CalendarEventPickerRow({ entry }: { entry: CalendarScheduleEntry }) {
           </div>
           <div className="mt-1 truncate text-xs font-bold text-gray-600">{childLabel} · {entry.teamName}</div>
           <div className="mt-0.5 truncate text-xs font-semibold text-gray-500">{entry.location || 'Location TBD'}</div>
+          {tournamentInfo.isTournament ? (
+            <div className="mt-0.5 truncate text-xs font-bold text-indigo-700">{tournamentInfo.label}</div>
+          ) : null}
           <div className="mt-2 flex flex-wrap gap-1.5">
             {needsRsvp ? <span className="rounded-full bg-primary-50 px-2 py-0.5 text-[10px] font-black uppercase text-primary-700">RSVP needed</span> : null}
             {entry.practiceHomePacketSummary ? <span className="rounded-full bg-blue-50 px-2 py-0.5 text-[10px] font-black uppercase text-blue-700">Packet</span> : null}
