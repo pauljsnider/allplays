@@ -70,6 +70,7 @@ export function AppShell({ auth, children }: AppShellProps) {
   const [inboxOpen, setInboxOpen] = useState(false);
   const [inboxItems, setInboxItems] = useState<NotificationInboxItem[]>([]);
   const [inboxState, setInboxState] = useState<'idle' | 'loading' | 'ready' | 'error'>('idle');
+  const [inboxRetryKey, setInboxRetryKey] = useState(0);
   const [unreadCount, setUnreadCount] = useState(0);
   const [unreadState, setUnreadState] = useState<'loading' | 'ready' | 'error'>('loading');
   const { isDesktopWeb } = useShellLayout();
@@ -220,7 +221,11 @@ export function AppShell({ auth, children }: AppShellProps) {
       active = false;
       unsubscribe();
     };
-  }, [auth.user?.uid, inboxOpen]);
+  }, [auth.user?.uid, inboxOpen, inboxRetryKey]);
+
+  const handleRetryNotificationInbox = () => {
+    setInboxRetryKey((current) => current + 1);
+  };
 
   const handleMarkNotificationRead = async (uid: string, itemId: string) => {
     const mod = await loadNotificationInboxService();
@@ -467,6 +472,7 @@ export function AppShell({ auth, children }: AppShellProps) {
             inboxState={inboxState === 'idle' ? 'loading' : inboxState}
             uid={auth.user?.uid ?? ''}
             onClose={() => setInboxOpen(false)}
+            onRetry={handleRetryNotificationInbox}
             onMarkRead={handleMarkNotificationRead}
             onMarkAllRead={handleMarkAllNotificationsRead}
           />
