@@ -16,6 +16,14 @@ const scheduleMocks = vi.hoisted(() => ({
     resolveCachedParentScheduleEvents: vi.fn(() => []),
     loadParentScheduleAssignments: vi.fn().mockResolvedValue([]),
     loadParentScheduleRideOffers: vi.fn().mockResolvedValue([]),
+    loadStaffScheduleRsvpBreakdown: vi.fn(),
+    loadStaffRsvpReminderPreview: vi.fn(),
+    invalidateStaffRsvpAvailabilityEvent: vi.fn(),
+    createStaffRsvpAvailabilityLoader: vi.fn(() => ({
+        loadBreakdown: (...args) => scheduleMocks.loadStaffScheduleRsvpBreakdown(...args),
+        loadReminderPreview: (...args) => scheduleMocks.loadStaffRsvpReminderPreview(...args),
+        invalidateEvent: (...args) => scheduleMocks.invalidateStaffRsvpAvailabilityEvent(...args)
+    })),
     loadHomeScoringPlayers: vi.fn().mockResolvedValue([]),
     loadAutoFilledLineupDraftPreviewForApp: vi.fn(),
     loadGameDayLiveEventsForApp: vi.fn().mockResolvedValue([]),
