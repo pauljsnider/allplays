@@ -196,7 +196,7 @@ import {
 } from './registration-review.js?v=2';
 import { assertVolunteerScreeningCleared } from './volunteer-screening-access.js?v=2';
 import { buildTournamentPoolOverrideKey } from './tournament-standings.js?v=1';
-import { buildBulkDeleteUpdates, buildMoveUpdates, buildReorderUpdates, isSafeTeamMediaUrl, isSupportedTeamMediaDocument, isSupportedTeamMediaImage, normalizeTeamMediaFolderDraft, normalizeAlbumVisibility, sortByMediaOrder } from './team-media-utils.js?v=3';
+import { buildBulkDeleteUpdates, buildMoveUpdates, buildReorderUpdates, isSafeTeamMediaUrl, isSupportedTeamMediaDocument, isSupportedTeamMediaImage, normalizeTeamMediaFolderDraft, normalizeAlbumVisibility, sortByMediaOrder } from './team-media-utils.js?v=4';
 import { getApp } from './vendor/firebase-app.js';
 import {
     computeOfficiatingCoverageStatus,
@@ -950,6 +950,48 @@ export async function getTeamMediaFolders(teamId, options = {}) {
     }));
 }
 
+async function removeLegacyTeamMediaUrls(teamId, itemId, item = {}) {
+    const legacyUrlFields = ['downloadUrl', 'url', 'src']
+        .filter((field) => String(item?.[field] || '').trim());
+    if (legacyUrlFields.length === 0) {
+        return Promise.resolve();
+    }
+
+    const updatePayload = {
+        updatedAt: serverTimestamp()
+    };
+    legacyUrlFields.forEach((field) => {
+        updatePayload[field] = deleteField();
+    });
+
+    return updateDoc(doc(db, `teams/${teamId}/mediaItems`, itemId), updatePayload).catch((error) => {
+        console.warn('Unable to remove legacy cached team media URL fields:', error);
+    });
+}
+
+async function resolveAuthorizedTeamMediaItem(teamId, item) {
+    if (!['photo', 'file'].includes(String(item?.type || '').toLowerCase())) return item;
+
+    if (!item.storagePath) {
+        return item;
+    }
+
+    removeLegacyTeamMediaUrls(teamId, item.id, item);
+
+    const sanitizedItem = { ...item };
+    delete sanitizedItem.downloadUrl;
+    delete sanitizedItem.url;
+    delete sanitizedItem.src;
+
+    try {
+        const url = await getDownloadURL(ref(storage, item.storagePath));
+        return { ...sanitizedItem, url };
+    } catch (error) {
+        console.warn('Unable to resolve authorized team media download URL:', error);
+        return sanitizedItem;
+    }
+}
+
 export async function getTeamMediaItems(teamId, folderId = null) {
     if (!teamId) return [];
     const itemsRef = getTeamMediaItemsRef(teamId);
@@ -959,24 +1001,7 @@ export async function getTeamMediaItems(teamId, folderId = null) {
         .filter((item) => item.deleted !== true)
         .filter((item) => !folderId || item.folderId === folderId);
 
-    const resolvedItems = await Promise.all(items.map(async (item) => {
-        if (!['photo', 'file'].includes(String(item?.type || '').toLowerCase())) return item;
-        if (String(item.downloadUrl || item.url || item.src || '').trim()) return item;
-        if (!item.storagePath) return item;
-        try {
-            const downloadUrl = await getDownloadURL(ref(storage, item.storagePath));
-            updateDoc(doc(db, `teams/${teamId}/mediaItems`, item.id), {
-                downloadUrl,
-                updatedAt: serverTimestamp()
-            }).catch((error) => {
-                console.warn('Unable to backfill cached team media download URL:', error);
-            });
-            return { ...item, downloadUrl };
-        } catch (error) {
-            console.warn('Unable to resolve team media download URL:', error);
-            return item;
-        }
-    }));
+    const resolvedItems = await Promise.all(items.map((item) => resolveAuthorizedTeamMediaItem(teamId, item)));
 
     return sortByMediaOrder(resolvedItems);
 }
@@ -1035,24 +1060,7 @@ export async function getTeamMediaItemsPage(teamId, folderId, options = {}) {
     const pageDocs = sortedDocs.slice(startOffset, startOffset + pageSize);
     const hasMore = startOffset + pageSize < sortedDocs.length;
     const items = pageDocs.map((itemDoc) => ({ id: itemDoc.id, ...itemDoc.data() }));
-    const resolvedItems = await Promise.all(items.map(async (item) => {
-        if (!['photo', 'file'].includes(String(item?.type || '').toLowerCase())) return item;
-        if (String(item.downloadUrl || item.url || item.src || '').trim()) return item;
-        if (!item.storagePath) return item;
-        try {
-            const downloadUrl = await getDownloadURL(ref(storage, item.storagePath));
-            updateDoc(doc(db, `teams/${teamId}/mediaItems`, item.id), {
-                downloadUrl,
-                updatedAt: serverTimestamp()
-            }).catch((error) => {
-                console.warn('Unable to backfill cached team media download URL:', error);
-            });
-            return { ...item, downloadUrl };
-        } catch (error) {
-            console.warn('Unable to resolve team media download URL:', error);
-            return item;
-        }
-    }));
+    const resolvedItems = await Promise.all(items.map((item) => resolveAuthorizedTeamMediaItem(teamId, item)));
     const lastDoc = pageDocs[pageDocs.length - 1] || null;
 
     return {
@@ -1199,14 +1207,13 @@ export async function uploadTeamMediaPhoto(teamId, folderId, file, options = {})
         }, reject, () => resolve(uploadTask.snapshot));
     });
 
-    const downloadUrl = await getDownloadURL(snapshot.ref);
+    const runtimeUrl = options?.returnItem === true ? await getDownloadURL(snapshot.ref) : '';
     const order = await reserveNextTeamMediaOrder(cleanTeamId, cleanFolderId);
     const mediaItem = {
         folderId: cleanFolderId,
         title: String(file.name || 'Uploaded photo').trim() || 'Uploaded photo',
         type: 'photo',
         storagePath,
-        downloadUrl,
         uploadedBy: currentUser.uid,
         size: Number(file.size || 0),
         mimeType: file.type || 'image/jpeg',
@@ -1217,7 +1224,7 @@ export async function uploadTeamMediaPhoto(teamId, folderId, file, options = {})
     };
     const docRef = await addDoc(getTeamMediaItemsRef(cleanTeamId), mediaItem);
     if (options?.returnItem === true) {
-        return { id: docRef.id, ...mediaItem, url: downloadUrl };
+        return { id: docRef.id, ...mediaItem, url: runtimeUrl };
     }
     return docRef.id;
 }
@@ -1249,7 +1256,7 @@ export async function uploadTeamMediaFile(teamId, folderId, file, options = {}) 
         }, reject, () => resolve(uploadTask.snapshot));
     });
 
-    const downloadUrl = await getDownloadURL(snapshot.ref);
+    const runtimeUrl = options?.returnItem === true ? await getDownloadURL(snapshot.ref) : '';
     const order = await reserveNextTeamMediaOrder(cleanTeamId, cleanFolderId);
     const mediaItem = {
         folderId: cleanFolderId,
@@ -1257,7 +1264,6 @@ export async function uploadTeamMediaFile(teamId, folderId, file, options = {}) 
         fileName: String(file.name || '').trim(),
         type: 'file',
         storagePath,
-        downloadUrl,
         uploadedBy: currentUser.uid,
         size: Number(file.size || 0),
         mimeType: file.type,
@@ -1268,7 +1274,7 @@ export async function uploadTeamMediaFile(teamId, folderId, file, options = {}) 
     };
     const docRef = await addDoc(getTeamMediaItemsRef(cleanTeamId), mediaItem);
     if (options?.returnItem === true) {
-        return { id: docRef.id, ...mediaItem, url: downloadUrl };
+        return { id: docRef.id, ...mediaItem, url: runtimeUrl };
     }
     return docRef.id;
 }

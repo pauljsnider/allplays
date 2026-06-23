@@ -274,7 +274,10 @@ export function buildBulkDeleteUpdates(ids = []) {
 }
 
 export function getTeamMediaItemUrl(item = {}) {
-    return String(item.downloadUrl || item.url || item.src || '').trim();
+    const runtimeUrl = String(item.url || item.src || '').trim();
+    if (runtimeUrl) return runtimeUrl;
+    if (asTrimmedString(item.storagePath)) return '';
+    return String(item.downloadUrl || '').trim();
 }
 
 export function isSafeTeamMediaPhoto(item = {}) {

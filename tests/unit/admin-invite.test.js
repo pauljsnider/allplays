@@ -4,7 +4,7 @@ const dbMocks = vi.hoisted(() => ({
     redeemAdminInviteAtomicPersistence: vi.fn()
 }));
 
-vi.mock('../../js/db.js?v=64', () => dbMocks);
+vi.mock('../../js/db.js?v=66', () => dbMocks);
 
 const { redeemAdminInviteAcceptance } = await import('../../js/admin-invite.js');
 
