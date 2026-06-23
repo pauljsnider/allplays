@@ -12,4 +12,15 @@ describe('verify pending legacy page redirect wiring', () => {
         expect(source).toContain("window.location.href = redirectUrl;");
         expect(source).not.toContain('href="dashboard.html"');
     });
+
+    it('keeps Continue disabled until the redirect target is ready', () => {
+        const source = readFileSync(resolve(process.cwd(), 'verify-pending.html'), 'utf8');
+
+        expect(source).toContain('id="continue-btn" href="#" aria-disabled="true" tabindex="-1"');
+        expect(source).toContain('opacity-50 cursor-not-allowed pointer-events-none');
+        expect(source).toContain("continueBtn.removeAttribute('aria-disabled');");
+        expect(source).toContain("continueBtn.removeAttribute('tabindex');");
+        expect(source).toContain("continueBtn.classList.remove('opacity-50', 'cursor-not-allowed', 'pointer-events-none');");
+        expect(source).toContain("continueBtn.classList.add('hover:bg-indigo-700');");
+    });
 });
