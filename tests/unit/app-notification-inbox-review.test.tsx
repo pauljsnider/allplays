@@ -269,6 +269,26 @@ describe('Notification inbox review regressions', () => {
         expect(screen.queryByTestId('notification-inbox-loading')).toBeNull();
     });
 
+    it('shows a retry action for an empty error state and invokes the supplied handler', () => {
+        const onRetry = vi.fn();
+
+        render(
+            <NotificationInboxSheet
+                items={[]}
+                inboxState="error"
+                uid="user-1"
+                onClose={vi.fn()}
+                onRetry={onRetry}
+                onMarkRead={vi.fn(() => Promise.resolve())}
+            />
+        );
+
+        fireEvent.click(screen.getByRole('button', { name: /retry/i }));
+
+        expect(screen.getByTestId('notification-inbox-error')).toBeTruthy();
+        expect(onRetry).toHaveBeenCalledTimes(1);
+    });
+
     it('shows items with an error banner when inboxState is error but prior items are loaded', () => {
         render(
             <NotificationInboxSheet
@@ -293,6 +313,36 @@ describe('Notification inbox review regressions', () => {
         expect(screen.getByTestId('notification-item-notif-2')).toBeTruthy();
         expect(screen.getByTestId('notification-inbox-error-banner')).toBeTruthy();
         expect(screen.queryByTestId('notification-inbox-error')).toBeNull();
+    });
+
+    it('shows a retry action in the cached-error banner and invokes the supplied handler', () => {
+        const onRetry = vi.fn();
+
+        render(
+            <NotificationInboxSheet
+                items={[
+                    notificationItem({
+                        id: 'notif-2',
+                        category: 'game_update',
+                        type: 'game_update',
+                        title: 'Game rescheduled',
+                        body: '',
+                        text: 'Game rescheduled',
+                        appRoute: '/schedule',
+                    }),
+                ]}
+                inboxState="error"
+                uid="user-1"
+                onClose={vi.fn()}
+                onRetry={onRetry}
+                onMarkRead={vi.fn(() => Promise.resolve())}
+            />
+        );
+
+        fireEvent.click(screen.getByRole('button', { name: /retry/i }));
+
+        expect(screen.getByTestId('notification-inbox-error-banner')).toBeTruthy();
+        expect(onRetry).toHaveBeenCalledTimes(1);
     });
 
     it('shows "No notifications yet" only when inboxState is ready and items list is empty', () => {

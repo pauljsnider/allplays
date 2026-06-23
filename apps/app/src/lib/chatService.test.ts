@@ -1,7 +1,132 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { mapChatConversationDocument, mapChatMessageDocument, mapChatMessageRecord, mapChatMessageRecords } from './firestore/mappers';
 import type { FirestoreDocument } from './firestore/types';
+
+const legacyChatServiceMocks = vi.hoisted(() => ({
+  GoogleAIBackend: class GoogleAIBackend {},
+  canAccessTeamChat: vi.fn(),
+  canModerateChat: vi.fn(),
+  clearChatMuted: vi.fn(),
+  deleteChatMessage: vi.fn(),
+  deleteUploadedChatAttachments: vi.fn(),
+  editChatMessage: vi.fn(),
+  getAI: vi.fn(),
+  getAggregatedStatsForGames: vi.fn(),
+  getApp: vi.fn(() => ({})),
+  getChatConversations: vi.fn(),
+  getChatMessages: vi.fn(),
+  getGameEvents: vi.fn(),
+  getGames: vi.fn(),
+  getGenerativeModel: vi.fn(),
+  getParentTeams: vi.fn(),
+  getPlayers: vi.fn(),
+  getSentTeamEmails: vi.fn(),
+  getStoredTeamEmailDrafts: vi.fn(),
+  getStoredTeamEmailTemplates: vi.fn(),
+  getTeam: vi.fn(),
+  getUnreadChatCounts: vi.fn(),
+  getUserByEmail: vi.fn(),
+  getUserProfile: vi.fn(),
+  getUserTeamsWithAccess: vi.fn(),
+  isTeamActive: vi.fn(() => true),
+  postChatMessage: vi.fn(),
+  resolveImageFirebaseConfig: vi.fn(() => ({ apiKey: 'test-api-key', storageBucket: 'test-bucket' })),
+  saveStoredTeamEmailDraft: vi.fn(),
+  saveStoredTeamEmailTemplate: vi.fn(),
+  sendTeamEmail: vi.fn(),
+  subscribeToChatMessages: vi.fn(),
+  toggleChatReaction: vi.fn(),
+  updateChatLastRead: vi.fn(),
+  updateChatMuted: vi.fn(),
+  uploadChatImage: vi.fn(),
+  upsertChatConversation: vi.fn()
+}));
+
+const nativeRuntime = vi.hoisted(() => ({
+  isNativePlatform: false
+}));
+
+vi.mock('@capacitor/core', () => ({
+  Capacitor: {
+    isNativePlatform: () => nativeRuntime.isNativePlatform
+  }
+}));
+
+vi.mock('./adapters/legacyChatService', () => legacyChatServiceMocks);
+
+vi.mock('./authService', () => ({
+  firebaseAuth: {
+    app: {
+      options: {
+        projectId: 'demo-allplays'
+      }
+    }
+  },
+  getNativeAuthIdToken: vi.fn()
+}));
+
+type Deferred<T> = {
+  promise: Promise<T>;
+  resolve: (value: T | PromiseLike<T>) => void;
+  reject: (reason?: unknown) => void;
+};
+
+function createDeferred<T>(): Deferred<T> {
+  let resolve!: (value: T | PromiseLike<T>) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise;
+    reject = rejectPromise;
+  });
+  return { promise, resolve, reject };
+}
+
+function createUploadedAttachment(file: File, urlName = file.name) {
+  return {
+    type: file.type.startsWith('video/') ? 'video' : 'image',
+    url: `https://cdn.example.test/${urlName}`,
+    path: `team-photos/${urlName}`,
+    name: file.name,
+    mimeType: file.type,
+    size: file.size,
+    thumbnailUrl: null
+  };
+}
+
+function buildSendInput(files: File[]) {
+  return {
+    teamId: 'team-1',
+    user: {
+      uid: 'user-1',
+      email: 'coach@example.test',
+      displayName: 'Coach Taylor',
+      roles: ['coach' as const]
+    },
+    profile: {
+      fullName: 'Coach T',
+      photoUrl: 'https://cdn.example.test/coach.jpg'
+    },
+    text: 'Practice photos',
+    files,
+    selectedConversation: null,
+    selectedConversationId: 'team',
+    selectedRecipientTarget: 'full_team' as const,
+    selectedRecipientIds: []
+  };
+}
+
+beforeEach(() => {
+  vi.useRealTimers();
+  vi.resetAllMocks();
+  nativeRuntime.isNativePlatform = false;
+  legacyChatServiceMocks.resolveImageFirebaseConfig.mockReturnValue({ apiKey: 'test-api-key', storageBucket: 'test-bucket' });
+  legacyChatServiceMocks.postChatMessage.mockResolvedValue({ id: 'message-1' });
+});
+
+afterEach(() => {
+  vi.useRealTimers();
+});
 
 describe('chat Firestore mappers', () => {
   it('maps a valid Firestore chat message document into a typed message model', () => {
@@ -230,5 +355,84 @@ describe('chat Firestore mappers', () => {
       updatedAt: new Date('2026-06-19T18:30:00.000Z'),
       lastMessageAt: null
     });
+  });
+});
+
+describe('sendTeamChatMessage attachment uploads', () => {
+  it('starts multiple uploads before the first resolves and posts attachments in the original order', async () => {
+    const first = new File(['first'], 'first.jpg', { type: 'image/jpeg' });
+    const second = new File(['second'], 'second.jpg', { type: 'image/jpeg' });
+    const third = new File(['third'], 'third.jpg', { type: 'image/jpeg' });
+    const uploadedFirst = createUploadedAttachment(first);
+    const uploadedSecond = createUploadedAttachment(second);
+    const uploadedThird = createUploadedAttachment(third);
+    const uploadStarts: string[] = [];
+    const uploadDeferreds = new Map<string, Deferred<ReturnType<typeof createUploadedAttachment>>>();
+
+    legacyChatServiceMocks.uploadChatImage.mockImplementation((_teamId: string, file: File) => {
+      uploadStarts.push(file.name);
+      const deferred = createDeferred<ReturnType<typeof createUploadedAttachment>>();
+      uploadDeferreds.set(file.name, deferred);
+      return deferred.promise;
+    });
+
+    const { sendTeamChatMessage } = await import('./chatService');
+    const sendPromise = sendTeamChatMessage(buildSendInput([first, second, third]));
+
+    expect(uploadStarts.slice(0, 2)).toEqual(['first.jpg', 'second.jpg']);
+    expect(legacyChatServiceMocks.postChatMessage).not.toHaveBeenCalled();
+
+    uploadDeferreds.get('second.jpg')?.resolve(uploadedSecond);
+    uploadDeferreds.get('third.jpg')?.resolve(uploadedThird);
+    await Promise.resolve();
+    expect(legacyChatServiceMocks.postChatMessage).not.toHaveBeenCalled();
+
+    uploadDeferreds.get('first.jpg')?.resolve(uploadedFirst);
+    await sendPromise;
+
+    expect(legacyChatServiceMocks.uploadChatImage).toHaveBeenCalledTimes(3);
+    expect(legacyChatServiceMocks.postChatMessage).toHaveBeenCalledTimes(1);
+    expect(legacyChatServiceMocks.postChatMessage).toHaveBeenCalledWith('team-1', expect.objectContaining({
+      attachments: [uploadedFirst, uploadedSecond, uploadedThird]
+    }));
+  });
+
+  it('finishes an equal-delay 3-file send in one parallel batch and posts once after uploads finish', async () => {
+    vi.useFakeTimers();
+    const files = [
+      new File(['one'], 'one.jpg', { type: 'image/jpeg' }),
+      new File(['two'], 'two.jpg', { type: 'image/jpeg' }),
+      new File(['three'], 'three.jpg', { type: 'image/jpeg' })
+    ];
+    const fileNames = files.map((file) => file.name);
+    const uploadStarts: string[] = [];
+    const uploadFinishes: string[] = [];
+    const uploadDelayMs = 100;
+
+    legacyChatServiceMocks.uploadChatImage.mockImplementation((_teamId: string, file: File) => new Promise((resolve) => {
+      uploadStarts.push(file.name);
+      window.setTimeout(() => {
+        uploadFinishes.push(file.name);
+        resolve(createUploadedAttachment(file));
+      }, uploadDelayMs);
+    }));
+    legacyChatServiceMocks.postChatMessage.mockImplementation(async () => {
+      expect(uploadFinishes).toEqual(fileNames);
+      return { id: 'message-1' };
+    });
+
+    const { sendTeamChatMessage } = await import('./chatService');
+    const sendPromise = sendTeamChatMessage(buildSendInput(files));
+
+    expect(uploadStarts).toEqual(fileNames);
+    await vi.advanceTimersByTimeAsync(uploadDelayMs - 1);
+    expect(legacyChatServiceMocks.postChatMessage).not.toHaveBeenCalled();
+
+    await vi.advanceTimersByTimeAsync(1);
+    expect(legacyChatServiceMocks.postChatMessage).toHaveBeenCalledTimes(1);
+
+    await sendPromise;
+    expect(legacyChatServiceMocks.uploadChatImage).toHaveBeenCalledTimes(3);
+    expect(legacyChatServiceMocks.postChatMessage).toHaveBeenCalledTimes(1);
   });
 });
