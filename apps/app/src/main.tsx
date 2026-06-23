@@ -6,9 +6,9 @@ import { ErrorBoundary } from './components/ErrorBoundary';
 import {
   captureAppStartupFailure,
   initializeAppErrorTracking,
-  installReactErrorTelemetry,
-  startAppStartupTimer
+  installReactErrorTelemetry
 } from './lib/telemetry';
+import { startAppStartupTimer } from './lib/uxTiming';
 import { hideNativeSplashScreen, initializeNativeAppearance } from './lib/nativeAppearance';
 import './styles/index.css';
 

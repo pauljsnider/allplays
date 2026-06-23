@@ -4,13 +4,17 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const renderMock = vi.fn();
 const telemetryMocks = vi.hoisted(() => {
+  return {
+    captureAppStartupFailure: vi.fn(),
+    initializeAppErrorTracking: vi.fn(),
+    installReactErrorTelemetry: vi.fn()
+  };
+});
+const uxTimingMocks = vi.hoisted(() => {
   const end = vi.fn();
   return {
     end,
-    captureAppStartupFailure: vi.fn(),
-    initializeAppErrorTracking: vi.fn(),
-    startAppStartupTimer: vi.fn(() => ({ end })),
-    installReactErrorTelemetry: vi.fn()
+    startAppStartupTimer: vi.fn(() => ({ end }))
   };
 });
 
@@ -30,6 +34,7 @@ vi.mock('./components/ErrorBoundary', () => ({
 }));
 
 vi.mock('./lib/telemetry', () => telemetryMocks);
+vi.mock('./lib/uxTiming', () => uxTimingMocks);
 
 describe('main startup telemetry wiring', () => {
   beforeEach(() => {
@@ -50,10 +55,10 @@ describe('main startup telemetry wiring', () => {
 
     expect(telemetryMocks.initializeAppErrorTracking).toHaveBeenCalledTimes(1);
     expect(telemetryMocks.installReactErrorTelemetry).toHaveBeenCalledTimes(1);
-    expect(telemetryMocks.startAppStartupTimer).toHaveBeenCalledTimes(1);
+    expect(uxTimingMocks.startAppStartupTimer).toHaveBeenCalledTimes(1);
     expect(renderMock).toHaveBeenCalledTimes(1);
     expect(requestAnimationFrameMock).toHaveBeenCalledTimes(1);
-    expect(telemetryMocks.end).toHaveBeenCalledWith({ phase: 'initial-render' });
+    expect(uxTimingMocks.end).toHaveBeenCalledWith({ phase: 'initial-render' });
     expect(telemetryMocks.captureAppStartupFailure).not.toHaveBeenCalled();
   });
 
@@ -68,6 +73,6 @@ describe('main startup telemetry wiring', () => {
 
     expect(telemetryMocks.initializeAppErrorTracking).toHaveBeenCalledTimes(1);
     expect(telemetryMocks.captureAppStartupFailure).toHaveBeenCalledWith(startupError, { phase: 'initial-render' });
-    expect(telemetryMocks.end).toHaveBeenCalledWith({ phase: 'initial-render', error: startupError });
+    expect(uxTimingMocks.end).toHaveBeenCalledWith({ phase: 'initial-render', error: startupError });
   });
 });

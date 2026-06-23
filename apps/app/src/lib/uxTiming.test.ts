@@ -10,8 +10,10 @@ import {
   recordFirstMeaningfulRender,
   hasRecordedFirstMeaningfulRender,
   resetFirstMeaningfulRenderForTests,
+  startAppStartupTimer,
   startInteractionTimer,
   startScreenMountTimer,
+  startWarmResumeTimer,
   startUxTimer
 } from './uxTiming';
 
@@ -29,7 +31,9 @@ describe('uxTiming', () => {
   it('declares stable app-start and core interaction spans', () => {
     expect(UX_TIMING).toMatchObject({
       appStartup: 'app startup',
+      appStartToHomeRender: 'app start to home first meaningful render',
       firstMeaningfulRender: 'first meaningful render',
+      warmResume: 'warm resume to interactive',
       rsvpTap: 'rsvp tap latency',
       chatSend: 'chat send latency'
     });
@@ -54,6 +58,28 @@ describe('uxTiming', () => {
     });
   });
 
+  it('startAppStartupTimer tags the span as startup timing', () => {
+    const timer = startAppStartupTimer({ platform: 'web' });
+    timer.end({ phase: 'initial-render' });
+    expect(recordAppUxTiming).toHaveBeenCalledWith(UX_TIMING.appStartup, expect.any(Number), {
+      category: 'startup',
+      stage: 'startup',
+      platform: 'web',
+      phase: 'initial-render'
+    });
+  });
+
+  it('startWarmResumeTimer tags the span as resume timing', () => {
+    const timer = startWarmResumeTimer({ source: 'visibilitychange', elapsedMs: 10_000 });
+    timer.end({ route: 'home' });
+    expect(recordAppUxTiming).toHaveBeenCalledWith(UX_TIMING.warmResume, expect.any(Number), {
+      category: 'resume',
+      source: 'visibilitychange',
+      elapsedMs: 10000,
+      route: 'home'
+    });
+  });
+
   it('startScreenMountTimer uses stable labels and bounded screen metadata', () => {
     const timer = startScreenMountTimer('messages', { mode: 'inbox' });
     timer.end({ teamCount: 3, unreadCount: 5 });
@@ -66,12 +92,17 @@ describe('uxTiming', () => {
     });
   });
 
-  it('records first meaningful render exactly once per load', () => {
+  it('records first meaningful render exactly once per load and emits the cold Home span', () => {
     expect(hasRecordedFirstMeaningfulRender()).toBe(false);
     recordFirstMeaningfulRender('home', { warm: true });
     recordFirstMeaningfulRender('schedule');
     expect(hasRecordedFirstMeaningfulRender()).toBe(true);
-    expect(recordAppUxTiming).toHaveBeenCalledTimes(1);
+    expect(recordAppUxTiming).toHaveBeenCalledTimes(2);
+    expect(recordAppUxTiming).toHaveBeenCalledWith(UX_TIMING.appStartToHomeRender, 0, {
+      category: 'startup',
+      route: 'home',
+      warm: true
+    });
     expect(recordAppUxTiming).toHaveBeenCalledWith(UX_TIMING.firstMeaningfulRender, 0, {
       route: 'home',
       warm: true
