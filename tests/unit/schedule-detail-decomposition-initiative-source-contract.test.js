@@ -160,6 +160,8 @@ describe('ScheduleEventDetail decomposition initiative source contract', () => {
         expect(availabilityPanelsSource).toContain('export function QuickAvailabilityPanel');
         expect(availabilityPanelsSource).toContain("export { AvailabilityNotesList");
         expect(availabilityPanelsSource).toContain("export { AttentionPanel");
+        expect(availabilityPanelsSource).not.toContain('export function AvailabilityNotesList');
+        expect(availabilityPanelsSource).not.toContain('export function AttentionPanel');
         expect(availabilityNotesListSource).toContain('export function AvailabilityNotesList');
         expect(attentionPanelSource).toContain('export function AttentionPanel');
         expect(staffRsvpRowSource).toContain('export function StaffRsvpPlayerRow');
