@@ -114,7 +114,7 @@ describe('teamDrillsService', () => {
       teamName: 'Bears',
       sport: 'Soccer',
       ageGroup: 'U12',
-      availableMinutes: 75,
+      targetMinutes: 75,
       rosterSize: 14,
       goals: ['Press after turnovers', 'Finish from wide service'],
       focusSkills: ['first touch', 'finishing'],
@@ -136,25 +136,23 @@ describe('teamDrillsService', () => {
       }]
     });
 
-    expect(prompt.system).toContain('Soccer practices');
-    expect(prompt.user).toContain('Team: Bears');
-    expect(prompt.user).toContain('Available time: 75 minutes');
-    expect(prompt.user).toContain('- Press after turnovers');
-    expect(prompt.user).toContain('- first touch');
-    expect(prompt.user).toContain('- Half field only');
-    expect(prompt.user).toContain('- Rondo 4v2 (Technical; 15 min, 8-10 players, 20x20). Skills: passing, support.');
-    expect(prompt.user).toContain('minute-by-minute practice plan');
+    expect(prompt.system).toContain('ALL PLAYS AI coach');
+    expect(prompt.user).toContain('Return ONLY valid JSON in this shape');
+    expect(prompt.user).toContain('"coreBlocks"');
+    expect(prompt.user).toContain('The total planned drill durations must equal exactly 75 minutes');
+    expect(prompt.user).toContain('"practiceGoals":["Press after turnovers","Finish from wide service"]');
+    expect(prompt.user).toContain('"focusSkills":["first touch","finishing"]');
+    expect(prompt.user).toContain('"constraints":["Half field only","Two keepers unavailable"]');
+    expect(prompt.user).toContain('"drillLibraryCatalog":[{"id":"drill-1","title":"Rondo 4v2"');
   });
 
-  it('keeps practice prompt section headers on their own source line so prompts stay readable', () => {
-    const source = readFileSync(new URL('./teamDrillsService.ts', import.meta.url), 'utf8');
+  it('keeps the app drills prompt shared on the legacy-style JSON response contract', () => {
+    const source = readFileSync('src/lib/practiceAiCoachService.ts', 'utf8');
 
-    expect(source).toContain("`Practice goals:\n${goalLines.map((goal) => `- ${goal}`).join('\\n')}`");
-    expect(source).toContain("`Focus skills:\n${skillLines.map((skill) => `- ${skill}`).join('\\n')}`");
-    expect(source).toContain("`Constraints:\n${constraintLines.map((constraint) => `- ${constraint}`).join('\\n')}`");
-    expect(source).toContain("`Favorite drills to prefer when they fit:\n${drillLines.length ? drillLines.join('\\n') : '- No favorites supplied.'}`");
-    expect(source).not.toContain("`Practice goals:\\n${goalLines.map((goal) => `- ${goal}`).join('\\n')}`");
-    expect(source).not.toContain("`Favorite drills to prefer when they fit:\\n${drillLines.length ? drillLines.join('\\n') : '- No favorites supplied.'}`");
+    expect(source).toContain('You are ALL PLAYS AI coach. Build a ${sport} practice plan from the provided context.');
+    expect(source).toContain('Return ONLY valid JSON in this shape:');
+    expect(source).toContain('"coreBlocks": [');
+    expect(source).toContain('Use drillId null only for free-text blocks that do not map to a real catalog drill.');
   });
 
   it('loads a bounded community drill page and merges team-published drills for staff users', async () => {

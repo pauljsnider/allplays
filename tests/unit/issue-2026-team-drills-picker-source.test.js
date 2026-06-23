@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 
 const teamDrillsPageSource = readFileSync(new URL('../../apps/app/src/pages/TeamDrills.tsx', import.meta.url), 'utf8');
 const teamDrillsServiceSource = readFileSync(new URL('../../apps/app/src/lib/teamDrillsService.ts', import.meta.url), 'utf8');
+const practiceAiCoachServiceSource = readFileSync(new URL('../../apps/app/src/lib/practiceAiCoachService.ts', import.meta.url), 'utf8');
 const scheduleEventDetailSource = readFileSync(new URL('../../apps/app/src/pages/ScheduleEventDetail.tsx', import.meta.url), 'utf8');
 const practiceTimelineServiceTestSource = readFileSync(new URL('../../apps/app/src/lib/practiceTimelineService.test.ts', import.meta.url), 'utf8');
 const teamDrillsPageTestSource = readFileSync(new URL('../../apps/app/src/pages/TeamDrills.test.tsx', import.meta.url), 'utf8');
@@ -21,8 +22,9 @@ describe('issue 2026 team drills picker source contract', () => {
     it('keeps drill service pagination and AI practice-coach prompt inputs available', () => {
         expect(teamDrillsServiceSource).toContain('const drillLibraryPageSize = 12;');
         expect(teamDrillsServiceSource).toContain('export function filterDrillSummaries');
-        expect(teamDrillsServiceSource).toContain('export function buildPracticeAiCoachPrompt');
-        expect(teamDrillsServiceSource).toContain('Favorite drills to prefer when they fit:');
+        expect(teamDrillsServiceSource).toContain("export { buildPracticeAiCoachPrompt } from './practiceAiCoachService';");
+        expect(practiceAiCoachServiceSource).toContain('export function buildPracticeAiCoachPrompt');
+        expect(practiceAiCoachServiceSource).toContain('drillLibraryCatalog');
         expect(teamDrillsServiceSource).toContain('export async function loadTeamDrillLibraryPage');
         expect(teamDrillsServiceSource).toContain('export async function loadFavoriteDrills');
     });
