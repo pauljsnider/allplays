@@ -337,11 +337,15 @@ function clampChatCursorPosition(text: string, cursorPosition?: number) {
 
 export function getChatMentionQuery(text: string, cursorPosition?: number) {
   const source = String(text || '');
-  const match = source.slice(0, clampChatCursorPosition(source, cursorPosition)).match(chatMentionQueryRegex);
+  const safeCursorPosition = clampChatCursorPosition(source, cursorPosition);
+  const beforeCursor = source.slice(0, safeCursorPosition);
+  const match = beforeCursor.match(chatMentionQueryRegex);
   if (!match) return null;
-  const query = String(match[2] || '');
-  if (!query.trim() || /\s$/.test(query)) return null;
-  return query.trim().toLowerCase();
+  const prefixQuery = String(match[2] || '');
+  const suffixQuery = source.slice(safeCursorPosition).match(chatMentionSuffixRegex)?.[0] || '';
+  const query = `${prefixQuery}${suffixQuery}`.trim();
+  if (!query || /\s$/.test(prefixQuery)) return null;
+  return query.toLowerCase();
 }
 
 export function hasChatMentionTrigger(text: string, cursorPosition?: number) {

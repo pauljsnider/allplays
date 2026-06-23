@@ -73,6 +73,7 @@ describe('React app chat logic', () => {
         const partialCursor = partialMention.indexOf('c team');
 
         expect(getChatMentionQuery('Can @co')).toBe('co');
+        expect(getChatMentionQuery(partialMention, partialCursor)).toBe('coac');
         expect(getChatMentionQuery('@')).toBeNull();
         expect(getChatMentionQuery('@ ')).toBeNull();
         expect(getChatMentionQuery('Can @Coach Jamie ')).toBeNull();
