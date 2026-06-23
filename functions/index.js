@@ -4779,9 +4779,14 @@ function mergeNotificationResolutionUser(usersByUid, user) {
   usersByUid.set(uid, entry);
 }
 
+function getNotificationRecipientDocUid(docSnap) {
+  const data = docSnap?.data?.() || {};
+  return String(data.uid || docSnap?.id || '').trim();
+}
+
 function getNotificationRecipientUserFromDoc(docSnap) {
   const data = docSnap?.data?.() || {};
-  const uid = String(data.uid || docSnap?.id || '').trim();
+  const uid = getNotificationRecipientDocUid(docSnap);
   if (!uid) return null;
   return {
     uid,
@@ -4794,6 +4799,15 @@ function getNotificationRecipientUserFromDoc(docSnap) {
 function isAggregateNotificationRecipientDoc(docSnap) {
   const data = docSnap?.data?.() || {};
   return Array.isArray(data.roles) || Array.isArray(data.tokens);
+}
+
+function isLegacyTargetNotificationRecipientDoc(docSnap) {
+  const data = docSnap?.data?.() || {};
+  return !isAggregateNotificationRecipientDoc(docSnap)
+    && !String(data.teamId || '').trim()
+    && String(data.uid || '').trim()
+    && String(data.deviceId || '').trim()
+    && String(data.token || '').trim();
 }
 
 function buildIndexedEligibleUsers(recipientDocs, category, audienceContext = {}, additionalUsers = []) {
@@ -4822,7 +4836,8 @@ async function getTargetsForCategory(teamId, category, actorUid = null, audience
   const targetSnap = await firestore.collection(`teams/${teamId}/notificationRecipients`)
     .where(`categories.${category}`, '==', true)
     .get();
-  const indexedRecipientDocs = (targetSnap.docs || []).filter(isAggregateNotificationRecipientDoc);
+  const categoryRecipientDocs = targetSnap.docs || [];
+  const indexedRecipientDocs = categoryRecipientDocs.filter(isAggregateNotificationRecipientDoc);
   if (indexedRecipientDocs.length) {
     additionalUsers = Array.isArray(additionalUsers) ? additionalUsers : [];
     if (indexedRecipientDocs.some((docSnap) => notificationRecipientDocNeedsRoleBackfill(docSnap))) {
@@ -4830,15 +4845,52 @@ async function getTargetsForCategory(teamId, category, actorUid = null, audience
       additionalUsers = [...candidateUsers, ...additionalUsers];
     }
     const eligibleUsers = buildIndexedEligibleUsers(indexedRecipientDocs, category, audienceContext, additionalUsers);
-    return indexedRecipientDocs
+    const explicitlyEligibleLegacyRecipientDocs = categoryRecipientDocs.filter((docSnap) => (
+      isLegacyTargetNotificationRecipientDoc(docSnap)
+      && eligibleUsers.has(getNotificationRecipientDocUid(docSnap))
+    ));
+    return [...indexedRecipientDocs, ...explicitlyEligibleLegacyRecipientDocs]
       .flatMap((docSnap) => buildTargetsFromNotificationRecipientDoc(docSnap, { teamId, category, actorUid, eligibleUsers }))
       .filter(Boolean);
+  }
+
+  const legacyTargetRecipientDocs = categoryRecipientDocs.filter(isLegacyTargetNotificationRecipientDoc);
+  if (legacyTargetRecipientDocs.length) {
+    const candidateUsers = await getCandidateUsersForTeam(teamId);
+    const indexedAdditionalUsers = [
+      ...candidateUsers,
+      ...(Array.isArray(additionalUsers) ? additionalUsers : [])
+    ];
+    const eligibleUsers = buildIndexedEligibleUsers([], category, audienceContext, indexedAdditionalUsers);
+    const explicitlyEligibleLegacyRecipientDocs = legacyTargetRecipientDocs.filter((docSnap) => (
+      eligibleUsers.has(getNotificationRecipientDocUid(docSnap))
+    ));
+    if (explicitlyEligibleLegacyRecipientDocs.length) {
+      return explicitlyEligibleLegacyRecipientDocs
+        .flatMap((docSnap) => buildTargetsFromNotificationRecipientDoc(docSnap, { teamId, category, actorUid, eligibleUsers }))
+        .filter(Boolean);
+    }
   }
 
   const indexIsEmpty = typeof teamNotificationRecipientIndexIsEmpty === 'function'
     ? await teamNotificationRecipientIndexIsEmpty(teamId)
     : true;
   if (!indexIsEmpty) {
+    const candidateUsers = categoryRecipientDocs.length ? await getCandidateUsersForTeam(teamId) : [];
+    const indexedAdditionalUsers = [
+      ...candidateUsers,
+      ...(Array.isArray(additionalUsers) ? additionalUsers : [])
+    ];
+    const eligibleUsers = buildIndexedEligibleUsers([], category, audienceContext, indexedAdditionalUsers);
+    const explicitlyEligibleLegacyRecipientDocs = categoryRecipientDocs.filter((docSnap) => (
+      !isAggregateNotificationRecipientDoc(docSnap)
+      && eligibleUsers.has(getNotificationRecipientDocUid(docSnap))
+    ));
+    if (explicitlyEligibleLegacyRecipientDocs.length) {
+      return explicitlyEligibleLegacyRecipientDocs
+        .flatMap((docSnap) => buildTargetsFromNotificationRecipientDoc(docSnap, { teamId, category, actorUid, eligibleUsers }))
+        .filter(Boolean);
+    }
     return [];
   }
 
