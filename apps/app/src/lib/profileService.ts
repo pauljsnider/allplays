@@ -28,6 +28,7 @@ export {
 
 const profileTimeoutMs = 8000;
 const primaryDataTimeoutMs = 3000;
+const nativeBatchTeamLookupSize = 10;
 const logger = createLogger('profile-service');
 
 function logProfileWarning(message: string, operation: string, error: unknown, context: Record<string, unknown> = {}) {
@@ -286,6 +287,33 @@ async function nativeRunQuery(collectionId: string, fieldPath: string, op: 'EQUA
     : [];
 }
 
+function getProfileParentTeamIds(profile: ProfileDocument) {
+  return [...new Set((Array.isArray((profile as any).parentOf) ? (profile as any).parentOf : [])
+    .map((link: any) => link?.teamId)
+    .filter(Boolean))] as string[];
+}
+
+async function nativeLoadTeamsByIds(teamIds: string[]) {
+  if (!teamIds.length) {
+    return [];
+  }
+
+  const chunks = Array.from(
+    { length: Math.ceil(teamIds.length / nativeBatchTeamLookupSize) },
+    (_, index) => teamIds.slice(index * nativeBatchTeamLookupSize, (index + 1) * nativeBatchTeamLookupSize)
+  );
+
+  const results = [] as any[];
+  for (const chunk of chunks) {
+    const teams = await Promise.all(
+      chunk.map((teamId) => nativeGetDocument(`teams/${encodeURIComponent(teamId)}`).catch(() => null))
+    );
+    results.push(...teams.filter(Boolean));
+  }
+
+  return results;
+}
+
 function filterActiveTeams(teams: any[]) {
   return teams.filter(isTeamActive);
 }
@@ -307,10 +335,7 @@ async function nativeLoadNotificationTeams(userId: string, email?: string | null
     nativeRunQuery('teams', 'ownerId', 'EQUAL', userId).catch(() => []),
     email ? nativeRunQuery('teams', 'adminEmails', 'ARRAY_CONTAINS', email.toLowerCase()).catch(() => []) : Promise.resolve([])
   ]);
-  const parentTeamIds = [...new Set((Array.isArray((profile as any).parentOf) ? (profile as any).parentOf : [])
-    .map((link: any) => link?.teamId)
-    .filter(Boolean))] as string[];
-  const parentTeams = await Promise.all(parentTeamIds.map((teamId) => nativeGetDocument(`teams/${encodeURIComponent(teamId)}`).catch(() => null)));
+  const parentTeams = await nativeLoadTeamsByIds(getProfileParentTeamIds(profile));
   const map = new Map<string, NotificationTeam>();
   filterActiveTeams([...ownedTeams, ...adminTeams, ...parentTeams]).forEach((team: any) => {
     if (team?.id) {
@@ -322,10 +347,7 @@ async function nativeLoadNotificationTeams(userId: string, email?: string | null
 
 async function nativeLoadParentTeams(userId: string): Promise<NotificationTeam[]> {
   const profile = await nativeLoadProfileDocument(userId).catch(() => ({}));
-  const parentTeamIds = [...new Set((Array.isArray((profile as any).parentOf) ? (profile as any).parentOf : [])
-    .map((link: any) => link?.teamId)
-    .filter(Boolean))] as string[];
-  const parentTeams = await Promise.all(parentTeamIds.map((teamId) => nativeGetDocument(`teams/${encodeURIComponent(teamId)}`).catch(() => null)));
+  const parentTeams = await nativeLoadTeamsByIds(getProfileParentTeamIds(profile));
 
   return filterActiveTeams(parentTeams)
     .filter((team: any) => team?.id)
