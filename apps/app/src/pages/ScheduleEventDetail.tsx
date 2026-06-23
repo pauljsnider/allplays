@@ -80,9 +80,8 @@ import { useAsyncOperation } from '../lib/useAsyncOperation';
 import { EventDetailPageSkeleton } from '../components/PageSkeletons';
 import { AssignmentsSection } from '../components/schedule/AssignmentsSection';
 import { CompactMeta } from '../components/schedule/CompactMeta';
-import { DateTile } from '../components/schedule/DateTile';
-import { EventBrief } from '../components/schedule/EventBrief';
 import { EventDetailsPanel } from '../components/schedule/EventDetailsPanel';
+import { ScheduleEventHeader } from '../components/schedule/ScheduleEventHeader';
 import { EventSectionNav } from '../components/schedule/EventSectionNav';
 import { GameReportSections } from '../components/schedule/GameReportSections';
 import { PlayerSwitcher } from '../components/schedule/PlayerSwitcher';
@@ -487,40 +486,25 @@ export function ScheduleEventDetail({ auth }: { auth: AuthState }) {
               </button>
             </div>
 
-            <div className="mt-1.5 flex items-start gap-2.5 sm:mt-2 sm:gap-3">
-              <DateTile date={selectedEvent.date} />
-              <div className="min-w-0 flex-1">
-                <div className="flex min-w-0 items-center gap-2">
-                  <span className="min-w-0 truncate text-xs font-black uppercase tracking-[0.04em] text-gray-500">{selectedEvent.teamName}</span>
-                  <span className={`inline-flex min-h-5 flex-none items-center rounded-full px-2 text-[10px] font-extrabold uppercase tracking-[0.04em] ${selectedEvent.type === 'practice' ? 'bg-amber-100 text-amber-800' : 'bg-primary-100 text-primary-800'}`}>
-                    {selectedEvent.type}
-                  </span>
-                </div>
-                <h1 className="mt-0.5 text-lg font-black leading-tight text-gray-950 sm:text-2xl">{title}</h1>
-                <div className="mt-0 flex min-w-0 flex-wrap gap-x-2 gap-y-0.5 text-xs font-bold leading-5 text-gray-600 sm:text-sm">
-                  <span>{formatHeroTime(selectedEvent)}</span>
-                  <span className="min-w-0 truncate">{selectedEvent.location || 'Location TBD'}</span>
-                </div>
-              </div>
-            </div>
-
-            <div className="mt-1 flex min-w-0 items-center justify-between gap-2 sm:mt-2">
-              <div className="min-w-0 flex-1">
-                {events.length > 1 ? (
-                  <>
-                    <PlayerSwitcher events={events} selectedChildId={selectedEvent.childId} onSelect={selectChild} compact />
-                    <div className="mt-1 truncate text-xs font-bold text-gray-600">{selectedEvent.childName} · {selectedEvent.teamName}</div>
-                  </>
-                ) : (
-                  <CompactMeta icon={Users} value={`${selectedEvent.childName} · ${selectedEvent.teamName}`} />
-                )}
-              </div>
-              <span className={`inline-flex min-h-6 flex-none items-center rounded-full border px-2 text-[10px] font-extrabold uppercase tracking-[0.04em] ${rsvpBadgeClasses[rsvp]}`}>
-                {rsvpLabels[rsvp]}
-              </span>
-            </div>
-
-            <EventBrief pieces={getEventBriefPieces(selectedEvent)} />
+            <ScheduleEventHeader
+              date={selectedEvent.date}
+              teamName={selectedEvent.teamName}
+              eventType={selectedEvent.type}
+              title={title}
+              timeLabel={formatHeroTime(selectedEvent)}
+              location={selectedEvent.location}
+              playerSummary={events.length > 1 ? (
+                <>
+                  <PlayerSwitcher events={events} selectedChildId={selectedEvent.childId} onSelect={selectChild} compact />
+                  <div className="mt-1 truncate text-xs font-bold text-gray-600">{selectedEvent.childName} · {selectedEvent.teamName}</div>
+                </>
+              ) : (
+                <CompactMeta icon={Users} value={`${selectedEvent.childName} · ${selectedEvent.teamName}`} />
+              )}
+              rsvpLabel={rsvpLabels[rsvp]}
+              rsvpClassName={rsvpBadgeClasses[rsvp]}
+              briefPieces={getEventBriefPieces(selectedEvent)}
+            />
             <button
               type="button"
               className="secondary-button event-calendar-button mt-1.5 w-full justify-center sm:mt-2"

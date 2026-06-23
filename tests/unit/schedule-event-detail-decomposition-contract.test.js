@@ -14,9 +14,8 @@ describe('ScheduleEventDetail decomposition contract', () => {
         [
             "import { AssignmentsSection } from '../components/schedule/AssignmentsSection';",
             "import { CompactMeta } from '../components/schedule/CompactMeta';",
-            "import { DateTile } from '../components/schedule/DateTile';",
-            "import { EventBrief } from '../components/schedule/EventBrief';",
             "import { EventDetailsPanel } from '../components/schedule/EventDetailsPanel';",
+            "import { ScheduleEventHeader } from '../components/schedule/ScheduleEventHeader';",
             "import { EventSectionNav } from '../components/schedule/EventSectionNav';",
             "import { GameReportSections } from '../components/schedule/GameReportSections';",
             "import { PlayerSwitcher } from '../components/schedule/PlayerSwitcher';",
@@ -38,8 +37,6 @@ describe('ScheduleEventDetail decomposition contract', () => {
             /^function AssignmentCard\b/m,
             /^function AssignmentsSection\b/m,
             /^function CompactMeta\b/m,
-            /^function DateTile\b/m,
-            /^function EventBrief\b/m,
             /^function EventDetailsPanel\b/m,
             /^function EventSectionNav\b/m,
             /^function GameReportSections\b/m,
@@ -63,6 +60,7 @@ describe('ScheduleEventDetail decomposition contract', () => {
     it('keeps schedule detail utility controls in extracted presentational components', () => {
         const compactMeta = readRepoFile('apps/app/src/components/schedule/CompactMeta.tsx');
         const practiceAttendancePanel = readRepoFile('apps/app/src/components/schedule/PracticeAttendancePanel.tsx');
+        const scheduleEventHeader = readRepoFile('apps/app/src/components/schedule/ScheduleEventHeader.tsx');
         const scoreStepper = readRepoFile('apps/app/src/components/schedule/ScoreStepper.tsx');
         const scheduleStatus = readRepoFile('apps/app/src/components/schedule/ScheduleStatus.tsx');
         const focusedTests = readRepoFile('apps/app/src/components/schedule/ScheduleEventDetailPresentational.test.tsx');
@@ -70,6 +68,9 @@ describe('ScheduleEventDetail decomposition contract', () => {
         expect(compactMeta).toContain('export function CompactMeta');
         expect(practiceAttendancePanel).toContain('export function PracticeAttendancePanel');
         expect(practiceAttendancePanel).toContain('onSelectStatus(player, status)');
+        expect(scheduleEventHeader).toContain("import { DateTile } from './DateTile';");
+        expect(scheduleEventHeader).toContain("import { EventBrief } from './EventBrief';");
+        expect(scheduleEventHeader).toContain('export function ScheduleEventHeader');
         expect(scoreStepper).toContain('export function ScoreStepper');
         expect(scoreStepper).toContain('aria-label={`${label} score up`}');
         expect(scheduleStatus).toContain('export function Status');
