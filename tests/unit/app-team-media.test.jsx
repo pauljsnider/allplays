@@ -124,6 +124,22 @@ function selectValue(select, value) {
   });
 }
 
+async function waitForAssertion(assertion) {
+  let lastError;
+  for (let attempt = 0; attempt < 50; attempt += 1) {
+    try {
+      assertion();
+      return;
+    } catch (error) {
+      lastError = error;
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      });
+    }
+  }
+  throw lastError;
+}
+
 function changeFiles(input, files) {
   act(() => {
     Object.defineProperty(input, 'files', {
@@ -492,6 +508,7 @@ describe('React app TeamMedia team chat posting', () => {
       buttons.find((button) => button.textContent.includes('Send to chat')).dispatchEvent(new MouseEvent('click', { bubbles: true }));
     });
 
+    await waitForAssertion(() => expect(chatServiceMocks.sendTeamChatMessage).toHaveBeenCalledTimes(1));
     const sendCall = chatServiceMocks.sendTeamChatMessage.mock.calls[0][0];
     expect(sendCall.teamId).toBe('team-1');
     expect(sendCall.text).toBe('Great start');
@@ -503,7 +520,7 @@ describe('React app TeamMedia team chat posting', () => {
       url: 'https://example.test/tipoff.jpg',
       name: 'Tipoff',
     })]);
-    expect(container.textContent).toContain('Photo posted to team chat.');
+    await waitForAssertion(() => expect(container.textContent).toContain('Photo posted to team chat.'));
     expect(container.querySelector('[aria-label="Caption for team chat"]')).toBeNull();
 
     await act(async () => root.unmount());
@@ -525,7 +542,7 @@ describe('React app TeamMedia team chat posting', () => {
       sendButton.dispatchEvent(new MouseEvent('click', { bubbles: true }));
     });
 
-    expect(chatServiceMocks.sendTeamChatMessage).toHaveBeenCalledTimes(1);
+    await waitForAssertion(() => expect(chatServiceMocks.sendTeamChatMessage).toHaveBeenCalledTimes(1));
     expect(sendButton.disabled).toBe(true);
     expect(sendButton.textContent).toContain('Posting');
     expect(container.textContent).toContain('Posting');
@@ -552,7 +569,7 @@ describe('React app TeamMedia team chat posting', () => {
       buttons.find((button) => button.textContent.includes('Send to chat')).dispatchEvent(new MouseEvent('click', { bubbles: true }));
     });
 
-    expect(container.textContent).toContain('Chat offline');
+    await waitForAssertion(() => expect(container.textContent).toContain('Chat offline'));
     expect(container.querySelector('[aria-label="Caption for team chat"]')).not.toBeNull();
     expect(container.textContent).toContain('Tipoff');
     expect(parentToolsServiceMocks.updateTeamMediaItemForApp).not.toHaveBeenCalled();

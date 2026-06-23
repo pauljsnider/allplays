@@ -80,10 +80,10 @@ describe('PublicTeamSearch', () => {
         renderSearch();
 
         expect(screen.getByPlaceholderText('Search by team, city, state, or zip')).toBeTruthy();
-        expect(screen.getByRole('button', { name: /Search/i })).toBeTruthy();
+        expect(screen.getByRole('button', { name: 'Search public teams' })).toBeTruthy();
         expect(screen.getByRole('button', { name: /Browse all public teams/i })).toBeTruthy();
         expect(screen.getByText('Search for public teams near you')).toBeTruthy();
-        expect(screen.queryByRole('button', { name: /Clear/i })).toBeNull();
+        expect(screen.queryByRole('button', { name: 'Clear public team search' })).toBeNull();
         expect(screen.queryByText('Atlanta United')).toBeNull();
         expect(getPublicTeamsPage).not.toHaveBeenCalled();
     });
@@ -94,12 +94,12 @@ describe('PublicTeamSearch', () => {
 
         const searchInput = screen.getByPlaceholderText('Search by team, city, state, or zip') as HTMLInputElement;
         fireEvent.change(searchInput, { target: { value: 'atlanta' } });
-        fireEvent.click(screen.getByRole('button', { name: /Search/i }));
+        fireEvent.click(screen.getByRole('button', { name: 'Search public teams' }));
 
         await waitFor(() => expect(getPublicTeamsPage).toHaveBeenCalledWith({ searchText: 'atlanta', cursor: null }));
         expect(screen.getByText('Atlanta United')).toBeTruthy();
         expect(screen.queryByText('New York Knicks')).toBeNull();
-        expect(screen.getByRole('button', { name: /Clear/i })).toBeTruthy();
+        expect(screen.getByRole('button', { name: 'Clear public team search' })).toBeTruthy();
     });
 
     it('loads all public teams only when browse all is used and can load the next page', async () => {
@@ -145,7 +145,7 @@ describe('PublicTeamSearch', () => {
 
         const searchInput = screen.getByPlaceholderText('Search by team, city, state, or zip') as HTMLInputElement;
         fireEvent.change(searchInput, { target: { value: 'atlanta' } });
-        fireEvent.click(screen.getByRole('button', { name: /Search/i }));
+        fireEvent.click(screen.getByRole('button', { name: 'Search public teams' }));
 
         await waitFor(() => expect(getPublicTeamsPage).toHaveBeenCalledWith({ searchText: 'atlanta', cursor: null }));
         expect(screen.getByText('Atlanta Fire')).toBeTruthy();
@@ -168,12 +168,12 @@ describe('PublicTeamSearch', () => {
 
         const searchInput = screen.getByPlaceholderText('Search by team, city, state, or zip') as HTMLInputElement;
         fireEvent.change(searchInput, { target: { value: 'atlanta' } });
-        fireEvent.click(screen.getByRole('button', { name: /Search/i }));
+        fireEvent.click(screen.getByRole('button', { name: 'Search public teams' }));
 
         await waitFor(() => expect(getPublicTeamsPage).toHaveBeenCalledTimes(1));
         expect(screen.getByText('Atlanta United')).toBeTruthy();
 
-        fireEvent.click(screen.getByRole('button', { name: /Clear/i }));
+        fireEvent.click(screen.getByRole('button', { name: 'Clear public team search' }));
 
         expect(searchInput.value).toBe('');
         expect(screen.getByText('Search for public teams near you')).toBeTruthy();
@@ -196,7 +196,7 @@ describe('PublicTeamSearch', () => {
         renderSearch();
 
         fireEvent.change(screen.getByPlaceholderText('Search by team, city, state, or zip'), { target: { value: 'boston' } });
-        fireEvent.click(screen.getByRole('button', { name: /Search/i }));
+        fireEvent.click(screen.getByRole('button', { name: 'Search public teams' }));
 
         await waitFor(() => {
             const message = screen.getByText(/No public teams found/i);

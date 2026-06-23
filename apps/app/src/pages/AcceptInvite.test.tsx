@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { cleanup, render, screen } from '@testing-library/react';
-import { MemoryRouter, Route, Routes } from 'react-router-dom';
+import { HashRouter, MemoryRouter, Route, Routes } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { AcceptInvite } from './AcceptInvite';
 import type { AuthState } from '../lib/types';
@@ -55,6 +55,20 @@ function renderAcceptInvite() {
     );
 }
 
+function renderAcceptInviteHashRoute() {
+    window.location.hash = '#/accept-invite?code=ABCDEFGH&type=parent';
+
+    return render(
+        <HashRouter>
+            <Routes>
+                <Route path="/accept-invite" element={<AcceptInvite auth={auth} />} />
+                <Route path="/reset-password" element={<div>Reset route</div>} />
+                <Route path="/home" element={<div>Home route</div>} />
+            </Routes>
+        </HashRouter>
+    );
+}
+
 describe('AcceptInvite', () => {
     beforeEach(() => {
         vi.clearAllMocks();
@@ -67,6 +81,7 @@ describe('AcceptInvite', () => {
 
     afterEach(() => {
         cleanup();
+        window.location.hash = '';
     });
 
     it('shows signed-in invite success before redirecting to the destination route', async () => {
@@ -84,5 +99,21 @@ describe('AcceptInvite', () => {
             email: 'parent@example.com',
             refresh: auth.refresh
         });
+    });
+
+    it('does not apply the delayed success redirect after leaving the invite route', async () => {
+        renderAcceptInviteHashRoute();
+
+        expect(await screen.findByText('Invite accepted.')).toBeTruthy();
+
+        window.location.hash = '#/reset-password?mode=resetPassword&oobCode=valid-code';
+        window.dispatchEvent(new Event('hashchange'));
+
+        expect(await screen.findByText('Reset route')).toBeTruthy();
+
+        await new Promise((resolve) => setTimeout(resolve, 750));
+
+        expect(screen.getByText('Reset route')).toBeTruthy();
+        expect(screen.queryByText('Home route')).toBeNull();
     });
 });

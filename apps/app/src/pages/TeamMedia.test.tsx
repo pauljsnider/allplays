@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { TeamMedia } from './TeamMedia';
@@ -205,7 +205,7 @@ describe('TeamMedia bulk delete', () => {
     fireEvent.change(screen.getByLabelText('Caption for team chat'), { target: { value: '  Great start  ' } });
     fireEvent.click(screen.getByRole('button', { name: 'Send to chat' }));
 
-    expect(chatServiceMocks.sendTeamChatMessage).toHaveBeenCalledWith(expect.objectContaining({
+    await waitFor(() => expect(chatServiceMocks.sendTeamChatMessage).toHaveBeenCalledWith(expect.objectContaining({
       teamId: 'team-1',
       text: 'Great start',
       selectedConversationId: 'team-chat',
@@ -216,7 +216,7 @@ describe('TeamMedia bulk delete', () => {
         url: 'https://example.com/photo-1.jpg',
         name: 'Photo one'
       })]
-    }));
+    })));
     expect(await screen.findByText('Photo posted to team chat.')).toBeTruthy();
   });
 

@@ -115,4 +115,16 @@ describe('all teams calendar sync controls', () => {
         expect(source).toContain('updatePublicGamesFeedButton();');
         expect(source).toContain('Select a team with public games before copying the Fan Feed link.');
     });
+
+    it('rechecks Fan Feed eligibility inside the copy handler', () => {
+        const source = readCalendarPage();
+        const handlerStart = source.indexOf('async function copyPublicGamesFeedUrl()');
+        const handlerEnd = source.indexOf("document.getElementById('sync-calendar-apple')");
+        const handler = source.slice(handlerStart, handlerEnd);
+
+        expect(handlerStart).toBeGreaterThan(-1);
+        expect(handlerEnd).toBeGreaterThan(handlerStart);
+        expect(handler).toContain('!canExposePublicFanFeed(team)');
+        expect(handler).toContain("alert('Select a team with public games before copying the Fan Feed link.');");
+    });
 });
