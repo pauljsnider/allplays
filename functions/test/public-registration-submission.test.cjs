@@ -302,6 +302,19 @@ test('creates exactly one pending registration and reserves matching capacity', 
     assert.equal(registrations[0].data.selectedOption.countKey, 'u10');
 });
 
+test('normalizes guardian email casing for parent readback rules', async () => {
+    const { firestore, submitPublicRegistration } = loadSubmitPublicRegistration(buildSeedState());
+
+    const result = await submitPublicRegistration(buildSubmission({
+        guardian: { email: ' Parent@Example.COM ' }
+    }), context);
+
+    const registrations = firestore.registrationDocs();
+    assert.equal(registrations.length, 1);
+    assert.equal(registrations[0].data.guardian.email, 'parent@example.com');
+    assert.equal(result.registrationId, registrations[0].path.split('/').pop());
+});
+
 test('rejects blocked capacity without creating a registration or changing counters', async () => {
     const { firestore, submitPublicRegistration } = loadSubmitPublicRegistration(buildSeedState({
         registrationOptions: [{ id: 'u10', title: 'U10', capacityLimit: 1, waitlistEnabled: false, active: true }],

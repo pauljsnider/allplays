@@ -363,7 +363,8 @@ function normalizePublicRegistrationFlatObject(value = {}) {
   return Object.entries(value).reduce((result, [key, rawValue]) => {
     const cleanKey = String(key || '').trim();
     if (!cleanKey || rawValue == null || typeof rawValue === 'object') return result;
-    result[cleanKey] = String(rawValue).trim();
+    const cleanValue = String(rawValue).trim();
+    result[cleanKey] = /email/i.test(cleanKey) ? cleanValue.toLowerCase() : cleanValue;
     return result;
   }, {});
 }
