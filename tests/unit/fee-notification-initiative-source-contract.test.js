@@ -21,13 +21,13 @@ describe('fees notification initiative source contract', () => {
 
     it('targets parents for assignment and reminders while keeping staff payment alerts separate', () => {
         expect(functionsSource).toContain('resolveFeeAssignmentPayerUserIds(teamId, data)');
-        expect(functionsSource).toContain('resolveFeeReminderCandidateUserIds(teamId, data)');
+        expect(functionsSource).toContain('resolveFeeReminderCandidateUserIds(teamId, recipient)');
         expect(functionsSource).toContain('const staffTargets = allFeeTargets.filter((target) => staffUserIds.has(target.uid) && target.uid !== payerUserId);');
         expect(functionsSource).toContain('const payerTargets = allFeeTargets.filter((target) => target.uid === payerUserId);');
     });
 
     it('marks due reminders sent only after opted-in payer targets exist', () => {
-        const reminderTargetIndex = functionsSource.indexOf('const payerTargets = allTargets.filter((t) => candidateUserIdSet.has(t.uid));');
+        const reminderTargetIndex = functionsSource.indexOf('const payerTargets = allTargets.filter((target) => candidateUserIdSet.has(target.uid));');
         const markSentIndex = functionsSource.indexOf('await doc.ref.update({');
 
         expect(reminderTargetIndex).toBeGreaterThan(-1);

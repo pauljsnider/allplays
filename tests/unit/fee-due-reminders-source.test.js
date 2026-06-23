@@ -10,11 +10,32 @@ function getHelper(name, nextMarker) {
     return new Function(`${slice}; return ${name};`)();
 }
 
+function getEligibilityHelpers() {
+    const start = functionsSource.indexOf('function wasFeeReminderSentForThreshold(');
+    const end = functionsSource.indexOf('\nasync function resolveFeeReminderCandidateUserIds');
+    const slice = functionsSource.slice(start, end);
+    const coerceDate = (value) => {
+        if (!value) return null;
+        if (typeof value?.toDate === 'function') return value.toDate();
+        const date = value instanceof Date ? value : new Date(value);
+        return Number.isNaN(date.getTime()) ? null : date;
+    };
+    const getTeamFeeBalanceCents = (recipient = {}) => {
+        if (recipient.balanceDueCents != null) return Number(recipient.balanceDueCents);
+        return Math.max(0, Number(recipient.amountCents || 0) - Number(recipient.amountPaidCents || 0));
+    };
+    return new Function('coerceDate', 'getTeamFeeBalanceCents', `${slice}; return { getFeeReminderDueDateMillis, isFeeDueReminderCandidateEligible };`)(
+        coerceDate,
+        getTeamFeeBalanceCents
+    );
+}
+
 const getFeeReminderPlayerKey = getHelper('getFeeReminderPlayerKey', 'function buildFeeReminderCandidateUserIds');
 const buildFeeReminderCandidateUserIds = getHelper('buildFeeReminderCandidateUserIds', 'function resolveFeeReminderThresholdHours');
 const resolveFeeReminderThresholdHours = getHelper('resolveFeeReminderThresholdHours', 'function wasFeeReminderSentForThreshold');
 const wasFeeReminderSentForThreshold = getHelper('wasFeeReminderSentForThreshold', 'function formatFeeReminderWindowLabel');
 const formatFeeReminderWindowLabel = getHelper('formatFeeReminderWindowLabel', 'async function resolveFeeReminderCandidateUserIds');
+const { getFeeReminderDueDateMillis, isFeeDueReminderCandidateEligible } = getEligibilityHelpers();
 
 describe('fee due reminder helper logic', () => {
     it('builds a player key from team and player ids when the recipient does not store one', () => {
@@ -58,6 +79,40 @@ describe('fee due reminder helper logic', () => {
         expect(formatFeeReminderWindowLabel(48)).toBe('2 days or less');
         expect(formatFeeReminderWindowLabel(72)).toBe('3 days or less');
     });
+
+    it('identifies unpaid due-window fee reminder candidates', () => {
+        const nowMillis = Date.parse('2026-06-28T12:00:00.000Z');
+
+        expect(getFeeReminderDueDateMillis({ dueDate: '2026-06-30T12:00:00.000Z' })).toBe(Date.parse('2026-06-30T12:00:00.000Z'));
+        expect(isFeeDueReminderCandidateEligible({
+            status: 'unpaid',
+            amountCents: 4500,
+            dueDate: '2026-06-30T12:00:00.000Z'
+        }, { nowMillis, reminderThresholdHours: 72 })).toBe(true);
+        expect(isFeeDueReminderCandidateEligible({
+            status: 'pending',
+            amountCents: 4500,
+            dueDate: '2026-07-02T12:00:00.000Z'
+        }, { nowMillis, reminderThresholdHours: 72 })).toBe(false);
+        expect(isFeeDueReminderCandidateEligible({
+            status: 'paid',
+            amountCents: 4500,
+            dueDate: '2026-06-30T12:00:00.000Z'
+        }, { nowMillis, reminderThresholdHours: 72 })).toBe(false);
+        expect(isFeeDueReminderCandidateEligible({
+            status: 'unpaid',
+            amountCents: 4500,
+            amountPaidCents: 4500,
+            dueDate: '2026-06-30T12:00:00.000Z'
+        }, { nowMillis, reminderThresholdHours: 72 })).toBe(false);
+        expect(isFeeDueReminderCandidateEligible({
+            status: 'unpaid',
+            amountCents: 4500,
+            dueDate: '2026-06-30T12:00:00.000Z',
+            reminderSentAt: { seconds: 1 },
+            reminderThresholdHours: 72
+        }, { nowMillis, reminderThresholdHours: 72 })).toBe(false);
+    });
 });
 
 describe('fee due reminder source wiring', () => {
@@ -71,9 +126,10 @@ describe('fee due reminder source wiring', () => {
         expect(functionsSource).toContain(".where('parentPlayerKeys', 'array-contains', playerKey)");
         expect(functionsSource).toContain("const teamSnap = await firestore.collection('teams').doc(teamId).get();");
         expect(functionsSource).toContain('reminderThresholdHours = resolveFeeReminderThresholdHours(teamSnap.exists ? teamSnap.data() : {});');
-        expect(functionsSource).toContain('const candidateUserIds = await resolveFeeReminderCandidateUserIds(teamId, data);');
+        expect(functionsSource).toContain('const candidateUserIds = await resolveFeeReminderCandidateUserIds(teamId, recipient);');
         expect(functionsSource).toContain('const candidateUserIdSet = new Set(candidateUserIds);');
-        expect(functionsSource).toContain('if (wasFeeReminderSentForThreshold(data, reminderThresholdHours)) return null;');
+        expect(functionsSource).toContain('async function resolveEligibleFeeReminderRecipient({');
+        expect(functionsSource).toContain('if (!isFeeDueReminderCandidateEligible(recipient, { nowMillis, reminderThresholdHours })) {');
         expect(functionsSource).toContain('reminderThresholdHours');
     });
 
@@ -91,8 +147,9 @@ describe('fee due reminder source wiring', () => {
         expect(functionsSource).toContain("const batchId = pathParts[3];");
         expect(functionsSource).toContain("const recipientId = pathParts[5];");
         expect(functionsSource).toContain("const amountLabel = formatMoneyFromCents(getTeamFeeBalanceCents(data), data.currency || 'USD');");
-        expect(functionsSource).toContain('const reminderWindowLabel = formatFeeReminderWindowLabel(reminderThresholdHours);');
-        expect(functionsSource).toContain('body: `${amountLabel} is due in ${reminderWindowLabel}.`,');
+        expect(functionsSource).toContain('const body = buildFeeReminderNotificationBody(data, amountLabel, reminderThresholdHours);');
+        expect(functionsSource).toContain('return `${amountLabel} is due ${dueDateDisplay} (${reminderWindowLabel}).`;');
+        expect(functionsSource).toContain('body,');
         expect(functionsSource).toContain('batchId,');
         expect(functionsSource).toContain('recipientId,');
     });
