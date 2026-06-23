@@ -138,7 +138,7 @@ export async function enablePushNotificationsForUser(userId: string): Promise<Pu
   }
 
   if (!Capacitor.isNativePlatform()) {
-    const { registerPushNotifications } = await import('../../../../js/push-notifications.js');
+    const { registerPushNotifications } = await import('@legacy/push-notifications.js');
     const { token } = await registerPushNotifications();
     await saveNotificationDeviceToken(userId, {
       token,
