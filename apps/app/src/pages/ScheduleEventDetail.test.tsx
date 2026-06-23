@@ -1520,6 +1520,81 @@ describe('ScheduleEventDetail assignments', () => {
     });
   });
 
+  it('clears live substitutions after cancelling the game from the same hub', async () => {
+    const gamePlan = {
+      formationId: 'basketball-5v5',
+      numPeriods: 4,
+      periodDuration: 8,
+      lineups: {
+        'Q1-pg': 'p1',
+        'Q1-sg': 'p2',
+        'Q1-sf': 'p3',
+        'Q1-pf': 'p4',
+        'Q1-c': 'p5'
+      },
+      isPublished: true,
+      publishedLineups: {
+        'Q1-pg': 'p1',
+        'Q1-sg': 'p2',
+        'Q1-sf': 'p3',
+        'Q1-pf': 'p4',
+        'Q1-c': 'p5'
+      }
+    };
+    const players = [
+      { id: 'p1', name: 'Avery Smith', number: '1' },
+      { id: 'p2', name: 'Blake Jones', number: '2' },
+      { id: 'p3', name: 'Casey Brown', number: '3' },
+      { id: 'p4', name: 'Devon Lee', number: '4' },
+      { id: 'p5', name: 'Emerson Fox', number: '5' },
+      { id: 'p6', name: 'Finley Ray', number: '6' }
+    ];
+    scheduleServiceMocks.loadParentScheduleEventDetail.mockResolvedValue({
+      events: [buildEvent({
+        liveStatus: 'live',
+        status: 'live',
+        canUpdateScore: true,
+        isTeamStaff: true,
+        isTeamAdmin: true,
+        gamePlan,
+        rotationPlan: { Q1: { pg: 'p1', sg: 'p2', sf: 'p3', pf: 'p4', c: 'p5' } }
+      })],
+      children: []
+    });
+    scheduleServiceMocks.loadAutoFilledLineupDraftPreviewForApp.mockResolvedValue({
+      availablePlayers: players,
+      goingPlayers: players,
+      gamePlan
+    });
+    scheduleServiceMocks.loadGameDayLiveEventsForApp.mockResolvedValue([]);
+    scheduleServiceMocks.cancelScheduledGameForApp.mockResolvedValue({ notificationError: null });
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+
+    renderScheduleEventDetail();
+
+    await waitFor(() => {
+      expect(screen.getAllByRole('button', { name: 'Game' }).length).toBeGreaterThan(0);
+    });
+    fireEvent.click(screen.getAllByRole('button', { name: 'Game' })[0]);
+    fireEvent.click(screen.getByRole('button', { name: 'Live substitutions' }));
+
+    await waitFor(() => {
+      expect(screen.getByLabelText('Out')).toBeTruthy();
+      expect(screen.getByLabelText('In')).toBeTruthy();
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel game' }));
+
+    await waitFor(() => {
+      expect(scheduleServiceMocks.cancelScheduledGameForApp).toHaveBeenCalledWith(expect.any(Object), auth.user);
+    });
+    await waitFor(() => {
+      expect(screen.queryByLabelText('Out')).toBeNull();
+      expect(screen.queryByLabelText('In')).toBeNull();
+      expect(screen.getByText('Publish a lineup first to enable live substitution planning.')).toBeTruthy();
+    });
+  });
+
   it('resets deferred game hub panels before rendering a switched event', async () => {
     scheduleServiceMocks.loadParentScheduleEventDetail.mockImplementation(async (_user, { eventId }) => ({
       events: [eventId === 'game-2'

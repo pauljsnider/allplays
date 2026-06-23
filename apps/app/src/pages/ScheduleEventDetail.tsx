@@ -2170,8 +2170,9 @@ function GameDaySubstitutionPanel({ auth, event }: { auth: AuthState; event: Par
   }, [event.eventKey, event.gamePlan, event.rotationPlan, event.rotationActual, event.coachingNotes, event.liveEvents]);
 
   useEffect(() => {
-    if (!auth.user || !formationId) {
+    if (!auth.user || !formationId || event.isCancelled) {
       setPlayers([]);
+      setLoading(false);
       return undefined;
     }
     let cancelled = false;
@@ -2195,7 +2196,7 @@ function GameDaySubstitutionPanel({ auth, event }: { auth: AuthState; event: Par
         if (!cancelled) setLoading(false);
       });
     return () => { cancelled = true; };
-  }, [auth.user, event.teamId, event.id, event.gamePlan, formationId]);
+  }, [auth.user, event.teamId, event.id, event.gamePlan, event.isCancelled, formationId]);
 
   useEffect(() => {
     if (period && periods.includes(period)) return;
