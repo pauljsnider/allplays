@@ -6568,6 +6568,11 @@ exports._internal = {
   sweepStaleNotificationDeviceTokens,
   sendRsvpReminderPushNotifications,
   sendPracticePacketDueTomorrowReminders,
+  sendFeeUnpaidDueReminders,
+  getFeeReminderDueDateMillis,
+  isFeeDueReminderCandidateEligible,
+  buildFeeReminderNotificationBody,
+  resolveEligibleFeeReminderRecipient,
   syncNotificationRecipientForTeamUser,
   syncNotificationRecipientsForUserChange,
   syncNotificationRecipientsForTeamChange
@@ -7302,6 +7307,44 @@ function formatFeeReminderWindowLabel(reminderThresholdHours = 72) {
   return `${reminderThresholdDays} day${reminderThresholdDays === 1 ? '' : 's'} or less`;
 }
 
+function getFeeReminderDueDateMillis(recipient = {}) {
+  const dueDateValue = recipient?.dueDate || recipient?.dueAt || recipient?.deadline;
+  if (typeof dueDateValue?.toMillis === 'function') {
+    return dueDateValue.toMillis();
+  }
+  return coerceDate(dueDateValue)?.getTime();
+}
+
+function isFeeDueReminderCandidateEligible(recipient = {}, {
+  nowMillis = Date.now(),
+  reminderThresholdHours = 72
+} = {}) {
+  const status = String(recipient?.status || '').trim().toLowerCase();
+  if (!['unpaid', 'pending'].includes(status)) return false;
+  if (getTeamFeeBalanceCents(recipient) <= 0) return false;
+
+  const dueDateMillis = getFeeReminderDueDateMillis(recipient);
+  if (!Number.isFinite(dueDateMillis)) return false;
+
+  const effectiveNowMillis = Number(nowMillis);
+  if (!Number.isFinite(effectiveNowMillis) || dueDateMillis < effectiveNowMillis) return false;
+
+  const reminderThresholdMillis = Number(reminderThresholdHours) * 60 * 60 * 1000;
+  if (!Number.isFinite(reminderThresholdMillis) || reminderThresholdMillis <= 0) return false;
+  if (dueDateMillis > effectiveNowMillis + reminderThresholdMillis) return false;
+
+  return !wasFeeReminderSentForThreshold(recipient, reminderThresholdHours);
+}
+
+function buildFeeReminderNotificationBody(recipient = {}, amountLabel = '', reminderThresholdHours = 72) {
+  const dueDateDisplay = formatFeeAssignmentDueDate(recipient.dueDate || recipient.dueAt || recipient.deadline);
+  const reminderWindowLabel = formatFeeReminderWindowLabel(reminderThresholdHours);
+  if (dueDateDisplay) {
+    return `${amountLabel} is due ${dueDateDisplay} (${reminderWindowLabel}).`;
+  }
+  return `${amountLabel} is due in ${reminderWindowLabel}.`;
+}
+
 async function resolveFeeReminderCandidateUserIds(teamId, recipient = {}) {
   const playerKey = getFeeReminderPlayerKey(recipient, teamId);
   let playerOwnerIds = [];
@@ -7316,8 +7359,38 @@ async function resolveFeeReminderCandidateUserIds(teamId, recipient = {}) {
   return buildFeeReminderCandidateUserIds(recipient, playerOwnerIds);
 }
 
+async function resolveEligibleFeeReminderRecipient({
+  teamId,
+  batchId,
+  recipientId,
+  recipient,
+  nowMillis,
+  reminderThresholdHours
+}) {
+  if (!isFeeDueReminderCandidateEligible(recipient, { nowMillis, reminderThresholdHours })) {
+    return null;
+  }
+
+  const candidateUserIds = await resolveFeeReminderCandidateUserIds(teamId, recipient);
+  if (!candidateUserIds.length) return null;
+
+  const allTargets = await getTargetsForCategory(teamId, 'fees', null);
+  const candidateUserIdSet = new Set(candidateUserIds);
+  const payerTargets = allTargets.filter((target) => candidateUserIdSet.has(target.uid));
+  if (!payerTargets.length) return null;
+
+  return {
+    teamId,
+    batchId,
+    recipientId,
+    candidateUserIds,
+    payerTargets
+  };
+}
+
 async function sendFeeUnpaidDueReminders() {
   const now = admin.firestore.Timestamp.now();
+  const nowMillis = now.toMillis();
   const maxReminderThresholdLater = admin.firestore.Timestamp.fromMillis(now.toMillis() + 72 * 60 * 60 * 1000);
   const teamReminderThresholdHours = new Map();
 
@@ -7344,27 +7417,20 @@ async function sendFeeUnpaidDueReminders() {
       teamReminderThresholdHours.set(teamId, reminderThresholdHours);
     }
 
-    const dueDateMillis = typeof data?.dueDate?.toMillis === 'function'
-      ? data.dueDate.toMillis()
-      : coerceDate(data?.dueDate)?.getTime();
-    if (!Number.isFinite(dueDateMillis)) return null;
-
-    const reminderThresholdMillis = reminderThresholdHours * 60 * 60 * 1000;
-    if (dueDateMillis > now.toMillis() + reminderThresholdMillis) return null;
-    if (wasFeeReminderSentForThreshold(data, reminderThresholdHours)) return null;
-
     const title = data.feeTitle || data.title || 'Team fee due soon';
     const amountLabel = formatMoneyFromCents(getTeamFeeBalanceCents(data), data.currency || 'USD');
-    const reminderWindowLabel = formatFeeReminderWindowLabel(reminderThresholdHours);
+    const body = buildFeeReminderNotificationBody(data, amountLabel, reminderThresholdHours);
 
     try {
-      const candidateUserIds = await resolveFeeReminderCandidateUserIds(teamId, data);
-      if (!candidateUserIds.length) return null;
-
-      const allTargets = await getTargetsForCategory(teamId, 'fees', null);
-      const candidateUserIdSet = new Set(candidateUserIds);
-      const payerTargets = allTargets.filter((t) => candidateUserIdSet.has(t.uid));
-      if (!payerTargets.length) return null;
+      const eligibleRecipient = await resolveEligibleFeeReminderRecipient({
+        teamId,
+        batchId,
+        recipientId,
+        recipient: data,
+        nowMillis,
+        reminderThresholdHours
+      });
+      if (!eligibleRecipient) return null;
 
       // Mark reminderSentAt only when targets exist, to prevent duplicate sends if function retries
       await doc.ref.update({
@@ -7373,15 +7439,15 @@ async function sendFeeUnpaidDueReminders() {
       });
 
       await sendDirectTargetsNotification({
-        targets: payerTargets,
+        targets: eligibleRecipient.payerTargets,
         category: 'fees',
         title: `Reminder: ${title} is due soon`,
-        body: `${amountLabel} is due in ${reminderWindowLabel}.`,
+        body,
         teamId,
         batchId,
         recipientId,
       });
-      return { teamId, payerUserIds: candidateUserIds, feeTitle: title };
+      return { teamId, payerUserIds: eligibleRecipient.candidateUserIds, feeTitle: title };
     } catch (err) {
       console.error('sendFeeUnpaidDueReminders: failed to notify', { teamId, candidateUserIds: buildFeeReminderCandidateUserIds(data), error: err });
       return null;
