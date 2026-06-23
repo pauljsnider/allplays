@@ -1333,9 +1333,10 @@ test('app schedule event detail exposes parent actions and RSVP', async ({ page,
     expect(await page.evaluate(() => window.__sharedPayloads[1]?.text)).toContain('https://allplays.ai/game.html#teamId=team-1&gameId=game-1');
     expect(await page.evaluate(() => window.__scheduleCalls.gameReport)).toEqual({ teamId: 'team-1', gameId: 'game-1' });
     await page.getByRole('button', { name: 'Players' }).click();
-    await expect(page.getByText('#7 Pat')).toBeVisible();
-    await expect(page.getByText('12')).toBeVisible();
-    await expect(page.getByRole('link', { name: /#7 Pat/ })).toHaveAttribute('href', /https:\/\/allplays\.ai\/player\.html#teamId=team-1&gameId=game-1&playerId=player-1/);
+    const playerLink = page.getByRole('link', { name: /#7 Pat/ });
+    await expect(playerLink).toBeVisible();
+    await expect(playerLink).toContainText('12');
+    await expect(playerLink).toHaveAttribute('href', /https:\/\/allplays\.ai\/player\.html#teamId=team-1&gameId=game-1&playerId=player-1/);
     await page.getByRole('button', { name: 'Plays' }).click();
     await expect(page.getByText('Pat scored in transition')).toBeVisible();
     await page.getByRole('button', { name: 'Opponent' }).click();
