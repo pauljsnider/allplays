@@ -132,7 +132,7 @@ import { toAppServiceError } from './appErrors';
 import { createLogger } from './logger';
 import { getNativeRestDedupKey, loadDedupedNativeRestRequest, shouldDedupNativeRestRequest } from './nativeRestDedup';
 import { mapFirestoreDocument, mapScheduleEventDocument, mapScheduleEventDocuments, mapScheduleEventRecord, mapScheduleEventRecords } from './firestore/mappers';
-import type { FirestoreDecodedDocument, FirestoreDocument as NativeFirestoreDocument } from './firestore/types';
+import type { FirestoreDecodedDocument, FirestoreDocument as NativeFirestoreDocument, ScheduleEventFirestoreRecord } from './firestore/types';
 import type { AuthUser } from './types';
 
 const buildPracticePacketCompletionPayloadBase = buildPracticePacketCompletionPayload;
@@ -821,7 +821,7 @@ async function nativeRunQuery(collectionId: string, fieldPath: string, op: 'EQUA
     : [];
 }
 
-async function nativeGetScheduleEventDocument(path: string) {
+async function nativeGetScheduleEventDocument(path: string): Promise<ScheduleEventFirestoreRecord | null> {
   try {
     return mapScheduleEventDocument(await nativeFirestoreRequest(`/${path}`) as NativeFirestoreDocument);
   } catch (error: any) {
@@ -833,7 +833,7 @@ async function nativeGetScheduleEventDocument(path: string) {
   }
 }
 
-async function nativeListScheduleEventDocuments(path: string) {
+async function nativeListScheduleEventDocuments(path: string): Promise<ScheduleEventFirestoreRecord[]> {
   const payload = await nativeFirestoreRequest(`/${path}`);
   return mapScheduleEventDocuments((payload.documents || []) as NativeFirestoreDocument[]);
 }
@@ -2242,7 +2242,7 @@ function isEventWithinRange(game: any, range: ScheduleDateRange) {
   return true;
 }
 
-async function loadGames(teamId: string, range: ScheduleDateRange = {}) {
+async function loadGames(teamId: string, range: ScheduleDateRange = {}): Promise<ScheduleEventFirestoreRecord[]> {
   return readWithNativeFallback(
     `games ${teamId}`,
     async () => mapScheduleEventRecords(await getGames(teamId, range)),
@@ -2256,7 +2256,7 @@ async function loadGames(teamId: string, range: ScheduleDateRange = {}) {
   );
 }
 
-async function loadGameById(teamId: string, gameId: string) {
+async function loadGameById(teamId: string, gameId: string): Promise<ScheduleEventFirestoreRecord | null> {
   return readWithNativeFallback(
     `game ${teamId}/${gameId}`,
     async () => mapScheduleEventRecord(await getGame(teamId, gameId), gameId),
