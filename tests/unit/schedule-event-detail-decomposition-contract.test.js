@@ -13,14 +13,18 @@ describe('ScheduleEventDetail decomposition contract', () => {
 
         [
             "import { AssignmentsSection } from '../components/schedule/AssignmentsSection';",
+            "import { CompactMeta } from '../components/schedule/CompactMeta';",
             "import { DateTile } from '../components/schedule/DateTile';",
             "import { EventBrief } from '../components/schedule/EventBrief';",
             "import { EventDetailsPanel } from '../components/schedule/EventDetailsPanel';",
             "import { EventSectionNav } from '../components/schedule/EventSectionNav';",
             "import { GameReportSections } from '../components/schedule/GameReportSections';",
             "import { PlayerSwitcher } from '../components/schedule/PlayerSwitcher';",
+            "import { PracticeAttendancePanel } from '../components/schedule/PracticeAttendancePanel';",
             "import { ReportMarkdownText } from '../components/schedule/ReportMarkdownText';",
             "import { RideshareSection } from '../components/schedule/RideshareSection';",
+            "import { ScoreStepper } from '../components/schedule/ScoreStepper';",
+            "import { Status } from '../components/schedule/ScheduleStatus';",
             "import { StaffRsvpBreakdownPanel } from '../components/schedule/StaffRsvpBreakdownPanel';",
             "import { StaffRsvpReminderPanel } from '../components/schedule/StaffRsvpReminderPanel';",
             'QuickAvailabilityPanel',
@@ -33,23 +37,43 @@ describe('ScheduleEventDetail decomposition contract', () => {
         [
             /^function AssignmentCard\b/m,
             /^function AssignmentsSection\b/m,
+            /^function CompactMeta\b/m,
             /^function DateTile\b/m,
             /^function EventBrief\b/m,
             /^function EventDetailsPanel\b/m,
             /^function EventSectionNav\b/m,
             /^function GameReportSections\b/m,
             /^function PlayerSwitcher\b/m,
+            /^function PracticeAttendancePanel\b/m,
             /^function ReportMarkdownText\b/m,
             /^function RideOfferCard\b/m,
             /^function RideshareSection\b/m,
+            /^function ScoreStepper\b/m,
             /^function StaffRsvpBreakdownPanel\b/m,
             /^function StaffRsvpReminderPanel\b/m,
             /^function StaffRsvpPlayerRow\b/m,
+            /^function Status\b/m,
             /^function QuickAvailabilityPanel\b/m,
             /^function AttentionPanel\b/m
         ].forEach((inlineDefinition) => {
             expect(page).not.toMatch(inlineDefinition);
         });
+    });
+
+    it('keeps schedule detail utility controls in extracted presentational components', () => {
+        const compactMeta = readRepoFile('apps/app/src/components/schedule/CompactMeta.tsx');
+        const practiceAttendancePanel = readRepoFile('apps/app/src/components/schedule/PracticeAttendancePanel.tsx');
+        const scoreStepper = readRepoFile('apps/app/src/components/schedule/ScoreStepper.tsx');
+        const scheduleStatus = readRepoFile('apps/app/src/components/schedule/ScheduleStatus.tsx');
+        const focusedTests = readRepoFile('apps/app/src/components/schedule/ScheduleEventDetailPresentational.test.tsx');
+
+        expect(compactMeta).toContain('export function CompactMeta');
+        expect(practiceAttendancePanel).toContain('export function PracticeAttendancePanel');
+        expect(practiceAttendancePanel).toContain('onSelectStatus(player, status)');
+        expect(scoreStepper).toContain('export function ScoreStepper');
+        expect(scoreStepper).toContain('aria-label={`${label} score up`}');
+        expect(scheduleStatus).toContain('export function Status');
+        expect(focusedTests).toContain("describe('ScheduleEventDetail presentational components'");
     });
 
     it('keeps RSVP and rideshare workflows behind extracted hooks and page context', () => {
