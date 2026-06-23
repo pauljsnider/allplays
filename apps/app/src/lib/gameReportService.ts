@@ -174,8 +174,9 @@ function normalizePlay(entry: GameReportEventFirestoreRecord): GameReportPlay {
 
 function normalizeOpponentRows(opponentStats: GameReportGameFirestoreRecord['opponentStats'] = {}): GameReportOpponentRow[] {
   return Object.entries(opponentStats || {}).map(([id, rawStats]) => {
-    const { name, number, notes, photoUrl, ...stats } = rawStats || {};
+    const { name, number, notes, playerId, photoUrl, ...stats } = rawStats || {};
     void notes;
+    void playerId;
     return {
       id,
       name: String(name || 'Opponent Player'),
@@ -184,6 +185,19 @@ function normalizeOpponentRows(opponentStats: GameReportGameFirestoreRecord['opp
       stats: mapGameReportTeamStatsRecord(stats)
     };
   });
+}
+
+function normalizeOpponentStatsForColumns(opponentStats: GameReportGameFirestoreRecord['opponentStats'] = {}): Record<string, GameReportStatsRecord> {
+  return Object.entries(opponentStats || {}).reduce<Record<string, GameReportStatsRecord>>((acc, [id, rawStats]) => {
+    const { name, number, notes, playerId, photoUrl, ...stats } = rawStats || {};
+    void name;
+    void number;
+    void notes;
+    void playerId;
+    void photoUrl;
+    acc[id] = mapGameReportTeamStatsRecord(stats);
+    return acc;
+  }, {});
 }
 
 function normalizeHighlightClips(teamId: string, gameId: string, game: GameReportGameFirestoreRecord): GameReportHighlightClip[] {
@@ -260,7 +274,7 @@ export async function loadGameReportSections(teamId: string, gameId: string): Pr
   });
   const opponentStats = game.opponentStats || {};
   const { oppKeys, oppLabels } = resolveOpponentReportStatColumns({
-    opponentStats,
+    opponentStats: normalizeOpponentStatsForColumns(opponentStats),
     resolvedConfig
   });
   const teamStatFields = resolvePostGameTeamStatFields({ resolvedConfig, teamStats });
