@@ -2227,7 +2227,7 @@ async function loadParentCertificates(params = getParams()) {
             .flatMap((entry) => entry.certificates)
             .find((cert) => cert.id === certificateId);
 
-        if (!certificate && !state.demoMode && !state.certificatePersistenceUnavailable) {
+        if (!certificate && !state.demoMode) {
             try {
                 const requestedCertificate = await getCertificate(state.teamId, certificateId);
                 if (canViewSavedCertificate(state.user, state.team, requestedCertificate)) {

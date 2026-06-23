@@ -178,6 +178,8 @@ describe('awards and certificates workflow wiring', () => {
 
         expect(parentLoadBody).toContain('let certificate = entries');
         expect(parentLoadBody).toContain('const requestedCertificate = await getCertificate(state.teamId, certificateId);');
+        expect(parentLoadBody).toContain('if (!certificate && !state.demoMode) {');
+        expect(parentLoadBody).not.toContain('if (!certificate && !state.demoMode && !state.certificatePersistenceUnavailable) {');
         expect(parentLoadBody).toContain('if (canViewSavedCertificate(state.user, state.team, requestedCertificate)) {');
         expect(parentLoadBody).toContain('matchingEntry.certificates.unshift(certificate);');
         expect(parentLoadBody).toContain("showAlert('Saved certificate could not be found for your linked players.', 'warning');");
