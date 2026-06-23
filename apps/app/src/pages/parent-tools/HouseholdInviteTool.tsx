@@ -1,10 +1,9 @@
 import { useCallback, useEffect, useMemo, useState, type FormEvent } from 'react';
 import { Copy, Loader2, RefreshCw, Users } from 'lucide-react';
 import { createParentHouseholdMemberInvite, loadParentHouseholdInviteModel, type ParentHouseholdFamilyMember, type ParentHouseholdLinkedPlayer } from '../../lib/parentToolsService';
-import { useAsyncOperation } from '../../lib/useAsyncOperation';
+import { toAppServiceError } from '../../lib/appErrors';
 import type { AuthState } from '../../lib/types';
-import { EmptyState, LoadingBlock, RetryableStatus, Status, ToolHeader, copyText } from './shared';
-import { toAppServiceError, type AppServiceError } from '../../lib/appErrors';
+import { EmptyState, LoadingBlock, RetryableStatus, Status, ToolHeader, copyText, useParentToolAsyncOperation } from './shared';
 
 export function HouseholdInviteTool({ auth, refreshVersion }: { auth: AuthState; refreshVersion: number }) {
     const [linkedPlayers, setLinkedPlayers] = useState<ParentHouseholdLinkedPlayer[]>([]);
@@ -15,34 +14,34 @@ export function HouseholdInviteTool({ auth, refreshVersion }: { auth: AuthState;
     const [relation, setRelation] = useState('');
     const [createdInvite, setCreatedInvite] = useState<{ code: string; inviteUrl: string } | null>(null);
     const [message, setMessage] = useState('');
-    const [error, setError] = useState<AppServiceError | null>(null);
-    const loadOperation = useAsyncOperation();
-    const submitOperation = useAsyncOperation();
+    const loadOperation = useParentToolAsyncOperation();
+    const submitOperation = useParentToolAsyncOperation();
     const runLoad = loadOperation.run;
     const runSubmit = submitOperation.run;
+    const clearLoadError = loadOperation.clearError;
+    const clearSubmitError = submitOperation.clearError;
+    const setSubmitError = submitOperation.setError;
     const loading = loadOperation.loading;
     const saving = submitOperation.loading;
+    const error = loadOperation.error ?? submitOperation.error;
 
     const pendingMembers = useMemo(() => members.filter((member) => String(member.status || '').toLowerCase() === 'pending'), [members]);
 
     const refresh = useCallback(async () => {
-        setError(null);
+        clearLoadError();
+        clearSubmitError();
         return runLoad(
             () => loadParentHouseholdInviteModel(auth.user),
+            'Unable to load household invites.',
             {
-                rethrow: false,
-                getErrorMessage: (loadError) => String(toAppServiceError(loadError, 'Unable to load household invites.').message || 'Unable to load household invites.'),
                 onSuccess: (model) => {
                     setLinkedPlayers(model.linkedPlayers);
                     setMembers(model.members);
                     setPlayerKey((current) => current || (model.linkedPlayers[0] ? `${model.linkedPlayers[0].teamId}::${model.linkedPlayers[0].playerId}` : ''));
-                },
-                onError: (loadError) => {
-                    setError(toAppServiceError(loadError, 'Unable to load household invites.'));
                 }
             }
         );
-    }, [auth.user, runLoad]);
+    }, [auth.user, clearLoadError, clearSubmitError, runLoad]);
 
     useEffect(() => {
         void refresh();
@@ -53,18 +52,18 @@ export function HouseholdInviteTool({ auth, refreshVersion }: { auth: AuthState;
         const trimmedEmail = email.trim();
         const trimmedRelation = relation.trim();
         if (!playerKey) {
-            setError(toAppServiceError(new Error('Choose a linked player first.'), 'Choose a linked player first.'));
+            setSubmitError(toAppServiceError(new Error('Choose a linked player first.'), 'Choose a linked player first.'));
             return;
         }
         if (!trimmedEmail || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmedEmail)) {
-            setError(toAppServiceError(new Error('Enter a valid email for the household contact.'), 'Enter a valid email for the household contact.'));
+            setSubmitError(toAppServiceError(new Error('Enter a valid email for the household contact.'), 'Enter a valid email for the household contact.'));
             return;
         }
         if (!trimmedRelation) {
-            setError(toAppServiceError(new Error('Enter the household contact relation.'), 'Enter the household contact relation.'));
+            setSubmitError(toAppServiceError(new Error('Enter the household contact relation.'), 'Enter the household contact relation.'));
             return;
         }
-        setError(null);
+        clearSubmitError();
         setMessage('');
         setCreatedInvite(null);
         await runSubmit(
@@ -74,9 +73,8 @@ export function HouseholdInviteTool({ auth, refreshVersion }: { auth: AuthState;
                 email: trimmedEmail,
                 relation: trimmedRelation
             }),
+            'Unable to create household invite.',
             {
-                rethrow: false,
-                getErrorMessage: (createError) => String(toAppServiceError(createError, 'Unable to create household invite.').message || 'Unable to create household invite.'),
                 onSuccess: async (result) => {
                     setCreatedInvite(result);
                     setMessage('Household invite created.');
@@ -84,9 +82,6 @@ export function HouseholdInviteTool({ auth, refreshVersion }: { auth: AuthState;
                     setEmail('');
                     setRelation('');
                     await refresh();
-                },
-                onError: (createError) => {
-                    setError(toAppServiceError(createError, 'Unable to create household invite.'));
                 }
             }
         );
