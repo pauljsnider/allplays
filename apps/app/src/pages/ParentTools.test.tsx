@@ -175,9 +175,13 @@ describe('ParentTools access', () => {
     it('opens the manual request form immediately while public teams finish loading', async () => {
         type PublicTeamRow = { id: string; name: string; sport: string };
         const deferredTeams: { resolve: ((value: PublicTeamRow[]) => void) | null } = { resolve: null };
-        parentToolsAccessServiceMocks.loadParentAccessTeams.mockImplementation(() => new Promise<PublicTeamRow[]>((resolve) => {
-            deferredTeams.resolve = resolve;
-        }));
+        let loadStartedAfterFormRendered = false;
+        parentToolsAccessServiceMocks.loadParentAccessTeams.mockImplementation(() => {
+            loadStartedAfterFormRendered = Boolean(screen.queryByRole('combobox', { name: 'Team' }));
+            return new Promise<PublicTeamRow[]>((resolve) => {
+                deferredTeams.resolve = resolve;
+            });
+        });
         renderParentTools();
 
         await screen.findByText('Request player access');
@@ -190,6 +194,7 @@ describe('ParentTools access', () => {
         expect(teamSelect.disabled).toBe(true);
         expect(playerSelect.disabled).toBe(true);
         expect(parentToolsAccessServiceMocks.loadParentAccessTeams).toHaveBeenCalledTimes(1);
+        expect(loadStartedAfterFormRendered).toBe(true);
         expect(screen.queryByRole('button', { name: 'Request access without a code' })).toBeNull();
         expect(screen.getByRole('option', { name: 'Loading public teams...' })).toBeTruthy();
 

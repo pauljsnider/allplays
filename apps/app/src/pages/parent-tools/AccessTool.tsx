@@ -64,10 +64,7 @@ export function AccessTool({ auth, onAccessChanged }: { auth: AuthState; onAcces
 
     const openManualRequest = useCallback(() => {
         setManualRequestOpen(true);
-        if (!teams.length && !loadingTeams) {
-            void loadTeams();
-        }
-    }, [loadTeams, loadingTeams, teams.length]);
+    }, []);
 
     const refresh = useCallback(async () => {
         accessLoadOperation.clearError();
@@ -98,6 +95,11 @@ export function AccessTool({ auth, onAccessChanged }: { auth: AuthState; onAcces
         setSelectedTeamId('');
         setSelectedPlayerId('');
     }, [auth.user?.uid]);
+
+    useEffect(() => {
+        if (!manualRequestOpen || teams.length || loadingTeams) return;
+        void loadTeams();
+    }, [loadTeams, loadingTeams, manualRequestOpen, teams.length]);
 
     const loadPlayersForTeam = useCallback(async (teamId: string) => {
         const rows = await runPlayerLoad(
