@@ -2223,9 +2223,26 @@ async function loadParentCertificates(params = getParams()) {
     }
     const certificateId = params.get('certificateId');
     if (certificateId) {
-        const certificate = entries
+        let certificate = entries
             .flatMap((entry) => entry.certificates)
             .find((cert) => cert.id === certificateId);
+
+        if (!certificate && !state.demoMode) {
+            try {
+                const requestedCertificate = await getCertificate(state.teamId, certificateId);
+                if (canViewSavedCertificate(state.user, state.team, requestedCertificate)) {
+                    certificate = requestedCertificate;
+                    const matchingEntry = entries.find((entry) => entry.playerId === certificate.playerId);
+                    if (matchingEntry && !matchingEntry.certificates.some((item) => item.id === certificate.id)) {
+                        matchingEntry.certificates.unshift(certificate);
+                    }
+                }
+            } catch (error) {
+                if (!isPermissionError(error)) throw error;
+                state.certificatePersistenceUnavailable = true;
+            }
+        }
+
         if (certificate) {
             renderParentCertificateDetail(certificate);
             return;

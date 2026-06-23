@@ -23,7 +23,7 @@ describe('awards and certificates workflow wiring', () => {
         expect(html).toContain('Start new run');
         expect(html).toContain('View saved work');
         expect(html).toContain('Create one-off certificate');
-        expect(html).toContain('./js/certificates/studio.js?v=9');
+        expect(html).toContain('./js/certificates/studio.js?v=10');
         expect(studio).toContain("from './templates.js?v=2'");
         expect(studio).toContain("from './renderer.js?v=2'");
         expect(studio).toContain("from './aiDescriptions.js?v=4'");
@@ -170,6 +170,19 @@ describe('awards and certificates workflow wiring', () => {
         expect(indexes).toContain('"collectionGroup": "certificates"');
         expect(indexes).toContain('"collectionGroup": "certificateBatches"');
         expect(indexes).toContain('"fieldPath": "playerId"');
+    });
+
+    it('falls back to loading the requested parent certificate by id', () => {
+        const studio = readRepoFile('js/certificates/studio.js');
+        const parentLoadBody = studio.match(/async function loadParentCertificates\(params = getParams\(\)\) \{[\s\S]*?\n\}/)?.[0] || '';
+
+        expect(parentLoadBody).toContain('let certificate = entries');
+        expect(parentLoadBody).toContain('const requestedCertificate = await getCertificate(state.teamId, certificateId);');
+        expect(parentLoadBody).toContain('if (!certificate && !state.demoMode) {');
+        expect(parentLoadBody).not.toContain('if (!certificate && !state.demoMode && !state.certificatePersistenceUnavailable) {');
+        expect(parentLoadBody).toContain('if (canViewSavedCertificate(state.user, state.team, requestedCertificate)) {');
+        expect(parentLoadBody).toContain('matchingEntry.certificates.unshift(certificate);');
+        expect(parentLoadBody).toContain("showAlert('Saved certificate could not be found for your linked players.', 'warning');");
     });
 
     it('wires team color editing for certificate palettes and PNG-backed print', () => {
