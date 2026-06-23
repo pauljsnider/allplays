@@ -84,6 +84,82 @@ export function canViewTeamMediaFolder(folder, accessLevel) {
     return accessLevel === 'parent' && canReadTeamMediaAlbum(folder, false);
 }
 
+function normalizeTeamMediaNotificationAlbumVisibility(folder = {}) {
+    if (folder?.staffOnly === true) return 'private';
+    const rawVisibility = folder?.visibility ?? folder?.albumVisibility;
+    const normalized = asTrimmedString(rawVisibility).toLowerCase().replace(/[\s_]+/g, '-');
+    if (['private', 'staff', 'staff-only'].includes(normalized)) return 'private';
+    return normalizeAlbumVisibility(rawVisibility);
+}
+
+function normalizeTeamMediaAudienceList(value) {
+    if (Array.isArray(value)) return value;
+    if (value instanceof Set) return Array.from(value);
+    if (typeof value === 'string') return value.split(',');
+    return [];
+}
+
+function normalizeTeamMediaAudienceUserIds(value) {
+    return Array.from(new Set(
+        normalizeTeamMediaAudienceList(value)
+            .map((entry) => asTrimmedString(entry))
+            .filter(Boolean)
+    ));
+}
+
+function normalizeTeamMediaAudienceRoles(value) {
+    return Array.from(new Set(
+        normalizeTeamMediaAudienceList(value)
+            .map((entry) => asTrimmedString(entry).toLowerCase().replace(/[\s_]+/g, '-'))
+            .map((role) => (['admin', 'coach', 'manager', 'owner'].includes(role) ? 'staff' : role))
+            .filter((role) => ['parent', 'staff'].includes(role))
+    ));
+}
+
+function getTeamMediaAudienceValue(source = {}, keys = []) {
+    return keys.reduce((selected, key) => (selected === undefined ? source?.[key] : selected), undefined);
+}
+
+function getTeamMediaAudienceAccessLevel(user = {}) {
+    const roles = normalizeTeamMediaAudienceRoles(user.roles);
+    if (roles.includes('staff')) return 'full';
+    if (roles.includes('parent')) return 'parent';
+    return null;
+}
+
+function canAudienceUserViewTeamMediaAlbum(folder, user) {
+    const visibility = normalizeTeamMediaNotificationAlbumVisibility(folder);
+    return canViewTeamMediaFolder({ ...folder, visibility }, getTeamMediaAudienceAccessLevel(user));
+}
+
+export function resolveTeamMediaAlbumNotificationAudience(folder = {}, users = []) {
+    const audienceSource = folder?.audienceContext && typeof folder.audienceContext === 'object'
+        ? { ...folder.audienceContext, ...folder }
+        : folder;
+    const allowedUserIds = normalizeTeamMediaAudienceUserIds(getTeamMediaAudienceValue(audienceSource, [
+        'allowedUserIds',
+        'audienceUserIds',
+        'visibleToUserIds',
+        'userIds'
+    ]));
+    const allowedRoles = normalizeTeamMediaAudienceRoles(getTeamMediaAudienceValue(audienceSource, [
+        'allowedRoles',
+        'audienceRoles',
+        'visibleToRoles',
+        'roles'
+    ]));
+    const hasAudienceRestrictions = allowedUserIds.length > 0 || allowedRoles.length > 0;
+
+    return (Array.isArray(users) ? users : []).filter((user) => {
+        const uid = asTrimmedString(user?.uid);
+        if (!uid || !canAudienceUserViewTeamMediaAlbum(audienceSource, user)) return false;
+        if (!hasAudienceRestrictions) return true;
+
+        const roles = normalizeTeamMediaAudienceRoles(user.roles);
+        return allowedUserIds.includes(uid) || roles.some((role) => allowedRoles.includes(role));
+    });
+}
+
 export function hasTeamMediaUploadGrant(user, teamId) {
     const normalizedTeamId = String(teamId || '').trim();
     if (!user || !normalizedTeamId) return false;

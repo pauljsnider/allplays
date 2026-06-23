@@ -22,6 +22,7 @@ import {
     normalizeSelectedMediaIds,
     normalizeTeamMediaFolderDraft,
     normalizeTeamMediaVideoDraft,
+    resolveTeamMediaAlbumNotificationAudience,
     sortByMediaOrder
 } from '../../js/team-media-utils.js';
 
@@ -117,6 +118,40 @@ describe('team media album visibility', () => {
         expect(canReadTeamMediaAlbum({ visibility: 'team' }, false)).toBe(true);
         expect(canReadTeamMediaAlbum({ visibility: 'private' }, false)).toBe(false);
         expect(canReadTeamMediaAlbum({ visibility: 'private' }, true)).toBe(true);
+    });
+});
+
+describe('team media notification audience resolver', () => {
+    const users = [
+        { uid: 'parent-1', roles: ['parent'] },
+        { uid: 'parent-2', roles: ['parent'] },
+        { uid: 'staff-1', roles: ['staff'] },
+        { uid: 'staff-parent-1', roles: ['parent', 'staff'] }
+    ];
+    const resolveIds = (folder) => resolveTeamMediaAlbumNotificationAudience(folder, users).map((user) => user.uid);
+
+    it('resolves staff-only albums without parent-only users', () => {
+        expect(resolveIds({ visibility: 'staff-only' })).toEqual(['staff-1', 'staff-parent-1']);
+        expect(resolveIds({ albumVisibility: 'team', staffOnly: true })).toEqual(['staff-1', 'staff-parent-1']);
+    });
+
+    it('resolves visibility-restricted albums to explicitly allowed visible users', () => {
+        expect(resolveIds({
+            visibility: 'team',
+            visibleToUserIds: ['parent-2'],
+            visibleToRoles: ['staff']
+        })).toEqual(['parent-2', 'staff-1', 'staff-parent-1']);
+
+        expect(resolveIds({
+            visibility: 'private',
+            allowedUserIds: ['parent-2'],
+            allowedRoles: ['staff']
+        })).toEqual(['staff-1', 'staff-parent-1']);
+    });
+
+    it('keeps standard visible albums on the current eligible audience', () => {
+        expect(resolveTeamMediaAlbumNotificationAudience({ visibility: 'team' }, users)).toEqual(users);
+        expect(resolveTeamMediaAlbumNotificationAudience({}, users)).toEqual(users);
     });
 });
 
