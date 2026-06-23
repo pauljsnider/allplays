@@ -4897,6 +4897,43 @@ function getRideshareSeatsRemaining(offer = {}, claimedDelta = 0) {
   return Math.max(0, seatCapacity - seatCountConfirmed - Math.max(0, Number.parseInt(String(claimedDelta || 0), 10) || 0));
 }
 
+function normalizeRideOfferNotificationStatus(value) {
+  const normalized = String(value || '').trim().toLowerCase();
+  if (normalized === 'cancelled' || normalized === 'canceled') return 'cancelled';
+  if (normalized === 'closed') return 'closed';
+  return 'open';
+}
+
+function normalizeRideRequestNotificationStatus(value) {
+  const normalized = String(value || '').trim().toLowerCase();
+  if (['confirmed', 'waitlisted', 'declined', 'cancelled', 'canceled'].includes(normalized)) {
+    return normalized === 'canceled' ? 'cancelled' : normalized;
+  }
+  return 'pending';
+}
+
+function normalizeRideshareTimestampKey(value) {
+  if (!value) return '';
+  if (typeof value.toMillis === 'function') return String(value.toMillis());
+  if (value instanceof Date) return String(value.getTime());
+  if (typeof value === 'object') {
+    const seconds = Number(value.seconds ?? value._seconds);
+    if (Number.isFinite(seconds)) {
+      const nanos = Number(value.nanoseconds ?? value._nanoseconds ?? 0);
+      return `${seconds}:${Number.isFinite(nanos) ? nanos : 0}`;
+    }
+  }
+  return String(value);
+}
+
+function shouldNotifyRideClaimUpdate(before = {}, after = {}) {
+  const beforeStatus = normalizeRideRequestNotificationStatus(before.status);
+  const afterStatus = normalizeRideRequestNotificationStatus(after.status);
+  if (afterStatus !== 'pending') return false;
+  if (beforeStatus !== 'pending') return true;
+  return Boolean(after.requestedAt) && normalizeRideshareTimestampKey(before.requestedAt) !== normalizeRideshareTimestampKey(after.requestedAt);
+}
+
 function formatRideshareSeatLabel(seatCount) {
   const safeSeatCount = Math.max(0, Number.parseInt(String(seatCount || 0), 10) || 0);
   return `${safeSeatCount} ${safeSeatCount === 1 ? 'seat' : 'seats'}`;
@@ -4946,6 +4983,42 @@ function buildRideOfferCancelledNotificationPayload(game = {}) {
     title: `Ride canceled for ${getRideshareEventLabel(game)}`,
     body: 'Your rideshare claim is no longer available.'
   };
+}
+
+async function sendRideClaimNotification(request = {}, context = {}) {
+  if (!NOTIFICATION_CATEGORIES.includes('rideshare')) return null;
+
+  const teamId = String(context.params?.teamId || '').trim();
+  const gameId = String(context.params?.gameId || '').trim();
+  const offerId = String(context.params?.offerId || '').trim();
+  const actorUid = String(request.parentUserId || '').trim() || null;
+  if (!teamId || !gameId || !offerId) return null;
+
+  const [offerSnap, gameSnap] = await Promise.all([
+    firestore.doc(`teams/${teamId}/games/${gameId}/rideOffers/${offerId}`).get(),
+    firestore.doc(`teams/${teamId}/games/${gameId}`).get()
+  ]);
+  if (!offerSnap.exists) return null;
+
+  const offer = offerSnap.data() || {};
+  const driverUserId = String(offer.driverUserId || '').trim();
+  if (!driverUserId || driverUserId === actorUid) return null;
+
+  const targets = await getTargetsForCategoryUserIds(teamId, 'rideshare', [driverUserId], actorUid);
+  if (!targets.length) return null;
+
+  const game = gameSnap.exists ? (gameSnap.data() || {}) : {};
+  const payload = buildRideClaimNotificationPayload(game, offer, request);
+  return sendDirectTargetsNotification({
+    targets,
+    category: 'rideshare',
+    title: payload.title,
+    body: payload.body,
+    teamId,
+    gameId,
+    eventId: gameId,
+    timeSensitive: isRideshareTimeSensitive(game)
+  });
 }
 
 function buildTargetsFromNotificationRecipientDoc(docSnap, { teamId, category, actorUid = null, eligibleUsers = new Map() } = {}) {
@@ -7685,44 +7758,23 @@ exports._internal.notifyRideOfferCreated = notifyRideOfferCreated;
 const notifyRideClaimCreated = functions.firestore
   .document('teams/{teamId}/games/{gameId}/rideOffers/{offerId}/requests/{requestId}')
   .onCreate(async (snapshot, context) => {
-    if (!NOTIFICATION_CATEGORIES.includes('rideshare')) return null;
-
-    const request = snapshot.data() || {};
-    const teamId = String(context.params?.teamId || '').trim();
-    const gameId = String(context.params?.gameId || '').trim();
-    const offerId = String(context.params?.offerId || '').trim();
-    const actorUid = String(request.parentUserId || '').trim() || null;
-    if (!teamId || !gameId || !offerId) return null;
-
-    const [offerSnap, gameSnap] = await Promise.all([
-      firestore.doc(`teams/${teamId}/games/${gameId}/rideOffers/${offerId}`).get(),
-      firestore.doc(`teams/${teamId}/games/${gameId}`).get()
-    ]);
-    if (!offerSnap.exists) return null;
-
-    const offer = offerSnap.data() || {};
-    const driverUserId = String(offer.driverUserId || '').trim();
-    if (!driverUserId || driverUserId === actorUid) return null;
-
-    const targets = await getTargetsForCategoryUserIds(teamId, 'rideshare', [driverUserId], actorUid);
-    if (!targets.length) return null;
-
-    const game = gameSnap.exists ? (gameSnap.data() || {}) : {};
-    const payload = buildRideClaimNotificationPayload(game, offer, request);
-    return sendDirectTargetsNotification({
-      targets,
-      category: 'rideshare',
-      title: payload.title,
-      body: payload.body,
-      teamId,
-      gameId,
-      eventId: gameId,
-      timeSensitive: isRideshareTimeSensitive(game)
-    });
+    return sendRideClaimNotification(snapshot.data() || {}, context);
   });
 
 exports.notifyRideClaimCreated = notifyRideClaimCreated;
 exports._internal.notifyRideClaimCreated = notifyRideClaimCreated;
+
+const notifyRideClaimUpdated = functions.firestore
+  .document('teams/{teamId}/games/{gameId}/rideOffers/{offerId}/requests/{requestId}')
+  .onUpdate(async (change, context) => {
+    const before = change.before.data() || {};
+    const after = change.after.data() || {};
+    if (!shouldNotifyRideClaimUpdate(before, after)) return null;
+    return sendRideClaimNotification(after, context);
+  });
+
+exports.notifyRideClaimUpdated = notifyRideClaimUpdated;
+exports._internal.notifyRideClaimUpdated = notifyRideClaimUpdated;
 
 const notifyRideOfferCancelled = functions.firestore
   .document('teams/{teamId}/games/{gameId}/rideOffers/{offerId}')
@@ -7731,9 +7783,9 @@ const notifyRideOfferCancelled = functions.firestore
 
     const before = change.before.data() || {};
     const after = change.after.data() || {};
-    const beforeStatus = String(before.status || '').trim().toLowerCase() || 'open';
-    const afterStatus = String(after.status || '').trim().toLowerCase() || 'open';
-    if (beforeStatus !== 'open' || !['closed', 'cancelled'].includes(afterStatus)) return null;
+    const beforeStatus = normalizeRideOfferNotificationStatus(before.status);
+    const afterStatus = normalizeRideOfferNotificationStatus(after.status);
+    if (beforeStatus === 'cancelled' || afterStatus !== 'cancelled') return null;
 
     const teamId = String(context.params?.teamId || '').trim();
     const gameId = String(context.params?.gameId || '').trim();

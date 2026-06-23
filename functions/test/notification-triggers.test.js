@@ -407,6 +407,104 @@ test('notifyRideClaimCreated targets only the driver with remaining-seat copy', 
     }
 });
 
+test('notifyRideClaimUpdated notifies the driver when a prior request is reactivated', async () => {
+    const requestedAt = { seconds: 1800000000, nanoseconds: 0 };
+    const { moduleExports, env, cleanup } = loadNotificationInternals({
+        teamDoc: { ownerId: 'coach-1', adminEmails: [] },
+        parentUserIds: ['driver-1', 'parent-2'],
+        gameDocs: {
+            'game-1': {
+                title: "Saturday's game",
+                date: '2026-06-28T16:00:00.000Z'
+            }
+        },
+        rideOfferDocs: {
+            'game-1/offer-1': {
+                driverUserId: 'driver-1',
+                seatCapacity: 3,
+                seatCountConfirmed: 1,
+                status: 'open'
+            }
+        },
+        indexedTargets: [
+            { uid: 'driver-1', deviceId: 'driver-device', token: 'driver-token', categories: { rideshare: true } },
+            { uid: 'parent-2', deviceId: 'parent-device', token: 'parent-token', categories: { rideshare: true } }
+        ]
+    });
+
+    try {
+        const ref = env.firestoreState.doc('teams/team-1/games/game-1/rideOffers/offer-1/requests/parent-2__player-2');
+        const result = await moduleExports.notifyRideClaimUpdated(
+            makeChange(ref, {
+                parentUserId: 'parent-2',
+                childId: 'player-2',
+                childName: 'Sam Parker',
+                status: 'waitlisted',
+                requestedAt: { seconds: 1799999900, nanoseconds: 0 }
+            }, {
+                parentUserId: 'parent-2',
+                childId: 'player-2',
+                childName: 'Sam Parker',
+                status: 'pending',
+                requestedAt
+            }),
+            { params: { teamId: 'team-1', gameId: 'game-1', offerId: 'offer-1', requestId: 'parent-2__player-2' } }
+        );
+
+        assert.equal(result?.successCount, 1);
+        assert.equal(env.messagingCalls.length, 1);
+        assert.deepEqual(env.messagingCalls[0].tokens, ['driver-token']);
+        assert.equal(env.messagingCalls[0].title, 'Sam P. claimed a seat — 1 seat left');
+        assert.equal(env.messagingCalls[0].data.category, 'rideshare');
+    } finally {
+        cleanup();
+    }
+});
+
+test('notifyRideClaimUpdated ignores ordinary pending request edits without a new requestedAt', async () => {
+    const { moduleExports, env, cleanup } = loadNotificationInternals({
+        teamDoc: { ownerId: 'coach-1', adminEmails: [] },
+        parentUserIds: ['driver-1', 'parent-2'],
+        rideOfferDocs: {
+            'game-1/offer-1': {
+                driverUserId: 'driver-1',
+                seatCapacity: 3,
+                seatCountConfirmed: 0,
+                status: 'open'
+            }
+        },
+        indexedTargets: [
+            { uid: 'driver-1', deviceId: 'driver-device', token: 'driver-token', categories: { rideshare: true } }
+        ]
+    });
+
+    try {
+        const requestedAt = { seconds: 1800000000, nanoseconds: 0 };
+        const ref = env.firestoreState.doc('teams/team-1/games/game-1/rideOffers/offer-1/requests/parent-2__player-2');
+        const result = await moduleExports.notifyRideClaimUpdated(
+            makeChange(ref, {
+                parentUserId: 'parent-2',
+                childId: 'player-2',
+                childName: 'Sam',
+                status: 'pending',
+                requestedAt
+            }, {
+                parentUserId: 'parent-2',
+                childId: 'player-2',
+                childName: 'Sam Parker',
+                status: 'pending',
+                requestedAt
+            }),
+            { params: { teamId: 'team-1', gameId: 'game-1', offerId: 'offer-1', requestId: 'parent-2__player-2' } }
+        );
+
+        assert.equal(result, null);
+        assert.equal(env.messagingCalls.length, 0);
+    } finally {
+        cleanup();
+    }
+});
+
 test('notifyRideOfferCancelled targets only active claimants and respects rideshare preferences', async () => {
     const { moduleExports, env, cleanup } = loadNotificationInternals({
         teamDoc: { ownerId: 'coach-1', adminEmails: [] },
@@ -448,6 +546,40 @@ test('notifyRideOfferCancelled targets only active claimants and respects ridesh
         assert.equal(env.messagingCalls[0].title, "Ride canceled for Saturday's game");
         assert.equal(env.messagingCalls[0].data.category, 'rideshare');
         assert.equal(env.auditWrites[0].value.category, 'rideshare');
+    } finally {
+        cleanup();
+    }
+});
+
+test('notifyRideOfferCancelled ignores a normal closed offer transition', async () => {
+    const { moduleExports, env, cleanup } = loadNotificationInternals({
+        teamDoc: { ownerId: 'coach-1', adminEmails: [] },
+        parentUserIds: ['driver-1', 'parent-2'],
+        rideRequestDocs: {
+            'game-1/offer-1': [
+                { id: 'request-1', parentUserId: 'parent-2', status: 'confirmed' }
+            ]
+        },
+        indexedTargets: [
+            { uid: 'parent-2', deviceId: 'claimant-device', token: 'claimant-token', categories: { rideshare: true } }
+        ]
+    });
+
+    try {
+        const ref = env.firestoreState.doc('teams/team-1/games/game-1/rideOffers/offer-1');
+        const result = await moduleExports.notifyRideOfferCancelled(
+            makeChange(ref, {
+                driverUserId: 'driver-1',
+                status: 'open'
+            }, {
+                driverUserId: 'driver-1',
+                status: 'closed'
+            }),
+            { params: { teamId: 'team-1', gameId: 'game-1', offerId: 'offer-1' } }
+        );
+
+        assert.equal(result, null);
+        assert.equal(env.messagingCalls.length, 0);
     } finally {
         cleanup();
     }

@@ -4,6 +4,7 @@ import { readFileSync } from 'node:fs';
 const functionsSource = readFileSync(new URL('../../functions/index.js', import.meta.url), 'utf8');
 const targetIndexSource = readFileSync(new URL('../../functions/notification-target-index-core.cjs', import.meta.url), 'utf8');
 const deliveryMetadataSource = readFileSync(new URL('../../functions/notification-delivery-metadata.cjs', import.meta.url), 'utf8');
+const notificationPreferencesSource = readFileSync(new URL('../../js/notification-preferences.js', import.meta.url), 'utf8');
 const scheduleServiceSource = readFileSync(new URL('../../apps/app/src/lib/scheduleService.ts', import.meta.url), 'utf8');
 const pushRoutingSource = readFileSync(new URL('../../apps/app/src/lib/pushNotificationRouting.ts', import.meta.url), 'utf8');
 const rideshareServiceTestSource = readFileSync(new URL('./app-schedule-rideshare-service.test.js', import.meta.url), 'utf8');
@@ -13,6 +14,7 @@ describe('issue 2109 rideshare notification source contract', () => {
     it('keeps rideshare as a routed notification category for parents and staff', () => {
         expect(targetIndexSource).toContain("'rideshare'");
         expect(targetIndexSource).toContain('rideshare: true');
+        expect(notificationPreferencesSource).toContain('rideshare: true');
         expect(targetIndexSource).toContain("rideshare: Object.freeze(['parent', 'staff'])");
         expect(deliveryMetadataSource).toContain("rideshare: Object.freeze({ androidChannelId: ANDROID_NOTIFICATION_CHANNEL_IDS.team, iosThreadScope: 'team' })");
         expect(deliveryMetadataSource).toContain("timeSensitive = false");
@@ -31,6 +33,7 @@ describe('issue 2109 rideshare notification source contract', () => {
     it('keeps rideshare offer, request, decision, cancellation, and routing tests in place', () => {
         expect(functionsSource).toContain("exports.notifyRideOfferCreated = notifyRideOfferCreated;");
         expect(functionsSource).toContain("exports.notifyRideClaimCreated = notifyRideClaimCreated;");
+        expect(functionsSource).toContain("exports.notifyRideClaimUpdated = notifyRideClaimUpdated;");
         expect(functionsSource).toContain("exports.notifyRideOfferCancelled = notifyRideOfferCancelled;");
         expect(functionsSource).toContain("getTeamParentUserIds(teamId)");
         expect(scheduleServiceSource).toContain('export async function createParentScheduleRideOffer');
