@@ -37,7 +37,7 @@ function getTargetsForCategoryFactory() {
         'backfillNotificationRecipientsForTeam',
         'getLegacyTargetsForCategory',
         'functions',
-        `${extractChunk('async function getTargetsForCategory(', 'async function pruneInvalidTokens')}
+        `${extractChunk('function mergeNotificationResolutionUser(', 'async function pruneInvalidTokens')}
         return getTargetsForCategory;`
     );
 }
