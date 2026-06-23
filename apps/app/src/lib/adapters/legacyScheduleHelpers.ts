@@ -38,7 +38,7 @@ type LegacyCalendarEvent = LegacyRecord & {
 type LegacyPracticeOccurrence = LegacyRecord & {
     masterId?: string;
     instanceDate?: string;
-    date?: string | Date;
+    date: string | Date;
     endDate?: string | Date;
     end?: string | Date;
     location?: string;
@@ -109,6 +109,16 @@ function normalizeCalendarEvent(value: unknown): LegacyCalendarEvent {
     return normalizeRecord<LegacyCalendarEvent>(value);
 }
 
+function normalizePracticeOccurrence(value: unknown): LegacyPracticeOccurrence | null {
+    const record = normalizeRecord(value);
+    const date = record.date ?? record.instanceDate;
+    if (!(typeof date === 'string' || date instanceof Date)) return null;
+    return {
+        ...record,
+        date
+    } as LegacyPracticeOccurrence;
+}
+
 function normalizeSubstitutionPlayer(value: unknown): LegacySubstitutionPlayer {
     const record = normalizeRecord(value);
     return {
@@ -177,7 +187,7 @@ export function getOpenOfficiatingSlots(game: unknown): LegacyRecord[] {
 }
 
 export function expandRecurrence(game: unknown): LegacyPracticeOccurrence[] {
-    return normalizeArray<LegacyPracticeOccurrence>(legacyExpandRecurrence(game) as LegacyPracticeOccurrence[]);
+    return normalizeArray(legacyExpandRecurrence(game)).map(normalizePracticeOccurrence).filter(Boolean) as LegacyPracticeOccurrence[];
 }
 
 export function extractOpponent(summary: unknown, teamName: unknown): string {
