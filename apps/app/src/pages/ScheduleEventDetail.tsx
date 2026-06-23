@@ -1,6 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from 'react';
 import { Link, useParams, useSearchParams } from 'react-router-dom';
-import { AlertCircle, CalendarDays, CheckCircle2, ChevronDown, ChevronLeft, ClipboardCheck, ExternalLink, FileText, Radio, RefreshCw, Share2, Users, Video, type LucideIcon } from 'lucide-react';
+import { CalendarDays, ChevronDown, ChevronLeft, ClipboardCheck, ExternalLink, FileText, Radio, RefreshCw, Share2, Users, Video, type LucideIcon } from 'lucide-react';
 import {
   cancelPracticeOccurrenceForApp,
   cancelScheduledGameForApp,
@@ -78,14 +78,18 @@ import { type AppServiceError, toAppServiceError } from '../lib/appErrors';
 import { useAsyncOperation } from '../lib/useAsyncOperation';
 import { EventDetailPageSkeleton } from '../components/PageSkeletons';
 import { AssignmentsSection } from '../components/schedule/AssignmentsSection';
+import { CompactMeta } from '../components/schedule/CompactMeta';
 import { DateTile } from '../components/schedule/DateTile';
 import { EventBrief } from '../components/schedule/EventBrief';
 import { EventDetailsPanel } from '../components/schedule/EventDetailsPanel';
 import { EventSectionNav } from '../components/schedule/EventSectionNav';
 import { GameReportSections } from '../components/schedule/GameReportSections';
 import { PlayerSwitcher } from '../components/schedule/PlayerSwitcher';
+import { PracticeAttendancePanel } from '../components/schedule/PracticeAttendancePanel';
 import { ReportMarkdownText } from '../components/schedule/ReportMarkdownText';
 import { RideshareSection } from '../components/schedule/RideshareSection';
+import { ScoreStepper } from '../components/schedule/ScoreStepper';
+import { Status } from '../components/schedule/ScheduleStatus';
 import { StaffRsvpBreakdownPanel } from '../components/schedule/StaffRsvpBreakdownPanel';
 import { StaffRsvpReminderPanel } from '../components/schedule/StaffRsvpReminderPanel';
 import {
@@ -571,15 +575,6 @@ export function ScheduleEventDetail({ auth }: { auth: AuthState }) {
       </div>
       </div>
     </ScheduleEventDetailProvider>
-  );
-}
-
-function CompactMeta({ icon: Icon, value }: { icon: LucideIcon; value: string }) {
-  return (
-    <div className="flex min-w-0 items-center gap-2 text-sm font-bold text-gray-800">
-      <Icon className="h-4 w-4 flex-none text-primary-600" aria-hidden="true" />
-      <span className="min-w-0 truncate">{value}</span>
-    </div>
   );
 }
 
@@ -3064,19 +3059,6 @@ function GameDayFoulTrackerPanel({ auth, event }: { auth: AuthState; event: Pare
   );
 }
 
-function ScoreStepper({ label, value, onDecrease, onIncrease, disabled }: { label: string; value: number; onDecrease: () => void; onIncrease: () => void; disabled: boolean }) {
-  return (
-    <div className="rounded-xl border border-gray-200 bg-white p-2">
-      <div className="mb-2 text-center text-xs font-black uppercase tracking-[0.04em] text-gray-500">{label}</div>
-      <div className="flex items-center justify-center gap-3">
-        <button type="button" className="min-h-11 min-w-11 rounded-full border border-gray-200 text-xl font-black text-gray-700 disabled:opacity-40" onClick={onDecrease} disabled={disabled || value <= 0} aria-label={`${label} score down`}>−</button>
-        <div className="min-w-12 text-center text-3xl font-black tabular-nums text-gray-950">{value}</div>
-        <button type="button" className="min-h-11 min-w-11 rounded-full border border-gray-200 text-xl font-black text-gray-700 disabled:opacity-40" onClick={onIncrease} disabled={disabled} aria-label={`${label} score up`}>+</button>
-      </div>
-    </div>
-  );
-}
-
 function PracticeTimelineSection({ auth, event }: { auth: AuthState; event: ParentScheduleEvent }) {
   const [sessionId, setSessionId] = useState<string | null>(event.practiceSessionId || null);
   const [blocks, setBlocks] = useState<PracticeTimelineBlock[]>([]);
@@ -3699,76 +3681,11 @@ function PracticePacketSection({ auth, event, childEvents }: { auth: AuthState; 
   );
 }
 
-function PracticeAttendancePanel({ attendance, loading, saving, savingPlayerId, onSelectStatus }: {
-  attendance: StaffPracticeAttendance | null;
-  loading: boolean;
-  saving: boolean;
-  savingPlayerId: string | null;
-  onSelectStatus: (player: PracticeAttendancePlayer, status: 'present' | 'late' | 'absent') => Promise<void>;
-}) {
-  if (loading && !attendance) {
-    return <div className="mb-3 rounded-xl border border-gray-200 bg-gray-50 p-3 text-sm font-semibold text-gray-500">Loading practice attendance...</div>;
-  }
-  if (!attendance) return null;
-
-  return (
-    <div className="mb-3 rounded-xl border border-amber-200 bg-amber-50 p-3">
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div>
-          <div className="text-[11px] font-extrabold uppercase tracking-[0.04em] text-amber-700">Practice attendance</div>
-          <div className="mt-1 text-sm font-black text-gray-950">Mark each player present, late, or absent.</div>
-        </div>
-        <span className="inline-flex min-h-8 items-center rounded-full border border-amber-200 bg-white px-3 text-xs font-black text-amber-900">
-          {attendance.checkedInCount}/{attendance.rosterSize} checked in
-        </span>
-      </div>
-      <div className="mt-3 space-y-2">
-        {attendance.players.map((player) => {
-          const busy = savingPlayerId === player.playerId;
-          return (
-            <div key={player.playerId} className="rounded-xl border border-amber-100 bg-white p-3" data-testid={`practice-attendance-row-${player.playerId}`}>
-              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                <div className="min-w-0">
-                  <div className="text-sm font-black text-gray-950">{player.playerNumber ? `#${player.playerNumber} ` : ''}{player.displayName}</div>
-                  <div className="mt-1 text-xs font-bold text-gray-500">{player.status === 'absent' ? 'Absent' : player.status === 'late' ? 'Late' : 'Present'}</div>
-                </div>
-                <div className="grid grid-cols-3 gap-1.5 sm:min-w-[220px]">
-                  {(['present', 'late', 'absent'] as const).map((status) => (
-                    <button
-                      key={status}
-                      type="button"
-                      className={`min-h-8 rounded-full border px-2 text-[11px] font-black transition ${player.status === status ? 'border-amber-300 bg-amber-100 text-amber-900' : 'border-gray-200 bg-white text-gray-600 hover:border-amber-200 hover:bg-amber-50 hover:text-amber-900'}`}
-                      disabled={saving}
-                      onClick={() => onSelectStatus(player, status)}
-                    >
-                      {busy && player.status !== status ? 'Saving' : status === 'present' ? 'Present' : status === 'late' ? 'Late' : 'Absent'}
-                    </button>
-                  ))}
-                </div>
-              </div>
-            </div>
-          );
-        })}
-      </div>
-    </div>
-  );
-}
-
 function DetailRow({ label, value }: { label: string; value: string }) {
   return (
     <div className="rounded-xl border border-gray-200 bg-gray-50 p-3">
       <div className="text-[11px] font-extrabold uppercase tracking-[0.04em] text-gray-500">{label}</div>
       <div className="mt-1 text-sm font-black text-gray-950">{value}</div>
-    </div>
-  );
-}
-
-function Status({ tone, message }: { tone: 'success' | 'error'; message: string }) {
-  const isError = tone === 'error';
-  return (
-    <div className={`flex items-start gap-2 rounded-xl border p-3 text-sm font-semibold ${isError ? 'border-rose-200 bg-rose-50 text-rose-800' : 'border-emerald-200 bg-emerald-50 text-emerald-800'}`}>
-      {isError ? <AlertCircle className="mt-0.5 h-4 w-4 flex-none" aria-hidden="true" /> : <CheckCircle2 className="mt-0.5 h-4 w-4 flex-none" aria-hidden="true" />}
-      {message}
     </div>
   );
 }

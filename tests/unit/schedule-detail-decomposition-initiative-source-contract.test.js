@@ -10,17 +10,22 @@ const contextSource = readSource('apps/app/src/pages/schedule/ScheduleEventDetai
 const rsvpHookSource = readSource('apps/app/src/hooks/schedule/useScheduleEventRsvp.ts');
 const ridesHookSource = readSource('apps/app/src/hooks/schedule/useScheduleRideOffers.ts');
 const availabilityPanelsSource = readSource('apps/app/src/components/schedule/AvailabilityPanels.tsx');
+const compactMetaSource = readSource('apps/app/src/components/schedule/CompactMeta.tsx');
 const assignmentsSectionSource = readSource('apps/app/src/components/schedule/AssignmentsSection.tsx');
 const gameReportSectionsSource = readSource('apps/app/src/components/schedule/GameReportSections.tsx');
 const gameReportContentSource = readSource('apps/app/src/components/schedule/GameReportSectionContent.tsx');
 const playerSwitcherSource = readSource('apps/app/src/components/schedule/PlayerSwitcher.tsx');
+const practiceAttendancePanelSource = readSource('apps/app/src/components/schedule/PracticeAttendancePanel.tsx');
 const reportMarkdownSource = readSource('apps/app/src/components/schedule/ReportMarkdownText.tsx');
 const rideOfferCardSource = readSource('apps/app/src/components/schedule/RideOfferCard.tsx');
 const rideshareSectionSource = readSource('apps/app/src/components/schedule/RideshareSection.tsx');
+const scoreStepperSource = readSource('apps/app/src/components/schedule/ScoreStepper.tsx');
+const scheduleStatusSource = readSource('apps/app/src/components/schedule/ScheduleStatus.tsx');
 const staffRsvpRowSource = readSource('apps/app/src/components/schedule/StaffRsvpPlayerRow.tsx');
 const staffRsvpBreakdownPanelSource = readSource('apps/app/src/components/schedule/StaffRsvpBreakdownPanel.tsx');
 const staffRsvpReminderPanelSource = readSource('apps/app/src/components/schedule/StaffRsvpReminderPanel.tsx');
 const staffRsvpBreakdownHookSource = readSource('apps/app/src/hooks/schedule/useStaffRsvpBreakdown.ts');
+const presentationalComponentTestSource = readSource('apps/app/src/components/schedule/ScheduleEventDetailPresentational.test.tsx');
 const summaryComponentTestSource = readSource('apps/app/src/components/schedule/ScheduleEventSummaryComponents.test.tsx');
 const rsvpHookTestSource = readSource('apps/app/src/hooks/schedule/useScheduleEventRsvp.test.tsx');
 const staffRsvpHookTestSource = readSource('apps/app/src/hooks/schedule/useStaffRsvpBreakdown.test.tsx');
@@ -104,11 +109,15 @@ describe('ScheduleEventDetail decomposition initiative source contract', () => {
     it('keeps reusable schedule UI out of the detail page body', () => {
         [
             "import { DateTile } from '../components/schedule/DateTile';",
+            "import { CompactMeta } from '../components/schedule/CompactMeta';",
             "import { EventBrief } from '../components/schedule/EventBrief';",
             "import { GameReportSections } from '../components/schedule/GameReportSections';",
             "import { PlayerSwitcher } from '../components/schedule/PlayerSwitcher';",
+            "import { PracticeAttendancePanel } from '../components/schedule/PracticeAttendancePanel';",
             "import { ReportMarkdownText } from '../components/schedule/ReportMarkdownText';",
             "import { EventSectionNav } from '../components/schedule/EventSectionNav';",
+            "import { ScoreStepper } from '../components/schedule/ScoreStepper';",
+            "import { Status } from '../components/schedule/ScheduleStatus';",
             "import { StaffRsvpBreakdownPanel } from '../components/schedule/StaffRsvpBreakdownPanel';",
             "import { StaffRsvpReminderPanel } from '../components/schedule/StaffRsvpReminderPanel';",
             'QuickAvailabilityPanel',
@@ -119,12 +128,16 @@ describe('ScheduleEventDetail decomposition initiative source contract', () => {
         });
 
         [
+            /^function CompactMeta\b/m,
             /^function DateTile\b/m,
             /^function EventBrief\b/m,
             /^function EventSectionNav\b/m,
             /^function GameReportSections\b/m,
             /^function PlayerSwitcher\b/m,
+            /^function PracticeAttendancePanel\b/m,
             /^function ReportMarkdownText\b/m,
+            /^function ScoreStepper\b/m,
+            /^function Status\b/m,
             /^function StaffRsvpBreakdownPanel\b/m,
             /^function StaffRsvpReminderPanel\b/m,
             /^function QuickAvailabilityPanel\b/m,
@@ -135,12 +148,19 @@ describe('ScheduleEventDetail decomposition initiative source contract', () => {
             expect(detailSource).not.toMatch(inlineDefinition);
         });
 
+        expect(compactMetaSource).toContain('export function CompactMeta');
+        expect(practiceAttendancePanelSource).toContain('export function PracticeAttendancePanel');
+        expect(practiceAttendancePanelSource).toContain('data-testid={`practice-attendance-row-${player.playerId}`}');
+        expect(scoreStepperSource).toContain('export function ScoreStepper');
+        expect(scoreStepperSource).toContain('aria-label={`${label} score down`}');
+        expect(scheduleStatusSource).toContain('export function Status');
         expect(availabilityPanelsSource).toContain('export function QuickAvailabilityPanel');
         expect(availabilityPanelsSource).toContain('export function AvailabilityNotesList');
         expect(availabilityPanelsSource).toContain('export function AttentionPanel');
         expect(staffRsvpRowSource).toContain('export function StaffRsvpPlayerRow');
         expect(staffRsvpBreakdownPanelSource).toContain('export function StaffRsvpBreakdownPanel');
         expect(staffRsvpReminderPanelSource).toContain('export function StaffRsvpReminderPanel');
+        expect(presentationalComponentTestSource).toContain("describe('ScheduleEventDetail presentational components'");
         expect(summaryComponentTestSource).toContain("describe('Schedule event summary components'");
     });
 
