@@ -4,6 +4,7 @@ const DEFAULT_PAYMENT_SETTINGS = {
     offlinePaymentEnabled: false,
     onlineCheckoutEnabled: false
 };
+const ADMIN_REGISTRATION_FORM_STATUSES = ['draft', 'published', 'closed'];
 
 export function fieldLabelsToDefinitions(labels = [], prefix = 'field') {
     return labels
@@ -33,8 +34,8 @@ export function formatFieldLabels(fields = [], fallbackLabels = []) {
 export function buildAdminRegistrationFormPayload(input = {}, context = {}) {
     const participantLabels = parseFieldLabels(input.participantFieldsText);
     const guardianLabels = parseFieldLabels(input.guardianFieldsText);
-    const feeAmount = Number(input.feeAmount || 0);
-    const status = input.status === 'published' ? 'published' : 'draft';
+    const feeAmountCents = parseAdminRegistrationFeeAmountCents(input.feeAmount);
+    const status = normalizeAdminRegistrationFormStatus(input.status || (input.published === true ? 'published' : 'draft'));
     const installmentPlan = normalizeInstallmentPlan(input.installmentPlan || input);
 
     return {
@@ -44,7 +45,7 @@ export function buildAdminRegistrationFormPayload(input = {}, context = {}) {
         title: String(input.title || input.programName || '').trim(),
         description: String(input.description || '').trim(),
         season: String(input.season || '').trim(),
-        feeAmountCents: Math.max(0, Math.round(feeAmount * 100)),
+        feeAmountCents,
         currency: 'USD',
         installmentPlan,
         participantFields: fieldLabelsToDefinitions(
@@ -61,8 +62,27 @@ export function buildAdminRegistrationFormPayload(input = {}, context = {}) {
         backgroundCheck: normalizeBackgroundCheckSettings(input.backgroundCheck),
         waiverText: String(input.waiverText || '').trim(),
         status,
-        published: status === 'published'
+        published: isPublishedAdminRegistrationFormStatus(status)
     };
+}
+
+export function normalizeAdminRegistrationFormStatus(status = 'draft') {
+    const normalized = String(status || '').trim().toLowerCase();
+    if (normalized === 'open') return 'published';
+    return ADMIN_REGISTRATION_FORM_STATUSES.includes(normalized) ? normalized : 'draft';
+}
+
+export function isPublishedAdminRegistrationFormStatus(status = 'draft') {
+    const normalized = normalizeAdminRegistrationFormStatus(status);
+    return normalized === 'published' || normalized === 'closed';
+}
+
+export function parseAdminRegistrationFeeAmountCents(value = '') {
+    const normalized = String(value ?? '').replace(/[$,]/g, '').trim();
+    if (!normalized) return 0;
+    const parsed = Number(normalized);
+    if (!Number.isFinite(parsed) || parsed < 0) return 0;
+    return Math.max(0, Math.round(parsed * 100));
 }
 
 export function normalizeBackgroundCheck(settings = {}) {
@@ -232,6 +252,12 @@ export function validateAdminRegistrationFormPayload(payload = {}) {
     if (!payload.teamId) errors.push('Team is required.');
     if (!payload.programName) errors.push('Title is required.');
     if (!payload.waiverText) errors.push('Waiver text is required.');
+    if (!ADMIN_REGISTRATION_FORM_STATUSES.includes(String(payload.status || 'draft'))) {
+        errors.push('Registration status is invalid.');
+    }
+    if (!Number.isFinite(Number(payload.feeAmountCents)) || Number(payload.feeAmountCents) < 0) {
+        errors.push('Fee amount must be zero or greater.');
+    }
     if (!Array.isArray(payload.participantFields) || payload.participantFields.length < 1) {
         errors.push('At least one participant field is required.');
     }

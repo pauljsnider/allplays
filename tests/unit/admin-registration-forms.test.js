@@ -5,12 +5,15 @@ import {
     fieldLabelsToDefinitions,
     formatRegistrationDiscountRulesText,
     getAdminRegistrationShareUrl,
+    isPublishedAdminRegistrationFormStatus,
     normalizeBackgroundCheck,
+    normalizeAdminRegistrationFormStatus,
     normalizePaymentSettings,
     normalizeBackgroundCheckSettings,
     normalizeInstallmentPlan,
     normalizeRegistrationDiscountRules,
     normalizeRegistrationOptions,
+    parseAdminRegistrationFeeAmountCents,
     parseRegistrationDiscountRulesText,
     validateAdminRegistrationFormPayload
 } from '../../js/admin-registration-forms.js';
@@ -233,6 +236,49 @@ describe('admin registration form setup', () => {
         ]);
     });
 
+    it('preserves closed published forms and normalizes open status aliases', () => {
+        const closedPayload = buildAdminRegistrationFormPayload({
+            title: 'Spring Soccer',
+            waiverText: 'Accepted.',
+            feeAmount: '$1,234.56',
+            status: 'closed'
+        }, { teamId: 'team-1' });
+        const openPayload = buildAdminRegistrationFormPayload({
+            title: 'Summer Camp',
+            waiverText: 'Accepted.',
+            status: 'open'
+        }, { teamId: 'team-1' });
+
+        expect(closedPayload).toMatchObject({
+            status: 'closed',
+            published: true,
+            feeAmountCents: 123456
+        });
+        expect(openPayload).toMatchObject({
+            status: 'published',
+            published: true
+        });
+        expect(normalizeAdminRegistrationFormStatus('paused')).toBe('draft');
+        expect(isPublishedAdminRegistrationFormStatus('closed')).toBe(true);
+    });
+
+    it('converts admin registration fee inputs to safe cents', () => {
+        expect(parseAdminRegistrationFeeAmountCents('125.50')).toBe(12550);
+        expect(parseAdminRegistrationFeeAmountCents('$1,234.56')).toBe(123456);
+        expect(parseAdminRegistrationFeeAmountCents('19.995')).toBe(2000);
+        expect(parseAdminRegistrationFeeAmountCents('')).toBe(0);
+        expect(parseAdminRegistrationFeeAmountCents('-2')).toBe(0);
+        expect(validateAdminRegistrationFormPayload({
+            teamId: 'team-1',
+            programName: 'Bad fee',
+            waiverText: 'Accepted.',
+            status: 'published',
+            feeAmountCents: Number.NaN,
+            participantFields: [{ id: 'p', label: 'Player' }],
+            guardianFields: [{ id: 'g', label: 'Guardian' }]
+        })).toEqual(['Fee amount must be zero or greater.']);
+    });
+
     it('creates a shareable public registration URL for published forms', () => {
         expect(getAdminRegistrationShareUrl('team 1', 'form/2', 'https://allplays.example')).toBe(
             'https://allplays.example/registration.html?teamId=team%201&formId=form%2F2'
@@ -268,6 +314,7 @@ describe('admin registration form setup', () => {
         expect(adminPage).toContain('registration-background-check-instructions');
         expect(adminPage).toContain('registration-waiver');
         expect(adminPage).toContain('Publish and show link');
+        expect(adminPage).toContain('Closed to new submissions');
         expect(adminJs).toContain('window.openRegistrationFormsAdmin');
         expect(adminJs).toContain('window.addRegistrationOptionAdmin');
         expect(adminJs).toContain('window.moveRegistrationOptionAdmin');
@@ -280,6 +327,8 @@ describe('admin registration form setup', () => {
         expect(adminJs).toContain("document.getElementById('registration-background-check-enabled')");
         expect(adminJs).toContain("document.getElementById('registration-background-check-required')");
         expect(adminJs).toContain("document.getElementById('registration-background-check-instructions')");
+        expect(adminJs).toContain('getRegistrationAdminStatus(form)');
+        expect(adminJs).toContain("payload.status === 'closed'");
         expect(adminJs).toContain('const teamId = activeRegistrationTeam.id;');
         expect(adminJs).toContain('if (activeRegistrationTeam?.id !== teamId) return;');
         expect(adminJs).toContain('teams/${teamId}/registrationForms');
