@@ -71,6 +71,7 @@ vi.mock('../../../../js/parent-membership-utils.js', () => ({
 
 const libDir = dirname(fileURLToPath(import.meta.url));
 const authServicePath = resolve(libDir, 'authService.ts');
+const legacyAuthAdapterPath = resolve(libDir, 'adapters/legacyAuth.ts');
 const appTsconfigPath = resolve(libDir, '../../tsconfig.json');
 
 function createGoogleUser(overrides: Record<string, unknown> = {}) {
@@ -109,11 +110,20 @@ describe('app auth invite activation', () => {
     adminInviteMocks.redeemAdminInviteAcceptance.mockResolvedValue({ id: 'team-1', name: 'Bears' });
   });
 
-  it('keeps the legacy auth db graph lazy until an auth db flow is needed', () => {
+  it('routes the legacy auth graph through the lazy typed adapter', () => {
     const authServiceSource = readFileSync(authServicePath, 'utf8');
+    const legacyAuthAdapterSource = readFileSync(legacyAuthAdapterPath, 'utf8');
 
-    expect(authServiceSource).not.toContain("import * as authDb from '../../../../js/db.js';");
-    expect(authServiceSource).toContain("authDbPromise ||= import('../../../../js/db.js');");
+    expect(authServiceSource).not.toContain('../../../../js/');
+    expect(authServiceSource).not.toContain('@legacy/');
+    expect(authServiceSource).toContain("from './adapters/legacyAuth';");
+    expect(authServiceSource).toContain('loadLegacyAuthDb');
+    expect(legacyAuthAdapterSource).toContain("import('@legacy/db.js')");
+    expect(legacyAuthAdapterSource).toContain("import('@legacy/admin-invite.js')");
+    expect(legacyAuthAdapterSource).toContain("import('@legacy/accept-invite-flow.js')");
+    expect(legacyAuthAdapterSource).toContain("import('@legacy/signup-flow.js')");
+    expect(legacyAuthAdapterSource).toContain("import('@legacy/parent-membership-utils.js')");
+    expect(legacyAuthAdapterSource).not.toMatch(/from\s+['"]@legacy\//);
     expect(authServiceSource).not.toContain('return Promise.resolve(authDb);');
   });
 
@@ -132,7 +142,7 @@ describe('app auth invite activation', () => {
 
     await signInWithGoogleAccount('ABCDEFGH');
 
-    expect(dbMocks.validateAccessCode).toHaveBeenCalledWith('ABCDEFGH');
+    expect(dbMocks.validateAccessCode).toHaveBeenCalledWith('ABCDEFGH', undefined);
     expect(dbMocks.redeemParentInvite).toHaveBeenCalledWith('google-user-1', 'ABCDEFGH', 'parent@example.com');
     expect(dbMocks.redeemParentInvite.mock.calls[0][1]).toBe('ABCDEFGH');
     expect(dbMocks.updateUserProfile).toHaveBeenCalledWith('google-user-1', expect.objectContaining({
