@@ -31,6 +31,20 @@ export const initialEmailComposerState: EmailComposerState = {
   templates: []
 };
 
+export const emailComposerActions = {
+  setDrafts: (drafts: TeamEmailDraft[]): EmailComposerAction => ({ type: 'setDrafts', drafts }),
+  selectDraft: (draftId: string): EmailComposerAction => ({ type: 'selectDraft', draftId }),
+  updateSubject: (subject: string): EmailComposerAction => ({ type: 'updateSubject', subject }),
+  updateBody: (body: string): EmailComposerAction => ({ type: 'updateBody', body }),
+  updateTemplateName: (templateName: string): EmailComposerAction => ({ type: 'updateTemplateName', templateName }),
+  setTemplates: (templates: TeamEmailTemplate[]): EmailComposerAction => ({ type: 'setTemplates', templates }),
+  applyTemplate: (templateId: string): EmailComposerAction => ({ type: 'applyTemplate', templateId }),
+  saveDraft: (draft: TeamEmailDraft): EmailComposerAction => ({ type: 'saveDraft', draft }),
+  deleteDraft: (draftId: string): EmailComposerAction => ({ type: 'deleteDraft', draftId }),
+  clearSelectedDraft: (): EmailComposerAction => ({ type: 'clearSelectedDraft' }),
+  clearComposer: (): EmailComposerAction => ({ type: 'clearComposer' })
+};
+
 function getDraftContent(draft: TeamEmailDraft | undefined | null) {
   return {
     subject: draft?.subject || '',

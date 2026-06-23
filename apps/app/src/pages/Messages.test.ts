@@ -1,6 +1,16 @@
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { getDirectThreadMountKey, getMessagesInboxLoadRouteKey, isSelectedConversation, mergeInboxTeams, mergeVisibleChatMessages, normalizeConversationId, shouldRecordDirectThreadMount } from './Messages';
 import type { ChatInboxPreviewUpdate, ChatTeam } from '../lib/chatService';
+
+function resolveAppSourcePath(relativePath: string) {
+  const cwd = process.cwd();
+  const appRoot = cwd.endsWith('/apps/app') || cwd.endsWith('\\apps\\app')
+    ? cwd
+    : resolve(cwd, 'apps/app');
+  return resolve(appRoot, relativePath);
+}
 
 function buildTeam(overrides: Partial<ChatTeam> = {}): ChatTeam {
   return {
@@ -120,5 +130,21 @@ describe('direct thread mount telemetry', () => {
     expect(getMessagesInboxLoadRouteKey(true, 'team-2')).toBe('');
     expect(getMessagesInboxLoadRouteKey(false, 'team-1')).toBe('team-1');
     expect(getMessagesInboxLoadRouteKey(false, ' team-2 ')).toBe('team-2');
+  });
+
+  it('keeps Messages email composer dispatches on the shared action creators', () => {
+    const source = readFileSync(resolveAppSourcePath('src/pages/Messages.tsx'), 'utf8');
+
+    expect(source).toContain("import { emailComposerActions } from './messages/state/emailReducer';");
+    expect(source).toContain("emailDispatch(emailComposerActions.setTemplates(await loadTeamEmailTemplates(teamId)));");
+    expect(source).toContain("emailDispatch(emailComposerActions.setDrafts(await loadTeamEmailDrafts(teamId)));");
+    expect(source).toContain("emailDispatch(emailComposerActions.clearSelectedDraft());");
+    expect(source).toContain("emailDispatch(emailComposerActions.selectDraft(draft.id));");
+    expect(source).toContain("emailDispatch(emailComposerActions.applyTemplate(template.id));");
+    expect(source).toContain("emailDispatch(emailComposerActions.saveDraft(savedDraft));");
+    expect(source).toContain("emailDispatch(emailComposerActions.clearComposer());");
+    expect(source).not.toContain("emailDispatch({ type: 'setTemplates'");
+    expect(source).not.toContain("emailDispatch({ type: 'setDrafts'");
+    expect(source).not.toContain("emailDispatch({ type: 'clearComposer'");
   });
 });
