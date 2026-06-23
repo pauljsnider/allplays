@@ -14,6 +14,7 @@ describe('notification preference helpers', () => {
       mentions: true,
       access: true,
       fees: true,
+      rideshare: true,
       liveChat: false,
       liveScore: false,
       media: false

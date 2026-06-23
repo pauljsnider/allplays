@@ -487,7 +487,7 @@ test('preference writes update the aggregated notificationRecipients doc', async
                 fees: true,
                 practice: false,
                 access: true,
-                rideshare: false,
+                rideshare: true,
                 media: false,
                 awards: false,
                 officiating: false
