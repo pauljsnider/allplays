@@ -360,6 +360,10 @@ async function mockHomePlayerModules(page) {
                 export async function savePlayerCustomRosterFieldValues() {}
                 export async function saveStaffPlayerRosterDetails() { return { updatedFields: [] }; }
                 export async function sendParentCoParentInvite() { return { code: 'ABC12345' }; }
+                export function normalizeAthleteProfileHighlightClipUrl(url) {
+                    const value = String(url || '').trim();
+                    return value;
+                }
                 export async function saveParentAthleteProfileDraft() { return { shareUrl: 'https://allplays.ai/athlete-profile.html?profileId=profile-1' }; }
                 export async function saveParentPlayerIncentiveRule() { return 'rule-2'; }
                 export async function toggleParentPlayerIncentiveRule() {}
