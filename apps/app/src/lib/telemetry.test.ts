@@ -16,7 +16,7 @@ const sentryMocks = vi.hoisted(() => {
 });
 
 vi.mock('@sentry/browser', () => sentryMocks);
-vi.mock('../../../../js/telemetry.js', () => ({}));
+vi.mock('@legacy/telemetry.js', () => ({}));
 
 describe('app telemetry bridge', () => {
   beforeEach(() => {

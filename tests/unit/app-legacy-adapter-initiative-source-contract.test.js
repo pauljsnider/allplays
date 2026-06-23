@@ -4,6 +4,12 @@ import { join } from 'node:path';
 
 const repoRoot = process.cwd();
 const directLegacyReferencePattern = /(from\s+['"](?:\.\.\/){4,}js\/|import\(['"](?:\.\.\/){4,}js\/)/;
+const legacyAliasReferencePattern = /(from\s+['"]@legacy\/|import\(['"]@legacy\/)/;
+const legacyAdapterDir = 'apps/app/src/lib/adapters/';
+const approvedRuntimeBridgePaths = [
+    'apps/app/src/lib/pushService.ts',
+    'apps/app/src/lib/telemetry.ts'
+];
 
 function readRepoFile(path) {
     return readFileSync(join(repoRoot, path), 'utf8');
@@ -61,16 +67,30 @@ describe('app legacy adapter initiative source contract', () => {
         expect(rosterPrivacyAdapterSource).toContain("from '@legacy/roster-profile-fields.js'");
     });
 
-    it('keeps direct ../../../../js references limited to known app-shell exceptions and adapter shims', () => {
-        const filesWithDirectLegacyReferences = listSourceFiles('apps/app/src')
+    it('keeps direct ../../../../js references behind adapter shims', () => {
+        const nonAdapterFilesWithDirectLegacyReferences = listSourceFiles('apps/app/src')
+            .filter((path) => !path.startsWith(legacyAdapterDir))
             .filter((path) => directLegacyReferencePattern.test(readRepoFile(path)))
             .sort();
 
-        expect(filesWithDirectLegacyReferences).toEqual([
-            'apps/app/src/lib/adapters/legacyScheduleHelpers.ts',
-            'apps/app/src/lib/pushService.ts',
-            'apps/app/src/lib/telemetry.ts'
-        ]);
+        expect(nonAdapterFilesWithDirectLegacyReferences).toEqual([]);
+    });
+
+    it('keeps @legacy imports at the adapter boundary and approved runtime bridges', () => {
+        const filesWithLegacyAliasReferences = listSourceFiles('apps/app/src')
+            .filter((path) => legacyAliasReferencePattern.test(readRepoFile(path)))
+            .filter((path) => !path.startsWith(legacyAdapterDir))
+            .sort();
+
+        expect(filesWithLegacyAliasReferences).toEqual(approvedRuntimeBridgePaths);
+
+        const telemetrySource = readRepoFile('apps/app/src/lib/telemetry.ts');
+        const pushServiceSource = readRepoFile('apps/app/src/lib/pushService.ts');
+
+        expect(telemetrySource).toContain("import('@legacy/telemetry.js')");
+        expect(pushServiceSource).toContain("import('@legacy/push-notifications.js')");
+        expect(telemetrySource).not.toMatch(directLegacyReferencePattern);
+        expect(pushServiceSource).not.toMatch(directLegacyReferencePattern);
     });
 
     it('routes migrated parent tools, auth, chat, schedule, player, and game report services through adapters', () => {

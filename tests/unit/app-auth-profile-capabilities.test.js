@@ -338,7 +338,7 @@ describe('React app auth/profile capability parity', () => {
 
         expectContains(pushService, [
             'if (!Capacitor.isNativePlatform()) {',
-            "await import('../../../../js/push-notifications.js')",
+            "await import('@legacy/push-notifications.js')",
             'const { token } = await registerPushNotifications();',
             'await saveNotificationDeviceToken(userId, {',
             "platform: 'web'",
@@ -346,6 +346,7 @@ describe('React app auth/profile capability parity', () => {
             'getNativeMessagingToken()',
             'platform = Capacitor.getPlatform()'
         ]);
+        expect(pushService).not.toContain("await import('../../../../js/push-notifications.js')");
         expect(pushService).not.toContain("import { registerPushNotifications } from '../../../../js/push-notifications.js';");
         expect(pushService).not.toContain('Push registration for the web app still runs through the current website profile page.');
     });
