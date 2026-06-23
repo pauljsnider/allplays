@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   applyStandardTrackerTallyDelta,
+  buildStandardTrackerOpponentStatsEntry,
   buildStandardTrackerViewModel
 } from './standardTrackerViewModel';
 
@@ -65,6 +66,58 @@ describe('standardTrackerViewModel', () => {
     expect(model.rows[0].cells.map((cell) => `${cell.column.key}:${cell.value}`)).toEqual(['3-pt:2', 'fg%:50']);
     expect(applyStandardTrackerTallyDelta({ p1: { '3-pt': 2 } }, 'p1', '3-Pt', 1)).toEqual({
       p1: { '3-pt': 3 }
+    });
+  });
+
+  it('builds linked and anonymous opponent stat entries in the legacy report shape', () => {
+    const linkedModel = buildStandardTrackerViewModel({
+      config: {
+        columns: ['GOALS', 'SHOTS'],
+        statDefinitions: [
+          { id: 'goals', label: 'GOALS' },
+          { id: 'shots', label: 'SHOTS' }
+        ]
+      },
+      roster: [{
+        id: 'opp-9',
+        playerId: 'opp-9',
+        name: 'Taylor Guard',
+        number: '9',
+        photoUrl: 'https://img.example/opp-9.png',
+        stats: { goals: 2, shots: 3, fouls: 1 }
+      }]
+    });
+
+    expect(buildStandardTrackerOpponentStatsEntry({
+      player: linkedModel.rows[0].player,
+      columns: linkedModel.columns,
+      tallies: { 'opp-9': { goals: 2, shots: 3, fouls: 1 } }
+    })).toEqual({
+      name: 'Taylor Guard',
+      number: '9',
+      playerId: 'opp-9',
+      photoUrl: 'https://img.example/opp-9.png',
+      goals: 2,
+      shots: 3,
+      fouls: 1
+    });
+
+    const anonymousModel = buildStandardTrackerViewModel({
+      config: { columns: ['GOALS'] },
+      roster: [{ id: 'opponent', playerId: null, name: 'Wolves', stats: { goals: 0 } }]
+    });
+
+    expect(buildStandardTrackerOpponentStatsEntry({
+      player: anonymousModel.rows[0].player,
+      columns: anonymousModel.columns,
+      tallies: { opponent: { goals: 1 } }
+    })).toEqual({
+      name: 'Wolves',
+      number: '',
+      playerId: null,
+      photoUrl: '',
+      goals: 1,
+      fouls: 0
     });
   });
 });

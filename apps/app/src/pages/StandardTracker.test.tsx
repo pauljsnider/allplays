@@ -8,6 +8,8 @@ import type { AuthState } from '../lib/types';
 
 const scheduleServiceMocks = vi.hoisted(() => ({
   loadHomeScoringPlayers: vi.fn(),
+  loadOpponentScoringPlayers: vi.fn(),
+  loadOpponentStatsForGame: vi.fn(),
   loadParentScheduleEventDetail: vi.fn(),
   loadScorekeeperStatTrackerConfigsForApp: vi.fn(),
   updateGameScore: vi.fn()
@@ -161,6 +163,8 @@ function configureDefaultMocks() {
     { id: 'p1', name: 'Avery Smith', number: '12', points: 0, fouls: 0, stats: { goals: 0, shots: 2 } },
     { id: 'p2', name: 'Blake Jones', number: '7', points: 0, fouls: 0, stats: { goals: 1, shots: 0 } }
   ]);
+  scheduleServiceMocks.loadOpponentScoringPlayers.mockResolvedValue([]);
+  scheduleServiceMocks.loadOpponentStatsForGame.mockResolvedValue({});
 }
 
 function renderTracker(authOverride = auth) {
@@ -248,6 +252,145 @@ describe('StandardTracker', () => {
       expect(screen.getByText('1-0')).toBeTruthy();
       expect(within(screen.getByTestId('standard-tracker-row-p1')).getByText('+1 / 0')).toBeTruthy();
       expect(screen.getByText('Undid #12 Avery Smith GOALS +1.')).toBeTruthy();
+    });
+  });
+
+  it('hydrates persisted opponent tallies before recording linked roster stats', async () => {
+    scheduleServiceMocks.loadParentScheduleEventDetail.mockResolvedValue({
+      events: [buildEvent({
+        opponent: 'Ravens',
+        opponentTeamId: 'opp-team-1',
+        opponentTeamName: 'Ravens Academy',
+        opponentTeamPhoto: 'https://img.example/ravens.png'
+      })],
+      children: []
+    });
+    scheduleServiceMocks.loadOpponentScoringPlayers.mockResolvedValue([
+      { id: 'opp-9', name: 'Taylor Guard', number: '9', photoUrl: 'https://img.example/opp-9.png', points: 0, fouls: 0, stats: { goals: 0, shots: 0 } }
+    ]);
+    scheduleServiceMocks.loadOpponentStatsForGame.mockResolvedValue({
+      'opp-9': {
+        name: 'Taylor Guard',
+        number: '9',
+        playerId: 'opp-9',
+        photoUrl: 'https://img.example/opp-9.png',
+        goals: 2,
+        shots: 1,
+        fouls: 0
+      }
+    });
+    scheduleServiceMocks.loadHomeScoringPlayers.mockImplementation(async () => {
+      return [
+        { id: 'p1', name: 'Avery Smith', number: '12', points: 0, fouls: 0, stats: { goals: 0, shots: 2 } },
+        { id: 'p2', name: 'Blake Jones', number: '7', points: 0, fouls: 0, stats: { goals: 1, shots: 0 } }
+      ];
+    });
+
+    renderTracker();
+
+    expect(await screen.findByTestId('standard-tracker-opponent-grid')).toBeTruthy();
+    expect(scheduleServiceMocks.loadHomeScoringPlayers).toHaveBeenCalledWith('team-1', 'game-1');
+    expect(scheduleServiceMocks.loadOpponentScoringPlayers).toHaveBeenCalledWith('opp-team-1');
+    expect(scheduleServiceMocks.loadOpponentStatsForGame).toHaveBeenCalledWith('team-1', 'game-1');
+    expect(within(screen.getByTestId('standard-tracker-opponent-row-opp-9')).getByText('+1 / 2')).toBeTruthy();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Opponent #9 Taylor Guard GOALS add one' }));
+
+    const service = statTrackingMocks.getLastService();
+    await waitFor(() => {
+      expect(service.recordEvent).toHaveBeenCalledWith('team-1', 'game-1', expect.objectContaining({
+        text: 'Opponent #9 Taylor Guard GOALS +1',
+        teamSide: 'away',
+        playerName: 'Taylor Guard',
+        playerNumber: '9',
+        opponentPlayerName: 'Taylor Guard',
+        opponentPlayerNumber: '9',
+        opponentPlayerPhoto: 'https://img.example/opp-9.png',
+        opponentStatsEntryId: 'opp-9',
+        opponentStatsEntryBefore: {
+          name: 'Taylor Guard',
+          number: '9',
+          playerId: 'opp-9',
+          photoUrl: 'https://img.example/opp-9.png',
+          goals: 2,
+          shots: 1,
+          fouls: 0
+        },
+        opponentStatsEntryAfter: {
+          name: 'Taylor Guard',
+          number: '9',
+          playerId: 'opp-9',
+          photoUrl: 'https://img.example/opp-9.png',
+          goals: 3,
+          shots: 1,
+          fouls: 0
+        },
+        undoData: expect.objectContaining({
+          playerId: 'opp-9',
+          statKey: 'goals',
+          value: 1,
+          isOpponent: true
+        })
+      }), auth.user);
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText('1-1')).toBeTruthy();
+      expect(within(screen.getByTestId('standard-tracker-opponent-row-opp-9')).getByText('+1 / 3')).toBeTruthy();
+      expect(screen.getByText('Opponent #9 Taylor Guard GOALS +1 recorded.')).toBeTruthy();
+    });
+
+    const savedSession = JSON.parse(window.localStorage.getItem(getStandardTrackerSessionKey('team-1', 'game-1')) || '{}');
+    expect(savedSession).toMatchObject({
+      score: { homeScore: 1, awayScore: 1 },
+      opponentTallies: { 'opp-9': { goals: 3, shots: 1 } }
+    });
+  });
+
+  it('records unlinked opponent stats against an anonymous opponent entry', async () => {
+    renderTracker();
+
+    expect(await screen.findByTestId('standard-tracker-opponent-grid')).toBeTruthy();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Opponent Wolves GOALS add one' }));
+
+    const service = statTrackingMocks.getLastService();
+    await waitFor(() => {
+      expect(service.recordEvent).toHaveBeenCalledWith('team-1', 'game-1', expect.objectContaining({
+        text: 'Opponent Wolves GOALS +1',
+        teamSide: 'away',
+        playerName: 'Wolves',
+        playerNumber: '',
+        opponentStatsEntryId: 'opponent',
+        opponentStatsEntryBefore: {
+          name: 'Wolves',
+          number: '',
+          playerId: null,
+          photoUrl: '',
+          goals: 0,
+          shots: 0,
+          fouls: 0
+        },
+        opponentStatsEntryAfter: {
+          name: 'Wolves',
+          number: '',
+          playerId: null,
+          photoUrl: '',
+          goals: 1,
+          shots: 0,
+          fouls: 0
+        },
+        undoData: expect.objectContaining({
+          playerId: 'opponent',
+          statKey: 'goals',
+          isOpponent: true
+        })
+      }), auth.user);
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText('1-1')).toBeTruthy();
+      expect(within(screen.getByTestId('standard-tracker-opponent-row-opponent')).getByText('+1 / 1')).toBeTruthy();
     });
   });
 
@@ -357,6 +500,7 @@ describe('StandardTracker', () => {
     expect(screen.queryByTestId('standard-tracker-grid')).toBeNull();
     expect(scheduleServiceMocks.loadScorekeeperStatTrackerConfigsForApp).not.toHaveBeenCalled();
     expect(scheduleServiceMocks.loadHomeScoringPlayers).not.toHaveBeenCalled();
+    expect(scheduleServiceMocks.loadOpponentScoringPlayers).not.toHaveBeenCalled();
     expect(statTrackingMocks.createDefaultStatTrackingService).not.toHaveBeenCalled();
   });
 });

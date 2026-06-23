@@ -12,6 +12,14 @@ export type TrackerUndoData = {
     isOpponent?: boolean;
 };
 
+export type TrackerOpponentStatsEntry = {
+    name: string;
+    number: string;
+    playerId: string | null;
+    photoUrl: string;
+    [statKey: string]: string | number | null;
+};
+
 export type TrackerEventInput = {
     text: string;
     clock?: string | null;
@@ -21,6 +29,12 @@ export type TrackerEventInput = {
     undoData?: TrackerUndoData | null;
     playerName?: string | null;
     playerNumber?: string | null;
+    opponentPlayerName?: string | null;
+    opponentPlayerNumber?: string | number | null;
+    opponentPlayerPhoto?: string | null;
+    opponentStatsEntryId?: string | null;
+    opponentStatsEntryBefore?: TrackerOpponentStatsEntry | null;
+    opponentStatsEntryAfter?: TrackerOpponentStatsEntry | null;
     teamSide?: 'home' | 'away';
 };
 
@@ -34,6 +48,9 @@ export type TrackerEventDocument = {
     statKey: string | null;
     value: number | null;
     isOpponent: boolean;
+    opponentPlayerName?: string | null;
+    opponentPlayerNumber?: string;
+    opponentPlayerPhoto?: string;
     createdBy: string;
 };
 
@@ -59,8 +76,9 @@ export function buildTrackerEventDocument(input: TrackerEventInput, user: Tracke
     const undoData = input.undoData || {};
     const statKey = normalizeStatKey(undoData.statKey);
     const value = Number(undoData.value);
+    const isOpponent = undoData.isOpponent === true;
 
-    return {
+    const event: TrackerEventDocument = {
         text: String(input.text || ''),
         gameTime: String(input.gameTime || input.clock || ''),
         period: String(input.period || BASE_TRACKER_PERIOD),
@@ -69,7 +87,15 @@ export function buildTrackerEventDocument(input: TrackerEventInput, user: Tracke
         playerId: normalizeText(undoData.playerId) || null,
         statKey: statKey || null,
         value: Number.isFinite(value) ? value : null,
-        isOpponent: undoData.isOpponent === true,
+        isOpponent,
         createdBy: String(user.uid || '')
     };
+
+    if (isOpponent) {
+        event.opponentPlayerName = normalizeText(input.opponentPlayerName || input.playerName) || null;
+        event.opponentPlayerNumber = normalizeText(input.opponentPlayerNumber ?? input.playerNumber);
+        event.opponentPlayerPhoto = normalizeText(input.opponentPlayerPhoto);
+    }
+
+    return event;
 }

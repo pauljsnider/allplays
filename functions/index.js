@@ -581,108 +581,140 @@ function buildRegistrationReminderStopUpdate({ reason = 'resolved', nowIso = '' 
   };
 }
 
-async function queueDueRegistrationFailedPaymentReminders() {
-  const now = new Date();
-  const nowIso = now.toISOString();
-  const { appUrl } = getStripeConfig();
-  const dueSnap = await firestore.collectionGroup('registrations')
-    .where('paymentReminder.nextReminderAt', '<=', nowIso)
-    .limit(50)
-    .get();
+const REGISTRATION_PAYMENT_REMINDER_QUERY_PAGE_SIZE = PRE_EVENT_REMINDER_QUERY_PAGE_SIZE;
+const REGISTRATION_PAYMENT_REMINDER_MAX_PAGES_PER_RUN = PRE_EVENT_REMINDER_MAX_PAGES_PER_RUN;
+const REGISTRATION_PAYMENT_REMINDER_MAX_RUNTIME_MS = PRE_EVENT_REMINDER_MAX_RUNTIME_MS;
 
-  const results = [];
-  for (const docSnap of dueSnap.docs) {
-    const registrationRef = docSnap.ref;
-    let queued = false;
-    await firestore.runTransaction(async (transaction) => {
-      const freshSnap = await transaction.get(registrationRef);
-      if (!freshSnap.exists) return;
+async function processDueRegistrationFailedPaymentReminder(docSnap, { now, nowIso, appUrl }) {
+  const registrationRef = docSnap.ref;
+  let result = null;
+  await firestore.runTransaction(async (transaction) => {
+    const freshSnap = await transaction.get(registrationRef);
+    if (!freshSnap.exists) return;
 
-      const registration = freshSnap.data() || {};
-      const reminder = registration.paymentReminder || {};
-      const nextReminderAt = String(reminder.nextReminderAt || '').trim();
-      if (!nextReminderAt || nextReminderAt > nowIso) return;
+    const registration = freshSnap.data() || {};
+    const reminder = registration.paymentReminder || {};
+    const nextReminderAt = String(reminder.nextReminderAt || '').trim();
+    if (!nextReminderAt || nextReminderAt > nowIso) return;
 
-      if (shouldStopRegistrationPaymentReminders(registration)) {
-        transaction.update(registrationRef, buildRegistrationReminderStopUpdate({
-          reason: registration.paymentStatus === 'paid' ? 'paid' : 'closed',
-          nowIso
-        }));
-        return;
-      }
+    if (shouldStopRegistrationPaymentReminders(registration)) {
+      const reason = registration.paymentStatus === 'paid' ? 'paid' : 'closed';
+      transaction.update(registrationRef, buildRegistrationReminderStopUpdate({
+        reason,
+        nowIso
+      }));
+      result = { path: registrationRef.path, action: 'stopped', reason };
+      return;
+    }
 
-      const recipientEmail = String(reminder.recipientEmail || getRegistrationCustomerEmail(registration) || '').trim().toLowerCase();
-      if (!recipientEmail) {
-        transaction.update(registrationRef, {
-          'paymentReminder.status': 'missing_email',
-          'paymentReminder.lastReminderKind': 'missing_email',
-          'paymentReminder.nextReminderAt': admin.firestore.FieldValue.delete(),
-          updatedAt: admin.firestore.FieldValue.serverTimestamp()
-        });
-        return;
-      }
-
-      const reminderNumber = Math.max(1, Number(reminder.reminderCount || 0) + 1);
-      const registrationInput = {
-        teamId: registration.teamId,
-        formId: registration.formId,
-        registrationId: registration.id || registrationRef.id,
-        checkoutAttemptToken: registration.checkoutAttemptToken || ''
-      };
-      const mailDocId = buildRegistrationPaymentReminderMailDocId({
-        teamId: registration.teamId,
-        formId: registration.formId,
-        registrationId: registration.id || registrationRef.id,
-        eventId: reminder.lastEventId || 'manual',
-        sequence: `followup_${reminderNumber}`
-      });
-      const retryUrl = String(reminder.retryUrl || '').trim() || buildRegistrationPaymentRetryUrl(appUrl, registrationInput);
-      const form = {
-        programName: registration.programName || 'Program registration'
-      };
-      const mailJob = buildRegistrationReminderMailJob({
-        registration,
-        form,
-        retryUrl,
-        reminderLabel: 'Your registration payment is still due.',
-        metadata: {
-          recipientEmail,
-          teamId: registration.teamId,
-          formId: registration.formId,
-          registrationId: registration.id || registrationRef.id,
-          reminderKind: 'followup',
-          reminderNumber,
-          stripeEventId: reminder.lastEventId || null
-        }
-      });
-
-      transaction.set(buildRegistrationReminderMailRef(mailDocId), mailJob);
+    const recipientEmail = String(reminder.recipientEmail || getRegistrationCustomerEmail(registration) || '').trim().toLowerCase();
+    if (!recipientEmail) {
       transaction.update(registrationRef, {
-        'paymentReminder.status': 'active',
-        'paymentReminder.recipientEmail': recipientEmail,
-        'paymentReminder.retryUrl': retryUrl,
-        'paymentReminder.reminderCount': reminderNumber,
-        'paymentReminder.lastQueuedAt': nowIso,
-        'paymentReminder.lastMailId': mailDocId,
-        'paymentReminder.lastReminderKind': 'followup',
-        'paymentReminder.lastAudit': buildQueuedReminderAuditEntry({
-          kind: 'followup',
-          eventId: reminder.lastEventId || '',
-          mailDocId,
-          queuedAtIso: nowIso
-        }),
-        'paymentReminder.nextReminderAt': new Date(now.getTime() + REGISTRATION_PAYMENT_REMINDER_CADENCE_DAYS * 24 * 60 * 60 * 1000).toISOString(),
+        'paymentReminder.status': 'missing_email',
+        'paymentReminder.lastReminderKind': 'missing_email',
+        'paymentReminder.nextReminderAt': admin.firestore.FieldValue.delete(),
         updatedAt: admin.firestore.FieldValue.serverTimestamp()
       });
-      queued = true;
+      result = { path: registrationRef.path, action: 'missing_email' };
+      return;
+    }
+
+    const reminderNumber = Math.max(1, Number(reminder.reminderCount || 0) + 1);
+    const registrationInput = {
+      teamId: registration.teamId,
+      formId: registration.formId,
+      registrationId: registration.id || registrationRef.id,
+      checkoutAttemptToken: registration.checkoutAttemptToken || ''
+    };
+    const mailDocId = buildRegistrationPaymentReminderMailDocId({
+      teamId: registration.teamId,
+      formId: registration.formId,
+      registrationId: registration.id || registrationRef.id,
+      eventId: reminder.lastEventId || 'manual',
+      sequence: `followup_${reminderNumber}`
+    });
+    const retryUrl = String(reminder.retryUrl || '').trim() || buildRegistrationPaymentRetryUrl(appUrl, registrationInput);
+    const form = {
+      programName: registration.programName || 'Program registration'
+    };
+    const mailJob = buildRegistrationReminderMailJob({
+      registration,
+      form,
+      retryUrl,
+      reminderLabel: 'Your registration payment is still due.',
+      metadata: {
+        recipientEmail,
+        teamId: registration.teamId,
+        formId: registration.formId,
+        registrationId: registration.id || registrationRef.id,
+        reminderKind: 'followup',
+        reminderNumber,
+        stripeEventId: reminder.lastEventId || null
+      }
     });
 
-    if (queued) {
-      results.push(registrationRef.path);
-    }
-  }
+    transaction.set(buildRegistrationReminderMailRef(mailDocId), mailJob);
+    transaction.update(registrationRef, {
+      'paymentReminder.status': 'active',
+      'paymentReminder.recipientEmail': recipientEmail,
+      'paymentReminder.retryUrl': retryUrl,
+      'paymentReminder.reminderCount': reminderNumber,
+      'paymentReminder.lastQueuedAt': nowIso,
+      'paymentReminder.lastMailId': mailDocId,
+      'paymentReminder.lastReminderKind': 'followup',
+      'paymentReminder.lastAudit': buildQueuedReminderAuditEntry({
+        kind: 'followup',
+        eventId: reminder.lastEventId || '',
+        mailDocId,
+        queuedAtIso: nowIso
+      }),
+      'paymentReminder.nextReminderAt': new Date(now.getTime() + REGISTRATION_PAYMENT_REMINDER_CADENCE_DAYS * 24 * 60 * 60 * 1000).toISOString(),
+      updatedAt: admin.firestore.FieldValue.serverTimestamp()
+    });
+    result = { path: registrationRef.path, action: 'queued', mailDocId };
+  });
 
-  return results;
+  return result;
+}
+
+async function queueDueRegistrationFailedPaymentReminders(now = new Date()) {
+  const nowIso = now.toISOString();
+  const { appUrl } = getStripeConfig();
+  const drainSummary = await drainDueReminderPages({
+    now,
+    maxPages: REGISTRATION_PAYMENT_REMINDER_MAX_PAGES_PER_RUN,
+    maxRuntimeMs: REGISTRATION_PAYMENT_REMINDER_MAX_RUNTIME_MS,
+    loadPage: async ({ dueIso, cursor, limit }) => {
+      let query = firestore.collectionGroup('registrations')
+        .where('paymentReminder.nextReminderAt', '<=', dueIso)
+        .orderBy('paymentReminder.nextReminderAt')
+        .limit(limit || REGISTRATION_PAYMENT_REMINDER_QUERY_PAGE_SIZE);
+      if (cursor) {
+        query = query.startAfter(cursor);
+      }
+      const dueSnap = await query.get();
+      return {
+        docs: dueSnap.docs,
+        nextCursor: dueSnap.docs[dueSnap.docs.length - 1] || null
+      };
+    },
+    processReminder: (docSnap) => processDueRegistrationFailedPaymentReminder(docSnap, { now, nowIso, appUrl })
+  });
+  const processedResults = drainSummary.results.filter(Boolean);
+  const queuedResults = processedResults.filter((result) => result.action === 'queued');
+  const stoppedResults = processedResults.filter((result) => result.action === 'stopped');
+  const missingEmailResults = processedResults.filter((result) => result.action === 'missing_email');
+
+  return {
+    ...drainSummary,
+    results: processedResults,
+    examinedCount: drainSummary.results.length,
+    processedCount: processedResults.length,
+    queuedCount: queuedResults.length,
+    stoppedCount: stoppedResults.length,
+    missingEmailCount: missingEmailResults.length,
+    queuedPaths: queuedResults.map((result) => result.path)
+  };
 }
 
 async function reserveRegistrationCheckoutCapacityForRetry(input, options = {}) {
