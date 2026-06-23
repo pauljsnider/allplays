@@ -528,7 +528,7 @@ describe('React app auth/profile capability parity', () => {
             'getGames',
             'getPracticeSessions',
             'getRsvps',
-            'getRsvpSummaries',
+            'summarizeRsvps',
             'listRideOffersForEvent',
             'getAssignmentClaims',
             'fetchAndParseCalendar',
