@@ -2140,10 +2140,11 @@ describe('team schedule game windowing (#2034)', () => {
       {
         masterId: 'practice-master',
         instanceDate: '2026-06-24',
-        date: new Date('2026-06-24T18:00:00.000Z'),
+        date: '2026-06-24T18:00:00.000Z',
         endDate: new Date('2026-06-24T19:30:00.000Z'),
         location: 'North Field',
-        title: 'Weekly Practice'
+        title: 'Weekly Practice',
+        notes: 'Bring water'
       }
     ] as any);
 
@@ -2156,7 +2157,8 @@ describe('team schedule game windowing (#2034)', () => {
         id: 'practice-master__2026-06-24',
         type: 'practice',
         isDbGame: true,
-        location: 'North Field'
+        location: 'North Field',
+        notes: 'Bring water'
       })
     ]));
   });

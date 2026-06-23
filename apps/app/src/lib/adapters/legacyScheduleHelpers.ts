@@ -40,8 +40,10 @@ type LegacyPracticeOccurrence = LegacyRecord & {
     instanceDate?: string;
     date?: string | Date;
     endDate?: string | Date;
+    end?: string | Date;
     location?: string;
     title?: string;
+    notes?: string;
 };
 
 type LegacyRsvpBreakdownRow = LegacyRecord & {
@@ -95,8 +97,8 @@ export type LegacyLiveSubstitutionResult = {
     rotationActual: LegacyRotationActual;
 } | null;
 
-function normalizeArray<T = unknown>(value: T[] | null | undefined): T[] {
-    return Array.isArray(value) ? value : [];
+function normalizeArray<T = unknown>(value: unknown): T[] {
+    return Array.isArray(value) ? value as T[] : [];
 }
 
 function normalizeRecord<T extends LegacyRecord = LegacyRecord>(value: unknown): T {

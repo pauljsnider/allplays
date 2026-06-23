@@ -2742,7 +2742,8 @@ async function buildTeamSchedule(teamId: string, teamChildren: ParentScheduleChi
 
     if (isPractice && game.isSeriesMaster && game.recurrence) {
       for (const occurrence of expandRecurrence(game)) {
-        const date = normalizeScheduleDate(occurrence.date) || new Date(occurrence.date);
+        const date = normalizeScheduleDate(occurrence.date) || (occurrence.date ? new Date(occurrence.date) : null);
+        if (!date) continue;
         const id = `${occurrence.masterId}__${occurrence.instanceDate}`;
         const session = resolvePracticeSessionForEvent({ id }, date, sessionsByEventId, sessions, matchedSessionIds);
         teamChildren.forEach((child) => {
@@ -2770,7 +2771,7 @@ async function buildTeamSchedule(teamId: string, teamChildren: ParentScheduleChi
             awayScore: game.awayScore ?? null,
             canUpdateScore: false,
             arrivalTime: game.arrivalTime || null,
-            notes: occurrence.notes || null,
+            notes: compactString(occurrence.notes) || null,
             seasonLabel: game.seasonLabel || null,
             competitionType: game.competitionType || null,
             countsTowardSeasonRecord: game.countsTowardSeasonRecord ?? null,
@@ -2985,7 +2986,8 @@ async function buildTargetedTeamScheduleEvent(teamId: string, eventId: string, t
     ));
     if (!occurrence) return [];
 
-    const occurrenceDate = normalizeScheduleDate(occurrence.date) || new Date(occurrence.date);
+    const occurrenceDate = normalizeScheduleDate(occurrence.date) || (occurrence.date ? new Date(occurrence.date) : null);
+    if (!occurrenceDate) return [];
     return teamChildren.map((child) => createScheduleEvent({
       teamId,
       teamName,
