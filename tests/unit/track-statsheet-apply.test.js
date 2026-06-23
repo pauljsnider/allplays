@@ -7,6 +7,27 @@ import {
 } from '../../js/track-statsheet-apply.js';
 
 describe('track statsheet apply helpers', () => {
+    it('allows excluded unmatched home rows when included rows are mapped', () => {
+        expect(validateTrackStatsheetApplyRows([
+            { include: true, mappedPlayerId: 'p1' },
+            { include: false, mappedPlayerId: '' }
+        ])).toEqual({
+            ok: true,
+            includedHome: [
+                { include: true, mappedPlayerId: 'p1' }
+            ]
+        });
+    });
+
+    it('blocks apply when no home row is included for saving', () => {
+        expect(validateTrackStatsheetApplyRows([
+            { include: false, mappedPlayerId: '' }
+        ])).toEqual({
+            ok: false,
+            alertMessage: 'Please review or map at least one home player before applying.'
+        });
+    });
+
     it('blocks apply when included home rows are still unmatched', () => {
         expect(validateTrackStatsheetApplyRows([
             { include: true, mappedPlayerId: 'p1' },

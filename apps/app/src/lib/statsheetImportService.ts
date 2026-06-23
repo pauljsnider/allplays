@@ -142,6 +142,7 @@ export function autoAssignTrackStatsheetRosterMatches(rows: TrackStatsheetReview
     }
     return {
       ...row,
+      include: Boolean(mappedPlayerId),
       mappedPlayerId
     }
   })
