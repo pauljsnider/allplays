@@ -734,6 +734,16 @@
             return String(team?.registrationSource?.[key] || team?.registrationProvider?.[key] || '').trim();
         }
 
+        function getStoredRegistrationSource(team = {}) {
+            if (team?.registrationSource && typeof team.registrationSource === 'object') {
+                return { ...team.registrationSource };
+            }
+            if (team?.registrationProvider && typeof team.registrationProvider === 'object') {
+                return { ...team.registrationProvider };
+            }
+            return null;
+        }
+
         function getRegistrationLastSyncTime(source = {}) {
             return String(source.lastSyncAt || source.lastSyncedAt || source.lastSyncTime || '').trim();
         }
@@ -899,9 +909,7 @@
         }
 
         function populateRegistrationProviderFields(team = {}) {
-            currentRegistrationSource = team.registrationSource && typeof team.registrationSource === 'object'
-                ? { ...team.registrationSource }
-                : null;
+            currentRegistrationSource = getStoredRegistrationSource(team);
             const provider = getRegistrationProviderDisplayName(
                 getRegistrationSourceValue(team, 'provider') ||
                 getRegistrationSourceValue(team, 'providerName') ||
@@ -925,8 +933,9 @@
         async function refreshRegistrationSourceFromTeam() {
             if (!currentTeamId) return null;
             const latestTeam = await getTeam(currentTeamId);
-            if (latestTeam?.registrationSource && typeof latestTeam.registrationSource === 'object') {
-                currentRegistrationSource = { ...latestTeam.registrationSource };
+            const storedRegistrationSource = getStoredRegistrationSource(latestTeam || {});
+            if (storedRegistrationSource) {
+                currentRegistrationSource = storedRegistrationSource;
                 renderRegistrationConnectionStatus(currentRegistrationSource);
                 return latestTeam;
             }

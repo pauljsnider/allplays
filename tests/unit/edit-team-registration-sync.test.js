@@ -19,6 +19,7 @@ describe('edit team Sports Connect registration sync wiring', () => {
         expect(source).toContain("refreshLabel: 'Re-import from Sports Connect'");
         expect(source).toContain("canRefresh: true");
         expect(source).toContain("syncEnabled: true");
+        expect(source).toContain('function getStoredRegistrationSource(team = {})');
         expect(source).toContain('function isCurrentRegistrationProviderMappingSaved(provider, externalTeamId)');
         expect(source).toContain("refreshButton.disabled = !capability.canRefresh || !currentTeamId || isUnsavedSportsConnectMapping;");
         expect(source).toContain('await syncRegistrationProvider(currentTeamId)');
@@ -81,5 +82,27 @@ describe('edit team Sports Connect registration sync wiring', () => {
         expect(syncHandlerSource).toContain('Sports Connect import complete.');
         expect(syncHandlerSource).toContain('Sports Connect import failed:');
         expect(syncHandlerSource).toContain('Fetching Sports Connect registration snapshot');
+    });
+
+    it('honors legacy registrationProvider mappings when loading saved sync state', () => {
+        const source = readEditTeam();
+        const storedSourceHelper = source.slice(
+            source.indexOf('function getStoredRegistrationSource(team = {})'),
+            source.indexOf('function getRegistrationLastSyncTime(source = {})')
+        );
+        const populateSource = source.slice(
+            source.indexOf('function populateRegistrationProviderFields(team = {})'),
+            source.indexOf('function clearRegistrationProviderFields()')
+        );
+        const refreshSource = source.slice(
+            source.indexOf('async function refreshRegistrationSourceFromTeam()'),
+            source.indexOf('async function handleRegistrationProviderSync()')
+        );
+
+        expect(storedSourceHelper).toContain('team?.registrationSource');
+        expect(storedSourceHelper).toContain('team?.registrationProvider');
+        expect(populateSource).toContain('currentRegistrationSource = getStoredRegistrationSource(team);');
+        expect(refreshSource).toContain('const storedRegistrationSource = getStoredRegistrationSource(latestTeam || {});');
+        expect(refreshSource).toContain('currentRegistrationSource = storedRegistrationSource;');
     });
 });
