@@ -4,6 +4,7 @@ import { readFileSync } from 'node:fs';
 const teamFeesServiceSource = readFileSync(new URL('../../apps/app/src/lib/teamFeesService.ts', import.meta.url), 'utf8');
 const teamFeesServiceTestSource = readFileSync(new URL('./app-team-fees-service.test.ts', import.meta.url), 'utf8');
 const legacyFeesAdminSource = readFileSync(new URL('../../js/team-fees-admin.js', import.meta.url), 'utf8');
+const capabilitiesSource = readFileSync(new URL('../../apps/app/src/data/capabilities.ts', import.meta.url), 'utf8');
 const registrationFlowSource = readFileSync(new URL('../../js/registration-flow.js', import.meta.url), 'utf8');
 const registrationFlowTestSource = readFileSync(new URL('./registration-flow.test.js', import.meta.url), 'utf8');
 
@@ -33,6 +34,7 @@ describe('issue 1991 fee installment plan source contract', () => {
         expect(registrationFlowSource).toContain('export function getPaymentPlanChoices');
         expect(registrationFlowSource).toContain('export function buildPaymentPlanSnapshot');
         expect(registrationFlowSource).toContain("id: useInstallments ? 'installments' : 'pay_full'");
+        expect(capabilitiesSource).toContain("'Installment schedules'");
         expect(teamFeesServiceTestSource).toContain('builds rounded installment previews for payment plan setup');
         expect(teamFeesServiceTestSource).toContain('defaults null installment spacing to 30 days');
         expect(teamFeesServiceTestSource).toContain('rejects invalid installment plan inputs');
