@@ -326,7 +326,7 @@
     <script type="module">
         import { getTeam, getPlayers, getGames, getConfigs, getTrackedCalendarEventUids, getUnreadChatCounts, getUserProfile, getAllUsers, saveTeamAvailabilityPreferences, grantScorekeeperAccess, revokeScorekeeperAccess, grantStreamScoreAccess, revokeStreamScoreAccess, getRsvps, getRsvpSummaries, submitRsvp, getMyRsvp, getLocalAttractionSponsors, getAdSpaceSponsors, postChatMessage, getPublicTrackingItems, getPlayerTrackingStatuses } from './js/db.js?v=65';
         import { normalizeExternalWebsiteUrl, selectRotatingSponsor } from './js/local-attractions.js?v=2';
-        import { renderHeader, renderFooter, getUrlParams, formatDate, formatShortDate, formatTime, fetchAndParseCalendar, extractOpponent, isPracticeEvent, isTrackedCalendarEvent, escapeHtml, shareOrCopy } from './js/utils.js?v=11';
+        import { renderHeader, renderFooter, getUrlParams, formatDate, formatShortDate, formatTime, fetchAndParseCalendar, extractOpponent, isPracticeEvent, isTrackedCalendarEvent, expandRecurrence, escapeHtml, shareOrCopy } from './js/utils.js?v=11';
         import { fetchLeagueStandings } from './js/league-standings.js?v=1';
         import { computeNativeStandings } from './js/native-standings.js?v=1';
         import { computeTournamentPoolStandings } from './js/tournament-standings.js?v=3';
@@ -2256,6 +2256,35 @@
 
         async function getAllEvents(team, dbGames) {
             let allEvents = [];
+            const scheduleEntries = [];
+
+            for (const game of (dbGames || [])) {
+                const id = game.id || game.gameId;
+                const isRecurringPractice = game.type === 'practice' && game.isSeriesMaster && game.recurrence;
+
+                if (isRecurringPractice) {
+                    for (const occ of expandRecurrence(game)) {
+                        scheduleEntries.push({
+                            game,
+                            id: `${occ.masterId}__${occ.instanceDate}`,
+                            date: occ.date instanceof Date ? occ.date : new Date(occ.date),
+                            title: occ.title || game.title || 'Practice',
+                            location: occ.location || game.location || 'TBD',
+                            notes: occ.notes ?? game.notes
+                        });
+                    }
+                    continue;
+                }
+
+                scheduleEntries.push({
+                    game,
+                    id,
+                    date: game.date?.toDate ? game.date.toDate() : new Date(game.date),
+                    title: game.title || null,
+                    location: game.location || 'TBD',
+                    notes: game.notes
+                });
+            }
 
             const trackedUids = await getTrackedCalendarEventUids(currentTeamId);
 
@@ -2271,10 +2300,9 @@
                             const isCancelled = event.status?.toUpperCase() === 'CANCELLED' ||
                                 event.summary?.includes('[CANCELED]');
 
-                            const hasConflict = dbGames.some(dbGame => {
-                                const dbDate = dbGame.date.toDate ? dbGame.date.toDate() : new Date(dbGame.date);
+                            const hasConflict = scheduleEntries.some((entry) => {
                                 const eventDate = event.dtstart;
-                                return Math.abs(dbDate - eventDate) < 60000;
+                                return Math.abs(entry.date - eventDate) < 60000;
                             });
 
                             if (hasConflict) return;
@@ -2313,7 +2341,7 @@
                 linkedPlayerIds.length > 0
             );
             const canSeeTeamNotes = canReadRsvps && (isTeamAdmin || (availabilityPreferences.noteVisibility === 'team' && currentTeamAccessInfo?.hasAccess));
-            const dbGameIds = (dbGames || []).map((game) => game.id || game.gameId).filter(Boolean);
+            const dbGameIds = scheduleEntries.map((entry) => entry.id).filter(Boolean);
             let rsvpSummaries = new Map();
             if (canReadRsvps) {
                 try {
@@ -2323,9 +2351,8 @@
                 }
             }
 
-            for (const game of dbGames) {
-                const gameDate = game.date.toDate ? game.date.toDate() : new Date(game.date);
-                const id = game.id || game.gameId;
+            for (const entry of scheduleEntries) {
+                const { game, date: gameDate, id, title, location, notes } = entry;
                 const isPractice = game.type === 'practice';
                 const isCancelled = String(game.status || '').toLowerCase() === 'cancelled';
                 let availabilityNotes = [];
@@ -2348,9 +2375,10 @@
                     type: 'db',
                     id,
                     gameId: id,
+                    title,
                     date: gameDate,
                     opponent: game.opponent,
-                    location: game.location || 'TBD',
+                    location,
                     status: game.status,
                     liveStatus: game.liveStatus,
                     homeScore: game.homeScore,
@@ -2358,7 +2386,7 @@
                     isHome: game.isHome,
                     kitColor: game.kitColor,
                     arrivalTime: game.arrivalTime,
-                    notes: game.notes,
+                    notes,
                     assignments: game.assignments,
                     rsvpSummary: rsvpSummaries.get(id) || game.rsvpSummary,
                     myRsvp,
