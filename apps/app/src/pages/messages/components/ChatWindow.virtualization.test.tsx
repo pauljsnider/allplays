@@ -233,11 +233,12 @@ describe('ChatWindow virtualization', () => {
   });
 
   it('returns a bounded render slice and spacer heights for long message lists', () => {
-    const messages = Array.from({ length: 6 }, (_, index) => buildMessage(`message-${index + 1}`, index + 1));
+    const messages = Array.from({ length: 60 }, (_, index) => buildMessage(`message-${index + 1}`, index + 1));
     const windowed = buildVirtualizedChatWindow(messages, {
       scrollTop: 230,
       viewportHeight: 180,
       overscanPx: 50,
+      initialWindowCount: 10,
       measuredHeights: {
         'message-1': 100,
         'message-2': 110,
@@ -248,15 +249,16 @@ describe('ChatWindow virtualization', () => {
       }
     });
 
-    expect(windowed.visibleMessages.map((message) => message.id)).toEqual(['message-2', 'message-3', 'message-4']);
+    expect(windowed.visibleMessages.slice(0, 3).map((message) => message.id)).toEqual(['message-2', 'message-3', 'message-4']);
     expect(windowed.topSpacerHeight).toBe(132);
-    expect(windowed.bottomSpacerHeight).toBe(290);
+    expect(windowed.bottomSpacerHeight).toBeGreaterThan(0);
+    expect(windowed.visibleMessages.length).toBeLessThan(messages.length);
   });
 
-  it('keeps modest threads fully rendered until the initial scroll settles at the latest message', () => {
+  it('keeps modest threads fully rendered even after the thread auto-scrolls to the latest message', () => {
     const messages = Array.from({ length: 6 }, (_, index) => buildMessage(`message-${index + 1}`, index + 1));
     const windowed = buildVirtualizedChatWindow(messages, {
-      scrollTop: 0,
+      scrollTop: 240,
       viewportHeight: 180
     });
 

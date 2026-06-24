@@ -1773,7 +1773,7 @@ export function buildVirtualizedChatWindow(
   }
 
   const totalHeight = offsets[offsets.length - 1];
-  if (messages.length <= Math.max(1, initialWindowCount) && scrollTop <= 0) {
+  if (messages.length <= Math.max(1, initialWindowCount)) {
     return {
       startIndex: 0,
       endIndex: messages.length - 1,
