@@ -22,7 +22,11 @@ const scheduleServiceMocks = vi.hoisted(() => ({
 const appDataCacheMocks = vi.hoisted(() => ({
   getCachedAppData: vi.fn(() => null),
   getParentScheduleSummaryCacheKey: vi.fn(() => 'parent-schedule:test-user'),
-  loadCachedAppData: vi.fn(async (_key: string, loader: () => Promise<unknown>) => loader())
+  loadCachedAppData: vi.fn(async (
+    _key: string,
+    loader: () => Promise<unknown>,
+    _options?: { shouldCache?: (value: { isPartial?: boolean }) => boolean }
+  ) => loader())
 }));
 
 const uxTimingMocks = vi.hoisted(() => ({
