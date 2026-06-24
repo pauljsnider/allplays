@@ -499,7 +499,7 @@ describe('React app auth/profile capability parity', () => {
             'RSVP needed',
             'Game details',
             'Event details',
-            'getEventDetailPath'
+            'getScheduleEventDetailPath'
         ]);
         expectContains(scheduleEventDetail, [
             'useScheduleEventRsvp',

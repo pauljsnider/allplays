@@ -1184,7 +1184,7 @@ export function Schedule({ auth }: { auth: AuthState }) {
             </div>
           </div>
 
-          <ScheduleNextUpCard event={webInsights.nextEvent} />
+          <ScheduleNextUpCard event={webInsights.nextEvent} preferGameHubForStaff={!isDesktopWeb} />
         </div>
 
         {!isDesktopWeb ? (
@@ -1294,6 +1294,7 @@ export function Schedule({ auth }: { auth: AuthState }) {
               entries={calendarEntries}
               selectedDay={selectedDay}
               selectedDayEntries={selectedDayEntries}
+              preferGameHubForStaff={!isDesktopWeb}
               onMonthChange={setCalendarMonth}
               onDaySelect={setSelectedDay}
               onDayClose={() => setSelectedDay(null)}
@@ -1307,6 +1308,7 @@ export function Schedule({ auth }: { auth: AuthState }) {
               pageSize={listPageSize}
               canShowMore={canLoadMorePastHistory || visibleListCount < listEntries.length}
               loadingMore={filter === 'past-all' && loadingPastHistory}
+              preferGameHubForStaff={!isDesktopWeb}
               onShowMore={handleShowMore}
             />
           ) : (
@@ -1316,6 +1318,7 @@ export function Schedule({ auth }: { auth: AuthState }) {
               pageSize={listPageSize}
               canShowMore={canLoadMorePastHistory || visibleListCount < listEntries.length}
               loadingMore={filter === 'past-all' && loadingPastHistory}
+              preferGameHubForStaff={!isDesktopWeb}
               onShowMore={handleShowMore}
             />
           )}
@@ -2003,7 +2006,7 @@ function buildScheduleWebInsights(events: ParentScheduleEvent[]): ScheduleWebIns
   });
 }
 
-function ScheduleNextUpCard({ event }: { event: ParentScheduleEvent | null }) {
+function ScheduleNextUpCard({ event, preferGameHubForStaff }: { event: ParentScheduleEvent | null; preferGameHubForStaff: boolean }) {
   if (!event) {
     return (
       <div className="schedule-next-card rounded-xl border border-dashed border-gray-300 bg-gray-50 p-4">
@@ -2019,7 +2022,7 @@ function ScheduleNextUpCard({ event }: { event: ParentScheduleEvent | null }) {
   const tournamentInfo = getScheduleTournamentInfo(event);
 
   return (
-    <Link to={getEventDetailPath(event)} className="schedule-next-card block rounded-xl border border-primary-100 bg-primary-50 p-4 transition hover:border-primary-200 hover:bg-primary-100">
+    <Link to={getGenericEventDetailPath(event, preferGameHubForStaff)} className="schedule-next-card block rounded-xl border border-primary-100 bg-primary-50 p-4 transition hover:border-primary-200 hover:bg-primary-100">
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
           <div className="app-label text-primary-700">Next up</div>
@@ -2262,7 +2265,7 @@ function ScheduleActionQueue({ events }: { events: ParentScheduleEvent[] }) {
       </div>
       <div className="mt-3 space-y-2">
         {actionEvents.length ? actionEvents.map(({ event, action }) => (
-          <Link key={event.eventKey} to={getEventDetailPath(event)} className="block rounded-xl border border-gray-200 bg-white p-3 transition hover:border-primary-200 hover:bg-primary-50">
+          <Link key={event.eventKey} to={getTaskTargetedEventDetailPath(event)} className="block rounded-xl border border-gray-200 bg-white p-3 transition hover:border-primary-200 hover:bg-primary-50">
             <div className="flex items-start justify-between gap-2">
               <div className="min-w-0">
                 <div className="truncate text-sm font-black text-gray-950">{action}</div>
@@ -2285,12 +2288,13 @@ function LoadingSchedule() {
   return <SchedulePageSkeleton />;
 }
 
-function ScheduleList({ events, visibleCount, pageSize, canShowMore, loadingMore, onShowMore }: {
+function ScheduleList({ events, visibleCount, pageSize, canShowMore, loadingMore, preferGameHubForStaff, onShowMore }: {
   events: CalendarScheduleEntry[];
   visibleCount: number;
   pageSize: number;
   canShowMore: boolean;
   loadingMore: boolean;
+  preferGameHubForStaff: boolean;
   onShowMore: () => void;
 }) {
   if (!events.length) {
@@ -2310,7 +2314,7 @@ function ScheduleList({ events, visibleCount, pageSize, canShowMore, loadingMore
     <div className="space-y-3">
       <div className="schedule-list overflow-hidden rounded-xl border border-gray-200 bg-white shadow-app sm:space-y-3 sm:overflow-visible sm:border-0 sm:bg-transparent sm:shadow-none">
         {renderedEvents.map((event) => (
-          <ScheduleEventCard key={event.eventKey} event={event} />
+          <ScheduleEventCard key={event.eventKey} event={event} preferGameHubForStaff={preferGameHubForStaff} />
         ))}
       </div>
       {canShowMore ? (
@@ -2327,12 +2331,13 @@ function ScheduleList({ events, visibleCount, pageSize, canShowMore, loadingMore
   );
 }
 
-function CompactScheduleList({ events, visibleCount, pageSize, canShowMore, loadingMore, onShowMore }: {
+function CompactScheduleList({ events, visibleCount, pageSize, canShowMore, loadingMore, preferGameHubForStaff, onShowMore }: {
   events: CalendarScheduleEntry[];
   visibleCount: number;
   pageSize: number;
   canShowMore: boolean;
   loadingMore: boolean;
+  preferGameHubForStaff: boolean;
   onShowMore: () => void;
 }) {
   if (!events.length) {
@@ -2359,7 +2364,7 @@ function CompactScheduleList({ events, visibleCount, pageSize, canShowMore, load
             const rsvp = normalizeRsvpResponse(event.myRsvp);
             const tournamentInfo = getScheduleTournamentInfo(event);
             return (
-              <Link key={event.eventKey} to={getEventDetailPath(event)} className="compact-schedule-row grid grid-cols-[82px_minmax(0,1fr)_auto] gap-3 px-3 py-2.5 transition hover:bg-primary-50">
+              <Link key={event.eventKey} to={getGenericEventDetailPath(event, preferGameHubForStaff)} className="compact-schedule-row grid grid-cols-[82px_minmax(0,1fr)_auto] gap-3 px-3 py-2.5 transition hover:bg-primary-50">
                 <div className="text-xs font-black text-gray-700">
                   <div>{formatEventDateLabel(event.date)}</div>
                   <div className="mt-0.5 text-gray-500">{formatEventTimeLabel(event.date)}</div>
@@ -2418,7 +2423,7 @@ function PracticePacketsPanel({ rows }: { rows: PracticePacketScheduleRow[] }) {
       </div>
       <div className="schedule-list overflow-hidden rounded-xl border border-gray-200 bg-white shadow-app sm:space-y-3 sm:overflow-visible sm:border-0 sm:bg-transparent sm:shadow-none">
         {rows.map((row) => (
-          <Link key={`${row.event.eventKey}-packet`} to={getEventDetailPath(row.event)} className="block border-b border-gray-100 px-3 py-3 transition last:border-b-0 hover:bg-gray-50 sm:rounded-xl sm:border sm:border-blue-100 sm:bg-white sm:shadow-sm sm:hover:border-blue-200 sm:hover:bg-blue-50">
+          <Link key={`${row.event.eventKey}-packet`} to={getTaskTargetedEventDetailPath(row.event)} className="block border-b border-gray-100 px-3 py-3 transition last:border-b-0 hover:bg-gray-50 sm:rounded-xl sm:border sm:border-blue-100 sm:bg-white sm:shadow-sm sm:hover:border-blue-200 sm:hover:bg-blue-50">
             <div className="flex items-center justify-between gap-3">
               <div className="min-w-0">
                 <div className="flex items-center gap-2">
@@ -2443,12 +2448,13 @@ function PracticePacketsPanel({ rows }: { rows: PracticePacketScheduleRow[] }) {
   );
 }
 
-function ScheduleEventCard({ event }: {
+function ScheduleEventCard({ event, preferGameHubForStaff }: {
   event: ParentScheduleEvent | CalendarScheduleEntry;
+  preferGameHubForStaff: boolean;
 }) {
   const rsvp = normalizeRsvpResponse(event.myRsvp);
   const eventTitle = getScheduleTitle(event);
-  const detailPath = getEventDetailPath(event);
+  const detailPath = getGenericEventDetailPath(event, preferGameHubForStaff);
   const isRsvpNeeded = rsvp === 'not_responded' && event.isDbGame && !event.isCancelled;
   const hasPracticePacket = event.type === 'practice' && Boolean(event.practiceHomePacketSummary);
   const actionPills = getEventCardActionPills(event, rsvp);
@@ -2605,8 +2611,22 @@ function formatTournamentStandingMeta(row: ScheduleTournamentStandingRow) {
   return parts.length ? ` (${parts.join(', ')})` : '';
 }
 
-function getEventDetailPath(event: ParentScheduleEvent | CalendarScheduleEntry) {
+function getTaskTargetedEventDetailPath(event: ParentScheduleEvent | CalendarScheduleEntry) {
   return getScheduleEventDetailPath(event, getScheduleTaskDetailSection(event));
+}
+
+function hasStaffGameHubAccess(event: Pick<ParentScheduleEvent, 'isTeamStaff' | 'isTeamAdmin' | 'canUpdateScore'>) {
+  return event.isTeamStaff === true || event.isTeamAdmin === true || event.canUpdateScore === true;
+}
+
+export function getGenericEventDetailPath(
+  event: ParentScheduleEvent | CalendarScheduleEntry,
+  preferGameHubForStaff = false
+) {
+  if (preferGameHubForStaff && hasStaffGameHubAccess(event)) {
+    return getScheduleEventDetailPath(event, 'game');
+  }
+  return getTaskTargetedEventDetailPath(event);
 }
 
 function getScheduleChildLabel(event: ParentScheduleEvent | CalendarScheduleEntry) {
@@ -2673,11 +2693,12 @@ function getOpenAssignmentCount(event: ParentScheduleEvent | CalendarScheduleEnt
   return event.assignments.filter((assignment) => assignment.claimable && !assignment.claim && !assignment.value).length;
 }
 
-function CalendarSchedule({ month, entries, selectedDay, selectedDayEntries, onMonthChange, onDaySelect, onDayClose }: {
+function CalendarSchedule({ month, entries, selectedDay, selectedDayEntries, preferGameHubForStaff, onMonthChange, onDaySelect, onDayClose }: {
   month: Date;
   entries: CalendarScheduleEntry[];
   selectedDay: Date | null;
   selectedDayEntries: CalendarScheduleEntry[];
+  preferGameHubForStaff: boolean;
   onMonthChange: (month: Date) => void;
   onDaySelect: (day: Date) => void;
   onDayClose: () => void;
@@ -2749,15 +2770,17 @@ function CalendarSchedule({ month, entries, selectedDay, selectedDayEntries, onM
       <CalendarEventPicker
         day={selectedDay}
         entries={selectedDayEntries}
+        preferGameHubForStaff={preferGameHubForStaff}
         onClose={onDayClose}
       />
     </div>
   );
 }
 
-function CalendarEventPicker({ day, entries, onClose }: {
+function CalendarEventPicker({ day, entries, preferGameHubForStaff, onClose }: {
   day: Date | null;
   entries: CalendarScheduleEntry[];
+  preferGameHubForStaff: boolean;
   onClose: () => void;
 }) {
   if (!day) return null;
@@ -2793,7 +2816,7 @@ function CalendarEventPicker({ day, entries, onClose }: {
           <div className="max-h-[65vh] overflow-y-auto p-3 sm:max-h-[70vh]">
             <div className="space-y-2">
               {entries.map((entry) => (
-                <CalendarEventPickerRow key={entry.eventKey} entry={entry} />
+                <CalendarEventPickerRow key={entry.eventKey} entry={entry} preferGameHubForStaff={preferGameHubForStaff} />
               ))}
             </div>
           </div>
@@ -2805,7 +2828,7 @@ function CalendarEventPicker({ day, entries, onClose }: {
   );
 }
 
-function CalendarEventPickerRow({ entry }: { entry: CalendarScheduleEntry }) {
+function CalendarEventPickerRow({ entry, preferGameHubForStaff }: { entry: CalendarScheduleEntry; preferGameHubForStaff: boolean }) {
   const rsvp = normalizeRsvpResponse(entry.myRsvp);
   const needsRsvp = entry.childRsvps.some((child) => normalizeRsvpResponse(child.myRsvp) === 'not_responded') || rsvp === 'not_responded';
   const childLabel = entry.childNames.length ? entry.childNames.join(', ') : entry.childName;
@@ -2813,7 +2836,7 @@ function CalendarEventPickerRow({ entry }: { entry: CalendarScheduleEntry }) {
   const tournamentInfo = getScheduleTournamentInfo(entry);
 
   return (
-    <Link to={getEventDetailPath(entry)} className="block rounded-2xl border border-gray-200 bg-white p-3 shadow-sm transition hover:border-primary-200 hover:bg-primary-50" onClick={(event) => event.stopPropagation()}>
+    <Link to={getGenericEventDetailPath(entry, preferGameHubForStaff)} className="block rounded-2xl border border-gray-200 bg-white p-3 shadow-sm transition hover:border-primary-200 hover:bg-primary-50" onClick={(event) => event.stopPropagation()}>
       <div className="flex items-start gap-3">
         <div className="flex h-12 w-16 flex-none flex-col items-center justify-center rounded-xl bg-gray-50 ring-1 ring-gray-100">
           <div className="text-sm font-black leading-none text-gray-950">{formatEventTimeLabel(entry.date)}</div>

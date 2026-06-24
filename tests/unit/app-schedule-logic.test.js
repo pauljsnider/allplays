@@ -58,7 +58,7 @@ describe('React app parent schedule logic', () => {
         });
     });
 
-    it('builds task-targeted event detail routes while generic opens keep the availability default', () => {
+    it('keeps parent task-targeted event detail routes explicit', () => {
         const generic = event({
             teamId: 'team/with slash',
             id: 'game 1',
