@@ -311,6 +311,11 @@ async function mockScheduleModules(page, options = {}) {
                     return { id: 'game-created' };
                 }
 
+                export async function createScheduledTournamentBlockForApp(teamId, form, user) {
+                    window.__scheduleCalls.tournamentCreates = (window.__scheduleCalls.tournamentCreates || []).concat({ teamId, form, userId: user?.uid || null });
+                    return { id: 'tournament-created' };
+                }
+
                 export async function createScheduledPracticeForApp(teamId, form, user) {
                     window.__scheduleCalls.practiceCreates = (window.__scheduleCalls.practiceCreates || []).concat({ teamId, form, userId: user?.uid || null });
                     return { id: 'practice-created' };
