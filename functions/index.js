@@ -6054,30 +6054,44 @@ async function sendCategoryNotification({
 
   for (let i = 0; i < targets.length; i += maxMulticastTokens) {
     const targetChunk = targets.slice(i, i + maxMulticastTokens);
-    const sendResult = await admin.messaging().sendEachForMulticast({
-      tokens: targetChunk.map((target) => target.token),
-      notification: { title, body },
-      data: {
-        teamId: String(teamId),
-        gameId: String(gameId || ''),
-        eventId: String(eventId || gameId || ''),
-        conversationId: String(conversationId || ''),
-        childId: String(childId || ''),
-        rsvpId: String(childId || ''),
-        category: String(category),
-        appRoute,
-        link
-      },
-      ...deliveryOptions,
-      webpush: mergeWebpushOptions({
-        notification: WEB_PUSH_NOTIFICATION_ASSETS,
-        fcmOptions: { link }
-      }, deliveryOptions)
-    });
-    allResponses.push(...(Array.isArray(sendResult.responses) ? sendResult.responses : []));
-    successCount += Number(sendResult.successCount || 0);
-    failureCount += Number(sendResult.failureCount || 0);
-    await pruneInvalidTokens(sendResult, targetChunk);
+    try {
+      const sendResult = await admin.messaging().sendEachForMulticast({
+        tokens: targetChunk.map((target) => target.token),
+        notification: { title, body },
+        data: {
+          teamId: String(teamId),
+          gameId: String(gameId || ''),
+          eventId: String(eventId || gameId || ''),
+          conversationId: String(conversationId || ''),
+          childId: String(childId || ''),
+          rsvpId: String(childId || ''),
+          category: String(category),
+          appRoute,
+          link
+        },
+        ...deliveryOptions,
+        webpush: mergeWebpushOptions({
+          notification: WEB_PUSH_NOTIFICATION_ASSETS,
+          fcmOptions: { link }
+        }, deliveryOptions)
+      });
+      allResponses.push(...(Array.isArray(sendResult.responses) ? sendResult.responses : []));
+      successCount += Number(sendResult.successCount || 0);
+      failureCount += Number(sendResult.failureCount || 0);
+      await pruneInvalidTokens(sendResult, targetChunk);
+    } catch (error) {
+      failureCount += targetChunk.length;
+      allResponses.push(...targetChunk.map((target) => ({
+        success: false,
+        error: new Error(`Push delivery failed for ${target.uid || 'unknown-user'}: ${error?.message || String(error || 'Unknown error')}`)
+      })));
+      functions.logger.warn('Failed to send push notification chunk', {
+        teamId,
+        category,
+        targetCount: targetChunk.length,
+        error: error?.message || String(error || 'Unknown error')
+      });
+    }
   }
 
   const inboxResult = await writeNotificationInboxRecords({
@@ -8597,13 +8611,26 @@ exports.notifyGameUpdated = functions.firestore
     const actorUid = after.updatedBy || null;
 
     if (category === 'liveScore') {
+      const liveScoreDedupKey = `score:${toNumericScore(before.homeScore)}:${toNumericScore(before.awayScore)}->${toNumericScore(after.homeScore)}:${toNumericScore(after.awayScore)}`;
+      const canSendLiveScore = await checkAndSetNotificationDedup(teamId, category, gameId, liveScoreDedupKey);
+      if (!canSendLiveScore) {
+        functions.logger.info('Notification dedup: skipping duplicate live score send', {
+          teamId,
+          category,
+          gameId,
+          dedupKey: liveScoreDedupKey
+        });
+        return null;
+      }
+
       return sendCategoryNotification({
         teamId,
         gameId,
         category,
         title: 'Live score update',
         body: `Score is now ${toNumericScore(after.homeScore)}-${toNumericScore(after.awayScore)}`,
-        actorUid
+        actorUid,
+        dedupKey: liveScoreDedupKey
       });
     }
 

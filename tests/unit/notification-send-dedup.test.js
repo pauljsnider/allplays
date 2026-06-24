@@ -89,17 +89,18 @@ function buildSendCategoryNotificationHarness({
     canSend = true,
     targets = [{ uid: 'user-1', token: 'token-1' }],
     categories = ['schedule', 'liveScore', 'mentions', 'liveChat'],
-    deliveryOptions = {}
+    deliveryOptions = {},
+    sendEachForMulticastImpl = async () => ({
+        responses: [{ success: true }],
+        successCount: targets.length,
+        failureCount: 0
+    })
 } = {}) {
     const sendSource = getSourceSlice(
         'async function sendCategoryNotification({',
         '\nasync function sendDirectTargetsNotification'
     );
-    const sendEachForMulticast = vi.fn(async () => ({
-        responses: [{ success: true }],
-        successCount: targets.length,
-        failureCount: 0
-    }));
+    const sendEachForMulticast = vi.fn(sendEachForMulticastImpl);
     const admin = {
         messaging: () => ({
             sendEachForMulticast
@@ -119,7 +120,8 @@ function buildSendCategoryNotificationHarness({
     const writeNotificationAuditRecord = vi.fn(async () => {});
     const functions = {
         logger: {
-            info: vi.fn()
+            info: vi.fn(),
+            warn: vi.fn()
         }
     };
 
@@ -386,6 +388,47 @@ describe('notification send dedup guard — sendCategoryNotification', () => {
             gameId: 'game-1',
             eventId: 'message-1',
             timeSensitive: false
+        });
+    });
+
+    it('still writes inbox records when push delivery throws for live score updates', async () => {
+        const harness = buildSendCategoryNotificationHarness({
+            categories: ['liveScore'],
+            targets: [
+                { uid: 'parent-1', token: 'token-1' },
+                { uid: 'parent-2', token: 'token-2' }
+            ],
+            sendEachForMulticastImpl: async () => {
+                throw new Error('messaging unavailable');
+            }
+        });
+
+        const result = await harness.fn({
+            teamId: 'team-1',
+            category: 'liveScore',
+            gameId: 'game-7',
+            title: 'Live score update',
+            body: 'Score is now 2-1'
+        });
+
+        expect(harness.sendEachForMulticast).toHaveBeenCalledOnce();
+        expect(harness.writeNotificationInboxRecords).toHaveBeenCalledWith(expect.objectContaining({
+            category: 'liveScore',
+            teamId: 'team-1',
+            gameId: 'game-7',
+            targets: [
+                { uid: 'parent-1', token: 'token-1' },
+                { uid: 'parent-2', token: 'token-2' }
+            ]
+        }));
+        expect(harness.writeNotificationAuditRecord).toHaveBeenCalledWith(expect.objectContaining({
+            failureCount: 2,
+            inboxResult: expect.objectContaining({ writeCount: 2 })
+        }));
+        expect(result).toMatchObject({
+            successCount: 0,
+            failureCount: 2,
+            inboxWriteCount: 2
         });
     });
 
