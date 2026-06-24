@@ -10,6 +10,7 @@
     "test": "vitest run tests/unit",
     "test:unit": "vitest run tests/unit",
     "test:unit:ci": "vitest run tests/unit --reporter=dot",
+    "test:coverage-map": "node scripts/report-test-coverage-map.mjs --check",
     "test:functions:notifications": "npm run test:notifications --prefix functions",
     "test:smoke": "playwright test --config=playwright.smoke.config.js",
     "test:smoke:team-fallback": "playwright test tests/smoke/team-fallback-regressions.spec.js --config=playwright.smoke.config.js --reporter=line",
