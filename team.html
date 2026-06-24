@@ -2981,6 +2981,17 @@
             return `${teamName} vs ${event.opponent || 'TBD'}`;
         }
 
+        function resolveIcsEventEndDate(game, startDate) {
+            const rawEnd = game?.end || game?.endDate;
+            let endDate = rawEnd?.toDate ? rawEnd.toDate() : (rawEnd ? new Date(rawEnd) : null);
+            if (endDate instanceof Date && !Number.isNaN(endDate.getTime()) && endDate.getTime() > startDate.getTime()) {
+                return endDate;
+            }
+
+            const fallbackHours = game?.type === 'game' ? 2 : 1;
+            return new Date(startDate.getTime() + fallbackHours * 60 * 60 * 1000);
+        }
+
         function buildIcs(games) {
             const teamName = currentTeam?.name || 'Team';
             const lines = ['BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//ALL PLAYS//EN'];
@@ -2988,8 +2999,7 @@
             games.forEach((game) => {
                 const date = game.date?.toDate ? game.date.toDate() : new Date(game.date);
                 const start = formatIcsDate(date);
-                const endDate = new Date(date.getTime() + 60 * 60 * 1000); // default 1 hour
-                const end = formatIcsDate(endDate);
+                const end = formatIcsDate(resolveIcsEventEndDate(game, date));
                 const summary = getIcsEventSummary(game, teamName);
                 const uid = `${game.id || summary}-${currentTeamId}@gameflow`;
                 lines.push(
