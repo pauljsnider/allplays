@@ -638,6 +638,7 @@ describe('React app parent tools service', () => {
             expect(options).toEqual({ pageSize: 50 });
             return [
                 { id: `${teamId}-open`, programName: 'Summer Camp', description: 'Skills', season: 'Summer', finalAmountDueCents: 7500, checkoutUrl: 'https://pay.example.test/camp', options: [{ id: 'opt-1' }] },
+                { id: `${teamId}-legacy`, programName: 'Legacy Camp', status: 'draft', published: true, finalAmountDueCents: 5000 },
                 { id: `${teamId}-draft`, programName: 'Draft Camp', status: 'draft', published: false },
                 { id: `${teamId}-closed`, programName: 'Closed Camp', status: 'closed', published: true }
             ];
@@ -645,16 +646,26 @@ describe('React app parent tools service', () => {
 
         const cards = await loadParentRegistrations(user);
 
-        expect(cards).toHaveLength(2);
-        expect(cards[0]).toMatchObject({
-            programName: 'Summer Camp',
-            feeLabel: '$75.00',
-            onlineCheckout: true,
-            options: [{ id: 'opt-1' }]
-        });
+        expect(cards).toHaveLength(4);
+        expect(cards).toEqual(expect.arrayContaining([
+            expect.objectContaining({
+                programName: 'Summer Camp',
+                feeLabel: '$75.00',
+                onlineCheckout: true,
+                options: [{ id: 'opt-1' }]
+            }),
+            expect.objectContaining({
+                programName: 'Legacy Camp',
+                feeLabel: '$50.00',
+                onlineCheckout: false,
+                options: []
+            })
+        ]));
         expect(cards.map((card) => card.url)).toEqual(expect.arrayContaining([
             'https://allplays.ai/registration.html?teamId=team-1&formId=team-1-open',
-            'https://allplays.ai/registration.html?teamId=team-coach&formId=team-coach-open'
+            'https://allplays.ai/registration.html?teamId=team-1&formId=team-1-legacy',
+            'https://allplays.ai/registration.html?teamId=team-coach&formId=team-coach-open',
+            'https://allplays.ai/registration.html?teamId=team-coach&formId=team-coach-legacy'
         ]));
         expect(cards.map((card) => card.appUrl)).toEqual(expect.arrayContaining([
             'https://allplays.ai/app/#/registration?teamId=team-1&formId=team-1-open',
