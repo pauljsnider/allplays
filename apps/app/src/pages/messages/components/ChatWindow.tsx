@@ -128,6 +128,20 @@ type PendingChatSendRequest = {
   selectedRecipientIds: string[];
 };
 
+type VirtualizedChatWindow = {
+  startIndex: number;
+  endIndex: number;
+  topSpacerHeight: number;
+  bottomSpacerHeight: number;
+  visibleMessages: ChatMessage[];
+};
+
+const CHAT_MESSAGE_INITIAL_WINDOW_COUNT = 40;
+const CHAT_MESSAGE_WINDOW_OVERSCAN_PX = 480;
+const CHAT_MESSAGE_BASE_ESTIMATED_HEIGHT = 104;
+const CHAT_MESSAGE_DAY_DIVIDER_ESTIMATED_HEIGHT = 28;
+const CHAT_MESSAGE_ATTACHMENT_ESTIMATED_HEIGHT = 144;
+
 const allTargetOptions: Array<{ value: ChatTargetType; label: string; description: string }> = [
   { value: 'full_team', label: 'Full team', description: 'Visible to everyone in this team chat.' },
   { value: 'staff', label: 'Staff only', description: 'Moves this into a staff conversation.' },
@@ -280,6 +294,8 @@ export function ChatWindow({
   const [editText, setEditText] = useState('');
   const [isMuted, setIsMuted] = useState(() => resolveMutedState(teamId, DEFAULT_TEAM_CONVERSATION_ID, inboxTeam, {}));
   const [composerCursorPosition, setComposerCursorPosition] = useState<number | undefined>(undefined);
+  const [messageViewportState, setMessageViewportState] = useState({ scrollTop: 0, viewportHeight: 0 });
+  const [measuredMessageHeights, setMeasuredMessageHeights] = useState<Record<string, number>>({});
   const messagesRef = useRef<HTMLDivElement | null>(null);
   const messagesContentRef = useRef<HTMLDivElement | null>(null);
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
@@ -304,6 +320,7 @@ export function ChatWindow({
   const scheduledScrollForceRef = useRef(false);
   const scheduledScrollTimeoutsRef = useRef<number[]>([]);
   const lastObservedViewportSignatureRef = useRef('');
+  const olderLoadAnchorRef = useRef<{ previousScrollHeight: number; previousScrollTop: number } | null>(null);
   const pendingSendRequestsRef = useRef(new Map<string, PendingChatSendRequest>());
   const sendQueueRef = useRef(Promise.resolve());
 
@@ -385,7 +402,17 @@ export function ChatWindow({
     () => mergeVisibleChatMessages(messages, optimisticMessages, effectiveConversationId),
     [effectiveConversationId, messages, optimisticMessages]
   );
+  const messageWindow = useMemo(() => buildVirtualizedChatWindow(visibleMessages, {
+    scrollTop: messageViewportState.scrollTop,
+    viewportHeight: messageViewportState.viewportHeight,
+    measuredHeights: measuredMessageHeights
+  }), [measuredMessageHeights, messageViewportState.scrollTop, messageViewportState.viewportHeight, visibleMessages]);
   const error = teamError || messagesError;
+
+  const handleMessageRowHeightChange = useCallback((messageId: string, height: number) => {
+    if (!messageId || !Number.isFinite(height) || height <= 0) return;
+    setMeasuredMessageHeights((current) => current[messageId] === height ? current : { ...current, [messageId]: height });
+  }, []);
 
   useEffect(() => {
     const liveClientIds = new Set(messages.map((message) => String(message.clientMessageId || message.id || '')).filter(Boolean));
@@ -531,6 +558,7 @@ export function ChatWindow({
     );
     programmaticScrollRef.current = true;
     container.scrollTop = Math.max(0, nextHeight - container.clientHeight);
+    setMessageViewportState({ scrollTop: container.scrollTop, viewportHeight: container.clientHeight });
     messagesEndRef.current?.scrollIntoView({ block: 'end', behavior });
     stickToLatestRef.current = true;
     setShowJumpToLatest(false);
@@ -618,6 +646,12 @@ export function ChatWindow({
   }, [teamId]);
 
   useEffect(() => {
+    setMeasuredMessageHeights({});
+    setMessageViewportState({ scrollTop: 0, viewportHeight: 0 });
+    olderLoadAnchorRef.current = null;
+  }, [effectiveConversationId]);
+
+  useEffect(() => {
     setIsMuted(resolveMutedState(teamId, effectiveConversationId, inboxTeam, profile));
   }, [effectiveConversationId, inboxTeam, profile, teamId]);
 
@@ -628,6 +662,31 @@ export function ChatWindow({
     scheduleScrollToLatest('auto');
   }, [visibleMessages.length, aiThinking, scheduleScrollToLatest, scrollToLatest, selectedConversationId]);
 
+  useLayoutEffect(() => {
+    const anchor = olderLoadAnchorRef.current;
+    if (!anchor || loadingOlder) return;
+    const container = messagesRef.current;
+    if (!container) {
+      olderLoadAnchorRef.current = null;
+      return;
+    }
+    const nextHeight = Math.max(container.scrollHeight, messagesContentRef.current?.scrollHeight || 0);
+    const delta = Math.max(0, nextHeight - anchor.previousScrollHeight);
+    container.scrollTop = anchor.previousScrollTop + delta;
+    setMessageViewportState({ scrollTop: container.scrollTop, viewportHeight: container.clientHeight });
+    lastObservedViewportSignatureRef.current = buildChatViewportSignature(nextHeight, container.clientHeight, container.scrollTop);
+    olderLoadAnchorRef.current = null;
+  }, [loadingOlder, olderMessages.length]);
+
+  useLayoutEffect(() => {
+    const container = messagesRef.current;
+    if (!container) return;
+    const nextState = { scrollTop: container.scrollTop, viewportHeight: container.clientHeight };
+    setMessageViewportState((current) => (
+      current.scrollTop === nextState.scrollTop && current.viewportHeight === nextState.viewportHeight ? current : nextState
+    ));
+  }, [messageWindow.topSpacerHeight, messageWindow.bottomSpacerHeight, messageWindow.visibleMessages.length]);
+
   useEffect(() => {
     const container = messagesRef.current;
     const content = messagesContentRef.current;
@@ -637,6 +696,11 @@ export function ChatWindow({
       const nextHeight = Math.max(container.scrollHeight, content.scrollHeight);
       const distanceFromBottom = Math.max(0, nextHeight - container.clientHeight - container.scrollTop);
       const nextSignature = buildChatViewportSignature(nextHeight, container.clientHeight, container.scrollTop);
+      setMessageViewportState((current) => (
+        current.scrollTop === container.scrollTop && current.viewportHeight === container.clientHeight
+          ? current
+          : { scrollTop: container.scrollTop, viewportHeight: container.clientHeight }
+      ));
       if (nextSignature === lastObservedViewportSignatureRef.current) return;
       lastObservedViewportSignatureRef.current = nextSignature;
       if (stickToLatestRef.current) {
@@ -763,13 +827,29 @@ export function ChatWindow({
 
   const loadOlderMessages = async () => {
     try {
+      const container = messagesRef.current;
+      if (container) {
+        olderLoadAnchorRef.current = {
+          previousScrollHeight: Math.max(container.scrollHeight, messagesContentRef.current?.scrollHeight || 0),
+          previousScrollTop: container.scrollTop
+        };
+      }
       await loadOlderChatMessages();
     } catch (loadError: any) {
+      olderLoadAnchorRef.current = null;
       setStatus({ tone: 'error', message: loadError?.message || 'Unable to load older messages.' });
     }
   };
 
   const handleMessagesScroll = () => {
+    const container = messagesRef.current;
+    if (container) {
+      setMessageViewportState((current) => (
+        current.scrollTop === container.scrollTop && current.viewportHeight === container.clientHeight
+          ? current
+          : { scrollTop: container.scrollTop, viewportHeight: container.clientHeight }
+      ));
+    }
     if (programmaticScrollRef.current) return;
     if (!messages.length) {
       stickToLatestRef.current = true;
@@ -1472,11 +1552,14 @@ export function ChatWindow({
               </div>
             ) : (
               <MessageList
-                messages={visibleMessages}
+                messages={messageWindow.visibleMessages}
+                topSpacerHeight={messageWindow.topSpacerHeight}
+                bottomSpacerHeight={messageWindow.bottomSpacerHeight}
                 currentUserId={auth.user?.uid || ''}
                 canModerate={canModerate}
                 actionMessageId={actionMessageId}
                 reactionMessageId={reactionMessageId}
+                onMessageRowHeightChange={handleMessageRowHeightChange}
                 onActionMessage={setActionMessageId}
                 onReactionMessage={setReactionMessageId}
                 onToggleReaction={handleToggleReaction}
@@ -1636,6 +1719,88 @@ export function ChatWindow({
 export function buildChatViewportSignature(scrollHeight: number, clientHeight: number, scrollTop: number) {
   const distanceFromBottom = Math.max(0, scrollHeight - clientHeight - scrollTop);
   return `${scrollHeight}:${clientHeight}:${distanceFromBottom}`;
+}
+
+export function estimateChatMessageRowHeight(message: ChatMessage, previousMessage: ChatMessage | null = null) {
+  const attachments = getMessageAttachments(message);
+  const textLength = String(message.text || '').trim().length;
+  const showDayDivider = formatChatDay(message.createdAt) !== formatChatDay(previousMessage?.createdAt);
+  const textLines = Math.max(1, Math.ceil(textLength / 72));
+  return CHAT_MESSAGE_BASE_ESTIMATED_HEIGHT
+    + ((textLines - 1) * 20)
+    + (attachments.length ? CHAT_MESSAGE_ATTACHMENT_ESTIMATED_HEIGHT : 0)
+    + (showDayDivider ? CHAT_MESSAGE_DAY_DIVIDER_ESTIMATED_HEIGHT : 0);
+}
+
+export function buildVirtualizedChatWindow(
+  messages: ChatMessage[],
+  {
+    scrollTop,
+    viewportHeight,
+    measuredHeights,
+    overscanPx = CHAT_MESSAGE_WINDOW_OVERSCAN_PX,
+    initialWindowCount = CHAT_MESSAGE_INITIAL_WINDOW_COUNT
+  }: {
+    scrollTop: number;
+    viewportHeight: number;
+    measuredHeights?: Record<string, number>;
+    overscanPx?: number;
+    initialWindowCount?: number;
+  }
+): VirtualizedChatWindow {
+  if (!messages.length) {
+    return {
+      startIndex: 0,
+      endIndex: -1,
+      topSpacerHeight: 0,
+      bottomSpacerHeight: 0,
+      visibleMessages: []
+    };
+  }
+
+  const heights: number[] = [];
+  const offsets = [0];
+  for (let index = 0; index < messages.length; index += 1) {
+    const message = messages[index];
+    const measuredHeight = Number(measuredHeights?.[String(message.id)] || 0);
+    const estimatedHeight = estimateChatMessageRowHeight(message, index > 0 ? messages[index - 1] : null);
+    const height = Math.max(measuredHeight, estimatedHeight);
+    heights.push(height);
+    offsets.push(offsets[offsets.length - 1] + height);
+  }
+
+  const totalHeight = offsets[offsets.length - 1];
+  if (!Number.isFinite(viewportHeight) || viewportHeight <= 0) {
+    const startIndex = Math.max(0, messages.length - Math.max(1, initialWindowCount));
+    return {
+      startIndex,
+      endIndex: messages.length - 1,
+      topSpacerHeight: offsets[startIndex],
+      bottomSpacerHeight: 0,
+      visibleMessages: messages.slice(startIndex)
+    };
+  }
+
+  const startBoundary = Math.max(0, scrollTop - Math.max(0, overscanPx));
+  const endBoundary = Math.min(totalHeight, scrollTop + viewportHeight + Math.max(0, overscanPx));
+
+  let startIndex = 0;
+  while (startIndex < messages.length - 1 && offsets[startIndex + 1] < startBoundary) {
+    startIndex += 1;
+  }
+
+  let endIndex = startIndex;
+  while (endIndex < messages.length - 1 && offsets[endIndex + 1] < endBoundary) {
+    endIndex += 1;
+  }
+
+  return {
+    startIndex,
+    endIndex,
+    topSpacerHeight: offsets[startIndex],
+    bottomSpacerHeight: Math.max(0, totalHeight - offsets[endIndex + 1]),
+    visibleMessages: messages.slice(startIndex, endIndex + 1)
+  };
 }
 
 function resolveMutedState(
@@ -2008,10 +2173,13 @@ function formatEmailSentTime(value: unknown) {
 
 type MessageListProps = {
   messages: ChatMessage[];
+  topSpacerHeight: number;
+  bottomSpacerHeight: number;
   currentUserId: string;
   canModerate: boolean;
   actionMessageId: string;
   reactionMessageId: string;
+  onMessageRowHeightChange: (messageId: string, height: number) => void;
   onActionMessage: (messageId: string) => void;
   onReactionMessage: (messageId: string) => void;
   onToggleReaction: (messageId: string, reactionKey: string) => void;
@@ -2022,10 +2190,13 @@ type MessageListProps = {
 
 const MessageList = memo(function MessageList({
   messages,
+  topSpacerHeight,
+  bottomSpacerHeight,
   currentUserId,
   canModerate,
   actionMessageId,
   reactionMessageId,
+  onMessageRowHeightChange,
   onActionMessage,
   onReactionMessage,
   onToggleReaction,
@@ -2036,13 +2207,24 @@ const MessageList = memo(function MessageList({
   let lastDay = '';
   return (
     <div className="space-y-3 p-3 sm:p-4">
+      {topSpacerHeight > 0 ? <div aria-hidden="true" data-testid="chat-top-spacer" style={{ height: `${topSpacerHeight}px` }} /> : null}
       {messages.map((message, index) => {
         const day = formatChatDay(message.createdAt);
         const showDay = day && day !== lastDay;
         const preferReactionPickerAbove = index >= Math.max(0, messages.length - 2);
         lastDay = day || lastDay;
         return (
-          <div key={message.id}>
+          <div
+            key={message.id}
+            className="message-row-measure"
+            ref={(node) => {
+              if (!node) return;
+              const nextHeight = node.offsetHeight;
+              if (nextHeight > 0) {
+                onMessageRowHeightChange(String(message.id), nextHeight);
+              }
+            }}
+          >
             {showDay ? <div className="my-3 text-center text-[11px] font-black uppercase text-gray-400">{day}</div> : null}
             <MessageBubble
               message={message}
@@ -2061,6 +2243,7 @@ const MessageList = memo(function MessageList({
           </div>
         );
       })}
+      {bottomSpacerHeight > 0 ? <div aria-hidden="true" data-testid="chat-bottom-spacer" style={{ height: `${bottomSpacerHeight}px` }} /> : null}
     </div>
   );
 });
