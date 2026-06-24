@@ -1,3 +1,6 @@
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
     buildCoverageReport,
@@ -34,6 +37,30 @@ describe('feature coverage map', () => {
         expect(discovered.cloudFunctions).toContain('submitPublicRegistration');
         expect(discovered.cloudFunctions).toContain('createStripeTeamFeeCheckout');
         expect(discovered.cloudFunctions).toContain('notifyTeamChatMessageCreated');
+    });
+
+    it('ignores app build output when discovering shipped HTML pages', () => {
+        const repoRoot = mkdtempSync(path.join(os.tmpdir(), 'allplays-coverage-map-'));
+
+        try {
+            mkdirSync(path.join(repoRoot, 'apps/app/dist'), { recursive: true });
+            mkdirSync(path.join(repoRoot, 'apps/app/src/pages'), { recursive: true });
+            mkdirSync(path.join(repoRoot, 'functions'), { recursive: true });
+
+            writeFileSync(path.join(repoRoot, 'help.html'), '<h1>Help</h1>');
+            writeFileSync(path.join(repoRoot, 'apps/app/bundle-visualizer.html'), '<h1>Generated bundle report</h1>');
+            writeFileSync(path.join(repoRoot, 'apps/app/dist/index.html'), '<h1>Built app shell</h1>');
+            writeFileSync(path.join(repoRoot, 'apps/app/src/pages/Home.tsx'), 'export function Home() { return null; }');
+            writeFileSync(path.join(repoRoot, 'functions/index.js'), 'exports.exampleFunction = () => {};');
+
+            const discovered = discoverRepositorySurfaces(repoRoot);
+
+            expect(discovered.htmlPages).toEqual(['help.html']);
+            expect(discovered.appPageFiles).toEqual(['apps/app/src/pages/Home.tsx']);
+            expect(discovered.cloudFunctions).toEqual(['exampleFunction']);
+        } finally {
+            rmSync(repoRoot, { recursive: true, force: true });
+        }
     });
 
     it('keeps the current follow-up gaps visible in the report output', () => {

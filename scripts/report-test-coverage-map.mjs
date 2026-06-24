@@ -84,6 +84,9 @@ export function discoverRepositorySurfaces(repoRoot = DEFAULT_REPO_ROOT) {
         'apps/app/dist',
         'ios'
     ];
+    const ignoredGeneratedHtmlPaths = [
+        'apps/app/bundle-visualizer.html'
+    ];
 
     const allFiles = walkFiles(repoRoot, (absolutePath) => {
         const repoPath = toRepoPath(repoRoot, absolutePath);
@@ -97,6 +100,7 @@ export function discoverRepositorySurfaces(repoRoot = DEFAULT_REPO_ROOT) {
     const htmlPages = allFiles
         .map((absolutePath) => toRepoPath(repoRoot, absolutePath))
         .filter((repoPath) => repoPath.endsWith('.html'))
+        .filter((repoPath) => !ignoredGeneratedHtmlPaths.includes(repoPath))
         .sort();
 
     const appPageFiles = walkFiles(path.resolve(repoRoot, 'apps/app/src/pages'))
