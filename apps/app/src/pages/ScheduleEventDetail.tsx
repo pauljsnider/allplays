@@ -3867,9 +3867,12 @@ function getAttentionItems(event: ParentScheduleEvent, rsvp: RsvpResponse): Atte
 }
 
 function getEventBriefPieces(event: ParentScheduleEvent) {
+  const scoreLabel = getScoreLabel(event);
+  const statusLabel = getEventStatusLabel(event);
+
   return [
     event.isCancelled ? 'Cancelled' : '',
-    getScoreLabel(event) ? `Final ${getScoreLabel(event)}` : '',
+    scoreLabel ? (statusLabel === 'Live now' ? scoreLabel : `Final ${scoreLabel}`) : '',
     event.isHome === true ? 'Home' : event.isHome === false ? 'Away' : '',
     event.kitColor ? `${event.kitColor} kit` : '',
     event.seasonLabel ? event.seasonLabel : '',
