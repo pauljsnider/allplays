@@ -2,7 +2,7 @@
 import { readFileSync } from 'node:fs';
 import { JSDOM } from 'jsdom';
 import { describe, it, expect } from 'vitest'; // Import Vitest globals
-import { buildManualPaymentUpdate, buildBalanceAdjustmentUpdate, buildOnlineRefundRequest, getRecipientRefundableCents, getRecipientStripePaymentRefs, isOnlineRefundEligible, buildOfflineRefundUpdate, buildTeamFeePaymentSummaryRows, serializeTeamFeePaymentSummaryCsv, buildTeamFeePaymentSummaryCsv, escapeCsvValue, registerTeamFeesAdminPageHandlers, normalizeTeamFeeDraft, buildCancelRecipientUpdate } from '../../js/team-fees-admin.js'; // Adjusted path
+import { buildManualPaymentUpdate, buildBalanceAdjustmentUpdate, buildOnlineRefundRequest, getRecipientRefundableCents, getRecipientStripePaymentRefs, isOnlineRefundEligible, buildOfflineRefundUpdate, buildTeamFeePaymentSummaryRows, serializeTeamFeePaymentSummaryCsv, buildTeamFeePaymentSummaryCsv, escapeCsvValue, registerTeamFeesAdminPageHandlers, normalizeTeamFeeDraft, buildCancelRecipientUpdate, buildTeamFeeRecipientRecords } from '../../js/team-fees-admin.js'; // Adjusted path
 
 describe('team fees admin page routing', () => {
     it('reinitializes when same-page manage links update the hash', () => {
@@ -21,12 +21,23 @@ describe('team fees admin page routing', () => {
         const adminSource = readFileSync(new URL('../../js/team-fees-admin.js', import.meta.url), 'utf8');
         const pageSource = readFileSync(new URL('../../team-fees.html', import.meta.url), 'utf8');
 
-        expect(adminSource).toContain("import('./db.js?v=65')");
-        expect(pageSource).toContain('<script type="module" src="./js/team-fees-admin.js?v=10"></script>');
+        expect(adminSource).toContain("import('./db.js?v=66')");
+        expect(pageSource).toContain('<script type="module" src="./js/team-fees-admin.js?v=11"></script>');
     });
 });
 
-describe('create offline team fee form', () => {
+describe('create team fee form', () => {
+    it('renders the collection mode control while preserving the default offline warning copy', () => {
+        const source = readFileSync(new URL('../../js/team-fees-admin.js', import.meta.url), 'utf8');
+
+        expect(source).toContain('name="collectionMode" type="radio" value="offline_manual"');
+        expect(source).toContain('name="collectionMode" type="radio" value="online_stripe"');
+        expect(source).toContain('Create offline team fee');
+        expect(source).toContain('No credit card, Stripe, checkout, email, push, or SMS workflow is created.');
+        expect(source).toContain('Create online team fee');
+        expect(source).toContain('Pay online action');
+    });
+
     it('keeps advanced invoice controls collapsed by default and available after expansion', () => {
         const source = readFileSync(new URL('../../js/team-fees-admin.js', import.meta.url), 'utf8');
         const advancedSection = source.match(/<details id="advanced-invoice-details"[\s\S]*?<\/details>/)?.[0];
@@ -66,8 +77,39 @@ describe('normalizeTeamFeeDraft', () => {
             dueDate: '2026-06-01',
             recipientIds: ['player-1'],
             lineItems: [],
-            installments: []
+            installments: [],
+            collectionMode: 'offline_manual',
+            offlinePaymentInstructions: 'Collect payment outside ALL PLAYS. No online payment is processed.'
         });
+    });
+
+    it('preserves online Stripe collection mode without offline instructions', () => {
+        const draft = normalizeTeamFeeDraft({
+            ...simpleDraft,
+            collectionMode: 'online_stripe'
+        });
+
+        expect(draft).toMatchObject({
+            collectionMode: 'online_stripe',
+            offlinePaymentInstructions: ''
+        });
+    });
+
+    it('threads collection mode into recipient records', () => {
+        const draft = normalizeTeamFeeDraft({
+            ...simpleDraft,
+            collectionMode: 'online_stripe'
+        });
+        const recipients = buildTeamFeeRecipientRecords(draft, [{ id: 'player-1', name: 'Sam' }], 'team-1');
+
+        expect(recipients).toEqual([
+            expect.objectContaining({
+                teamId: 'team-1',
+                playerId: 'player-1',
+                collectionMode: 'online_stripe',
+                offlinePaymentInstructions: ''
+            })
+        ]);
     });
 
     it('requires populated line items and installments to match the fee amount', () => {

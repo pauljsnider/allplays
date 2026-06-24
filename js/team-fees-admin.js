@@ -2,6 +2,7 @@ import { escapeHtml, getUrlParams, renderFooter, renderHeader } from './utils.js
 
 export const OFFLINE_TEAM_FEE_LABEL = 'Offline/manual collection only';
 export const OFFLINE_TEAM_FEE_INSTRUCTIONS = 'Collect payment outside ALL PLAYS. No online payment is processed.';
+export const ONLINE_TEAM_FEE_LABEL = 'Online Stripe collection';
 
 const STATUS_LABELS = {
     paid: 'Paid',
@@ -18,6 +19,13 @@ const REFUND_METHOD_LABELS = {
 
 function normalizeString(value) {
     return String(value || '').trim();
+}
+
+function normalizeTeamFeeCollectionMode(value) {
+    const normalized = normalizeString(value).toLowerCase();
+    if (!normalized || ['offline_manual', 'offline', 'manual'].includes(normalized)) return 'offline_manual';
+    if (['online_stripe', 'online', 'stripe', 'stripe_checkout'].includes(normalized)) return 'online_stripe';
+    throw new Error('Choose how families should pay this fee.');
 }
 
 function normalizeInvoiceEntries(entries = [], { descriptionKey = 'description', amountKey = 'amount', dateKey = null, requireDescription = false, missingMessage = 'Complete each invoice row before saving.' } = {}) {
@@ -87,6 +95,7 @@ export function normalizeTeamFeeDraft(formValues = {}) {
     const amountCents = parseTeamFeeAmountToCents(formValues.amount);
     const dueDate = normalizeString(formValues.dueDate);
     const notes = normalizeString(formValues.notes);
+    const collectionMode = normalizeTeamFeeCollectionMode(formValues.collectionMode);
     const recipientIds = Array.from(new Set((formValues.recipientIds || [])
         .map((id) => normalizeString(id))
         .filter(Boolean)));
@@ -120,13 +129,17 @@ export function normalizeTeamFeeDraft(formValues = {}) {
         recipientIds,
         lineItems,
         installments,
-        collectionMode: 'offline_manual',
-        offlinePaymentInstructions: OFFLINE_TEAM_FEE_INSTRUCTIONS
+        collectionMode,
+        offlinePaymentInstructions: collectionMode === 'offline_manual' ? OFFLINE_TEAM_FEE_INSTRUCTIONS : ''
     };
 }
 
 export function buildTeamFeeRecipientRecords(draft, players = [], teamId = '') {
     const selectedIds = new Set(draft.recipientIds || []);
+    const collectionMode = normalizeTeamFeeCollectionMode(draft.collectionMode);
+    const offlinePaymentInstructions = collectionMode === 'offline_manual'
+        ? (draft.offlinePaymentInstructions || OFFLINE_TEAM_FEE_INSTRUCTIONS)
+        : '';
     return (players || [])
         .filter((player) => selectedIds.has(player.id))
         .map((player) => ({
@@ -140,8 +153,8 @@ export function buildTeamFeeRecipientRecords(draft, players = [], teamId = '') {
             dueDate: draft.dueDate,
             notes: draft.notes || '',
             status: 'unpaid',
-            collectionMode: 'offline_manual',
-            offlinePaymentInstructions: draft.offlinePaymentInstructions || OFFLINE_TEAM_FEE_INSTRUCTIONS,
+            collectionMode,
+            offlinePaymentInstructions,
             lineItems: draft.lineItems || [],
             installments: draft.installments || []
         }));
@@ -656,6 +669,7 @@ function showHtmlMessage(html, type = 'info') {
 
 function collectFormValues(form) {
     return {
+        collectionMode: form.elements.collectionMode.value,
         title: form.elements.title.value,
         amount: form.elements.amount.value,
         dueDate: form.elements.dueDate.value,
@@ -700,7 +714,7 @@ export function renderCreatedTeamFeeBatchSuccess(teamId, batchId) {
     const manageUrl = buildTeamFeeBatchManageUrl(teamId, batchId);
     return `
         <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-            <span>Fee batch saved with unpaid recipient records. Batch ID: ${escapeHtml(batchId)}</span>
+            <span>Fee batch saved. Batch ID: ${escapeHtml(batchId)}</span>
             <a href="${escapeHtml(manageUrl)}" class="rounded-lg bg-green-700 px-3 py-2 text-center text-sm font-semibold text-white hover:bg-green-800">Manage this fee</a>
         </div>
     `;
@@ -897,13 +911,13 @@ async function renderCreateMode({ container, teamId, team, user, getPlayers, cre
     container.innerHTML = `
         <div class="mb-6">
             <a href="dashboard.html" class="text-sm font-semibold text-primary-600 hover:text-primary-700">Back to My Teams</a>
-            <h1 class="mt-3 text-3xl font-bold text-gray-900">Create offline team fee</h1>
-            <p class="mt-2 text-gray-600">${escapeHtml(team.name || 'Team')} fee batches are for manual collection only.</p>
+            <h1 id="create-fee-title" class="mt-3 text-3xl font-bold text-gray-900">Create offline team fee</h1>
+            <p id="create-fee-subtitle" class="mt-2 text-gray-600">${escapeHtml(team.name || 'Team')} fee batches default to manual collection.</p>
         </div>
 
-        <div class="mb-6 rounded-2xl border border-amber-200 bg-amber-50 p-5 text-amber-900">
-            <p class="font-bold">${OFFLINE_TEAM_FEE_LABEL}</p>
-            <p class="mt-1 text-sm">No credit card, Stripe, checkout, email, push, or SMS workflow is created. This only records unpaid roster fee assignments.</p>
+        <div id="collection-mode-callout" class="mb-6 rounded-2xl border border-amber-200 bg-amber-50 p-5 text-amber-900">
+            <p id="collection-mode-callout-label" class="font-bold">${OFFLINE_TEAM_FEE_LABEL}</p>
+            <p id="collection-mode-callout-body" class="mt-1 text-sm">No credit card, Stripe, checkout, email, push, or SMS workflow is created. This only records unpaid roster fee assignments.</p>
         </div>
 
         ${renderTeamFeeBatchList(existingBatches, teamId)}
@@ -911,6 +925,25 @@ async function renderCreateMode({ container, teamId, team, user, getPlayers, cre
         <form id="team-fee-form" class="rounded-2xl border border-gray-200 bg-white p-6 shadow-md">
             <div id="fee-message" class="hidden"></div>
             <div class="mt-4 grid gap-4 md:grid-cols-2">
+                <fieldset class="block md:col-span-2">
+                    <legend class="text-sm font-semibold text-gray-700">Collection mode</legend>
+                    <div class="mt-2 grid gap-3 md:grid-cols-2">
+                        <label class="flex cursor-pointer items-start gap-3 rounded-2xl border border-amber-200 bg-amber-50 p-4">
+                            <input name="collectionMode" type="radio" value="offline_manual" class="mt-1 h-4 w-4 border-gray-300 text-primary-600" checked>
+                            <span>
+                                <span class="block font-semibold text-gray-900">Offline/manual collection</span>
+                                <span class="mt-1 block text-sm text-gray-600">Keep the current instructions-based workflow. Parents will not get a Stripe Pay online action.</span>
+                            </span>
+                        </label>
+                        <label class="flex cursor-pointer items-start gap-3 rounded-2xl border border-sky-200 bg-sky-50 p-4">
+                            <input name="collectionMode" type="radio" value="online_stripe" class="mt-1 h-4 w-4 border-gray-300 text-primary-600">
+                            <span>
+                                <span class="block font-semibold text-gray-900">Online Stripe collection</span>
+                                <span class="mt-1 block text-sm text-gray-600">Parents will see a Pay online action in their dashboard and complete payment in Stripe when they are eligible.</span>
+                            </span>
+                        </label>
+                    </div>
+                </fieldset>
                 <label class="block">
                     <span class="text-sm font-semibold text-gray-700">Title</span>
                     <input name="title" type="text" required placeholder="Tournament dues" class="mt-1 w-full rounded-xl border border-gray-300 px-4 py-3 focus:border-primary-500 focus:outline-none">
@@ -975,6 +1008,45 @@ async function renderCreateMode({ container, teamId, team, user, getPlayers, cre
     const advancedInvoiceDetails = document.getElementById('advanced-invoice-details');
     const lineItemsList = document.getElementById('line-items-list');
     const installmentsList = document.getElementById('installments-list');
+    const collectionModeTitle = document.getElementById('create-fee-title');
+    const collectionModeSubtitle = document.getElementById('create-fee-subtitle');
+    const collectionModeCallout = document.getElementById('collection-mode-callout');
+    const collectionModeCalloutLabel = document.getElementById('collection-mode-callout-label');
+    const collectionModeCalloutBody = document.getElementById('collection-mode-callout-body');
+    const submitButton = form.querySelector('button[type="submit"]');
+
+    function updateCollectionModeCopy() {
+        const offlineSelected = form.elements.collectionMode.value !== 'online_stripe';
+        if (collectionModeTitle) {
+            collectionModeTitle.textContent = offlineSelected ? 'Create offline team fee' : 'Create online team fee';
+        }
+        if (collectionModeSubtitle) {
+            collectionModeSubtitle.textContent = offlineSelected
+                ? `${team.name || 'Team'} fee batches default to manual collection.`
+                : `${team.name || 'Team'} fee batches can use Stripe collection so families can pay online.`;
+        }
+        if (collectionModeCallout) {
+            collectionModeCallout.className = offlineSelected
+                ? 'mb-6 rounded-2xl border border-amber-200 bg-amber-50 p-5 text-amber-900'
+                : 'mb-6 rounded-2xl border border-sky-200 bg-sky-50 p-5 text-sky-900';
+        }
+        if (collectionModeCalloutLabel) {
+            collectionModeCalloutLabel.textContent = offlineSelected ? OFFLINE_TEAM_FEE_LABEL : ONLINE_TEAM_FEE_LABEL;
+        }
+        if (collectionModeCalloutBody) {
+            collectionModeCalloutBody.textContent = offlineSelected
+                ? 'No credit card, Stripe, checkout, email, push, or SMS workflow is created. This only records unpaid roster fee assignments.'
+                : 'Parents can use Stripe checkout from their dashboard when the fee is unpaid and their account has access to the team.';
+        }
+        if (submitButton && !submitButton.disabled) {
+            submitButton.textContent = offlineSelected ? 'Save unpaid fee records' : 'Save Stripe fee records';
+        }
+    }
+
+    form.querySelectorAll('input[name="collectionMode"]').forEach((input) => {
+        input.addEventListener('change', updateCollectionModeCopy);
+    });
+    updateCollectionModeCopy();
 
     document.getElementById('add-line-item')?.addEventListener('click', () => {
         lineItemsList.insertAdjacentHTML('beforeend', renderInvoiceRow('lineItem'));
@@ -1007,12 +1079,15 @@ async function renderCreateMode({ container, teamId, team, user, getPlayers, cre
             advancedInvoiceDetails.open = false;
             lineItemsList.innerHTML = '';
             installmentsList.innerHTML = '';
+            updateCollectionModeCopy();
             showHtmlMessage(renderCreatedTeamFeeBatchSuccess(teamId, batch.id), 'success');
         } catch (error) {
             showMessage(error?.message || 'Unable to save fee batch.', 'error');
         } finally {
             button.disabled = false;
-            button.textContent = 'Save unpaid fee records';
+            button.textContent = form.elements.collectionMode.value === 'online_stripe'
+                ? 'Save Stripe fee records'
+                : 'Save unpaid fee records';
         }
     });
 }
@@ -1178,7 +1253,7 @@ async function initTeamFeesAdminPage() {
     renderFooter(document.getElementById('footer-container'));
 
     const [{ getTeam, getPlayers, getUserProfile, createTeamFeeBatch, getTeamFeeBatch, listTeamFeeBatches, listTeamFeeRecipients, updateTeamFeeRecipient, canModerateChat }, { requireAuth }] = await Promise.all([
-        import('./db.js?v=65'),
+        import('./db.js?v=66'),
         import('./auth.js?v=33')
     ]);
 

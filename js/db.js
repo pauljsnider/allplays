@@ -5078,11 +5078,23 @@ export async function createTeamFeeBatch(teamId, feeDraft, recipients = [], user
     if (!feeDraft?.dueDate) throw new Error('Due date is required.');
     if (!recipients.length) throw new Error('At least one recipient is required.');
 
+    const normalizedCollectionMode = String(feeDraft?.collectionMode || 'offline_manual').trim().toLowerCase();
+    const collectionMode = ['online_stripe', 'online', 'stripe', 'stripe_checkout'].includes(normalizedCollectionMode)
+        ? 'online_stripe'
+        : ['offline_manual', 'offline', 'manual', ''].includes(normalizedCollectionMode)
+            ? 'offline_manual'
+            : null;
+    if (!collectionMode) throw new Error('Choose how families should pay this fee.');
+    if (collectionMode === 'online_stripe' && recipients.some((recipient) => !recipient?.playerId)) {
+        throw new Error('Online Stripe collection requires roster recipients with player IDs.');
+    }
+
     const batchRef = doc(collection(db, `teams/${teamId}/feeBatches`));
     const write = writeBatch(db);
     const now = serverTimestamp();
-    const collectionMode = 'offline_manual';
-    const offlinePaymentInstructions = feeDraft.offlinePaymentInstructions || 'Collect payment outside ALL PLAYS. No online payment is processed.';
+    const offlinePaymentInstructions = collectionMode === 'offline_manual'
+        ? (feeDraft.offlinePaymentInstructions || 'Collect payment outside ALL PLAYS. No online payment is processed.')
+        : '';
 
     write.set(batchRef, {
         teamId,

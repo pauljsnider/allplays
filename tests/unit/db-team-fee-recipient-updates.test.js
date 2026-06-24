@@ -25,6 +25,100 @@ function buildUpdateTeamFeeRecipient({ db = {}, doc, updateDoc, runTransaction, 
     );
 }
 
+function buildCreateTeamFeeBatch({ db = {}, doc, collection, writeBatch, serverTimestamp }) {
+    const start = dbSource.indexOf('export async function createTeamFeeBatch');
+    const end = dbSource.indexOf('\nfunction normalizeParentRegistrationEmail', start);
+    expect(start).toBeGreaterThanOrEqual(0);
+    expect(end).toBeGreaterThan(start);
+
+    const functionSource = dbSource
+        .slice(start, end)
+        .replace('export async function createTeamFeeBatch', 'return async function createTeamFeeBatch');
+
+    return new Function('db', 'doc', 'collection', 'writeBatch', 'serverTimestamp', functionSource)(
+        db,
+        doc,
+        collection,
+        writeBatch,
+        serverTimestamp
+    );
+}
+
+function buildCreateTeamFeeBatchHarness() {
+    let nextBatchId = 'batch-1';
+    const setCalls = [];
+    const commit = vi.fn(async () => undefined);
+    const writeBatch = vi.fn(() => ({
+        set: vi.fn((ref, payload) => setCalls.push({ ref, payload })),
+        commit
+    }));
+    const collection = vi.fn((_db, path) => ({ path }));
+    const doc = vi.fn((_dbOrCollection, ...parts) => {
+        if (parts.length === 0) return { id: nextBatchId, path: `teams/team-1/feeBatches/${nextBatchId}` };
+        return { path: parts.join('/') };
+    });
+    const createTeamFeeBatch = buildCreateTeamFeeBatch({
+        doc,
+        collection,
+        writeBatch,
+        serverTimestamp: vi.fn(() => 'server-ts')
+    });
+
+    return { createTeamFeeBatch, setCalls, commit, doc, collection, writeBatch };
+}
+
+describe('createTeamFeeBatch collection mode persistence', () => {
+    const feeDraft = {
+        title: 'Tournament dues',
+        amountCents: 12500,
+        dueDate: '2026-06-01',
+        notes: 'Includes field rental.'
+    };
+    const recipients = [{ playerId: 'player-1', playerName: 'Sam' }];
+
+    it('persists offline manual mode and instructions by default', async () => {
+        const { createTeamFeeBatch, setCalls, commit } = buildCreateTeamFeeBatchHarness();
+
+        await expect(createTeamFeeBatch('team-1', feeDraft, recipients, { uid: 'admin-1', email: 'admin@example.com' })).resolves.toEqual({ id: 'batch-1' });
+
+        expect(commit).toHaveBeenCalledTimes(1);
+        expect(setCalls[0].payload).toEqual(expect.objectContaining({
+            collectionMode: 'offline_manual',
+            offlinePaymentInstructions: 'Collect payment outside ALL PLAYS. No online payment is processed.'
+        }));
+        expect(setCalls[1].payload).toEqual(expect.objectContaining({
+            playerId: 'player-1',
+            collectionMode: 'offline_manual',
+            offlinePaymentInstructions: 'Collect payment outside ALL PLAYS. No online payment is processed.'
+        }));
+    });
+
+    it('persists online Stripe mode on the batch and recipient without offline instructions', async () => {
+        const { createTeamFeeBatch, setCalls, commit } = buildCreateTeamFeeBatchHarness();
+
+        await expect(createTeamFeeBatch('team-1', { ...feeDraft, collectionMode: 'online_stripe' }, recipients, { uid: 'admin-1' })).resolves.toEqual({ id: 'batch-1' });
+
+        expect(commit).toHaveBeenCalledTimes(1);
+        expect(setCalls[0].payload).toEqual(expect.objectContaining({
+            collectionMode: 'online_stripe',
+            offlinePaymentInstructions: ''
+        }));
+        expect(setCalls[1].payload).toEqual(expect.objectContaining({
+            playerId: 'player-1',
+            collectionMode: 'online_stripe',
+            offlinePaymentInstructions: ''
+        }));
+    });
+
+    it('fails online Stripe creation when recipient checkout context is missing', async () => {
+        const { createTeamFeeBatch, commit } = buildCreateTeamFeeBatchHarness();
+
+        await expect(createTeamFeeBatch('team-1', { ...feeDraft, collectionMode: 'online_stripe' }, [{ playerName: 'Missing player id' }]))
+            .rejects.toThrow('Online Stripe collection requires roster recipients with player IDs.');
+        expect(commit).not.toHaveBeenCalled();
+    });
+});
+
 describe('updateTeamFeeRecipient manual payment validation', () => {
     it('rejects manual payments that exceed the recipient remaining balance before persisting', async () => {
         const updateDoc = vi.fn();

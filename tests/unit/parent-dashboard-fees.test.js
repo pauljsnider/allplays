@@ -33,6 +33,30 @@ describe('parent dashboard team fees', () => {
         expect(html).toContain('Bring cash or check to practice.');
         expect(html).toContain('Unpaid');
         expect(html).toContain('border-l-red-500');
+        expect(html).not.toContain('Pay online');
+    });
+
+    it('renders Pay online for online Stripe team fees with checkout context', () => {
+        const html = renderParentTeamFees([
+            {
+                feeTitle: 'Tournament dues',
+                teamName: '12U Tigers',
+                playerName: 'Sam',
+                amountCents: 12500,
+                balanceDueCents: 12500,
+                dueDate: '2026-06-01',
+                status: 'unpaid',
+                collectionMode: 'online_stripe',
+                teamId: 'team-1',
+                batchId: 'batch-1',
+                recipientId: 'player-1'
+            }
+        ]);
+
+        expect(html).toContain('Pay online');
+        expect(html).toContain('data-team-fee-checkout="true"');
+        expect(html).toContain('data-team-id="team-1"');
+        expect(html).not.toContain('Offline payment:');
     });
 
     it('normalizes paid, unpaid, partial, canceled, and adjusted status styling', () => {
