@@ -2,9 +2,9 @@
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
-import { MemoryRouter, Route, Routes, useNavigate } from 'react-router-dom';
+import { MemoryRouter, Route, Routes, useLocation, useNavigate } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { Schedule } from './Schedule';
+import { Schedule, getGenericEventDetailPath } from './Schedule';
 import type { AuthState } from '../lib/types';
 
 const scheduleServiceMocks = vi.hoisted(() => ({
@@ -94,6 +94,11 @@ function ScheduleNavigationHarness() {
       <Schedule auth={auth} />
     </>
   );
+}
+
+function RouteProbe() {
+  const location = useLocation();
+  return <div data-testid="route-probe">{location.pathname}{location.search}</div>;
 }
 
 function buildScheduleEvent(index: number, overrides: Record<string, unknown> = {}) {
@@ -302,6 +307,48 @@ describe('Schedule', () => {
           type: 'network'
         })
       }));
+    });
+  });
+
+  it('routes generic staff card opens to the game hub helper on mobile', () => {
+    expect(getGenericEventDetailPath(buildScheduleEvent(1, {
+      isTeamStaff: true,
+      myRsvp: 'not_responded'
+    }) as any, true)).toBe('/schedule/team-1/event-1?childId=player-1&section=game');
+    expect(getGenericEventDetailPath(buildScheduleEvent(1, {
+      isTeamStaff: false,
+      myRsvp: 'not_responded'
+    }) as any, true)).toBe('/schedule/team-1/event-1?childId=player-1&section=availability');
+    expect(getGenericEventDetailPath(buildScheduleEvent(1, {
+      id: 'practice-1',
+      type: 'practice',
+      isDbGame: false,
+      practiceHomePacketSummary: '2 drills',
+      isTeamStaff: true
+    }) as any, true)).toBe('/schedule/team-1/practice-1?childId=player-1&section=game');
+  });
+
+  it('opens the game hub from mobile staff schedule cards', async () => {
+    scheduleServiceMocks.loadParentSchedule.mockResolvedValueOnce(buildStaffScheduleResult());
+
+    const { container } = render(
+      <MemoryRouter initialEntries={['/schedule']}>
+        <Routes>
+          <Route path="/schedule" element={<Schedule auth={auth} />} />
+          <Route path="/schedule/:teamId/:eventId" element={<RouteProbe />} />
+        </Routes>
+      </MemoryRouter>
+    );
+
+    await screen.findByText('Next up');
+
+    const nextUpLink = container.querySelector('.schedule-next-card');
+    expect(nextUpLink?.getAttribute('href')).toBe('/schedule/team-1/event-1?childId=player-1&section=game');
+
+    fireEvent.click(nextUpLink as HTMLAnchorElement);
+
+    await waitFor(() => {
+      expect(screen.getByTestId('route-probe').textContent).toBe('/schedule/team-1/event-1?childId=player-1&section=game');
     });
   });
 
@@ -588,8 +635,8 @@ describe('Schedule', () => {
   it('keeps list pagination props in sync with the parent schedule view', () => {
     const source = readFileSync(resolveAppSourcePath('src/pages/Schedule.tsx'), 'utf8');
 
-    expect(source).toContain('function ScheduleList({ events, visibleCount, pageSize, canShowMore, loadingMore, onShowMore }');
-    expect(source).toContain('function CompactScheduleList({ events, visibleCount, pageSize, canShowMore, loadingMore, onShowMore }');
+    expect(source).toContain('function ScheduleList({ events, visibleCount, pageSize, canShowMore, loadingMore, preferGameHubForStaff, onShowMore }');
+    expect(source).toContain('function CompactScheduleList({ events, visibleCount, pageSize, canShowMore, loadingMore, preferGameHubForStaff, onShowMore }');
     expect(source).toContain("{loadingMore ? 'Loading more…' : `Show ${Math.min(pageSize, remainingCount || pageSize)} more`}");
   });
 
