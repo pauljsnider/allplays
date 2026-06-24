@@ -3,7 +3,7 @@ import { describe, it } from 'vitest';
 import { createRequire } from 'node:module';
 
 const require = createRequire(import.meta.url);
-const { loadNotificationInternals } = require('./send-category-notification-test-helpers');
+const { loadNotificationInternals } = require('./send-category-notification-test-helpers.cjs');
 
 function buildLargeFixture({ recipients = 500, devicesPerRecipient = 1 }) {
     const indexedTargets = [];

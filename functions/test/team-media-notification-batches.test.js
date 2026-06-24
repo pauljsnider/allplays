@@ -3,7 +3,7 @@ import { test } from 'vitest';
 import { createRequire } from 'node:module';
 
 const require = createRequire(import.meta.url);
-const { loadNotificationInternals } = require('./send-category-notification-test-helpers');
+const { loadNotificationInternals } = require('./send-category-notification-test-helpers.cjs');
 
 test('team media notification batch metadata groups album uploads into hourly windows', () => {
         const { internals, cleanup } = loadNotificationInternals();
