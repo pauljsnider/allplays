@@ -35,6 +35,14 @@ function trackParentToolRender(toolId: ParentToolId) {
     globalThis.__ALLPLAYS_PARENT_TOOLS_RENDER_TRACKER__?.(toolId);
 }
 
+function hasParentToolLinks(auth: AuthState) {
+    return Boolean(
+        auth.user?.parentOf?.length ||
+        auth.user?.parentPlayerKeys?.length ||
+        auth.user?.parentTeamIds?.length
+    );
+}
+
 const ParentToolPanel = memo(function ParentToolPanel({ toolId, auth, refreshVersion, onAccessChanged }: { toolId: ParentToolId } & ParentToolPanelProps) {
     trackParentToolRender(toolId);
     const Panel = lazyToolPanels[toolId];
@@ -46,7 +54,7 @@ export function ParentTools({ auth }: { auth: AuthState }) {
     const navigate = useNavigate();
     const location = useLocation();
     const activeTool = validToolIds.has(toolId as ParentToolId) ? toolId as ParentToolId : null;
-    const hasLinkedPlayers = Boolean(auth.user?.parentOf?.length);
+    const hasLinkedPlayers = hasParentToolLinks(auth);
     const visibleTools = hasLinkedPlayers ? tools : tools.filter((tool) => tool.id === 'access');
     const visibleToolIds = new Set(visibleTools.map((tool) => tool.id));
     const isLockedDeepLink = Boolean(activeTool && !visibleToolIds.has(activeTool));

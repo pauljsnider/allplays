@@ -95,6 +95,16 @@ const linkedAuth: AuthState = {
     } : null
 };
 
+const indexedLinkedAuth: AuthState = {
+    ...auth,
+    user: auth.user ? {
+        ...auth.user,
+        parentOf: [],
+        parentTeamIds: ['team-1'],
+        parentPlayerKeys: ['team-1::player-1']
+    } : null
+};
+
 function ParentToolsRoute({ authState = auth }: { authState?: AuthState }) {
     return <ParentTools auth={authState} />;
 }
@@ -343,6 +353,16 @@ describe('ParentTools access', () => {
         expect(screen.getByRole('button', { name: 'Share' })).toBeTruthy();
         expect(screen.getByRole('button', { name: 'Register' })).toBeTruthy();
         expect(screen.getByRole('button', { name: 'Awards' })).toBeTruthy();
+    });
+
+    it('treats indexed parent player links as unlocked parent tools access', async () => {
+        renderParentTools(['/parent-tools/calendar'], false, indexedLinkedAuth);
+
+        expect(await screen.findByText('No team schedules')).toBeTruthy();
+        expect(screen.getByRole('button', { name: 'Access' })).toBeTruthy();
+        expect(screen.getByRole('button', { name: 'Calendar' })).toBeTruthy();
+        expect(screen.getByRole('button', { name: 'Register' })).toBeTruthy();
+        expect(screen.queryByText('Link a player in Access to unlock the rest of Parent Tools.')).toBeNull();
     });
 
     it('lazy-loads tab panels only when their tab is opened', async () => {
