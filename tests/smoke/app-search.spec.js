@@ -476,7 +476,7 @@ test.describe('desktop app global search', () => {
         await expect.poll(() => page.evaluate(() => window.__openedPublicUrls)).toEqual([]);
     });
 
-    test('desktop search filters help results by selected role', async ({ page, baseURL }) => {
+    test('desktop search shows matching help results without role filter controls', async ({ page, baseURL }) => {
         await mockSearchModules(page);
         await gotoAppRoute(page, baseURL, '/home');
 
@@ -484,14 +484,9 @@ test.describe('desktop app global search', () => {
         await page.getByLabel('Search teams, players, actions, help').fill('live tracker');
         await expect(page.getByRole('button', { name: /Track Live Games with the Live Tracker/ })).toBeVisible();
         await expect(page.getByRole('button', { name: /Watch Live Games and Replays/ })).toBeVisible();
-
-        await page.getByRole('button', { name: 'Coach', exact: true }).click();
-        await expect(page.getByRole('button', { name: /Track Live Games with the Live Tracker/ })).toBeVisible();
-        await expect(page.getByRole('button', { name: /Watch Live Games and Replays/ })).toBeHidden();
-
-        await page.getByRole('button', { name: 'Member', exact: true }).click();
-        await expect(page.getByRole('button', { name: /Watch Live Games and Replays/ })).toBeVisible();
-        await expect(page.getByRole('button', { name: /Track Live Games with the Live Tracker/ })).toBeHidden();
+        await expect(page.getByRole('button', { name: /More help results/ })).toBeVisible();
+        await expect(page.getByRole('button', { name: 'Coach', exact: true })).toHaveCount(0);
+        await expect(page.getByRole('button', { name: 'Member', exact: true })).toHaveCount(0);
     });
 
     test('desktop search supports typed keyboard navigation from the dialog', async ({ page, baseURL }) => {

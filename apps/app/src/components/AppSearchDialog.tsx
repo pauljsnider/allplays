@@ -10,7 +10,6 @@ import {
   loadAppSearchTeams,
   searchAppTeams,
   searchAppPlayers,
-  type AppSearchHelpRoleFilter,
   type AppSearchItem,
   type AppSearchPlayer,
   type AppSearchTeam
@@ -36,7 +35,6 @@ export function AppSearchDialog({ auth, open, onClose }: AppSearchDialogProps) {
   const [playersLoading, setPlayersLoading] = useState(false);
   const [playersError, setPlayersError] = useState('');
   const [activeIndex, setActiveIndex] = useState(0);
-  const [helpRoleFilter, setHelpRoleFilter] = useState<AppSearchHelpRoleFilter>('all');
   const searchRequestId = useRef(0);
   const openedAtRef = useRef(Date.now());
   const preloadedRoutesRef = useRef(new Set<string>());
@@ -45,8 +43,8 @@ export function AppSearchDialog({ auth, open, onClose }: AppSearchDialogProps) {
   const navigate = useNavigate();
 
   const results = useMemo(
-    () => computeAppSearchResults({ queryText: query, auth, teams, players, helpRoleFilter }),
-    [auth, helpRoleFilter, players, query, teams]
+    () => computeAppSearchResults({ queryText: query, auth, teams, players, helpRoleFilter: 'all' }),
+    [auth, players, query, teams]
   );
   const helpResults = results.help ?? [];
   const flatResults = results.flat ?? [...results.actions, ...results.teams, ...helpResults, ...results.players];
@@ -66,7 +64,6 @@ export function AppSearchDialog({ auth, open, onClose }: AppSearchDialogProps) {
     setBaseTeams(knownTeams);
     setTeams(knownTeams);
     setActiveIndex(0);
-    setHelpRoleFilter('all');
     setTeamsLoading(false);
     setTeamsError('');
 
@@ -201,7 +198,7 @@ export function AppSearchDialog({ auth, open, onClose }: AppSearchDialogProps) {
 
   useEffect(() => {
     setActiveIndex(0);
-  }, [helpRoleFilter, query]);
+  }, [query]);
 
   useEffect(() => {
     if (activeIndex >= flatResults.length) {
@@ -235,6 +232,18 @@ export function AppSearchDialog({ auth, open, onClose }: AppSearchDialogProps) {
     if (item.href) {
       void openPublicUrl(item.href);
     }
+  };
+
+  const openHelpPortal = () => {
+    const trimmedQuery = query.trim();
+    onClose();
+    setQuery('');
+    navigate('/help', {
+      state: {
+        helpQuery: trimmedQuery,
+        helpRoleFilter: 'all'
+      }
+    });
   };
 
   const onKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
@@ -272,9 +281,7 @@ export function AppSearchDialog({ auth, open, onClose }: AppSearchDialogProps) {
           : ''
     : teamsError;
   const helpStatus = hasRealQuery && helpResults.length === 0
-    ? helpRoleFilter === 'all'
-      ? 'No matching help articles'
-      : `No ${getHelpRoleLabel(helpRoleFilter)} help articles match this search`
+    ? 'No matching help articles'
     : '';
   const playersStatus = !hasRealQuery
     ? 'Type at least 2 characters to search players'
@@ -358,7 +365,20 @@ export function AppSearchDialog({ auth, open, onClose }: AppSearchDialogProps) {
               activeIndex={activeIndex}
               offset={results.actions.length + results.teams.length}
               status={helpStatus}
-              headerAccessory={hasRealQuery ? <HelpRoleFilter value={helpRoleFilter} onChange={setHelpRoleFilter} /> : null}
+              headerAccessory={hasRealQuery ? (
+                <button
+                  type="button"
+                  className="text-xs font-extrabold text-primary-700 transition hover:text-primary-800"
+                  onClick={openHelpPortal}
+                  onKeyDown={(event) => {
+                    if (event.key === 'Enter') {
+                      event.stopPropagation();
+                    }
+                  }}
+                >
+                  More help results
+                </button>
+              ) : null}
               onOpen={openResult}
               onHover={setActiveResultIndex}
             />
@@ -384,46 +404,6 @@ export function AppSearchDialog({ auth, open, onClose }: AppSearchDialogProps) {
       </div>
     </div>
   );
-}
-
-const helpRoleOptions: Array<{ value: AppSearchHelpRoleFilter; label: string }> = [
-  { value: 'all', label: 'All' },
-  { value: 'parent', label: 'Parent' },
-  { value: 'coach', label: 'Coach' },
-  { value: 'admin', label: 'Admin' },
-  { value: 'member', label: 'Member' }
-];
-
-function HelpRoleFilter({ value, onChange }: {
-  value: AppSearchHelpRoleFilter;
-  onChange: (value: AppSearchHelpRoleFilter) => void;
-}) {
-  return (
-    <div className="flex flex-wrap items-center justify-end gap-1.5" aria-label="Filter help by role">
-      <div className="text-[11px] font-extrabold uppercase tracking-[0.04em] text-gray-500">Help role</div>
-      <div className="flex flex-wrap gap-1.5">
-        {helpRoleOptions.map((option) => (
-          <button
-            key={option.value}
-            type="button"
-            className={`rounded-full border px-3 py-1 text-xs font-extrabold transition ${
-              value === option.value
-                ? 'border-primary-300 bg-primary-50 text-primary-700'
-                : 'border-gray-200 bg-white text-gray-600 hover:bg-gray-50'
-            }`}
-            aria-pressed={value === option.value}
-            onClick={() => onChange(option.value)}
-          >
-            {option.label}
-          </button>
-        ))}
-      </div>
-    </div>
-  );
-}
-
-function getHelpRoleLabel(value: AppSearchHelpRoleFilter) {
-  return helpRoleOptions.find((option) => option.value === value)?.label || 'selected role';
 }
 
 function SearchSection({
