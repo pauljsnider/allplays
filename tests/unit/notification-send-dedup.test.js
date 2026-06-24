@@ -20,9 +20,14 @@ function buildFirestoreTimestamp(ms) {
     };
 }
 
-function buildDedupDocPath(teamId, category, gameId = null) {
+function buildDedupDocPath(teamId, category, gameId = null, dedupKey = null) {
     const crypto = require('node:crypto');
-    const key = [teamId, category, gameId || ''].join('::');
+    const normalizedGameId = String(gameId || '').trim();
+    const normalizedDedupKey = String(dedupKey || '').trim();
+    const dedupIdentity = normalizedGameId && normalizedDedupKey
+        ? `${normalizedGameId}::${normalizedDedupKey}`
+        : (normalizedDedupKey || normalizedGameId);
+    const key = [teamId, category, dedupIdentity].join('::');
     const hash = crypto.createHash('sha256').update(key).digest('hex').slice(0, 16);
     return `teams/${teamId}/notificationSendLog/${hash}`;
 }
@@ -89,17 +94,18 @@ function buildSendCategoryNotificationHarness({
     canSend = true,
     targets = [{ uid: 'user-1', token: 'token-1' }],
     categories = ['schedule', 'liveScore', 'mentions', 'liveChat'],
-    deliveryOptions = {}
+    deliveryOptions = {},
+    sendEachForMulticastImpl = async () => ({
+        responses: [{ success: true }],
+        successCount: targets.length,
+        failureCount: 0
+    })
 } = {}) {
     const sendSource = getSourceSlice(
         'async function sendCategoryNotification({',
         '\nasync function sendDirectTargetsNotification'
     );
-    const sendEachForMulticast = vi.fn(async () => ({
-        responses: [{ success: true }],
-        successCount: targets.length,
-        failureCount: 0
-    }));
+    const sendEachForMulticast = vi.fn(sendEachForMulticastImpl);
     const admin = {
         messaging: () => ({
             sendEachForMulticast
@@ -119,7 +125,8 @@ function buildSendCategoryNotificationHarness({
     const writeNotificationAuditRecord = vi.fn(async () => {});
     const functions = {
         logger: {
-            info: vi.fn()
+            info: vi.fn(),
+            warn: vi.fn()
         }
     };
 
@@ -249,6 +256,29 @@ describe('notification send dedup guard — checkAndSetNotificationDedup', () =>
         expect(first.mockFirestore.doc.mock.calls[0][0]).not.toBe(second.mockFirestore.doc.mock.calls[0][0]);
         expect([...first.store.values()][0]).toMatchObject({ category: 'schedule', gameId: 'game-1' });
         expect([...second.store.values()][0]).toMatchObject({ category: 'practice', gameId: 'game-1' });
+    });
+
+    it('scopes custom dedup keys to the gameId so matching score transitions do not collide across games', async () => {
+        const now = Date.now();
+        const existingPath = buildDedupDocPath('team-1', 'liveScore', 'game-1', 'score:0:0->2:0');
+        const { fn, mockFirestore } = createDedupHarness({
+            nowMs: now,
+            docs: {
+                [existingPath]: {
+                    teamId: 'team-1',
+                    category: 'liveScore',
+                    gameId: 'game-1',
+                    dedupKey: 'score:0:0->2:0',
+                    sentAt: buildFirestoreTimestamp(now - 60 * 1000)
+                }
+            }
+        });
+
+        const result = await fn('team-1', 'liveScore', 'game-2', 'score:0:0->2:0');
+
+        expect(result).toBe(true);
+        expect(mockFirestore.doc).toHaveBeenCalledWith(expect.stringMatching(/^teams\/team-1\/notificationSendLog\//));
+        expect(mockFirestore.doc.mock.calls.at(-1)[0]).not.toBe(existingPath);
     });
 });
 
@@ -386,6 +416,47 @@ describe('notification send dedup guard — sendCategoryNotification', () => {
             gameId: 'game-1',
             eventId: 'message-1',
             timeSensitive: false
+        });
+    });
+
+    it('still writes inbox records when push delivery throws for live score updates', async () => {
+        const harness = buildSendCategoryNotificationHarness({
+            categories: ['liveScore'],
+            targets: [
+                { uid: 'parent-1', token: 'token-1' },
+                { uid: 'parent-2', token: 'token-2' }
+            ],
+            sendEachForMulticastImpl: async () => {
+                throw new Error('messaging unavailable');
+            }
+        });
+
+        const result = await harness.fn({
+            teamId: 'team-1',
+            category: 'liveScore',
+            gameId: 'game-7',
+            title: 'Live score update',
+            body: 'Score is now 2-1'
+        });
+
+        expect(harness.sendEachForMulticast).toHaveBeenCalledOnce();
+        expect(harness.writeNotificationInboxRecords).toHaveBeenCalledWith(expect.objectContaining({
+            category: 'liveScore',
+            teamId: 'team-1',
+            gameId: 'game-7',
+            targets: [
+                { uid: 'parent-1', token: 'token-1' },
+                { uid: 'parent-2', token: 'token-2' }
+            ]
+        }));
+        expect(harness.writeNotificationAuditRecord).toHaveBeenCalledWith(expect.objectContaining({
+            failureCount: 2,
+            inboxResult: expect.objectContaining({ writeCount: 2 })
+        }));
+        expect(result).toMatchObject({
+            successCount: 0,
+            failureCount: 2,
+            inboxWriteCount: 2
         });
     });
 

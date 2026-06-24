@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 
@@ -110,5 +110,55 @@ describe('game schedule update push notifications', () => {
         expect(indexedLookupIndex).toBeGreaterThan(-1);
         expect(notifyBody).toContain('title: payload.title');
         expect(notifyBody).toContain('body: payload.body');
+    });
+
+    it('deduplicates live score sends by the before/after score transition before delivering notifications', async () => {
+        const sendCategoryNotification = vi.fn(async () => ({ successCount: 1, failureCount: 0 }));
+        const checkAndSetNotificationDedup = vi.fn(async () => true);
+        const handler = new Function(
+            'functions',
+            'detectGameNotificationCategory',
+            'sendCategoryNotification',
+            'checkAndSetNotificationDedup',
+            'toNumericScore',
+            'buildScheduleUpdateNotificationPayload',
+            `const exports = {};
+${functionsSource.slice(functionsSource.indexOf('exports.notifyGameUpdated = functions.firestore'), functionsSource.indexOf('const notifyGameCreated ='))}
+return exports.notifyGameUpdated;`
+        )(
+            {
+                firestore: {
+                    document: () => ({ onUpdate: (onUpdateHandler) => onUpdateHandler })
+                },
+                logger: {
+                    info: vi.fn()
+                }
+            },
+            () => 'liveScore',
+            sendCategoryNotification,
+            checkAndSetNotificationDedup,
+            (value) => Number(value || 0),
+            () => ({ title: 'unused', body: 'unused' })
+        );
+
+        await handler({
+            before: { data: () => ({ homeScore: 1, awayScore: 0 }) },
+            after: { data: () => ({ homeScore: 2, awayScore: 0, updatedBy: 'staff-1' }) }
+        }, {
+            params: { teamId: 'team-1', gameId: 'game-7' }
+        });
+
+        expect(checkAndSetNotificationDedup).toHaveBeenCalledWith(
+            'team-1',
+            'liveScore',
+            'game-7',
+            'score:1:0->2:0'
+        );
+        expect(sendCategoryNotification).toHaveBeenCalledWith(expect.objectContaining({
+            teamId: 'team-1',
+            gameId: 'game-7',
+            category: 'liveScore',
+            dedupKey: 'score:1:0->2:0'
+        }));
     });
 });
