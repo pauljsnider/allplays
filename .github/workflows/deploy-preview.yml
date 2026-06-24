@@ -166,13 +166,18 @@ jobs:
           fi
 
           channels_file="$RUNNER_TEMP/firebase-preview-channels.txt"
+          channels_log="$RUNNER_TEMP/firebase-preview-channels.log"
           keep_file="$RUNNER_TEMP/firebase-preview-keep.txt"
           prune_file="$RUNNER_TEMP/firebase-preview-prune.txt"
           {
             echo "$CURRENT_CHANNEL"
             head -n "$KEEP_RECENT_OPEN_PR_CHANNELS" "$open_pr_numbers_file" | sed 's/^/pr-/'
           } | sed '/^$/d' | sort -u > "$keep_file"
-          ./node_modules/.bin/firebase hosting:channel:list --site game-flow-c6311 --project game-flow-c6311 > "$channels_file"
+          if ! ./node_modules/.bin/firebase hosting:channel:list --site game-flow-c6311 --project game-flow-c6311 > "$channels_file" 2>"$channels_log"; then
+            echo "Warning: unable to list Firebase preview channels; skipping stale Firebase preview channel pruning." >&2
+            cat "$channels_log" >&2
+            exit 0
+          fi
           awk -F '│' 'NF > 2 {gsub(/^[[:space:]]+|[[:space:]]+$/, "", $2); if ($2 ~ /^pr-/) print $2 }' "$channels_file" | sort -u > "$prune_file"
 
           delete_channel() {
