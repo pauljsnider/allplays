@@ -3951,8 +3951,16 @@ function getEventStatusClasses(event: ParentScheduleEvent) {
   return 'border-primary-200 bg-primary-50 text-primary-700';
 }
 
+const pastScheduledGameScoreCutoffMs = 3 * 60 * 60 * 1000;
+
 function getScoreLabel(event: ParentScheduleEvent) {
   if (event.type !== 'game') return '';
   if (event.homeScore === null || event.homeScore === undefined || event.awayScore === null || event.awayScore === undefined) return '';
+  const status = String(event.status || '').trim().toLowerCase();
+  const liveStatus = String(event.liveStatus || '').trim().toLowerCase();
+  const isLive = status === 'live' || liveStatus === 'live';
+  const isCompleted = status === 'completed' || status === 'final' || liveStatus === 'completed' || liveStatus === 'final';
+  const isPastScheduledResult = event.date.getTime() < Date.now() - pastScheduledGameScoreCutoffMs;
+  if (!isLive && !isCompleted && !isPastScheduledResult) return '';
   return `${event.homeScore}-${event.awayScore}`;
 }
