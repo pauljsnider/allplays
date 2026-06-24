@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from 'react';
 import { AlertCircle, CalendarDays, CheckCircle2, ChevronDown, ChevronLeft, ChevronRight, ClipboardCheck, Copy, Download, Filter, Link as LinkIcon, ListChecks, MapPin, RefreshCw } from 'lucide-react';
-import { Link } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import { Modal } from '../components/Modal';
 import { SchedulePageSkeleton } from '../components/PageSkeletons';
 import { PullToRefresh } from '../components/PullToRefresh';
@@ -57,6 +57,9 @@ const timeRangeOptions: Array<{ value: ScheduleTimeRange; label: string }> = [
   { value: 'quarter', label: 'Quarter' },
   { value: 'all', label: 'All' }
 ];
+const scheduleViewModes: ScheduleViewMode[] = ['list', 'compact', 'calendar', 'packets'];
+const scheduleFilterValues = filterOptions.map((option) => option.value);
+const scheduleTimeRangeValues = timeRangeOptions.map((option) => option.value);
 
 const upcomingListPageSize = 20;
 const pastListPageSize = 10;
@@ -133,13 +136,29 @@ function loadScheduleAiImportModule() {
   return scheduleAiImportModulePromise;
 }
 
+function getScheduleViewFromQuery(value: string | null): ScheduleViewMode | null {
+  const normalized = String(value || '').trim().toLowerCase();
+  return scheduleViewModes.includes(normalized as ScheduleViewMode) ? normalized as ScheduleViewMode : null;
+}
+
+function getScheduleFilterFromQuery(value: string | null): ParentScheduleFilter | null {
+  const normalized = String(value || '').trim().toLowerCase();
+  return scheduleFilterValues.includes(normalized as ParentScheduleFilter) ? normalized as ParentScheduleFilter : null;
+}
+
+function getScheduleTimeRangeFromQuery(value: string | null): ScheduleTimeRange | null {
+  const normalized = String(value || '').trim().toLowerCase();
+  return scheduleTimeRangeValues.includes(normalized as ScheduleTimeRange) ? normalized as ScheduleTimeRange : null;
+}
+
 export function Schedule({ auth }: { auth: AuthState }) {
+  const [searchParams] = useSearchParams();
   const { isDesktopWeb } = useShellLayout();
-  const [filter, setFilter] = useState<ParentScheduleFilter>('upcoming-all');
-  const [view, setView] = useState<ScheduleViewMode>('list');
-  const [selectedPlayerId, setSelectedPlayerId] = useState('');
-  const [selectedTeamId, setSelectedTeamId] = useState('');
-  const [timeRange, setTimeRange] = useState<ScheduleTimeRange>('all');
+  const [filter, setFilter] = useState<ParentScheduleFilter>(() => getScheduleFilterFromQuery(searchParams.get('filter')) || 'upcoming-all');
+  const [view, setView] = useState<ScheduleViewMode>(() => getScheduleViewFromQuery(searchParams.get('view')) || 'list');
+  const [selectedPlayerId, setSelectedPlayerId] = useState(() => String(searchParams.get('playerId') || '').trim());
+  const [selectedTeamId, setSelectedTeamId] = useState(() => String(searchParams.get('teamId') || '').trim());
+  const [timeRange, setTimeRange] = useState<ScheduleTimeRange>(() => getScheduleTimeRangeFromQuery(searchParams.get('range')) || 'all');
   const [children, setChildren] = useState<ParentScheduleChild[]>([]);
   const [events, setEvents] = useState<ParentScheduleEvent[]>([]);
   const [scheduleLoadError, setScheduleLoadError] = useState<AppServiceError | null>(null);
@@ -318,6 +337,20 @@ export function Schedule({ auth }: { auth: AuthState }) {
     }
   };
 
+  useEffect(() => {
+    const nextFilter = getScheduleFilterFromQuery(searchParams.get('filter'));
+    if (nextFilter) setFilter(nextFilter);
+
+    const nextView = getScheduleViewFromQuery(searchParams.get('view'));
+    if (nextView) setView(nextView);
+
+    const nextRange = getScheduleTimeRangeFromQuery(searchParams.get('range'));
+    if (nextRange) setTimeRange(nextRange);
+
+    setSelectedTeamId(String(searchParams.get('teamId') || '').trim());
+    setSelectedPlayerId(String(searchParams.get('playerId') || '').trim());
+  }, [searchParams]);
+
   const refreshSchedule = async (force = false) => {
     if (!auth.user) return null;
     clearScheduleReadError();
@@ -361,7 +394,7 @@ export function Schedule({ auth }: { auth: AuthState }) {
           if (selectedPlayerId && !result.children.some((child) => child.playerId === selectedPlayerId)) {
             setSelectedPlayerId('');
           }
-          if (selectedTeamId && !result.children.some((child) => child.teamId === selectedTeamId)) {
+          if (selectedTeamId && !result.children.some((child) => child.teamId === selectedTeamId) && !result.events.some((event) => event.teamId === selectedTeamId)) {
             setSelectedTeamId('');
           }
           const firstUpcoming = filterParentScheduleEvents(result.events, { filter: 'upcoming-all' })[0];

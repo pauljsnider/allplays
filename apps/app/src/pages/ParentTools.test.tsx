@@ -44,6 +44,27 @@ vi.mock('../lib/publicActions', () => ({
     openPublicUrl: vi.fn(),
     sharePublicUrl: vi.fn()
 }));
+vi.mock('lucide-react', () => {
+    const Icon = () => null;
+    return {
+        AlertCircle: Icon,
+        Award: Icon,
+        CalendarDays: Icon,
+        CheckCircle2: Icon,
+        ChevronLeft: Icon,
+        Copy: Icon,
+        DollarSign: Icon,
+        Download: Icon,
+        ExternalLink: Icon,
+        KeyRound: Icon,
+        Loader2: Icon,
+        RefreshCw: Icon,
+        Share2: Icon,
+        Shield: Icon,
+        Ticket: Icon,
+        Users: Icon
+    };
+});
 
 const auth: AuthState = {
     user: {
@@ -492,6 +513,16 @@ describe('ParentTools access', () => {
             expect(openPublicUrl).toHaveBeenCalledWith('https://pay.example.test/legacy');
         });
         expect(parentToolsServiceMocks.initiateParentTeamFeeCheckout).not.toHaveBeenCalled();
+    });
+
+    it('shows safe Fees copy instead of raw Firestore index errors', async () => {
+        parentToolsServiceMocks.loadParentFeesForApp.mockRejectedValue(new Error('The query requires an index. You can create it here: https://console.firebase.google.com/v1/r/project/game-flow-c6311/firestore/indexes?create_composite=test'));
+
+        renderParentTools(['/parent-tools/fees']);
+
+        expect(await screen.findByText('Unable to load fees.')).toBeTruthy();
+        expect(screen.queryByText(/console\.firebase\.google\.com/)).toBeNull();
+        expect(screen.queryByText(/query requires an index/i)).toBeNull();
     });
 
     it('regenerates stale team fee checkout links instead of opening the stored URL', async () => {

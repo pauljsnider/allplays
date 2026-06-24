@@ -2,7 +2,7 @@
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
-import { MemoryRouter, Route, Routes } from 'react-router-dom';
+import { MemoryRouter, Route, Routes, useNavigate } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { Schedule } from './Schedule';
 import type { AuthState } from '../lib/types';
@@ -67,13 +67,23 @@ const auth: AuthState = {
   signOut: vi.fn()
 };
 
-function renderSchedule() {
+function renderSchedule(initialEntry = '/schedule') {
   return render(
-    <MemoryRouter initialEntries={['/schedule']}>
+    <MemoryRouter initialEntries={[initialEntry]}>
       <Routes>
         <Route path="/schedule" element={<Schedule auth={auth} />} />
       </Routes>
     </MemoryRouter>
+  );
+}
+
+function ScheduleNavigationHarness() {
+  const navigate = useNavigate();
+  return (
+    <>
+      <button type="button" onClick={() => navigate('/schedule')}>Go root schedule</button>
+      <Schedule auth={auth} />
+    </>
   );
 }
 
@@ -252,6 +262,80 @@ describe('Schedule', () => {
 
     expect(await screen.findByText('Showing 20 of 21 events')).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Show 1 more' })).toBeTruthy();
+  });
+
+  it('applies schedule team and view query params on direct links', async () => {
+    scheduleServiceMocks.loadParentSchedule.mockResolvedValueOnce({
+      children: [
+        { playerId: 'player-1', playerName: 'Pat', teamId: 'team-1', teamName: 'Bears' },
+        { playerId: 'player-2', playerName: 'Sam', teamId: 'team-2', teamName: 'Wolves' }
+      ],
+      events: [
+        buildScheduleEvent(1, {
+          eventKey: 'team-1::event-1::player-1::2100-06-01T18:00:00.000Z::game',
+          teamId: 'team-1',
+          teamName: 'Bears',
+          opponent: 'Bears Opponent'
+        }),
+        buildScheduleEvent(2, {
+          eventKey: 'team-2::event-2::player-2::2100-06-02T18:00:00.000Z::game',
+          teamId: 'team-2',
+          teamName: 'Wolves',
+          childId: 'player-2',
+          childName: 'Sam',
+          opponent: 'Wolves Opponent'
+        })
+      ]
+    });
+
+    renderSchedule('/schedule?teamId=team-2&view=packets');
+
+    await screen.findByText('No practice packets in this filter');
+    expect((screen.getByLabelText('Team filter') as HTMLSelectElement).value).toBe('team-2');
+    expect(screen.getAllByRole('button', { name: 'Packets' }).some((button) => button.getAttribute('aria-pressed') === 'true')).toBe(true);
+  });
+
+  it('clears URL-scoped team and player filters when schedule query params disappear', async () => {
+    scheduleServiceMocks.loadParentSchedule.mockResolvedValueOnce({
+      children: [
+        { playerId: 'player-1', playerName: 'Pat', teamId: 'team-1', teamName: 'Bears' },
+        { playerId: 'player-2', playerName: 'Sam', teamId: 'team-2', teamName: 'Wolves' }
+      ],
+      events: [
+        buildScheduleEvent(1, {
+          eventKey: 'team-1::event-1::player-1::2100-06-01T18:00:00.000Z::game',
+          teamId: 'team-1',
+          teamName: 'Bears'
+        }),
+        buildScheduleEvent(2, {
+          eventKey: 'team-2::event-2::player-2::2100-06-02T18:00:00.000Z::game',
+          teamId: 'team-2',
+          teamName: 'Wolves',
+          childId: 'player-2',
+          childName: 'Sam'
+        })
+      ]
+    });
+
+    render(
+      <MemoryRouter initialEntries={['/schedule?teamId=team-2&playerId=player-2']}>
+        <Routes>
+          <Route path="/schedule" element={<ScheduleNavigationHarness />} />
+        </Routes>
+      </MemoryRouter>
+    );
+
+    await waitFor(() => {
+      expect((screen.getByLabelText('Team filter') as HTMLSelectElement).value).toBe('team-2');
+      expect((screen.getByLabelText('Player filter') as HTMLSelectElement).value).toBe('player-2');
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Go root schedule' }));
+
+    await waitFor(() => {
+      expect((screen.getByLabelText('Team filter') as HTMLSelectElement).value).toBe('');
+      expect((screen.getByLabelText('Player filter') as HTMLSelectElement).value).toBe('');
+    });
   });
 
   it('renders web-created tournament game metadata read-only in the schedule list', async () => {
