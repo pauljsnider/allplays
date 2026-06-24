@@ -182,6 +182,35 @@ describe('AppSearchDialog', () => {
     });
   });
 
+  it('lets Enter activate the more help results button instead of the highlighted result', async () => {
+    const onClose = vi.fn();
+
+    render(
+      <MemoryRouter>
+        <AppSearchDialog auth={auth} open={true} onClose={onClose} />
+      </MemoryRouter>
+    );
+
+    fireEvent.change(screen.getByLabelText('Search teams, players, actions, help'), { target: { value: 'ro' } });
+
+    const moreHelpResultsButton = await screen.findByRole('button', { name: /More help results/i });
+    moreHelpResultsButton.focus();
+    fireEvent.keyDown(moreHelpResultsButton, { key: 'Enter' });
+
+    expect(onClose).not.toHaveBeenCalled();
+    expect(navigateMock).not.toHaveBeenCalled();
+
+    fireEvent.click(moreHelpResultsButton);
+
+    expect(onClose).toHaveBeenCalledTimes(1);
+    expect(navigateMock).toHaveBeenCalledWith('/help', {
+      state: {
+        helpQuery: 'ro',
+        helpRoleFilter: 'all'
+      }
+    });
+  });
+
   it('keeps the opening tap guard active long enough for slower mobile pointer sequences', async () => {
     vi.useFakeTimers();
     const onClose = vi.fn();

@@ -370,6 +370,11 @@ export function AppSearchDialog({ auth, open, onClose }: AppSearchDialogProps) {
                   type="button"
                   className="text-xs font-extrabold text-primary-700 transition hover:text-primary-800"
                   onClick={openHelpPortal}
+                  onKeyDown={(event) => {
+                    if (event.key === 'Enter') {
+                      event.stopPropagation();
+                    }
+                  }}
                 >
                   More help results
                 </button>

@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import { LifeBuoy, Search } from 'lucide-react';
 import { getHelpKnowledgeDocs, searchHelpKnowledge } from '../lib/helpKnowledgeService';
@@ -22,10 +22,15 @@ const helpRoleOptions: Array<{ value: HelpPortalRoleFilter; label: string }> = [
 
 export function HelpPortal() {
   const location = useLocation();
-  const initialState = normalizePortalState(location.state);
-  const [query, setQuery] = useState(initialState.helpQuery);
-  const [roleFilter, setRoleFilter] = useState<HelpPortalRoleFilter>(initialState.helpRoleFilter);
+  const portalState = useMemo(() => normalizePortalState(location.state), [location.state]);
+  const [query, setQuery] = useState(portalState.helpQuery);
+  const [roleFilter, setRoleFilter] = useState<HelpPortalRoleFilter>(portalState.helpRoleFilter);
   const helpDocs = useMemo(() => getHelpKnowledgeDocs(), []);
+
+  useEffect(() => {
+    setQuery(portalState.helpQuery);
+    setRoleFilter(portalState.helpRoleFilter);
+  }, [portalState.helpQuery, portalState.helpRoleFilter]);
 
   const visibleDocs = useMemo<HelpPortalListItem[]>(() => {
     const trimmedQuery = query.trim();

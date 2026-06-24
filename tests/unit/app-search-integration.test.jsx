@@ -413,6 +413,8 @@ describe('React app shell search', () => {
         await fillSearch(container, 'help');
 
         expect(container.querySelector('[aria-label="Filter help by role"]')).toBeNull();
+        expect(Array.from(container.querySelectorAll('button')).some((button) => button.textContent === 'Coach')).toBe(false);
+        expect(Array.from(container.querySelectorAll('button')).some((button) => button.textContent === 'Member')).toBe(false);
         expect(helpMocks.searchHelpKnowledge).toHaveBeenLastCalledWith({
             query: 'help',
             roles: ['parent'],
@@ -495,6 +497,8 @@ describe('React app shell search', () => {
         await fillSearch(container, 'live tracker');
 
         expect(container.querySelector('[aria-label="Filter help by role"]')).toBeNull();
+        expect(Array.from(container.querySelectorAll('button')).some((button) => button.textContent === 'Coach')).toBe(false);
+        expect(Array.from(container.querySelectorAll('button')).some((button) => button.textContent === 'Member')).toBe(false);
         expect(helpMocks.searchHelpKnowledge).toHaveBeenLastCalledWith({
             query: 'live tracker',
             roles: ['parent'],

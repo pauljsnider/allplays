@@ -2,7 +2,7 @@
 import React, { act } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createRoot } from 'react-dom/client';
-import { MemoryRouter, Route, Routes } from 'react-router-dom';
+import { MemoryRouter, Route, Routes, useNavigate } from 'react-router-dom';
 
 const helpMocks = vi.hoisted(() => ({
     getHelpKnowledgeDocs: vi.fn(),
@@ -46,7 +46,16 @@ const docs = [
     }
 ];
 
-async function renderHelp(initialEntry = '/help') {
+function SameRouteLauncher({ nextState }) {
+    const navigate = useNavigate();
+
+    return React.createElement('button', {
+        type: 'button',
+        onClick: () => navigate('/help', { state: nextState })
+    }, 'Load same route state');
+}
+
+async function renderHelp(initialEntry = '/help', extraHelpContent = null) {
     const container = document.createElement('div');
     document.body.appendChild(container);
     const root = createRoot(container);
@@ -58,7 +67,10 @@ async function renderHelp(initialEntry = '/help') {
             React.createElement(
                 Routes,
                 null,
-                React.createElement(Route, { path: '/help', element: React.createElement(HelpPortal) }),
+                React.createElement(Route, {
+                    path: '/help',
+                    element: React.createElement(React.Fragment, null, extraHelpContent, React.createElement(HelpPortal))
+                }),
                 React.createElement(Route, { path: '/help/:helpId', element: React.createElement(HelpArticle) })
             )
         ));
@@ -149,6 +161,35 @@ describe('HelpPortal', () => {
         await clickElement(Array.from(container.querySelectorAll('button')).find((button) => button.textContent === 'Back to Help Portal'));
         expect(container.querySelector('input[aria-label="Search help articles"]')?.value).toBe('schedule');
         expect(Array.from(container.querySelectorAll('button')).find((button) => button.textContent === 'Coach')?.getAttribute('aria-pressed')).toBe('true');
+
+        await act(async () => root.unmount());
+    });
+
+    it('resyncs search state when the help portal receives a same-route navigation handoff', async () => {
+        helpMocks.getHelpKnowledgeDocs.mockReturnValue(docs);
+        helpMocks.searchHelpKnowledge.mockImplementation(({ query, roleFilter }) => {
+            if (query === 'fees' && roleFilter === 'parent') return [docs[2]];
+            if (query === 'schedule' && roleFilter === 'coach') return [docs[1]];
+            return [];
+        });
+
+        const initialEntry = {
+            pathname: '/help',
+            state: { helpQuery: 'fees', helpRoleFilter: 'parent' }
+        };
+        const nextState = { helpQuery: 'schedule', helpRoleFilter: 'coach' };
+        const launcher = React.createElement(SameRouteLauncher, { nextState });
+        const { container, root } = await renderHelp(initialEntry, launcher);
+
+        expect(container.querySelector('input[aria-label="Search help articles"]')?.value).toBe('fees');
+        expect(Array.from(container.querySelectorAll('button')).find((button) => button.textContent === 'Parent')?.getAttribute('aria-pressed')).toBe('true');
+
+        await clickElement(Array.from(container.querySelectorAll('button')).find((button) => button.textContent === 'Load same route state'));
+
+        expect(container.querySelector('input[aria-label="Search help articles"]')?.value).toBe('schedule');
+        expect(Array.from(container.querySelectorAll('button')).find((button) => button.textContent === 'Coach')?.getAttribute('aria-pressed')).toBe('true');
+        expect(container.textContent).toContain('Coach schedule tools');
+        expect(container.textContent).not.toContain('Parent fee guide');
 
         await act(async () => root.unmount());
     });
