@@ -14,11 +14,16 @@ describe('login page cache busting', () => {
         );
     });
 
-    it('only replays buffered auth after successful redirect processing', () => {
+    it('sets the buffered auth replay flag before follow-up Google redirect work that can fail', () => {
         const source = readFileSync(resolve(process.cwd(), 'login.html'), 'utf8');
+        const successBlock = source.slice(
+            source.indexOf('if (result && result.user) {'),
+            source.indexOf('} else {')
+        );
 
         expect(source).toContain('let shouldConsumePendingRedirectUser = false;');
-        expect(source).toContain('shouldConsumePendingRedirectUser = true;');
+        expect(successBlock.indexOf('shouldConsumePendingRedirectUser = true;'))
+            .toBeLessThan(successBlock.indexOf("const profile = await getUserProfile(result.user.uid);"));
         expect(source).toContain('authState.finishProcessing({ keepPendingRedirectUser: shouldConsumePendingRedirectUser });');
     });
 });

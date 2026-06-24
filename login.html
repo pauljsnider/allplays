@@ -144,13 +144,13 @@
                 console.log('[Login Page] handleGoogleRedirectResult returned:', result ? 'Result found' : 'No result');
 
                 if (result && result.user) {
+                    shouldConsumePendingRedirectUser = true;
                     console.log('[Login Page] User found, fetching profile for:', result.user.email);
                     // User just returned from Google sign-in
                     const profile = await getUserProfile(result.user.uid);
                     console.log('[Login Page] Profile fetched:', profile);
                     const userWithRoles = { ...result.user, ...profile };
                     const redirectUrl = redirectCoordinator.getGoogleRedirectUrl(userWithRoles);
-                    shouldConsumePendingRedirectUser = true;
                     console.log('[Login Page] Redirecting to:', redirectUrl);
                     window.location.href = redirectUrl;
                     return; // Prevent further initialization
