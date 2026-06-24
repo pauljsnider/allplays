@@ -164,6 +164,10 @@ function logScheduleError(message: string, operation: string, error: unknown, co
   });
 }
 
+function rethrowScheduleLoadError(error: unknown): never {
+  throw toAppServiceError(error, 'Unable to load schedule.');
+}
+
 export type ParentScheduleChild = {
   teamId: string;
   teamName: string;
@@ -3540,7 +3544,7 @@ export async function loadParentSchedule(user: AuthUser | null, options: ParentS
 
     const failedTeamLoads = teamResults.filter((result) => result.error);
     if (failedTeamLoads.length === teamResults.length && failedTeamLoads.length > 0) {
-      throw failedTeamLoads[0].error;
+      rethrowScheduleLoadError(failedTeamLoads[0].error);
     }
     if (failedTeamLoads.length > 0) {
       logScheduleWarning('Continuing with partial team schedule data.', 'parent-schedule-partial-load', failedTeamLoads[0].error, {
