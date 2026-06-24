@@ -1773,6 +1773,16 @@ export function buildVirtualizedChatWindow(
   }
 
   const totalHeight = offsets[offsets.length - 1];
+  if (messages.length <= Math.max(1, initialWindowCount) && scrollTop <= 0) {
+    return {
+      startIndex: 0,
+      endIndex: messages.length - 1,
+      topSpacerHeight: 0,
+      bottomSpacerHeight: 0,
+      visibleMessages: messages
+    };
+  }
+
   if (!Number.isFinite(viewportHeight) || viewportHeight <= 0) {
     if (preferTopWindow) {
       const endIndex = Math.min(messages.length - 1, Math.max(0, initialWindowCount - 1));
