@@ -781,8 +781,13 @@ export async function loadChatConversations(teamId: string, user: AuthUser, team
   }
 }
 
+function canReuseStaffChatConversation(conversation: ChatConversation | null | undefined) {
+  if (!isStaffConversation(conversation)) return false;
+  return !Array.isArray(conversation?.participantIds) || conversation.participantIds.length === 0;
+}
+
 export async function ensureStaffChatConversation(teamId: string, user: AuthUser, conversations: ChatConversation[] = []): Promise<ChatConversation> {
-  const existing = conversations.find((conversation) => isStaffConversation(conversation));
+  const existing = conversations.find((conversation) => canReuseStaffChatConversation(conversation));
   if (existing) return existing;
 
   return await withTimeout(Promise.resolve(upsertChatConversation(teamId, {
