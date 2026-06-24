@@ -5,7 +5,6 @@ import {
   buildTrackStatsheetApplyPlan,
   collection,
   db,
-  deleteDoc,
   doc,
   getAI,
   getApp,
@@ -23,6 +22,8 @@ import {
 } from './adapters/legacyStatsheetImport'
 
 const logger = createLogger('statsheetImportService')
+
+const TRACKED_DATA_CLEANUP_BATCH_LIMIT = 450
 
 export type TrackStatsheetReviewRow = {
   number: string;
@@ -363,12 +364,6 @@ export async function applyTrackStatsheetImportForApp({
     statSheetPhotoUrl = await uploadStatSheetPhoto(teamId, file)
   }
 
-  if (hasExistingTrackedData) {
-    await Promise.all(eventsSnap.docs.map((entry: any) => deleteDoc(entry.ref)))
-    await Promise.all(statsSnap.docs.map((entry: any) => deleteDoc(entry.ref)))
-    await Promise.all(privateStatsSnap.docs.map((entry: any) => deleteDoc(entry.ref)))
-  }
-
   const applyPlan = buildTrackStatsheetApplyPlan({
     includedHome: validation.includedHome,
     includedVisitor,
@@ -378,6 +373,11 @@ export async function applyTrackStatsheetImportForApp({
     awayScore,
     statSheetPhotoUrl: statSheetPhotoUrl || null
   })
+
+  const retainedAggregatedStatsIds = new Set((applyPlan.aggregatedStatsWrites || []).map((entry: any) => String(entry?.playerId || '')))
+  const retainedPrivateStatsIds = new Set((applyPlan.aggregatedStatsWrites || [])
+    .filter((entry: any) => entry?.privateData)
+    .map((entry: any) => String(entry?.playerId || '')))
 
   const batch = writeBatch(db)
   addAggregatedStatsWritesToBatch({
@@ -392,10 +392,33 @@ export async function applyTrackStatsheetImportForApp({
   batch.update(gameRef, applyPlan.gameUpdate)
   await batch.commit()
 
+  const cleanupDocs = [
+    ...eventsSnap.docs,
+    ...statsSnap.docs.filter((entry: any) => !retainedAggregatedStatsIds.has(getTrackedDocId(entry))),
+    ...privateStatsSnap.docs.filter((entry: any) => !retainedPrivateStatsIds.has(getTrackedDocId(entry)))
+  ]
+
+  for (let i = 0; i < cleanupDocs.length; i += TRACKED_DATA_CLEANUP_BATCH_LIMIT) {
+    const cleanupBatch = writeBatch(db)
+    cleanupDocs.slice(i, i + TRACKED_DATA_CLEANUP_BATCH_LIMIT).forEach((entry: any) => {
+      cleanupBatch.delete(entry.ref)
+    })
+    await cleanupBatch.commit()
+  }
+
   return {
     requiresReplaceConfirmation: false,
     hasExistingTrackedData,
     uploadedPhotoUrl: statSheetPhotoUrl,
     applyPlan
   }
+}
+
+function getTrackedDocId(entry: any) {
+  if (entry?.id) {
+    return String(entry.id)
+  }
+
+  const path = String(entry?.ref?.path || '')
+  return path.split('/').filter(Boolean).pop() || ''
 }

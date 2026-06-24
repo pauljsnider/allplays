@@ -1,9 +1,10 @@
-import { describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const firebaseMocks = vi.hoisted(() => {
   const batch = {
     update: vi.fn(),
     set: vi.fn(),
+    delete: vi.fn(),
     commit: vi.fn(async () => undefined)
   }
   return {
@@ -56,6 +57,11 @@ vi.mock('../../../../js/live-tracker-save-complete.js', () => ({
 }))
 
 import { analyzeTrackStatsheetPhoto, applyTrackStatsheetImportForApp, buildTrackStatsheetReviewModel } from './statsheetImportService'
+
+beforeEach(() => {
+  vi.clearAllMocks()
+  firebaseMocks.batch.commit.mockResolvedValue(undefined)
+})
 
 describe('buildTrackStatsheetReviewModel', () => {
   it('swaps sides when visitor rows match the roster better and auto-assigns players', () => {
@@ -160,6 +166,30 @@ describe('analyzeTrackStatsheetPhoto', () => {
 })
 
 describe('applyTrackStatsheetImportForApp', () => {
+  it('does not clear existing tracked data before the replacement write succeeds', async () => {
+    firebaseMocks.getDocs
+      .mockResolvedValueOnce({ size: 1, docs: [{ id: 'event-1', ref: { path: 'teams/team-1/games/game-1/events/event-1' } }] })
+      .mockResolvedValueOnce({ size: 1, docs: [{ id: 'p2', ref: { path: 'teams/team-1/games/game-1/aggregatedStats/p2' } }] })
+      .mockResolvedValueOnce({ size: 1, docs: [{ id: 'p2', ref: { path: 'teams/team-1/games/game-1/privatePlayerStats/p2' } }] })
+    firebaseMocks.batch.commit.mockRejectedValueOnce(new Error('write failed'))
+
+    await expect(applyTrackStatsheetImportForApp({
+      teamId: 'team-1',
+      gameId: 'game-1',
+      roster: [{ id: 'p1', name: 'Avery Smith', number: '12' }],
+      columns: ['PTS'],
+      homeRows: [{ number: '12', name: 'Avery Smith', fouls: 2, totalPoints: 10, include: true, mappedPlayerId: 'p1' }],
+      visitorRows: [],
+      homeScore: 50,
+      awayScore: 42,
+      file: null,
+      replaceExisting: true
+    })).rejects.toThrow('write failed')
+
+    expect(firebaseMocks.deleteDoc).not.toHaveBeenCalled()
+    expect(firebaseMocks.batch.delete).not.toHaveBeenCalled()
+  })
+
   it('prevents saving when every home row is still review-only', async () => {
     await expect(applyTrackStatsheetImportForApp({
       teamId: 'team-1',
@@ -221,11 +251,11 @@ describe('applyTrackStatsheetImportForApp', () => {
     expect(firebaseMocks.writeBatch).not.toHaveBeenCalled()
   })
 
-  it('uploads, clears existing stats, and writes the legacy apply plan through the shared batch helper', async () => {
+  it('uploads, writes the replacement, and only then cleans up superseded tracked data', async () => {
     firebaseMocks.getDocs
-      .mockResolvedValueOnce({ size: 1, docs: [{ ref: { path: 'event-1' } }] })
-      .mockResolvedValueOnce({ size: 1, docs: [{ ref: { path: 'stats-1' } }] })
-      .mockResolvedValueOnce({ size: 1, docs: [{ ref: { path: 'private-stats-1' } }] })
+      .mockResolvedValueOnce({ size: 1, docs: [{ id: 'event-1', ref: { path: 'teams/team-1/games/game-1/events/event-1' } }] })
+      .mockResolvedValueOnce({ size: 1, docs: [{ id: 'p2', ref: { path: 'teams/team-1/games/game-1/aggregatedStats/p2' } }] })
+      .mockResolvedValueOnce({ size: 1, docs: [{ id: 'p2', ref: { path: 'teams/team-1/games/game-1/privatePlayerStats/p2' } }] })
 
     const file = new File(['sheet'], 'statsheet.png', { type: 'image/png' })
     const result = await applyTrackStatsheetImportForApp({
@@ -242,14 +272,14 @@ describe('applyTrackStatsheetImportForApp', () => {
     })
 
     expect(dbMocks.uploadStatSheetPhoto).toHaveBeenCalledWith('team-1', file)
-    expect(firebaseMocks.deleteDoc).toHaveBeenCalledTimes(3)
-    expect(firebaseMocks.deleteDoc).toHaveBeenCalledWith({ path: 'private-stats-1' })
     expect(firebaseMocks.writeBatch).toHaveBeenCalled()
     expect(firebaseMocks.batch.update).toHaveBeenCalledWith(
       { path: 'teams/team-1/games/game-1' },
       expect.objectContaining({ homeScore: 50, awayScore: 42, statSheetPhotoUrl: 'https://img.test/statsheet.png' })
     )
-    expect(firebaseMocks.batch.commit).toHaveBeenCalled()
+    expect(firebaseMocks.batch.delete).toHaveBeenCalledTimes(3)
+    expect(firebaseMocks.batch.delete).toHaveBeenCalledWith({ path: 'teams/team-1/games/game-1/privatePlayerStats/p2' })
+    expect(firebaseMocks.batch.commit).toHaveBeenCalledTimes(2)
     expect(result).toMatchObject({ requiresReplaceConfirmation: false, uploadedPhotoUrl: 'https://img.test/statsheet.png' })
   })
 })
