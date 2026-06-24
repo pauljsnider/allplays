@@ -1,10 +1,5 @@
 import { test, expect } from '@playwright/test';
-
-function buildUrl(baseURL, path) {
-    const url = new URL(path, `${baseURL}/`);
-    url.searchParams.set('cb', String(Date.now()));
-    return url.toString();
-}
+import { buildUrl } from './helpers/boot-path.js';
 
 function encodeModuleValue(value) {
     return Buffer.from(JSON.stringify(value), 'utf8').toString('base64');
@@ -163,6 +158,16 @@ async function fillRequiredRegistrationFields(page) {
     await page.locator('[name="guardian.email"]').fill('parent@example.com');
     await page.locator('#waiver-accepted').check();
 }
+
+test('buildUrl preserves preview path prefixes for registration smoke coverage', async () => {
+    const url = new URL(buildUrl('https://host/preview', '/registration.html?teamId=team-1&formId=form-1'));
+
+    expect(url.origin).toBe('https://host');
+    expect(url.pathname).toBe('/preview/registration.html');
+    expect(url.searchParams.get('teamId')).toBe('team-1');
+    expect(url.searchParams.get('formId')).toBe('form-1');
+    expect(url.searchParams.get('cb')).toMatch(/^\d+$/);
+});
 
 test('public registration submits an offline-payment registration with option, plan, quantity, and waiver details', async ({ page, baseURL }) => {
     await mockRegistrationModules(page);
