@@ -74,18 +74,18 @@ describe('live game state helpers', () => {
     })).toBe('cfg-only');
   });
 
-  it('keeps goal-sport scoring enabled unless the game explicitly picks a stat config', () => {
+  it('keeps full live tracker mode out of goal-only scoring even without a stat config id', () => {
     expect(resolveGoalSportTrackerProfile({
       game: { sport: 'Soccer' },
       team: { sport: 'Soccer' },
       config: { id: 'cfg-soccer', baseType: 'Soccer', columns: ['GOALS', 'SHOTS'] }
-    })).toMatchObject({ sport: 'soccer', statColumns: ['GOALS'] });
+    })).toBeNull();
 
     expect(resolveGoalSportTrackerProfile({
       game: { sport: 'Soccer' },
       team: { sport: 'Soccer' },
       config: { id: 'cfg-basketball', baseType: 'Basketball', columns: ['PTS', 'REB'] }
-    })).toMatchObject({ sport: 'soccer', statColumns: ['GOALS'] });
+    })).toBeNull();
 
     expect(resolveGoalSportTrackerProfile({
       game: {},
@@ -103,7 +103,7 @@ describe('live game state helpers', () => {
       game: { sport: 'Soccer' },
       team: { sport: 'Soccer' },
       config: { name: 'Default', baseType: 'Soccer', columns: ['GOALS'] }
-    })).toMatchObject({ sport: 'soccer', statColumns: ['GOALS'] });
+    })).toBeNull();
   });
 
   it('lets trackerMode=simple force goal-sport scoring without affecting non-goal sports', () => {
