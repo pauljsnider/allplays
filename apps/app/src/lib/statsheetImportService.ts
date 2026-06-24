@@ -24,6 +24,7 @@ import {
 const logger = createLogger('statsheetImportService')
 
 const TRACKED_DATA_CLEANUP_BATCH_LIMIT = 450
+const FIRESTORE_BATCH_WRITE_LIMIT = 500
 
 export type TrackStatsheetReviewRow = {
   number: string;
@@ -374,10 +375,18 @@ export async function applyTrackStatsheetImportForApp({
     statSheetPhotoUrl: statSheetPhotoUrl || null
   })
 
-  const retainedAggregatedStatsIds = new Set((applyPlan.aggregatedStatsWrites || []).map((entry: any) => String(entry?.playerId || '')))
-  const retainedPrivateStatsIds = new Set((applyPlan.aggregatedStatsWrites || [])
-    .filter((entry: any) => entry?.privateData)
-    .map((entry: any) => String(entry?.playerId || '')))
+  const plannedPlayerIds = new Set((applyPlan.aggregatedStatsWrites || []).map((entry: any) => String(entry?.playerId || '')))
+
+  const cleanupDocs = [
+    ...eventsSnap.docs,
+    ...statsSnap.docs.filter((entry: any) => !plannedPlayerIds.has(getTrackedDocId(entry))),
+    ...privateStatsSnap.docs.filter((entry: any) => !plannedPlayerIds.has(getTrackedDocId(entry)))
+  ]
+
+  const totalBatchWrites = (applyPlan.aggregatedStatsWrites || []).length * 2 + 1 + cleanupDocs.length
+  if (replaceExisting && totalBatchWrites > FIRESTORE_BATCH_WRITE_LIMIT) {
+    throw new Error('This statsheet replacement is too large to apply safely in one save. Please reduce the tracked rows or ask a team admin to clear the game first.')
+  }
 
   const batch = writeBatch(db)
   addAggregatedStatsWritesToBatch({
@@ -390,20 +399,22 @@ export async function applyTrackStatsheetImportForApp({
   })
   const gameRef = doc(db, `teams/${teamId}/games`, gameId)
   batch.update(gameRef, applyPlan.gameUpdate)
-  await batch.commit()
 
-  const cleanupDocs = [
-    ...eventsSnap.docs,
-    ...statsSnap.docs.filter((entry: any) => !retainedAggregatedStatsIds.has(getTrackedDocId(entry))),
-    ...privateStatsSnap.docs.filter((entry: any) => !retainedPrivateStatsIds.has(getTrackedDocId(entry)))
-  ]
-
-  for (let i = 0; i < cleanupDocs.length; i += TRACKED_DATA_CLEANUP_BATCH_LIMIT) {
-    const cleanupBatch = writeBatch(db)
-    cleanupDocs.slice(i, i + TRACKED_DATA_CLEANUP_BATCH_LIMIT).forEach((entry: any) => {
-      cleanupBatch.delete(entry.ref)
+  if (replaceExisting) {
+    cleanupDocs.forEach((entry: any) => {
+      batch.delete(entry.ref)
     })
-    await cleanupBatch.commit()
+    await batch.commit()
+  } else {
+    await batch.commit()
+
+    for (let i = 0; i < cleanupDocs.length; i += TRACKED_DATA_CLEANUP_BATCH_LIMIT) {
+      const cleanupBatch = writeBatch(db)
+      cleanupDocs.slice(i, i + TRACKED_DATA_CLEANUP_BATCH_LIMIT).forEach((entry: any) => {
+        cleanupBatch.delete(entry.ref)
+      })
+      await cleanupBatch.commit()
+    }
   }
 
   return {

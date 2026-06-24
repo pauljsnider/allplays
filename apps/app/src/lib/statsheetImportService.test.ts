@@ -166,14 +166,13 @@ describe('analyzeTrackStatsheetPhoto', () => {
 })
 
 describe('applyTrackStatsheetImportForApp', () => {
-  it('does not clear existing tracked data before the replacement write succeeds', async () => {
+  it('batches replacement cleanup into the same commit as the new statsheet writes', async () => {
     firebaseMocks.getDocs
       .mockResolvedValueOnce({ size: 1, docs: [{ id: 'event-1', ref: { path: 'teams/team-1/games/game-1/events/event-1' } }] })
       .mockResolvedValueOnce({ size: 1, docs: [{ id: 'p2', ref: { path: 'teams/team-1/games/game-1/aggregatedStats/p2' } }] })
       .mockResolvedValueOnce({ size: 1, docs: [{ id: 'p2', ref: { path: 'teams/team-1/games/game-1/privatePlayerStats/p2' } }] })
-    firebaseMocks.batch.commit.mockRejectedValueOnce(new Error('write failed'))
 
-    await expect(applyTrackStatsheetImportForApp({
+    await applyTrackStatsheetImportForApp({
       teamId: 'team-1',
       gameId: 'game-1',
       roster: [{ id: 'p1', name: 'Avery Smith', number: '12' }],
@@ -184,10 +183,11 @@ describe('applyTrackStatsheetImportForApp', () => {
       awayScore: 42,
       file: null,
       replaceExisting: true
-    })).rejects.toThrow('write failed')
+    })
 
-    expect(firebaseMocks.deleteDoc).not.toHaveBeenCalled()
-    expect(firebaseMocks.batch.delete).not.toHaveBeenCalled()
+    expect(firebaseMocks.writeBatch).toHaveBeenCalledTimes(1)
+    expect(firebaseMocks.batch.delete).toHaveBeenCalledTimes(3)
+    expect(firebaseMocks.batch.commit).toHaveBeenCalledTimes(1)
   })
 
   it('prevents saving when every home row is still review-only', async () => {
@@ -251,7 +251,31 @@ describe('applyTrackStatsheetImportForApp', () => {
     expect(firebaseMocks.writeBatch).not.toHaveBeenCalled()
   })
 
-  it('uploads, writes the replacement, and only then cleans up superseded tracked data', async () => {
+  it('does not create a second cleanup batch for private stats already handled by the apply plan', async () => {
+    firebaseMocks.getDocs
+      .mockResolvedValueOnce({ size: 0, docs: [] })
+      .mockResolvedValueOnce({ size: 0, docs: [] })
+      .mockResolvedValueOnce({ size: 1, docs: [{ id: 'p1', ref: { path: 'teams/team-1/games/game-1/privatePlayerStats/p1' } }] })
+
+    await applyTrackStatsheetImportForApp({
+      teamId: 'team-1',
+      gameId: 'game-1',
+      roster: [{ id: 'p1', name: 'Avery Smith', number: '12' }],
+      columns: ['PTS'],
+      homeRows: [{ number: '12', name: 'Avery Smith', fouls: 2, totalPoints: 10, include: true, mappedPlayerId: 'p1' }],
+      visitorRows: [],
+      homeScore: 50,
+      awayScore: 42,
+      file: null,
+      replaceExisting: true
+    })
+
+    expect(firebaseMocks.writeBatch).toHaveBeenCalledTimes(1)
+    expect(firebaseMocks.batch.delete).not.toHaveBeenCalled()
+    expect(firebaseMocks.batch.commit).toHaveBeenCalledTimes(1)
+  })
+
+  it('uploads and applies replacement writes plus cleanup in a single commit', async () => {
     firebaseMocks.getDocs
       .mockResolvedValueOnce({ size: 1, docs: [{ id: 'event-1', ref: { path: 'teams/team-1/games/game-1/events/event-1' } }] })
       .mockResolvedValueOnce({ size: 1, docs: [{ id: 'p2', ref: { path: 'teams/team-1/games/game-1/aggregatedStats/p2' } }] })
@@ -279,7 +303,7 @@ describe('applyTrackStatsheetImportForApp', () => {
     )
     expect(firebaseMocks.batch.delete).toHaveBeenCalledTimes(3)
     expect(firebaseMocks.batch.delete).toHaveBeenCalledWith({ path: 'teams/team-1/games/game-1/privatePlayerStats/p2' })
-    expect(firebaseMocks.batch.commit).toHaveBeenCalledTimes(2)
+    expect(firebaseMocks.batch.commit).toHaveBeenCalledTimes(1)
     expect(result).toMatchObject({ requiresReplaceConfirmation: false, uploadedPhotoUrl: 'https://img.test/statsheet.png' })
   })
 })
