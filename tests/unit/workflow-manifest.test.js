@@ -81,6 +81,27 @@ describe('workflow manifest', () => {
         expect(adminStepByStep).not.toContain('Generate Payment Link');
     });
 
+    it('regenerates awards workflow help knowledge metadata from the manifest', () => {
+        const manifest = JSON.parse(readRepoFile('workflow-manifest.json'));
+        const workflow = manifest.find((item) => item.id === 'awards-certificates');
+        const appHelpIndex = readRepoFile('apps/app/src/lib/helpKnowledgeIndex.ts');
+        const awardsEntry = appHelpIndex.match(/\{\n\s+"id": "awards-certificates",[\s\S]*?\n\s+\}/)?.[0];
+
+        expect(workflow).toMatchObject({
+            id: 'awards-certificates',
+            title: 'Create and Publish Player Awards and Certificates',
+            file: 'workflow-awards-certificates.html',
+            summary: 'Design certificates, generate AI player narratives from real game data, and publish awards to families — individually or for the whole team at once.'
+        });
+        expect(workflow.roles).toEqual(['Coach', 'Admin']);
+        expect(awardsEntry).toBeTruthy();
+        expect(awardsEntry).toContain('"summary": "Design certificates, generate AI player narratives from real game data, and publish awards to families — individually or for the whole team at once."');
+        expect(awardsEntry).toContain('"roles": [\n      "coach",\n      "admin"\n    ]');
+        expect(awardsEntry).not.toContain('"id": "workflow-awards-certificates"');
+        expect(awardsEntry).not.toContain('"summary": "Workflow Guide"');
+        expect(awardsEntry).not.toContain('"parent"');
+    });
+
     it('documents roster staff visibility across workflow and capability metadata', () => {
         const rosterWorkflow = readRepoFile('workflow-roster.html');
         const capabilities = readRepoFile('apps/app/src/data/capabilities.ts');
