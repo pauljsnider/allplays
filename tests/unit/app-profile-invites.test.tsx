@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import React from 'react';
+import React, { StrictMode } from 'react';
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -109,12 +109,14 @@ const auth: AuthState = {
   signOut: vi.fn().mockResolvedValue(undefined)
 };
 
-function renderProfile() {
-  return render(
+function renderProfile({ strictMode = false }: { strictMode?: boolean } = {}) {
+  const tree = (
     <MemoryRouter>
       <Profile auth={auth} />
     </MemoryRouter>
   );
+
+  return render(strictMode ? <StrictMode>{tree}</StrictMode> : tree);
 }
 
 function getPhotoInput(container: HTMLElement) {
@@ -674,6 +676,31 @@ describe('Profile invites', () => {
     expect((screen.getByLabelText('Schedule Changes') as HTMLInputElement).checked).toBe(false);
     expect((screen.getByRole('button', { name: 'Turn on game-day alerts' }) as HTMLButtonElement).disabled).toBe(false);
     expect((screen.getByRole('button', { name: 'Save preferences' }) as HTMLButtonElement).disabled).toBe(false);
+  });
+
+  it('deduplicates overlapping alert preference loads for the same team in StrictMode', async () => {
+    const teamOneLoad = createDeferred<{ liveChat: boolean; liveScore: boolean; schedule: boolean }>();
+
+    profileServiceMocks.loadNotificationTeams.mockResolvedValue([
+      { id: 'team-1', name: 'Blue Team' },
+      { id: 'team-2', name: 'Gold Team' }
+    ]);
+    profileServiceMocks.loadNotificationPreferences.mockImplementation(async (_userId: string, teamId: string) => {
+      if (teamId === 'team-1') {
+        return teamOneLoad.promise;
+      }
+      return { liveChat: false, liveScore: true, schedule: false };
+    });
+
+    renderProfile({ strictMode: true });
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Alerts' }));
+
+    await waitFor(() => expect(profileServiceMocks.loadNotificationPreferences).toHaveBeenCalledTimes(1));
+    expect(profileServiceMocks.loadNotificationPreferences).toHaveBeenCalledWith('user-1', 'team-1');
+
+    teamOneLoad.resolve({ liveChat: true, liveScore: false, schedule: true });
+    await waitFor(() => expect((screen.getByLabelText('Live Chat') as HTMLInputElement).checked).toBe(true));
   });
 
   it('shows blocked native push recovery and refreshes after returning from settings', async () => {

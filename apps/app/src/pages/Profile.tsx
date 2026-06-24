@@ -88,6 +88,7 @@ function getLoadErrorMessage(error: unknown, fallback: string) {
 }
 
 export function Profile({ auth }: { auth: AuthState }) {
+  const notificationPreferenceLoadRequestsRef = useRef<Record<string, Promise<NotificationPreferences>>>({});
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const { isDesktopWeb, isNative } = useShellLayout();
@@ -175,6 +176,22 @@ export function Profile({ auth }: { auth: AuthState }) {
   const nativePushEnabled = isNative && pushPermissionStatus?.state === 'enabled';
   const nativePushBlocked = isNative && pushPermissionStatus?.state === 'blocked';
   const nativePushUnsupported = isNative && pushPermissionStatus?.state === 'unsupported';
+
+  const loadNotificationPreferencesOnce = useCallback((userId: string, teamId: string) => {
+    const activeRequest = notificationPreferenceLoadRequestsRef.current[teamId];
+    if (activeRequest) {
+      return activeRequest;
+    }
+
+    const request = loadNotificationPreferences(userId, teamId).finally(() => {
+      if (notificationPreferenceLoadRequestsRef.current[teamId] === request) {
+        delete notificationPreferenceLoadRequestsRef.current[teamId];
+      }
+    });
+
+    notificationPreferenceLoadRequestsRef.current[teamId] = request;
+    return request;
+  }, []);
 
   const refreshPushPermissionStatus = useCallback(async (options: { silent?: boolean } = {}) => {
     if (!isNative || activeProfileSection !== 'alerts') {
@@ -386,7 +403,7 @@ export function Profile({ auth }: { auth: AuthState }) {
         }
 
         try {
-          const firstPrefs = await loadNotificationPreferences(user.uid, initialTeamId);
+          const firstPrefs = await loadNotificationPreferencesOnce(user.uid, initialTeamId);
           if (!cancelled) {
             setNotificationPreferences(firstPrefs);
             setNotificationPreferencesByTeamId((current) => ({ ...current, [initialTeamId]: firstPrefs }));
@@ -450,7 +467,7 @@ export function Profile({ auth }: { auth: AuthState }) {
       }
 
       try {
-        const preferences = await loadNotificationPreferences(user.uid, selectedTeamId);
+        const preferences = await loadNotificationPreferencesOnce(user.uid, selectedTeamId);
         if (!cancelled) {
           setNotificationPreferences(preferences);
           setNotificationPreferencesByTeamId((current) => ({ ...current, [selectedTeamId]: preferences }));
@@ -481,7 +498,7 @@ export function Profile({ auth }: { auth: AuthState }) {
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeProfileSection, notificationPreferencesByTeamId, notificationTeamsLoaded, selectedTeamId, user, notificationPreferencesReloadNonce]);
+  }, [activeProfileSection, loadNotificationPreferencesOnce, notificationPreferencesByTeamId, notificationTeamsLoaded, selectedTeamId, user, notificationPreferencesReloadNonce]);
 
   useEffect(() => {
     let cancelled = false;
@@ -933,7 +950,7 @@ export function Profile({ auth }: { auth: AuthState }) {
       const currentPreferences = notificationPreferencesByTeamId[teamId]
         || (loadedNotificationTeamId === teamId
           ? notificationPreferences
-          : await loadNotificationPreferences(user.uid, teamId));
+          : await loadNotificationPreferencesOnce(user.uid, teamId));
       const nextPreferences = normalizeNotificationPreferences({
         ...currentPreferences,
         ...gameDayDefaultPreferences
