@@ -7,6 +7,10 @@ import type { NotificationInboxItem } from '../lib/notificationInboxService';
 import type { AuthState } from '../lib/types';
 import { APP_BACK_DISMISS_EVENT } from '../lib/nativeBackButton';
 
+const publicActionMocks = vi.hoisted(() => ({
+  openPublicUrl: vi.fn(() => Promise.resolve()),
+}));
+
 type SubscribeToNotificationInbox = (
   uid: string,
   onItems: (items: NotificationInboxItem[]) => void,
@@ -33,6 +37,8 @@ vi.mock('../lib/useShellLayout', () => ({
 vi.mock('../lib/uxTiming', () => ({
   recordUxTiming: vi.fn(),
 }));
+
+vi.mock('../lib/publicActions', () => publicActionMocks);
 
 vi.mock('../lib/badgeService', () => ({
   updateAppIconBadge: updateAppIconBadgeMock,
@@ -118,6 +124,7 @@ describe('AppShell', () => {
     subscribeToUnreadNotificationCountMock.mockReset();
     subscribeToUnreadNotificationCountMock.mockReturnValue(vi.fn());
     updateAppIconBadgeMock.mockClear();
+    publicActionMocks.openPublicUrl.mockClear();
   });
 
   afterEach(() => {
@@ -416,6 +423,25 @@ describe('AppShell', () => {
 
     expect(event.defaultPrevented).toBe(true);
     await waitFor(() => expect(screen.getByRole('dialog', { name: 'Search teams, players, actions, and help' })).toBeTruthy());
+  });
+
+  it('routes Fees through the native team picker instead of the public website handoff', async () => {
+    render(
+      <MemoryRouter initialEntries={['/home']}>
+        <Routes>
+          <Route path="/home" element={<AppShell auth={signedInAuth}><div>Home</div></AppShell>} />
+          <Route path="/teams" element={<AppShell auth={signedInAuth}><div>Teams hub</div></AppShell>} />
+        </Routes>
+      </MemoryRouter>
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'Add' }));
+    fireEvent.click(screen.getByRole('button', { name: /FeesSelect a team for fee setup, checkout, and balancesCoach\/Admin/i }));
+
+    await waitFor(() => {
+      expect(screen.getByText('Teams hub')).toBeTruthy();
+    });
+    expect(publicActionMocks.openPublicUrl).not.toHaveBeenCalled();
   });
 
   it('dismisses the search dialog when native back asks overlays to close', async () => {

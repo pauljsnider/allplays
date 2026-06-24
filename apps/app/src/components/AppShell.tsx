@@ -689,11 +689,11 @@ function buildAddWorkflows(): AddWorkflow[] {
     {
       id: 'fees',
       label: 'Fees',
-      detail: 'Create fees, checkout, balances',
+      detail: 'Select a team for fee setup, checkout, and balances',
       section: 'Team Ops',
       icon: CreditCard,
-      kind: 'website',
-      href: legacyUrl('team-fees.html'),
+      kind: 'native',
+      href: '/teams',
       badge: 'Coach/Admin'
     },
     {
