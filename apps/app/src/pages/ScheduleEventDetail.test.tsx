@@ -510,6 +510,44 @@ describe('ScheduleEventDetail loading states', () => {
 
     expect(screen.getByText('3-2')).toBeTruthy();
   });
+
+  it('renders tournament context and legacy standings on the event detail screen', async () => {
+    scheduleServiceMocks.loadParentScheduleEventDetail.mockResolvedValue({
+      events: [buildEvent({
+        competitionType: 'tournament',
+        tournament: {
+          divisionName: '10U Gold',
+          bracketName: 'Gold Bracket',
+          roundName: 'Semifinal',
+          poolName: 'Pool A',
+          slotAssignments: {
+            home: { sourceType: 'pool_seed', poolName: 'Pool A', seed: 1 },
+            away: { sourceType: 'game_result', gameId: 'R1G2', outcome: 'winner' }
+          },
+          standings: {
+            poolName: '10U Gold / Pool A',
+            rows: [
+              { rank: 1, teamName: 'Tigers', wins: 2, losses: 0, points: 6 },
+              { rank: 2, teamName: 'Lions', record: '1-1', points: 3 }
+            ],
+            isOverridden: true
+          }
+        }
+      })],
+      children: []
+    });
+
+    renderScheduleEventDetail();
+
+    await waitFor(() => {
+      expect(screen.getByRole('heading', { name: 'vs. Wolves' })).toBeTruthy();
+    });
+
+    expect(screen.getAllByText('10U Gold / Gold Bracket / Semifinal').length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/Pool: Pool A/).length).toBeGreaterThan(0);
+    expect(screen.getAllByText('10U Gold / Pool A standings').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('#1 Tigers (2-0, 6 pts)').length).toBeGreaterThan(0);
+  });
 });
 
 describe('ScheduleEventDetail lineup draft guards', () => {

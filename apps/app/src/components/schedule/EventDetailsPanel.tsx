@@ -4,7 +4,10 @@ import {
   formatEventTimeLabel,
   getScheduleForecastHref,
   getScheduleMapHref,
-  type ParentScheduleEvent
+  getScheduleTournamentInfo,
+  type ParentScheduleEvent,
+  type ScheduleTournamentInfo,
+  type ScheduleTournamentStandingRow
 } from '../../lib/scheduleLogic';
 
 export function EventDetailsPanel({ event, open }: { event: ParentScheduleEvent; open: boolean }) {
@@ -12,9 +15,11 @@ export function EventDetailsPanel({ event, open }: { event: ParentScheduleEvent;
   const rows = getEventDetailRows(event);
   const mapHref = getScheduleMapHref(event.location);
   const forecastHref = getScheduleForecastHref(event.location);
+  const tournamentInfo = getScheduleTournamentInfo(event);
 
   return (
     <div className="mt-3 rounded-xl border border-gray-200 bg-white">
+      {tournamentInfo.isTournament ? <TournamentEventDetailsSummary info={tournamentInfo} /> : null}
       <dl className="divide-y divide-gray-200 px-3">
         {rows.map((row) => (
           <div key={row.label} className="flex items-start gap-3 py-3">
@@ -64,6 +69,46 @@ function getEventDetailRows(event: ParentScheduleEvent) {
     event.practiceHomePacketSummary ? { label: 'Home packet', value: event.practiceHomePacketSummary, icon: FileText } : null,
     event.notes ? { label: 'Notes', value: event.notes, icon: FileText } : null
   ].filter((row): row is { label: string; value: string; icon: LucideIcon } => Boolean(row));
+}
+
+function TournamentEventDetailsSummary({ info }: { info: ScheduleTournamentInfo }) {
+  const standingsRows = info.standings?.rows.slice(0, 4) || [];
+  const hiddenStandingCount = Math.max((info.standings?.rows.length || 0) - standingsRows.length, 0);
+  const showMatchup = Boolean(info.matchupLabel && !info.details.includes(info.matchupLabel));
+
+  return (
+    <div className="border-b border-indigo-100 bg-indigo-50 px-3 py-3" aria-label="Tournament information">
+      <div className="text-xs font-black text-indigo-950">{info.label}</div>
+      {info.details ? <div className="mt-0.5 text-xs font-semibold text-indigo-800">{info.details}</div> : null}
+      {showMatchup ? <div className="mt-0.5 text-xs font-semibold text-indigo-800">{info.matchupLabel}</div> : null}
+      {info.standings ? (
+        <div className="mt-2 border-t border-indigo-100 pt-2">
+          <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] font-black uppercase tracking-[0.04em] text-indigo-900">
+            <span>{info.standings.groupName} standings</span>
+            {info.standings.note ? <span className="rounded-full bg-white px-2 py-0.5 text-indigo-700">{info.standings.note}</span> : null}
+          </div>
+          <div className="mt-1 grid gap-1">
+            {standingsRows.map((row) => (
+              <div key={`${row.rank}-${row.teamName}`} className="truncate text-xs font-semibold text-indigo-900">
+                #{row.rank} {row.teamName}{formatTournamentStandingMeta(row)}
+              </div>
+            ))}
+            {hiddenStandingCount ? (
+              <div className="text-xs font-semibold text-indigo-700">+{hiddenStandingCount} more</div>
+            ) : null}
+          </div>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function formatTournamentStandingMeta(row: ScheduleTournamentStandingRow) {
+  const parts = [
+    row.record,
+    row.points !== null ? `${row.points} pts` : ''
+  ].filter(Boolean);
+  return parts.length ? ` (${parts.join(', ')})` : '';
 }
 
 function formatGameInfo(event: ParentScheduleEvent) {
