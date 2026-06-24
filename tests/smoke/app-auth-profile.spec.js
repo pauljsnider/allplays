@@ -61,6 +61,7 @@ async function mockAppModules(page, { user = null, emailLink = false } = {}) {
             canPrompt: true,
             canOpenSettings: false
         }];
+        window.__mockNotificationPreferenceResponses ??= [];
     }, { mockUser: user, mockEmailLink: emailLink });
 
     await page.route(/\/src\/lib\/useAuth\.ts(\?.*)?$/, async (route) => {
@@ -266,6 +267,21 @@ async function mockAppModules(page, { user = null, emailLink = false } = {}) {
 
                 export async function loadNotificationPreferences(userId, teamId) {
                     window.__appProfileCalls.notificationLoads.push({ userId, teamId });
+                    const queue = window.__mockNotificationPreferenceResponses || [];
+                    if (queue.length > 1) {
+                        const next = queue.shift();
+                        if (next?.error) {
+                            throw new Error(next.error);
+                        }
+                        return next?.value || { liveChat: true, liveScore: false, schedule: true };
+                    }
+                    if (queue.length === 1) {
+                        const next = queue[0];
+                        if (next?.error) {
+                            throw new Error(next.error);
+                        }
+                        return next?.value || { liveChat: true, liveScore: false, schedule: true };
+                    }
                     return { liveChat: true, liveScore: false, schedule: true };
                 }
 
@@ -722,6 +738,47 @@ test('profile exposes account, notification, invite, verification, password, upl
         reset: ['parent@example.com'],
         signOut: 1
     });
+});
+
+test('profile keeps destructive alert actions disabled until a failed team load retries successfully', async ({ page, baseURL }) => {
+    const user = {
+        uid: 'user-1',
+        email: 'parent@example.com',
+        displayName: 'Pat Parent',
+        emailVerified: false,
+        roles: ['parent']
+    };
+    await mockAppModules(page, { user });
+    await page.addInitScript(() => {
+        window.__mockNotificationPreferenceResponses = [
+            { value: { liveChat: true, liveScore: false, schedule: true } },
+            { error: 'temporary outage' },
+            { value: { liveChat: false, liveScore: true, schedule: false } }
+        ];
+    });
+    await page.goto(appUrl(baseURL, '/profile'), { waitUntil: 'domcontentloaded' });
+
+    await page.getByRole('button', { name: 'Alerts', exact: true }).click();
+    await expect(page.getByLabel('Team')).toHaveValue('team-1');
+    await page.getByLabel('Team').selectOption('team-2');
+
+    await expect(page.getByText('Alerts unavailable', { exact: true })).toBeVisible();
+    await expect(page.getByText('temporary outage')).toBeVisible();
+    await expect(page.getByLabel('Live Chat')).toHaveCount(0);
+    await expect(page.getByRole('button', { name: 'Turn on game-day alerts' })).toBeDisabled();
+    await expect(page.getByRole('button', { name: 'Save preferences' })).toBeDisabled();
+    await expect.poll(async () => page.evaluate(() => window.__appProfileCalls.notificationSaves.length)).toBe(0);
+
+    await page.getByRole('button', { name: 'Retry alerts' }).click();
+
+    await expect.poll(async () => page.evaluate(() => window.__appProfileCalls.notificationLoads.length)).toBe(3);
+    await expect(page.getByText('temporary outage')).toHaveCount(0);
+    await expect(page.getByLabel('Live Chat')).toBeVisible();
+    await expect(page.getByLabel('Live Chat')).not.toBeChecked();
+    await expect(page.getByLabel('Live Score')).toBeChecked();
+    await expect(page.getByLabel('Schedule Changes')).not.toBeChecked();
+    await expect(page.getByRole('button', { name: 'Turn on game-day alerts' })).toBeEnabled();
+    await expect(page.getByRole('button', { name: 'Save preferences' })).toBeEnabled();
 });
 
 test('profile alerts recover from blocked native notification permissions', async ({ page, baseURL }) => {
