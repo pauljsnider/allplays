@@ -34,6 +34,10 @@ const initialLoadTelemetryMocks = vi.hoisted(() => ({
   end: vi.fn()
 }));
 
+const shellLayoutMocks = vi.hoisted(() => ({
+  isDesktopWeb: false
+}));
+
 vi.mock('../lib/scheduleService', () => scheduleServiceMocks);
 vi.mock('../lib/appDataCache', () => appDataCacheMocks);
 vi.mock('../lib/telemetry', () => ({
@@ -44,7 +48,7 @@ vi.mock('../lib/uxTiming', () => ({
   startScreenMountTimer: vi.fn(() => ({ end: uxTimingMocks.end }))
 }));
 vi.mock('../lib/useShellLayout', () => ({
-  useShellLayout: () => ({ isDesktopWeb: false })
+  useShellLayout: () => ({ isDesktopWeb: shellLayoutMocks.isDesktopWeb })
 }));
 
 const auth: AuthState = {
@@ -108,6 +112,19 @@ function buildScheduleEvent(index: number, overrides: Record<string, unknown> = 
   };
 }
 
+function buildStaffScheduleResult() {
+  return {
+    children: [
+      { playerId: 'player-1', playerName: 'Pat', teamId: 'team-1', teamName: 'Bears' }
+    ],
+    events: [
+      buildScheduleEvent(1, {
+        isTeamStaff: true
+      })
+    ]
+  };
+}
+
 function resolveAppSourcePath(relativePath: string) {
   const cwd = process.cwd();
   const appRoot = cwd.endsWith('/apps/app') || cwd.endsWith('\\apps\\app')
@@ -119,6 +136,7 @@ function resolveAppSourcePath(relativePath: string) {
 describe('Schedule', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    shellLayoutMocks.isDesktopWeb = false;
     Object.defineProperty(window, 'scrollTo', {
       value: vi.fn(),
       writable: true
@@ -506,5 +524,54 @@ describe('Schedule', () => {
     expect(source).toContain('return runScheduleRead(');
     expect(source).toContain('const loaded = await runPastHistoryRead(');
     expect(source).not.toContain('const [loadingPastHistory, setLoadingPastHistory]');
+  });
+
+  it('defers tracker config loading on mobile until staff tools are opened and caches the result', async () => {
+    scheduleServiceMocks.loadParentSchedule.mockResolvedValueOnce(buildStaffScheduleResult());
+    scheduleServiceMocks.loadScheduleStatTrackerConfigsForApp.mockResolvedValueOnce([
+      { id: 'config-1', name: 'Varsity Tracker' }
+    ]);
+
+    renderSchedule();
+
+    expect(await screen.findByRole('button', { name: /manage schedule/i })).toBeTruthy();
+    expect(scheduleServiceMocks.loadScheduleStatTrackerConfigsForApp).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole('button', { name: /manage schedule/i }));
+
+    await waitFor(() => {
+      expect(scheduleServiceMocks.loadScheduleStatTrackerConfigsForApp).toHaveBeenCalledTimes(1);
+      expect(scheduleServiceMocks.loadScheduleStatTrackerConfigsForApp).toHaveBeenCalledWith('team-1', auth.user);
+    });
+    expect(await screen.findByRole('option', { name: 'Varsity Tracker' })).toBeTruthy();
+
+    fireEvent.click(screen.getByRole('button', { name: /manage schedule/i }));
+    fireEvent.click(screen.getByRole('button', { name: /manage schedule/i }));
+
+    await waitFor(() => {
+      expect(screen.getByRole('option', { name: 'Varsity Tracker' })).toBeTruthy();
+    });
+    expect(scheduleServiceMocks.loadScheduleStatTrackerConfigsForApp).toHaveBeenCalledTimes(1);
+  });
+
+  it('defers desktop tracker config loading until staff starts using game creation', async () => {
+    shellLayoutMocks.isDesktopWeb = true;
+    scheduleServiceMocks.loadParentSchedule.mockResolvedValueOnce(buildStaffScheduleResult());
+    scheduleServiceMocks.loadScheduleStatTrackerConfigsForApp.mockResolvedValueOnce([
+      { id: 'config-1', name: 'Varsity Tracker' }
+    ]);
+
+    renderSchedule();
+
+    expect(await screen.findByRole('heading', { name: 'Add game for Bears' })).toBeTruthy();
+    expect(scheduleServiceMocks.loadScheduleStatTrackerConfigsForApp).not.toHaveBeenCalled();
+
+    fireEvent.focus(screen.getByLabelText('Opponent'));
+
+    await waitFor(() => {
+      expect(scheduleServiceMocks.loadScheduleStatTrackerConfigsForApp).toHaveBeenCalledTimes(1);
+      expect(scheduleServiceMocks.loadScheduleStatTrackerConfigsForApp).toHaveBeenCalledWith('team-1', auth.user);
+    });
+    expect(await screen.findByRole('option', { name: 'Varsity Tracker' })).toBeTruthy();
   });
 });

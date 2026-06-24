@@ -218,6 +218,9 @@ export function Schedule({ auth }: { auth: AuthState }) {
   const pastHistoryLoadedRef = useRef(false);
   const childrenRef = useRef<ParentScheduleChild[]>([]);
   const eventsRef = useRef<ParentScheduleEvent[]>([]);
+  const trackerConfigCacheRef = useRef<Record<string, ScheduleStatTrackerConfigOption[]>>({});
+  const trackerConfigRequestPromiseRef = useRef<Record<string, Promise<ScheduleStatTrackerConfigOption[]>>>({});
+  const [trackerConfigRequestedTeamIds, setTrackerConfigRequestedTeamIds] = useState<Record<string, true>>({});
 
   const applyScheduleResult = (data: { children: ParentScheduleChild[]; events: ParentScheduleEvent[]; }) => {
     childrenRef.current = data.children;
@@ -533,23 +536,68 @@ export function Schedule({ auth }: { auth: AuthState }) {
     }
   }, [isDesktopWeb, selectedCalendarTeam]);
 
+  const requestTrackerConfigLoad = () => {
+    if (!selectedCalendarTeam) return;
+    setTrackerConfigRequestedTeamIds((current) => {
+      if (current[selectedCalendarTeam.teamId]) return current;
+      return {
+        ...current,
+        [selectedCalendarTeam.teamId]: true
+      };
+    });
+  };
+
+  useEffect(() => {
+    if (!selectedCalendarTeam) {
+      setGameTrackerConfigs([]);
+      setGameTrackerConfigError(null);
+      return;
+    }
+    const cachedConfigs = trackerConfigCacheRef.current[selectedCalendarTeam.teamId];
+    setGameTrackerConfigs(cachedConfigs || []);
+    setGameTrackerConfigError(null);
+  }, [selectedCalendarTeam]);
+
 
   useEffect(() => {
     let cancelled = false;
+    if (!selectedCalendarTeam || !auth.user) return;
+    const shouldLoadTrackerConfigs = mobileStaffToolsOpen
+      || trackerConfigRequestedTeamIds[selectedCalendarTeam.teamId]
+      || (isDesktopWeb && desktopAdvancedControlsOpen);
+    if (!shouldLoadTrackerConfigs) return;
+
+    const cachedConfigs = trackerConfigCacheRef.current[selectedCalendarTeam.teamId];
+    if (cachedConfigs) {
+      setGameTrackerConfigs(cachedConfigs);
+      setGameTrackerConfigError(null);
+      return;
+    }
+
     setGameTrackerConfigs([]);
     setGameTrackerConfigError(null);
-    if (!selectedCalendarTeam || !auth.user) return;
-    loadScheduleStatTrackerConfigsForApp(selectedCalendarTeam.teamId, auth.user)
+
+    const cachedPromise = trackerConfigRequestPromiseRef.current[selectedCalendarTeam.teamId]
+      || loadScheduleStatTrackerConfigsForApp(selectedCalendarTeam.teamId, auth.user);
+    trackerConfigRequestPromiseRef.current[selectedCalendarTeam.teamId] = cachedPromise;
+
+    cachedPromise
       .then((configs) => {
-        if (!cancelled) setGameTrackerConfigs(configs);
+        trackerConfigCacheRef.current[selectedCalendarTeam.teamId] = configs;
+        delete trackerConfigRequestPromiseRef.current[selectedCalendarTeam.teamId];
+        if (!cancelled) {
+          setGameTrackerConfigs(configs);
+          setGameTrackerConfigError(null);
+        }
       })
       .catch((configError: any) => {
+        delete trackerConfigRequestPromiseRef.current[selectedCalendarTeam.teamId];
         if (!cancelled) setGameTrackerConfigError(configError?.message || 'Unable to load tracker configs.');
       });
     return () => {
       cancelled = true;
     };
-  }, [auth.user, selectedCalendarTeam]);
+  }, [auth.user, desktopAdvancedControlsOpen, isDesktopWeb, mobileStaffToolsOpen, selectedCalendarTeam, trackerConfigRequestedTeamIds]);
 
   useEffect(() => {
     setGameForm((current) => {
@@ -1082,7 +1130,10 @@ export function Schedule({ auth }: { auth: AuthState }) {
               onRefresh={() => refreshSchedule(true)}
               onExport={handleExport}
               advancedControlsOpen={desktopAdvancedControlsOpen}
-              onAdvancedControlsOpenChange={setDesktopAdvancedControlsOpen}
+              onAdvancedControlsOpenChange={(open) => {
+                if (open) requestTrackerConfigLoad();
+                setDesktopAdvancedControlsOpen(open);
+              }}
               onCopyAgenda={handleCopyAgenda}
               onResetFilters={() => {
                 setFilter('upcoming-all');
@@ -1119,6 +1170,7 @@ export function Schedule({ auth }: { auth: AuthState }) {
                 saving={savingGame}
                 error={gameFormError}
                 configError={gameTrackerConfigError}
+                onStartUsing={requestTrackerConfigLoad}
                 onChange={(nextForm) => {
                   setGameForm(nextForm);
                   if (gameFormError) setGameFormError(null);
@@ -1219,7 +1271,11 @@ export function Schedule({ auth }: { auth: AuthState }) {
             <MobileScheduleStaffToolsSection
               open={mobileStaffToolsOpen}
               teamName={selectedCalendarTeam.teamName}
-              onToggle={() => setMobileStaffToolsOpen((current) => !current)}
+              onToggle={() => setMobileStaffToolsOpen((current) => {
+                const nextOpen = !current;
+                if (nextOpen) requestTrackerConfigLoad();
+                return nextOpen;
+              })}
             >
               <ScheduleGameCreatePanel
                 teamName={selectedCalendarTeam.teamName}
@@ -1228,6 +1284,7 @@ export function Schedule({ auth }: { auth: AuthState }) {
                 saving={savingGame}
                 error={gameFormError}
                 configError={gameTrackerConfigError}
+                onStartUsing={requestTrackerConfigLoad}
                 onChange={(nextForm) => {
                   setGameForm(nextForm);
                   if (gameFormError) setGameFormError(null);
@@ -1339,10 +1396,10 @@ function getDefaultSchedulePracticeForm(): SchedulePracticeFormInput {
   };
 }
 
-function ScheduleGameCreatePanel({ teamName, form, configs, saving, error, configError, onChange, onSubmit }: { teamName: string; form: ScheduleGameFormInput; configs: ScheduleStatTrackerConfigOption[]; saving: boolean; error: string | null; configError: string | null; onChange: (form: ScheduleGameFormInput) => void; onSubmit: (event: FormEvent<HTMLFormElement>) => void }) {
+function ScheduleGameCreatePanel({ teamName, form, configs, saving, error, configError, onStartUsing, onChange, onSubmit }: { teamName: string; form: ScheduleGameFormInput; configs: ScheduleStatTrackerConfigOption[]; saving: boolean; error: string | null; configError: string | null; onStartUsing?: () => void; onChange: (form: ScheduleGameFormInput) => void; onSubmit: (event: FormEvent<HTMLFormElement>) => void }) {
   const updateField = (field: keyof ScheduleGameFormInput, value: string | Date | boolean | null) => onChange({ ...form, [field]: value });
   return (
-    <section className="app-card p-3 sm:p-4" aria-label="Create game">
+    <section className="app-card p-3 sm:p-4" aria-label="Create game" onFocusCapture={onStartUsing}>
       <div className="app-label">Game scheduling</div>
       <h2 className="mt-1 text-base font-black text-gray-950">Add game for {teamName}</h2>
       <form className="mt-3 space-y-3" onSubmit={onSubmit}>
