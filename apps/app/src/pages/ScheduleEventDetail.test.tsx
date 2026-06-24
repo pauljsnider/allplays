@@ -467,6 +467,28 @@ describe('ScheduleEventDetail loading states', () => {
       expect(screen.getAllByText(/Avery Smith/).length).toBeGreaterThan(0);
     });
   });
+
+  it('does not label future scheduled games with a final 0-0 score', async () => {
+    scheduleServiceMocks.loadParentScheduleEventDetail.mockResolvedValue({
+      events: [buildEvent({
+        date: new Date('2099-11-15T18:00:00.000Z'),
+        homeScore: 0,
+        awayScore: 0,
+        status: 'scheduled',
+        liveStatus: 'scheduled'
+      })],
+      children: []
+    });
+
+    renderScheduleEventDetail();
+
+    await waitFor(() => {
+      expect(screen.getByRole('heading', { name: 'vs. Wolves' })).toBeTruthy();
+    });
+
+    expect(screen.queryByText('Final 0-0')).toBeNull();
+    expect(screen.queryByText(/^0-0$/)).toBeNull();
+  });
 });
 
 describe('ScheduleEventDetail lineup draft guards', () => {
