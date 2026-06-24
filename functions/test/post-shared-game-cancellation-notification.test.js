@@ -1,13 +1,26 @@
-const assert = require('node:assert/strict');
-const test = require('node:test');
-const Module = require('node:module');
+import assert from 'node:assert/strict';
+import Module from 'node:module';
+import { afterEach, test } from 'vitest';
 
+const require = Module.createRequire(import.meta.url);
 const repoIndexPath = require.resolve('../index.js');
 const originalModuleLoad = Module._load;
 
 let adminStub = null;
 let functionsStub = null;
 let StripeStub = null;
+
+function resetTestState() {
+  Module._load = originalModuleLoad;
+  adminStub = null;
+  functionsStub = null;
+  StripeStub = null;
+  delete require.cache[repoIndexPath];
+}
+
+afterEach(() => {
+  resetTestState();
+});
 
 function patchedModuleLoad(request, parent, isMain) {
   if (request === 'firebase-admin' && adminStub) {
