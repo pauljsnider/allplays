@@ -1,5 +1,10 @@
 // @vitest-environment jsdom
-import { describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it } from 'vitest';
+
+beforeEach(async () => {
+    const { resetHelpKnowledgeCachesForTests } = await import('../../apps/app/src/lib/helpKnowledgeService.ts');
+    resetHelpKnowledgeCachesForTests();
+});
 
 describe('app help knowledge service', () => {
     it('indexes root help and workflow pages for private AI lookup', async () => {
@@ -106,5 +111,40 @@ describe('app help knowledge service', () => {
             expect(results.length).toBeGreaterThan(0);
             expect(results.every((result) => roleFilter === 'all' || result.roles.includes('all') || result.roles.includes(roleFilter))).toBe(true);
         });
+    });
+
+    it('builds snippets only for the returned top matches and caches repeated searches', async () => {
+        const {
+            getHelpKnowledgeDebugStateForTests,
+            getHelpKnowledgeDocs,
+            searchHelpKnowledge
+        } = await import('../../apps/app/src/lib/helpKnowledgeService.ts');
+        const docs = getHelpKnowledgeDocs();
+        const limit = 3;
+
+        const results = searchHelpKnowledge({
+            query: 'live tracker',
+            roleFilter: 'all',
+            limit
+        });
+        const debugAfterFirstSearch = getHelpKnowledgeDebugStateForTests();
+
+        expect(results).toHaveLength(limit);
+        expect(docs.length).toBeGreaterThan(limit);
+        expect(debugAfterFirstSearch.snippetBuilds).toBe(limit);
+        expect(debugAfterFirstSearch.sentenceSplits).toBe(docs.length);
+        expect(debugAfterFirstSearch.queryCacheHits).toBe(0);
+
+        const repeatedResults = searchHelpKnowledge({
+            query: 'live tracker',
+            roleFilter: 'all',
+            limit
+        });
+        const debugAfterSecondSearch = getHelpKnowledgeDebugStateForTests();
+
+        expect(repeatedResults).toEqual(results);
+        expect(debugAfterSecondSearch.snippetBuilds).toBe(limit);
+        expect(debugAfterSecondSearch.sentenceSplits).toBe(docs.length);
+        expect(debugAfterSecondSearch.queryCacheHits).toBe(1);
     });
 });

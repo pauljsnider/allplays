@@ -21,6 +21,16 @@ type HelpKnowledgeDoc = HelpKnowledgeIndexDoc & {
   roles: string[];
   summary: string;
   text: string;
+  normalizedTitle: string;
+  normalizedSummary: string;
+  normalizedFile: string;
+  normalizedText: string;
+  snippetSentences: string[];
+};
+
+type HelpKnowledgeQueryCacheEntry = {
+  key: string;
+  results: HelpKnowledgeResult[];
 };
 
 const searchableHelpRoles = ['admin', 'coach', 'member', 'parent'];
@@ -54,8 +64,15 @@ const stopWords = new Set([
   'you',
   'your'
 ]);
+const helpSearchQueryCacheMaxEntries = 40;
 
 let helpDocsCache: HelpKnowledgeDoc[] | null = null;
+const helpSearchQueryCache = new Map<string, HelpKnowledgeQueryCacheEntry>();
+const helpKnowledgeDebugState = {
+  queryCacheHits: 0,
+  snippetBuilds: 0,
+  sentenceSplits: 0
+};
 
 export function getSearchHelpRoles(helpRoleFilter?: unknown): string[] {
   const role = normalizeRoles([helpRoleFilter]).find((normalizedRole) => searchableHelpRoles.includes(normalizedRole));
@@ -67,11 +84,7 @@ export function getHelpKnowledgeDocs(): HelpKnowledgeDoc[] {
   if (helpDocsCache) return helpDocsCache;
 
   helpDocsCache = helpKnowledgeIndex
-    .map((doc) => ({
-      ...doc,
-      url: new URL(doc.file, allPlaysOrigin).toString(),
-      roles: normalizeRoles(doc.roles)
-    }))
+    .map((doc) => buildHelpKnowledgeDoc(doc))
     .sort((a, b) => a.title.localeCompare(b.title));
 
   return helpDocsCache;
@@ -91,30 +104,60 @@ export function searchHelpKnowledge({
   const docs = getHelpKnowledgeDocs();
   const cleanQuery = compactText(query);
   const queryTokens = tokenize(cleanQuery);
+  const normalizedQuery = cleanQuery.toLowerCase();
   const roleTokens = normalizeRoles(roles);
   const [normalizedRoleFilter] = normalizeRoles([roleFilter]);
   const maxResults = Math.min(Math.max(Number(limit) || 5, 1), Math.max(docs.length, 1));
+  const cacheKey = JSON.stringify({
+    query: normalizedQuery,
+    roles: roleTokens,
+    roleFilter: normalizedRoleFilter || '',
+    limit: maxResults
+  });
+  const cachedResults = helpSearchQueryCache.get(cacheKey);
+  if (cachedResults) {
+    helpKnowledgeDebugState.queryCacheHits += 1;
+    return cachedResults.results;
+  }
 
-  return docs
+  const scoredResults = docs
     .filter((doc) => normalizedRoleFilter
       ? roleFilterMatches(doc.roles, normalizedRoleFilter)
       : (!roleTokens.length || roleMatches(doc.roles, roleTokens)))
-    .map((doc) => {
-      const score = scoreHelpDoc(doc, cleanQuery, queryTokens, roleTokens);
-      return {
-        id: doc.id,
-        title: doc.title,
-        file: doc.file,
-        url: doc.url,
-        roles: doc.roles,
-        summary: doc.summary,
-        snippet: buildSnippet(doc, queryTokens),
-        score
-      };
-    })
+    .map((doc) => ({
+      doc,
+      score: scoreHelpDoc(doc, normalizedQuery, queryTokens, roleTokens)
+    }))
     .filter((result) => result.score > 0 || !queryTokens.length)
-    .sort((a, b) => b.score - a.score || a.title.localeCompare(b.title))
-    .slice(0, maxResults);
+    .sort((a, b) => b.score - a.score || a.doc.title.localeCompare(b.doc.title))
+    .slice(0, maxResults)
+    .map(({ doc, score }) => ({
+      id: doc.id,
+      title: doc.title,
+      file: doc.file,
+      url: doc.url,
+      roles: doc.roles,
+      summary: doc.summary,
+      snippet: buildSnippet(doc, queryTokens),
+      score
+    }));
+
+  setHelpSearchQueryCache(cacheKey, scoredResults);
+  return scoredResults;
+}
+
+function buildHelpKnowledgeDoc(doc: HelpKnowledgeIndexDoc): HelpKnowledgeDoc {
+  const normalizedText = compactText(doc.text);
+  return {
+    ...doc,
+    url: new URL(doc.file, allPlaysOrigin).toString(),
+    roles: normalizeRoles(doc.roles),
+    normalizedTitle: doc.title.toLowerCase(),
+    normalizedSummary: doc.summary.toLowerCase(),
+    normalizedFile: doc.file.toLowerCase(),
+    normalizedText: normalizedText.toLowerCase(),
+    snippetSentences: splitSnippetSentences(normalizedText)
+  };
 }
 
 function scoreHelpDoc(doc: HelpKnowledgeDoc, query: string, tokens: string[], roles: string[]) {
@@ -122,10 +165,10 @@ function scoreHelpDoc(doc: HelpKnowledgeDoc, query: string, tokens: string[], ro
     return roleMatches(doc.roles, roles) ? 2 : 1;
   }
 
-  const title = doc.title.toLowerCase();
-  const summary = doc.summary.toLowerCase();
-  const file = doc.file.toLowerCase();
-  const text = doc.text.toLowerCase();
+  const title = doc.normalizedTitle;
+  const summary = doc.normalizedSummary;
+  const file = doc.normalizedFile;
+  const text = doc.normalizedText;
   let score = roleMatches(doc.roles, roles) ? 2 : 0;
   const phrase = query.toLowerCase();
 
@@ -149,16 +192,31 @@ function buildSnippet(doc: HelpKnowledgeDoc, tokens: string[]) {
   const text = compactText(doc.text);
   if (!text) return doc.summary;
 
-  const sentences = text
-    .split(/(?<=[.!?])\s+|\n+/)
-    .map((sentence) => compactText(sentence))
-    .filter((sentence) => sentence.length > 40);
+  helpKnowledgeDebugState.snippetBuilds += 1;
   const lowerTokens = tokens.map((token) => token.toLowerCase());
-  const match = sentences.find((sentence) => lowerTokens.some((token) => sentence.toLowerCase().includes(token)))
-    || sentences[0]
+  const match = doc.snippetSentences.find((sentence) => lowerTokens.some((token) => sentence.toLowerCase().includes(token)))
+    || doc.snippetSentences[0]
     || text;
 
   return match.length > 420 ? `${match.slice(0, 417).trim()}...` : match;
+}
+
+function splitSnippetSentences(text: string) {
+  helpKnowledgeDebugState.sentenceSplits += 1;
+  return text
+    .split(/(?<=[.!?])\s+|\n+/)
+    .map((sentence) => compactText(sentence))
+    .filter((sentence) => sentence.length > 40);
+}
+
+function setHelpSearchQueryCache(key: string, results: HelpKnowledgeResult[]) {
+  helpSearchQueryCache.set(key, { key, results });
+  if (helpSearchQueryCache.size <= helpSearchQueryCacheMaxEntries) return;
+
+  const oldestKey = helpSearchQueryCache.keys().next().value;
+  if (oldestKey) {
+    helpSearchQueryCache.delete(oldestKey);
+  }
 }
 
 function normalizeRoles(roles: unknown[]) {
@@ -205,4 +263,16 @@ function countOccurrences(value: string, token: string) {
 
 function compactText(value: unknown) {
   return String(value || '').replace(/\s+/g, ' ').trim();
+}
+
+export function resetHelpKnowledgeCachesForTests() {
+  helpDocsCache = null;
+  helpSearchQueryCache.clear();
+  helpKnowledgeDebugState.queryCacheHits = 0;
+  helpKnowledgeDebugState.snippetBuilds = 0;
+  helpKnowledgeDebugState.sentenceSplits = 0;
+}
+
+export function getHelpKnowledgeDebugStateForTests() {
+  return { ...helpKnowledgeDebugState };
 }
