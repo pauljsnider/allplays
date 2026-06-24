@@ -25,6 +25,8 @@ function createEnvironment() {
     const elements = new Map([
         ['header-container', new MockElement('header-container')],
         ['hero-cta', new MockElement('hero-cta')],
+        ['nav-cta-desktop', new MockElement('nav-cta-desktop')],
+        ['nav-cta-mobile', new MockElement('nav-cta-mobile')],
         ['live-games-list', new MockElement('live-games-list')],
         ['past-games-list', new MockElement('past-games-list')]
     ]);
@@ -125,6 +127,7 @@ describe('homepage index workflow', () => {
         expect(homepageHtml).not.toContain('login.html#signup');
         expect(homepageHtml).toContain('mailto:paul@paulsnider.net?subject=ALL%20PLAYS%20Access%20Request');
         expect(homepageHtml).toContain('Request Access');
+        expect(homepageHtml).toContain("./js/homepage.js?v=4");
     });
 
     it('routes coach users to the team dashboard CTA, deduplicates live and upcoming games, and preserves replay links', async () => {
@@ -203,6 +206,10 @@ describe('homepage index workflow', () => {
 
         expect(elements.get('hero-cta').textContent).toBe('Request Access');
         expect(elements.get('hero-cta').href).toBe('mailto:paul@paulsnider.net?subject=ALL%20PLAYS%20Access%20Request');
+        expect(elements.get('nav-cta-desktop').textContent).toBe('Request Access');
+        expect(elements.get('nav-cta-desktop').href).toBe('mailto:paul@paulsnider.net?subject=ALL%20PLAYS%20Access%20Request');
+        expect(elements.get('nav-cta-mobile').textContent).toBe('Request Access');
+        expect(elements.get('nav-cta-mobile').href).toBe('mailto:paul@paulsnider.net?subject=ALL%20PLAYS%20Access%20Request');
 
         const liveMarkup = elements.get('live-games-list').innerHTML;
         expect(liveMarkup).not.toContain('Loading games...');
