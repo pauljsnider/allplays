@@ -6550,6 +6550,7 @@ export async function getUnreadChatCounts(userId, teamIds, options = {}) {
     const latestMessageAtByTeam = options?.latestMessageAtByTeam || {};
     const conversationIdsByTeam = options?.conversationIdsByTeam || {};
     const conversationLookupByTeam = options?.conversationLookupByTeam || {};
+    const defaultConversationOnly = options?.defaultConversationOnly === true;
     let userData = {};
 
     try {
@@ -6569,18 +6570,20 @@ export async function getUnreadChatCounts(userId, teamIds, options = {}) {
                 ? conversationIdsByTeam[teamId]
                 : null;
             const conversationLookup = conversationLookupByTeam?.[teamId] || {};
-            const loadedConversationIds = storedConversationIds || (await getChatConversations(
-                teamId,
-                conversationLookup.user || null,
-                {
-                    team: conversationLookup.team || null,
-                    canModerate: conversationLookup.canModerate === true
-                }
-            )).map((conversation) => conversation?.id).filter(Boolean);
-            const conversationIds = [
+            const loadedConversationIds = storedConversationIds || (defaultConversationOnly
+                ? [DEFAULT_TEAM_CONVERSATION_ID]
+                : (await getChatConversations(
+                    teamId,
+                    conversationLookup.user || null,
+                    {
+                        team: conversationLookup.team || null,
+                        canModerate: conversationLookup.canModerate === true
+                    }
+                )).map((conversation) => conversation?.id).filter(Boolean));
+            const conversationIds = Array.from(new Set([
                 DEFAULT_TEAM_CONVERSATION_ID,
                 ...loadedConversationIds.filter((conversationId) => !isDefaultTeamConversation(conversationId))
-            ];
+            ]));
 
             const unreadCounts = await Promise.all(conversationIds.map(async (conversationId) => {
                 try {

@@ -573,6 +573,9 @@ describe('React app chat recipient service', () => {
             expect.objectContaining({ id: 'team-a', lastMessage: null, unreadCount: 0 }),
             expect.objectContaining({ id: 'team-b', lastMessage: null, unreadCount: 3 })
         ]);
+        expect(dbMocks.getUnreadChatCounts).toHaveBeenCalledWith('user-1', ['team-a', 'team-b'], expect.objectContaining({
+            defaultConversationOnly: true
+        }));
         expect(dbMocks.getChatConversations).not.toHaveBeenCalled();
         expect(dbMocks.getChatMessages).not.toHaveBeenCalled();
     });
