@@ -3766,23 +3766,23 @@ export async function getUserAccessCodesPage(userId, options = {}) {
     const pageSize = Number.isFinite(rawPageSize)
         ? Math.min(Math.max(Math.floor(rawPageSize), 1), 50)
         : 10;
-    const constraints = [
-        where("generatedBy", "==", userId),
-        orderBy("createdAt", "desc")
-    ];
-    if (options.cursor) {
-        constraints.push(startAfter(options.cursor));
+    const codes = await getUserAccessCodes(userId);
+    const rawCursor = options.cursor;
+    let offset = typeof rawCursor === 'number' && Number.isFinite(rawCursor)
+        ? Math.max(0, Math.floor(rawCursor))
+        : 0;
+    if (!offset && rawCursor && typeof rawCursor === 'object') {
+        const cursorId = rawCursor.id || rawCursor.ref?.id;
+        if (cursorId) {
+            const cursorIndex = codes.findIndex(code => code.id === cursorId);
+            offset = cursorIndex >= 0 ? cursorIndex + 1 : 0;
+        }
     }
-    constraints.push(limit(pageSize));
-    const q = query(
-        collection(db, "accessCodes"),
-        ...constraints
-    );
-    const snapshot = await getDocs(q);
-    const codes = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+    const pageCodes = codes.slice(offset, offset + pageSize);
+    const nextOffset = offset + pageCodes.length;
     return {
-        codes,
-        nextCursor: snapshot.docs.length === pageSize ? snapshot.docs[snapshot.docs.length - 1] : null
+        codes: pageCodes,
+        nextCursor: nextOffset < codes.length ? nextOffset : null
     };
 }
 

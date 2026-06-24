@@ -124,7 +124,12 @@ export function RetryableStatus({
 
 export function getParentToolErrorMessage(error: AppServiceError | null, fallbackMessage: string) {
     if (!error) return fallbackMessage;
-    return String(error.message || '').trim() || fallbackMessage;
+    const message = String(error.message || '').trim();
+    if (!message) return fallbackMessage;
+    if (/query requires an index|console\.firebase\.google\.com|firestore\/indexes/i.test(message)) {
+        return fallbackMessage;
+    }
+    return message;
 }
 
 export function LoadingBlock({ label }: { label: string }) {

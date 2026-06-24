@@ -65,6 +65,36 @@ vi.mock('../lib/parentToolsService', () => ({
   getGoogleCalendarFeedUrl: vi.fn(() => 'https://calendar.google.com/calendar/render')
 }));
 vi.mock('../lib/scheduleService', () => scheduleServiceMocks);
+vi.mock('lucide-react', () => {
+  const Icon = () => null;
+  return {
+    Award: Icon,
+    BarChart3: Icon,
+    CalendarDays: Icon,
+    CheckCircle2: Icon,
+    ChevronRight: Icon,
+    Code2: Icon,
+    Copy: Icon,
+    DollarSign: Icon,
+    Dumbbell: Icon,
+    ExternalLink: Icon,
+    ImageIcon: Icon,
+    LinkIcon: Icon,
+    Loader2: Icon,
+    MapPin: Icon,
+    MessageCircle: Icon,
+    Radio: Icon,
+    RefreshCw: Icon,
+    Save: Icon,
+    Shield: Icon,
+    Ticket: Icon,
+    Trophy: Icon,
+    UserPlus: Icon,
+    UserRound: Icon,
+    Users: Icon,
+    Zap: Icon
+  };
+});
 
 const auth: AuthState = {
   user: {
@@ -133,6 +163,14 @@ const model = {
   staffPermissions: null,
   counts: { games: 0, practices: 0, completedGames: 0 }
 };
+
+function createDeferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((nextResolve) => {
+    resolve = nextResolve;
+  });
+  return { promise, resolve };
+}
 
 describe('TeamDetail', () => {
   beforeEach(() => {
@@ -500,7 +538,7 @@ describe('TeamDetail', () => {
       currentPlayers: [managedModel.players[0], managedModel.inactivePlayers[0]]
     }));
     expect(await screen.findByText('Possible duplicate of existing roster player Pat Star #9.')).toBeTruthy();
-    expect(screen.getByRole('button', { name: 'Import reviewed players' })).toBeDisabled();
+    expect((screen.getByRole('button', { name: 'Import reviewed players' }) as HTMLButtonElement).disabled).toBe(true);
 
     fireEvent.click(screen.getAllByRole('button', { name: 'Remove' })[0]);
     expect(await screen.findByDisplayValue('Alex New')).toBeTruthy();
@@ -539,6 +577,38 @@ describe('TeamDetail', () => {
     expect(await screen.findByAltText('Bears team photo')).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: /roster/i }));
     expect(await screen.findByAltText('Pat Star player photo')).toBeTruthy();
+  });
+
+  it('clears roster invite and tracking loading states after deferred roster loads finish', async () => {
+    const managedModel = {
+      ...model,
+      canManageTeam: true
+    };
+    const inviteLoad = createDeferred<unknown[]>();
+    const trackingLoad = createDeferred<unknown[]>();
+    teamDetailServiceMocks.loadParentTeamDetail.mockResolvedValue(managedModel);
+    teamDetailServiceMocks.loadTeamRosterParentInvites.mockReturnValue(inviteLoad.promise);
+    teamDetailServiceMocks.loadTeamTrackingAdmin.mockReturnValue(trackingLoad.promise);
+
+    render(
+      <MemoryRouter initialEntries={['/teams/team-1?tab=roster']}>
+        <Routes>
+          <Route path="/teams/:teamId" element={<TeamDetail auth={auth} />} />
+        </Routes>
+      </MemoryRouter>
+    );
+
+    expect(await screen.findByText('Loading parent invite status…')).toBeTruthy();
+    expect(await screen.findByText('Loading tracking items…')).toBeTruthy();
+
+    inviteLoad.resolve([]);
+    trackingLoad.resolve([]);
+
+    await waitFor(() => {
+      expect(screen.queryByText('Loading parent invite status…')).toBeNull();
+      expect(screen.queryByText('Loading tracking items…')).toBeNull();
+    });
+    expect(screen.getByText('No tracking items found.')).toBeTruthy();
   });
 
   it('renders multiple tracking items with completion badges and lets staff manage statuses from the roster tab', async () => {

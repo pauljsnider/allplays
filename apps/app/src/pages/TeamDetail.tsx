@@ -229,7 +229,7 @@ export function TeamDetail({ auth }: { auth: AuthState }) {
   useEffect(() => {
     let cancelled = false;
     async function loadRosterInvitesForTab() {
-      if (!teamId || activeTab !== 'roster' || !model?.canManageTeam || rosterInviteLoading || rosterInviteAttempted) return;
+      if (!teamId || activeTab !== 'roster' || !model?.canManageTeam || rosterInviteAttempted) return;
       setRosterInviteLoading(true);
       setRosterInviteError('');
       try {
@@ -252,12 +252,12 @@ export function TeamDetail({ auth }: { auth: AuthState }) {
     return () => {
       cancelled = true;
     };
-  }, [activeTab, authUserId, model?.canManageTeam, teamId, rosterInviteLoading, rosterInviteAttempted, auth.user]);
+  }, [activeTab, authUserId, model?.canManageTeam, teamId, rosterInviteAttempted, auth.user]);
 
   useEffect(() => {
     let cancelled = false;
     async function loadTrackingForRosterTab() {
-      if (!teamId || activeTab !== 'roster' || !model?.canManageTeam || trackingLoading || trackingAttempted) return;
+      if (!teamId || activeTab !== 'roster' || !model?.canManageTeam || trackingAttempted) return;
       setTrackingLoading(true);
       setTrackingError('');
       try {
@@ -280,7 +280,7 @@ export function TeamDetail({ auth }: { auth: AuthState }) {
     return () => {
       cancelled = true;
     };
-  }, [activeTab, authUserId, auth.user, model?.canManageTeam, teamId, trackingAttempted, trackingLoading]);
+  }, [activeTab, authUserId, auth.user, model?.canManageTeam, teamId, trackingAttempted]);
 
   useEffect(() => {
     const scroll = () => {
