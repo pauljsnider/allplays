@@ -73,16 +73,10 @@ export function resolvePreferredStatConfigId({ configs = [], team = null } = {})
 
 export function resolveGoalSportTrackerProfile({ trackerMode = '', game = null, team = null, config = null } = {}) {
   const mode = String(trackerMode || '').trim().toLowerCase();
-  const sport = mode === 'simple'
-    ? game?.sport || config?.baseType || team?.sport || ''
-    : game?.sport || team?.sport || '';
-  const goalSportProfile = getGoalSportProfile({ sport });
-  if (!goalSportProfile) return null;
+  if (mode !== 'simple') return null;
 
-  if (mode === 'simple') return goalSportProfile;
-
-  const hasExplicitStatTrackerConfig = !!String(game?.statTrackerConfigId || '').trim();
-  return hasExplicitStatTrackerConfig ? null : goalSportProfile;
+  const sport = game?.sport || config?.baseType || team?.sport || '';
+  return getGoalSportProfile({ sport });
 }
 
 export function resolveLiveStatColumns({ columns = [], configs = [], game = null, team = null } = {}) {
