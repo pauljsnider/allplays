@@ -1,0 +1,708 @@
+{
+    "version": 1,
+    "description": "Feature-to-test coverage inventory for legacy pages, React app pages, Cloud Functions, and workflow smoke tests.",
+    "tiers": [
+        "unit",
+        "integration",
+        "workflow"
+    ],
+    "features": [
+        {
+            "id": "platform.admin-docs-static-shell",
+            "label": "Platform admin, help, changelog, and static shell",
+            "priority": "high",
+            "plannedPr": "coverage-map-and-static-workflow-guards",
+            "targetTiers": [
+                "unit",
+                "integration",
+                "workflow"
+            ],
+            "legacyPages": [
+                "admin.html",
+                "check-admin-status.html",
+                "changelog.html",
+                "edit-config.html",
+                "help-account.html",
+                "help-game-operations.html",
+                "help-page-reference.html",
+                "help-team-operations.html",
+                "help-watch-chat.html",
+                "help.html",
+                "index.html",
+                "profile.html",
+                "workflow-admin-ops.html",
+                "workflow-awards-certificates.html",
+                "workflow-choose-home-dashboard.html",
+                "workflow-communication.html",
+                "workflow-fees-payments.html",
+                "workflow-game-day.html",
+                "workflow-getting-started.html",
+                "workflow-join-team.html",
+                "workflow-live-tracker.html",
+                "workflow-live-watch-replay.html",
+                "workflow-postgame.html",
+                "workflow-registration.html",
+                "workflow-roster.html",
+                "workflow-schedule.html",
+                "workflow-team-media.html",
+                "workflow-team-setup.html",
+                "workflow-track-game.html"
+            ],
+            "supportPages": [
+                "apps/app/index.html",
+                "beta/cheer/track-cheer-mobile.html",
+                "beta/sub-tracker-prototype.html",
+                "beta/track-basketball-mobile-mock.html",
+                "beta/track-basketball-mock.html",
+                "mockups/game-day-command-center.html",
+                "mockups/practice-command-center.html",
+                "src/app/team-fees/team-fees.component.html",
+                "test-family-sharing.html",
+                "test-fix-recurring-rsvp.html",
+                "test-fix-schedule-drills.html",
+                "test-foul-tracking.html",
+                "test-game-day.html",
+                "test-pr-changes.html",
+                "test-statsheet-mapping.html",
+                "test-track-live.html",
+                "test-workflow-mobile-toc-active-state.html",
+                "test-youtube-stream.html"
+            ],
+            "appPages": [
+                "apps/app/src/pages/CapabilityPage.tsx",
+                "apps/app/src/pages/HelpArticle.tsx",
+                "apps/app/src/pages/HelpPortal.tsx"
+            ],
+            "cloudFunctions": [
+                "_internal",
+                "collectTelemetry"
+            ],
+            "unitTests": [
+                "tests/unit/admin-bootstrap.test.js",
+                "tests/unit/admin-dashboard-stats.test.js",
+                "tests/unit/admin-status-page.test.js",
+                "tests/unit/app-capability-page.test.jsx",
+                "tests/unit/app-help-article.test.jsx",
+                "tests/unit/app-help-knowledge-service.test.js",
+                "tests/unit/app-help-portal.test.jsx",
+                "tests/unit/changelog-page.test.js",
+                "tests/unit/edit-config-access.test.js",
+                "tests/unit/help-page-reference-integrity.test.js"
+            ],
+            "integrationTests": [
+                "tests/unit/edit-config-schema-workflow.test.js"
+            ],
+            "workflowTests": [
+                "tests/smoke/changelog.spec.js",
+                "tests/smoke/edit-config-platform-admin.spec.js",
+                "tests/smoke/footer-support-links.spec.js",
+                "tests/smoke/help-center.spec.js",
+                "tests/smoke/static-hosting-bootstrap.spec.js"
+            ],
+            "knownGaps": [
+                {
+                    "tier": "workflow",
+                    "description": "Workflow help pages are not all booted directly in Playwright; add a static workflow-page sweep PR."
+                }
+            ]
+        },
+        {
+            "id": "auth.invites-account-recovery",
+            "label": "Authentication, invites, account recovery, and profile",
+            "priority": "critical",
+            "plannedPr": "auth-invites-account-recovery-tests",
+            "targetTiers": [
+                "unit",
+                "integration",
+                "workflow"
+            ],
+            "legacyPages": [
+                "accept-invite.html",
+                "login.html",
+                "reset-password.html",
+                "verify-pending.html"
+            ],
+            "appPages": [
+                "apps/app/src/pages/AcceptInvite.tsx",
+                "apps/app/src/pages/AuthPage.tsx",
+                "apps/app/src/pages/Profile.tsx",
+                "apps/app/src/pages/ResetPassword.tsx",
+                "apps/app/src/pages/VerifyPending.tsx"
+            ],
+            "cloudFunctions": [
+                "autoAcceptParentInviteForExistingUser",
+                "confirmParentAccountMerge",
+                "previewAccountMerge",
+                "validateAccessCodeForAcceptance"
+            ],
+            "unitTests": [
+                "functions/test/account-merge-core.test.cjs",
+                "tests/unit/accept-invite-flow.test.js",
+                "tests/unit/accept-invite-page.test.js",
+                "tests/unit/access-code-validation.test.js",
+                "tests/unit/account-merge-core.test.js",
+                "tests/unit/account-merge-functions-source.test.js",
+                "tests/unit/app-auth-invite-mode.test.jsx",
+                "tests/unit/app-auth-profile-capabilities.test.js",
+                "tests/unit/app-profile-service.test.ts"
+            ],
+            "integrationTests": [
+                "apps/app/src/pages/AcceptInvite.test.tsx",
+                "apps/app/src/pages/Profile.test.tsx",
+                "tests/unit/admin-invite-redemption.test.js",
+                "tests/unit/auth-google-admin-invite-cleanup.test.js",
+                "tests/unit/auth-google-parent-invite-cleanup.test.js"
+            ],
+            "workflowTests": [
+                "tests/smoke/admin-invite-redemption.spec.js",
+                "tests/smoke/app-auth-profile.spec.js",
+                "tests/smoke/firebase-auth-bootstrap.spec.js",
+                "tests/smoke/login-forgot-password.spec.js",
+                "tests/smoke/login-invite-redirect.spec.js"
+            ],
+            "knownGaps": [
+                {
+                    "tier": "integration",
+                    "description": "React reset and verify-pending pages need direct page-boundary tests."
+                }
+            ]
+        },
+        {
+            "id": "teams.roster-settings-discovery",
+            "label": "Teams, roster, settings, discovery, player profile, and home dashboards",
+            "priority": "critical",
+            "plannedPr": "teams-roster-settings-discovery-tests",
+            "targetTiers": [
+                "unit",
+                "integration",
+                "workflow"
+            ],
+            "legacyPages": [
+                "athlete-profile-builder.html",
+                "athlete-profile.html",
+                "dashboard.html",
+                "edit-roster.html",
+                "edit-team.html",
+                "parent-dashboard.html",
+                "player.html",
+                "team.html",
+                "teams.html"
+            ],
+            "appPages": [
+                "apps/app/src/pages/Home.tsx",
+                "apps/app/src/pages/PlayerDetail.tsx",
+                "apps/app/src/pages/PublicTeamsBrowse.tsx",
+                "apps/app/src/pages/TeamDetail.tsx",
+                "apps/app/src/pages/TeamSettings.tsx",
+                "apps/app/src/pages/Teams.tsx"
+            ],
+            "cloudFunctions": [
+                "notifyInviteRedeemed",
+                "notifyParentMembershipRequestCreated",
+                "notifyParentMembershipRequestUpdated"
+            ],
+            "unitTests": [
+                "tests/unit/app-home-logic.test.js",
+                "tests/unit/app-home-service.test.js",
+                "tests/unit/app-player-service.test.js",
+                "tests/unit/app-team-detail-service.test.js",
+                "tests/unit/athlete-profile-utils.test.js",
+                "tests/unit/discover-public-teams-search-pagination.test.js",
+                "tests/unit/edit-roster-bulk-ai-reactivate.test.js",
+                "tests/unit/edit-roster-registration-import.test.js",
+                "tests/unit/edit-team-registration-sync.test.js",
+                "tests/unit/teams-public-visibility.test.js"
+            ],
+            "integrationTests": [
+                "apps/app/src/pages/Home.test.tsx",
+                "apps/app/src/pages/PlayerDetail.test.tsx",
+                "apps/app/src/pages/TeamDetail.test.tsx",
+                "apps/app/src/pages/TeamSettings.test.tsx",
+                "apps/app/src/pages/Teams.test.tsx",
+                "tests/unit/app-home-player-integration.test.jsx"
+            ],
+            "workflowTests": [
+                "tests/smoke/app-home-player.spec.js",
+                "tests/smoke/app-search.spec.js",
+                "tests/smoke/app-teams.spec.js",
+                "tests/smoke/edit-roster-bulk-ai-reset.spec.js",
+                "tests/smoke/team-fallback-regressions.spec.js",
+                "tests/smoke/teams-location-search.spec.js"
+            ],
+            "knownGaps": [
+                {
+                    "tier": "integration",
+                    "description": "PublicTeamsBrowse needs a direct app page test around empty states, pagination, and location search."
+                }
+            ]
+        },
+        {
+            "id": "schedule.calendar-rsvp-availability",
+            "label": "Schedule, calendar, RSVP, availability, organization schedule, and reminders",
+            "priority": "critical",
+            "plannedPr": "schedule-calendar-rsvp-tests",
+            "targetTiers": [
+                "unit",
+                "integration",
+                "workflow"
+            ],
+            "legacyPages": [
+                "calendar.html",
+                "edit-schedule.html",
+                "organization-schedule.html",
+                "public-rsvp.html"
+            ],
+            "appPages": [
+                "apps/app/src/pages/Schedule.tsx",
+                "apps/app/src/pages/ScheduleEventDetail.tsx",
+                "apps/app/src/pages/schedule/ScheduleEventDetailContext.tsx"
+            ],
+            "cloudFunctions": [
+                "createScopedRsvpToken",
+                "dispatchDuePreEventReminders",
+                "fetchCalendarIcs",
+                "getPublicRsvp",
+                "notifyGameCreated",
+                "notifyGameUpdated",
+                "notifyScheduleImportBatchCompleted",
+                "postSharedGameCancellationNotification",
+                "publicTeamGamesIcs",
+                "publishOrganizationScheduleDraft",
+                "redeemScopedRsvpToken",
+                "sendPublicRsvpEmails",
+                "submitPublicRsvp",
+                "teamCalendarFeed"
+            ],
+            "unitTests": [
+                "functions/test/calendar-ics-fetch-core.test.cjs",
+                "tests/unit/app-schedule-availability-panels.test.tsx",
+                "tests/unit/app-schedule-event-detail-cancel.test.js",
+                "tests/unit/app-schedule-service-contracts.test.js",
+                "tests/unit/calendar-ics-event-type.test.js",
+                "tests/unit/calendar-rsvp.test.js",
+                "tests/unit/edit-schedule-calendar-import.test.js",
+                "tests/unit/edit-schedule-cancel-game-notification.test.js",
+                "tests/unit/edit-schedule-tournament.test.js"
+            ],
+            "integrationTests": [
+                "apps/app/src/pages/Schedule.test.tsx",
+                "apps/app/src/pages/ScheduleEventDetail.test.tsx",
+                "tests/unit/app-schedule-event-detail-add-to-calendar.test.tsx"
+            ],
+            "workflowTests": [
+                "tests/smoke/app-schedule.spec.js",
+                "tests/smoke/calendar-sharing.spec.js",
+                "tests/smoke/edit-schedule-calendar-cancelled-import.spec.js",
+                "tests/smoke/edit-schedule-calendar-import.spec.js",
+                "tests/smoke/team-schedule-calendar.spec.js"
+            ],
+            "knownGaps": [
+                {
+                    "tier": "workflow",
+                    "description": "Public RSVP token redemption needs a dedicated smoke workflow."
+                }
+            ]
+        },
+        {
+            "id": "registration.provider-sync-checkout",
+            "label": "Registration forms, public registration, provider sync, and checkout retry",
+            "priority": "critical",
+            "plannedPr": "registration-provider-sync-checkout-tests",
+            "targetTiers": [
+                "unit",
+                "integration",
+                "workflow"
+            ],
+            "legacyPages": [
+                "registration.html"
+            ],
+            "appPages": [
+                "apps/app/src/pages/RegistrationDetail.tsx"
+            ],
+            "cloudFunctions": [
+                "cancelStripeRegistrationCheckout",
+                "createStripeRegistrationCheckout",
+                "notifyRegistrationStatusChanged",
+                "notifyRegistrationSubmitted",
+                "queueDueRegistrationFailedPaymentReminders",
+                "submitPublicRegistration",
+                "syncRegistrationProvider"
+            ],
+            "unitTests": [
+                "functions/test/public-registration-submission.test.cjs",
+                "functions/test/registration-checkout-retry-capacity.test.js",
+                "functions/test/registration-payment-reminder-backlog.test.js",
+                "tests/unit/admin-registration-forms.test.js",
+                "tests/unit/db-registration-review-pagination.test.js",
+                "tests/unit/edit-roster-registration-import.test.js",
+                "tests/unit/edit-schedule-registration-import.test.js",
+                "tests/unit/edit-team-registration-import.test.js"
+            ],
+            "integrationTests": [
+                "apps/app/src/pages/RegistrationDetail.test.tsx",
+                "tests/unit/app-registration-detail.test.jsx"
+            ],
+            "workflowTests": [],
+            "knownGaps": [
+                {
+                    "tier": "workflow",
+                    "description": "No Playwright workflow covers public registration form load, checkout retry, or capacity messaging."
+                }
+            ]
+        },
+        {
+            "id": "fees.payments-team-pass",
+            "label": "Team fees, installments, payment reminders, refunds, and team pass",
+            "priority": "critical",
+            "plannedPr": "fees-payments-team-pass-tests",
+            "targetTiers": [
+                "unit",
+                "integration",
+                "workflow"
+            ],
+            "legacyPages": [
+                "team-fees.html"
+            ],
+            "appPages": [
+                "apps/app/src/pages/TeamFees.tsx"
+            ],
+            "cloudFunctions": [
+                "createStripeTeamFeeCheckout",
+                "createStripeTeamPassCheckout",
+                "notifyFeeAssigned",
+                "notifyFeeMarkedPaid",
+                "refundStripeTeamFeePayment",
+                "sendFeeUnpaidDueReminders",
+                "stripeTeamPassWebhook"
+            ],
+            "unitTests": [
+                "tests/unit/app-team-fees-service.test.ts",
+                "tests/unit/db-team-fee-recipient-list.test.js",
+                "tests/unit/db-team-fee-recipient-updates.test.js",
+                "tests/unit/fee-due-reminders-source.test.js",
+                "tests/unit/fee-notification-contract.test.js"
+            ],
+            "integrationTests": [
+                "apps/app/src/pages/TeamFees.test.tsx"
+            ],
+            "workflowTests": [],
+            "knownGaps": [
+                {
+                    "tier": "workflow",
+                    "description": "No workflow test covers paid-recipient cancellation blocking, refund states, or parent fee checkout states."
+                }
+            ]
+        },
+        {
+            "id": "messaging.notifications-email",
+            "label": "Team chat, app messages, notifications, inbox, email, and device tokens",
+            "priority": "critical",
+            "plannedPr": "messaging-notifications-email-tests",
+            "targetTiers": [
+                "unit",
+                "integration",
+                "workflow"
+            ],
+            "legacyPages": [
+                "team-chat.html"
+            ],
+            "appPages": [
+                "apps/app/src/pages/Messages.tsx"
+            ],
+            "appSupportFiles": [
+                "apps/app/src/pages/messages/components/ChatComposer.tsx",
+                "apps/app/src/pages/messages/components/ChatWindow.tsx",
+                "apps/app/src/pages/messages/hooks/useChatMessages.ts",
+                "apps/app/src/pages/messages/hooks/useChatSheets.ts",
+                "apps/app/src/pages/messages/hooks/useChatTeam.ts",
+                "apps/app/src/pages/messages/state/emailReducer.ts"
+            ],
+            "cloudFunctions": [
+                "markAllNotificationInboxRead",
+                "markNotificationInboxItemRead",
+                "notifyConversationChatMessageCreated",
+                "notifyTeamChatMessageCreated",
+                "queueTeamEmailDelivery",
+                "sendTeamEmail",
+                "sweepStaleNotificationDeviceTokens",
+                "syncTeamNotificationRecipientsOnDeviceWrite",
+                "syncTeamNotificationRecipientsOnPreferenceWrite",
+                "syncTeamNotificationRecipientsOnTeamWrite",
+                "syncTeamNotificationRecipientsOnUserWrite",
+                "syncTeamNotificationTargetsOnDeviceWrite",
+                "syncTeamNotificationTargetsOnPreferenceWrite"
+            ],
+            "unitTests": [
+                "functions/test/notification-recipient-index.test.js",
+                "functions/test/notification-triggers.test.js",
+                "functions/test/send-category-notification-load.test.js",
+                "functions/test/send-category-notification.test.js",
+                "functions/test/team-email-core.test.cjs",
+                "tests/unit/app-chat-email-drafts-service.test.ts",
+                "tests/unit/app-chat-service-recipients.test.js",
+                "tests/unit/app-messages-accessibility.test.tsx",
+                "tests/unit/app-notification-inbox-review.test.tsx",
+                "tests/unit/chat-notification-delivery-contract.test.js"
+            ],
+            "integrationTests": [
+                "apps/app/src/pages/Messages.test.ts",
+                "tests/unit/app-chat-email-templates-integration.test.tsx",
+                "tests/unit/app-chat-messages-integration.test.jsx"
+            ],
+            "workflowTests": [
+                "tests/smoke/app-messages.spec.js"
+            ],
+            "knownGaps": [
+                {
+                    "tier": "workflow",
+                    "description": "No browser workflow covers notification inbox mark-read or mute/mention delivery states."
+                }
+            ]
+        },
+        {
+            "id": "media.certificates-awards",
+            "label": "Team media, athlete media, certificates, awards, and publish/export",
+            "priority": "high",
+            "plannedPr": "media-certificates-awards-tests",
+            "targetTiers": [
+                "unit",
+                "integration",
+                "workflow"
+            ],
+            "legacyPages": [
+                "certificates.html",
+                "team-media.html"
+            ],
+            "appPages": [
+                "apps/app/src/pages/TeamCertificates.tsx",
+                "apps/app/src/pages/TeamMedia.tsx"
+            ],
+            "cloudFunctions": [
+                "dispatchDueTeamMediaNotificationBatches",
+                "notifyPublishedCertificateAward",
+                "queueTeamMediaNotificationBatch"
+            ],
+            "unitTests": [
+                "functions/test/team-media-notification-batches.test.js",
+                "tests/unit/athlete-profile-storage-rules.test.js",
+                "tests/unit/certificate-award-notifications.test.js",
+                "tests/unit/certificates-workflow.test.js",
+                "tests/unit/fallback-media-storage.test.js",
+                "tests/unit/team-media-page.test.js",
+                "tests/unit/team-media-utils.test.js",
+                "tests/unit/team-media-wiring.test.js"
+            ],
+            "integrationTests": [
+                "apps/app/src/pages/TeamCertificates.test.tsx",
+                "apps/app/src/pages/TeamMedia.lazy-chat.test.tsx",
+                "apps/app/src/pages/TeamMedia.test.tsx"
+            ],
+            "workflowTests": [
+                "tests/smoke/certificates-workflow.spec.js"
+            ],
+            "knownGaps": [
+                {
+                    "tier": "workflow",
+                    "description": "Team media upload, staff album, and media notification workflows need browser coverage."
+                }
+            ]
+        },
+        {
+            "id": "game-day.tracking-live-stats",
+            "label": "Game day, game plan, tracking, live game, statsheet, replay, and scoreboard",
+            "priority": "critical",
+            "plannedPr": "game-day-tracking-live-stats-tests",
+            "targetTiers": [
+                "unit",
+                "integration",
+                "workflow"
+            ],
+            "legacyPages": [
+                "game-day.html",
+                "game-plan.html",
+                "game.html",
+                "live-game.html",
+                "live-tracker.html",
+                "track-basketball.html",
+                "track-live.html",
+                "track-statsheet.html",
+                "track.html",
+                "tracking-items.html",
+                "widget-scoreboard.html"
+            ],
+            "appPages": [
+                "apps/app/src/pages/GameDetail.tsx",
+                "apps/app/src/pages/StandardTracker.tsx"
+            ],
+            "cloudFunctions": [],
+            "unitTests": [
+                "tests/unit/app-baseball-scorekeeping-service.test.ts",
+                "tests/unit/app-game-report-service.test.js",
+                "tests/unit/app-live-game-announcer.test.js",
+                "tests/unit/db-tracking-items.test.js",
+                "tests/unit/game-day-entry.test.js",
+                "tests/unit/live-game-replay-init.test.js",
+                "tests/unit/live-tracker-opponent-stats.test.js",
+                "tests/unit/scoreboard-widget.test.js",
+                "tests/unit/track-basketball-opponent-hydration.test.js"
+            ],
+            "integrationTests": [
+                "apps/app/src/pages/GameDetail.test.tsx",
+                "apps/app/src/pages/StandardTracker.test.tsx",
+                "tests/unit/app-game-detail-baseball-walk.test.jsx"
+            ],
+            "workflowTests": [
+                "tests/smoke/track-statsheet-apply.spec.js"
+            ],
+            "knownGaps": [
+                {
+                    "tier": "workflow",
+                    "description": "Live tracker, replay, opponent stat entry, and tracker undo need end-to-end workflow coverage."
+                }
+            ]
+        },
+        {
+            "id": "parent-tools.family-rideshare-practice",
+            "label": "Parent tools, family share, household access, rideshare, and practice packets",
+            "priority": "high",
+            "plannedPr": "parent-tools-family-rideshare-practice-tests",
+            "targetTiers": [
+                "unit",
+                "integration",
+                "workflow"
+            ],
+            "legacyPages": [
+                "family.html"
+            ],
+            "appPages": [
+                "apps/app/src/pages/ParentTools.tsx",
+                "apps/app/src/pages/parent-tools/AccessTool.tsx",
+                "apps/app/src/pages/parent-tools/CalendarTool.tsx",
+                "apps/app/src/pages/parent-tools/CertificatesTool.tsx",
+                "apps/app/src/pages/parent-tools/FamilyShareTool.tsx",
+                "apps/app/src/pages/parent-tools/FeesTool.tsx",
+                "apps/app/src/pages/parent-tools/HouseholdInviteTool.tsx",
+                "apps/app/src/pages/parent-tools/RegistrationsTool.tsx"
+            ],
+            "appSupportFiles": [
+                "apps/app/src/pages/parent-tools/loadParentToolPanel.ts",
+                "apps/app/src/pages/parent-tools/shared.tsx"
+            ],
+            "cloudFunctions": [
+                "notifyPracticePacketAssigned",
+                "notifyPracticePacketCompleted",
+                "notifyRideClaimCreated",
+                "notifyRideClaimUpdated",
+                "notifyRideOfferCancelled",
+                "notifyRideOfferCreated",
+                "sendPracticePacketDueTomorrowReminders"
+            ],
+            "unitTests": [
+                "tests/unit/app-parent-tools-household-service.test.js",
+                "tests/unit/app-parent-tools-service.test.js",
+                "tests/unit/app-parent-tools-single-event-ics.test.ts",
+                "tests/unit/family-calendar-failures.test.js",
+                "tests/unit/family-plan.test.js",
+                "tests/unit/family-share-token-rules.test.js"
+            ],
+            "integrationTests": [
+                "apps/app/src/pages/ParentTools.test.tsx",
+                "apps/app/src/pages/parent-tools/async-pattern-regression.test.ts",
+                "tests/unit/app-parent-tools-integration.test.jsx",
+                "tests/unit/app-parent-tools-registration.test.jsx"
+            ],
+            "workflowTests": [
+                "tests/smoke/app-parent-tools.spec.js"
+            ],
+            "knownGaps": [
+                {
+                    "tier": "workflow",
+                    "description": "Family share anonymous access and rideshare offer/claim flows need dedicated workflow tests."
+                }
+            ]
+        },
+        {
+            "id": "officials.org-tournaments-drills",
+            "label": "Officials, organization schedule, tournaments, drills, and practice planning",
+            "priority": "high",
+            "plannedPr": "officials-org-tournaments-drills-tests",
+            "targetTiers": [
+                "unit",
+                "integration",
+                "workflow"
+            ],
+            "legacyPages": [
+                "drills.html",
+                "officials.html"
+            ],
+            "appPages": [
+                "apps/app/src/pages/Officials.tsx",
+                "apps/app/src/pages/TeamDrills.tsx"
+            ],
+            "cloudFunctions": [
+                "claimOpenOfficiatingSlot",
+                "notifyOfficiatingNotificationCreated",
+                "notifyOpenOfficiatingSlots"
+            ],
+            "unitTests": [
+                "functions/test/officiating-self-assignment-core.test.cjs",
+                "tests/unit/admin-officials-directory.test.js",
+                "tests/unit/app-officials.test.tsx",
+                "tests/unit/app-schedule-tournament-info.test.ts",
+                "tests/unit/bracket-management.test.js",
+                "tests/unit/db-tournament-overrides.test.js",
+                "tests/unit/drills-access-control.test.js",
+                "tests/unit/drills-live-practice-notes.test.js",
+                "tests/unit/officiating-slots.test.js"
+            ],
+            "integrationTests": [
+                "apps/app/src/pages/TeamDrills.test.tsx"
+            ],
+            "workflowTests": [],
+            "knownGaps": [
+                {
+                    "tier": "workflow",
+                    "description": "Officials claim flow, organization schedule publish, and drills picker need Playwright workflow coverage."
+                }
+            ]
+        },
+        {
+            "id": "private-ai.mobile-capabilities-performance",
+            "label": "Private AI, native/mobile capabilities, performance, and app infrastructure",
+            "priority": "medium",
+            "plannedPr": "private-ai-mobile-performance-tests",
+            "targetTiers": [
+                "unit",
+                "integration",
+                "workflow"
+            ],
+            "legacyPages": [],
+            "appPages": [
+                "apps/app/src/pages/PrivateAiChat.tsx"
+            ],
+            "cloudFunctions": [],
+            "unitTests": [
+                "tests/unit/app-capacitor-native-config.test.js",
+                "tests/unit/app-data-cache.test.ts",
+                "tests/unit/app-native-deep-link-routing.test.ts",
+                "tests/unit/app-performance-baseline-contract.test.js",
+                "tests/unit/app-private-ai-service.test.js",
+                "tests/unit/app-protected-route-bootstrap.test.js",
+                "tests/unit/app-service-load-telemetry.test.ts"
+            ],
+            "integrationTests": [
+                "tests/unit/app-private-ai-integration.test.jsx"
+            ],
+            "workflowTests": [
+                "tests/smoke/app-private-ai.spec.js",
+                "tests/smoke/app-production-bootstrap.spec.js"
+            ],
+            "knownGaps": [
+                {
+                    "tier": "workflow",
+                    "description": "Native deep-link and push-notification routes remain unit-covered only until emulator/device workflow tests are added."
+                }
+            ]
+        }
+    ]
+}
