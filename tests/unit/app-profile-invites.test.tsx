@@ -606,7 +606,7 @@ describe('Profile invites', () => {
     expect((screen.getByLabelText('Live Score') as HTMLInputElement).checked).toBe(false);
   });
 
-  it('renders fallback toggles and re-enables team actions when preference loading fails', async () => {
+  it('keeps team alert actions locked when preference loading fails', async () => {
     profileServiceMocks.loadNotificationTeams.mockResolvedValue([
       { id: 'team-1', name: 'Blue Team' },
       { id: 'team-2', name: 'Gold Team' }
@@ -631,20 +631,15 @@ describe('Profile invites', () => {
     expect(await screen.findByText('Alerts unavailable')).toBeTruthy();
     expect(screen.getByText('temporary outage')).toBeTruthy();
     await waitFor(() => expect(screen.queryByText('Loading alerts for Gold Team…')).toBeNull());
-    expect(screen.getByLabelText('Live Chat')).toBeTruthy();
-    expect((screen.getByLabelText('Live Chat') as HTMLInputElement).checked).toBe(true);
-    expect((screen.getByLabelText('Live Score') as HTMLInputElement).checked).toBe(false);
-    expect((screen.getByLabelText('Schedule Changes') as HTMLInputElement).checked).toBe(true);
-    expect((gameDayButton as HTMLButtonElement).disabled).toBe(false);
-    expect((saveButton as HTMLButtonElement).disabled).toBe(false);
+    expect(screen.queryByLabelText('Live Chat')).toBeNull();
+    expect((gameDayButton as HTMLButtonElement).disabled).toBe(true);
+    expect((saveButton as HTMLButtonElement).disabled).toBe(true);
 
+    fireEvent.click(gameDayButton);
     fireEvent.click(saveButton);
 
-    await waitFor(() => expect(profileServiceMocks.saveNotificationPreferences).toHaveBeenCalledWith('user-1', 'team-2', {
-      liveChat: true,
-      liveScore: false,
-      schedule: true
-    }));
+    expect(pushServiceMocks.enablePushNotificationsForUser).not.toHaveBeenCalled();
+    expect(profileServiceMocks.saveNotificationPreferences).not.toHaveBeenCalled();
   });
 
   it('reloads alert preferences for the selected team after tapping retry', async () => {
@@ -666,8 +661,9 @@ describe('Profile invites', () => {
 
     await waitFor(() => expect(profileServiceMocks.loadNotificationPreferences).toHaveBeenCalledTimes(2));
     expect(await screen.findByText('temporary outage')).toBeTruthy();
-    expect((screen.getByLabelText('Live Chat') as HTMLInputElement).checked).toBe(true);
-    expect((screen.getByLabelText('Live Score') as HTMLInputElement).checked).toBe(false);
+    expect(screen.queryByLabelText('Live Chat')).toBeNull();
+    expect((screen.getByRole('button', { name: 'Turn on game-day alerts' }) as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByRole('button', { name: 'Save preferences' }) as HTMLButtonElement).disabled).toBe(true);
 
     fireEvent.click(screen.getByRole('button', { name: 'Retry alerts' }));
 
@@ -676,6 +672,8 @@ describe('Profile invites', () => {
     await waitFor(() => expect((screen.getByLabelText('Live Chat') as HTMLInputElement).checked).toBe(false));
     expect((screen.getByLabelText('Live Score') as HTMLInputElement).checked).toBe(true);
     expect((screen.getByLabelText('Schedule Changes') as HTMLInputElement).checked).toBe(false);
+    expect((screen.getByRole('button', { name: 'Turn on game-day alerts' }) as HTMLButtonElement).disabled).toBe(false);
+    expect((screen.getByRole('button', { name: 'Save preferences' }) as HTMLButtonElement).disabled).toBe(false);
   });
 
   it('shows blocked native push recovery and refreshes after returning from settings', async () => {

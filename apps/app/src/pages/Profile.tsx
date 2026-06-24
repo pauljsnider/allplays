@@ -464,16 +464,12 @@ export function Profile({ auth }: { auth: AuthState }) {
       } catch (error) {
         logger.warn('Unable to load notification preferences.', { error });
         if (!cancelled) {
-          // Fall back to default preferences so the selected team still has editable
-          // toggles and game-day actions after a transient read failure, while
-          // still surfacing the load error and allowing an explicit retry.
           setNotificationPreferences(emptyPreferences);
-          setNotificationPreferencesByTeamId((current) => ({ ...current, [selectedTeamId]: emptyPreferences }));
           setNotificationPreferenceErrorsByTeamId((current) => ({
             ...current,
             [selectedTeamId]: getLoadErrorMessage(error, 'Unable to load notification preferences.')
           }));
-          setLoadedNotificationTeamId(selectedTeamId);
+          setLoadedNotificationTeamId((current) => current === selectedTeamId ? '' : current);
           setNotificationPreferencesErrorTeamId(selectedTeamId);
           setNotificationStatus({ message: 'Alerts unavailable — couldn’t load this team’s preferences.', tone: 'error' });
         }
@@ -899,6 +895,10 @@ export function Profile({ auth }: { auth: AuthState }) {
   const turnOnGameDayAlerts = async () => {
     if (!user || !selectedTeamId) {
       setNotificationStatus({ message: 'Select a team first.', tone: 'error' });
+      return;
+    }
+    if (!selectedTeamPreferencesHydrated) {
+      setNotificationStatus({ message: 'Wait for this team’s alert preferences to finish loading.', tone: 'error' });
       return;
     }
 
@@ -1371,7 +1371,7 @@ export function Profile({ auth }: { auth: AuthState }) {
                     ? 'Notifications are blocked in device settings. Open settings, allow notifications, then return here to finish game-day alerts.'
                     : 'One tap enables push on this device and turns on schedule changes and live score updates for the selected team.'}
                 </p>
-                <button type="button" className="primary-button mt-3" onClick={nativePushBlocked ? () => void openDeviceSettingsForPush('Notifications are turned off in device settings. Open device settings to finish turning on game-day alerts.') : turnOnGameDayAlerts} disabled={busy === 'game-day-alerts' || (!nativePushBlocked && (!selectedTeamId || !selectedTeamPreferencesHydrated))}>
+                <button type="button" className="primary-button mt-3" onClick={nativePushBlocked ? () => void openDeviceSettingsForPush('Notifications are turned off in device settings. Open device settings to finish turning on game-day alerts.') : turnOnGameDayAlerts} disabled={busy === 'game-day-alerts' || !selectedTeamId || !selectedTeamPreferencesHydrated}>
                   {busy === 'game-day-alerts' ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <Upload className="h-4 w-4" aria-hidden="true" />}
                   {nativePushBlocked ? 'Open device settings to finish alerts' : 'Turn on game-day alerts'}
                 </button>
@@ -1389,11 +1389,10 @@ export function Profile({ auth }: { auth: AuthState }) {
                       <RefreshCw className={`h-4 w-4 ${selectedTeamPreferencesLoading ? 'animate-spin' : ''}`} aria-hidden="true" />
                       Retry alerts
                     </button>
-                    <span className="text-xs font-bold text-rose-700">Using safe defaults until saved preferences load.</span>
+                    <span className="text-xs font-bold text-rose-700">Team-specific alerts stay locked until saved preferences load successfully.</span>
                   </div>
                 </div>
-              ) : null}
-              {selectedTeamPreferencesLoading ? (
+              ) : selectedTeamPreferencesLoading ? (
                 <div className="mt-3 rounded-2xl border border-gray-200 bg-gray-50 p-3" role="status" aria-live="polite">
                   <div className="flex items-center gap-2 text-sm font-black text-gray-900">
                     <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
