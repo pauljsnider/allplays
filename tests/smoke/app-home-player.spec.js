@@ -101,6 +101,17 @@ async function mockHomePlayerModules(page) {
                     return { home, schedule: [] };
                 }
 
+                export async function loadParentTeamsSummaryBootstrap(...args) {
+                    const home = await loadParentHome(...args);
+                    return {
+                        home,
+                        scheduleScope: {
+                            profile: {},
+                            children: home.teams.flatMap((team) => team.players || [])
+                        }
+                    };
+                }
+
                 export async function loadParentTeamsSummary(...args) {
                     return loadParentHome(...args);
                 }
