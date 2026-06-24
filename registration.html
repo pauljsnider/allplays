@@ -55,6 +55,7 @@
                 <section id="registration-options-section" class="hidden">
                     <h2 class="text-xl font-semibold text-gray-900">Registration option</h2>
                     <p class="mt-1 text-sm text-gray-600">Choose the option that fits this participant.</p>
+                    <p id="registration-options-unavailable" class="hidden mt-3 rounded border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">Registration is currently unavailable. No registration options are available.</p>
                     <div id="registration-options" class="mt-3 grid gap-3"></div>
                 </section>
 
@@ -260,6 +261,7 @@
             renderRegistrationPaymentSettings(form);
             renderRegistrationOptions(form);
             renderPaymentPlanChoices(form);
+            setRegistrationUnavailableState(form);
 
             loadingState.classList.add('hidden');
             formElement.classList.remove('hidden');
@@ -294,14 +296,36 @@
             section.classList.remove('hidden');
         }
 
+        function hasConfiguredRegistrationOptions(form) {
+            return (form.registrationOptions || []).some(option => option.active === true);
+        }
+
+        function hasUnavailableRegistrationOptions(form) {
+            return hasConfiguredRegistrationOptions(form) && !requiresRegistrationOption(form);
+        }
+
+        function setRegistrationUnavailableState(form) {
+            const unavailable = hasUnavailableRegistrationOptions(form);
+            const unavailableMessage = document.getElementById('registration-options-unavailable');
+
+            unavailableMessage.classList.toggle('hidden', !unavailable);
+            submitButton.disabled = unavailable;
+            payRegistrationButton.disabled = unavailable;
+
+            if (unavailable) {
+                showFormError('Registration is currently unavailable. No registration options are available.');
+            }
+        }
+
         function renderRegistrationOptions(form) {
             const section = document.getElementById('registration-options-section');
             const container = document.getElementById('registration-options');
             const options = getActiveRegistrationOptions(form, form.registrationOptionCounts || {});
+            const configuredOptions = hasConfiguredRegistrationOptions(form);
             container.innerHTML = '';
 
             if (options.length === 0) {
-                section.classList.add('hidden');
+                section.classList.toggle('hidden', !configuredOptions);
                 return;
             }
 
@@ -481,6 +505,10 @@
         formElement.addEventListener('submit', async (event) => {
             event.preventDefault();
             if (!activeForm) return;
+            if (hasUnavailableRegistrationOptions(activeForm)) {
+                showFormError('Registration is currently unavailable. No registration options are available.');
+                return;
+            }
 
             // If online checkout is required, the payment button handles the flow.
             if (hasOnlineRegistrationCheckout(activeForm)) {
@@ -602,6 +630,10 @@
             event.preventDefault(); // Prevent any default form submission
             if (!activeForm || !hasOnlineRegistrationCheckout(activeForm)) {
                 showFormError('Payment is not configured for this registration.');
+                return;
+            }
+            if (hasUnavailableRegistrationOptions(activeForm)) {
+                showFormError('Registration is currently unavailable. No registration options are available.');
                 return;
             }
 

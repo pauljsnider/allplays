@@ -203,6 +203,34 @@ test('public registration submits an offline-payment registration with option, p
     });
 });
 
+test('public registration shows an unavailable state when all configured options are full', async ({ page, baseURL }) => {
+    await mockRegistrationModules(page, {
+        form: registrationForm({
+            registrationOptions: [
+                {
+                    id: 'u10',
+                    title: 'U10 Travel',
+                    description: 'Roster is full.',
+                    capacityLimit: 1,
+                    waitlistEnabled: false,
+                    active: true
+                }
+            ],
+            registrationOptionCounts: {
+                u10: { enrolled: 1, waitlisted: 0 }
+            }
+        })
+    });
+    await page.goto(buildUrl(baseURL, '/registration.html?teamId=team-1&formId=form-1'), { waitUntil: 'domcontentloaded' });
+
+    await expect(page.getByText('Registration is currently unavailable. No registration options are available.')).toBeVisible();
+    await expect(page.locator('#registration-options')).toBeEmpty();
+    await expect(page.getByRole('button', { name: 'Submit registration' })).toBeDisabled();
+
+    const calls = await page.evaluate(() => window.__registrationCalls);
+    expect(calls.filter((call) => call.name === 'submitPublicRegistration')).toEqual([]);
+});
+
 test('online registration prepares one server registration and redirects to Stripe checkout', async ({ page, baseURL }) => {
     await mockRegistrationModules(page, {
         form: registrationForm({

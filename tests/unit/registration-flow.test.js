@@ -7,12 +7,14 @@ import {
     collectFieldValues,
     decideRegistrationPlacement,
     formatFeeAmount,
+    getActiveRegistrationOptions,
     getRegistrationPaymentNotice,
     hasRegistrationPaymentSettings,
     hasOnlineRegistrationCheckout,
     getPaymentPlanChoices,
     formatFeeSnapshotLines,
     normalizeRegistrationForm,
+    requiresRegistrationOption,
     validateRegistrationSubmission
 } from '../../js/registration-flow.js';
 import fs from 'node:fs';
@@ -277,6 +279,23 @@ describe('public registration flow', () => {
         expect(validateRegistrationSubmission(form, { waiverAccepted: true, selectedOptionId: 'u10' })).toEqual([]);
     });
 
+    it('treats all-full non-waitlisted options as unavailable before submission', () => {
+        const form = normalizeRegistrationForm({
+            programName: 'Clinic',
+            published: true,
+            registrationOptions: [
+                { id: 'u10', title: 'U10', capacityLimit: 1, waitlistEnabled: false, active: true }
+            ],
+            registrationOptionCounts: {
+                u10: { enrolled: 1, waitlisted: 0 }
+            }
+        }, { teamId: 'team-1', formId: 'form-1' });
+
+        expect(getActiveRegistrationOptions(form, form.registrationOptionCounts)).toEqual([]);
+        expect(requiresRegistrationOption(form)).toBe(false);
+        expect(validateRegistrationSubmission(form, { waiverAccepted: true, selectedOptionId: '' })).toEqual([]);
+    });
+
     it('places selected option registrations into pending, waitlisted, or blocked states', () => {
         const form = normalizeRegistrationForm({
             programName: 'Clinic',
@@ -352,6 +371,8 @@ describe('public registration flow', () => {
         expect(page).toContain("doc(db, 'teams', teamId, 'registrationForms', formId)");
         expect(page).not.toContain("collection(db, 'teams', teamId, 'registrationForms', formId, 'registrations')");
         expect(page).toContain('registration-options-section');
+        expect(page).toContain('registration-options-unavailable');
+        expect(page).toContain('Registration is currently unavailable. No registration options are available.');
         expect(page).toContain('registration-payment-section');
         expect(page).toContain('getRegistrationPaymentNotice');
         expect(page).toContain('hasOnlineRegistrationCheckout');
@@ -389,6 +410,7 @@ describe('public registration flow', () => {
         expect(page).not.toContain('runTransaction(db, async (transaction)');
         expect(page).not.toContain('addDoc(');
         expect(page).toContain('decideRegistrationPlacement');
+        expect(page).toContain('hasUnavailableRegistrationOptions');
         expect(page).toContain('option-full');
         expect(page).toContain('waiver-accepted');
         expect(page).toContain('confirmation-message');
@@ -752,6 +774,8 @@ describe('public registration flow', () => {
         expect(functionsSource).toContain('form.currency || registration.feeSnapshot?.currency || registration.currency');
         expect(functionsSource).toContain("Current public checkout capability is required to retry this payment.");
         expect(functionsSource).toContain("This registration option is no longer available. Please restart registration or contact the organizer.");
+        expect(functionsSource).toContain("Registration is currently unavailable. No registration options are available.");
+        expect(functionsSource).toContain("reason: 'no-options-available'");
         expect(functionsSource).toContain("registrationCapacityReleased: false");
         expect(functionsSource).toContain("capacityReleasedAt: admin.firestore.FieldValue.delete()");
         expect(functionsSource).toContain("const currency = String(");

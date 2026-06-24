@@ -317,9 +317,13 @@ test('normalizes guardian email casing for parent readback rules', async () => {
 
 test('rejects blocked capacity without creating a registration or changing counters', async () => {
     const { firestore, submitPublicRegistration } = loadSubmitPublicRegistration(buildSeedState({
-        registrationOptions: [{ id: 'u10', title: 'U10', capacityLimit: 1, waitlistEnabled: false, active: true }],
+        registrationOptions: [
+            { id: 'u10', title: 'U10', capacityLimit: 1, waitlistEnabled: false, active: true },
+            { id: 'u12', title: 'U12', capacityLimit: 5, waitlistEnabled: false, active: true }
+        ],
         registrationOptionCounts: {
-            u10: { enrolled: 1, waitlisted: 0 }
+            u10: { enrolled: 1, waitlisted: 0 },
+            u12: { enrolled: 0, waitlisted: 0 }
         }
     }));
 
@@ -328,6 +332,32 @@ test('rejects blocked capacity without creating a registration or changing count
         (error) => {
             assert.equal(error.code, 'failed-precondition');
             assert.equal(error.details.reason, 'option-full');
+            return true;
+        }
+    );
+
+    const form = firestore.snapshot('teams/team-1/registrationForms/form-1');
+    assert.equal(form.registrationOptionCounts.u10.enrolled, 1);
+    assert.equal(form.registrationOptionCounts.u10.waitlisted, 0);
+    assert.equal(form.registrationOptionCounts.u12.enrolled, 0);
+    assert.equal(form.registrationOptionCounts.u12.waitlisted, 0);
+    assert.equal(firestore.registrationDocs().length, 0);
+});
+
+test('rejects submissions when every configured option is full without a waitlist', async () => {
+    const { firestore, submitPublicRegistration } = loadSubmitPublicRegistration(buildSeedState({
+        registrationOptions: [{ id: 'u10', title: 'U10', capacityLimit: 1, waitlistEnabled: false, active: true }],
+        registrationOptionCounts: {
+            u10: { enrolled: 1, waitlisted: 0 }
+        }
+    }));
+
+    await assert.rejects(
+        submitPublicRegistration(buildSubmission({ selectedOptionId: '' }), context),
+        (error) => {
+            assert.equal(error.code, 'failed-precondition');
+            assert.equal(error.message, 'Registration is currently unavailable. No registration options are available.');
+            assert.equal(error.details.reason, 'no-options-available');
             return true;
         }
     );
