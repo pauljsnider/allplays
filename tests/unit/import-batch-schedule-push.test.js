@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { createRequire } from 'node:module';
 
 const require = createRequire(import.meta.url);
-const { loadNotificationInternals } = require('../../functions/test/send-category-notification-test-helpers');
+const { loadNotificationInternals } = require('../../functions/test/send-category-notification-test-helpers.cjs');
 
 function createSnapshot(data) {
     return {
