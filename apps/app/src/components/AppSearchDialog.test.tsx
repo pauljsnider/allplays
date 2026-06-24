@@ -132,7 +132,7 @@ describe('AppSearchDialog', () => {
     expect(screen.getByText('Type at least 2 characters to search players')).not.toBeNull();
   });
 
-  it('shows help role filters and player results once the query reaches two characters', async () => {
+  it('shows help results without role filters once the query reaches two characters', async () => {
     const onClose = vi.fn();
     searchAppPlayersMock.mockResolvedValueOnce([{
       id: 'player:team-2:player-2',
@@ -152,10 +152,34 @@ describe('AppSearchDialog', () => {
 
     fireEvent.change(screen.getByLabelText('Search teams, players, actions, help'), { target: { value: 'ro' } });
 
-    expect(await screen.findByLabelText('Filter help by role')).not.toBeNull();
+    await waitFor(() => expect(screen.queryByLabelText('Filter help by role')).toBeNull());
     expect(await screen.findByText('Players')).not.toBeNull();
     expect(await screen.findByRole('button', { name: /#10 Rocket Kid/i })).not.toBeNull();
     expect(screen.getByRole('button', { name: /Search like a coach/i })).not.toBeNull();
+    expect(screen.getByRole('button', { name: /More help results/i })).not.toBeNull();
+  });
+
+  it('opens the help portal with the current query preserved', async () => {
+    const onClose = vi.fn();
+
+    render(
+      <MemoryRouter>
+        <AppSearchDialog auth={auth} open={true} onClose={onClose} />
+      </MemoryRouter>
+    );
+
+    fireEvent.change(screen.getByLabelText('Search teams, players, actions, help'), { target: { value: 'ro' } });
+
+    const moreHelpResultsButton = await screen.findByRole('button', { name: /More help results/i });
+    fireEvent.click(moreHelpResultsButton);
+
+    expect(onClose).toHaveBeenCalledTimes(1);
+    expect(navigateMock).toHaveBeenCalledWith('/help', {
+      state: {
+        helpQuery: 'ro',
+        helpRoleFilter: 'all'
+      }
+    });
   });
 
   it('keeps the opening tap guard active long enough for slower mobile pointer sequences', async () => {
