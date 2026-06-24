@@ -109,9 +109,9 @@ const auth: AuthState = {
   signOut: vi.fn()
 };
 
-function renderProfile() {
+function renderProfile(initialEntry = '/profile') {
   return render(
-    <MemoryRouter initialEntries={['/profile']}>
+    <MemoryRouter initialEntries={[initialEntry]}>
       <Routes>
         <Route path="/profile" element={<Profile auth={auth} />} />
       </Routes>
@@ -142,16 +142,27 @@ describe('Profile', () => {
   it('keeps mobile profile section buttons in a two-column grid so Alerts stays reachable', async () => {
     renderProfile();
 
-    expect(await screen.findByRole('heading', { name: 'Your Account' })).toBeInTheDocument();
+    expect(await screen.findByRole('heading', { name: 'Your Account' })).toBeTruthy();
     const alertsButton = screen.getByRole('button', { name: /^Alerts$/ });
-    expect(alertsButton).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /^Invites$/ })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /^Security$/ })).toBeInTheDocument();
+    expect(alertsButton).toBeTruthy();
+    expect(screen.getByRole('button', { name: /^Invites$/ })).toBeTruthy();
+    expect(screen.getByRole('button', { name: /^Security$/ })).toBeTruthy();
 
     const sectionGrid = alertsButton.parentElement;
     expect(sectionGrid).not.toBeNull();
     expect(sectionGrid?.className).toContain('grid-cols-2');
     expect(sectionGrid?.className).toContain('sm:grid-cols-4');
     expect(sectionGrid?.className).not.toContain('min-w-max');
+  });
+
+  it('loads the Invites section to a normal empty state when invite history is empty', async () => {
+    profileServiceMocks.loadProfileAccessCodesPage.mockResolvedValue({ codes: [], nextCursor: null });
+
+    renderProfile('/profile?section=invites');
+
+    expect(await screen.findByText('Invite codes')).toBeTruthy();
+    expect(await screen.findByText('No codes generated yet.')).toBeTruthy();
+    expect(screen.queryByText('Unable to load invite history.')).toBeNull();
+    expect(profileServiceMocks.loadProfileAccessCodesPage).toHaveBeenCalledWith('user-1', { pageSize: 3 });
   });
 });

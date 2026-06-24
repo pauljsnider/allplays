@@ -22,6 +22,7 @@ export function Composer({
     mentionSuggestionsLoading,
     mentionTriggerActive,
     audienceSummary,
+    disabled = false,
     onCursorChange,
     onTextChange,
     onSubmit,
@@ -47,6 +48,7 @@ export function Composer({
     mentionSuggestionsLoading: boolean;
     mentionTriggerActive: boolean;
     audienceSummary: string;
+    disabled?: boolean;
     onCursorChange: (cursorPosition: number | undefined) => void;
     onTextChange: (value: string) => void;
     onSubmit: (event?: FormEvent) => void;
@@ -61,7 +63,7 @@ export function Composer({
     const textareaRef = useRef<HTMLTextAreaElement | null>(null);
     const pendingCursorPositionRef = useRef<number | null>(null);
     const [activeSuggestionIndex, setActiveSuggestionIndex] = useState(0);
-    const canSend = Boolean(text.trim() || filePreviews.length) && !aiThinking;
+    const canSend = Boolean(text.trim() || filePreviews.length) && !aiThinking && !disabled;
     const cursorPosition = textareaRef.current?.selectionStart ?? text.length;
     const beforeCursor = useMemo(() => text.slice(0, cursorPosition), [cursorPosition, text]);
     const showMentionQuickAction = /(^|\s)@\w*$/i.test(beforeCursor) && !hasAllPlaysMention(text);
@@ -115,7 +117,17 @@ export function Composer({
     };
 
     return (
-        <form className="chat-composer safe-bottom border border-gray-200 bg-white p-2 shadow-app" onSubmit={onSubmit}>
+        <form
+            className="chat-composer safe-bottom border border-gray-200 bg-white p-2 shadow-app"
+            onSubmit={(event) => {
+                if (disabled) {
+                    event.preventDefault();
+                    return;
+                }
+                onSubmit(event);
+            }}
+            aria-disabled={disabled}
+        >
             {filePreviews.length ? (
                 <div className="chat-attachment-strip">
                     {filePreviews.map((preview, index) => (
@@ -125,7 +137,7 @@ export function Composer({
                             ) : (
                                 <img src={preview.url} alt={preview.file.name || `Attachment preview ${index + 1}`} className="h-full w-full object-cover" />
                             )}
-                            <button type="button" className="absolute right-1 top-1 rounded-full bg-gray-950/70 p-1 text-white" onClick={() => onRemoveFile(index)} aria-label="Remove attachment">
+                            <button type="button" className="absolute right-1 top-1 rounded-full bg-gray-950/70 p-1 text-white" onClick={() => onRemoveFile(index)} aria-label="Remove attachment" disabled={disabled}>
                                 <X className="h-3 w-3" aria-hidden="true" />
                             </button>
                         </div>
@@ -133,14 +145,14 @@ export function Composer({
                 </div>
             ) : null}
 
-            {showMentionQuickAction ? (
+            {showMentionQuickAction && !disabled ? (
                 <button type="button" className="mb-2 flex w-full items-center gap-2 rounded-xl border border-indigo-100 bg-indigo-50 px-3 py-2 text-left text-sm font-black text-indigo-700" onMouseDown={(event) => event.preventDefault()} onClick={onMention}>
                     <Bot className="h-4 w-4" aria-hidden="true" />
                     @ALL PLAYS
                 </button>
             ) : null}
 
-            {showMentionSuggestions ? (
+            {showMentionSuggestions && !disabled ? (
                 <div className="mb-2 rounded-xl border border-gray-200 bg-white p-1 shadow-sm" aria-label="Mention suggestions">
                     {mentionSuggestionsLoading && mentionSuggestions.length === 0 ? (
                         <div className="px-3 py-2 text-xs font-bold text-gray-500">Loading teammates...</div>
@@ -173,16 +185,24 @@ export function Composer({
                     ref={textareaRef}
                     value={text}
                     onChange={(event) => {
+                        if (disabled) return;
                         onTextChange(event.target.value);
                         onCursorChange(event.target.selectionStart ?? event.target.value.length);
                     }}
-                    onClick={(event) => syncCursorPosition(event.currentTarget.selectionStart ?? event.currentTarget.value.length)}
-                    onKeyUp={(event) => syncCursorPosition(event.currentTarget.selectionStart ?? event.currentTarget.value.length)}
-                    onSelect={(event) => syncCursorPosition(event.currentTarget.selectionStart ?? event.currentTarget.value.length)}
+                    onClick={(event) => {
+                        if (!disabled) syncCursorPosition(event.currentTarget.selectionStart ?? event.currentTarget.value.length);
+                    }}
+                    onKeyUp={(event) => {
+                        if (!disabled) syncCursorPosition(event.currentTarget.selectionStart ?? event.currentTarget.value.length);
+                    }}
+                    onSelect={(event) => {
+                        if (!disabled) syncCursorPosition(event.currentTarget.selectionStart ?? event.currentTarget.value.length);
+                    }}
                     rows={1}
                     maxLength={2000}
                     className="chat-composer-textarea"
                     placeholder={placeholder}
+                    disabled={disabled}
                     enterKeyHint="send"
                     onKeyDown={(event) => {
                         if (showMentionSuggestions && mentionSuggestions.length > 0) {
@@ -202,7 +222,7 @@ export function Composer({
                                 return;
                             }
                         }
-                        if (event.key === 'Enter' && !event.shiftKey) {
+                        if (!disabled && event.key === 'Enter' && !event.shiftKey) {
                             event.preventDefault();
                             onSubmit();
                         }
@@ -221,7 +241,7 @@ export function Composer({
             ) : null}
 
             <div className="chat-composer-toolbar">
-                <button type="button" className="chat-tool-button" onClick={onAttach} aria-label="Add attachment">
+                <button type="button" className="chat-tool-button" onClick={onAttach} aria-label="Add attachment" disabled={disabled}>
                     <Paperclip className="h-4 w-4" aria-hidden="true" />
                 </button>
                 {voiceSupported ? (
@@ -230,18 +250,19 @@ export function Composer({
                         className={`chat-tool-button ${voiceListening ? 'chat-tool-button-active' : ''}`}
                         onClick={onVoice}
                         aria-label={voiceListening ? 'Stop voice input' : 'Voice to text'}
+                        disabled={disabled}
                     >
                         <Mic className="h-4 w-4" aria-hidden="true" />
                     </button>
                 ) : null}
                 {canModerate ? (
-                    <button type="button" className="chat-audience-pill" onClick={onAudience}>
+                    <button type="button" className="chat-audience-pill" onClick={onAudience} disabled={disabled}>
                         <Users className="h-4 w-4 flex-none" aria-hidden="true" />
                         <span className="truncate">Audience: {audienceSummary}</span>
                     </button>
                 ) : null}
                 {canSendTeamEmail ? (
-                    <button type="button" className="chat-audience-pill" onClick={onTeamEmail} aria-label="Open Team Email">
+                    <button type="button" className="chat-audience-pill" onClick={onTeamEmail} aria-label="Open Team Email" disabled={disabled}>
                         <Mail className="h-4 w-4 flex-none" aria-hidden="true" />
                         <span className="truncate">Team Email</span>
                     </button>

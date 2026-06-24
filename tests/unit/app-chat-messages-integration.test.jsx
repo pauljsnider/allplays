@@ -1688,10 +1688,11 @@ describe('React app messages integration', () => {
         expect(buttonByText(container, 'Done').disabled).toBe(true);
 
         const textarea = container.querySelector('textarea');
+        expect(textarea.disabled).toBe(true);
+        expect(buttonByText(container, 'Send message').disabled).toBe(true);
         await setFieldValue(textarea, 'This should stay targeted.');
-        await click(container, 'Send message');
 
-        expect(container.textContent).toContain('Choose at least one selected member before sending.');
+        expect(container.textContent).toContain('Choose at least one selected member, or switch back to Full team.');
         expect(container.textContent).toContain('Message audience');
         expect(chatMocks.sendTeamChatMessage).not.toHaveBeenCalled();
     });

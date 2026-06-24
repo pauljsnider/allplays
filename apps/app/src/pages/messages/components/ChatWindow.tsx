@@ -424,6 +424,13 @@ export function ChatWindow({
   const mentionTriggerActive = hasChatMentionTrigger(text, composerCursorPosition);
   const mediaEntries = useMemo(() => collectThreadMedia(visibleMessages), [visibleMessages]);
   const teamName = team?.name || inboxTeam?.name || 'Team chat';
+  const composerDisabled = showConversationSheet
+    || showAudienceSheet
+    || showMediaGallery
+    || showAttachSheet
+    || showLinkSheet
+    || showEmailSheet
+    || Boolean(editingMessage);
 
   const ensureRecipientOptionsLoaded = useCallback(async () => {
     if (!canModerate) return [] as ChatRecipientOption[];
@@ -1505,6 +1512,7 @@ export function ChatWindow({
         mentionSuggestionsLoading={mentionTriggerActive && recipientOptionsLoading}
         mentionTriggerActive={mentionTriggerActive}
         audienceSummary={audienceSummary}
+        disabled={composerDisabled}
         onCursorChange={setComposerCursorPosition}
         onTextChange={setText}
         onSubmit={handleSend}

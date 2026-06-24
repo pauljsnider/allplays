@@ -640,6 +640,34 @@ async function loadTeamConfigs(teamId: string) {
   ).catch(() => []);
 }
 
+async function loadTeamTrackingItems(teamId: string) {
+  const normalizedTeamId = cleanString(teamId);
+  return readWithNativeFallback(
+    `team tracking items ${normalizedTeamId}`,
+    async () => {
+      const itemSnapshot = await getDocs(collection(db, `teams/${normalizedTeamId}/trackingItems`));
+      return (itemSnapshot.docs as any[]).map((itemDoc) => ({ id: itemDoc.id, ...itemDoc.data() }));
+    },
+    async () => nativeListCollection(`teams/${encodeURIComponent(normalizedTeamId)}/trackingItems`)
+  );
+}
+
+async function loadTeamTrackingStatuses(teamId: string, itemId: string) {
+  const normalizedTeamId = cleanString(teamId);
+  const normalizedItemId = cleanString(itemId);
+  return readWithNativeFallback(
+    `team tracking statuses ${normalizedTeamId}/${normalizedItemId}`,
+    async () => {
+      const statusSnapshot = await getDocs(collection(db, `teams/${normalizedTeamId}/trackingItems/${normalizedItemId}/memberTracking`));
+      return (statusSnapshot.docs as any[]).map((statusDoc) => ({
+        id: statusDoc.id,
+        ...statusDoc.data()
+      }));
+    },
+    async () => nativeListCollection(`teams/${encodeURIComponent(normalizedTeamId)}/trackingItems/${encodeURIComponent(normalizedItemId)}/memberTracking`)
+  );
+}
+
 function getExpirationTime(expiresAt: any): number | null {
   if (expiresAt == null) return null;
   if (typeof expiresAt?.toMillis === 'function') return expiresAt.toMillis();
@@ -1401,9 +1429,8 @@ export async function loadTeamTrackingAdmin(teamId: string, user: AuthUser | nul
   }
 
   const normalizedTeamId = cleanString(teamId);
-  const itemSnapshot = await getDocs(collection(db, `teams/${normalizedTeamId}/trackingItems`));
-  const trackingItems = (itemSnapshot.docs as any[])
-    .map((itemDoc) => normalizeTeamTrackingItem({ id: itemDoc.id, ...itemDoc.data() }))
+  const trackingItems = (await loadTeamTrackingItems(normalizedTeamId))
+    .map((itemDoc) => normalizeTeamTrackingItem(itemDoc))
     .filter((item): item is ReturnType<typeof normalizeTeamTrackingItem> => Boolean(item.id))
     .sort((a, b) => a.name.localeCompare(b.name));
 
@@ -1412,12 +1439,8 @@ export async function loadTeamTrackingAdmin(teamId: string, user: AuthUser | nul
 
   if (trackingItems.length) {
     await Promise.all(trackingItems.map(async (item) => {
-      const statusSnapshot = await getDocs(collection(db, `teams/${normalizedTeamId}/trackingItems/${item.id}/memberTracking`));
-      const statuses = (statusSnapshot.docs as any[])
-        .map((statusDoc) => normalizeTrackingStatus({
-          id: statusDoc.id,
-          ...statusDoc.data()
-        }))
+      const statuses = (await loadTeamTrackingStatuses(normalizedTeamId, item.id))
+        .map((statusDoc) => normalizeTrackingStatus(statusDoc))
         .filter((status) => cleanString((status as any)?.trackingItemId || (status as any)?.itemId) === item.id);
       trackingStatusesByItemId.set(item.id, statuses);
     }));

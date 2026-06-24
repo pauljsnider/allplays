@@ -105,6 +105,38 @@
       ]
     },
     {
+      "collectionGroup": "feeRecipients",
+      "queryScope": "COLLECTION_GROUP",
+      "fields": [
+        { "fieldPath": "teamId", "order": "ASCENDING" },
+        { "fieldPath": "parentUserId", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "feeRecipients",
+      "queryScope": "COLLECTION_GROUP",
+      "fields": [
+        { "fieldPath": "teamId", "order": "ASCENDING" },
+        { "fieldPath": "accountUserId", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "feeRecipients",
+      "queryScope": "COLLECTION_GROUP",
+      "fields": [
+        { "fieldPath": "teamId", "order": "ASCENDING" },
+        { "fieldPath": "userId", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "feeRecipients",
+      "queryScope": "COLLECTION_GROUP",
+      "fields": [
+        { "fieldPath": "teamId", "order": "ASCENDING" },
+        { "fieldPath": "playerId", "order": "ASCENDING" }
+      ]
+    },
+    {
       "collectionGroup": "registrations",
       "queryScope": "COLLECTION_GROUP",
       "fields": [
