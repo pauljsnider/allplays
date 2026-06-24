@@ -253,6 +253,20 @@ describe('ChatWindow virtualization', () => {
     expect(windowed.bottomSpacerHeight).toBe(290);
   });
 
+  it('falls back to the oldest window when prepended history loads before viewport sizing is available', () => {
+    const messages = Array.from({ length: 6 }, (_, index) => buildMessage(`message-${index + 1}`, index + 1));
+    const windowed = buildVirtualizedChatWindow(messages, {
+      scrollTop: 0,
+      viewportHeight: 0,
+      initialWindowCount: 3,
+      preferTopWindow: true
+    });
+
+    expect(windowed.visibleMessages.map((message) => message.id)).toEqual(['message-1', 'message-2', 'message-3']);
+    expect(windowed.topSpacerHeight).toBe(0);
+    expect(windowed.bottomSpacerHeight).toBeGreaterThan(0);
+  });
+
   it('keeps mounted message bubbles bounded below the full thread size', () => {
     const { container } = render(
       <MemoryRouter>

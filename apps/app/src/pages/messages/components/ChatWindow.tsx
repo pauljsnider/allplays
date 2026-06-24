@@ -405,8 +405,9 @@ export function ChatWindow({
   const messageWindow = useMemo(() => buildVirtualizedChatWindow(visibleMessages, {
     scrollTop: messageViewportState.scrollTop,
     viewportHeight: messageViewportState.viewportHeight,
-    measuredHeights: measuredMessageHeights
-  }), [measuredMessageHeights, messageViewportState.scrollTop, messageViewportState.viewportHeight, visibleMessages]);
+    measuredHeights: measuredMessageHeights,
+    preferTopWindow: olderMessages.length > 0 && messageViewportState.scrollTop <= 0
+  }), [measuredMessageHeights, messageViewportState.scrollTop, messageViewportState.viewportHeight, olderMessages.length, visibleMessages]);
   const error = teamError || messagesError;
 
   const handleMessageRowHeightChange = useCallback((messageId: string, height: number) => {
@@ -1739,13 +1740,15 @@ export function buildVirtualizedChatWindow(
     viewportHeight,
     measuredHeights,
     overscanPx = CHAT_MESSAGE_WINDOW_OVERSCAN_PX,
-    initialWindowCount = CHAT_MESSAGE_INITIAL_WINDOW_COUNT
+    initialWindowCount = CHAT_MESSAGE_INITIAL_WINDOW_COUNT,
+    preferTopWindow = false
   }: {
     scrollTop: number;
     viewportHeight: number;
     measuredHeights?: Record<string, number>;
     overscanPx?: number;
     initialWindowCount?: number;
+    preferTopWindow?: boolean;
   }
 ): VirtualizedChatWindow {
   if (!messages.length) {
@@ -1771,6 +1774,16 @@ export function buildVirtualizedChatWindow(
 
   const totalHeight = offsets[offsets.length - 1];
   if (!Number.isFinite(viewportHeight) || viewportHeight <= 0) {
+    if (preferTopWindow) {
+      const endIndex = Math.min(messages.length - 1, Math.max(0, initialWindowCount - 1));
+      return {
+        startIndex: 0,
+        endIndex,
+        topSpacerHeight: 0,
+        bottomSpacerHeight: Math.max(0, totalHeight - offsets[endIndex + 1]),
+        visibleMessages: messages.slice(0, endIndex + 1)
+      };
+    }
     const startIndex = Math.max(0, messages.length - Math.max(1, initialWindowCount));
     return {
       startIndex,
