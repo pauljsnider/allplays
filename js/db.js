@@ -6094,14 +6094,14 @@ export async function upsertChatConversation(teamId, conversation = {}) {
     } = conversation;
     const normalizedType = normalizeConversationType(type);
     const normalizedParticipantIds = normalizeConversationParticipantIds(participantIds);
-    const conversationId = buildConversationId(normalizedType, normalizedParticipantIds);
-    const now = Timestamp.now();
-    const conversationRef = doc(db, 'teams', teamId, 'chatConversations', conversationId);
-    const existing = await getDoc(conversationRef);
     const normalizedParticipantRoles = Array.from(new Set((Array.isArray(participantRoles) ? participantRoles : [])
         .map((role) => String(role || '').trim())
         .filter(Boolean)))
         .sort();
+    const conversationId = buildConversationId(normalizedType, normalizedParticipantIds, normalizedParticipantRoles);
+    const now = Timestamp.now();
+    const conversationRef = doc(db, 'teams', teamId, 'chatConversations', conversationId);
+    const existing = await getDoc(conversationRef);
     const normalizedMutedBy = Array.from(new Set(Array.isArray(mutedBy) ? mutedBy : []));
     const hasMutedByUpdate = Object.prototype.hasOwnProperty.call(conversation, 'mutedBy');
 

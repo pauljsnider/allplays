@@ -787,7 +787,7 @@ export async function ensureStaffChatConversation(teamId: string, user: AuthUser
 
   return await withTimeout(Promise.resolve(upsertChatConversation(teamId, {
     type: 'group',
-    participantIds: [user.uid],
+    participantIds: [],
     participantRoles: ['staff'],
     mutedBy: [],
     name: 'Staff only'
@@ -1147,7 +1147,7 @@ export async function sendTeamChatMessage({
     let createdConversation: ChatConversation | null = null;
     if (isDefaultTeamConversation(conversationId) && targetMetadata.targetType !== 'full_team') {
       const participantIds = targetMetadata.targetType === 'staff'
-        ? [user.uid]
+        ? []
         : Array.from(new Set([user.uid, ...targetMetadata.recipientIds]));
       const participantRoles = targetMetadata.targetType === 'staff' ? ['staff'] : [];
       createdConversation = await withTimeout(Promise.resolve(upsertChatConversation(teamId, {

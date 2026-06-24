@@ -823,7 +823,7 @@ describe('React app chat recipient service', () => {
 
         expect(dbMocks.upsertChatConversation).toHaveBeenCalledWith('team-1', expect.objectContaining({
             type: 'group',
-            participantIds: ['coach-1'],
+            participantIds: [],
             participantRoles: ['staff'],
             name: 'Staff only'
         }));
