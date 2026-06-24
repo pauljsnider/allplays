@@ -31,6 +31,7 @@ function createTeamIcsHooks() {
     const formatIcsDateSource = extractFunction(source, 'formatIcsDate');
     const escapeIcsTextSource = extractFunction(source, 'escapeIcsText');
     const getIcsEventSummarySource = extractFunction(source, 'getIcsEventSummary');
+    const resolveIcsEventEndDateSource = extractFunction(source, 'resolveIcsEventEndDate');
     const buildIcsSource = extractFunction(source, 'buildIcs');
 
     return new Function(`
@@ -39,8 +40,9 @@ let currentTeamId = 'team-1';
 ${formatIcsDateSource}
 ${escapeIcsTextSource}
 ${getIcsEventSummarySource}
+${resolveIcsEventEndDateSource}
 ${buildIcsSource}
-return { buildIcs, getIcsEventSummary, escapeIcsText };
+return { buildIcs, getIcsEventSummary, escapeIcsText, resolveIcsEventEndDate };
 `)();
 }
 
@@ -92,5 +94,57 @@ describe('team ICS export', () => {
         expect(escapeIcsText(title)).toBe('Pitching\\\\Practice\\;Plan\\, A\\nLOCATION:Injected');
         expect(ics).toContain('SUMMARY:Pitching\\\\Practice\\;Plan\\, A\\nLOCATION:Injected');
         expect(ics).not.toContain('\r\nLOCATION:Injected\r\nLOCATION:Main Field');
+    });
+
+    it('uses saved end times when exporting events', () => {
+        const { buildIcs } = createTeamIcsHooks();
+        const ics = buildIcs([
+            {
+                id: 'practice-3',
+                type: 'practice',
+                title: 'Evening practice',
+                date: new Date('2026-06-13T18:00:00Z'),
+                endDate: new Date('2026-06-13T20:00:00Z'),
+                location: 'Main Field',
+                status: 'scheduled'
+            }
+        ]);
+
+        expect(ics).toContain('DTSTART:20260613T180000Z');
+        expect(ics).toContain('DTEND:20260613T200000Z');
+    });
+
+    it('falls back to two hours for games without saved end times', () => {
+        const { buildIcs } = createTeamIcsHooks();
+        const ics = buildIcs([
+            {
+                id: 'game-2',
+                type: 'game',
+                opponent: 'Lions',
+                date: new Date('2026-06-14T18:00:00Z'),
+                location: 'North Field',
+                status: 'scheduled'
+            }
+        ]);
+
+        expect(ics).toContain('DTSTART:20260614T180000Z');
+        expect(ics).toContain('DTEND:20260614T200000Z');
+    });
+
+    it('treats legacy events without a type as games for fallback end times', () => {
+        const { buildIcs, resolveIcsEventEndDate } = createTeamIcsHooks();
+        const startDate = new Date('2026-06-15T18:00:00Z');
+        const legacyGame = {
+            id: 'game-legacy',
+            opponent: 'Tigers',
+            date: startDate,
+            location: 'Legacy Field',
+            status: 'scheduled'
+        };
+        const ics = buildIcs([legacyGame]);
+
+        expect(resolveIcsEventEndDate(legacyGame, startDate).toISOString()).toBe('2026-06-15T20:00:00.000Z');
+        expect(ics).toContain('DTSTART:20260615T180000Z');
+        expect(ics).toContain('DTEND:20260615T200000Z');
     });
 });
