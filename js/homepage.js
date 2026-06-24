@@ -1,3 +1,6 @@
+const REQUEST_ACCESS_HREF = 'mailto:paul@paulsnider.net?subject=ALL%20PLAYS%20Access%20Request';
+const REQUEST_ACCESS_TEXT = 'Request Access';
+
 function resolveTeamId(game) {
     return game.teamId || game.team?.id || '';
 }
@@ -47,6 +50,24 @@ function renderTeamAvatar(game) {
     return `<div class="w-10 h-10 rounded-full bg-primary-100 flex items-center justify-center text-primary-600 font-bold">${teamInitial}</div>`;
 }
 
+function applyRequestAccessCta(cta) {
+    if (!cta) {
+        return;
+    }
+
+    cta.textContent = REQUEST_ACCESS_TEXT;
+    cta.href = REQUEST_ACCESS_HREF;
+}
+
+export function applyHeaderCtas(document, user) {
+    if (user) {
+        return;
+    }
+
+    applyRequestAccessCta(document.getElementById('nav-cta-desktop'));
+    applyRequestAccessCta(document.getElementById('nav-cta-mobile'));
+}
+
 export function applyHeroCta(user, heroCta, getRedirectUrl = () => 'dashboard.html') {
     if (!heroCta) {
         return;
@@ -58,8 +79,7 @@ export function applyHeroCta(user, heroCta, getRedirectUrl = () => 'dashboard.ht
         return;
     }
 
-    heroCta.textContent = 'Create Your Team';
-    heroCta.href = 'login.html#signup';
+    applyRequestAccessCta(heroCta);
 }
 
 export async function loadLiveGames({
@@ -188,6 +208,7 @@ export async function initHomepage({
 
     checkAuth((user) => {
         renderHeader(document.getElementById('header-container'), user);
+        applyHeaderCtas(document, user);
         applyHeroCta(user, heroCta, getRedirectUrl);
     });
 
