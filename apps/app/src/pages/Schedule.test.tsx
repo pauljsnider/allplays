@@ -590,6 +590,22 @@ describe('Schedule', () => {
     expect(scheduleServiceMocks.loadScheduleStatTrackerConfigsForApp).toHaveBeenCalledTimes(1);
   });
 
+  it('hides desktop staff schedule tools until Manage schedule is opened', async () => {
+    shellLayoutMocks.isDesktopWeb = true;
+    scheduleServiceMocks.loadParentSchedule.mockResolvedValueOnce(buildStaffScheduleResult());
+
+    renderSchedule();
+
+    expect(await screen.findByRole('button', { name: /manage schedule/i })).toBeTruthy();
+    expect(screen.queryByRole('heading', { name: 'Add game for Bears' })).toBeNull();
+    expect(screen.queryByRole('heading', { name: 'Add external calendar' })).toBeNull();
+
+    fireEvent.click(screen.getByRole('button', { name: /manage schedule/i }));
+
+    expect(await screen.findByRole('heading', { name: 'Add game for Bears' })).toBeTruthy();
+    expect(screen.getByRole('heading', { name: 'Add external calendar' })).toBeTruthy();
+  });
+
   it('defers desktop tracker config loading until staff starts using game creation', async () => {
     shellLayoutMocks.isDesktopWeb = true;
     scheduleServiceMocks.loadParentSchedule.mockResolvedValueOnce(buildStaffScheduleResult());
@@ -598,6 +614,11 @@ describe('Schedule', () => {
     ]);
 
     renderSchedule();
+
+    expect(await screen.findByRole('button', { name: /manage schedule/i })).toBeTruthy();
+    expect(scheduleServiceMocks.loadScheduleStatTrackerConfigsForApp).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole('button', { name: /manage schedule/i }));
 
     expect(await screen.findByRole('heading', { name: 'Add game for Bears' })).toBeTruthy();
     expect(scheduleServiceMocks.loadScheduleStatTrackerConfigsForApp).not.toHaveBeenCalled();
