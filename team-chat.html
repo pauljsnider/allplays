@@ -661,7 +661,7 @@
             }
         }
 
-        async function handleRealtimeMessages(newMessages, oldestDoc) {
+        async function handleRealtimeMessages(newMessages, oldestDoc, loadedConversationId = selectedConversationId) {
             const container = document.getElementById('messages-container');
             const wasNearBottom = isNearBottom(container);
 
@@ -685,15 +685,15 @@
                 scrollToBottom();
             }
 
-            maybeUpdateChatLastRead();
+            maybeUpdateChatLastRead(loadedConversationId);
             pendingScrollToBottom = false;
         }
 
-        async function loadMessagesAfterRealtimeFailure(error) {
+        async function loadMessagesAfterRealtimeFailure(error, loadedConversationId = selectedConversationId) {
             console.warn('Realtime chat messages unavailable; loading current messages once:', error);
             try {
-                const fallbackMessages = await getChatMessages(teamId, { limit: 50, conversationId: selectedConversationId });
-                await handleRealtimeMessages(fallbackMessages, fallbackMessages.length ? fallbackMessages[fallbackMessages.length - 1]._doc : null);
+                const fallbackMessages = await getChatMessages(teamId, { limit: 50, conversationId: loadedConversationId });
+                await handleRealtimeMessages(fallbackMessages, fallbackMessages.length ? fallbackMessages[fallbackMessages.length - 1]._doc : null, loadedConversationId);
             } catch (fallbackError) {
                 console.error('Error loading chat messages after realtime failure:', fallbackError);
                 initialSnapshotLoaded = true;
@@ -712,21 +712,22 @@
             initialSnapshotLoaded = false;
             liveMessages = [];
             liveOldestDoc = null;
+            const subscriptionConversationId = selectedConversationId;
 
             try {
                 unsubscribeChat = subscribeToChatMessages(
                     teamId,
-                    { limit: 50, conversationId: selectedConversationId },
-                    handleRealtimeMessages,
-                    loadMessagesAfterRealtimeFailure
+                    { limit: 50, conversationId: subscriptionConversationId },
+                    (newMessages, oldestDoc) => handleRealtimeMessages(newMessages, oldestDoc, subscriptionConversationId),
+                    (error) => loadMessagesAfterRealtimeFailure(error, subscriptionConversationId)
                 );
             } catch (error) {
                 unsubscribeChat = null;
-                loadMessagesAfterRealtimeFailure(error);
+                loadMessagesAfterRealtimeFailure(error, subscriptionConversationId);
             }
         }
 
-        function maybeUpdateChatLastRead() {
+        function maybeUpdateChatLastRead(conversationId = selectedConversationId) {
             const isPageVisible = document.visibilityState === 'visible' && !document.hidden;
             const isWindowFocused = document.hasFocus();
 
@@ -736,7 +737,7 @@
                 isPageVisible,
                 isWindowFocused
             })) {
-                updateChatLastRead(currentUser.uid, teamId).catch(err =>
+                updateChatLastRead(currentUser.uid, teamId, conversationId).catch(err =>
                     console.warn('Failed to update last read:', err)
                 );
             }
