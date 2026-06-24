@@ -98,4 +98,25 @@ describe('help and workflow page inventory', () => {
             expect(existsSync(resolve(REPO_ROOT, item.file)), `${item.file} should exist`).toBe(true);
         }
     });
+
+    it('keeps the app help index aligned with awards workflow metadata', () => {
+        const manifest = JSON.parse(readRepoFile('workflow-manifest.json'));
+        const workflow = manifest.find((item) => item.file === 'workflow-awards-certificates.html');
+        const appHelpIndex = readRepoFile('apps/app/src/lib/helpKnowledgeIndex.ts');
+
+        expect(workflow).toMatchObject({
+            id: 'awards-certificates',
+            title: 'Create and Publish Player Awards and Certificates',
+            file: 'workflow-awards-certificates.html'
+        });
+        expect(workflow.roles).toEqual(['Coach', 'Admin']);
+        expect(workflow.summary).toContain('Design certificates');
+        expect(workflow.summary).toContain('publish awards to families');
+        expect(appHelpIndex).toContain('"id": "awards-certificates"');
+        expect(appHelpIndex).toContain('"file": "workflow-awards-certificates.html"');
+        expect(appHelpIndex).toContain(`"summary": ${JSON.stringify(workflow.summary)}`);
+        expect(appHelpIndex).toContain('"roles": [\n      "coach",\n      "admin"\n    ]');
+        expect(appHelpIndex).not.toContain('"id": "workflow-awards-certificates"');
+        expect(appHelpIndex).not.toContain('"summary": "Workflow Guide"');
+    });
 });
