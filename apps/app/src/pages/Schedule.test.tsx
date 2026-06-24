@@ -11,6 +11,7 @@ const scheduleServiceMocks = vi.hoisted(() => ({
   addTeamCalendarUrl: vi.fn(),
   createScheduledGameForApp: vi.fn(),
   createScheduledPracticeForApp: vi.fn(),
+  createScheduledTournamentBlockForApp: vi.fn(),
   createScheduleImportGame: vi.fn(),
   createScheduleImportPractice: vi.fn(),
   finalizeScheduleImportBatch: vi.fn(),
@@ -392,13 +393,14 @@ describe('Schedule', () => {
     });
   });
 
-  it('renders web-created tournament game metadata read-only in the schedule list', async () => {
+  it('renders web-created tournament game metadata and the create tournament flow', async () => {
     scheduleServiceMocks.loadParentSchedule.mockResolvedValueOnce({
       children: [
         { playerId: 'player-1', playerName: 'Pat', teamId: 'team-1', teamName: 'Bears' }
       ],
       events: [
         buildScheduleEvent(1, {
+          isTeamStaff: true,
           competitionType: 'tournament',
           tournament: {
             divisionName: '10U Gold',
@@ -428,7 +430,48 @@ describe('Schedule', () => {
     expect(screen.getAllByText(/Pool: Pool A/).length).toBeGreaterThan(0);
     expect(screen.getAllByText('10U Gold / Pool A standings').length).toBeGreaterThan(0);
     expect(screen.getAllByText('#1 Tigers (2-0, 6 pts)').length).toBeGreaterThan(0);
-    expect(screen.queryByRole('button', { name: /create tournament/i })).toBeNull();
+
+    fireEvent.click(screen.getByRole('button', { name: /manage schedule/i }));
+
+    expect(await screen.findByRole('heading', { name: 'Add tournament for Bears' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: /create tournament/i })).toBeTruthy();
+  });
+
+  it('submits tournament blocks with metadata and child games from schedule tools', async () => {
+    scheduleServiceMocks.loadParentSchedule
+      .mockResolvedValueOnce(buildStaffScheduleResult())
+      .mockResolvedValueOnce(buildStaffScheduleResult());
+    scheduleServiceMocks.createScheduledTournamentBlockForApp.mockResolvedValueOnce(['game-1']);
+
+    renderSchedule();
+
+    fireEvent.click(await screen.findByRole('button', { name: /manage schedule/i }));
+    expect(await screen.findByRole('heading', { name: 'Add tournament for Bears' })).toBeTruthy();
+
+    fireEvent.change(screen.getByLabelText('Tournament division'), { target: { value: '10U Gold' } });
+    fireEvent.change(screen.getByLabelText('Tournament bracket'), { target: { value: 'Gold Bracket' } });
+    fireEvent.change(screen.getByLabelText('Tournament round'), { target: { value: 'Semifinal' } });
+    fireEvent.change(screen.getByLabelText('Tournament pool'), { target: { value: 'Pool A' } });
+    fireEvent.change(screen.getByLabelText('Game 1 opponent'), { target: { value: 'Tigers' } });
+    fireEvent.change(screen.getByLabelText('Game 1 location'), { target: { value: 'Main Gym' } });
+    fireEvent.change(screen.getByLabelText('Game 1 starts'), { target: { value: '2026-06-24T18:30' } });
+    fireEvent.change(screen.getByLabelText('Game 1 ends'), { target: { value: '2026-06-24T20:00' } });
+
+    fireEvent.click(screen.getByRole('button', { name: /^create tournament$/i }));
+
+    await waitFor(() => {
+      expect(scheduleServiceMocks.createScheduledTournamentBlockForApp).toHaveBeenCalledTimes(1);
+      expect(scheduleServiceMocks.createScheduledTournamentBlockForApp).toHaveBeenCalledWith('team-1', expect.objectContaining({
+        divisionName: '10U Gold',
+        bracketName: 'Gold Bracket',
+        roundName: 'Semifinal',
+        poolName: 'Pool A',
+        games: [expect.objectContaining({
+          opponent: 'Tigers',
+          location: 'Main Gym'
+        })]
+      }), auth.user);
+    });
   });
 
   it('does not label scheduled games with default 0-0 scores as final results', async () => {
@@ -579,13 +622,13 @@ describe('Schedule', () => {
       expect(scheduleServiceMocks.loadScheduleStatTrackerConfigsForApp).toHaveBeenCalledTimes(1);
       expect(scheduleServiceMocks.loadScheduleStatTrackerConfigsForApp).toHaveBeenCalledWith('team-1', auth.user);
     });
-    expect(await screen.findByRole('option', { name: 'Varsity Tracker' })).toBeTruthy();
+    expect((await screen.findAllByRole('option', { name: 'Varsity Tracker' })).length).toBeGreaterThan(0);
 
     fireEvent.click(screen.getByRole('button', { name: /manage schedule/i }));
     fireEvent.click(screen.getByRole('button', { name: /manage schedule/i }));
 
     await waitFor(() => {
-      expect(screen.getByRole('option', { name: 'Varsity Tracker' })).toBeTruthy();
+      expect(screen.getAllByRole('option', { name: 'Varsity Tracker' }).length).toBeGreaterThan(0);
     });
     expect(scheduleServiceMocks.loadScheduleStatTrackerConfigsForApp).toHaveBeenCalledTimes(1);
   });
@@ -623,12 +666,12 @@ describe('Schedule', () => {
     expect(await screen.findByRole('heading', { name: 'Add game for Bears' })).toBeTruthy();
     expect(scheduleServiceMocks.loadScheduleStatTrackerConfigsForApp).not.toHaveBeenCalled();
 
-    fireEvent.focus(screen.getByLabelText('Opponent'));
+    fireEvent.focus(screen.getAllByLabelText('Opponent')[0]);
 
     await waitFor(() => {
       expect(scheduleServiceMocks.loadScheduleStatTrackerConfigsForApp).toHaveBeenCalledTimes(1);
       expect(scheduleServiceMocks.loadScheduleStatTrackerConfigsForApp).toHaveBeenCalledWith('team-1', auth.user);
     });
-    expect(await screen.findByRole('option', { name: 'Varsity Tracker' })).toBeTruthy();
+    expect((await screen.findAllByRole('option', { name: 'Varsity Tracker' })).length).toBeGreaterThan(0);
   });
 });

@@ -4,7 +4,7 @@ import { Link, useSearchParams } from 'react-router-dom';
 import { Modal } from '../components/Modal';
 import { SchedulePageSkeleton } from '../components/PageSkeletons';
 import { PullToRefresh } from '../components/PullToRefresh';
-import { addTeamCalendarUrl, createScheduledGameForApp, createScheduledPracticeForApp, createScheduleImportGame, createScheduleImportPractice, finalizeScheduleImportBatch, loadParentSchedule, loadScheduleStatTrackerConfigsForApp, removeTeamCalendarUrl, type ParentScheduleChild, type ScheduleGameFormInput, type SchedulePracticeFormInput, type PracticeRecurrenceFormInput, type ScheduleStatTrackerConfigOption } from '../lib/scheduleService';
+import { addTeamCalendarUrl, createScheduledGameForApp, createScheduledPracticeForApp, createScheduledTournamentBlockForApp, createScheduleImportGame, createScheduleImportPractice, finalizeScheduleImportBatch, loadParentSchedule, loadScheduleStatTrackerConfigsForApp, removeTeamCalendarUrl, type ParentScheduleChild, type ScheduleGameFormInput, type SchedulePracticeFormInput, type PracticeRecurrenceFormInput, type ScheduleStatTrackerConfigOption, type ScheduleTournamentCreateFormInput } from '../lib/scheduleService';
 import { getCachedAppData, getParentScheduleSummaryCacheKey, loadCachedAppData } from '../lib/appDataCache';
 import { toAppServiceError, type AppServiceError } from '../lib/appErrors';
 import { startAppInitialLoadTimer } from '../lib/telemetry';
@@ -209,6 +209,9 @@ export function Schedule({ auth }: { auth: AuthState }) {
   const [gameFormError, setGameFormError] = useState<string | null>(null);
   const [gameTrackerConfigs, setGameTrackerConfigs] = useState<ScheduleStatTrackerConfigOption[]>([]);
   const [gameTrackerConfigError, setGameTrackerConfigError] = useState<string | null>(null);
+  const [tournamentForm, setTournamentForm] = useState<ScheduleTournamentCreateFormInput>(() => getDefaultScheduleTournamentForm());
+  const [savingTournament, setSavingTournament] = useState(false);
+  const [tournamentFormError, setTournamentFormError] = useState<string | null>(null);
   const [practiceForm, setPracticeForm] = useState<SchedulePracticeFormInput>(() => getDefaultSchedulePracticeForm());
   const [savingPractice, setSavingPractice] = useState(false);
   const [practiceFormError, setPracticeFormError] = useState<string | null>(null);
@@ -625,6 +628,20 @@ export function Schedule({ auth }: { auth: AuthState }) {
         }}
         onSubmit={handleCreateGame}
       />
+      <ScheduleTournamentCreatePanel
+        teamName={selectedCalendarTeam.teamName}
+        form={tournamentForm}
+        configs={gameTrackerConfigs}
+        saving={savingTournament}
+        error={tournamentFormError}
+        configError={gameTrackerConfigError}
+        onStartUsing={requestTrackerConfigLoad}
+        onChange={(nextForm) => {
+          setTournamentForm(nextForm);
+          if (tournamentFormError) setTournamentFormError(null);
+        }}
+        onSubmit={handleCreateTournament}
+      />
       <SchedulePracticeCreatePanel
         teamName={selectedCalendarTeam.teamName}
         form={practiceForm}
@@ -690,6 +707,17 @@ export function Schedule({ auth }: { auth: AuthState }) {
     });
   }, [gameTrackerConfigs]);
 
+  useEffect(() => {
+    setTournamentForm((current) => ({
+      ...current,
+      games: current.games.map((game) => {
+        if (!game.statTrackerConfigId) return game;
+        const hasMatchingConfig = gameTrackerConfigs.some((config) => config.id === game.statTrackerConfigId);
+        return hasMatchingConfig ? game : { ...game, statTrackerConfigId: '' };
+      })
+    }));
+  }, [gameTrackerConfigs]);
+
   const handleCreateGame = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (!selectedCalendarTeam || !auth.user || savingGame) return;
@@ -706,6 +734,25 @@ export function Schedule({ auth }: { auth: AuthState }) {
       setGameFormError(gameError?.message || 'Unable to create game.');
     } finally {
       setSavingGame(false);
+    }
+  };
+
+  const handleCreateTournament = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!selectedCalendarTeam || !auth.user || savingTournament) return;
+    setSavingTournament(true);
+    setTournamentFormError(null);
+    setStatusMessage(null);
+    clearScheduleReadError();
+    try {
+      await createScheduledTournamentBlockForApp(selectedCalendarTeam.teamId, tournamentForm, auth.user);
+      setTournamentForm(getDefaultScheduleTournamentForm());
+      await refreshSchedule(true);
+      setStatusMessage('Tournament created and schedule refreshed.');
+    } catch (tournamentError: any) {
+      setTournamentFormError(tournamentError?.message || 'Unable to create tournament.');
+    } finally {
+      setSavingTournament(false);
     }
   };
 
@@ -1335,6 +1382,23 @@ function getDefaultScheduleGameForm(): ScheduleGameFormInput {
   };
 }
 
+function getDefaultScheduleTournamentGameForm(): ScheduleGameFormInput {
+  return {
+    ...getDefaultScheduleGameForm(),
+    competitionType: 'tournament'
+  };
+}
+
+function getDefaultScheduleTournamentForm(): ScheduleTournamentCreateFormInput {
+  return {
+    divisionName: '',
+    bracketName: '',
+    roundName: '',
+    poolName: '',
+    games: [getDefaultScheduleTournamentGameForm()]
+  };
+}
+
 function getDefaultSchedulePracticeForm(): SchedulePracticeFormInput {
   const startDate = new Date();
   startDate.setDate(startDate.getDate() + 1);
@@ -1371,6 +1435,59 @@ function ScheduleGameCreatePanel({ teamName, form, configs, saving, error, confi
         <label className="flex items-center gap-2 text-sm font-black text-gray-800"><input type="checkbox" checked={form.countsTowardSeasonRecord !== false} onChange={(event) => updateField('countsTowardSeasonRecord', event.target.checked)} /> Counts toward season record</label>
         <label className="text-xs font-bold uppercase tracking-wide text-gray-600">Notes<textarea className="auth-input mt-1 min-h-20" value={form.notes || ''} onChange={(event) => updateField('notes', event.target.value)} /></label>
         <button type="submit" className="primary-button" disabled={saving}>{saving ? 'Creating game' : 'Create game'}</button>
+        {configError ? <div className="rounded-2xl border border-amber-200 bg-amber-50 px-3 py-2 text-sm font-bold text-amber-700">{configError}</div> : null}
+        {error ? <div className="rounded-2xl border border-rose-200 bg-rose-50 px-3 py-2 text-sm font-bold text-rose-700">{error}</div> : null}
+      </form>
+    </section>
+  );
+}
+
+function ScheduleTournamentCreatePanel({ teamName, form, configs, saving, error, configError, onStartUsing, onChange, onSubmit }: { teamName: string; form: ScheduleTournamentCreateFormInput; configs: ScheduleStatTrackerConfigOption[]; saving: boolean; error: string | null; configError: string | null; onStartUsing?: () => void; onChange: (form: ScheduleTournamentCreateFormInput) => void; onSubmit: (event: FormEvent<HTMLFormElement>) => void }) {
+  const updateField = (field: keyof Omit<ScheduleTournamentCreateFormInput, 'games'>, value: string) => onChange({ ...form, [field]: value });
+  const updateGame = (index: number, field: keyof ScheduleGameFormInput, value: string | Date | boolean | null) => onChange({
+    ...form,
+    games: form.games.map((game, gameIndex) => gameIndex === index ? { ...game, [field]: value } : game)
+  });
+  const addGame = () => onChange({ ...form, games: [...form.games, getDefaultScheduleTournamentGameForm()] });
+  const removeGame = (index: number) => onChange({ ...form, games: form.games.filter((_, gameIndex) => gameIndex !== index) });
+
+  return (
+    <section className="app-card p-3 sm:p-4" aria-label="Create tournament" onFocusCapture={onStartUsing}>
+      <div className="app-label">Tournament scheduling</div>
+      <h2 className="mt-1 text-base font-black text-gray-950">Add tournament for {teamName}</h2>
+      <form className="mt-3 space-y-3" onSubmit={onSubmit}>
+        <div className="grid gap-3 sm:grid-cols-2">
+          <label className="text-xs font-bold uppercase tracking-wide text-gray-600">Tournament division<input aria-label="Tournament division" className="auth-input mt-1" value={form.divisionName} onChange={(event) => updateField('divisionName', event.target.value)} /></label>
+          <label className="text-xs font-bold uppercase tracking-wide text-gray-600">Bracket<input aria-label="Tournament bracket" className="auth-input mt-1" value={form.bracketName} onChange={(event) => updateField('bracketName', event.target.value)} /></label>
+          <label className="text-xs font-bold uppercase tracking-wide text-gray-600">Round<input aria-label="Tournament round" className="auth-input mt-1" value={form.roundName} onChange={(event) => updateField('roundName', event.target.value)} /></label>
+          <label className="text-xs font-bold uppercase tracking-wide text-gray-600">Pool<input aria-label="Tournament pool" className="auth-input mt-1" value={form.poolName || ''} onChange={(event) => updateField('poolName', event.target.value)} /></label>
+        </div>
+
+        <div className="space-y-3">
+          {form.games.map((game, index) => (
+            <div key={`tournament-game-${index}`} className="rounded-2xl border border-gray-200 bg-gray-50 p-3">
+              <div className="flex items-center justify-between gap-3">
+                <div className="text-sm font-black text-gray-900">Game {index + 1}</div>
+                <button type="button" className="text-xs font-black text-gray-500 disabled:text-gray-300" onClick={() => removeGame(index)} disabled={saving || form.games.length <= 0}>Remove</button>
+              </div>
+              <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                <label className="text-xs font-bold uppercase tracking-wide text-gray-600">Opponent<input aria-label={`Game ${index + 1} opponent`} className="auth-input mt-1" value={game.opponent} onChange={(event) => updateGame(index, 'opponent', event.target.value)} /></label>
+                <label className="text-xs font-bold uppercase tracking-wide text-gray-600">Location<input aria-label={`Game ${index + 1} location`} className="auth-input mt-1" value={game.location || ''} onChange={(event) => updateGame(index, 'location', event.target.value)} /></label>
+                <label className="text-xs font-bold uppercase tracking-wide text-gray-600">Starts<input aria-label={`Game ${index + 1} starts`} type="datetime-local" className="auth-input mt-1" value={toDatetimeLocalInputValue(game.startDate)} onChange={(event) => updateGame(index, 'startDate', new Date(event.target.value))} /></label>
+                <label className="text-xs font-bold uppercase tracking-wide text-gray-600">Ends<input aria-label={`Game ${index + 1} ends`} type="datetime-local" className="auth-input mt-1" value={toDatetimeLocalInputValue(game.endDate)} onChange={(event) => updateGame(index, 'endDate', event.target.value ? new Date(event.target.value) : null)} /></label>
+                <label className="text-xs font-bold uppercase tracking-wide text-gray-600">Arrival<input aria-label={`Game ${index + 1} arrival`} type="datetime-local" className="auth-input mt-1" value={toDatetimeLocalInputValue(game.arrivalTime)} onChange={(event) => updateGame(index, 'arrivalTime', event.target.value ? new Date(event.target.value) : null)} /></label>
+                <label className="text-xs font-bold uppercase tracking-wide text-gray-600">Home / away<select aria-label={`Game ${index + 1} home away`} className="auth-input mt-1" value={game.isHome === false ? 'away' : game.isHome === true ? 'home' : 'neutral'} onChange={(event) => updateGame(index, 'isHome', event.target.value === 'neutral' ? null : event.target.value === 'home')}><option value="home">Home</option><option value="away">Away</option><option value="neutral">Neutral</option></select></label>
+                <label className="text-xs font-bold uppercase tracking-wide text-gray-600">Tracker config<select aria-label={`Game ${index + 1} tracker config`} className="auth-input mt-1" value={game.statTrackerConfigId || ''} onChange={(event) => updateGame(index, 'statTrackerConfigId', event.target.value)}><option value="">No tracker config</option>{configs.map((config) => <option key={`${index}-${config.id}`} value={config.id}>{config.name}</option>)}</select></label>
+              </div>
+              <label className="mt-3 block text-xs font-bold uppercase tracking-wide text-gray-600">Notes<textarea aria-label={`Game ${index + 1} notes`} className="auth-input mt-1 min-h-20" value={game.notes || ''} onChange={(event) => updateGame(index, 'notes', event.target.value)} /></label>
+            </div>
+          ))}
+        </div>
+
+        <div className="flex flex-wrap gap-2">
+          <button type="button" className="rounded-full border border-gray-300 px-3 py-2 text-sm font-black text-gray-700" onClick={addGame} disabled={saving}>Add another game</button>
+        </div>
+        <button type="submit" className="primary-button" disabled={saving}>{saving ? 'Creating tournament' : 'Create tournament'}</button>
         {configError ? <div className="rounded-2xl border border-amber-200 bg-amber-50 px-3 py-2 text-sm font-bold text-amber-700">{configError}</div> : null}
         {error ? <div className="rounded-2xl border border-rose-200 bg-rose-50 px-3 py-2 text-sm font-bold text-rose-700">{error}</div> : null}
       </form>

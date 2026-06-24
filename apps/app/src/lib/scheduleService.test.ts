@@ -160,13 +160,13 @@ vi.mock('./appDataCache', () => ({
   getParentScheduleSummaryCacheKey: (userId: string) => `app-schedule-summary:${userId}`
 }));
 
-import { addPractice, broadcastLiveEvent, claimOpenOfficiatingSlot, clearOccurrenceOverride, releaseAssignmentClaim, respondToOfficiatingAssignment, updateEvent, updateGame, updateOccurrence, getAssignmentClaims, getGame, getGames, getPlayers, getPracticeSession, getPracticeSessions, getRsvpBreakdownByPlayer, getRsvpSummaries, getRsvps, getTeam, getTeams, listRideOffersForEvent, submitRsvpForPlayer, updatePracticeAttendance, getDoc, getDocs } from './adapters/legacyScheduleDb';
+import { addGame, addPractice, broadcastLiveEvent, claimOpenOfficiatingSlot, clearOccurrenceOverride, releaseAssignmentClaim, respondToOfficiatingAssignment, updateEvent, updateGame, updateOccurrence, getAssignmentClaims, getGame, getGames, getPlayers, getPracticeSession, getPracticeSessions, getRsvpBreakdownByPlayer, getRsvpSummaries, getRsvps, getTeam, getTeams, listRideOffersForEvent, submitRsvpForPlayer, updatePracticeAttendance, getDoc, getDocs } from './adapters/legacyScheduleDb';
 import { getNativeAuthIdToken } from './authService';
 import { expandRecurrence, fetchAndParseCalendar, isTeamActive } from './adapters/legacyScheduleHelpers';
 import { getCachedAppData, loadCachedAppData } from './appDataCache';
 import { mapScheduleEventRecord } from './firestore/mappers';
 import { loadProfileDocument } from './profileService';
-import { buildPlayerScoringLiveEvent, claimOfficialAssignmentItem, createScheduledPracticeForApp, createStaffRsvpAvailabilityLoader, flushPendingLivePublishOperations, hydrateParentScheduleDetails, loadOfficialAssignments, loadParentSchedule, loadParentScheduleChildren, loadParentScheduleEventDetail, loadScheduledPracticeSeriesForEdit, loadStaffPracticeAttendance, loadStaffScheduleRsvpBreakdown, publishLiveScoreUpdateEvent, recordPlayerGameStat, recordPlayerScoringStat, releaseParentScheduleAssignmentClaim, resolveCachedParentScheduleEvents, resolveLiveGameClockSnapshot, resolveParentGameRoute, respondToOfficialAssignmentItem, revertScheduledPracticeOccurrenceForApp, saveScheduledGameLineupDraftForApp, saveStaffPracticeAttendance, submitStaffScheduleRsvpOverride, undoRecordedPlayerGameStat, updateLiveGameClockState, updateScheduledPracticeForApp } from './scheduleService';
+import { buildPlayerScoringLiveEvent, claimOfficialAssignmentItem, createScheduledPracticeForApp, createScheduledTournamentBlockForApp, createStaffRsvpAvailabilityLoader, flushPendingLivePublishOperations, hydrateParentScheduleDetails, loadOfficialAssignments, loadParentSchedule, loadParentScheduleChildren, loadParentScheduleEventDetail, loadScheduledPracticeSeriesForEdit, loadStaffPracticeAttendance, loadStaffScheduleRsvpBreakdown, publishLiveScoreUpdateEvent, recordPlayerGameStat, recordPlayerScoringStat, releaseParentScheduleAssignmentClaim, resolveCachedParentScheduleEvents, resolveLiveGameClockSnapshot, resolveParentGameRoute, respondToOfficialAssignmentItem, revertScheduledPracticeOccurrenceForApp, saveScheduledGameLineupDraftForApp, saveStaffPracticeAttendance, submitStaffScheduleRsvpOverride, undoRecordedPlayerGameStat, updateLiveGameClockState, updateScheduledPracticeForApp } from './scheduleService';
 
 function playerSnapshot(id: string, data: Record<string, unknown> | null) {
   return {
@@ -322,6 +322,91 @@ describe('parent schedule child scope', () => {
     expect(schedule.children).toEqual([
       { teamId: 'team-1', teamName: 'Bears', playerId: 'player-1', playerName: 'Avery Lee' }
     ]);
+  });
+});
+
+describe('scheduled tournament writes', () => {
+  const coachUser = { uid: 'coach-1', email: 'coach@example.com', roles: ['coach'] } as any;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(getTeam).mockResolvedValue({ id: 'team-1', ownerId: 'coach-1', adminEmails: [], admins: [] } as any);
+  });
+
+  it('creates tournament child games with the legacy-compatible tournament shape', async () => {
+    vi.mocked(addGame)
+      .mockResolvedValueOnce('game-1' as any)
+      .mockResolvedValueOnce('game-2' as any);
+
+    const createdIds = await createScheduledTournamentBlockForApp('team-1', {
+      divisionName: '10U Gold',
+      bracketName: 'Gold Bracket',
+      roundName: 'Semifinal',
+      poolName: 'Pool A',
+      games: [
+        {
+          opponent: 'Tigers',
+          startDate: new Date('2026-06-24T18:30:00.000Z'),
+          endDate: new Date('2026-06-24T20:00:00.000Z'),
+          location: 'Main Gym',
+          arrivalTime: new Date('2026-06-24T18:00:00.000Z'),
+          isHome: true,
+          notes: 'Bring dark jerseys'
+        },
+        {
+          opponent: 'Lions',
+          startDate: new Date('2026-06-25T18:30:00.000Z'),
+          endDate: new Date('2026-06-25T20:00:00.000Z'),
+          location: 'Field 2',
+          arrivalTime: new Date('2026-06-25T18:00:00.000Z'),
+          isHome: false,
+          notes: ''
+        }
+      ]
+    }, coachUser);
+
+    expect(createdIds).toEqual(['game-1', 'game-2']);
+    expect(addGame).toHaveBeenCalledTimes(2);
+    expect(addGame).toHaveBeenNthCalledWith(1, 'team-1', expect.objectContaining({
+      type: 'game',
+      opponent: 'Tigers',
+      competitionType: 'tournament',
+      tournament: {
+        divisionName: '10U Gold',
+        bracketName: 'Gold Bracket',
+        roundName: 'Semifinal',
+        poolName: 'Pool A'
+      }
+    }));
+    expect(addGame).toHaveBeenNthCalledWith(2, 'team-1', expect.objectContaining({
+      type: 'game',
+      opponent: 'Lions',
+      competitionType: 'tournament',
+      tournament: {
+        divisionName: '10U Gold',
+        bracketName: 'Gold Bracket',
+        roundName: 'Semifinal',
+        poolName: 'Pool A'
+      }
+    }));
+  });
+
+  it('rejects tournament blocks without required metadata or child games', async () => {
+    await expect(createScheduledTournamentBlockForApp('team-1', {
+      divisionName: '',
+      bracketName: 'Gold Bracket',
+      roundName: 'Semifinal',
+      poolName: 'Pool A',
+      games: [{ opponent: 'Tigers', startDate: new Date('2026-06-24T18:30:00.000Z') } as any]
+    }, coachUser)).rejects.toThrow('Tournament blocks require division, bracket, and round names.');
+
+    await expect(createScheduledTournamentBlockForApp('team-1', {
+      divisionName: '10U Gold',
+      bracketName: 'Gold Bracket',
+      roundName: 'Semifinal',
+      poolName: 'Pool A',
+      games: []
+    }, coachUser)).rejects.toThrow('Tournament blocks require at least one game.');
   });
 });
 
