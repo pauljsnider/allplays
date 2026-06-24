@@ -118,6 +118,40 @@ describe('publicTeamsService', () => {
         expect(dbMocks.discoverPublicTeams).toHaveBeenCalledWith({ searchText: 'Kansas City', cursor: null, pageSize: 24 });
     });
 
+    it('still matches short text prefixes before treating two-letter searches as state codes', async () => {
+        dbMocks.discoverPublicTeams.mockResolvedValue({
+            teams: [
+                {
+                    id: 'team-bears-1',
+                    name: 'Bears',
+                    city: 'Kansas City',
+                    state: 'MO'
+                },
+                {
+                    id: 'team-state-1',
+                    name: 'Wildcats',
+                    city: 'Wichita',
+                    state: 'BE'
+                }
+            ],
+            nextCursor: null
+        });
+
+        await expect(getPublicTeamsPage({ searchText: 'be' })).resolves.toEqual({
+            teams: [
+                expect.objectContaining({
+                    teamId: 'team-bears-1',
+                    teamName: 'Bears'
+                }),
+                expect.objectContaining({
+                    teamId: 'team-state-1',
+                    teamName: 'Wildcats'
+                })
+            ],
+            nextCursor: null
+        });
+    });
+
     it('trims generic search text before hitting the bounded discovery helper', async () => {
         dbMocks.discoverPublicTeams.mockResolvedValue({
             teams: [],

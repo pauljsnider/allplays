@@ -57,12 +57,12 @@ function matchesPublicTeamSearch(team: { name?: string | null; city?: string | n
         return normalizedZip.startsWith(normalizedSearchText);
     }
 
-    if (/^[a-z]{2}$/.test(normalizedSearchText)) {
-        return normalizedState === normalizedSearchText;
-    }
-
     if (teamFields.some((field) => field.includes(normalizedSearchText))) {
         return true;
+    }
+
+    if (/^[a-z]{2}$/.test(normalizedSearchText)) {
+        return normalizedState === normalizedSearchText;
     }
 
     return searchTokens.every((token) => combinedFields.includes(token));
