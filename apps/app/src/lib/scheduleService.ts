@@ -3517,19 +3517,40 @@ export async function loadParentSchedule(user: AuthUser | null, options: ParentS
     });
 
     const teamEntries = [...byTeam.entries()];
-    const eventBatches = await mapWithConcurrency(teamEntries, parentScheduleTeamConcurrency, async ([teamId, teamChildren]) => {
+    const teamResults = await mapWithConcurrency(teamEntries, parentScheduleTeamConcurrency, async ([teamId, teamChildren]) => {
       try {
-        return await buildTeamSchedule(teamId, teamChildren, user, {
-          includePastGames,
-          range: scheduleRangeByTeam?.[teamId]
-        });
+        return {
+          teamId,
+          events: await buildTeamSchedule(teamId, teamChildren, user, {
+            includePastGames,
+            range: scheduleRangeByTeam?.[teamId]
+          }),
+          error: null
+        };
       } catch (error) {
+        const appError = toAppServiceError(error, 'Unable to load schedule.');
         logScheduleWarning('Failed to load team schedule.', 'team-schedule-load', error, { teamId });
-        throw toAppServiceError(error, 'Unable to load schedule.');
+        return {
+          teamId,
+          events: [] as ParentScheduleEvent[],
+          error: appError
+        };
       }
     });
 
-    const events = eventBatches.flat().sort((a, b) => a.date.getTime() - b.date.getTime());
+    const failedTeamLoads = teamResults.filter((result) => result.error);
+    if (failedTeamLoads.length === teamResults.length && failedTeamLoads.length > 0) {
+      throw failedTeamLoads[0].error;
+    }
+    if (failedTeamLoads.length > 0) {
+      logScheduleWarning('Continuing with partial team schedule data.', 'parent-schedule-partial-load', failedTeamLoads[0].error, {
+        failedTeamIds: failedTeamLoads.map((result) => result.teamId),
+        failedTeams: failedTeamLoads.length,
+        totalTeams: teamResults.length
+      });
+    }
+
+    const events = teamResults.flatMap((result) => result.events).sort((a, b) => a.date.getTime() - b.date.getTime());
     if (hydrateDetails) {
       await hydrateEventDetails(events, user);
     }
