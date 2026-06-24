@@ -100,4 +100,48 @@ describe('publicTeamsService', () => {
 
         expect(dbMocks.discoverPublicTeams).toHaveBeenCalledWith({ searchText: 'Atlanta United', cursor: null, pageSize: 24 });
     });
+
+    it('defensively filters over-broad public browse results against the active search text', async () => {
+        dbMocks.discoverPublicTeams.mockResolvedValue({
+            teams: [
+                {
+                    id: 'team-ai-1',
+                    name: 'AI Score Reader',
+                    city: 'Kansas City',
+                    state: 'MO',
+                    zip: '64131'
+                },
+                {
+                    id: 'team-bbb-1',
+                    name: 'bbb',
+                    city: 'Kansas City',
+                    state: 'MO',
+                    zip: '64113'
+                },
+                {
+                    id: 'team-blake-1',
+                    name: 'Blake\'s Basketball',
+                    city: 'Overland Park',
+                    state: 'KS',
+                    zip: '66210'
+                }
+            ],
+            nextCursor: null
+        });
+
+        await expect(getPublicTeamsPage({ searchText: 'AI Score Reader' })).resolves.toEqual({
+            teams: [
+                expect.objectContaining({
+                    teamId: 'team-ai-1',
+                    teamName: 'AI Score Reader'
+                })
+            ],
+            nextCursor: null
+        });
+
+        await expect(getPublicTeamsPage({ searchText: 'zzzznotateam64131' })).resolves.toEqual({
+            teams: [],
+            nextCursor: null
+        });
+    });
 });
