@@ -307,10 +307,11 @@
         function setRegistrationUnavailableState(form) {
             const unavailable = hasUnavailableRegistrationOptions(form);
             const unavailableMessage = document.getElementById('registration-options-unavailable');
+            const allowRetryPayment = retryPaymentRequested && hasOnlineRegistrationCheckout(form);
 
             unavailableMessage.classList.toggle('hidden', !unavailable);
             submitButton.disabled = unavailable;
-            payRegistrationButton.disabled = unavailable;
+            payRegistrationButton.disabled = unavailable && !allowRetryPayment;
 
             if (unavailable) {
                 showFormError('Registration is currently unavailable. No registration options are available.');
@@ -632,7 +633,7 @@
                 showFormError('Payment is not configured for this registration.');
                 return;
             }
-            if (hasUnavailableRegistrationOptions(activeForm)) {
+            if (hasUnavailableRegistrationOptions(activeForm) && !retryPaymentRequested) {
                 showFormError('Registration is currently unavailable. No registration options are available.');
                 return;
             }

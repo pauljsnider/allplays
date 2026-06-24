@@ -389,6 +389,9 @@ describe('public registration flow', () => {
         expect(page).toContain("const retryPaymentRequested = params.get('retryPayment') === '1' && !!(retryPublicCheckoutCapability || retryRegistrationId);");
         expect(page).toContain('Use the button below to retry payment without submitting a new registration.');
         expect(page).toContain('if (retryPaymentRequested) {');
+        expect(page).toContain('const allowRetryPayment = retryPaymentRequested && hasOnlineRegistrationCheckout(form);');
+        expect(page).toContain('payRegistrationButton.disabled = unavailable && !allowRetryPayment;');
+        expect(page).toContain('if (hasUnavailableRegistrationOptions(activeForm) && !retryPaymentRequested) {');
         expect(page).toContain("registrationId: currentPublicCheckoutCapability ? '' : retryRegistrationId,");
         expect(page).toContain('retryPayment: true');
         expect(page).toContain('const retryKey = buildCheckoutRetryKey(submission, amountCents, currency);');
