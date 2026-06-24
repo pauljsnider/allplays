@@ -119,8 +119,12 @@ export function createLoginAuthStateManager() {
         pendingRedirectUser = null;
     }
 
-    function finishProcessing() {
+    function finishProcessing({ keepPendingRedirectUser = false } = {}) {
         isProcessingAuth = false;
+
+        if (!keepPendingRedirectUser) {
+            pendingRedirectUser = null;
+        }
     }
 
     function captureAuthenticatedUser(user) {

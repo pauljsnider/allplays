@@ -101,7 +101,7 @@
         import { getUserProfile } from './js/db.js?v=66';
         import { renderHeader, renderFooter } from './js/utils.js?v=8';
         import { getPostAuthRedirectUrl } from './js/invite-redirect.js?v=2';
-        import * as loginPageModule from './js/login-page.js?v=5';
+        import * as loginPageModule from './js/login-page.js?v=6';
 
         renderFooter(document.getElementById('footer-container'));
 
@@ -138,11 +138,13 @@
             console.log('[Login Page] Starting Google redirect result check');
 
             const errorDiv = document.getElementById('error-message');
+            let shouldConsumePendingRedirectUser = false;
             try {
                 const result = await handleGoogleRedirectResult();
                 console.log('[Login Page] handleGoogleRedirectResult returned:', result ? 'Result found' : 'No result');
 
                 if (result && result.user) {
+                    shouldConsumePendingRedirectUser = true;
                     console.log('[Login Page] User found, fetching profile for:', result.user.email);
                     // User just returned from Google sign-in
                     const profile = await getUserProfile(result.user.uid);
@@ -154,6 +156,7 @@
                     return; // Prevent further initialization
                 } else {
                     console.log('[Login Page] No redirect result - normal page load');
+                    shouldConsumePendingRedirectUser = true;
                 }
             } catch (error) {
                 // Show error from Google sign-in
@@ -164,7 +167,7 @@
             } finally {
                 // Always clear the processing flag so checkAuth can work normally
                 console.log('[Login Page] Clearing isProcessingAuth flag');
-                authState.finishProcessing();
+                authState.finishProcessing({ keepPendingRedirectUser: shouldConsumePendingRedirectUser });
 
                 const pendingUser = authState.consumePendingRedirectUser();
                 if (pendingUser) {

@@ -148,7 +148,7 @@ describe('login page redirect coordination', () => {
 });
 
 describe('login page auth state manager', () => {
-    it('replays a pending authenticated user after redirect processing finishes', () => {
+    it('replays a pending authenticated user after successful redirect processing finishes', () => {
         const authState = createLoginAuthStateManager();
         const user = { uid: 'user-1' };
 
@@ -157,9 +157,22 @@ describe('login page auth state manager', () => {
         expect(authState.captureAuthenticatedUser(user)).toBe(false);
         expect(authState.consumePendingRedirectUser()).toBe(null);
 
-        authState.finishProcessing();
+        authState.finishProcessing({ keepPendingRedirectUser: true });
 
         expect(authState.consumePendingRedirectUser()).toBe(user);
+        expect(authState.consumePendingRedirectUser()).toBe(null);
+    });
+
+    it('drops a buffered authenticated user after failed redirect processing', () => {
+        const authState = createLoginAuthStateManager();
+        const user = { uid: 'user-2' };
+
+        authState.beginProcessing();
+
+        expect(authState.captureAuthenticatedUser(user)).toBe(false);
+
+        authState.finishProcessing();
+
         expect(authState.consumePendingRedirectUser()).toBe(null);
     });
 
