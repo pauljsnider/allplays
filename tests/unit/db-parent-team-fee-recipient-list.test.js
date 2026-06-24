@@ -22,15 +22,23 @@ function buildListParentTeamFeeRecipients({ db = {}, collectionGroup, query, whe
 }
 
 describe('listParentTeamFeeRecipients', () => {
-    it('uses single-field recipient lookups so parent fees do not depend on composite team indexes', async () => {
+    it('keeps parent fee lookups scoped to linked teams so Firestore rules can authorize them', async () => {
         const collectionGroupMock = vi.fn((_db, name) => ({ name }));
         const whereMock = vi.fn((field, op, value) => ({ field, op, value }));
         const queryMock = vi.fn((ref, ...clauses) => ({ ref, clauses }));
         const getDocs = vi.fn(async (request) => {
             const fields = request.clauses.map((clause) => clause.field);
-            expect(fields).not.toContain('teamId');
+            expect(fields).toContain('teamId');
 
-            if (fields.includes('parentUserId')) {
+            const teamIdClause = request.clauses.find((clause) => clause.field === 'teamId');
+            const playerIdClause = request.clauses.find((clause) => clause.field === 'playerId');
+            const parentUserClause = request.clauses.find((clause) => clause.field === 'parentUserId');
+
+            if (teamIdClause?.value !== 'team-1') {
+                return { docs: [] };
+            }
+
+            if (parentUserClause?.value === 'parent-1') {
                 return {
                     docs: [
                         {
@@ -47,7 +55,7 @@ describe('listParentTeamFeeRecipients', () => {
                 };
             }
 
-            if (fields.includes('playerId')) {
+            if (playerIdClause?.value === 'player-1') {
                 return {
                     docs: [
                         {
@@ -57,15 +65,6 @@ describe('listParentTeamFeeRecipients', () => {
                                 teamId: 'team-1',
                                 playerId: 'player-1',
                                 title: 'Tournament fee'
-                            })
-                        },
-                        {
-                            id: 'recipient-3',
-                            ref: { path: 'teams/team-2/feeBatches/batch-9/feeRecipients/recipient-3' },
-                            data: () => ({
-                                teamId: 'team-2',
-                                playerId: 'player-1',
-                                title: 'Wrong team fee'
                             })
                         }
                     ]
@@ -88,6 +87,15 @@ describe('listParentTeamFeeRecipients', () => {
             expect.objectContaining({ id: 'recipient-1', title: 'Season dues' }),
             expect.objectContaining({ id: 'recipient-2', title: 'Tournament fee' })
         ]);
-        expect(fees.some((fee) => fee.id === 'recipient-3')).toBe(false);
+        expect(queryMock).toHaveBeenCalledWith(
+            { name: 'feeRecipients' },
+            { field: 'teamId', op: '==', value: 'team-1' },
+            { field: 'parentUserId', op: '==', value: 'parent-1' }
+        );
+        expect(queryMock).toHaveBeenCalledWith(
+            { name: 'feeRecipients' },
+            { field: 'teamId', op: '==', value: 'team-1' },
+            { field: 'playerId', op: '==', value: 'player-1' }
+        );
     });
 });

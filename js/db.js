@@ -4809,14 +4809,20 @@ export async function listParentTeamFeeRecipients(userId, children = []) {
         const [teamId, playerId] = key.split('::');
         return { teamId, playerId };
     });
-    const playerIds = [...new Set(childLinks.map((child) => child.playerId).filter(Boolean))];
+    const teamIds = [...new Set(childLinks.map((child) => child.teamId).filter(Boolean))];
 
     const recipientsRef = collectionGroup(db, 'feeRecipients');
     const queries = [
-        query(recipientsRef, where('parentUserId', '==', userId)),
-        query(recipientsRef, where('accountUserId', '==', userId)),
-        query(recipientsRef, where('userId', '==', userId)),
-        ...playerIds.map((playerId) => query(recipientsRef, where('playerId', '==', playerId)))
+        ...teamIds.flatMap((teamId) => [
+            query(recipientsRef, where('teamId', '==', teamId), where('parentUserId', '==', userId)),
+            query(recipientsRef, where('teamId', '==', teamId), where('accountUserId', '==', userId)),
+            query(recipientsRef, where('teamId', '==', teamId), where('userId', '==', userId))
+        ]),
+        ...childLinks.map((child) => query(
+            recipientsRef,
+            where('teamId', '==', child.teamId),
+            where('playerId', '==', child.playerId)
+        ))
     ];
 
     const results = await Promise.allSettled(queries.map((feeQuery) => getDocs(feeQuery)));
