@@ -194,7 +194,7 @@ describe('Schedule', () => {
     });
   });
 
-  it('passes a no-partial-caching guard into the schedule summary cache loader', async () => {
+  it('passes the full schedule cache contract into the summary loader', async () => {
     scheduleServiceMocks.loadParentSchedule.mockResolvedValueOnce({
       children: [
         { playerId: 'player-1', playerName: 'Pat', teamId: 'team-1', teamName: 'Bears' }
@@ -210,10 +210,18 @@ describe('Schedule', () => {
       'parent-schedule:test-user',
       expect.any(Function),
       expect.objectContaining({
+        ttlMs: 60 * 1000 * 5,
+        force: false,
         shouldCache: expect.any(Function)
       })
     );
-    const options = appDataCacheMocks.loadCachedAppData.mock.calls[0]?.[2] as { shouldCache: (value: { isPartial?: boolean }) => boolean };
+    const options = appDataCacheMocks.loadCachedAppData.mock.calls[0]?.[2] as {
+      ttlMs: number;
+      force: boolean;
+      shouldCache: (value: { isPartial?: boolean }) => boolean;
+    };
+    expect(options.ttlMs).toBe(60 * 1000 * 5);
+    expect(options.force).toBe(false);
     expect(options.shouldCache({ isPartial: true })).toBe(false);
     expect(options.shouldCache({ isPartial: false })).toBe(true);
   });
