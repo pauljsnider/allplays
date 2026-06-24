@@ -762,7 +762,7 @@ test('profile keeps destructive alert actions disabled until a failed team load 
     await expect(page.getByLabel('Team')).toHaveValue('team-1');
     await page.getByLabel('Team').selectOption('team-2');
 
-    await expect(page.getByText('Alerts unavailable')).toBeVisible();
+    await expect(page.getByText('Alerts unavailable', { exact: true })).toBeVisible();
     await expect(page.getByText('temporary outage')).toBeVisible();
     await expect(page.getByLabel('Live Chat')).toHaveCount(0);
     await expect(page.getByRole('button', { name: 'Turn on game-day alerts' })).toBeDisabled();
