@@ -793,6 +793,41 @@ describe('React app chat recipient service', () => {
         });
     });
 
+    it('reuses only canonical staff conversations and ignores legacy coach-scoped staff threads', async () => {
+        dbMocks.upsertChatConversation.mockResolvedValue({
+            id: 'group_role%3Astaff',
+            type: 'group',
+            participantIds: [],
+            participantRoles: ['staff']
+        });
+
+        const { ensureStaffChatConversation } = await import('../../apps/app/src/lib/chatService.ts');
+        const result = await ensureStaffChatConversation('team-1', {
+            uid: 'coach-1',
+            email: 'coach@example.com',
+            displayName: 'Coach Jamie'
+        }, [
+            {
+                id: 'legacy-staff-thread',
+                type: 'group',
+                participantIds: ['coach-1'],
+                participantRoles: ['staff']
+            }
+        ]);
+
+        expect(dbMocks.upsertChatConversation).toHaveBeenCalledWith('team-1', expect.objectContaining({
+            type: 'group',
+            participantIds: [],
+            participantRoles: ['staff'],
+            name: 'Staff only'
+        }));
+        expect(result).toEqual(expect.objectContaining({
+            id: 'group_role%3Astaff',
+            participantIds: [],
+            participantRoles: ['staff']
+        }));
+    });
+
     it('routes staff-only messages into a non-default conversation before posting', async () => {
         dbMocks.upsertChatConversation.mockResolvedValue({
             id: 'staff-conversation',
@@ -823,7 +858,7 @@ describe('React app chat recipient service', () => {
 
         expect(dbMocks.upsertChatConversation).toHaveBeenCalledWith('team-1', expect.objectContaining({
             type: 'group',
-            participantIds: ['coach-1'],
+            participantIds: [],
             participantRoles: ['staff'],
             name: 'Staff only'
         }));

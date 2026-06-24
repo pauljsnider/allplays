@@ -35,6 +35,8 @@ describe('team chat conversations', () => {
         expect(normalizeConversationParticipantIds(['email:Parent@Example.com'])).toEqual(['email:parent@example.com']);
         expect(buildConversationId('direct', ['user:b', 'user:a'])).toBe('direct_user%3Aa__user%3Ab');
         expect(buildConversationId('group', ['player:42', 'email:parent@example.com'])).toBe('group_email%3Aparent%40example.com__player%3A42');
+        expect(buildConversationId('group', ['coach-a'], ['staff'])).toBe('group_role%3Astaff');
+        expect(buildConversationId('group', ['coach-b'], ['staff'])).toBe('group_role%3Astaff');
     });
 
     it('recognizes user, email, role, moderator, and team conversation participation', () => {

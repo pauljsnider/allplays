@@ -148,4 +148,51 @@ describe('upsertChatConversation', () => {
             updatedAt: now
         });
     });
+
+    it('builds one stable conversation id for staff-only role conversations', async () => {
+        const now = { seconds: 456 };
+        const getDoc = vi.fn().mockResolvedValue(makeSnapshot(null));
+        const setDoc = vi.fn().mockResolvedValue(undefined);
+        const conversationRef = { path: 'teams/team-1/chatConversations/group_role%3Astaff' };
+        const buildConversationId = vi.fn(() => 'group_role%3Astaff');
+        const upsertChatConversation = buildUpsertChatConversation({
+            normalizeConversationType: vi.fn((value) => value),
+            normalizeConversationParticipantIds: vi.fn(() => []),
+            buildConversationId,
+            Timestamp: { now: vi.fn(() => now) },
+            doc: vi.fn(() => conversationRef),
+            db: {},
+            getDoc,
+            setDoc
+        });
+
+        const result = await upsertChatConversation('team-1', {
+            type: 'group',
+            participantIds: ['coach-2'],
+            participantRoles: ['staff'],
+            mutedBy: [],
+            name: 'Staff only'
+        });
+
+        expect(buildConversationId).toHaveBeenCalledWith('group', [], ['staff']);
+        expect(setDoc).toHaveBeenCalledWith(conversationRef, {
+            type: 'group',
+            participantIds: [],
+            participantRoles: ['staff'],
+            mutedBy: [],
+            updatedAt: now,
+            name: 'Staff only',
+            createdAt: now
+        }, { merge: true });
+        expect(result).toEqual({
+            id: 'group_role%3Astaff',
+            type: 'group',
+            participantIds: [],
+            participantRoles: ['staff'],
+            mutedBy: [],
+            updatedAt: now,
+            name: 'Staff only',
+            createdAt: now
+        });
+    });
 });

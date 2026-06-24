@@ -781,13 +781,18 @@ export async function loadChatConversations(teamId: string, user: AuthUser, team
   }
 }
 
+function canReuseStaffChatConversation(conversation: ChatConversation | null | undefined) {
+  if (!isStaffConversation(conversation)) return false;
+  return !Array.isArray(conversation?.participantIds) || conversation.participantIds.length === 0;
+}
+
 export async function ensureStaffChatConversation(teamId: string, user: AuthUser, conversations: ChatConversation[] = []): Promise<ChatConversation> {
-  const existing = conversations.find((conversation) => isStaffConversation(conversation));
+  const existing = conversations.find((conversation) => canReuseStaffChatConversation(conversation));
   if (existing) return existing;
 
   return await withTimeout(Promise.resolve(upsertChatConversation(teamId, {
     type: 'group',
-    participantIds: [user.uid],
+    participantIds: [],
     participantRoles: ['staff'],
     mutedBy: [],
     name: 'Staff only'
@@ -1147,7 +1152,7 @@ export async function sendTeamChatMessage({
     let createdConversation: ChatConversation | null = null;
     if (isDefaultTeamConversation(conversationId) && targetMetadata.targetType !== 'full_team') {
       const participantIds = targetMetadata.targetType === 'staff'
-        ? [user.uid]
+        ? []
         : Array.from(new Set([user.uid, ...targetMetadata.recipientIds]));
       const participantRoles = targetMetadata.targetType === 'staff' ? ['staff'] : [];
       createdConversation = await withTimeout(Promise.resolve(upsertChatConversation(teamId, {

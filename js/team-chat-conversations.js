@@ -1,4 +1,5 @@
 export const DEFAULT_TEAM_CONVERSATION_ID = 'team';
+const STAFF_ROLE_CONVERSATION_ID = 'group_role%3Astaff';
 
 const CONVERSATION_TYPES = new Set(['team', 'group', 'direct']);
 
@@ -18,9 +19,21 @@ export function normalizeConversationParticipantIds(participantIds = []) {
         .sort();
 }
 
-export function buildConversationId(type, participantIds = []) {
+function normalizeConversationParticipantRoles(participantRoles = []) {
+    return Array.from(new Set((Array.isArray(participantRoles) ? participantRoles : [])
+        .map((role) => String(role || '').trim().toLowerCase())
+        .filter(Boolean)))
+        .sort();
+}
+
+export function buildConversationId(type, participantIds = [], participantRoles = []) {
     const normalizedType = normalizeConversationType(type);
     if (normalizedType === 'team') return DEFAULT_TEAM_CONVERSATION_ID;
+
+    const roles = normalizeConversationParticipantRoles(participantRoles);
+    if (normalizedType === 'group' && roles.length === 1 && roles[0] === 'staff') {
+        return STAFF_ROLE_CONVERSATION_ID;
+    }
 
     const participants = normalizeConversationParticipantIds(participantIds);
     const prefix = normalizedType === 'direct' && participants.length === 2 ? 'direct' : 'group';

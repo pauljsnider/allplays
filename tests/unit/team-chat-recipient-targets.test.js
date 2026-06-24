@@ -37,6 +37,7 @@ describe('team chat recipient targets', () => {
         expect(html).toContain('function buildEmailTargetMetadata()');
         expect(html).toContain("participantRoles.includes('staff')");
         expect(html).toContain('const targetMetadata = buildEmailTargetMetadata();');
+        expect(html).toContain("const participantIds = targetMetadata.targetType === 'staff'\n                        ? []");
     });
 
     it('persists normalized target metadata from postChatMessage', () => {
