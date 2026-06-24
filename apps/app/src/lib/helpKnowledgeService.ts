@@ -107,6 +107,7 @@ export function searchHelpKnowledge({
   const normalizedQuery = cleanQuery.toLowerCase();
   const roleTokens = normalizeRoles(roles);
   const [normalizedRoleFilter] = normalizeRoles([roleFilter]);
+  const hasExplicitQuery = normalizedQuery.length > 0;
   const maxResults = Math.min(Math.max(Number(limit) || 5, 1), Math.max(docs.length, 1));
   const cacheKey = JSON.stringify({
     query: normalizedQuery,
@@ -128,7 +129,7 @@ export function searchHelpKnowledge({
       doc,
       score: scoreHelpDoc(doc, normalizedQuery, queryTokens, roleTokens)
     }))
-    .filter((result) => result.score > 0 || !queryTokens.length)
+    .filter((result) => result.score > 0 || !hasExplicitQuery)
     .sort((a, b) => b.score - a.score || a.doc.title.localeCompare(b.doc.title))
     .slice(0, maxResults)
     .map(({ doc, score }) => ({
@@ -162,6 +163,7 @@ function buildHelpKnowledgeDoc(doc: HelpKnowledgeIndexDoc): HelpKnowledgeDoc {
 
 function scoreHelpDoc(doc: HelpKnowledgeDoc, query: string, tokens: string[], roles: string[]) {
   if (!tokens.length) {
+    if (query) return 0;
     return roleMatches(doc.roles, roles) ? 2 : 1;
   }
 
@@ -169,21 +171,46 @@ function scoreHelpDoc(doc: HelpKnowledgeDoc, query: string, tokens: string[], ro
   const summary = doc.normalizedSummary;
   const file = doc.normalizedFile;
   const text = doc.normalizedText;
-  let score = roleMatches(doc.roles, roles) ? 2 : 0;
+  let score = 0;
+  let hasQueryMatch = false;
   const phrase = query.toLowerCase();
 
   if (phrase.length > 8) {
-    if (title.includes(phrase)) score += 28;
-    if (summary.includes(phrase)) score += 18;
-    if (text.includes(phrase)) score += 10;
+    if (title.includes(phrase)) {
+      score += 28;
+      hasQueryMatch = true;
+    }
+    if (summary.includes(phrase)) {
+      score += 18;
+      hasQueryMatch = true;
+    }
+    if (text.includes(phrase)) {
+      score += 10;
+      hasQueryMatch = true;
+    }
   }
 
   tokens.forEach((token) => {
-    if (title.includes(token)) score += 9;
-    if (summary.includes(token)) score += 5;
-    if (file.includes(token)) score += 4;
-    if (text.includes(token)) score += Math.min(countOccurrences(text, token), 6);
+    if (title.includes(token)) {
+      score += 9;
+      hasQueryMatch = true;
+    }
+    if (summary.includes(token)) {
+      score += 5;
+      hasQueryMatch = true;
+    }
+    if (file.includes(token)) {
+      score += 4;
+      hasQueryMatch = true;
+    }
+    if (text.includes(token)) {
+      score += Math.min(countOccurrences(text, token), 6);
+      hasQueryMatch = true;
+    }
   });
+
+  if (!hasQueryMatch) return 0;
+  if (roleMatches(doc.roles, roles)) score += 2;
 
   return score;
 }
