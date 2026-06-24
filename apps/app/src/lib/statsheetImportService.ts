@@ -347,7 +347,8 @@ export async function applyTrackStatsheetImportForApp({
   const includedVisitor = (visitorRows || []).filter((row) => row?.include)
   const eventsSnap = await getDocs(collection(db, `teams/${teamId}/games/${gameId}/events`))
   const statsSnap = await getDocs(collection(db, `teams/${teamId}/games/${gameId}/aggregatedStats`))
-  const hasExistingTrackedData = eventsSnap.size > 0 || statsSnap.size > 0
+  const privateStatsSnap = await getDocs(collection(db, `teams/${teamId}/games/${gameId}/privatePlayerStats`))
+  const hasExistingTrackedData = eventsSnap.size > 0 || statsSnap.size > 0 || privateStatsSnap.size > 0
 
   if (hasExistingTrackedData && !replaceExisting) {
     return {
@@ -365,6 +366,7 @@ export async function applyTrackStatsheetImportForApp({
   if (hasExistingTrackedData) {
     await Promise.all(eventsSnap.docs.map((entry: any) => deleteDoc(entry.ref)))
     await Promise.all(statsSnap.docs.map((entry: any) => deleteDoc(entry.ref)))
+    await Promise.all(privateStatsSnap.docs.map((entry: any) => deleteDoc(entry.ref)))
   }
 
   const applyPlan = buildTrackStatsheetApplyPlan({
