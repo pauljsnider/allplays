@@ -180,6 +180,7 @@ export function Schedule({ auth }: { auth: AuthState }) {
   });
   const [selectedDay, setSelectedDay] = useState<Date | null>(null);
   const [desktopAdvancedControlsOpen, setDesktopAdvancedControlsOpen] = useState(false);
+  const [desktopStaffToolsOpen, setDesktopStaffToolsOpen] = useState(false);
   const [calendarUrl, setCalendarUrl] = useState('');
   const [calendarUrlError, setCalendarUrlError] = useState<string | null>(null);
   const [savingCalendarUrl, setSavingCalendarUrl] = useState(false);
@@ -540,6 +541,12 @@ export function Schedule({ auth }: { auth: AuthState }) {
     }
   }, [isDesktopWeb, selectedCalendarTeam]);
 
+  useEffect(() => {
+    if (!isDesktopWeb || !selectedCalendarTeam) {
+      setDesktopStaffToolsOpen(false);
+    }
+  }, [isDesktopWeb, selectedCalendarTeam]);
+
   const requestTrackerConfigLoad = () => {
     if (!selectedCalendarTeam) return;
     setTrackerConfigRequestedTeamIds((current) => {
@@ -567,8 +574,7 @@ export function Schedule({ auth }: { auth: AuthState }) {
     let cancelled = false;
     if (!selectedCalendarTeam || !auth.user) return;
     const shouldLoadTrackerConfigs = mobileStaffToolsOpen
-      || trackerConfigRequestedTeamIds[selectedCalendarTeam.teamId]
-      || (isDesktopWeb && desktopAdvancedControlsOpen);
+      || trackerConfigRequestedTeamIds[selectedCalendarTeam.teamId];
     if (!shouldLoadTrackerConfigs) return;
 
     const cachedConfigs = trackerConfigCacheRef.current[selectedCalendarTeam.teamId];
@@ -601,7 +607,76 @@ export function Schedule({ auth }: { auth: AuthState }) {
     return () => {
       cancelled = true;
     };
-  }, [auth.user, desktopAdvancedControlsOpen, isDesktopWeb, mobileStaffToolsOpen, selectedCalendarTeam, trackerConfigRequestedTeamIds]);
+  }, [auth.user, mobileStaffToolsOpen, selectedCalendarTeam, trackerConfigRequestedTeamIds]);
+
+  const renderScheduleStaffToolsContent = () => selectedCalendarTeam ? (
+    <>
+      <ScheduleGameCreatePanel
+        teamName={selectedCalendarTeam.teamName}
+        form={gameForm}
+        configs={gameTrackerConfigs}
+        saving={savingGame}
+        error={gameFormError}
+        configError={gameTrackerConfigError}
+        onStartUsing={requestTrackerConfigLoad}
+        onChange={(nextForm) => {
+          setGameForm(nextForm);
+          if (gameFormError) setGameFormError(null);
+        }}
+        onSubmit={handleCreateGame}
+      />
+      <SchedulePracticeCreatePanel
+        teamName={selectedCalendarTeam.teamName}
+        form={practiceForm}
+        saving={savingPractice}
+        error={practiceFormError}
+        onChange={(nextForm) => {
+          setPracticeForm(nextForm);
+          if (practiceFormError) setPracticeFormError(null);
+        }}
+        onSubmit={handleCreatePractice}
+      />
+      <ScheduleStaffTools
+        teamName={selectedCalendarTeam.teamName}
+        calendarUrl={calendarUrl}
+        calendarUrls={selectedCalendarTeam.calendarUrls || []}
+        calendarUrlError={calendarUrlError}
+        savingCalendarUrl={savingCalendarUrl}
+        removingCalendarUrl={removingCalendarUrl}
+        aiScheduleText={aiScheduleText}
+        aiScheduleImageName={aiScheduleImageName}
+        aiPreviewRows={scheduleImportPreviewSource === 'ai' ? csvPreviewRows : []}
+        aiImportErrors={aiImportErrors}
+        processingAiImport={processingAiImport}
+        csvHeaders={csvHeaders}
+        csvMapping={csvMapping}
+        csvPreviewRows={scheduleImportPreviewSource === 'csv' ? csvPreviewRows : []}
+        csvImportErrors={csvImportErrors}
+        csvFileName={csvFileName}
+        loadingCsvFile={loadingCsvFile}
+        importingCsv={importingCsv}
+        onCalendarUrlChange={(value) => {
+          setCalendarUrl(value);
+          if (calendarUrlError) setCalendarUrlError(null);
+        }}
+        onAddCalendarUrl={handleAddCalendarUrl}
+        onRemoveCalendarUrl={handleRemoveCalendarUrl}
+        onAiTextChange={(value) => {
+          setAiScheduleText(value);
+          clearAiPreview();
+          if (aiImportErrors.length) setAiImportErrors([]);
+        }}
+        onAiImageChange={handleAiImageChange}
+        onAiGeneratePreview={handleAiGeneratePreview}
+        onImportCsv={handleCsvImport}
+        onClearAi={handleAiClear}
+        onCsvFileChange={handleCsvFileChange}
+        onCsvMappingChange={handleCsvMappingChange}
+        onCsvPreview={handleCsvPreview}
+        onClearCsv={handleCsvClear}
+      />
+    </>
+  ) : null;
 
   useEffect(() => {
     setGameForm((current) => {
@@ -1134,10 +1209,7 @@ export function Schedule({ auth }: { auth: AuthState }) {
               onRefresh={() => refreshSchedule(true)}
               onExport={handleExport}
               advancedControlsOpen={desktopAdvancedControlsOpen}
-              onAdvancedControlsOpenChange={(open) => {
-                if (open) requestTrackerConfigLoad();
-                setDesktopAdvancedControlsOpen(open);
-              }}
+              onAdvancedControlsOpenChange={setDesktopAdvancedControlsOpen}
               onCopyAgenda={handleCopyAgenda}
               onResetFilters={() => {
                 setFilter('upcoming-all');
@@ -1164,76 +1236,6 @@ export function Schedule({ auth }: { auth: AuthState }) {
               ))}
             </div>
           ) : null}
-
-          {isDesktopWeb && selectedCalendarTeam ? (
-            <>
-              <ScheduleGameCreatePanel
-                teamName={selectedCalendarTeam.teamName}
-                form={gameForm}
-                configs={gameTrackerConfigs}
-                saving={savingGame}
-                error={gameFormError}
-                configError={gameTrackerConfigError}
-                onStartUsing={requestTrackerConfigLoad}
-                onChange={(nextForm) => {
-                  setGameForm(nextForm);
-                  if (gameFormError) setGameFormError(null);
-                }}
-                onSubmit={handleCreateGame}
-              />
-              <SchedulePracticeCreatePanel
-                teamName={selectedCalendarTeam.teamName}
-                form={practiceForm}
-                saving={savingPractice}
-                error={practiceFormError}
-                onChange={(nextForm) => {
-                  setPracticeForm(nextForm);
-                  if (practiceFormError) setPracticeFormError(null);
-                }}
-                onSubmit={handleCreatePractice}
-              />
-            <ScheduleStaffTools
-              teamName={selectedCalendarTeam.teamName}
-              calendarUrl={calendarUrl}
-              calendarUrls={selectedCalendarTeam.calendarUrls || []}
-              calendarUrlError={calendarUrlError}
-              savingCalendarUrl={savingCalendarUrl}
-              removingCalendarUrl={removingCalendarUrl}
-              aiScheduleText={aiScheduleText}
-              aiScheduleImageName={aiScheduleImageName}
-              aiPreviewRows={scheduleImportPreviewSource === 'ai' ? csvPreviewRows : []}
-              aiImportErrors={aiImportErrors}
-              processingAiImport={processingAiImport}
-              csvHeaders={csvHeaders}
-              csvMapping={csvMapping}
-              csvPreviewRows={scheduleImportPreviewSource === 'csv' ? csvPreviewRows : []}
-              csvImportErrors={csvImportErrors}
-              csvFileName={csvFileName}
-              loadingCsvFile={loadingCsvFile}
-              importingCsv={importingCsv}
-              onCalendarUrlChange={(value) => {
-                setCalendarUrl(value);
-                if (calendarUrlError) setCalendarUrlError(null);
-              }}
-              onAddCalendarUrl={handleAddCalendarUrl}
-              onRemoveCalendarUrl={handleRemoveCalendarUrl}
-              onAiTextChange={(value) => {
-                setAiScheduleText(value);
-                clearAiPreview();
-                if (aiImportErrors.length) setAiImportErrors([]);
-              }}
-              onAiImageChange={handleAiImageChange}
-              onAiGeneratePreview={handleAiGeneratePreview}
-              onImportCsv={handleCsvImport}
-              onClearAi={handleAiClear}
-              onCsvFileChange={handleCsvFileChange}
-              onCsvMappingChange={handleCsvMappingChange}
-              onCsvPreview={handleCsvPreview}
-              onClearCsv={handleCsvClear}
-            />
-            </>
-          ) : null}
-
           {statusMessage ? <Status tone="success" message={statusMessage} /> : null}
           {scheduleReadError ? <Status tone="error" message={scheduleLoadError ? getScheduleLoadErrorMessage(scheduleLoadError, hasLoadedSchedule) : scheduleReadError} /> : null}
 
@@ -1271,81 +1273,30 @@ export function Schedule({ auth }: { auth: AuthState }) {
             />
           )}
 
+          {isDesktopWeb && selectedCalendarTeam ? (
+            <ScheduleStaffToolsSection
+              open={desktopStaffToolsOpen}
+              teamName={selectedCalendarTeam.teamName}
+              contentId="desktop-schedule-staff-tools"
+              onToggle={() => setDesktopStaffToolsOpen((current) => !current)}
+            >
+              {renderScheduleStaffToolsContent()}
+            </ScheduleStaffToolsSection>
+          ) : null}
+
           {!isDesktopWeb && selectedCalendarTeam ? (
-            <MobileScheduleStaffToolsSection
+            <ScheduleStaffToolsSection
               open={mobileStaffToolsOpen}
               teamName={selectedCalendarTeam.teamName}
+              contentId="mobile-schedule-staff-tools"
               onToggle={() => setMobileStaffToolsOpen((current) => {
                 const nextOpen = !current;
                 if (nextOpen) requestTrackerConfigLoad();
                 return nextOpen;
               })}
             >
-              <ScheduleGameCreatePanel
-                teamName={selectedCalendarTeam.teamName}
-                form={gameForm}
-                configs={gameTrackerConfigs}
-                saving={savingGame}
-                error={gameFormError}
-                configError={gameTrackerConfigError}
-                onStartUsing={requestTrackerConfigLoad}
-                onChange={(nextForm) => {
-                  setGameForm(nextForm);
-                  if (gameFormError) setGameFormError(null);
-                }}
-                onSubmit={handleCreateGame}
-              />
-              <SchedulePracticeCreatePanel
-                teamName={selectedCalendarTeam.teamName}
-                form={practiceForm}
-                saving={savingPractice}
-                error={practiceFormError}
-                onChange={(nextForm) => {
-                  setPracticeForm(nextForm);
-                  if (practiceFormError) setPracticeFormError(null);
-                }}
-                onSubmit={handleCreatePractice}
-              />
-              <ScheduleStaffTools
-                teamName={selectedCalendarTeam.teamName}
-                calendarUrl={calendarUrl}
-                calendarUrls={selectedCalendarTeam.calendarUrls || []}
-                calendarUrlError={calendarUrlError}
-                savingCalendarUrl={savingCalendarUrl}
-                removingCalendarUrl={removingCalendarUrl}
-                aiScheduleText={aiScheduleText}
-                aiScheduleImageName={aiScheduleImageName}
-                aiPreviewRows={scheduleImportPreviewSource === 'ai' ? csvPreviewRows : []}
-                aiImportErrors={aiImportErrors}
-                processingAiImport={processingAiImport}
-                csvHeaders={csvHeaders}
-                csvMapping={csvMapping}
-                csvPreviewRows={scheduleImportPreviewSource === 'csv' ? csvPreviewRows : []}
-                csvImportErrors={csvImportErrors}
-                csvFileName={csvFileName}
-                loadingCsvFile={loadingCsvFile}
-                importingCsv={importingCsv}
-                onCalendarUrlChange={(value) => {
-                  setCalendarUrl(value);
-                  if (calendarUrlError) setCalendarUrlError(null);
-                }}
-                onAddCalendarUrl={handleAddCalendarUrl}
-                onRemoveCalendarUrl={handleRemoveCalendarUrl}
-                onAiTextChange={(value) => {
-                  setAiScheduleText(value);
-                  clearAiPreview();
-                  if (aiImportErrors.length) setAiImportErrors([]);
-                }}
-                onAiImageChange={handleAiImageChange}
-                onAiGeneratePreview={handleAiGeneratePreview}
-                onImportCsv={handleCsvImport}
-                onClearAi={handleAiClear}
-                onCsvFileChange={handleCsvFileChange}
-                onCsvMappingChange={handleCsvMappingChange}
-                onCsvPreview={handleCsvPreview}
-                onClearCsv={handleCsvClear}
-              />
-            </MobileScheduleStaffToolsSection>
+              {renderScheduleStaffToolsContent()}
+            </ScheduleStaffToolsSection>
           ) : null}
         </div>
       </div>
@@ -1476,14 +1427,14 @@ function PracticeRecurrenceFields({ form, onChange }: { form: SchedulePracticeFo
   );
 }
 
-function MobileScheduleStaffToolsSection({ open, teamName, onToggle, children }: { open: boolean; teamName: string; onToggle: () => void; children: ReactNode }) {
+function ScheduleStaffToolsSection({ open, teamName, contentId, onToggle, children }: { open: boolean; teamName: string; contentId: string; onToggle: () => void; children: ReactNode }) {
   return (
     <section className="app-card p-3" aria-label="Manage schedule tools">
       <button
         type="button"
         className="flex w-full items-center justify-between gap-3 text-left"
         aria-expanded={open}
-        aria-controls="mobile-schedule-staff-tools"
+        aria-controls={contentId}
         onClick={onToggle}
       >
         <div className="min-w-0">
@@ -1494,7 +1445,7 @@ function MobileScheduleStaffToolsSection({ open, teamName, onToggle, children }:
         <ChevronDown className={`h-5 w-5 flex-none text-gray-500 transition ${open ? 'rotate-180' : ''}`} aria-hidden="true" />
       </button>
       {open ? (
-        <div id="mobile-schedule-staff-tools" className="mt-3 space-y-3">
+        <div id={contentId} className="mt-3 space-y-3">
           {children}
         </div>
       ) : null}

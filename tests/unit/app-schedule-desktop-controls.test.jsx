@@ -161,6 +161,15 @@ async function waitForButtonEnabled(container, text) {
     throw new Error(`Timed out waiting for enabled button: ${text}`);
 }
 
+async function openManageSchedule(container) {
+    await waitForText(container, 'Manage schedule');
+    if (buttonContainingText(container, 'Manage schedule').getAttribute('aria-expanded') !== 'true') {
+        await act(async () => {
+            buttonContainingText(container, 'Manage schedule').dispatchEvent(new MouseEvent('click', { bubbles: true }));
+        });
+    }
+}
+
 async function changeInput(input, value) {
     await act(async () => {
         const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
@@ -319,6 +328,7 @@ describe('React app desktop Schedule controls', () => {
         });
 
         const { container } = await renderSchedule();
+        await openManageSchedule(container);
         await waitForText(container, 'Add external calendar');
 
         const input = container.querySelector('input[aria-label="External .ics calendar URL"]');
@@ -430,6 +440,7 @@ describe('React app desktop Schedule controls', () => {
         });
 
         const { container } = await renderSchedule();
+        await openManageSchedule(container);
         await waitForText(container, 'Saved calendar links');
         expect(container.textContent).toContain('https://example.com/stale.ics');
 
@@ -476,6 +487,7 @@ describe('React app desktop Schedule controls', () => {
         });
         clearAppDataCache('app-schedule-summary');
         const staff = await renderSchedule();
+        await openManageSchedule(staff.container);
         await waitForText(staff.container, 'Add external calendar');
         await clickButton(staff.container, 'Save calendar');
 
@@ -497,6 +509,7 @@ describe('React app desktop Schedule controls', () => {
         clearAppDataCache('app-schedule-summary');
 
         const { container } = await renderSchedule();
+        await openManageSchedule(container);
         await waitForText(container, 'Import schedule CSV');
         const csvModuleLoadsBeforeUpload = scheduleMocks.csvModuleLoads;
         const input = container.querySelector('input[aria-label="Schedule CSV file"]');
@@ -591,6 +604,7 @@ describe('React app desktop Schedule controls', () => {
         clearAppDataCache('app-schedule-summary');
 
         const { container } = await renderSchedule();
+        await openManageSchedule(container);
         await waitForText(container, 'Draft schedule with AI');
         const aiModuleLoadsBeforeGenerate = scheduleMocks.aiModuleLoads;
         const textarea = container.querySelector('textarea[aria-label="Schedule text or AI instructions"]');
@@ -643,6 +657,7 @@ describe('React app desktop Schedule controls', () => {
         });
 
         const { container } = await renderSchedule();
+        await openManageSchedule(container);
         await waitForText(container, 'Draft schedule with AI');
         const textarea = container.querySelector('textarea[aria-label="Schedule text or AI instructions"]');
 
@@ -667,6 +682,7 @@ describe('React app desktop Schedule controls', () => {
         });
 
         const { container } = await renderSchedule();
+        await openManageSchedule(container);
         await waitForText(container, 'Import schedule CSV');
         const input = container.querySelector('input[aria-label="Schedule CSV file"]');
         const file = new File([
@@ -697,6 +713,7 @@ describe('React app desktop Schedule controls', () => {
         scheduleMocks.createScheduleImportGame.mockRejectedValueOnce(new Error('Firestore write failed'));
 
         const { container } = await renderSchedule();
+        await openManageSchedule(container);
         await waitForText(container, 'Import schedule CSV');
         const input = container.querySelector('input[aria-label="Schedule CSV file"]');
         const file = new File([
@@ -737,6 +754,7 @@ describe('React app desktop Schedule controls', () => {
             .mockResolvedValueOnce('game-4');
 
         const { container } = await renderSchedule();
+        await openManageSchedule(container);
         await waitForText(container, 'Import schedule CSV');
         const input = container.querySelector('input[aria-label="Schedule CSV file"]');
         const file = new File([
@@ -787,9 +805,15 @@ describe('React app desktop Schedule controls', () => {
         await waitForText(container, 'Main Gym');
         await clickButton(container, 'Filters and views');
         await changeSelect(selectByLabel(container, 'Team'), 'team-1');
+        await openManageSchedule(container);
         await waitForText(container, 'Add game for Bears');
 
         const teamOnePanel = container.querySelector('section[aria-label="Create game"]');
+        await act(async () => {
+            teamOnePanel.querySelector('input').focus();
+            await Promise.resolve();
+        });
+        await waitForText(container, 'Bears Tracker');
         const teamOneSelects = teamOnePanel.querySelectorAll('select');
         await changeSelect(teamOneSelects[1], 'cfg-team-1');
         expect(teamOneSelects[1].value).toBe('cfg-team-1');
