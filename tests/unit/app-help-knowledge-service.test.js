@@ -147,4 +147,43 @@ describe('app help knowledge service', () => {
         expect(debugAfterSecondSearch.sentenceSplits).toBe(docs.length);
         expect(debugAfterSecondSearch.queryCacheHits).toBe(1);
     });
+
+    it('returns no help results for impossible non-empty queries even when roles match', async () => {
+        const { searchHelpKnowledge } = await import('../../apps/app/src/lib/helpKnowledgeService.ts');
+        const results = searchHelpKnowledge({
+            query: 'qzxqzxqzx123456789',
+            roles: ['parent'],
+            limit: 5
+        });
+
+        expect(results).toEqual([]);
+    });
+
+    it('does not treat non-empty zero-token queries as empty help searches', async () => {
+        const { searchHelpKnowledge } = await import('../../apps/app/src/lib/helpKnowledgeService.ts');
+        const results = searchHelpKnowledge({
+            query: 'AI',
+            roles: ['parent'],
+            limit: 5
+        });
+
+        expect(results).toEqual([]);
+    });
+
+    it('keeps genuinely matching help results for non-empty queries', async () => {
+        const { searchHelpKnowledge } = await import('../../apps/app/src/lib/helpKnowledgeService.ts');
+        const results = searchHelpKnowledge({
+            query: 'account access',
+            roles: ['parent'],
+            limit: 5
+        });
+
+        expect(results.length).toBeGreaterThan(0);
+        expect(results).toEqual(expect.arrayContaining([
+            expect.objectContaining({
+                id: 'help-account',
+                title: 'Account and Access'
+            })
+        ]));
+    });
 });
