@@ -223,7 +223,8 @@ test('public registration shows an unavailable state when all configured options
     });
     await page.goto(buildUrl(baseURL, '/registration.html?teamId=team-1&formId=form-1'), { waitUntil: 'domcontentloaded' });
 
-    await expect(page.getByText('Registration is currently unavailable. No registration options are available.')).toBeVisible();
+    await expect(page.locator('#registration-options-unavailable')).toBeVisible();
+    await expect(page.locator('#error-message')).toHaveText('Registration is currently unavailable. No registration options are available.');
     await expect(page.locator('#registration-options')).toBeEmpty();
     await expect(page.getByRole('button', { name: 'Submit registration' })).toBeDisabled();
 
