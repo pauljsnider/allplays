@@ -771,6 +771,7 @@ test('profile keeps destructive alert actions disabled until a failed team load 
 
     await page.getByRole('button', { name: 'Retry alerts' }).click();
 
+    await expect.poll(async () => page.evaluate(() => window.__appProfileCalls.notificationLoads.length)).toBe(3);
     await expect(page.getByText('temporary outage')).toHaveCount(0);
     await expect(page.getByLabel('Live Chat')).toBeVisible();
     await expect(page.getByLabel('Live Chat')).not.toBeChecked();
