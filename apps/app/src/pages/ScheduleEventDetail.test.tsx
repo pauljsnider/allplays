@@ -489,6 +489,27 @@ describe('ScheduleEventDetail loading states', () => {
     expect(screen.queryByText('Final 0-0')).toBeNull();
     expect(screen.queryByText(/^0-0$/)).toBeNull();
   });
+
+  it('shows the live score label for games that are currently live', async () => {
+    scheduleServiceMocks.loadParentScheduleEventDetail.mockResolvedValue({
+      events: [buildEvent({
+        date: new Date('2099-11-15T18:00:00.000Z'),
+        homeScore: 3,
+        awayScore: 2,
+        status: 'live',
+        liveStatus: 'live'
+      })],
+      children: []
+    });
+
+    renderScheduleEventDetail();
+
+    await waitFor(() => {
+      expect(screen.getByRole('heading', { name: 'vs. Wolves' })).toBeTruthy();
+    });
+
+    expect(screen.getByText('3-2')).toBeTruthy();
+  });
 });
 
 describe('ScheduleEventDetail lineup draft guards', () => {

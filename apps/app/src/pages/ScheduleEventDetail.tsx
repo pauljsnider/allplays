@@ -3958,8 +3958,9 @@ function getScoreLabel(event: ParentScheduleEvent) {
   if (event.homeScore === null || event.homeScore === undefined || event.awayScore === null || event.awayScore === undefined) return '';
   const status = String(event.status || '').trim().toLowerCase();
   const liveStatus = String(event.liveStatus || '').trim().toLowerCase();
+  const isLive = status === 'live' || liveStatus === 'live';
   const isCompleted = status === 'completed' || status === 'final' || liveStatus === 'completed' || liveStatus === 'final';
   const isPastScheduledResult = event.date.getTime() < Date.now() - pastScheduledGameScoreCutoffMs;
-  if (!isCompleted && !isPastScheduledResult) return '';
+  if (!isLive && !isCompleted && !isPastScheduledResult) return '';
   return `${event.homeScore}-${event.awayScore}`;
 }
