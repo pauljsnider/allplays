@@ -4,6 +4,7 @@ import { StrictMode } from 'react';
 import { MemoryRouter, Route, Routes, useParams } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { Teams } from './Teams';
+import type { ParentHomeModel } from '../lib/homeLogic';
 import type { AuthState } from '../lib/types';
 
 const homeServiceMocks = vi.hoisted(() => ({
@@ -70,7 +71,7 @@ const auth: AuthState = {
   signOut: vi.fn()
 };
 
-const emptyHome = {
+const emptyHome: ParentHomeModel = {
   players: [],
   teams: [],
   upcomingEvents: [],
@@ -126,7 +127,7 @@ function deferred<T>() {
   return { promise, resolve, reject };
 }
 
-function makeTeamSummaryBootstrap(home: typeof emptyHome) {
+function makeTeamSummaryBootstrap(home: ParentHomeModel) {
   return {
     home,
     scheduleScope: {
