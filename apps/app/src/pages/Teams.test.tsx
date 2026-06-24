@@ -8,7 +8,7 @@ import type { AuthState } from '../lib/types';
 
 const homeServiceMocks = vi.hoisted(() => ({
   loadParentHomeSummary: vi.fn(),
-  loadParentTeamsSummary: vi.fn()
+  loadParentTeamsSummaryBootstrap: vi.fn()
 }));
 
 const publicActionMocks = vi.hoisted(() => ({
@@ -126,6 +126,16 @@ function deferred<T>() {
   return { promise, resolve, reject };
 }
 
+function makeTeamSummaryBootstrap(home: typeof emptyHome) {
+  return {
+    home,
+    scheduleScope: {
+      profile: { id: 'profile-parent-1' },
+      children: home.teams.flatMap((team) => team.players)
+    }
+  };
+}
+
 describe('Teams empty state', () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -133,7 +143,7 @@ describe('Teams empty state', () => {
       value: vi.fn(),
       writable: true
     });
-    homeServiceMocks.loadParentTeamsSummary.mockResolvedValue(emptyHome);
+    homeServiceMocks.loadParentTeamsSummaryBootstrap.mockResolvedValue(makeTeamSummaryBootstrap(emptyHome));
     homeServiceMocks.loadParentHomeSummary.mockResolvedValue(emptyHome);
   });
 
@@ -154,7 +164,7 @@ describe('Teams empty state', () => {
   });
 
   it('shows retryable blocking error UI instead of the empty state when the first team load fails', async () => {
-    homeServiceMocks.loadParentTeamsSummary.mockRejectedValueOnce(new Error('Team service down'));
+    homeServiceMocks.loadParentTeamsSummaryBootstrap.mockRejectedValueOnce(new Error('Team service down'));
 
     renderTeams();
 
@@ -185,7 +195,7 @@ describe('Teams empty state', () => {
       fees: [],
       metrics: { players: 1, teams: 1, rsvpNeeded: 0, unreadMessages: 1, packetsReady: 0 }
     };
-    homeServiceMocks.loadParentTeamsSummary.mockResolvedValueOnce(fastTeamHome);
+    homeServiceMocks.loadParentTeamsSummaryBootstrap.mockResolvedValueOnce(makeTeamSummaryBootstrap(fastTeamHome));
     homeServiceMocks.loadParentHomeSummary.mockRejectedValueOnce(new Error('Enrichment outage'));
 
     renderTeams({ initialEntry: '/teams?selectedTeamId=team-fast&from=home' });
@@ -198,10 +208,58 @@ describe('Teams empty state', () => {
     expect(screen.queryByText('No teams available')).toBeNull();
   });
 
+  it('reuses the fast summary scope when loading the enriched team cards', async () => {
+    const fastTeamHome = {
+      players: [],
+      teams: [{
+        teamId: 'team-fast',
+        teamName: 'Fast Falcons',
+        role: 'Parent' as const,
+        sport: 'Basketball',
+        photoUrl: null,
+        players: [{ teamId: 'team-fast', teamName: 'Fast Falcons', playerId: 'player-1', playerName: 'Avery Ace' }],
+        nextEvent: null,
+        eventCount: 0,
+        unreadCount: 1,
+        openActions: 0
+      }],
+      upcomingEvents: [],
+      actionItems: [],
+      fees: [],
+      metrics: { players: 1, teams: 1, rsvpNeeded: 0, unreadMessages: 1, packetsReady: 0 }
+    };
+    const scheduleScope = {
+      profile: { id: 'profile-parent-1' },
+      children: fastTeamHome.teams[0].players
+    };
+    homeServiceMocks.loadParentTeamsSummaryBootstrap.mockResolvedValueOnce({
+      home: fastTeamHome,
+      scheduleScope
+    });
+    homeServiceMocks.loadParentHomeSummary.mockResolvedValueOnce({
+      ...fastTeamHome,
+      teams: [{
+        ...fastTeamHome.teams[0],
+        eventCount: 2
+      }]
+    });
+
+    renderTeams({ initialEntry: '/teams?selectedTeamId=team-fast' });
+
+    expect(await screen.findByRole('heading', { name: '1 team ready' })).toBeInTheDocument();
+    await waitFor(() => {
+      expect(homeServiceMocks.loadParentHomeSummary).toHaveBeenCalledWith(auth.user, {
+        force: false,
+        scheduleScope
+      });
+    });
+    expect(homeServiceMocks.loadParentTeamsSummaryBootstrap).toHaveBeenCalledTimes(1);
+  });
+
   it('keeps the loading state bound to the latest initial request under StrictMode before showing the retryable error UI', async () => {
-    const firstLoad = deferred<typeof emptyHome>();
-    const secondLoad = deferred<typeof emptyHome>();
-    homeServiceMocks.loadParentTeamsSummary
+    const firstLoad = deferred<ReturnType<typeof makeTeamSummaryBootstrap>>();
+    const secondLoad = deferred<ReturnType<typeof makeTeamSummaryBootstrap>>();
+    homeServiceMocks.loadParentTeamsSummaryBootstrap
       .mockImplementationOnce(() => firstLoad.promise)
       .mockImplementationOnce(() => secondLoad.promise);
 
@@ -260,7 +318,7 @@ describe('Teams launcher navigation', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     Object.defineProperty(window, 'scrollTo', { value: vi.fn(), writable: true });
-    homeServiceMocks.loadParentTeamsSummary.mockResolvedValue(twoTeamHome);
+    homeServiceMocks.loadParentTeamsSummaryBootstrap.mockResolvedValue(makeTeamSummaryBootstrap(twoTeamHome));
     homeServiceMocks.loadParentHomeSummary.mockResolvedValue(twoTeamHome);
   });
 
@@ -306,7 +364,7 @@ describe('Teams single-team auto-navigate', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     Object.defineProperty(window, 'scrollTo', { value: vi.fn(), writable: true });
-    homeServiceMocks.loadParentTeamsSummary.mockResolvedValue(singleTeamHome);
+    homeServiceMocks.loadParentTeamsSummaryBootstrap.mockResolvedValue(makeTeamSummaryBootstrap(singleTeamHome));
     homeServiceMocks.loadParentHomeSummary.mockResolvedValue(singleTeamHome);
   });
 
@@ -338,14 +396,14 @@ describe('Teams single-team auto-navigate', () => {
   });
 
   it('keeps the chooser visible when the only team has no linked players yet', async () => {
-    homeServiceMocks.loadParentTeamsSummary.mockResolvedValue({
+    homeServiceMocks.loadParentTeamsSummaryBootstrap.mockResolvedValue(makeTeamSummaryBootstrap({
       ...singleTeamHome,
       teams: [{
         ...singleTeam,
         players: []
       }],
       metrics: { ...singleTeamHome.metrics, players: 0 }
-    });
+    }));
     homeServiceMocks.loadParentHomeSummary.mockResolvedValue({
       ...singleTeamHome,
       teams: [{
