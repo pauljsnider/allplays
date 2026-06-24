@@ -243,7 +243,11 @@ export async function loadParentScheduleSummary(
       expandStaffPlayers: false,
       parentScope: options.scheduleScope
     }),
-    { ttlMs: homeSummaryTtlMs, force: options.force }
+    {
+      ttlMs: homeSummaryTtlMs,
+      force: options.force,
+      shouldCache: (result) => result?.isPartial !== true
+    }
   );
 }
 

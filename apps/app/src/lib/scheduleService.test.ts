@@ -2078,6 +2078,73 @@ describe('native parent schedule Firestore mapping', () => {
   });
 });
 
+describe('partial parent schedule team failures (#3021)', () => {
+  const parentUser = {
+    uid: 'parent-1',
+    email: 'parent@example.com',
+    parentOf: [
+      { teamId: 'team-1', playerId: 'p1', playerName: 'Kid One' },
+      { teamId: 'team-2', playerId: 'p2', playerName: 'Kid Two' }
+    ]
+  } as any;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    (globalThis as any).window = { location: { protocol: 'https:' }, setTimeout, clearTimeout } as any;
+    vi.mocked(loadProfileDocument).mockResolvedValue({
+      parentOf: parentUser.parentOf
+    } as any);
+    vi.mocked(getTeam).mockImplementation(async (teamId: string) => ({ id: teamId, name: teamId === 'team-1' ? 'Team One' : 'Team Two' }) as any);
+    vi.mocked(getTeams).mockResolvedValue([] as any);
+    vi.mocked(getPracticeSessions).mockResolvedValue([] as any);
+    vi.mocked(getDoc).mockImplementation(async (ref: any) => {
+      if (ref?.path?.includes('team-1/players/p1')) return playerSnapshot('p1', { id: 'p1', name: 'Kid One', active: true }) as any;
+      if (ref?.path?.includes('team-2/players/p2')) return playerSnapshot('p2', { id: 'p2', name: 'Kid Two', active: true }) as any;
+      return playerSnapshot('missing', null) as any;
+    });
+  });
+
+  it('keeps successful teams visible when one team schedule load fails', async () => {
+    vi.mocked(getGames).mockImplementation(async (teamId: string) => {
+      if (teamId === 'team-2') {
+        throw new Error('permission-denied');
+      }
+      return [{
+        id: 'game-1',
+        type: 'game',
+        date: new Date('2026-06-25T18:00:00.000Z'),
+        opponent: 'Tigers',
+        location: 'Main Gym'
+      }] as any;
+    });
+
+    const result = await loadParentSchedule(parentUser, { hydrateDetails: false, expandStaffPlayers: false });
+
+    expect(result.children).toEqual(expect.arrayContaining([
+      expect.objectContaining({ teamId: 'team-1', playerId: 'p1' }),
+      expect.objectContaining({ teamId: 'team-2', playerId: 'p2' })
+    ]));
+    expect(result.events).toHaveLength(1);
+    expect(result.events[0]).toMatchObject({
+      teamId: 'team-1',
+      id: 'game-1',
+      opponent: 'Tigers'
+    });
+    expect(result.isPartial).toBe(true);
+  });
+
+  it('rethrows a typed schedule load error when every team schedule load fails', async () => {
+    vi.mocked(getGames).mockRejectedValue(new Error('permission-denied'));
+
+    await expect(loadParentSchedule(parentUser, { hydrateDetails: false, expandStaffPlayers: false })).rejects.toMatchObject({
+      name: 'AppServiceError',
+      type: 'permission',
+      message: 'permission-denied'
+    });
+  });
+
+});
+
 describe('team schedule game windowing (#2034)', () => {
   const parentUser = {
     uid: 'parent-1',

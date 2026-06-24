@@ -22,7 +22,11 @@ const scheduleServiceMocks = vi.hoisted(() => ({
 const appDataCacheMocks = vi.hoisted(() => ({
   getCachedAppData: vi.fn(() => null),
   getParentScheduleSummaryCacheKey: vi.fn(() => 'parent-schedule:test-user'),
-  loadCachedAppData: vi.fn(async (_key: string, loader: () => Promise<unknown>) => loader())
+  loadCachedAppData: vi.fn(async (
+    _key: string,
+    loader: () => Promise<unknown>,
+    _options?: { shouldCache?: (value: { isPartial?: boolean }) => boolean }
+  ) => loader())
 }));
 
 const uxTimingMocks = vi.hoisted(() => ({
@@ -188,6 +192,38 @@ describe('Schedule', () => {
       hydrateDetails: false,
       expandStaffPlayers: false
     });
+  });
+
+  it('passes the full schedule cache contract into the summary loader', async () => {
+    scheduleServiceMocks.loadParentSchedule.mockResolvedValueOnce({
+      children: [
+        { playerId: 'player-1', playerName: 'Pat', teamId: 'team-1', teamName: 'Bears' }
+      ],
+      events: [],
+      isPartial: true
+    });
+
+    renderSchedule();
+
+    expect(await screen.findByText('No events in this filter')).toBeTruthy();
+    expect(appDataCacheMocks.loadCachedAppData).toHaveBeenCalledWith(
+      'parent-schedule:test-user',
+      expect.any(Function),
+      expect.objectContaining({
+        ttlMs: 60 * 1000 * 5,
+        force: false,
+        shouldCache: expect.any(Function)
+      })
+    );
+    const options = appDataCacheMocks.loadCachedAppData.mock.calls[0]?.[2] as {
+      ttlMs: number;
+      force: boolean;
+      shouldCache: (value: { isPartial?: boolean }) => boolean;
+    };
+    expect(options.ttlMs).toBe(60 * 1000 * 5);
+    expect(options.force).toBe(false);
+    expect(options.shouldCache({ isPartial: true })).toBe(false);
+    expect(options.shouldCache({ isPartial: false })).toBe(true);
   });
 
   it('keeps team and player filters after an empty schedule refresh fails', async () => {
