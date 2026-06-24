@@ -130,4 +130,21 @@ describe('team ICS export', () => {
         expect(ics).toContain('DTSTART:20260614T180000Z');
         expect(ics).toContain('DTEND:20260614T200000Z');
     });
+
+    it('treats legacy events without a type as games for fallback end times', () => {
+        const { buildIcs, resolveIcsEventEndDate } = createTeamIcsHooks();
+        const startDate = new Date('2026-06-15T18:00:00Z');
+        const legacyGame = {
+            id: 'game-legacy',
+            opponent: 'Tigers',
+            date: startDate,
+            location: 'Legacy Field',
+            status: 'scheduled'
+        };
+        const ics = buildIcs([legacyGame]);
+
+        expect(resolveIcsEventEndDate(legacyGame, startDate).toISOString()).toBe('2026-06-15T20:00:00.000Z');
+        expect(ics).toContain('DTSTART:20260615T180000Z');
+        expect(ics).toContain('DTEND:20260615T200000Z');
+    });
 });

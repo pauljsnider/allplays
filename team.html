@@ -2988,7 +2988,8 @@
                 return endDate;
             }
 
-            const fallbackHours = game?.type === 'game' ? 2 : 1;
+            const isPractice = game?.type === 'practice' || game?.isPractice;
+            const fallbackHours = isPractice ? 1 : 2;
             return new Date(startDate.getTime() + fallbackHours * 60 * 60 * 1000);
         }
 
