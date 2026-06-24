@@ -8297,6 +8297,34 @@ exports.notifyConversationChatMessageCreated = functions.firestore
   .document('teams/{teamId}/chatConversations/{conversationId}/chatMessages/{messageId}')
   .onCreate(handleTeamChatMessageCreated);
 
+function formatSharedGameCancellationNoticeDate(game = {}) {
+  const dateValue = coerceDate(game?.date);
+  if (!dateValue) return '';
+
+  const timeZone = String(game?.timeZone || '').trim();
+  if (timeZone) {
+    return formatScheduleUpdateDate(dateValue, timeZone);
+  }
+
+  return dateValue.toLocaleDateString('en-US', {
+    weekday: 'short',
+    month: 'short',
+    day: 'numeric'
+  });
+}
+
+function buildSharedGameCancellationCounterpartMessage({ sourceTeam = {}, sourceGame = {} } = {}) {
+  const sourceTeamName = normalizeText(sourceTeam?.name, 160) || 'The other team';
+  const eventTitle = getEventTitle(sourceGame || {}) || 'Game';
+  const dateLabel = formatSharedGameCancellationNoticeDate(sourceGame);
+
+  if (dateLabel) {
+    return `⚠️ Shared game cancelled: ${sourceTeamName} cancelled ${eventTitle} on ${dateLabel}.`;
+  }
+
+  return `⚠️ Shared game cancelled: ${sourceTeamName} cancelled ${eventTitle}.`;
+}
+
 exports.postSharedGameCancellationNotification = functions.https.onCall(async (data, context) => {
   if (!context.auth?.uid) {
     throw new functions.https.HttpsError('unauthenticated', 'Sign in to notify the linked team chat.');
@@ -8305,12 +8333,9 @@ exports.postSharedGameCancellationNotification = functions.https.onCall(async (d
   const teamId = normalizeText(data?.teamId, 160);
   const gameId = normalizeText(data?.gameId, 160);
   const counterpartTeamId = normalizeText(data?.counterpartTeamId, 160);
-  const text = normalizeText(data?.text, 4000);
-  const senderName = normalizeText(data?.senderName, 160) || 'Team Staff';
-  const senderEmail = normalizeText(data?.senderEmail, 320) || null;
 
-  if (!teamId || !gameId || !counterpartTeamId || !text) {
-    throw new functions.https.HttpsError('invalid-argument', 'teamId, gameId, counterpartTeamId, and text are required.');
+  if (!teamId || !gameId || !counterpartTeamId) {
+    throw new functions.https.HttpsError('invalid-argument', 'teamId, gameId, and counterpartTeamId are required.');
   }
 
   const callerEmail = String(context.auth.token?.email || '').trim().toLowerCase();
@@ -8337,6 +8362,7 @@ exports.postSharedGameCancellationNotification = functions.https.onCall(async (d
     throw new functions.https.HttpsError('permission-denied', 'Only team coaches and admins can notify the linked team chat.');
   }
 
+  const counterpartTeam = counterpartTeamSnap.data() || {};
   const sourceGame = sourceGameSnap.data() || {};
   const linkedCounterpartTeamId = String(sourceGame.sharedScheduleOpponentTeamId || sourceGame.opponentTeamId || '').trim();
   if (!linkedCounterpartTeamId || linkedCounterpartTeamId !== counterpartTeamId) {
@@ -8346,12 +8372,18 @@ exports.postSharedGameCancellationNotification = functions.https.onCall(async (d
     throw new functions.https.HttpsError('failed-precondition', 'Cancel the game before notifying the linked team chat.');
   }
 
+  const text = buildSharedGameCancellationCounterpartMessage({
+    sourceTeam,
+    sourceGame
+  });
   const messageRef = firestore.collection(`teams/${counterpartTeamId}/chatMessages`).doc();
   await messageRef.set({
     text,
-    senderId: context.auth.uid,
-    senderName,
-    senderEmail,
+    senderId: 'shared-game-cancellation-system',
+    senderName: 'ALL PLAYS',
+    senderEmail: null,
+    senderType: 'system',
+    systemGenerated: true,
     senderPhotoUrl: null,
     attachments: [],
     imageUrl: null,
@@ -8368,7 +8400,11 @@ exports.postSharedGameCancellationNotification = functions.https.onCall(async (d
     aiMeta: {
       type: 'shared-game-cancelled',
       sourceTeamId: teamId,
-      sourceGameId: gameId
+      sourceGameId: gameId,
+      sourceTeamName: sourceTeam.name || null,
+      counterpartTeamId,
+      counterpartTeamName: counterpartTeam.name || null,
+      actorType: 'system'
     },
     targetType: 'full_team',
     recipientIds: [],
