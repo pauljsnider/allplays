@@ -475,8 +475,12 @@ function getActivePublicRegistrationOptions(form = {}, counts = {}) {
   });
 }
 
+function hasConfiguredPublicRegistrationOptions(form = {}) {
+  return (form.registrationOptions || []).some((option) => option.active === true);
+}
+
 function publicRegistrationRequiresOption(form = {}) {
-  return (form.registrationOptions || []).some((option) => option.active !== false);
+  return getActivePublicRegistrationOptions(form, form.registrationOptionCounts || {}).length > 0;
 }
 
 function getConfiguredPublicRegistrationOptionById(form = {}, selectedOptionId = '') {
@@ -770,6 +774,12 @@ exports.submitPublicRegistration = functions.https.onCall(async (data, context =
     const formData = formSnap.data() || {};
     const latestForm = normalizePublicRegistrationForm(formData, input);
     validatePublicRegistrationSubmission(latestForm, input);
+
+    if (hasConfiguredPublicRegistrationOptions(latestForm) && !publicRegistrationRequiresOption(latestForm)) {
+      throwPublicRegistrationError('failed-precondition', 'Registration is currently unavailable. No registration options are available.', {
+        reason: 'no-options-available'
+      });
+    }
 
     let status = 'pending';
     let selectedOption = null;
