@@ -327,16 +327,10 @@ describe('chat unread count helpers', () => {
         expect(warn).toHaveBeenCalledWith('Failed to get unread count for team team-b conversation team:', expect.any(Error));
     });
 
-    it('aggregates unread counts across the default and sibling conversations for one team', async () => {
+    it('keeps fast inbox unread counts on the default conversation only', async () => {
         const getUnreadChatCount = vi.fn()
-            .mockResolvedValueOnce(1)
-            .mockResolvedValueOnce(2)
-            .mockResolvedValueOnce(0);
-        const getChatConversations = vi.fn().mockResolvedValue([
-            { id: 'team' },
-            { id: 'staff-conversation' },
-            { id: 'direct-conversation' }
-        ]);
+            .mockResolvedValueOnce(1);
+        const getChatConversations = vi.fn();
         const getDoc = vi.fn().mockResolvedValue({
             data: () => ({ teamChatState: {} })
         });
@@ -354,6 +348,7 @@ describe('chat unread count helpers', () => {
         const lookupTeam = { id: 'team-a', name: 'Bears' };
 
         await expect(getUnreadChatCounts('user-5', ['team-a'], {
+            defaultConversationOnly: true,
             latestMessageAtByTeam: {
                 'team-a': { seconds: 250 }
             },
@@ -365,13 +360,51 @@ describe('chat unread count helpers', () => {
                 }
             }
         })).resolves.toEqual({
+            'team-a': 1
+        });
+
+        expect(getChatConversations).not.toHaveBeenCalled();
+        expect(getUnreadChatCount).toHaveBeenCalledTimes(1);
+        expect(getUnreadChatCount).toHaveBeenNthCalledWith(1, 'user-5', 'team-a', expect.objectContaining({
+            conversationId: 'team',
+            latestMessageAt: { seconds: 250 }
+        }));
+        expect(warn).not.toHaveBeenCalled();
+    });
+
+    it('aggregates unread counts across sibling conversations when ids are already loaded', async () => {
+        const getUnreadChatCount = vi.fn()
+            .mockResolvedValueOnce(1)
+            .mockResolvedValueOnce(2)
+            .mockResolvedValueOnce(0);
+        const getChatConversations = vi.fn();
+        const getDoc = vi.fn().mockResolvedValue({
+            data: () => ({ teamChatState: {} })
+        });
+        const doc = vi.fn(() => ({ path: 'users/user-5' }));
+        const warn = vi.fn();
+        const getUnreadChatCounts = buildGetUnreadChatCounts({
+            db: {},
+            getDoc,
+            doc,
+            getUnreadChatCount,
+            getChatConversations,
+            console: { warn }
+        });
+
+        await expect(getUnreadChatCounts('user-5', ['team-a'], {
+            defaultConversationOnly: true,
+            latestMessageAtByTeam: {
+                'team-a': { seconds: 250 }
+            },
+            conversationIdsByTeam: {
+                'team-a': ['team', 'staff-conversation', 'direct-conversation']
+            }
+        })).resolves.toEqual({
             'team-a': 3
         });
 
-        expect(getChatConversations).toHaveBeenCalledWith('team-a', lookupUser, {
-            team: lookupTeam,
-            canModerate: true
-        });
+        expect(getChatConversations).not.toHaveBeenCalled();
         expect(getUnreadChatCount).toHaveBeenNthCalledWith(1, 'user-5', 'team-a', expect.objectContaining({
             conversationId: 'team',
             latestMessageAt: { seconds: 250 }

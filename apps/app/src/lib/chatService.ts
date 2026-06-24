@@ -679,7 +679,8 @@ export async function loadChatInbox(user: AuthUser | null, options: ChatInboxLoa
   const unreadCounts = await withTimeout(
     Promise.resolve(getUnreadChatCounts(user.uid, unreadCandidateTeamIds, {
       latestMessageAtByTeam,
-      conversationLookupByTeam
+      conversationLookupByTeam,
+      defaultConversationOnly: !includeLastMessages
     })),
     'Chat unread counts',
     3000
