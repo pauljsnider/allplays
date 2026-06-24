@@ -1370,6 +1370,16 @@ export type ScheduleGameFormInput = {
   opponentTeamPhoto?: string | null;
 };
 
+export type ScheduleTournamentGameFormInput = ScheduleGameFormInput;
+
+export type ScheduleTournamentCreateFormInput = {
+  divisionName: string;
+  bracketName: string;
+  roundName: string;
+  poolName?: string | null;
+  games: ScheduleTournamentGameFormInput[];
+};
+
 export type ScheduleStatTrackerConfigOption = {
   id: string;
   name: string;
@@ -1479,6 +1489,22 @@ function buildScheduledGamePayload(input: ScheduleGameFormInput, user: AuthUser)
     opponentTeamName: compactString(input.opponentTeamName) || null,
     opponentTeamPhoto: compactString(input.opponentTeamPhoto) || null,
     createdBy: user.uid
+  };
+}
+
+function buildScheduledTournamentMetadata(input: ScheduleTournamentCreateFormInput) {
+  const divisionName = compactString(input.divisionName);
+  const bracketName = compactString(input.bracketName);
+  const roundName = compactString(input.roundName);
+  const poolName = compactString(input.poolName);
+  if (!divisionName || !bracketName || !roundName) {
+    throw new Error('Tournament blocks require division, bracket, and round names.');
+  }
+  return {
+    divisionName,
+    bracketName,
+    roundName,
+    ...(poolName ? { poolName } : {})
   };
 }
 
@@ -1621,6 +1647,45 @@ export async function createScheduledGameForApp(teamId: string, input: ScheduleG
     });
     return doc?.id || '';
   }
+}
+
+export async function createScheduledTournamentBlockForApp(teamId: string, input: ScheduleTournamentCreateFormInput, user: AuthUser | null) {
+  const normalizedTeamId = compactString(teamId);
+  if (!normalizedTeamId) throw new Error('Team is required.');
+  await requireScheduleImportStaff(normalizedTeamId, user);
+
+  const tournament = buildScheduledTournamentMetadata(input);
+  const games = Array.isArray(input.games) ? input.games : [];
+  if (!games.length) {
+    throw new Error('Tournament blocks require at least one game.');
+  }
+
+  const createdIds: string[] = [];
+  for (const game of games) {
+    const payload = {
+      ...buildScheduledGamePayload({
+        ...game,
+        competitionType: 'tournament'
+      }, user as AuthUser),
+      competitionType: 'tournament',
+      tournament
+    };
+
+    try {
+      const createdId = await withTimeout(Promise.resolve(addGame(normalizedTeamId, payload)), 'Scheduled tournament game create');
+      createdIds.push(createdId || '');
+    } catch (error) {
+      if (!isNativeRuntime()) throw error;
+      logScheduleWarning('Falling back to REST scheduled tournament game create.', 'scheduled-tournament-game-create', error, { fallback: 'rest', teamId: normalizedTeamId });
+      const doc = await nativeCreateDocument(`teams/${encodeURIComponent(normalizedTeamId)}/games`, {
+        ...payload,
+        createdAt: new Date()
+      });
+      createdIds.push(doc?.id || '');
+    }
+  }
+
+  return createdIds;
 }
 
 export async function updateScheduledGameForApp(teamId: string, gameId: string, input: ScheduleGameFormInput, user: AuthUser | null) {

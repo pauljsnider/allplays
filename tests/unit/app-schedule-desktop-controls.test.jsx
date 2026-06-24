@@ -444,7 +444,14 @@ describe('React app desktop Schedule controls', () => {
         await waitForText(container, 'Saved calendar links');
         expect(container.textContent).toContain('https://example.com/stale.ics');
 
-        await clickButton(container, 'Remove');
+        const savedCalendarUrl = Array.from(container.querySelectorAll('div')).find((candidate) => candidate.textContent.trim() === 'https://example.com/stale.ics');
+        const savedCalendarRow = savedCalendarUrl?.parentElement;
+        const removeButton = savedCalendarRow?.querySelector('button');
+        if (!savedCalendarRow || !removeButton) throw new Error('Saved calendar row not found');
+
+        await act(async () => {
+            removeButton.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+        });
 
         expect(window.confirm).toHaveBeenCalledWith('Remove this external calendar link? Imported events from this feed will disappear after the schedule refreshes.');
         expect(scheduleMocks.removeTeamCalendarUrl).toHaveBeenCalledWith('team-1', 'https://example.com/stale.ics', auth.user);
