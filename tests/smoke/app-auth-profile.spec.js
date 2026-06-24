@@ -61,7 +61,7 @@ async function mockAppModules(page, { user = null, emailLink = false } = {}) {
             canPrompt: true,
             canOpenSettings: false
         }];
-        window.__mockNotificationPreferenceResponses = [];
+        window.__mockNotificationPreferenceResponses ??= [];
     }, { mockUser: user, mockEmailLink: emailLink });
 
     await page.route(/\/src\/lib\/useAuth\.ts(\?.*)?$/, async (route) => {
