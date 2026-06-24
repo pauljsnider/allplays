@@ -297,6 +297,32 @@ describe('parent schedule child scope', () => {
     expect(getDoc).toHaveBeenCalledWith(expect.objectContaining({ path: 'teams/team-active/players/player-missing' }));
     expect(getPlayers).not.toHaveBeenCalled();
   });
+
+  it('reloads profile scope during schedule enrichment when the fast scope profile is empty', async () => {
+    vi.mocked(loadProfileDocument).mockResolvedValue({
+      parentOf: [],
+      parentPlayerKeys: ['team-1::player-1']
+    } as any);
+    vi.mocked(getTeam).mockResolvedValue({ id: 'team-1', name: 'Bears', active: true } as any);
+    vi.mocked(getDoc).mockResolvedValue(playerSnapshot('player-1', { name: 'Avery Lee', active: true }) as any);
+    vi.mocked(getTeams).mockResolvedValue([] as any);
+    vi.mocked(getGames).mockResolvedValue([] as any);
+    vi.mocked(getPracticeSessions).mockResolvedValue([] as any);
+
+    const schedule = await loadParentSchedule(parentUser, {
+      hydrateDetails: false,
+      expandStaffPlayers: false,
+      parentScope: {
+        profile: {},
+        children: []
+      }
+    });
+
+    expect(loadProfileDocument).toHaveBeenCalledWith('parent-1');
+    expect(schedule.children).toEqual([
+      { teamId: 'team-1', teamName: 'Bears', playerId: 'player-1', playerName: 'Avery Lee' }
+    ]);
+  });
 });
 
 describe('scheduled practice writes', () => {

@@ -140,7 +140,7 @@ export async function loadParentTeamsSummaryBootstrap(
         throw error;
       }
     },
-    { ttlMs: teamsSummaryTtlMs, force: options.force }
+    { ttlMs: teamsSummaryTtlMs, force: options.force, persist: false }
   );
 }
 

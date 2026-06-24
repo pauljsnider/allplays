@@ -45,9 +45,9 @@ describe('homeService Teams bootstrap reuse', () => {
         scheduleServiceMocks.hydrateParentScheduleDetails.mockImplementation(async (schedule) => schedule);
     });
 
-    it('reuses the fast summary schedule scope for teams enrichment', async () => {
+    it('reuses the fast summary schedule scope for teams enrichment without persisting the profile', async () => {
         const scheduleScope = {
-            profile: { parentTeamIds: ['team-1'] },
+            profile: { parentTeamIds: ['team-1'], notifyByEmail: true },
             children: [{
                 teamId: 'team-1',
                 teamName: 'Fast Falcons',
@@ -74,5 +74,6 @@ describe('homeService Teams bootstrap reuse', () => {
             expandStaffPlayers: false,
             parentScope: scheduleScope
         }));
+        expect(window.localStorage.getItem('allplays:appDataCache:teams-summary-bootstrap%3Aparent-1')).toBeNull();
     });
 });

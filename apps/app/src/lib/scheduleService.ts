@@ -187,6 +187,10 @@ export type ParentScheduleScope = {
   children: ParentScheduleChild[];
 };
 
+function hasResolvedParentProfile(profile: unknown): profile is Record<string, unknown> {
+  return Boolean(profile && typeof profile === 'object' && !Array.isArray(profile) && Object.keys(profile as Record<string, unknown>).length > 0);
+}
+
 export type ParentScheduleLoadOptions = {
   hydrateDetails?: boolean;
   expandStaffPlayers?: boolean;
@@ -3502,8 +3506,15 @@ export async function loadParentSchedule(user: AuthUser | null, options: ParentS
   const scheduleRangeByTeam = options.scheduleRangeByTeam || null;
 
   try {
-    const profile = options.parentScope?.profile || await loadProfileDocument(user.uid);
-    const { children, byTeam, staffTeams } = await buildParentScheduleTeamChildren(user, profile as Record<string, unknown>, { ...options, expandStaffPlayers });
+    const canReuseParentScope = hasResolvedParentProfile(options.parentScope?.profile);
+    const profile = canReuseParentScope
+      ? options.parentScope!.profile
+      : await loadProfileDocument(user.uid);
+    const { children, byTeam, staffTeams } = await buildParentScheduleTeamChildren(user, profile as Record<string, unknown>, {
+      ...options,
+      expandStaffPlayers,
+      parentScope: canReuseParentScope ? options.parentScope : undefined
+    });
 
     const teamEntries = [...byTeam.entries()];
     const eventBatches = await mapWithConcurrency(teamEntries, parentScheduleTeamConcurrency, async ([teamId, teamChildren]) => {
