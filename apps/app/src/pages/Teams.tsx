@@ -82,6 +82,7 @@ export function Teams({ auth }: { auth: AuthState }) {
     run: runTeamEnrichmentLoad
   } = useAsyncOperation();
   const selectedTeamId = searchParams.get('selectedTeamId') || '';
+  const requestedWorkflow = searchParams.get('workflow') || '';
   const authUserId = auth.user?.uid || null;
   const hasLoadedTeamSummary = Boolean(authUserId) && authUserId === loadedTeamSummaryUserId;
   const hasLoadedTeamDetails = Boolean(authUserId) && authUserId === loadedTeamUserId;
@@ -176,9 +177,9 @@ export function Teams({ auth }: { auth: AuthState }) {
   useEffect(() => {
     if (loading || selectedTeamId) return;
     if (shouldAutoNavigateToSingleTeam(home.teams)) {
-      navigate(`/teams/${encodeURIComponent(home.teams[0].teamId)}`, { replace: true });
+      navigate(getSingleTeamDestination(home.teams[0].teamId, requestedWorkflow), { replace: true });
     }
-  }, [loading, home.teams, navigate, selectedTeamId]);
+  }, [loading, home.teams, navigate, requestedWorkflow, selectedTeamId]);
 
   const showBlockingErrorState = !loading && !hasLoadedTeamDetails && Boolean(teamsLoadError);
 
@@ -263,6 +264,13 @@ function mergeTeamSummary(current: ParentHomeModel, enriched: ParentHomeModel): 
 
 function shouldAutoNavigateToSingleTeam(teams: ParentHomeTeam[]): boolean {
   return teams.length === 1 && teams[0]?.players.length === 1;
+}
+
+function getSingleTeamDestination(teamId: string, workflow: string) {
+  if (workflow === 'fees') {
+    return `/teams/${encodeURIComponent(teamId)}/fees`;
+  }
+  return `/teams/${encodeURIComponent(teamId)}`;
 }
 
 function TeamsHeader({ loading, refreshing, teams, teamRoles, onRefresh }: {

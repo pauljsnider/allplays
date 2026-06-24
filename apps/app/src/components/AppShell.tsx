@@ -693,7 +693,7 @@ function buildAddWorkflows(): AddWorkflow[] {
       section: 'Team Ops',
       icon: CreditCard,
       kind: 'native',
-      href: '/teams',
+      href: '/teams?workflow=fees',
       badge: 'Coach/Admin'
     },
     {

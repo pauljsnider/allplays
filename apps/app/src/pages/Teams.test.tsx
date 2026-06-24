@@ -104,12 +104,13 @@ function TeamHubRoute() {
   return <div data-testid="team-hub">Team hub: {teamId}</div>;
 }
 
-function renderTeamsWithNav() {
+function renderTeamsWithNav(initialEntry = '/teams') {
   return render(
-    <MemoryRouter initialEntries={["/teams"]}>
+    <MemoryRouter initialEntries={[initialEntry]}>
       <Routes>
         <Route path="/teams" element={<Teams auth={auth} />} />
         <Route path="/teams/:teamId" element={<TeamHubRoute />} />
+        <Route path="/teams/:teamId/fees" element={<div data-testid="team-fees-route">Team fees route</div>} />
       </Routes>
     </MemoryRouter>
   );
@@ -323,6 +324,17 @@ describe('Teams single-team auto-navigate', () => {
     expect(screen.getByTestId('team-hub').textContent).toBe('Team hub: team-solo');
     expect(screen.queryByText('Choose a team')).toBeNull();
     expect(screen.queryByText('Loading teams')).toBeNull();
+  });
+
+  it('opens team fees directly when the fees workflow targets a single linked team', async () => {
+    renderTeamsWithNav('/teams?workflow=fees');
+
+    await waitFor(() => {
+      expect(screen.getByTestId('team-fees-route')).toBeInTheDocument();
+    });
+
+    expect(screen.queryByTestId('team-hub')).toBeNull();
+    expect(screen.queryByText('Choose a team')).toBeNull();
   });
 
   it('keeps the chooser visible when the only team has no linked players yet', async () => {
