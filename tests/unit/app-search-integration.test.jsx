@@ -384,7 +384,7 @@ describe('React app shell search', () => {
         expect(container.textContent).not.toContain('Paige Forward');
     });
 
-    it('filters help matches by selected role and opens the filtered help result with Enter', async () => {
+    it('shows unfiltered help matches in search and routes advanced help filtering to the help portal', async () => {
         helpMocks.searchHelpKnowledge.mockReturnValue([
             {
                 id: 'coach-roster-help',
@@ -412,57 +412,26 @@ describe('React app shell search', () => {
         await clickButton(container, 'Search');
         await fillSearch(container, 'help');
 
-        const filterGroup = container.querySelector('[aria-label="Filter help by role"]');
-        expect(filterGroup).toBeTruthy();
-
-        const roleButton = (label) => {
-            const button = Array.from(filterGroup.querySelectorAll('button')).find((candidate) => candidate.textContent.trim() === label);
-            if (!button) throw new Error(`Role filter button not found: ${label}`);
-            return button;
-        };
-
-        ['All', 'Parent', 'Coach', 'Admin', 'Member'].forEach((label) => {
-            expect(roleButton(label)).toBeTruthy();
+        expect(container.querySelector('[aria-label="Filter help by role"]')).toBeNull();
+        expect(helpMocks.searchHelpKnowledge).toHaveBeenLastCalledWith({
+            query: 'help',
+            roles: ['parent'],
+            roleFilter: 'all',
+            limit: 5
         });
-        expect(roleButton('All').getAttribute('aria-pressed')).toBe('true');
         expect(container.textContent).toContain('Manage a roster');
         expect(container.textContent).toContain('Reset a password');
-
-        const helpSearchCallCount = helpMocks.searchHelpKnowledge.mock.calls.length;
-        await act(async () => {
-            roleButton('Parent').dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
-        });
-        await flush();
-
-        expect(roleButton('All').getAttribute('aria-pressed')).toBe('false');
-        expect(roleButton('Parent').getAttribute('aria-pressed')).toBe('true');
-        expect(helpMocks.searchHelpKnowledge).toHaveBeenCalledTimes(helpSearchCallCount + 1);
-        expect(container.textContent).not.toContain('Manage a roster');
-        expect(container.textContent).toContain('Reset a password');
+        expect(buttonByText(container, 'More help results')).toBeTruthy();
 
         await pressDialogKey(container, 'Enter');
-        expect(container.querySelector('[data-testid="route"]').textContent).toBe('/help/parent-password-help');
+        expect(container.querySelector('[data-testid="route"]').textContent).toBe('/help/coach-roster-help');
         expect(publicActionMocks.openPublicUrl).not.toHaveBeenCalled();
 
         await clickButton(container, 'Search');
         await fillSearch(container, 'help');
-        const reopenedFilterGroup = container.querySelector('[aria-label="Filter help by role"]');
-        const reopenedRoleButton = (label) => {
-            const button = Array.from(reopenedFilterGroup.querySelectorAll('button')).find((candidate) => candidate.textContent.trim() === label);
-            if (!button) throw new Error(`Role filter button not found after reopen: ${label}`);
-            return button;
-        };
-        await act(async () => {
-            reopenedRoleButton('Member').dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
-        });
-        await flush();
-
-        expect(reopenedRoleButton('Parent').getAttribute('aria-pressed')).toBe('false');
-        expect(reopenedRoleButton('Member').getAttribute('aria-pressed')).toBe('true');
-        expect(container.textContent).not.toContain('Manage a roster');
-        expect(container.textContent).not.toContain('Reset a password');
-        expect(container.textContent).toContain('No Member help articles match this search');
-        expect(container.querySelector('input[aria-label="Search teams, players, actions, help"]')).toBeTruthy();
+        await clickButton(container, 'More help results');
+        expect(container.querySelector('[data-testid="route"]').textContent).toBe('/help');
+        expect(publicActionMocks.openPublicUrl).not.toHaveBeenCalled();
     });
 
     it('renders help matches and opens help articles inside the app', async () => {
@@ -492,7 +461,7 @@ describe('React app shell search', () => {
         expect(publicActionMocks.openPublicUrl).not.toHaveBeenCalled();
     });
 
-    it('updates help results immediately when the role filter changes', async () => {
+    it('keeps dialog help search scoped to the default all-roles filter', async () => {
         helpMocks.searchHelpKnowledge.mockImplementation(({ roleFilter }) => {
             if (roleFilter === 'coach') {
                 return [{
@@ -524,28 +493,17 @@ describe('React app shell search', () => {
 
         await clickButton(container, 'Search');
         await fillSearch(container, 'live tracker');
+
+        expect(container.querySelector('[aria-label="Filter help by role"]')).toBeNull();
+        expect(helpMocks.searchHelpKnowledge).toHaveBeenLastCalledWith({
+            query: 'live tracker',
+            roles: ['parent'],
+            roleFilter: 'all',
+            limit: 5
+        });
         expect(container.textContent).toContain('Watch Live Games and Replays');
-
-        await clickButton(container, 'Coach');
-        expect(helpMocks.searchHelpKnowledge).toHaveBeenLastCalledWith({
-            query: 'live tracker',
-            roles: ['parent'],
-            roleFilter: 'coach',
-            limit: 5
-        });
-        expect(container.textContent).toContain('Track Live Games with the Live Tracker');
-        expect(container.textContent).toContain('coach');
-        expect(container.textContent).toContain('admin');
-
-        await clickButton(container, 'Member');
-        expect(helpMocks.searchHelpKnowledge).toHaveBeenLastCalledWith({
-            query: 'live tracker',
-            roles: ['parent'],
-            roleFilter: 'member',
-            limit: 5
-        });
         expect(container.textContent).not.toContain('Track Live Games with the Live Tracker');
-        expect(container.textContent).toContain('No Member help articles match this search');
+        expect(buttonByText(container, 'More help results')).toBeTruthy();
     });
 
     it('opens Browse Teams through the native app route for signed-in users', async () => {
