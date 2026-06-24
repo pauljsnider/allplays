@@ -2131,6 +2131,16 @@ describe('partial parent schedule team failures (#3021)', () => {
     });
   });
 
+  it('rethrows a typed schedule load error when every team schedule load fails', async () => {
+    vi.mocked(getGames).mockRejectedValue(new Error('permission-denied'));
+
+    await expect(loadParentSchedule(parentUser, { hydrateDetails: false, expandStaffPlayers: false })).rejects.toMatchObject({
+      name: 'AppServiceError',
+      type: 'permission',
+      message: 'permission-denied'
+    });
+  });
+
 });
 
 describe('team schedule game windowing (#2034)', () => {
