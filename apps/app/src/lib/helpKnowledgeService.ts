@@ -169,21 +169,46 @@ function scoreHelpDoc(doc: HelpKnowledgeDoc, query: string, tokens: string[], ro
   const summary = doc.normalizedSummary;
   const file = doc.normalizedFile;
   const text = doc.normalizedText;
-  let score = roleMatches(doc.roles, roles) ? 2 : 0;
+  let score = 0;
+  let hasQueryMatch = false;
   const phrase = query.toLowerCase();
 
   if (phrase.length > 8) {
-    if (title.includes(phrase)) score += 28;
-    if (summary.includes(phrase)) score += 18;
-    if (text.includes(phrase)) score += 10;
+    if (title.includes(phrase)) {
+      score += 28;
+      hasQueryMatch = true;
+    }
+    if (summary.includes(phrase)) {
+      score += 18;
+      hasQueryMatch = true;
+    }
+    if (text.includes(phrase)) {
+      score += 10;
+      hasQueryMatch = true;
+    }
   }
 
   tokens.forEach((token) => {
-    if (title.includes(token)) score += 9;
-    if (summary.includes(token)) score += 5;
-    if (file.includes(token)) score += 4;
-    if (text.includes(token)) score += Math.min(countOccurrences(text, token), 6);
+    if (title.includes(token)) {
+      score += 9;
+      hasQueryMatch = true;
+    }
+    if (summary.includes(token)) {
+      score += 5;
+      hasQueryMatch = true;
+    }
+    if (file.includes(token)) {
+      score += 4;
+      hasQueryMatch = true;
+    }
+    if (text.includes(token)) {
+      score += Math.min(countOccurrences(text, token), 6);
+      hasQueryMatch = true;
+    }
   });
+
+  if (!hasQueryMatch) return 0;
+  if (roleMatches(doc.roles, roles)) score += 2;
 
   return score;
 }
