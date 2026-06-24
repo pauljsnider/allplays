@@ -20,9 +20,14 @@ function buildFirestoreTimestamp(ms) {
     };
 }
 
-function buildDedupDocPath(teamId, category, gameId = null) {
+function buildDedupDocPath(teamId, category, gameId = null, dedupKey = null) {
     const crypto = require('node:crypto');
-    const key = [teamId, category, gameId || ''].join('::');
+    const normalizedGameId = String(gameId || '').trim();
+    const normalizedDedupKey = String(dedupKey || '').trim();
+    const dedupIdentity = normalizedGameId && normalizedDedupKey
+        ? `${normalizedGameId}::${normalizedDedupKey}`
+        : (normalizedDedupKey || normalizedGameId);
+    const key = [teamId, category, dedupIdentity].join('::');
     const hash = crypto.createHash('sha256').update(key).digest('hex').slice(0, 16);
     return `teams/${teamId}/notificationSendLog/${hash}`;
 }
@@ -251,6 +256,29 @@ describe('notification send dedup guard — checkAndSetNotificationDedup', () =>
         expect(first.mockFirestore.doc.mock.calls[0][0]).not.toBe(second.mockFirestore.doc.mock.calls[0][0]);
         expect([...first.store.values()][0]).toMatchObject({ category: 'schedule', gameId: 'game-1' });
         expect([...second.store.values()][0]).toMatchObject({ category: 'practice', gameId: 'game-1' });
+    });
+
+    it('scopes custom dedup keys to the gameId so matching score transitions do not collide across games', async () => {
+        const now = Date.now();
+        const existingPath = buildDedupDocPath('team-1', 'liveScore', 'game-1', 'score:0:0->2:0');
+        const { fn, mockFirestore } = createDedupHarness({
+            nowMs: now,
+            docs: {
+                [existingPath]: {
+                    teamId: 'team-1',
+                    category: 'liveScore',
+                    gameId: 'game-1',
+                    dedupKey: 'score:0:0->2:0',
+                    sentAt: buildFirestoreTimestamp(now - 60 * 1000)
+                }
+            }
+        });
+
+        const result = await fn('team-1', 'liveScore', 'game-2', 'score:0:0->2:0');
+
+        expect(result).toBe(true);
+        expect(mockFirestore.doc).toHaveBeenCalledWith(expect.stringMatching(/^teams\/team-1\/notificationSendLog\//));
+        expect(mockFirestore.doc.mock.calls.at(-1)[0]).not.toBe(existingPath);
     });
 });
 

@@ -5937,8 +5937,17 @@ function buildNotificationDedupRef(teamId, category, dedupIdentity = '') {
   return firestore.doc(`teams/${teamId}/notificationSendLog/${hash}`);
 }
 
+function buildNotificationDedupIdentity(gameId, dedupKey = null) {
+  const normalizedGameId = String(gameId || '').trim();
+  const normalizedDedupKey = String(dedupKey || '').trim();
+  if (normalizedGameId && normalizedDedupKey) {
+    return `${normalizedGameId}::${normalizedDedupKey}`;
+  }
+  return normalizedDedupKey || normalizedGameId;
+}
+
 async function markNotificationDedupSent(teamId, category, gameId, dedupKey = null) {
-  const dedupIdentity = String(dedupKey || gameId || '').trim();
+  const dedupIdentity = buildNotificationDedupIdentity(gameId, dedupKey);
   const dedupRef = buildNotificationDedupRef(teamId, category, dedupIdentity);
   await dedupRef.set({
     teamId,
@@ -5950,7 +5959,7 @@ async function markNotificationDedupSent(teamId, category, gameId, dedupKey = nu
 }
 
 async function checkAndSetNotificationDedup(teamId, category, gameId, dedupKey = null) {
-  const dedupIdentity = String(dedupKey || gameId || '').trim();
+  const dedupIdentity = buildNotificationDedupIdentity(gameId, dedupKey);
   const dedupRef = buildNotificationDedupRef(teamId, category, dedupIdentity);
 
   const result = await firestore.runTransaction(async (txn) => {
