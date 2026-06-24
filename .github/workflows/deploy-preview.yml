@@ -172,13 +172,13 @@ jobs:
             echo "$CURRENT_CHANNEL"
             head -n "$KEEP_RECENT_OPEN_PR_CHANNELS" "$open_pr_numbers_file" | sed 's/^/pr-/'
           } | sed '/^$/d' | sort -u > "$keep_file"
-          npx firebase-tools@14.25.0 hosting:channel:list --site game-flow-c6311 --project game-flow-c6311 > "$channels_file"
+          ./node_modules/.bin/firebase hosting:channel:list --site game-flow-c6311 --project game-flow-c6311 > "$channels_file"
           awk -F '│' 'NF > 2 {gsub(/^[[:space:]]+|[[:space:]]+$/, "", $2); if ($2 ~ /^pr-/) print $2 }' "$channels_file" | sort -u > "$prune_file"
 
           delete_channel() {
             local channel="$1"
             local delete_log="$RUNNER_TEMP/firebase-preview-delete-$channel.log"
-            if ! npx firebase-tools@14.25.0 hosting:channel:delete "$channel" --site game-flow-c6311 --project game-flow-c6311 --force >"$delete_log" 2>&1; then
+            if ! ./node_modules/.bin/firebase hosting:channel:delete "$channel" --site game-flow-c6311 --project game-flow-c6311 --force >"$delete_log" 2>&1; then
               if grep -Eq 'HTTP Error: 404|Not Found' "$delete_log"; then
                 echo "Skipping already-missing Firebase preview channel: $channel"
                 return 0
@@ -205,7 +205,7 @@ jobs:
 
           deploy_preview_channel() {
             : > "$log_file"
-            npx firebase-tools@14.25.0 hosting:channel:deploy "$CURRENT_CHANNEL" --project game-flow-c6311 --config "$FIREBASE_PREVIEW_CONFIG" --expires 7d --non-interactive 2>&1 | tee "$log_file"
+            ./node_modules/.bin/firebase hosting:channel:deploy "$CURRENT_CHANNEL" --project game-flow-c6311 --config "$FIREBASE_PREVIEW_CONFIG" --expires 7d --non-interactive 2>&1 | tee "$log_file"
           }
 
           skip_preview_for_quota() {
@@ -221,7 +221,7 @@ jobs:
           delete_oldest_preview_channel() {
             channels_file="$RUNNER_TEMP/firebase-preview-channels-retry.txt"
             delete_log="$RUNNER_TEMP/firebase-preview-delete-retry.log"
-            if ! npx firebase-tools@14.25.0 hosting:channel:list --site game-flow-c6311 --project game-flow-c6311 > "$channels_file"; then
+            if ! ./node_modules/.bin/firebase hosting:channel:list --site game-flow-c6311 --project game-flow-c6311 > "$channels_file"; then
               skip_preview_for_quota
             fi
             oldest_channel="$(awk -F '│' 'NF > 3 {
@@ -237,7 +237,7 @@ jobs:
               skip_preview_for_quota
             fi
             echo "Deleting oldest Firebase preview channel to free quota: $oldest_channel"
-            if ! npx firebase-tools@14.25.0 hosting:channel:delete "$oldest_channel" --site game-flow-c6311 --project game-flow-c6311 --force >"$delete_log" 2>&1; then
+            if ! ./node_modules/.bin/firebase hosting:channel:delete "$oldest_channel" --site game-flow-c6311 --project game-flow-c6311 --force >"$delete_log" 2>&1; then
               skip_preview_for_quota
             fi
           }
