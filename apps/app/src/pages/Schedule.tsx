@@ -369,6 +369,7 @@ export function Schedule({ auth }: { auth: AuthState }) {
     });
     const cacheKey = getParentScheduleSummaryCacheKey(auth.user.uid);
     const scheduleCacheTtlMs = 60 * 1000 * 5;
+    const scheduleCacheOptions = { ttlMs: scheduleCacheTtlMs, force };
     const cached = getCachedAppData(cacheKey);
 
     return runScheduleRead(
@@ -376,8 +377,7 @@ export function Schedule({ auth }: { auth: AuthState }) {
         cacheKey,
         () => loadParentSchedule(auth.user, { hydrateDetails: false, expandStaffPlayers: false }),
         {
-          ttlMs: scheduleCacheTtlMs,
-          force,
+          ...scheduleCacheOptions,
           shouldCache: (result) => result?.isPartial !== true
         }
       ),
