@@ -2531,6 +2531,10 @@ function getEventMetadataPills(event: ParentScheduleEvent | CalendarScheduleEntr
 
 function getScoreLabel(event: ParentScheduleEvent | CalendarScheduleEntry) {
   if (event.type !== 'game') return '';
+  const status = String(event.status || '').trim().toLowerCase();
+  const liveStatus = String(event.liveStatus || '').trim().toLowerCase();
+  const isCompleted = status === 'completed' || status === 'final' || liveStatus === 'completed' || liveStatus === 'final';
+  if (!isCompleted) return '';
   if (event.homeScore === null || event.homeScore === undefined || event.awayScore === null || event.awayScore === undefined) return '';
   return `${event.homeScore}-${event.awayScore}`;
 }
