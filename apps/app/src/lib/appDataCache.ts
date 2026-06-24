@@ -20,6 +20,7 @@ type LoadCachedAppDataOptions<T> = {
   maxStaleMs?: number;
   staleWhileRevalidate?: boolean;
   onRefresh?: (value: T) => void;
+  shouldCache?: (value: T) => boolean;
 };
 
 type StoredCacheEntry = {
@@ -57,7 +58,8 @@ export function loadCachedAppData<T>(
     persist = true,
     maxStaleMs = defaultMaxStaleMs,
     staleWhileRevalidate = false,
-    onRefresh
+    onRefresh,
+    shouldCache
   }: LoadCachedAppDataOptions<T> = {}
 ): Promise<T> {
   const now = Date.now();
@@ -75,14 +77,14 @@ export function loadCachedAppData<T>(
     && hasCachedValue(existing)
     && existing.expiresAt + maxStaleMs > now
   ) {
-    const refreshPromise = loadAndStoreCachedAppData(key, loader, existing, { ttlMs, persist, onRefresh });
+    const refreshPromise = loadAndStoreCachedAppData(key, loader, existing, { ttlMs, persist, onRefresh, shouldCache });
     refreshPromise.catch((error) => {
       logger.warn('Background refresh failed.', { error });
     });
     return Promise.resolve(existing.value as T);
   }
 
-  return loadAndStoreCachedAppData(key, loader, existing, { ttlMs, persist, onRefresh });
+  return loadAndStoreCachedAppData(key, loader, existing, { ttlMs, persist, onRefresh, shouldCache });
 }
 
 export function clearAppDataCache(prefix = '') {
@@ -99,9 +101,28 @@ function loadAndStoreCachedAppData<T>(
   key: string,
   loader: () => Promise<T>,
   existing: CacheEntry<T> | undefined,
-  { ttlMs, persist, onRefresh }: { ttlMs: number; persist: boolean; onRefresh?: (value: T) => void }
+  {
+    ttlMs,
+    persist,
+    onRefresh,
+    shouldCache
+  }: { ttlMs: number; persist: boolean; onRefresh?: (value: T) => void; shouldCache?: (value: T) => boolean }
 ) {
   const promise = loader().then((value) => {
+    if (shouldCache && !shouldCache(value)) {
+      if (existing && hasCachedValue(existing)) {
+        cache.set(key, {
+          value: existing.value,
+          expiresAt: existing.expiresAt,
+          hydratedFromStorage: existing.hydratedFromStorage
+        });
+      } else {
+        cache.delete(key);
+      }
+      onRefresh?.(value);
+      return value;
+    }
+
     const entry = {
       value,
       expiresAt: Date.now() + ttlMs,

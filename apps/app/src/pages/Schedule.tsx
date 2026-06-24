@@ -375,7 +375,11 @@ export function Schedule({ auth }: { auth: AuthState }) {
       () => loadCachedAppData(
         cacheKey,
         () => loadParentSchedule(auth.user, { hydrateDetails: false, expandStaffPlayers: false }),
-        { ttlMs: scheduleCacheTtlMs, force }
+        {
+          ttlMs: scheduleCacheTtlMs,
+          force,
+          shouldCache: (result) => result?.isPartial !== true
+        }
       ),
       {
         getErrorMessage: (loadError) => {

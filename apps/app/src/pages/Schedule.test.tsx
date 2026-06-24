@@ -190,6 +190,30 @@ describe('Schedule', () => {
     });
   });
 
+  it('passes a no-partial-caching guard into the schedule summary cache loader', async () => {
+    scheduleServiceMocks.loadParentSchedule.mockResolvedValueOnce({
+      children: [
+        { playerId: 'player-1', playerName: 'Pat', teamId: 'team-1', teamName: 'Bears' }
+      ],
+      events: [],
+      isPartial: true
+    });
+
+    renderSchedule();
+
+    expect(await screen.findByText('No events in this filter')).toBeTruthy();
+    expect(appDataCacheMocks.loadCachedAppData).toHaveBeenCalledWith(
+      'parent-schedule:test-user',
+      expect.any(Function),
+      expect.objectContaining({
+        shouldCache: expect.any(Function)
+      })
+    );
+    const options = appDataCacheMocks.loadCachedAppData.mock.calls[0]?.[2] as { shouldCache: (value: { isPartial?: boolean }) => boolean };
+    expect(options.shouldCache({ isPartial: true })).toBe(false);
+    expect(options.shouldCache({ isPartial: false })).toBe(true);
+  });
+
   it('keeps team and player filters after an empty schedule refresh fails', async () => {
     scheduleServiceMocks.loadParentSchedule
       .mockResolvedValueOnce({

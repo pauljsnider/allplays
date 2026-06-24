@@ -2090,6 +2090,7 @@ describe('partial parent schedule team failures (#3021)', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    (globalThis as any).window = { location: { protocol: 'https:' }, setTimeout, clearTimeout } as any;
     vi.mocked(loadProfileDocument).mockResolvedValue({
       parentOf: parentUser.parentOf
     } as any);
@@ -2129,6 +2130,7 @@ describe('partial parent schedule team failures (#3021)', () => {
       id: 'game-1',
       opponent: 'Tigers'
     });
+    expect(result.isPartial).toBe(true);
   });
 
   it('rethrows a typed schedule load error when every team schedule load fails', async () => {

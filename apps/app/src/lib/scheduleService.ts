@@ -184,6 +184,7 @@ type ParentScopeLink = ParentScheduleChild & {
 export type ParentScheduleLoadResult = {
   children: ParentScheduleChild[];
   events: ParentScheduleEvent[];
+  isPartial?: boolean;
 };
 
 export type ParentScheduleScope = {
@@ -3558,15 +3559,17 @@ export async function loadParentSchedule(user: AuthUser | null, options: ParentS
     if (hydrateDetails) {
       await hydrateEventDetails(events, user);
     }
+    const isPartial = failedTeamLoads.length > 0;
     timer.end({
       hydrateDetails,
       expandStaffPlayers,
       childLinks: children.length,
       teams: byTeam.size,
       staffTeams: staffTeams.length,
-      eventRows: events.length
+      eventRows: events.length,
+      isPartial
     });
-    return { children, events };
+    return { children, events, isPartial };
   } catch (error: any) {
     timer.end({ hydrateDetails, expandStaffPlayers, error: error?.message || 'Unable to load parent schedule.' });
     throw error;

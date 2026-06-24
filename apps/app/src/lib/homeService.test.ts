@@ -27,7 +27,7 @@ vi.mock('./logger', () => ({
     createLogger: vi.fn(() => ({ warn: vi.fn() }))
 }));
 
-import { loadParentHomeSummary, loadParentTeamsSummaryBootstrap } from './homeService';
+import { loadParentHomeSummary, loadParentScheduleSummary, loadParentTeamsSummaryBootstrap } from './homeService';
 
 const user = {
     uid: 'parent-1',
@@ -75,5 +75,27 @@ describe('homeService Teams bootstrap reuse', () => {
             parentScope: scheduleScope
         }));
         expect(window.localStorage.getItem('allplays:appDataCache:teams-summary-bootstrap%3Aparent-1')).toBeNull();
+    });
+
+    it('does not cache partial parent schedule summaries as complete results', async () => {
+        scheduleServiceMocks.loadParentSchedule
+            .mockResolvedValueOnce({
+                children: [{ teamId: 'team-1', teamName: 'Fast Falcons', playerId: 'player-1', playerName: 'Avery Ace' }],
+                events: [],
+                isPartial: true
+            })
+            .mockResolvedValueOnce({
+                children: [{ teamId: 'team-1', teamName: 'Fast Falcons', playerId: 'player-1', playerName: 'Avery Ace' }],
+                events: [{ id: 'event-1' }],
+                isPartial: false
+            });
+
+        const partial = await loadParentScheduleSummary(user, { force: true });
+        const complete = await loadParentScheduleSummary(user);
+
+        expect(partial.isPartial).toBe(true);
+        expect(complete.isPartial).toBe(false);
+        expect(scheduleServiceMocks.loadParentSchedule).toHaveBeenCalledTimes(2);
+        expect(window.localStorage.getItem('allplays:appDataCache:app-schedule-summary%3Aparent-1')).toContain('event-1');
     });
 });
