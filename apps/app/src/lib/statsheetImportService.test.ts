@@ -46,7 +46,7 @@ vi.mock('../../../../js/firebase.js', () => firebaseMocks)
 vi.mock('../../../../js/db.js', () => dbMocks)
 vi.mock('../../../../js/vendor/firebase-app.js', () => firebaseAppMocks)
 vi.mock('../../../../js/vendor/firebase-ai.js', () => firebaseAiMocks)
-vi.mock('./profileService', () => ({ acquireProfilePhoto: vi.fn() }))
+vi.mock('./profilePhotoService', () => ({ acquireProfilePhoto: vi.fn() }))
 vi.mock('../../../../js/live-tracker-save-complete.js', () => ({
   addAggregatedStatsWritesToBatch: vi.fn(({ aggregatedStatsWrites = [], batch, db, currentTeamId, currentGameId, createDocRef }: any) => {
     aggregatedStatsWrites.forEach(({ playerId, data }: any) => {
@@ -181,6 +181,29 @@ describe('applyTrackStatsheetImportForApp', () => {
     firebaseMocks.getDocs
       .mockResolvedValueOnce({ size: 1, docs: [{ ref: { path: 'event-1' } }] })
       .mockResolvedValueOnce({ size: 0, docs: [] })
+      .mockResolvedValueOnce({ size: 0, docs: [] })
+
+    const result = await applyTrackStatsheetImportForApp({
+      teamId: 'team-1',
+      gameId: 'game-1',
+      roster: [{ id: 'p1', name: 'Avery Smith', number: '12' }],
+      columns: ['PTS'],
+      homeRows: [{ number: '12', name: 'Avery Smith', fouls: 2, totalPoints: 10, include: true, mappedPlayerId: 'p1' }],
+      visitorRows: [],
+      homeScore: 50,
+      awayScore: 42,
+      file: null
+    })
+
+    expect(result).toMatchObject({ requiresReplaceConfirmation: true, hasExistingTrackedData: true })
+    expect(firebaseMocks.writeBatch).not.toHaveBeenCalled()
+  })
+
+  it('requires replacement when only private tracked stats already exist', async () => {
+    firebaseMocks.getDocs
+      .mockResolvedValueOnce({ size: 0, docs: [] })
+      .mockResolvedValueOnce({ size: 0, docs: [] })
+      .mockResolvedValueOnce({ size: 1, docs: [{ ref: { path: 'private-stats-1' } }] })
 
     const result = await applyTrackStatsheetImportForApp({
       teamId: 'team-1',
@@ -202,6 +225,7 @@ describe('applyTrackStatsheetImportForApp', () => {
     firebaseMocks.getDocs
       .mockResolvedValueOnce({ size: 1, docs: [{ ref: { path: 'event-1' } }] })
       .mockResolvedValueOnce({ size: 1, docs: [{ ref: { path: 'stats-1' } }] })
+      .mockResolvedValueOnce({ size: 1, docs: [{ ref: { path: 'private-stats-1' } }] })
 
     const file = new File(['sheet'], 'statsheet.png', { type: 'image/png' })
     const result = await applyTrackStatsheetImportForApp({
@@ -218,7 +242,8 @@ describe('applyTrackStatsheetImportForApp', () => {
     })
 
     expect(dbMocks.uploadStatSheetPhoto).toHaveBeenCalledWith('team-1', file)
-    expect(firebaseMocks.deleteDoc).toHaveBeenCalledTimes(2)
+    expect(firebaseMocks.deleteDoc).toHaveBeenCalledTimes(3)
+    expect(firebaseMocks.deleteDoc).toHaveBeenCalledWith({ path: 'private-stats-1' })
     expect(firebaseMocks.writeBatch).toHaveBeenCalled()
     expect(firebaseMocks.batch.update).toHaveBeenCalledWith(
       { path: 'teams/team-1/games/game-1' },

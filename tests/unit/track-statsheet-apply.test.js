@@ -1,10 +1,13 @@
 import { describe, expect, it } from 'vitest';
+import { readFileSync } from 'node:fs';
 
 import {
     buildTrackStatsheetApplyPlan,
     getTrackStatsheetPointsKey,
     validateTrackStatsheetApplyRows
 } from '../../js/track-statsheet-apply.js';
+
+const trackStatsheetSource = readFileSync(new URL('../../track-statsheet.html', import.meta.url), 'utf8');
 
 describe('track statsheet apply helpers', () => {
     it('allows excluded unmatched home rows when included rows are mapped', () => {
@@ -172,5 +175,10 @@ describe('track statsheet apply helpers', () => {
                 }
             }
         ]);
+    });
+
+    it('clears private player stats when replacing previously tracked game data', () => {
+        expect(trackStatsheetSource).toContain("const privateStatsSnap = await getDocs(collection(db, `teams/${currentTeamId}/games/${currentGameId}/privatePlayerStats`));");
+        expect(trackStatsheetSource).toMatch(/if \(eventsSnap\.size > 0 \|\| statsSnap\.size > 0 \|\| privateStatsSnap\.size > 0\) \{[\s\S]*await Promise\.all\(privateStatsSnap\.docs\.map\(docItem => deleteDoc\(docItem\.ref\)\)\);/);
     });
 });

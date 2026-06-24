@@ -758,7 +758,8 @@ RETURN JSON:
         applyStatus.textContent = 'Checking existing game data…';
         const eventsSnap = await getDocs(collection(db, `teams/${currentTeamId}/games/${currentGameId}/events`));
         const statsSnap = await getDocs(collection(db, `teams/${currentTeamId}/games/${currentGameId}/aggregatedStats`));
-        if (eventsSnap.size > 0 || statsSnap.size > 0) {
+        const privateStatsSnap = await getDocs(collection(db, `teams/${currentTeamId}/games/${currentGameId}/privatePlayerStats`));
+        if (eventsSnap.size > 0 || statsSnap.size > 0 || privateStatsSnap.size > 0) {
           const confirmClear = confirm('This game already has tracked data. Replace it with the stat sheet results?');
           if (!confirmClear) {
             applyStatus.textContent = 'Cancelled.';
@@ -767,6 +768,7 @@ RETURN JSON:
           applyStatus.textContent = 'Clearing existing stats…';
           await Promise.all(eventsSnap.docs.map(docItem => deleteDoc(docItem.ref)));
           await Promise.all(statsSnap.docs.map(docItem => deleteDoc(docItem.ref)));
+          await Promise.all(privateStatsSnap.docs.map(docItem => deleteDoc(docItem.ref)));
         }
 
         const applyPlan = buildTrackStatsheetApplyPlan({
