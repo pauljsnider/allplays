@@ -5,7 +5,6 @@ import {
   buildTrackStatsheetApplyPlan,
   collection,
   db,
-  deleteDoc,
   doc,
   getAI,
   getApp,
@@ -23,6 +22,9 @@ import {
 } from './adapters/legacyStatsheetImport'
 
 const logger = createLogger('statsheetImportService')
+
+const TRACKED_DATA_CLEANUP_BATCH_LIMIT = 450
+const FIRESTORE_BATCH_WRITE_LIMIT = 500
 
 export type TrackStatsheetReviewRow = {
   number: string;
@@ -363,12 +365,6 @@ export async function applyTrackStatsheetImportForApp({
     statSheetPhotoUrl = await uploadStatSheetPhoto(teamId, file)
   }
 
-  if (hasExistingTrackedData) {
-    await Promise.all(eventsSnap.docs.map((entry: any) => deleteDoc(entry.ref)))
-    await Promise.all(statsSnap.docs.map((entry: any) => deleteDoc(entry.ref)))
-    await Promise.all(privateStatsSnap.docs.map((entry: any) => deleteDoc(entry.ref)))
-  }
-
   const applyPlan = buildTrackStatsheetApplyPlan({
     includedHome: validation.includedHome,
     includedVisitor,
@@ -378,6 +374,19 @@ export async function applyTrackStatsheetImportForApp({
     awayScore,
     statSheetPhotoUrl: statSheetPhotoUrl || null
   })
+
+  const plannedPlayerIds = new Set((applyPlan.aggregatedStatsWrites || []).map((entry: any) => String(entry?.playerId || '')))
+
+  const cleanupDocs = [
+    ...eventsSnap.docs,
+    ...statsSnap.docs.filter((entry: any) => !plannedPlayerIds.has(getTrackedDocId(entry))),
+    ...privateStatsSnap.docs.filter((entry: any) => !plannedPlayerIds.has(getTrackedDocId(entry)))
+  ]
+
+  const totalBatchWrites = (applyPlan.aggregatedStatsWrites || []).length * 2 + 1 + cleanupDocs.length
+  if (replaceExisting && totalBatchWrites > FIRESTORE_BATCH_WRITE_LIMIT) {
+    throw new Error('This statsheet replacement is too large to apply safely in one save. Please reduce the tracked rows or ask a team admin to clear the game first.')
+  }
 
   const batch = writeBatch(db)
   addAggregatedStatsWritesToBatch({
@@ -390,7 +399,23 @@ export async function applyTrackStatsheetImportForApp({
   })
   const gameRef = doc(db, `teams/${teamId}/games`, gameId)
   batch.update(gameRef, applyPlan.gameUpdate)
-  await batch.commit()
+
+  if (replaceExisting) {
+    cleanupDocs.forEach((entry: any) => {
+      batch.delete(entry.ref)
+    })
+    await batch.commit()
+  } else {
+    await batch.commit()
+
+    for (let i = 0; i < cleanupDocs.length; i += TRACKED_DATA_CLEANUP_BATCH_LIMIT) {
+      const cleanupBatch = writeBatch(db)
+      cleanupDocs.slice(i, i + TRACKED_DATA_CLEANUP_BATCH_LIMIT).forEach((entry: any) => {
+        cleanupBatch.delete(entry.ref)
+      })
+      await cleanupBatch.commit()
+    }
+  }
 
   return {
     requiresReplaceConfirmation: false,
@@ -398,4 +423,13 @@ export async function applyTrackStatsheetImportForApp({
     uploadedPhotoUrl: statSheetPhotoUrl,
     applyPlan
   }
+}
+
+function getTrackedDocId(entry: any) {
+  if (entry?.id) {
+    return String(entry.id)
+  }
+
+  const path = String(entry?.ref?.path || '')
+  return path.split('/').filter(Boolean).pop() || ''
 }
