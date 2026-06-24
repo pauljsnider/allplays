@@ -377,6 +377,56 @@ describe('Schedule', () => {
     expect(screen.queryByRole('button', { name: /create tournament/i })).toBeNull();
   });
 
+  it('does not label scheduled games with default 0-0 scores as final results', async () => {
+    scheduleServiceMocks.loadParentSchedule.mockResolvedValueOnce({
+      children: [
+        { playerId: 'player-1', playerName: 'Pat', teamId: 'team-1', teamName: 'Bears' }
+      ],
+      events: [
+        buildScheduleEvent(1, {
+          status: 'scheduled',
+          liveStatus: 'scheduled',
+          homeScore: 0,
+          awayScore: 0
+        })
+      ]
+    });
+
+    renderSchedule();
+
+    await waitFor(() => {
+      expect(scheduleServiceMocks.loadParentSchedule).toHaveBeenCalledTimes(1);
+      expect(screen.queryByRole('status', { name: 'Loading schedule' })).toBeNull();
+    });
+    expect(screen.queryByText('Final 0-0')).toBeNull();
+    expect(screen.queryByText('0-0')).toBeNull();
+  });
+
+  it('shows saved scores for past games even before status flips to completed', async () => {
+    scheduleServiceMocks.loadParentSchedule.mockResolvedValueOnce({
+      children: [
+        { playerId: 'player-1', playerName: 'Pat', teamId: 'team-1', teamName: 'Bears' }
+      ],
+      events: [
+        buildScheduleEvent(1, {
+          date: new Date(Date.now() - (4 * 60 * 60 * 1000)),
+          status: 'scheduled',
+          liveStatus: 'scheduled',
+          homeScore: 21,
+          awayScore: 14
+        })
+      ]
+    });
+
+    renderSchedule('/schedule?filter=recent-results');
+
+    await waitFor(() => {
+      expect(scheduleServiceMocks.loadParentSchedule).toHaveBeenCalledTimes(1);
+      expect(screen.queryByRole('status', { name: 'Loading schedule' })).toBeNull();
+    });
+    expect(screen.getByText('21-14')).toBeTruthy();
+  });
+
   it('requests older past-event pages for every linked team, even without events in the default window', async () => {
     const seededPastEvent = buildScheduleEvent(1, {
       eventKey: 'team-1::event-1::player-1::past::game',
