@@ -5,6 +5,7 @@ import { clearAppDataCache } from '../../apps/app/src/lib/appDataCache.ts';
 const scheduleMocks = vi.hoisted(() => ({
     loadParentSchedule: vi.fn(),
     loadParentScheduleChildren: vi.fn(),
+    loadParentScheduleScope: vi.fn(),
     hydrateParentScheduleDetails: vi.fn((schedule) => Promise.resolve(schedule))
 }));
 
@@ -124,6 +125,17 @@ beforeEach(() => {
             playerName: 'Pat Star'
         }
     ]);
+    scheduleMocks.loadParentScheduleScope.mockResolvedValue({
+        profile: { id: 'profile-user-1' },
+        children: [
+            {
+                teamId: 'team-1',
+                teamName: 'Bears',
+                playerId: 'player-1',
+                playerName: 'Pat Star'
+            }
+        ]
+    });
     chatMocks.loadChatInbox.mockResolvedValue({
         teams: [
             {
@@ -365,12 +377,12 @@ describe('React app Home service', () => {
         expect(chatMocks.loadChatInbox).toHaveBeenCalledWith(user, { includeLastMessages: false });
     });
 
-    it('uses the shared parent child resolver for the fast Teams summary', async () => {
+    it('uses the shared parent scope resolver for the fast Teams summary', async () => {
         const { loadParentTeamsSummary } = await import('../../apps/app/src/lib/homeService.ts');
 
         const home = await loadParentTeamsSummary({ ...user, parentOf: [] }, { force: true });
 
-        expect(scheduleMocks.loadParentScheduleChildren).toHaveBeenCalledWith(expect.objectContaining({
+        expect(scheduleMocks.loadParentScheduleScope).toHaveBeenCalledWith(expect.objectContaining({
             uid: 'user-1',
             parentOf: []
         }));

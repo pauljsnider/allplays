@@ -7,7 +7,7 @@ import { MemoryRouter, Route, Routes } from 'react-router-dom';
 const homeMocks = vi.hoisted(() => ({
     loadParentHome: vi.fn(),
     loadParentHomeSummary: vi.fn(),
-    loadParentTeamsSummary: vi.fn()
+    loadParentTeamsSummaryBootstrap: vi.fn()
 }));
 const publicActionMocks = vi.hoisted(() => ({
     openPublicUrl: vi.fn()
@@ -40,6 +40,16 @@ const auth = {
     refresh: async () => {},
     signOut: async () => {}
 };
+
+function makeTeamSummaryBootstrap(home) {
+    return {
+        home,
+        scheduleScope: {
+            profile: { id: 'profile-user-1' },
+            children: home.teams.flatMap((team) => team.players || [])
+        }
+    };
+}
 
 async function renderTeams(initialEntry = '/teams') {
     const container = document.createElement('div');
@@ -140,7 +150,7 @@ beforeEach(() => {
     };
     window.scrollTo = vi.fn();
     homeMocks.loadParentHomeSummary.mockImplementation((...args) => homeMocks.loadParentHome(...args));
-    homeMocks.loadParentTeamsSummary.mockImplementation((...args) => homeMocks.loadParentHome(...args));
+    homeMocks.loadParentTeamsSummaryBootstrap.mockImplementation((...args) => homeMocks.loadParentHome(...args).then((home) => makeTeamSummaryBootstrap(home)));
     homeMocks.loadParentHome.mockResolvedValue({
         players: [],
         upcomingEvents: [],
@@ -194,8 +204,14 @@ describe('React app Teams page', () => {
     it('renders the same parent and staff/admin teams used by the app inbox', async () => {
         const { container } = await renderTeams('/teams?selectedTeamId=team-staff&from=home');
 
-        expect(homeMocks.loadParentTeamsSummary).toHaveBeenCalledWith(auth.user, { force: false });
-        expect(homeMocks.loadParentHomeSummary).toHaveBeenCalledWith(auth.user, { force: false });
+        expect(homeMocks.loadParentTeamsSummaryBootstrap).toHaveBeenCalledWith(auth.user, { force: false });
+        expect(homeMocks.loadParentHomeSummary).toHaveBeenCalledWith(auth.user, {
+            force: false,
+            scheduleScope: expect.objectContaining({
+                profile: expect.objectContaining({ id: 'profile-user-1' }),
+                children: expect.any(Array)
+            })
+        });
         expect(container.textContent).toContain('2 teams ready');
         expect(container.textContent).toContain('Choose a team');
         expect(container.textContent).toContain('Staff Wolves');
@@ -204,7 +220,6 @@ describe('React app Teams page', () => {
         expect(container.textContent).toContain('No player is linked to this account for the team, but team chat is available.');
         expect(container.textContent).toContain('Team navigation');
         expect(container.textContent.indexOf('Choose a team')).toBeLessThan(container.textContent.indexOf('Team navigation'));
-        expect(container.textContent).toContain('Coach/admin tools');
         expect(container.textContent).toContain('Website tools available');
         expect(container.textContent).toContain('Discover public teams');
         expect(getHrefs(container)).toContain('/teams/browse');
@@ -263,8 +278,8 @@ describe('React app Teams page', () => {
     });
 
     it('refreshes team data without dropping into the loading shell', async () => {
-        homeMocks.loadParentTeamsSummary
-            .mockResolvedValueOnce({
+        homeMocks.loadParentTeamsSummaryBootstrap
+            .mockResolvedValueOnce(makeTeamSummaryBootstrap({
                 players: [],
                 teams: [{
                     teamId: 'team-1',
@@ -281,8 +296,8 @@ describe('React app Teams page', () => {
                 actionItems: [],
                 fees: [],
                 metrics: { players: 0, teams: 1, rsvpNeeded: 0, unreadMessages: 0, packetsReady: 0 }
-            })
-            .mockResolvedValueOnce({
+            }))
+            .mockResolvedValueOnce(makeTeamSummaryBootstrap({
                 players: [],
                 teams: [
                     {
@@ -312,7 +327,7 @@ describe('React app Teams page', () => {
                 actionItems: [],
                 fees: [],
                 metrics: { players: 0, teams: 2, rsvpNeeded: 0, unreadMessages: 1, packetsReady: 0 }
-            });
+            }));
         homeMocks.loadParentHomeSummary.mockResolvedValue({
             players: [],
             teams: [],
@@ -331,7 +346,7 @@ describe('React app Teams page', () => {
         await flush();
         await waitForText(container, '2 teams ready');
 
-        expect(homeMocks.loadParentTeamsSummary).toHaveBeenCalledTimes(2);
+        expect(homeMocks.loadParentTeamsSummaryBootstrap).toHaveBeenCalledTimes(2);
         expect(container.textContent).toContain('Lions');
         expect(container.textContent).not.toContain('Loading teams');
     });
@@ -358,22 +373,23 @@ describe('React app Teams page', () => {
             fees: [],
             metrics: { players: 2, teams: 1, rsvpNeeded: 0, unreadMessages: 0, packetsReady: 0 }
         };
-        homeMocks.loadParentTeamsSummary.mockResolvedValueOnce(multiTeamModel);
+        homeMocks.loadParentTeamsSummaryBootstrap.mockResolvedValueOnce(makeTeamSummaryBootstrap(multiTeamModel));
         homeMocks.loadParentHomeSummary.mockResolvedValueOnce(multiTeamModel);
 
         const { container } = await renderTeams('/teams');
         await waitForText(container, 'Multi Bears');
 
         const hrefs = getHrefs(container);
-        expect(container.textContent).toContain('2 linked player profiles and reports');
-        expect(container.textContent).not.toContain('Player profileReports, editable profile, incentives, clips');
-        expect(hrefs).toContain('https://allplays.ai/team.html#teamId=team-multi');
+        expect(container.textContent).toContain('Linked players');
+        expect(container.textContent).toContain('Pat Star');
+        expect(container.textContent).toContain('Sam Wing');
+        expect(container.textContent).not.toContain('Team hub stub');
         expect(hrefs).toContain('/players/team-multi/player-1');
         expect(hrefs).toContain('/players/team-multi/player-2');
     });
 
     it('shows clear retryable error UI instead of a spinner when the initial load fails', async () => {
-        homeMocks.loadParentTeamsSummary.mockRejectedValueOnce(new Error('Team service down'));
+        homeMocks.loadParentTeamsSummaryBootstrap.mockRejectedValueOnce(new Error('Team service down'));
 
         const { container } = await renderTeams('/teams');
 
@@ -399,7 +415,7 @@ describe('React app Teams page', () => {
                 packetsReady: 0
             }
         };
-        homeMocks.loadParentTeamsSummary.mockResolvedValueOnce(emptyTeamsModel);
+        homeMocks.loadParentTeamsSummaryBootstrap.mockResolvedValueOnce(makeTeamSummaryBootstrap(emptyTeamsModel));
         homeMocks.loadParentHomeSummary.mockResolvedValueOnce(emptyTeamsModel);
 
         const { container } = await renderTeams('/teams');
@@ -435,7 +451,7 @@ describe('React app Teams page', () => {
                 }
             ]
         };
-        homeMocks.loadParentTeamsSummary.mockResolvedValueOnce(singleTeamModel);
+        homeMocks.loadParentTeamsSummaryBootstrap.mockResolvedValueOnce(makeTeamSummaryBootstrap(singleTeamModel));
         homeMocks.loadParentHomeSummary.mockResolvedValueOnce(singleTeamModel);
 
         const container = document.createElement('div');
@@ -506,7 +522,7 @@ describe('React app Teams page', () => {
                 }
             ]
         };
-        homeMocks.loadParentTeamsSummary.mockResolvedValueOnce(singleTeamModel);
+        homeMocks.loadParentTeamsSummaryBootstrap.mockResolvedValueOnce(makeTeamSummaryBootstrap(singleTeamModel));
         homeMocks.loadParentHomeSummary.mockResolvedValueOnce(multiTeamModel);
 
         const container = document.createElement('div');

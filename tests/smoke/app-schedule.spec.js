@@ -506,6 +506,13 @@ async function mockScheduleModules(page, options = {}) {
                     ];
                 }
 
+                export async function loadParentScheduleScope(user) {
+                    return {
+                        profile: { uid: user?.uid || 'user-1' },
+                        children: await loadParentScheduleChildren()
+                    };
+                }
+
                 export async function hydrateParentScheduleDetails(schedule) {
                     return schedule;
                 }

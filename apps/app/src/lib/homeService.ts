@@ -12,9 +12,10 @@ import { getParentScheduleSummaryCacheKey, loadCachedAppData } from './appDataCa
 import { toAppServiceError, type AppServiceError } from './appErrors';
 import {
   hydrateParentScheduleDetails,
-  loadParentScheduleChildren,
   loadParentSchedule,
-  type ParentScheduleLoadResult
+  loadParentScheduleScope,
+  type ParentScheduleLoadResult,
+  type ParentScheduleScope
 } from './scheduleService';
 import type { AuthUser } from './types';
 
@@ -60,14 +61,17 @@ export async function loadParentHome(user: AuthUser | null): Promise<ParentHomeM
   });
 }
 
-export async function loadParentHomeSummary(user: AuthUser | null, options: { force?: boolean } = {}): Promise<ParentHomeModel> {
+export async function loadParentHomeSummary(
+  user: AuthUser | null,
+  options: { force?: boolean; scheduleScope?: ParentScheduleScope } = {}
+): Promise<ParentHomeModel> {
   const summary = await loadParentHomeSummaryBootstrap(user, options);
   return summary.home;
 }
 
 export async function loadParentHomeSummaryBootstrap(
   user: AuthUser | null,
-  options: { force?: boolean } = {}
+  options: { force?: boolean; scheduleScope?: ParentScheduleScope } = {}
 ): Promise<{ home: ParentHomeModel; schedule: ParentScheduleLoadResult }> {
   if (!user?.uid) {
     const schedule = { children: [], events: [] };
@@ -90,39 +94,53 @@ export async function loadParentHomeSummaryBootstrap(
 }
 
 export async function loadParentTeamsSummary(user: AuthUser | null, options: { force?: boolean } = {}): Promise<ParentHomeModel> {
+  const summary = await loadParentTeamsSummaryBootstrap(user, options);
+  return summary.home;
+}
+
+export async function loadParentTeamsSummaryBootstrap(
+  user: AuthUser | null,
+  options: { force?: boolean } = {}
+): Promise<{ home: ParentHomeModel; scheduleScope: ParentScheduleScope }> {
   if (!user?.uid) {
-    return buildParentHomeModel({ children: [], events: [], inboxTeams: [], fees: [] });
+    return {
+      home: buildParentHomeModel({ children: [], events: [], inboxTeams: [], fees: [] }),
+      scheduleScope: { profile: {}, children: [] }
+    };
   }
 
   return loadCachedAppData(
-    `teams-summary:${user.uid}`,
+    `teams-summary-bootstrap:${user.uid}`,
     async () => {
       const timer = startUxTimer('teams summary load');
       try {
-        const [chatInbox, children] = await Promise.all([
+        const [chatInbox, scheduleScope] = await Promise.all([
           loadChatInbox(user, { includeLastMessages: false }).catch((error) => {
             throw toAppServiceError(error, 'Unable to load teams.');
           }),
-          loadParentScheduleChildren(user)
+          loadParentScheduleScope(user)
         ]);
         const model = buildParentHomeModel({
-          children,
+          children: scheduleScope.children,
           events: [],
           inboxTeams: normalizeInboxTeams(chatInbox.teams || []),
           fees: []
         });
         timer.end({
-          children: children.length,
+          children: scheduleScope.children.length,
           teams: model.teams.length,
           inboxTeams: chatInbox.teams?.length || 0
         });
-        return model;
+        return {
+          home: model,
+          scheduleScope
+        };
       } catch (error: any) {
         timer.end({ error: error?.message || 'Unable to load team summary.' });
         throw error;
       }
     },
-    { ttlMs: teamsSummaryTtlMs, force: options.force }
+    { ttlMs: teamsSummaryTtlMs, force: options.force, persist: false }
   );
 }
 
@@ -213,11 +231,18 @@ export async function loadParentHomeWithSecondaryData(
   }, { ttlMs: homeSecondaryTtlMs, force: options.force });
 }
 
-export async function loadParentScheduleSummary(user: AuthUser | null, options: { force?: boolean } = {}): Promise<ParentScheduleLoadResult> {
+export async function loadParentScheduleSummary(
+  user: AuthUser | null,
+  options: { force?: boolean; scheduleScope?: ParentScheduleScope } = {}
+): Promise<ParentScheduleLoadResult> {
   if (!user?.uid) return { children: [], events: [] };
   return loadCachedAppData(
     getParentScheduleSummaryCacheKey(user.uid),
-    () => loadParentSchedule(user, { hydrateDetails: false, expandStaffPlayers: false }),
+    () => loadParentSchedule(user, {
+      hydrateDetails: false,
+      expandStaffPlayers: false,
+      parentScope: options.scheduleScope
+    }),
     { ttlMs: homeSummaryTtlMs, force: options.force }
   );
 }

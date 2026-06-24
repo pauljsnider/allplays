@@ -182,12 +182,22 @@ export type ParentScheduleLoadResult = {
   events: ParentScheduleEvent[];
 };
 
+export type ParentScheduleScope = {
+  profile: Record<string, unknown>;
+  children: ParentScheduleChild[];
+};
+
+function hasResolvedParentProfile(profile: unknown): profile is Record<string, unknown> {
+  return Boolean(profile && typeof profile === 'object' && !Array.isArray(profile) && Object.keys(profile as Record<string, unknown>).length > 0);
+}
+
 export type ParentScheduleLoadOptions = {
   hydrateDetails?: boolean;
   expandStaffPlayers?: boolean;
   /** Load the team's full game history instead of the default recent window (#2034). */
   includePastGames?: boolean;
   scheduleRangeByTeam?: ScheduleDateRangeByTeam;
+  parentScope?: ParentScheduleScope;
 };
 
 export type OfficialAssignmentsAccess = {
@@ -2235,6 +2245,21 @@ export async function loadParentScheduleChildren(user: AuthUser | null, options:
   return resolveParentScheduleChildren(user, profile as Record<string, unknown>);
 }
 
+export async function loadParentScheduleScope(user: AuthUser | null): Promise<ParentScheduleScope> {
+  if (!user?.uid) {
+    return {
+      profile: {},
+      children: []
+    };
+  }
+  const profile = await loadProfileDocument(user.uid).catch(() => ({}));
+  const children = await resolveParentScheduleChildren(user, profile as Record<string, unknown>);
+  return {
+    profile: profile as Record<string, unknown>,
+    children
+  };
+}
+
 function hasRecordedAttendance(attendance: any) {
   return !!attendance && Array.isArray(attendance.players) && attendance.players.length > 0;
 }
@@ -3225,7 +3250,7 @@ export async function hydrateParentScheduleDetails(schedule: ParentScheduleLoadR
 
 async function buildParentScheduleTeamChildren(user: AuthUser, profile: Record<string, unknown>, options: ParentScheduleLoadOptions = {}) {
   const expandStaffPlayers = options.expandStaffPlayers !== false;
-  const children = await resolveParentScheduleChildren(user, profile as Record<string, unknown>);
+  const children = options.parentScope?.children || await resolveParentScheduleChildren(user, profile as Record<string, unknown>);
   const byTeam = new Map<string, ParentScheduleChild[]>();
   children.forEach((child) => {
     if (!byTeam.has(child.teamId)) byTeam.set(child.teamId, []);
@@ -3481,8 +3506,15 @@ export async function loadParentSchedule(user: AuthUser | null, options: ParentS
   const scheduleRangeByTeam = options.scheduleRangeByTeam || null;
 
   try {
-    const profile = await loadProfileDocument(user.uid);
-    const { children, byTeam, staffTeams } = await buildParentScheduleTeamChildren(user, profile as Record<string, unknown>, { expandStaffPlayers });
+    const canReuseParentScope = hasResolvedParentProfile(options.parentScope?.profile);
+    const profile = canReuseParentScope
+      ? options.parentScope!.profile
+      : await loadProfileDocument(user.uid);
+    const { children, byTeam, staffTeams } = await buildParentScheduleTeamChildren(user, profile as Record<string, unknown>, {
+      ...options,
+      expandStaffPlayers,
+      parentScope: canReuseParentScope ? options.parentScope : undefined
+    });
 
     const teamEntries = [...byTeam.entries()];
     const eventBatches = await mapWithConcurrency(teamEntries, parentScheduleTeamConcurrency, async ([teamId, teamChildren]) => {

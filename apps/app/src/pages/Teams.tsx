@@ -27,7 +27,7 @@ import {
 import { RoleBadge } from '../components/Badges';
 import { toAppServiceError, type AppServiceError } from '../lib/appErrors';
 import { getEventDetailPath, getPlayerDetailPath, type ParentHomeModel, type ParentHomeTeam } from '../lib/homeLogic';
-import { loadParentHomeSummary, loadParentTeamsSummary } from '../lib/homeService';
+import { loadParentHomeSummary, loadParentTeamsSummaryBootstrap } from '../lib/homeService';
 import { openPublicUrl } from '../lib/publicActions';
 import { PullToRefresh } from '../components/PullToRefresh';
 import { useAsyncOperation } from '../lib/useAsyncOperation';
@@ -104,8 +104,12 @@ export function Teams({ auth }: { auth: AuthState }) {
     clearTeamEnrichmentError();
     setTeamsLoadError(null);
 
+    let teamSummaryBootstrap: Awaited<ReturnType<typeof loadParentTeamsSummaryBootstrap>> | null = null;
     const fastHome = await runTeamSummaryLoad(
-      () => loadParentTeamsSummary(user, { force: !showLoading }),
+      async () => {
+        teamSummaryBootstrap = await loadParentTeamsSummaryBootstrap(user, { force: !showLoading });
+        return teamSummaryBootstrap.home;
+      },
       {
         ignoreStale: true,
         rethrow: false,
@@ -132,7 +136,10 @@ export function Teams({ auth }: { auth: AuthState }) {
 
     const hasFastTeams = fastHome.teams.length > 0;
     await runTeamEnrichmentLoad(
-      () => loadParentHomeSummary(user, { force: !showLoading }),
+      () => loadParentHomeSummary(user, {
+        force: !showLoading,
+        scheduleScope: teamSummaryBootstrap?.scheduleScope
+      }),
       {
         ignoreStale: true,
         rethrow: false,

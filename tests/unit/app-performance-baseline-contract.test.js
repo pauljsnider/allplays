@@ -83,7 +83,7 @@ describe('app performance baseline contract', () => {
         expect(home).toContain('timer.end({\n            hydrated: false,\n            error: appError.message\n          });');
 
         expect(homeService).toContain("const timer = startUxTimer('teams summary load');");
-        expect(homeService).toContain('timer.end({\n          children: children.length,\n          teams: model.teams.length,');
+        expect(homeService).toContain('timer.end({\n          children: scheduleScope.children.length,\n          teams: model.teams.length,');
         expect(homeService).toContain("timer.end({ error: error?.message || 'Unable to load team summary.' });");
     });
 
