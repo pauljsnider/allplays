@@ -53,18 +53,19 @@ function loadResetHelpers(overrides = {}) {
 }
 
 describe('resetTeamStatConfigs guard', () => {
-    it('treats completed, final, cancelled, and completed-live games as reset-safe history', () => {
+    it('treats any game with a config assignment as reset-blocking history', () => {
         const { isResetBlockingLocalGameAssignment } = loadResetHelpers();
 
-        expect(isResetBlockingLocalGameAssignment({ statTrackerConfigId: 'cfg-1', status: 'completed' })).toBe(false);
-        expect(isResetBlockingLocalGameAssignment({ statTrackerConfigId: 'cfg-1', status: 'final' })).toBe(false);
-        expect(isResetBlockingLocalGameAssignment({ statTrackerConfigId: 'cfg-1', status: 'cancelled' })).toBe(false);
-        expect(isResetBlockingLocalGameAssignment({ statTrackerConfigId: 'cfg-1', liveStatus: 'completed' })).toBe(false);
+        expect(isResetBlockingLocalGameAssignment({ statTrackerConfigId: 'cfg-1', status: 'completed' })).toBe(true);
+        expect(isResetBlockingLocalGameAssignment({ statTrackerConfigId: 'cfg-1', status: 'final' })).toBe(true);
+        expect(isResetBlockingLocalGameAssignment({ statTrackerConfigId: 'cfg-1', status: 'cancelled' })).toBe(true);
+        expect(isResetBlockingLocalGameAssignment({ statTrackerConfigId: 'cfg-1', liveStatus: 'completed' })).toBe(true);
         expect(isResetBlockingLocalGameAssignment({ statTrackerConfigId: 'cfg-1', status: 'scheduled' })).toBe(true);
         expect(isResetBlockingLocalGameAssignment({ statTrackerConfigId: 'cfg-1', liveStatus: 'live' })).toBe(true);
+        expect(isResetBlockingLocalGameAssignment({ statTrackerConfigId: '' })).toBe(false);
     });
 
-    it('allows reset when only historical local games reference the config and no shared games do', async () => {
+    it('blocks reset when completed local games still reference the config', async () => {
         const batch = {
             delete: vi.fn(),
             commit: vi.fn().mockResolvedValue(undefined)
@@ -90,13 +91,13 @@ describe('resetTeamStatConfigs guard', () => {
             doc
         });
 
-        const deletedCount = await resetTeamStatConfigs('team-1');
-
-        expect(deletedCount).toBe(1);
-        expect(getDocs).toHaveBeenCalledTimes(4);
-        expect(batch.delete).toHaveBeenCalledTimes(1);
-        expect(batch.commit).toHaveBeenCalledTimes(1);
-        expect(doc).toHaveBeenCalledWith(expect.anything(), 'teams/team-1/statTrackerConfigs', 'cfg-1');
+        await expect(resetTeamStatConfigs('team-1')).rejects.toThrow(
+            'One or more stat configs are still assigned to existing games, including completed history. Remove those assignments before resetting the stats setup.'
+        );
+        expect(getDocs).toHaveBeenCalledTimes(1);
+        expect(batch.delete).not.toHaveBeenCalled();
+        expect(batch.commit).not.toHaveBeenCalled();
+        expect(doc).not.toHaveBeenCalled();
     });
 
     it('blocks reset when a scheduled local game still references the config', async () => {
@@ -117,13 +118,13 @@ describe('resetTeamStatConfigs guard', () => {
         });
 
         await expect(resetTeamStatConfigs('team-1')).rejects.toThrow(
-            'One or more stat configs are still assigned to scheduled or shared games. Remove those assignments before resetting the stats setup.'
+            'One or more stat configs are still assigned to existing games, including completed history. Remove those assignments before resetting the stats setup.'
         );
         expect(batch.delete).not.toHaveBeenCalled();
         expect(batch.commit).not.toHaveBeenCalled();
     });
 
-    it('allows reset when only completed shared games reference the config', async () => {
+    it('blocks reset when completed shared games still reference the config', async () => {
         const batch = {
             delete: vi.fn(),
             commit: vi.fn().mockResolvedValue(undefined)
@@ -144,11 +145,11 @@ describe('resetTeamStatConfigs guard', () => {
             writeBatch: () => batch
         });
 
-        const deletedCount = await resetTeamStatConfigs('team-1');
-
-        expect(deletedCount).toBe(1);
-        expect(batch.delete).toHaveBeenCalledTimes(1);
-        expect(batch.commit).toHaveBeenCalledTimes(1);
+        await expect(resetTeamStatConfigs('team-1')).rejects.toThrow(
+            'One or more stat configs are still assigned to existing games, including completed history. Remove those assignments before resetting the stats setup.'
+        );
+        expect(batch.delete).not.toHaveBeenCalled();
+        expect(batch.commit).not.toHaveBeenCalled();
     });
 
     it('blocks reset when a scheduled shared game still references the config', async () => {
@@ -173,7 +174,7 @@ describe('resetTeamStatConfigs guard', () => {
         });
 
         await expect(resetTeamStatConfigs('team-1')).rejects.toThrow(
-            'One or more stat configs are still assigned to scheduled or shared games. Remove those assignments before resetting the stats setup.'
+            'One or more stat configs are still assigned to existing games, including completed history. Remove those assignments before resetting the stats setup.'
         );
         expect(batch.delete).not.toHaveBeenCalled();
         expect(batch.commit).not.toHaveBeenCalled();

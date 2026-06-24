@@ -3544,13 +3544,6 @@ export async function deleteConfig(teamId, configId) {
 }
 
 function isResetBlockingLocalGameAssignment(game = {}) {
-    const status = String(game?.status || '').toLowerCase();
-    const liveStatus = String(game?.liveStatus || '').toLowerCase();
-
-    if (status === 'completed' || status === 'final' || status === 'cancelled' || liveStatus === 'completed') {
-        return false;
-    }
-
     return Boolean(String(game?.statTrackerConfigId || '').trim());
 }
 
@@ -3583,7 +3576,7 @@ export async function resetTeamStatConfigs(teamId) {
 
     for (const config of configs) {
         if (await hasResetBlockingLocalGameUsingConfig(teamId, config.id) || await hasResetBlockingSharedGameUsingConfig(teamId, config.id)) {
-            throw new Error('One or more stat configs are still assigned to scheduled or shared games. Remove those assignments before resetting the stats setup.');
+            throw new Error('One or more stat configs are still assigned to existing games, including completed history. Remove those assignments before resetting the stats setup.');
         }
     }
 
