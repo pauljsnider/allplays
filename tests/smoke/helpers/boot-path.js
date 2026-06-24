@@ -138,6 +138,7 @@ export async function assertPageBootsWithoutFatalErrors(page, options) {
         readySelectors = [],
         requiredSelectors = [],
         forbiddenTexts = [],
+        skipDefaultForbiddenTexts = false,
         expectedAttributes = [],
         tabChecks = [],
         hiddenSelectors = []
@@ -180,7 +181,7 @@ export async function assertPageBootsWithoutFatalErrors(page, options) {
 
     const bodyText = await page.locator('body').innerText();
     const forbiddenPatterns = [
-        ...DEFAULT_FORBIDDEN_TEXT_PATTERNS,
+        ...(skipDefaultForbiddenTexts ? [] : DEFAULT_FORBIDDEN_TEXT_PATTERNS),
         ...toRegExpList(forbiddenTexts)
     ];
     forbiddenPatterns.forEach((pattern) => {
