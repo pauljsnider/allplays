@@ -110,7 +110,7 @@ describe('live tracker finish completion plan', () => {
     ]);
   });
 
-  it('marks standard live-tracker zero-stat aggregate writes as profile appearances', () => {
+  it('marks pre-seeded zero-stat live-tracker players as did not appear', () => {
     const plan = buildFinishCompletionPlan({
       requestedHome: 0,
       requestedAway: 0,
@@ -132,20 +132,21 @@ describe('live tracker finish completion plan', () => {
       {
         playerId: 'p-zero',
         data: {
+          didNotPlay: true,
           playerName: 'Zero Stat',
           playerNumber: '12',
-          participated: true,
-          participationStatus: 'appeared',
+          participated: false,
+          participationStatus: 'did-not-appear',
           participationSource: 'live-tracker-finish',
           stats: { pts: 0, reb: 0, ast: 0, fouls: 0 },
           timeMs: 0
         }
       }
     ]);
-    expect(hasPlayerProfileParticipation(plan.aggregatedStatsWrites[0].data)).toBe(true);
+    expect(hasPlayerProfileParticipation(plan.aggregatedStatsWrites[0].data)).toBe(false);
   });
 
-  it('keeps standard finish aggregate readback visible in player profile history', () => {
+  it('keeps live-tracker aggregates with real participation visible in player profile history', () => {
     const standardFinishAggregateDoc = {
       playerName: 'Zero Stat',
       playerNumber: '12',
@@ -157,6 +158,41 @@ describe('live tracker finish completion plan', () => {
     };
 
     expect(hasPlayerProfileParticipation(standardFinishAggregateDoc)).toBe(true);
+  });
+
+  it('marks live-tracker players with recorded playing time as having appeared even without counting stats', () => {
+    const plan = buildFinishCompletionPlan({
+      requestedHome: 0,
+      requestedAway: 0,
+      liveHome: 0,
+      liveAway: 0,
+      scoreLogIsComplete: true,
+      log: [],
+      columns: ['PTS', 'REB', 'AST'],
+      roster: [
+        { id: 'p-minutes', name: 'Minutes Only', num: '21' }
+      ],
+      statsByPlayerId: {
+        'p-minutes': { pts: 0, reb: 0, ast: 0, fouls: 0, time: 60000 }
+      },
+      opponentEntries: []
+    });
+
+    expect(plan.aggregatedStatsWrites).toEqual([
+      {
+        playerId: 'p-minutes',
+        data: {
+          playerName: 'Minutes Only',
+          playerNumber: '21',
+          participated: true,
+          participationStatus: 'appeared',
+          participationSource: 'live-tracker-finish',
+          stats: { pts: 0, reb: 0, ast: 0, fouls: 0 },
+          timeMs: 60000
+        }
+      }
+    ]);
+    expect(hasPlayerProfileParticipation(plan.aggregatedStatsWrites[0].data)).toBe(true);
   });
 
   it('splits private player stats into manager-only finish writes', () => {

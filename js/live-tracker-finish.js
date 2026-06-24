@@ -39,6 +39,16 @@ function getPlayerElapsedTimeMs(playerStats) {
     ?? 0;
 }
 
+function hasLiveTrackerParticipation(playerStats = {}, columns = []) {
+  const timeMs = getPlayerElapsedTimeMs(playerStats);
+  if (timeMs > 0) return true;
+
+  return (Array.isArray(columns) ? columns : []).some((col) => {
+    const key = String(col || '').toLowerCase();
+    return Number(playerStats?.[key] || 0) !== 0;
+  }) || Number(playerStats?.fouls || 0) !== 0;
+}
+
 export function buildFinishCompletionPlan({
   requestedHome,
   requestedAway,
@@ -122,21 +132,23 @@ export function buildFinishCompletionPlan({
   });
 
   const aggregatedStatsWrites = safeRoster.map((player) => {
+    const playerStats = safeStatsByPlayerId[player.id] || {};
     const statsObj = {};
     safeColumns.forEach((col) => {
       const key = col.toLowerCase();
-      statsObj[key] = safeStatsByPlayerId[player.id]?.[key] || 0;
+      statsObj[key] = playerStats[key] || 0;
     });
-    statsObj.fouls = safeStatsByPlayerId[player.id]?.fouls || 0;
-    const actuallyParticipated = !!safeStatsByPlayerId[player.id];
+    statsObj.fouls = playerStats.fouls || 0;
+    const actuallyParticipated = hasLiveTrackerParticipation(playerStats, safeColumns);
 
     const baseData = {
       playerName: player.name,
       playerNumber: player.num,
-      timeMs: getPlayerElapsedTimeMs(safeStatsByPlayerId[player.id]),
+      timeMs: getPlayerElapsedTimeMs(playerStats),
       participated: actuallyParticipated,
       participationStatus: actuallyParticipated ? 'appeared' : 'did-not-appear',
       participationSource: 'live-tracker-finish',
+      ...(actuallyParticipated ? {} : { didNotPlay: true })
     };
 
     const { publicStats, privateStats } = splitPlayerStatsByVisibility(statTrackerConfig, statsObj);
