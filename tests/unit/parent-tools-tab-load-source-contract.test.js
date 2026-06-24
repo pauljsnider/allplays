@@ -18,8 +18,9 @@ const parentToolPanelSources = [
 describe('Parent Tools tab load boundary', () => {
     it('mounts only visited Parent Tools panels instead of every workflow on first access load', () => {
         expect(parentToolsSource).toContain("const [visitedTools, setVisitedTools] = useState<ParentToolId[]>(() => activeTool ? [activeTool] : ['access']);");
+        expect(parentToolsSource).toContain("const visibleTools = hasLinkedPlayers ? tools : tools.filter((tool) => tool.id === 'access');");
         expect(parentToolsSource).toContain("if (!mounted) return null;");
-        expect(parentToolsSource).toContain("{tools.map((tool) => (");
+        expect(parentToolsSource).toContain("{visibleTools.map((tool) => (");
         expect(parentToolsSource).toContain("<KeepAliveTool key={tool.id} active={activeTool === tool.id} mounted={visitedTools.includes(tool.id)}>");
         expect(parentToolsSource).toContain("<ParentToolPanel");
     });

@@ -1,10 +1,11 @@
 import { lazy, memo, Suspense, useCallback, useEffect, useRef, useState, type ComponentType, type LazyExoticComponent, type ReactNode } from 'react';
 import { Award, CalendarDays, ChevronLeft, DollarSign, Loader2, Share2, Shield, Ticket, Users, type LucideIcon } from 'lucide-react';
-import { Link, Navigate, useNavigate, useParams } from 'react-router-dom';
+import { Link, Navigate, useLocation, useNavigate, useParams } from 'react-router-dom';
 import type { AuthState } from '../lib/types';
 import { loadParentToolPanel } from './parent-tools/loadParentToolPanel';
 
 type ParentToolDefinition = { id: ParentToolId; label: string; icon: LucideIcon };
+type ParentToolsRedirectState = { accessLockedMessage?: string };
 
 export type ParentToolId = 'access' | 'household' | 'fees' | 'calendar' | 'share' | 'registrations' | 'certificates';
 export type ParentToolPanelProps = { auth: AuthState; refreshVersion: number; onAccessChanged: () => void };
@@ -34,6 +35,14 @@ function trackParentToolRender(toolId: ParentToolId) {
     globalThis.__ALLPLAYS_PARENT_TOOLS_RENDER_TRACKER__?.(toolId);
 }
 
+function hasParentToolLinks(auth: AuthState) {
+    return Boolean(
+        auth.user?.parentOf?.length ||
+        auth.user?.parentPlayerKeys?.length ||
+        auth.user?.parentTeamIds?.length
+    );
+}
+
 const ParentToolPanel = memo(function ParentToolPanel({ toolId, auth, refreshVersion, onAccessChanged }: { toolId: ParentToolId } & ParentToolPanelProps) {
     trackParentToolRender(toolId);
     const Panel = lazyToolPanels[toolId];
@@ -43,7 +52,14 @@ const ParentToolPanel = memo(function ParentToolPanel({ toolId, auth, refreshVer
 export function ParentTools({ auth }: { auth: AuthState }) {
     const { toolId = 'access' } = useParams();
     const navigate = useNavigate();
+    const location = useLocation();
     const activeTool = validToolIds.has(toolId as ParentToolId) ? toolId as ParentToolId : null;
+    const hasLinkedPlayers = hasParentToolLinks(auth);
+    const visibleTools = hasLinkedPlayers ? tools : tools.filter((tool) => tool.id === 'access');
+    const visibleToolIds = new Set(visibleTools.map((tool) => tool.id));
+    const isLockedDeepLink = Boolean(activeTool && !visibleToolIds.has(activeTool));
+    const redirectState = location.state as ParentToolsRedirectState | null;
+    const accessLockedMessage = activeTool === 'access' ? redirectState?.accessLockedMessage : undefined;
     const [visitedTools, setVisitedTools] = useState<ParentToolId[]>(() => activeTool ? [activeTool] : ['access']);
     const [toolRefreshVersions, setToolRefreshVersions] = useState<Record<ParentToolId, number>>(initialToolRefreshVersions);
     const [staleTools, setStaleTools] = useState<Set<ParentToolId>>(() => new Set());
@@ -100,6 +116,9 @@ export function ParentTools({ auth }: { auth: AuthState }) {
     }, []);
 
     if (!activeTool) return <Navigate to="/parent-tools/access" replace />;
+    if (isLockedDeepLink) {
+        return <Navigate to="/parent-tools/access" replace state={{ accessLockedMessage: 'Link a player in Access to unlock the rest of Parent Tools.' }} />;
+    }
 
     return (
         <div className="parent-tools-page space-y-3">
@@ -111,14 +130,20 @@ export function ParentTools({ auth }: { auth: AuthState }) {
                     <div className="min-w-0 flex-1">
                         <div className="app-label">Parent tools</div>
                         <h1 className="truncate text-xl font-black leading-tight text-gray-950">Family workflows</h1>
-                        <p className="mt-0.5 truncate text-xs font-semibold text-gray-600">Access, household invites, payments, calendars, sharing, registration, and awards.</p>
+                        <p className="mt-0.5 truncate text-xs font-semibold text-gray-600">{hasLinkedPlayers ? 'Access, household invites, payments, calendars, sharing, registration, and awards.' : 'Start with Access. Link a player to unlock the rest of Parent Tools.'}</p>
                     </div>
                 </div>
             </section>
 
+            {accessLockedMessage ? (
+                <section className="app-card border border-amber-200 bg-amber-50/80 p-4 text-sm font-semibold text-amber-900">
+                    {accessLockedMessage}
+                </section>
+            ) : null}
+
             <div className="parent-tools-nav sticky top-24 z-30 -mx-1 overflow-x-auto bg-gray-50/95 py-2 backdrop-blur">
-                <div className="grid min-w-max grid-cols-7 gap-1 rounded-2xl border border-gray-200 bg-white p-1 shadow-sm">
-                    {tools.map((tool) => {
+                <div className="grid min-w-max gap-1 rounded-2xl border border-gray-200 bg-white p-1 shadow-sm" style={{ gridTemplateColumns: `repeat(${visibleTools.length}, minmax(0, 1fr))` }}>
+                    {visibleTools.map((tool) => {
                         const Icon = tool.icon;
                         const active = tool.id === activeTool;
                         return (
@@ -137,7 +162,7 @@ export function ParentTools({ auth }: { auth: AuthState }) {
                 </div>
             </div>
 
-            {tools.map((tool) => (
+            {visibleTools.map((tool) => (
                 <KeepAliveTool key={tool.id} active={activeTool === tool.id} mounted={visitedTools.includes(tool.id)}>
                     <Suspense fallback={<ParentToolPanelFallback />}>
                         <ParentToolPanel

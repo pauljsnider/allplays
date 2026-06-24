@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+import { useCallback, useState } from 'react';
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { MemoryRouter, Route, Routes, useNavigate } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -86,6 +87,24 @@ const auth: AuthState = {
     signOut: vi.fn().mockResolvedValue(undefined)
 };
 
+const linkedAuth: AuthState = {
+    ...auth,
+    user: auth.user ? {
+        ...auth.user,
+        parentOf: [{ teamId: 'team-1', playerId: 'player-1' }]
+    } : null
+};
+
+const indexedLinkedAuth: AuthState = {
+    ...auth,
+    user: auth.user ? {
+        ...auth.user,
+        parentOf: [],
+        parentTeamIds: ['team-1'],
+        parentPlayerKeys: ['team-1::player-1']
+    } : null
+};
+
 function ParentToolsRoute({ authState = auth }: { authState?: AuthState }) {
     return <ParentTools auth={authState} />;
 }
@@ -116,6 +135,22 @@ function renderParentTools(
             </Routes>
         </MemoryRouter>
     );
+}
+
+function RefreshingParentToolsRoute() {
+    const [parentOf, setParentOf] = useState<Array<Record<string, unknown>>>([]);
+    const refresh = useCallback(async () => {
+        const nextParentOf = [{ teamId: 'team-1', playerId: 'player-1' }];
+        setParentOf(nextParentOf);
+        return auth.user ? { ...auth.user, parentOf: nextParentOf } : null;
+    }, []);
+    const authState: AuthState = {
+        ...auth,
+        user: auth.user ? { ...auth.user, parentOf } : null,
+        refresh
+    };
+
+    return <ParentTools auth={authState} />;
 }
 
 describe('ParentTools access', () => {
@@ -286,6 +321,50 @@ describe('ParentTools access', () => {
         expect(within(requestsSection).getByText('No requests yet')).toBeTruthy();
     });
 
+    it('shows only Access for parents without linked players', async () => {
+        renderParentTools();
+
+        expect(await screen.findByText('Request player access')).toBeTruthy();
+        expect(screen.getByRole('button', { name: 'Access' })).toBeTruthy();
+        expect(screen.queryByRole('button', { name: 'Household' })).toBeNull();
+        expect(screen.queryByRole('button', { name: 'Fees' })).toBeNull();
+        expect(screen.queryByRole('button', { name: 'Calendar' })).toBeNull();
+        expect(screen.queryByRole('button', { name: 'Share' })).toBeNull();
+        expect(screen.queryByRole('button', { name: 'Register' })).toBeNull();
+        expect(screen.queryByRole('button', { name: 'Awards' })).toBeNull();
+    });
+
+    it('redirects hidden tool routes back to Access with an explanation', async () => {
+        renderParentTools(['/parent-tools/calendar']);
+
+        expect(await screen.findByText('Request player access')).toBeTruthy();
+        expect(screen.getByText('Link a player in Access to unlock the rest of Parent Tools.')).toBeTruthy();
+        expect(screen.queryByRole('button', { name: 'Calendar' })).toBeNull();
+    });
+
+    it('shows the full tab set when a parent already has linked players', async () => {
+        renderParentTools(['/parent-tools/access'], false, linkedAuth);
+
+        expect(await screen.findByText('Request player access')).toBeTruthy();
+        expect(screen.getByRole('button', { name: 'Access' })).toBeTruthy();
+        expect(screen.getByRole('button', { name: 'Household' })).toBeTruthy();
+        expect(screen.getByRole('button', { name: 'Fees' })).toBeTruthy();
+        expect(screen.getByRole('button', { name: 'Calendar' })).toBeTruthy();
+        expect(screen.getByRole('button', { name: 'Share' })).toBeTruthy();
+        expect(screen.getByRole('button', { name: 'Register' })).toBeTruthy();
+        expect(screen.getByRole('button', { name: 'Awards' })).toBeTruthy();
+    });
+
+    it('treats indexed parent player links as unlocked parent tools access', async () => {
+        renderParentTools(['/parent-tools/calendar'], false, indexedLinkedAuth);
+
+        expect(await screen.findByText('No team schedules')).toBeTruthy();
+        expect(screen.getByRole('button', { name: 'Access' })).toBeTruthy();
+        expect(screen.getByRole('button', { name: 'Calendar' })).toBeTruthy();
+        expect(screen.getByRole('button', { name: 'Register' })).toBeTruthy();
+        expect(screen.queryByText('Link a player in Access to unlock the rest of Parent Tools.')).toBeNull();
+    });
+
     it('lazy-loads tab panels only when their tab is opened', async () => {
         const panelLoads: ParentToolId[] = [];
         globalThis.__ALLPLAYS_PARENT_TOOLS_PANEL_LOAD_TRACKER__ = (toolId) => {
@@ -293,7 +372,7 @@ describe('ParentTools access', () => {
         };
         parentToolsServiceMocks.loadParentFeesForApp.mockResolvedValue([]);
 
-        renderParentTools();
+        renderParentTools(['/parent-tools/access'], false, linkedAuth);
 
         await screen.findByText('Request player access');
         expect(panelLoads).not.toContain('fees');
@@ -354,7 +433,7 @@ describe('ParentTools access', () => {
             }
         ]);
 
-        renderParentTools();
+        renderParentTools(['/parent-tools/access'], false, linkedAuth);
 
         await screen.findByText('Request player access');
         fireEvent.click(screen.getByRole('button', { name: 'Fees' }));
@@ -387,43 +466,35 @@ describe('ParentTools access', () => {
         expect(parentToolsServiceMocks.loadParentRegistrations).toHaveBeenCalledTimes(2);
     });
 
-    it('refreshes cached tool data after access changes update parent links', async () => {
-        parentToolsServiceMocks.loadParentRegistrations
-            .mockResolvedValueOnce([])
-            .mockResolvedValueOnce([
-                {
-                    id: 'form-1',
-                    teamId: 'team-1',
-                    teamName: 'Bears',
-                    programName: 'Summer Camp',
-                    description: 'Skills week',
-                    season: 'Summer',
-                    feeLabel: '$75.00',
-                    paymentNotice: '',
-                    onlineCheckout: true,
-                    options: [],
-                    url: 'https://allplays.ai/registration.html?teamId=team-1&formId=form-1'
-                }
-            ]);
+    it('reveals deferred tabs after access changes add a linked player', async () => {
+        inviteRedemptionMocks.redeemSignedInInvite.mockImplementationOnce(async ({ refresh }) => {
+            await refresh();
+            return {
+                code: 'AB12CD34',
+                redirectPath: '/home',
+                message: 'Invite accepted.'
+            };
+        });
 
-        renderParentTools();
+        render(
+            <MemoryRouter initialEntries={['/parent-tools/access']}>
+                <Routes>
+                    <Route path="/parent-tools/:toolId" element={<RefreshingParentToolsRoute />} />
+                    <Route path="/accept-invite" element={<div>Accept invite route</div>} />
+                </Routes>
+            </MemoryRouter>
+        );
 
-        await screen.findByText('Request player access');
-        fireEvent.click(screen.getByRole('button', { name: 'Register' }));
-        await screen.findByText('No open registrations');
-        expect(parentToolsServiceMocks.loadParentRegistrations).toHaveBeenCalledTimes(1);
+        expect(await screen.findByText('Request player access')).toBeTruthy();
+        expect(screen.queryByRole('button', { name: 'Register' })).toBeNull();
 
-        fireEvent.click(screen.getByRole('button', { name: 'Access' }));
-        await screen.findByText('Request player access');
         fireEvent.change(screen.getByPlaceholderText('XXXXXXXX'), { target: { value: 'ab12cd34' } });
         fireEvent.click(screen.getByRole('button', { name: 'Redeem code' }));
-        expect(await screen.findByText('Invite accepted.')).toBeTruthy();
-        await waitFor(() => expect(parentToolsAccessServiceMocks.loadParentAccessModel).toHaveBeenCalledTimes(2));
-        expect(parentToolsServiceMocks.loadParentRegistrations).toHaveBeenCalledTimes(1);
 
-        fireEvent.click(screen.getByRole('button', { name: 'Register' }));
-        expect(await screen.findByText('Summer Camp')).toBeTruthy();
-        expect(parentToolsServiceMocks.loadParentRegistrations).toHaveBeenCalledTimes(2);
+        expect(await screen.findByText('Invite accepted.')).toBeTruthy();
+        expect(await screen.findByRole('button', { name: 'Register' })).toBeTruthy();
+        expect(screen.getByRole('button', { name: 'Calendar' })).toBeTruthy();
+        expect(screen.getByRole('button', { name: 'Household' })).toBeTruthy();
     });
 
     it('loads calendar tools with cached defaults across remounts and forces refresh on demand', async () => {
@@ -440,21 +511,21 @@ describe('ParentTools access', () => {
             teams: [{ teamId: 'team-1', teamName: 'Bears', eventCount: 1 }]
         });
 
-        const firstRender = renderParentTools(['/parent-tools/calendar']);
+        const firstRender = renderParentTools(['/parent-tools/calendar'], false, linkedAuth);
         expect(await screen.findByText('Bears')).toBeTruthy();
-        expect(parentToolsServiceMocks.loadParentCalendarTools).toHaveBeenNthCalledWith(1, auth.user, {});
+        expect(parentToolsServiceMocks.loadParentCalendarTools).toHaveBeenNthCalledWith(1, linkedAuth.user, {});
         firstRender.unmount();
 
-        renderParentTools(['/parent-tools/calendar']);
+        renderParentTools(['/parent-tools/calendar'], false, linkedAuth);
         expect(await screen.findByText('Bears')).toBeTruthy();
-        expect(parentToolsServiceMocks.loadParentCalendarTools).toHaveBeenNthCalledWith(2, auth.user, {});
+        expect(parentToolsServiceMocks.loadParentCalendarTools).toHaveBeenNthCalledWith(2, linkedAuth.user, {});
 
         fireEvent.click(screen.getByRole('button', { name: 'Refresh' }));
-        await waitFor(() => expect(parentToolsServiceMocks.loadParentCalendarTools).toHaveBeenNthCalledWith(3, auth.user, { force: true }));
+        await waitFor(() => expect(parentToolsServiceMocks.loadParentCalendarTools).toHaveBeenNthCalledWith(3, linkedAuth.user, { force: true }));
     });
 
     it('keeps parent tool refresh effects stable during local rerenders', async () => {
-        renderParentTools();
+        renderParentTools(['/parent-tools/access'], false, linkedAuth);
 
         await screen.findByText('Request player access');
         expect(parentToolsAccessServiceMocks.loadParentAccessModel).toHaveBeenCalledTimes(1);
@@ -504,7 +575,7 @@ describe('ParentTools access', () => {
             }
         ]);
 
-        renderParentTools(['/parent-tools/fees']);
+        renderParentTools(['/parent-tools/fees'], false, linkedAuth);
 
         await screen.findByText('Team dues');
         fireEvent.click(screen.getByRole('button', { name: 'Pay fee' }));
@@ -518,7 +589,7 @@ describe('ParentTools access', () => {
     it('shows safe Fees copy instead of raw Firestore index errors', async () => {
         parentToolsServiceMocks.loadParentFeesForApp.mockRejectedValue(new Error('The query requires an index. You can create it here: https://console.firebase.google.com/v1/r/project/game-flow-c6311/firestore/indexes?create_composite=test'));
 
-        renderParentTools(['/parent-tools/fees']);
+        renderParentTools(['/parent-tools/fees'], false, linkedAuth);
 
         expect(await screen.findByText('Unable to load fees.')).toBeTruthy();
         expect(screen.queryByText(/console\.firebase\.google\.com/)).toBeNull();
@@ -555,7 +626,7 @@ describe('ParentTools access', () => {
             checkoutUrl: 'https://pay.example.test/fresh'
         });
 
-        renderParentTools(['/parent-tools/fees']);
+        renderParentTools(['/parent-tools/fees'], false, linkedAuth);
 
         await screen.findByText('Team dues');
         fireEvent.click(screen.getByRole('button', { name: 'Pay fee' }));
@@ -607,7 +678,7 @@ describe('ParentTools access', () => {
             }
         ]);
 
-        renderParentTools(['/parent-tools/fees?teamId=team-1&batchId=batch-1&recipientId=recipient-1']);
+        renderParentTools(['/parent-tools/fees?teamId=team-1&batchId=batch-1&recipientId=recipient-1'], false, linkedAuth);
 
         expect(await screen.findByText('Paid fee')).toBeTruthy();
         expect(screen.queryByText('Open fee')).toBeNull();
@@ -658,7 +729,7 @@ describe('ParentTools access', () => {
             renderCounts[toolId] = (renderCounts[toolId] || 0) + 1;
         };
 
-        renderParentTools();
+        renderParentTools(['/parent-tools/access'], false, linkedAuth);
 
         await screen.findByText('Request player access');
         expect(renderCounts.access).toBe(1);
@@ -703,7 +774,7 @@ describe('ParentTools access', () => {
                 }
             ]);
 
-        renderParentTools();
+        renderParentTools(['/parent-tools/access'], false, linkedAuth);
 
         await screen.findByText('Request player access');
         fireEvent.click(screen.getByRole('button', { name: 'Fees' }));
@@ -742,12 +813,12 @@ describe('ParentTools access', () => {
                 teams: [{ teamId: 'team-1', teamName: 'Bears', eventCount: 1 }]
             });
 
-        renderParentTools();
+        renderParentTools(['/parent-tools/access'], false, linkedAuth);
 
         await screen.findByText('Request player access');
         fireEvent.click(screen.getByRole('button', { name: 'Calendar' }));
         await screen.findByText('No team schedules');
-        expect(parentToolsServiceMocks.loadParentCalendarTools).toHaveBeenNthCalledWith(1, auth.user, {});
+        expect(parentToolsServiceMocks.loadParentCalendarTools).toHaveBeenNthCalledWith(1, linkedAuth.user, {});
 
         fireEvent.click(screen.getByRole('button', { name: 'Access' }));
         await screen.findByText('Request player access');
@@ -758,7 +829,7 @@ describe('ParentTools access', () => {
 
         fireEvent.click(screen.getByRole('button', { name: 'Calendar' }));
         expect(await screen.findByText('Bears')).toBeTruthy();
-        expect(parentToolsServiceMocks.loadParentCalendarTools).toHaveBeenNthCalledWith(2, auth.user, { force: true });
+        expect(parentToolsServiceMocks.loadParentCalendarTools).toHaveBeenNthCalledWith(2, linkedAuth.user, { force: true });
     });
 
     it('refreshes the currently viewed dependent tab when access changes finish after navigation', async () => {
@@ -784,7 +855,7 @@ describe('ParentTools access', () => {
                 }
             ]);
 
-        renderParentTools();
+        renderParentTools(['/parent-tools/access'], false, linkedAuth);
 
         await screen.findByText('Request player access');
         fireEvent.click(screen.getByRole('button', { name: 'Register' }));
@@ -829,7 +900,7 @@ describe('ParentTools access', () => {
                 }
             ]);
 
-        renderParentTools(['/parent-tools/registrations']);
+        renderParentTools(['/parent-tools/registrations'], false, linkedAuth);
 
         expect(await screen.findByText('Registration service unavailable.')).toBeTruthy();
         fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
