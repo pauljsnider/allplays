@@ -43,7 +43,7 @@ import {
   listFamilyShareTokens,
   listMyParentMembershipRequests,
   listParentTeamFeeRecipients,
-  listTeamRegistrationForms,
+  listPublishedTeamRegistrationForms,
   listTeamRegistrationReviews,
   listTeamRegistrationReviewsPage,
   moveTeamMediaItems,
@@ -604,7 +604,7 @@ export async function loadParentRegistrations(user: AuthUser | null): Promise<Pa
   const cards = await Promise.all(teamIds.map(async (teamId) => {
     const [team, forms] = await Promise.all([
       Promise.resolve(getTeam(teamId)).catch(() => null),
-      Promise.resolve(listTeamRegistrationForms(teamId)).catch(() => [])
+      Promise.resolve(listPublishedTeamRegistrationForms(teamId, { pageSize: 50 })).catch(() => [])
     ]);
     return (forms || []).map((form: any) => toRegistrationCard(team || { id: teamId }, form));
   }));

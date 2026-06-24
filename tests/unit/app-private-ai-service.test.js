@@ -396,6 +396,23 @@ describe('private AI service', () => {
         expect(scheduleMocks.loadParentSchedule).toHaveBeenCalledWith(authUser, { includePastGames: true });
     });
 
+    it('uses the parent registrations loader for private AI parent tools summaries', async () => {
+        toolsMocks.loadParentRegistrations.mockResolvedValueOnce([{ id: 'form-1', teamName: 'Bears', programName: 'Summer Camp' }]);
+        toolsMocks.loadParentCertificates.mockResolvedValueOnce([{ id: 'cert-1', title: 'Hustle Award' }]);
+        const { runPrivateAiTool } = await import('../../apps/app/src/lib/privateAiService.ts');
+
+        await expect(runPrivateAiTool(authUser, { name: 'get_parent_tools' })).resolves.toMatchObject({
+            ok: true,
+            data: {
+                registrations: [{ id: 'form-1', teamName: 'Bears', programName: 'Summer Camp' }],
+                certificates: [{ id: 'cert-1', title: 'Hustle Award' }]
+            }
+        });
+
+        expect(toolsMocks.loadParentRegistrations).toHaveBeenCalledWith(authUser);
+        expect(toolsMocks.loadParentCertificates).toHaveBeenCalledWith(authUser);
+    });
+
     it('retrieves help workflow pages for functional questions', async () => {
         const { runPrivateAiTool } = await import('../../apps/app/src/lib/privateAiService.ts');
 
