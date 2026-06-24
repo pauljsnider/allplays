@@ -33,6 +33,7 @@ const dbMocks = vi.hoisted(() => ({
     listFamilyShareTokens: vi.fn(),
     listMyParentMembershipRequests: vi.fn(),
     listParentTeamFeeRecipients: vi.fn(),
+    listPublishedTeamRegistrationForms: vi.fn(),
     listTeamRegistrationForms: vi.fn(),
     listTeamRegistrationReviews: vi.fn(),
     listTeamRegistrationReviewsPage: vi.fn(),
@@ -630,12 +631,17 @@ describe('React app parent tools service', () => {
         expect(dbMocks.updateFamilyShareTokenCalendars).toHaveBeenCalledWith('token-1', ['https://calendar.example.test/b.ics']);
     });
 
-    it('loads published registrations for parent and coach teams', async () => {
+    it('loads published registrations for parent and coach teams without scanning every form', async () => {
         dbMocks.getTeam.mockImplementation(async (teamId) => ({ id: teamId, name: teamId === 'team-1' ? 'Bears' : 'Coach Wolves' }));
-        dbMocks.listTeamRegistrationForms.mockImplementation(async (teamId) => ([
-            { id: `${teamId}-open`, programName: 'Summer Camp', description: 'Skills', season: 'Summer', finalAmountDueCents: 7500, checkoutUrl: 'https://pay.example.test/camp', options: [{ id: 'opt-1' }] },
-            { id: `${teamId}-closed`, programName: 'Closed Camp', status: 'closed' }
-        ]));
+        dbMocks.listTeamRegistrationForms.mockRejectedValue(new Error('parent discovery should not scan all forms'));
+        dbMocks.listPublishedTeamRegistrationForms.mockImplementation(async (teamId, options) => {
+            expect(options).toEqual({ pageSize: 50 });
+            return [
+                { id: `${teamId}-open`, programName: 'Summer Camp', description: 'Skills', season: 'Summer', finalAmountDueCents: 7500, checkoutUrl: 'https://pay.example.test/camp', options: [{ id: 'opt-1' }] },
+                { id: `${teamId}-draft`, programName: 'Draft Camp', status: 'draft', published: false },
+                { id: `${teamId}-closed`, programName: 'Closed Camp', status: 'closed', published: true }
+            ];
+        });
 
         const cards = await loadParentRegistrations(user);
 
@@ -654,6 +660,8 @@ describe('React app parent tools service', () => {
             'https://allplays.ai/app/#/registration?teamId=team-1&formId=team-1-open',
             'https://allplays.ai/app/#/registration?teamId=team-coach&formId=team-coach-open'
         ]));
+        expect(dbMocks.listPublishedTeamRegistrationForms).toHaveBeenCalledTimes(2);
+        expect(dbMocks.listTeamRegistrationForms).not.toHaveBeenCalled();
     });
 
     it('loads a linked registration detail model for in-app review', async () => {

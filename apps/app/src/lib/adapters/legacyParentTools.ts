@@ -54,6 +54,7 @@ export const listFamilyShareTokens = (...args: any[]) => callLegacyDb('listFamil
 export const listMyParentMembershipRequests = (...args: any[]) => callLegacyDb('listMyParentMembershipRequests', args);
 export const listParentTeamFeeRecipients = (...args: any[]) => callLegacyDb('listParentTeamFeeRecipients', args);
 export const listTeamRegistrationForms = (...args: any[]) => callLegacyDb('listTeamRegistrationForms', args);
+export const listPublishedTeamRegistrationForms = (...args: any[]) => callLegacyDb('listPublishedTeamRegistrationForms', args);
 export const listTeamRegistrationReviews = (...args: any[]) => callLegacyDb('listTeamRegistrationReviews', args);
 export const listTeamRegistrationReviewsPage = (...args: any[]) => callLegacyDb('listTeamRegistrationReviewsPage', args);
 export const rejectTeamRegistration = (...args: any[]) => callLegacyDb('rejectTeamRegistration', args);

@@ -2355,6 +2355,16 @@ export async function listTeamRegistrationForms(teamId) {
         .sort((a, b) => String(a.name || a.title || a.id).localeCompare(String(b.name || b.title || b.id)));
 }
 
+export async function listPublishedTeamRegistrationForms(teamId, options = {}) {
+    if (!teamId) return [];
+    const pageSize = Math.max(1, Math.min(100, Number(options.pageSize) || 50));
+    const formsRef = collection(db, `teams/${teamId}/registrationForms`);
+    const snapshot = await getDocs(query(formsRef, where('status', '==', 'published'), limit(pageSize)));
+    return snapshot.docs
+        .map((formDoc) => ({ id: formDoc.id, ...formDoc.data() }))
+        .sort((a, b) => String(a.name || a.title || a.id).localeCompare(String(b.name || b.title || b.id)));
+}
+
 export async function getTeamRegistrationForm(teamId, formId) {
     if (!teamId || !formId) return null;
     const formSnap = await getDoc(doc(db, 'teams', teamId, 'registrationForms', formId));
