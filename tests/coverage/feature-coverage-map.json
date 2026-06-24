@@ -49,7 +49,6 @@
                 "workflow-track-game.html"
             ],
             "supportPages": [
-                "apps/app/bundle-visualizer.html",
                 "apps/app/index.html",
                 "beta/cheer/track-cheer-mobile.html",
                 "beta/sub-tracker-prototype.html",
