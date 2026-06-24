@@ -67,6 +67,34 @@ describe('publicTeamsService', () => {
         expect(dbMocks.discoverPublicTeams).toHaveBeenCalledWith({ searchText: '60601', cursor: null, pageSize: 24 });
     });
 
+    it('accepts nullable location fields from legacy public team results', async () => {
+        dbMocks.discoverPublicTeams.mockResolvedValue({
+            teams: [
+                {
+                    id: 'team-null-location-1',
+                    name: 'Null Location FC',
+                    city: null,
+                    state: null,
+                    zip: '73301'
+                }
+            ],
+            nextCursor: null
+        });
+
+        await expect(getPublicTeamsPage({ searchText: '73301' })).resolves.toEqual({
+            teams: [
+                expect.objectContaining({
+                    teamId: 'team-null-location-1',
+                    location: '73301',
+                    city: null,
+                    state: null,
+                    zip: '73301'
+                })
+            ],
+            nextCursor: null
+        });
+    });
+
     it('keeps city searches on the bounded helper contract for zip-backed public teams', async () => {
         dbMocks.discoverPublicTeams.mockResolvedValue({
             teams: [

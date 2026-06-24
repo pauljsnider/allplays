@@ -10,7 +10,7 @@ function normalizePublicTeamSearchText(value: string | null | undefined): string
     return String(value || '').trim().toLowerCase();
 }
 
-function teamLocation(team: { city?: string; state?: string; zip?: string }): string | null {
+function teamLocation(team: { city?: string | null; state?: string | null; zip?: string | null }): string | null {
     if (team.city && team.state) return `${team.city}, ${team.state}`;
     if (team.zip) return team.zip;
     return null;
