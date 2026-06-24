@@ -324,7 +324,7 @@ describe('React app auth/profile capability parity', () => {
         expect(turnOnGameDayAlerts).toContain('const currentPreferences = notificationPreferencesByTeamId[teamId]');
         expect(turnOnGameDayAlerts).toContain('loadedNotificationTeamId === teamId');
         expect(turnOnGameDayAlerts).toContain('? notificationPreferences');
-        expect(turnOnGameDayAlerts).toContain(': await loadNotificationPreferences(user.uid, teamId));');
+        expect(turnOnGameDayAlerts).toContain(': await loadNotificationPreferencesOnce(user.uid, teamId));');
         expect(turnOnGameDayAlerts).toContain('...currentPreferences,');
         expect(turnOnGameDayAlerts.indexOf('await enablePushNotificationsForUser(user.uid);')).toBeLessThan(
             turnOnGameDayAlerts.indexOf('saveNotificationPreferences(user.uid, teamId, nextPreferences)')
