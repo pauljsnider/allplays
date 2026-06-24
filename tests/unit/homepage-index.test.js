@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 import { initHomepage } from '../../js/homepage.js';
 
@@ -117,6 +119,14 @@ async function runHomepage({
 }
 
 describe('homepage index workflow', () => {
+    it('keeps public homepage CTAs on the request-access path instead of blocked signup', () => {
+        const homepageHtml = readFileSync(resolve(process.cwd(), 'index.html'), 'utf8');
+
+        expect(homepageHtml).not.toContain('login.html#signup');
+        expect(homepageHtml).toContain('mailto:paul@paulsnider.net?subject=ALL%20PLAYS%20Access%20Request');
+        expect(homepageHtml).toContain('Request Access');
+    });
+
     it('routes coach users to the team dashboard CTA, deduplicates live and upcoming games, and preserves replay links', async () => {
         const duplicatedLiveGame = createGame({ liveViewerCount: 5 });
         const replayGame = createGame({
@@ -183,7 +193,7 @@ describe('homepage index workflow', () => {
         expect(elements.get('hero-cta').href).toBe('parent-dashboard.html');
     });
 
-    it('keeps upcoming cards visible when live games fail and sets the guest CTA', async () => {
+    it('keeps upcoming cards visible when live games fail and sets the guest CTA to request access', async () => {
         const upcomingGame = createGame({ id: 'game-3', opponent: 'Owls' });
 
         const { elements } = await runHomepage({
@@ -191,8 +201,8 @@ describe('homepage index workflow', () => {
             upcomingGames: [upcomingGame]
         });
 
-        expect(elements.get('hero-cta').textContent).toBe('Create Your Team');
-        expect(elements.get('hero-cta').href).toBe('login.html#signup');
+        expect(elements.get('hero-cta').textContent).toBe('Request Access');
+        expect(elements.get('hero-cta').href).toBe('mailto:paul@paulsnider.net?subject=ALL%20PLAYS%20Access%20Request');
 
         const liveMarkup = elements.get('live-games-list').innerHTML;
         expect(liveMarkup).not.toContain('Loading games...');

@@ -1,3 +1,5 @@
+const REQUEST_ACCESS_HREF = 'mailto:paul@paulsnider.net?subject=ALL%20PLAYS%20Access%20Request';
+
 function resolveTeamId(game) {
     return game.teamId || game.team?.id || '';
 }
@@ -58,8 +60,8 @@ export function applyHeroCta(user, heroCta, getRedirectUrl = () => 'dashboard.ht
         return;
     }
 
-    heroCta.textContent = 'Create Your Team';
-    heroCta.href = 'login.html#signup';
+    heroCta.textContent = 'Request Access';
+    heroCta.href = REQUEST_ACCESS_HREF;
 }
 
 export async function loadLiveGames({
