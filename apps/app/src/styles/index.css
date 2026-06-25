@@ -59,20 +59,21 @@ a {
 }
 
 .app-search-overlay {
+  --app-search-keyboard-inset: 0px;
   display: flex;
   align-items: flex-start;
   justify-content: center;
   overflow-y: auto;
-  padding: calc(max(12px, env(safe-area-inset-top)) + 8px) 12px calc(max(12px, env(safe-area-inset-bottom)) + 8px);
+  padding: calc(max(12px, env(safe-area-inset-top)) + 8px) 12px calc(max(12px, env(safe-area-inset-bottom)) + 8px + var(--app-search-keyboard-inset));
 }
 
 .app-search-panel {
-  max-height: calc(100vh - max(12px, env(safe-area-inset-top)) - max(12px, env(safe-area-inset-bottom)) - 24px);
+  max-height: calc(100vh - max(12px, env(safe-area-inset-top)) - max(12px, env(safe-area-inset-bottom)) - var(--app-search-keyboard-inset) - 24px);
 }
 
 @supports (height: 100dvh) {
   .app-search-panel {
-    max-height: calc(100dvh - max(12px, env(safe-area-inset-top)) - max(12px, env(safe-area-inset-bottom)) - 24px);
+    max-height: calc(100dvh - max(12px, env(safe-area-inset-top)) - max(12px, env(safe-area-inset-bottom)) - var(--app-search-keyboard-inset) - 24px);
   }
 }
 

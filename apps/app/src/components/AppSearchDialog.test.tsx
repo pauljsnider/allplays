@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { AppSearchDialog } from './AppSearchDialog';
@@ -9,6 +9,16 @@ import type { AuthState } from '../lib/types';
 const { navigateMock, preloadSearchRouteMock } = vi.hoisted(() => ({
   navigateMock: vi.fn(),
   preloadSearchRouteMock: vi.fn(async () => true),
+}));
+
+const { capacitorMocks } = vi.hoisted(() => ({
+  capacitorMocks: {
+    isNativePlatform: vi.fn(() => false),
+  }
+}));
+
+vi.mock('@capacitor/core', () => ({
+  Capacitor: capacitorMocks,
 }));
 
 vi.mock('react-router-dom', async (importOriginal) => {
@@ -105,6 +115,7 @@ describe('AppSearchDialog', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    capacitorMocks.isNativePlatform.mockReturnValue(false);
     getKnownAppSearchTeamsMock.mockReturnValue([]);
     loadAppSearchTeamsMock.mockResolvedValue([{ id: 'team-2', name: 'Rockets', sport: 'Soccer', zip: '64114' }]);
     searchAppTeamsMock.mockImplementation(async (_query, teams) => teams);
@@ -130,6 +141,86 @@ describe('AppSearchDialog', () => {
     await waitFor(() => expect(screen.queryByLabelText('Filter help by role')).toBeNull());
     expect(screen.getByText('Players')).not.toBeNull();
     expect(screen.getByText('Type at least 2 characters to search players')).not.toBeNull();
+  });
+
+  it('adds a native keyboard inset when the visual viewport is partially obscured', async () => {
+    const onClose = vi.fn();
+    const originalVisualViewport = window.visualViewport;
+    const originalInnerHeight = window.innerHeight;
+    const listeners = new Map<string, Set<() => void>>();
+    let viewportHeight = 800;
+    let viewportOffsetTop = 0;
+
+    const emit = (eventName: string) => {
+      listeners.get(eventName)?.forEach((listener) => listener());
+    };
+
+    Object.defineProperty(window, 'innerHeight', {
+      configurable: true,
+      value: 800,
+    });
+
+    Object.defineProperty(window, 'visualViewport', {
+      configurable: true,
+      value: {
+        get height() {
+          return viewportHeight;
+        },
+        get offsetTop() {
+          return viewportOffsetTop;
+        },
+        addEventListener: (eventName: string, listener: () => void) => {
+          if (!listeners.has(eventName)) listeners.set(eventName, new Set());
+          listeners.get(eventName)?.add(listener);
+        },
+        removeEventListener: (eventName: string, listener: () => void) => {
+          listeners.get(eventName)?.delete(listener);
+        },
+      },
+    });
+
+    capacitorMocks.isNativePlatform.mockReturnValue(true);
+
+    try {
+      render(
+        <MemoryRouter>
+          <AppSearchDialog auth={auth} open={true} onClose={onClose} />
+        </MemoryRouter>
+      );
+
+      const dialog = screen.getByRole('dialog', { name: 'Search teams, players, actions, and help' });
+      expect(dialog).toHaveAttribute('data-keyboard-visible', 'false');
+      expect(dialog).toHaveStyle('--app-search-keyboard-inset: 0px');
+
+      viewportHeight = 520;
+      act(() => {
+        emit('resize');
+      });
+
+      await waitFor(() => {
+        expect(dialog).toHaveAttribute('data-keyboard-visible', 'true');
+        expect(dialog).toHaveStyle('--app-search-keyboard-inset: 280px');
+      });
+
+      viewportHeight = 800;
+      act(() => {
+        emit('resize');
+      });
+
+      await waitFor(() => {
+        expect(dialog).toHaveAttribute('data-keyboard-visible', 'false');
+        expect(dialog).toHaveStyle('--app-search-keyboard-inset: 0px');
+      });
+    } finally {
+      Object.defineProperty(window, 'visualViewport', {
+        configurable: true,
+        value: originalVisualViewport,
+      });
+      Object.defineProperty(window, 'innerHeight', {
+        configurable: true,
+        value: originalInnerHeight,
+      });
+    }
   });
 
   it('shows help results without role filters once the query reaches two characters', async () => {

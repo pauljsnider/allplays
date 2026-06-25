@@ -35,6 +35,10 @@ describe('Capacitor native config', () => {
             backgroundColor: '#ffffff',
             overlaysWebView: false
         });
+        expect(config.plugins.Keyboard).toMatchObject({
+            resize: 'native',
+            resizeOnFullScreen: true
+        });
 
         expect(androidSettings).toContain("include ':capacitor-splash-screen'");
         expect(androidSettings).toContain("include ':capacitor-status-bar'");
@@ -78,10 +82,12 @@ describe('Capacitor native config', () => {
 
         expect(appCss).toContain('env(safe-area-inset-top)');
         expect(appCss).toContain('env(safe-area-inset-bottom)');
+        expect(appCss).toContain('--app-search-keyboard-inset');
         expect(androidManifest).toContain('android:autoVerify="true"');
         expect(androidManifest).toContain('android:host="allplays.ai"');
         expect(androidManifest).toContain('android:pathPrefix="/app"');
         expect(androidManifest).toContain('android:scheme="allplays"');
+        expect(androidManifest).toContain('android:windowSoftInputMode="adjustResize"');
         expect(iosInfo).toContain('<string>allplays</string>');
         expect(iosInfo).toContain('<string>ai.allplays.lite</string>');
         expect(iosEntitlements).toContain('com.apple.developer.associated-domains');
