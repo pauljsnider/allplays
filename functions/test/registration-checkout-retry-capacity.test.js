@@ -502,6 +502,7 @@ test('includes retryPayment on Stripe cancel returns for initial public registra
     assert.equal(successUrl.searchParams.get('paymentPlanId'), 'pay_full');
     assert.match(successUrl.searchParams.get('publicCheckoutCapability') || '', /^[A-Za-z0-9_-]{32,}$/);
     assert.equal(successUrl.searchParams.get('retryPayment'), null);
+    assert.deepEqual(successUrl.searchParams.getAll('retryPayment'), []);
     assert.equal(successUrl.searchParams.get('status'), 'success');
 
     assert.equal(cancelUrl.origin, 'https://allplays.test');
@@ -511,5 +512,6 @@ test('includes retryPayment on Stripe cancel returns for initial public registra
     assert.equal(cancelUrl.searchParams.get('paymentPlanId'), 'pay_full');
     assert.equal(cancelUrl.searchParams.get('publicCheckoutCapability'), successUrl.searchParams.get('publicCheckoutCapability'));
     assert.equal(cancelUrl.searchParams.get('retryPayment'), '1');
+    assert.deepEqual(cancelUrl.searchParams.getAll('retryPayment'), ['1']);
     assert.equal(cancelUrl.searchParams.get('status'), 'cancelled');
 });
