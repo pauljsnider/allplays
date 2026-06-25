@@ -579,6 +579,8 @@ export async function loadFamilyShareModel(user: AuthUser | null): Promise<{ chi
     children,
     tokens: (tokens || []).map((token: any) => ({
       ...token,
+      expired: isFamilyShareTokenExpired(token),
+      statusLabel: getFamilyShareTokenStatusLabel(token),
       url: getFamilyShareUrl(token.id),
       childCount: Array.isArray(token.children) ? token.children.length : 0
     }))
@@ -1159,6 +1161,18 @@ function toDate(value: unknown): Date | null {
 
 function toMillis(value: unknown) {
   return toDate(value)?.getTime() || 0;
+}
+
+function isFamilyShareTokenExpired(token: unknown) {
+  const expiresAt = toMillis(asObject(token).expiresAt);
+  return expiresAt > 0 && expiresAt <= Date.now();
+}
+
+function getFamilyShareTokenStatusLabel(token: unknown) {
+  const data = asObject(token);
+  if (data.revokedAt || data.revoked || data.active === false) return 'Revoked';
+  if (isFamilyShareTokenExpired(data)) return 'Expired';
+  return 'Active';
 }
 
 function compactString(value: unknown) {

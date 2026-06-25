@@ -431,6 +431,9 @@ describe('family plan helpers', () => {
         expect(source).toContain("from './family-share-utils.js?v=1'");
         expect(source).toContain("throw new Error('No linked players are available to share yet.')");
         expect(source).toContain('globalThis.crypto.getRandomValues(bytes)');
+        expect(source).toContain('const FAMILY_SHARE_TOKEN_LIFETIME_MS = 30 * 24 * 60 * 60 * 1000;');
+        expect(source).toContain('const expiresAt = Timestamp.fromMillis(now.toMillis() + FAMILY_SHARE_TOKEN_LIFETIME_MS);');
+        expect(source).toContain('expiresAt,');
     });
 
     it('normalizes family share calendar URLs to valid unique web links', () => {

@@ -46,8 +46,8 @@
     <svg class="w-16 h-16 text-gray-300 mx-auto mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
       <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"></path>
     </svg>
-    <h2 class="text-xl font-bold text-gray-700 mb-2">This link is no longer valid</h2>
-    <p class="text-gray-500 text-sm">The family page link you used has been revoked or does not exist.</p>
+    <h2 id="page-error-title" class="text-xl font-bold text-gray-700 mb-2">This link is no longer valid</h2>
+    <p id="page-error-detail" class="text-gray-500 text-sm">The family page link you used has expired, been revoked, or does not exist.</p>
   </div>
 
   <div id="page-loading" class="container mx-auto px-4 py-16 text-center">
@@ -173,7 +173,7 @@
   <div id="footer-container"></div>
 
   <script type="module">
-    import { getFamilyShareToken, getTeam, getGames, getTrackedCalendarEventUids } from './js/db.js?v=70';
+    import { getFamilyShareToken, getTeam, getGames, getTrackedCalendarEventUids } from './js/db.js?v=71';
     import { resolveScheduleWatchCta } from './js/schedule-watch-cta.js?v=1';
     import { renderHeader, renderFooter, escapeHtml, fetchAndParseCalendar, extractOpponent, isPracticeEvent, expandRecurrence, getCalendarEventTrackingId, isTrackedCalendarEvent } from './js/utils.js?v=11';
 
@@ -211,6 +211,11 @@
       return Number.isNaN(d?.getTime?.()) ? null : d;
     }
 
+    function isFamilyShareTokenExpired(token) {
+      const expiresAt = toDateSafe(token?.expiresAt);
+      return Boolean(expiresAt && expiresAt.getTime() <= Date.now());
+    }
+
     async function init() {
       if (!tokenId) {
         showError();
@@ -228,6 +233,11 @@
 
       if (!token || token.active === false) {
         showError();
+        return;
+      }
+
+      if (isFamilyShareTokenExpired(token)) {
+        showError('This link has expired', 'Ask the parent to create a new family share link. Expired links never load player, team, or schedule details.');
         return;
       }
 
@@ -288,7 +298,11 @@
       document.getElementById('page-main').classList.remove('hidden');
     }
 
-    function showError() {
+    function showError(title = 'This link is no longer valid', detail = 'The family page link you used has expired, been revoked, or does not exist.') {
+      const titleEl = document.getElementById('page-error-title');
+      const detailEl = document.getElementById('page-error-detail');
+      if (titleEl) titleEl.textContent = title;
+      if (detailEl) detailEl.textContent = detail;
       document.getElementById('page-loading').classList.add('hidden');
       document.getElementById('page-error').classList.remove('hidden');
     }

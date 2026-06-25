@@ -536,6 +536,26 @@ describe('React app parent tools integration', () => {
         expect(serviceMocks.revokeParentFamilyShare).not.toHaveBeenCalled();
     });
 
+    it('marks expired family share links so they are not presented as reusable active links', async () => {
+        serviceMocks.loadFamilyShareModel.mockResolvedValueOnce({
+            children: [{ teamId: 'team-1', playerId: 'player-1', playerName: 'Pat Star' }],
+            tokens: [{ id: 'token-1', label: 'Grandma', url: 'https://allplays.ai/family.html?token=token-1', childCount: 1, extraCalendarUrls: [], expired: true, statusLabel: 'Expired' }]
+        });
+
+        const { container } = await renderParentTools('/parent-tools/share');
+        await waitForText(container, 'Expired');
+
+        const tokenCard = Array.from(container.querySelectorAll('section')).find((section) => section.textContent.includes('Grandma'));
+        const buttons = Array.from(tokenCard?.querySelectorAll('button') || []);
+        const copyButton = buttons.find((button) => button.textContent.trim() === 'Copy');
+        const shareButton = buttons.find((button) => button.textContent.trim() === 'Share');
+        const revokeButton = buttons.find((button) => button.textContent.trim() === 'Revoke');
+
+        expect(copyButton?.disabled).toBe(true);
+        expect(shareButton?.disabled).toBe(true);
+        expect(revokeButton?.disabled).toBe(false);
+    });
+
     it('renders fee notes and offline payment guidance without changing checkout', async () => {
         serviceMocks.loadParentFeesForApp.mockResolvedValueOnce([{
             id: 'fee-2',

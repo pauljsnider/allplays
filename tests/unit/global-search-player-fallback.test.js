@@ -6,7 +6,7 @@ const source = readFileSync(resolve(process.cwd(), 'js/global-search.js'), 'utf8
 
 describe('legacy global player search scoping', () => {
     it('uses bounded public team discovery instead of bootstrapping the full catalog', () => {
-        expect(source).toContain("import { discoverPublicTeams } from './db.js?v=70';");
+        expect(source).toContain("import { discoverPublicTeams } from './db.js?v=71';");
         expect(source).not.toContain('import { getTeams }');
         expect(source).toContain('const teamSearchQueryLimit = 20;');
         expect(source).toContain('if (q.length < 2) {');

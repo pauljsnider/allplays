@@ -168,6 +168,15 @@ function FamilyTokenCard({ token, editing, saving, onEdit, onCancel, onCopy, onS
     onSaveCalendars: (tokenId: string, value: string) => void;
 }) {
     const [calendarText, setCalendarText] = useState('');
+    const revoked = Boolean(token.revokedAt || token.revoked || token.active === false);
+    const expired = Boolean(token.expired) && !revoked;
+    const shareDisabled = revoked || expired;
+    const statusLabel = token.statusLabel || (revoked ? 'Revoked' : expired ? 'Expired' : 'Active');
+    const statusClassName = revoked
+        ? 'bg-rose-50 text-rose-700'
+        : expired
+            ? 'bg-amber-50 text-amber-700'
+            : 'bg-emerald-50 text-emerald-700';
 
     useEffect(() => {
         if (editing) setCalendarText((token.extraCalendarUrls || []).join('\n'));
@@ -180,8 +189,8 @@ function FamilyTokenCard({ token, editing, saving, onEdit, onCancel, onCopy, onS
                     <div className="truncate text-sm font-black text-gray-950">{token.label || 'Family share link'}</div>
                     <div className="mt-0.5 text-xs font-semibold text-gray-500">{token.childCount} player{token.childCount === 1 ? '' : 's'} included</div>
                 </div>
-                <span className={`rounded-full px-2 py-0.5 text-[10px] font-black uppercase ${token.revokedAt || token.revoked ? 'bg-rose-50 text-rose-700' : 'bg-emerald-50 text-emerald-700'}`}>
-                    {token.revokedAt || token.revoked ? 'Revoked' : 'Active'}
+                <span className={`rounded-full px-2 py-0.5 text-[10px] font-black uppercase ${statusClassName}`}>
+                    {statusLabel}
                 </span>
             </div>
             <div className="mt-3 break-all rounded-xl border border-gray-200 bg-gray-50 p-3 text-xs font-semibold text-gray-600">{token.url}</div>
@@ -195,10 +204,10 @@ function FamilyTokenCard({ token, editing, saving, onEdit, onCancel, onCopy, onS
                 </div>
             ) : (
                 <div className="mt-3 grid grid-cols-4 gap-2">
-                    <button type="button" className="secondary-button !min-h-9 justify-center text-xs" onClick={() => onCopy(token.url)}><Copy className="h-4 w-4" aria-hidden="true" />Copy</button>
-                    <button type="button" className="secondary-button !min-h-9 justify-center text-xs" onClick={onShare}><Share2 className="h-4 w-4" aria-hidden="true" />Share</button>
+                    <button type="button" className="secondary-button !min-h-9 justify-center text-xs" onClick={() => onCopy(token.url)} disabled={shareDisabled}><Copy className="h-4 w-4" aria-hidden="true" />Copy</button>
+                    <button type="button" className="secondary-button !min-h-9 justify-center text-xs" onClick={onShare} disabled={shareDisabled}><Share2 className="h-4 w-4" aria-hidden="true" />Share</button>
                     <button type="button" className="secondary-button !min-h-9 justify-center text-xs" onClick={onEdit}>Feeds</button>
-                    <button type="button" className="ghost-button !min-h-9 justify-center text-xs text-rose-700" onClick={onRevoke} disabled={saving || token.revokedAt || token.revoked}>Revoke</button>
+                    <button type="button" className="ghost-button !min-h-9 justify-center text-xs text-rose-700" onClick={onRevoke} disabled={saving || revoked}>Revoke</button>
                 </div>
             )}
         </section>

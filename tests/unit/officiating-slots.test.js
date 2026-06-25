@@ -107,7 +107,7 @@ describe('officiating slots', () => {
         expect(officialsSource).toContain('Result submitted');
         expect(officialsSource).toContain("slot.status !== 'accepted' || !hasGameStarted(game) || isCancelled(game)");
         expect(officialsSource).toContain("document.getElementById('officials-status').textContent = 'Result saved.';");
-        expect(officialsSource).toContain("'./js/db.js?v=70'");
+        expect(officialsSource).toContain("'./js/db.js?v=71'");
         expect(officialsSource).not.toContain("'./js/db.js?v=42'");
         expect(officialsSource).not.toContain("'./js/db.js?v=66'");
         expect(dbSource).toContain('export async function submitOfficiatingAssignmentResult(teamId, gameId, slotId, result, official = auth.currentUser)');
