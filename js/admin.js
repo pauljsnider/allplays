@@ -5,6 +5,7 @@ import {
     getAllUsers,
     getGames,
     getOfficials,
+    getOfficialsForUsers,
     addOfficial,
     updateOfficial,
     deleteOfficial,
@@ -14,7 +15,7 @@ import {
     getTelemetryPageDaily,
     getTelemetryEventDaily,
     getTelemetrySessions
-} from './db.js?v=72';
+} from './db.js?v=73';
 import { db, collection, getDocs, doc, setDoc, updateDoc, serverTimestamp } from './firebase.js?v=19';
 import { renderHeader, renderFooter, escapeHtml } from './utils.js?v=8';
 import { checkAuth } from './auth.js?v=36';
@@ -30,11 +31,12 @@ import {
 } from './admin-registration-forms.js?v=3';
 import { buildRecentGameResultsRows } from './admin-game-results.js?v=1';
 import {
+    buildOfficialLookupCacheKey,
     buildOfficialUserLookup,
     formatOfficialUserSummary,
     getOfficialUserSummary,
     matchesOfficialUserSearch
-} from './admin-user-official-links.js?v=1';
+} from './admin-user-official-links.js?v=2';
 import { buildAdminTeamOfficialsSummary } from './admin-team-officials.js?v=1';
 
 let allTeams = [];
@@ -87,6 +89,12 @@ function getTeamsKey(teams = []) {
 
 function getCurrentTeamPageKey() {
     return getTeamsKey(getCurrentTeamPage());
+}
+
+function getTeamNameById(teamId) {
+    const team = getDashboardTeams().find((entry) => entry.id === teamId)
+        || allTeams.find((entry) => entry.id === teamId);
+    return team?.name || 'Team';
 }
 
 function getDashboardTeams() {
@@ -298,6 +306,25 @@ async function loadOfficialUserLinks(teams = allTeams, { scope = 'page' } = {}) 
     loadedTeamsOfficialsPageKey = teamsKey;
 }
 
+async function loadVisibleOfficialUserLinks(users = allUsers) {
+    const usersKey = buildOfficialLookupCacheKey(users);
+    if (!usersKey) {
+        officialUserLookup = new Map();
+        loadedUsersOfficialsKey = '';
+        return;
+    }
+    if (usersKey && loadedUsersOfficialsKey === usersKey) {
+        return;
+    }
+
+    const officialEntries = await getOfficialsForUsers(users);
+    officialUserLookup = buildOfficialUserLookup(officialEntries.map((entry) => ({
+        ...entry,
+        teamName: getTeamNameById(entry.teamId)
+    })));
+    loadedUsersOfficialsKey = usersKey;
+}
+
 async function loadGameStatsForTeams(teams = allTeams, { scope = 'page' } = {}) {
     const teamsKey = getTeamsKey(teams);
     if (scope === 'page' && teamsKey && loadedGamesPageKey === teamsKey) {
@@ -342,8 +369,8 @@ async function ensureCurrentTeamOfficialsLoaded() {
     await loadOfficialUserLinks(getCurrentTeamPage(), { scope: 'page' });
 }
 
-async function ensureAllOfficialsLoaded() {
-    await loadOfficialUserLinks(getDashboardTeams(), { scope: 'all' });
+async function ensureCurrentUsersOfficialsLoaded() {
+    await loadVisibleOfficialUserLinks(getCurrentUsersPage());
 }
 
 function getTelemetryRangeDays() {
@@ -1453,7 +1480,7 @@ async function loadNextTeamsPage() {
             await ensureCurrentTeamOfficialsLoaded();
         }
         if (activeTab === 'users') {
-            await ensureAllOfficialsLoaded();
+            await ensureCurrentUsersOfficialsLoaded();
             renderCurrentUsersView();
         }
         renderCurrentTeamsView();
@@ -1480,7 +1507,7 @@ async function loadPreviousTeamsPage() {
             await ensureCurrentTeamOfficialsLoaded();
         }
         if (activeTab === 'users') {
-            await ensureAllOfficialsLoaded();
+            await ensureCurrentUsersOfficialsLoaded();
             renderCurrentUsersView();
         }
         renderCurrentTeamsView();
@@ -1508,6 +1535,7 @@ async function loadNextUsersPage() {
         } else {
             return;
         }
+        await ensureCurrentUsersOfficialsLoaded();
         renderCurrentUsersView();
         if (activeTab === 'dashboard') {
             updateDashboard();
@@ -1525,6 +1553,7 @@ async function loadPreviousUsersPage() {
     try {
         const previousIndex = userPageState.currentIndex - 1;
         setUsersPage(userPageState.pages[previousIndex] || [], userPageState.nextCursor, previousIndex);
+        await ensureCurrentUsersOfficialsLoaded();
         renderCurrentUsersView();
         if (activeTab === 'dashboard') {
             updateDashboard();
@@ -1548,7 +1577,7 @@ async function handleTabChange(tab) {
         return;
     }
     if (tab === 'users') {
-        await ensureAllOfficialsLoaded();
+        await ensureCurrentUsersOfficialsLoaded();
         renderCurrentUsersView();
         return;
     }

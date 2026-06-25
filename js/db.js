@@ -48,6 +48,7 @@ import { buildCoachOverrideRsvpDocId, shouldDeleteLegacyRsvpForOverride } from '
 import { computeEffectiveRsvpSummary } from './rsvp-summary.js?v=1';
 import { buildGameDayRsvpBreakdown } from './game-day-rsvp-breakdown.js?v=1';
 import { isAvailabilityLocked, normalizeAvailabilityPreferences } from './availability-preferences.js?v=1';
+import { collectOfficialLookupTargets } from './admin-user-official-links.js?v=2';
 import { resolveAvailabilityCutoffEventDate } from './availability-cutoff-date.js?v=1';
 import { normalizeFamilyShareCalendarUrls, normalizeFamilyShareChildren } from './family-share-utils.js?v=1';
 import { normalizeChatAttachments } from './team-chat-media.js';
@@ -2213,6 +2214,48 @@ export async function getOfficials(teamId) {
             .map(mapOfficial)
             .sort((a, b) => String(a.name || a.displayName || a.email || '').localeCompare(String(b.name || b.displayName || b.email || '')));
     }
+}
+
+function chunkArray(values = [], chunkSize = 10) {
+    const chunks = [];
+    for (let index = 0; index < values.length; index += chunkSize) {
+        chunks.push(values.slice(index, index + chunkSize));
+    }
+    return chunks;
+}
+
+export async function getOfficialsForUsers(users = []) {
+    const { emails, phones } = collectOfficialLookupTargets(users);
+    if (!emails.length && !phones.length) {
+        return [];
+    }
+
+    const entries = [];
+    const seenDocKeys = new Set();
+    const addSnapshotEntries = (snapshot) => {
+        snapshot.docs.forEach((docSnap) => {
+            const teamId = docSnap.ref.parent.parent?.id || '';
+            const docKey = `${teamId}:${docSnap.id}`;
+            if (!teamId || seenDocKeys.has(docKey)) return;
+            seenDocKeys.add(docKey);
+            entries.push({
+                teamId,
+                official: { id: docSnap.id, ...docSnap.data() }
+            });
+        });
+    };
+
+    const emailQueries = chunkArray(emails).map(async (chunk) => {
+        const snapshot = await getDocs(query(collectionGroup(db, 'officials'), where('email', 'in', chunk)));
+        addSnapshotEntries(snapshot);
+    });
+    const phoneQueries = chunkArray(phones).map(async (chunk) => {
+        const snapshot = await getDocs(query(collectionGroup(db, 'officials'), where('phone', 'in', chunk)));
+        addSnapshotEntries(snapshot);
+    });
+
+    await Promise.all([...emailQueries, ...phoneQueries]);
+    return entries;
 }
 
 export async function getPlayers(teamId, options = {}) {

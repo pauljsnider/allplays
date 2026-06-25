@@ -10,6 +10,31 @@ export function normalizeOfficialLinkPhone(phone) {
     return digits;
 }
 
+export function collectOfficialLookupTargets(users = []) {
+    const emails = new Set();
+    const phones = new Set();
+
+    users.forEach((user) => {
+        const email = normalizeOfficialLinkEmail(user?.email);
+        const phone = normalizeOfficialLinkPhone(user?.phone);
+        if (email) emails.add(email);
+        if (phone) phones.add(phone);
+    });
+
+    return {
+        emails: Array.from(emails),
+        phones: Array.from(phones)
+    };
+}
+
+export function buildOfficialLookupCacheKey(users = []) {
+    return users.map((user) => [
+        String(user?.id || '').trim(),
+        normalizeOfficialLinkEmail(user?.email),
+        normalizeOfficialLinkPhone(user?.phone)
+    ].join(':')).join('|');
+}
+
 function getOfficialLookupKeys(official = {}) {
     return [
         normalizeOfficialLinkEmail(official.email),
