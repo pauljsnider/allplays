@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { cleanup, render, screen } from '@testing-library/react';
+import { cleanup, render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { Profile } from './Profile';
@@ -119,6 +119,16 @@ function renderProfile(initialEntry = '/profile') {
   );
 }
 
+function createDeferredPromise<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
+}
+
 describe('Profile', () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -164,5 +174,31 @@ describe('Profile', () => {
     expect(await screen.findByText('No codes generated yet.')).toBeTruthy();
     expect(screen.queryByText('Unable to load invite history.')).toBeNull();
     expect(profileServiceMocks.loadProfileAccessCodesPage).toHaveBeenCalledWith('user-1', { pageSize: 3 });
+  });
+
+  it('renders alerts team controls before the first team preferences finish loading', async () => {
+    const preferencesRequest = createDeferredPromise<{ liveChat: boolean; liveScore: boolean; schedule: boolean }>();
+    profileServiceMocks.loadNotificationTeams.mockResolvedValue([{ id: 'team-1', name: 'Blue Team' }]);
+    profileServiceMocks.loadNotificationPreferences.mockImplementation(() => preferencesRequest.promise);
+
+    renderProfile('/profile?section=alerts');
+
+    expect(await screen.findByText('Notification preferences')).toBeTruthy();
+    expect(await screen.findByRole('combobox')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Enable push on this device' })).toBeTruthy();
+    expect(screen.getByText('Loading alerts for Blue Team…')).toBeTruthy();
+    expect(screen.queryByText('Loading your alert teams…')).toBeNull();
+
+    await waitFor(() => {
+      expect(profileServiceMocks.loadNotificationTeams).toHaveBeenCalledTimes(1);
+      expect(profileServiceMocks.loadNotificationPreferences).toHaveBeenCalledTimes(1);
+      expect(profileServiceMocks.loadNotificationPreferences).toHaveBeenCalledWith('user-1', 'team-1');
+    });
+
+    preferencesRequest.resolve({ liveChat: true, liveScore: false, schedule: true });
+
+    await waitFor(() => {
+      expect(screen.queryByText('Loading alerts for Blue Team…')).toBeNull();
+    });
   });
 });

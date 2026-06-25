@@ -396,9 +396,9 @@ export function Profile({ auth }: { auth: AuthState }) {
           }
           return initialTeamId;
         });
+        setNotificationTeamsLoaded(true);
 
         if (!initialTeamId) {
-          setNotificationTeamsLoaded(true);
           return;
         }
 
@@ -419,10 +419,6 @@ export function Profile({ auth }: { auth: AuthState }) {
             const message = getLoadErrorMessage(error, 'Unable to load notification preferences.');
             setNotificationPreferenceErrorsByTeamId((current) => ({ ...current, [initialTeamId]: message }));
             setNotificationStatus({ message: 'Unable to load notification preferences.', tone: 'error' });
-          }
-        } finally {
-          if (!cancelled) {
-            setNotificationTeamsLoaded(true);
           }
         }
       } catch (error) {
