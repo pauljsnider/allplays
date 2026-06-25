@@ -41,8 +41,7 @@ import { isAccessCodeExpired } from './access-code-utils.js?v=1';
 import {
     buildParentMembershipRequestId,
     buildParentMembershipRequestUpdate,
-    hasParentLink,
-    mergeApprovedParentLinkState
+    mergeApprovedParentMembershipRequests
 } from './parent-membership-utils.js?v=2';
 import { buildCoachOverrideRsvpDocId, shouldDeleteLegacyRsvpForOverride } from './rsvp-doc-ids.js';
 import { computeEffectiveRsvpSummary } from './rsvp-summary.js?v=1';
@@ -2902,49 +2901,27 @@ export async function approveParentMembershipRequest(teamId, requestId, decision
 
         const teamRef = doc(db, 'teams', teamId);
         const playerRef = doc(db, `teams/${teamId}/players`, requestData.playerId);
-        const userRef = doc(db, 'users', requestData.requesterUserId);
-        const [teamSnap, playerSnap, userSnap] = await Promise.all([
+        const [teamSnap, playerSnap] = await Promise.all([
             transaction.get(teamRef),
-            transaction.get(playerRef),
-            transaction.get(userRef)
+            transaction.get(playerRef)
         ]);
 
         if (!teamSnap.exists() || !playerSnap.exists()) {
             throw new Error('Team or player not found');
         }
 
-        const team = { id: teamSnap.id, ...(teamSnap.data() || {}) };
         const player = { id: playerSnap.id, ...(playerSnap.data() || {}) };
-        const userData = userSnap.exists() ? (userSnap.data() || {}) : {};
-        if (hasParentLink(userData, teamId, requestData.playerId)) {
-            throw new Error('Requester already has access to this player');
-        }
-        const merged = mergeApprovedParentLinkState({
-            userData,
-            parentUserId: requestData.requesterUserId,
-            parentEmail: requestData.requesterEmail || userData.email || '',
-            team,
-            player,
-            relation: requestData.relation || null
-        });
-
         const currentParents = Array.isArray(player.parents) ? player.parents : [];
         const hasParentEntry = currentParents.some((parent) => parent?.userId === requestData.requesterUserId);
         const now = Timestamp.now();
 
         transaction.set(playerRef, {
             parents: hasParentEntry ? currentParents : [...currentParents, {
-                ...merged.playerParentEntry,
+                userId: requestData.requesterUserId,
+                email: requestData.requesterEmail || 'pending',
+                relation: requestData.relation || null,
                 addedAt: now
             }],
-            updatedAt: now
-        }, { merge: true });
-        // Write BOTH sides of the link. Without this, the player's `parents`
-        // array references the user but the user's `parentOf` (and the
-        // denormalized `parentTeamIds`/`parentPlayerKeys` the Firestore rules
-        // rely on) stay empty, so the parent can never see the linked player.
-        transaction.set(userRef, {
-            ...merged.userUpdate,
             updatedAt: now
         }, { merge: true });
         transaction.update(requestRef, {
@@ -5346,8 +5323,20 @@ async function listParentRegistrationApplicationsForProfile(userProfile = {}) {
 }
 
 export async function getParentDashboardData(userId) {
-    const userProfile = await getUserProfile(userId);
-    if (!userProfile || !userProfile.parentOf || userProfile.parentOf.length === 0) {
+    const userProfile = (await getUserProfile(userId)) || {};
+
+    try {
+        const approvedRequests = await listMyParentMembershipRequests(userId);
+        const parentRequestSync = mergeApprovedParentMembershipRequests(userProfile, approvedRequests);
+        if (parentRequestSync.changed) {
+            await updateUserProfile(userId, parentRequestSync.userUpdate);
+            Object.assign(userProfile, parentRequestSync.userUpdate);
+        }
+    } catch (error) {
+        console.warn('[parent-dashboard] Failed to sync approved parent membership requests:', error);
+    }
+
+    if (!userProfile.parentOf || userProfile.parentOf.length === 0) {
         // A registration-applications failure (e.g. a missing collection-group
         // index) must never crash the dashboard, so degrade to an empty list.
         let registrationApplications = [];

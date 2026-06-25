@@ -23,32 +23,86 @@ import { initializeApp, cert, getApps } from 'firebase-admin/app';
 import { getFirestore } from 'firebase-admin/firestore';
 import { getAuth } from 'firebase-admin/auth';
 import { readFileSync } from 'fs';
-
-const sa = JSON.parse(readFileSync(new URL('./serviceAccountKey.json', import.meta.url), 'utf8'));
-if (!getApps().length) initializeApp({ credential: cert(sa), projectId: 'game-flow-c6311' });
-const db = getFirestore();
-const auth = getAuth();
+import { fileURLToPath } from 'url';
 
 const APPLY = process.argv.includes('--apply');
 const emailFlagIdx = process.argv.indexOf('--email');
 const onlyEmail = emailFlagIdx !== -1 ? String(process.argv[emailFlagIdx + 1] || '').trim().toLowerCase() : null;
 
+let dbInstance = null;
+let authInstance = null;
+
 function uniqueStrings(values) {
     return [...new Set((values || []).filter(Boolean).map((v) => String(v)))];
+}
+
+function getAdminApp() {
+    if (!getApps().length) {
+        const sa = JSON.parse(readFileSync(new URL('./serviceAccountKey.json', import.meta.url), 'utf8'));
+        initializeApp({ credential: cert(sa), projectId: 'game-flow-c6311' });
+    }
+    return getApps()[0];
+}
+
+function getDb() {
+    if (!dbInstance) {
+        getAdminApp();
+        dbInstance = getFirestore();
+    }
+    return dbInstance;
+}
+
+function getAuthClient() {
+    if (!authInstance) {
+        getAdminApp();
+        authInstance = getAuth();
+    }
+    return authInstance;
+}
+
+export function buildParentAccessRepairUpdate(userData = {}, desiredLinks = []) {
+    const existingParentOf = Array.isArray(userData.parentOf) ? userData.parentOf : [];
+    const existingKeys = new Set(existingParentOf.map((link) => `${link?.teamId}::${link?.playerId}`));
+    const missingLinks = desiredLinks.filter((link) => !existingKeys.has(`${link.teamId}::${link.playerId}`));
+    const parentOf = [...existingParentOf, ...missingLinks];
+    const parentTeamIds = uniqueStrings(parentOf.map((link) => link?.teamId));
+    const parentPlayerKeys = uniqueStrings(parentOf.map((link) => (link?.teamId && link?.playerId ? `${link.teamId}::${link.playerId}` : '')));
+    const roles = uniqueStrings([...(Array.isArray(userData.roles) ? userData.roles : []), 'parent']);
+
+    const existingTeamIds = uniqueStrings(userData.parentTeamIds || []);
+    const existingPlayerKeys = uniqueStrings(userData.parentPlayerKeys || []);
+    const existingRoles = uniqueStrings(userData.roles || []);
+    const changed =
+        missingLinks.length > 0 ||
+        JSON.stringify(parentTeamIds) !== JSON.stringify(existingTeamIds) ||
+        JSON.stringify(parentPlayerKeys) !== JSON.stringify(existingPlayerKeys) ||
+        JSON.stringify(roles) !== JSON.stringify(existingRoles);
+
+    return {
+        changed,
+        missingLinks,
+        userUpdate: {
+            parentOf,
+            parentTeamIds,
+            parentPlayerKeys,
+            roles
+        }
+    };
 }
 
 async function resolveOnlyUid() {
     if (!onlyEmail) return null;
     try {
-        const u = await auth.getUserByEmail(onlyEmail);
+        const u = await getAuthClient().getUserByEmail(onlyEmail);
         return u.uid;
     } catch {
-        const q = await db.collection('users').where('email', '==', onlyEmail).limit(1).get();
+        const q = await getDb().collection('users').where('email', '==', onlyEmail).limit(1).get();
         return q.empty ? '__no-match__' : q.docs[0].id;
     }
 }
 
 async function main() {
+    const db = getDb();
     const onlyUid = await resolveOnlyUid();
     console.log(`Mode: ${APPLY ? 'APPLY (writing)' : 'DRY RUN (no writes)'}${onlyUid ? `  scope: ${onlyEmail} (${onlyUid})` : '  scope: all users'}\n`);
 
@@ -93,7 +147,7 @@ async function main() {
         }
     }
 
-    // 2. For each user, merge missing links into parentOf.
+    // 2. For each user, merge missing links into parentOf and always recompute access keys.
     let usersChanged = 0;
     let linksAdded = 0;
     for (const [uid, desiredMap] of desiredByUid) {
@@ -104,28 +158,23 @@ async function main() {
             continue;
         }
         const userData = userSnap.data() || {};
-        const existing = Array.isArray(userData.parentOf) ? userData.parentOf : [];
-        const existingKeys = new Set(existing.map((l) => `${l?.teamId}::${l?.playerId}`));
-
-        const missing = [...desiredMap.values()].filter((l) => !existingKeys.has(`${l.teamId}::${l.playerId}`));
-        if (missing.length === 0) continue;
-
-        const nextParentOf = [...existing, ...missing];
-        const parentTeamIds = uniqueStrings(nextParentOf.map((l) => l?.teamId));
-        const parentPlayerKeys = uniqueStrings(nextParentOf.map((l) => (l?.teamId && l?.playerId ? `${l.teamId}::${l.playerId}` : '')));
-        const roles = uniqueStrings([...(Array.isArray(userData.roles) ? userData.roles : []), 'parent']);
+        const repair = buildParentAccessRepairUpdate(userData, [...desiredMap.values()]);
+        if (!repair.changed) continue;
 
         usersChanged += 1;
-        linksAdded += missing.length;
-        console.log(`  user ${uid} (${userData.email || 'no-email'}): +${missing.length} link(s): ${missing.map((l) => `${l.teamName}/${l.playerName}`).join(', ')}`);
+        linksAdded += repair.missingLinks.length;
+        const repairedAccessOnly = repair.missingLinks.length === 0;
+        console.log(`  user ${uid} (${userData.email || 'no-email'}): ${repairedAccessOnly ? 'recomputed access keys' : `+${repair.missingLinks.length} link(s): ${repair.missingLinks.map((link) => `${link.teamName}/${link.playerName}`).join(', ')}`}`);
 
         if (APPLY) {
-            await userRef.set({ parentOf: nextParentOf, parentTeamIds, parentPlayerKeys, roles }, { merge: true });
+            await userRef.set(repair.userUpdate, { merge: true });
         }
     }
 
-    console.log(`\n${APPLY ? 'Applied' : 'Would apply'}: ${linksAdded} link(s) across ${usersChanged} user(s).`);
+    console.log(`\n${APPLY ? 'Applied' : 'Would apply'}: ${linksAdded} missing link(s) repaired across ${usersChanged} user(s).`);
     if (!APPLY) console.log('Re-run with --apply to write.');
 }
 
-main().then(() => process.exit(0)).catch((e) => { console.error(e); process.exit(1); });
+if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
+    main().then(() => process.exit(0)).catch((e) => { console.error(e); process.exit(1); });
+}
