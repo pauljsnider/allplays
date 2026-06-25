@@ -11,6 +11,137 @@ function appUrl(baseURL, hashPath) {
     return url.toString();
 }
 
+const parentHouseholdServiceMock = `
+    export async function loadParentHouseholdInviteModel() {
+        return {
+            linkedPlayers: [{ teamId: 'team-1', teamName: 'Bears', playerId: 'player-1', playerName: 'Pat Star', playerNumber: '9' }],
+            members: []
+        };
+    }
+    export async function createParentHouseholdMemberInvite() {
+        return { code: 'HOUSE123', inviteUrl: 'https://allplays.ai/accept-invite.html?code=HOUSE123' };
+    }
+`;
+
+const parentFeesServiceMock = `
+    export async function loadParentFeesForApp() {
+        return [{
+            id: 'fee-1',
+            title: 'Team dues',
+            teamId: 'team-1',
+            teamName: 'Bears',
+            playerName: 'Pat Star',
+            status: 'open',
+            amountLabel: '$120',
+            dueLabel: 'Jun 1',
+            statusLabel: 'Open',
+            balanceDueCents: 12000,
+            checkoutUrl: 'https://pay.example.test/fee',
+            canPay: true,
+            lineItems: [{ title: 'Season', amountCents: 12000 }],
+            installments: [{ label: 'Deposit', amountCents: 6000 }],
+            ledgerEntries: [{ label: 'Adjustment', amountCents: -1000 }]
+        }];
+    }
+    export async function initiateParentTeamFeeCheckout() {
+        return { success: true, checkoutUrl: 'https://pay.example.test/created-fee' };
+    }
+`;
+
+const parentCalendarServiceMock = `
+    export async function loadParentCalendarTools() {
+        return {
+            events: [{ teamId: 'team-1', teamName: 'Bears', title: 'Practice', opponent: '', date: new Date('2100-06-01T18:00:00Z') }],
+            teams: [{ teamId: 'team-1', teamName: 'Bears', eventCount: 1 }]
+        };
+    }
+    export function buildParentScheduleIcs() {
+        return 'BEGIN:VCALENDAR\\r\\nEND:VCALENDAR';
+    }
+    export function getCalendarEventShareText(event) {
+        return event.teamName + ' ' + event.title;
+    }
+    export async function getPrivateTeamCalendarFeedUrl() {
+        return 'https://feed.example.test/team-1.ics';
+    }
+    export function getAppleCalendarFeedUrl(url) {
+        return 'webcal://' + url.replace(/^https?:\\/\\//, '');
+    }
+    export function getGoogleCalendarFeedUrl(url) {
+        return 'https://calendar.google.com/calendar/render?cid=' + encodeURIComponent(url);
+    }
+`;
+
+const parentFamilyShareServiceMock = `
+    export async function loadFamilyShareModel() {
+        return {
+            children: [{ teamId: 'team-1', playerId: 'player-1', playerName: 'Pat Star' }],
+            tokens: [{ id: 'token-1', label: 'Grandma', url: 'https://allplays.ai/family.html?token=token-1', childCount: 1, extraCalendarUrls: [] }]
+        };
+    }
+    export async function createParentFamilyShare(user, label, urls) {
+        window.__familyCreates.push({ label, urls });
+        return { tokenId: 'token-2', url: 'https://allplays.ai/family.html?token=token-2' };
+    }
+    export async function revokeParentFamilyShare() {}
+    export async function updateParentFamilyShareCalendars() {}
+`;
+
+const parentRegistrationsServiceMock = `
+    export async function loadParentRegistrations() {
+        return [{
+            id: 'form-1',
+            teamId: 'team-1',
+            teamName: 'Bears',
+            programName: 'Summer Camp',
+            description: 'Skills week',
+            season: 'Summer',
+            feeLabel: '$75.00',
+            paymentNotice: 'Online checkout available.',
+            onlineCheckout: true,
+            options: [{ id: 'opt-1' }],
+            url: 'https://allplays.ai/registration.html?teamId=team-1&formId=form-1'
+        }];
+    }
+    export async function loadParentRegistrationDetail() {
+        return {
+            teamName: 'Bears',
+            isPublished: true,
+            onlineCheckout: true,
+            legacyUrl: 'https://allplays.ai/registration.html?teamId=team-1&formId=form-1',
+            form: {
+                programName: 'Summer Camp',
+                description: 'Skills week',
+                season: 'Summer',
+                currency: 'USD',
+                participantFields: [],
+                guardianFields: [],
+                waiverText: '',
+                registrationOptionCounts: {}
+            },
+            options: [{ id: 'opt-1', title: 'Full week', description: 'Skills week', capacityLimit: 20, waitlistEnabled: true }],
+            feeSnapshot: { finalAmountDueCents: 7500 },
+            paymentNotice: 'Online checkout available.',
+            paymentPlans: []
+        };
+    }
+`;
+
+const parentCertificatesServiceMock = `
+    export async function loadParentCertificates() {
+        return [{
+            id: 'cert-1',
+            teamId: 'team-1',
+            teamName: 'Bears',
+            playerId: 'player-1',
+            playerName: 'Pat Star',
+            title: 'Hustle Award',
+            narrative: 'Great effort.',
+            url: 'https://allplays.ai/certificates.html#teamId=team-1&certificateId=cert-1'
+        }];
+    }
+`;
+
 async function mockParentToolsModules(page) {
     await page.addInitScript(() => {
         window.__openedPublicUrls = [];
@@ -111,6 +242,54 @@ async function mockParentToolsModules(page) {
                     return { success: true };
                 }
             `
+        });
+    });
+
+    await page.route(/\/src\/lib\/parentHouseholdService\.ts(\?.*)?$/, async (route) => {
+        await route.fulfill({
+            status: 200,
+            contentType: 'application/javascript',
+            body: parentHouseholdServiceMock
+        });
+    });
+
+    await page.route(/\/src\/lib\/parentFeesService\.ts(\?.*)?$/, async (route) => {
+        await route.fulfill({
+            status: 200,
+            contentType: 'application/javascript',
+            body: parentFeesServiceMock
+        });
+    });
+
+    await page.route(/\/src\/lib\/parentCalendarService\.ts(\?.*)?$/, async (route) => {
+        await route.fulfill({
+            status: 200,
+            contentType: 'application/javascript',
+            body: parentCalendarServiceMock
+        });
+    });
+
+    await page.route(/\/src\/lib\/parentFamilyShareService\.ts(\?.*)?$/, async (route) => {
+        await route.fulfill({
+            status: 200,
+            contentType: 'application/javascript',
+            body: parentFamilyShareServiceMock
+        });
+    });
+
+    await page.route(/\/src\/lib\/parentRegistrationsService\.ts(\?.*)?$/, async (route) => {
+        await route.fulfill({
+            status: 200,
+            contentType: 'application/javascript',
+            body: parentRegistrationsServiceMock
+        });
+    });
+
+    await page.route(/\/src\/lib\/parentCertificatesService\.ts(\?.*)?$/, async (route) => {
+        await route.fulfill({
+            status: 200,
+            contentType: 'application/javascript',
+            body: parentCertificatesServiceMock
         });
     });
 

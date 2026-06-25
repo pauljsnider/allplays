@@ -39,6 +39,34 @@ const inviteRedemptionMocks = vi.hoisted(() => ({
 }));
 
 vi.mock('../lib/parentToolsService', () => parentToolsServiceMocks);
+vi.mock('../lib/parentCalendarService', () => ({
+    buildParentScheduleIcs: parentToolsServiceMocks.buildParentScheduleIcs,
+    getAppleCalendarFeedUrl: parentToolsServiceMocks.getAppleCalendarFeedUrl,
+    getCalendarEventShareText: parentToolsServiceMocks.getCalendarEventShareText,
+    getGoogleCalendarFeedUrl: parentToolsServiceMocks.getGoogleCalendarFeedUrl,
+    getPrivateTeamCalendarFeedUrl: parentToolsServiceMocks.getPrivateTeamCalendarFeedUrl,
+    loadParentCalendarTools: parentToolsServiceMocks.loadParentCalendarTools
+}));
+vi.mock('../lib/parentFeesService', () => ({
+    initiateParentTeamFeeCheckout: parentToolsServiceMocks.initiateParentTeamFeeCheckout,
+    loadParentFeesForApp: parentToolsServiceMocks.loadParentFeesForApp
+}));
+vi.mock('../lib/parentFamilyShareService', () => ({
+    createParentFamilyShare: parentToolsServiceMocks.createParentFamilyShare,
+    loadFamilyShareModel: parentToolsServiceMocks.loadFamilyShareModel,
+    revokeParentFamilyShare: parentToolsServiceMocks.revokeParentFamilyShare,
+    updateParentFamilyShareCalendars: parentToolsServiceMocks.updateParentFamilyShareCalendars
+}));
+vi.mock('../lib/parentHouseholdService', () => ({
+    createParentHouseholdMemberInvite: parentToolsServiceMocks.createParentHouseholdMemberInvite,
+    loadParentHouseholdInviteModel: parentToolsServiceMocks.loadParentHouseholdInviteModel
+}));
+vi.mock('../lib/parentRegistrationsService', () => ({
+    loadParentRegistrations: parentToolsServiceMocks.loadParentRegistrations
+}));
+vi.mock('../lib/parentCertificatesService', () => ({
+    loadParentCertificates: parentToolsServiceMocks.loadParentCertificates
+}));
 vi.mock('../lib/parentToolsAccessService', () => parentToolsAccessServiceMocks);
 vi.mock('../lib/inviteRedemption', () => inviteRedemptionMocks);
 vi.mock('../lib/publicActions', () => ({
@@ -296,9 +324,9 @@ describe('ParentTools access', () => {
 
         await screen.findByText('Request player access');
         await waitFor(() => expect(parentToolsAccessServiceMocks.loadParentAccessTeams).toHaveBeenCalledTimes(1));
-        expect(screen.queryByRole('button', { name: 'Request access without a code' })).toBeNull();
 
         const teamSelect = await screen.findByRole('combobox', { name: 'Team' }) as HTMLSelectElement;
+        expect(screen.queryByRole('button', { name: 'Request access without a code' })).toBeNull();
         expect(teamSelect.value).toBe('team-1');
         await waitFor(() => expect(parentToolsAccessServiceMocks.loadParentAccessPlayers).toHaveBeenCalledWith('team-1'));
         expect(screen.getByRole('option', { name: 'Loading players...' })).toBeTruthy();

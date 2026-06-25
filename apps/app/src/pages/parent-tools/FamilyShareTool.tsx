@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState, type FormEvent } from 'react';
 import { Copy, Loader2, RefreshCw, Share2 } from 'lucide-react';
-import { createParentFamilyShare, loadFamilyShareModel, revokeParentFamilyShare, updateParentFamilyShareCalendars, type FamilyShareTokenCard } from '../../lib/parentToolsService';
+import { createParentFamilyShare, loadFamilyShareModel, revokeParentFamilyShare, updateParentFamilyShareCalendars, type FamilyShareTokenCard } from '../../lib/parentFamilyShareService';
 import { sharePublicUrl } from '../../lib/publicActions';
 import type { AuthState } from '../../lib/types';
 import { EmptyState, LoadingBlock, RetryableStatus, Status, ToolHeader, copyText, splitLines, useParentToolAsyncOperation } from './shared';

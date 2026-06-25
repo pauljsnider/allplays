@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { DollarSign, ExternalLink, Loader2, RefreshCw } from 'lucide-react';
 import { useSearchParams } from 'react-router-dom';
 import { openPublicUrl } from '../../lib/publicActions';
-import { initiateParentTeamFeeCheckout, loadParentFeesForApp, type ParentFeeAppRecord } from '../../lib/parentToolsService';
+import { initiateParentTeamFeeCheckout, loadParentFeesForApp, type ParentFeeAppRecord } from '../../lib/parentFeesService';
 import type { AuthState } from '../../lib/types';
 import { EmptyState, LoadingBlock, MetricCard, RetryableStatus, ToolHeader, formatDetailAmount, formatMoney, useParentToolAsyncOperation } from './shared';
 

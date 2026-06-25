@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { CalendarDays, Copy, Download, Loader2, RefreshCw } from 'lucide-react';
 import { exportCalendarIcsFile, openPublicUrl } from '../../lib/publicActions';
-import { buildParentScheduleIcs, getAppleCalendarFeedUrl, getCalendarEventShareText, getGoogleCalendarFeedUrl, getPrivateTeamCalendarFeedUrl, loadParentCalendarTools, type ParentCalendarTeam } from '../../lib/parentToolsService';
+import { buildParentScheduleIcs, getAppleCalendarFeedUrl, getCalendarEventShareText, getGoogleCalendarFeedUrl, getPrivateTeamCalendarFeedUrl, loadParentCalendarTools, type ParentCalendarTeam } from '../../lib/parentCalendarService';
 import type { ParentScheduleEvent } from '../../lib/scheduleLogic';
 import type { AuthState } from '../../lib/types';
 import { LoadingBlock, MetricCard, RetryableStatus, Status, ToolHeader, copyText, useParentToolAsyncOperation } from './shared';
