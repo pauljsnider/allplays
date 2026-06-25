@@ -33,4 +33,12 @@ describe('family page external calendar failures', () => {
         expect(source).toContain('No events in this filter.');
         expect(source).toContain('Some external calendars could not be loaded, so this schedule may be incomplete.');
     });
+
+    it('shows an expired-link state before rendering any family details', () => {
+        const source = readRepoFile('family.html');
+
+        expect(source).toContain('function isFamilyShareTokenExpired(token)');
+        expect(source).toContain("showError('This link has expired', 'Ask the parent to create a new family share link. Expired links never load player, team, or schedule details.')");
+        expect(source).toContain('The family page link you used has expired, been revoked, or does not exist.');
+    });
 });

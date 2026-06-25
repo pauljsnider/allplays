@@ -2348,7 +2348,8 @@ service cloud.firestore {
       // Owner can always read their own tokens (including revoked ones).
       allow get: if (resource.data.get('active', true) == true &&
                      resource.data.get('revoked', false) != true &&
-                     resource.data.get('revokedAt', null) == null) ||
+                     resource.data.get('revokedAt', null) == null &&
+                     (resource.data.get('expiresAt', null) == null || resource.data.expiresAt > request.time)) ||
                     (isSignedIn() && resource.data.ownerUserId == request.auth.uid) ||
                     isGlobalAdmin();
       // Only the owner can list their own tokens (rule applied per-document).
@@ -2357,9 +2358,14 @@ service cloud.firestore {
       allow create: if isSignedIn() &&
                        request.resource.data.ownerUserId == request.auth.uid &&
                        request.resource.data.active == true &&
+                       request.resource.data.expiresAt is timestamp &&
+                       request.resource.data.expiresAt > request.time &&
                        isSafeDocumentId(tokenId);
       // Owner can update (e.g., revoke) their own tokens.
-      allow update: if isSignedIn() && resource.data.ownerUserId == request.auth.uid;
+      allow update: if isSignedIn() &&
+                       resource.data.ownerUserId == request.auth.uid &&
+                       request.resource.data.expiresAt is timestamp &&
+                       request.resource.data.expiresAt > request.time;
       allow delete: if isSignedIn() &&
                        (resource.data.ownerUserId == request.auth.uid || isGlobalAdmin());
     }

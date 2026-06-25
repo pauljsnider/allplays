@@ -8707,6 +8707,8 @@ function generateShareToken() {
     return Array.from(bytes).map(b => b.toString(16).padStart(2, '0')).join('');
 }
 
+const FAMILY_SHARE_TOKEN_LIFETIME_MS = 30 * 24 * 60 * 60 * 1000;
+
 export async function createFamilyShareToken(ownerUserId, children, label, extraCalendarUrls = []) {
     const normalizedChildren = normalizeFamilyShareChildren(children);
     if (!ownerUserId) {
@@ -8717,12 +8719,14 @@ export async function createFamilyShareToken(ownerUserId, children, label, extra
     }
     const tokenId = generateShareToken();
     const now = Timestamp.now();
+    const expiresAt = Timestamp.fromMillis(now.toMillis() + FAMILY_SHARE_TOKEN_LIFETIME_MS);
     await setDoc(doc(db, 'familyShareTokens', tokenId), {
         ownerUserId,
         label: String(label || '').trim().slice(0, 60),
         children: normalizedChildren,
         extraCalendarUrls: normalizeFamilyShareCalendarUrls(extraCalendarUrls),
         createdAt: now,
+        expiresAt,
         updatedAt: now,
         active: true
     });

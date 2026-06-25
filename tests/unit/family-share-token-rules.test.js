@@ -19,6 +19,15 @@ describe('family share token Firestore rules', () => {
         expect(familyShareTokenRules).toContain("resource.data.get('revokedAt', null) == null");
     });
 
+    it('blocks anonymous reads after token expiration while preserving legacy tokens without expiresAt', () => {
+        expect(familyShareTokenRules).toContain("resource.data.get('expiresAt', null) == null || resource.data.expiresAt > request.time");
+    });
+
+    it('requires expiresAt on owner-created and owner-updated share tokens', () => {
+        expect(familyShareTokenRules).toContain("request.resource.data.expiresAt is timestamp");
+        expect(familyShareTokenRules).toContain("request.resource.data.expiresAt > request.time");
+    });
+
     it('still reserves revoked-token access for owners and global admins', () => {
         expect(familyShareTokenRules).toContain("isSignedIn() && resource.data.ownerUserId == request.auth.uid");
         expect(familyShareTokenRules).toContain('isGlobalAdmin()');

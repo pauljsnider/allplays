@@ -609,8 +609,11 @@ describe('React app parent tools service', () => {
     });
 
     it('loads and mutates family share tokens using current website contracts', async () => {
+        vi.useFakeTimers();
+        vi.setSystemTime(new Date('2026-06-25T02:30:00Z'));
         dbMocks.listFamilyShareTokens.mockResolvedValue([
-            { id: 'token-1', label: 'Grandma', children: [{ playerId: 'player-1' }], extraCalendarUrls: ['https://calendar.example.test/feed.ics'] }
+            { id: 'token-1', label: 'Grandma', children: [{ playerId: 'player-1' }], extraCalendarUrls: ['https://calendar.example.test/feed.ics'], expiresAt: { toDate: () => new Date('2026-07-25T02:30:00Z') } },
+            { id: 'token-legacy', label: 'Aunt', children: [{ playerId: 'player-1' }], extraCalendarUrls: [], expiresAt: { toDate: () => new Date('2026-06-24T02:30:00Z') } }
         ]);
         dbMocks.createFamilyShareToken.mockResolvedValue('token-2');
         dbMocks.revokeFamilyShareToken.mockResolvedValue();
@@ -618,7 +621,10 @@ describe('React app parent tools service', () => {
 
         await expect(loadFamilyShareModel(user)).resolves.toMatchObject({
             children: [{ teamId: 'team-1', playerId: 'player-1', playerName: 'Pat Star' }],
-            tokens: [{ id: 'token-1', url: 'https://allplays.ai/family.html?token=token-1', childCount: 1 }]
+            tokens: [
+                { id: 'token-1', url: 'https://allplays.ai/family.html?token=token-1', childCount: 1, expired: false, statusLabel: 'Active' },
+                { id: 'token-legacy', url: 'https://allplays.ai/family.html?token=token-legacy', childCount: 1, expired: true, statusLabel: 'Expired' }
+            ]
         });
         await expect(createParentFamilyShare(user, 'Coach', ['https://calendar.example.test/a.ics'])).resolves.toEqual({
             tokenId: 'token-2',
@@ -629,6 +635,7 @@ describe('React app parent tools service', () => {
         await updateParentFamilyShareCalendars('token-1', ['https://calendar.example.test/b.ics']);
         expect(dbMocks.revokeFamilyShareToken).toHaveBeenCalledWith('token-1');
         expect(dbMocks.updateFamilyShareTokenCalendars).toHaveBeenCalledWith('token-1', ['https://calendar.example.test/b.ics']);
+        vi.useRealTimers();
     });
 
     it('loads published registrations for parent and coach teams without scanning every form', async () => {
