@@ -282,6 +282,52 @@ describe('ParentTools access', () => {
         expect((screen.getByLabelText('Team') as HTMLSelectElement).disabled).toBe(false);
     });
 
+    it('auto-opens and preselects the deep-linked team on access routes', async () => {
+        type ParentAccessPlayerRow = { id: string; name: string; number: string };
+        const deferredPlayers: { resolve: ((value: ParentAccessPlayerRow[]) => void) | null } = { resolve: null };
+        parentToolsAccessServiceMocks.loadParentAccessPlayers.mockImplementation((teamId: string) => {
+            expect(teamId).toBe('team-1');
+            return new Promise<ParentAccessPlayerRow[]>((resolve) => {
+                deferredPlayers.resolve = resolve;
+            });
+        });
+
+        renderParentTools(['/parent-tools/access?teamId=team-1']);
+
+        await screen.findByText('Request player access');
+        await waitFor(() => expect(parentToolsAccessServiceMocks.loadParentAccessTeams).toHaveBeenCalledTimes(1));
+        expect(screen.queryByRole('button', { name: 'Request access without a code' })).toBeNull();
+
+        const teamSelect = await screen.findByRole('combobox', { name: 'Team' }) as HTMLSelectElement;
+        expect(teamSelect.value).toBe('team-1');
+        await waitFor(() => expect(parentToolsAccessServiceMocks.loadParentAccessPlayers).toHaveBeenCalledWith('team-1'));
+        expect(screen.getByRole('option', { name: 'Loading players...' })).toBeTruthy();
+
+        await waitFor(() => expect(deferredPlayers.resolve).toBeTruthy());
+        if (!deferredPlayers.resolve) throw new Error('Expected players loader to be pending.');
+        deferredPlayers.resolve([{ id: 'player-1', name: 'Sam Player', number: '12' }]);
+
+        expect(await screen.findByRole('option', { name: '#12 Sam Player' })).toBeTruthy();
+        expect((screen.getByLabelText('Player') as HTMLSelectElement).value).toBe('player-1');
+    });
+
+    it('falls back safely when the deep-linked team is missing', async () => {
+        renderParentTools(['/parent-tools/access?teamId=missing-team']);
+
+        await screen.findByText('Request player access');
+        await waitFor(() => expect(parentToolsAccessServiceMocks.loadParentAccessTeams).toHaveBeenCalledTimes(1));
+        expect(screen.getByRole('button', { name: 'Request access without a code' })).toBeTruthy();
+        expect(screen.queryByRole('combobox', { name: 'Team' })).toBeNull();
+        expect(screen.getByRole('button', { name: 'Redeem code' })).toBeTruthy();
+
+        fireEvent.click(screen.getByRole('button', { name: 'Request access without a code' }));
+
+        const teamSelect = await screen.findByRole('combobox', { name: 'Team' }) as HTMLSelectElement;
+        expect(teamSelect.value).toBe('');
+        expect(await screen.findByRole('option', { name: 'Bears - Soccer' })).toBeTruthy();
+        expect(parentToolsAccessServiceMocks.loadParentAccessPlayers).not.toHaveBeenCalled();
+    });
+
     it('allows retry when public team loading fails after opening manual requests', async () => {
         parentToolsAccessServiceMocks.loadParentAccessTeams
             .mockRejectedValueOnce(new Error('Network hiccup.'))

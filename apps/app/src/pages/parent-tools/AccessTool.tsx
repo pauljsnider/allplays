@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState, type FormEvent } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import { AlertCircle, CheckCircle2, KeyRound, Loader2, RefreshCw, Shield, Users } from 'lucide-react';
 import { redeemSignedInInvite } from '../../lib/inviteRedemption';
 import { toAppServiceError, type AppServiceError } from '../../lib/appErrors';
@@ -16,6 +16,8 @@ import type { AuthState } from '../../lib/types';
 import { EmptyState, LoadingBlock, RetryableStatus, Status, ToolHeader, getParentToolErrorMessage, useParentToolAsyncOperation } from './shared';
 
 export function AccessTool({ auth, onAccessChanged }: { auth: AuthState; onAccessChanged: () => void }) {
+    const [searchParams] = useSearchParams();
+    const deepLinkedTeamId = searchParams.get('teamId')?.trim() || '';
     const [teams, setTeams] = useState<ParentAccessTeam[]>([]);
     const [requests, setRequests] = useState<ParentAccessRequest[]>([]);
     const [players, setPlayers] = useState<ParentAccessPlayer[]>([]);
@@ -109,6 +111,17 @@ export function AccessTool({ auth, onAccessChanged }: { auth: AuthState; onAcces
         setSelectedTeamId('');
         setSelectedPlayerId('');
     }, [auth.user?.uid]);
+
+    useEffect(() => {
+        if (!deepLinkedTeamId || teams.length || loadingTeams) return;
+        void loadTeams();
+    }, [deepLinkedTeamId, loadTeams, loadingTeams, teams.length]);
+
+    useEffect(() => {
+        if (!deepLinkedTeamId || !teams.some((team) => team.id === deepLinkedTeamId)) return;
+        setManualRequestOpen(true);
+        setSelectedTeamId((current) => current || deepLinkedTeamId);
+    }, [deepLinkedTeamId, teams]);
 
     useEffect(() => {
         if (!manualRequestOpen || manualTeamsRequested || teams.length || loadingTeams) return;
