@@ -509,9 +509,10 @@
         import { createGameDayRsvpController } from './js/game-day-rsvp-controls.js?v=1';
         import {
             buildOnFieldMap as buildLiveOnFieldMap,
+            syncGameDayLiveState,
             getSubstitutionOptions,
             applyLiveSubstitution
-        } from './js/game-day-live-substitutions.js?v=1';
+        } from './js/game-day-live-substitutions.js?v=2';
 
         renderFooter(document.getElementById('footer-container'));
 
@@ -1090,6 +1091,14 @@
                 const unsubGame = subscribeGame(teamId, state.gameId, (updatedGame) => {
                     const prevLiveStatus = state.game?.liveStatus;
                     state.game = updatedGame;
+                    const liveStateUpdate = syncGameDayLiveState({
+                        currentState: state,
+                        updatedGame
+                    });
+                    state.gamePlan = liveStateUpdate.gamePlan;
+                    state.rotationPlan = liveStateUpdate.rotationPlan;
+                    state.rotationActual = liveStateUpdate.rotationActual;
+                    state.formationId = liveStateUpdate.formationId;
                     state.score = { home: updatedGame.homeScore || 0, away: updatedGame.awayScore || 0 };
                     const remoteChat = extractChatStateFromGameDoc(updatedGame);
                     if (remoteChat && !state.chatPersistInFlight && !state.chatPersistTimer) {
@@ -1103,6 +1112,9 @@
                     }
                     markAiChatContextDirty();
                     updateScoreDisplay();
+                    if (liveStateUpdate.hasLineupChange) {
+                        renderCurrentMode();
+                    }
                     // Detect transitions
                     if (updatedGame.liveStatus === 'live' && prevLiveStatus !== 'live' && state.mode !== 'gameday') {
                         if (confirm('The game is now live! Switch to Game Day mode?')) setMode('gameday');

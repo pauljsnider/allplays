@@ -1,3 +1,5 @@
+import { buildRotationPlanFromGamePlan } from './game-plan-interop.js';
+
 function getPlayersByName(players = []) {
     const byName = new Map();
     players.forEach((player) => {
@@ -54,6 +56,66 @@ export function getSubstitutionOptions({
         onField,
         onFieldPlayers: players.filter((player) => onFieldIds.has(player.id)),
         offFieldPlayers: players.filter((player) => !onFieldIds.has(player.id))
+    };
+}
+
+function hasOwnField(doc, field) {
+    return Object.prototype.hasOwnProperty.call(doc || {}, field);
+}
+
+function buildLineupSyncSignature({
+    gamePlan = null,
+    rotationPlan = {},
+    rotationActual = {},
+    formationId = null
+}) {
+    return JSON.stringify({
+        gamePlan,
+        rotationPlan,
+        rotationActual,
+        formationId
+    });
+}
+
+function hasGamePlanChanged(currentGamePlan, nextGamePlan) {
+    return JSON.stringify(currentGamePlan || null) !== JSON.stringify(nextGamePlan || null);
+}
+
+export function syncGameDayLiveState({
+    currentState = {},
+    updatedGame = {}
+}) {
+    const nextGamePlan = hasOwnField(updatedGame, 'gamePlan')
+        ? updatedGame.gamePlan || null
+        : currentState.gamePlan || null;
+    const rebuiltRotationPlan = buildRotationPlanFromGamePlan(nextGamePlan);
+    const shouldRebuildRotationPlan = hasOwnField(updatedGame, 'gamePlan')
+        && hasGamePlanChanged(currentState.gamePlan, nextGamePlan);
+    const nextRotationPlan = shouldRebuildRotationPlan
+        ? rebuiltRotationPlan
+        : (hasOwnField(updatedGame, 'rotationPlan')
+            ? updatedGame.rotationPlan || {}
+            : (hasOwnField(updatedGame, 'gamePlan')
+                ? rebuiltRotationPlan
+                : currentState.rotationPlan || {}));
+    const nextRotationActual = hasOwnField(updatedGame, 'rotationActual')
+        ? updatedGame.rotationActual || {}
+        : currentState.rotationActual || {};
+    const nextFormationId = nextGamePlan?.formationId || currentState.formationId || null;
+    const previousSignature = buildLineupSyncSignature(currentState);
+    const nextSignature = buildLineupSyncSignature({
+        gamePlan: nextGamePlan,
+        rotationPlan: nextRotationPlan,
+        rotationActual: nextRotationActual,
+        formationId: nextFormationId
+    });
+
+    return {
+        gamePlan: nextGamePlan,
+        rotationPlan: nextRotationPlan,
+        rotationActual: nextRotationActual,
+        formationId: nextFormationId,
+        hasLineupChange: previousSignature !== nextSignature
     };
 }
 
