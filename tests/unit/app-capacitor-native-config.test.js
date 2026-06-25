@@ -16,12 +16,16 @@ describe('Capacitor native config', () => {
         const androidBuild = readProjectFile('android/app/capacitor.build.gradle');
         const iosPackage = readProjectFile('ios/App/CapApp-SPM/Package.swift');
 
+        expect(rootPackage.dependencies['@capacitor/keyboard']).toBeTruthy();
         expect(rootPackage.dependencies['@capacitor/splash-screen']).toBeTruthy();
         expect(rootPackage.dependencies['@capacitor/status-bar']).toBeTruthy();
+        expect(appPackage.dependencies['@capacitor/keyboard']).toBeTruthy();
         expect(appPackage.dependencies['@capacitor/splash-screen']).toBeTruthy();
         expect(appPackage.dependencies['@capacitor/status-bar']).toBeTruthy();
+        expect(rootPackageLock).toContain('"node_modules/@capacitor/keyboard"');
         expect(rootPackageLock).toContain('"node_modules/@capacitor/splash-screen"');
         expect(rootPackageLock).toContain('"node_modules/@capacitor/status-bar"');
+        expect(appPackageLock).toContain('"node_modules/@capacitor/keyboard"');
         expect(appPackageLock).toContain('"node_modules/@capacitor/splash-screen"');
         expect(appPackageLock).toContain('"node_modules/@capacitor/status-bar"');
 
@@ -35,11 +39,18 @@ describe('Capacitor native config', () => {
             backgroundColor: '#ffffff',
             overlaysWebView: false
         });
+        expect(config.plugins.Keyboard).toMatchObject({
+            resize: 'native',
+            resizeOnFullScreen: true
+        });
 
+        expect(androidSettings).toContain("include ':capacitor-keyboard'");
         expect(androidSettings).toContain("include ':capacitor-splash-screen'");
         expect(androidSettings).toContain("include ':capacitor-status-bar'");
+        expect(androidBuild).toContain("implementation project(':capacitor-keyboard')");
         expect(androidBuild).toContain("implementation project(':capacitor-splash-screen')");
         expect(androidBuild).toContain("implementation project(':capacitor-status-bar')");
+        expect(iosPackage).toContain('CapacitorKeyboard');
         expect(iosPackage).toContain('CapacitorSplashScreen');
         expect(iosPackage).toContain('CapacitorStatusBar');
     });
@@ -78,10 +89,12 @@ describe('Capacitor native config', () => {
 
         expect(appCss).toContain('env(safe-area-inset-top)');
         expect(appCss).toContain('env(safe-area-inset-bottom)');
+        expect(appCss).toContain('--app-search-keyboard-inset');
         expect(androidManifest).toContain('android:autoVerify="true"');
         expect(androidManifest).toContain('android:host="allplays.ai"');
         expect(androidManifest).toContain('android:pathPrefix="/app"');
         expect(androidManifest).toContain('android:scheme="allplays"');
+        expect(androidManifest).toContain('android:windowSoftInputMode="adjustResize"');
         expect(iosInfo).toContain('<string>allplays</string>');
         expect(iosInfo).toContain('<string>ai.allplays.lite</string>');
         expect(iosEntitlements).toContain('com.apple.developer.associated-domains');

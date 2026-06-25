@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import type { KeyboardEvent, ReactNode } from 'react';
+import type { CSSProperties, KeyboardEvent, ReactNode } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { Capacitor } from '@capacitor/core';
 import { ChevronRight, Search, X } from 'lucide-react';
 import { openPublicUrl } from '../lib/publicActions';
 import { preloadSearchRoute } from '../lib/searchRoutePreload';
@@ -24,6 +25,7 @@ type AppSearchDialogProps = {
 
 const backdropCloseGuardMs = 750;
 const hydrationSearchFallbackMs = 250;
+const keyboardInsetActivationThresholdPx = 80;
 
 export function AppSearchDialog({ auth, open, onClose }: AppSearchDialogProps) {
   const [query, setQuery] = useState('');
@@ -35,6 +37,7 @@ export function AppSearchDialog({ auth, open, onClose }: AppSearchDialogProps) {
   const [playersLoading, setPlayersLoading] = useState(false);
   const [playersError, setPlayersError] = useState('');
   const [activeIndex, setActiveIndex] = useState(0);
+  const [keyboardInset, setKeyboardInset] = useState(0);
   const searchRequestId = useRef(0);
   const openedAtRef = useRef(Date.now());
   const preloadedRoutesRef = useRef(new Set<string>());
@@ -201,12 +204,53 @@ export function AppSearchDialog({ auth, open, onClose }: AppSearchDialogProps) {
   }, [query]);
 
   useEffect(() => {
+    if (!open) {
+      setKeyboardInset(0);
+      return;
+    }
+
+    if (typeof window === 'undefined') {
+      return;
+    }
+
+    const isNativeRuntime = Capacitor.isNativePlatform() || window.location.protocol === 'capacitor:';
+    const visualViewport = window.visualViewport;
+
+    if (!isNativeRuntime || !visualViewport) {
+      setKeyboardInset(0);
+      return;
+    }
+
+    const updateKeyboardInset = () => {
+      const viewportBottom = visualViewport.height + visualViewport.offsetTop;
+      const obscuredHeight = Math.max(0, window.innerHeight - viewportBottom);
+      setKeyboardInset(obscuredHeight >= keyboardInsetActivationThresholdPx ? Math.round(obscuredHeight) : 0);
+    };
+
+    updateKeyboardInset();
+    visualViewport.addEventListener('resize', updateKeyboardInset);
+    visualViewport.addEventListener('scroll', updateKeyboardInset);
+    window.addEventListener('resize', updateKeyboardInset);
+
+    return () => {
+      visualViewport.removeEventListener('resize', updateKeyboardInset);
+      visualViewport.removeEventListener('scroll', updateKeyboardInset);
+      window.removeEventListener('resize', updateKeyboardInset);
+      setKeyboardInset(0);
+    };
+  }, [open]);
+
+  useEffect(() => {
     if (activeIndex >= flatResults.length) {
       setActiveIndex(Math.max(0, flatResults.length - 1));
     }
   }, [activeIndex, flatResults.length]);
 
   if (!open) return null;
+
+  const searchOverlayStyle = {
+    '--app-search-keyboard-inset': `${keyboardInset}px`
+  } as CSSProperties;
 
   const preloadResultRoute = (item: AppSearchItem | undefined) => {
     const route = item?.route;
@@ -299,6 +343,8 @@ export function AppSearchDialog({ auth, open, onClose }: AppSearchDialogProps) {
       role="dialog"
       aria-modal="true"
       aria-labelledby="app-search-dialog-title"
+      data-keyboard-visible={keyboardInset > 0 ? 'true' : 'false'}
+      style={searchOverlayStyle}
       onKeyDown={onKeyDown}
       onMouseDown={(event) => {
         if (event.target !== event.currentTarget) return;
