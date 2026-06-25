@@ -88,6 +88,162 @@ export function resolveTrackLiveClockResume({
   };
 }
 
+function toMillis(value) {
+  if (value == null) return null;
+  if (typeof value === 'number' && Number.isFinite(value)) return value;
+  if (typeof value?.toMillis === 'function') {
+    const ms = value.toMillis();
+    return Number.isFinite(ms) ? ms : null;
+  }
+  if (typeof value === 'object' && Number.isFinite(value.seconds)) {
+    const nanos = Number.isFinite(value.nanoseconds) ? value.nanoseconds : 0;
+    return (value.seconds * 1000) + Math.floor(nanos / 1000000);
+  }
+  return null;
+}
+
+function formatTrackGameTime(gameClockMs) {
+  const safeMs = Math.max(0, Number(gameClockMs) || 0);
+  const totalSeconds = Math.floor(safeMs / 1000);
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  return `${minutes}:${seconds.toString().padStart(2, '0')}`;
+}
+
+function normalizeTrackLiveText(value) {
+  return String(value || '').trim();
+}
+
+function buildResumeLogText(event) {
+  const description = normalizeTrackLiveText(event?.description);
+  if (event?.type === 'clock_pause') {
+    return 'Game stopped';
+  }
+  return description;
+}
+
+function parseUndoTarget(description) {
+  const clean = normalizeTrackLiveText(description);
+  const match = clean.match(/^Undo:\s*(.+)$/i);
+  return match ? normalizeTrackLiveText(match[1]) : '';
+}
+
+function removeLastMatchingText(entries, targetText) {
+  const clean = normalizeTrackLiveText(targetText);
+  if (!clean) return;
+
+  for (let index = entries.length - 1; index >= 0; index -= 1) {
+    if (normalizeTrackLiveText(entries[index]?.text) === clean) {
+      entries.splice(index, 1);
+      return;
+    }
+  }
+}
+
+export function buildTrackLiveResumeState({
+  liveEvents = [],
+  buildGoalNoteText = (event) => normalizeTrackLiveText(event?.note),
+  now = () => Date.now()
+} = {}) {
+  if (!Array.isArray(liveEvents) || liveEvents.length === 0) {
+    return {
+      gameLog: [],
+      liveNotes: [],
+      summaryText: ''
+    };
+  }
+
+  const orderedEvents = liveEvents
+    .map((event, index) => ({
+      event,
+      index,
+      createdAtMs: toMillis(event?.createdAt)
+    }))
+    .sort((a, b) => {
+      if (a.createdAtMs !== null && b.createdAtMs !== null && a.createdAtMs !== b.createdAtMs) {
+        return a.createdAtMs - b.createdAtMs;
+      }
+      if (a.createdAtMs !== null && b.createdAtMs === null) return -1;
+      if (a.createdAtMs === null && b.createdAtMs !== null) return 1;
+      return a.index - b.index;
+    });
+
+  const gameLog = [];
+  const liveNotes = [];
+
+  orderedEvents.forEach(({ event, index, createdAtMs }) => {
+    const type = normalizeTrackLiveText(event?.type);
+    const timestamp = createdAtMs ?? now();
+    const baseEntry = {
+      period: normalizeTrackLiveText(event?.period),
+      time: formatTrackGameTime(event?.gameClockMs),
+      timestamp
+    };
+
+    if (type === 'reset') {
+      gameLog.length = 0;
+      liveNotes.length = 0;
+      return;
+    }
+
+    if (type === 'undo') {
+      removeLastMatchingText(gameLog, parseUndoTarget(event?.description));
+      removeLastMatchingText(liveNotes, event?.removedNote);
+
+      const correctionText = normalizeTrackLiveText(event?.description);
+      if (correctionText && !parseUndoTarget(correctionText)) {
+        gameLog.push({
+          ...baseEntry,
+          text: correctionText
+        });
+      }
+      return;
+    }
+
+    if (type === 'note') {
+      const noteText = normalizeTrackLiveText(event?.note);
+      if (noteText) {
+        liveNotes.push({
+          ...baseEntry,
+          id: normalizeTrackLiveText(event?.liveNoteId) || `resume-note-${index}`,
+          text: noteText,
+          type: normalizeTrackLiveText(event?.noteType) || 'text'
+        });
+      }
+    }
+
+    if (type === 'goal') {
+      const goalNoteText = normalizeTrackLiveText(buildGoalNoteText(event));
+      if (goalNoteText) {
+        liveNotes.push({
+          ...baseEntry,
+          id: normalizeTrackLiveText(event?.liveNoteId) || `resume-goal-note-${index}`,
+          text: goalNoteText,
+          type: 'goal'
+        });
+      }
+    }
+
+    if (type === 'clock_sync') {
+      return;
+    }
+
+    const text = buildResumeLogText(event);
+    if (!text) return;
+
+    gameLog.push({
+      ...baseEntry,
+      text
+    });
+  });
+
+  return {
+    gameLog: gameLog.slice().reverse(),
+    liveNotes: liveNotes.slice().reverse(),
+    summaryText: liveNotes.map((entry) => entry.text).join('\n')
+  };
+}
+
 export async function runTrackLiveResetPersistence({
   publishResetEvent,
   updateResetState,
