@@ -168,6 +168,29 @@ describe('Messages team email templates', () => {
     });
   });
 
+  it('shows the mobile team email composer before drafts and templates', async () => {
+    renderMessages();
+
+    fireEvent.click(await screen.findByRole('button', { name: /audience:/i }));
+    fireEvent.click(screen.getByRole('button', { name: /selected members/i }));
+    fireEvent.click((await screen.findAllByRole('checkbox'))[0]);
+    fireEvent.click(screen.getByRole('button', { name: 'Done' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Open Team Email' }));
+
+    const dialog = await screen.findByRole('dialog', { name: 'Team Email' });
+    const subjectField = within(dialog).getByLabelText('Subject');
+    const messageField = within(dialog).getByLabelText('Message');
+    const sendButton = within(dialog).getByRole('button', { name: 'Send email' });
+    const savedDraftsHeading = within(dialog).getByText('Saved drafts');
+    const reusableTemplatesHeading = within(dialog).getByText('Reusable templates');
+
+    expect(chatServiceMocks.loadTeamEmailDrafts).toHaveBeenCalledWith('team-1');
+    expect(subjectField.compareDocumentPosition(savedDraftsHeading) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(messageField.compareDocumentPosition(savedDraftsHeading) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(sendButton.compareDocumentPosition(savedDraftsHeading) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(sendButton.compareDocumentPosition(reusableTemplatesHeading) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
   it('loads saved drafts and restores one into the team email composer', async () => {
     renderMessages();
 
