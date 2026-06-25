@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { cleanup, render, screen } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { Profile } from './Profile';
@@ -15,7 +15,7 @@ const authServiceMocks = vi.hoisted(() => ({
 
 const profileServiceMocks = vi.hoisted(() => ({
   createProfileAccessCode: vi.fn(async () => 'CODE1234'),
-  loadNotificationPreferences: vi.fn(async () => ({ liveChat: true, liveScore: false, schedule: true })),
+  loadNotificationPreferences: vi.fn(async (_userId: string, _teamId: string) => ({ liveChat: true, liveScore: false, schedule: true })),
   loadNotificationTeams: vi.fn(async () => ([{ id: 'team-1', name: 'Blue Team' }])),
   loadParentTeams: vi.fn(async () => ([{ id: 'team-1', name: 'Blue Team' }])),
   loadProfileAccessCodes: vi.fn(async () => []),
@@ -119,6 +119,16 @@ function renderProfile(initialEntry = '/profile') {
   );
 }
 
+function createDeferredPromise<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
+}
+
 describe('Profile', () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -164,5 +174,77 @@ describe('Profile', () => {
     expect(await screen.findByText('No codes generated yet.')).toBeTruthy();
     expect(screen.queryByText('Unable to load invite history.')).toBeNull();
     expect(profileServiceMocks.loadProfileAccessCodesPage).toHaveBeenCalledWith('user-1', { pageSize: 3 });
+  });
+
+  it('renders alerts team controls before the first team preferences finish loading', async () => {
+    const preferencesRequest = createDeferredPromise<{ liveChat: boolean; liveScore: boolean; schedule: boolean }>();
+    profileServiceMocks.loadNotificationTeams.mockResolvedValue([{ id: 'team-1', name: 'Blue Team' }]);
+    profileServiceMocks.loadNotificationPreferences.mockImplementation(() => preferencesRequest.promise);
+
+    renderProfile('/profile?section=alerts');
+
+    expect(await screen.findByText('Notification preferences')).toBeTruthy();
+    expect(await screen.findByRole('combobox')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Enable push on this device' })).toBeTruthy();
+    expect(screen.getByText('Loading alerts for Blue Team…')).toBeTruthy();
+    expect(screen.queryByText('Loading your alert teams…')).toBeNull();
+
+    await waitFor(() => {
+      expect(profileServiceMocks.loadNotificationTeams).toHaveBeenCalledTimes(1);
+      expect(profileServiceMocks.loadNotificationPreferences).toHaveBeenCalledTimes(1);
+      expect(profileServiceMocks.loadNotificationPreferences).toHaveBeenCalledWith('user-1', 'team-1');
+    });
+
+    preferencesRequest.resolve({ liveChat: true, liveScore: false, schedule: true });
+
+    await waitFor(() => {
+      expect(screen.queryByText('Loading alerts for Blue Team…')).toBeNull();
+    });
+  });
+
+  it('ignores stale initial alert preferences after switching teams mid-load', async () => {
+    const firstTeamPreferences = createDeferredPromise<{ liveChat: boolean; liveScore: boolean; schedule: boolean }>();
+    const secondTeamPreferences = createDeferredPromise<{ liveChat: boolean; liveScore: boolean; schedule: boolean }>();
+    profileServiceMocks.loadNotificationTeams.mockResolvedValue([
+      { id: 'team-1', name: 'Blue Team' },
+      { id: 'team-2', name: 'Gold Team' }
+    ]);
+    profileServiceMocks.loadNotificationPreferences.mockImplementation((_userId: string, teamId: string) => {
+      if (teamId === 'team-1') {
+        return firstTeamPreferences.promise;
+      }
+      return secondTeamPreferences.promise;
+    });
+
+    renderProfile('/profile?section=alerts');
+
+    const teamSelect = await screen.findByRole('combobox');
+    await waitFor(() => {
+      expect(profileServiceMocks.loadNotificationPreferences).toHaveBeenCalledWith('user-1', 'team-1');
+    });
+
+    fireEvent.change(teamSelect, { target: { value: 'team-2' } });
+
+    await waitFor(() => {
+      expect(profileServiceMocks.loadNotificationPreferences).toHaveBeenCalledWith('user-1', 'team-2');
+    });
+
+    secondTeamPreferences.resolve({ liveChat: false, liveScore: true, schedule: true });
+
+    await waitFor(() => {
+      expect(screen.getByLabelText('Live Chat')).toBeTruthy();
+    });
+    expect((screen.getByLabelText('Live Chat') as HTMLInputElement).checked).toBe(false);
+    expect((screen.getByLabelText('Live Score') as HTMLInputElement).checked).toBe(true);
+    expect((screen.getByLabelText('Schedule Changes') as HTMLInputElement).checked).toBe(true);
+
+    firstTeamPreferences.resolve({ liveChat: true, liveScore: false, schedule: false });
+
+    await waitFor(() => {
+      expect(screen.queryByText('Loading alerts for Gold Team…')).toBeNull();
+    });
+    expect((screen.getByLabelText('Live Chat') as HTMLInputElement).checked).toBe(false);
+    expect((screen.getByLabelText('Live Score') as HTMLInputElement).checked).toBe(true);
+    expect((screen.getByLabelText('Schedule Changes') as HTMLInputElement).checked).toBe(true);
   });
 });

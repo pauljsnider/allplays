@@ -149,6 +149,7 @@ export function Profile({ auth }: { auth: AuthState }) {
   const photoFileRef = useRef<File | null>(null);
   const photoUrlRef = useRef('');
   const photoChangedRef = useRef(false);
+  const selectedTeamIdRef = useRef('');
 
   const revokeOwnedPhotoPreviewUrl = () => {
     const activePreviewUrl = ownedPhotoPreviewUrlRef.current;
@@ -241,6 +242,10 @@ export function Profile({ auth }: { auth: AuthState }) {
       revokeOwnedPhotoPreviewUrl();
     };
   }, []);
+
+  useEffect(() => {
+    selectedTeamIdRef.current = selectedTeamId;
+  }, [selectedTeamId]);
 
   useEffect(() => {
     let cancelled = false;
@@ -396,22 +401,24 @@ export function Profile({ auth }: { auth: AuthState }) {
           }
           return initialTeamId;
         });
+        setNotificationTeamsLoaded(true);
 
         if (!initialTeamId) {
-          setNotificationTeamsLoaded(true);
           return;
         }
 
         try {
           const firstPrefs = await loadNotificationPreferencesOnce(user.uid, initialTeamId);
           if (!cancelled) {
-            setNotificationPreferences(firstPrefs);
+            if (selectedTeamIdRef.current === initialTeamId) {
+              setNotificationPreferences(firstPrefs);
+              setLoadedNotificationTeamId(initialTeamId);
+            }
             setNotificationPreferencesByTeamId((current) => ({ ...current, [initialTeamId]: firstPrefs }));
             setNotificationPreferenceErrorsByTeamId((current) => {
               const { [initialTeamId]: _ignored, ...rest } = current;
               return rest;
             });
-            setLoadedNotificationTeamId(initialTeamId);
           }
         } catch (error) {
           // Don't set loadedNotificationTeamId on error so loadPreferences effect can retry
@@ -419,10 +426,6 @@ export function Profile({ auth }: { auth: AuthState }) {
             const message = getLoadErrorMessage(error, 'Unable to load notification preferences.');
             setNotificationPreferenceErrorsByTeamId((current) => ({ ...current, [initialTeamId]: message }));
             setNotificationStatus({ message: 'Unable to load notification preferences.', tone: 'error' });
-          }
-        } finally {
-          if (!cancelled) {
-            setNotificationTeamsLoaded(true);
           }
         }
       } catch (error) {
