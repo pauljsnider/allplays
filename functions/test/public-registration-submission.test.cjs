@@ -468,6 +468,71 @@ test('charges only the first scheduled installment for installment registrations
     assert.equal(checkoutRegistration.paymentStatus, 'checkout_open');
   });
 
+test('keeps the stored installment schedule for later checkout attempts after form pricing changes', async () => {
+    const { firestore, stripeState, mod } = loadFunctionsModule(buildSeedState({
+        feeAmountCents: 12500,
+        paymentSettings: { offlinePaymentEnabled: true, onlineCheckoutEnabled: true },
+        installmentPlan: {
+            enabled: true,
+            title: 'Monthly installments',
+            installmentCount: 3,
+            firstDueDate: '2026-07-01',
+            intervalDays: 30
+        }
+    }));
+
+    const submission = await mod.submitPublicRegistration(buildSubmission({
+        selectedPaymentPlanId: 'installments',
+        checkoutAttemptToken: 'checkouttoken123456'
+    }), context);
+
+    const registrationPath = `teams/team-1/registrationForms/form-1/registrations/${submission.registrationId}`;
+    await firestore.doc(registrationPath).set({
+        paymentPlan: {
+            id: 'installments',
+            schedule: [
+                { label: 'Installment 1', dueDate: '2026-07-01', amountCents: 4166 },
+                { label: 'Installment 2', dueDate: '2026-07-31', amountCents: 4166 },
+                { label: 'Installment 3', dueDate: '2026-08-30', amountCents: 4168 }
+            ],
+            totalBalanceDueCents: 12500,
+            paidInstallmentCount: 1,
+            remainingBalanceCents: 8334,
+            nextDueDate: '2026-07-31'
+        },
+        paymentStatus: 'installment_in_progress',
+        balanceDueCents: 8334,
+        nextPaymentDueDate: '2026-07-31'
+    }, { merge: true });
+    await firestore.doc('teams/team-1/registrationForms/form-1').set({
+        feeAmountCents: 18000,
+        installmentPlan: {
+            enabled: true,
+            title: 'Biweekly installments',
+            installmentCount: 4,
+            firstDueDate: '2026-07-10',
+            intervalDays: 14
+        }
+    }, { merge: true });
+
+    const checkout = await mod.createStripeRegistrationCheckout({
+        teamId: 'team-1',
+        formId: 'form-1',
+        registrationId: submission.registrationId,
+        amountCents: 18000,
+        currency: 'usd',
+        checkoutAttemptToken: 'checkouttoken123456'
+    });
+
+    assert.equal(checkout.checkoutUrl, 'https://stripe.test/checkout/1');
+    assert.equal(stripeState.checkoutSessions[0].line_items[0].price_data.unit_amount, 4166);
+    assert.match(stripeState.checkoutSessions[0].success_url, /paymentPlanId=installments/);
+    assert.match(stripeState.checkoutSessions[0].success_url, /paidInstallmentCount=2/);
+
+    const checkoutRegistration = firestore.snapshot(registrationPath);
+    assert.equal(checkoutRegistration.checkoutAmountCents, 4166);
+});
+
 function createMockResponse() {
     return {
         statusCode: 200,
@@ -556,4 +621,79 @@ test('records installment payment progress after Stripe marks the first installm
     assert.equal(registration.paymentPlan.paidInstallmentCount, 1);
     assert.equal(registration.paymentPlan.remainingBalanceCents, 8334);
     assert.equal(registration.paymentPlan.nextDueDate, '2026-07-31');
+});
+
+test('keeps capacity reserved when a later installment payment fails', async () => {
+    const { firestore, stripeState, mod } = loadFunctionsModule(buildSeedState({
+        feeAmountCents: 12500,
+        paymentSettings: { offlinePaymentEnabled: true, onlineCheckoutEnabled: true },
+        installmentPlan: {
+            enabled: true,
+            title: 'Monthly installments',
+            installmentCount: 3,
+            firstDueDate: '2026-07-01',
+            intervalDays: 30
+        }
+    }));
+
+    const submission = await mod.submitPublicRegistration(buildSubmission({
+        selectedPaymentPlanId: 'installments',
+        checkoutAttemptToken: 'checkouttoken123456'
+    }), context);
+
+    const registrationPath = `teams/team-1/registrationForms/form-1/registrations/${submission.registrationId}`;
+    await firestore.doc(registrationPath).set({
+        paymentStatus: 'installment_in_progress',
+        paymentPlan: {
+            id: 'installments',
+            schedule: [
+                { label: 'Installment 1', dueDate: '2026-07-01', amountCents: 4166 },
+                { label: 'Installment 2', dueDate: '2026-07-31', amountCents: 4166 },
+                { label: 'Installment 3', dueDate: '2026-08-30', amountCents: 4168 }
+            ],
+            totalBalanceDueCents: 12500,
+            paidInstallmentCount: 1,
+            remainingBalanceCents: 8334,
+            nextDueDate: '2026-07-31'
+        },
+        registrationCapacityReleased: false,
+        balanceDueCents: 8334,
+        nextPaymentDueDate: '2026-07-31',
+        publicCheckoutCapabilityHash: ''
+    }, { merge: true });
+
+    stripeState.webhookEvent = {
+        id: 'evt_installment_failed_2',
+        type: 'checkout.session.async_payment_failed',
+        data: {
+            object: {
+                id: 'cs_test_2',
+                payment_status: 'failed',
+                payment_intent: 'pi_test_2',
+                metadata: {
+                    product: 'registration',
+                    teamId: 'team-1',
+                    formId: 'form-1',
+                    registrationId: submission.registrationId,
+                    checkoutAttemptToken: 'checkouttoken123456'
+                }
+            }
+        }
+    };
+
+    const req = {
+        method: 'POST',
+        rawBody: Buffer.from('event'),
+        headers: { 'stripe-signature': 'sig_test' }
+    };
+    const res = createMockResponse();
+
+    await mod.stripeTeamPassWebhook(req, res);
+
+    assert.equal(res.statusCode, 200);
+    const registration = firestore.snapshot(registrationPath);
+    const form = firestore.snapshot('teams/team-1/registrationForms/form-1');
+    assert.equal(registration.paymentStatus, 'payment_failed');
+    assert.equal(registration.registrationCapacityReleased, false);
+    assert.equal(form.registrationOptionCounts.u10.enrolled, 1);
 });

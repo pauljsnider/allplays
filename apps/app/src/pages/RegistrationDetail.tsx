@@ -52,6 +52,7 @@ function RegistrationDetailPage({ auth, publicAccess = false, staffReview = fals
   const returnPublicCheckoutCapability = searchParams.get('publicCheckoutCapability') || '';
   const retryPaymentRequested = searchParams.get('retryPayment') === '1' && Boolean(returnPublicCheckoutCapability || returnRegistrationId);
   const successfulPaymentPlanId = normalizePaymentPlanId(searchParams.get('paymentPlanId'));
+  const successfulPaidInstallmentCount = normalizePaidInstallmentCount(searchParams.get('paidInstallmentCount'));
   const returnStatus = normalizeRegistrationReturnStatus(searchParams.get('status'));
   const isPaymentSuccessReturn = returnStatus === 'success' && Boolean(returnPublicCheckoutCapability || returnRegistrationId);
   const isRetryPaymentMode = retryPaymentRequested && !isPaymentSuccessReturn;
@@ -153,9 +154,9 @@ function RegistrationDetailPage({ auth, publicAccess = false, staffReview = fals
   const successfulPaymentPlanSummary = useMemo(() => {
     if (!form || !displayFeeSnapshot || !isPaymentSuccessReturn) return null;
     const paymentPlanId = successfulPaymentPlanId || selectedPaymentPlanId;
-    const paidInstallmentCount = paymentPlanId === 'installments' ? 1 : 0;
+    const paidInstallmentCount = paymentPlanId === 'installments' ? Math.max(1, successfulPaidInstallmentCount) : 0;
     return buildRegistrationPaymentPlanSummary(form, displayFeeSnapshot, paymentPlanId, paidInstallmentCount);
-  }, [displayFeeSnapshot, form, isPaymentSuccessReturn, selectedPaymentPlanId, successfulPaymentPlanId]);
+  }, [displayFeeSnapshot, form, isPaymentSuccessReturn, selectedPaymentPlanId, successfulPaidInstallmentCount, successfulPaymentPlanId]);
   const selectedReview = useMemo(() => {
     const allReviews = [...(queue?.reviews || []), ...(queue?.waitlistedReviews || [])];
     return allReviews.find((review) => review.id === selectedReviewId) || allReviews[0] || null;
@@ -897,6 +898,10 @@ function formatOptionAvailability(option: any, counts: Record<string, any>) {
 
 function normalizePaymentPlanId(value: string | null) {
   return String(value || '').trim() === 'installments' ? 'installments' : 'pay_full';
+}
+
+function normalizePaidInstallmentCount(value: string | null) {
+  return Math.max(0, Math.floor(Number(value || 0) || 0));
 }
 
 function buildRegistrationPaymentPlanSummary(form: ParentRegistrationCard, feeSnapshot: Record<string, any>, paymentPlanId: string, paidInstallmentCount = 0) {

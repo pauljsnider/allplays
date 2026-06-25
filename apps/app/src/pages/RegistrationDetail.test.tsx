@@ -226,14 +226,14 @@ describe('RegistrationDetail payment notice', () => {
       }
     }));
 
-    renderPublicRegistration('/registration?teamId=team-1&formId=form-1&publicCheckoutCapability=cap-1&retryPayment=1&paymentPlanId=installments&status=success');
+    renderPublicRegistration('/registration?teamId=team-1&formId=form-1&publicCheckoutCapability=cap-1&retryPayment=1&paymentPlanId=installments&paidInstallmentCount=2&status=success');
 
     expect(await screen.findByRole('heading', { name: 'Payment successful' })).toBeTruthy();
     expect(screen.getByText('Your installment payment was received. Here is what remains on your payment schedule.')).toBeTruthy();
     expect(screen.getByLabelText('Remaining installment schedule')).toBeTruthy();
     expect(screen.getByText('Remaining balance')).toBeTruthy();
-    expect(screen.getByText('$83.34')).toBeTruthy();
-    expect(screen.getByText('Installment 2 · Due Jul 31, 2026')).toBeTruthy();
+    expect(screen.getByText('$41.68')).toBeTruthy();
+    expect(screen.queryByText('Installment 2 · Due Jul 31, 2026')).toBeNull();
     expect(screen.getByText('Installment 3 · Due Aug 30, 2026')).toBeTruthy();
   });
 });

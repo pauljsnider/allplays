@@ -341,6 +341,10 @@ function buildRegistrationCheckoutUrls(appUrl, input) {
   if (input.paymentPlanId) {
     params.set('paymentPlanId', String(input.paymentPlanId));
   }
+  const paidInstallmentCount = Math.max(0, Math.floor(Number(input.paidInstallmentCount) || 0));
+  if (paidInstallmentCount > 0) {
+    params.set('paidInstallmentCount', String(paidInstallmentCount));
+  }
   return {
     successUrl: `${baseUrl}/registration.html?${params.toString()}&status=success`,
     cancelUrl: `${baseUrl}/registration.html?${params.toString()}&status=cancelled`
@@ -897,18 +901,40 @@ function buildRegistrationInstallmentScheduleFromAuthoritativeForm(form, totalBa
   return buildPublicRegistrationInstallmentSchedule(totalBalanceDueCents, form.installmentPlan);
 }
 
+function getStoredRegistrationInstallmentSchedule(registration = {}) {
+  return Array.isArray(registration.paymentPlan?.schedule)
+    ? registration.paymentPlan.schedule.filter(Boolean)
+    : [];
+}
+
+function getStoredRegistrationInstallmentTotalBalanceDueCents(registration = {}) {
+  return Math.max(0, Math.round(Number(
+    registration.paymentPlan?.totalBalanceDueCents
+    ?? registration.feeSnapshot?.finalAmountDueCents
+    ?? registration.feeAmountCents
+    ?? 0
+  ) || 0));
+}
+
 function getRegistrationPaymentPlanPaidInstallmentCount(registration = {}) {
   return Math.max(0, Math.floor(Number(registration.paymentPlan?.paidInstallmentCount || 0) || 0));
 }
 
+function shouldKeepRegistrationCapacityReserved(registration = {}) {
+  return registration.paymentPlan?.id === 'installments' && getRegistrationPaymentPlanPaidInstallmentCount(registration) > 0;
+}
+
 function buildRegistrationInstallmentPaymentState(registration = {}, form = null, nextPaidInstallmentCount = getRegistrationPaymentPlanPaidInstallmentCount(registration)) {
-  const authoritativeTotalBalanceDueCents = form
-    ? computeRegistrationFeeAmountCentsFromForm(form)
-    : Math.max(0, Math.round(Number(registration.paymentPlan?.totalBalanceDueCents ?? registration.feeSnapshot?.finalAmountDueCents ?? registration.feeAmountCents ?? 0)));
-  const authoritativeSchedule = form
-    ? buildRegistrationInstallmentScheduleFromAuthoritativeForm(form, authoritativeTotalBalanceDueCents)
-    : Array.isArray(registration.paymentPlan?.schedule)
-      ? registration.paymentPlan.schedule.filter(Boolean)
+  const storedSchedule = getStoredRegistrationInstallmentSchedule(registration);
+  const authoritativeTotalBalanceDueCents = storedSchedule.length
+    ? getStoredRegistrationInstallmentTotalBalanceDueCents(registration)
+    : form
+      ? computeRegistrationFeeAmountCentsFromForm(form)
+      : getStoredRegistrationInstallmentTotalBalanceDueCents(registration);
+  const authoritativeSchedule = storedSchedule.length
+    ? storedSchedule
+    : form
+      ? buildRegistrationInstallmentScheduleFromAuthoritativeForm(form, authoritativeTotalBalanceDueCents)
       : [];
   if (!authoritativeSchedule.length) {
     return {
@@ -2946,7 +2972,10 @@ exports.createStripeRegistrationCheckout = functions.https.onCall(async (data) =
   const checkoutUrlInput = {
     ...resolvedInput,
     publicCheckoutCapability: issuedPublicCheckoutCapability,
-    paymentPlanId: String(registration.paymentPlan?.id || 'pay_full').trim() || 'pay_full'
+    paymentPlanId: String(registration.paymentPlan?.id || 'pay_full').trim() || 'pay_full',
+    paidInstallmentCount: registration.paymentPlan?.id === 'installments'
+      ? getRegistrationPaymentPlanPaidInstallmentCount(registration) + 1
+      : 0
   };
   const { successUrl, cancelUrl } = buildRegistrationCheckoutUrls(appUrl, checkoutUrlInput);
   const title = registration.programName || form.programName || form.title || form.name || 'Program registration';
@@ -3158,7 +3187,8 @@ exports.stripeTeamPassWebhook = functions.https.onRequest(async (req, res) => {
           const countKey = String(selectedOption.countKey || selectedOption.id || '').trim();
           const counts = form.registrationOptionCounts || {};
           const optionCounts = countKey ? counts[countKey] || {} : {};
-          const shouldReleaseCapacity = registration.registrationCapacityReleased !== true && registration.paymentStatus !== 'paid' && countKey;
+          const shouldRetainCapacity = shouldKeepRegistrationCapacityReserved(registration);
+          const shouldReleaseCapacity = !shouldRetainCapacity && registration.registrationCapacityReleased !== true && registration.paymentStatus !== 'paid' && countKey;
           if (shouldReleaseCapacity && registration.status === 'pending') {
             transaction.update(formRef, {
               [`registrationOptionCounts.${countKey}.enrolled`]: Math.max(0, Number(optionCounts.enrolled || 0) - 1),
@@ -3178,8 +3208,10 @@ exports.stripeTeamPassWebhook = functions.https.onRequest(async (req, res) => {
             stripeCheckoutSessionId: session.id || null,
             stripePaymentStatus: session.payment_status || 'unpaid',
             stripeEventId: event.id,
-            registrationCapacityReleased: true,
-            capacityReleasedAt: receivedAt,
+            ...(shouldReleaseCapacity ? {
+              registrationCapacityReleased: true,
+              capacityReleasedAt: receivedAt
+            } : {}),
             updatedAt: receivedAt
           }, { merge: true });
 
