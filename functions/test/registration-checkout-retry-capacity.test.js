@@ -1,7 +1,8 @@
-const assert = require('node:assert/strict');
-const test = require('node:test');
-const Module = require('node:module');
+import assert from 'node:assert/strict';
+import Module, { createRequire } from 'node:module';
+import { afterEach, beforeEach, test } from 'vitest';
 
+const require = createRequire(import.meta.url);
 const repoIndexPath = require.resolve('../index.js');
 const originalModuleLoad = Module._load;
 
@@ -289,7 +290,7 @@ const checkoutInput = {
     retryPayment: true
 };
 
-test.beforeEach(() => {
+beforeEach(() => {
     delete require.cache[repoIndexPath];
     Module._load = patchedModuleLoad;
     adminStub = null;
@@ -297,7 +298,7 @@ test.beforeEach(() => {
     StripeStub = null;
 });
 
-test.afterEach(() => {
+afterEach(() => {
     delete require.cache[repoIndexPath];
     Module._load = originalModuleLoad;
     adminStub = null;
