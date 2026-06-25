@@ -531,24 +531,43 @@ export function Schedule({ auth }: { auth: AuthState }) {
   const manageableTeamOptions = useMemo(() => (
     teamOptions.filter((team) => events.some((event) => event.teamId === team.teamId && event.isTeamStaff === true))
   ), [events, teamOptions]);
+  const [selectedStaffManageTeamId, setSelectedStaffManageTeamId] = useState('');
+  const hasManageableScheduleTeams = manageableTeamOptions.length > 0;
   const selectedCalendarTeam = useMemo(() => {
-    if (selectedTeamId) {
-      return manageableTeamOptions.find((team) => team.teamId === selectedTeamId) || null;
+    const pageSelectedManageableTeam = selectedTeamId
+      ? manageableTeamOptions.find((team) => team.teamId === selectedTeamId) || null
+      : null;
+    if (pageSelectedManageableTeam) {
+      return pageSelectedManageableTeam;
+    }
+    if (selectedStaffManageTeamId) {
+      return manageableTeamOptions.find((team) => team.teamId === selectedStaffManageTeamId) || null;
     }
     return manageableTeamOptions.length === 1 ? manageableTeamOptions[0] : null;
-  }, [manageableTeamOptions, selectedTeamId]);
+  }, [manageableTeamOptions, selectedStaffManageTeamId, selectedTeamId]);
+  const shouldShowManageScheduleTeamPicker = !selectedCalendarTeam && manageableTeamOptions.length > 1;
 
   useEffect(() => {
-    if (isDesktopWeb || !selectedCalendarTeam) {
+    if (!selectedStaffManageTeamId) {
+      return;
+    }
+    const stillManageable = manageableTeamOptions.some((team) => team.teamId === selectedStaffManageTeamId);
+    if (!stillManageable) {
+      setSelectedStaffManageTeamId('');
+    }
+  }, [manageableTeamOptions, selectedStaffManageTeamId]);
+
+  useEffect(() => {
+    if (isDesktopWeb || !hasManageableScheduleTeams) {
       setMobileStaffToolsOpen(false);
     }
-  }, [isDesktopWeb, selectedCalendarTeam]);
+  }, [hasManageableScheduleTeams, isDesktopWeb]);
 
   useEffect(() => {
-    if (!isDesktopWeb || !selectedCalendarTeam) {
+    if (!isDesktopWeb || !hasManageableScheduleTeams) {
       setDesktopStaffToolsOpen(false);
     }
-  }, [isDesktopWeb, selectedCalendarTeam]);
+  }, [hasManageableScheduleTeams, isDesktopWeb]);
 
   const requestTrackerConfigLoad = () => {
     if (!selectedCalendarTeam) return;
@@ -612,88 +631,113 @@ export function Schedule({ auth }: { auth: AuthState }) {
     };
   }, [auth.user, mobileStaffToolsOpen, selectedCalendarTeam, trackerConfigRequestedTeamIds]);
 
-  const renderScheduleStaffToolsContent = () => selectedCalendarTeam ? (
-    <>
-      <ScheduleGameCreatePanel
-        teamName={selectedCalendarTeam.teamName}
-        form={gameForm}
-        configs={gameTrackerConfigs}
-        saving={savingGame}
-        error={gameFormError}
-        configError={gameTrackerConfigError}
-        onStartUsing={requestTrackerConfigLoad}
-        onChange={(nextForm) => {
-          setGameForm(nextForm);
-          if (gameFormError) setGameFormError(null);
-        }}
-        onSubmit={handleCreateGame}
-      />
-      <ScheduleTournamentCreatePanel
-        teamName={selectedCalendarTeam.teamName}
-        form={tournamentForm}
-        configs={gameTrackerConfigs}
-        saving={savingTournament}
-        error={tournamentFormError}
-        configError={gameTrackerConfigError}
-        onStartUsing={requestTrackerConfigLoad}
-        onChange={(nextForm) => {
-          setTournamentForm(nextForm);
-          if (tournamentFormError) setTournamentFormError(null);
-        }}
-        onSubmit={handleCreateTournament}
-      />
-      <SchedulePracticeCreatePanel
-        teamName={selectedCalendarTeam.teamName}
-        form={practiceForm}
-        saving={savingPractice}
-        error={practiceFormError}
-        onChange={(nextForm) => {
-          setPracticeForm(nextForm);
-          if (practiceFormError) setPracticeFormError(null);
-        }}
-        onSubmit={handleCreatePractice}
-      />
-      <ScheduleStaffTools
-        teamName={selectedCalendarTeam.teamName}
-        calendarUrl={calendarUrl}
-        calendarUrls={selectedCalendarTeam.calendarUrls || []}
-        calendarUrlError={calendarUrlError}
-        savingCalendarUrl={savingCalendarUrl}
-        removingCalendarUrl={removingCalendarUrl}
-        aiScheduleText={aiScheduleText}
-        aiScheduleImageName={aiScheduleImageName}
-        aiPreviewRows={scheduleImportPreviewSource === 'ai' ? csvPreviewRows : []}
-        aiImportErrors={aiImportErrors}
-        processingAiImport={processingAiImport}
-        csvHeaders={csvHeaders}
-        csvMapping={csvMapping}
-        csvPreviewRows={scheduleImportPreviewSource === 'csv' ? csvPreviewRows : []}
-        csvImportErrors={csvImportErrors}
-        csvFileName={csvFileName}
-        loadingCsvFile={loadingCsvFile}
-        importingCsv={importingCsv}
-        onCalendarUrlChange={(value) => {
-          setCalendarUrl(value);
-          if (calendarUrlError) setCalendarUrlError(null);
-        }}
-        onAddCalendarUrl={handleAddCalendarUrl}
-        onRemoveCalendarUrl={handleRemoveCalendarUrl}
-        onAiTextChange={(value) => {
-          setAiScheduleText(value);
-          clearAiPreview();
-          if (aiImportErrors.length) setAiImportErrors([]);
-        }}
-        onAiImageChange={handleAiImageChange}
-        onAiGeneratePreview={handleAiGeneratePreview}
-        onImportCsv={handleCsvImport}
-        onClearAi={handleAiClear}
-        onCsvFileChange={handleCsvFileChange}
-        onCsvMappingChange={handleCsvMappingChange}
-        onCsvPreview={handleCsvPreview}
-        onClearCsv={handleCsvClear}
-      />
-    </>
-  ) : null;
+  const renderScheduleStaffToolsContent = () => {
+    if (shouldShowManageScheduleTeamPicker) {
+      return (
+        <section className="app-card p-3 sm:p-4" aria-label="Choose team to manage">
+          <div className="app-label">Choose team</div>
+          <h3 className="mt-1 text-base font-black text-gray-950">Choose the team to manage</h3>
+          <p className="mt-1 text-sm font-semibold leading-6 text-gray-600">Pick a team here to unlock game, practice, tournament, and import tools.</p>
+          <label className="mt-3 block text-xs font-bold uppercase tracking-wide text-gray-600">
+            Team to manage
+            <select
+              aria-label="Team to manage"
+              className="auth-input mt-1"
+              value={selectedStaffManageTeamId}
+              onChange={(event) => setSelectedStaffManageTeamId(event.target.value)}
+            >
+              <option value="">Select a team</option>
+              {manageableTeamOptions.map((team) => (
+                <option key={team.teamId} value={team.teamId}>{team.teamName}</option>
+              ))}
+            </select>
+          </label>
+        </section>
+      );
+    }
+    return selectedCalendarTeam ? (
+      <>
+        <ScheduleGameCreatePanel
+          teamName={selectedCalendarTeam.teamName}
+          form={gameForm}
+          configs={gameTrackerConfigs}
+          saving={savingGame}
+          error={gameFormError}
+          configError={gameTrackerConfigError}
+          onStartUsing={requestTrackerConfigLoad}
+          onChange={(nextForm) => {
+            setGameForm(nextForm);
+            if (gameFormError) setGameFormError(null);
+          }}
+          onSubmit={handleCreateGame}
+        />
+        <ScheduleTournamentCreatePanel
+          teamName={selectedCalendarTeam.teamName}
+          form={tournamentForm}
+          configs={gameTrackerConfigs}
+          saving={savingTournament}
+          error={tournamentFormError}
+          configError={gameTrackerConfigError}
+          onStartUsing={requestTrackerConfigLoad}
+          onChange={(nextForm) => {
+            setTournamentForm(nextForm);
+            if (tournamentFormError) setTournamentFormError(null);
+          }}
+          onSubmit={handleCreateTournament}
+        />
+        <SchedulePracticeCreatePanel
+          teamName={selectedCalendarTeam.teamName}
+          form={practiceForm}
+          saving={savingPractice}
+          error={practiceFormError}
+          onChange={(nextForm) => {
+            setPracticeForm(nextForm);
+            if (practiceFormError) setPracticeFormError(null);
+          }}
+          onSubmit={handleCreatePractice}
+        />
+        <ScheduleStaffTools
+          teamName={selectedCalendarTeam.teamName}
+          calendarUrl={calendarUrl}
+          calendarUrls={selectedCalendarTeam.calendarUrls || []}
+          calendarUrlError={calendarUrlError}
+          savingCalendarUrl={savingCalendarUrl}
+          removingCalendarUrl={removingCalendarUrl}
+          aiScheduleText={aiScheduleText}
+          aiScheduleImageName={aiScheduleImageName}
+          aiPreviewRows={scheduleImportPreviewSource === 'ai' ? csvPreviewRows : []}
+          aiImportErrors={aiImportErrors}
+          processingAiImport={processingAiImport}
+          csvHeaders={csvHeaders}
+          csvMapping={csvMapping}
+          csvPreviewRows={scheduleImportPreviewSource === 'csv' ? csvPreviewRows : []}
+          csvImportErrors={csvImportErrors}
+          csvFileName={csvFileName}
+          loadingCsvFile={loadingCsvFile}
+          importingCsv={importingCsv}
+          onCalendarUrlChange={(value) => {
+            setCalendarUrl(value);
+            if (calendarUrlError) setCalendarUrlError(null);
+          }}
+          onAddCalendarUrl={handleAddCalendarUrl}
+          onRemoveCalendarUrl={handleRemoveCalendarUrl}
+          onAiTextChange={(value) => {
+            setAiScheduleText(value);
+            clearAiPreview();
+            if (aiImportErrors.length) setAiImportErrors([]);
+          }}
+          onAiImageChange={handleAiImageChange}
+          onAiGeneratePreview={handleAiGeneratePreview}
+          onImportCsv={handleCsvImport}
+          onClearAi={handleAiClear}
+          onCsvFileChange={handleCsvFileChange}
+          onCsvMappingChange={handleCsvMappingChange}
+          onCsvPreview={handleCsvPreview}
+          onClearCsv={handleCsvClear}
+        />
+      </>
+    ) : null;
+  };
 
   useEffect(() => {
     setGameForm((current) => {
@@ -1323,10 +1367,10 @@ export function Schedule({ auth }: { auth: AuthState }) {
             />
           )}
 
-          {isDesktopWeb && selectedCalendarTeam ? (
+          {isDesktopWeb && hasManageableScheduleTeams ? (
             <ScheduleStaffToolsSection
               open={desktopStaffToolsOpen}
-              teamName={selectedCalendarTeam.teamName}
+              teamName={selectedCalendarTeam?.teamName || null}
               contentId="desktop-schedule-staff-tools"
               onToggle={() => setDesktopStaffToolsOpen((current) => !current)}
             >
@@ -1334,10 +1378,10 @@ export function Schedule({ auth }: { auth: AuthState }) {
             </ScheduleStaffToolsSection>
           ) : null}
 
-          {!isDesktopWeb && selectedCalendarTeam ? (
+          {!isDesktopWeb && hasManageableScheduleTeams ? (
             <ScheduleStaffToolsSection
               open={mobileStaffToolsOpen}
-              teamName={selectedCalendarTeam.teamName}
+              teamName={selectedCalendarTeam?.teamName || null}
               contentId="mobile-schedule-staff-tools"
               onToggle={() => setMobileStaffToolsOpen((current) => {
                 const nextOpen = !current;
@@ -1547,7 +1591,7 @@ function PracticeRecurrenceFields({ form, onChange }: { form: SchedulePracticeFo
   );
 }
 
-function ScheduleStaffToolsSection({ open, teamName, contentId, onToggle, children }: { open: boolean; teamName: string; contentId: string; onToggle: () => void; children: ReactNode }) {
+function ScheduleStaffToolsSection({ open, teamName, contentId, onToggle, children }: { open: boolean; teamName: string | null; contentId: string; onToggle: () => void; children: ReactNode }) {
   return (
     <section className="app-card p-3" aria-label="Manage schedule tools">
       <button
@@ -1560,7 +1604,7 @@ function ScheduleStaffToolsSection({ open, teamName, contentId, onToggle, childr
         <div className="min-w-0">
           <div className="app-label">Staff schedule tools</div>
           <h2 className="mt-1 text-base font-black text-gray-950">Manage schedule</h2>
-          <p className="mt-1 text-xs font-semibold leading-5 text-gray-500">Calendar feeds and imports for {teamName} stay tucked away until you need them.</p>
+          <p className="mt-1 text-xs font-semibold leading-5 text-gray-500">{teamName ? `Calendar feeds and imports for ${teamName} stay tucked away until you need them.` : 'Choose a team here to unlock schedule tools without relying on the page-level team filter.'}</p>
         </div>
         <ChevronDown className={`h-5 w-5 flex-none text-gray-500 transition ${open ? 'rotate-180' : ''}`} aria-hidden="true" />
       </button>
