@@ -11,18 +11,19 @@ function parseCurrentShapeKey(key) {
   };
 }
 
-function plannerKeyForCurrentShapeKey(key, intervals) {
+function plannerKeysForCurrentShapeKey(key, intervals) {
   const parsed = parseCurrentShapeKey(key);
-  if (!parsed || !Number.isFinite(parsed.periodNum)) return null;
+  if (!parsed || !Number.isFinite(parsed.periodNum)) return [];
 
   const periodIntervals = intervals.filter(interval => interval.period === parsed.periodNum);
-  if (periodIntervals.length === 0) return null;
+  if (periodIntervals.length === 0) return [];
 
-  const interval = parsed.time == null
-    ? periodIntervals[0]
-    : periodIntervals.find(candidate => Number(candidate.time) === parsed.time);
+  if (parsed.time == null) {
+    return periodIntervals.map(interval => `${interval.key}-${parsed.posId}`);
+  }
 
-  return interval ? `${interval.key}-${parsed.posId}` : null;
+  const interval = periodIntervals.find(candidate => Number(candidate.time) === parsed.time);
+  return interval ? [`${interval.key}-${parsed.posId}`] : [];
 }
 
 export function normalizeLineupsForGamePlanPlanner(gamePlan) {
@@ -33,9 +34,11 @@ export function normalizeLineupsForGamePlanPlanner(gamePlan) {
   const legacyAndOtherEntries = [];
 
   Object.entries(gamePlan.lineups).forEach(([key, playerId]) => {
-    const plannerKey = plannerKeyForCurrentShapeKey(key, intervals);
-    if (plannerKey) {
-      normalized[plannerKey] = playerId;
+    const plannerKeys = plannerKeysForCurrentShapeKey(key, intervals);
+    if (plannerKeys.length > 0) {
+      plannerKeys.forEach((plannerKey) => {
+        normalized[plannerKey] = playerId;
+      });
     } else {
       legacyAndOtherEntries.push([key, playerId]);
     }
