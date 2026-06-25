@@ -335,9 +335,6 @@ function buildRegistrationCheckoutUrls(appUrl, input) {
   if (input.publicCheckoutCapability) {
     params.set('publicCheckoutCapability', input.publicCheckoutCapability);
   }
-  if (input.retryPayment) {
-    params.set('retryPayment', '1');
-  }
   if (input.paymentPlanId) {
     params.set('paymentPlanId', String(input.paymentPlanId));
   }
@@ -345,8 +342,14 @@ function buildRegistrationCheckoutUrls(appUrl, input) {
   if (paidInstallmentCount > 0) {
     params.set('paidInstallmentCount', String(paidInstallmentCount));
   }
+  const successParams = new URLSearchParams(params);
+  if (input.retryPayment) {
+    params.set('retryPayment', '1');
+  } else if (input.publicCheckoutCapability) {
+    params.set('retryPayment', '1');
+  }
   return {
-    successUrl: `${baseUrl}/registration.html?${params.toString()}&status=success`,
+    successUrl: `${baseUrl}/registration.html?${successParams.toString()}&status=success`,
     cancelUrl: `${baseUrl}/registration.html?${params.toString()}&status=cancelled`
   };
 }
