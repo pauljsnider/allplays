@@ -1602,9 +1602,85 @@ export async function upsertNotificationDeviceToken(userId, { token, platform = 
     return deviceId;
 }
 
+function normalizeRegistrationSourceScopeStrings(values = []) {
+    return [...new Set((Array.isArray(values) ? values : [values])
+        .map((value) => String(value || '').trim())
+        .filter(Boolean))];
+}
+
+async function getRegistrationSourceAdminTeamIds(userId, userEmail) {
+    const snapshots = await Promise.all([
+        getDocs(query(collection(db, 'teams'), where('ownerId', '==', userId))),
+        userEmail
+            ? getDocs(query(collection(db, 'teams'), where('adminEmails', 'array-contains', userEmail)))
+            : Promise.resolve(null)
+    ]);
+
+    return normalizeRegistrationSourceScopeStrings(snapshots.flatMap((snapshot) => (
+        snapshot?.docs?.map((docSnap) => docSnap.id) || []
+    )));
+}
+
+async function getScopedRegistrationSourceDocs(fieldName, teamIds = []) {
+    const docs = [];
+    for (let index = 0; index < teamIds.length; index += 10) {
+        const teamIdsChunk = teamIds.slice(index, index + 10);
+        if (teamIdsChunk.length === 0) continue;
+        const snapshot = await getDocs(query(collection(db, 'registrationSources'), where(fieldName, 'in', teamIdsChunk)));
+        docs.push(...snapshot.docs);
+    }
+    return docs;
+}
+
+function mapRegistrationSourceDoc(docSnap) {
+    return { id: docSnap.id, ...docSnap.data() };
+}
+
+function sortRegistrationSources(sources = []) {
+    return [...sources].sort((left, right) => {
+        const leftLabel = String(left?.externalTeamName || left?.teamName || left?.name || left?.provider || '').trim();
+        const rightLabel = String(right?.externalTeamName || right?.teamName || right?.name || right?.provider || '').trim();
+        return leftLabel.localeCompare(rightLabel);
+    });
+}
+
 export async function getRegistrationSources() {
-    const snapshot = await getDocs(collection(db, "registrationSources"));
-    return snapshot.docs.map(docSnap => ({ id: docSnap.id, ...docSnap.data() }));
+    const userId = auth.currentUser?.uid || '';
+    const userEmail = String(auth.currentUser?.email || '').trim().toLowerCase();
+    if (!userId) {
+        return [];
+    }
+
+    const profile = await getUserProfile(userId);
+    if (profile?.isAdmin === true) {
+        const snapshot = await getDocs(query(collection(db, 'registrationSources'), orderBy('externalTeamName')));
+        return snapshot.docs.map(mapRegistrationSourceDoc);
+    }
+
+    const [ownedSourcesSnapshot, delegatedSourcesSnapshot, adminTeamIds] = await Promise.all([
+        getDocs(query(collection(db, 'registrationSources'), where('ownerId', '==', userId))),
+        userEmail
+            ? getDocs(query(collection(db, 'registrationSources'), where('adminEmails', 'array-contains', userEmail)))
+            : Promise.resolve(null),
+        getRegistrationSourceAdminTeamIds(userId, userEmail)
+    ]);
+
+    const [teamSources, organizationSources] = await Promise.all([
+        getScopedRegistrationSourceDocs('teamId', adminTeamIds),
+        getScopedRegistrationSourceDocs('organizationTeamId', adminTeamIds)
+    ]);
+
+    const sourcesById = new Map();
+    [
+        ...ownedSourcesSnapshot.docs,
+        ...(delegatedSourcesSnapshot?.docs || []),
+        ...teamSources,
+        ...organizationSources
+    ].forEach((docSnap) => {
+        sourcesById.set(docSnap.id, mapRegistrationSourceDoc(docSnap));
+    });
+
+    return sortRegistrationSources([...sourcesById.values()]);
 }
 
 const DEFAULT_ADMIN_COLLECTION_PAGE_SIZE = 25;
