@@ -149,6 +149,23 @@ describe('GameDetail route resolution', () => {
     expect(screen.getByTestId('location').textContent).toBe('/schedule/team-bears/game-1?childId=player-7&section=game')
   })
 
+  it('falls back to the resolved schedule route when detail refresh fails', async () => {
+    scheduleServiceMocks.resolveParentGameRoute.mockResolvedValue({
+      teamId: 'team-bears',
+      eventId: 'game-1',
+      childId: 'player-7'
+    })
+    scheduleServiceMocks.loadParentScheduleEventDetail.mockRejectedValue(new Error('offline'))
+
+    renderGameDetail()
+
+    await waitFor(() => {
+      expect(screen.getByText('Live event workflow')).toBeTruthy()
+    })
+
+    expect(screen.getByTestId('location').textContent).toBe('/schedule/team-bears/game-1?childId=player-7&section=game')
+  })
+
   it('shows a recovery state when the game cannot be resolved', async () => {
     scheduleServiceMocks.resolveParentGameRoute.mockResolvedValue(null)
 

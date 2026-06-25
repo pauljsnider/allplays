@@ -46,15 +46,6 @@ export function GameDetail({ auth }: { auth: AuthState }) {
           return
         }
 
-        const detail = await loadParentScheduleEventDetail(auth.user, {
-          teamId: targetRoute.teamId,
-          eventId: targetRoute.eventId,
-          expandStaffPlayers: false
-        })
-
-        if (cancelled) return
-
-        const matchedEvent = detail.events.find((event) => event.childId === targetRoute.childId) || detail.events[0]
         const fallbackParams = new URLSearchParams()
         if (targetRoute.childId) {
           fallbackParams.set('childId', targetRoute.childId)
@@ -63,11 +54,30 @@ export function GameDetail({ auth }: { auth: AuthState }) {
         const fallbackQuery = fallbackParams.toString()
         const fallbackTarget = `/schedule/${encodeURIComponent(targetRoute.teamId)}/${encodeURIComponent(targetRoute.eventId)}${fallbackQuery ? `?${fallbackQuery}` : ''}`
 
-        setState({
-          loading: false,
-          redirectTarget: matchedEvent ? getGenericEventDetailPath(matchedEvent, true) : fallbackTarget,
-          error: null
-        })
+        try {
+          const detail = await loadParentScheduleEventDetail(auth.user, {
+            teamId: targetRoute.teamId,
+            eventId: targetRoute.eventId,
+            expandStaffPlayers: false
+          })
+
+          if (cancelled) return
+
+          const matchedEvent = detail.events.find((event) => event.childId === targetRoute.childId) || detail.events[0]
+
+          setState({
+            loading: false,
+            redirectTarget: matchedEvent ? getGenericEventDetailPath(matchedEvent, true) : fallbackTarget,
+            error: null
+          })
+        } catch {
+          if (cancelled) return
+          setState({
+            loading: false,
+            redirectTarget: fallbackTarget,
+            error: null
+          })
+        }
       } catch (error: any) {
         if (cancelled) return
         setState({
