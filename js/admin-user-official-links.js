@@ -10,6 +10,53 @@ export function normalizeOfficialLinkPhone(phone) {
     return digits;
 }
 
+export function collectOfficialLookupTargets(users = []) {
+    const emails = new Set();
+    const phones = new Set();
+
+    users.forEach((user) => {
+        const email = normalizeOfficialLinkEmail(user?.email);
+        const phone = normalizeOfficialLinkPhone(user?.phone);
+        if (email) emails.add(email);
+        if (phone) phones.add(phone);
+    });
+
+    return {
+        emails: Array.from(emails),
+        phones: Array.from(phones)
+    };
+}
+
+export function collectOfficialLookupQueryTargets(users = []) {
+    const emails = new Set();
+    const phones = new Set();
+
+    users.forEach((user) => {
+        const rawEmail = String(user?.email || '').trim();
+        const normalizedEmail = normalizeOfficialLinkEmail(user?.email);
+        const rawPhone = String(user?.phone || '').trim();
+        const normalizedPhone = normalizeOfficialLinkPhone(user?.phone);
+
+        if (rawEmail) emails.add(rawEmail);
+        if (normalizedEmail) emails.add(normalizedEmail);
+        if (rawPhone) phones.add(rawPhone);
+        if (normalizedPhone) phones.add(normalizedPhone);
+    });
+
+    return {
+        emails: Array.from(emails),
+        phones: Array.from(phones)
+    };
+}
+
+export function buildOfficialLookupCacheKey(users = []) {
+    return users.map((user) => [
+        String(user?.id || '').trim(),
+        normalizeOfficialLinkEmail(user?.email),
+        normalizeOfficialLinkPhone(user?.phone)
+    ].join(':')).join('|');
+}
+
 function getOfficialLookupKeys(official = {}) {
     return [
         normalizeOfficialLinkEmail(official.email),

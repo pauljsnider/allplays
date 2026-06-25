@@ -23,7 +23,9 @@ describe('admin dashboard statistics scope', () => {
         expect(adminJs).toContain('getUsersPage: getAdminUsersPage');
         expect(adminJs).toContain('await Promise.all([');
         expect(adminJs).toContain('loadDashboardData()');
-        expect(adminJs).toContain('await ensureAllOfficialsLoaded();');
+        expect(adminJs).toContain('ensureCurrentTeamGamesLoaded()');
+        expect(adminJs).toContain('await ensureCurrentTeamOfficialsLoaded();');
+        expect(adminJs).toContain('await ensureCurrentUsersOfficialsLoaded();');
         expect(adminHtml).toContain('id="teams-pagination-status"');
         expect(adminHtml).toContain('id="users-pagination-status"');
     });

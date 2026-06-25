@@ -1,7 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
 import {
+    buildOfficialLookupCacheKey,
     buildOfficialUserLookup,
+    collectOfficialLookupQueryTargets,
+    collectOfficialLookupTargets,
     formatOfficialUserSummary,
     getOfficialUserSummary,
     matchesOfficialUserSearch
@@ -69,9 +72,28 @@ describe('admin users official links', () => {
         expect(formatOfficialUserSummary(summary)).toBe('1 team: Falcons');
     });
 
-    it('wires the admin users tab to show and filter official-linked users across every team', () => {
+    it('collects bounded lookup targets from only the visible users slice', () => {
+        const users = [
+            { id: 'user-1', email: ' Ref@One.com ', phone: '+1 (555) 123-4567' },
+            { id: 'user-2', email: 'ref@one.com', phone: '5551234567' },
+            { id: 'user-3', email: 'other@example.com', phone: '' }
+        ];
+
+        expect(collectOfficialLookupTargets(users)).toEqual({
+            emails: ['ref@one.com', 'other@example.com'],
+            phones: ['5551234567']
+        });
+        expect(collectOfficialLookupQueryTargets(users)).toEqual({
+            emails: ['Ref@One.com', 'ref@one.com', 'other@example.com'],
+            phones: ['+1 (555) 123-4567', '5551234567']
+        });
+        expect(buildOfficialLookupCacheKey(users)).toBe('user-1:ref@one.com:5551234567|user-2:ref@one.com:5551234567|user-3:other@example.com:');
+    });
+
+    it('wires the admin users tab to show and filter official-linked users for the visible page', () => {
         const adminHtml = readSource('admin.html');
         const adminJs = readSource('js/admin.js');
+        const dbJs = readSource('js/db.js');
 
         expect(adminHtml).toContain('id="filter-users-official-status"');
         expect(adminHtml).toContain('Officials only');
@@ -79,7 +101,12 @@ describe('admin users official links', () => {
         expect(adminHtml).toContain('Official</th>');
 
         expect(adminJs).toContain('getOfficials');
-        expect(adminJs).toContain("loadOfficialUserLinks(getDashboardTeams(), { scope: 'all' })");
+        expect(adminJs).toContain('getOfficialsForUsers');
+        expect(adminJs).toContain('loadVisibleOfficialUserLinks(getCurrentUsersPage())');
+        expect(adminJs).not.toContain("loadOfficialUserLinks(getDashboardTeams(), { scope: 'all' })");
+        expect(dbJs).toContain("collectionGroup(db, 'officials')");
+        expect(dbJs).toContain('collectOfficialLookupQueryTargets');
+        expect(dbJs).toContain("where('email', 'in', chunk)");
         expect(adminJs).toContain('buildOfficialUserLookup');
         expect(adminJs).toContain('formatOfficialUserSummary');
         expect(adminJs).toContain('matchesOfficialUserSearch');
@@ -87,12 +114,13 @@ describe('admin users official links', () => {
         expect(adminJs).toContain('inline-flex items-center rounded-full bg-emerald-100');
     });
 
-    it('loads team-page summaries separately from the full users-tab official lookup', () => {
+    it('refreshes team-page and users-page official loaders separately', () => {
         const adminJs = readSource('js/admin.js');
 
         expect(adminJs).toContain("async function ensureCurrentTeamOfficialsLoaded() {");
         expect(adminJs).toContain("await loadOfficialUserLinks(getCurrentTeamPage(), { scope: 'page' });");
-        expect(adminJs).toContain("async function ensureAllOfficialsLoaded() {");
-        expect(adminJs).toContain("await loadOfficialUserLinks(getDashboardTeams(), { scope: 'all' });");
+        expect(adminJs).toContain("async function ensureCurrentUsersOfficialsLoaded() {");
+        expect(adminJs).toContain("await loadVisibleOfficialUserLinks(getCurrentUsersPage());");
+        expect(adminJs).toContain('await ensureCurrentUsersOfficialsLoaded();');
     });
 });
