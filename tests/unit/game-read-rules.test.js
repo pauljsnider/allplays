@@ -2,7 +2,9 @@ import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
 
 const rules = readFileSync(new URL('../../firestore.rules', import.meta.url), 'utf8');
-const collectionGroupGamesMatch = rules.match(/match \/{path=\*\*}\/games\/\{gameId} \{[\s\S]*?\n\s*}/);
+const collectionGroupGamesHelperMatch = rules.match(/function canReadCollectionGroupGameDocument\(teamPath, data\) \{[\s\S]*?\n\s*}/);
+const collectionGroupGamesHelper = collectionGroupGamesHelperMatch?.[0] || '';
+const collectionGroupGamesMatch = rules.match(/match \/\{path=\*\*}\/games\/\{gameId} \{[\s\S]*?\n\s*}/);
 const collectionGroupGamesRules = collectionGroupGamesMatch?.[0] || '';
 const teamGamesStart = rules.indexOf('match /games/{gameId} {');
 const teamGamesEnd = rules.indexOf('// Live Events subcollection - for real-time game broadcasting', teamGamesStart);
@@ -41,7 +43,15 @@ describe('game Firestore read rules', () => {
         expect(rules).toContain("isPublicGameReadTeam(teamData) || isShareableGameDocument(data)");
         expect(rules).toContain("data.get('shareable', false) == true");
         expect(rules).toContain("data.get('publicCalendar', false) == true");
-        expect(rules).toContain('canReadManagedTeamDocument(get(/databases/$(database)/documents/$(teamPath)).data)');
+        expect(collectionGroupGamesHelper).toContain('let parentTeamPath = /databases/$(database)/documents/$(teamPath);');
+        expect(collectionGroupGamesHelper).toContain('let parentTeam = get(parentTeamPath).data;');
+        expect(collectionGroupGamesHelper).toContain('return parentTeam != null &&');
+        expect(collectionGroupGamesHelper).toContain('canReadManagedTeamDocument(parentTeam)');
+        expect(collectionGroupGamesHelper).toContain('canReadPublicGameDocument(parentTeam, data)');
+        expect(collectionGroupGamesHelper).not.toContain('canReadManagedTeamDocument(get(/databases/$(database)/documents/$(teamPath)).data)');
+        expect(collectionGroupGamesHelper).not.toContain('canReadPublicGameDocument(get(/databases/$(database)/documents/$(teamPath)).data, data)');
+        expect(collectionGroupGamesHelper.match(/get\(parentTeamPath\)/g) || []).toHaveLength(1);
+        expect(collectionGroupGamesHelper).not.toContain('exists(parentTeamPath)');
         expect(rules).not.toContain('canReadTeamDocument(get(/databases/$(database)/documents/$(teamPath)).data)');
     });
 

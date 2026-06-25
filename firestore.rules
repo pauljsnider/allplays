@@ -549,10 +549,12 @@ service cloud.firestore {
     }
 
     function canReadCollectionGroupGameDocument(teamPath, data) {
-      return exists(/databases/$(database)/documents/$(teamPath)) &&
+      let parentTeamPath = /databases/$(database)/documents/$(teamPath);
+      let parentTeam = get(parentTeamPath).data;
+      return parentTeam != null &&
              (
-               canReadManagedTeamDocument(get(/databases/$(database)/documents/$(teamPath)).data) ||
-               canReadPublicGameDocument(get(/databases/$(database)/documents/$(teamPath)).data, data)
+               canReadManagedTeamDocument(parentTeam) ||
+               canReadPublicGameDocument(parentTeam, data)
              );
     }
 
