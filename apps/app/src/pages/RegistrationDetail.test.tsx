@@ -168,6 +168,34 @@ describe('RegistrationDetail payment notice', () => {
     expect(openPublicUrlMock).toHaveBeenCalledWith('https://stripe.example/checkout');
   });
 
+  it('shows the first installment due now plus the remaining schedule before checkout', async () => {
+    parentToolsServiceMocks.loadPublicRegistrationDetail.mockResolvedValue(buildDetail({
+      onlineCheckout: true,
+      paymentNotice: 'Pay online.',
+      paymentPlans: [{ id: 'pay_full', title: 'Pay in full' }, { id: 'installments', title: 'Monthly installments' }],
+      form: {
+        installmentPlan: {
+          enabled: true,
+          title: 'Monthly installments',
+          installmentCount: 3,
+          firstDueDate: '2026-07-01',
+          intervalDays: 30
+        }
+      }
+    }));
+
+    renderPublicRegistration();
+
+    const paymentPlan = await screen.findByLabelText('Payment plan');
+    fireEvent.change(paymentPlan, { target: { value: 'installments' } });
+
+    expect(await screen.findByLabelText('Installment payment summary')).toBeTruthy();
+    expect(screen.getByText('Amount due now')).toBeTruthy();
+    expect(screen.getAllByText('$41.66')).toHaveLength(2);
+    expect(screen.getByText('Installment 2 · Due Jul 31, 2026')).toBeTruthy();
+    expect(screen.getByText('Installment 3 · Due Aug 30, 2026')).toBeTruthy();
+  });
+
   it('replaces the form with a success confirmation after Stripe success returns', async () => {
     parentToolsServiceMocks.loadPublicRegistrationDetail.mockResolvedValue(buildDetail({
       onlineCheckout: true,
@@ -180,5 +208,32 @@ describe('RegistrationDetail payment notice', () => {
     expect(screen.getByText('Your registration payment was received. The program organizer will follow up with next steps.')).toBeTruthy();
     expect(screen.queryByRole('button', { name: 'Retry payment with Stripe' })).toBeNull();
     expect(screen.queryByRole('button', { name: 'Pay registration with Stripe' })).toBeNull();
+  });
+
+  it('shows remaining installments after a successful installment payment', async () => {
+    parentToolsServiceMocks.loadPublicRegistrationDetail.mockResolvedValue(buildDetail({
+      onlineCheckout: true,
+      paymentNotice: 'Pay online.',
+      paymentPlans: [{ id: 'pay_full', title: 'Pay in full' }, { id: 'installments', title: 'Monthly installments' }],
+      form: {
+        installmentPlan: {
+          enabled: true,
+          title: 'Monthly installments',
+          installmentCount: 3,
+          firstDueDate: '2026-07-01',
+          intervalDays: 30
+        }
+      }
+    }));
+
+    renderPublicRegistration('/registration?teamId=team-1&formId=form-1&publicCheckoutCapability=cap-1&retryPayment=1&paymentPlanId=installments&status=success');
+
+    expect(await screen.findByRole('heading', { name: 'Payment successful' })).toBeTruthy();
+    expect(screen.getByText('Your installment payment was received. Here is what remains on your payment schedule.')).toBeTruthy();
+    expect(screen.getByLabelText('Remaining installment schedule')).toBeTruthy();
+    expect(screen.getByText('Remaining balance')).toBeTruthy();
+    expect(screen.getByText('$83.34')).toBeTruthy();
+    expect(screen.getByText('Installment 2 · Due Jul 31, 2026')).toBeTruthy();
+    expect(screen.getByText('Installment 3 · Due Aug 30, 2026')).toBeTruthy();
   });
 });

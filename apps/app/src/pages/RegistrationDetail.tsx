@@ -51,6 +51,7 @@ function RegistrationDetailPage({ auth, publicAccess = false, staffReview = fals
   const returnCheckoutAttemptToken = searchParams.get('checkoutAttemptToken') || '';
   const returnPublicCheckoutCapability = searchParams.get('publicCheckoutCapability') || '';
   const retryPaymentRequested = searchParams.get('retryPayment') === '1' && Boolean(returnPublicCheckoutCapability || returnRegistrationId);
+  const successfulPaymentPlanId = normalizePaymentPlanId(searchParams.get('paymentPlanId'));
   const returnStatus = normalizeRegistrationReturnStatus(searchParams.get('status'));
   const isPaymentSuccessReturn = returnStatus === 'success' && Boolean(returnPublicCheckoutCapability || returnRegistrationId);
   const isRetryPaymentMode = retryPaymentRequested && !isPaymentSuccessReturn;
@@ -145,6 +146,16 @@ function RegistrationDetailPage({ auth, publicAccess = false, staffReview = fals
   const effectiveQuantity = useMemo(() => hasQuantityDiscount ? quantity : 1, [hasQuantityDiscount, quantity]);
   const displayFeeSnapshot = useMemo(() => form ? calculateRegistrationFeeSnapshot(form, { quantity: effectiveQuantity, now: new Date() }) : null, [form, effectiveQuantity]);
   const displayFeeLines = useMemo<FeeSummaryLine[]>(() => displayFeeSnapshot ? formatFeeSnapshotLines(displayFeeSnapshot) : [], [displayFeeSnapshot]);
+  const selectedPaymentPlanSummary = useMemo(() => {
+    if (!form || !displayFeeSnapshot) return null;
+    return buildRegistrationPaymentPlanSummary(form, displayFeeSnapshot, selectedPaymentPlanId, 0);
+  }, [displayFeeSnapshot, form, selectedPaymentPlanId]);
+  const successfulPaymentPlanSummary = useMemo(() => {
+    if (!form || !displayFeeSnapshot || !isPaymentSuccessReturn) return null;
+    const paymentPlanId = successfulPaymentPlanId || selectedPaymentPlanId;
+    const paidInstallmentCount = paymentPlanId === 'installments' ? 1 : 0;
+    return buildRegistrationPaymentPlanSummary(form, displayFeeSnapshot, paymentPlanId, paidInstallmentCount);
+  }, [displayFeeSnapshot, form, isPaymentSuccessReturn, selectedPaymentPlanId, successfulPaymentPlanId]);
   const selectedReview = useMemo(() => {
     const allReviews = [...(queue?.reviews || []), ...(queue?.waitlistedReviews || [])];
     return allReviews.find((review) => review.id === selectedReviewId) || allReviews[0] || null;
@@ -580,9 +591,25 @@ function RegistrationDetailPage({ auth, publicAccess = false, staffReview = fals
         <section className="app-card p-5">
           <div className="flex items-start gap-3 rounded-2xl border border-emerald-200 bg-emerald-50 p-4 text-emerald-900">
             <CheckCircle2 className="mt-0.5 h-5 w-5 flex-none" aria-hidden="true" />
-            <div>
+            <div className="w-full">
               <h2 className="text-base font-black">Payment successful</h2>
-              <p className="mt-1 text-sm font-semibold text-emerald-800">Your registration payment was received. The program organizer will follow up with next steps.</p>
+              <p className="mt-1 text-sm font-semibold text-emerald-800">{successfulPaymentPlanSummary?.isInstallments ? 'Your installment payment was received. Here is what remains on your payment schedule.' : 'Your registration payment was received. The program organizer will follow up with next steps.'}</p>
+              {successfulPaymentPlanSummary?.isInstallments ? (
+                <div className="mt-3 rounded-xl border border-emerald-200 bg-white/70 p-3 text-sm text-emerald-950" aria-label="Remaining installment schedule">
+                  <div className="flex items-center justify-between gap-3 text-sm font-black">
+                    <span>Remaining balance</span>
+                    <span>{formatMoney(successfulPaymentPlanSummary.remainingBalanceCents, successfulPaymentPlanSummary.currency)}</span>
+                  </div>
+                  <div className="mt-2 grid gap-2">
+                    {successfulPaymentPlanSummary.remainingSchedule.length ? successfulPaymentPlanSummary.remainingSchedule.map((installment, index) => (
+                      <div key={`${installment.label}-${index}`} className="flex items-center justify-between gap-3 text-xs font-semibold text-emerald-900">
+                        <span>{installment.label}{installment.dueDate ? ` · Due ${formatDueDateLabel(installment.dueDate)}` : ''}</span>
+                        <span>{formatMoney(installment.amountCents, successfulPaymentPlanSummary.currency)}</span>
+                      </div>
+                    )) : <div className="text-xs font-semibold text-emerald-900">No remaining installments.</div>}
+                  </div>
+                </div>
+              ) : null}
             </div>
           </div>
         </section>
@@ -630,6 +657,30 @@ function RegistrationDetailPage({ auth, publicAccess = false, staffReview = fals
             <div className="rounded-xl border border-sky-200 bg-sky-50 p-3 text-sm text-sky-950" aria-label="Registration payment notice">
               <h2 className="text-sm font-black text-sky-950">Payment</h2>
               <p className="mt-1 whitespace-pre-line font-semibold leading-5 text-sky-900">{form.paymentNotice}</p>
+            </div>
+          ) : null}
+
+          {selectedPaymentPlanSummary?.isInstallments ? (
+            <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-950" aria-label="Installment payment summary">
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <h2 className="text-sm font-black">Amount due now</h2>
+                  <p className="mt-1 text-xs font-semibold text-amber-900">Pay the first installment now. The rest of the schedule stays due on the dates below.</p>
+                </div>
+                <div className="text-right">
+                  <div className="text-lg font-black tabular-nums">{formatMoney(selectedPaymentPlanSummary.currentInstallment?.amountCents || 0, selectedPaymentPlanSummary.currency)}</div>
+                  {selectedPaymentPlanSummary.currentInstallment?.dueDate ? <div className="text-xs font-semibold text-amber-900">Due {formatDueDateLabel(selectedPaymentPlanSummary.currentInstallment.dueDate)}</div> : null}
+                </div>
+              </div>
+              <div className="mt-3 grid gap-2">
+                <div className="text-xs font-black uppercase tracking-wide text-amber-700">Remaining schedule</div>
+                {selectedPaymentPlanSummary.remainingSchedule.map((installment, index) => (
+                  <div key={`${installment.label}-${index}`} className="flex items-center justify-between gap-3 text-xs font-semibold text-amber-900">
+                    <span>{installment.label}{installment.dueDate ? ` · Due ${formatDueDateLabel(installment.dueDate)}` : ''}</span>
+                    <span>{formatMoney(installment.amountCents, selectedPaymentPlanSummary.currency)}</span>
+                  </div>
+                ))}
+              </div>
             </div>
           ) : null}
 
@@ -842,6 +893,70 @@ function formatOptionAvailability(option: any, counts: Record<string, any>) {
   if (!capacity) return option.description || 'Registration option available';
   const remaining = Math.max(0, capacity - enrolled);
   return `${remaining} ${remaining === 1 ? 'spot' : 'spots'} left`;
+}
+
+function normalizePaymentPlanId(value: string | null) {
+  return String(value || '').trim() === 'installments' ? 'installments' : 'pay_full';
+}
+
+function buildRegistrationPaymentPlanSummary(form: ParentRegistrationCard, feeSnapshot: Record<string, any>, paymentPlanId: string, paidInstallmentCount = 0) {
+  const totalBalanceDueCents = Math.max(0, Math.round(Number(feeSnapshot?.finalAmountDueCents ?? form.feeAmountCents ?? 0) || 0));
+  const currency = String(feeSnapshot?.currency || form.currency || 'USD');
+  const useInstallments = paymentPlanId === 'installments' && form.installmentPlan?.enabled === true;
+  if (!useInstallments) {
+    return {
+      isInstallments: false,
+      currency,
+      totalBalanceDueCents,
+      currentInstallment: null,
+      remainingSchedule: [],
+      remainingBalanceCents: 0
+    };
+  }
+
+  const count = Math.max(2, Math.min(12, Math.floor(Number(form.installmentPlan?.installmentCount) || 2)));
+  const baseAmount = Math.floor(totalBalanceDueCents / count);
+  const remainder = totalBalanceDueCents - (baseAmount * count);
+  const firstDueDate = parseLocalDate(form.installmentPlan?.firstDueDate);
+  const intervalDays = Math.max(1, Math.floor(Number(form.installmentPlan?.intervalDays) || 30));
+  const schedule = Array.from({ length: count }, (_, index) => {
+    const dueDate = firstDueDate ? addDays(firstDueDate, intervalDays * index) : null;
+    return {
+      label: `Installment ${index + 1}`,
+      dueDate: dueDate ? dueDate.toISOString().slice(0, 10) : String(form.installmentPlan?.firstDueDate || ''),
+      amountCents: baseAmount + (index === count - 1 ? remainder : 0)
+    };
+  });
+  const safePaidInstallmentCount = Math.min(schedule.length, Math.max(0, Math.floor(Number(paidInstallmentCount) || 0)));
+  const currentInstallment = schedule[safePaidInstallmentCount] || null;
+  const remainingSchedule = schedule.slice(safePaidInstallmentCount === 0 ? 1 : safePaidInstallmentCount);
+  const remainingBalanceCents = remainingSchedule.reduce((sum, installment) => sum + Math.max(0, Number(installment.amountCents || 0)), 0);
+  return {
+    isInstallments: true,
+    currency,
+    totalBalanceDueCents,
+    currentInstallment,
+    remainingSchedule,
+    remainingBalanceCents
+  };
+}
+
+function parseLocalDate(value: unknown) {
+  const match = String(value || '').match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!match) return null;
+  return new Date(Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3])));
+}
+
+function addDays(date: Date, days: number) {
+  const next = new Date(date.getTime());
+  next.setUTCDate(next.getUTCDate() + days);
+  return next;
+}
+
+function formatDueDateLabel(value: string) {
+  const date = parseLocalDate(value);
+  if (!date) return value;
+  return new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'UTC' }).format(date);
 }
 
 function formatMoney(cents: number, currency = 'USD') {

@@ -338,6 +338,9 @@ function buildRegistrationCheckoutUrls(appUrl, input) {
   if (input.retryPayment) {
     params.set('retryPayment', '1');
   }
+  if (input.paymentPlanId) {
+    params.set('paymentPlanId', String(input.paymentPlanId));
+  }
   return {
     successUrl: `${baseUrl}/registration.html?${params.toString()}&status=success`,
     cancelUrl: `${baseUrl}/registration.html?${params.toString()}&status=cancelled`
@@ -889,11 +892,66 @@ function computeRegistrationFeeAmountCentsFromForm(form, now = new Date()) {
   return Math.max(0, remainingAmountCents);
 }
 
+function buildRegistrationInstallmentScheduleFromAuthoritativeForm(form, totalBalanceDueCents) {
+  if (form?.installmentPlan?.enabled !== true) return [];
+  return buildPublicRegistrationInstallmentSchedule(totalBalanceDueCents, form.installmentPlan);
+}
+
+function getRegistrationPaymentPlanPaidInstallmentCount(registration = {}) {
+  return Math.max(0, Math.floor(Number(registration.paymentPlan?.paidInstallmentCount || 0) || 0));
+}
+
+function buildRegistrationInstallmentPaymentState(registration = {}, form = null, nextPaidInstallmentCount = getRegistrationPaymentPlanPaidInstallmentCount(registration)) {
+  const authoritativeTotalBalanceDueCents = form
+    ? computeRegistrationFeeAmountCentsFromForm(form)
+    : Math.max(0, Math.round(Number(registration.paymentPlan?.totalBalanceDueCents ?? registration.feeSnapshot?.finalAmountDueCents ?? registration.feeAmountCents ?? 0)));
+  const authoritativeSchedule = form
+    ? buildRegistrationInstallmentScheduleFromAuthoritativeForm(form, authoritativeTotalBalanceDueCents)
+    : Array.isArray(registration.paymentPlan?.schedule)
+      ? registration.paymentPlan.schedule.filter(Boolean)
+      : [];
+  if (!authoritativeSchedule.length) {
+    return {
+      totalBalanceDueCents: authoritativeTotalBalanceDueCents,
+      schedule: authoritativeSchedule,
+      paidInstallmentCount: 0,
+      currentInstallment: null,
+      remainingSchedule: [],
+      remainingBalanceCents: authoritativeTotalBalanceDueCents,
+      nextDueDate: ''
+    };
+  }
+
+  const paidInstallmentCount = Math.min(authoritativeSchedule.length, Math.max(0, Math.floor(Number(nextPaidInstallmentCount) || 0)));
+  const currentInstallment = authoritativeSchedule[paidInstallmentCount] || null;
+  const remainingSchedule = authoritativeSchedule.slice(paidInstallmentCount);
+  const remainingBalanceCents = remainingSchedule.reduce((sum, installment) => {
+    return sum + Math.max(0, Math.round(Number(installment?.amountCents || 0) || 0));
+  }, 0);
+  return {
+    totalBalanceDueCents: authoritativeTotalBalanceDueCents,
+    schedule: authoritativeSchedule,
+    paidInstallmentCount,
+    currentInstallment,
+    remainingSchedule,
+    remainingBalanceCents,
+    nextDueDate: String(remainingSchedule[0]?.dueDate || '')
+  };
+}
+
 function getRegistrationCheckoutAmountCents(registration = {}, form = null) {
+  if (form && registration.paymentPlan?.id === 'installments' && form.installmentPlan?.enabled === true) {
+    const installmentState = buildRegistrationInstallmentPaymentState(registration, form);
+    return Math.max(0, Math.round(Number(installmentState.currentInstallment?.amountCents || 0) || 0));
+  }
   if (form) {
     // Use the server-recomputed amount from the authoritative form document so
-    // a tampered feeSnapshot stored on the registration cannot lower the charge.
+    // a tampered feeSnapshot stored on the stored registration cannot lower the charge.
     return computeRegistrationFeeAmountCentsFromForm(form);
+  }
+  if (registration.paymentPlan?.id === 'installments') {
+    const installmentState = buildRegistrationInstallmentPaymentState(registration, null);
+    return Math.max(0, Math.round(Number(installmentState.currentInstallment?.amountCents || 0) || 0));
   }
   return Math.max(0, Math.round(Number(registration.feeSnapshot?.finalAmountDueCents ?? registration.feeAmountCents ?? 0)));
 }
@@ -2862,6 +2920,9 @@ exports.createStripeRegistrationCheckout = functions.https.onCall(async (data) =
   // This prevents a tampered feeSnapshot on the stored registration from lowering the charge.
   const expectedAmountCents = getRegistrationCheckoutAmountCents(registration, form);
   const amountCents = expectedAmountCents;
+  if (!Number.isFinite(amountCents) || amountCents <= 0) {
+    throw new functions.https.HttpsError('failed-precondition', 'This registration does not have a payment due.');
+  }
   const currency = String(
     form.currency || registration.feeSnapshot?.currency || registration.currency || 'usd'
   ).trim().toLowerCase() || 'usd';
@@ -2884,7 +2945,8 @@ exports.createStripeRegistrationCheckout = functions.https.onCall(async (data) =
   const issuedPublicCheckoutCapability = createRawPublicCheckoutCapability();
   const checkoutUrlInput = {
     ...resolvedInput,
-    publicCheckoutCapability: issuedPublicCheckoutCapability
+    publicCheckoutCapability: issuedPublicCheckoutCapability,
+    paymentPlanId: String(registration.paymentPlan?.id || 'pay_full').trim() || 'pay_full'
   };
   const { successUrl, cancelUrl } = buildRegistrationCheckoutUrls(appUrl, checkoutUrlInput);
   const title = registration.programName || form.programName || form.title || form.name || 'Program registration';
@@ -3021,21 +3083,52 @@ exports.stripeTeamPassWebhook = functions.https.onRequest(async (req, res) => {
           throw new Error('Registration form not found for Stripe webhook.');
         }
 
+        const form = formSnap.data() || {};
+        const registration = registrationSnap.data() || {};
         if (shouldMarkRegistrationPaidFromEvent(event)) {
-          transaction.set(registrationRef, {
-            checkoutStatus: 'complete',
-            paymentStatus: 'paid',
-            paidAt: receivedAt,
-            stripeCheckoutSessionId: session.id || null,
-            stripePaymentIntentId: session.payment_intent || null,
-            stripePaymentStatus: session.payment_status || 'paid',
-            stripeEventId: event.id,
-            updatedAt: receivedAt
-          }, { merge: true });
-          transaction.update(registrationRef, buildRegistrationReminderStopUpdate({ reason: 'paid', nowIso: queuedAtIso }));
+          if (registration.paymentPlan?.id === 'installments' && form.installmentPlan?.enabled === true) {
+            const nextPaidInstallmentCount = getRegistrationPaymentPlanPaidInstallmentCount(registration) + 1;
+            const installmentState = buildRegistrationInstallmentPaymentState(registration, form, nextPaidInstallmentCount);
+            const hasRemainingInstallments = installmentState.remainingBalanceCents > 0 && installmentState.remainingSchedule.length > 0;
+            transaction.set(registrationRef, {
+              checkoutStatus: 'complete',
+              paymentStatus: hasRemainingInstallments ? 'installment_in_progress' : 'paid',
+              paidAt: receivedAt,
+              balanceDueCents: installmentState.remainingBalanceCents,
+              nextPaymentDueDate: installmentState.nextDueDate || null,
+              stripeCheckoutSessionId: session.id || null,
+              stripePaymentIntentId: session.payment_intent || null,
+              stripePaymentStatus: session.payment_status || 'paid',
+              stripeEventId: event.id,
+              paymentPlan: {
+                ...registration.paymentPlan,
+                totalBalanceDueCents: installmentState.totalBalanceDueCents,
+                schedule: installmentState.schedule,
+                paidInstallmentCount: installmentState.paidInstallmentCount,
+                remainingBalanceCents: installmentState.remainingBalanceCents,
+                nextDueDate: installmentState.nextDueDate || null,
+                lastPaidInstallmentAmountCents: Math.max(0, Math.round(Number(session.amount_total || 0) || 0)),
+                lastPaidInstallmentAt: receivedAt
+              },
+              updatedAt: receivedAt
+            }, { merge: true });
+            transaction.update(registrationRef, buildRegistrationReminderStopUpdate({ reason: hasRemainingInstallments ? 'installment_in_progress' : 'paid', nowIso: queuedAtIso }));
+          } else {
+            transaction.set(registrationRef, {
+              checkoutStatus: 'complete',
+              paymentStatus: 'paid',
+              paidAt: receivedAt,
+              balanceDueCents: 0,
+              nextPaymentDueDate: null,
+              stripeCheckoutSessionId: session.id || null,
+              stripePaymentIntentId: session.payment_intent || null,
+              stripePaymentStatus: session.payment_status || 'paid',
+              stripeEventId: event.id,
+              updatedAt: receivedAt
+            }, { merge: true });
+            transaction.update(registrationRef, buildRegistrationReminderStopUpdate({ reason: 'paid', nowIso: queuedAtIso }));
+          }
         } else {
-          const form = formSnap.data() || {};
-          const registration = registrationSnap.data() || {};
           if (!registrationCheckoutAuthorityMatches(registration, registrationInput)) {
             transaction.set(eventRef, {
               provider: 'stripe',

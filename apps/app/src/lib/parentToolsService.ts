@@ -1043,11 +1043,14 @@ function toTeamRegistrationReviewCard(review: any): TeamRegistrationReviewCard {
     || review?.payment?.status
   );
   const paymentAmount = Number(
-    feeSnapshot.finalAmountDueCents
+    review?.balanceDueCents
+    ?? review?.paymentPlan?.remainingBalanceCents
+    ?? feeSnapshot.finalAmountDueCents
     ?? feeSnapshot.amountDueCents
     ?? feeSnapshot.feeAmountCents
     ?? review?.feeAmountCents
   );
+  const paymentStateLabel = paymentState.replace(/_/g, ' ');
 
   return {
     ...review,
@@ -1062,7 +1065,7 @@ function toTeamRegistrationReviewCard(review: any): TeamRegistrationReviewCard {
     submittedAt: review?.reviewSummary?.submittedAt || review?.submittedAt || review?.createdAt || null,
     selectedOptionLabel: compactString(selectedOption.title || selectedOption.label || review?.selectedOptionLabel || review?.selectedOptionId),
     paymentLabel: paymentState
-      ? `${paymentState}${Number.isFinite(paymentAmount) ? ` · ${formatCurrency(paymentAmount, feeSnapshot.currency || review?.currency || 'USD')}` : ''}`
+      ? `${paymentStateLabel}${Number.isFinite(paymentAmount) ? ` · ${formatCurrency(paymentAmount, feeSnapshot.currency || review?.currency || 'USD')}` : ''}`
       : (Number.isFinite(paymentAmount) ? formatCurrency(paymentAmount, feeSnapshot.currency || review?.currency || 'USD') : 'Not recorded'),
     waiverAccepted: Boolean(
       review?.waiverAccepted
