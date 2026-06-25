@@ -1540,26 +1540,36 @@ export async function loadChatRecipientOptions(teamId: string): Promise<ChatReci
       if (!parentKey) return;
       const parentId = getRecipientOptionId(parent.userId ? 'user' : 'email', parentKey);
       const profile = parentProfiles.get(parentId) || {};
-    options.push({
-      id: parentId,
-      name: getChatMemberDisplayName({
-        name: parent.name,
+      options.push({
+        id: parentId,
+        name: getChatMemberDisplayName({
+          name: parent.name,
           fullName: parent.fullName,
           displayName: parent.displayName,
           profileName: profile.name,
           profileFullName: profile.fullName,
-        profileDisplayName: profile.displayName,
-        email: parent.email || profile.email
-      }, 'Guardian'),
-      detail: player.name ? `Guardian for ${player.name}` : 'Guardian',
-      email: compactString(parent.email || profile.email).toLowerCase() || undefined
+          profileDisplayName: profile.displayName,
+          email: parent.email || profile.email
+        }, 'Guardian'),
+        detail: player.name ? `Guardian for ${player.name}` : 'Guardian',
+        email: compactString(parent.email || profile.email).toLowerCase() || undefined
+      });
     });
-  });
   });
 
   const byId = new Map<string, ChatRecipientOption>();
   options.forEach((option) => byId.set(option.id, option));
   return [...byId.values()].sort((a, b) => `${a.name} ${a.detail || ''}`.localeCompare(`${b.name} ${b.detail || ''}`));
+}
+
+function needsChatRecipientProfile(parent: Record<string, any> = {}) {
+  const label = getChatMemberDisplayName({
+    name: parent.name,
+    fullName: parent.fullName,
+    displayName: parent.displayName,
+    email: parent.email
+  }, '');
+  return !label || label === compactString(parent.email);
 }
 
 async function loadChatRecipientProfiles(players: any): Promise<Map<string, Record<string, any>>> {
@@ -1572,10 +1582,14 @@ async function loadChatRecipientProfiles(players: any): Promise<Map<string, Reco
       : parent?.email
         ? getRecipientOptionId('email', String(parent.email).trim().toLowerCase())
         : '';
-    if (key && !uniqueParents.has(key)) {
+    if (key && needsChatRecipientProfile(parent) && !uniqueParents.has(key)) {
       uniqueParents.set(key, parent);
     }
   });
+
+  if (!uniqueParents.size) {
+    return new Map();
+  }
 
   const entries = await Promise.all([...uniqueParents.entries()].map(async ([recipientId, parent]) => {
     const userId = compactString(parent?.userId);

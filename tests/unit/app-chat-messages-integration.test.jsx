@@ -1418,6 +1418,22 @@ describe('React app messages integration', () => {
         expect(chatMocks.loadChatRecipientOptions).toHaveBeenCalledTimes(1);
     });
 
+    it('reuses the mention recipient cache when opening selected members after suggestions load', async () => {
+        const { container } = await renderMessages('/messages/team-1');
+        const composer = container.querySelector('.chat-composer-textarea');
+
+        await setFieldValue(composer, 'Can @co');
+
+        expect(chatMocks.loadChatRecipientOptions).toHaveBeenCalledTimes(1);
+        expect(container.textContent).toContain('@Coach Jamie');
+
+        await click(container, 'Audience: Full team');
+        await click(container, 'Selected members');
+
+        expect(chatMocks.loadChatRecipientOptions).toHaveBeenCalledTimes(1);
+        expect(container.textContent).toContain('Coach Jamie');
+    });
+
     it('ignores stale recipient option loads after switching teams', async () => {
         layoutMocks.isDesktopWeb = true;
         const deferredRecipients = createDeferred();
