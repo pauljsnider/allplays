@@ -1192,6 +1192,7 @@ function saveHistory(action) {
     bench: [...state.bench],
     stats: JSON.parse(JSON.stringify(state.stats)),
     log: [...state.log],
+    subs: [...state.subs],
     opp: JSON.parse(JSON.stringify(state.opp)),
     scoreLogIsComplete: state.scoreLogIsComplete
   };
@@ -1216,6 +1217,7 @@ function undo() {
   state.bench = prev.bench;
   state.stats = prev.stats;
   state.log = prev.log;
+  state.subs = Array.isArray(prev.subs) ? prev.subs : [];
   state.opp = prev.opp;
   state.scoreLogIsComplete = prev.scoreLogIsComplete !== false;
   renderAll();

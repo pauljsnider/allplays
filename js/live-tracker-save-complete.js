@@ -238,6 +238,8 @@ export async function runSaveAndCompleteWorkflow({
     statTrackerConfig: currentConfig || {},
     roster,
     statsByPlayerId: state.stats,
+    activePlayerIds: state.onCourt,
+    substitutions: state.subs,
     opponentEntries: state.opp,
     currentUserUid: currentUser?.uid,
     buildEmailBody: (finalHome, finalAway, recapSummary, logEntries) => generateEmailBody(finalHome, finalAway, recapSummary, logEntries)

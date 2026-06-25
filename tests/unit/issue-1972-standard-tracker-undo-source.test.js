@@ -15,6 +15,8 @@ describe('issue 1972 standard tracker undo source contract', () => {
         expect(liveTrackerSource).toContain('const prev = state.history.pop();');
         expect(liveTrackerSource).toContain('state.home = prev.home;');
         expect(liveTrackerSource).toContain('state.away = prev.away;');
+        expect(liveTrackerSource).toContain('subs: [...state.subs],');
+        expect(liveTrackerSource).toContain('state.subs = Array.isArray(prev.subs) ? prev.subs : [];');
         expect(liveTrackerSource).toContain('state.scoreLogIsComplete = prev.scoreLogIsComplete !== false;');
     });
 

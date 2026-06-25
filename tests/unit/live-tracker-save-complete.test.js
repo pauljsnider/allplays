@@ -194,6 +194,35 @@ describe('live tracker save-and-complete workflow', () => {
     ]);
   });
 
+  it('preserves lineup-only zero-stat appearances in finish writes', async () => {
+    const harness = buildHarness();
+    harness.context.state.stats = {
+      'p-zero': { pts: 0, ast: 0, fouls: 0, time: 0 }
+    };
+    harness.context.state.onCourt = ['p-zero'];
+    harness.context.state.subs = [];
+    harness.context.roster = [
+      { id: 'p-zero', name: 'Zero Stat', num: '12' }
+    ];
+    harness.context.currentConfig = { columns: ['PTS', 'AST'] };
+
+    await runSaveAndCompleteWorkflow(harness.context);
+
+    const zeroStatWrite = harness.setCalls.find(({ ref }) => ref.path === 'teams/team-1/games/game-9/aggregatedStats/p-zero');
+    expect(zeroStatWrite).toEqual({
+      ref: { kind: 'doc', path: 'teams/team-1/games/game-9/aggregatedStats/p-zero' },
+      data: {
+        playerName: 'Zero Stat',
+        playerNumber: '12',
+        timeMs: 0,
+        participated: true,
+        participationStatus: 'appeared',
+        participationSource: 'live-tracker-finish',
+        stats: { pts: 0, ast: 0, fouls: 0 }
+      }
+    });
+  });
+
   it('accepts only one in-flight finish submission and keeps the button disabled until commit settles', async () => {
     let resolveCommit;
     const commitControl = {};
