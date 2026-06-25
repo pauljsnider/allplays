@@ -21,6 +21,7 @@ import {
   getCalendarScheduleEntries,
   getGenericEventDetailPath,
   getParentScheduleTeamOptions,
+  getScheduleEventDetailPath,
   getPracticePacketRows,
   getScheduleTitle,
   getScheduleTournamentInfo,
@@ -2453,7 +2454,8 @@ function ScheduleEventCard({ event, preferGameHubForStaff }: {
 }) {
   const rsvp = normalizeRsvpResponse(event.myRsvp);
   const eventTitle = getScheduleTitle(event);
-  const detailPath = getGenericEventDetailPath(event, preferGameHubForStaff);
+  const defaultDetailPath = getScheduleEventDetailPath(event);
+  const detailPath = getGenericEventDetailPath(event, preferGameHubForStaff) || defaultDetailPath;
   const isRsvpNeeded = rsvp === 'not_responded' && event.isDbGame && !event.isCancelled;
   const hasPracticePacket = event.type === 'practice' && Boolean(event.practiceHomePacketSummary);
   const actionPills = getEventCardActionPills(event, rsvp);
