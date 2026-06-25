@@ -775,6 +775,30 @@ describe('React app parent tools service', () => {
         expect(dbMocks.rejectTeamRegistration).toHaveBeenCalledWith('team-coach', 'form-review', 'reg-1', 'Not eligible');
     });
 
+    it('surfaces installment-in-progress review labels from stored payment state', async () => {
+        dbMocks.listTeamRegistrationReviews.mockResolvedValue([
+            {
+                id: 'reg-installment-1',
+                status: 'pending',
+                participant: { name: 'Riley Runner' },
+                guardian: { email: 'parent@example.com', name: 'Pat Parent' },
+                selectedOption: { title: 'Travel' },
+                feeSnapshot: { finalAmountDueCents: 15000, currency: 'USD' },
+                paymentStatus: 'installment_in_progress',
+                balanceDueCents: 10000,
+                paymentPlan: { remainingBalanceCents: 10000 },
+                waiverAccepted: true
+            }
+        ]);
+        dbMocks.getPlayers.mockResolvedValue([]);
+
+        const queue = await loadTeamRegistrationQueue(user, 'team-coach', 'form-review');
+
+        expect(queue.reviews[0]).toMatchObject({
+            paymentLabel: 'installment in progress · $100.00'
+        });
+    });
+
     it('loads first page of registration reviews using a bounded query', async () => {
         const mockReviews = [
             {
