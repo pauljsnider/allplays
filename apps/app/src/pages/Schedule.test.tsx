@@ -135,6 +135,32 @@ function buildStaffScheduleResult() {
   };
 }
 
+function buildMultiTeamStaffScheduleResult() {
+  return {
+    children: [
+      { playerId: 'player-1', playerName: 'Pat', teamId: 'team-1', teamName: 'Bears' },
+      { playerId: 'player-2', playerName: 'Sam', teamId: 'team-2', teamName: 'Wolves' }
+    ],
+    events: [
+      buildScheduleEvent(1, {
+        isTeamStaff: true
+      }),
+      buildScheduleEvent(2, {
+        eventKey: 'team-2::event-2::player-2::2100-06-02T18:00:00.000Z::practice',
+        id: 'event-2',
+        teamId: 'team-2',
+        teamName: 'Wolves',
+        type: 'practice',
+        childId: 'player-2',
+        childName: 'Sam',
+        isDbGame: false,
+        isTeamStaff: true,
+        title: 'Practice'
+      })
+    ]
+  };
+}
+
 function resolveAppSourcePath(relativePath: string) {
   const cwd = process.cwd();
   const appRoot = cwd.endsWith('/apps/app') || cwd.endsWith('\\apps\\app')
@@ -396,8 +422,10 @@ describe('Schedule', () => {
 
     await screen.findByText('Parent queue');
 
-    expect(container.querySelector('.schedule-action-queue a[href="/schedule/team-1/event-1?childId=player-1&section=assignments"]')).toBeTruthy();
-    expect(container.querySelector('.schedule-action-queue a[href="/schedule/team-1/event-2?childId=player-1&section=rideshare"]')).toBeTruthy();
+    const queueLinks = Array.from(container.querySelectorAll('.schedule-action-queue a')).map((link) => link.getAttribute('href'));
+
+    expect(queueLinks).toContain('/schedule/team-1/event-1?childId=player-1&section=assignments');
+    expect(queueLinks).toContain('/schedule/team-1/event-2?childId=player-1&section=rideshare');
   });
 
   it('shows the remaining event count when only one more event is hidden', async () => {
@@ -726,6 +754,51 @@ describe('Schedule', () => {
       expect(screen.getAllByRole('option', { name: 'Varsity Tracker' }).length).toBeGreaterThan(0);
     });
     expect(scheduleServiceMocks.loadScheduleStatTrackerConfigsForApp).toHaveBeenCalledTimes(1);
+  });
+
+  it('shows Manage schedule for multi-team staff and opens to a team selector before tools', async () => {
+    scheduleServiceMocks.loadParentSchedule.mockResolvedValueOnce(buildMultiTeamStaffScheduleResult());
+
+    renderSchedule();
+
+    expect(await screen.findByRole('button', { name: /manage schedule/i })).toBeTruthy();
+    expect(screen.queryByRole('heading', { name: 'Add game for Bears' })).toBeNull();
+
+    fireEvent.click(screen.getByRole('button', { name: /manage schedule/i }));
+
+    expect(await screen.findByRole('heading', { name: 'Choose the team to manage' })).toBeTruthy();
+    expect(screen.getByLabelText('Team to manage')).toBeTruthy();
+    expect(screen.queryByRole('heading', { name: 'Add game for Bears' })).toBeNull();
+    expect(screen.queryByRole('heading', { name: 'Add practice for Bears' })).toBeNull();
+  });
+
+  it('uses the Manage schedule team selector to reveal and submit team-specific staff tools', async () => {
+    scheduleServiceMocks.loadParentSchedule
+      .mockResolvedValueOnce(buildMultiTeamStaffScheduleResult())
+      .mockResolvedValueOnce(buildMultiTeamStaffScheduleResult());
+    scheduleServiceMocks.createScheduledGameForApp.mockResolvedValueOnce('game-2');
+
+    renderSchedule();
+
+    fireEvent.click(await screen.findByRole('button', { name: /manage schedule/i }));
+    expect(await screen.findByRole('heading', { name: 'Choose the team to manage' })).toBeTruthy();
+
+    fireEvent.change(screen.getByLabelText('Team to manage'), { target: { value: 'team-2' } });
+
+    expect(await screen.findByRole('heading', { name: 'Add game for Wolves' })).toBeTruthy();
+    expect(screen.getByRole('heading', { name: 'Add external calendar' })).toBeTruthy();
+
+    fireEvent.change(screen.getAllByLabelText('Opponent')[0], { target: { value: 'Falcons' } });
+    fireEvent.change(screen.getAllByLabelText('Location')[0], { target: { value: 'West Gym' } });
+    fireEvent.click(screen.getByRole('button', { name: /^create game$/i }));
+
+    await waitFor(() => {
+      expect(scheduleServiceMocks.createScheduledGameForApp).toHaveBeenCalledTimes(1);
+      expect(scheduleServiceMocks.createScheduledGameForApp).toHaveBeenCalledWith('team-2', expect.objectContaining({
+        opponent: 'Falcons',
+        location: 'West Gym'
+      }), auth.user);
+    });
   });
 
   it('hides desktop staff schedule tools until Manage schedule is opened', async () => {
