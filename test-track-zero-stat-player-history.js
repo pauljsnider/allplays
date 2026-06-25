@@ -104,6 +104,7 @@ test('standard finish writes zero-stat appearances with player profile participa
         statsByPlayerId: {
             'player-b': { pts: 0, reb: 0, ast: 0, fouls: 0, time: 0 }
         },
+        activePlayerIds: ['player-b'],
         opponentEntries: []
     });
 
@@ -116,7 +117,7 @@ test('standard finish writes zero-stat appearances with player profile participa
             participated: true,
             participationStatus: 'appeared',
             participationSource: 'live-tracker-finish',
-            stats: { pts: 0, reb: 0, ast: 0 }
+            stats: { pts: 0, reb: 0, ast: 0, fouls: 0 }
         },
         'Standard finish zero-stat write should include explicit profile participation markers'
     );

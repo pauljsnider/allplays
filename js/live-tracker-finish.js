@@ -39,7 +39,26 @@ function getPlayerElapsedTimeMs(playerStats) {
     ?? 0;
 }
 
-function hasLiveTrackerParticipation(playerStats = {}, columns = []) {
+function collectExplicitAppearancePlayerIds({ activePlayerIds = [], substitutions = [] } = {}) {
+  const playerIds = new Set();
+
+  (Array.isArray(activePlayerIds) ? activePlayerIds : []).forEach((playerId) => {
+    if (playerId) playerIds.add(playerId);
+  });
+
+  (Array.isArray(substitutions) ? substitutions : []).forEach((substitution) => {
+    const outId = substitution?.out;
+    const inId = substitution?.in;
+    if (outId) playerIds.add(outId);
+    if (inId) playerIds.add(inId);
+  });
+
+  return playerIds;
+}
+
+function hasLiveTrackerParticipation(playerStats = {}, columns = [], hasExplicitAppearance = false) {
+  if (hasExplicitAppearance) return true;
+
   const timeMs = getPlayerElapsedTimeMs(playerStats);
   if (timeMs > 0) return true;
 
@@ -69,6 +88,8 @@ export function buildFinishCompletionPlan({
   statTrackerConfig = {},
   roster = [],
   statsByPlayerId = {},
+  activePlayerIds = [],
+  substitutions = [],
   opponentEntries = [],
   currentUserUid = null,
   buildEmailBody = () => ''
@@ -101,6 +122,7 @@ export function buildFinishCompletionPlan({
   const safeColumns = Array.isArray(columns) ? columns : [];
   const safeRoster = Array.isArray(roster) ? roster : {};
   const safeStatsByPlayerId = statsByPlayerId && typeof statsByPlayerId === 'object' ? statsByPlayerId : {};
+  const explicitAppearancePlayerIds = collectExplicitAppearancePlayerIds({ activePlayerIds, substitutions });
   const effectiveLog = Array.isArray(log) ? [...log] : [];
   let reconciliationNote = '';
 
@@ -139,7 +161,11 @@ export function buildFinishCompletionPlan({
       statsObj[key] = playerStats[key] || 0;
     });
     statsObj.fouls = playerStats.fouls || 0;
-    const actuallyParticipated = hasLiveTrackerParticipation(playerStats, safeColumns);
+    const actuallyParticipated = hasLiveTrackerParticipation(
+      playerStats,
+      safeColumns,
+      explicitAppearancePlayerIds.has(player.id)
+    );
 
     const baseData = {
       playerName: player.name,
