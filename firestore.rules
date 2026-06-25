@@ -41,6 +41,20 @@ service cloud.firestore {
               isGlobalAdmin());
     }
 
+    function canReadRegistrationSource(data) {
+      return isSignedIn() &&
+             (isGlobalAdmin() ||
+              data.ownerId == request.auth.uid ||
+              data.organizationOwnerId == request.auth.uid ||
+              (request.auth.token.email != null &&
+               (
+                 request.auth.token.email.lower() in data.get('adminEmails', []) ||
+                 request.auth.token.email.lower() in data.get('organizationAdminEmails', [])
+               )) ||
+              (data.teamId is string && isTeamOwnerOrAdmin(data.teamId)) ||
+              (data.organizationTeamId is string && isTeamOwnerOrAdmin(data.organizationTeamId)));
+    }
+
     function isAdminInvitePayloadValid(data) {
       return data.keys().hasOnly([
                'code', 'type', 'teamId', 'teamName', 'email', 'generatedBy',
@@ -1547,7 +1561,7 @@ service cloud.firestore {
 
     // Registration sources configured by global admins for the Create Team import path.
     match /registrationSources/{sourceId} {
-      allow read: if isSignedIn();
+      allow get, list: if canReadRegistrationSource(resource.data);
       allow write: if isGlobalAdmin();
     }
 

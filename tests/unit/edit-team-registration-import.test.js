@@ -71,18 +71,34 @@ describe('edit team registration import', () => {
         expect(source).toContain('populateRegistrationSourcePicker()');
     });
 
-    it('uses getRegistrationSources in db.js to read the registrationSources collection', () => {
+    it('uses getRegistrationSources in db.js to scope registration source reads to the signed-in admin surface', () => {
         const source = readRepoFile('js/db.js');
 
         expect(source).toContain('export async function getRegistrationSources()');
-        expect(source).toContain("collection(db, \"registrationSources\")");
+        expect(source).toContain("where('ownerId', '==', userId)");
+        expect(source).toContain("where('adminEmails', 'array-contains', userEmail)");
+        expect(source).toContain("where('organizationOwnerId', '==', userId)");
+        expect(source).toContain("where('organizationAdminEmails', 'array-contains', userEmail)");
+        expect(source).toContain("getScopedRegistrationSourceDocs('teamId', adminTeamIds)");
+        expect(source).toContain("getScopedRegistrationSourceDocs('organizationTeamId', adminTeamIds)");
+        expect(source).toContain("where(fieldName, 'in', teamIdsChunk)");
+        expect(source).toContain("const snapshot = await getDocs(registrationSourcesRef);");
+        expect(source).toContain('return sortRegistrationSources(snapshot.docs.map(mapRegistrationSourceDoc));');
+        expect(source).not.toContain("orderBy('externalTeamName')");
     });
 
-    it('adds Firestore security rules for the registrationSources collection', () => {
+    it('adds least-privilege Firestore security rules for the registrationSources collection', () => {
         const rules = readRepoFile('firestore.rules');
 
-        expect(rules).toContain('match /registrationSources/{sourceId}');
-        expect(rules).toContain('allow read: if isSignedIn()');
-        expect(rules).toContain('allow write: if isGlobalAdmin()');
+        expect(rules).toContain('function canReadRegistrationSource(data)');
+        expect(rules).toContain('data.ownerId == request.auth.uid');
+        expect(rules).toContain('data.organizationOwnerId == request.auth.uid');
+        expect(rules).toContain("request.auth.token.email.lower() in data.get('adminEmails', [])");
+        expect(rules).toContain("request.auth.token.email.lower() in data.get('organizationAdminEmails', [])");
+        expect(rules).toContain("data.teamId is string && isTeamOwnerOrAdmin(data.teamId)");
+        expect(rules).toContain("data.organizationTeamId is string && isTeamOwnerOrAdmin(data.organizationTeamId)");
+        expect(rules).toContain('allow get, list: if canReadRegistrationSource(resource.data);');
+        expect(rules).toContain('allow write: if isGlobalAdmin();');
+        expect(rules).not.toContain('allow read: if isSignedIn();');
     });
 });
