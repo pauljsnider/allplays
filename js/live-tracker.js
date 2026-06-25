@@ -2046,8 +2046,24 @@ function formatClock(ms) {
   return `${m}:${sec}`;
 }
 
+function getConfiguredPointsColumn() {
+  const configured = String(currentConfig?.scoringColumn || '').trim();
+  const columns = Array.isArray(currentConfig?.columns) ? currentConfig.columns : [];
+  if (configured && columns.some((column) => String(column || '').trim().toLowerCase() === configured.toLowerCase())) {
+    return configured;
+  }
+  return columns.find((column) => {
+    const normalized = String(column || '').trim().toUpperCase();
+    return normalized === 'PTS' || normalized === 'POINTS' || normalized === 'GOALS';
+  }) || '';
+}
+
 function isPointsColumn(colOrKey) {
   const u = (colOrKey || '').toString().toUpperCase();
+  const configured = getConfiguredPointsColumn();
+  if (configured) {
+    return u === configured.toUpperCase();
+  }
   return u === 'PTS' || u === 'POINTS' || u === 'GOALS';
 }
 
