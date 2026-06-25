@@ -2700,6 +2700,7 @@ describe('ScheduleEventDetail wrap-up', () => {
     });
     expect(chatServiceMocks.sendTeamChatMessage).toHaveBeenCalledTimes(1);
     await waitFor(() => {
+      expect(screen.getByTestId('live-score-editor').textContent).toContain('52-47');
       expect(screen.getByText('Final score posted to team chat.')).toBeTruthy();
     });
   });

@@ -1466,7 +1466,7 @@ function GameHubSection({ auth, event, childEvents, onScoreUpdated, onLiveClockU
               open={Boolean(openPanels.wrapup)}
               onToggle={() => togglePanel('wrapup')}
             >
-              <GameWrapupPanel auth={auth} event={event} onWrapupCompleted={onWrapupCompleted} />
+              <GameWrapupPanel auth={auth} event={event} onScoreUpdated={onScoreUpdated} onWrapupCompleted={onWrapupCompleted} />
             </LazyGameHubPanel>
           ) : null}
 
@@ -1862,9 +1862,10 @@ function StatsheetImportPanel({ event, onImported }: { event: ParentScheduleEven
   )
 }
 
-function GameWrapupPanel({ auth, event, onWrapupCompleted }: {
+function GameWrapupPanel({ auth, event, onScoreUpdated, onWrapupCompleted }: {
   auth: AuthState;
   event: ParentScheduleEvent;
+  onScoreUpdated: (homeScore: number, awayScore: number) => void;
   onWrapupCompleted: (payload: { homeScore: number; awayScore: number; postGameNotes: string; summary: string; practiceFeedItems: PracticeFeedItem[] }) => void;
 }) {
   const savedHomeScore = Math.max(0, Number(event.homeScore ?? 0));
@@ -1922,6 +1923,7 @@ function GameWrapupPanel({ auth, event, onWrapupCompleted }: {
         setAwayScore(nextAwayScore);
         setPersistedHomeScore(nextHomeScore);
         setPersistedAwayScore(nextAwayScore);
+        onScoreUpdated(nextHomeScore, nextAwayScore);
         scoreSaved = true;
       }
 
