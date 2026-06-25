@@ -1,4 +1,5 @@
 import { lazy, ReactNode, Suspense, useEffect, useRef, useState } from 'react';
+import { Capacitor } from '@capacitor/core';
 import { Navigate, Route, Routes, useLocation, useNavigate } from 'react-router-dom';
 import { AppShell } from './components/AppShell';
 import { ErrorBoundary } from './components/ErrorBoundary';
@@ -149,6 +150,16 @@ export default function App() {
   }, [navigate]);
 
   useEffect(() => {
+    if (!auth.user) {
+      return;
+    }
+
+    const isNativeRuntime = Capacitor.isNativePlatform()
+      || (typeof window !== 'undefined' && window.location.protocol === 'capacitor:');
+    if (!isNativeRuntime) {
+      return;
+    }
+
     let active = true;
     let removeListener = () => {};
 
@@ -174,7 +185,7 @@ export default function App() {
       active = false;
       removeListener();
     };
-  }, [navigate]);
+  }, [auth.user, navigate]);
 
   useEffect(() => {
     if (auth.loading || !auth.user) {
