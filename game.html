@@ -1280,9 +1280,16 @@ Write the match report now:`;
                     }
                     throw error;
                 });
+                const teamPromise = getTeam(teamId, { includeInactive: true }).catch((error) => {
+                    if (error?.code === 'permission-denied') {
+                        console.warn('Failed to load team document for public game report viewer:', error);
+                        return null;
+                    }
+                    throw error;
+                });
                 const [team, game, players] = await Promise.all([
-                    // Reports are historical and must resolve soft-deleted teams.
-                    getTeam(teamId, { includeInactive: true }),
+                    // Reports are historical and must resolve soft-deleted teams when viewers can access them.
+                    teamPromise,
                     getGame(teamId, gameId),
                     playersPromise
                 ]);
@@ -1292,8 +1299,15 @@ Write the match report now:`;
                     return;
                 }
 
+                const resolvedTeam = team || {
+                    id: teamId,
+                    name: game.teamName || game.homeTeamName || 'Team',
+                    photoUrl: game.teamPhotoUrl || game.homeTeamPhoto || '',
+                    sport: game.sport || 'Basketball'
+                };
+
                 // Render team navigation banner if user has access
-                if (currentUser) {
+                if (currentUser && team) {
                     // Enrich user profile if needed
                     try {
                         const profile = await getUserProfile(currentUser.uid);
@@ -1362,8 +1376,8 @@ Write the match report now:`;
                     </div>
                     <h1 class="text-3xl md:text-4xl lg:text-5xl font-bold mb-6 md:mb-8 text-gray-900">
                         <span class="inline-flex items-center gap-2">
-                            ${team.photoUrl ? `<img src="${escapeHtml(team.photoUrl)}" alt="" class="w-10 h-10 rounded-full object-cover border border-gray-200">` : ''}
-                            ${escapeHtml(team.name)}
+                            ${resolvedTeam.photoUrl ? `<img src="${escapeHtml(resolvedTeam.photoUrl)}" alt="" class="w-10 h-10 rounded-full object-cover border border-gray-200">` : ''}
+                            ${escapeHtml(resolvedTeam.name)}
                         </span>
                         <span class="text-gray-400 mx-2 md:mx-3">vs</span>
                         <span class="inline-flex items-center gap-2">
@@ -1373,7 +1387,7 @@ Write the match report now:`;
                     </h1>
                     <div class="flex justify-center items-center gap-6 md:gap-8 mb-6">
                         <div class="text-center">
-                            <div class="text-sm text-gray-500 mb-2 font-medium">${escapeHtml(team.name)}</div>
+                            <div class="text-sm text-gray-500 mb-2 font-medium">${escapeHtml(resolvedTeam.name)}</div>
                             <div class="text-5xl md:text-6xl lg:text-7xl font-mono font-bold ${isWin ? 'text-green-600' : 'text-primary-600'
                     }">${game.homeScore || 0}</div>
                         </div>
@@ -1432,7 +1446,7 @@ Write the match report now:`;
                 const shareBtn = document.getElementById('share-report-btn');
                 if (shareBtn) {
                     shareBtn.addEventListener('click', async () => {
-                        const teamName = team?.name || 'Team';
+                        const teamName = resolvedTeam?.name || 'Team';
                         const opponent = game?.opponent || 'Opponent';
                         const dateLabel = formatShortDate(game?.date);
                         const url = `${window.location.origin}/game.html#teamId=${teamId}&gameId=${gameId}`;
@@ -1495,7 +1509,7 @@ Write the match report now:`;
                     resolvedConfig = resolveLiveStatConfig({
                         configs,
                         game,
-                        team
+                        team: resolvedTeam
                     });
                 } catch (err) {
                     console.error('Error fetching config:', err);
@@ -1523,7 +1537,7 @@ Write the match report now:`;
                 });
 
                 // Setup summary controls
-                setupSummaryControls(teamId, gameId, game, team, players, statsMap, statKeys, statLabels);
+                setupSummaryControls(teamId, gameId, game, resolvedTeam, players, statsMap, statKeys, statLabels);
                 const headerRow = document.getElementById('stats-header-row');
                 const computeHasPlayingTime = () => Object.values(timeMap).some((t) => t > 0);
                 function renderStatsTable() {
