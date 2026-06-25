@@ -669,11 +669,11 @@
     <script type="module">
         import { getTeam, getGame, getPlayers, getConfigs, logStatEvent, updatePlayerStats, updateGame, collection, getDocs, deleteDoc, query, broadcastLiveEvent, setGameLiveStatus, subscribeLiveChat, postLiveChatMessage } from './js/db.js?v=72';
         import { db } from './js/firebase.js?v=19';
-        import { writeBatch, doc, setDoc, addDoc, onSnapshot } from './js/firebase.js?v=19';
+        import { writeBatch, doc, setDoc, addDoc, onSnapshot, orderBy } from './js/firebase.js?v=19';
         import { renderHeader, renderFooter, getUrlParams, escapeHtml } from './js/utils.js?v=8';
         import { resolveOpponentDisplayName, resolveLiveStatConfig, resolveLiveStatColumns, resolveGoalSportTrackerProfile } from './js/live-game-state.js?v=8';
         import { createFieldState, setPlayerFieldStatus, startFieldClock, pauseFieldClock, getPlayerFieldElapsedMs, getLiveLineup } from './js/live-tracker-field-status.js?v=1';
-        import { summarizePersistedTrackingState, buildTrackLiveResetUpdate, resolveTrackLiveClockResume, runTrackLiveResetPersistence } from './js/track-live-state.js?v=3';
+        import { summarizePersistedTrackingState, buildTrackLiveResetUpdate, resolveTrackLiveClockResume, buildTrackLiveResumeState, runTrackLiveResetPersistence } from './js/track-live-state.js?v=4';
         import { getDefaultLivePeriod, getSportPeriodLabels, resolveLiveSport, isFootballSport } from './js/live-sport-config.js?v=3';
         import { applyGoalSportScore, buildGoalSportEvent, resolveGoalSportScorer } from './js/live-scorekeeping-goal-sports.js?v=2';
 
@@ -954,6 +954,29 @@
                 statsSnapshot.forEach(doc => {
                     gameState.playerStats[doc.id] = doc.data().stats || {};
                 });
+
+                const liveEventsSnapshot = await getDocs(query(
+                    collection(db, `teams/${teamId}/games/${gameId}/liveEvents`),
+                    orderBy('createdAt', 'asc')
+                ));
+                const resumedTrackingState = buildTrackLiveResumeState({
+                    liveEvents: liveEventsSnapshot.docs.map((doc) => doc.data()),
+                    buildGoalNoteText: (event) => {
+                        const teamLabel = event?.teamSide === 'away'
+                            ? resolveOpponentDisplayName(currentGame)
+                            : currentTeam?.name || 'Home';
+                        return buildGoalSportNoteText(teamLabel, event?.note);
+                    }
+                });
+                gameState.gameLog = resumedTrackingState.gameLog;
+                gameState.liveNotes = resumedTrackingState.liveNotes;
+                renderGameLog();
+                renderLiveNotes();
+
+                const summaryField = document.getElementById('gameSummary');
+                if (summaryField && resumedTrackingState.summaryText) {
+                    summaryField.value = resumedTrackingState.summaryText;
+                }
 
                 // Also load existing scores from aggregated stats
                 let totalHomePoints = 0;
