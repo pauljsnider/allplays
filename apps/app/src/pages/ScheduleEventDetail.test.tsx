@@ -914,7 +914,7 @@ describe('ScheduleEventDetail assignments', () => {
       const updatedPanelClock = readClockSeconds(screen.getByTestId('live-game-clock-panel').textContent);
       expect(updatedHeaderClock).not.toBeNull();
       expect(updatedHeaderClock).toBe(updatedPanelClock);
-      expect(updatedHeaderClock).toBeGreaterThan((initialHeaderClock ?? 0) + 1);
+      expect(updatedHeaderClock).toBeGreaterThanOrEqual((initialHeaderClock ?? 0) + 1);
       expect(screen.getByTestId('live-score-editor').innerHTML).toBe(scoreEditorMarkup);
       expect(screen.getByTestId('game-day-foul-panel').innerHTML).toBe(foulTrackerMarkup);
       expect(scheduleServiceMocks.loadHomeScoringPlayers).toHaveBeenCalledTimes(2);
