@@ -363,6 +363,43 @@ describe('Schedule', () => {
     });
   });
 
+  it('routes desktop parent queue links through generic assignment and rideshare detail paths', async () => {
+    shellLayoutMocks.isDesktopWeb = true;
+    scheduleServiceMocks.loadParentSchedule.mockResolvedValueOnce({
+      children: [
+        { playerId: 'player-1', playerName: 'Pat', teamId: 'team-1', teamName: 'Bears' }
+      ],
+      events: [
+        buildScheduleEvent(1, {
+          myRsvp: 'going',
+          assignments: [{ role: 'Snack bar', value: '', claimable: true }]
+        }),
+        buildScheduleEvent(2, {
+          eventKey: 'team-1::event-2::player-1::2100-06-02T18:00:00.000Z::game',
+          id: 'event-2',
+          date: new Date('2100-06-02T18:00:00.000Z'),
+          myRsvp: 'going',
+          assignments: [],
+          rideshareSummary: { requests: 1, pending: 0, seatsLeft: 0 }
+        })
+      ]
+    });
+
+    const { container } = render(
+      <MemoryRouter initialEntries={['/schedule']}>
+        <Routes>
+          <Route path="/schedule" element={<Schedule auth={auth} />} />
+          <Route path="/schedule/:teamId/:eventId" element={<RouteProbe />} />
+        </Routes>
+      </MemoryRouter>
+    );
+
+    await screen.findByText('Parent queue');
+
+    expect(container.querySelector('.schedule-action-queue a[href="/schedule/team-1/event-1?childId=player-1&section=assignments"]')).toBeTruthy();
+    expect(container.querySelector('.schedule-action-queue a[href="/schedule/team-1/event-2?childId=player-1&section=rideshare"]')).toBeTruthy();
+  });
+
   it('shows the remaining event count when only one more event is hidden', async () => {
     scheduleServiceMocks.loadParentSchedule.mockResolvedValueOnce({
       children: [
