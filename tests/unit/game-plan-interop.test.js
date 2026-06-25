@@ -53,7 +53,7 @@ describe('game plan interop helpers', () => {
     });
   });
 
-  it('maps Game Day half lineup keys into planner interval keys', () => {
+  it('expands Game Day half lineup keys across every planner interval in that period', () => {
     const lineups = normalizeLineupsForGamePlanPlanner({
       numPeriods: 2,
       periodDuration: 25,
@@ -66,7 +66,13 @@ describe('game plan interop helpers', () => {
 
     expect(lineups).toEqual({
       '1-7-keeper': 'p1',
-      '2-7-striker': 'p2'
+      '1-14-keeper': 'p1',
+      '1-21-keeper': 'p1',
+      '1-25-keeper': 'p1',
+      '2-7-striker': 'p2',
+      '2-14-striker': 'p2',
+      '2-21-striker': 'p2',
+      '2-25-striker': 'p2'
     });
   });
 
@@ -82,7 +88,10 @@ describe('game plan interop helpers', () => {
     });
 
     expect(lineups).toEqual({
-      '1-7-keeper': 'new-player'
+      '1-7-keeper': 'new-player',
+      '1-14-keeper': 'old-player',
+      '1-21-keeper': 'old-player',
+      '1-25-keeper': 'old-player'
     });
   });
 
@@ -98,6 +107,25 @@ describe('game plan interop helpers', () => {
 
     expect(lineups).toEqual({
       '1-14-keeper': 'p2'
+    });
+  });
+
+  it('preserves timed Game Day assignments when whole-period keys are encountered later', () => {
+    const lineups = normalizeLineupsForGamePlanPlanner({
+      numPeriods: 2,
+      periodDuration: 25,
+      subTimes: [7, 14, 21],
+      lineups: {
+        "H1 14'-keeper": 'timed-player',
+        'H1-keeper': 'whole-period-player'
+      }
+    });
+
+    expect(lineups).toEqual({
+      '1-7-keeper': 'whole-period-player',
+      '1-14-keeper': 'timed-player',
+      '1-21-keeper': 'whole-period-player',
+      '1-25-keeper': 'whole-period-player'
     });
   });
 
