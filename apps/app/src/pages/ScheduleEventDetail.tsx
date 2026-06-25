@@ -114,6 +114,7 @@ import {
   type PracticePacketCompletion,
   type RsvpResponse
 } from '../lib/scheduleLogic';
+import { DEFAULT_TEAM_CONVERSATION_ID } from '../lib/chatLogic';
 // Type-only imports for deferred modules — runtime values loaded on demand below
 import type { LiveGameChatMessage } from '../lib/liveGameChatService';
 import type { LiveGameReaction, LiveGameReactionType } from '../lib/liveGameReactionsService';
@@ -1870,17 +1871,22 @@ function GameWrapupPanel({ auth, event, onWrapupCompleted }: {
   const savedAwayScore = Math.max(0, Number(event.awayScore ?? 0));
   const [homeScore, setHomeScore] = useState(savedHomeScore);
   const [awayScore, setAwayScore] = useState(savedAwayScore);
+  const [persistedHomeScore, setPersistedHomeScore] = useState(savedHomeScore);
+  const [persistedAwayScore, setPersistedAwayScore] = useState(savedAwayScore);
   const [postGameNotes, setPostGameNotes] = useState(String(event.postGameNotes || ''));
   const [practiceFeedItems, setPracticeFeedItems] = useState<PracticeFeedItem[]>(Array.isArray(event.practiceFeedItems) ? event.practiceFeedItems : []);
   const [summary, setSummary] = useState(String(event.summary || ''));
   const [shouldGenerateSummary, setShouldGenerateSummary] = useState(true);
   const [shouldSendEmail, setShouldSendEmail] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [sharingFinalScore, setSharingFinalScore] = useState(false);
   const [status, setStatus] = useState<{ tone: 'success' | 'error'; message: string } | null>(null);
 
   useEffect(() => {
     setHomeScore(savedHomeScore);
     setAwayScore(savedAwayScore);
+    setPersistedHomeScore(savedHomeScore);
+    setPersistedAwayScore(savedAwayScore);
     setPostGameNotes(String(event.postGameNotes || ''));
     setPracticeFeedItems(Array.isArray(event.practiceFeedItems) ? event.practiceFeedItems : []);
     setSummary(String(event.summary || ''));
@@ -1888,9 +1894,65 @@ function GameWrapupPanel({ auth, event, onWrapupCompleted }: {
     setShouldSendEmail(false);
   }, [event.eventKey, event.homeScore, event.awayScore, event.postGameNotes, event.summary, event.practiceFeedItems, savedHomeScore, savedAwayScore]);
 
+  const busy = saving || sharingFinalScore;
+
+  const buildFinalScoreShareMessage = (nextHomeScore: number, nextAwayScore: number) => {
+    const opponentName = String(event.opponent || event.title || 'Opponent').trim() || 'Opponent';
+    const teamName = String(event.teamName || 'Team').trim() || 'Team';
+    const teamScore = event.isHome === false ? nextAwayScore : nextHomeScore;
+    const opponentScore = event.isHome === false ? nextHomeScore : nextAwayScore;
+    return `Final vs. ${opponentName}: ${teamName} ${teamScore}, ${opponentName} ${opponentScore}.`;
+  };
+
+  const shareFinalScoreToTeamChat = async () => {
+    if (!auth.user) return;
+    setSharingFinalScore(true);
+    setStatus(null);
+
+    let nextHomeScore = homeScore;
+    let nextAwayScore = awayScore;
+    let scoreSaved = false;
+
+    try {
+      if (homeScore !== persistedHomeScore || awayScore !== persistedAwayScore) {
+        const scorePayload = await updateGameScore(event.teamId, event.id, { homeScore, awayScore }, auth.user);
+        nextHomeScore = Number(scorePayload.homeScore ?? homeScore);
+        nextAwayScore = Number(scorePayload.awayScore ?? awayScore);
+        setHomeScore(nextHomeScore);
+        setAwayScore(nextAwayScore);
+        setPersistedHomeScore(nextHomeScore);
+        setPersistedAwayScore(nextAwayScore);
+        scoreSaved = true;
+      }
+
+      const { sendTeamChatMessage } = await import('../lib/chatService');
+      await sendTeamChatMessage({
+        teamId: event.teamId,
+        user: auth.user,
+        profile: auth.profile || {},
+        text: buildFinalScoreShareMessage(nextHomeScore, nextAwayScore),
+        selectedConversation: null,
+        selectedConversationId: DEFAULT_TEAM_CONVERSATION_ID,
+        selectedRecipientTarget: 'full_team',
+        selectedRecipientIds: []
+      });
+      setStatus({ tone: 'success', message: 'Final score posted to team chat.' });
+    } catch (error: any) {
+      const message = error?.message || 'Unable to post final score to team chat. Try again.';
+      setStatus({
+        tone: 'error',
+        message: scoreSaved
+          ? `Final score saved, but team chat share failed: ${message}`
+          : message
+      });
+    } finally {
+      setSharingFinalScore(false);
+    }
+  };
+
   const completeWrapup = async () => {
     if (!auth.user) return;
-    const previousScore = { homeScore: savedHomeScore, awayScore: savedAwayScore };
+    const previousScore = { homeScore: persistedHomeScore, awayScore: persistedAwayScore };
     const trimmedNotes = postGameNotes.trim();
     setSaving(true);
     setStatus(null);
@@ -1901,6 +1963,8 @@ function GameWrapupPanel({ auth, event, onWrapupCompleted }: {
       const scorePayload = await updateGameScore(event.teamId, event.id, { homeScore, awayScore }, auth.user);
       const nextHomeScore = Number(scorePayload.homeScore ?? homeScore);
       const nextAwayScore = Number(scorePayload.awayScore ?? awayScore);
+      setPersistedHomeScore(nextHomeScore);
+      setPersistedAwayScore(nextAwayScore);
 
       if (nextHomeScore !== previousScore.homeScore || nextAwayScore !== previousScore.awayScore) {
         try {
@@ -1993,8 +2057,8 @@ function GameWrapupPanel({ auth, event, onWrapupCompleted }: {
       </div>
 
       <div className="mt-3 grid gap-2 sm:grid-cols-2">
-        <ScoreStepper label="Final home" value={homeScore} onDecrease={() => setHomeScore((value) => Math.max(0, value - 1))} onIncrease={() => setHomeScore((value) => value + 1)} disabled={saving} />
-        <ScoreStepper label="Final away" value={awayScore} onDecrease={() => setAwayScore((value) => Math.max(0, value - 1))} onIncrease={() => setAwayScore((value) => value + 1)} disabled={saving} />
+        <ScoreStepper label="Final home" value={homeScore} onDecrease={() => setHomeScore((value) => Math.max(0, value - 1))} onIncrease={() => setHomeScore((value) => value + 1)} disabled={busy} />
+        <ScoreStepper label="Final away" value={awayScore} onDecrease={() => setAwayScore((value) => Math.max(0, value - 1))} onIncrease={() => setAwayScore((value) => value + 1)} disabled={busy} />
       </div>
 
       <label className="mt-3 block text-xs font-black uppercase tracking-[0.04em] text-gray-500" htmlFor="game-wrapup-notes">Post-game notes</label>
@@ -2004,16 +2068,16 @@ function GameWrapupPanel({ auth, event, onWrapupCompleted }: {
         value={postGameNotes}
         onChange={(changeEvent) => setPostGameNotes(changeEvent.target.value)}
         placeholder="What changed the game? What should practice fix next?"
-        disabled={saving}
+        disabled={busy}
       />
 
       <div className="mt-3 grid gap-2 sm:grid-cols-2">
         <label className="flex items-center gap-2 rounded-2xl border border-gray-200 bg-white px-3 py-3 text-sm font-semibold text-gray-900">
-          <input type="checkbox" checked={shouldGenerateSummary} onChange={(changeEvent) => setShouldGenerateSummary(changeEvent.target.checked)} disabled={saving} />
+          <input type="checkbox" checked={shouldGenerateSummary} onChange={(changeEvent) => setShouldGenerateSummary(changeEvent.target.checked)} disabled={busy} />
           <span>Generate AI summary</span>
         </label>
         <label className="flex items-center gap-2 rounded-2xl border border-gray-200 bg-white px-3 py-3 text-sm font-semibold text-gray-900">
-          <input type="checkbox" checked={shouldSendEmail} onChange={(changeEvent) => setShouldSendEmail(changeEvent.target.checked)} disabled={saving} />
+          <input type="checkbox" checked={shouldSendEmail} onChange={(changeEvent) => setShouldSendEmail(changeEvent.target.checked)} disabled={busy} />
           <span>Email recap after save</span>
         </label>
       </div>
@@ -2023,9 +2087,17 @@ function GameWrapupPanel({ auth, event, onWrapupCompleted }: {
           type="button"
           className="primary-button min-h-11 px-4 text-sm"
           onClick={completeWrapup}
-          disabled={saving}
+          disabled={busy}
         >
           {saving ? 'Saving wrap-up' : isCompleted ? 'Run wrap-up again' : 'Complete wrap-up'}
+        </button>
+        <button
+          type="button"
+          className="secondary-button min-h-11 px-4 text-sm"
+          onClick={shareFinalScoreToTeamChat}
+          disabled={busy}
+        >
+          {sharingFinalScore ? 'Posting to team chat' : 'Share final score to team chat'}
         </button>
         <span className="text-xs font-semibold text-gray-500">AI failures do not block completion. Uncheck AI summary to skip it, or run wrap-up again to regenerate.</span>
       </div>

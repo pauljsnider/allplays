@@ -115,6 +115,10 @@ const gameWrapupServiceMocks = vi.hoisted(() => ({
   generateGameWrapupArtifactsForApp: vi.fn()
 }));
 vi.mock('../lib/gameWrapupService', () => gameWrapupServiceMocks);
+const chatServiceMocks = vi.hoisted(() => ({
+  sendTeamChatMessage: vi.fn()
+}));
+vi.mock('../lib/chatService', () => chatServiceMocks);
 vi.mock('../lib/publicActions', () => publicActionMocks);
 vi.mock('../lib/liveGameAnnouncer', () => ({ useLiveGameAnnouncer: vi.fn() }));
 const liveGameChatServiceMocks = vi.hoisted(() => ({
@@ -1510,6 +1514,7 @@ describe('ScheduleEventDetail assignments', () => {
       expect(scheduleServiceMocks.loadAutoFilledLineupDraftPreviewForApp).toHaveBeenCalledTimes(1);
       expect(screen.getByRole('button', { name: /#1 Avery Smith/i })).toBeTruthy();
     });
+    expect(chatServiceMocks.sendTeamChatMessage).not.toHaveBeenCalled();
     expect(screen.queryByText('Loading lineup builder…')).toBeNull();
   });
 
@@ -2653,6 +2658,49 @@ describe('ScheduleEventDetail wrap-up', () => {
     expect(gameWrapupServiceMocks.generateGameWrapupArtifactsForApp).not.toHaveBeenCalled();
     await waitFor(() => {
       expect(screen.getByText('Wrap-up saved without AI summary.')).toBeTruthy();
+    });
+  });
+
+  it('shows an explicit final-score share action for completed staff games and posts once to team chat', async () => {
+    scheduleServiceMocks.loadParentScheduleEventDetail.mockResolvedValue({
+      events: [buildEvent({ isTeamStaff: true, canUpdateScore: true, homeScore: 51, awayScore: 47, status: 'completed', liveStatus: 'completed' })],
+      children: []
+    });
+    scheduleServiceMocks.updateGameScore.mockResolvedValue({ homeScore: 52, awayScore: 47 });
+    chatServiceMocks.sendTeamChatMessage.mockResolvedValue({ conversationId: 'team' });
+
+    renderScheduleEventDetail();
+
+    await waitFor(() => {
+      expect(screen.getAllByRole('button', { name: 'Game' }).length).toBeGreaterThan(0);
+    });
+    fireEvent.click(screen.getAllByRole('button', { name: 'Game' })[0]);
+    fireEvent.click(screen.getByRole('button', { name: 'Post-game wrap-up' }));
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: 'Share final score to team chat' })).toBeTruthy();
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Final home score up' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Share final score to team chat' }));
+
+    await waitFor(() => {
+      expect(scheduleServiceMocks.updateGameScore).toHaveBeenCalledWith('team-1', 'game-1', { homeScore: 52, awayScore: 47 }, auth.user);
+    });
+    await waitFor(() => {
+      expect(chatServiceMocks.sendTeamChatMessage).toHaveBeenCalledWith(expect.objectContaining({
+        teamId: 'team-1',
+        user: auth.user,
+        profile: {},
+        text: 'Final vs. Wolves: Bears 52, Wolves 47.',
+        selectedConversationId: 'team',
+        selectedRecipientTarget: 'full_team',
+        selectedRecipientIds: []
+      }));
+    });
+    expect(chatServiceMocks.sendTeamChatMessage).toHaveBeenCalledTimes(1);
+    await waitFor(() => {
+      expect(screen.getByText('Final score posted to team chat.')).toBeTruthy();
     });
   });
 
