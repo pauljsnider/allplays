@@ -242,7 +242,76 @@
             const advancedStatDefinitionsStr = document.getElementById('advancedStatDefinitions').value;
             const columns = columnsStr.split(',').map(s => s.trim()).filter(s => s.length > 0);
             const statDefinitions = parseAdvancedStatDefinitions(advancedStatDefinitionsStr);
-            return { name, baseType, columns, statDefinitions };
+            const existingConfig = editingConfigId
+                ? currentConfigs.find((config) => config.id === editingConfigId)
+                : null;
+            const scoringColumn = deriveBasketballScoringColumn({
+                baseType,
+                columns,
+                statDefinitions,
+                existingConfig
+            });
+            return {
+                name,
+                baseType,
+                columns,
+                statDefinitions,
+                ...(scoringColumn ? { scoringColumn } : {})
+            };
+        }
+
+        function slugifyStatKey(value = '') {
+            return String(value || '')
+                .trim()
+                .toLowerCase()
+                .replace(/[^a-z0-9_]+/g, '');
+        }
+
+        function findCanonicalBasketballScoringColumn(columns = []) {
+            return (Array.isArray(columns) ? columns : []).find((column) => {
+                const normalized = String(column || '').trim().toUpperCase();
+                return normalized === 'PTS' || normalized === 'POINTS' || normalized === 'GOALS';
+            }) || '';
+        }
+
+        function deriveBasketballScoringColumn({ baseType = '', columns = [], statDefinitions = [], existingConfig = null } = {}) {
+            if (String(baseType || '').trim().toLowerCase() !== 'basketball') {
+                return '';
+            }
+
+            const safeColumns = (Array.isArray(columns) ? columns : []).map((column) => String(column || '').trim()).filter(Boolean);
+            if (!safeColumns.length) {
+                return '';
+            }
+
+            const directMatch = findCanonicalBasketballScoringColumn(safeColumns);
+            if (directMatch) {
+                return directMatch;
+            }
+
+            const previousColumns = Array.isArray(existingConfig?.columns) ? existingConfig.columns : [];
+            const previousScoringColumn = String(existingConfig?.scoringColumn || '').trim();
+            const previousScoringIndex = previousScoringColumn
+                ? previousColumns.findIndex((column) => String(column || '').trim().toLowerCase() === previousScoringColumn.toLowerCase())
+                : previousColumns.findIndex((column) => Boolean(findCanonicalBasketballScoringColumn([column])));
+
+            if (previousScoringIndex >= 0 && safeColumns[previousScoringIndex]) {
+                return safeColumns[previousScoringIndex];
+            }
+
+            const providedIds = new Set((Array.isArray(statDefinitions) ? statDefinitions : [])
+                .filter((definition) => !definition?.formula)
+                .map((definition) => slugifyStatKey(definition.id || definition.acronym || definition.label))
+                .filter(Boolean));
+
+            if (providedIds.has('pts')) {
+                const unmatchedColumns = safeColumns.filter((column) => !providedIds.has(slugifyStatKey(column)));
+                if (unmatchedColumns.length === 1) {
+                    return unmatchedColumns[0];
+                }
+            }
+
+            return '';
         }
 
         function syncColumnsInputWithStatId(statId = '') {
