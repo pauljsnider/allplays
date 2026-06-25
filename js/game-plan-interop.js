@@ -31,17 +31,33 @@ export function normalizeLineupsForGamePlanPlanner(gamePlan) {
 
   const intervals = buildGamePlanIntervals(gamePlan);
   const normalized = {};
+  const currentShapeWholePeriodEntries = [];
+  const currentShapeTimedEntries = [];
   const legacyAndOtherEntries = [];
 
   Object.entries(gamePlan.lineups).forEach(([key, playerId]) => {
+    const parsedCurrentShapeKey = parseCurrentShapeKey(key);
     const plannerKeys = plannerKeysForCurrentShapeKey(key, intervals);
     if (plannerKeys.length > 0) {
-      plannerKeys.forEach((plannerKey) => {
-        normalized[plannerKey] = playerId;
-      });
+      const targetEntries = parsedCurrentShapeKey?.time == null
+        ? currentShapeWholePeriodEntries
+        : currentShapeTimedEntries;
+      targetEntries.push([plannerKeys, playerId]);
     } else {
       legacyAndOtherEntries.push([key, playerId]);
     }
+  });
+
+  currentShapeWholePeriodEntries.forEach(([plannerKeys, playerId]) => {
+    plannerKeys.forEach((plannerKey) => {
+      normalized[plannerKey] = playerId;
+    });
+  });
+
+  currentShapeTimedEntries.forEach(([plannerKeys, playerId]) => {
+    plannerKeys.forEach((plannerKey) => {
+      normalized[plannerKey] = playerId;
+    });
   });
 
   legacyAndOtherEntries.forEach(([key, playerId]) => {

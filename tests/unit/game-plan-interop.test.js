@@ -110,6 +110,25 @@ describe('game plan interop helpers', () => {
     });
   });
 
+  it('preserves timed Game Day assignments when whole-period keys are encountered later', () => {
+    const lineups = normalizeLineupsForGamePlanPlanner({
+      numPeriods: 2,
+      periodDuration: 25,
+      subTimes: [7, 14, 21],
+      lineups: {
+        "H1 14'-keeper": 'timed-player',
+        'H1-keeper': 'whole-period-player'
+      }
+    });
+
+    expect(lineups).toEqual({
+      '1-7-keeper': 'whole-period-player',
+      '1-14-keeper': 'timed-player',
+      '1-21-keeper': 'whole-period-player',
+      '1-25-keeper': 'whole-period-player'
+    });
+  });
+
   it('uses quarter prefixes for 4-period legacy plans', () => {
     const plan = buildRotationPlanFromGamePlan({
       numPeriods: 4,
