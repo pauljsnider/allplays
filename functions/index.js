@@ -328,27 +328,29 @@ function buildRegistrationReminderMailRef(mailDocId) {
 
 function buildRegistrationCheckoutUrls(appUrl, input) {
   const baseUrl = String(appUrl || 'https://allplays.ai').replace(/\/$/, '');
-  const successParams = new URLSearchParams({
+  const params = new URLSearchParams({
     teamId: input.teamId,
     formId: input.formId
   });
   if (input.publicCheckoutCapability) {
-    successParams.set('publicCheckoutCapability', input.publicCheckoutCapability);
+    params.set('publicCheckoutCapability', input.publicCheckoutCapability);
   }
   if (input.paymentPlanId) {
-    successParams.set('paymentPlanId', String(input.paymentPlanId));
+    params.set('paymentPlanId', String(input.paymentPlanId));
   }
   const paidInstallmentCount = Math.max(0, Math.floor(Number(input.paidInstallmentCount) || 0));
   if (paidInstallmentCount > 0) {
-    successParams.set('paidInstallmentCount', String(paidInstallmentCount));
+    params.set('paidInstallmentCount', String(paidInstallmentCount));
   }
-  const cancelParams = new URLSearchParams(successParams);
-  if (input.retryPayment || input.publicCheckoutCapability) {
-    cancelParams.set('retryPayment', '1');
+  const successParams = new URLSearchParams(params);
+  if (input.retryPayment) {
+    params.set('retryPayment', '1');
+  } else if (input.publicCheckoutCapability) {
+    params.set('retryPayment', '1');
   }
   return {
     successUrl: `${baseUrl}/registration.html?${successParams.toString()}&status=success`,
-    cancelUrl: `${baseUrl}/registration.html?${cancelParams.toString()}&status=cancelled`
+    cancelUrl: `${baseUrl}/registration.html?${params.toString()}&status=cancelled`
   };
 }
 
