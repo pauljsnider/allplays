@@ -791,6 +791,24 @@ export function getScheduleEventDetailPath(
   return `/schedule/${encodeURIComponent(event.teamId)}/${encodeURIComponent(event.id)}${query ? `?${query}` : ''}`;
 }
 
+function getTaskTargetedEventDetailPath(event: ParentScheduleEvent | CalendarScheduleEntry) {
+  return getScheduleEventDetailPath(event, getScheduleTaskDetailSection(event));
+}
+
+function hasStaffGameHubAccess(event: Pick<ParentScheduleEvent, 'isTeamStaff' | 'isTeamAdmin' | 'canUpdateScore'>) {
+  return event.isTeamStaff === true || event.isTeamAdmin === true || event.canUpdateScore === true;
+}
+
+export function getGenericEventDetailPath(
+  event: ParentScheduleEvent | CalendarScheduleEntry,
+  preferGameHubForStaff = false
+) {
+  if (preferGameHubForStaff && hasStaffGameHubAccess(event)) {
+    return getScheduleEventDetailPath(event, 'game');
+  }
+  return getTaskTargetedEventDetailPath(event);
+}
+
 export function getScheduleTournamentInfo(
   event: Pick<ParentScheduleEvent, 'competitionType' | 'tournament'> & Record<string, any>
 ): ScheduleTournamentInfo {

@@ -19,14 +19,14 @@ import {
   formatEventDateLabel,
   formatEventTimeLabel,
   getCalendarScheduleEntries,
-  getScheduleEventDetailPath,
+  getGenericEventDetailPath,
   getParentScheduleTeamOptions,
+  getScheduleEventDetailPath,
   getPracticePacketRows,
   getScheduleTitle,
   getScheduleTournamentInfo,
   getScheduleMapHref,
   getScheduleForecastHref,
-  getScheduleTaskDetailSection,
   normalizeRsvpResponse,
   validateExternalCalendarUrl,
   type CalendarScheduleEntry,
@@ -2265,7 +2265,7 @@ function ScheduleActionQueue({ events }: { events: ParentScheduleEvent[] }) {
       </div>
       <div className="mt-3 space-y-2">
         {actionEvents.length ? actionEvents.map(({ event, action }) => (
-          <Link key={event.eventKey} to={getTaskTargetedEventDetailPath(event)} className="block rounded-xl border border-gray-200 bg-white p-3 transition hover:border-primary-200 hover:bg-primary-50">
+          <Link key={event.eventKey} to={getGenericEventDetailPath(event)} className="block rounded-xl border border-gray-200 bg-white p-3 transition hover:border-primary-200 hover:bg-primary-50">
             <div className="flex items-start justify-between gap-2">
               <div className="min-w-0">
                 <div className="truncate text-sm font-black text-gray-950">{action}</div>
@@ -2423,7 +2423,7 @@ function PracticePacketsPanel({ rows }: { rows: PracticePacketScheduleRow[] }) {
       </div>
       <div className="schedule-list overflow-hidden rounded-xl border border-gray-200 bg-white shadow-app sm:space-y-3 sm:overflow-visible sm:border-0 sm:bg-transparent sm:shadow-none">
         {rows.map((row) => (
-          <Link key={`${row.event.eventKey}-packet`} to={getTaskTargetedEventDetailPath(row.event)} className="block border-b border-gray-100 px-3 py-3 transition last:border-b-0 hover:bg-gray-50 sm:rounded-xl sm:border sm:border-blue-100 sm:bg-white sm:shadow-sm sm:hover:border-blue-200 sm:hover:bg-blue-50">
+          <Link key={`${row.event.eventKey}-packet`} to={getGenericEventDetailPath(row.event)} className="block border-b border-gray-100 px-3 py-3 transition last:border-b-0 hover:bg-gray-50 sm:rounded-xl sm:border sm:border-blue-100 sm:bg-white sm:shadow-sm sm:hover:border-blue-200 sm:hover:bg-blue-50">
             <div className="flex items-center justify-between gap-3">
               <div className="min-w-0">
                 <div className="flex items-center gap-2">
@@ -2454,7 +2454,8 @@ function ScheduleEventCard({ event, preferGameHubForStaff }: {
 }) {
   const rsvp = normalizeRsvpResponse(event.myRsvp);
   const eventTitle = getScheduleTitle(event);
-  const detailPath = getGenericEventDetailPath(event, preferGameHubForStaff);
+  const defaultDetailPath = getScheduleEventDetailPath(event);
+  const detailPath = getGenericEventDetailPath(event, preferGameHubForStaff) || defaultDetailPath;
   const isRsvpNeeded = rsvp === 'not_responded' && event.isDbGame && !event.isCancelled;
   const hasPracticePacket = event.type === 'practice' && Boolean(event.practiceHomePacketSummary);
   const actionPills = getEventCardActionPills(event, rsvp);
@@ -2611,23 +2612,7 @@ function formatTournamentStandingMeta(row: ScheduleTournamentStandingRow) {
   return parts.length ? ` (${parts.join(', ')})` : '';
 }
 
-function getTaskTargetedEventDetailPath(event: ParentScheduleEvent | CalendarScheduleEntry) {
-  return getScheduleEventDetailPath(event, getScheduleTaskDetailSection(event));
-}
-
-function hasStaffGameHubAccess(event: Pick<ParentScheduleEvent, 'isTeamStaff' | 'isTeamAdmin' | 'canUpdateScore'>) {
-  return event.isTeamStaff === true || event.isTeamAdmin === true || event.canUpdateScore === true;
-}
-
-export function getGenericEventDetailPath(
-  event: ParentScheduleEvent | CalendarScheduleEntry,
-  preferGameHubForStaff = false
-) {
-  if (preferGameHubForStaff && hasStaffGameHubAccess(event)) {
-    return getScheduleEventDetailPath(event, 'game');
-  }
-  return getTaskTargetedEventDetailPath(event);
-}
+export { getGenericEventDetailPath } from '../lib/scheduleLogic';
 
 function getScheduleChildLabel(event: ParentScheduleEvent | CalendarScheduleEntry) {
   const names = 'childNames' in event && event.childNames.length ? event.childNames : [];

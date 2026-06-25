@@ -5,7 +5,8 @@ import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const scheduleServiceMocks = vi.hoisted(() => ({
-  resolveParentGameRoute: vi.fn()
+  resolveParentGameRoute: vi.fn(),
+  loadParentScheduleEventDetail: vi.fn()
 }))
 
 vi.mock('../lib/scheduleService', () => scheduleServiceMocks)
@@ -67,11 +68,28 @@ describe('GameDetail route resolution', () => {
     cleanup()
   })
 
-  it('routes /games/:gameId into the schedule event detail workflow with game section context', async () => {
+  it('routes non-staff /games/:gameId links to the next task-focused section', async () => {
     scheduleServiceMocks.resolveParentGameRoute.mockResolvedValue({
       teamId: 'team-bears',
       eventId: 'game-1',
       childId: 'player-7'
+    })
+    scheduleServiceMocks.loadParentScheduleEventDetail.mockResolvedValue({
+      children: [],
+      events: [{
+        id: 'game-1',
+        teamId: 'team-bears',
+        childId: 'player-7',
+        type: 'game',
+        isDbGame: true,
+        isCancelled: false,
+        myRsvp: 'not_responded',
+        assignments: [],
+        rideshareSummary: null,
+        isTeamStaff: false,
+        isTeamAdmin: false,
+        canUpdateScore: false
+      }]
     })
 
     renderGameDetail()
@@ -82,7 +100,7 @@ describe('GameDetail route resolution', () => {
       expect(screen.getByText('Live event workflow')).toBeTruthy()
     })
 
-    expect(screen.getByTestId('location').textContent).toBe('/schedule/team-bears/game-1?childId=player-7&section=game')
+    expect(screen.getByTestId('location').textContent).toBe('/schedule/team-bears/game-1?childId=player-7&section=availability')
     expect(screen.getByRole('heading', { name: 'Availability' })).toBeTruthy()
     expect(screen.getByText('Rideshare')).toBeTruthy()
     expect(screen.getByText('Assignments')).toBeTruthy()
@@ -91,6 +109,61 @@ describe('GameDetail route resolution', () => {
     expect(scheduleServiceMocks.resolveParentGameRoute).toHaveBeenCalledWith(auth.user, 'game-1', {
       expandStaffPlayers: false
     })
+    expect(scheduleServiceMocks.loadParentScheduleEventDetail).toHaveBeenCalledWith(auth.user, {
+      teamId: 'team-bears',
+      eventId: 'game-1',
+      expandStaffPlayers: false
+    })
+  })
+
+  it('keeps staff-capable /games/:gameId links on the game hub', async () => {
+    scheduleServiceMocks.resolveParentGameRoute.mockResolvedValue({
+      teamId: 'team-bears',
+      eventId: 'game-1',
+      childId: 'player-7'
+    })
+    scheduleServiceMocks.loadParentScheduleEventDetail.mockResolvedValue({
+      children: [],
+      events: [{
+        id: 'game-1',
+        teamId: 'team-bears',
+        childId: 'player-7',
+        type: 'game',
+        isDbGame: true,
+        isCancelled: false,
+        myRsvp: 'not_responded',
+        assignments: [],
+        rideshareSummary: null,
+        isTeamStaff: true,
+        isTeamAdmin: false,
+        canUpdateScore: false
+      }]
+    })
+
+    renderGameDetail()
+
+    await waitFor(() => {
+      expect(screen.getByText('Live event workflow')).toBeTruthy()
+    })
+
+    expect(screen.getByTestId('location').textContent).toBe('/schedule/team-bears/game-1?childId=player-7&section=game')
+  })
+
+  it('falls back to the resolved schedule route when detail refresh fails', async () => {
+    scheduleServiceMocks.resolveParentGameRoute.mockResolvedValue({
+      teamId: 'team-bears',
+      eventId: 'game-1',
+      childId: 'player-7'
+    })
+    scheduleServiceMocks.loadParentScheduleEventDetail.mockRejectedValue(new Error('offline'))
+
+    renderGameDetail()
+
+    await waitFor(() => {
+      expect(screen.getByText('Live event workflow')).toBeTruthy()
+    })
+
+    expect(screen.getByTestId('location').textContent).toBe('/schedule/team-bears/game-1?childId=player-7&section=game')
   })
 
   it('shows a recovery state when the game cannot be resolved', async () => {

@@ -6,7 +6,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { GameDetail } from '../../apps/app/src/pages/GameDetail.tsx';
 
 const scheduleServiceMocks = vi.hoisted(() => ({
-    resolveParentGameRoute: vi.fn()
+    resolveParentGameRoute: vi.fn(),
+    loadParentScheduleEventDetail: vi.fn()
 }));
 
 vi.mock('../../apps/app/src/lib/scheduleService', async (importOriginal) => ({
@@ -76,6 +77,24 @@ describe('app GameDetail route resolution', () => {
             childId: 'player-1'
         });
 
+        scheduleServiceMocks.loadParentScheduleEventDetail.mockResolvedValue({
+            children: [],
+            events: [{
+                id: 'game-baseball',
+                teamId: 'team-baseball',
+                childId: 'player-1',
+                type: 'game',
+                isDbGame: true,
+                isCancelled: false,
+                myRsvp: 'not_responded',
+                assignments: [],
+                rideshareSummary: null,
+                isTeamStaff: true,
+                isTeamAdmin: false,
+                canUpdateScore: false
+            }]
+        });
+
         const { container, root, router } = await renderGameDetail();
 
         await act(async () => {
@@ -90,6 +109,11 @@ describe('app GameDetail route resolution', () => {
         expect(container.textContent).toContain('Live event workflow');
         expect(container.textContent).not.toContain('Live chat');
         expect(scheduleServiceMocks.resolveParentGameRoute).toHaveBeenCalledWith(coachAuth.user, 'game-baseball', {
+            expandStaffPlayers: false
+        });
+        expect(scheduleServiceMocks.loadParentScheduleEventDetail).toHaveBeenCalledWith(coachAuth.user, {
+            teamId: 'team-baseball',
+            eventId: 'game-baseball',
             expandStaffPlayers: false
         });
 

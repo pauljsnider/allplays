@@ -320,6 +320,17 @@ describe('Schedule', () => {
       myRsvp: 'not_responded'
     }) as any, true)).toBe('/schedule/team-1/event-1?childId=player-1&section=availability');
     expect(getGenericEventDetailPath(buildScheduleEvent(1, {
+      isTeamStaff: false,
+      myRsvp: 'going',
+      assignments: [{ role: 'Snack bar', value: '', claimable: true }]
+    }) as any, true)).toBe('/schedule/team-1/event-1?childId=player-1&section=assignments');
+    expect(getGenericEventDetailPath(buildScheduleEvent(1, {
+      isTeamStaff: false,
+      myRsvp: 'going',
+      assignments: [],
+      rideshareSummary: { requests: 1, pending: 0, seatsLeft: 0 }
+    }) as any, true)).toBe('/schedule/team-1/event-1?childId=player-1&section=rideshare');
+    expect(getGenericEventDetailPath(buildScheduleEvent(1, {
       id: 'practice-1',
       type: 'practice',
       isDbGame: false,
@@ -350,6 +361,43 @@ describe('Schedule', () => {
     await waitFor(() => {
       expect(screen.getByTestId('route-probe').textContent).toBe('/schedule/team-1/event-1?childId=player-1&section=game');
     });
+  });
+
+  it('routes desktop parent queue links through generic assignment and rideshare detail paths', async () => {
+    shellLayoutMocks.isDesktopWeb = true;
+    scheduleServiceMocks.loadParentSchedule.mockResolvedValueOnce({
+      children: [
+        { playerId: 'player-1', playerName: 'Pat', teamId: 'team-1', teamName: 'Bears' }
+      ],
+      events: [
+        buildScheduleEvent(1, {
+          myRsvp: 'going',
+          assignments: [{ role: 'Snack bar', value: '', claimable: true }]
+        }),
+        buildScheduleEvent(2, {
+          eventKey: 'team-1::event-2::player-1::2100-06-02T18:00:00.000Z::game',
+          id: 'event-2',
+          date: new Date('2100-06-02T18:00:00.000Z'),
+          myRsvp: 'going',
+          assignments: [],
+          rideshareSummary: { requests: 1, pending: 0, seatsLeft: 0 }
+        })
+      ]
+    });
+
+    const { container } = render(
+      <MemoryRouter initialEntries={['/schedule']}>
+        <Routes>
+          <Route path="/schedule" element={<Schedule auth={auth} />} />
+          <Route path="/schedule/:teamId/:eventId" element={<RouteProbe />} />
+        </Routes>
+      </MemoryRouter>
+    );
+
+    await screen.findByText('Parent queue');
+
+    expect(container.querySelector('.schedule-action-queue a[href="/schedule/team-1/event-1?childId=player-1&section=assignments"]')).toBeTruthy();
+    expect(container.querySelector('.schedule-action-queue a[href="/schedule/team-1/event-2?childId=player-1&section=rideshare"]')).toBeTruthy();
   });
 
   it('shows the remaining event count when only one more event is hidden', async () => {
