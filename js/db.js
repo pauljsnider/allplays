@@ -2939,6 +2939,14 @@ export async function approveParentMembershipRequest(teamId, requestId, decision
             }],
             updatedAt: now
         }, { merge: true });
+        // Write BOTH sides of the link. Without this, the player's `parents`
+        // array references the user but the user's `parentOf` (and the
+        // denormalized `parentTeamIds`/`parentPlayerKeys` the Firestore rules
+        // rely on) stay empty, so the parent can never see the linked player.
+        transaction.set(userRef, {
+            ...merged.userUpdate,
+            updatedAt: now
+        }, { merge: true });
         transaction.update(requestRef, {
             ...requestUpdate,
             updatedAt: now,
@@ -5340,7 +5348,14 @@ async function listParentRegistrationApplicationsForProfile(userProfile = {}) {
 export async function getParentDashboardData(userId) {
     const userProfile = await getUserProfile(userId);
     if (!userProfile || !userProfile.parentOf || userProfile.parentOf.length === 0) {
-        const registrationApplications = await listParentRegistrationApplicationsForProfile(userProfile || {});
+        // A registration-applications failure (e.g. a missing collection-group
+        // index) must never crash the dashboard, so degrade to an empty list.
+        let registrationApplications = [];
+        try {
+            registrationApplications = await listParentRegistrationApplicationsForProfile(userProfile || {});
+        } catch (error) {
+            console.warn('[parent-dashboard] Failed to load registration applications; continuing without them:', error);
+        }
         return {
             upcomingGames: [],
             children: [],
@@ -5432,7 +5447,15 @@ export async function getParentDashboardData(userId) {
         return dA - dB;
     });
 
-    const registrationApplications = await listParentRegistrationApplicationsForProfile(userProfile);
+    // The parent's players are already loaded above. A registration-applications
+    // failure (e.g. a missing collection-group index) must never propagate and
+    // hide those players, so degrade to an empty list instead.
+    let registrationApplications = [];
+    try {
+        registrationApplications = await listParentRegistrationApplicationsForProfile(userProfile);
+    } catch (error) {
+        console.warn('[parent-dashboard] Failed to load registration applications; continuing without them:', error);
+    }
 
     if (activeChildren.length === 0) {
         if (dashboardState.blockedLinkCount > 0) {

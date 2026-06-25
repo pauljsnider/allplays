@@ -287,4 +287,59 @@ describe('parent scope normalization', () => {
             teamEventErrors: 1
         });
     });
+
+    it('keeps players visible when the registration applications query fails (missing index)', async () => {
+        const getUserProfile = vi.fn().mockResolvedValue({
+            parentOf: [
+                { teamId: 'team-active', playerId: 'player-active', teamName: 'Active Team', playerName: 'Avery Lee' }
+            ],
+            parentTeamIds: ['team-active'],
+            parentPlayerKeys: ['team-active::player-active']
+        });
+        const updateUserProfile = vi.fn().mockResolvedValue(undefined);
+        // Simulate the Firestore "missing COLLECTION_GROUP index" failure.
+        const indexError = new Error('The query requires a COLLECTION_GROUP_ASC index for collection registrations and field guardian.email');
+        indexError.code = 'failed-precondition';
+        const listParentRegistrationApplicationsForProfile = vi.fn().mockRejectedValue(indexError);
+        const normalizeParentScopeLinks = vi.fn().mockResolvedValue({
+            activeLinks: [
+                {
+                    teamId: 'team-active',
+                    playerId: 'player-active',
+                    teamName: 'Active Team',
+                    playerName: 'Avery Lee',
+                    playerNumber: '9',
+                    playerPhotoUrl: null
+                }
+            ],
+            parentTeamIds: ['team-active'],
+            parentPlayerKeys: ['team-active::player-active'],
+            blockedLinkCount: 0,
+            staleLinkCount: 0
+        });
+        const getParentDashboardData = buildGetParentDashboardData({
+            getUserProfile,
+            updateUserProfile,
+            listParentRegistrationApplicationsForProfile,
+            normalizeParentScopeLinks,
+            getTeam: vi.fn().mockResolvedValue({ id: 'team-active', name: 'Active Team', active: true }),
+            getEvents: vi.fn().mockResolvedValue([])
+        });
+
+        // Must not throw, and the player must still be returned.
+        const result = await getParentDashboardData('parent-1');
+
+        expect(listParentRegistrationApplicationsForProfile).toHaveBeenCalled();
+        expect(result.registrationApplications).toEqual([]);
+        expect(result.children).toEqual([
+            {
+                teamId: 'team-active',
+                playerId: 'player-active',
+                teamName: 'Active Team',
+                playerName: 'Avery Lee',
+                playerNumber: '9',
+                playerPhotoUrl: null
+            }
+        ]);
+    });
 });

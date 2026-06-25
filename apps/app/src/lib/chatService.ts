@@ -91,6 +91,8 @@ export type ChatTeam = {
   sport?: string | null;
   photoUrl?: string | null;
   active?: boolean;
+  archived?: boolean;
+  status?: string | null;
   role: 'Parent' | 'Coach' | 'Admin';
   canModerate: boolean;
   unreadCount: number;
@@ -723,6 +725,8 @@ export async function loadChatInbox(user: AuthUser | null, options: ChatInboxLoa
       sport: team.sport || null,
       photoUrl: team.photoUrl || null,
       active: team.active,
+      archived: team.archived,
+      status: team.status,
       role: getTeamRole(user, team, profile),
       canModerate,
       unreadCount: Number(unreadCounts[team.id] || 0),

@@ -205,6 +205,35 @@ describe('React app Home model helpers', () => {
         });
     });
 
+    it('hides deactivated and archived teams from the My Teams list', () => {
+        const model = buildParentHomeModel({
+            children: [
+                // Parent-linked player on a deactivated team (inbox marks it inactive)
+                child({ teamId: 'team-dead', teamName: 'Deer', playerId: 'player-x', playerName: 'Paul' }),
+                // Parent-linked player on an active team
+                child({ teamId: 'team-live', teamName: 'Current', playerId: 'player-y', playerName: 'Madison' })
+            ],
+            events: [],
+            inboxTeams: [
+                { id: 'team-dead', name: 'Deer', role: 'Admin', unreadCount: 0, active: false },
+                { id: 'team-live', name: 'Current', role: 'Admin', unreadCount: 0, active: true },
+                // Owned/coached teams surfaced only via chat inbox
+                { id: 'team-archived', name: 'Old Bears', role: 'Coach', unreadCount: 2, archived: true },
+                { id: 'team-status', name: 'Disabled FC', role: 'Coach', unreadCount: 1, status: 'inactive' },
+                { id: 'team-ok', name: 'Wildcats', role: 'Coach', unreadCount: 5, active: true }
+            ],
+            now: new Date('2100-05-30T12:00:00Z')
+        });
+
+        const teamIds = model.teams.map((team) => team.teamId).sort();
+        expect(teamIds).toEqual(['team-live', 'team-ok']);
+        expect(model.metrics.teams).toBe(2);
+        // Inactive teams must not leak in through either the child or inbox path.
+        expect(model.teams.find((team) => team.teamId === 'team-dead')).toBeUndefined();
+        expect(model.teams.find((team) => team.teamId === 'team-archived')).toBeUndefined();
+        expect(model.teams.find((team) => team.teamId === 'team-status')).toBeUndefined();
+    });
+
     it('builds the same Home outputs from indexed event aggregates across multiple teams and players', () => {
         const now = new Date('2100-05-30T12:00:00Z');
         const model = buildParentHomeModel({

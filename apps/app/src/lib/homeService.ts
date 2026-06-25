@@ -258,6 +258,9 @@ function normalizeInboxTeams(teams: any[]): ParentHomeInboxTeam[] {
     role: team.role || 'Parent',
     sport: team.sport || null,
     photoUrl: team.photoUrl || null,
-    unreadCount: Number(team.unreadCount || 0)
+    unreadCount: Number(team.unreadCount || 0),
+    active: team.active,
+    archived: team.archived,
+    status: team.status
   }));
 }

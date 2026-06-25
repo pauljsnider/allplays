@@ -5,6 +5,7 @@ import {
   type ParentScheduleEvent
 } from './scheduleLogic';
 import type { ParentScheduleChild } from './scheduleService';
+import { isTeamActive } from './teamVisibility';
 
 export type HomeActionKind = 'rsvp' | 'packet' | 'assignment' | 'rideshare' | 'fee' | 'message';
 export type HomeActionTone = 'amber' | 'blue' | 'emerald' | 'rose' | 'gray';
@@ -30,6 +31,9 @@ export type ParentHomeInboxTeam = {
   unreadCount?: number;
   sport?: string | null;
   photoUrl?: string | null;
+  active?: boolean | null;
+  archived?: boolean | null;
+  status?: string | null;
 };
 
 export type ParentHomeAction = {
@@ -303,6 +307,10 @@ function buildHomeTeams(children: ParentScheduleChild[], eventIndex: HomeEventIn
   const byTeam = new Map<string, ParentHomeTeam>();
   children.forEach((child) => {
     const inbox = inboxByTeamId.get(child.teamId);
+    // Hide deactivated/archived teams from the "My Teams" list. We can only
+    // judge this when we have the team record (via the chat inbox); pure
+    // parent-link teams without inbox data are left in place.
+    if (inbox && !isTeamActive(inbox)) return;
     if (!byTeam.has(child.teamId)) {
       const aggregate = eventIndex.teamAggregates.get(child.teamId);
       byTeam.set(child.teamId, {
@@ -323,6 +331,7 @@ function buildHomeTeams(children: ParentScheduleChild[], eventIndex: HomeEventIn
 
   inboxByTeamId.forEach((inbox, teamId) => {
     if (byTeam.has(teamId)) return;
+    if (!isTeamActive(inbox)) return;
     byTeam.set(teamId, {
       teamId,
       teamName: inbox.name || teamId,
