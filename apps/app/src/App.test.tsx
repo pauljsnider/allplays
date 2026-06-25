@@ -48,6 +48,28 @@ const nativeBackMock = vi.hoisted(() => {
     })
   };
 });
+const capacitorMock = vi.hoisted(() => ({
+  isNativePlatform: vi.fn(() => true),
+  isPluginAvailable: vi.fn(() => true),
+  getPlatform: vi.fn(() => 'ios')
+}));
+const pushRoutingMock = vi.hoisted(() => ({
+  clearPendingPushRoute: vi.fn(),
+  readPendingPushRoute: vi.fn(() => null)
+}));
+const pushServiceMock = vi.hoisted(() => {
+  const state = {
+    lastListener: null as ((route: string) => void) | null
+  };
+  return {
+    ...state,
+    addPushNotificationOpenListener: vi.fn(async (listener: (route: string) => void) => {
+      state.lastListener = listener;
+      return () => {};
+    }),
+    ensureAndroidNotificationChannels: vi.fn(async () => {})
+  };
+});
 
 vi.mock('@capacitor/app', () => ({
   App: {
@@ -57,11 +79,7 @@ vi.mock('@capacitor/app', () => ({
 }));
 
 vi.mock('@capacitor/core', () => ({
-  Capacitor: {
-    isNativePlatform: () => true,
-    isPluginAvailable: () => true,
-    getPlatform: () => 'ios'
-  }
+  Capacitor: capacitorMock
 }));
 
 vi.mock('./lib/useAuth', () => ({
@@ -77,19 +95,13 @@ vi.mock('./components/AppShell', () => ({
   ),
 }));
 
-vi.mock('./lib/pushNotificationRouting', () => ({
-  clearPendingPushRoute: vi.fn(),
-  readPendingPushRoute: vi.fn(() => null),
-}));
+vi.mock('./lib/pushNotificationRouting', () => pushRoutingMock);
 
 vi.mock('./lib/reloadRouting', () => ({
   shouldReloadTeamsToHome: vi.fn(() => false),
 }));
 
-vi.mock('./lib/pushService', () => ({
-  addPushNotificationOpenListener: vi.fn(async () => () => {}),
-  ensureAndroidNotificationChannels: vi.fn(async () => {}),
-}));
+vi.mock('./lib/pushService', () => pushServiceMock);
 
 vi.mock('./pages/Home', () => ({
   Home: () => {
@@ -114,6 +126,10 @@ vi.mock('./pages/Schedule', () => ({
 
 vi.mock('./pages/ScheduleEventDetail', () => ({
   ScheduleEventDetail: () => <div>Event detail page</div>,
+}));
+
+vi.mock('./pages/Messages', () => ({
+  Messages: () => <div>Messages page</div>,
 }));
 
 function installTestLocalStorage() {
@@ -150,6 +166,15 @@ describe('App protected route loading', () => {
     nativeBackMock.addListener.mockClear();
     nativeBackMock.exitApp.mockClear();
     nativeBackMock.remove.mockClear();
+    capacitorMock.isNativePlatform.mockReturnValue(true);
+    capacitorMock.isPluginAvailable.mockReturnValue(true);
+    capacitorMock.getPlatform.mockReturnValue('ios');
+    pushRoutingMock.clearPendingPushRoute.mockClear();
+    pushRoutingMock.readPendingPushRoute.mockReset();
+    pushRoutingMock.readPendingPushRoute.mockReturnValue(null);
+    pushServiceMock.addPushNotificationOpenListener.mockClear();
+    pushServiceMock.ensureAndroidNotificationChannels.mockClear();
+    pushServiceMock.lastListener = null;
     consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
   });
 
@@ -233,6 +258,84 @@ describe('App protected route loading', () => {
 
     expect(await screen.findByText('Officials assignments page')).toBeTruthy();
     expect(screen.queryByText('Loading ALL PLAYS')).toBeNull();
+  });
+
+  it('skips push setup during signed-out boot', () => {
+    authMock.state = {
+      ...authMock.signedInAuth,
+      user: null,
+      loading: false,
+      roles: [],
+      isParent: false
+    };
+
+    render(
+      <MemoryRouter initialEntries={['/auth']}>
+        <App />
+      </MemoryRouter>
+    );
+
+    expect(pushServiceMock.ensureAndroidNotificationChannels).not.toHaveBeenCalled();
+    expect(pushServiceMock.addPushNotificationOpenListener).not.toHaveBeenCalled();
+  });
+
+  it('skips push setup on web but registers it once for signed-in native boot', async () => {
+    capacitorMock.isNativePlatform.mockReturnValue(false);
+
+    const firstRender = render(
+      <MemoryRouter initialEntries={['/officials']}>
+        <App />
+      </MemoryRouter>
+    );
+
+    expect(await screen.findByText('Officials assignments page')).toBeTruthy();
+    expect(pushServiceMock.ensureAndroidNotificationChannels).not.toHaveBeenCalled();
+    expect(pushServiceMock.addPushNotificationOpenListener).not.toHaveBeenCalled();
+
+    firstRender.unmount();
+    capacitorMock.isNativePlatform.mockReturnValue(true);
+
+    render(
+      <MemoryRouter initialEntries={['/officials']}>
+        <App />
+      </MemoryRouter>
+    );
+
+    expect(await screen.findByText('Officials assignments page')).toBeTruthy();
+    await waitFor(() => expect(pushServiceMock.ensureAndroidNotificationChannels).toHaveBeenCalledTimes(1));
+    expect(pushServiceMock.addPushNotificationOpenListener).toHaveBeenCalledTimes(1);
+  });
+
+  it('preserves pending push routing after auth resolves in a native session', async () => {
+    authMock.state = {
+      ...authMock.signedInAuth,
+      user: null,
+      loading: true,
+      roles: [],
+      isParent: false
+    };
+    pushRoutingMock.readPendingPushRoute.mockImplementationOnce(() => '/messages').mockReturnValue(null);
+    writeAuthBootstrapHint({ uid: 'user-1', email: 'parent@example.com', displayName: 'Pat Parent', roles: ['parent'] });
+
+    const { rerender } = render(
+      <MemoryRouter initialEntries={['/home']}>
+        <App />
+      </MemoryRouter>
+    );
+
+    expect(await screen.findByRole('navigation', { name: 'Primary navigation' })).toBeTruthy();
+    expect(pushServiceMock.ensureAndroidNotificationChannels).not.toHaveBeenCalled();
+
+    authMock.state = { ...authMock.signedInAuth, refresh: vi.fn(), signOut: vi.fn() };
+    rerender(
+      <MemoryRouter initialEntries={['/home']}>
+        <App />
+      </MemoryRouter>
+    );
+
+    expect(await screen.findByText('Messages page')).toBeTruthy();
+    await waitFor(() => expect(pushServiceMock.ensureAndroidNotificationChannels).toHaveBeenCalledTimes(1));
+    expect(pushRoutingMock.clearPendingPushRoute).toHaveBeenCalledTimes(1);
   });
 
   it('keeps the app shell visible when a protected route throws while rendering', async () => {
