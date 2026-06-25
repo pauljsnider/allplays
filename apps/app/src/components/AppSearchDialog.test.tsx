@@ -149,7 +149,7 @@ describe('AppSearchDialog', () => {
     const originalInnerHeight = window.innerHeight;
     const listeners = new Map<string, Set<() => void>>();
     let viewportHeight = 800;
-    let viewportOffsetTop = 0;
+    const viewportOffsetTop = 0;
 
     const emit = (eventName: string) => {
       listeners.get(eventName)?.forEach((listener) => listener());
