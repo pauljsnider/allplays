@@ -110,7 +110,8 @@ describe('React app chat recipient service', () => {
         const options = await loadChatRecipientOptions('team-1');
 
         expect(dbMocks.getUserProfile).not.toHaveBeenCalled();
-        expect(dbMocks.getUserByEmail).not.toHaveBeenCalled();
+        expect(dbMocks.getUserByEmail).toHaveBeenCalledTimes(1);
+        expect(dbMocks.getUserByEmail).toHaveBeenCalledWith('noname@example.com');
         expect(options).toEqual(expect.arrayContaining([
             expect.objectContaining({
                 id: 'user:parent-1',
@@ -175,6 +176,11 @@ describe('React app chat recipient service', () => {
             }
             return null;
         });
+        dbMocks.getUserByEmail.mockImplementation(async (email) => (
+            email === 'casey@example.com'
+                ? { fullName: 'Casey Guardian', email }
+                : null
+        ));
 
         const { loadChatRecipientOptions } = await import('../../apps/app/src/lib/chatService.ts');
         const options = await loadChatRecipientOptions('team-1');
@@ -182,7 +188,8 @@ describe('React app chat recipient service', () => {
         expect(dbMocks.getUserProfile).toHaveBeenCalledTimes(2);
         expect(dbMocks.getUserProfile).toHaveBeenCalledWith('parent-2');
         expect(dbMocks.getUserProfile).toHaveBeenCalledWith('parent-3');
-        expect(dbMocks.getUserByEmail).not.toHaveBeenCalled();
+        expect(dbMocks.getUserByEmail).toHaveBeenCalledTimes(1);
+        expect(dbMocks.getUserByEmail).toHaveBeenCalledWith('casey@example.com');
         expect(options).toEqual(expect.arrayContaining([
             expect.objectContaining({
                 id: 'user:parent-1',
@@ -195,7 +202,8 @@ describe('React app chat recipient service', () => {
             }),
             expect.objectContaining({
                 id: 'email:casey@example.com',
-                name: 'casey@example.com'
+                name: 'Casey Guardian',
+                email: 'casey@example.com'
             }),
             expect.objectContaining({
                 id: 'user:parent-3',

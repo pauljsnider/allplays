@@ -1563,12 +1563,13 @@ export async function loadChatRecipientOptions(teamId: string): Promise<ChatReci
 }
 
 function needsChatRecipientProfile(parent: Record<string, any> = {}) {
-  return !getChatMemberDisplayName({
+  const label = getChatMemberDisplayName({
     name: parent.name,
     fullName: parent.fullName,
     displayName: parent.displayName,
     email: parent.email
   }, '');
+  return !label || label === compactString(parent.email);
 }
 
 async function loadChatRecipientProfiles(players: any): Promise<Map<string, Record<string, any>>> {
