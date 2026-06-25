@@ -1662,6 +1662,7 @@ export function ChatWindow({
 
       {showEmailSheet && canModerate ? (
         <TeamEmailSheet
+          isDesktopWeb={isDesktopWeb}
           subject={emailState.subject}
           body={emailState.body}
           drafts={emailState.drafts}
@@ -1900,6 +1901,7 @@ export function StatusBanner({ status, onClose }: { status: ChatStatus; onClose:
 }
 
 function TeamEmailSheet({
+  isDesktopWeb,
   subject,
   body,
   drafts,
@@ -1935,6 +1937,7 @@ function TeamEmailSheet({
   onHistoryStatusClose,
   onClose
 }: {
+  isDesktopWeb: boolean;
   subject: string;
   body: string;
   drafts: TeamEmailDraft[];
@@ -1989,6 +1992,120 @@ function TeamEmailSheet({
     }
   }, [selectedTemplateId, templates]);
 
+  const savedDraftsSection = (
+    <div className="space-y-3 rounded-2xl border border-gray-200 bg-gray-50 p-3">
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <div className="text-sm font-black text-gray-950">Saved drafts</div>
+          <div className="text-xs font-semibold leading-5 text-gray-500">Drafts keep selected recipients, subject, and body. Saving never sends email.</div>
+        </div>
+        <div className="flex gap-2">
+          <button type="button" className="ghost-button !h-9 !min-h-9 text-xs" onClick={onRefreshDrafts} disabled={loadingDrafts}>
+            {loadingDrafts ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <RefreshCw className="h-4 w-4" aria-hidden="true" />}
+            Refresh
+          </button>
+          <button type="button" className="secondary-button !h-9 !min-h-9 text-xs" disabled={!canSaveDraft} onClick={onSaveDraft}>
+            {savingDraft ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : null}
+            Save draft
+          </button>
+        </div>
+      </div>
+      {loadingDrafts && drafts.length === 0 ? (
+        <div className="rounded-xl border border-gray-200 bg-white px-3 py-3 text-sm font-bold text-gray-500">Loading saved drafts...</div>
+      ) : drafts.length === 0 ? (
+        <div className="rounded-xl border border-dashed border-gray-200 bg-white px-3 py-2 text-xs font-semibold text-gray-500">
+          No saved drafts yet.
+        </div>
+      ) : (
+        <div className="space-y-2">
+          {drafts.map((draft) => {
+            const isSelected = draft.id === selectedDraftId;
+            return (
+              <button
+                key={draft.id}
+                type="button"
+                className={`w-full rounded-xl border px-3 py-2 text-left ${isSelected ? 'border-primary-200 bg-primary-50 text-primary-700' : 'border-gray-200 bg-white text-gray-700 hover:bg-gray-50'}`}
+                onClick={() => onApplyDraft(draft.id)}
+              >
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <div className="truncate text-sm font-black">{draft.subject || '(No subject)'}</div>
+                    <div className="mt-0.5 text-xs font-semibold text-gray-500">{Math.max(draft.recipientIds.length, draft.recipients.length)} recipient{Math.max(draft.recipientIds.length, draft.recipients.length) === 1 ? '' : 's'} · {formatEmailSentTime(draft.updatedAt)}</div>
+                  </div>
+                  {isSelected ? <span className="text-[11px] font-black uppercase">Current</span> : null}
+                </div>
+              </button>
+            );
+          })}
+        </div>
+      )}
+      {!draftAudienceSupported ? (
+        <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-sm font-bold text-amber-800">
+          Draft saving is available only for Selected members.
+        </div>
+      ) : missingSelectedRecipients ? (
+        <div className="rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-sm font-bold text-rose-700">
+          Choose at least one selected member before saving or sending email.
+        </div>
+      ) : null}
+    </div>
+  );
+
+  const reusableTemplatesSection = (
+    <div className="space-y-3 rounded-2xl border border-gray-200 bg-gray-50 p-3">
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <div className="text-sm font-black text-gray-950">Reusable templates</div>
+          <div className="text-xs font-semibold leading-5 text-gray-500">Apply a saved subject and body without changing recipients.</div>
+        </div>
+        <button type="button" className="ghost-button !h-9 !min-h-9 text-xs" onClick={onRefreshTemplates} disabled={loadingTemplates}>
+          {loadingTemplates ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <RefreshCw className="h-4 w-4" aria-hidden="true" />}
+          Refresh
+        </button>
+      </div>
+      <div className="flex flex-col gap-2 sm:flex-row">
+        <label className="min-w-0 flex-1">
+          <span className="app-label">Saved template</span>
+          <select
+            value={selectedTemplateId}
+            onChange={(event) => setSelectedTemplateId(event.target.value)}
+            className="mt-1 min-h-11 w-full rounded-xl border border-gray-200 bg-white px-3 text-sm font-semibold text-gray-900 outline-none focus:border-primary-300 focus:ring-2 focus:ring-primary-100"
+          >
+            <option value="">Select a template</option>
+            {templates.map((template) => (
+              <option key={template.id} value={template.id}>{template.name}</option>
+            ))}
+          </select>
+        </label>
+        <button type="button" className="secondary-button sm:mt-6" disabled={!selectedTemplateId} onClick={() => onApplyTemplate(selectedTemplateId)}>
+          Apply template
+        </button>
+      </div>
+      {!loadingTemplates && templates.length === 0 ? (
+        <div className="rounded-xl border border-dashed border-gray-200 bg-white px-3 py-2 text-xs font-semibold text-gray-500">
+          No saved team email templates yet.
+        </div>
+      ) : null}
+      <label className="block">
+        <span className="app-label">Save current email as template</span>
+        <div className="mt-1 flex flex-col gap-2 sm:flex-row">
+          <input
+            value={templateName}
+            onChange={(event) => onTemplateNameChange(event.target.value)}
+            className="min-h-11 w-full rounded-xl border border-gray-200 bg-white px-3 text-sm font-semibold text-gray-900 outline-none focus:border-primary-300 focus:ring-2 focus:ring-primary-100"
+            placeholder="Weekly reminder"
+            maxLength={120}
+            enterKeyHint="next"
+          />
+          <button type="button" className="secondary-button sm:min-w-[148px]" disabled={!canSaveTemplate} onClick={onSaveTemplate}>
+            {savingTemplate ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : null}
+            Save template
+          </button>
+        </div>
+      </label>
+    </div>
+  );
+
   return (
     <Sheet title="Team Email" onClose={onClose}>
       <form className="space-y-3" onSubmit={onSubmit}>
@@ -2011,114 +2128,8 @@ function TeamEmailSheet({
             </button>
           </div>
         ) : null}
-        <div className="space-y-3 rounded-2xl border border-gray-200 bg-gray-50 p-3">
-          <div className="flex items-start justify-between gap-3">
-            <div>
-              <div className="text-sm font-black text-gray-950">Saved drafts</div>
-              <div className="text-xs font-semibold leading-5 text-gray-500">Drafts keep selected recipients, subject, and body. Saving never sends email.</div>
-            </div>
-            <div className="flex gap-2">
-              <button type="button" className="ghost-button !h-9 !min-h-9 text-xs" onClick={onRefreshDrafts} disabled={loadingDrafts}>
-                {loadingDrafts ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <RefreshCw className="h-4 w-4" aria-hidden="true" />}
-                Refresh
-              </button>
-              <button type="button" className="secondary-button !h-9 !min-h-9 text-xs" disabled={!canSaveDraft} onClick={onSaveDraft}>
-                {savingDraft ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : null}
-                Save draft
-              </button>
-            </div>
-          </div>
-          {loadingDrafts && drafts.length === 0 ? (
-            <div className="rounded-xl border border-gray-200 bg-white px-3 py-3 text-sm font-bold text-gray-500">Loading saved drafts...</div>
-          ) : drafts.length === 0 ? (
-            <div className="rounded-xl border border-dashed border-gray-200 bg-white px-3 py-2 text-xs font-semibold text-gray-500">
-              No saved drafts yet.
-            </div>
-          ) : (
-            <div className="space-y-2">
-              {drafts.map((draft) => {
-                const isSelected = draft.id === selectedDraftId;
-                return (
-                  <button
-                    key={draft.id}
-                    type="button"
-                    className={`w-full rounded-xl border px-3 py-2 text-left ${isSelected ? 'border-primary-200 bg-primary-50 text-primary-700' : 'border-gray-200 bg-white text-gray-700 hover:bg-gray-50'}`}
-                    onClick={() => onApplyDraft(draft.id)}
-                  >
-                    <div className="flex items-start justify-between gap-3">
-                      <div className="min-w-0">
-                        <div className="truncate text-sm font-black">{draft.subject || '(No subject)'}</div>
-                        <div className="mt-0.5 text-xs font-semibold text-gray-500">{Math.max(draft.recipientIds.length, draft.recipients.length)} recipient{Math.max(draft.recipientIds.length, draft.recipients.length) === 1 ? '' : 's'} · {formatEmailSentTime(draft.updatedAt)}</div>
-                      </div>
-                      {isSelected ? <span className="text-[11px] font-black uppercase">Current</span> : null}
-                    </div>
-                  </button>
-                );
-              })}
-            </div>
-          )}
-          {!draftAudienceSupported ? (
-            <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-sm font-bold text-amber-800">
-              Draft saving is available only for Selected members.
-            </div>
-          ) : missingSelectedRecipients ? (
-            <div className="rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-sm font-bold text-rose-700">
-              Choose at least one selected member before saving or sending email.
-            </div>
-          ) : null}
-        </div>
-        <div className="space-y-3 rounded-2xl border border-gray-200 bg-gray-50 p-3">
-          <div className="flex items-start justify-between gap-3">
-            <div>
-              <div className="text-sm font-black text-gray-950">Reusable templates</div>
-              <div className="text-xs font-semibold leading-5 text-gray-500">Apply a saved subject and body without changing recipients.</div>
-            </div>
-            <button type="button" className="ghost-button !h-9 !min-h-9 text-xs" onClick={onRefreshTemplates} disabled={loadingTemplates}>
-              {loadingTemplates ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <RefreshCw className="h-4 w-4" aria-hidden="true" />}
-              Refresh
-            </button>
-          </div>
-          <div className="flex flex-col gap-2 sm:flex-row">
-            <label className="min-w-0 flex-1">
-              <span className="app-label">Saved template</span>
-              <select
-                value={selectedTemplateId}
-                onChange={(event) => setSelectedTemplateId(event.target.value)}
-                className="mt-1 min-h-11 w-full rounded-xl border border-gray-200 bg-white px-3 text-sm font-semibold text-gray-900 outline-none focus:border-primary-300 focus:ring-2 focus:ring-primary-100"
-              >
-                <option value="">Select a template</option>
-                {templates.map((template) => (
-                  <option key={template.id} value={template.id}>{template.name}</option>
-                ))}
-              </select>
-            </label>
-            <button type="button" className="secondary-button sm:mt-6" disabled={!selectedTemplateId} onClick={() => onApplyTemplate(selectedTemplateId)}>
-              Apply template
-            </button>
-          </div>
-          {!loadingTemplates && templates.length === 0 ? (
-            <div className="rounded-xl border border-dashed border-gray-200 bg-white px-3 py-2 text-xs font-semibold text-gray-500">
-              No saved team email templates yet.
-            </div>
-          ) : null}
-          <label className="block">
-            <span className="app-label">Save current email as template</span>
-            <div className="mt-1 flex flex-col gap-2 sm:flex-row">
-              <input
-                value={templateName}
-                onChange={(event) => onTemplateNameChange(event.target.value)}
-                className="min-h-11 w-full rounded-xl border border-gray-200 bg-white px-3 text-sm font-semibold text-gray-900 outline-none focus:border-primary-300 focus:ring-2 focus:ring-primary-100"
-                placeholder="Weekly reminder"
-                maxLength={120}
-                enterKeyHint="next"
-              />
-              <button type="button" className="secondary-button sm:min-w-[148px]" disabled={!canSaveTemplate} onClick={onSaveTemplate}>
-                {savingTemplate ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : null}
-                Save template
-              </button>
-            </div>
-          </label>
-        </div>
+        {isDesktopWeb ? savedDraftsSection : null}
+        {isDesktopWeb ? reusableTemplatesSection : null}
         <label className="block">
           <span className="app-label">Subject</span>
           <input
@@ -2146,6 +2157,8 @@ function TeamEmailSheet({
           Send email
         </button>
         {status ? <StatusBanner status={status} onClose={onStatusClose} /> : null}
+        {!isDesktopWeb ? savedDraftsSection : null}
+        {!isDesktopWeb ? reusableTemplatesSection : null}
       </form>
 
       <div className="mt-5 border-t border-gray-100 pt-4">
