@@ -199,7 +199,8 @@
             "cloudFunctions": [
                 "notifyInviteRedeemed",
                 "notifyParentMembershipRequestCreated",
-                "notifyParentMembershipRequestUpdated"
+                "notifyParentMembershipRequestUpdated",
+                "syncApprovedParentMembershipRequestUserLink"
             ],
             "unitTests": [
                 "tests/unit/app-home-logic.test.js",
