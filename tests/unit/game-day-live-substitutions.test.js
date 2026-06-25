@@ -182,6 +182,53 @@ describe('game day live substitutions', () => {
             H1: { keeper: 'p3', striker: 'p2' }
         });
     });
+
+    it('rebuilds the live rotation plan when a refreshed game plan arrives with a stale persisted rotation plan', () => {
+        const currentState = {
+            gamePlan: createSavedGamePlan(),
+            rotationPlan: {
+                H1: { keeper: 'p1', striker: 'p3' }
+            },
+            rotationActual: {
+                H1: {
+                    'sub-1776194700000': [{
+                        position: 'striker',
+                        out: 'Blake',
+                        outId: 'p2',
+                        outPlayerId: 'p2',
+                        in: 'Casey',
+                        inId: 'p3',
+                        inPlayerId: 'p3',
+                        appliedAt: '2026-04-14T19:25:00.000Z'
+                    }]
+                }
+            },
+            formationId: 'soccer-9v9'
+        };
+        const updatedGame = {
+            gamePlan: {
+                formationId: 'soccer-9v9',
+                numPeriods: 2,
+                lineups: {
+                    'H1-keeper': 'p1',
+                    'H1-striker': 'p2',
+                    'H2-keeper': 'p3',
+                    'H2-striker': 'p1'
+                }
+            },
+            rotationPlan: currentState.rotationPlan,
+            rotationActual: currentState.rotationActual
+        };
+
+        const synced = syncGameDayLiveState({ currentState, updatedGame });
+
+        expect(synced.hasLineupChange).toBe(true);
+        expect(synced.rotationActual).toEqual(currentState.rotationActual);
+        expect(synced.rotationPlan).toEqual({
+            H1: { keeper: 'p1', striker: 'p2' },
+            H2: { keeper: 'p3', striker: 'p1' }
+        });
+    });
 });
 
 describe('game day live substitution wiring', () => {

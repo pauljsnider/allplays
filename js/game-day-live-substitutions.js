@@ -77,6 +77,10 @@ function buildLineupSyncSignature({
     });
 }
 
+function hasGamePlanChanged(currentGamePlan, nextGamePlan) {
+    return JSON.stringify(currentGamePlan || null) !== JSON.stringify(nextGamePlan || null);
+}
+
 export function syncGameDayLiveState({
     currentState = {},
     updatedGame = {}
@@ -84,11 +88,16 @@ export function syncGameDayLiveState({
     const nextGamePlan = hasOwnField(updatedGame, 'gamePlan')
         ? updatedGame.gamePlan || null
         : currentState.gamePlan || null;
-    const nextRotationPlan = hasOwnField(updatedGame, 'rotationPlan')
-        ? updatedGame.rotationPlan || {}
-        : (hasOwnField(updatedGame, 'gamePlan')
-            ? buildRotationPlanFromGamePlan(nextGamePlan)
-            : currentState.rotationPlan || {});
+    const rebuiltRotationPlan = buildRotationPlanFromGamePlan(nextGamePlan);
+    const shouldRebuildRotationPlan = hasOwnField(updatedGame, 'gamePlan')
+        && hasGamePlanChanged(currentState.gamePlan, nextGamePlan);
+    const nextRotationPlan = shouldRebuildRotationPlan
+        ? rebuiltRotationPlan
+        : (hasOwnField(updatedGame, 'rotationPlan')
+            ? updatedGame.rotationPlan || {}
+            : (hasOwnField(updatedGame, 'gamePlan')
+                ? rebuiltRotationPlan
+                : currentState.rotationPlan || {}));
     const nextRotationActual = hasOwnField(updatedGame, 'rotationActual')
         ? updatedGame.rotationActual || {}
         : currentState.rotationActual || {};
