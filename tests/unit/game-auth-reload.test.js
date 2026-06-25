@@ -46,4 +46,18 @@ describe('game auth reload', () => {
         expect(source).toContain('return [];');
         expect(source).toContain('playersPromise');
     });
+
+    it('keeps shareable game reports rendering when the parent team doc is private', () => {
+        const source = readGameHtml();
+
+        expect(source).toContain("const teamPromise = getTeam(teamId, { includeInactive: true }).catch((error) => {");
+        expect(source).toContain("console.warn('Failed to load team document for public game report viewer:', error);");
+        expect(source).toContain('return null;');
+        expect(source).toContain('const resolvedTeam = team || {');
+        expect(source).toContain("name: game.teamName || game.homeTeamName || 'Team'");
+        expect(source).toContain("photoUrl: game.teamPhotoUrl || game.homeTeamPhoto || ''");
+        expect(source).toContain("sport: game.sport || 'Basketball'");
+        expect(source).toContain('if (currentUser && team) {');
+        expect(source).toContain('setupSummaryControls(teamId, gameId, game, resolvedTeam, players, statsMap, statKeys, statLabels);');
+    });
 });
