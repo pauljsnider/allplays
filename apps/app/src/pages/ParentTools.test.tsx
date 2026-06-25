@@ -324,9 +324,9 @@ describe('ParentTools access', () => {
 
         await screen.findByText('Request player access');
         await waitFor(() => expect(parentToolsAccessServiceMocks.loadParentAccessTeams).toHaveBeenCalledTimes(1));
-        expect(screen.queryByRole('button', { name: 'Request access without a code' })).toBeNull();
 
         const teamSelect = await screen.findByRole('combobox', { name: 'Team' }) as HTMLSelectElement;
+        expect(screen.queryByRole('button', { name: 'Request access without a code' })).toBeNull();
         expect(teamSelect.value).toBe('team-1');
         await waitFor(() => expect(parentToolsAccessServiceMocks.loadParentAccessPlayers).toHaveBeenCalledWith('team-1'));
         expect(screen.getByRole('option', { name: 'Loading players...' })).toBeTruthy();
