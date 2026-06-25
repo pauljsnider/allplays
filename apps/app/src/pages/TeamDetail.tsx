@@ -494,9 +494,12 @@ function StandingsSection({ model }: { model: TeamDetailModel }) {
   const [expanded, setExpanded] = useState(false);
   const rows = Array.isArray(model.standings.rows) ? model.standings.rows : [];
   const hasRows = rows.length > 0;
-  const visibleRows = expanded ? rows : rows.slice(0, initialStandingsRowLimit);
-  const hasMoreRows = rows.length > initialStandingsRowLimit;
   const highlightKey = getStandingsRowKey(model.standings.currentRow);
+  const highlightedRowIndex = rows.findIndex((row) => getStandingsRowKey(row) === highlightKey);
+  const visibleRows = expanded
+    ? rows
+    : getCollapsedStandingsRows(rows, highlightedRowIndex, initialStandingsRowLimit);
+  const hasMoreRows = rows.length > initialStandingsRowLimit;
   const contextColumn = getStandingsContextColumn(rows, model.standings.label);
 
   if (!hasRows && !model.team.leagueUrl) {
@@ -2827,10 +2830,30 @@ function formatStandingsRecord(row: Record<string, any> | null | undefined) {
   return `${wins ?? 0}-${losses ?? 0}${ties ? `-${ties}` : ''}`;
 }
 
+function getCollapsedStandingsRows(rows: Array<Record<string, any>>, highlightedRowIndex: number, limit: number) {
+  if (rows.length <= limit || highlightedRowIndex < 0 || highlightedRowIndex < limit) {
+    return rows.slice(0, limit);
+  }
+  return rows.slice(0, Math.max(limit - 1, 0)).concat(rows[highlightedRowIndex]);
+}
+
 function getStandingsContextColumn(rows: Array<Record<string, any>> = [], label = '') {
   const safeRows = Array.isArray(rows) ? rows : [];
+  const normalizedLabel = label.toLowerCase();
+  if (normalizedLabel.includes('win percentage')) {
+    return {
+      label: 'PCT',
+      value: (row: Record<string, any>) => {
+        const winPct = row?.winPct;
+        if (typeof winPct === 'number' && Number.isFinite(winPct)) return winPct.toFixed(3);
+        const stringPct = cleanStandingsCell(winPct);
+        return stringPct || '—';
+      }
+    };
+  }
+
   const hasPoints = safeRows.some((row) => toStandingsNumber(row?.points) !== null);
-  if (hasPoints || label.toLowerCase().includes('points')) {
+  if (hasPoints || normalizedLabel.includes('points')) {
     return {
       label: 'PTS',
       value: (row: Record<string, any>) => formatStandingsCellValue(toStandingsNumber(row?.points))
