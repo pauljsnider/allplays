@@ -47,6 +47,34 @@ const inviteRedemptionMocks = vi.hoisted(() => ({
 }));
 
 vi.mock('../../apps/app/src/lib/parentToolsService.ts', () => serviceMocks);
+vi.mock('../../apps/app/src/lib/parentFeesService.ts', () => ({
+    loadParentFeesForApp: serviceMocks.loadParentFeesForApp,
+    initiateParentTeamFeeCheckout: serviceMocks.initiateParentTeamFeeCheckout
+}));
+vi.mock('../../apps/app/src/lib/parentFamilyShareService.ts', () => ({
+    loadFamilyShareModel: serviceMocks.loadFamilyShareModel,
+    createParentFamilyShare: serviceMocks.createParentFamilyShare,
+    revokeParentFamilyShare: serviceMocks.revokeParentFamilyShare,
+    updateParentFamilyShareCalendars: serviceMocks.updateParentFamilyShareCalendars
+}));
+vi.mock('../../apps/app/src/lib/parentCalendarService.ts', () => ({
+    loadParentCalendarTools: serviceMocks.loadParentCalendarTools,
+    buildParentScheduleIcs: serviceMocks.buildParentScheduleIcs,
+    getPrivateTeamCalendarFeedUrl: serviceMocks.getPrivateTeamCalendarFeedUrl,
+    getAppleCalendarFeedUrl: serviceMocks.getAppleCalendarFeedUrl,
+    getGoogleCalendarFeedUrl: serviceMocks.getGoogleCalendarFeedUrl,
+    getCalendarEventShareText: serviceMocks.getCalendarEventShareText
+}));
+vi.mock('../../apps/app/src/lib/parentHouseholdService.ts', () => ({
+    loadParentHouseholdInviteModel: serviceMocks.loadParentHouseholdInviteModel,
+    createParentHouseholdMemberInvite: serviceMocks.createParentHouseholdMemberInvite
+}));
+vi.mock('../../apps/app/src/lib/parentRegistrationsService.ts', () => ({
+    loadParentRegistrations: serviceMocks.loadParentRegistrations
+}));
+vi.mock('../../apps/app/src/lib/parentCertificatesService.ts', () => ({
+    loadParentCertificates: serviceMocks.loadParentCertificates
+}));
 vi.mock('../../apps/app/src/lib/parentToolsAccessService.ts', () => accessServiceMocks);
 vi.mock('../../apps/app/src/lib/inviteRedemption.ts', () => inviteRedemptionMocks);
 vi.mock('../../apps/app/src/lib/publicActions.ts', () => publicActionMocks);
