@@ -5,7 +5,8 @@ import { buildRotationPlanFromGamePlan } from '../../js/game-plan-interop.js';
 import {
     buildOnFieldMap,
     getSubstitutionOptions,
-    applyLiveSubstitution
+    applyLiveSubstitution,
+    syncGameDayLiveState
 } from '../../js/game-day-live-substitutions.js';
 
 const players = [
@@ -110,16 +111,97 @@ describe('game day live substitutions', () => {
             appliedAt: '2026-04-14T19:26:00.000Z'
         });
     });
+
+    it('refreshes remote lineup state for already-open game day sessions', () => {
+        const currentState = {
+            gamePlan: createSavedGamePlan(),
+            rotationPlan: buildRotationPlanFromGamePlan(createSavedGamePlan()),
+            rotationActual: {},
+            formationId: 'soccer-9v9'
+        };
+
+        const updatedGame = {
+            gamePlan: createSavedGamePlan(),
+            rotationPlan: {
+                H1: { keeper: 'p1', striker: 'p3' }
+            },
+            rotationActual: {
+                H1: {
+                    'sub-1776194700000': [{
+                        position: 'striker',
+                        out: 'Blake',
+                        outId: 'p2',
+                        outPlayerId: 'p2',
+                        in: 'Casey',
+                        inId: 'p3',
+                        inPlayerId: 'p3',
+                        appliedAt: '2026-04-14T19:25:00.000Z'
+                    }]
+                }
+            }
+        };
+
+        const synced = syncGameDayLiveState({ currentState, updatedGame });
+
+        expect(synced.hasLineupChange).toBe(true);
+        expect(synced.rotationPlan).toEqual(updatedGame.rotationPlan);
+        expect(synced.rotationActual).toEqual(updatedGame.rotationActual);
+        expect(buildOnFieldMap({
+            period: 'H1',
+            rotationPlan: synced.rotationPlan,
+            rotationActual: synced.rotationActual,
+            players
+        })).toEqual({ keeper: 'p1', striker: 'p3' });
+    });
+
+    it('rebuilds the live rotation plan from a refreshed game plan when no explicit plan is stored', () => {
+        const updatedGame = {
+            gamePlan: {
+                formationId: 'soccer-9v9',
+                numPeriods: 2,
+                lineups: {
+                    'H1-keeper': 'p3',
+                    'H1-striker': 'p2'
+                }
+            }
+        };
+
+        const synced = syncGameDayLiveState({
+            currentState: {
+                rotationPlan: {},
+                rotationActual: {},
+                formationId: null,
+                gamePlan: null
+            },
+            updatedGame
+        });
+
+        expect(synced.hasLineupChange).toBe(true);
+        expect(synced.formationId).toBe('soccer-9v9');
+        expect(synced.rotationPlan).toEqual({
+            H1: { keeper: 'p3', striker: 'p2' }
+        });
+    });
 });
 
 describe('game day live substitution wiring', () => {
     it('routes on-field reconstruction and apply-sub behavior through the shared helper module', () => {
         const source = readFileSync(resolve(process.cwd(), 'game-day.html'), 'utf8');
 
-        expect(source).toContain("from './js/game-day-live-substitutions.js?v=1'");
+        expect(source).toContain("from './js/game-day-live-substitutions.js?v=2'");
         expect(source).toContain('return buildLiveOnFieldMap({');
         expect(source).toContain('const { onFieldPlayers, offFieldPlayers } = getSubstitutionOptions({');
         expect(source).toContain('const subResult = applyLiveSubstitution({');
         expect(source).toContain('populateSubDropdowns();');
+    });
+
+    it('syncs remote lineup updates from the live game subscription before re-rendering', () => {
+        const source = readFileSync(resolve(process.cwd(), 'game-day.html'), 'utf8');
+
+        expect(source).toContain('const liveStateUpdate = syncGameDayLiveState({');
+        expect(source).toContain('state.rotationPlan = liveStateUpdate.rotationPlan;');
+        expect(source).toContain('state.rotationActual = liveStateUpdate.rotationActual;');
+        expect(source).toContain('if (liveStateUpdate.hasLineupChange) {');
+        expect(source).toContain('renderCurrentMode();');
     });
 });
