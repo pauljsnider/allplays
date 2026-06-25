@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
+import { afterEach, beforeEach, test } from 'node:test';
 import Module, { createRequire } from 'node:module';
-import { afterEach, beforeEach, test } from 'vitest';
 
 const require = createRequire(import.meta.url);
 const repoIndexPath = require.resolve('../index.js');
