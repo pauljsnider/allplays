@@ -77,10 +77,14 @@ describe('edit team registration import', () => {
         expect(source).toContain('export async function getRegistrationSources()');
         expect(source).toContain("where('ownerId', '==', userId)");
         expect(source).toContain("where('adminEmails', 'array-contains', userEmail)");
+        expect(source).toContain("where('organizationOwnerId', '==', userId)");
+        expect(source).toContain("where('organizationAdminEmails', 'array-contains', userEmail)");
         expect(source).toContain("getScopedRegistrationSourceDocs('teamId', adminTeamIds)");
         expect(source).toContain("getScopedRegistrationSourceDocs('organizationTeamId', adminTeamIds)");
         expect(source).toContain("where(fieldName, 'in', teamIdsChunk)");
-        expect(source).not.toContain('getDocs(collection(db, "registrationSources"))');
+        expect(source).toContain("const snapshot = await getDocs(registrationSourcesRef);");
+        expect(source).toContain('return sortRegistrationSources(snapshot.docs.map(mapRegistrationSourceDoc));');
+        expect(source).not.toContain("orderBy('externalTeamName')");
     });
 
     it('adds least-privilege Firestore security rules for the registrationSources collection', () => {

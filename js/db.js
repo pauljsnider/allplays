@@ -1651,16 +1651,21 @@ export async function getRegistrationSources() {
         return [];
     }
 
+    const registrationSourcesRef = collection(db, 'registrationSources');
     const profile = await getUserProfile(userId);
     if (profile?.isAdmin === true) {
-        const snapshot = await getDocs(query(collection(db, 'registrationSources'), orderBy('externalTeamName')));
-        return snapshot.docs.map(mapRegistrationSourceDoc);
+        const snapshot = await getDocs(registrationSourcesRef);
+        return sortRegistrationSources(snapshot.docs.map(mapRegistrationSourceDoc));
     }
 
-    const [ownedSourcesSnapshot, delegatedSourcesSnapshot, adminTeamIds] = await Promise.all([
-        getDocs(query(collection(db, 'registrationSources'), where('ownerId', '==', userId))),
+    const [ownedSourcesSnapshot, delegatedSourcesSnapshot, organizationOwnedSourcesSnapshot, organizationDelegatedSourcesSnapshot, adminTeamIds] = await Promise.all([
+        getDocs(query(registrationSourcesRef, where('ownerId', '==', userId))),
         userEmail
-            ? getDocs(query(collection(db, 'registrationSources'), where('adminEmails', 'array-contains', userEmail)))
+            ? getDocs(query(registrationSourcesRef, where('adminEmails', 'array-contains', userEmail)))
+            : Promise.resolve(null),
+        getDocs(query(registrationSourcesRef, where('organizationOwnerId', '==', userId))),
+        userEmail
+            ? getDocs(query(registrationSourcesRef, where('organizationAdminEmails', 'array-contains', userEmail)))
             : Promise.resolve(null),
         getRegistrationSourceAdminTeamIds(userId, userEmail)
     ]);
@@ -1674,6 +1679,8 @@ export async function getRegistrationSources() {
     [
         ...ownedSourcesSnapshot.docs,
         ...(delegatedSourcesSnapshot?.docs || []),
+        ...organizationOwnedSourcesSnapshot.docs,
+        ...(organizationDelegatedSourcesSnapshot?.docs || []),
         ...teamSources,
         ...organizationSources
     ].forEach((docSnap) => {
