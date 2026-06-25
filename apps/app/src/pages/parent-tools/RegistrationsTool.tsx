@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { ExternalLink, RefreshCw, Share2, Ticket } from 'lucide-react';
 import { Link } from 'react-router-dom';
-import { loadParentRegistrations, type ParentRegistrationCard } from '../../lib/parentToolsService';
+import { loadParentRegistrations, type ParentRegistrationCard } from '../../lib/parentRegistrationsService';
 import { openPublicUrl, sharePublicUrl } from '../../lib/publicActions';
 import type { AuthState } from '../../lib/types';
 import { EmptyState, LoadingBlock, MetricCard, RetryableStatus, ToolHeader, useParentToolAsyncOperation } from './shared';

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState, type FormEvent } from 'react';
 import { Copy, Loader2, RefreshCw, Users } from 'lucide-react';
-import { createParentHouseholdMemberInvite, loadParentHouseholdInviteModel, type ParentHouseholdFamilyMember, type ParentHouseholdLinkedPlayer } from '../../lib/parentToolsService';
+import { createParentHouseholdMemberInvite, loadParentHouseholdInviteModel, type ParentHouseholdFamilyMember, type ParentHouseholdLinkedPlayer } from '../../lib/parentHouseholdService';
 import { toAppServiceError } from '../../lib/appErrors';
 import type { AuthState } from '../../lib/types';
 import { EmptyState, LoadingBlock, RetryableStatus, Status, ToolHeader, copyText, useParentToolAsyncOperation } from './shared';

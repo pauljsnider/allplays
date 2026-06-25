@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Award, ExternalLink, RefreshCw, Share2 } from 'lucide-react';
-import { loadParentCertificates, type ParentCertificateCard } from '../../lib/parentToolsService';
+import { loadParentCertificates, type ParentCertificateCard } from '../../lib/parentCertificatesService';
 import { openPublicUrl, sharePublicUrl } from '../../lib/publicActions';
 import type { AuthState } from '../../lib/types';
 import { EmptyState, LoadingBlock, RetryableStatus, ToolHeader, useParentToolAsyncOperation } from './shared';
