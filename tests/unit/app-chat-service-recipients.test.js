@@ -77,7 +77,7 @@ beforeEach(() => {
 });
 
 describe('React app chat recipient service', () => {
-    it('hydrates selected member options with profile names and falls back to email', async () => {
+    it('builds selected member options from roster parent data without profile lookups', async () => {
         dbMocks.getPlayers.mockResolvedValue([
             {
                 id: 'player-1',
@@ -87,7 +87,65 @@ describe('React app chat recipient service', () => {
                     {
                         userId: 'parent-1',
                         email: 'pat@example.com',
-                        name: 'pat@example.com'
+                        fullName: 'Pat Parent'
+                    }
+                ]
+            },
+            {
+                id: 'player-2',
+                name: 'Blake',
+                parents: [
+                    {
+                        email: 'casey@example.com',
+                        displayName: 'Casey Guardian'
+                    },
+                    {
+                        email: 'noname@example.com'
+                    }
+                ]
+            }
+        ]);
+
+        const { loadChatRecipientOptions } = await import('../../apps/app/src/lib/chatService.ts');
+        const options = await loadChatRecipientOptions('team-1');
+
+        expect(dbMocks.getUserProfile).not.toHaveBeenCalled();
+        expect(dbMocks.getUserByEmail).not.toHaveBeenCalled();
+        expect(options).toEqual(expect.arrayContaining([
+            expect.objectContaining({
+                id: 'user:parent-1',
+                name: 'Pat Parent',
+                detail: 'Guardian for Avery',
+                email: 'pat@example.com'
+            }),
+            expect.objectContaining({
+                id: 'email:casey@example.com',
+                name: 'Casey Guardian',
+                detail: 'Guardian for Blake',
+                email: 'casey@example.com'
+            }),
+            expect.objectContaining({
+                id: 'email:noname@example.com',
+                name: 'noname@example.com',
+                detail: 'Guardian for Blake',
+                email: 'noname@example.com'
+            })
+        ]));
+    });
+
+    it('only hydrates parent profiles for roster entries missing a usable label', async () => {
+        dbMocks.getPlayers.mockResolvedValue([
+            {
+                id: 'player-1',
+                name: 'Avery',
+                parents: [
+                    {
+                        userId: 'parent-1',
+                        email: 'pat@example.com',
+                        fullName: 'Pat Parent'
+                    },
+                    {
+                        userId: 'parent-2'
                     }
                 ]
             },
@@ -99,39 +157,54 @@ describe('React app chat recipient service', () => {
                         email: 'casey@example.com'
                     },
                     {
-                        email: 'noname@example.com'
+                        userId: 'parent-3'
+                    },
+                    {
+                        email: 'named@example.com',
+                        name: 'Named Guardian'
                     }
                 ]
             }
         ]);
-        dbMocks.getUserProfile.mockResolvedValue({
-            fullName: 'Pat Parent',
-            email: 'pat@example.com'
+        dbMocks.getUserProfile.mockImplementation(async (userId) => {
+            if (userId === 'parent-2') {
+                return { fullName: 'Morgan Missing', email: 'morgan@example.com' };
+            }
+            if (userId === 'parent-3') {
+                return { fullName: 'Casey Guardian', email: 'casey@example.com' };
+            }
+            return null;
         });
-        dbMocks.getUserByEmail.mockImplementation(async (email) => (
-            email === 'casey@example.com'
-                ? { fullName: 'Casey Guardian', email }
-                : null
-        ));
 
         const { loadChatRecipientOptions } = await import('../../apps/app/src/lib/chatService.ts');
         const options = await loadChatRecipientOptions('team-1');
 
+        expect(dbMocks.getUserProfile).toHaveBeenCalledTimes(2);
+        expect(dbMocks.getUserProfile).toHaveBeenCalledWith('parent-2');
+        expect(dbMocks.getUserProfile).toHaveBeenCalledWith('parent-3');
+        expect(dbMocks.getUserByEmail).not.toHaveBeenCalled();
         expect(options).toEqual(expect.arrayContaining([
             expect.objectContaining({
                 id: 'user:parent-1',
-                name: 'Pat Parent',
-                detail: 'Guardian for Avery'
+                name: 'Pat Parent'
+            }),
+            expect.objectContaining({
+                id: 'user:parent-2',
+                name: 'Morgan Missing',
+                email: 'morgan@example.com'
             }),
             expect.objectContaining({
                 id: 'email:casey@example.com',
-                name: 'Casey Guardian',
-                detail: 'Guardian for Blake'
+                name: 'casey@example.com'
             }),
             expect.objectContaining({
-                id: 'email:noname@example.com',
-                name: 'noname@example.com',
-                detail: 'Guardian for Blake'
+                id: 'user:parent-3',
+                name: 'Casey Guardian',
+                email: 'casey@example.com'
+            }),
+            expect.objectContaining({
+                id: 'email:named@example.com',
+                name: 'Named Guardian'
             })
         ]));
     });
