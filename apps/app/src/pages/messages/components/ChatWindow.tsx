@@ -2673,7 +2673,7 @@ function ConversationSheet({
   );
 }
 
-function AudienceSheet({
+export function AudienceSheet({
   selectedTarget,
   selectedRecipientIds,
   recipientOptions,
@@ -2694,6 +2694,27 @@ function AudienceSheet({
   onRetryRecipientOptions: () => void;
   onClose: () => void;
 }) {
+  const [recipientSearch, setRecipientSearch] = useState('');
+  const normalizedRecipientSearch = recipientSearch.trim().toLowerCase();
+  const selectedRecipientIdSet = useMemo(() => new Set(selectedRecipientIds), [selectedRecipientIds]);
+  const matchesRecipientSearch = useCallback((option: ChatRecipientOption) => {
+    if (!normalizedRecipientSearch) return true;
+    const label = `${option.name} ${option.detail || ''}`.toLowerCase();
+    return label.includes(normalizedRecipientSearch);
+  }, [normalizedRecipientSearch]);
+  const matchingRecipientOptions = useMemo(
+    () => recipientOptions.filter((option) => matchesRecipientSearch(option)),
+    [matchesRecipientSearch, recipientOptions]
+  );
+  const selectedRecipientOptions = useMemo(
+    () => recipientOptions.filter((option) => selectedRecipientIdSet.has(option.id)),
+    [recipientOptions, selectedRecipientIdSet]
+  );
+  const browseRecipientOptions = useMemo(
+    () => matchingRecipientOptions.filter((option) => !selectedRecipientIdSet.has(option.id)),
+    [matchingRecipientOptions, selectedRecipientIdSet]
+  );
+  const hasMatchingRecipientOptions = matchingRecipientOptions.length > 0;
   const toggleRecipient = (recipientId: string) => {
     onRecipientsChange(
       selectedRecipientIds.includes(recipientId)
@@ -2730,6 +2751,42 @@ function AudienceSheet({
 
       {selectedTarget === 'individuals' ? (
         <>
+          <div className="mt-4">
+            <label htmlFor="chat-audience-recipient-search" className="mb-1 block text-xs font-black uppercase tracking-[0.18em] text-gray-500">
+              Search recipients
+            </label>
+            <input
+              id="chat-audience-recipient-search"
+              type="search"
+              value={recipientSearch}
+              onChange={(event) => setRecipientSearch(event.target.value)}
+              placeholder="Search by member or guardian name"
+              className="h-11 w-full rounded-xl border border-gray-200 bg-white px-3 text-sm font-semibold text-gray-900 outline-none transition focus:border-primary-400 focus:ring-2 focus:ring-primary-100"
+            />
+          </div>
+
+          {selectedRecipientOptions.length ? (
+            <div className="mt-4 rounded-xl border border-primary-100 bg-primary-50/60 p-3">
+              <div className="mb-2 text-xs font-black uppercase tracking-[0.18em] text-primary-700">Selected</div>
+              <div className="space-y-2">
+                {selectedRecipientOptions.map((option) => (
+                  <label key={option.id} className="flex cursor-pointer items-center gap-3 rounded-xl border border-primary-100 bg-white px-3 py-2">
+                    <input
+                      type="checkbox"
+                      className="h-4 w-4 rounded border-gray-300 text-primary-600"
+                      checked={selectedRecipientIds.includes(option.id)}
+                      onChange={() => toggleRecipient(option.id)}
+                    />
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate text-sm font-black text-gray-800">{option.name}</span>
+                      {option.detail ? <span className="block truncate text-xs font-semibold text-gray-500">{option.detail}</span> : null}
+                    </span>
+                  </label>
+                ))}
+              </div>
+            </div>
+          ) : null}
+
           <div className="mt-4 max-h-72 overflow-y-auto rounded-xl border border-gray-200">
             {recipientOptionsLoading ? (
               <div className="p-3 text-sm font-semibold text-gray-500">
@@ -2743,7 +2800,7 @@ function AudienceSheet({
                   Retry recipient load
                 </button>
               </div>
-            ) : recipientOptions.length ? recipientOptions.map((option) => (
+            ) : recipientOptions.length ? browseRecipientOptions.length ? browseRecipientOptions.map((option) => (
               <label key={option.id} className="flex cursor-pointer items-center gap-3 border-b border-gray-100 px-3 py-2 last:border-b-0">
                 <input
                   type="checkbox"
@@ -2756,7 +2813,11 @@ function AudienceSheet({
                   {option.detail ? <span className="block truncate text-xs font-semibold text-gray-500">{option.detail}</span> : null}
                 </span>
               </label>
-            )) : (
+            )) : normalizedRecipientSearch && !hasMatchingRecipientOptions ? (
+              <div className="p-3 text-sm font-semibold text-gray-500">No recipients match that search yet.</div>
+            ) : (
+              <div className="p-3 text-sm font-semibold text-gray-500">No roster or community members are available yet.</div>
+            ) : (
               <div className="p-3 text-sm font-semibold text-gray-500">No roster or community members are available yet.</div>
             )}
           </div>

@@ -1,11 +1,12 @@
 // @vitest-environment jsdom
 import '@testing-library/jest-dom/vitest';
-import { cleanup, fireEvent, render, waitFor } from '@testing-library/react';
+import * as React from 'react';
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ChatMessage } from '../../../lib/chatService';
 import type { AuthState } from '../../../lib/types';
-import { ChatWindow, buildVirtualizedChatWindow } from './ChatWindow';
+import { AudienceSheet, ChatWindow, buildVirtualizedChatWindow } from './ChatWindow';
 
 const liveMessages = Array.from({ length: 220 }, (_, index) => buildMessage(`live-${index + 1}`, index + 101));
 const olderPage = Array.from({ length: 50 }, (_, index) => buildMessage(`older-${index + 1}`, index + 1));
@@ -318,5 +319,85 @@ describe('ChatWindow virtualization', () => {
     await waitFor(() => {
       expect(thread.scrollTop).toBe(720);
     });
+  });
+});
+
+describe('AudienceSheet recipient search', () => {
+  function getRecipientCheckbox(name: string) {
+    return screen.getByText(name).closest('label')?.querySelector('input') as HTMLInputElement;
+  }
+
+  function renderAudienceSheet(initialSelectedRecipientIds: string[] = []) {
+    const recipientOptions = [
+      { id: 'player-sam', name: 'Sam Player', detail: '#12' },
+      { id: 'guardian-taylor', name: 'Taylor Guardian', detail: 'Guardian for Sam Player' },
+      { id: 'player-casey', name: 'Casey Center', detail: '#34' }
+    ];
+
+    function AudienceSheetHarness() {
+      const [selectedRecipientIds, setSelectedRecipientIds] = React.useState(initialSelectedRecipientIds);
+      return (
+        <AudienceSheet
+          selectedTarget="individuals"
+          selectedRecipientIds={selectedRecipientIds}
+          recipientOptions={recipientOptions}
+          recipientOptionsLoading={false}
+          recipientOptionsError={null}
+          onTargetChange={vi.fn() as any}
+          onRecipientsChange={setSelectedRecipientIds}
+          onRetryRecipientOptions={vi.fn()}
+          onClose={vi.fn()}
+        />
+      );
+    }
+
+    return render(<AudienceSheetHarness />);
+  }
+
+  it('filters recipient options immediately by name or detail text', () => {
+    renderAudienceSheet();
+
+    fireEvent.change(screen.getByPlaceholderText('Search by member or guardian name'), {
+      target: { value: 'guardian for sam' }
+    });
+
+    expect(screen.getByText('Taylor Guardian')).toBeInTheDocument();
+    expect(screen.queryByText('Sam Player')).not.toBeInTheDocument();
+    expect(screen.queryByText('Casey Center')).not.toBeInTheDocument();
+  });
+
+  it('keeps selected recipients pinned and checked while filtering and after clearing search', () => {
+    renderAudienceSheet(['player-sam']);
+
+    expect(getRecipientCheckbox('Sam Player')).toBeChecked();
+    expect(screen.getByText('Selected')).toBeInTheDocument();
+
+    fireEvent.change(screen.getByPlaceholderText('Search by member or guardian name'), {
+      target: { value: 'zzz' }
+    });
+
+    expect(getRecipientCheckbox('Sam Player')).toBeChecked();
+    expect(screen.getByText('No recipients match that search yet.')).toBeInTheDocument();
+
+    fireEvent.change(screen.getByPlaceholderText('Search by member or guardian name'), {
+      target: { value: '' }
+    });
+
+    expect(getRecipientCheckbox('Sam Player')).toBeChecked();
+    expect(screen.queryByText('No recipients match that search yet.')).not.toBeInTheDocument();
+  });
+
+  it('blocks Done with no selected recipients and allows it after choosing a filtered recipient', () => {
+    renderAudienceSheet();
+
+    const doneButton = screen.getByRole('button', { name: 'Done' });
+    expect(doneButton).toBeDisabled();
+
+    fireEvent.change(screen.getByPlaceholderText('Search by member or guardian name'), {
+      target: { value: 'casey' }
+    });
+    fireEvent.click(getRecipientCheckbox('Casey Center'));
+
+    expect(doneButton).not.toBeDisabled();
   });
 });
