@@ -71,6 +71,37 @@ describe('basketball scoring column regression', () => {
         })).toBe('SCORE');
     });
 
+    it('includes the derived basketball scoring column in config writes', () => {
+        const source = readFileSync(new URL('../../edit-config.html', import.meta.url), 'utf8');
+        const hooks = runFunction([
+            extractFunction(source, 'getConfigWritePayload', 'edit-config.html')
+        ], ['getConfigWritePayload'], {
+            getFormPayload: () => ({
+                name: 'Basketball Standard',
+                baseType: 'Basketball',
+                columns: ['SCORE', 'REB', 'AST'],
+                statDefinitions: [
+                    { id: 'pts', label: 'PTS', topStat: true },
+                    { id: 'reb', label: 'REB' },
+                    { id: 'ast', label: 'AST' }
+                ],
+                scoringColumn: 'SCORE'
+            })
+        });
+
+        expect(hooks.getConfigWritePayload()).toEqual({
+            name: 'Basketball Standard',
+            baseType: 'Basketball',
+            columns: ['SCORE', 'REB', 'AST'],
+            statDefinitions: [
+                { id: 'pts', label: 'PTS', topStat: true },
+                { id: 'reb', label: 'REB' },
+                { id: 'ast', label: 'AST' }
+            ],
+            scoringColumn: 'SCORE'
+        });
+    });
+
     it.each([
         ['track-basketball.js', '../../js/track-basketball.js'],
         ['live-tracker.js', '../../js/live-tracker.js']

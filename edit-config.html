@@ -260,6 +260,17 @@
             };
         }
 
+        function getConfigWritePayload() {
+            const { name, baseType, columns, statDefinitions, scoringColumn } = getFormPayload();
+            return {
+                name,
+                baseType,
+                columns,
+                statDefinitions,
+                ...(scoringColumn ? { scoringColumn } : {})
+            };
+        }
+
         function slugifyStatKey(value = '') {
             return String(value || '')
                 .trim()
@@ -601,7 +612,8 @@
 
         document.getElementById('add-config-form').addEventListener('submit', async (e) => {
             e.preventDefault();
-            const { name, baseType, columns, statDefinitions } = getFormPayload();
+            const configPayload = getConfigWritePayload();
+            const { name, columns, statDefinitions } = configPayload;
 
             if (!name) {
                 alert('Please add a config name.');
@@ -621,19 +633,9 @@
 
             try {
                 if (editingConfigId) {
-                    await updateConfig(currentTeamId, editingConfigId, {
-                        name,
-                        baseType,
-                        columns,
-                        statDefinitions
-                    });
+                    await updateConfig(currentTeamId, editingConfigId, configPayload);
                 } else {
-                    await createConfig(currentTeamId, {
-                        name,
-                        baseType,
-                        columns,
-                        statDefinitions
-                    });
+                    await createConfig(currentTeamId, configPayload);
                 }
                 resetFormState();
                 await loadConfigs();
