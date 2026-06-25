@@ -46,7 +46,7 @@ describe('app telemetry bridge', () => {
     };
 
     const telemetry = await import('./telemetry');
-    telemetry.initializeAppErrorTracking();
+    await telemetry.initializeAppErrorTracking();
     vi.spyOn(performance, 'now').mockReturnValue(160);
 
     telemetry.recordAppUxTiming('teams summary load', 100, {
@@ -185,7 +185,7 @@ describe('app telemetry bridge', () => {
   it('initializes only when runtime config provides a DSN, redacts sensitive payload fields, and preserves stack frames', async () => {
     const telemetry = await import('./telemetry');
 
-    expect(telemetry.initializeAppErrorTracking()).toBe(false);
+    expect(await telemetry.initializeAppErrorTracking()).toBe(false);
     expect(sentryMocks.init).not.toHaveBeenCalled();
 
     window.__ALLPLAYS_CONFIG__ = {
@@ -194,7 +194,7 @@ describe('app telemetry bridge', () => {
       sentryRelease: 'app@1.2.3'
     };
 
-    expect(telemetry.initializeAppErrorTracking()).toBe(true);
+    expect(await telemetry.initializeAppErrorTracking()).toBe(true);
     expect(sentryMocks.init).toHaveBeenCalledWith(expect.objectContaining({
       dsn: 'https://public@example.ingest.sentry.io/456',
       environment: 'production',
@@ -262,7 +262,7 @@ describe('app telemetry bridge', () => {
 
     const telemetry = await import('./telemetry');
 
-    expect(telemetry.initializeAppErrorTracking({ isProduction: false })).toBe(true);
+    expect(await telemetry.initializeAppErrorTracking({ isProduction: false })).toBe(true);
     expect(sentryMocks.init).toHaveBeenCalledWith(expect.objectContaining({
       dsn: 'https://public@example.ingest.sentry.io/global',
       environment: 'staging',
@@ -277,7 +277,7 @@ describe('app telemetry bridge', () => {
 
     const telemetry = await import('./telemetry');
 
-    expect(telemetry.initializeAppErrorTracking({ isProduction: false })).toBe(true);
+    expect(await telemetry.initializeAppErrorTracking({ isProduction: false })).toBe(true);
     expect(sentryMocks.init).toHaveBeenCalledWith(expect.objectContaining({
       dsn: 'https://public@example.ingest.sentry.io/clean',
       environment: undefined,
@@ -293,7 +293,7 @@ describe('app telemetry bridge', () => {
     };
 
     const telemetry = await import('./telemetry');
-    telemetry.initializeAppErrorTracking();
+    await telemetry.initializeAppErrorTracking();
     telemetry.installReactErrorTelemetry();
 
     expect(typeof window.__ALLPLAYS_REPORT_REACT_ERROR__).toBe('function');
@@ -337,7 +337,7 @@ describe('app telemetry bridge', () => {
     };
 
     const telemetry = await import('./telemetry');
-    telemetry.initializeAppErrorTracking();
+    await telemetry.initializeAppErrorTracking();
 
     telemetry.captureHandledAppError('native auth bridge', {
       name: 'BridgeFailure',
@@ -390,7 +390,7 @@ describe('app telemetry bridge', () => {
     };
 
     const telemetry = await import('./telemetry');
-    telemetry.initializeAppErrorTracking({ isProduction: true });
+    await telemetry.initializeAppErrorTracking({ isProduction: true });
 
     const rejection = new Error('token=leak-me');
     window.dispatchEvent(new ErrorEvent('error', {

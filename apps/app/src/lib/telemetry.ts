@@ -1,4 +1,3 @@
-import * as Sentry from '@sentry/browser';
 import type { ErrorEvent as SentryErrorEvent } from '@sentry/browser';
 import type { ReactErrorBoundaryReport } from '../components/ErrorBoundary';
 import { createLogger, isSensitiveLogKey, normalizeErrorForLogging, redactedValue, sanitizeForLogging } from './logger';
@@ -56,6 +55,10 @@ declare global {
 let telemetryPromise: Promise<AppTelemetryApi | null> | null = null;
 let errorTrackingInitialized = false;
 let globalErrorHandlersInstalled = false;
+// Sentry is the largest eager dependency in the cold-start path (~80 KB). Load
+// it lazily so it no longer blocks first paint; until it resolves, error
+// capture is a best-effort no-op.
+let sentryModule: typeof import('@sentry/browser') | null = null;
 
 export function startAppStartupTimer() {
   return createAppTimer('app startup', { stage: 'startup' });
@@ -147,7 +150,7 @@ export function captureAppTelemetryError(
   captureErrorTrackingException(label, error, context, options);
 }
 
-export function initializeAppErrorTracking(options: ErrorTrackingInitOptions = {}) {
+export async function initializeAppErrorTracking(options: ErrorTrackingInitOptions = {}): Promise<boolean> {
   if (errorTrackingInitialized) {
     return true;
   }
@@ -158,6 +161,7 @@ export function initializeAppErrorTracking(options: ErrorTrackingInitOptions = {
   }
 
   try {
+    const Sentry = sentryModule ?? (sentryModule = await import('@sentry/browser'));
     Sentry.init({
       dsn: config.dsn,
       environment: config.environment,
@@ -315,10 +319,11 @@ function captureErrorTrackingException(
   context: TelemetryProperties = {},
   options: { handled?: boolean } = {}
 ) {
-  if (!errorTrackingInitialized) {
+  if (!errorTrackingInitialized || !sentryModule) {
     return;
   }
 
+  const Sentry = sentryModule;
   const normalizedError = normalizeError(error, label);
   const sanitizedContext = sanitizeForTracking({ label, ...context });
 

@@ -1,3 +1,5 @@
+import { recordNativeDedupHit, recordNativeRead } from './nativeReadMetrics';
+
 type NativeRestDedupEntry<T> = {
   promise: Promise<T>;
   expiresAt: number;
@@ -36,6 +38,7 @@ export function loadDedupedNativeRestRequest<T>(
   const now = Date.now();
   const existing = nativeRestDedupCache.get(key) as NativeRestDedupEntry<T> | undefined;
   if (existing && existing.expiresAt > now) {
+    recordNativeDedupHit();
     return existing.promise;
   }
   if (existing) {
@@ -59,6 +62,7 @@ export function loadDedupedNativeRestRequest<T>(
   }, Math.max(0, dedupWindowMs));
   nativeRestDedupCache.set(key, entry);
 
+  recordNativeRead();
   Promise.resolve()
     .then(loader)
     .then((result) => {
