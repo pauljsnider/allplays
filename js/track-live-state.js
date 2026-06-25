@@ -122,6 +122,37 @@ function buildResumeLogText(event) {
   return description;
 }
 
+function isHydratableLogEventType(type) {
+  return [
+    'baseball',
+    'clock_pause',
+    'clock_start',
+    'football_play',
+    'football_score',
+    'goal',
+    'note',
+    'period_change',
+    'stat',
+    'undo',
+    'volleyball'
+  ].includes(type);
+}
+
+function buildResumeUndoData(event) {
+  const type = normalizeTrackLiveText(event?.type);
+  if (type === 'stat' || type === 'goal') {
+    return {
+      type,
+      playerId: event?.playerId || null,
+      statKey: event?.statKey || null,
+      value: Number(event?.value || 0),
+      isOpponent: Boolean(event?.isOpponent)
+    };
+  }
+
+  return null;
+}
+
 function parseUndoTarget(description) {
   const clean = normalizeTrackLiveText(description);
   const match = clean.match(/^Undo:\s*(.+)$/i);
@@ -228,12 +259,17 @@ export function buildTrackLiveResumeState({
       return;
     }
 
+    if (!isHydratableLogEventType(type)) {
+      return;
+    }
+
     const text = buildResumeLogText(event);
     if (!text) return;
 
     gameLog.push({
       ...baseEntry,
-      text
+      text,
+      undoData: buildResumeUndoData(event)
     });
   });
 

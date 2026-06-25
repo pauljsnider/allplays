@@ -172,6 +172,10 @@ describe('track live state helpers', () => {
         {
           type: 'stat',
           description: '#30 Alex +2 PTS',
+          playerId: 'p30',
+          statKey: 'pts',
+          value: 2,
+          isOpponent: false,
           period: 'Q1',
           gameClockMs: 15000,
           createdAt: { seconds: 11, nanoseconds: 0 }
@@ -187,11 +191,22 @@ describe('track live state helpers', () => {
           createdAt: { seconds: 12, nanoseconds: 0 }
         },
         {
+          type: 'lineup',
+          description: 'Lineup updated',
+          period: 'Q1',
+          gameClockMs: 30000,
+          createdAt: { seconds: 12, nanoseconds: 500000000 }
+        },
+        {
           type: 'goal',
           description: 'Ava scored for the home team',
           note: 'Left-footed finish',
           liveNoteId: 'goal-note-1',
           teamSide: 'home',
+          statKey: 'goals',
+          value: 1,
+          playerId: 'p9',
+          isOpponent: false,
           period: 'H2',
           gameClockMs: 61000,
           createdAt: { seconds: 13, nanoseconds: 0 }
@@ -208,11 +223,35 @@ describe('track live state helpers', () => {
     });
 
     expect(resumed.gameLog).toEqual([
-      { text: 'Game stopped', period: 'H2', time: '1:02', timestamp: 14000 },
-      { text: 'Ava scored for the home team', period: 'H2', time: '1:01', timestamp: 13000 },
-      { text: 'Note: Strong defensive stretch', period: 'Q1', time: '0:20', timestamp: 12000 },
-      { text: '#30 Alex +2 PTS', period: 'Q1', time: '0:15', timestamp: 11000 },
-      { text: 'Game started', period: 'Q1', time: '0:00', timestamp: 10000 }
+      { text: 'Game stopped', period: 'H2', time: '1:02', timestamp: 14000, undoData: null },
+      {
+        text: 'Ava scored for the home team',
+        period: 'H2',
+        time: '1:01',
+        timestamp: 13000,
+        undoData: {
+          type: 'goal',
+          playerId: 'p9',
+          statKey: 'goals',
+          value: 1,
+          isOpponent: false
+        }
+      },
+      { text: 'Note: Strong defensive stretch', period: 'Q1', time: '0:20', timestamp: 12000, undoData: null },
+      {
+        text: '#30 Alex +2 PTS',
+        period: 'Q1',
+        time: '0:15',
+        timestamp: 11000,
+        undoData: {
+          type: 'stat',
+          playerId: 'p30',
+          statKey: 'pts',
+          value: 2,
+          isOpponent: false
+        }
+      },
+      { text: 'Game started', period: 'Q1', time: '0:00', timestamp: 10000, undoData: null }
     ]);
     expect(resumed.liveNotes).toEqual([
       { id: 'goal-note-1', text: 'Home goal: Left-footed finish', type: 'goal', period: 'H2', time: '1:01', timestamp: 13000 },
@@ -227,6 +266,10 @@ describe('track live state helpers', () => {
         {
           type: 'stat',
           description: '#12 Maya +1 AST',
+          playerId: 'p12',
+          statKey: 'ast',
+          value: 1,
+          isOpponent: false,
           period: 'Q1',
           gameClockMs: 5000,
           createdAt: { seconds: 10, nanoseconds: 0 }
@@ -259,6 +302,10 @@ describe('track live state helpers', () => {
         {
           type: 'stat',
           description: '#5 Eli +3 PTS',
+          playerId: 'p5',
+          statKey: 'pts',
+          value: 3,
+          isOpponent: false,
           period: 'Q2',
           gameClockMs: 15000,
           createdAt: { seconds: 14, nanoseconds: 0 }
@@ -275,7 +322,19 @@ describe('track live state helpers', () => {
 
     expect(resumed.gameLog).toEqual([
       { text: 'Corrected: PTS adjusted', period: 'Q2', time: '0:16', timestamp: 15000 },
-      { text: '#5 Eli +3 PTS', period: 'Q2', time: '0:15', timestamp: 14000 }
+      {
+        text: '#5 Eli +3 PTS',
+        period: 'Q2',
+        time: '0:15',
+        timestamp: 14000,
+        undoData: {
+          type: 'stat',
+          playerId: 'p5',
+          statKey: 'pts',
+          value: 3,
+          isOpponent: false
+        }
+      }
     ]);
     expect(resumed.liveNotes).toEqual([]);
     expect(resumed.summaryText).toBe('');
