@@ -15,7 +15,7 @@ const authServiceMocks = vi.hoisted(() => ({
 
 const profileServiceMocks = vi.hoisted(() => ({
   createProfileAccessCode: vi.fn(async () => 'CODE1234'),
-  loadNotificationPreferences: vi.fn(async () => ({ liveChat: true, liveScore: false, schedule: true })),
+  loadNotificationPreferences: vi.fn(async (_userId: string, _teamId: string) => ({ liveChat: true, liveScore: false, schedule: true })),
   loadNotificationTeams: vi.fn(async () => ([{ id: 'team-1', name: 'Blue Team' }])),
   loadParentTeams: vi.fn(async () => ([{ id: 'team-1', name: 'Blue Team' }])),
   loadProfileAccessCodes: vi.fn(async () => []),
