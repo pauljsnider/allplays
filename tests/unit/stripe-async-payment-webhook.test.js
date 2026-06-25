@@ -40,7 +40,7 @@ describe('Stripe async payment webhook handling (issue #2203)', () => {
         expect(source).toContain("checkoutStatus: event.type === 'checkout.session.expired' ? 'expired' : 'payment_failed',");
         expect(source).toContain("paymentStatus: event.type === 'checkout.session.expired' ? 'checkout_expired' : 'payment_failed',");
         expect(source).toContain('registrationCapacityReleased: true,');
-        expect(source).toContain('capacityReleasedAt: receivedAt,');
+        expect(source).toContain('capacityReleasedAt: receivedAt');
     });
 
     it('accepts public checkout capability metadata for non-paid webhook retries', () => {
