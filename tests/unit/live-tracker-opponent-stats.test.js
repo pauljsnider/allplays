@@ -254,6 +254,8 @@ return {
   els,
   renderOpponents,
   addSelectedOpponentRoster,
+  setLinkedOpponentTeam,
+  loadOpponentRoster,
   setContext(context = {}) {
     currentTeamId = context.teamId || null;
     currentGameId = context.gameId || null;
@@ -279,7 +281,7 @@ const runModule = new AsyncFunction(
   moduleSource
 );
 
-async function bootLiveTracker({ updateGame }) {
+async function bootLiveTracker({ updateGame, getPlayers = async () => [] }) {
   const { document } = createEnvironment();
   const scheduledTimeouts = new Map();
   let nextTimeoutId = 1;
@@ -288,7 +290,7 @@ async function bootLiveTracker({ updateGame }) {
       getTeam: async () => ({}),
       getTeams: async () => [],
       getGame: async () => ({}),
-      getPlayers: async () => [],
+      getPlayers,
       getConfigs: async () => [],
       updateGame,
       collection: () => ({}),
@@ -475,6 +477,30 @@ describe('live tracker opponent stats harness', () => {
 });
 
 describe('live tracker opponent stats hydration', () => {
+  it('keeps linked opponent controls visible after roster auto-populates players', async () => {
+    const page = await bootLiveTracker({
+      updateGame: async () => {},
+      getPlayers: async () => [
+        { id: 'opp10', name: 'Taylor Guard', number: '10', photoUrl: 'https://img/10.png' },
+        { id: 'opp22', name: 'Jordan Wing', number: '22', photoUrl: '' }
+      ]
+    });
+
+    page.setContext({
+      teamId: 'team-1',
+      gameId: 'game-1',
+      config: { columns: ['PTS'] },
+      game: { opponent: 'Rivals', opponentTeamId: null }
+    });
+    page.state.opp = [];
+
+    await page.setLinkedOpponentTeam({ id: 'opp-team-1', name: 'Rivals', photoUrl: '' });
+
+    expect(page.state.opp).toHaveLength(2);
+    expect(page.els.oppTeamLinked.classList.tokens.has('hidden')).toBe(false);
+    expect(page.els.oppTeamSection.classList.tokens.has('hidden')).toBe(false);
+  });
+
   it('preserves linked opponent roster additions so resume restores selected players', async () => {
     const updateCalls = [];
     const page = await bootLiveTracker({

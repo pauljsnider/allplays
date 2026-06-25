@@ -856,15 +856,7 @@ function updateSubtitle() {
 
 function updateOpponentLinkVisibility() {
   if (!els.oppTeamSection) return;
-  const hasOppPlayers = state.opp.some(o => {
-    const hasName = (o.name || '').trim().length > 0;
-    const hasNumber = (o.number || '').trim().length > 0;
-    const hasStats = o.stats && Object.values(o.stats).some(val => val > 0);
-    return hasName || hasNumber || hasStats;
-  });
-  const isLinked = !!currentGame?.opponentTeamId;
-  const shouldHide = isLinked && hasOppPlayers;
-  els.oppTeamSection.classList.toggle('hidden', shouldHide);
+  els.oppTeamSection.classList.remove('hidden');
 }
 
 function getOpponentRecordedPoints(opp) {
