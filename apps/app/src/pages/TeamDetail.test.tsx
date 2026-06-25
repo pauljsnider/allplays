@@ -338,6 +338,66 @@ describe('TeamDetail', () => {
     expect(teamDetailServiceMocks.loadParentTeamDetail).toHaveBeenCalledTimes(1);
   });
 
+  it('renders native standings rows with the current team highlight and expandable overflow', async () => {
+    const standingsRows = [
+      { rank: 1, team: 'Lions', w: 8, l: 1, t: 0, points: 16 },
+      { rank: 2, team: 'Tigers', w: 7, l: 2, t: 0, points: 14 },
+      { rank: 3, team: 'Bears', w: 6, l: 3, t: 0, points: 12 },
+      { rank: 4, team: 'Wolves', w: 5, l: 4, t: 0, points: 10 },
+      { rank: 5, team: 'Hawks', w: 4, l: 5, t: 0, points: 8 },
+      { rank: 6, team: 'Falcons', w: 3, l: 6, t: 0, points: 6 }
+    ];
+    teamDetailServiceMocks.loadParentTeamDetail.mockResolvedValue({
+      ...model,
+      standings: {
+        enabled: true,
+        label: 'Points table',
+        rows: standingsRows,
+        currentRow: standingsRows[2]
+      }
+    });
+
+    render(
+      <MemoryRouter initialEntries={['/teams/team-1']}>
+        <Routes>
+          <Route path="/teams/:teamId" element={<TeamDetail auth={auth} />} />
+        </Routes>
+      </MemoryRouter>
+    );
+
+    expect(await screen.findByRole('heading', { name: 'Bears' })).toBeTruthy();
+    expect(screen.getByRole('columnheader', { name: 'Rank' })).toBeTruthy();
+    expect(screen.getByRole('columnheader', { name: 'Record' })).toBeTruthy();
+    expect(screen.getByRole('columnheader', { name: 'PTS' })).toBeTruthy();
+    expect(screen.getByText('Lions')).toBeTruthy();
+    expect(screen.getByText('Hawks')).toBeTruthy();
+    expect(screen.queryByText('Falcons')).toBeNull();
+    expect(screen.getByRole('button', { name: 'Show 1 more team' })).toBeTruthy();
+
+    const currentTeamCell = screen.getAllByText('Bears').find((element) => element.tagName === 'TD');
+    const currentTeamRow = currentTeamCell?.closest('tr');
+    expect(currentTeamRow?.getAttribute('aria-current')).toBe('true');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Show 1 more team' }));
+    expect(await screen.findByText('Falcons')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Show fewer teams' })).toBeTruthy();
+  });
+
+  it('falls back to the external league page when native standings rows are unavailable', async () => {
+    render(
+      <MemoryRouter initialEntries={['/teams/team-1']}>
+        <Routes>
+          <Route path="/teams/:teamId" element={<TeamDetail auth={auth} />} />
+        </Routes>
+      </MemoryRouter>
+    );
+
+    expect(await screen.findByRole('heading', { name: 'Bears' })).toBeTruthy();
+    const leagueLinks = screen.getAllByRole('link', { name: 'League page' });
+    expect(leagueLinks.some((link) => link.getAttribute('href') === 'https://league.example.test/standings')).toBe(true);
+    expect(screen.getByText('Open the league page for current standings.')).toBeTruthy();
+  });
+
   it('lets team staff deactivate and reactivate players from the roster tab', async () => {
     const managedModel = {
       ...model,
