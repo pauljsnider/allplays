@@ -320,6 +320,17 @@ describe('Schedule', () => {
       myRsvp: 'not_responded'
     }) as any, true)).toBe('/schedule/team-1/event-1?childId=player-1&section=availability');
     expect(getGenericEventDetailPath(buildScheduleEvent(1, {
+      isTeamStaff: false,
+      myRsvp: 'going',
+      assignments: [{ role: 'Snack bar', value: '', claimable: true }]
+    }) as any, true)).toBe('/schedule/team-1/event-1?childId=player-1&section=assignments');
+    expect(getGenericEventDetailPath(buildScheduleEvent(1, {
+      isTeamStaff: false,
+      myRsvp: 'going',
+      assignments: [],
+      rideshareSummary: { requests: 1, pending: 0, seatsLeft: 0 }
+    }) as any, true)).toBe('/schedule/team-1/event-1?childId=player-1&section=rideshare');
+    expect(getGenericEventDetailPath(buildScheduleEvent(1, {
       id: 'practice-1',
       type: 'practice',
       isDbGame: false,

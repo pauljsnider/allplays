@@ -1,12 +1,13 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { AlertCircle, ChevronLeft, RefreshCw } from 'lucide-react'
 import { Link, Navigate, useParams } from 'react-router-dom'
-import { resolveParentGameRoute, type ParentGameRouteResolution } from '../lib/scheduleService'
+import { getGenericEventDetailPath } from '../lib/scheduleLogic'
+import { loadParentScheduleEventDetail, resolveParentGameRoute } from '../lib/scheduleService'
 import type { AuthState } from '../lib/types'
 
 type ResolutionState = {
   loading: boolean
-  targetRoute: ParentGameRouteResolution | null
+  redirectTarget: string
   error: string | null
 }
 
@@ -14,7 +15,7 @@ export function GameDetail({ auth }: { auth: AuthState }) {
   const { gameId = '' } = useParams()
   const [state, setState] = useState<ResolutionState>({
     loading: true,
-    targetRoute: null,
+    redirectTarget: '',
     error: null
   })
 
@@ -24,12 +25,12 @@ export function GameDetail({ auth }: { auth: AuthState }) {
     async function resolveGameRoute() {
       if (!auth.user || !gameId) {
         if (!cancelled) {
-          setState({ loading: false, targetRoute: null, error: 'This game is not available right now.' })
+          setState({ loading: false, redirectTarget: '', error: 'This game is not available right now.' })
         }
         return
       }
 
-      setState({ loading: true, targetRoute: null, error: null })
+      setState({ loading: true, redirectTarget: '', error: null })
 
       try {
         const targetRoute = await resolveParentGameRoute(auth.user, gameId, { expandStaffPlayers: false })
@@ -39,18 +40,39 @@ export function GameDetail({ auth }: { auth: AuthState }) {
         if (!targetRoute) {
           setState({
             loading: false,
-            targetRoute: null,
+            redirectTarget: '',
             error: 'We could not find this game in your live schedule. Open Schedule to find the event or refresh after the team shares access.'
           })
           return
         }
 
-        setState({ loading: false, targetRoute, error: null })
+        const detail = await loadParentScheduleEventDetail(auth.user, {
+          teamId: targetRoute.teamId,
+          eventId: targetRoute.eventId,
+          expandStaffPlayers: false
+        })
+
+        if (cancelled) return
+
+        const matchedEvent = detail.events.find((event) => event.childId === targetRoute.childId) || detail.events[0]
+        const fallbackParams = new URLSearchParams()
+        if (targetRoute.childId) {
+          fallbackParams.set('childId', targetRoute.childId)
+        }
+        fallbackParams.set('section', 'game')
+        const fallbackQuery = fallbackParams.toString()
+        const fallbackTarget = `/schedule/${encodeURIComponent(targetRoute.teamId)}/${encodeURIComponent(targetRoute.eventId)}${fallbackQuery ? `?${fallbackQuery}` : ''}`
+
+        setState({
+          loading: false,
+          redirectTarget: matchedEvent ? getGenericEventDetailPath(matchedEvent, true) : fallbackTarget,
+          error: null
+        })
       } catch (error: any) {
         if (cancelled) return
         setState({
           loading: false,
-          targetRoute: null,
+          redirectTarget: '',
           error: error?.message || 'Unable to open this game right now.'
         })
       }
@@ -63,19 +85,8 @@ export function GameDetail({ auth }: { auth: AuthState }) {
     }
   }, [auth.user, gameId])
 
-  const redirectTarget = useMemo(() => {
-    if (!state.targetRoute) return ''
-    const params = new URLSearchParams()
-    if (state.targetRoute.childId) {
-      params.set('childId', state.targetRoute.childId)
-    }
-    params.set('section', 'game')
-    const search = params.toString()
-    return `/schedule/${encodeURIComponent(state.targetRoute.teamId)}/${encodeURIComponent(state.targetRoute.eventId)}${search ? `?${search}` : ''}`
-  }, [state.targetRoute])
-
-  if (redirectTarget) {
-    return <Navigate to={redirectTarget} replace />
+  if (state.redirectTarget) {
+    return <Navigate to={state.redirectTarget} replace />
   }
 
   if (state.loading) {
