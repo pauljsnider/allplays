@@ -48,7 +48,10 @@ import { buildCoachOverrideRsvpDocId, shouldDeleteLegacyRsvpForOverride } from '
 import { computeEffectiveRsvpSummary } from './rsvp-summary.js?v=1';
 import { buildGameDayRsvpBreakdown } from './game-day-rsvp-breakdown.js?v=1';
 import { isAvailabilityLocked, normalizeAvailabilityPreferences } from './availability-preferences.js?v=1';
-import { collectOfficialLookupTargets } from './admin-user-official-links.js?v=2';
+import {
+    collectOfficialLookupQueryTargets,
+    collectOfficialLookupTargets
+} from './admin-user-official-links.js?v=2';
 import { resolveAvailabilityCutoffEventDate } from './availability-cutoff-date.js?v=1';
 import { normalizeFamilyShareCalendarUrls, normalizeFamilyShareChildren } from './family-share-utils.js?v=1';
 import { normalizeChatAttachments } from './team-chat-media.js';
@@ -2225,8 +2228,9 @@ function chunkArray(values = [], chunkSize = 10) {
 }
 
 export async function getOfficialsForUsers(users = []) {
-    const { emails, phones } = collectOfficialLookupTargets(users);
-    if (!emails.length && !phones.length) {
+    const normalizedTargets = collectOfficialLookupTargets(users);
+    const queryTargets = collectOfficialLookupQueryTargets(users);
+    if (!normalizedTargets.emails.length && !normalizedTargets.phones.length) {
         return [];
     }
 
@@ -2245,11 +2249,11 @@ export async function getOfficialsForUsers(users = []) {
         });
     };
 
-    const emailQueries = chunkArray(emails).map(async (chunk) => {
+    const emailQueries = chunkArray(queryTargets.emails).map(async (chunk) => {
         const snapshot = await getDocs(query(collectionGroup(db, 'officials'), where('email', 'in', chunk)));
         addSnapshotEntries(snapshot);
     });
-    const phoneQueries = chunkArray(phones).map(async (chunk) => {
+    const phoneQueries = chunkArray(queryTargets.phones).map(async (chunk) => {
         const snapshot = await getDocs(query(collectionGroup(db, 'officials'), where('phone', 'in', chunk)));
         addSnapshotEntries(snapshot);
     });

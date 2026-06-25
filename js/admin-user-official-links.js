@@ -27,6 +27,28 @@ export function collectOfficialLookupTargets(users = []) {
     };
 }
 
+export function collectOfficialLookupQueryTargets(users = []) {
+    const emails = new Set();
+    const phones = new Set();
+
+    users.forEach((user) => {
+        const rawEmail = String(user?.email || '').trim();
+        const normalizedEmail = normalizeOfficialLinkEmail(user?.email);
+        const rawPhone = String(user?.phone || '').trim();
+        const normalizedPhone = normalizeOfficialLinkPhone(user?.phone);
+
+        if (rawEmail) emails.add(rawEmail);
+        if (normalizedEmail) emails.add(normalizedEmail);
+        if (rawPhone) phones.add(rawPhone);
+        if (normalizedPhone) phones.add(normalizedPhone);
+    });
+
+    return {
+        emails: Array.from(emails),
+        phones: Array.from(phones)
+    };
+}
+
 export function buildOfficialLookupCacheKey(users = []) {
     return users.map((user) => [
         String(user?.id || '').trim(),

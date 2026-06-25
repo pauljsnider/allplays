@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 import {
     buildOfficialLookupCacheKey,
     buildOfficialUserLookup,
+    collectOfficialLookupQueryTargets,
     collectOfficialLookupTargets,
     formatOfficialUserSummary,
     getOfficialUserSummary,
@@ -82,6 +83,10 @@ describe('admin users official links', () => {
             emails: ['ref@one.com', 'other@example.com'],
             phones: ['5551234567']
         });
+        expect(collectOfficialLookupQueryTargets(users)).toEqual({
+            emails: ['Ref@One.com', 'ref@one.com', 'other@example.com'],
+            phones: ['+1 (555) 123-4567', '5551234567']
+        });
         expect(buildOfficialLookupCacheKey(users)).toBe('user-1:ref@one.com:5551234567|user-2:ref@one.com:5551234567|user-3:other@example.com:');
     });
 
@@ -100,6 +105,7 @@ describe('admin users official links', () => {
         expect(adminJs).toContain('loadVisibleOfficialUserLinks(getCurrentUsersPage())');
         expect(adminJs).not.toContain("loadOfficialUserLinks(getDashboardTeams(), { scope: 'all' })");
         expect(dbJs).toContain("collectionGroup(db, 'officials')");
+        expect(dbJs).toContain('collectOfficialLookupQueryTargets');
         expect(dbJs).toContain("where('email', 'in', chunk)");
         expect(adminJs).toContain('buildOfficialUserLookup');
         expect(adminJs).toContain('formatOfficialUserSummary');
