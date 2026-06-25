@@ -33,6 +33,7 @@ export function validateFirebaseRulesCi() {
     const firestoreRules = readText('firestore.rules');
     const storageRules = readText('storage.rules');
     const legacyGameClipRules = extractMatchBlock(storageRules, 'match /game-clips/{fileName} {');
+    const collectionGroupGamesHelper = (firestoreRules.match(/function canReadCollectionGroupGameDocument\(teamPath, data\) \{[\s\S]*?\n\s*}/) || [''])[0];
     const gameEventsRules = (firestoreRules.match(/match \/events\/\{eventId} \{[\s\S]*?\n\s*}/) || [''])[0];
     const aggregatedStatsRules = (firestoreRules.match(/match \/aggregatedStats\/\{statId} \{[\s\S]*?\n\s*}/) || [''])[0];
     const deployProd = readText('.github/workflows/deploy-prod.yml');
@@ -60,6 +61,15 @@ export function validateFirebaseRulesCi() {
     assertIncludes(firestoreRules, 'function canReadGameDocument(teamId, gameId, data)', 'Firestore game visibility helper');
     assertIncludes(firestoreRules, 'function canReadGameSubcollectionDocument(teamId, gameId)', 'Firestore game subcollection visibility helper');
     assertIncludes(firestoreRules, 'function canReadCollectionGroupGameDocument(teamPath, data)', 'Firestore collection-group game visibility helper');
+    assertIncludes(collectionGroupGamesHelper, 'let parentTeamPath = /databases/$(database)/documents/$(teamPath);', 'Firestore collection-group team path reuse');
+    assertIncludes(collectionGroupGamesHelper, 'let parentTeam = get(parentTeamPath).data;', 'Firestore collection-group parent team lookup reuse');
+    assertIncludes(collectionGroupGamesHelper, 'return parentTeam != null &&', 'Firestore collection-group parent team existence guard');
+    if ((collectionGroupGamesHelper.match(/get\(parentTeamPath\)/g) || []).length !== 1) {
+        throw new Error('Firestore collection-group game visibility helper must resolve the parent team document exactly once.');
+    }
+    if (collectionGroupGamesHelper.includes('exists(parentTeamPath)')) {
+        throw new Error('Firestore collection-group game visibility helper must not re-read the parent team document with exists(parentTeamPath).');
+    }
     assertIncludes(firestoreRules, 'allow read: if canReadGameDocument(teamId, gameId, resource.data);', 'Firestore team game read rules');
     assertIncludes(firestoreRules, 'allow read: if canReadGameSubcollectionDocument(teamId, gameId);', 'Firestore game subcollection read rules');
     assertIncludes(firestoreRules, 'allow read: if canReadCollectionGroupGameDocument(path, resource.data);', 'Firestore collection-group game read rules');
