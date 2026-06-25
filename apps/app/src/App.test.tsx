@@ -55,7 +55,7 @@ const capacitorMock = vi.hoisted(() => ({
 }));
 const pushRoutingMock = vi.hoisted(() => ({
   clearPendingPushRoute: vi.fn(),
-  readPendingPushRoute: vi.fn(() => null)
+  readPendingPushRoute: vi.fn<() => string | null>(() => null)
 }));
 const pushServiceMock = vi.hoisted(() => {
   const state = {
