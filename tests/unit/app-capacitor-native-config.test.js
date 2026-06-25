@@ -16,12 +16,16 @@ describe('Capacitor native config', () => {
         const androidBuild = readProjectFile('android/app/capacitor.build.gradle');
         const iosPackage = readProjectFile('ios/App/CapApp-SPM/Package.swift');
 
+        expect(rootPackage.dependencies['@capacitor/keyboard']).toBeTruthy();
         expect(rootPackage.dependencies['@capacitor/splash-screen']).toBeTruthy();
         expect(rootPackage.dependencies['@capacitor/status-bar']).toBeTruthy();
+        expect(appPackage.dependencies['@capacitor/keyboard']).toBeTruthy();
         expect(appPackage.dependencies['@capacitor/splash-screen']).toBeTruthy();
         expect(appPackage.dependencies['@capacitor/status-bar']).toBeTruthy();
+        expect(rootPackageLock).toContain('"node_modules/@capacitor/keyboard"');
         expect(rootPackageLock).toContain('"node_modules/@capacitor/splash-screen"');
         expect(rootPackageLock).toContain('"node_modules/@capacitor/status-bar"');
+        expect(appPackageLock).toContain('"node_modules/@capacitor/keyboard"');
         expect(appPackageLock).toContain('"node_modules/@capacitor/splash-screen"');
         expect(appPackageLock).toContain('"node_modules/@capacitor/status-bar"');
 
@@ -40,10 +44,13 @@ describe('Capacitor native config', () => {
             resizeOnFullScreen: true
         });
 
+        expect(androidSettings).toContain("include ':capacitor-keyboard'");
         expect(androidSettings).toContain("include ':capacitor-splash-screen'");
         expect(androidSettings).toContain("include ':capacitor-status-bar'");
+        expect(androidBuild).toContain("implementation project(':capacitor-keyboard')");
         expect(androidBuild).toContain("implementation project(':capacitor-splash-screen')");
         expect(androidBuild).toContain("implementation project(':capacitor-status-bar')");
+        expect(iosPackage).toContain('CapacitorKeyboard');
         expect(iosPackage).toContain('CapacitorSplashScreen');
         expect(iosPackage).toContain('CapacitorStatusBar');
     });
