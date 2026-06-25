@@ -338,6 +338,95 @@ describe('TeamDetail', () => {
     expect(teamDetailServiceMocks.loadParentTeamDetail).toHaveBeenCalledTimes(1);
   });
 
+  it('renders native standings rows with the current team highlight and expandable overflow', async () => {
+    const standingsRows = [
+      { rank: 1, team: 'Lions', w: 8, l: 1, t: 0, points: 16 },
+      { rank: 2, team: 'Tigers', w: 7, l: 2, t: 0, points: 14 },
+      { rank: 3, team: 'Wolves', w: 6, l: 3, t: 0, points: 12 },
+      { rank: 4, team: 'Hawks', w: 5, l: 4, t: 0, points: 10 },
+      { rank: 5, team: 'Falcons', w: 4, l: 5, t: 0, points: 8 },
+      { rank: 6, team: 'Bears', w: 3, l: 6, t: 0, points: 6 }
+    ];
+    teamDetailServiceMocks.loadParentTeamDetail.mockResolvedValue({
+      ...model,
+      standings: {
+        enabled: true,
+        label: 'Points table',
+        rows: standingsRows,
+        currentRow: standingsRows[5]
+      }
+    });
+
+    render(
+      <MemoryRouter initialEntries={['/teams/team-1']}>
+        <Routes>
+          <Route path="/teams/:teamId" element={<TeamDetail auth={auth} />} />
+        </Routes>
+      </MemoryRouter>
+    );
+
+    expect(await screen.findByRole('heading', { name: 'Bears' })).toBeTruthy();
+    expect(screen.getByRole('columnheader', { name: 'Rank' })).toBeTruthy();
+    expect(screen.getByRole('columnheader', { name: 'Record' })).toBeTruthy();
+    expect(screen.getByRole('columnheader', { name: 'PTS' })).toBeTruthy();
+    expect(screen.getByText('Lions')).toBeTruthy();
+    expect(screen.queryByText('Falcons')).toBeNull();
+    expect(screen.getByText('Bears')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Show 1 more team' })).toBeTruthy();
+
+    const currentTeamCell = screen.getAllByText('Bears').find((element) => element.tagName === 'TD');
+    const currentTeamRow = currentTeamCell?.closest('tr');
+    expect(currentTeamRow?.getAttribute('aria-current')).toBe('true');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Show 1 more team' }));
+    expect(await screen.findByText('Falcons')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Show fewer teams' })).toBeTruthy();
+  });
+
+  it('shows win percentage as the standings context column when the standings label is win percentage', async () => {
+    const standingsRows = [
+      { rank: 1, team: 'Lions', w: 8, l: 1, t: 0, points: 16, winPct: 0.889 },
+      { rank: 2, team: 'Bears', w: 6, l: 3, t: 0, points: 12, winPct: 0.667 }
+    ];
+    teamDetailServiceMocks.loadParentTeamDetail.mockResolvedValue({
+      ...model,
+      standings: {
+        enabled: true,
+        label: 'Win percentage',
+        rows: standingsRows,
+        currentRow: standingsRows[1]
+      }
+    });
+
+    render(
+      <MemoryRouter initialEntries={['/teams/team-1']}>
+        <Routes>
+          <Route path="/teams/:teamId" element={<TeamDetail auth={auth} />} />
+        </Routes>
+      </MemoryRouter>
+    );
+
+    expect(await screen.findByRole('heading', { name: 'Bears' })).toBeTruthy();
+    expect(screen.getByRole('columnheader', { name: 'PCT' })).toBeTruthy();
+    expect(screen.queryByRole('columnheader', { name: 'PTS' })).toBeNull();
+    expect(screen.getByText('0.667')).toBeTruthy();
+  });
+
+  it('falls back to the external league page when native standings rows are unavailable', async () => {
+    render(
+      <MemoryRouter initialEntries={['/teams/team-1']}>
+        <Routes>
+          <Route path="/teams/:teamId" element={<TeamDetail auth={auth} />} />
+        </Routes>
+      </MemoryRouter>
+    );
+
+    expect(await screen.findByRole('heading', { name: 'Bears' })).toBeTruthy();
+    const leagueLinks = screen.getAllByRole('link', { name: 'League page' });
+    expect(leagueLinks.some((link) => link.getAttribute('href') === 'https://league.example.test/standings')).toBe(true);
+    expect(screen.getByText('Open the league page for current standings.')).toBeTruthy();
+  });
+
   it('lets team staff deactivate and reactivate players from the roster tab', async () => {
     const managedModel = {
       ...model,

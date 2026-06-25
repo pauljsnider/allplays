@@ -45,6 +45,7 @@ type RosterAiImportModule = typeof import('../lib/rosterAiImport');
 type RosterAiImportPreviewRow = import('../lib/rosterAiImport').RosterAiImportPreviewRow;
 
 let rosterAiImportModulePromise: Promise<RosterAiImportModule> | null = null;
+const initialStandingsRowLimit = 5;
 
 const tabs: Array<{ id: TeamTab; label: string; icon: LucideIcon }> = [
   { id: 'overview', label: 'Overview', icon: Trophy },
@@ -462,6 +463,8 @@ function OverviewTab({ model }: { model: TeamDetailModel }) {
         <InfoCard icon={BarChart3} title="Standings" value={getStandingValue(model)} detail={getStandingDetail(model)} href={model.team.leagueUrl || undefined} />
       </section>
 
+      <StandingsSection model={model} />
+
       <section className="app-card p-4">
         <div className="flex items-start justify-between gap-3">
           <div>
@@ -484,6 +487,83 @@ function OverviewTab({ model }: { model: TeamDetailModel }) {
 
       <TeamPassCard model={model} />
     </div>
+  );
+}
+
+function StandingsSection({ model }: { model: TeamDetailModel }) {
+  const [expanded, setExpanded] = useState(false);
+  const rows = Array.isArray(model.standings.rows) ? model.standings.rows : [];
+  const hasRows = rows.length > 0;
+  const highlightKey = getStandingsRowKey(model.standings.currentRow);
+  const highlightedRowIndex = rows.findIndex((row) => getStandingsRowKey(row) === highlightKey);
+  const visibleRows = expanded
+    ? rows
+    : getCollapsedStandingsRows(rows, highlightedRowIndex, initialStandingsRowLimit);
+  const hasMoreRows = rows.length > initialStandingsRowLimit;
+  const contextColumn = getStandingsContextColumn(rows, model.standings.label);
+
+  if (!hasRows && !model.team.leagueUrl) {
+    return null;
+  }
+
+  return (
+    <section className="app-card p-4">
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <div className="text-sm font-black text-gray-950">Standings</div>
+          <div className="mt-1 text-xs font-semibold text-gray-500">
+            {hasRows ? 'Quick league snapshot with the current team highlighted.' : 'Open the league page for current standings.'}
+          </div>
+        </div>
+        {model.team.leagueUrl ? <a href={model.team.leagueUrl} className="secondary-button !min-h-9 text-xs" target="_blank" rel="noreferrer">League page</a> : null}
+      </div>
+
+      {hasRows ? (
+        <>
+          <div className="mt-3 overflow-x-auto rounded-xl border border-gray-200">
+            <table className="min-w-full divide-y divide-gray-200 text-left">
+              <thead className="bg-gray-50">
+                <tr className="text-[11px] font-black uppercase tracking-[0.04em] text-gray-500">
+                  <th className="px-3 py-2.5">Rank</th>
+                  <th className="px-3 py-2.5">Team</th>
+                  <th className="px-3 py-2.5">Record</th>
+                  <th className="px-3 py-2.5">{contextColumn.label}</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-100 bg-white">
+                {visibleRows.map((row) => {
+                  const isHighlighted = getStandingsRowKey(row) === highlightKey;
+                  return (
+                    <tr
+                      key={getStandingsRowKey(row)}
+                      className={isHighlighted ? 'bg-primary-50/70' : 'bg-white'}
+                      aria-current={isHighlighted ? 'true' : undefined}
+                    >
+                      <td className={`whitespace-nowrap px-3 py-2.5 text-sm ${isHighlighted ? 'font-black text-primary-800' : 'font-semibold text-gray-700'}`}>{formatStandingsRank(row)}</td>
+                      <td className={`whitespace-nowrap px-3 py-2.5 text-sm ${isHighlighted ? 'font-black text-primary-800' : 'font-semibold text-gray-900'}`}>{getStandingsTeamName(row)}</td>
+                      <td className="whitespace-nowrap px-3 py-2.5 text-sm font-semibold text-gray-700">{formatStandingsRecord(row)}</td>
+                      <td className="whitespace-nowrap px-3 py-2.5 text-sm font-semibold text-gray-700">{contextColumn.value(row)}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+          <div className="mt-3 flex items-center justify-between gap-3">
+            <div className="text-xs font-semibold text-gray-500">Computed from completed in-app games.</div>
+            {hasMoreRows ? (
+              <button type="button" className="secondary-button !min-h-9 text-xs" onClick={() => setExpanded((current) => !current)}>
+                {expanded ? 'Show fewer teams' : `Show ${rows.length - initialStandingsRowLimit} more team${rows.length - initialStandingsRowLimit === 1 ? '' : 's'}`}
+              </button>
+            ) : null}
+          </div>
+        </>
+      ) : (
+        <div className="mt-3 rounded-xl border border-gray-200 bg-gray-50 p-4 text-sm font-semibold text-gray-500">
+          No in-app standings rows yet.
+        </div>
+      )}
+    </section>
   );
 }
 
@@ -2715,14 +2795,103 @@ function formatRecord(record: TeamDetailModel['record']) {
 function getStandingValue(model: TeamDetailModel) {
   const row = model.standings.currentRow;
   if (!row) return model.team.leagueUrl ? 'League link' : 'Not set';
-  return row.record || `${row.w || 0}-${row.l || 0}${row.t ? `-${row.t}` : ''}`;
+  return formatStandingsRecord(row);
 }
 
 function getStandingDetail(model: TeamDetailModel) {
   const row = model.standings.currentRow;
   if (!row) return model.team.leagueUrl ? 'Open league page for standings' : 'No standings configured';
   const rank = typeof row.rank === 'number' ? `#${row.rank}` : model.standings.label;
-  return `${rank} · PF ${row.pf || 0} · PA ${row.pa || 0}`;
+  const contextColumn = getStandingsContextColumn(model.standings.rows, model.standings.label);
+  return `${rank} · ${contextColumn.label} ${contextColumn.value(row)}`;
+}
+
+function getStandingsRowKey(row: Record<string, any> | null | undefined) {
+  if (!row) return 'current-row';
+  return `${cleanStandingsCell(row.team) || 'team'}::${cleanStandingsCell(row.rank) || 'rank'}`;
+}
+
+function getStandingsTeamName(row: Record<string, any> | null | undefined) {
+  return cleanStandingsCell(row?.team) || '—';
+}
+
+function formatStandingsRank(row: Record<string, any> | null | undefined) {
+  return typeof row?.rank === 'number' ? `#${row.rank}` : '—';
+}
+
+function formatStandingsRecord(row: Record<string, any> | null | undefined) {
+  if (!row) return '—';
+  const explicitRecord = cleanStandingsCell(row.record);
+  if (explicitRecord) return explicitRecord;
+  const wins = toStandingsNumber(row.w);
+  const losses = toStandingsNumber(row.l);
+  const ties = toStandingsNumber(row.t);
+  if (wins === null && losses === null && ties === null) return '—';
+  return `${wins ?? 0}-${losses ?? 0}${ties ? `-${ties}` : ''}`;
+}
+
+function getCollapsedStandingsRows(rows: Array<Record<string, any>>, highlightedRowIndex: number, limit: number) {
+  if (rows.length <= limit || highlightedRowIndex < 0 || highlightedRowIndex < limit) {
+    return rows.slice(0, limit);
+  }
+  return rows.slice(0, Math.max(limit - 1, 0)).concat(rows[highlightedRowIndex]);
+}
+
+function getStandingsContextColumn(rows: Array<Record<string, any>> = [], label = '') {
+  const safeRows = Array.isArray(rows) ? rows : [];
+  const normalizedLabel = label.toLowerCase();
+  if (normalizedLabel.includes('win percentage')) {
+    return {
+      label: 'PCT',
+      value: (row: Record<string, any>) => {
+        const winPct = row?.winPct;
+        if (typeof winPct === 'number' && Number.isFinite(winPct)) return winPct.toFixed(3);
+        const stringPct = cleanStandingsCell(winPct);
+        return stringPct || '—';
+      }
+    };
+  }
+
+  const hasPoints = safeRows.some((row) => toStandingsNumber(row?.points) !== null);
+  if (hasPoints || normalizedLabel.includes('points')) {
+    return {
+      label: 'PTS',
+      value: (row: Record<string, any>) => formatStandingsCellValue(toStandingsNumber(row?.points))
+    };
+  }
+
+  const hasGoalsForAgainst = safeRows.some((row) => toStandingsNumber(row?.pf) !== null || toStandingsNumber(row?.pa) !== null);
+  if (hasGoalsForAgainst) {
+    return {
+      label: 'PF/PA',
+      value: (row: Record<string, any>) => `${formatStandingsCellValue(toStandingsNumber(row?.pf))}/${formatStandingsCellValue(toStandingsNumber(row?.pa))}`
+    };
+  }
+
+  return {
+    label: 'PCT',
+    value: (row: Record<string, any>) => {
+      const winPct = row?.winPct;
+      if (typeof winPct === 'number' && Number.isFinite(winPct)) return winPct.toFixed(3);
+      const stringPct = cleanStandingsCell(winPct);
+      return stringPct || '—';
+    }
+  };
+}
+
+function formatStandingsCellValue(value: number | string | null) {
+  if (value === null || value === '') return '—';
+  return String(value);
+}
+
+function toStandingsNumber(value: unknown) {
+  if (value === null || value === undefined || value === '') return null;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function cleanStandingsCell(value: unknown) {
+  return String(value ?? '').trim();
 }
 
 function formatEventDate(date: Date) {

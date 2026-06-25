@@ -97,12 +97,14 @@ vi.mock('./nativeRestLogging', () => ({ sanitizeErrorForLogging: vi.fn((error) =
 
 import {
   __resetTeamDetailBaseSnapshotCacheForTests,
+  buildTeamDetailModel,
   createStatTrackerConfigForApp,
   loadTeamTrackingAdmin,
   saveTeamTrackingItemForApp,
   setPlayerTrackingStatusForApp,
   updateTeamSettingsForApp
 } from './teamDetailService';
+import { computeNativeStandings } from '../../../../js/native-standings.js';
 
 describe('createStatTrackerConfigForApp', () => {
   beforeEach(() => {
@@ -308,5 +310,84 @@ describe('tracking admin helpers', () => {
       updatedBy: 'coach-1',
       updatedByEmail: 'coach@example.com'
     }));
+  });
+});
+
+describe('buildTeamDetailModel standings', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('passes completed non-practice games into native standings and preserves the returned current row', () => {
+    vi.mocked(computeNativeStandings).mockReturnValue([
+      { rank: 1, team: 'Bears', w: 1, l: 0, t: 0, points: 2 },
+      { rank: 2, team: 'Lions', w: 0, l: 1, t: 0, points: 0 }
+    ]);
+
+    const built = buildTeamDetailModel({
+      teamId: 'team-1',
+      team: {
+        id: 'team-1',
+        name: 'Bears',
+        sport: 'Basketball',
+        standingsConfig: {
+          enabled: true,
+          rankingMode: 'points'
+        }
+      },
+      players: [],
+      configs: [],
+      games: [
+        {
+          id: 'game-1',
+          type: 'game',
+          opponent: 'Lions',
+          isHome: true,
+          homeScore: 42,
+          awayScore: 35,
+          status: 'completed',
+          date: new Date('2026-06-20T10:00:00Z')
+        },
+        {
+          id: 'practice-1',
+          type: 'practice',
+          opponent: '',
+          status: 'completed',
+          date: new Date('2026-06-21T10:00:00Z')
+        },
+        {
+          id: 'game-2',
+          type: 'game',
+          opponent: 'Tigers',
+          isHome: true,
+          homeScore: null,
+          awayScore: null,
+          status: 'scheduled',
+          date: new Date('2026-06-22T10:00:00Z')
+        }
+      ]
+    });
+
+    expect(computeNativeStandings).toHaveBeenCalledWith([
+      {
+        homeTeam: 'Bears',
+        awayTeam: 'Lions',
+        homeScore: 42,
+        awayScore: 35,
+        status: 'completed'
+      },
+      {
+        homeTeam: 'Bears',
+        awayTeam: 'Tigers',
+        homeScore: null,
+        awayScore: null,
+        status: 'scheduled'
+      }
+    ], {
+      enabled: true,
+      rankingMode: 'points'
+    });
+    expect(built.standings.rows).toHaveLength(2);
+    expect(built.standings.currentRow).toEqual(expect.objectContaining({ team: 'Bears', rank: 1 }));
   });
 });
