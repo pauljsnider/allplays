@@ -534,8 +534,11 @@ export function Schedule({ auth }: { auth: AuthState }) {
   const [selectedStaffManageTeamId, setSelectedStaffManageTeamId] = useState('');
   const hasManageableScheduleTeams = manageableTeamOptions.length > 0;
   const selectedCalendarTeam = useMemo(() => {
-    if (selectedTeamId) {
-      return manageableTeamOptions.find((team) => team.teamId === selectedTeamId) || null;
+    const pageSelectedManageableTeam = selectedTeamId
+      ? manageableTeamOptions.find((team) => team.teamId === selectedTeamId) || null
+      : null;
+    if (pageSelectedManageableTeam) {
+      return pageSelectedManageableTeam;
     }
     if (selectedStaffManageTeamId) {
       return manageableTeamOptions.find((team) => team.teamId === selectedStaffManageTeamId) || null;

@@ -161,6 +161,43 @@ function buildMultiTeamStaffScheduleResult() {
   };
 }
 
+function buildMixedTeamScheduleResult() {
+  return {
+    children: [
+      { playerId: 'player-1', playerName: 'Pat', teamId: 'team-1', teamName: 'Bears' },
+      { playerId: 'player-2', playerName: 'Sam', teamId: 'team-2', teamName: 'Wolves' },
+      { playerId: 'player-3', playerName: 'Jordan', teamId: 'team-3', teamName: 'Hawks' }
+    ],
+    events: [
+      buildScheduleEvent(1, {
+        isTeamStaff: true
+      }),
+      buildScheduleEvent(2, {
+        eventKey: 'team-2::event-2::player-2::2100-06-02T18:00:00.000Z::practice',
+        id: 'event-2',
+        teamId: 'team-2',
+        teamName: 'Wolves',
+        type: 'practice',
+        childId: 'player-2',
+        childName: 'Sam',
+        isDbGame: false,
+        isTeamStaff: true,
+        title: 'Practice'
+      }),
+      buildScheduleEvent(3, {
+        eventKey: 'team-3::event-3::player-3::2100-06-03T18:00:00.000Z::game',
+        id: 'event-3',
+        teamId: 'team-3',
+        teamName: 'Hawks',
+        childId: 'player-3',
+        childName: 'Jordan',
+        isTeamStaff: false,
+        opponent: 'Comets'
+      })
+    ]
+  };
+}
+
 function resolveAppSourcePath(relativePath: string) {
   const cwd = process.cwd();
   const appRoot = cwd.endsWith('/apps/app') || cwd.endsWith('\\apps\\app')
@@ -799,6 +836,21 @@ describe('Schedule', () => {
         location: 'West Gym'
       }), auth.user);
     });
+  });
+
+  it('lets staff team selection override a non-manageable page team filter', async () => {
+    scheduleServiceMocks.loadParentSchedule.mockResolvedValueOnce(buildMixedTeamScheduleResult());
+
+    renderSchedule('/schedule?teamId=team-3');
+
+    fireEvent.click(await screen.findByRole('button', { name: /manage schedule/i }));
+    expect(await screen.findByRole('heading', { name: 'Choose the team to manage' })).toBeTruthy();
+    expect((screen.getByLabelText('Team filter') as HTMLSelectElement).value).toBe('team-3');
+
+    fireEvent.change(screen.getByLabelText('Team to manage'), { target: { value: 'team-2' } });
+
+    expect(await screen.findByRole('heading', { name: 'Add game for Wolves' })).toBeTruthy();
+    expect(screen.getByRole('heading', { name: 'Add external calendar' })).toBeTruthy();
   });
 
   it('hides desktop staff schedule tools until Manage schedule is opened', async () => {
