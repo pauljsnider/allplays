@@ -99,31 +99,31 @@ const URL = deps.URL;
 const Blob = deps.Blob;
 ` + match[1]
         .replace(
-            "import { getUserTeamsWithAccess, getParentTeams, getGames, getTeam, getTrackedCalendarEventUids, getUserProfile, submitRsvp, submitRsvpForPlayer, getMyRsvp, getRsvpSummaries, getRsvps } from './js/db.js?v=65';",
+            /import \{ getUserTeamsWithAccess, getParentTeams, getGames, getTeam, getTrackedCalendarEventUids, getUserProfile, submitRsvp, submitRsvpForPlayer, getMyRsvp, getRsvpSummaries, getRsvps \} from '\.\/js\/db\.js\?v=\d+';/,
             'const { getUserTeamsWithAccess, getParentTeams, getGames, getTeam, getTrackedCalendarEventUids, getUserProfile, submitRsvp, submitRsvpForPlayer, getMyRsvp, getRsvpSummaries, getRsvps } = deps.db;'
         )
         .replace(
-            "import { renderHeader, renderFooter, escapeHtml, formatDate, formatTime, fetchAndParseCalendar, expandRecurrence, buildGlobalCalendarIcsEvent, isTrackedCalendarEvent } from './js/utils.js?v=13';",
+            /import \{ renderHeader, renderFooter, escapeHtml, formatDate, formatTime, fetchAndParseCalendar, expandRecurrence, buildGlobalCalendarIcsEvent, isTrackedCalendarEvent \} from '\.\/js\/utils\.js\?v=\d+';/,
             'const { renderHeader, renderFooter, escapeHtml, formatDate, formatTime, fetchAndParseCalendar, expandRecurrence, buildGlobalCalendarIcsEvent, isTrackedCalendarEvent } = deps.utils;'
         )
         .replace(
-            "import { mergeGlobalCalendarIcsEvents } from './js/calendar-ics-sync.js?v=1';",
+            /import \{ mergeGlobalCalendarIcsEvents \} from '\.\/js\/calendar-ics-sync\.js\?v=\d+';/,
             'const { mergeGlobalCalendarIcsEvents } = deps.calendarIcsSync;'
         )
         .replace(
-            "import { requireAuth, checkAuth } from './js/auth.js?v=33';",
+            /import \{ requireAuth, checkAuth \} from '\.\/js\/auth\.js\?v=\d+';/,
             'const { requireAuth, checkAuth } = deps.auth;'
         )
         .replace(
-            "import { buildLinkedPlayersByTeam, resolveCalendarRsvpSubmission } from './js/calendar-rsvp.js?v=1';",
+            /import \{ buildLinkedPlayersByTeam, resolveCalendarRsvpSubmission \} from '\.\/js\/calendar-rsvp\.js\?v=\d+';/,
             'const { buildLinkedPlayersByTeam, resolveCalendarRsvpSubmission } = deps.calendarRsvp;'
         )
         .replace(
-            "import { applyRsvpHydration } from './js/rsvp-hydration.js?v=1';",
+            /import \{ applyRsvpHydration \} from '\.\/js\/rsvp-hydration\.js\?v=\d+';/,
             'const { applyRsvpHydration } = deps.rsvpHydration;'
         )
         .replace(
-            "import { buildAvailabilityNoteRows, canViewAvailabilityNotes, formatAvailabilityCutoff, isAvailabilityLocked, normalizeAvailabilityPreferences } from './js/availability-preferences.js?v=1';",
+            /import \{ buildAvailabilityNoteRows, canViewAvailabilityNotes, formatAvailabilityCutoff, isAvailabilityLocked, normalizeAvailabilityPreferences \} from '\.\/js\/availability-preferences\.js\?v=\d+';/,
             'const { buildAvailabilityNoteRows, canViewAvailabilityNotes, formatAvailabilityCutoff, isAvailabilityLocked, normalizeAvailabilityPreferences } = deps.availabilityPreferences;'
         )
         .replace(
