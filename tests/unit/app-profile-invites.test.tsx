@@ -408,7 +408,7 @@ describe('Profile invites', () => {
     refreshDeferred.resolve();
   });
 
-  it('keeps alerts in the loading state until the first team preferences hydrate', async () => {
+  it('renders team controls as soon as alert teams load, then hydrates preferences in place', async () => {
     const deferredTeams = createDeferred<Array<{ id: string; name: string }>>();
     const deferredPreferences = createDeferred<{ liveChat: boolean; liveScore: boolean; schedule: boolean }>();
     profileServiceMocks.loadNotificationTeams.mockReturnValue(deferredTeams.promise);
@@ -427,16 +427,17 @@ describe('Profile invites', () => {
     deferredTeams.resolve([{ id: 'team-1', name: 'Blue Team' }]);
 
     await waitFor(() => expect(profileServiceMocks.loadNotificationPreferences).toHaveBeenCalledTimes(1));
-    expect(screen.getByText('Loading your alert teams…')).toBeTruthy();
-    expect(screen.queryByLabelText('Team')).toBeNull();
-    expect(screen.queryByRole('button', { name: 'Turn on game-day alerts' })).toBeNull();
-    expect(screen.queryByRole('button', { name: 'Save preferences' })).toBeNull();
+    await waitFor(() => expect((screen.getByLabelText('Team') as HTMLSelectElement).value).toBe('team-1'));
+    expect(screen.queryByText('Loading your alert teams…')).toBeNull();
+    expect(await screen.findByRole('button', { name: 'Enable push on this device' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Turn on game-day alerts' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Save preferences' })).toBeTruthy();
+    expect(screen.getByText('Loading alerts for Blue Team…')).toBeTruthy();
 
     deferredPreferences.resolve({ liveChat: true, liveScore: false, schedule: true });
 
-    await waitFor(() => expect((screen.getByLabelText('Team') as HTMLSelectElement).value).toBe('team-1'));
-    expect(await screen.findByRole('button', { name: 'Turn on game-day alerts' })).toBeTruthy();
-    expect(screen.getByRole('button', { name: 'Save preferences' })).toBeTruthy();
+    await waitFor(() => expect(screen.queryByText('Loading alerts for Blue Team…')).toBeNull());
+    expect(screen.getByLabelText('Live Chat')).toBeTruthy();
   });
 
   it('shows an empty state when no alert teams are available', async () => {
