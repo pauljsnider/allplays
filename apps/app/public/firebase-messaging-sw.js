@@ -1,3 +1,4 @@
+/* eslint-env serviceworker */
 /* global importScripts, firebase */
 
 importScripts('https://www.gstatic.com/firebasejs/12.6.0/firebase-app-compat.js');
