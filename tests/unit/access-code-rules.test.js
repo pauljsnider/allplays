@@ -28,6 +28,15 @@ describe('access code Firestore rules', () => {
         expect(accessCodeRules).not.toMatch(/allow\s+get\s*:\s*if\s+true/);
     });
 
+    it('preserves standard profile access-code creation without reopening typed invite paths', () => {
+        expect(rules).toContain('function isStandardAccessCodePayloadValid(data)');
+        expect(rules).toContain("'code', 'generatedBy', 'email', 'phone', 'createdAt', 'used', 'usedBy', 'usedAt'");
+        expect(rules).toContain("!data.keys().hasAny(['type'])");
+        expect(accessCodeRules).toContain("!request.resource.data.keys().hasAny(['type'])");
+        expect(accessCodeRules).toContain('isStandardAccessCodePayloadValid(request.resource.data)');
+        expect(accessCodeRules).toContain('request.resource.data.code == codeId');
+    });
+
     it('blocks self-minted admin invites unless the caller already administers the target team', () => {
         expect(rules).toContain('function isAdminInvitePayloadValid(data)');
         expect(accessCodeRules).toContain("request.resource.data.get('type', null) == 'admin_invite'");
