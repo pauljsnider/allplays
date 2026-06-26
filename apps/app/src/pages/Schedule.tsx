@@ -204,6 +204,7 @@ export function Schedule({ auth }: { auth: AuthState }) {
   const [importingCsv, setImportingCsv] = useState(false);
   const [removingCalendarUrl, setRemovingCalendarUrl] = useState<string | null>(null);
   const [mobileStaffToolsOpen, setMobileStaffToolsOpen] = useState(false);
+  const [scheduleStaffToolMode, setScheduleStaffToolMode] = useState<'menu' | 'tournament'>('menu');
   const [gameForm, setGameForm] = useState<ScheduleGameFormInput>(() => getDefaultScheduleGameForm());
   const [savingGame, setSavingGame] = useState(false);
   const [gameFormError, setGameFormError] = useState<string | null>(null);
@@ -560,14 +561,20 @@ export function Schedule({ auth }: { auth: AuthState }) {
   useEffect(() => {
     if (isDesktopWeb || !hasManageableScheduleTeams) {
       setMobileStaffToolsOpen(false);
+      setScheduleStaffToolMode('menu');
     }
   }, [hasManageableScheduleTeams, isDesktopWeb]);
 
   useEffect(() => {
     if (!isDesktopWeb || !hasManageableScheduleTeams) {
       setDesktopStaffToolsOpen(false);
+      setScheduleStaffToolMode('menu');
     }
   }, [hasManageableScheduleTeams, isDesktopWeb]);
+
+  useEffect(() => {
+    setScheduleStaffToolMode('menu');
+  }, [selectedCalendarTeam?.teamId]);
 
   const requestTrackerConfigLoad = () => {
     if (!selectedCalendarTeam) return;
@@ -671,20 +678,36 @@ export function Schedule({ auth }: { auth: AuthState }) {
           }}
           onSubmit={handleCreateGame}
         />
-        <ScheduleTournamentCreatePanel
-          teamName={selectedCalendarTeam.teamName}
-          form={tournamentForm}
-          configs={gameTrackerConfigs}
-          saving={savingTournament}
-          error={tournamentFormError}
-          configError={gameTrackerConfigError}
-          onStartUsing={requestTrackerConfigLoad}
-          onChange={(nextForm) => {
-            setTournamentForm(nextForm);
-            if (tournamentFormError) setTournamentFormError(null);
-          }}
-          onSubmit={handleCreateTournament}
-        />
+        {scheduleStaffToolMode === 'tournament' ? (
+          <ScheduleTournamentCreatePanel
+            teamName={selectedCalendarTeam.teamName}
+            form={tournamentForm}
+            configs={gameTrackerConfigs}
+            saving={savingTournament}
+            error={tournamentFormError}
+            configError={gameTrackerConfigError}
+            onStartUsing={requestTrackerConfigLoad}
+            onChange={(nextForm) => {
+              setTournamentForm(nextForm);
+              if (tournamentFormError) setTournamentFormError(null);
+            }}
+            onCancel={() => {
+              setTournamentForm(getDefaultScheduleTournamentForm());
+              setTournamentFormError(null);
+              setScheduleStaffToolMode('menu');
+            }}
+            onSubmit={handleCreateTournament}
+          />
+        ) : (
+          <ScheduleTournamentEntryCard
+            teamName={selectedCalendarTeam.teamName}
+            onOpen={() => {
+              requestTrackerConfigLoad();
+              setTournamentFormError(null);
+              setScheduleStaffToolMode('tournament');
+            }}
+          />
+        )}
         <SchedulePracticeCreatePanel
           teamName={selectedCalendarTeam.teamName}
           form={practiceForm}
@@ -1372,7 +1395,13 @@ export function Schedule({ auth }: { auth: AuthState }) {
               open={desktopStaffToolsOpen}
               teamName={selectedCalendarTeam?.teamName || null}
               contentId="desktop-schedule-staff-tools"
-              onToggle={() => setDesktopStaffToolsOpen((current) => !current)}
+              onToggle={() => setDesktopStaffToolsOpen((current) => {
+                const nextOpen = !current;
+                if (!nextOpen) {
+                  setScheduleStaffToolMode('menu');
+                }
+                return nextOpen;
+              })}
             >
               {renderScheduleStaffToolsContent()}
             </ScheduleStaffToolsSection>
@@ -1385,7 +1414,11 @@ export function Schedule({ auth }: { auth: AuthState }) {
               contentId="mobile-schedule-staff-tools"
               onToggle={() => setMobileStaffToolsOpen((current) => {
                 const nextOpen = !current;
-                if (nextOpen) requestTrackerConfigLoad();
+                if (nextOpen) {
+                  requestTrackerConfigLoad();
+                } else {
+                  setScheduleStaffToolMode('menu');
+                }
                 return nextOpen;
               })}
             >
@@ -1489,7 +1522,18 @@ function ScheduleGameCreatePanel({ teamName, form, configs, saving, error, confi
   );
 }
 
-function ScheduleTournamentCreatePanel({ teamName, form, configs, saving, error, configError, onStartUsing, onChange, onSubmit }: { teamName: string; form: ScheduleTournamentCreateFormInput; configs: ScheduleStatTrackerConfigOption[]; saving: boolean; error: string | null; configError: string | null; onStartUsing?: () => void; onChange: (form: ScheduleTournamentCreateFormInput) => void; onSubmit: (event: FormEvent<HTMLFormElement>) => void }) {
+function ScheduleTournamentEntryCard({ teamName, onOpen }: { teamName: string; onOpen: () => void }) {
+  return (
+    <section className="app-card p-3 sm:p-4" aria-label="Tournament entry point">
+      <div className="app-label">Tournament scheduling</div>
+      <h2 className="mt-1 text-base font-black text-gray-950">Start a new tournament block</h2>
+      <p className="mt-1 text-sm font-semibold leading-6 text-gray-600">Open a tournament shell for {teamName} without creating any schedule data yet.</p>
+      <button type="button" className="primary-button mt-3" onClick={onOpen}>New tournament block</button>
+    </section>
+  );
+}
+
+function ScheduleTournamentCreatePanel({ teamName, form, configs, saving, error, configError, onStartUsing, onChange, onCancel, onSubmit }: { teamName: string; form: ScheduleTournamentCreateFormInput; configs: ScheduleStatTrackerConfigOption[]; saving: boolean; error: string | null; configError: string | null; onStartUsing?: () => void; onChange: (form: ScheduleTournamentCreateFormInput) => void; onCancel: () => void; onSubmit: (event: FormEvent<HTMLFormElement>) => void }) {
   const updateField = (field: keyof Omit<ScheduleTournamentCreateFormInput, 'games'>, value: string) => onChange({ ...form, [field]: value });
   const updateGame = (index: number, field: keyof ScheduleGameFormInput, value: string | Date | boolean | null) => onChange({
     ...form,
@@ -1534,7 +1578,10 @@ function ScheduleTournamentCreatePanel({ teamName, form, configs, saving, error,
         <div className="flex flex-wrap gap-2">
           <button type="button" className="rounded-full border border-gray-300 px-3 py-2 text-sm font-black text-gray-700" onClick={addGame} disabled={saving}>Add another game</button>
         </div>
-        <button type="submit" className="primary-button" disabled={saving}>{saving ? 'Creating tournament' : 'Create tournament'}</button>
+        <div className="flex flex-wrap gap-2">
+          <button type="submit" className="primary-button" disabled={saving}>{saving ? 'Creating tournament' : 'Create tournament'}</button>
+          <button type="button" className="secondary-button" onClick={onCancel} disabled={saving}>Cancel</button>
+        </div>
         {configError ? <div className="rounded-2xl border border-amber-200 bg-amber-50 px-3 py-2 text-sm font-bold text-amber-700">{configError}</div> : null}
         {error ? <div className="rounded-2xl border border-rose-200 bg-rose-50 px-3 py-2 text-sm font-bold text-rose-700">{error}</div> : null}
       </form>
