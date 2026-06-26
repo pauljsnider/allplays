@@ -8,7 +8,7 @@ import { writeAuthBootstrapHint } from './lib/authBootstrapHint';
 import type { AuthState } from './lib/types';
 
 const suspendedHomePromise = new Promise<never>(() => {});
-let homeRenderMode: 'suspend' | 'throw' = 'suspend';
+let homeRenderMode: 'suspend' | 'throw' | 'render' = 'suspend';
 let consoleErrorSpy: ReturnType<typeof vi.spyOn> | null = null;
 const authMock = vi.hoisted(() => {
   const signedInAuth: AuthState = {
@@ -108,6 +108,9 @@ vi.mock('./pages/Home', () => ({
     if (homeRenderMode === 'throw') {
       throw new Error('Home page render failed');
     }
+    if (homeRenderMode === 'render') {
+      return <div>Home page</div>;
+    }
     throw suspendedHomePromise;
   },
 }));
@@ -135,6 +138,22 @@ vi.mock('./pages/Messages', () => ({
 vi.mock('./pages/Teams', () => ({
   Teams: () => <div>Teams page</div>,
 }));
+
+vi.mock('./pages/Profile', async () => {
+  const reactRouterDom = await import('react-router-dom');
+  return {
+    Profile: () => {
+      const [searchParams] = reactRouterDom.useSearchParams();
+      return (
+        <div>
+          <div>Profile page</div>
+          <div>Profile section: {searchParams.get('section') || 'account'}</div>
+          <div>Profile team: {searchParams.get('teamId') || 'none'}</div>
+        </div>
+      );
+    },
+  };
+});
 
 function installTestLocalStorage() {
   const store = new Map<string, string>();
@@ -411,6 +430,34 @@ describe('App protected route loading', () => {
     });
 
     expect(await screen.findByText('Schedule page')).toBeTruthy();
+  });
+
+  it('collapses Profile query state before leaving to Home on native back', async () => {
+    homeRenderMode = 'render';
+
+    render(
+      <MemoryRouter initialEntries={['/profile?section=alerts&teamId=team-2']}>
+        <App />
+      </MemoryRouter>
+    );
+
+    expect(await screen.findByText('Profile page')).toBeTruthy();
+    expect(screen.getByText('Profile section: alerts')).toBeTruthy();
+    expect(screen.getByText('Profile team: team-2')).toBeTruthy();
+    await waitFor(() => expect(nativeBackMock.listeners).toHaveLength(1));
+
+    await act(async () => {
+      nativeBackMock.listeners[0]({ canGoBack: false });
+    });
+
+    expect(await screen.findByText('Profile section: account')).toBeTruthy();
+    expect(screen.getByText('Profile team: none')).toBeTruthy();
+
+    await act(async () => {
+      nativeBackMock.listeners[0]({ canGoBack: false });
+    });
+
+    expect(await screen.findByText('Home page')).toBeTruthy();
   });
 
   it('routes native app links into the React app router', async () => {

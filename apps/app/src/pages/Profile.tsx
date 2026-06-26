@@ -93,6 +93,11 @@ export function Profile({ auth }: { auth: AuthState }) {
   const [searchParams, setSearchParams] = useSearchParams();
   const { isDesktopWeb, isNative } = useShellLayout();
   const user = auth.user;
+  const searchSection = (() => {
+    const section = searchParams.get('section');
+    return (section === 'account' || section === 'alerts' || section === 'invites' || section === 'security') ? section as ProfileSectionId : 'account';
+  })();
+  const initialUrlTeamId = searchParams.get('teamId') || '';
   const [profile, setProfile] = useState<ProfileDocument>({});
   const [fullName, setFullName] = useState('');
   const [phone, setPhone] = useState('');
@@ -102,7 +107,6 @@ export function Profile({ auth }: { auth: AuthState }) {
   const [photoChanged, setPhotoChanged] = useState(false);
   const [photoChooserOpen, setPhotoChooserOpen] = useState(false);
   const [notificationTeams, setNotificationTeams] = useState<NotificationTeam[]>([]);
-  const [initialUrlTeamId] = useState(() => searchParams.get('teamId') || '');
   const [selectedTeamId, setSelectedTeamId] = useState('');
   const [notificationPreferences, setNotificationPreferences] = useState<NotificationPreferences>(emptyPreferences);
   const [notificationPreferencesByTeamId, setNotificationPreferencesByTeamId] = useState<Record<string, NotificationPreferences>>({});
@@ -131,10 +135,7 @@ export function Profile({ auth }: { auth: AuthState }) {
   const [accountMergeStatus, setAccountMergeStatus] = useState<Status | null>(null);
   const [inviteActionStatus, setInviteActionStatus] = useState('');
   const [inviteHistoryExpanded, setInviteHistoryExpanded] = useState(false);
-  const [activeProfileSection, setActiveProfileSection] = useState<ProfileSectionId>(() => {
-    const s = searchParams.get('section');
-    return (s === 'account' || s === 'alerts' || s === 'invites' || s === 'security') ? s as ProfileSectionId : 'account';
-  });
+  const [activeProfileSection, setActiveProfileSection] = useState<ProfileSectionId>(searchSection);
   const [notificationTeamsLoaded, setNotificationTeamsLoaded] = useState(false);
   const [accessCodesLoaded, setAccessCodesLoaded] = useState(false);
   const [accessCodesLoadingMore, setAccessCodesLoadingMore] = useState(false);
@@ -246,6 +247,19 @@ export function Profile({ auth }: { auth: AuthState }) {
   useEffect(() => {
     selectedTeamIdRef.current = selectedTeamId;
   }, [selectedTeamId]);
+
+  useEffect(() => {
+    setActiveProfileSection((current) => current === searchSection ? current : searchSection);
+
+    if (searchSection !== 'alerts') {
+      setSelectedTeamId((current) => current ? '' : current);
+      return;
+    }
+
+    if (searchParams.has('teamId')) {
+      setSelectedTeamId((current) => current === initialUrlTeamId ? current : initialUrlTeamId);
+    }
+  }, [initialUrlTeamId, searchParams, searchSection]);
 
   useEffect(() => {
     let cancelled = false;

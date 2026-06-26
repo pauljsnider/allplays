@@ -17,6 +17,11 @@ describe('native back button helpers', () => {
     expect(getNativeBackTarget('/teams/team-1', '?tab=more')).toBe('/teams/team-1');
     expect(getNativeBackTarget('/teams/team-1', '?tab=overview')).toBe('/teams');
     expect(getNativeBackTarget('/teams/team-1')).toBe('/teams');
+    expect(getNativeBackTarget('/profile', '?section=alerts')).toBe('/profile');
+    expect(getNativeBackTarget('/profile', '?section=invites')).toBe('/profile');
+    expect(getNativeBackTarget('/profile', '?section=security')).toBe('/profile');
+    expect(getNativeBackTarget('/profile', '?section=alerts&teamId=team-2')).toBe('/profile');
+    expect(getNativeBackTarget('/profile')).toBe('/home');
     expect(getNativeBackTarget('/teams/browse')).toBe('/teams');
     expect(getNativeBackTarget('/parent-tools/registrations/team-1/form-1')).toBe('/parent-tools');
     expect(getNativeBackTarget('/help/game-day')).toBe('/help');
