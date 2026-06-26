@@ -225,7 +225,37 @@ describe('PlayerDetail athlete profile season selection', () => {
     });
   });
 
-  it('defaults first save to the current season and blocks zero-season saves', async () => {
+  it('auto-includes the only linked season and saves without season selection input', async () => {
+    playerServiceMocks.loadParentPlayerDetail.mockResolvedValue(buildDetailData({
+      athleteProfile: {
+        ...buildDetailData().athleteProfile,
+        seasonOptions: [buildDetailData().athleteProfile.seasonOptions[0]]
+      }
+    }));
+
+    renderPlayerDetail();
+
+    await screen.findByText('Sam Player');
+    fireEvent.click(screen.getByRole('button', { name: 'Profile' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Athlete Profile' }));
+    await screen.findByText('Athlete Profile Builder');
+
+    expect(screen.getByText('Included linked season')).toBeTruthy();
+    expect(screen.getByText('Current Team')).toBeTruthy();
+    expect(screen.queryByRole('checkbox')).toBeNull();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Save Athlete Profile' }));
+
+    await waitFor(() => {
+      expect(playerServiceMocks.saveParentAthleteProfileDraft).toHaveBeenCalledWith(expect.objectContaining({
+        draft: expect.objectContaining({
+          selectedSeasonKeys: ['team-current::player-current']
+        })
+      }));
+    });
+  });
+
+  it('defaults first save to the current season and blocks zero-season saves when multiple seasons are available', async () => {
     renderPlayerDetail();
 
     await screen.findByText('Sam Player');
@@ -325,8 +355,9 @@ describe('PlayerDetail athlete profile season selection', () => {
     fireEvent.click(await screen.findByRole('button', { name: 'Athlete Profile' }));
     await screen.findByText('Athlete Profile Builder');
 
-    const fallbackSeason = await screen.findByLabelText('Sam Player Current Team');
-    expect((fallbackSeason as HTMLInputElement).checked).toBe(true);
+    expect(screen.getByText('Included linked season')).toBeTruthy();
+    expect(screen.getByText('Current Team')).toBeTruthy();
+    expect(screen.queryByRole('checkbox')).toBeNull();
 
     fireEvent.click(screen.getByRole('button', { name: 'Publish Athlete Profile' }));
 

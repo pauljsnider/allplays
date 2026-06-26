@@ -1072,8 +1072,11 @@ function AthleteProfileBuilderCard({ data, auth, onChanged, onShareStateChange }
     if (existingKeys.length) {
       return [...new Set(existingKeys)];
     }
+    if (seasonOptions.length === 1) {
+      return [seasonOptions[0].seasonKey];
+    }
     return currentSeasonKey ? [currentSeasonKey] : [];
-  }, [currentSeasonKey, existing]);
+  }, [currentSeasonKey, existing, seasonOptions]);
   const initialClipDrafts = useMemo(() => normalizeExistingAthleteClips(existing?.clips), [existing?.clips]);
   const [name, setName] = useState(existing?.athlete?.name || data.player.name || data.child.playerName || '');
   const [headline, setHeadline] = useState(existing?.athlete?.headline || '');
@@ -1084,6 +1087,8 @@ function AthleteProfileBuilderCard({ data, auth, onChanged, onShareStateChange }
   const [achievements, setAchievements] = useState(existing?.bio?.achievements || '');
   const [privacy, setPrivacy] = useState<AthleteProfilePrivacy>(existing?.privacy === 'public' ? 'public' : 'private');
   const [selectedSeasonKeys, setSelectedSeasonKeys] = useState<string[]>(initialSelectedSeasonKeys);
+  const hasSingleSeasonOption = seasonOptions.length === 1;
+  const singleSeasonOption = hasSingleSeasonOption ? seasonOptions[0] : null;
   const [saving, setSaving] = useState(false);
   const [awaitingPersistedPublish, setAwaitingPersistedPublish] = useState(false);
   const [status, setStatus] = useState<{ tone: 'error' | 'success'; message: string } | null>(null);
@@ -1619,27 +1624,39 @@ function AthleteProfileBuilderCard({ data, auth, onChanged, onShareStateChange }
         </label>
         <div className="rounded-2xl border border-gray-200 bg-white p-3">
           <div className="text-xs font-black uppercase tracking-[0.04em] text-gray-500">Selected seasons</div>
-          <p className="mt-1 text-sm font-semibold text-gray-700">Choose which linked seasons roll into the public athlete profile.</p>
-          <div className="mt-3 space-y-2">
-            {seasonOptions.map((option) => {
-              const checked = selectedSeasonKeys.includes(option.seasonKey);
-              return (
-                <label key={option.seasonKey} className={`flex items-start gap-3 rounded-xl border p-3 ${checked ? 'border-primary-300 bg-primary-50' : 'border-gray-200 bg-gray-50'}`}>
-                  <input
-                    type="checkbox"
-                    aria-label={`${option.playerName} ${option.teamName}`}
-                    checked={checked}
-                    onChange={() => toggleSeasonKey(option.seasonKey)}
-                    className="mt-1 h-4 w-4 rounded border-gray-300 text-primary-600 focus:ring-primary-500"
-                  />
-                  <span className="min-w-0">
-                    <span className="block text-sm font-black text-gray-900">{option.playerName}</span>
-                    <span className="block text-xs font-semibold text-gray-500">{option.teamName}</span>
-                  </span>
-                </label>
-              );
-            })}
-          </div>
+          {hasSingleSeasonOption && singleSeasonOption ? (
+            <>
+              <p className="mt-1 text-sm font-semibold text-gray-700">Included linked season</p>
+              <div className="mt-3 rounded-xl border border-primary-200 bg-primary-50 px-3 py-3">
+                <div className="text-sm font-black text-gray-900">{singleSeasonOption.playerName}</div>
+                <div className="text-xs font-semibold text-gray-500">{singleSeasonOption.teamName}</div>
+              </div>
+            </>
+          ) : (
+            <>
+              <p className="mt-1 text-sm font-semibold text-gray-700">Choose which linked seasons roll into the public athlete profile.</p>
+              <div className="mt-3 space-y-2">
+                {seasonOptions.map((option) => {
+                  const checked = selectedSeasonKeys.includes(option.seasonKey);
+                  return (
+                    <label key={option.seasonKey} className={`flex items-start gap-3 rounded-xl border p-3 ${checked ? 'border-primary-300 bg-primary-50' : 'border-gray-200 bg-gray-50'}`}>
+                      <input
+                        type="checkbox"
+                        aria-label={`${option.playerName} ${option.teamName}`}
+                        checked={checked}
+                        onChange={() => toggleSeasonKey(option.seasonKey)}
+                        className="mt-1 h-4 w-4 rounded border-gray-300 text-primary-600 focus:ring-primary-500"
+                      />
+                      <span className="min-w-0">
+                        <span className="block text-sm font-black text-gray-900">{option.playerName}</span>
+                        <span className="block text-xs font-semibold text-gray-500">{option.teamName}</span>
+                      </span>
+                    </label>
+                  );
+                })}
+              </div>
+            </>
+          )}
         </div>
         <div className="rounded-2xl border border-primary-100 bg-primary-50/60 p-3">
           <div className="text-xs font-black uppercase tracking-[0.04em] text-primary-700">What others see</div>
