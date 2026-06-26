@@ -31,6 +31,21 @@ describe('RSVP note privacy Firestore rules', () => {
     expect(rsvpBlock).toContain('isRsvpStatusPayloadSafe(request.resource.data)');
   });
 
+  it('allows linked-player parent RSVP writes only for the matching player-scoped document', () => {
+    const rsvpBlock = extractNestedBlock(gamesBlock, 'match /rsvps/{rsvpId} {');
+
+    expect(gamesBlock).toContain('function getRsvpPayloadPlayerId(data)');
+    expect(gamesBlock).toContain('function rsvpPayloadMatchesSinglePlayer(data, playerId)');
+    expect(gamesBlock).toContain('function canUseLinkedPlayerRsvp(teamId, data)');
+    expect(gamesBlock).toContain('function isOwnLinkedPlayerRsvpId(rsvpId, data)');
+    expect(gamesBlock).toContain('isParentForPlayer(teamId, playerId)');
+    expect(gamesBlock).toContain('rsvpId == request.auth.uid + "__" + playerId');
+    expect(rsvpBlock).toContain('canUseLinkedPlayerRsvp(teamId, request.resource.data)');
+    expect(rsvpBlock).toContain('isOwnLinkedPlayerRsvpId(rsvpId, request.resource.data)');
+    expect(rsvpBlock).toContain('canUseLinkedPlayerRsvp(teamId, resource.data)');
+    expect(rsvpBlock).toContain('isOwnLinkedPlayerRsvpId(rsvpId, resource.data)');
+  });
+
   it('restricts note docs to admins, the note owner, or explicit team-visible notes', () => {
     const noteBlock = extractNestedBlock(gamesBlock, 'match /rsvpNotes/{rsvpId} {');
 
@@ -50,6 +65,8 @@ describe('RSVP note privacy Firestore rules', () => {
     expect(noteBlock).toContain("data.keys().hasAll(['userId', 'note', 'visibility', 'updatedAt'])");
     expect(noteBlock).toContain("data.visibility in ['admins', 'team']");
     expect(noteBlock).toContain("(data.visibility == 'admins' || teamAllowsTeamVisibleRsvpNotes(teamId))");
+    expect(noteBlock).toContain('canUseLinkedPlayerRsvp(teamId, data)');
+    expect(noteBlock).toContain('isOwnLinkedPlayerRsvpId(rsvpId, data)');
     expect(noteBlock).toContain('data.userId == request.auth.uid &&\n                     isOwnRsvpNoteId()');
     expect(noteBlock).not.toContain('data.userId == request.auth.uid &&\n                     isOwnRsvpNoteDoc(data)');
     expect(noteBlock).toContain('allow create, update: if isSignedIn() && canWriteRsvpNote(teamId, rsvpId, request.resource.data);');

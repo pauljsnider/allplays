@@ -38,6 +38,18 @@ vi.mock('react-router-dom', async () => {
     };
 });
 
+vi.mock('lucide-react', () => {
+    const Icon = () => null;
+    return {
+        AlertCircle: Icon,
+        Bell: Icon,
+        CheckCheck: Icon,
+        Loader2: Icon,
+        RotateCcw: Icon,
+        X: Icon,
+    };
+});
+
 vi.mock('../../js/firebase.js', () => firebaseMocks);
 
 function notificationItem(overrides: Partial<NotificationInboxItem> = {}): NotificationInboxItem {
@@ -157,8 +169,9 @@ describe('Notification inbox review regressions', () => {
         });
     });
 
-    it('logs Firestore subscription errors when no error callback is provided', () => {
+    it('falls back before logging Firestore subscription errors when no error callback is provided', () => {
         const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+        const consoleWarnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
         const subscriptionError = new Error('subscription failed');
 
         subscribeToNotificationInbox('user-1', vi.fn());
@@ -166,9 +179,18 @@ describe('Notification inbox review regressions', () => {
         const errorHandler = firebaseMocks.onSnapshot.mock.calls[0][2] as (error: unknown) => void;
         errorHandler(subscriptionError);
 
+        expect(consoleWarnSpy).toHaveBeenCalledWith(
+            '[notification-inbox-service] Inbox ordered query failed; falling back to unordered inbox snapshot.',
+            { error: { name: 'Error', message: 'subscription failed' } }
+        );
+
+        const fallbackError = new Error('fallback failed');
+        const fallbackErrorHandler = firebaseMocks.onSnapshot.mock.calls[1][2] as (error: unknown) => void;
+        fallbackErrorHandler(fallbackError);
+
         expect(consoleErrorSpy).toHaveBeenCalledWith(
             '[notification-inbox-service] Failed to subscribe to notification inbox.',
-            { error: { name: 'Error', message: 'subscription failed' } }
+            { error: { name: 'Error', message: 'fallback failed' } }
         );
     });
 

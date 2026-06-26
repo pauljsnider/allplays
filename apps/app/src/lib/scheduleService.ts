@@ -3648,6 +3648,8 @@ async function nativeSubmitRsvpForPlayer(teamId: string, gameId: string, user: A
     userId: user.uid,
     displayName: user.displayName || user.email || null,
     playerIds: [childId],
+    playerId: childId,
+    childId,
     response,
     respondedAt
   });
@@ -3655,6 +3657,8 @@ async function nativeSubmitRsvpForPlayer(teamId: string, gameId: string, user: A
     userId: user.uid,
     displayName: user.displayName || user.email || null,
     playerIds: [childId],
+    playerId: childId,
+    childId,
     response,
     respondedAt,
     note: compactString(note) || null,

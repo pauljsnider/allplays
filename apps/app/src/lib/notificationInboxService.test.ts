@@ -26,7 +26,7 @@ import {
     query,
     where
 } from './adapters/legacyNotificationInboxDb';
-import { subscribeToUnreadNotificationCount } from './notificationInboxService';
+import { subscribeToNotificationInbox, subscribeToUnreadNotificationCount } from './notificationInboxService';
 
 describe('notificationInboxService', () => {
     beforeEach(() => {
@@ -94,6 +94,64 @@ describe('notificationInboxService', () => {
         expect(orderBy).not.toHaveBeenCalled();
         expect(limit).not.toHaveBeenCalled();
         expect(callback).toHaveBeenCalledWith(1);
+
+        unsubscribe();
+        expect(primaryUnsubscribe).toHaveBeenCalledTimes(1);
+        expect(fallbackUnsubscribe).toHaveBeenCalledTimes(1);
+    });
+
+    it('falls back to the full inbox snapshot when the ordered inbox query fails', () => {
+        const callback = vi.fn();
+        const primaryUnsubscribe = vi.fn();
+        const fallbackUnsubscribe = vi.fn();
+        const inboxCollection = { kind: 'inboxCollection' };
+        const primaryQuery = { kind: 'primaryInboxQuery' };
+        vi.mocked(collection).mockReturnValueOnce(inboxCollection as never);
+        vi.mocked(query).mockReturnValueOnce(primaryQuery as never);
+        vi.mocked(onSnapshot)
+            .mockImplementationOnce((_query, _onNext, onError) => {
+                onError?.(new Error('The query requires an index.'));
+                return primaryUnsubscribe;
+            })
+            .mockImplementationOnce((_query, onNext) => {
+                onNext({
+                    docs: [
+                        {
+                            id: 'older',
+                            data: () => ({
+                                category: 'schedule',
+                                title: 'Older update',
+                                body: 'Earlier item',
+                                createdAt: { seconds: 10 },
+                                readAt: null
+                            })
+                        },
+                        {
+                            id: 'newer',
+                            data: () => ({
+                                type: 'team_message',
+                                text: 'Fresh message',
+                                createdAt: { toDate: () => new Date('2026-06-26T12:00:00Z') },
+                                readAt: null
+                            })
+                        }
+                    ]
+                } as never);
+                return fallbackUnsubscribe;
+            });
+
+        const unsubscribe = subscribeToNotificationInbox('user-123', callback);
+
+        expect(collection).toHaveBeenCalledWith(db, 'users/user-123/notificationInbox');
+        expect(orderBy).toHaveBeenCalledWith('createdAt', 'desc');
+        expect(limit).toHaveBeenCalledWith(50);
+        expect(query).toHaveBeenCalledWith(inboxCollection, { kind: 'orderBy' }, { kind: 'limit' });
+        expect(onSnapshot).toHaveBeenNthCalledWith(1, primaryQuery, expect.any(Function), expect.any(Function));
+        expect(onSnapshot).toHaveBeenNthCalledWith(2, inboxCollection, expect.any(Function), expect.any(Function));
+        expect(callback).toHaveBeenCalledWith([
+            expect.objectContaining({ id: 'newer', text: 'Fresh message' }),
+            expect.objectContaining({ id: 'older', text: 'Older update: Earlier item' })
+        ]);
 
         unsubscribe();
         expect(primaryUnsubscribe).toHaveBeenCalledTimes(1);

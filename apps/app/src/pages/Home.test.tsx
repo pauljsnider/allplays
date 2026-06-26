@@ -598,6 +598,7 @@ describe('Home', () => {
     expect(await screen.findByRole('heading', { name: 'Today for your players' })).toBeTruthy();
     expect(screen.getByText('Upcoming')).toBeTruthy();
     expect(screen.getAllByText('Player 1 needs availability').length).toBeGreaterThan(0);
+    expect(screen.getByRole('link', { name: /do\s*player 1 needs availability/i }).getAttribute('href')).toBe('/schedule/team-1/upcoming-1');
     expect(screen.getByText('Falcons')).toBeTruthy();
     expect(screen.getAllByText('Tournament fee').length).toBeGreaterThan(0);
 

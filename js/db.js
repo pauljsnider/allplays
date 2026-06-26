@@ -8217,10 +8217,14 @@ async function mergeRsvpNotesForExistingRsvps(teamId, gameId, rsvps = []) {
 async function writeRsvpNote(teamId, gameId, rsvpId, { userId, displayName, playerIds, response, note, respondedAt }) {
     const visibility = await loadTeamRsvpNoteVisibility(teamId);
     const noteRef = doc(db, `teams/${teamId}/games/${gameId}/rsvpNotes`, rsvpId);
+    const normalizedPlayerIds = uniqueNonEmptyIds(playerIds);
+    const primaryPlayerId = normalizedPlayerIds.length === 1 ? normalizedPlayerIds[0] : null;
     await setDoc(noteRef, {
         userId,
         displayName: displayName || null,
-        playerIds: playerIds || [],
+        playerIds: normalizedPlayerIds,
+        playerId: primaryPlayerId,
+        childId: primaryPlayerId,
         response: response || 'not_responded',
         respondedAt: respondedAt || null,
         note: normalizeRsvpNoteText(note) || null,
@@ -8314,10 +8318,14 @@ export async function submitRsvp(teamId, gameId, userId, { displayName, playerId
 
     const rsvpRef = doc(db, `teams/${teamId}/games/${gameId}/rsvps`, effectiveUserId);
     const respondedAt = Timestamp.now();
+    const normalizedPlayerIds = uniqueNonEmptyIds(playerIds);
+    const primaryPlayerId = normalizedPlayerIds.length === 1 ? normalizedPlayerIds[0] : null;
     await setDoc(rsvpRef, {
         userId: effectiveUserId,
         displayName: displayName || null,
-        playerIds: playerIds || [],
+        playerIds: normalizedPlayerIds,
+        playerId: primaryPlayerId,
+        childId: primaryPlayerId,
         response, // 'going' | 'maybe' | 'not_going'
         respondedAt
     });
@@ -8379,6 +8387,8 @@ export async function submitRsvpForPlayer(teamId, gameId, userId, { displayName,
         userId: effectiveUserId,
         displayName: displayName || null,
         playerIds: [normalizedPlayerId],
+        playerId: normalizedPlayerId,
+        childId: normalizedPlayerId,
         response, // 'going' | 'maybe' | 'not_going'
         respondedAt
     });
