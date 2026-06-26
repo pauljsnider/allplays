@@ -31,6 +31,8 @@ function statDefaults(columns) {
   return stats;
 }
 
+let subSequence = 0;
+
 let state = {
   period: 'Q1',
   clock: 0,
@@ -326,6 +328,88 @@ function renderFairness() {
   els.fairness.className = `pill px-2 py-1 font-semibold text-xs ${balanced ? 'bg-white text-ink' : 'bg-accent text-ink'}`;
 }
 
+function createSubEntry(outId, inId) {
+  subSequence += 1;
+  return {
+    id: `sub-${Date.now()}-${subSequence}`,
+    out: outId,
+    in: inId,
+    period: state.period,
+    clock: formatClock(state.clock)
+  };
+}
+
+function revertLogEntry(logEntry) {
+  if (!logEntry?.undoData) {
+    return true;
+  }
+
+  const { type, playerId, statKey, value, isOpponent, outId, inId, subId, benchIndex } = logEntry.undoData;
+
+  if (type === 'stat') {
+    if (isOpponent) {
+      const opp = state.opp.find(o => o.id === playerId);
+      if (opp && opp.stats && opp.stats[statKey] !== undefined) {
+        opp.stats[statKey] = safeDecrement(opp.stats[statKey], value);
+        if (isPointsColumn(statKey)) {
+          state.away = safeDecrement(state.away, value);
+        }
+      }
+    } else if (state.stats[playerId] && state.stats[playerId][statKey] !== undefined) {
+      state.stats[playerId][statKey] = safeDecrement(state.stats[playerId][statKey], value);
+      if (isPointsColumn(statKey)) {
+        state.home = safeDecrement(state.home, value);
+      }
+    }
+
+    return true;
+  }
+
+  if (type === 'sub') {
+    const onCourtIndex = state.onCourt.indexOf(inId);
+    const benchPlayerIndex = state.bench.indexOf(outId);
+    if (onCourtIndex === -1 || benchPlayerIndex === -1 || state.onCourt.includes(outId)) {
+      alert('This substitution can only be removed after newer lineup changes are undone.');
+      return false;
+    }
+
+    const nextOnCourt = [...state.onCourt];
+    nextOnCourt[onCourtIndex] = outId;
+    const uniqueOnCourtCount = new Set(nextOnCourt).size;
+    if (uniqueOnCourtCount !== nextOnCourt.length) {
+      alert('This substitution can only be removed after newer lineup changes are undone.');
+      return false;
+    }
+
+    const nextBench = state.bench.filter(id => id !== outId);
+    const normalizedBenchIndex = Number.isInteger(benchIndex)
+      ? Math.max(0, Math.min(benchIndex, nextBench.length))
+      : 0;
+    nextBench.splice(normalizedBenchIndex, 0, inId);
+
+    state.onCourt = nextOnCourt;
+    state.bench = nextBench;
+    state.subs = state.subs.filter(sub => sub.id !== subId);
+    return true;
+  }
+
+  return true;
+}
+
+function removeLogEntry(index) {
+  if (isNaN(index) || index < 0 || index >= state.log.length) {
+    return;
+  }
+
+  const logEntry = state.log[index];
+  if (!revertLogEntry(logEntry)) {
+    return;
+  }
+
+  state.log.splice(index, 1);
+  renderAll();
+}
+
 function renderLog() {
   els.log.innerHTML = state.log.slice(0, 40).map((ev, idx) => `
     <div class="flex justify-between items-center border border-slate/10 rounded-lg p-2 bg-white">
@@ -340,45 +424,10 @@ function renderLog() {
     </div>
   `).join('') || '<div class="text-xs text-slate-500 text-center py-4">No events yet</div>';
 
-  // Add event listeners for remove buttons
   els.log.querySelectorAll('button[data-remove-log]').forEach(btn => {
     btn.addEventListener('click', () => {
       const index = Number(btn.dataset.removeLog);
-      if (!isNaN(index)) {
-        const logEntry = state.log[index];
-
-        // Reverse the stat change if undoData exists
-        if (logEntry && logEntry.undoData) {
-          const { type, playerId, statKey, value, isOpponent } = logEntry.undoData;
-
-          if (type === 'stat') {
-            if (isOpponent) {
-              // Reverse opponent stat
-              const opp = state.opp.find(o => o.id === playerId);
-              if (opp && opp.stats && opp.stats[statKey] !== undefined) {
-                opp.stats[statKey] = safeDecrement(opp.stats[statKey], value);
-                if (isPointsColumn(statKey)) {
-                  state.away = safeDecrement(state.away, value);
-                }
-              }
-            } else {
-              // Reverse team player stat
-              if (state.stats[playerId] && state.stats[playerId][statKey] !== undefined) {
-                state.stats[playerId][statKey] = safeDecrement(state.stats[playerId][statKey], value);
-                if (isPointsColumn(statKey)) {
-                  state.home = safeDecrement(state.home, value);
-                }
-              }
-            }
-          }
-        }
-
-        // Remove the log entry
-        state.log.splice(index, 1);
-
-        // Re-render everything to reflect the changes
-        renderAll();
-      }
+      removeLogEntry(index);
     });
   });
 }
@@ -395,6 +444,7 @@ function saveHistory(action) {
     bench: [...state.bench],
     stats: JSON.parse(JSON.stringify(state.stats)),
     log: [...state.log],
+    subs: [...state.subs],
     opp: JSON.parse(JSON.stringify(state.opp)),
     scoreLogIsComplete: state.scoreLogIsComplete
   };
@@ -417,6 +467,7 @@ function undo() {
   state.bench = prev.bench;
   state.stats = prev.stats;
   state.log = prev.log;
+  state.subs = Array.isArray(prev.subs) ? prev.subs : [];
   state.opp = prev.opp;
   state.scoreLogIsComplete = prev.scoreLogIsComplete !== false;
   renderAll();
@@ -1209,12 +1260,20 @@ function closeSubModal() {
 }
 
 function applySub(outId, inId) {
+  const benchIndex = state.bench.indexOf(inId);
   const result = applySubstitution(state.onCourt, state.bench, outId, inId);
   if (!result.applied) return;
   state.onCourt = result.onCourt;
   state.bench = result.bench;
-  state.subs.push({ out: outId, in: inId, period: state.period, clock: formatClock(state.clock) });
-  addLog(`Sub: #${getNum(outId)} ${playerName(outId)} → #${getNum(inId)} ${playerName(inId)}`);
+  const subEntry = createSubEntry(outId, inId);
+  state.subs.push(subEntry);
+  addLog(`Sub: #${getNum(outId)} ${playerName(outId)} → #${getNum(inId)} ${playerName(inId)}`, {
+    type: 'sub',
+    outId,
+    inId,
+    subId: subEntry.id,
+    benchIndex
+  });
   renderLineup();
   renderLive();
 }
@@ -1227,13 +1286,20 @@ function applyQueue(closeModal = true) {
 
   // Log each individual swap for clarity
   state.subQueue.forEach(pair => {
+    const benchIndex = state.bench.indexOf(pair.in);
     const result = applySubstitution(state.onCourt, state.bench, pair.out, pair.in);
     if (result.applied) {
       state.onCourt = result.onCourt;
       state.bench = result.bench;
-      state.subs.push({ out: pair.out, in: pair.in, period: state.period, clock: formatClock(state.clock) });
-      // Log each swap individually
-      addLog(`Sub: #${getNum(pair.out)} ${playerName(pair.out)} → #${getNum(pair.in)} ${playerName(pair.in)}`);
+      const subEntry = createSubEntry(pair.out, pair.in);
+      state.subs.push(subEntry);
+      addLog(`Sub: #${getNum(pair.out)} ${playerName(pair.out)} → #${getNum(pair.in)} ${playerName(pair.in)}`, {
+        type: 'sub',
+        outId: pair.out,
+        inId: pair.in,
+        subId: subEntry.id,
+        benchIndex
+      });
     }
   });
 
