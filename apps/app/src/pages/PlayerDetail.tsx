@@ -1056,6 +1056,11 @@ function AthleteProfileBuilderCard({ data, auth, onChanged, onShareStateChange }
     }];
   }, [currentSeasonKey, data.athleteProfile.seasonOptions, data.child.playerId, data.child.playerName, data.child.teamId, data.child.teamName, data.player.name, data.team?.name]);
   const initialSelectedSeasonKeys = useMemo(() => {
+    const availableSeasonKeys = new Set(
+      seasonOptions
+        .map((option) => String(option?.seasonKey || '').trim())
+        .filter(Boolean)
+    );
     const existingKeys = Array.isArray(existing?.seasons)
       ? existing.seasons
         .map((season: any) => {
@@ -1067,7 +1072,7 @@ function AthleteProfileBuilderCard({ data, auth, onChanged, onShareStateChange }
           const seasonPlayerId = String(season?.playerId || '').trim();
           return seasonTeamId && seasonPlayerId ? `${seasonTeamId}::${seasonPlayerId}` : '';
         })
-        .filter(Boolean)
+        .filter((seasonKey: string) => !availableSeasonKeys.size || availableSeasonKeys.has(seasonKey))
       : [];
     if (existingKeys.length) {
       return [...new Set(existingKeys)];
