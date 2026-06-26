@@ -114,7 +114,7 @@ service firebase.storage {
       allow get: if canReadTeamMediaObject(teamId, folderId);
       allow list: if false;
       allow create: if canCreateTeamMediaUpload(teamId, folderId) &&
-        request.auth.uid == userId &&
+        (isTeamOwnerOrAdmin(teamId) || request.auth.uid == userId) &&
         request.resource.size > 0 &&
         request.resource.size <= 10 * 1024 * 1024 &&
         isAllowedTeamMediaUploadType(request.resource.contentType);

@@ -65,6 +65,7 @@ describe('team media page wiring', () => {
         expect(storageRules).toContain('allow get: if canReadTeamMediaObject(teamId, folderId);');
         expect(storageRules).toContain("firestore.get(folderPath).data.get('visibility', 'team') == 'team'");
         expect(storageRules).toContain('canCreateTeamMediaUpload(teamId, folderId)');
+        expect(storageRules).toContain('(isTeamOwnerOrAdmin(teamId) || request.auth.uid == userId)');
         expect(storageRules).toContain("teamId in firestore.get(userPath).data.get('teamMediaUploadTeamIds', [])");
         expect(storageRules).toContain('canUploadTeamMediaFolder(teamId, folderId)');
         expect(storageRules).toContain('isAllowedTeamMediaUploadType(request.resource.contentType)');
