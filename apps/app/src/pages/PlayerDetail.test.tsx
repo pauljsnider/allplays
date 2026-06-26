@@ -225,7 +225,79 @@ describe('PlayerDetail athlete profile season selection', () => {
     });
   });
 
-  it('defaults first save to the current season and blocks zero-season saves', async () => {
+  it('auto-includes the only linked season and saves without season selection input', async () => {
+    playerServiceMocks.loadParentPlayerDetail.mockResolvedValue(buildDetailData({
+      athleteProfile: {
+        ...buildDetailData().athleteProfile,
+        seasonOptions: [buildDetailData().athleteProfile.seasonOptions[0]]
+      }
+    }));
+
+    renderPlayerDetail();
+
+    await screen.findByText('Sam Player');
+    fireEvent.click(screen.getByRole('button', { name: 'Profile' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Athlete Profile' }));
+    await screen.findByText('Athlete Profile Builder');
+
+    expect(screen.getByText('Included linked season')).toBeTruthy();
+    expect(screen.getByText('Current Team')).toBeTruthy();
+    expect(screen.queryByRole('checkbox')).toBeNull();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Save Athlete Profile' }));
+
+    await waitFor(() => {
+      expect(playerServiceMocks.saveParentAthleteProfileDraft).toHaveBeenCalledWith(expect.objectContaining({
+        draft: expect.objectContaining({
+          selectedSeasonKeys: ['team-current::player-current']
+        })
+      }));
+    });
+  });
+
+  it('clamps hidden single-season saves to the lone available linked season', async () => {
+    playerServiceMocks.loadParentPlayerDetail.mockResolvedValue(buildDetailData({
+      athleteProfile: {
+        profile: {
+          id: 'profile-1',
+          athlete: { name: 'Sam Player' },
+          bio: {},
+          privacy: 'public',
+          clips: [],
+          seasons: [
+            { seasonKey: 'team-current::player-current', teamName: 'Current Team', playerName: 'Sam Player' },
+            { seasonKey: 'team-prior::player-prior', teamName: 'Prior Team', playerName: 'Sam Player' }
+          ]
+        },
+        shareUrl: 'https://allplays.ai/athlete-profile.html?profileId=profile-1',
+        builderUrl: 'https://allplays.ai/athlete-profile-builder.html?teamId=team-current&playerId=player-current&profileId=profile-1',
+        seasonOptions: [buildDetailData().athleteProfile.seasonOptions[0]]
+      }
+    }));
+
+    renderPlayerDetail();
+
+    await screen.findByText('Sam Player');
+    fireEvent.click(screen.getByRole('button', { name: 'Profile' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Athlete Profile' }));
+    await screen.findByText('Athlete Profile Builder');
+
+    expect(screen.getByText('Included linked season')).toBeTruthy();
+    expect(screen.getByText('Current Team')).toBeTruthy();
+    expect(screen.queryByRole('checkbox')).toBeNull();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Publish Athlete Profile' }));
+
+    await waitFor(() => {
+      expect(playerServiceMocks.saveParentAthleteProfileDraft).toHaveBeenCalledWith(expect.objectContaining({
+        draft: expect.objectContaining({
+          selectedSeasonKeys: ['team-current::player-current']
+        })
+      }));
+    });
+  });
+
+  it('defaults first save to the current season and blocks zero-season saves when multiple seasons are available', async () => {
     renderPlayerDetail();
 
     await screen.findByText('Sam Player');
@@ -325,8 +397,9 @@ describe('PlayerDetail athlete profile season selection', () => {
     fireEvent.click(await screen.findByRole('button', { name: 'Athlete Profile' }));
     await screen.findByText('Athlete Profile Builder');
 
-    const fallbackSeason = await screen.findByLabelText('Sam Player Current Team');
-    expect((fallbackSeason as HTMLInputElement).checked).toBe(true);
+    expect(screen.getByText('Included linked season')).toBeTruthy();
+    expect(screen.getByText('Current Team')).toBeTruthy();
+    expect(screen.queryByRole('checkbox')).toBeNull();
 
     fireEvent.click(screen.getByRole('button', { name: 'Publish Athlete Profile' }));
 
