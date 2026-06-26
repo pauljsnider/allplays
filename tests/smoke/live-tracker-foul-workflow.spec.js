@@ -487,6 +487,25 @@ test('persists an opponent foul across refresh and removes it cleanly after resu
         return store.game?.opponentStats?.opp1?.fouls;
     }).toBe(0);
 
+    await expect.poll(async () => {
+        const store = await readStore(page);
+        return Object.values(store.liveEvents || {})
+            .filter((event) => event.playerId === 'opp1' && event.statKey === 'fouls')
+            .map((event) => ({
+                value: Number(event.value),
+                description: String(event.description || '')
+            }));
+    }).toEqual([
+        {
+            value: 1,
+            description: `Opp ${opponentName} FOULS +1`
+        },
+        {
+            value: -1,
+            description: `REMOVE Opp ${opponentName} FOULS +1`
+        }
+    ]);
+
     await page.evaluate((key) => localStorage.removeItem(key), LOCAL_STATE_KEY);
     await setConfirmResponses(page, [true]);
     await loadTracker(page, baseURL);
