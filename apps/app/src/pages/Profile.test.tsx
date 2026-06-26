@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
-import { MemoryRouter, Route, Routes } from 'react-router-dom';
+import { MemoryRouter, Route, Routes, useNavigate } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { Profile } from './Profile';
 import type { AuthState } from '../lib/types';
@@ -109,11 +109,20 @@ const auth: AuthState = {
   signOut: vi.fn()
 };
 
-function renderProfile(initialEntry = '/profile') {
+function TestRouteControls() {
+  const navigate = useNavigate();
+  return (
+    <button type="button" onClick={() => navigate('/profile', { replace: true })}>
+      Go to plain profile
+    </button>
+  );
+}
+
+function renderProfile(initialEntry = '/profile', includeRouteControls = false) {
   return render(
     <MemoryRouter initialEntries={[initialEntry]}>
       <Routes>
-        <Route path="/profile" element={<Profile auth={auth} />} />
+        <Route path="/profile" element={<><Profile auth={auth} />{includeRouteControls ? <TestRouteControls /> : null}</>} />
       </Routes>
     </MemoryRouter>
   );
@@ -246,5 +255,18 @@ describe('Profile', () => {
     expect((screen.getByLabelText('Live Chat') as HTMLInputElement).checked).toBe(false);
     expect((screen.getByLabelText('Live Score') as HTMLInputElement).checked).toBe(true);
     expect((screen.getByLabelText('Schedule Changes') as HTMLInputElement).checked).toBe(true);
+  });
+
+  it('re-syncs the active section and team from the URL after native back collapses profile query state', async () => {
+    renderProfile('/profile?section=alerts&teamId=team-1', true);
+
+    expect(await screen.findByText('Notification preferences')).toBeTruthy();
+    expect(await screen.findByRole('combobox')).toHaveValue('team-1');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Go to plain profile' }));
+
+    expect(await screen.findByRole('heading', { name: 'Your Account' })).toBeTruthy();
+    expect(screen.queryByText('Notification preferences')).toBeNull();
+    expect(screen.queryByRole('combobox')).toBeNull();
   });
 });
