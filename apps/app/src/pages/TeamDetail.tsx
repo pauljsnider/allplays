@@ -97,6 +97,9 @@ export function TeamDetail({ auth }: { auth: AuthState }) {
   const [trackingAttempted, setTrackingAttempted] = useState(false);
   const [trackingItems, setTrackingItems] = useState<TeamTrackingAdminItem[]>([]);
   const [detailCollectionsLoaded, setDetailCollectionsLoaded] = useState(false);
+  const [detailCollectionsLoading, setDetailCollectionsLoading] = useState(false);
+  const [detailCollectionsError, setDetailCollectionsError] = useState('');
+  const [detailCollectionsReloadVersion, setDetailCollectionsReloadVersion] = useState(0);
 
   function navigateToTab(nextTab: TeamTab) {
     if (nextTab === activeTab) return;
@@ -122,10 +125,16 @@ export function TeamDetail({ auth }: { auth: AuthState }) {
       setLoading(true);
       setError(null);
       try {
-        const nextModel = await loadParentTeamDetailBootstrap(teamId, auth.user);
+        const shouldHydrateOverviewCollections = activeTab === 'overview';
+        const nextModel = shouldHydrateOverviewCollections
+          ? await loadParentTeamDetail(teamId, auth.user, { includeDeferredData: false })
+          : await loadParentTeamDetailBootstrap(teamId, auth.user);
         if (!cancelled) {
           setModel(nextModel);
-          setDetailCollectionsLoaded(false);
+          setDetailCollectionsLoaded(shouldHydrateOverviewCollections);
+          setDetailCollectionsLoading(false);
+          setDetailCollectionsError('');
+          setDetailCollectionsReloadVersion(0);
           setStaffPermissionsError('');
           setStaffPermissionsLoading(false);
           setInsightsLoading(false);
@@ -147,6 +156,10 @@ export function TeamDetail({ auth }: { auth: AuthState }) {
         if (!cancelled) {
           setError(toAppServiceError(loadError, 'Unable to load this team.'));
           setModel(null);
+          setDetailCollectionsLoaded(false);
+          setDetailCollectionsLoading(false);
+          setDetailCollectionsError('');
+          setDetailCollectionsReloadVersion(0);
           setStaffPermissionsError('');
           setStaffPermissionsLoading(false);
           setInsightsLoading(false);
@@ -177,7 +190,9 @@ export function TeamDetail({ auth }: { auth: AuthState }) {
   useEffect(() => {
     let cancelled = false;
     async function loadDeferredTeamCollections() {
-      if (!teamId || !model || detailCollectionsLoaded || (activeTab !== 'schedule' && activeTab !== 'more')) return;
+      if (!teamId || !model || detailCollectionsLoaded || detailCollectionsLoading || detailCollectionsError || (activeTab !== 'schedule' && activeTab !== 'more')) return;
+      setDetailCollectionsLoading(true);
+      setDetailCollectionsError('');
       try {
         const nextModel = await loadParentTeamDetail(teamId, auth.user, { includeDeferredData: false });
         if (!cancelled) {
@@ -190,8 +205,12 @@ export function TeamDetail({ auth }: { auth: AuthState }) {
           } : nextModel);
           setDetailCollectionsLoaded(true);
         }
-      } catch {
-        // Keep the lightweight model visible. The schedule or more tab can still surface its own empty state.
+      } catch (loadError: any) {
+        if (!cancelled) {
+          setDetailCollectionsError(loadError?.message || 'Unable to load team schedule and settings.');
+        }
+      } finally {
+        if (!cancelled) setDetailCollectionsLoading(false);
       }
     }
 
@@ -199,7 +218,7 @@ export function TeamDetail({ auth }: { auth: AuthState }) {
     return () => {
       cancelled = true;
     };
-  }, [activeTab, auth.user, detailCollectionsLoaded, model, teamId]);
+  }, [activeTab, auth.user, detailCollectionsError, detailCollectionsLoaded, detailCollectionsLoading, detailCollectionsReloadVersion, model, teamId]);
 
   useEffect(() => {
     let cancelled = false;
@@ -458,10 +477,20 @@ export function TeamDetail({ auth }: { auth: AuthState }) {
       </section>
 
       {activeTab === 'overview' ? <OverviewTab model={model} /> : null}
-      {activeTab === 'schedule' ? <ScheduleTab model={model} auth={auth} onOpenStatTrackerConfigs={() => navigateToTab('more')} /> : null}
+      {activeTab === 'schedule' ? (
+        detailCollectionsLoading ? <InlineDeferredLoading copy="Loading team schedule…" /> : detailCollectionsError ? <DeferredCollectionsErrorState message={detailCollectionsError} onRetry={() => {
+          setDetailCollectionsError('');
+          setDetailCollectionsReloadVersion((current) => current + 1);
+        }} /> : <ScheduleTab model={model} auth={auth} onOpenStatTrackerConfigs={() => navigateToTab('more')} />
+      ) : null}
       {activeTab === 'roster' ? <RosterTab model={model} authUser={auth.user} onRefresh={refreshTeamDetail} rosterInviteLoading={rosterInviteLoading} rosterInviteError={rosterInviteError} rosterInviteSummaries={rosterInviteSummaries} onInviteCreated={refreshRosterInvites} trackingLoading={trackingLoading} trackingError={trackingError} trackingItems={trackingItems} onTrackingChanged={refreshTrackingItems} /> : null}
       {activeTab === 'insights' ? <InsightsTab model={model} loading={insightsLoading} error={insightsError} /> : null}
-      {activeTab === 'more' ? <MoreTab model={model} auth={auth} staffPermissionsLoading={staffPermissionsLoading} staffPermissionsError={staffPermissionsError} sponsorsLoading={sponsorsLoading} sponsorsError={sponsorsError} onTeamDetailRefresh={refreshTeamDetail} /> : null}
+      {activeTab === 'more' ? (
+        detailCollectionsLoading ? <InlineDeferredLoading copy="Loading team settings…" /> : detailCollectionsError ? <DeferredCollectionsErrorState message={detailCollectionsError} onRetry={() => {
+          setDetailCollectionsError('');
+          setDetailCollectionsReloadVersion((current) => current + 1);
+        }} /> : <MoreTab model={model} auth={auth} staffPermissionsLoading={staffPermissionsLoading} staffPermissionsError={staffPermissionsError} sponsorsLoading={sponsorsLoading} sponsorsError={sponsorsError} onTeamDetailRefresh={refreshTeamDetail} />
+      ) : null}
     </div>
   );
 }
@@ -1766,6 +1795,17 @@ function formatConfigColumnSummary(columnCount: number, columnNames: string[]) {
   const preview = columnNames.slice(0, 3).join(', ');
   const remainder = columnCount - Math.min(columnNames.length, 3);
   return `${columnCount} column${columnCount === 1 ? '' : 's'}${preview ? ` · ${preview}${remainder > 0 ? ` +${remainder}` : ''}` : ''}`;
+}
+
+function DeferredCollectionsErrorState({ message, onRetry }: { message: string; onRetry: () => void }) {
+  return (
+    <section className="app-card p-4">
+      <InlineDeferredError title="Team detail unavailable" message={message} />
+      <button type="button" className="secondary-button mt-3 !min-h-9 text-xs" onClick={onRetry}>
+        Retry
+      </button>
+    </section>
+  );
 }
 
 function InlineDeferredLoading({ copy }: { copy: string }) {

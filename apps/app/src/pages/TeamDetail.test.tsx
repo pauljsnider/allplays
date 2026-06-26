@@ -229,7 +229,7 @@ describe('TeamDetail', () => {
   });
 
   it('shows the shared team skeleton while team detail is loading', () => {
-    teamDetailServiceMocks.loadParentTeamDetailBootstrap.mockReturnValue(new Promise(() => {}));
+    teamDetailServiceMocks.loadParentTeamDetail.mockReturnValue(new Promise(() => {}));
 
     render(
       <MemoryRouter initialEntries={['/teams/team-1']}>
@@ -244,7 +244,7 @@ describe('TeamDetail', () => {
   });
 
   it('shows a retryable team detail error state and reloads on retry', async () => {
-    teamDetailServiceMocks.loadParentTeamDetailBootstrap
+    teamDetailServiceMocks.loadParentTeamDetail
       .mockRejectedValueOnce(new Error('Team detail unavailable.'))
       .mockResolvedValueOnce(model);
 
@@ -260,10 +260,10 @@ describe('TeamDetail', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
 
     expect(await screen.findByRole('heading', { name: 'Bears' })).toBeTruthy();
-    expect(teamDetailServiceMocks.loadParentTeamDetailBootstrap).toHaveBeenCalledTimes(2);
+    expect(teamDetailServiceMocks.loadParentTeamDetail).toHaveBeenCalledTimes(2);
   });
 
-  it('uses the lightweight bootstrap on overview and defers full detail until schedule opens', async () => {
+  it('uses the lightweight bootstrap on roster and defers full detail until schedule opens', async () => {
     teamDetailServiceMocks.loadParentTeamDetailBootstrap.mockResolvedValue({
       ...model,
       upcomingEvents: [],
@@ -298,7 +298,7 @@ describe('TeamDetail', () => {
     });
 
     render(
-      <MemoryRouter initialEntries={['/teams/team-1']}>
+      <MemoryRouter initialEntries={['/teams/team-1?tab=roster']}>
         <Routes>
           <Route path="/teams/:teamId" element={<TeamDetail auth={auth} />} />
         </Routes>
@@ -313,6 +313,127 @@ describe('TeamDetail', () => {
 
     await waitFor(() => expect(teamDetailServiceMocks.loadParentTeamDetail).toHaveBeenCalledTimes(1));
     expect(await screen.findByText('Bears vs Tigers')).toBeTruthy();
+  });
+
+  it('hydrates overview collections before rendering the default team hub stats', async () => {
+    const nextEvent = {
+      id: 'game-next',
+      title: 'Bears vs Tigers',
+      type: 'game',
+      date: new Date(Date.now() + 24 * 60 * 60 * 1000),
+      location: 'Main Gym',
+      opponent: 'Tigers',
+      status: 'scheduled',
+      liveStatus: '',
+      visibility: 'public',
+      isPrivate: false,
+      isPublic: true,
+      shareable: true,
+      publicCalendar: true,
+      homeScore: null,
+      awayScore: null,
+      isCancelled: false,
+      statTrackerConfigId: '',
+      statTrackerConfigLabel: 'No config assigned',
+      statTrackerConfigBaseType: '',
+      statTrackerConfigExists: false,
+      statTrackerConfigIsBasketball: false
+    };
+    teamDetailServiceMocks.loadParentTeamDetail.mockResolvedValue({
+      ...model,
+      upcomingEvents: [nextEvent],
+      recentResults: [{
+        id: 'game-final',
+        title: 'Bears vs Wolves',
+        type: 'game',
+        date: new Date(Date.now() - 24 * 60 * 60 * 1000),
+        location: 'Main Gym',
+        opponent: 'Wolves',
+        status: 'completed',
+        liveStatus: 'completed',
+        visibility: 'public',
+        isPrivate: false,
+        isPublic: true,
+        shareable: true,
+        publicCalendar: true,
+        homeScore: 60,
+        awayScore: 55,
+        isCancelled: false,
+        statTrackerConfigId: '',
+        statTrackerConfigLabel: 'No config assigned',
+        statTrackerConfigBaseType: '',
+        statTrackerConfigExists: false,
+        statTrackerConfigIsBasketball: false
+      }],
+      nextEvent,
+      counts: { games: 2, practices: 0, completedGames: 1 }
+    });
+
+    render(
+      <MemoryRouter initialEntries={['/teams/team-1']}>
+        <Routes>
+          <Route path="/teams/:teamId" element={<TeamDetail auth={auth} />} />
+        </Routes>
+      </MemoryRouter>
+    );
+
+    expect(await screen.findByRole('heading', { name: 'Bears' })).toBeTruthy();
+    expect(screen.getByText(/Bears vs Tigers/i)).toBeTruthy();
+    expect(teamDetailServiceMocks.loadParentTeamDetailBootstrap).not.toHaveBeenCalled();
+    expect(teamDetailServiceMocks.loadParentTeamDetail).toHaveBeenCalledTimes(1);
+  });
+
+  it('surfaces deferred team collection failures on the schedule tab and lets users retry', async () => {
+    teamDetailServiceMocks.loadParentTeamDetailBootstrap.mockResolvedValue({
+      ...model,
+      upcomingEvents: [],
+      recentResults: [],
+      statTrackerConfigs: []
+    });
+    teamDetailServiceMocks.loadParentTeamDetail
+      .mockRejectedValueOnce(new Error('Schedule load failed.'))
+      .mockResolvedValueOnce({
+        ...model,
+        upcomingEvents: [{
+          id: 'game-next',
+          title: 'Bears vs Tigers',
+          type: 'game',
+          date: new Date(Date.now() + 24 * 60 * 60 * 1000),
+          location: 'Main Gym',
+          opponent: 'Tigers',
+          status: 'scheduled',
+          liveStatus: '',
+          visibility: 'public',
+          isPrivate: false,
+          isPublic: true,
+          shareable: true,
+          publicCalendar: true,
+          homeScore: null,
+          awayScore: null,
+          isCancelled: false,
+          statTrackerConfigId: '',
+          statTrackerConfigLabel: 'No config assigned',
+          statTrackerConfigBaseType: '',
+          statTrackerConfigExists: false,
+          statTrackerConfigIsBasketball: false
+        }]
+      });
+
+    render(
+      <MemoryRouter initialEntries={['/teams/team-1?tab=schedule']}>
+        <Routes>
+          <Route path="/teams/:teamId" element={<TeamDetail auth={auth} />} />
+        </Routes>
+      </MemoryRouter>
+    );
+
+    expect(await screen.findByText('Schedule load failed.')).toBeTruthy();
+    expect(screen.queryByText('No team events found.')).toBeNull();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+
+    expect(await screen.findByText('Bears vs Tigers')).toBeTruthy();
+    expect(teamDetailServiceMocks.loadParentTeamDetail).toHaveBeenCalledTimes(2);
   });
 
   it('retries a retryable RSVP reminder preview failure from the shared error state', async () => {
