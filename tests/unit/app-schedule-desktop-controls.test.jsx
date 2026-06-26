@@ -62,6 +62,16 @@ function futureDate(offsetHours = 24) {
     return new Date(Date.now() + offsetHours * 60 * 60 * 1000);
 }
 
+function createDeferred() {
+    let resolve;
+    let reject;
+    const promise = new Promise((res, rej) => {
+        resolve = res;
+        reject = rej;
+    });
+    return { promise, resolve, reject };
+}
+
 function event(overrides = {}) {
     return {
         eventKey: overrides.eventKey || 'team-1::game-1::player-1',
@@ -373,6 +383,49 @@ describe('React app desktop Schedule controls', () => {
         await waitForText(container, 'Start a new tournament block');
         expect(container.querySelector('[role="dialog"]')).toBeNull();
         expect(scheduleMocks.createScheduledTournamentBlockForApp).not.toHaveBeenCalled();
+    });
+
+    it('keeps the tournament shell open while saving even when dismissal shortcuts fire', async () => {
+        scheduleMocks.loadParentSchedule.mockResolvedValue({
+            children: [
+                { playerId: 'player-1', playerName: 'Pat', teamId: 'team-1', teamName: 'Bears' }
+            ],
+            events: [event({ isTeamStaff: true })]
+        });
+        const deferred = createDeferred();
+        scheduleMocks.createScheduledTournamentBlockForApp.mockReturnValue(deferred.promise);
+
+        const { container } = await renderSchedule();
+        await openManageSchedule(container);
+        await clickButton(container, 'New tournament block');
+        await waitForText(container, 'Create tournament block');
+
+        const divisionInput = container.querySelector('input[aria-label="Tournament division"]');
+        await changeInput(divisionInput, 'Gold');
+        await clickButton(container, 'Create tournament');
+        await waitForText(container, 'Creating tournament');
+
+        const dialog = container.querySelector('[role="dialog"]');
+        const closeButton = container.querySelector('button[aria-label="Close tournament shell"]');
+        expect(closeButton.disabled).toBe(true);
+        expect(buttonByText(container, 'Cancel').disabled).toBe(true);
+
+        await act(async () => {
+            dialog.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+            dialog.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+        });
+
+        expect(container.querySelector('[role="dialog"]')).toBeTruthy();
+        expect(container.querySelector('input[aria-label="Tournament division"]').value).toBe('Gold');
+
+        await act(async () => {
+            deferred.resolve('tournament-new');
+            await deferred.promise;
+        });
+
+        await waitForText(container, 'Tournament created and schedule refreshed.');
+        expect(container.querySelector('[role="dialog"]')).toBeNull();
+        expect(scheduleMocks.createScheduledTournamentBlockForApp).toHaveBeenCalledTimes(1);
     });
 
     it('shows staff-only calendar import and refreshes after save', async () => {

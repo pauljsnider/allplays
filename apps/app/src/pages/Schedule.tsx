@@ -687,11 +687,15 @@ export function Schedule({ auth }: { auth: AuthState }) {
           }}
         />
         {scheduleStaffToolMode === 'tournament' ? (
-          <ScheduleTournamentCreateModal onClose={() => {
-            setTournamentForm(getDefaultScheduleTournamentForm());
-            setTournamentFormError(null);
-            setScheduleStaffToolMode('menu');
-          }}>
+          <ScheduleTournamentCreateModal
+            saving={savingTournament}
+            onClose={() => {
+              if (savingTournament) return;
+              setTournamentForm(getDefaultScheduleTournamentForm());
+              setTournamentFormError(null);
+              setScheduleStaffToolMode('menu');
+            }}
+          >
             <ScheduleTournamentCreatePanel
               teamName={selectedCalendarTeam.teamName}
               form={tournamentForm}
@@ -1539,7 +1543,7 @@ function ScheduleTournamentEntryCard({ teamName, onOpen }: { teamName: string; o
   );
 }
 
-function ScheduleTournamentCreateModal({ children, onClose }: { children: ReactNode; onClose: () => void }) {
+function ScheduleTournamentCreateModal({ children, saving, onClose }: { children: ReactNode; saving: boolean; onClose: () => void }) {
   return (
     <Modal overlayClassName="z-[70] flex items-end justify-center bg-gray-950/40 p-0 sm:items-center sm:p-6" ariaLabel="Create tournament block" onClose={onClose}>
       <section className="relative w-full overflow-hidden rounded-t-3xl bg-white shadow-2xl sm:mx-auto sm:max-w-4xl sm:rounded-2xl">
@@ -1551,8 +1555,9 @@ function ScheduleTournamentCreateModal({ children, onClose }: { children: ReactN
           </div>
           <button
             type="button"
-            className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-gray-200 bg-white text-lg font-black leading-none text-gray-500 transition hover:border-gray-300 hover:text-gray-700"
+            className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-gray-200 bg-white text-lg font-black leading-none text-gray-500 transition hover:border-gray-300 hover:text-gray-700 disabled:cursor-not-allowed disabled:opacity-60"
             aria-label="Close tournament shell"
+            disabled={saving}
             onClick={onClose}
           >
             <span aria-hidden="true">×</span>
