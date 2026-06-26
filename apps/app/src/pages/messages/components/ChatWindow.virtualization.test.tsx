@@ -6,7 +6,13 @@ import { MemoryRouter } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ChatMessage } from '../../../lib/chatService';
 import type { AuthState } from '../../../lib/types';
-import { AudienceSheet, ChatWindow, buildVirtualizedChatWindow } from './ChatWindow';
+import {
+  AudienceSheet,
+  ChatWindow,
+  buildVirtualizedChatLayout,
+  buildVirtualizedChatWindow,
+  buildVirtualizedChatWindowFromLayout
+} from './ChatWindow';
 
 const liveMessages = Array.from({ length: 220 }, (_, index) => buildMessage(`live-${index + 1}`, index + 101));
 const olderPage = Array.from({ length: 50 }, (_, index) => buildMessage(`older-${index + 1}`, index + 1));
@@ -201,6 +207,8 @@ describe('ChatWindow virtualization', () => {
     scrollHeightValue = 2400;
     contentScrollHeightValue = 2400;
     vi.stubGlobal('ResizeObserver', MockResizeObserver as any);
+    vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => window.setTimeout(() => callback(performance.now()), 0));
+    vi.stubGlobal('cancelAnimationFrame', (id: number) => window.clearTimeout(id));
     Object.defineProperty(window.HTMLElement.prototype, 'scrollIntoView', {
       configurable: true,
       value: vi.fn()
@@ -289,6 +297,41 @@ describe('ChatWindow virtualization', () => {
     expect(windowed.bottomSpacerHeight).toBeGreaterThan(0);
   });
 
+  it('reuses precomputed offsets for scroll-only window updates and rebuilds layout only when inputs change', () => {
+    const messages = Array.from({ length: 220 }, (_, index) => buildMessage(`message-${index + 1}`, index + 1));
+    const measuredHeights = {
+      'message-1': 132,
+      'message-2': 148,
+      'message-3': 124,
+      'message-4': 156
+    };
+
+    const cachedLayout = buildVirtualizedChatLayout(messages, measuredHeights);
+    const firstWindow = buildVirtualizedChatWindowFromLayout(messages, cachedLayout, {
+      scrollTop: 0,
+      viewportHeight: 320,
+      overscanPx: 0
+    });
+    const scrolledWindow = buildVirtualizedChatWindowFromLayout(messages, cachedLayout, {
+      scrollTop: 1400,
+      viewportHeight: 320,
+      overscanPx: 0
+    });
+
+    expect(scrolledWindow.startIndex).toBeGreaterThan(firstWindow.startIndex);
+    expect(cachedLayout.offsets[firstWindow.startIndex]).toBe(firstWindow.topSpacerHeight);
+    expect(cachedLayout.offsets[scrolledWindow.startIndex]).toBe(scrolledWindow.topSpacerHeight);
+
+    const updatedHeightLayout = buildVirtualizedChatLayout(messages, {
+      ...measuredHeights,
+      'message-1': 180
+    });
+    const prependedLayout = buildVirtualizedChatLayout([buildMessage('message-0', 0), ...messages], measuredHeights);
+
+    expect(updatedHeightLayout.totalHeight).toBeGreaterThan(cachedLayout.totalHeight);
+    expect(prependedLayout.totalHeight).toBeGreaterThan(cachedLayout.totalHeight);
+  });
+
   it('keeps mounted message bubbles bounded below the full thread size', () => {
     const { container } = render(
       <MemoryRouter>
@@ -319,6 +362,27 @@ describe('ChatWindow virtualization', () => {
     await waitFor(() => {
       expect(thread.scrollTop).toBe(720);
     });
+  });
+
+  it('keeps long-thread rendering bounded across repeated scroll-only updates', async () => {
+    const { container } = render(
+      <MemoryRouter>
+        <ChatWindow auth={auth} teamId="team-1" />
+      </MemoryRouter>
+    );
+
+    const thread = container.querySelector('.chat-messages-scroll') as HTMLDivElement;
+    expect(thread).toBeTruthy();
+
+    for (const scrollTop of [180, 420, 760]) {
+      thread.scrollTop = scrollTop;
+      fireEvent.scroll(thread);
+      await waitFor(() => {
+        const bubbleCount = container.querySelectorAll('.message-bubble').length;
+        expect(bubbleCount).toBeGreaterThan(0);
+        expect(bubbleCount).toBeLessThan(100);
+      });
+    }
   });
 });
 
