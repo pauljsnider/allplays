@@ -470,7 +470,8 @@ test('persists an opponent foul across refresh and removes it cleanly after resu
     await loadTracker(page, baseURL);
 
     await page.locator('#opponents-tab').click();
-    const resumedOpponentCard = page.locator('#opp-cards-mobile > div').filter({ hasText: opponentName }).first();
+    const resumedOpponentCard = page.locator('#opp-cards-mobile > div').filter({ has: page.locator('input[data-opp-edit="opp1"]') }).first();
+    await expect(resumedOpponentCard.locator('input[data-opp-edit="opp1"]')).toHaveValue(opponentName);
     await expect(resumedOpponentCard).toContainText('FLS 1');
     await expect(page.locator('#log-mobile')).toContainText(`Opp ${opponentName} FOULS +1`);
 
@@ -491,7 +492,8 @@ test('persists an opponent foul across refresh and removes it cleanly after resu
     await loadTracker(page, baseURL);
     await page.locator('#opponents-tab').click();
 
-    const refreshedOpponentCard = page.locator('#opp-cards-mobile > div').filter({ hasText: opponentName }).first();
+    const refreshedOpponentCard = page.locator('#opp-cards-mobile > div').filter({ has: page.locator('input[data-opp-edit="opp1"]') }).first();
+    await expect(refreshedOpponentCard.locator('input[data-opp-edit="opp1"]')).toHaveValue(opponentName);
     await expect(refreshedOpponentCard).toContainText('FLS 0');
     await expect(page.locator('#log-mobile')).not.toContainText(`Opp ${opponentName} FOULS +1`);
 });
