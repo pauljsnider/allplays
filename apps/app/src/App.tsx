@@ -17,6 +17,7 @@ import {
 import { addNativeDeepLinkListener } from './lib/nativeDeepLinkRouting';
 import { clearPendingPushRoute, readPendingPushRoute } from './lib/pushNotificationRouting';
 import { readAuthBootstrapHint } from './lib/authBootstrapHint';
+import { getRouteForUser } from './lib/authService';
 import { useAuth } from './lib/useAuth';
 import type { AuthState } from './lib/types';
 
@@ -54,6 +55,7 @@ const protectedRouteBootstrapGraceMs = 750;
 export default function App() {
   const auth = useAuth();
   const location = useLocation();
+  const signedInDefaultRoute = getRouteForUser(auth.user);
   const navigate = useNavigate();
   const authUserRef = useRef(auth.user);
   const locationRef = useRef(location);
@@ -213,7 +215,7 @@ export default function App() {
         <Route path="/reset-password" element={<ResetPassword />} />
         <Route path="/verify-pending" element={<VerifyPending auth={auth} />} />
         <Route path="/registration" element={<AppShell auth={auth}><RegistrationDetail auth={auth} publicAccess /></AppShell>} />
-        <Route path="/" element={<Navigate to={auth.user ? '/home' : '/auth'} replace />} />
+        <Route path="/" element={<Navigate to={auth.user ? signedInDefaultRoute : '/auth'} replace />} />
         <Route path="/home" element={<Protected auth={auth}><Home auth={auth} /></Protected>} />
         <Route path="/officials" element={<Protected auth={auth}><Officials auth={auth} /></Protected>} />
         <Route path="/schedule" element={<Protected auth={auth}><Schedule auth={auth} /></Protected>} />
@@ -242,7 +244,7 @@ export default function App() {
         <Route path="/help/:helpId" element={<Protected auth={auth}><HelpArticle /></Protected>} />
         <Route path="/profile" element={<Protected auth={auth}><Profile auth={auth} /></Protected>} />
         <Route path="/capabilities/:capabilityId" element={<Protected auth={auth}><CapabilityPage /></Protected>} />
-        <Route path="*" element={<Navigate to={auth.user ? '/home' : '/auth'} replace />} />
+        <Route path="*" element={<Navigate to={auth.user ? signedInDefaultRoute : '/auth'} replace />} />
       </Routes>
       {nativeExitNoticeVisible ? (
         <div className="fixed inset-x-0 bottom-24 z-[80] flex justify-center px-4" role="status" aria-live="polite">

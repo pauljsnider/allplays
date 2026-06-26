@@ -132,6 +132,10 @@ vi.mock('./pages/Messages', () => ({
   Messages: () => <div>Messages page</div>,
 }));
 
+vi.mock('./pages/Teams', () => ({
+  Teams: () => <div>Teams page</div>,
+}));
+
 function installTestLocalStorage() {
   const store = new Map<string, string>();
   Object.defineProperty(window, 'localStorage', {
@@ -236,6 +240,44 @@ describe('App protected route loading', () => {
 
     expect(screen.getByText('Loading ALL PLAYS')).toBeTruthy();
     expect(screen.queryByRole('navigation', { name: 'Primary navigation' })).toBeNull();
+  });
+
+  it('routes signed-in coach users from the root route to Teams', async () => {
+    authMock.state = {
+      ...authMock.signedInAuth,
+      user: { ...authMock.signedInAuth.user!, email: 'coach@example.com', roles: ['coach'] },
+      roles: ['coach'],
+      isParent: false,
+      isCoach: true,
+    };
+
+    render(
+      <MemoryRouter initialEntries={['/']}>
+        <App />
+      </MemoryRouter>
+    );
+
+    expect(await screen.findByText('Teams page')).toBeTruthy();
+    expect(screen.queryByText('Loading ALL PLAYS')).toBeNull();
+  });
+
+  it('routes signed-in coach users from unknown routes to Teams', async () => {
+    authMock.state = {
+      ...authMock.signedInAuth,
+      user: { ...authMock.signedInAuth.user!, email: 'coach@example.com', roles: ['coach'] },
+      roles: ['coach'],
+      isParent: false,
+      isCoach: true,
+    };
+
+    render(
+      <MemoryRouter initialEntries={['/does-not-exist']}>
+        <App />
+      </MemoryRouter>
+    );
+
+    expect(await screen.findByText('Teams page')).toBeTruthy();
+    expect(screen.queryByText('Loading ALL PLAYS')).toBeNull();
   });
 
   it('routes the dedicated public-team discovery screen ahead of dynamic team ids', async () => {
