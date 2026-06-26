@@ -180,6 +180,14 @@ describe('notification delivery metadata', () => {
         expect(serviceWorkerSource).toContain('event.waitUntil(clients.openWindow(link));');
     });
 
+    it('skips duplicate background notifications when Firebase already rendered a notification payload', () => {
+        expect(serviceWorkerSource).toContain('if (payload?.notification) return;');
+        expect(serviceWorkerSource).toContain("const title = payload?.data?.title || 'ALL PLAYS Update';");
+        expect(serviceWorkerSource).toContain("const body = payload?.data?.body || '';");
+        expect(serviceWorkerSource).not.toContain("const title = payload?.notification?.title || 'ALL PLAYS Update';");
+        expect(serviceWorkerSource).not.toContain("const body = payload?.notification?.body || '';");
+    });
+
     it('versions and expires cached Firebase service worker config', () => {
         expect(serviceWorkerSource).toContain("const CONFIG_CACHE_VERSION = 'v2';");
         expect(serviceWorkerSource).toContain('const CONFIG_CACHE_TTL_MS = 24 * 60 * 60 * 1000;');
@@ -188,7 +196,7 @@ describe('notification delivery metadata', () => {
         expect(serviceWorkerSource).toContain('cachedAt: Date.now()');
     });
 
-    it('keeps the app-hosted service worker lint-safe without changing its push handling behavior', () => {
+    it('keeps the app-hosted service worker lint-safe while matching the root worker behavior', () => {
         expect(appServiceWorkerSource).toContain('/* global self, caches, Response, fetch, URL, clients, importScripts, firebase, console */');
         expect(serviceWorkerSource).toContain('/* global importScripts, firebase */');
         expect(

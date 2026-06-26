@@ -115,14 +115,16 @@ function buildAppRouteNotificationLink(rawRoute) {
 
 function registerBackgroundMessageHandler(messaging) {
     messaging.onBackgroundMessage((payload) => {
-        const title = payload?.notification?.title || 'ALL PLAYS Update';
-        const body = payload?.notification?.body || '';
+        if (payload?.notification) return;
+
+        const title = payload?.data?.title || 'ALL PLAYS Update';
+        const body = payload?.data?.body || '';
         const link = buildAppRouteNotificationLink(payload?.data?.appRoute)
             || payload?.fcmOptions?.link
             || payload?.data?.link
             || '/';
-        const icon = payload?.notification?.icon || payload?.data?.icon || WEB_PUSH_NOTIFICATION_ICON;
-        const badge = payload?.notification?.badge || payload?.data?.badge || WEB_PUSH_NOTIFICATION_BADGE;
+        const icon = payload?.data?.icon || WEB_PUSH_NOTIFICATION_ICON;
+        const badge = payload?.data?.badge || WEB_PUSH_NOTIFICATION_BADGE;
 
         self.registration.showNotification(title, {
             body,
