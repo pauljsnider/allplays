@@ -1,5 +1,6 @@
 import { createLogger } from './logger';
 import { recordAppUxTiming } from './telemetry';
+import { diffNativeReadMetrics, snapshotNativeReadMetrics } from './nativeReadMetrics';
 
 const logger = createLogger('ux');
 
@@ -34,9 +35,18 @@ export function now() {
 
 export function startUxTimer(label: string, baseMeta: Record<string, unknown> = {}) {
   const startedAt = now();
+  const readsAtStart = snapshotNativeReadMetrics();
   return {
     end(meta: Record<string, unknown> = {}) {
-      recordUxTiming(label, startedAt, { ...baseMeta, ...meta });
+      // Reads-per-mount: how many native Firestore requests this span fanned out
+      // (and how many were avoided by dedup). Surfaces over-fetching on
+      // multi-team accounts without per-call logging. Only attached when reads
+      // actually occurred so zero-read spans keep their existing payload shape.
+      const readDelta = diffNativeReadMetrics(readsAtStart, snapshotNativeReadMetrics());
+      const readMeta = (readDelta.reads > 0 || readDelta.dedupHits > 0)
+        ? { nativeReads: readDelta.reads, nativeDedupHits: readDelta.dedupHits }
+        : {};
+      recordUxTiming(label, startedAt, { ...baseMeta, ...readMeta, ...meta });
     }
   };
 }

@@ -30,6 +30,8 @@ function buildGetParentDashboardData({
     getUserProfile,
     updateUserProfile,
     listParentRegistrationApplicationsForProfile,
+    listMyParentMembershipRequests = vi.fn().mockResolvedValue([]),
+    mergeApprovedParentMembershipRequests = vi.fn((userProfile) => ({ changed: false, userUpdate: userProfile })),
     normalizeParentScopeLinks,
     getTeam,
     getEvents
@@ -41,6 +43,8 @@ function buildGetParentDashboardData({
         'getUserProfile',
         'updateUserProfile',
         'listParentRegistrationApplicationsForProfile',
+        'listMyParentMembershipRequests',
+        'mergeApprovedParentMembershipRequests',
         'normalizeParentScopeLinks',
         'getTeam',
         'getEvents',
@@ -49,6 +53,8 @@ function buildGetParentDashboardData({
         getUserProfile,
         updateUserProfile,
         listParentRegistrationApplicationsForProfile,
+        listMyParentMembershipRequests,
+        mergeApprovedParentMembershipRequests,
         normalizeParentScopeLinks,
         getTeam,
         getEvents
@@ -286,5 +292,132 @@ describe('parent scope normalization', () => {
             staleLinkCount: 0,
             teamEventErrors: 1
         });
+    });
+
+    it('syncs approved membership requests into the parent profile before loading the dashboard', async () => {
+        const getUserProfile = vi.fn().mockResolvedValue({
+            parentOf: [
+                { teamId: 'team-active', playerId: 'player-existing', teamName: 'Active Team', playerName: 'Existing Child' }
+            ],
+            parentTeamIds: ['team-active'],
+            parentPlayerKeys: ['team-active::player-existing']
+        });
+        const updateUserProfile = vi.fn().mockResolvedValue(undefined);
+        const approvedRequests = [
+            {
+                status: 'approved',
+                teamId: 'team-active',
+                playerId: 'player-new',
+                playerName: 'Avery Lee',
+                playerNumber: '9',
+                requesterUserId: 'parent-1',
+                requesterEmail: 'parent@example.com'
+            }
+        ];
+        const listMyParentMembershipRequests = vi.fn().mockResolvedValue(approvedRequests);
+        const mergeApprovedParentMembershipRequests = vi.fn().mockReturnValue({
+            changed: true,
+            userUpdate: {
+                parentOf: [
+                    { teamId: 'team-active', playerId: 'player-existing', teamName: 'Active Team', playerName: 'Existing Child' },
+                    { teamId: 'team-active', playerId: 'player-new', teamName: 'Active Team', playerName: 'Avery Lee', playerNumber: '9' }
+                ],
+                parentTeamIds: ['team-active'],
+                parentPlayerKeys: ['team-active::player-existing', 'team-active::player-new']
+            }
+        });
+        const normalizeParentScopeLinks = vi.fn().mockResolvedValue({
+            activeLinks: [
+                { teamId: 'team-active', playerId: 'player-existing', teamName: 'Active Team', playerName: 'Existing Child', playerNumber: '', playerPhotoUrl: null },
+                { teamId: 'team-active', playerId: 'player-new', teamName: 'Active Team', playerName: 'Avery Lee', playerNumber: '9', playerPhotoUrl: null }
+            ],
+            parentTeamIds: ['team-active'],
+            parentPlayerKeys: ['team-active::player-existing', 'team-active::player-new'],
+            blockedLinkCount: 0,
+            staleLinkCount: 0
+        });
+        const getParentDashboardData = buildGetParentDashboardData({
+            getUserProfile,
+            updateUserProfile,
+            listParentRegistrationApplicationsForProfile: vi.fn().mockResolvedValue([]),
+            listMyParentMembershipRequests,
+            mergeApprovedParentMembershipRequests,
+            normalizeParentScopeLinks,
+            getTeam: vi.fn().mockResolvedValue({ id: 'team-active', name: 'Active Team', active: true }),
+            getEvents: vi.fn().mockResolvedValue([])
+        });
+
+        const result = await getParentDashboardData('parent-1');
+
+        expect(listMyParentMembershipRequests).toHaveBeenCalledWith('parent-1');
+        expect(mergeApprovedParentMembershipRequests).toHaveBeenCalledTimes(1);
+        expect(updateUserProfile).toHaveBeenCalledWith('parent-1', {
+            parentOf: [
+                { teamId: 'team-active', playerId: 'player-existing', teamName: 'Active Team', playerName: 'Existing Child' },
+                { teamId: 'team-active', playerId: 'player-new', teamName: 'Active Team', playerName: 'Avery Lee', playerNumber: '9' }
+            ],
+            parentTeamIds: ['team-active'],
+            parentPlayerKeys: ['team-active::player-existing', 'team-active::player-new']
+        });
+        expect(normalizeParentScopeLinks).toHaveBeenCalledWith([
+            { teamId: 'team-active', playerId: 'player-existing', teamName: 'Active Team', playerName: 'Existing Child' },
+            { teamId: 'team-active', playerId: 'player-new', teamName: 'Active Team', playerName: 'Avery Lee', playerNumber: '9' }
+        ]);
+        expect(result.children).toHaveLength(2);
+    });
+
+    it('keeps players visible when the registration applications query fails (missing index)', async () => {
+        const getUserProfile = vi.fn().mockResolvedValue({
+            parentOf: [
+                { teamId: 'team-active', playerId: 'player-active', teamName: 'Active Team', playerName: 'Avery Lee' }
+            ],
+            parentTeamIds: ['team-active'],
+            parentPlayerKeys: ['team-active::player-active']
+        });
+        const updateUserProfile = vi.fn().mockResolvedValue(undefined);
+        // Simulate the Firestore "missing COLLECTION_GROUP index" failure.
+        const indexError = new Error('The query requires a COLLECTION_GROUP_ASC index for collection registrations and field guardian.email');
+        indexError.code = 'failed-precondition';
+        const listParentRegistrationApplicationsForProfile = vi.fn().mockRejectedValue(indexError);
+        const normalizeParentScopeLinks = vi.fn().mockResolvedValue({
+            activeLinks: [
+                {
+                    teamId: 'team-active',
+                    playerId: 'player-active',
+                    teamName: 'Active Team',
+                    playerName: 'Avery Lee',
+                    playerNumber: '9',
+                    playerPhotoUrl: null
+                }
+            ],
+            parentTeamIds: ['team-active'],
+            parentPlayerKeys: ['team-active::player-active'],
+            blockedLinkCount: 0,
+            staleLinkCount: 0
+        });
+        const getParentDashboardData = buildGetParentDashboardData({
+            getUserProfile,
+            updateUserProfile,
+            listParentRegistrationApplicationsForProfile,
+            normalizeParentScopeLinks,
+            getTeam: vi.fn().mockResolvedValue({ id: 'team-active', name: 'Active Team', active: true }),
+            getEvents: vi.fn().mockResolvedValue([])
+        });
+
+        // Must not throw, and the player must still be returned.
+        const result = await getParentDashboardData('parent-1');
+
+        expect(listParentRegistrationApplicationsForProfile).toHaveBeenCalled();
+        expect(result.registrationApplications).toEqual([]);
+        expect(result.children).toEqual([
+            {
+                teamId: 'team-active',
+                playerId: 'player-active',
+                teamName: 'Active Team',
+                playerName: 'Avery Lee',
+                playerNumber: '9',
+                playerPhotoUrl: null
+            }
+        ]);
     });
 });

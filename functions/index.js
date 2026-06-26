@@ -1860,6 +1860,37 @@ function appendUniqueValue(values, value) {
   return nextValues;
 }
 
+function uniqueNonEmptyStrings(values = []) {
+  return [...new Set((Array.isArray(values) ? values : [])
+    .map((value) => String(value || '').trim())
+    .filter(Boolean))];
+}
+
+function buildApprovedParentMembershipUserUpdate({ userData = {}, requestData = {}, team = {}, player = {} }) {
+  const parentLink = {
+    teamId: String(team.id || requestData.teamId || '').trim(),
+    playerId: String(player.id || requestData.playerId || '').trim(),
+    teamName: team?.name || requestData.teamName || null,
+    playerName: player?.name || requestData.playerName || null,
+    playerNumber: player?.number ?? requestData.playerNumber ?? null,
+    playerPhotoUrl: player?.photoUrl || requestData.playerPhotoUrl || null,
+    relation: requestData.relation || null
+  };
+  const parentOf = appendUniqueParentLink(userData.parentOf, parentLink);
+  const parentTeamIds = uniqueNonEmptyStrings(parentOf.map((link) => link?.teamId));
+  const parentPlayerKeys = uniqueNonEmptyStrings(parentOf.map((link) => (
+    link?.teamId && link?.playerId ? `${link.teamId}::${link.playerId}` : ''
+  )));
+  const roles = appendUniqueValue(userData.roles, 'parent');
+
+  return {
+    parentOf,
+    parentTeamIds,
+    parentPlayerKeys,
+    roles
+  };
+}
+
 function buildAutoAcceptedParentLink({ codeData, team, player }) {
   return {
     teamId: codeData.teamId,
@@ -8927,6 +8958,52 @@ const notifyRideOfferCancelled = functions.firestore
 
 exports.notifyRideOfferCancelled = notifyRideOfferCancelled;
 exports._internal.notifyRideOfferCancelled = notifyRideOfferCancelled;
+
+exports.syncApprovedParentMembershipRequestUserLink = functions.firestore
+  .document('teams/{teamId}/membershipRequests/{requestId}')
+  .onUpdate(async (change, context) => {
+    const beforeData = change.before.data() || {};
+    const afterData = change.after.data() || {};
+    if (String(afterData.status || '').trim().toLowerCase() !== 'approved') return null;
+    if (String(beforeData.status || '').trim().toLowerCase() === 'approved') return null;
+
+    const teamId = String(context.params?.teamId || '').trim();
+    const playerId = String(afterData.playerId || '').trim();
+    const requesterUserId = String(afterData.requesterUserId || '').trim();
+    if (!teamId || !playerId || !requesterUserId) return null;
+
+    const teamRef = firestore.doc(`teams/${teamId}`);
+    const playerRef = firestore.doc(`teams/${teamId}/players/${playerId}`);
+    const userRef = firestore.doc(`users/${requesterUserId}`);
+
+    await firestore.runTransaction(async (transaction) => {
+      const [teamSnap, playerSnap, userSnap] = await Promise.all([
+        transaction.get(teamRef),
+        transaction.get(playerRef),
+        transaction.get(userRef)
+      ]);
+      if (!teamSnap.exists || !playerSnap.exists) {
+        return;
+      }
+
+      const userData = userSnap.exists ? (userSnap.data() || {}) : {};
+      const team = { id: teamSnap.id, ...(teamSnap.data() || {}) };
+      const player = { id: playerSnap.id, ...(playerSnap.data() || {}) };
+      const userUpdate = buildApprovedParentMembershipUserUpdate({
+        userData,
+        requestData: afterData,
+        team,
+        player
+      });
+
+      transaction.set(userRef, {
+        ...userUpdate,
+        updatedAt: admin.firestore.FieldValue.serverTimestamp()
+      }, { merge: true });
+    });
+
+    return null;
+  });
 
 exports.notifyParentMembershipRequestCreated = functions.firestore
   .document('teams/{teamId}/membershipRequests/{requestId}')

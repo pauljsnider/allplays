@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { defineConfig } from 'vitest/config';
+import { defineConfig, configDefaults } from 'vitest/config';
 
 const workspaceRoot = path.dirname(fileURLToPath(import.meta.url));
 const appNodeModules = path.resolve(workspaceRoot, 'apps/app/node_modules');
@@ -47,5 +47,11 @@ export default defineConfig({
       '@legacy': path.resolve(workspaceRoot, 'js')
     },
     dedupe: ['react', 'react-dom', 'react-router-dom']
+  },
+  test: {
+    // Never run tests from nested git worktrees (e.g. `.claude/worktrees/*`,
+    // agent worktrees). They are separate checkouts whose test files would
+    // otherwise be globbed in and fail on environment-specific issues.
+    exclude: [...configDefaults.exclude, '**/.claude/**', '**/worktrees/**']
   }
 });

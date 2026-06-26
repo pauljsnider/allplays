@@ -12,7 +12,7 @@ import { startAppStartupTimer } from './lib/uxTiming';
 import { hideNativeSplashScreen, initializeNativeAppearance } from './lib/nativeAppearance';
 import './styles/index.css';
 
-initializeAppErrorTracking();
+void initializeAppErrorTracking();
 installReactErrorTelemetry();
 void initializeNativeAppearance();
 const startupTimer = startAppStartupTimer();
