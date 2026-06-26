@@ -11,6 +11,7 @@ const {
 
 const functionsSource = readFileSync(new URL('../../functions/index.js', import.meta.url), 'utf8');
 const serviceWorkerSource = readFileSync(new URL('../../firebase-messaging-sw.js', import.meta.url), 'utf8');
+const appServiceWorkerSource = readFileSync(new URL('../../apps/app/public/firebase-messaging-sw.js', import.meta.url), 'utf8');
 
 function extractChunk(startMarker, endMarker) {
     const start = functionsSource.indexOf(startMarker);
@@ -179,11 +180,30 @@ describe('notification delivery metadata', () => {
         expect(serviceWorkerSource).toContain('event.waitUntil(clients.openWindow(link));');
     });
 
+    it('skips duplicate background notifications when Firebase already rendered a notification payload', () => {
+        expect(serviceWorkerSource).toContain('if (payload?.notification) return;');
+        expect(serviceWorkerSource).toContain("const title = payload?.data?.title || 'ALL PLAYS Update';");
+        expect(serviceWorkerSource).toContain("const body = payload?.data?.body || '';");
+        expect(serviceWorkerSource).not.toContain("const title = payload?.notification?.title || 'ALL PLAYS Update';");
+        expect(serviceWorkerSource).not.toContain("const body = payload?.notification?.body || '';");
+    });
+
     it('versions and expires cached Firebase service worker config', () => {
         expect(serviceWorkerSource).toContain("const CONFIG_CACHE_VERSION = 'v2';");
         expect(serviceWorkerSource).toContain('const CONFIG_CACHE_TTL_MS = 24 * 60 * 60 * 1000;');
         expect(serviceWorkerSource).toContain('cached?.version !== CONFIG_CACHE_VERSION');
         expect(serviceWorkerSource).toContain('Date.now() - cached.cachedAt > CONFIG_CACHE_TTL_MS');
         expect(serviceWorkerSource).toContain('cachedAt: Date.now()');
+    });
+
+    it('keeps the app-hosted service worker lint-safe while matching the root worker behavior', () => {
+        expect(appServiceWorkerSource).toContain('/* global self, caches, Response, fetch, URL, clients, importScripts, firebase, console */');
+        expect(serviceWorkerSource).toContain('/* global importScripts, firebase */');
+        expect(
+            appServiceWorkerSource.replace(
+                '/* global self, caches, Response, fetch, URL, clients, importScripts, firebase, console */',
+                '/* global importScripts, firebase */'
+            )
+        ).toBe(serviceWorkerSource);
     });
 });

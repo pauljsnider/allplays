@@ -133,8 +133,9 @@ async function flush() {
     });
 }
 
-async function waitForText(container, text) {
-    for (let index = 0; index < 120; index += 1) {
+async function waitForText(container, text, timeoutMs = 5000) {
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
         if (container.textContent.includes(text)) return;
         await flush();
     }
