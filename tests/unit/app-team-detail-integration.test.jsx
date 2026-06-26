@@ -331,7 +331,8 @@ describe('React app TeamDetail page', () => {
     it('loads parent-facing team.html features with team and player photos', async () => {
         const { container } = await renderTeamDetail();
 
-        expect(teamDetailMocks.loadParentTeamDetailBootstrap).toHaveBeenCalledWith('team-1', auth.user);
+        expect(teamDetailMocks.loadParentTeamDetailBootstrap).not.toHaveBeenCalled();
+        expect(teamDetailMocks.loadParentTeamDetail).toHaveBeenCalledWith('team-1', auth.user, { includeDeferredData: false });
         expect(container.textContent).toContain('Bears');
         expect(container.querySelector('img[src="https://img.example.test/team.png"]')).toBeTruthy();
         expect(container.textContent).toContain('Season record (2100)');
@@ -591,18 +592,18 @@ describe('React app TeamDetail page', () => {
     it('loads deferred insights and sponsors once, then reuses them across tab switches', async () => {
         const { container } = await renderTeamDetail();
 
-        expect(teamDetailMocks.loadParentTeamDetail).not.toHaveBeenCalled();
+        expect(teamDetailMocks.loadParentTeamDetail).toHaveBeenCalledTimes(1);
         expect(teamDetailMocks.loadTeamDetailInsights).not.toHaveBeenCalled();
         expect(teamDetailMocks.loadTeamDetailSponsors).not.toHaveBeenCalled();
 
         await clickButton(container, 'Insights');
-        expect(teamDetailMocks.loadParentTeamDetail).not.toHaveBeenCalled();
+        expect(teamDetailMocks.loadParentTeamDetail).toHaveBeenCalledTimes(1);
         expect(teamDetailMocks.loadTeamDetailInsights).toHaveBeenCalledTimes(1);
         expect(container.textContent).toContain('Bring ball');
 
         await clickButton(container, 'Overview');
         await clickButton(container, 'Insights');
-        expect(teamDetailMocks.loadParentTeamDetail).not.toHaveBeenCalled();
+        expect(teamDetailMocks.loadParentTeamDetail).toHaveBeenCalledTimes(1);
         expect(teamDetailMocks.loadTeamDetailInsights).toHaveBeenCalledTimes(1);
 
         await clickButton(container, 'More');
@@ -855,7 +856,7 @@ describe('React app TeamDetail page', () => {
     });
 
     it('shows the team unavailable state with a route back to teams', async () => {
-        teamDetailMocks.loadParentTeamDetailBootstrap.mockRejectedValueOnce(new Error('No team access'));
+        teamDetailMocks.loadParentTeamDetail.mockRejectedValueOnce(new Error('No team access'));
         const { container } = await renderTeamDetail();
 
         expect(container.textContent).toContain('Team unavailable');
