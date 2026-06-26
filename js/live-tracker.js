@@ -826,12 +826,14 @@ function renderOpponents() {
   }).join('') || '<div class="text-xs text-slate-500 text-center py-4">Add opponent players</div>';
 
   els.oppCards.querySelectorAll('[data-opp-edit]').forEach(inp => {
-    inp.addEventListener('change', () => {
+    const syncOpponentName = () => {
       const target = state.opp.find(o => o.id === inp.dataset.oppEdit);
       if (target) target.name = inp.value.trim() || target.name;
       scheduleOpponentStatsSync();
       scheduleLiveHasData();
-    });
+    };
+    inp.addEventListener('input', syncOpponentName);
+    inp.addEventListener('change', syncOpponentName);
   });
   els.oppCards.querySelectorAll('[data-opp-del]').forEach(btn => {
     btn.addEventListener('click', () => {
