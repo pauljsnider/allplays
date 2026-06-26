@@ -59,6 +59,8 @@ const starterPrompts = [
 ];
 
 const isDraftConversationId = (conversationId: string) => conversationId === DRAFT_PRIVATE_AI_CONVERSATION_ID;
+const draftConversationLabel = 'New chat';
+const draftConversationPreview = 'Start typing. This draft will save after your first message.';
 
 const resolveActiveConversationId = (
   currentConversationId: string,
@@ -293,7 +295,7 @@ export function PrivateAiChat({ auth }: { auth: AuthState }) {
       if (nextConversationId !== activeConversationId) {
         setActiveConversationId(nextConversationId);
       }
-      await refreshConversations(false);
+      await refreshConversations(false, nextConversationId);
     } catch (error: any) {
       setMessages((current) => current.filter((message) => message.id !== optimisticUser.id));
       setDraft(trimmedText);
@@ -471,6 +473,8 @@ function PrivateAiConversationList({
   onNewConversation: () => void;
   compact?: boolean;
 }) {
+  const showDraftConversation = isDraftConversationId(activeConversationId);
+
   if (compact) {
     return (
       <section className="private-ai-conversation-strip" aria-label="AI conversations">
@@ -479,7 +483,19 @@ function PrivateAiConversationList({
             <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
             Loading
           </span>
-        ) : conversations.length ? conversations.map((conversation) => (
+        ) : null}
+        {!loading && showDraftConversation ? (
+          <button
+            type="button"
+            className="private-ai-conversation-chip private-ai-conversation-chip-active"
+            onClick={() => onSelect(DRAFT_PRIVATE_AI_CONVERSATION_ID)}
+            aria-pressed={true}
+          >
+            <MessageCircle className="h-4 w-4" aria-hidden="true" />
+            <span>{draftConversationLabel}</span>
+          </button>
+        ) : null}
+        {!loading && conversations.length ? conversations.map((conversation) => (
           <button
             key={conversation.id}
             type="button"
@@ -490,9 +506,10 @@ function PrivateAiConversationList({
             <MessageCircle className="h-4 w-4" aria-hidden="true" />
             <span>{conversation.title}</span>
           </button>
-        )) : (
+        )) : null}
+        {!loading && !showDraftConversation && !conversations.length ? (
           <span className="private-ai-conversation-chip private-ai-conversation-chip-muted">No saved chats</span>
-        )}
+        ) : null}
       </section>
     );
   }
@@ -521,6 +538,17 @@ function PrivateAiConversationList({
             Loading chats
           </div>
         ) : null}
+        {!loading && showDraftConversation ? (
+          <button
+            type="button"
+            className="private-ai-conversation-button private-ai-conversation-button-active"
+            onClick={() => onSelect(DRAFT_PRIVATE_AI_CONVERSATION_ID)}
+            aria-pressed={true}
+          >
+            <span className="private-ai-conversation-title">{draftConversationLabel}</span>
+            <span className="private-ai-conversation-preview">{draftConversationPreview}</span>
+          </button>
+        ) : null}
         {!loading && conversations.length ? conversations.map((conversation) => (
           <button
             key={conversation.id}
@@ -535,7 +563,7 @@ function PrivateAiConversationList({
             </span>
           </button>
         )) : null}
-        {!loading && !conversations.length ? (
+        {!loading && !showDraftConversation && !conversations.length ? (
           <div className="rounded-xl border border-dashed border-gray-300 bg-gray-50 px-3 py-4 text-sm font-bold text-gray-500">
             Start a private chat and it will stay here for later.
           </div>
