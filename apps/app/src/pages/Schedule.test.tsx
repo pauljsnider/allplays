@@ -593,6 +593,8 @@ describe('Schedule', () => {
 
     fireEvent.click(screen.getByRole('button', { name: /manage schedule/i }));
 
+    expect(await screen.findByRole('heading', { name: 'Start a new tournament block' })).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'New tournament block' }));
     expect(await screen.findByRole('heading', { name: 'Add tournament for Bears' })).toBeTruthy();
     expect(screen.getByRole('button', { name: /create tournament/i })).toBeTruthy();
   });
@@ -606,6 +608,7 @@ describe('Schedule', () => {
     renderSchedule();
 
     fireEvent.click(await screen.findByRole('button', { name: /manage schedule/i }));
+    fireEvent.click(await screen.findByRole('button', { name: 'New tournament block' }));
     expect(await screen.findByRole('heading', { name: 'Add tournament for Bears' })).toBeTruthy();
 
     fireEvent.change(screen.getByLabelText('Tournament division'), { target: { value: '10U Gold' } });
@@ -632,6 +635,47 @@ describe('Schedule', () => {
         })]
       }), auth.user);
     });
+  });
+
+  it('hides Manage schedule from non-staff schedule users', async () => {
+    scheduleServiceMocks.loadParentSchedule.mockResolvedValueOnce({
+      children: [
+        { playerId: 'player-1', playerName: 'Pat', teamId: 'team-1', teamName: 'Bears' }
+      ],
+      events: [
+        buildScheduleEvent(1, {
+          isTeamStaff: false
+        })
+      ]
+    });
+
+    renderSchedule();
+
+    expect(await screen.findByText('Bears')).toBeTruthy();
+    expect(screen.queryByRole('button', { name: /manage schedule/i })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'New tournament block' })).toBeNull();
+  });
+
+  it('opens the tournament shell from a staff action and cancels without creating data', async () => {
+    scheduleServiceMocks.loadParentSchedule.mockResolvedValueOnce(buildStaffScheduleResult());
+
+    renderSchedule();
+
+    fireEvent.click(await screen.findByRole('button', { name: /manage schedule/i }));
+    expect(await screen.findByRole('heading', { name: 'Start a new tournament block' })).toBeTruthy();
+    expect(screen.queryByRole('heading', { name: 'Add tournament for Bears' })).toBeNull();
+
+    fireEvent.click(screen.getByRole('button', { name: 'New tournament block' }));
+
+    expect(await screen.findByRole('heading', { name: 'Add tournament for Bears' })).toBeTruthy();
+    fireEvent.change(screen.getByLabelText('Tournament division'), { target: { value: '10U Gold' } });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+
+    expect(await screen.findByRole('heading', { name: 'Start a new tournament block' })).toBeTruthy();
+    expect(screen.queryByRole('heading', { name: 'Add tournament for Bears' })).toBeNull();
+    expect(screen.queryByDisplayValue('10U Gold')).toBeNull();
+    expect(scheduleServiceMocks.createScheduledTournamentBlockForApp).not.toHaveBeenCalled();
   });
 
   it('does not label scheduled games with default 0-0 scores as final results', async () => {
@@ -823,6 +867,7 @@ describe('Schedule', () => {
     fireEvent.change(screen.getByLabelText('Team to manage'), { target: { value: 'team-2' } });
 
     expect(await screen.findByRole('heading', { name: 'Add game for Wolves' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'New tournament block' })).toBeTruthy();
     expect(screen.getByRole('heading', { name: 'Add external calendar' })).toBeTruthy();
 
     fireEvent.change(screen.getAllByLabelText('Opponent')[0], { target: { value: 'Falcons' } });
