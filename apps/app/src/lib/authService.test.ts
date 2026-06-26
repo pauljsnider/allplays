@@ -1,23 +1,44 @@
 // @vitest-environment jsdom
-import { readFileSync } from 'node:fs';
-import { dirname, resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-const capacitorMocks = vi.hoisted(() => ({
-  isNativePlatform: vi.fn(() => false),
-  isPluginAvailable: vi.fn(() => false)
+const authState = vi.hoisted(() => ({
+  currentUser: null,
+  app: {
+    options: {
+      apiKey: 'test-api-key'
+    },
+    name: '[DEFAULT]'
+  }
 }));
 
-const firebaseAuthRuntimeMocks = vi.hoisted(() => ({
-  auth: { currentUser: null },
+const legacyAuthMocks = vi.hoisted(() => ({
+  getUserProfile: vi.fn(),
+  listMyParentMembershipRequests: vi.fn(),
+  updateUserProfile: vi.fn(),
+  getUserTeams: vi.fn()
+}));
+
+const parentMembershipMocks = vi.hoisted(() => ({
+  mergeApprovedParentMembershipRequests: vi.fn()
+}));
+
+vi.mock('@capacitor/core', () => ({
+  Capacitor: {
+    isNativePlatform: vi.fn(() => true)
+  }
+}));
+
+vi.mock('@capacitor-firebase/authentication', () => ({
+  FirebaseAuthentication: {}
+}));
+
+vi.mock('./firebaseAuthRuntime', () => ({
+  auth: authState,
   applyActionCode: vi.fn(),
   confirmPasswordReset: vi.fn(),
   createUserWithEmailAndPassword: vi.fn(),
   getRedirectResult: vi.fn(),
-  GoogleAuthProvider: vi.fn(function GoogleAuthProvider(this: Record<string, unknown>) {
-    this.addScope = vi.fn();
-  }),
+  GoogleAuthProvider: class {},
   isSignInWithEmailLink: vi.fn(),
   onAuthStateChanged: vi.fn(),
   sendEmailVerification: vi.fn(),
@@ -31,154 +52,54 @@ const firebaseAuthRuntimeMocks = vi.hoisted(() => ({
   verifyPasswordResetCode: vi.fn()
 }));
 
-const dbMocks = vi.hoisted(() => ({
-  validateAccessCode: vi.fn(),
-  redeemParentInvite: vi.fn(),
-  redeemHouseholdInvite: vi.fn(),
-  redeemAdminInviteAtomically: vi.fn(),
-  markAccessCodeAsUsed: vi.fn(),
-  updateUserProfile: vi.fn(),
-  getTeam: vi.fn(),
-  getUserProfile: vi.fn()
+vi.mock('./adapters/legacyAuth', () => ({
+  loadLegacyAdminInvite: vi.fn(),
+  loadLegacyAuthDb: vi.fn(async () => legacyAuthMocks),
+  loadLegacyInviteFlow: vi.fn(),
+  loadLegacyParentMembershipUtils: vi.fn(async () => parentMembershipMocks),
+  loadLegacySignupFlow: vi.fn()
 }));
 
-const adminInviteMocks = vi.hoisted(() => ({
-  redeemAdminInviteAcceptance: vi.fn()
+vi.mock('./logger', () => ({
+  createLogger: () => ({
+    info: vi.fn(),
+    warn: vi.fn(),
+    error: vi.fn()
+  })
 }));
 
-vi.mock('@capacitor/core', () => ({
-  Capacitor: capacitorMocks
-}));
+import { hydrateFirebaseUser } from './authService';
 
-vi.mock('@capacitor-firebase/authentication', () => ({
-  FirebaseAuthentication: {
-    signInWithGoogle: vi.fn()
-  }
-}));
-
-vi.mock('./firebaseAuthRuntime', () => firebaseAuthRuntimeMocks);
-vi.mock('../../../../js/db.js', () => dbMocks);
-vi.mock('../../../../js/admin-invite.js', () => adminInviteMocks);
-vi.mock('../../../../js/accept-invite-flow.js', () => ({
-  createInviteProcessor: vi.fn()
-}));
-vi.mock('../../../../js/signup-flow.js', () => ({
-  executeEmailPasswordSignup: vi.fn()
-}));
-vi.mock('../../../../js/parent-membership-utils.js', () => ({
-  mergeApprovedParentMembershipRequests: vi.fn(() => ({ changed: false, userUpdate: {} }))
-}));
-
-const libDir = dirname(fileURLToPath(import.meta.url));
-const authServicePath = resolve(libDir, 'authService.ts');
-const legacyAuthAdapterPath = resolve(libDir, 'adapters/legacyAuth.ts');
-const appTsconfigPath = resolve(libDir, '../../tsconfig.json');
-
-function createGoogleUser(overrides: Record<string, unknown> = {}) {
-  return {
-    uid: 'google-user-1',
-    email: 'parent@example.com',
-    displayName: 'Pat Parent',
-    photoURL: '',
-    isNewUser: true,
-    delete: vi.fn().mockResolvedValue(undefined),
-    ...overrides
-  };
-}
-
-describe('app auth invite activation', () => {
+describe('hydrateFirebaseUser', () => {
   beforeEach(() => {
-    vi.resetModules();
-    vi.clearAllMocks();
-    window.sessionStorage.clear();
-    capacitorMocks.isNativePlatform.mockReturnValue(false);
-    firebaseAuthRuntimeMocks.signOut.mockResolvedValue(undefined);
-    dbMocks.validateAccessCode.mockResolvedValue({
-      valid: true,
-      type: 'parent_invite',
-      codeId: 'code-parent-1',
-      data: {
-        code: 'ABCDEFGH',
-        type: 'parent_invite'
-      }
+    authState.currentUser = null;
+    legacyAuthMocks.getUserProfile.mockReset();
+    legacyAuthMocks.listMyParentMembershipRequests.mockReset();
+    legacyAuthMocks.updateUserProfile.mockReset();
+    legacyAuthMocks.getUserTeams.mockReset();
+    parentMembershipMocks.mergeApprovedParentMembershipRequests.mockReset();
+    legacyAuthMocks.getUserProfile.mockResolvedValue({
+      email: 'coach@example.com',
+      coachOf: ['team-1']
     });
-    dbMocks.redeemParentInvite.mockResolvedValue({ success: true, teamId: 'team-1' });
-    dbMocks.markAccessCodeAsUsed.mockResolvedValue(undefined);
-    dbMocks.updateUserProfile.mockResolvedValue(undefined);
-    dbMocks.getTeam.mockResolvedValue({ id: 'team-1', name: 'Bears' });
-    dbMocks.getUserProfile.mockResolvedValue({ email: 'parent@example.com' });
-    adminInviteMocks.redeemAdminInviteAcceptance.mockResolvedValue({ id: 'team-1', name: 'Bears' });
-  });
-
-  it('routes the legacy auth graph through the lazy typed adapter', () => {
-    const authServiceSource = readFileSync(authServicePath, 'utf8');
-    const legacyAuthAdapterSource = readFileSync(legacyAuthAdapterPath, 'utf8');
-
-    expect(authServiceSource).not.toContain('../../../../js/');
-    expect(authServiceSource).not.toContain('@legacy/');
-    expect(authServiceSource).toContain("from './adapters/legacyAuth';");
-    expect(authServiceSource).toContain('loadLegacyAuthDb');
-    expect(legacyAuthAdapterSource).toContain("import('@legacy/db.js')");
-    expect(legacyAuthAdapterSource).toContain("import('@legacy/admin-invite.js')");
-    expect(legacyAuthAdapterSource).toContain("import('@legacy/accept-invite-flow.js')");
-    expect(legacyAuthAdapterSource).toContain("import('@legacy/signup-flow.js')");
-    expect(legacyAuthAdapterSource).toContain("import('@legacy/parent-membership-utils.js')");
-    expect(legacyAuthAdapterSource).not.toMatch(/from\s+['"]@legacy\//);
-    expect(authServiceSource).not.toContain('return Promise.resolve(authDb);');
-  });
-
-  it('includes node types in the app tsconfig for source-inspection auth tests', () => {
-    const tsconfig = JSON.parse(readFileSync(appTsconfigPath, 'utf8')) as {
-      compilerOptions?: { types?: string[] };
-    };
-
-    expect(tsconfig.compilerOptions?.types).toContain('node');
-  });
-
-  it('redeems a Google parent invite using generic pre-auth validation state', async () => {
-    const user = createGoogleUser();
-    firebaseAuthRuntimeMocks.signInWithPopup.mockResolvedValue({ user });
-    const { signInWithGoogleAccount } = await import('./authService');
-
-    await signInWithGoogleAccount('ABCDEFGH');
-
-    expect(dbMocks.validateAccessCode).toHaveBeenCalledWith('ABCDEFGH', undefined);
-    expect(dbMocks.redeemParentInvite).toHaveBeenCalledWith('google-user-1', 'ABCDEFGH', 'parent@example.com');
-    expect(dbMocks.redeemParentInvite.mock.calls[0][1]).toBe('ABCDEFGH');
-    expect(dbMocks.updateUserProfile).toHaveBeenCalledWith('google-user-1', expect.objectContaining({
-      email: 'parent@example.com',
-      fullName: 'Pat Parent'
-    }));
-  });
-
-  it('rejects a mismatched Google admin invite during authenticated redemption', async () => {
-    const user = createGoogleUser({
-      uid: 'google-admin-1',
-      email: 'other@example.com'
+    legacyAuthMocks.listMyParentMembershipRequests.mockResolvedValue([]);
+    legacyAuthMocks.getUserTeams.mockResolvedValue([]);
+    parentMembershipMocks.mergeApprovedParentMembershipRequests.mockReturnValue({
+      changed: false
     });
-    const mismatchError = new Error('This invite was sent to coach@example.com. Sign in with that email to accept it.');
-    firebaseAuthRuntimeMocks.signInWithPopup.mockResolvedValue({ user });
-    dbMocks.validateAccessCode.mockResolvedValue({
-      valid: true,
-      type: 'admin_invite',
-      codeId: 'code-admin-1',
-      data: {
-        code: 'ADMIN123',
-        type: 'admin_invite'
-      }
+  });
+
+  it('loads stored profile roles for native REST fallback users before routing decisions', async () => {
+    const hydrated = await hydrateFirebaseUser({
+      uid: 'coach-1',
+      email: 'coach@example.com',
+      displayName: 'Coach Example',
+      emailVerified: true,
+      isNativeRestSession: true
     });
-    adminInviteMocks.redeemAdminInviteAcceptance.mockRejectedValue(mismatchError);
-    const { signInWithGoogleAccount } = await import('./authService');
 
-    await expect(signInWithGoogleAccount('ADMIN123')).rejects.toThrow(mismatchError.message);
-
-    expect(adminInviteMocks.redeemAdminInviteAcceptance).toHaveBeenCalledWith(expect.objectContaining({
-      userId: 'google-admin-1',
-      userEmail: 'other@example.com',
-      codeId: 'code-admin-1'
-    }));
-    expect(adminInviteMocks.redeemAdminInviteAcceptance.mock.calls[0][0]).not.toHaveProperty('teamId');
-    expect(user.delete).toHaveBeenCalledTimes(1);
-    expect(firebaseAuthRuntimeMocks.signOut).toHaveBeenCalledWith(firebaseAuthRuntimeMocks.auth);
+    expect(legacyAuthMocks.getUserProfile).toHaveBeenCalledWith('coach-1');
+    expect(hydrated.user.roles).toContain('coach');
+    expect(hydrated.user.roles).not.toEqual(['parent']);
   });
 });

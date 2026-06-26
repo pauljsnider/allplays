@@ -840,16 +840,6 @@ async function cleanupFailedNewUser(user: FirebaseUser | null, context: string) 
 }
 
 export async function hydrateFirebaseUser(user: FirebaseUser): Promise<HydratedUser> {
-  if (user.isNativeRestSession && !auth.currentUser) {
-    const profile = {
-      email: user.email || ''
-    };
-    return {
-      user: toAuthUser(user, profile),
-      profile
-    };
-  }
-
   let profile: Record<string, unknown> = {};
   const dbModule = await loadLegacyAuthDb();
   try {
