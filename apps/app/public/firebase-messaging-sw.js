@@ -1,5 +1,4 @@
-/* eslint-env serviceworker */
-/* global importScripts, firebase */
+/* global self, caches, Response, fetch, URL, clients, importScripts, firebase, console */
 
 importScripts('https://www.gstatic.com/firebasejs/12.6.0/firebase-app-compat.js');
 importScripts('https://www.gstatic.com/firebasejs/12.6.0/firebase-messaging-compat.js');
