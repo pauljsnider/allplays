@@ -133,6 +133,83 @@ service cloud.firestore {
              (!request.resource.data.keys().hasAny(['updatedAt']) || request.resource.data.updatedAt is timestamp);
     }
 
+    function householdInviteMembershipMatches(data) {
+      let membershipPath = /databases/$(database)/documents/users/$(request.auth.uid)/familyMemberships/$(data.familyMembershipId);
+      return data.organizerUserId == request.auth.uid &&
+             data.generatedBy == request.auth.uid &&
+             data.familyMembershipId is string &&
+             data.familyMembershipId.size() > 0 &&
+             exists(membershipPath) &&
+             get(membershipPath).data.organizerUserId == request.auth.uid &&
+             get(membershipPath).data.status in ['pending', 'active'] &&
+             get(membershipPath).data.email == data.email &&
+             get(membershipPath).data.teamId == data.teamId &&
+             get(membershipPath).data.playerId == data.playerId;
+    }
+
+    function isHouseholdInviteAccessCodePayloadValid(data) {
+      return data.keys().hasOnly([
+               'code', 'type', 'email', 'displayName', 'generatedBy', 'organizerUserId',
+               'familyMembershipId', 'teamId', 'playerId', 'teamName', 'playerName',
+               'playerNum', 'playerPhotoUrl', 'relation', 'createdAt', 'expiresAt',
+               'used', 'usedBy', 'usedAt', 'revoked'
+             ]) &&
+             data.keys().hasAll([
+               'code', 'type', 'email', 'generatedBy', 'organizerUserId', 'familyMembershipId',
+               'teamId', 'playerId', 'createdAt', 'expiresAt', 'used', 'usedBy', 'usedAt', 'revoked'
+             ]) &&
+             data.type == 'household_invite' &&
+             data.code is string &&
+             data.code.size() > 0 &&
+             data.email is string &&
+             data.email.size() > 0 &&
+             (!('displayName' in data) || data.displayName == null || data.displayName is string) &&
+             data.teamId is string &&
+             data.teamId.size() > 0 &&
+             data.playerId is string &&
+             data.playerId.size() > 0 &&
+             (!('teamName' in data) || data.teamName == null || data.teamName is string) &&
+             (!('playerName' in data) || data.playerName == null || data.playerName is string) &&
+             (!('playerNum' in data) || data.playerNum == null || data.playerNum is string || data.playerNum is int) &&
+             (!('playerPhotoUrl' in data) || data.playerPhotoUrl == null || data.playerPhotoUrl is string) &&
+             (!('relation' in data) || data.relation == null || data.relation is string) &&
+             data.createdAt is timestamp &&
+             data.expiresAt is timestamp &&
+             data.expiresAt > request.time &&
+             data.used == false &&
+             data.usedBy == null &&
+             data.usedAt == null &&
+             data.revoked == false &&
+             householdInviteMembershipMatches(data) &&
+             isParentForPlayer(data.teamId, data.playerId);
+    }
+
+    function isHouseholdInviteRedemptionUpdate() {
+      return resource.data.get('type', null) == 'household_invite' &&
+             request.resource.data.get('type', resource.data.get('type', null)) == 'household_invite' &&
+             request.resource.data.diff(resource.data).affectedKeys().hasOnly(['used', 'usedBy', 'usedAt']) &&
+             resource.data.used == false &&
+             resource.data.revoked != true &&
+             request.auth.token.email is string &&
+             resource.data.email is string &&
+             request.auth.token.email.lower() == resource.data.email.lower() &&
+             request.resource.data.used == true &&
+             request.resource.data.usedBy == request.auth.uid &&
+             request.resource.data.usedAt is timestamp;
+    }
+
+    function isHouseholdInviteRevocationUpdate() {
+      return resource.data.get('type', null) == 'household_invite' &&
+             resource.data.generatedBy == request.auth.uid &&
+             resource.data.organizerUserId == request.auth.uid &&
+             request.resource.data.get('type', resource.data.get('type', null)) == 'household_invite' &&
+             request.resource.data.diff(resource.data).affectedKeys().hasOnly(['revoked', 'revokedAt', 'used', 'updatedAt']) &&
+             request.resource.data.revoked == true &&
+             request.resource.data.revokedAt is timestamp &&
+             request.resource.data.used == true &&
+             (!request.resource.data.keys().hasAny(['updatedAt']) || request.resource.data.updatedAt is timestamp);
+    }
+
     function canReadManagedTeamDocument(data) {
       return isSignedIn() &&
              (data.ownerId == request.auth.uid ||
@@ -1376,15 +1453,12 @@ service cloud.firestore {
                           isTeamOwnerOrAdmin(request.resource.data.teamId) &&
                           isParentInvitePayloadValid(request.resource.data) &&
                           request.resource.data.code == codeId) ||
-                         (request.resource.data.get('type', null) != 'admin_invite' &&
-                          request.resource.data.get('type', null) != 'parent_invite')
+                         (request.resource.data.get('type', null) == 'household_invite' &&
+                          isHouseholdInviteAccessCodePayloadValid(request.resource.data))
                        );
       // Only allow the code generator to update/delete, OR allow system to mark as used during signup
       allow update: if isSignedIn() &&
                        ((resource.data.generatedBy == request.auth.uid &&
-                         request.resource.data.get('type', resource.data.get('type', null)) != 'admin_invite' &&
-                         request.resource.data.get('type', resource.data.get('type', null)) != 'parent_invite') ||
-                        (resource.data.generatedBy == request.auth.uid &&
                          request.resource.data.get('type', resource.data.get('type', null)) == 'admin_invite' &&
                          request.resource.data.teamId is string &&
                          isTeamOwnerOrAdmin(request.resource.data.teamId) &&
@@ -1392,11 +1466,15 @@ service cloud.firestore {
                          request.resource.data.code == codeId) ||
                         isParentInviteRedemptionUpdate() ||
                         isParentInviteRevocationUpdate() ||
+                        isHouseholdInviteRedemptionUpdate() ||
+                        isHouseholdInviteRevocationUpdate() ||
                         // Allow marking as used only if setting these specific fields
                         (resource.data.get('type', null) != 'parent_invite' &&
+                         resource.data.get('type', null) != 'household_invite' &&
                          request.resource.data.diff(resource.data).affectedKeys().hasOnly(['used', 'usedBy', 'usedAt']) &&
                          request.resource.data.usedBy == request.auth.uid) ||
                         (resource.data.get('type', null) != 'parent_invite' &&
+                         resource.data.get('type', null) != 'household_invite' &&
                          resource.data.generatedBy == request.auth.uid &&
                          request.resource.data.diff(resource.data).affectedKeys().hasOnly(['revoked', 'revokedAt', 'used', 'updatedAt'])));
 	      allow delete: if isSignedIn() && resource.data.generatedBy == request.auth.uid;

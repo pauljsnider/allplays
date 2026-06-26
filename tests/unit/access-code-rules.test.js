@@ -38,11 +38,11 @@ describe('access code Firestore rules', () => {
     });
 
     it('prevents creators from updating an existing access code into an admin invite without team-admin authorization', () => {
-        expect(accessCodeRules).toContain("request.resource.data.get('type', resource.data.get('type', null)) != 'admin_invite'");
         expect(accessCodeRules).toContain("request.resource.data.get('type', resource.data.get('type', null)) == 'admin_invite'");
         expect(accessCodeRules).toContain('isTeamOwnerOrAdmin(request.resource.data.teamId)');
         expect(accessCodeRules).toContain('isAdminInvitePayloadValid(request.resource.data)');
         expect(accessCodeRules).toContain('request.resource.data.code == codeId');
+        expect(accessCodeRules).not.toContain("request.resource.data.generatedBy == request.auth.uid &&\n                         request.resource.data.get('type', resource.data.get('type', null)) != 'admin_invite'");
     });
 
     it('requires team-admin authorization and an explicit schema for parent_invite creation', () => {
@@ -61,9 +61,37 @@ describe('access code Firestore rules', () => {
         expect(rules).toContain("request.resource.data.diff(resource.data).affectedKeys().hasOnly(['used', 'usedBy', 'usedAt'])");
         expect(rules).toContain('function isParentInviteRevocationUpdate()');
         expect(rules).toContain("request.resource.data.diff(resource.data).affectedKeys().hasOnly(['revoked', 'revokedAt', 'updatedAt'])");
-        expect(accessCodeRules).toContain("request.resource.data.get('type', resource.data.get('type', null)) != 'parent_invite'");
         expect(accessCodeRules).toContain("resource.data.get('type', null) != 'parent_invite'");
+        expect(accessCodeRules).toContain("resource.data.get('type', null) != 'household_invite'");
         expect(accessCodeRules).not.toContain("resource.data.type != 'parent_invite'");
+    });
+
+    it('requires household_invite creation to match an organizer-owned family membership and linked parent scope', () => {
+        expect(rules).toContain('function householdInviteMembershipMatches(data)');
+        expect(rules).toContain("let membershipPath = /databases/$(database)/documents/users/$(request.auth.uid)/familyMemberships/$(data.familyMembershipId);");
+        expect(rules).toContain("get(membershipPath).data.email == data.email");
+        expect(rules).toContain("get(membershipPath).data.teamId == data.teamId");
+        expect(rules).toContain("get(membershipPath).data.playerId == data.playerId");
+        expect(rules).toContain("get(membershipPath).data.status in ['pending', 'active']");
+        expect(rules).toContain('function isHouseholdInviteAccessCodePayloadValid(data)');
+        expect(rules).toContain("data.type == 'household_invite'");
+        expect(rules).toContain('householdInviteMembershipMatches(data)');
+        expect(rules).toContain('isParentForPlayer(data.teamId, data.playerId)');
+        expect(accessCodeRules).toContain("request.resource.data.get('type', null) == 'household_invite'");
+        expect(accessCodeRules).toContain('isHouseholdInviteAccessCodePayloadValid(request.resource.data)');
+        expect(accessCodeRules).not.toContain("request.resource.data.get('type', null) != 'admin_invite' &&\n                          request.resource.data.get('type', null) != 'parent_invite'");
+    });
+
+    it('locks household_invite updates to invited-email redemption or organizer revocation', () => {
+        expect(rules).toContain('function isHouseholdInviteRedemptionUpdate()');
+        expect(rules).toContain("resource.data.get('type', null) == 'household_invite'");
+        expect(rules).toContain("request.auth.token.email.lower() == resource.data.email.lower()");
+        expect(rules).toContain("request.resource.data.diff(resource.data).affectedKeys().hasOnly(['used', 'usedBy', 'usedAt'])");
+        expect(rules).toContain('function isHouseholdInviteRevocationUpdate()');
+        expect(rules).toContain("request.resource.data.diff(resource.data).affectedKeys().hasOnly(['revoked', 'revokedAt', 'used', 'updatedAt'])");
+        expect(accessCodeRules).toContain('isHouseholdInviteRedemptionUpdate()');
+        expect(accessCodeRules).toContain('isHouseholdInviteRevocationUpdate()');
+        expect(accessCodeRules).toContain("resource.data.get('type', null) != 'household_invite'");
     });
 
     it('validates the allowed admin_invite payload fields before redemption can trust the record', () => {

@@ -4703,6 +4703,22 @@ function assertHouseholdInviteEmailMatches(codeData) {
     }
 }
 
+export function doesHouseholdInviteFamilyMembershipMatch(codeData = {}, membershipData = {}) {
+    const organizerUserId = String(codeData?.organizerUserId || '').trim();
+    const familyMembershipId = String(codeData?.familyMembershipId || '').trim();
+    if (!organizerUserId || !familyMembershipId) {
+        return false;
+    }
+
+    const membershipOrganizerUserId = String(membershipData?.organizerUserId || '').trim();
+    const membershipStatus = String(membershipData?.status || '').trim().toLowerCase();
+    return membershipOrganizerUserId === organizerUserId
+        && ['pending', 'active'].includes(membershipStatus)
+        && normalizeHouseholdInviteEmail(membershipData?.email) === normalizeHouseholdInviteEmail(codeData?.email)
+        && String(membershipData?.teamId || '').trim() === String(codeData?.teamId || '').trim()
+        && String(membershipData?.playerId || '').trim() === String(codeData?.playerId || '').trim();
+}
+
 async function resetHouseholdInviteCodeClaim(codeRef, userId) {
     await runTransaction(db, async (transaction) => {
         const latestCodeSnapshot = await transaction.get(codeRef);
@@ -4843,6 +4859,14 @@ export async function redeemHouseholdInvite(userId, code) {
     try {
         assertHouseholdInviteEmailMatches(codeData);
 
+        if (codeData.organizerUserId && codeData.familyMembershipId) {
+            const membershipRef = doc(db, 'users', codeData.organizerUserId, 'familyMemberships', codeData.familyMembershipId);
+            rollbackState.priorMembershipSnapshot = await getDoc(membershipRef);
+            if (!rollbackState.priorMembershipSnapshot.exists() || !doesHouseholdInviteFamilyMembershipMatch(codeData, rollbackState.priorMembershipSnapshot.data() || {})) {
+                throw new Error('This household invite is no longer valid for that player and email. Ask the organizer to send a new invite.');
+            }
+        }
+
         const [team, player] = await Promise.all([
             getTeam(codeData.teamId),
             getPlayers(codeData.teamId).then(ps => ps.find(p => p.id === codeData.playerId))
@@ -4885,7 +4909,6 @@ export async function redeemHouseholdInvite(userId, code) {
 
         if (codeData.organizerUserId && codeData.familyMembershipId) {
             const membershipRef = doc(db, 'users', codeData.organizerUserId, 'familyMemberships', codeData.familyMembershipId);
-            rollbackState.priorMembershipSnapshot = await getDoc(membershipRef);
             await updateDoc(membershipRef, {
                 status: 'active',
                 userId,
