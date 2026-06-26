@@ -338,6 +338,10 @@ async function mockTeamsModules(page, { scenario = '' } = {}) {
                     return [];
                 }
 
+                export async function loadParentTeamDetailBootstrap(teamId) {
+                    return loadParentTeamDetail(teamId);
+                }
+
                 export async function loadParentTeamDetail(teamId) {
                     if (teamId === 'team-empty') {
                         return {

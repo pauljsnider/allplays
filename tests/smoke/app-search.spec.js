@@ -363,6 +363,10 @@ async function mockSearchModules(page) {
                     return [];
                 }
 
+                export async function loadParentTeamDetailBootstrap(teamId) {
+                    return loadParentTeamDetail(teamId);
+                }
+
                 export async function loadParentTeamDetail(teamId) {
                     const isRockets = teamId === 'team-2';
                     return {
