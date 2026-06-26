@@ -8,14 +8,14 @@ describe('admin invite signup cache busting', () => {
 
         expect(authSource).toContain("import { executeEmailPasswordSignup } from './signup-flow.js?v=5';");
         expect(authSource).toContain("import { redeemAdminInviteAcceptance } from './admin-invite.js?v=5';");
-        expect(authSource).toContain("from './db.js?v=73';");
+        expect(authSource).toContain("from './db.js?v=74';");
     });
 
     it('pins fresh invite acceptance module versions for admin invite redemption', () => {
         const acceptInviteSource = readFileSync(resolve(process.cwd(), 'accept-invite.html'), 'utf8');
 
         expect(acceptInviteSource).toContain(
-            "import { validateAccessCode, redeemParentInvite, redeemHouseholdInvite, redeemAdminInviteAtomically, updateUserProfile, updateTeam, getTeam, getUserProfile, markAccessCodeAsUsed } from './js/db.js?v=73';"
+            "import { validateAccessCode, redeemParentInvite, redeemHouseholdInvite, redeemAdminInviteAtomically, updateUserProfile, updateTeam, getTeam, getUserProfile, markAccessCodeAsUsed } from './js/db.js?v=74';"
         );
         expect(acceptInviteSource).toContain(
             "import { createInviteProcessor, getInviteDashboardUrl, isInviteAlreadyRedeemedError } from './js/accept-invite-flow.js?v=7';"
@@ -24,13 +24,13 @@ describe('admin invite signup cache busting', () => {
 
     it('bumps auth module consumers after signup flow changes', () => {
         const authConsumers = {
-            'login.html': 'auth.js?v=36',
-            'accept-invite.html': 'auth.js?v=36',
-            'edit-team.html': 'auth.js?v=36',
-            'js/admin.js': 'auth.js?v=36',
-            'js/live-game.js': 'auth.js?v=36',
-            'js/live-tracker.js': 'auth.js?v=36',
-            'js/track-basketball.js': 'auth.js?v=36'
+            'login.html': 'auth.js?v=37',
+            'accept-invite.html': 'auth.js?v=37',
+            'edit-team.html': 'auth.js?v=37',
+            'js/admin.js': 'auth.js?v=37',
+            'js/live-game.js': 'auth.js?v=37',
+            'js/live-tracker.js': 'auth.js?v=37',
+            'js/track-basketball.js': 'auth.js?v=37'
         };
 
         for (const [relativePath, expectedVersion] of Object.entries(authConsumers)) {
@@ -39,8 +39,8 @@ describe('admin invite signup cache busting', () => {
         }
 
         const editTeamSource = readFileSync(resolve(process.cwd(), 'edit-team.html'), 'utf8');
-        expect(editTeamSource).toContain("import { checkAuth, sendInviteEmail } from './js/auth.js?v=36';");
-        expect(editTeamSource).not.toContain("import { checkAuth, sendInviteEmail } from './js/auth.js?v=35';");
+        expect(editTeamSource).toContain("import { checkAuth, sendInviteEmail } from './js/auth.js?v=37';");
+        expect(editTeamSource).not.toContain("import { checkAuth, sendInviteEmail } from './js/auth.js?v=36';");
     });
 
     it('keeps the shared header logout import pinned to auth.js v22', () => {
@@ -48,7 +48,7 @@ describe('admin invite signup cache busting', () => {
         const logoutImportMatches = utilsSource.match(/const \{ logout \} = await import\('\.\/auth\.js\?v=22'\);/g) || [];
 
         expect(logoutImportMatches).toHaveLength(1);
-        expect(utilsSource).not.toContain("const { logout } = await import('./auth.js?v=36');");
-        expect(utilsSource).not.toContain("const { logout } = await import('./auth.js?v=36');");
+        expect(utilsSource).not.toContain("const { logout } = await import('./auth.js?v=37');");
+        expect(utilsSource).not.toContain("const { logout } = await import('./auth.js?v=37');");
     });
 });
