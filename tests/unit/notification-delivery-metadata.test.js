@@ -189,7 +189,13 @@ describe('notification delivery metadata', () => {
     });
 
     it('keeps the app-hosted service worker lint-safe without changing its push handling behavior', () => {
-        expect(appServiceWorkerSource).toContain('/* eslint-env serviceworker */');
-        expect(appServiceWorkerSource.replace('/* eslint-env serviceworker */\n', '')).toBe(serviceWorkerSource);
+        expect(appServiceWorkerSource).toContain('/* global self, caches, Response, fetch, URL, clients, importScripts, firebase, console */');
+        expect(serviceWorkerSource).toContain('/* global importScripts, firebase */');
+        expect(
+            appServiceWorkerSource.replace(
+                '/* global self, caches, Response, fetch, URL, clients, importScripts, firebase, console */',
+                '/* global importScripts, firebase */'
+            )
+        ).toBe(serviceWorkerSource);
     });
 });
