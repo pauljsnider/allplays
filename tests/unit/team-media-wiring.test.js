@@ -24,7 +24,7 @@ describe('team media page wiring', () => {
         expect(page).toContain('Add album');
         expect(page).toContain('Upload files');
         expect(page).toContain('Save video link');
-        expect(source).toContain("from './db.js?v=72'");
+        expect(source).toContain("from './db.js?v=73'");
         expect(source).toContain("import { checkAuth } from './auth.js?v=36';");
         expect(source).toContain('checkAuth(async (user) => {');
         expect(source).toContain('team.html#teamId=${encodeURIComponent(state.teamId)}');
@@ -77,5 +77,15 @@ describe('team media page wiring', () => {
         expect(canReadTeamMediaObject({ authUid: 'parent-1', isTeamParent: true, folderVisibility: 'private' })).toBe(false);
         expect(canReadTeamMediaObject({ authUid: 'parent-1', isTeamParent: true, folderExists: false })).toBe(false);
         expect(canReadTeamMediaObject({ authUid: 'admin-1', isTeamAdmin: true, folderVisibility: 'private' })).toBe(true);
+    });
+
+    it('models moved media as inaccessible to parents once the old team-visible object is gone', () => {
+        const parentCanReadOldVisiblePath = canReadTeamMediaObject({ authUid: 'parent-1', isTeamParent: true, folderVisibility: 'team' });
+        const parentCanReadMovedPrivatePath = canReadTeamMediaObject({ authUid: 'parent-1', isTeamParent: true, folderVisibility: 'private' });
+        const parentCanReadDeletedOldPath = canReadTeamMediaObject({ authUid: 'parent-1', isTeamParent: true, folderExists: false, folderVisibility: 'team' });
+
+        expect(parentCanReadOldVisiblePath).toBe(true);
+        expect(parentCanReadMovedPrivatePath).toBe(false);
+        expect(parentCanReadDeletedOldPath).toBe(false);
     });
 });
