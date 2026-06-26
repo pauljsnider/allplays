@@ -651,7 +651,10 @@ describe('Schedule', () => {
 
     renderSchedule();
 
-    expect(await screen.findByText('Bears')).toBeTruthy();
+    await waitFor(() => {
+      expect(scheduleServiceMocks.loadParentSchedule).toHaveBeenCalledTimes(1);
+      expect(screen.queryByRole('status', { name: 'Loading schedule' })).toBeNull();
+    });
     expect(screen.queryByRole('button', { name: /manage schedule/i })).toBeNull();
     expect(screen.queryByRole('button', { name: 'New tournament block' })).toBeNull();
   });
