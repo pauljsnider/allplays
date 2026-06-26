@@ -1096,7 +1096,7 @@ async function renderManageMode({ container, teamId, batchId, team, user, getTea
     container.innerHTML = `
         <div class="mb-6 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
             <div>
-                <a href="team.html?id=${encodeURIComponent(teamId)}" class="text-sm font-semibold text-primary-600 hover:text-primary-700">Back to team</a>
+                <a href="team.html#teamId=${encodeURIComponent(teamId)}" class="text-sm font-semibold text-primary-600 hover:text-primary-700">Back to team</a>
                 <h1 id="page-title" class="mt-2 text-3xl font-bold text-gray-900">Manage team fee</h1>
                 <p id="page-subtitle" class="mt-1 text-sm text-gray-600">Review assigned recipients, record offline payments, and adjust balances.</p>
             </div>

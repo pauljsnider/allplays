@@ -22,7 +22,16 @@ describe('team fees admin page routing', () => {
         const pageSource = readFileSync(new URL('../../team-fees.html', import.meta.url), 'utf8');
 
         expect(adminSource).toContain("import('./db.js?v=74')");
-        expect(pageSource).toContain('<script type="module" src="./js/team-fees-admin.js?v=11"></script>');
+        expect(pageSource).toContain('<script type="module" src="./js/team-fees-admin.js?v=12"></script>');
+    });
+
+    it('routes the manage view back link with the teamId hash parameter that team.html reads', () => {
+        const adminSource = readFileSync(new URL('../../js/team-fees-admin.js', import.meta.url), 'utf8');
+        const teamPageSource = readFileSync(new URL('../../team.html', import.meta.url), 'utf8');
+
+        expect(adminSource).toContain('href="team.html#teamId=${encodeURIComponent(teamId)}"');
+        expect(adminSource).not.toContain('href="team.html?id=${encodeURIComponent(teamId)}"');
+        expect(teamPageSource).toContain('const { teamId } = getUrlParams();');
     });
 });
 
