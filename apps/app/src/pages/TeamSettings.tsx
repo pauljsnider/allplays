@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type ChangeEvent, type FormEvent } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { ArrowLeft, Camera, Loader2, RefreshCw, Save } from 'lucide-react';
-import { loadParentTeamDetail, updateTeamSettingsForApp } from '../lib/teamDetailService';
+import { loadParentTeamDetailBootstrap, updateTeamSettingsForApp } from '../lib/teamDetailService';
 import { normalizeOptionalHttpUrl, parseTeamLivestreamInput } from '../lib/teamLinks';
 import { useAsyncOperation } from '../lib/useAsyncOperation';
 import type { AuthState } from '../lib/types';
@@ -44,7 +44,7 @@ export function TeamSettings({ auth }: { auth: AuthState }) {
     activeLoadIdRef.current = loadId;
 
     return runPrimaryLoad(
-      () => loadParentTeamDetail(teamId, auth.user, { includeDeferredData: false }),
+      () => loadParentTeamDetailBootstrap(teamId, auth.user),
       {
         errorMessage: 'Unable to load team settings.',
         rethrow: false,

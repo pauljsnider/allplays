@@ -346,6 +346,8 @@ type TeamDetailBaseSnapshot = {
   players: any[];
   games: any[];
   configs: any[];
+  gamesLoaded: boolean;
+  configsLoaded: boolean;
 };
 
 type FirestoreDocument = Record<string, any> & { id: string };
@@ -414,20 +416,32 @@ function cacheTeamDetailBaseSnapshot(snapshot: TeamDetailBaseSnapshot) {
     team: snapshot.team,
     players: Array.isArray(snapshot.players) ? snapshot.players : [],
     games: Array.isArray(snapshot.games) ? snapshot.games : [],
-    configs: Array.isArray(snapshot.configs) ? snapshot.configs : []
+    configs: Array.isArray(snapshot.configs) ? snapshot.configs : [],
+    gamesLoaded: snapshot.gamesLoaded === true,
+    configsLoaded: snapshot.configsLoaded === true
   });
 }
 
-async function loadTeamDetailBaseSnapshot(teamId: string): Promise<TeamDetailBaseSnapshot> {
+async function loadTeamDetailBaseSnapshot(teamId: string, options: { includeGamesAndConfigs?: boolean } = {}): Promise<TeamDetailBaseSnapshot> {
   const normalizedTeamId = cleanString(teamId);
+  const includeGamesAndConfigs = options.includeGamesAndConfigs !== false;
   const cachedSnapshot = teamDetailBaseSnapshotCache.get(normalizedTeamId);
-  if (cachedSnapshot?.team) return cachedSnapshot;
+  if (
+    cachedSnapshot?.team
+    && (!includeGamesAndConfigs || (cachedSnapshot.gamesLoaded === true && cachedSnapshot.configsLoaded === true))
+  ) {
+    return cachedSnapshot;
+  }
 
   const [team, players, games, configs] = await Promise.all([
-    loadTeamDocument(normalizedTeamId),
-    loadTeamPlayers(normalizedTeamId),
-    loadTeamGames(normalizedTeamId),
-    loadTeamConfigs(normalizedTeamId)
+    cachedSnapshot?.team ? Promise.resolve(cachedSnapshot.team) : loadTeamDocument(normalizedTeamId),
+    cachedSnapshot?.players ? Promise.resolve(cachedSnapshot.players) : loadTeamPlayers(normalizedTeamId),
+    includeGamesAndConfigs
+      ? (cachedSnapshot?.gamesLoaded ? Promise.resolve(cachedSnapshot.games) : loadTeamGames(normalizedTeamId))
+      : Promise.resolve(cachedSnapshot?.games || []),
+    includeGamesAndConfigs
+      ? (cachedSnapshot?.configsLoaded ? Promise.resolve(cachedSnapshot.configs) : loadTeamConfigs(normalizedTeamId))
+      : Promise.resolve(cachedSnapshot?.configs || [])
   ]);
 
   const snapshot = {
@@ -435,7 +449,9 @@ async function loadTeamDetailBaseSnapshot(teamId: string): Promise<TeamDetailBas
     team,
     players: Array.isArray(players) ? players : [],
     games: Array.isArray(games) ? games : [],
-    configs: Array.isArray(configs) ? configs : []
+    configs: Array.isArray(configs) ? configs : [],
+    gamesLoaded: includeGamesAndConfigs ? true : cachedSnapshot?.gamesLoaded === true,
+    configsLoaded: includeGamesAndConfigs ? true : cachedSnapshot?.configsLoaded === true
   };
   cacheTeamDetailBaseSnapshot(snapshot);
   return snapshot;
@@ -1302,7 +1318,7 @@ export async function loadParentTeamDetail(
   options: { includeDeferredData?: boolean } = {}
 ): Promise<TeamDetailModel> {
   const includeDeferredData = options.includeDeferredData === true;
-  const { team, players, games, configs } = await loadTeamDetailBaseSnapshot(teamId);
+  const { team, players, games, configs } = await loadTeamDetailBaseSnapshot(teamId, { includeGamesAndConfigs: true });
 
   if (!team) throw new Error('Team not found.');
 
@@ -1342,6 +1358,30 @@ export async function loadParentTeamDetail(
     sponsors: [...normalizeSponsorList(adSponsors), ...normalizeSponsorList(localSponsors)],
     includeStaffPermissions: false,
     includeInsights: includeDeferredData
+  });
+}
+
+export async function loadParentTeamDetailBootstrap(teamId: string, user: AuthUser | null): Promise<TeamDetailModel> {
+  const { team, players } = await loadTeamDetailBaseSnapshot(teamId, { includeGamesAndConfigs: false });
+
+  if (!team) throw new Error('Team not found.');
+
+  const linkedPlayerIds = getLinkedPlayerIds(user, teamId, players);
+
+  return buildTeamDetailModel({
+    teamId,
+    team,
+    players,
+    games: [],
+    configs: [],
+    user,
+    linkedPlayerIds,
+    seasonStatsByPlayerId: {},
+    trackingItems: [],
+    trackingStatuses: [],
+    sponsors: [],
+    includeStaffPermissions: false,
+    includeInsights: false
   });
 }
 

@@ -36,7 +36,7 @@ import { getEventDetailPath } from '../lib/homeLogic';
 import { buildPrivateTeamCalendarFeedUrl, getAppleCalendarFeedUrl, getGoogleCalendarFeedUrl } from '../lib/parentToolsService';
 import { createStaffRsvpReminderPreviewLoader, sendStaffRsvpReminder, type StaffRsvpReminderSendResult } from '../lib/scheduleService';
 import type { ParentScheduleEvent, StaffRsvpReminderPreview } from '../lib/scheduleLogic';
-import { addRosterPlayerForApp, archiveTeamTrackingItemForApp, buildPublicTeamGamesIcsUrl, canExposePublicFanFeed, createRosterParentInviteForApp, createStatTrackerConfigForApp, deactivateRosterPlayerForApp, grantScorekeeperAccessForApp, grantVideographerAccessForApp, inviteTeamAdminForApp, loadParentTeamDetail, loadRosterFieldDefinitionsForApp, loadTeamDetailInsights, loadTeamDetailSponsors, loadTeamRosterParentInvites, loadTeamStaffPermissions, loadTeamTrackingAdmin, reactivateRosterPlayerForApp, revokeScorekeeperAccessForApp, revokeTeamAdminAccessForApp, revokeVideographerAccessForApp, saveTeamScheduleNotificationsForApp, saveTeamTrackingItemForApp, setPlayerTrackingStatusForApp, updateStatTrackerConfigForApp, type CreateRosterParentInviteForAppResult, type InviteTeamAdminForAppResult, type TeamDetailEvent, type TeamDetailModel, type TeamDetailPlayer, type TeamRosterFieldDefinition, type TeamRosterParentInviteSummary, type TeamScorekeeperGrantTarget, type TeamTrackingAdminItem } from '../lib/teamDetailService';
+import { addRosterPlayerForApp, archiveTeamTrackingItemForApp, buildPublicTeamGamesIcsUrl, canExposePublicFanFeed, createRosterParentInviteForApp, createStatTrackerConfigForApp, deactivateRosterPlayerForApp, grantScorekeeperAccessForApp, grantVideographerAccessForApp, inviteTeamAdminForApp, loadParentTeamDetail, loadParentTeamDetailBootstrap, loadRosterFieldDefinitionsForApp, loadTeamDetailInsights, loadTeamDetailSponsors, loadTeamRosterParentInvites, loadTeamStaffPermissions, loadTeamTrackingAdmin, reactivateRosterPlayerForApp, revokeScorekeeperAccessForApp, revokeTeamAdminAccessForApp, revokeVideographerAccessForApp, saveTeamScheduleNotificationsForApp, saveTeamTrackingItemForApp, setPlayerTrackingStatusForApp, updateStatTrackerConfigForApp, type CreateRosterParentInviteForAppResult, type InviteTeamAdminForAppResult, type TeamDetailEvent, type TeamDetailModel, type TeamDetailPlayer, type TeamRosterFieldDefinition, type TeamRosterParentInviteSummary, type TeamScorekeeperGrantTarget, type TeamTrackingAdminItem } from '../lib/teamDetailService';
 import { buildStatTrackerConfigPayload, createBlankStatTrackerConfigColumnDraft, createEmptyStatTrackerConfigDraft, createStatTrackerConfigDraft, createStatTrackerConfigDraftFromPreset, getStatTrackerConfigPresetCatalog, validateStatTrackerConfigDraft, type StatTrackerConfigDraft } from '../lib/statTrackerConfigEditor';
 import type { AuthState } from '../lib/types';
 
@@ -96,6 +96,7 @@ export function TeamDetail({ auth }: { auth: AuthState }) {
   const [trackingError, setTrackingError] = useState('');
   const [trackingAttempted, setTrackingAttempted] = useState(false);
   const [trackingItems, setTrackingItems] = useState<TeamTrackingAdminItem[]>([]);
+  const [detailCollectionsLoaded, setDetailCollectionsLoaded] = useState(false);
 
   function navigateToTab(nextTab: TeamTab) {
     if (nextTab === activeTab) return;
@@ -121,9 +122,10 @@ export function TeamDetail({ auth }: { auth: AuthState }) {
       setLoading(true);
       setError(null);
       try {
-        const nextModel = await loadParentTeamDetail(teamId, auth.user, { includeDeferredData: false });
+        const nextModel = await loadParentTeamDetailBootstrap(teamId, auth.user);
         if (!cancelled) {
           setModel(nextModel);
+          setDetailCollectionsLoaded(false);
           setStaffPermissionsError('');
           setStaffPermissionsLoading(false);
           setInsightsLoading(false);
@@ -171,6 +173,33 @@ export function TeamDetail({ auth }: { auth: AuthState }) {
       cancelled = true;
     };
   }, [authUserId, teamId, reloadVersion]);
+
+  useEffect(() => {
+    let cancelled = false;
+    async function loadDeferredTeamCollections() {
+      if (!teamId || !model || detailCollectionsLoaded || (activeTab !== 'schedule' && activeTab !== 'more')) return;
+      try {
+        const nextModel = await loadParentTeamDetail(teamId, auth.user, { includeDeferredData: false });
+        if (!cancelled) {
+          setModel((currentModel) => currentModel ? {
+            ...nextModel,
+            leaderboards: currentModel.leaderboards,
+            trackingSummaries: currentModel.trackingSummaries,
+            sponsors: currentModel.sponsors,
+            staffPermissions: currentModel.staffPermissions || nextModel.staffPermissions
+          } : nextModel);
+          setDetailCollectionsLoaded(true);
+        }
+      } catch {
+        // Keep the lightweight model visible. The schedule or more tab can still surface its own empty state.
+      }
+    }
+
+    void loadDeferredTeamCollections();
+    return () => {
+      cancelled = true;
+    };
+  }, [activeTab, auth.user, detailCollectionsLoaded, model, teamId]);
 
   useEffect(() => {
     let cancelled = false;
@@ -319,12 +348,15 @@ export function TeamDetail({ auth }: { auth: AuthState }) {
 
   async function refreshTeamDetail() {
     if (!teamId) return;
-    const nextModel = await loadParentTeamDetail(teamId, auth.user, { includeDeferredData: false });
+    const nextModel = detailCollectionsLoaded || activeTab === 'schedule' || activeTab === 'more'
+      ? await loadParentTeamDetail(teamId, auth.user, { includeDeferredData: false })
+      : await loadParentTeamDetailBootstrap(teamId, auth.user);
     const mergedModel = {
       ...nextModel,
       leaderboards: model?.leaderboards || nextModel.leaderboards,
       trackingSummaries: model?.trackingSummaries || nextModel.trackingSummaries,
-      sponsors: model?.sponsors || nextModel.sponsors
+      sponsors: model?.sponsors || nextModel.sponsors,
+      staffPermissions: model?.staffPermissions || nextModel.staffPermissions
     };
     if (activeTab === 'more' && nextModel.canManageTeam) {
       const staffPermissions = await loadTeamStaffPermissions(teamId, auth.user);

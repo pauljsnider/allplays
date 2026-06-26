@@ -17,6 +17,7 @@ const teamDetailServiceMocks = vi.hoisted(() => ({
   grantVideographerAccessForApp: vi.fn(),
   inviteTeamAdminForApp: vi.fn(),
   loadParentTeamDetail: vi.fn(),
+  loadParentTeamDetailBootstrap: vi.fn(),
   loadRosterFieldDefinitionsForApp: vi.fn(),
   loadTeamDetailInsights: vi.fn(),
   loadTeamDetailSponsors: vi.fn(),
@@ -180,6 +181,7 @@ describe('TeamDetail', () => {
       writable: true
     });
     teamDetailServiceMocks.loadParentTeamDetail.mockResolvedValue(model);
+    teamDetailServiceMocks.loadParentTeamDetailBootstrap.mockImplementation((...args: any[]) => teamDetailServiceMocks.loadParentTeamDetail(...args));
     teamDetailServiceMocks.loadRosterFieldDefinitionsForApp.mockResolvedValue([]);
     teamDetailServiceMocks.loadTeamDetailInsights.mockResolvedValue({ leaderboards: [], trackingSummaries: [] });
     teamDetailServiceMocks.loadTeamDetailSponsors.mockResolvedValue({ sponsors: [] });
@@ -227,7 +229,7 @@ describe('TeamDetail', () => {
   });
 
   it('shows the shared team skeleton while team detail is loading', () => {
-    teamDetailServiceMocks.loadParentTeamDetail.mockReturnValue(new Promise(() => {}));
+    teamDetailServiceMocks.loadParentTeamDetailBootstrap.mockReturnValue(new Promise(() => {}));
 
     render(
       <MemoryRouter initialEntries={['/teams/team-1']}>
@@ -242,7 +244,7 @@ describe('TeamDetail', () => {
   });
 
   it('shows a retryable team detail error state and reloads on retry', async () => {
-    teamDetailServiceMocks.loadParentTeamDetail
+    teamDetailServiceMocks.loadParentTeamDetailBootstrap
       .mockRejectedValueOnce(new Error('Team detail unavailable.'))
       .mockResolvedValueOnce(model);
 
@@ -258,7 +260,59 @@ describe('TeamDetail', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
 
     expect(await screen.findByRole('heading', { name: 'Bears' })).toBeTruthy();
-    expect(teamDetailServiceMocks.loadParentTeamDetail).toHaveBeenCalledTimes(2);
+    expect(teamDetailServiceMocks.loadParentTeamDetailBootstrap).toHaveBeenCalledTimes(2);
+  });
+
+  it('uses the lightweight bootstrap on overview and defers full detail until schedule opens', async () => {
+    teamDetailServiceMocks.loadParentTeamDetailBootstrap.mockResolvedValue({
+      ...model,
+      upcomingEvents: [],
+      recentResults: [],
+      statTrackerConfigs: []
+    });
+    teamDetailServiceMocks.loadParentTeamDetail.mockResolvedValue({
+      ...model,
+      upcomingEvents: [{
+        id: 'game-next',
+        title: 'Bears vs Tigers',
+        type: 'game',
+        date: new Date(Date.now() + 24 * 60 * 60 * 1000),
+        location: 'Main Gym',
+        opponent: 'Tigers',
+        status: 'scheduled',
+        liveStatus: '',
+        visibility: 'public',
+        isPrivate: false,
+        isPublic: true,
+        shareable: true,
+        publicCalendar: true,
+        homeScore: null,
+        awayScore: null,
+        isCancelled: false,
+        statTrackerConfigId: '',
+        statTrackerConfigLabel: 'No config assigned',
+        statTrackerConfigBaseType: '',
+        statTrackerConfigExists: false,
+        statTrackerConfigIsBasketball: false
+      }]
+    });
+
+    render(
+      <MemoryRouter initialEntries={['/teams/team-1']}>
+        <Routes>
+          <Route path="/teams/:teamId" element={<TeamDetail auth={auth} />} />
+        </Routes>
+      </MemoryRouter>
+    );
+
+    expect(await screen.findByRole('heading', { name: 'Bears' })).toBeTruthy();
+    expect(teamDetailServiceMocks.loadParentTeamDetailBootstrap).toHaveBeenCalledTimes(1);
+    expect(teamDetailServiceMocks.loadParentTeamDetail).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole('button', { name: /schedule/i }));
+
+    await waitFor(() => expect(teamDetailServiceMocks.loadParentTeamDetail).toHaveBeenCalledTimes(1));
+    expect(await screen.findByText('Bears vs Tigers')).toBeTruthy();
   });
 
   it('retries a retryable RSVP reminder preview failure from the shared error state', async () => {
