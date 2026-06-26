@@ -34,7 +34,8 @@ let roster = [
     { id: 'p3', num: '3', name: 'Cam' },
     { id: 'p4', num: '4', name: 'Dia' },
     { id: 'p5', num: '5', name: 'Eli' },
-    { id: 'p6', num: '6', name: 'Flo' }
+    { id: 'p6', num: '6', name: 'Flo' },
+    { id: 'p7', num: '7', name: 'Gia' }
 ];
 let state = {
     period: 'Q1',
@@ -42,14 +43,15 @@ let state = {
     home: 0,
     away: 0,
     onCourt: ['p1', 'p2', 'p3', 'p4', 'p5'],
-    bench: ['p6'],
+    bench: ['p6', 'p7'],
     stats: {
         p1: { pts: 0, time: 0 },
         p2: { pts: 0, time: 0 },
         p3: { pts: 0, time: 0 },
         p4: { pts: 0, time: 0 },
         p5: { pts: 0, time: 0 },
-        p6: { pts: 0, time: 0 }
+        p6: { pts: 0, time: 0 },
+        p7: { pts: 0, time: 0 }
     },
     log: [],
     subs: [],
@@ -93,18 +95,19 @@ describe('track basketball substitution undo', () => {
 
         hooks.applySub('p1', 'p6');
         expect(hooks.state.onCourt).toContain('p6');
-        expect(hooks.state.bench).toContain('p1');
+        expect(hooks.state.bench).toEqual(['p7', 'p1']);
         expect(hooks.state.subs).toHaveLength(1);
         expect(hooks.state.log[0].undoData).toMatchObject({
             type: 'sub',
             outId: 'p1',
-            inId: 'p6'
+            inId: 'p6',
+            benchIndex: 0
         });
 
         hooks.removeLogEntry(0);
 
         expect(hooks.state.onCourt).toEqual(['p1', 'p2', 'p3', 'p4', 'p5']);
-        expect(hooks.state.bench).toEqual(['p6']);
+        expect(hooks.state.bench).toEqual(['p6', 'p7']);
         expect(hooks.state.subs).toEqual([]);
         expect(hooks.state.log).toEqual([]);
     });
@@ -121,7 +124,7 @@ describe('track basketball substitution undo', () => {
         nowSpy.mockRestore();
 
         expect(hooks.state.onCourt).toEqual(['p1', 'p2', 'p3', 'p4', 'p5']);
-        expect(hooks.state.bench).toEqual(['p6']);
+        expect(hooks.state.bench).toEqual(['p6', 'p7']);
         expect(hooks.state.subs).toEqual([]);
         expect(hooks.state.log[0].text).toBe('Undid: Sub: #1 → #6');
     });

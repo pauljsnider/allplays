@@ -344,7 +344,7 @@ function revertLogEntry(logEntry) {
     return true;
   }
 
-  const { type, playerId, statKey, value, isOpponent, outId, inId, subId } = logEntry.undoData;
+  const { type, playerId, statKey, value, isOpponent, outId, inId, subId, benchIndex } = logEntry.undoData;
 
   if (type === 'stat') {
     if (isOpponent) {
@@ -366,13 +366,29 @@ function revertLogEntry(logEntry) {
   }
 
   if (type === 'sub') {
-    const reversed = applySubstitution(state.onCourt, state.bench, inId, outId);
-    if (!reversed.applied) {
+    const onCourtIndex = state.onCourt.indexOf(inId);
+    const benchPlayerIndex = state.bench.indexOf(outId);
+    if (onCourtIndex === -1 || benchPlayerIndex === -1 || state.onCourt.includes(outId)) {
       alert('This substitution can only be removed after newer lineup changes are undone.');
       return false;
     }
-    state.onCourt = reversed.onCourt;
-    state.bench = reversed.bench;
+
+    const nextOnCourt = [...state.onCourt];
+    nextOnCourt[onCourtIndex] = outId;
+    const uniqueOnCourtCount = new Set(nextOnCourt).size;
+    if (uniqueOnCourtCount !== nextOnCourt.length) {
+      alert('This substitution can only be removed after newer lineup changes are undone.');
+      return false;
+    }
+
+    const nextBench = state.bench.filter(id => id !== outId);
+    const normalizedBenchIndex = Number.isInteger(benchIndex)
+      ? Math.max(0, Math.min(benchIndex, nextBench.length))
+      : 0;
+    nextBench.splice(normalizedBenchIndex, 0, inId);
+
+    state.onCourt = nextOnCourt;
+    state.bench = nextBench;
     state.subs = state.subs.filter(sub => sub.id !== subId);
     return true;
   }
@@ -1244,6 +1260,7 @@ function closeSubModal() {
 }
 
 function applySub(outId, inId) {
+  const benchIndex = state.bench.indexOf(inId);
   const result = applySubstitution(state.onCourt, state.bench, outId, inId);
   if (!result.applied) return;
   state.onCourt = result.onCourt;
@@ -1254,7 +1271,8 @@ function applySub(outId, inId) {
     type: 'sub',
     outId,
     inId,
-    subId: subEntry.id
+    subId: subEntry.id,
+    benchIndex
   });
   renderLineup();
   renderLive();
@@ -1268,6 +1286,7 @@ function applyQueue(closeModal = true) {
 
   // Log each individual swap for clarity
   state.subQueue.forEach(pair => {
+    const benchIndex = state.bench.indexOf(pair.in);
     const result = applySubstitution(state.onCourt, state.bench, pair.out, pair.in);
     if (result.applied) {
       state.onCourt = result.onCourt;
@@ -1278,7 +1297,8 @@ function applyQueue(closeModal = true) {
         type: 'sub',
         outId: pair.out,
         inId: pair.in,
-        subId: subEntry.id
+        subId: subEntry.id,
+        benchIndex
       });
     }
   });
