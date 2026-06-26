@@ -136,6 +136,11 @@ type VirtualizedChatWindow = {
   visibleMessages: ChatMessage[];
 };
 
+type VirtualizedChatLayout = {
+  offsets: number[];
+  totalHeight: number;
+};
+
 const CHAT_MESSAGE_INITIAL_WINDOW_COUNT = 40;
 const CHAT_MESSAGE_WINDOW_OVERSCAN_PX = 480;
 const CHAT_MESSAGE_BASE_ESTIMATED_HEIGHT = 104;
@@ -315,6 +320,7 @@ export function ChatWindow({
   const emailSheetLoadedForTeamRef = useRef<string | null>(null);
   const programmaticScrollRef = useRef(false);
   const mountedRef = useRef(true);
+  const scheduledViewportFrameRef = useRef<number | null>(null);
   const scheduledScrollFrameRef = useRef<number | null>(null);
   const scheduledScrollBehaviorRef = useRef<ScrollBehavior>('auto');
   const scheduledScrollForceRef = useRef(false);
@@ -402,12 +408,12 @@ export function ChatWindow({
     () => mergeVisibleChatMessages(messages, optimisticMessages, effectiveConversationId),
     [effectiveConversationId, messages, optimisticMessages]
   );
-  const messageWindow = useMemo(() => buildVirtualizedChatWindow(visibleMessages, {
+  const messageLayout = useMemo(() => buildVirtualizedChatLayout(visibleMessages, measuredMessageHeights), [measuredMessageHeights, visibleMessages]);
+  const messageWindow = useMemo(() => buildVirtualizedChatWindowFromLayout(visibleMessages, messageLayout, {
     scrollTop: messageViewportState.scrollTop,
     viewportHeight: messageViewportState.viewportHeight,
-    measuredHeights: measuredMessageHeights,
     preferTopWindow: olderMessages.length > 0 && messageViewportState.scrollTop <= 0
-  }), [measuredMessageHeights, messageViewportState.scrollTop, messageViewportState.viewportHeight, olderMessages.length, visibleMessages]);
+  }), [messageLayout, messageViewportState.scrollTop, messageViewportState.viewportHeight, olderMessages.length, visibleMessages]);
   const error = teamError || messagesError;
 
   const handleMessageRowHeightChange = useCallback((messageId: string, height: number) => {
@@ -546,6 +552,15 @@ export function ChatWindow({
     }
   }, [removeNativeVoiceListeners, setVoiceDraftTranscript]);
 
+  const syncMessageViewportState = useCallback((container: HTMLDivElement | null) => {
+    if (!container) return;
+    setMessageViewportState((current) => (
+      current.scrollTop === container.scrollTop && current.viewportHeight === container.clientHeight
+        ? current
+        : { scrollTop: container.scrollTop, viewportHeight: container.clientHeight }
+    ));
+  }, []);
+
   const scrollToLatest = useCallback((behavior: ScrollBehavior = 'auto') => {
     if (!mountedRef.current) return;
     const container = messagesRef.current;
@@ -559,19 +574,37 @@ export function ChatWindow({
     );
     programmaticScrollRef.current = true;
     container.scrollTop = Math.max(0, nextHeight - container.clientHeight);
-    setMessageViewportState({ scrollTop: container.scrollTop, viewportHeight: container.clientHeight });
+    syncMessageViewportState(container);
     messagesEndRef.current?.scrollIntoView({ block: 'end', behavior });
     stickToLatestRef.current = true;
     setShowJumpToLatest(false);
     window.setTimeout(() => {
       programmaticScrollRef.current = false;
     }, 80);
-  }, []);
+  }, [syncMessageViewportState]);
 
   const clearScheduledScrollTimeouts = useCallback(() => {
     scheduledScrollTimeoutsRef.current.forEach((timerId) => window.clearTimeout(timerId));
     scheduledScrollTimeoutsRef.current = [];
   }, []);
+
+  const scheduleMessageViewportStateUpdate = useCallback((immediate = false) => {
+    const container = messagesRef.current;
+    if (!container) return;
+    if (immediate || typeof window.requestAnimationFrame !== 'function') {
+      if (scheduledViewportFrameRef.current !== null && typeof window.cancelAnimationFrame === 'function') {
+        window.cancelAnimationFrame(scheduledViewportFrameRef.current);
+      }
+      scheduledViewportFrameRef.current = null;
+      syncMessageViewportState(container);
+      return;
+    }
+    if (scheduledViewportFrameRef.current !== null) return;
+    scheduledViewportFrameRef.current = window.requestAnimationFrame(() => {
+      scheduledViewportFrameRef.current = null;
+      syncMessageViewportState(messagesRef.current);
+    });
+  }, [syncMessageViewportState]);
 
   const maybeScrollToLatest = useCallback((behavior: ScrollBehavior = 'auto', force = false) => {
     if (!mountedRef.current) return false;
@@ -674,19 +707,16 @@ export function ChatWindow({
     const nextHeight = Math.max(container.scrollHeight, messagesContentRef.current?.scrollHeight || 0);
     const delta = Math.max(0, nextHeight - anchor.previousScrollHeight);
     container.scrollTop = anchor.previousScrollTop + delta;
-    setMessageViewportState({ scrollTop: container.scrollTop, viewportHeight: container.clientHeight });
+    syncMessageViewportState(container);
     lastObservedViewportSignatureRef.current = buildChatViewportSignature(nextHeight, container.clientHeight, container.scrollTop);
     olderLoadAnchorRef.current = null;
-  }, [loadingOlder, olderMessages.length]);
+  }, [loadingOlder, olderMessages.length, syncMessageViewportState]);
 
   useLayoutEffect(() => {
     const container = messagesRef.current;
     if (!container) return;
-    const nextState = { scrollTop: container.scrollTop, viewportHeight: container.clientHeight };
-    setMessageViewportState((current) => (
-      current.scrollTop === nextState.scrollTop && current.viewportHeight === nextState.viewportHeight ? current : nextState
-    ));
-  }, [messageWindow.topSpacerHeight, messageWindow.bottomSpacerHeight, messageWindow.visibleMessages.length]);
+    syncMessageViewportState(container);
+  }, [messageWindow.topSpacerHeight, messageWindow.bottomSpacerHeight, messageWindow.visibleMessages.length, syncMessageViewportState]);
 
   useEffect(() => {
     const container = messagesRef.current;
@@ -697,11 +727,7 @@ export function ChatWindow({
       const nextHeight = Math.max(container.scrollHeight, content.scrollHeight);
       const distanceFromBottom = Math.max(0, nextHeight - container.clientHeight - container.scrollTop);
       const nextSignature = buildChatViewportSignature(nextHeight, container.clientHeight, container.scrollTop);
-      setMessageViewportState((current) => (
-        current.scrollTop === container.scrollTop && current.viewportHeight === container.clientHeight
-          ? current
-          : { scrollTop: container.scrollTop, viewportHeight: container.clientHeight }
-      ));
+      syncMessageViewportState(container);
       if (nextSignature === lastObservedViewportSignatureRef.current) return;
       lastObservedViewportSignatureRef.current = nextSignature;
       if (stickToLatestRef.current) {
@@ -718,7 +744,7 @@ export function ChatWindow({
     observer.observe(container);
     observer.observe(content);
     return () => observer.disconnect();
-  }, [scheduleScrollToLatest, scrollToLatest, selectedConversationId]);
+  }, [scheduleScrollToLatest, scrollToLatest, selectedConversationId, syncMessageViewportState]);
 
   useEffect(() => {
     let cancelled = false;
@@ -773,6 +799,9 @@ export function ChatWindow({
 
     return () => {
       mountedRef.current = false;
+      if (scheduledViewportFrameRef.current !== null && typeof window.cancelAnimationFrame === 'function') {
+        window.cancelAnimationFrame(scheduledViewportFrameRef.current);
+      }
       clearScheduledScrollToLatest();
       filePreviews.forEach((preview) => URL.revokeObjectURL(preview.url));
       stopVoiceCapture();
@@ -843,14 +872,7 @@ export function ChatWindow({
   };
 
   const handleMessagesScroll = () => {
-    const container = messagesRef.current;
-    if (container) {
-      setMessageViewportState((current) => (
-        current.scrollTop === container.scrollTop && current.viewportHeight === container.clientHeight
-          ? current
-          : { scrollTop: container.scrollTop, viewportHeight: container.clientHeight }
-      ));
-    }
+    scheduleMessageViewportStateUpdate();
     if (programmaticScrollRef.current) return;
     if (!messages.length) {
       stickToLatestRef.current = true;
@@ -1734,24 +1756,61 @@ export function estimateChatMessageRowHeight(message: ChatMessage, previousMessa
     + (showDayDivider ? CHAT_MESSAGE_DAY_DIVIDER_ESTIMATED_HEIGHT : 0);
 }
 
-export function buildVirtualizedChatWindow(
+export function buildVirtualizedChatLayout(
   messages: ChatMessage[],
+  measuredHeights?: Record<string, number>
+): VirtualizedChatLayout {
+  const offsets = [0];
+  for (let index = 0; index < messages.length; index += 1) {
+    const message = messages[index];
+    const measuredHeight = Number(measuredHeights?.[String(message.id)] || 0);
+    const estimatedHeight = estimateChatMessageRowHeight(message, index > 0 ? messages[index - 1] : null);
+    const height = Math.max(measuredHeight, estimatedHeight);
+    offsets.push(offsets[offsets.length - 1] + height);
+  }
+
+  return {
+    offsets,
+    totalHeight: offsets[offsets.length - 1] || 0
+  };
+}
+
+function findFirstVisibleChatRow(offsets: number[], boundary: number, rowCount: number) {
+  let low = 0;
+  let high = rowCount - 1;
+  let candidate = rowCount - 1;
+
+  while (low <= high) {
+    const mid = Math.floor((low + high) / 2);
+    if (offsets[mid + 1] >= boundary) {
+      candidate = mid;
+      high = mid - 1;
+    } else {
+      low = mid + 1;
+    }
+  }
+
+  return Math.max(0, Math.min(candidate, rowCount - 1));
+}
+
+export function buildVirtualizedChatWindowFromLayout(
+  messages: ChatMessage[],
+  layout: VirtualizedChatLayout,
   {
     scrollTop,
     viewportHeight,
-    measuredHeights,
     overscanPx = CHAT_MESSAGE_WINDOW_OVERSCAN_PX,
     initialWindowCount = CHAT_MESSAGE_INITIAL_WINDOW_COUNT,
     preferTopWindow = false
   }: {
     scrollTop: number;
     viewportHeight: number;
-    measuredHeights?: Record<string, number>;
     overscanPx?: number;
     initialWindowCount?: number;
     preferTopWindow?: boolean;
   }
 ): VirtualizedChatWindow {
+  const { offsets, totalHeight } = layout;
   if (!messages.length) {
     return {
       startIndex: 0,
@@ -1762,18 +1821,6 @@ export function buildVirtualizedChatWindow(
     };
   }
 
-  const heights: number[] = [];
-  const offsets = [0];
-  for (let index = 0; index < messages.length; index += 1) {
-    const message = messages[index];
-    const measuredHeight = Number(measuredHeights?.[String(message.id)] || 0);
-    const estimatedHeight = estimateChatMessageRowHeight(message, index > 0 ? messages[index - 1] : null);
-    const height = Math.max(measuredHeight, estimatedHeight);
-    heights.push(height);
-    offsets.push(offsets[offsets.length - 1] + height);
-  }
-
-  const totalHeight = offsets[offsets.length - 1];
   if (messages.length <= Math.max(1, initialWindowCount)) {
     return {
       startIndex: 0,
@@ -1807,16 +1854,8 @@ export function buildVirtualizedChatWindow(
 
   const startBoundary = Math.max(0, scrollTop - Math.max(0, overscanPx));
   const endBoundary = Math.min(totalHeight, scrollTop + viewportHeight + Math.max(0, overscanPx));
-
-  let startIndex = 0;
-  while (startIndex < messages.length - 1 && offsets[startIndex + 1] < startBoundary) {
-    startIndex += 1;
-  }
-
-  let endIndex = startIndex;
-  while (endIndex < messages.length - 1 && offsets[endIndex + 1] < endBoundary) {
-    endIndex += 1;
-  }
+  const startIndex = findFirstVisibleChatRow(offsets, startBoundary, messages.length);
+  const endIndex = Math.max(startIndex, findFirstVisibleChatRow(offsets, endBoundary, messages.length));
 
   return {
     startIndex,
@@ -1825,6 +1864,37 @@ export function buildVirtualizedChatWindow(
     bottomSpacerHeight: Math.max(0, totalHeight - offsets[endIndex + 1]),
     visibleMessages: messages.slice(startIndex, endIndex + 1)
   };
+}
+
+export function buildVirtualizedChatWindow(
+  messages: ChatMessage[],
+  {
+    scrollTop,
+    viewportHeight,
+    measuredHeights,
+    overscanPx = CHAT_MESSAGE_WINDOW_OVERSCAN_PX,
+    initialWindowCount = CHAT_MESSAGE_INITIAL_WINDOW_COUNT,
+    preferTopWindow = false
+  }: {
+    scrollTop: number;
+    viewportHeight: number;
+    measuredHeights?: Record<string, number>;
+    overscanPx?: number;
+    initialWindowCount?: number;
+    preferTopWindow?: boolean;
+  }
+): VirtualizedChatWindow {
+  return buildVirtualizedChatWindowFromLayout(
+    messages,
+    buildVirtualizedChatLayout(messages, measuredHeights),
+    {
+      scrollTop,
+      viewportHeight,
+      overscanPx,
+      initialWindowCount,
+      preferTopWindow
+    }
+  );
 }
 
 function resolveMutedState(
