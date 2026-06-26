@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
-import { MemoryRouter, Route, Routes } from 'react-router-dom';
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { createMemoryRouter, MemoryRouter, Route, RouterProvider, Routes } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { TeamDetail } from './TeamDetail';
 import type { AuthState } from '../lib/types';
@@ -338,6 +338,68 @@ describe('TeamDetail', () => {
     expect(teamDetailServiceMocks.loadParentTeamDetail).toHaveBeenCalledTimes(1);
   });
 
+  it('drives team tabs from the route search state', async () => {
+    const router = createMemoryRouter(
+      [
+        {
+          path: '/teams/:teamId',
+          element: <TeamDetail auth={auth} />
+        }
+      ],
+      { initialEntries: ['/teams/team-1?tab=roster'] }
+    );
+
+    render(<RouterProvider router={router} />);
+
+    expect(await screen.findByRole('heading', { name: 'Bears' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: /roster/i }).getAttribute('aria-pressed')).toBe('true');
+    expect(router.state.location.search).toBe('?tab=roster');
+
+    fireEvent.click(screen.getByRole('button', { name: /more/i }));
+    await waitFor(() => expect(router.state.location.search).toBe('?tab=more'));
+    expect(screen.getByRole('button', { name: /more/i }).getAttribute('aria-pressed')).toBe('true');
+
+    fireEvent.click(screen.getByRole('button', { name: /overview/i }));
+    await waitFor(() => expect(router.state.location.search).toBe(''));
+    expect(screen.getByRole('button', { name: /overview/i }).getAttribute('aria-pressed')).toBe('true');
+  });
+
+  it('steps back to team overview before leaving the team hub', async () => {
+    const router = createMemoryRouter(
+      [
+        {
+          path: '/teams',
+          element: <div>Teams list</div>
+        },
+        {
+          path: '/teams/:teamId',
+          element: <TeamDetail auth={auth} />
+        }
+      ],
+      { initialEntries: ['/teams', '/teams/team-1', '/teams/team-1?tab=roster'], initialIndex: 2 }
+    );
+
+    render(<RouterProvider router={router} />);
+
+    expect(await screen.findByRole('heading', { name: 'Bears' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: /roster/i }).getAttribute('aria-pressed')).toBe('true');
+
+    await act(async () => {
+      await router.navigate(-1);
+    });
+
+    await waitFor(() => expect(router.state.location.pathname).toBe('/teams/team-1'));
+    expect(router.state.location.search).toBe('');
+    expect(screen.getByRole('button', { name: /overview/i }).getAttribute('aria-pressed')).toBe('true');
+
+    await act(async () => {
+      await router.navigate(-1);
+    });
+
+    await waitFor(() => expect(router.state.location.pathname).toBe('/teams'));
+    expect(await screen.findByText('Teams list')).toBeTruthy();
+  });
+
   it('renders native standings rows with the current team highlight and expandable overflow', async () => {
     const standingsRows = [
       { rank: 1, team: 'Lions', w: 8, l: 1, t: 0, points: 16 },
@@ -371,10 +433,10 @@ describe('TeamDetail', () => {
     expect(screen.getByRole('columnheader', { name: 'PTS' })).toBeTruthy();
     expect(screen.getByText('Lions')).toBeTruthy();
     expect(screen.queryByText('Falcons')).toBeNull();
-    expect(screen.getByText('Bears')).toBeTruthy();
+    const currentTeamCell = screen.getAllByText('Bears').find((element) => element.tagName === 'TD');
+    expect(currentTeamCell).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Show 1 more team' })).toBeTruthy();
 
-    const currentTeamCell = screen.getAllByText('Bears').find((element) => element.tagName === 'TD');
     const currentTeamRow = currentTeamCell?.closest('tr');
     expect(currentTeamRow?.getAttribute('aria-current')).toBe('true');
 
