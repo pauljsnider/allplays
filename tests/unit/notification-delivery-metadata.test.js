@@ -11,6 +11,7 @@ const {
 
 const functionsSource = readFileSync(new URL('../../functions/index.js', import.meta.url), 'utf8');
 const serviceWorkerSource = readFileSync(new URL('../../firebase-messaging-sw.js', import.meta.url), 'utf8');
+const appServiceWorkerSource = readFileSync(new URL('../../apps/app/public/firebase-messaging-sw.js', import.meta.url), 'utf8');
 
 function extractChunk(startMarker, endMarker) {
     const start = functionsSource.indexOf(startMarker);
@@ -185,5 +186,10 @@ describe('notification delivery metadata', () => {
         expect(serviceWorkerSource).toContain('cached?.version !== CONFIG_CACHE_VERSION');
         expect(serviceWorkerSource).toContain('Date.now() - cached.cachedAt > CONFIG_CACHE_TTL_MS');
         expect(serviceWorkerSource).toContain('cachedAt: Date.now()');
+    });
+
+    it('keeps the app-hosted service worker lint-safe without changing its push handling behavior', () => {
+        expect(appServiceWorkerSource).toContain('/* eslint-env serviceworker */');
+        expect(appServiceWorkerSource.replace('/* eslint-env serviceworker */\n', '')).toBe(serviceWorkerSource);
     });
 });
