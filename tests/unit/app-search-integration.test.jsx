@@ -272,6 +272,33 @@ describe('React app shell search', () => {
         expect(container.querySelector('[data-testid="route"]').textContent).toBe('/players/team-home/player-1');
     });
 
+    it('shows local team matches before delayed public-team enrichment resolves', async () => {
+        let resolvePublicTeams;
+        dbMocks.discoverPublicTeams.mockImplementationOnce(() => new Promise((resolve) => {
+            resolvePublicTeams = resolve;
+        }));
+
+        const { container } = await renderShell();
+
+        await clickButton(container, 'Search');
+        await fillSearch(container, 'home');
+
+        expect(container.textContent).toContain('Home Rockets');
+        expect(container.textContent).not.toContain('Home Heroes');
+        expect(container.textContent).not.toContain('Searching teams...');
+
+        resolvePublicTeams({
+            teams: [
+                { id: 'team-public-home', name: 'Home Heroes', sport: 'Basketball', city: 'Austin', state: 'TX', isPublic: true }
+            ],
+            nextCursor: null
+        });
+        await flush(50);
+
+        await waitForText(container, 'Home Heroes');
+        expect(container.textContent).toContain('Home Rockets');
+    });
+
     it('lets player search start before slow team hydration finishes and merges team results afterward', async () => {
         let resolveParentHome;
         homeMocks.loadParentHome.mockImplementationOnce(() => new Promise((resolve) => {
@@ -382,6 +409,27 @@ describe('React app shell search', () => {
         expect(container.textContent).toContain('#9 Pat Star');
         expect(container.textContent).toContain('#10 Pat Stone');
         expect(container.textContent).not.toContain('Paige Forward');
+    });
+
+    it('reuses cached public-team searches for repeated normalized dialog queries', async () => {
+        dbMocks.discoverPublicTeams.mockResolvedValue({
+            teams: [
+                { id: 'team-1', name: 'Bears', sport: 'Basketball', zip: '66210', isPublic: true, appAccess: true },
+                { id: 'team-public-2', name: 'Bear Creek', sport: 'Soccer', city: 'Olathe', state: 'KS', isPublic: true }
+            ],
+            nextCursor: null
+        });
+
+        const { container } = await renderShell();
+
+        await clickButton(container, 'Search');
+        await fillSearch(container, 'bea');
+        await waitForText(container, 'Bear Creek');
+
+        await fillSearch(container, ' BEA ');
+        await waitForText(container, 'Bear Creek');
+
+        expect(dbMocks.discoverPublicTeams).toHaveBeenCalledTimes(1);
     });
 
     it('shows unfiltered help matches in search and routes advanced help filtering to the help portal', async () => {
