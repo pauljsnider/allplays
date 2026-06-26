@@ -107,9 +107,9 @@ describe('officiating slots', () => {
         expect(officialsSource).toContain('Result submitted');
         expect(officialsSource).toContain("slot.status !== 'accepted' || !hasGameStarted(game) || isCancelled(game)");
         expect(officialsSource).toContain("document.getElementById('officials-status').textContent = 'Result saved.';");
-        expect(officialsSource).toContain("'./js/db.js?v=72'");
-        expect(officialsSource).not.toContain("'./js/db.js?v=43'");
-        expect(officialsSource).not.toContain("'./js/db.js?v=67'");
+        expect(officialsSource).toContain("'./js/db.js?v=74'");
+        expect(officialsSource).not.toContain("'./js/db.js?v=44'");
+        expect(officialsSource).not.toContain("'./js/db.js?v=68'");
         expect(dbSource).toContain('export async function submitOfficiatingAssignmentResult(teamId, gameId, slotId, result, official = auth.currentUser)');
         expect(dbSource).toContain("throw new Error('Cancelled games cannot accept final results.');");
         expect(dbSource).toContain('homeScore: submittedResult.homeScore');

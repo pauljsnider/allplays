@@ -1183,6 +1183,81 @@ function sanitizeTeamMediaFileName(name) {
         .slice(0, 120) || 'photo';
 }
 
+function parseTeamMediaStoragePath(storagePath) {
+    const match = String(storagePath || '').match(/^team-media\/([^/]+)\/([^/]+)\/([^/]+)\/(.+)$/);
+    if (!match) return null;
+    return {
+        teamId: match[1],
+        folderId: match[2],
+        userId: match[3],
+        fileName: match[4]
+    };
+}
+
+function buildMovedTeamMediaStoragePath(teamId, targetFolderId, item = {}) {
+    const parsedPath = parseTeamMediaStoragePath(item.storagePath);
+    const userId = parsedPath?.userId || String(item.uploadedBy || auth.currentUser?.uid || '').trim() || getRequiredSignedInUserId();
+    const fileName = parsedPath?.fileName
+        || `${Date.now()}-${sanitizeTeamMediaFileName(item.fileName || item.title || item.id || 'media')}`;
+    return `team-media/${teamId}/${targetFolderId}/${userId}/${fileName}`;
+}
+
+async function copyTeamMediaStorageObject(sourcePath, destinationPath, mimeType) {
+    const sourceUrl = await getDownloadURL(ref(storage, sourcePath));
+    const response = await fetch(sourceUrl);
+    if (!response.ok) {
+        throw new Error(`Unable to copy team media object from ${sourcePath}: ${response.status}`);
+    }
+    const blob = await response.blob();
+    await uploadBytes(ref(storage, destinationPath), blob, {
+        contentType: mimeType || blob.type || 'application/octet-stream'
+    });
+}
+
+async function moveTeamMediaStorageBackedItem(teamId, item = {}, update = {}) {
+    if (!item.storagePath) {
+        throw new Error('Cannot move media: missing file reference');
+    }
+
+    const nextStoragePath = buildMovedTeamMediaStoragePath(teamId, update.folderId, item);
+    if (nextStoragePath === item.storagePath) {
+        await updateDoc(doc(db, `teams/${teamId}/mediaItems`, item.id), {
+            folderId: update.folderId,
+            order: update.order,
+            updatedAt: serverTimestamp()
+        });
+        return;
+    }
+
+    await copyTeamMediaStorageObject(item.storagePath, nextStoragePath, item.mimeType);
+
+    const itemRef = doc(db, `teams/${teamId}/mediaItems`, item.id);
+    try {
+        await updateDoc(itemRef, {
+            folderId: update.folderId,
+            order: update.order,
+            storagePath: nextStoragePath,
+            updatedAt: serverTimestamp()
+        });
+    } catch (error) {
+        await deleteObject(ref(storage, nextStoragePath)).catch(() => undefined);
+        throw error;
+    }
+
+    try {
+        await deleteObject(ref(storage, item.storagePath));
+    } catch (error) {
+        await updateDoc(itemRef, {
+            folderId: item.folderId,
+            order: item.order,
+            storagePath: item.storagePath,
+            updatedAt: serverTimestamp()
+        }).catch(() => undefined);
+        await deleteObject(ref(storage, nextStoragePath)).catch(() => undefined);
+        throw error;
+    }
+}
+
 export async function uploadTeamMediaPhoto(teamId, folderId, file, options = {}) {
     const cleanTeamId = String(teamId || '').trim();
     const cleanFolderId = String(folderId || '').trim();
@@ -1364,15 +1439,26 @@ export async function moveTeamMediaItems(teamId, itemIds = [], targetFolderId) {
     const targetItems = await getTeamMediaItems(teamId, targetFolderId);
     const updates = buildMoveUpdates(itemIds, targetFolderId, targetItems.length);
     if (updates.length === 0) throw new Error('Select at least one media item to move.');
-    const batch = writeBatch(db);
-    updates.forEach(({ id, folderId, order }) => {
-        batch.update(doc(db, `teams/${teamId}/mediaItems`, id), {
-            folderId,
-            order,
+
+    const selectedIds = new Set(updates.map(({ id }) => id));
+    const itemsSnapshot = await getDocs(getTeamMediaItemsRef(teamId));
+    const itemsById = new Map(itemsSnapshot.docs.map((itemDoc) => [itemDoc.id, { id: itemDoc.id, ...itemDoc.data() }]));
+
+    for (const update of updates) {
+        const item = itemsById.get(update.id);
+        if (!item || !selectedIds.has(update.id)) continue;
+
+        if (['photo', 'file'].includes(String(item.type || '').toLowerCase())) {
+            await moveTeamMediaStorageBackedItem(teamId, item, update);
+            continue;
+        }
+
+        await updateDoc(doc(db, `teams/${teamId}/mediaItems`, update.id), {
+            folderId: update.folderId,
+            order: update.order,
             updatedAt: serverTimestamp()
         });
-    });
-    await batch.commit();
+    }
 }
 
 export async function bulkDeleteTeamMediaItems(teamId, itemIds = []) {

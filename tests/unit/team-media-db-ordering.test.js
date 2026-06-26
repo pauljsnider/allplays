@@ -10,6 +10,7 @@ const firebaseMocks = vi.hoisted(() => ({
     getDoc: vi.fn(),
     getDocs: vi.fn(),
     getDownloadURL: vi.fn(async () => 'https://cdn.example.test/uploaded-file'),
+    deleteObject: vi.fn(async () => undefined),
     doc: vi.fn((_db, path, id) => ({ path: `${path}/${id}` })),
     limit: vi.fn((value) => ({ type: 'limit', value })),
     orderBy: vi.fn((field, direction) => ({ type: 'orderBy', field, direction })),
@@ -25,9 +26,25 @@ const firebaseMocks = vi.hoisted(() => ({
     })),
     serverTimestamp: vi.fn(() => 'server-ts'),
     startAfter: vi.fn((cursor) => ({ type: 'startAfter', cursor })),
+    uploadBytes: vi.fn(async () => ({ ref: { fullPath: 'team-media/copied-upload' } })),
     updateDoc: vi.fn(async () => undefined),
     where: vi.fn((field, op, value) => ({ type: 'where', field, op, value })),
     writeBatch: vi.fn(),
+}));
+
+const teamMediaUtilsMocks = vi.hoisted(() => ({
+    buildBulkDeleteUpdates: vi.fn(),
+    buildMoveUpdates: vi.fn(),
+    buildReorderUpdates: vi.fn(),
+    isSafeTeamMediaUrl: vi.fn(() => true),
+    isSupportedTeamMediaDocument: vi.fn(() => true),
+    isSupportedTeamMediaImage: vi.fn(() => true),
+    normalizeTeamMediaFolderDraft: vi.fn((draft = {}) => ({
+        name: String(draft.name || '').trim(),
+        visibility: String(draft.visibility || 'team').trim() || 'team'
+    })),
+    normalizeAlbumVisibility: vi.fn((value) => value),
+    sortByMediaOrder: vi.fn((items) => items)
 }));
 
 const uploadTaskQueue = vi.hoisted(() => []);
@@ -63,9 +80,9 @@ vi.mock('../../js/firebase.js?v=19', () => ({
     runTransaction: firebaseMocks.runTransaction,
     httpsCallable: vi.fn(),
     ref: vi.fn((_storage, path) => ({ fullPath: path })),
-    uploadBytes: vi.fn(),
+    uploadBytes: firebaseMocks.uploadBytes,
     getDownloadURL: firebaseMocks.getDownloadURL,
-    deleteObject: vi.fn()
+    deleteObject: firebaseMocks.deleteObject
 }));
 
 vi.mock('../../js/firebase-images.js?v=6', () => ({
@@ -74,20 +91,7 @@ vi.mock('../../js/firebase-images.js?v=6', () => ({
     requireImageAuth: vi.fn()
 }));
 
-vi.mock('../../js/team-media-utils.js?v=4', () => ({
-    buildBulkDeleteUpdates: vi.fn(),
-    buildMoveUpdates: vi.fn(),
-    buildReorderUpdates: vi.fn(),
-    isSafeTeamMediaUrl: vi.fn(() => true),
-    isSupportedTeamMediaDocument: vi.fn(() => true),
-    isSupportedTeamMediaImage: vi.fn(() => true),
-    normalizeTeamMediaFolderDraft: vi.fn((draft = {}) => ({
-        name: String(draft.name || '').trim(),
-        visibility: String(draft.visibility || 'team').trim() || 'team'
-    })),
-    normalizeAlbumVisibility: vi.fn((value) => value),
-    sortByMediaOrder: vi.fn((items) => items)
-}));
+vi.mock('../../js/team-media-utils.js?v=4', () => teamMediaUtilsMocks);
 
 vi.mock('../../js/vendor/firebase-storage.js', () => ({
     uploadBytesResumable: vi.fn((_storageRef, _file, _metadata) => {
@@ -107,6 +111,11 @@ describe('team media db ordering', () => {
         folderState.nextMediaOrder = 0;
         addDocState.nextId = 1;
         uploadTaskQueue.length = 0;
+        global.fetch = vi.fn(async () => ({
+            ok: true,
+            status: 200,
+            blob: async () => new Blob(['copied-media'], { type: 'image/jpeg' })
+        }));
     });
 
     it('assigns unique sequential orders to concurrent photo uploads without persisting download URLs', async () => {
@@ -357,6 +366,48 @@ describe('team media db ordering', () => {
         expect(firstPage.hasMore).toBe(true);
         expect(secondPage.items.map((item) => item.id)).toEqual(['media-3']);
         expect(secondPage.hasMore).toBe(false);
+    });
+
+    it('re-scopes storage-backed media when moving into a different album', async () => {
+        teamMediaUtilsMocks.buildMoveUpdates.mockReturnValue([
+            { id: 'media-1', folderId: 'folder-private', order: 3 }
+        ]);
+        firebaseMocks.getDocs
+            .mockResolvedValueOnce({ docs: [] })
+            .mockResolvedValueOnce({
+                docs: [{
+                    id: 'media-1',
+                    data: () => ({
+                        folderId: 'folder-team',
+                        order: 0,
+                        type: 'photo',
+                        mimeType: 'image/jpeg',
+                        storagePath: 'team-media/team-1/folder-team/user-1/original.jpg',
+                        uploadedBy: 'user-1',
+                        deleted: false
+                    })
+                }]
+            });
+        firebaseMocks.getDownloadURL.mockResolvedValueOnce('https://cdn.example.test/original.jpg');
+
+        const { moveTeamMediaItems } = await import('../../js/db.js');
+        await moveTeamMediaItems('team-1', ['media-1'], 'folder-private');
+
+        expect(firebaseMocks.uploadBytes).toHaveBeenCalledWith(
+            { fullPath: 'team-media/team-1/folder-private/user-1/original.jpg' },
+            expect.any(Blob),
+            { contentType: 'image/jpeg' }
+        );
+        expect(firebaseMocks.updateDoc).toHaveBeenCalledWith(
+            { path: 'teams/team-1/mediaItems/media-1' },
+            {
+                folderId: 'folder-private',
+                order: 3,
+                storagePath: 'team-media/team-1/folder-private/user-1/original.jpg',
+                updatedAt: 'server-ts'
+            }
+        );
+        expect(firebaseMocks.deleteObject).toHaveBeenCalledWith({ fullPath: 'team-media/team-1/folder-team/user-1/original.jpg' });
     });
 
     it('preserves legacy media without order fields at the end of paginated reads', async () => {
