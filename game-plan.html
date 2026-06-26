@@ -304,7 +304,7 @@
         import { renderHeader, renderFooter, getUrlParams, formatDate, formatTime, fetchAndParseCalendar, extractOpponent, isPracticeEvent, isTrackedCalendarEvent } from './js/utils.js?v=11';
         import { checkAuth } from './js/auth.js?v=37';
         import { getTeamAccessInfo } from './js/team-access.js';
-        import { createAutoSaveController } from './js/game-plan-autosave.js?v=1';
+        import { createAutoSaveController } from './js/game-plan-autosave.js?v=2';
         import { buildGamePlanIntervals } from './js/game-plan-intervals.js?v=2';
         import { normalizeLineupsForGamePlanPlanner } from './js/game-plan-interop.js?v=2';
 
@@ -645,6 +645,8 @@
         }
 
         async function loadGame(game) {
+            await autoSave.flush(currentTeamId, currentGameId, gamePlan, currentGame);
+
             currentGameId = game.id;
             currentGame = game;
 
@@ -670,7 +672,6 @@
             intervalsCache = [];
             lastSelectedPlayerId = null;
             dragSourceCellKey = null;
-            autoSave.cancel();
             const saveStatusEl = document.getElementById('save-status');
             const saveStatusText = document.getElementById('save-status-text');
             const saveStatusDot = document.getElementById('save-status-dot');

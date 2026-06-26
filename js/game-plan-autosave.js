@@ -9,29 +9,69 @@
 export function createAutoSaveController({ updateGame, onStatusChange, delay = 1500 } = {}) {
     let timer = null;
     let hasPendingSave = false;
+    let pendingPayload = null;
+    let activeSavePromise = null;
 
     async function executeSave(teamId, gameId, gamePlan) {
+        if (!gameId) {
+            return;
+        }
+
         onStatusChange?.('saving');
-        try {
+        activeSavePromise = (async () => {
             await updateGame(teamId, gameId, { gamePlan });
+        })();
+
+        try {
+            await activeSavePromise;
             hasPendingSave = false;
             onStatusChange?.('saved');
         } catch (err) {
             console.error('Auto-save failed:', err);
             onStatusChange?.('error');
+        } finally {
+            activeSavePromise = null;
         }
     }
 
     function scheduleSave(teamId, gameId, gamePlan, game) {
         if (!gameId || game?.isCalendar || game?.isSharedGame) return;
         hasPendingSave = true;
+        pendingPayload = { teamId, gameId, gamePlan };
         onStatusChange?.('unsaved');
         clearTimeout(timer);
-        timer = setTimeout(() => executeSave(teamId, gameId, gamePlan), delay);
+        timer = setTimeout(() => {
+            timer = null;
+            const payload = pendingPayload;
+            pendingPayload = null;
+            if (payload) {
+                return executeSave(payload.teamId, payload.gameId, payload.gamePlan);
+            }
+            return undefined;
+        }, delay);
+    }
+
+    async function flush(teamId, gameId, gamePlan, game) {
+        if (!gameId || game?.isCalendar || game?.isSharedGame) return;
+
+        if (timer) {
+            clearTimeout(timer);
+            timer = null;
+            const payload = pendingPayload ?? { teamId, gameId, gamePlan };
+            pendingPayload = null;
+            await executeSave(payload.teamId, payload.gameId, payload.gamePlan);
+            return;
+        }
+
+        if (activeSavePromise) {
+            await activeSavePromise;
+        }
     }
 
     function cancel() {
         clearTimeout(timer);
+        timer = null;
+        pendingPayload = null;
         hasPendingSave = false;
     }
 
@@ -39,5 +79,5 @@ export function createAutoSaveController({ updateGame, onStatusChange, delay = 1
         return hasPendingSave;
     }
 
-    return { scheduleSave, cancel, isPending };
+    return { scheduleSave, flush, cancel, isPending };
 }
