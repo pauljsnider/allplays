@@ -678,36 +678,45 @@ export function Schedule({ auth }: { auth: AuthState }) {
           }}
           onSubmit={handleCreateGame}
         />
+        <ScheduleTournamentEntryCard
+          teamName={selectedCalendarTeam.teamName}
+          onOpen={() => {
+            requestTrackerConfigLoad();
+            setTournamentFormError(null);
+            setScheduleStaffToolMode('tournament');
+          }}
+        />
         {scheduleStaffToolMode === 'tournament' ? (
-          <ScheduleTournamentCreatePanel
-            teamName={selectedCalendarTeam.teamName}
-            form={tournamentForm}
-            configs={gameTrackerConfigs}
+          <ScheduleTournamentCreateModal
             saving={savingTournament}
-            error={tournamentFormError}
-            configError={gameTrackerConfigError}
-            onStartUsing={requestTrackerConfigLoad}
-            onChange={(nextForm) => {
-              setTournamentForm(nextForm);
-              if (tournamentFormError) setTournamentFormError(null);
-            }}
-            onCancel={() => {
+            onClose={() => {
+              if (savingTournament) return;
               setTournamentForm(getDefaultScheduleTournamentForm());
               setTournamentFormError(null);
               setScheduleStaffToolMode('menu');
             }}
-            onSubmit={handleCreateTournament}
-          />
-        ) : (
-          <ScheduleTournamentEntryCard
-            teamName={selectedCalendarTeam.teamName}
-            onOpen={() => {
-              requestTrackerConfigLoad();
-              setTournamentFormError(null);
-              setScheduleStaffToolMode('tournament');
-            }}
-          />
-        )}
+          >
+            <ScheduleTournamentCreatePanel
+              teamName={selectedCalendarTeam.teamName}
+              form={tournamentForm}
+              configs={gameTrackerConfigs}
+              saving={savingTournament}
+              error={tournamentFormError}
+              configError={gameTrackerConfigError}
+              onStartUsing={requestTrackerConfigLoad}
+              onChange={(nextForm) => {
+                setTournamentForm(nextForm);
+                if (tournamentFormError) setTournamentFormError(null);
+              }}
+              onCancel={() => {
+                setTournamentForm(getDefaultScheduleTournamentForm());
+                setTournamentFormError(null);
+                setScheduleStaffToolMode('menu');
+              }}
+              onSubmit={handleCreateTournament}
+            />
+          </ScheduleTournamentCreateModal>
+        ) : null}
         <SchedulePracticeCreatePanel
           teamName={selectedCalendarTeam.teamName}
           form={practiceForm}
@@ -814,6 +823,7 @@ export function Schedule({ auth }: { auth: AuthState }) {
     try {
       await createScheduledTournamentBlockForApp(selectedCalendarTeam.teamId, tournamentForm, auth.user);
       setTournamentForm(getDefaultScheduleTournamentForm());
+      setScheduleStaffToolMode('menu');
       await refreshSchedule(true);
       setStatusMessage('Tournament created and schedule refreshed.');
     } catch (tournamentError: any) {
@@ -1533,6 +1543,34 @@ function ScheduleTournamentEntryCard({ teamName, onOpen }: { teamName: string; o
   );
 }
 
+function ScheduleTournamentCreateModal({ children, saving, onClose }: { children: ReactNode; saving: boolean; onClose: () => void }) {
+  return (
+    <Modal overlayClassName="z-[70] flex items-end justify-center bg-gray-950/40 p-0 sm:items-center sm:p-6" ariaLabel="Create tournament block" onClose={onClose}>
+      <section className="relative w-full overflow-hidden rounded-t-3xl bg-white shadow-2xl sm:mx-auto sm:max-w-4xl sm:rounded-2xl">
+        <div className="flex items-start justify-between gap-3 border-b border-gray-100 px-4 py-3">
+          <div className="min-w-0">
+            <div className="app-label">Staff schedule tools</div>
+            <h2 className="mt-1 text-lg font-black text-gray-950">Create tournament block</h2>
+            <p className="mt-1 text-xs font-semibold text-gray-500">Review the tournament shell, then cancel back to Schedule or create the block when you are ready.</p>
+          </div>
+          <button
+            type="button"
+            className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-gray-200 bg-white text-lg font-black leading-none text-gray-500 transition hover:border-gray-300 hover:text-gray-700 disabled:cursor-not-allowed disabled:opacity-60"
+            aria-label="Close tournament shell"
+            disabled={saving}
+            onClick={onClose}
+          >
+            <span aria-hidden="true">×</span>
+          </button>
+        </div>
+        <div className="max-h-[85vh] overflow-y-auto p-3 sm:p-4">
+          {children}
+        </div>
+      </section>
+    </Modal>
+  );
+}
+
 function ScheduleTournamentCreatePanel({ teamName, form, configs, saving, error, configError, onStartUsing, onChange, onCancel, onSubmit }: { teamName: string; form: ScheduleTournamentCreateFormInput; configs: ScheduleStatTrackerConfigOption[]; saving: boolean; error: string | null; configError: string | null; onStartUsing?: () => void; onChange: (form: ScheduleTournamentCreateFormInput) => void; onCancel: () => void; onSubmit: (event: FormEvent<HTMLFormElement>) => void }) {
   const updateField = (field: keyof Omit<ScheduleTournamentCreateFormInput, 'games'>, value: string) => onChange({ ...form, [field]: value });
   const updateGame = (index: number, field: keyof ScheduleGameFormInput, value: string | Date | boolean | null) => onChange({
@@ -1543,7 +1581,7 @@ function ScheduleTournamentCreatePanel({ teamName, form, configs, saving, error,
   const removeGame = (index: number) => onChange({ ...form, games: form.games.filter((_, gameIndex) => gameIndex !== index) });
 
   return (
-    <section className="app-card p-3 sm:p-4" aria-label="Create tournament" onFocusCapture={onStartUsing}>
+    <section className="app-card border-0 p-0 shadow-none sm:p-0" aria-label="Create tournament" onFocusCapture={onStartUsing}>
       <div className="app-label">Tournament scheduling</div>
       <h2 className="mt-1 text-base font-black text-gray-950">Add tournament for {teamName}</h2>
       <form className="mt-3 space-y-3" onSubmit={onSubmit}>
