@@ -176,6 +176,21 @@ describe('private AI chat page', () => {
         expect(container.querySelector('textarea').value).toBe('');
     });
 
+    it('shows a selected draft conversation row on desktop before first send', async () => {
+        layoutMocks.isDesktopWeb = true;
+        privateAiMocks.loadPrivateAiMessages.mockResolvedValueOnce([]);
+
+        const { container } = await renderPrivateAi();
+
+        await click(Array.from(container.querySelectorAll('button')).find((button) => button.textContent.includes('New')));
+
+        const draftRow = Array.from(container.querySelectorAll('.private-ai-conversation-button')).find((button) => button.textContent.includes('New chat'));
+        expect(draftRow).toBeTruthy();
+        expect(draftRow.getAttribute('aria-pressed')).toBe('true');
+        expect(draftRow.textContent).toContain('Start typing. This draft will save after your first message.');
+        expect(container.textContent).toContain('Recent chat');
+    });
+
     it('renders starter prompts in the empty mobile welcome state', async () => {
         layoutMocks.isDesktopWeb = false;
         privateAiMocks.loadPrivateAiMessages.mockResolvedValueOnce([]);
@@ -201,7 +216,7 @@ describe('private AI chat page', () => {
         expect(privateAiMocks.sendPrivateAiMessage).toHaveBeenCalledWith(auth.user, 'What do I need to handle today?', 'default');
     });
 
-    it('starts a blank draft and only saves after the first send', async () => {
+    it('starts a blank draft, shows the active mobile chip, and only saves after the first send', async () => {
         privateAiMocks.loadPrivateAiMessages
             .mockResolvedValueOnce([])
             .mockResolvedValueOnce([
@@ -289,11 +304,20 @@ describe('private AI chat page', () => {
         expect(container.textContent).toContain('What do you need from ALL PLAYS?');
         expect(textarea.value).toBe('First draft question');
 
+        const draftChip = Array.from(container.querySelectorAll('.private-ai-conversation-chip')).find((button) => button.textContent.includes('New chat'));
+        expect(draftChip).toBeTruthy();
+        expect(draftChip.getAttribute('aria-pressed')).toBe('true');
+        expect(container.textContent).toContain('Saved chat');
+
         await click(container.querySelector('button[aria-label="Send AI message"]'));
 
         expect(privateAiMocks.sendPrivateAiMessage).toHaveBeenCalledWith(auth.user, 'First draft question', '__draft__');
         expect(container.textContent).toContain('First draft question');
         expect(privateAiMocks.loadPrivateAiConversations).toHaveBeenCalledTimes(3);
+        expect(Array.from(container.querySelectorAll('.private-ai-conversation-chip')).some((button) => button.textContent.includes('New chat'))).toBe(false);
+        const savedChip = Array.from(container.querySelectorAll('.private-ai-conversation-chip')).find((button) => button.textContent.includes('First draft question'));
+        expect(savedChip).toBeTruthy();
+        expect(savedChip.getAttribute('aria-pressed')).toBe('true');
     });
 
     it('shows service errors without losing the typed message', async () => {
