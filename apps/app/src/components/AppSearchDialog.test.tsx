@@ -38,11 +38,17 @@ vi.mock('../lib/searchRoutePreload', () => ({
 }));
 
 const {
+  getImmediateAppTeamSearchResultsMock,
   getKnownAppSearchTeamsMock,
   loadAppSearchTeamsMock,
   searchAppTeamsMock,
   searchAppPlayersMock,
 } = vi.hoisted(() => ({
+  getImmediateAppTeamSearchResultsMock: vi.fn((query: string, teams: AppSearchTeam[]) => {
+    const normalizedQuery = query.trim().toLowerCase();
+    if (normalizedQuery.length < 2) return teams;
+    return teams.filter((team) => team.name.toLowerCase().includes(normalizedQuery));
+  }),
   getKnownAppSearchTeamsMock: vi.fn((): AppSearchTeam[] => []),
   loadAppSearchTeamsMock: vi.fn(async (): Promise<AppSearchTeam[]> => [{ id: 'team-2', name: 'Rockets', sport: 'Soccer', zip: '64114' }]),
   searchAppTeamsMock: vi.fn<(query: string, teams: AppSearchTeam[], user: AuthState['user']) => Promise<AppSearchTeam[]>>(),
@@ -86,6 +92,7 @@ vi.mock('../lib/searchService', () => ({
       flat: [...actionItems, ...teamItems, ...helpItems, ...players],
     };
   },
+  getImmediateAppTeamSearchResults: getImmediateAppTeamSearchResultsMock,
   getKnownAppSearchTeams: getKnownAppSearchTeamsMock,
   loadAppSearchTeams: loadAppSearchTeamsMock,
   searchAppTeams: searchAppTeamsMock,
