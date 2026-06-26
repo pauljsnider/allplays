@@ -553,12 +553,13 @@
                 "tests/unit/app-game-detail-baseball-walk.test.jsx"
             ],
             "workflowTests": [
-                "tests/smoke/track-statsheet-apply.spec.js"
+                "tests/smoke/track-statsheet-apply.spec.js",
+                "tests/smoke/live-tracker-foul-workflow.spec.js"
             ],
             "knownGaps": [
                 {
                     "tier": "workflow",
-                    "description": "Live tracker, replay, opponent stat entry, and tracker undo need end-to-end workflow coverage."
+                    "description": "Replay still needs end-to-end workflow coverage."
                 }
             ]
         },

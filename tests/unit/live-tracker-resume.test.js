@@ -240,7 +240,7 @@ describe('live tracker resume game log', () => {
     ]);
   });
 
-  it('excludes undo and remove stat broadcasts from reconstructed log entries', () => {
+  it('drops resumed stat log entries that were later reversed by undo or remove broadcasts', () => {
     const result = buildResumeLogFromLiveEvents([
       {
         type: 'stat',
@@ -255,6 +255,17 @@ describe('live tracker resume game log', () => {
       },
       {
         type: 'stat',
+        description: 'Opp Rival Guard FOULS +1',
+        period: 'Q1',
+        gameClockMs: 2000,
+        createdAt: { toMillis: () => 1500 },
+        playerId: 'opp1',
+        statKey: 'fouls',
+        value: 1,
+        isOpponent: true
+      },
+      {
+        type: 'stat',
         description: 'UNDO #4 Alex PTS +2',
         period: 'Q1',
         gameClockMs: 78000,
@@ -266,27 +277,17 @@ describe('live tracker resume game log', () => {
       },
       {
         type: 'stat',
-        description: 'REMOVE Opponent #12 PTS +3',
+        description: 'REMOVE Opp Rival Guard FOULS +1',
         period: 'Q1',
-        gameClockMs: 76000,
+        gameClockMs: 1000,
         createdAt: { toMillis: () => 3000 },
-        playerId: 'opp-12',
-        statKey: 'PTS',
-        value: -3,
+        playerId: 'opp1',
+        statKey: 'fouls',
+        value: -1,
         isOpponent: true
       }
     ]);
 
-    expect(result).toHaveLength(1);
-    expect(result[0]).toMatchObject({
-      text: '#4 Alex PTS +2',
-      undoData: {
-        type: 'stat',
-        playerId: 'p1',
-        statKey: 'PTS',
-        value: 2,
-        isOpponent: false
-      }
-    });
+    expect(result).toEqual([]);
   });
 });

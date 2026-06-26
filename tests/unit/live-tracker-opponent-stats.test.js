@@ -572,6 +572,53 @@ describe('live tracker opponent stats hydration', () => {
     expect(hydrated.fouls).toBe(3);
   });
 
+  it('syncs opponent name edits before later resume-sensitive stat updates', async () => {
+    const updateCalls = [];
+    const page = await bootLiveTracker({
+      updateGame: async (_teamId, _gameId, payload) => {
+        updateCalls.push(payload);
+      }
+    });
+
+    page.setContext({
+      teamId: 'team-1',
+      gameId: 'game-1',
+      config: { columns: ['PTS'] },
+      game: { liveHasData: false }
+    });
+    page.state.opp = [
+      {
+        id: 'opp1',
+        name: '',
+        number: '',
+        playerId: null,
+        photoUrl: '',
+        stats: { pts: 0, fouls: 1, time: 0 }
+      }
+    ];
+
+    page.renderOpponents();
+    const [nameInput] = page.els.oppCards.querySelectorAll('[data-opp-edit]');
+    nameInput.value = 'Rival Guard';
+    (nameInput.listeners.get('input') || []).forEach((handler) => handler());
+    await page.flushTimers();
+
+    expect(page.state.opp[0].name).toBe('Rival Guard');
+    expect(updateCalls).toContainEqual({
+      opponentStats: {
+        opp1: {
+          name: 'Rival Guard',
+          number: '',
+          playerId: null,
+          photoUrl: '',
+          pts: 0,
+          fouls: 1
+        }
+      }
+    });
+    expect(updateCalls).toContainEqual({ liveHasData: true });
+  });
+
   it('defaults fouls to zero when persisted fouls are missing', () => {
     const hydrated = hydrateOpponentStats({ pts: 4 }, ['PTS']);
     expect(hydrated.pts).toBe(4);
