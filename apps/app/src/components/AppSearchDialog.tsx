@@ -7,6 +7,7 @@ import { openPublicUrl } from '../lib/publicActions';
 import { preloadSearchRoute } from '../lib/searchRoutePreload';
 import {
   computeAppSearchResults,
+  getImmediateAppTeamSearchResults,
   getKnownAppSearchTeams,
   loadAppSearchTeams,
   searchAppTeams,
@@ -125,6 +126,10 @@ export function AppSearchDialog({ auth, open, onClose }: AppSearchDialogProps) {
 
       const runSearch = async (accessibleTeams: AppSearchTeam[]) => {
         const accessibleTeamsById = new Map(accessibleTeams.map((team) => [team.id, team]));
+        const localTeams = getImmediateAppTeamSearchResults(trimmedQuery, accessibleTeams);
+        setTeams(localTeams);
+        setTeamsLoading(localTeams.length === 0);
+
         const [teamsResult, playersResult] = await Promise.allSettled([
           searchAppTeams(trimmedQuery, accessibleTeams, auth.user),
           searchAppPlayers(trimmedQuery, accessibleTeamsById, auth.user)

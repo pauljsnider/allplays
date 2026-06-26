@@ -36,6 +36,7 @@ vi.mock('../../apps/app/src/lib/helpKnowledgeService', () => helpMocks);
 import {
     buildAppSearchActions,
     computeAppSearchResults,
+    getImmediateAppTeamSearchResults,
     getKnownAppSearchTeams,
     getSearchHelpRoles,
     loadAppSearchTeams,
@@ -797,6 +798,31 @@ describe('React app search service', () => {
             name: 'Bearcats Public',
             isPublic: true
         });
+    });
+
+    it('returns matching app-access teams immediately before public enrichment resolves', () => {
+        const teams = getImmediateAppTeamSearchResults('be', [
+            { id: 'team-home', name: 'Bearcats', sport: 'Soccer', fromAppAccess: true },
+            { id: 'team-other', name: 'Rockets', sport: 'Basketball', fromAppAccess: true }
+        ]);
+
+        expect(teams.map((team) => team.id)).toEqual(['team-home']);
+    });
+
+    it('reuses cached public-team results for repeated normalized queries', async () => {
+        dbMocks.discoverPublicTeams.mockResolvedValue({
+            teams: [
+                { id: 'team-public', name: 'Bears', sport: 'Basketball', city: 'Kansas City', state: 'MO', isPublic: true }
+            ],
+            nextCursor: null
+        });
+
+        const first = await searchAppTeams('be', [{ id: 'team-home', name: 'Bearcats', sport: 'Soccer', fromAppAccess: true }], auth.user);
+        const second = await searchAppTeams(' BE ', [{ id: 'team-home', name: 'Bearcats', sport: 'Soccer', fromAppAccess: true }], auth.user);
+
+        expect(dbMocks.discoverPublicTeams).toHaveBeenCalledTimes(1);
+        expect(first.map((team) => team.id)).toEqual(['team-home', 'team-public']);
+        expect(second.map((team) => team.id)).toEqual(['team-home', 'team-public']);
     });
 
     it('includes location-matched public teams in global app search results', async () => {
