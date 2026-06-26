@@ -168,14 +168,37 @@ const hubIconComponents: Record<ScheduleHubIcon, LucideIcon> = {
   users: Users
 };
 
+function isActiveTrackedScheduleEvent(event?: ParentScheduleEvent | null) {
+  return Boolean(event?.isDbGame && !event?.isCancelled);
+}
+
+function hasRideshareActivity(event?: ParentScheduleEvent | null) {
+  const summary = event?.rideshareSummary;
+  if (!summary) return false;
+  return [summary.offerCount, summary.requests, summary.pending, summary.confirmed, summary.seatsLeft]
+    .some((value) => Number(value || 0) > 0);
+}
+
+function hasAssignmentsPosted(event?: ParentScheduleEvent | null) {
+  return Array.isArray(event?.assignments) && event.assignments.length > 0;
+}
+
 function getEventDetailSections(event?: ParentScheduleEvent | null): Array<{ id: EventDetailSectionId; label: string; shortLabel?: string }> {
   const eventLabel = event?.type === 'practice' ? 'More' : 'Game';
-  return [
-    { id: 'availability', label: 'Availability' },
-    { id: 'rideshare', label: 'Rideshare' },
-    { id: 'assignments', label: 'Assignments', shortLabel: 'Tasks' },
-    { id: 'game', label: eventLabel }
+  const sections: Array<{ id: EventDetailSectionId; label: string; shortLabel?: string }> = [
+    { id: 'availability', label: 'Availability' }
   ];
+
+  if (isActiveTrackedScheduleEvent(event) || hasRideshareActivity(event)) {
+    sections.push({ id: 'rideshare', label: 'Rideshare' });
+  }
+
+  if (isActiveTrackedScheduleEvent(event) || hasAssignmentsPosted(event)) {
+    sections.push({ id: 'assignments', label: 'Assignments', shortLabel: 'Tasks' });
+  }
+
+  sections.push({ id: 'game', label: eventLabel });
+  return sections;
 }
 
 function getScheduleEventDetailLoadErrorMessage(error: AppServiceError, hasExistingEvent: boolean) {
@@ -439,6 +462,8 @@ export function ScheduleEventDetail({ auth }: { auth: AuthState }) {
   const hasPracticePacket = selectedEvent.type === 'practice' && Boolean(selectedEvent.practiceHomePacketSummary);
   const attentionItems = getAttentionItems(selectedEvent, rsvp).filter((item) => item.section !== 'availability' && item.title !== 'Practice packet ready');
   const sections = getEventDetailSections(selectedEvent);
+  const sectionIds = new Set(sections.map((section) => section.id));
+  const resolvedActiveSection = sectionIds.has(activeSection) ? activeSection : sections[0]?.id || 'availability';
 
   const addEventToCalendar = async () => {
     const icsTitle = `${title} | ${selectedEvent.teamName}`;
@@ -517,7 +542,7 @@ export function ScheduleEventDetail({ auth }: { auth: AuthState }) {
               className="event-workflow-nav event-nav-desktop mt-3"
               includeBaseClass={false}
               sections={sections}
-              activeSection={activeSection}
+              activeSection={resolvedActiveSection}
               hasPracticePacket={hasPracticePacket}
               onSelect={selectSection}
             />
@@ -533,7 +558,7 @@ export function ScheduleEventDetail({ auth }: { auth: AuthState }) {
         <EventSectionNav
           className="event-nav-mobile sticky top-24 z-30 w-full max-w-full bg-gray-50/95 py-1 backdrop-blur sm:py-2"
           sections={sections}
-          activeSection={activeSection}
+          activeSection={resolvedActiveSection}
           hasPracticePacket={hasPracticePacket}
           onSelect={selectSection}
         />
@@ -543,7 +568,7 @@ export function ScheduleEventDetail({ auth }: { auth: AuthState }) {
         {statusMessage ? <Status tone="success" message={statusMessage} /> : null}
         {error ? <Status tone="error" message={error} /> : null}
 
-        {activeSection === 'availability' ? (
+        {resolvedActiveSection === 'availability' ? (
           <AvailabilitySection
             event={selectedEvent}
             rsvp={rsvp}
@@ -553,9 +578,9 @@ export function ScheduleEventDetail({ auth }: { auth: AuthState }) {
             onSelectSection={selectSection}
           />
         ) : null}
-        {activeSection === 'rideshare' ? <RideshareSection /> : null}
-        {activeSection === 'assignments' ? <AssignmentsSection /> : null}
-        {activeSection === 'game' ? <GameHubSection key={selectedEvent.eventKey} auth={auth} event={selectedEvent} childEvents={events} onScoreUpdated={handleScoreUpdated} onLiveClockUpdated={handleLiveClockUpdated} onWrapupCompleted={handleWrapupCompleted} onStatsheetImported={handleStatsheetImported} onGameCancelled={handleGameCancelled} onPracticeOccurrenceCancelled={handlePracticeOccurrenceCancelled} onGamePlanPublished={handleGamePlanPublished} /> : null}
+        {resolvedActiveSection === 'rideshare' ? <RideshareSection /> : null}
+        {resolvedActiveSection === 'assignments' ? <AssignmentsSection /> : null}
+        {resolvedActiveSection === 'game' ? <GameHubSection key={selectedEvent.eventKey} auth={auth} event={selectedEvent} childEvents={events} onScoreUpdated={handleScoreUpdated} onLiveClockUpdated={handleLiveClockUpdated} onWrapupCompleted={handleWrapupCompleted} onStatsheetImported={handleStatsheetImported} onGameCancelled={handleGameCancelled} onPracticeOccurrenceCancelled={handlePracticeOccurrenceCancelled} onGamePlanPublished={handleGamePlanPublished} /> : null}
       </div>
       </div>
     </ScheduleEventDetailProvider>

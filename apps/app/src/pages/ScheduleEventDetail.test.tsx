@@ -637,6 +637,64 @@ describe('ScheduleEventDetail route state', () => {
 
 });
 
+describe('ScheduleEventDetail nav visibility', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    Object.defineProperty(window, 'scrollTo', {
+      value: vi.fn(),
+      writable: true
+    });
+  });
+
+  afterEach(() => {
+    cleanup();
+  });
+
+  it('hides rideshare and assignments tabs for inactive events with no related data', async () => {
+    scheduleServiceMocks.loadParentScheduleEventDetail.mockResolvedValue({
+      events: [buildEvent({
+        isDbGame: false,
+        isCancelled: true,
+        rideshareSummary: { offerCount: 0, seatsLeft: 0, requests: 0, pending: 0, confirmed: 0, isFull: false },
+        assignments: []
+      })],
+      children: []
+    });
+
+    renderScheduleEventDetailWithLocation();
+
+    await waitFor(() => {
+      expect(screen.getByRole('heading', { name: 'Availability' })).toBeTruthy();
+    });
+
+    expect(screen.queryByRole('button', { name: 'Rideshare' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Assignments' })).toBeNull();
+    expect(screen.getAllByRole('button', { name: 'Availability' }).length).toBeGreaterThan(0);
+    expect(screen.getAllByRole('button', { name: 'Game' }).length).toBeGreaterThan(0);
+  });
+
+  it('keeps rideshare and assignments tabs when inactive events still have related data', async () => {
+    scheduleServiceMocks.loadParentScheduleEventDetail.mockResolvedValue({
+      events: [buildEvent({
+        isDbGame: false,
+        isCancelled: true,
+        rideshareSummary: { offerCount: 1, seatsLeft: 0, requests: 0, pending: 0, confirmed: 1, isFull: true },
+        assignments: [{ role: 'Snacks', value: '', claimable: true, claim: null }]
+      })],
+      children: []
+    });
+
+    renderScheduleEventDetail();
+
+    await waitFor(() => {
+      expect(screen.getByRole('heading', { name: 'Availability' })).toBeTruthy();
+    });
+
+    expect(screen.getAllByRole('button', { name: 'Rideshare' }).length).toBeGreaterThan(0);
+    expect(screen.getAllByRole('button', { name: 'Assignments' }).length).toBeGreaterThan(0);
+  });
+});
+
 describe('ScheduleEventDetail rideshare permissions', () => {
   beforeEach(() => {
     vi.clearAllMocks();
