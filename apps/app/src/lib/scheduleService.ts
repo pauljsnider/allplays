@@ -3717,7 +3717,9 @@ function normalizeStaffScheduleRsvpBreakdown(value: any): StaffScheduleRsvpBreak
 
 async function loadStaffRsvpEventData(event: ParentScheduleEvent): Promise<StaffRsvpEventData> {
   try {
-    const source = await withTimeout(Promise.resolve(getRsvpBreakdownByPlayer(event.teamId, event.id)), 'Staff RSVP event data');
+    // The breakdown fans out across every roster player + their RSVPs, so it
+    // needs more headroom than the default primary-data timeout.
+    const source = await withTimeout(Promise.resolve(getRsvpBreakdownByPlayer(event.teamId, event.id)), 'Staff RSVP event data', 15000);
     return {
       breakdown: normalizeStaffScheduleRsvpBreakdown(source),
       reminderPreview: buildStaffRsvpReminderPreview(source?.players, source?.rsvps)

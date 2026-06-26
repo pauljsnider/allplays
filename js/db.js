@@ -8305,6 +8305,30 @@ async function assertAvailabilityOpen(teamId, gameId) {
     }
 }
 
+// Recompute and persist the denormalized RSVP summary WITHOUT blocking the
+// caller. By the time this runs the user's RSVP is already written, so a slow
+// or failing summary recompute must never make a saved RSVP look failed or
+// time out. Fire-and-forget; errors are swallowed (the summary is best-effort
+// denormalization and self-heals on the next submit/read).
+function refreshGameRsvpSummaryInBackground(teamId, gameId, options = {}) {
+    Promise.resolve()
+        .then(() => computeRsvpSummary(teamId, gameId, options))
+        .then((summary) => {
+            if (!summary) return undefined;
+            return updateDoc(doc(db, `teams/${teamId}/games`, gameId), { rsvpSummary: summary })
+                .catch((err) => {
+                    if (err?.code !== 'permission-denied' && err?.code !== 'not-found') {
+                        console.warn('[rsvp] Failed to persist RSVP summary:', err);
+                    }
+                });
+        })
+        .catch((err) => {
+            if (err?.code !== 'permission-denied') {
+                console.warn('[rsvp] Failed to recompute RSVP summary:', err);
+            }
+        });
+}
+
 export async function submitRsvp(teamId, gameId, userId, { displayName, playerIds, response, note }) {
     await assertAvailabilityOpen(teamId, gameId);
     const authUid = auth.currentUser?.uid || null;
@@ -8341,25 +8365,11 @@ export async function submitRsvp(teamId, gameId, userId, { displayName, playerId
     // Best effort: aggregate summary if caller can read RSVPs.
     // Parent accounts may be able to write their own RSVP but still fail this read
     // depending on team linkage state in profile claims/data.
-    let summary = null;
-    try {
-        summary = await computeRsvpSummary(teamId, gameId);
-    } catch (err) {
-        if (err?.code !== 'permission-denied') throw err;
-    }
+    // Denormalized summary refresh runs in the background so the RSVP resolves
+    // as soon as the write lands (a slow summary must not time out the save).
+    refreshGameRsvpSummaryInBackground(teamId, gameId);
 
-    // Best effort: write denormalized summary if caller is allowed to update game doc.
-    // For recurring-occurrence IDs (masterId__instanceDate) the virtual game doc may not
-    // exist, so we also suppress 'not-found' rather than crashing the submission.
-    if (summary) {
-        try {
-            await updateDoc(doc(db, `teams/${teamId}/games`, gameId), { rsvpSummary: summary });
-        } catch (err) {
-            if (err?.code !== 'permission-denied' && err?.code !== 'not-found') throw err;
-        }
-    }
-
-    return summary;
+    return null;
 }
 
 export async function submitRsvpForPlayer(teamId, gameId, userId, { displayName, playerId, response, note, skipAvailabilityCutoff = false }) {
@@ -8413,23 +8423,11 @@ export async function submitRsvpForPlayer(teamId, gameId, userId, { displayName,
         }
     }
 
-    // Keep denormalized summary consistent with submitRsvp behavior.
-    let summary = null;
-    try {
-        summary = await computeRsvpSummary(teamId, gameId, { freshRoster: true });
-    } catch (err) {
-        if (err?.code !== 'permission-denied') throw err;
-    }
+    // Refresh the denormalized summary in the background (fresh roster) so the
+    // RSVP write resolves immediately instead of blocking on the recompute.
+    refreshGameRsvpSummaryInBackground(teamId, gameId, { freshRoster: true });
 
-    if (summary) {
-        try {
-            await updateDoc(doc(db, `teams/${teamId}/games`, gameId), { rsvpSummary: summary });
-        } catch (err) {
-            if (err?.code !== 'permission-denied' && err?.code !== 'not-found') throw err;
-        }
-    }
-
-    return summary;
+    return null;
 }
 
 export async function getRsvps(teamId, gameId) {
