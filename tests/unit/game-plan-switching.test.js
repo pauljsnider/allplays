@@ -105,6 +105,7 @@ function buildHarness(overrides = {}) {
         renderPlayingTimeSummary: vi.fn(),
         updatePlanSummary: vi.fn(),
         autoSave: {
+            flush: vi.fn().mockResolvedValue(undefined),
             cancel: vi.fn(),
             isPending: vi.fn().mockReturnValue(false),
             scheduleSave: vi.fn()
@@ -298,7 +299,7 @@ describe('game plan game switching', () => {
         });
     });
 
-    it('cancels any pending auto-save when switching games', async () => {
+    it('flushes any pending auto-save before switching games', async () => {
         const { harness, deps } = buildHarness();
 
         await harness.loadGame({
@@ -313,8 +314,9 @@ describe('game plan game switching', () => {
             date: '2026-04-05T19:00:00.000Z'
         });
 
-        // autoSave.cancel should be called once per loadGame call
-        expect(deps.autoSave.cancel).toHaveBeenCalledTimes(2);
+        expect(deps.autoSave.flush).toHaveBeenNthCalledWith(1, 'team-1', null, deps.gamePlan, null);
+        expect(deps.autoSave.flush).toHaveBeenNthCalledWith(2, 'team-1', 'game-a', expect.objectContaining({ lineups: {} }), expect.objectContaining({ id: 'game-a' }));
+        expect(deps.autoSave.cancel).not.toHaveBeenCalled();
     });
 
     it('disables saving for calendar games and shows an explanatory note', async () => {
