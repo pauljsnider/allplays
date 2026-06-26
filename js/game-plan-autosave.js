@@ -64,7 +64,11 @@ export function createAutoSaveController({ updateGame, onStatusChange, delay = 1
         }
 
         if (activeSavePromise) {
-            await activeSavePromise;
+            try {
+                await activeSavePromise;
+            } catch (err) {
+                // executeSave already reports active-save failures through status updates.
+            }
         }
     }
 

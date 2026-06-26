@@ -5,15 +5,18 @@ describe('createAutoSaveController', () => {
     let updateGame;
     let onStatusChange;
     let autoSave;
+    let consoleErrorSpy;
 
     beforeEach(() => {
         vi.useFakeTimers();
         updateGame = vi.fn().mockResolvedValue(undefined);
         onStatusChange = vi.fn();
         autoSave = createAutoSaveController({ updateGame, onStatusChange, delay: 1500 });
+        consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
     });
 
     afterEach(() => {
+        consoleErrorSpy.mockRestore();
         vi.useRealTimers();
     });
 
@@ -173,6 +176,27 @@ describe('createAutoSaveController', () => {
 
             expect(updateGame).toHaveBeenCalledTimes(1);
             expect(autoSave.isPending()).toBe(false);
+        });
+
+        it('swallows active save failures after surfacing the error state', async () => {
+            let rejectSave;
+            updateGame.mockImplementation(() => new Promise((_, reject) => {
+                rejectSave = reject;
+            }));
+
+            autoSave.scheduleSave('team-1', 'game-1', { lineups: {} }, {});
+            const timerRun = vi.runAllTimersAsync();
+            await vi.advanceTimersByTimeAsync(1500);
+
+            const flushPromise = autoSave.flush('team-1', 'game-1', { lineups: {} }, {});
+            expect(updateGame).toHaveBeenCalledTimes(1);
+
+            rejectSave(new Error('network'));
+            await expect(flushPromise).resolves.toBeUndefined();
+            await timerRun;
+
+            expect(onStatusChange).toHaveBeenCalledWith('error');
+            expect(autoSave.isPending()).toBe(true);
         });
     });
 
