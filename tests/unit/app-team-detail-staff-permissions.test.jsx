@@ -7,6 +7,7 @@ import { MemoryRouter, Route, Routes } from 'react-router-dom';
 const teamDetailMocks = vi.hoisted(() => ({
     addRosterPlayerForApp: vi.fn(),
     loadParentTeamDetail: vi.fn(),
+    loadParentTeamDetailBootstrap: vi.fn(),
     loadRosterFieldDefinitionsForApp: vi.fn(),
     loadTeamDetailInsights: vi.fn(),
     loadTeamDetailSponsors: vi.fn(),
@@ -97,6 +98,7 @@ function makeModel(staffPermissions) {
 }
 
 async function renderTeamDetail(staffPermissions) {
+    teamDetailMocks.loadParentTeamDetailBootstrap.mockResolvedValue(makeModel(staffPermissions));
     teamDetailMocks.loadParentTeamDetail.mockResolvedValue(makeModel(staffPermissions));
     teamDetailMocks.loadTeamStaffPermissions.mockResolvedValue(staffPermissions);
     const container = document.createElement('div');

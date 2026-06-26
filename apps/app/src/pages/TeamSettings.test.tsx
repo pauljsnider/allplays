@@ -7,6 +7,7 @@ import type { AuthState } from '../lib/types';
 
 const teamDetailServiceMocks = vi.hoisted(() => ({
   loadParentTeamDetail: vi.fn(),
+  loadParentTeamDetailBootstrap: vi.fn(),
   updateTeamSettingsForApp: vi.fn()
 }));
 
@@ -89,7 +90,7 @@ describe('TeamSettings', () => {
       value: vi.fn(),
       writable: true
     });
-    teamDetailServiceMocks.loadParentTeamDetail.mockResolvedValue(managedModel);
+    teamDetailServiceMocks.loadParentTeamDetailBootstrap.mockResolvedValue(managedModel);
     teamDetailServiceMocks.updateTeamSettingsForApp.mockResolvedValue(undefined);
   });
 
@@ -98,7 +99,7 @@ describe('TeamSettings', () => {
   });
 
   it('blocks non-staff users from the direct edit route', async () => {
-    teamDetailServiceMocks.loadParentTeamDetail.mockResolvedValue({
+    teamDetailServiceMocks.loadParentTeamDetailBootstrap.mockResolvedValue({
       ...managedModel,
       canManageTeam: false
     });
@@ -116,7 +117,7 @@ describe('TeamSettings', () => {
   });
 
   it('shows a retry path when the initial team settings load fails', async () => {
-    teamDetailServiceMocks.loadParentTeamDetail
+    teamDetailServiceMocks.loadParentTeamDetailBootstrap
       .mockRejectedValueOnce(new Error('Unable to load team settings.'))
       .mockResolvedValueOnce(managedModel);
 
@@ -135,7 +136,7 @@ describe('TeamSettings', () => {
 
     expect(await screen.findByRole('heading', { name: 'Edit team' })).toBeTruthy();
     await waitFor(() => {
-      expect(teamDetailServiceMocks.loadParentTeamDetail).toHaveBeenCalledTimes(2);
+      expect(teamDetailServiceMocks.loadParentTeamDetailBootstrap).toHaveBeenCalledTimes(2);
     });
   });
 
@@ -212,12 +213,12 @@ describe('TeamSettings', () => {
 
     expect(nameInput.value).toBe('Updated Bears');
     await waitFor(() => {
-      expect(teamDetailServiceMocks.loadParentTeamDetail).toHaveBeenCalledTimes(1);
+      expect(teamDetailServiceMocks.loadParentTeamDetailBootstrap).toHaveBeenCalledTimes(1);
     });
   });
 
   it('defaults legacy teams without visibility set to public on save', async () => {
-    teamDetailServiceMocks.loadParentTeamDetail.mockResolvedValue({
+    teamDetailServiceMocks.loadParentTeamDetailBootstrap.mockResolvedValue({
       ...managedModel,
       team: {
         ...managedModel.team,
@@ -253,7 +254,7 @@ describe('TeamSettings', () => {
     const teamOneLoad = createDeferred<typeof managedModel>();
     const teamTwoLoad = createDeferred<typeof managedModel>();
 
-    teamDetailServiceMocks.loadParentTeamDetail.mockImplementation((requestedTeamId: string) => {
+    teamDetailServiceMocks.loadParentTeamDetailBootstrap.mockImplementation((requestedTeamId: string) => {
       if (requestedTeamId === 'team-1') return teamOneLoad.promise;
       if (requestedTeamId === 'team-2') return teamTwoLoad.promise;
       throw new Error(`Unexpected team id: ${requestedTeamId}`);
@@ -294,5 +295,19 @@ describe('TeamSettings', () => {
       expect((screen.getByPlaceholderText('Team name') as HTMLInputElement).value).toBe('Wolves');
       expect((screen.getByPlaceholderText('Basketball') as HTMLInputElement).value).toBe('Soccer');
     });
+  });
+
+  it('loads edit settings from the lightweight bootstrap path', async () => {
+    render(
+      <MemoryRouter initialEntries={['/teams/team-1/edit']}>
+        <Routes>
+          <Route path="/teams/:teamId/edit" element={<TeamSettings auth={auth} />} />
+        </Routes>
+      </MemoryRouter>
+    );
+
+    expect(await screen.findByRole('heading', { name: 'Edit team' })).toBeTruthy();
+    expect(teamDetailServiceMocks.loadParentTeamDetailBootstrap).toHaveBeenCalledTimes(1);
+    expect(teamDetailServiceMocks.loadParentTeamDetail).not.toHaveBeenCalled();
   });
 });

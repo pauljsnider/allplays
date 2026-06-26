@@ -491,7 +491,11 @@ async function mockHomePlayerModules(page) {
                     return [];
                 }
 
-                export async function loadParentTeamDetail() {
+                export async function loadParentTeamDetailBootstrap(teamId) {
+                    return loadParentTeamDetail(teamId);
+                }
+
+                export async function loadParentTeamDetail(teamId = 'team-1') {
                     const nextDate = new Date('2100-06-01T18:00:00Z');
                     return {
                         team: {

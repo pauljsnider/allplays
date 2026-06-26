@@ -7,6 +7,7 @@ import { MemoryRouter, Route, Routes } from 'react-router-dom';
 const teamDetailMocks = vi.hoisted(() => ({
     addRosterPlayerForApp: vi.fn(),
     loadParentTeamDetail: vi.fn(),
+    loadParentTeamDetailBootstrap: vi.fn(),
     loadRosterFieldDefinitionsForApp: vi.fn(),
     loadTeamDetailInsights: vi.fn(),
     loadTeamDetailSponsors: vi.fn(),
@@ -43,6 +44,7 @@ const scheduleServiceMocks = vi.hoisted(() => ({
 vi.mock('../../apps/app/src/lib/teamDetailService.ts', () => ({
     addRosterPlayerForApp: teamDetailMocks.addRosterPlayerForApp,
     loadParentTeamDetail: teamDetailMocks.loadParentTeamDetail,
+    loadParentTeamDetailBootstrap: teamDetailMocks.loadParentTeamDetailBootstrap,
     loadRosterFieldDefinitionsForApp: teamDetailMocks.loadRosterFieldDefinitionsForApp,
     loadTeamDetailInsights: teamDetailMocks.loadTeamDetailInsights,
     loadTeamDetailSponsors: teamDetailMocks.loadTeamDetailSponsors,
@@ -310,7 +312,8 @@ beforeEach(() => {
         summary: 'Team default reminder window: 24 hours before event start.'
     });
     teamDetailMocks.loadTeamStaffPermissions.mockResolvedValue(null);
-    teamDetailMocks.loadParentTeamDetail.mockResolvedValue(coreModel());
+    teamDetailMocks.loadParentTeamDetailBootstrap.mockResolvedValue(coreModel());
+    teamDetailMocks.loadParentTeamDetail.mockResolvedValue(model());
     teamDetailMocks.loadTeamDetailInsights.mockResolvedValue(deferredInsightsModel());
     teamDetailMocks.loadTeamDetailSponsors.mockResolvedValue(deferredSponsorsModel());
 });
@@ -328,6 +331,7 @@ describe('React app TeamDetail page', () => {
     it('loads parent-facing team.html features with team and player photos', async () => {
         const { container } = await renderTeamDetail();
 
+        expect(teamDetailMocks.loadParentTeamDetailBootstrap).not.toHaveBeenCalled();
         expect(teamDetailMocks.loadParentTeamDetail).toHaveBeenCalledWith('team-1', auth.user, { includeDeferredData: false });
         expect(container.textContent).toContain('Bears');
         expect(container.querySelector('img[src="https://img.example.test/team.png"]')).toBeTruthy();
@@ -369,6 +373,7 @@ describe('React app TeamDetail page', () => {
         const fanModel = model();
         fanModel.team.id = 'team 1/blue';
         fanModel.team.name = 'Bears & Wolves';
+        teamDetailMocks.loadParentTeamDetailBootstrap.mockResolvedValueOnce(fanModel);
         teamDetailMocks.loadParentTeamDetail.mockResolvedValueOnce(fanModel);
         parentToolsMocks.buildPrivateTeamCalendarFeedUrl.mockReturnValue('https://feed.example.test/private-team.ics?teamId=team%201%2Fblue&token=abc123');
 
@@ -397,6 +402,7 @@ describe('React app TeamDetail page', () => {
         const fanModel = model();
         fanModel.team.id = 'team 1/blue';
         fanModel.team.name = 'Bears & Wolves';
+        teamDetailMocks.loadParentTeamDetailBootstrap.mockResolvedValueOnce(fanModel);
         teamDetailMocks.loadParentTeamDetail.mockResolvedValueOnce(fanModel);
 
         const { container } = await renderTeamDetail();
@@ -422,6 +428,7 @@ describe('React app TeamDetail page', () => {
         ];
         hiddenModel.recentResults = [];
         hiddenModel.nextEvent = hiddenModel.upcomingEvents[0];
+        teamDetailMocks.loadParentTeamDetailBootstrap.mockResolvedValueOnce(hiddenModel);
         teamDetailMocks.loadParentTeamDetail.mockResolvedValueOnce(hiddenModel);
         const hidden = await renderTeamDetail();
         await clickButton(hidden.container, 'More');
@@ -451,6 +458,7 @@ describe('React app TeamDetail page', () => {
         managerModel.canManageTeam = true;
         managerModel.team.id = 'team 1/blue';
         managerModel.team.name = 'Bears & Wolves';
+        teamDetailMocks.loadParentTeamDetailBootstrap.mockResolvedValueOnce(managerModel);
         teamDetailMocks.loadParentTeamDetail.mockResolvedValueOnce(managerModel);
 
         const { container } = await renderTeamDetail();
@@ -470,6 +478,7 @@ describe('React app TeamDetail page', () => {
         expect(container.textContent).toContain('Widget link copied.');
 
         const parentModel = model();
+        teamDetailMocks.loadParentTeamDetailBootstrap.mockResolvedValueOnce(parentModel);
         teamDetailMocks.loadParentTeamDetail.mockResolvedValueOnce(parentModel);
         const hidden = await renderTeamDetail();
         await clickButton(hidden.container, 'More');
@@ -486,6 +495,7 @@ describe('React app TeamDetail page', () => {
             hasExplicitReminderHours: true,
             summary: 'Team default reminder window: 72 hours before event start.'
         };
+        teamDetailMocks.loadParentTeamDetailBootstrap.mockResolvedValueOnce(managerModel);
         teamDetailMocks.loadParentTeamDetail.mockResolvedValueOnce(managerModel).mockResolvedValueOnce({
             ...managerModel,
             team: {
@@ -522,6 +532,7 @@ describe('React app TeamDetail page', () => {
         expect(container.textContent).toContain('Team default reminder window: 48 hours before event start.');
 
         const parentModel = model();
+        teamDetailMocks.loadParentTeamDetailBootstrap.mockResolvedValueOnce(parentModel);
         teamDetailMocks.loadParentTeamDetail.mockResolvedValueOnce(parentModel);
         const hidden = await renderTeamDetail();
         await clickButton(hidden.container, 'More');
@@ -532,6 +543,7 @@ describe('React app TeamDetail page', () => {
         const managerModel = model();
         managerModel.canManageTeam = true;
         managerModel.staffPermissions = null;
+        teamDetailMocks.loadParentTeamDetailBootstrap.mockResolvedValueOnce(managerModel);
         teamDetailMocks.loadParentTeamDetail.mockResolvedValueOnce(managerModel);
         let resolveStaffPermissions;
         teamDetailMocks.loadTeamStaffPermissions.mockImplementationOnce(() => new Promise((resolve) => {
@@ -694,6 +706,7 @@ describe('React app TeamDetail page', () => {
             { id: 'game-2', type: 'game', title: 'at Tigers', date: new Date('2100-06-03T18:00:00Z'), location: 'North Gym', opponent: 'Tigers', status: '', liveStatus: '', visibility: '', isPrivate: false, isPublic: false, shareable: true, publicCalendar: false, homeScore: null, awayScore: null, isCancelled: false, statTrackerConfigId: '', statTrackerConfigLabel: 'No config assigned', statTrackerConfigBaseType: '', statTrackerConfigExists: false, statTrackerConfigIsBasketball: false }
         ];
         managerModel.nextEvent = managerModel.upcomingEvents[0];
+        teamDetailMocks.loadParentTeamDetailBootstrap.mockResolvedValueOnce(managerModel);
         teamDetailMocks.loadParentTeamDetail.mockResolvedValueOnce(managerModel);
         scheduleServiceMocks.loadPreview.mockResolvedValueOnce({
             missingPlayerCount: 3,
@@ -762,6 +775,7 @@ describe('React app TeamDetail page', () => {
             columnNames: ['PTS', 'REB', 'AST', 'STL'],
             assignedUpcomingGames: [{ gameId: 'game-1', title: 'vs. Falcons', date: new Date('2100-06-01T18:00:00Z') }]
         }];
+        teamDetailMocks.loadParentTeamDetailBootstrap.mockResolvedValueOnce(managerModel);
         teamDetailMocks.loadParentTeamDetail.mockResolvedValueOnce(managerModel);
 
         const { container } = await renderTeamDetail(managerAuth);
@@ -777,6 +791,7 @@ describe('React app TeamDetail page', () => {
         expect(container.textContent).toContain('vs. Falcons · Tue, Jun 1');
         expect(container.textContent).toContain('Missing config assignments');
 
+        teamDetailMocks.loadParentTeamDetailBootstrap.mockResolvedValueOnce(model());
         teamDetailMocks.loadParentTeamDetail.mockResolvedValueOnce(model());
         const hidden = await renderTeamDetail();
         await clickButton(hidden.container, 'Schedule');
@@ -788,6 +803,7 @@ describe('React app TeamDetail page', () => {
     it('hides inline RSVP reminders for parents and events with no missing players', async () => {
         const parentModel = model();
         parentModel.canManageTeam = false;
+        teamDetailMocks.loadParentTeamDetailBootstrap.mockResolvedValueOnce(parentModel);
         teamDetailMocks.loadParentTeamDetail.mockResolvedValueOnce(parentModel);
 
         const { container } = await renderTeamDetail();
@@ -816,6 +832,7 @@ describe('React app TeamDetail page', () => {
         emptyModel.trackingSummaries = [];
         emptyModel.sponsors = [];
         emptyModel.counts = { games: 0, practices: 0, completedGames: 0 };
+        teamDetailMocks.loadParentTeamDetailBootstrap.mockResolvedValueOnce(emptyModel);
         teamDetailMocks.loadParentTeamDetail.mockResolvedValueOnce(emptyModel);
         teamDetailMocks.loadTeamDetailInsights.mockResolvedValueOnce({ leaderboards: [], trackingSummaries: [] });
         teamDetailMocks.loadTeamDetailSponsors.mockResolvedValueOnce({ sponsors: [] });

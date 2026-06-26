@@ -99,6 +99,8 @@ import {
   __resetTeamDetailBaseSnapshotCacheForTests,
   buildTeamDetailModel,
   createStatTrackerConfigForApp,
+  loadParentTeamDetail,
+  loadParentTeamDetailBootstrap,
   loadTeamTrackingAdmin,
   saveTeamTrackingItemForApp,
   setPlayerTrackingStatusForApp,
@@ -194,6 +196,40 @@ describe('updateTeamSettingsForApp', () => {
     })).rejects.toThrow('Livestream link must be a valid YouTube or Twitch URL.');
 
     expect(dbMocks.updateTeam).not.toHaveBeenCalled();
+  });
+});
+
+describe('team detail bootstrap loading', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    dbMocks.getTeam.mockResolvedValue({ id: 'team-1', ownerId: 'owner-1', name: 'Bears', sport: 'Basketball' });
+    dbMocks.getPlayers.mockResolvedValue([{ id: 'player-1', name: 'Pat Star', active: true }]);
+    dbMocks.getGames.mockResolvedValue([{ id: 'game-1', type: 'game', status: 'scheduled' }]);
+    dbMocks.getConfigs.mockResolvedValue([{ id: 'config-1', name: 'Config' }]);
+    __resetTeamDetailBaseSnapshotCacheForTests();
+  });
+
+  it('skips games and stat config reads for the lightweight bootstrap path', async () => {
+    const model = await loadParentTeamDetailBootstrap('team-1', { uid: 'parent-1' } as any);
+
+    expect(model.team.name).toBe('Bears');
+    expect(model.players).toHaveLength(1);
+    expect(model.upcomingEvents).toEqual([]);
+    expect(model.statTrackerConfigs).toEqual([]);
+    expect(dbMocks.getTeam).toHaveBeenCalledTimes(1);
+    expect(dbMocks.getPlayers).toHaveBeenCalledTimes(1);
+    expect(dbMocks.getGames).not.toHaveBeenCalled();
+    expect(dbMocks.getConfigs).not.toHaveBeenCalled();
+  });
+
+  it('loads games and stat configs once a deferred detail surface requests them', async () => {
+    await loadParentTeamDetailBootstrap('team-1', { uid: 'parent-1' } as any);
+    await loadParentTeamDetail('team-1', { uid: 'parent-1' } as any, { includeDeferredData: false });
+
+    expect(dbMocks.getTeam).toHaveBeenCalledTimes(1);
+    expect(dbMocks.getPlayers).toHaveBeenCalledTimes(1);
+    expect(dbMocks.getGames).toHaveBeenCalledTimes(1);
+    expect(dbMocks.getConfigs).toHaveBeenCalledTimes(1);
   });
 });
 
