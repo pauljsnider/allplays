@@ -159,6 +159,15 @@ async function mockSearchModules(page) {
                     return getKnownAppSearchTeams(user);
                 }
 
+                export function getImmediateAppTeamSearchResults(queryText, appAccessTeams = []) {
+                    const q = String(queryText || '').trim().toLowerCase();
+                    if (q.length < 2) return appAccessTeams.slice(0, 20);
+                    return appAccessTeams.filter((team) => {
+                        const haystack = [team.name, team.sport, team.zip].filter(Boolean).join(' ').toLowerCase();
+                        return haystack.includes(q);
+                    }).slice(0, 20);
+                }
+
                 export async function searchAppTeams(queryText, appAccessTeams = []) {
                     window.__teamSearchQueries.push(String(queryText || ''));
                     const q = String(queryText || '').trim().toLowerCase();
