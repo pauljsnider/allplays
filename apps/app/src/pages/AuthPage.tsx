@@ -108,15 +108,16 @@ export function AuthPage({ auth }: { auth: AuthState }) {
       if (inviteCode) {
         rememberPendingInvite(inviteCode, inviteType);
       }
+      const hydrated = inviteCode ? null : await hydrateFirebaseUser(credential.user).catch(() => null);
+      const postLoginRoute = inviteCode ? postAuthRoute : getRouteForUser(hydrated?.user || auth.user);
       if (credential.nativeRest) {
-        window.location.hash = `#${inviteCode ? postAuthRoute : '/home'}`;
+        window.location.hash = `#${postLoginRoute}`;
         window.location.reload();
         return;
       }
 
-      const hydrated = await hydrateFirebaseUser(credential.user).catch(() => null);
       await auth.refresh();
-      navigate(inviteCode ? postAuthRoute : getRouteForUser(hydrated?.user || auth.user), { replace: true });
+      navigate(postLoginRoute, { replace: true });
     } catch (submitError: any) {
       setError(describeAuthError(submitError));
     } finally {
@@ -139,15 +140,20 @@ export function AuthPage({ auth }: { auth: AuthState }) {
 
       const result = await signInWithGoogleAccount(code || null);
       if (result) {
+        const hydrated = mode === 'signup' || inviteCode ? null : await hydrateFirebaseUser(result.user).catch(() => null);
+        const postGoogleRoute = mode === 'signup'
+          ? '/verify-pending'
+          : inviteCode
+            ? postAuthRoute
+            : getRouteForUser(hydrated?.user || auth.user);
         if (result.nativeRest) {
-          window.location.hash = `#${mode === 'signup' ? '/verify-pending' : inviteCode ? postAuthRoute : '/home'}`;
+          window.location.hash = `#${postGoogleRoute}`;
           window.location.reload();
           return;
         }
 
-        const hydrated = await hydrateFirebaseUser(result.user).catch(() => null);
         await auth.refresh();
-        navigate(mode === 'signup' ? '/verify-pending' : inviteCode ? postAuthRoute : getRouteForUser(hydrated?.user || auth.user), { replace: true });
+        navigate(postGoogleRoute, { replace: true });
       }
     } catch (googleError: any) {
       setError(describeAuthError(googleError));
