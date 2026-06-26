@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, type FormEvent } from 'react';
-import { Link, Navigate, useLocation, useParams } from 'react-router-dom';
+import { Link, Navigate, useLocation, useNavigate, useParams } from 'react-router-dom';
 import type { LucideIcon } from 'lucide-react';
 import {
   Award,
@@ -62,15 +62,24 @@ function loadRosterAiImportModule() {
   return rosterAiImportModulePromise;
 }
 
+function getTeamTabFromSearch(search: string): TeamTab {
+  const nextTab = new URLSearchParams(search).get('tab');
+  if (nextTab === 'schedule' || nextTab === 'roster' || nextTab === 'insights' || nextTab === 'more') {
+    return nextTab;
+  }
+  return 'overview';
+}
+
 export function TeamDetail({ auth }: { auth: AuthState }) {
   const { teamId = '' } = useParams();
   const location = useLocation();
+  const navigate = useNavigate();
   const authUserId = auth.user?.uid || '';
   const [model, setModel] = useState<TeamDetailModel | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<AppServiceError | null>(null);
   const [reloadVersion, setReloadVersion] = useState(0);
-  const [activeTab, setActiveTab] = useState<TeamTab>('overview');
+  const activeTab = getTeamTabFromSearch(location.search);
   const [staffPermissionsLoading, setStaffPermissionsLoading] = useState(false);
   const [staffPermissionsError, setStaffPermissionsError] = useState('');
   const [insightsLoading, setInsightsLoading] = useState(false);
@@ -88,12 +97,22 @@ export function TeamDetail({ auth }: { auth: AuthState }) {
   const [trackingAttempted, setTrackingAttempted] = useState(false);
   const [trackingItems, setTrackingItems] = useState<TeamTrackingAdminItem[]>([]);
 
-  useEffect(() => {
-    const nextTab = new URLSearchParams(location.search).get('tab');
-    if (nextTab === 'overview' || nextTab === 'schedule' || nextTab === 'roster' || nextTab === 'insights' || nextTab === 'more') {
-      setActiveTab(nextTab);
+  function navigateToTab(nextTab: TeamTab) {
+    if (nextTab === activeTab) return;
+
+    const nextParams = new URLSearchParams(location.search);
+    if (nextTab === 'overview') {
+      nextParams.delete('tab');
+    } else {
+      nextParams.set('tab', nextTab);
     }
-  }, [location.search]);
+
+    const nextSearch = nextParams.toString();
+    navigate({
+      pathname: location.pathname,
+      search: nextSearch ? `?${nextSearch}` : ''
+    });
+  }
 
   useEffect(() => {
     let cancelled = false;
@@ -392,7 +411,7 @@ export function TeamDetail({ auth }: { auth: AuthState }) {
                 key={tab.id}
                 type="button"
                 className={`flex min-h-14 flex-col items-center justify-center gap-1 rounded-xl px-1 text-[11px] font-black transition ${selected ? 'bg-primary-600 text-white shadow-sm' : 'text-gray-600 hover:bg-gray-100'}`}
-                onClick={() => setActiveTab(tab.id)}
+                onClick={() => navigateToTab(tab.id)}
                 aria-pressed={selected}
               >
                 <span className="relative">
@@ -407,7 +426,7 @@ export function TeamDetail({ auth }: { auth: AuthState }) {
       </section>
 
       {activeTab === 'overview' ? <OverviewTab model={model} /> : null}
-      {activeTab === 'schedule' ? <ScheduleTab model={model} auth={auth} onOpenStatTrackerConfigs={() => setActiveTab('more')} /> : null}
+      {activeTab === 'schedule' ? <ScheduleTab model={model} auth={auth} onOpenStatTrackerConfigs={() => navigateToTab('more')} /> : null}
       {activeTab === 'roster' ? <RosterTab model={model} authUser={auth.user} onRefresh={refreshTeamDetail} rosterInviteLoading={rosterInviteLoading} rosterInviteError={rosterInviteError} rosterInviteSummaries={rosterInviteSummaries} onInviteCreated={refreshRosterInvites} trackingLoading={trackingLoading} trackingError={trackingError} trackingItems={trackingItems} onTrackingChanged={refreshTrackingItems} /> : null}
       {activeTab === 'insights' ? <InsightsTab model={model} loading={insightsLoading} error={insightsError} /> : null}
       {activeTab === 'more' ? <MoreTab model={model} auth={auth} staffPermissionsLoading={staffPermissionsLoading} staffPermissionsError={staffPermissionsError} sponsorsLoading={sponsorsLoading} sponsorsError={sponsorsError} onTeamDetailRefresh={refreshTeamDetail} /> : null}

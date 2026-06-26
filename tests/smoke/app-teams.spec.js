@@ -680,6 +680,29 @@ test.describe('mobile My Teams', () => {
         await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1)).toBe(true);
     });
 
+    test('team detail tab routes preserve back navigation inside the team hub', async ({ page, baseURL }) => {
+        await mockTeamsModules(page);
+        await page.goto(appUrl(baseURL, '/teams'), { waitUntil: 'domcontentloaded' });
+
+        const teamsReadyHeading = page.getByRole('heading', { name: '3 teams ready' });
+        await waitForTeamsRoute(page, teamsReadyHeading);
+        await page.getByRole('link', { name: 'Open Bears' }).first().click();
+
+        await waitForTeamDetailRoute(page, 'Bears');
+        await page.getByRole('button', { name: /Roster/ }).click();
+        await expect(page).toHaveURL(/#\/teams\/team-1\?tab=roster$/);
+        await expect(page.getByRole('button', { name: /Roster/ })).toHaveAttribute('aria-pressed', 'true');
+
+        await page.goBack();
+        await waitForTeamDetailRoute(page, 'Bears');
+        await expect(page).toHaveURL(/#\/teams\/team-1$/);
+        await expect(page.getByRole('button', { name: /Overview/ })).toHaveAttribute('aria-pressed', 'true');
+
+        await page.goBack();
+        await waitForTeamsRoute(page, teamsReadyHeading);
+        await expect(page).toHaveURL(/#\/teams$/);
+    });
+
     test('team detail empty tabs are useful and navigable', async ({ page, baseURL }) => {
         await mockTeamsModules(page);
         await page.goto(appUrl(baseURL, '/teams/team-empty'), { waitUntil: 'domcontentloaded' });

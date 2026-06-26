@@ -38,6 +38,7 @@ export function dispatchNativeBackDismissEvent() {
 
 export function getNativeBackTarget(pathname: string, search = '') {
   const path = normalizePathname(pathname);
+  const normalizedSearch = normalizeSearch(search);
   const homeStateTarget = getNativeHomeBackTarget(path, search);
   if (homeStateTarget) return homeStateTarget;
   if (isNativeExitRoute(path, search)) return null;
@@ -47,6 +48,13 @@ export function getNativeBackTarget(pathname: string, search = '') {
   if (path === '/teams/browse') return '/teams';
   const teamSubroute = path.match(/^\/teams\/([^/]+)\/.+/);
   if (teamSubroute) return `/teams/${teamSubroute[1]}`;
+  if (/^\/teams\/[^/]+$/.test(path)) {
+    const params = new URLSearchParams(normalizedSearch);
+    if (params.get('tab') && params.get('tab') !== 'overview') {
+      params.delete('tab');
+      return buildRoute(path, params);
+    }
+  }
   if (/^\/teams\/[^/]+$/.test(path)) return '/teams';
   if (/^\/parent-tools\/.+/.test(path)) return '/parent-tools';
   if (/^\/players\//.test(path)) return '/home';
