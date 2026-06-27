@@ -36,6 +36,10 @@ const {
   normalizeCalendarRequest
 } = require('./team-calendar-feed-core.cjs');
 const {
+  isFamilyShareTokenReadable,
+  resolveFamilyShareChildrenFromOwnerProfile
+} = require('./family-share-core.cjs');
+const {
   hashRsvpToken,
   createRawRsvpToken,
   normalizeRsvpTokenCreateInput,
@@ -3893,6 +3897,46 @@ exports.teamCalendarFeed = functions.https.onRequest(async (req, res) => {
     console.error('Failed to build team calendar feed:', error);
     res.status(500).send('Calendar feed failed');
   }
+});
+
+exports.resolveFamilyShareTokenChildren = functions.https.onCall(async (data) => {
+  const tokenId = String(data?.tokenId || '').trim();
+  if (!/^[a-f0-9]{40}$/i.test(tokenId)) {
+    throw new functions.https.HttpsError('invalid-argument', 'A valid family share token is required.');
+  }
+
+  const tokenSnap = await firestore.doc(`familyShareTokens/${tokenId}`).get();
+  if (!tokenSnap.exists) {
+    throw new functions.https.HttpsError('not-found', 'Family share token not found.');
+  }
+
+  const token = tokenSnap.data() || {};
+  if (!isFamilyShareTokenReadable(token)) {
+    throw new functions.https.HttpsError('permission-denied', 'Family share token is no longer active.');
+  }
+
+  const ownerUserId = String(token.ownerUserId || '').trim();
+  if (!ownerUserId) {
+    return { children: [] };
+  }
+
+  const ownerSnap = await firestore.doc(`users/${ownerUserId}`).get();
+  if (!ownerSnap.exists) {
+    return { children: [] };
+  }
+
+  const children = await resolveFamilyShareChildrenFromOwnerProfile(ownerSnap.data() || {}, {
+    loadTeam: async (teamId) => {
+      const teamSnap = await firestore.doc(`teams/${teamId}`).get();
+      return teamSnap.exists ? { id: teamSnap.id, ...(teamSnap.data() || {}) } : null;
+    },
+    loadPlayer: async (teamId, playerId) => {
+      const playerSnap = await firestore.doc(`teams/${teamId}/players/${playerId}`).get();
+      return playerSnap.exists ? { id: playerSnap.id, ...(playerSnap.data() || {}) } : null;
+    }
+  });
+
+  return { children };
 });
 
 exports.fetchCalendarIcs = functions

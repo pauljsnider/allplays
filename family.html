@@ -173,7 +173,7 @@
   <div id="footer-container"></div>
 
   <script type="module">
-    import { getFamilyShareToken, getTeam, getGames, getTrackedCalendarEventUids } from './js/db.js?v=74';
+    import { getFamilyShareToken, resolveFamilyShareTokenChildren, getTeam, getGames, getTrackedCalendarEventUids } from './js/db.js?v=74';
     import { resolveScheduleWatchCta } from './js/schedule-watch-cta.js?v=1';
     import { renderHeader, renderFooter, escapeHtml, fetchAndParseCalendar, extractOpponent, isPracticeEvent, expandRecurrence, getCalendarEventTrackingId, isTrackedCalendarEvent } from './js/utils.js?v=14';
 
@@ -216,6 +216,35 @@
       return Boolean(expiresAt && expiresAt.getTime() <= Date.now());
     }
 
+    function normalizeFamilyPageChildren(children = []) {
+      return (Array.isArray(children) ? children : [])
+        .map(child => {
+          const teamId = String(child?.teamId ?? '').trim();
+          const playerId = String(child?.playerId || child?.childId || '').trim();
+          return {
+            teamId,
+            teamName: String(child?.teamName || child?.team || '').trim(),
+            playerId,
+            playerName: String(child?.playerName || child?.childName || child?.name || '').trim(),
+            playerNumber: String(child?.playerNumber ?? child?.number ?? '').trim(),
+            playerPhotoUrl: child?.playerPhotoUrl || child?.photoUrl || null
+          };
+        })
+        .filter(child => child.teamId && child.playerId);
+    }
+
+    async function resolveFamilyPageChildren(token) {
+      const storedChildren = normalizeFamilyPageChildren(token?.children);
+      if (storedChildren.length > 0) return storedChildren;
+
+      try {
+        return normalizeFamilyPageChildren(await resolveFamilyShareTokenChildren(tokenId));
+      } catch (err) {
+        console.warn('[family] Failed to resolve legacy share token children:', err);
+        return [];
+      }
+    }
+
     async function init() {
       if (!tokenId) {
         showError();
@@ -254,7 +283,7 @@
 
       document.title = (token.label || 'Family Page') + ' - ALL PLAYS';
 
-      const children = Array.isArray(token.children) ? token.children : [];
+      const children = await resolveFamilyPageChildren(token);
 
       renderPlayers(children);
       renderTeams(children);

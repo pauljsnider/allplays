@@ -597,14 +597,17 @@
                 "notifyRideClaimUpdated",
                 "notifyRideOfferCancelled",
                 "notifyRideOfferCreated",
+                "resolveFamilyShareTokenChildren",
                 "sendPracticePacketDueTomorrowReminders"
             ],
             "unitTests": [
+                "functions/test/family-share-core.test.cjs",
                 "tests/unit/app-parent-tools-household-service.test.js",
                 "tests/unit/app-parent-tools-service.test.js",
                 "tests/unit/app-parent-tools-single-event-ics.test.ts",
                 "tests/unit/family-calendar-failures.test.js",
                 "tests/unit/family-plan.test.js",
+                "tests/unit/family-share-legacy-token.test.js",
                 "tests/unit/family-share-token-rules.test.js"
             ],
             "integrationTests": [
