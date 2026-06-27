@@ -52,7 +52,12 @@ export function PublicTeamSearch({ autoBrowseOnMount = false, showBackLink = fal
   }, []);
 
   const handleSearch = () => {
-    void fetchPublicTeams({ searchText: searchQuery.trim() || undefined });
+    const trimmedQuery = searchQuery.trim();
+    if (!trimmedQuery) {
+      return;
+    }
+
+    void fetchPublicTeams({ searchText: trimmedQuery });
   };
 
   const handleBrowseAll = () => {
