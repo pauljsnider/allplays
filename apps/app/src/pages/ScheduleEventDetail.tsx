@@ -2845,6 +2845,7 @@ function getBonusState(teamFouls: number) {
 }
 
 function LiveScoreEditor({ auth, event, onScoreUpdated }: { auth: AuthState; event: ParentScheduleEvent; onScoreUpdated: (homeScore: number, awayScore: number) => void }) {
+  const autosaveDelayMs = 700;
   const savedHomeScore = Math.max(0, Number(event.homeScore ?? 0));
   const savedAwayScore = Math.max(0, Number(event.awayScore ?? 0));
   const [homeScore, setHomeScore] = useState(savedHomeScore);
@@ -2854,9 +2855,13 @@ function LiveScoreEditor({ auth, event, onScoreUpdated }: { auth: AuthState; eve
   const [loadingHomePlayers, setLoadingHomePlayers] = useState(false);
   const [playerScoringId, setPlayerScoringId] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  const [autosaveScheduled, setAutosaveScheduled] = useState(false);
   const [status, setStatus] = useState<{ tone: 'success' | 'error'; message: string } | null>(null);
   const lastSavedScoreRef = useRef({ eventKey: event.eventKey, homeScore: savedHomeScore, awayScore: savedAwayScore });
   const pendingLocalSaveRef = useRef<ScoreSnapshot | null>(null);
+  const autosaveTimeoutRef = useRef<number | null>(null);
+  const lastAutosaveFailureRef = useRef<ScoreSnapshot | null>(null);
+  const activeSaveModeRef = useRef<'manual' | 'autosave'>('manual');
 
   useEffect(() => {
     const pendingLocalSave = pendingLocalSaveRef.current;
@@ -2874,6 +2879,12 @@ function LiveScoreEditor({ auth, event, onScoreUpdated }: { auth: AuthState; eve
     }
 
     pendingLocalSaveRef.current = null;
+    lastAutosaveFailureRef.current = null;
+    if (autosaveTimeoutRef.current !== null) {
+      window.clearTimeout(autosaveTimeoutRef.current);
+      autosaveTimeoutRef.current = null;
+    }
+    setAutosaveScheduled(false);
     lastSavedScoreRef.current = { eventKey: event.eventKey, homeScore: savedHomeScore, awayScore: savedAwayScore };
   }, [event.eventKey, savedHomeScore, savedAwayScore]);
 
@@ -2905,6 +2916,7 @@ function LiveScoreEditor({ auth, event, onScoreUpdated }: { auth: AuthState; eve
     setPreviousScoreSnapshots((snapshots) => [...snapshots, { homeScore, awayScore }]);
     setHomeScore(nextHomeScore);
     setAwayScore(nextAwayScore);
+    lastAutosaveFailureRef.current = null;
     setStatus(null);
   };
 
@@ -2914,39 +2926,82 @@ function LiveScoreEditor({ auth, event, onScoreUpdated }: { auth: AuthState; eve
       if (!latestSnapshot) return snapshots;
       setHomeScore(latestSnapshot.homeScore);
       setAwayScore(latestSnapshot.awayScore);
+      lastAutosaveFailureRef.current = null;
       setStatus(null);
       return snapshots.slice(0, -1);
     });
   };
 
-  const saveScore = async () => {
+  const saveScore = async (mode: 'manual' | 'autosave' = 'manual', scoreOverride?: ScoreSnapshot) => {
     if (!auth.user) return;
+    const nextScore = scoreOverride || { homeScore, awayScore };
+    if (nextScore.homeScore === savedHomeScore && nextScore.awayScore === savedAwayScore) return;
+    if (autosaveTimeoutRef.current !== null) {
+      window.clearTimeout(autosaveTimeoutRef.current);
+      autosaveTimeoutRef.current = null;
+    }
+    setAutosaveScheduled(false);
+    activeSaveModeRef.current = mode;
     const previousScore = { homeScore: savedHomeScore, awayScore: savedAwayScore };
     setSaving(true);
     setStatus(null);
     try {
-      const payload = await updateGameScore(event.teamId, event.id, { homeScore, awayScore }, auth.user);
-      const nextHomeScore = Number(payload.homeScore ?? homeScore);
-      const nextAwayScore = Number(payload.awayScore ?? awayScore);
+      const payload = await updateGameScore(event.teamId, event.id, nextScore, auth.user);
+      const nextHomeScore = Number(payload.homeScore ?? nextScore.homeScore);
+      const nextAwayScore = Number(payload.awayScore ?? nextScore.awayScore);
       pendingLocalSaveRef.current = { homeScore: nextHomeScore, awayScore: nextAwayScore };
+      lastAutosaveFailureRef.current = null;
       onScoreUpdated(nextHomeScore, nextAwayScore);
       if (nextHomeScore === previousScore.homeScore && nextAwayScore === previousScore.awayScore) {
-        setStatus({ tone: 'success', message: 'Score saved.' });
+        setStatus({ tone: 'success', message: mode === 'autosave' ? 'Score autosaved.' : 'Score saved.' });
         return;
       }
       try {
         await publishLiveScoreUpdateEvent(event.teamId, event.id, { homeScore: nextHomeScore, awayScore: nextAwayScore }, auth.user, previousScore);
-        setStatus({ tone: 'success', message: 'Score saved and posted to live play-by-play.' });
+        setStatus({ tone: 'success', message: mode === 'autosave' ? 'Score autosaved and posted to live play-by-play.' : 'Score saved and posted to live play-by-play.' });
       } catch (publishError) {
         console.warn('[schedule-event-detail] Score saved but live play-by-play posting failed:', publishError);
-        setStatus({ tone: 'success', message: 'Score saved. Live play-by-play post failed.' });
+        setStatus({ tone: 'success', message: mode === 'autosave' ? 'Score autosaved. Live play-by-play post failed.' : 'Score saved. Live play-by-play post failed.' });
       }
     } catch (error: any) {
-      setStatus({ tone: 'error', message: error?.message || 'Unable to save score.' });
+      if (mode === 'autosave') {
+        lastAutosaveFailureRef.current = nextScore;
+      }
+      setStatus({ tone: 'error', message: error?.message || (mode === 'autosave' ? 'Unable to autosave score. Retry save.' : 'Unable to save score.') });
     } finally {
       setSaving(false);
     }
   };
+
+  useEffect(() => {
+    if (!auth.user || !dirty || saving || playerScoringId) return undefined;
+    const failedAutosave = lastAutosaveFailureRef.current;
+    if (failedAutosave && failedAutosave.homeScore === homeScore && failedAutosave.awayScore === awayScore) {
+      setAutosaveScheduled(false);
+      return undefined;
+    }
+    setAutosaveScheduled(true);
+    autosaveTimeoutRef.current = window.setTimeout(() => {
+      autosaveTimeoutRef.current = null;
+      setAutosaveScheduled(false);
+      void saveScore('autosave', { homeScore, awayScore });
+    }, autosaveDelayMs);
+
+    return () => {
+      if (autosaveTimeoutRef.current !== null) {
+        window.clearTimeout(autosaveTimeoutRef.current);
+        autosaveTimeoutRef.current = null;
+      }
+      setAutosaveScheduled(false);
+    };
+  }, [auth.user, awayScore, dirty, homeScore, playerScoringId, saving]);
+
+  const manualScoreSaveLabel = status?.tone === 'error' && dirty ? 'Retry save' : (saving ? 'Saving score' : 'Save score');
+  const helperText = autosaveScheduled
+    ? 'Autosaving manual score change…'
+    : (saving && activeSaveModeRef.current === 'autosave')
+      ? 'Saving manual score change…'
+      : 'Save or undo manual score changes before recording player stats.';
 
   const recordPlayerTwo = async (player: ScheduleHomeScoringPlayer) => {
     if (!auth.user || saving || playerScoringId || dirty) return;
@@ -3018,17 +3073,17 @@ function LiveScoreEditor({ auth, event, onScoreUpdated }: { auth: AuthState; eve
             })}
           </div>
         ) : !loadingHomePlayers ? <div className="mt-2 text-xs font-semibold text-gray-500">No active team roster players found.</div> : null}
-        {dirty ? <div className="mt-2 text-xs font-semibold text-amber-700">Save or undo manual score changes before recording player stats.</div> : null}
+        {dirty ? <div className="mt-2 text-xs font-semibold text-amber-700">{helperText}</div> : null}
       </div>
       <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
         <div className="flex flex-wrap items-center gap-2">
           <button
             type="button"
             className="primary-button min-h-11 px-4 text-sm"
-            onClick={saveScore}
+            onClick={() => void saveScore('manual')}
             disabled={saving || Boolean(playerScoringId) || !dirty}
           >
-            {saving ? 'Saving score' : 'Save score'}
+            {manualScoreSaveLabel}
           </button>
           {previousScoreSnapshots.length ? (
             <button
