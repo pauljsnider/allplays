@@ -3,12 +3,23 @@ import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/re
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { useState } from 'react';
 import { submitParentScheduleRsvp } from '../../lib/scheduleService';
+import { UX_TIMING } from '../../lib/uxTiming';
 import { useScheduleEventRsvp } from './useScheduleEventRsvp';
 import { ScheduleEventDetailProvider, useScheduleEventDetailContext } from '../../pages/schedule/ScheduleEventDetailContext';
 import type { AuthState } from '../../lib/types';
 
 vi.mock('../../lib/scheduleService', () => ({
     submitParentScheduleRsvp: vi.fn()
+}));
+
+const rsvpInteractionEnd = vi.fn();
+const startInteractionTimer = vi.fn((_label?: string, _meta?: Record<string, unknown>) => ({ end: rsvpInteractionEnd }));
+
+vi.mock('../../lib/uxTiming', () => ({
+    UX_TIMING: {
+        rsvpTap: 'rsvp tap latency'
+    },
+    startInteractionTimer: (label: string, meta?: Record<string, unknown>) => startInteractionTimer(label, meta)
 }));
 
 const auth: AuthState = {
@@ -142,6 +153,10 @@ describe('useScheduleEventRsvp', () => {
         });
         await waitFor(() => {
             expect(screen.getByText('Avery Smith marked going.')).toBeTruthy();
+        });
+        expect(startInteractionTimer).toHaveBeenCalledWith(UX_TIMING.rsvpTap, { response: 'going' });
+        await waitFor(() => {
+            expect(rsvpInteractionEnd).toHaveBeenCalledWith();
         });
         expect(screen.getByTestId('submitting').textContent).toBe('');
     });
