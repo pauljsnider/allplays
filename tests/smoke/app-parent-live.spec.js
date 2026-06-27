@@ -4,8 +4,8 @@
  *
  * Requires:
  *   SMOKE_APP_BASE_URL=http://localhost:5174
- *   SMOKE_PARENT_EMAIL  (default: paul@paulsnider.net)
- *   SMOKE_PARENT_PASSWORD (default: looser)
+ *   SMOKE_PARENT_EMAIL
+ *   SMOKE_PARENT_PASSWORD
  *
  * Run:
  *   SMOKE_APP_BASE_URL=http://localhost:5174 \
@@ -15,8 +15,9 @@
 import { expect, test } from '@playwright/test';
 
 const appBaseUrl = process.env.SMOKE_APP_BASE_URL || '';
-const parentEmail = process.env.SMOKE_PARENT_EMAIL || 'paul@paulsnider.net';
-const parentPassword = process.env.SMOKE_PARENT_PASSWORD || 'looser';
+const parentEmail = process.env.SMOKE_PARENT_EMAIL || '';
+const parentPassword = process.env.SMOKE_PARENT_PASSWORD || '';
+const hasParentCredentials = Boolean(parentEmail && parentPassword);
 
 test.skip(!appBaseUrl, 'SMOKE_APP_BASE_URL is required for live parent smoke tests');
 test.use({ viewport: { width: 390, height: 844 }, hasTouch: true });
@@ -71,6 +72,7 @@ test('live: app boots without a blank white screen', async ({ page, baseURL }) =
 // AUTH — sign in with email/password completes successfully
 // ---------------------------------------------------------------------------
 test('live: parent can sign in and land on a protected page', async ({ page, baseURL }) => {
+    test.skip(!hasParentCredentials, 'SMOKE_PARENT_EMAIL and SMOKE_PARENT_PASSWORD are required for authenticated parent smoke tests');
     await signIn(page, baseURL);
     const hash = new URL(page.url()).hash;
     // Should land on /teams (admin) or /home or /schedule — never /auth
@@ -83,6 +85,7 @@ test('live: parent can sign in and land on a protected page', async ({ page, bas
 // SCHEDULE — parent can see schedule
 // ---------------------------------------------------------------------------
 test('live: schedule page boots and shows content without crash', async ({ page, baseURL }) => {
+    test.skip(!hasParentCredentials, 'SMOKE_PARENT_EMAIL and SMOKE_PARENT_PASSWORD are required for authenticated parent smoke tests');
     await signIn(page, baseURL);
     await page.goto(appUrl(baseURL, '/schedule'), { waitUntil: 'domcontentloaded' });
     await expect(page.getByText('Loading ALL PLAYS')).toBeHidden({ timeout: 15000 });
@@ -102,6 +105,7 @@ test('live: schedule page boots and shows content without crash', async ({ page,
 // PARENT TOOLS — access panel renders "Family workflows" heading
 // ---------------------------------------------------------------------------
 test('live: parent tools access panel boots and shows family workflows heading', async ({ page, baseURL }) => {
+    test.skip(!hasParentCredentials, 'SMOKE_PARENT_EMAIL and SMOKE_PARENT_PASSWORD are required for authenticated parent smoke tests');
     await signIn(page, baseURL);
     await page.goto(appUrl(baseURL, '/parent-tools/access'), { waitUntil: 'domcontentloaded' });
     await expect(page.getByText('Loading ALL PLAYS')).toBeHidden({ timeout: 15000 });
@@ -116,6 +120,7 @@ test('live: parent tools access panel boots and shows family workflows heading',
 // FEES — fees panel boots
 // ---------------------------------------------------------------------------
 test('live: parent fees panel boots without error', async ({ page, baseURL }) => {
+    test.skip(!hasParentCredentials, 'SMOKE_PARENT_EMAIL and SMOKE_PARENT_PASSWORD are required for authenticated parent smoke tests');
     await signIn(page, baseURL);
     await page.goto(appUrl(baseURL, '/parent-tools/fees'), { waitUntil: 'domcontentloaded' });
     await expect(page.getByText('Loading ALL PLAYS')).toBeHidden({ timeout: 15000 });
@@ -139,6 +144,7 @@ test('live: parent fees panel boots without error', async ({ page, baseURL }) =>
 // CALENDAR — calendar panel boots
 // ---------------------------------------------------------------------------
 test('live: parent calendar panel boots without crash', async ({ page, baseURL }) => {
+    test.skip(!hasParentCredentials, 'SMOKE_PARENT_EMAIL and SMOKE_PARENT_PASSWORD are required for authenticated parent smoke tests');
     await signIn(page, baseURL);
     await page.goto(appUrl(baseURL, '/parent-tools/calendar'), { waitUntil: 'domcontentloaded' });
     await expect(page.getByText('Loading ALL PLAYS')).toBeHidden({ timeout: 15000 });
@@ -160,6 +166,7 @@ test('live: parent calendar panel boots without crash', async ({ page, baseURL }
 // SHARE — family share panel boots
 // ---------------------------------------------------------------------------
 test('live: parent share panel boots without crash', async ({ page, baseURL }) => {
+    test.skip(!hasParentCredentials, 'SMOKE_PARENT_EMAIL and SMOKE_PARENT_PASSWORD are required for authenticated parent smoke tests');
     await signIn(page, baseURL);
     await page.goto(appUrl(baseURL, '/parent-tools/share'), { waitUntil: 'domcontentloaded' });
     await expect(page.getByText('Loading ALL PLAYS')).toBeHidden({ timeout: 15000 });
@@ -178,6 +185,7 @@ test('live: parent share panel boots without crash', async ({ page, baseURL }) =
 // HOUSEHOLD — household panel boots
 // ---------------------------------------------------------------------------
 test('live: parent household panel boots without crash', async ({ page, baseURL }) => {
+    test.skip(!hasParentCredentials, 'SMOKE_PARENT_EMAIL and SMOKE_PARENT_PASSWORD are required for authenticated parent smoke tests');
     await signIn(page, baseURL);
     await page.goto(appUrl(baseURL, '/parent-tools/household'), { waitUntil: 'domcontentloaded' });
     await expect(page.getByText('Loading ALL PLAYS')).toBeHidden({ timeout: 15000 });
@@ -189,6 +197,7 @@ test('live: parent household panel boots without crash', async ({ page, baseURL 
 // CERTIFICATES / AWARDS — awards panel boots
 // ---------------------------------------------------------------------------
 test('live: parent awards panel boots without crash', async ({ page, baseURL }) => {
+    test.skip(!hasParentCredentials, 'SMOKE_PARENT_EMAIL and SMOKE_PARENT_PASSWORD are required for authenticated parent smoke tests');
     await signIn(page, baseURL);
     await page.goto(appUrl(baseURL, '/parent-tools/certificates'), { waitUntil: 'domcontentloaded' });
     await expect(page.getByText('Loading ALL PLAYS')).toBeHidden({ timeout: 15000 });
@@ -206,6 +215,7 @@ test('live: parent awards panel boots without crash', async ({ page, baseURL }) 
 // NAVIGATION — tab switching within parent tools
 // ---------------------------------------------------------------------------
 test('live: parent tools tab navigation works across tabs', async ({ page, baseURL }) => {
+    test.skip(!hasParentCredentials, 'SMOKE_PARENT_EMAIL and SMOKE_PARENT_PASSWORD are required for authenticated parent smoke tests');
     await signIn(page, baseURL);
     await page.goto(appUrl(baseURL, '/parent-tools/access'), { waitUntil: 'domcontentloaded' });
     await expect(page.getByText('Loading ALL PLAYS')).toBeHidden({ timeout: 15000 });
@@ -227,6 +237,7 @@ test('live: parent tools tab navigation works across tabs', async ({ page, baseU
 // RSVP — schedule event detail has RSVP section
 // ---------------------------------------------------------------------------
 test('live: schedule RSVP button opens response panel without crash', async ({ page, baseURL }) => {
+    test.skip(!hasParentCredentials, 'SMOKE_PARENT_EMAIL and SMOKE_PARENT_PASSWORD are required for authenticated parent smoke tests');
     await signIn(page, baseURL);
     await page.goto(appUrl(baseURL, '/schedule'), { waitUntil: 'domcontentloaded' });
     await expect(page.getByText('Loading ALL PLAYS')).toBeHidden({ timeout: 15000 });
