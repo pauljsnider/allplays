@@ -1532,7 +1532,9 @@ describe('ScheduleEventDetail assignments', () => {
       })],
       children: []
     });
-    scheduleServiceMocks.loadHomeScoringPlayers.mockResolvedValue([]);
+    scheduleServiceMocks.loadHomeScoringPlayers.mockResolvedValue([
+      { id: 'p1', name: 'Avery Smith', number: '1', points: 10, fouls: 1 }
+    ]);
     scheduleServiceMocks.loadAutoFilledLineupDraftPreviewForApp.mockResolvedValue({
       formationId: 'basketball-5v5',
       formationName: 'Basketball 5v5',
@@ -1559,21 +1561,27 @@ describe('ScheduleEventDetail assignments', () => {
 
     await waitFor(() => {
       expect(scheduleServiceMocks.loadAutoFilledLineupDraftPreviewForApp).toHaveBeenCalledTimes(1);
-      expect(screen.getByRole('button', { name: /#1 Avery Smith/i })).toBeTruthy();
+      expect(screen.getAllByRole('button', { name: /#1 Avery Smith/i }).length).toBeGreaterThan(0);
     });
 
     fireEvent.click(screen.getByRole('button', { name: 'Home score up' }));
-    fireEvent.click(screen.getByRole('button', { name: 'Save score' }));
+    expect(screen.getByText('Autosaving manual score change…')).toBeTruthy();
+    expect(scheduleServiceMocks.updateGameScore).not.toHaveBeenCalled();
+    expect(screen.getByRole('button', { name: '#1 Avery Smith plus 2 points' })).toHaveProperty('disabled', true);
 
     await waitFor(() => {
       expect(scheduleServiceMocks.updateGameScore).toHaveBeenCalledWith('team-1', 'game-1', { homeScore: 42, awayScore: 38 }, auth.user);
+    }, { timeout: 2000 });
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: '#1 Avery Smith plus 2 points' })).toHaveProperty('disabled', false);
     });
     await waitFor(() => {
       expect(scheduleServiceMocks.loadAutoFilledLineupDraftPreviewForApp).toHaveBeenCalledTimes(1);
-      expect(screen.getByRole('button', { name: /#1 Avery Smith/i })).toBeTruthy();
+      expect(screen.getAllByRole('button', { name: /#1 Avery Smith/i }).length).toBeGreaterThan(0);
     });
     expect(chatServiceMocks.sendTeamChatMessage).not.toHaveBeenCalled();
     expect(screen.queryByText('Loading lineup builder…')).toBeNull();
+    expect(screen.getByText('Score autosaved and posted to live play-by-play.')).toBeTruthy();
   });
 
   it('keeps live substitutions loaded during live clock updates', async () => {
