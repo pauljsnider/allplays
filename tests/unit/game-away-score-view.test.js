@@ -12,7 +12,7 @@ function extractFunctionBody(source, functionName) {
 }
 
 describe('game away score view regression', () => {
-    it('swaps team-relative scores and result state for away games', () => {
+    it('preserves legacy team-relative tracker scores for away games', () => {
         const source = readGameHtml();
         const functionBody = extractFunctionBody(source, 'resolveGameReportScoreView');
 
@@ -26,21 +26,23 @@ describe('game away score view regression', () => {
             awayScore: 55,
             status: 'completed'
         })).toEqual({
-            teamScore: 55,
-            opponentScore: 70,
-            isWin: false,
-            isLoss: true,
+            teamScore: 70,
+            opponentScore: 55,
+            isWin: true,
+            isLoss: false,
             isTie: false
         });
 
         expect(resolveGameReportScoreView({
-            isHome: true,
+            isHome: false,
+            teamScore: 61,
+            opponentScore: 58,
             homeScore: 70,
             awayScore: 55,
             status: 'completed'
         })).toEqual({
-            teamScore: 70,
-            opponentScore: 55,
+            teamScore: 61,
+            opponentScore: 58,
             isWin: true,
             isLoss: false,
             isTie: false

@@ -899,10 +899,8 @@ Write the match report now:`;
         }
 
         function resolveGameReportScoreView(game = {}) {
-            const homeScore = Number(game.homeScore || 0);
-            const awayScore = Number(game.awayScore || 0);
-            const teamScore = game.isHome === false ? awayScore : homeScore;
-            const opponentScore = game.isHome === false ? homeScore : awayScore;
+            const teamScore = Number(game.teamScore ?? game.homeScore ?? 0);
+            const opponentScore = Number(game.opponentScore ?? game.awayScore ?? 0);
 
             return {
                 teamScore,
