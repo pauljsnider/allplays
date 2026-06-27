@@ -1141,12 +1141,14 @@ export async function sendTeamChatMessage({
     throw new Error('Choose at least one selected member before sending.');
   }
 
-  const interaction = skipInteractionTiming
-    ? null
-    : startInteractionTimer(UX_TIMING.chatSend, {
+  let interactionHandle: ReturnType<typeof startInteractionTimer> | null = null;
+  if (!skipInteractionTiming) {
+    const interaction = startInteractionTimer(UX_TIMING.chatSend, {
       attachments: files.length,
       target: selectedRecipientTarget
     });
+    interactionHandle = interaction;
+  }
   const uploadedAttachments: Array<ChatAttachment | undefined> = [];
   try {
     const targetMetadata = buildChatAudienceMetadata({
@@ -1203,14 +1205,14 @@ export async function sendTeamChatMessage({
       await withTimeout(Promise.resolve(postChatMessage(teamId, payload)), 'Chat message send');
     }
 
-    interaction?.end({ path: isNativeRuntime() ? 'native' : 'sdk' });
+    interactionHandle?.end({ path: isNativeRuntime() ? 'native' : 'sdk' });
     return {
       conversationId,
       createdConversation,
       wantsAi: hasAllPlaysMention(text)
     };
   } catch (error) {
-    interaction?.end({ error: (error as Error)?.message || 'Chat send failed' });
+    interactionHandle?.end({ error: (error as Error)?.message || 'Chat send failed' });
     const cleanupAttachments = uploadedAttachments.filter((attachment): attachment is ChatAttachment => Boolean(attachment));
     if (cleanupAttachments.length > 0) {
       try {
