@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import React from 'react';
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
-import { MemoryRouter, Route, Routes } from 'react-router-dom';
+import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { AppShell } from '../../apps/app/src/components/AppShell';
 import type { AuthState } from '../../apps/app/src/lib/types';
@@ -117,16 +117,35 @@ const auth: AuthState = {
     signOut: vi.fn(),
 };
 
-function renderShell(isDesktop = true) {
+function LocationDisplay() {
+    const location = useLocation();
+    return <div data-testid="current-route">{location.pathname}</div>;
+}
+
+function renderShell(isDesktop = true, initialPath = '/home') {
     useShellLayoutMock.mockReturnValue({ isDesktopWeb: isDesktop });
     return render(
-        <MemoryRouter initialEntries={['/home']}>
+        <MemoryRouter initialEntries={[initialPath]}>
             <Routes>
                 <Route
                     path="/home"
                     element={
                         <AppShell auth={auth}>
-                            <div>Home content</div>
+                            <>
+                                <div>Home content</div>
+                                <LocationDisplay />
+                            </>
+                        </AppShell>
+                    }
+                />
+                <Route
+                    path="/messages/:teamId"
+                    element={
+                        <AppShell auth={auth}>
+                            <>
+                                <div>Chat thread content</div>
+                                <LocationDisplay />
+                            </>
                         </AppShell>
                     }
                 />
@@ -166,6 +185,58 @@ describe('Notification bell in AppShell', () => {
         renderShell(false);
         const bellButton = screen.getByTestId('app-shell-notifications-trigger');
         expect(bellButton.getAttribute('aria-label')).toBe('Notifications');
+    });
+
+    it('keeps the notification trigger available on mobile chat detail routes and returns to the same thread after closing the inbox', async () => {
+        let onUnreadError: ((error: unknown) => void) | undefined;
+        inboxServiceMocks.subscribeToUnreadNotificationCount.mockImplementation(
+            (_uid: string, onCount: (count: number) => void, onError?: (error: unknown) => void) => {
+                onUnreadError = onError;
+                return vi.fn();
+            }
+        );
+
+        renderShell(false, '/messages/team-1');
+
+        await waitFor(() => {
+            expect(inboxServiceMocks.subscribeToUnreadNotificationCount).toHaveBeenCalledWith(
+                'user-1',
+                expect.any(Function),
+                expect.any(Function)
+            );
+        });
+
+        const bellButton = screen.getByTestId('app-shell-notifications-trigger');
+        expect(bellButton.getAttribute('aria-label')).toBe('Notifications');
+        expect(screen.getByTestId('current-route').textContent).toBe('/messages/team-1');
+        expect(screen.queryByTestId('notification-unread-badge')).toBeNull();
+
+        act(() => {
+            onUnreadError?.(new Error('offline'));
+        });
+
+        expect(screen.getByTestId('app-shell-notifications-trigger')).toBeTruthy();
+
+        act(() => {
+            const onCount = inboxServiceMocks.subscribeToUnreadNotificationCount.mock.calls[0]?.[1] as ((count: number) => void) | undefined;
+            onCount?.(3);
+        });
+
+        await waitFor(() => {
+            expect(screen.getByTestId('notification-unread-badge').textContent).toBe('3');
+        });
+
+        fireEvent.click(screen.getByTestId('app-shell-notifications-trigger'));
+        await waitFor(() => {
+            expect(screen.getByRole('dialog', { name: 'Notifications' })).toBeTruthy();
+        });
+
+        fireEvent.click(screen.getByRole('button', { name: 'Close notifications' }));
+        await waitFor(() => {
+            expect(screen.queryByRole('dialog', { name: 'Notifications' })).toBeNull();
+        });
+        expect(screen.getByTestId('current-route').textContent).toBe('/messages/team-1');
+        expect(screen.getByText('Chat thread content')).toBeTruthy();
     });
 
     it('subscribes to unread counts on mount and defers the full inbox until opened', async () => {
