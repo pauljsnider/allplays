@@ -145,6 +145,45 @@ async function mockMessagesModules(page, options = {}) {
         });
     });
 
+    await page.route(/\/src\/lib\/notificationInboxService\.ts(\?.*)?$/, async (route) => {
+        await route.fulfill({
+            status: 200,
+            contentType: 'application/javascript',
+            body: `
+                const notificationItems = [
+                    {
+                        id: 'notif-1',
+                        text: 'Game starts in 30 minutes',
+                        type: 'game_alert',
+                        appRoute: '/schedule/game-1',
+                        readAt: null
+                    }
+                ];
+
+                export function subscribeToUnreadNotificationCount(_uid, onCount, _onError) {
+                    onCount(notificationItems.filter((item) => !item.readAt).length);
+                    return () => {};
+                }
+
+                export function subscribeToNotificationInbox(_uid, onItems, _onError) {
+                    onItems(notificationItems);
+                    return () => {};
+                }
+
+                export async function markNotificationRead(_uid, itemId) {
+                    const item = notificationItems.find((entry) => entry.id === itemId);
+                    if (item) item.readAt = new Date().toISOString();
+                }
+
+                export async function markAllNotificationsRead() {
+                    notificationItems.forEach((item) => {
+                        item.readAt = new Date().toISOString();
+                    });
+                }
+            `
+        });
+    });
+
     await page.route(/\/src\/lib\/chatService\.ts(\?.*)?$/, async (route) => {
         await route.fulfill({
             status: 200,
@@ -381,6 +420,14 @@ test('messages inbox and team chat exercise real migrated chat UX', async ({ pag
     expect(mobileFrame.composerHeight).toBeLessThan(132);
     expect(mobileFrame.textareaHeight).toBeLessThanOrEqual(50);
     expect(mobileFrame.toolbarMarginTop).toBeLessThanOrEqual(8);
+    const notificationTrigger = page.getByTestId('app-shell-notifications-trigger');
+    await expect(notificationTrigger).toBeVisible();
+    await expect(page.getByTestId('notification-unread-badge')).toHaveText('1');
+    await notificationTrigger.click();
+    await expect(page.getByRole('dialog', { name: 'Notifications' })).toBeVisible();
+    await page.getByRole('button', { name: 'Close notifications' }).click();
+    await expect(page.getByRole('dialog', { name: 'Notifications' })).toBeHidden();
+    await expect(page).toHaveURL(/#\/messages\/team-1$/);
     await expect(page.getByRole('button', { name: /Audience: Full team/ })).toBeVisible();
 
     await page.getByRole('button', { name: 'Add attachment' }).click();
