@@ -4,6 +4,18 @@ function toDate(value) {
     return new Date(value);
 }
 
+function getRealIcsTrackingId(event) {
+    const occurrenceId = typeof event?.id === 'string' ? event.id.trim() : '';
+    if (occurrenceId) return occurrenceId;
+
+    const uid = typeof event?.uid === 'string' ? event.uid.trim() : '';
+    return uid;
+}
+
+function isGeneratedIcsFallbackId(value) {
+    return /^ics-\d+$/.test(String(value || '').trim());
+}
+
 export function mergeGlobalCalendarIcsEvents({
     team,
     teamColor,
@@ -14,6 +26,12 @@ export function mergeGlobalCalendarIcsEvents({
     buildGlobalCalendarIcsEvent
 }) {
     const mergedEvents = [];
+    const importedTrackingIds = new Set(
+        (existingEvents || [])
+            .filter((existingEvent) => existingEvent?.source === 'ics' && existingEvent?.teamId === team?.id)
+            .map((existingEvent) => String(existingEvent?.id || '').trim())
+            .filter((trackingId) => trackingId && !isGeneratedIcsFallbackId(trackingId))
+    );
 
     (icsEvents || []).forEach((event) => {
         if (isTrackedCalendarEvent(event, trackedUids)) return;
@@ -28,6 +46,9 @@ export function mergeGlobalCalendarIcsEvents({
         });
         if (hasTrackedConflict) return;
 
+        const realTrackingId = getRealIcsTrackingId(event);
+        if (realTrackingId && importedTrackingIds.has(realTrackingId)) return;
+
         const mappedEvent = buildGlobalCalendarIcsEvent({
             team,
             teamColor,
@@ -36,9 +57,12 @@ export function mergeGlobalCalendarIcsEvents({
                 dtstart: eventDate
             }
         });
-        if (mappedEvent) {
-            mergedEvents.push(mappedEvent);
+        if (!mappedEvent) return;
+
+        if (realTrackingId) {
+            importedTrackingIds.add(realTrackingId);
         }
+        mergedEvents.push(mappedEvent);
     });
 
     return mergedEvents;
