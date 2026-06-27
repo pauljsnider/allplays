@@ -29,7 +29,7 @@ describe('teams page HTML escaping', () => {
 
         expect(source).toContain("searchForm.addEventListener('submit'");
         expect(source).toContain('event.preventDefault();');
-        expect(source).toContain('await loadTeams(getLocationSearchValue());');
+        expect(source).toContain('await loadTeams(activeLocationFilter);');
         expect(source).toContain('discoverPublicTeams(locationFilter');
         expect(source).toContain('function getStoredLocationLabel(team)');
         expect(source).toContain('.filter((team) => !getStoredLocationLabel(team))');
@@ -37,6 +37,21 @@ describe('teams page HTML escaping', () => {
         expect(source).toContain("renderLoadMoreButton(container");
         expect(source).toContain("clearSearchButton.addEventListener('click'");
         expect(source).toContain("locationSearchInput.value = '';");
+    });
+
+    it('preserves filtered discovery cursors for load more and clear resets back to browse mode', () => {
+        const source = readTeamsPage();
+
+        expect(source).toContain('? { searchText: locationFilter, cursor, pageSize: 24 }');
+        expect(source).toContain("let activeLocationFilter = '';");
+        expect(source).toContain('browseCursor = discovery.nextCursor || null;');
+        expect(source).toContain('canLoadMore: Boolean(browseCursor),');
+        expect(source).toContain("await loadTeams(activeLocationFilter, { cursor: nextCursor, append: true });");
+        expect(source).toContain("activeLocationFilter = getLocationSearchValue();");
+        expect(source).toContain("activeLocationFilter = '';");
+        expect(source).toContain("browseCursor = null;");
+        expect(source).toContain("renderedTeams = [];");
+        expect(source).toContain('await loadTeams();');
     });
 
     // This test now relies on the actual rendering logic in teams.html

@@ -118,6 +118,7 @@
     const searchButton = document.getElementById('search-button');
     const clearSearchButton = document.getElementById('clear-search-button');
     let browseCursor = null;
+    let activeLocationFilter = '';
     let renderedTeams = [];
 
     function getLocationSearchValue() {
@@ -164,10 +165,10 @@
       setSearchPending(true);
       try {
         const discovery = await discoverPublicTeams(locationFilter
-          ? { searchText: locationFilter, pageSize: 24 }
+          ? { searchText: locationFilter, cursor, pageSize: 24 }
           : { cursor, pageSize: 24 });
         const allTeams = discovery.teams || [];
-        browseCursor = locationFilter ? null : (discovery.nextCursor || null);
+        browseCursor = discovery.nextCursor || null;
         // Defense in depth: the query only requests public teams, and this keeps
         // private teams hidden if a stale helper or local test double returns one.
         const teams = allTeams.filter(t => t.isPublic === true);
@@ -287,11 +288,11 @@
         container.innerHTML = markup;
 
         renderLoadMoreButton(container, {
-          canLoadMore: !locationFilter && Boolean(browseCursor),
+          canLoadMore: Boolean(browseCursor),
           onClick: async () => {
             const nextCursor = browseCursor;
             if (!nextCursor) return;
-            await loadTeams('', { cursor: nextCursor, append: true });
+            await loadTeams(activeLocationFilter, { cursor: nextCursor, append: true });
           }
         });
 
@@ -324,13 +325,15 @@
 
     searchForm.addEventListener('submit', async (event) => {
       event.preventDefault();
+      activeLocationFilter = getLocationSearchValue();
       browseCursor = null;
       renderedTeams = [];
-      await loadTeams(getLocationSearchValue());
+      await loadTeams(activeLocationFilter);
     });
 
     clearSearchButton.addEventListener('click', async () => {
       locationSearchInput.value = '';
+      activeLocationFilter = '';
       browseCursor = null;
       renderedTeams = [];
       await loadTeams();
