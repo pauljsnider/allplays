@@ -182,6 +182,46 @@ describe('live tracker finish completion plan', () => {
     expect(hasPlayerProfileParticipation(plan.aggregatedStatsWrites[0].data)).toBe(true);
   });
 
+  it('marks zero-stat players with substitution-only live tracker appearances as having appeared', () => {
+    const plan = buildFinishCompletionPlan({
+      requestedHome: 0,
+      requestedAway: 0,
+      liveHome: 0,
+      liveAway: 0,
+      scoreLogIsComplete: true,
+      log: [],
+      columns: ['PTS', 'REB', 'AST'],
+      roster: [
+        { id: 'p-zero', name: 'Zero Stat', num: '12' }
+      ],
+      statsByPlayerId: {
+        'p-zero': { pts: 0, reb: 0, ast: 0, fouls: 0, time: 0 }
+      },
+      activePlayerIds: ['p-other'],
+      substitutions: [
+        { out: 'p-other', in: 'p-zero' },
+        { out: 'p-zero', in: 'p-other' }
+      ],
+      opponentEntries: []
+    });
+
+    expect(plan.aggregatedStatsWrites).toEqual([
+      {
+        playerId: 'p-zero',
+        data: {
+          playerName: 'Zero Stat',
+          playerNumber: '12',
+          participated: true,
+          participationStatus: 'appeared',
+          participationSource: 'live-tracker-finish',
+          stats: { pts: 0, reb: 0, ast: 0, fouls: 0 },
+          timeMs: 0
+        }
+      }
+    ]);
+    expect(hasPlayerProfileParticipation(plan.aggregatedStatsWrites[0].data)).toBe(true);
+  });
+
   it('keeps live-tracker aggregates with real participation visible in player profile history', () => {
     const standardFinishAggregateDoc = {
       playerName: 'Zero Stat',
