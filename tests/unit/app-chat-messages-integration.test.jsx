@@ -41,6 +41,19 @@ const publicActionMocks = vi.hoisted(() => ({
     sharePublicUrl: vi.fn()
 }));
 
+const uxTimingMocks = vi.hoisted(() => ({
+    UX_TIMING: {
+        chatSend: 'chat send latency'
+    },
+    interactionEnds: [],
+    startInteractionTimer: vi.fn((_label, _meta) => {
+        const end = vi.fn();
+        uxTimingMocks.interactionEnds.push(end);
+        return { end };
+    }),
+    startScreenMountTimer: vi.fn(() => ({ end: vi.fn() }))
+}));
+
 const voiceMocks = vi.hoisted(() => {
     const listeners = {};
     return {
@@ -126,6 +139,7 @@ vi.mock('../../apps/app/src/lib/useShellLayout.ts', () => ({
     useShellLayout: () => layoutMocks
 }));
 vi.mock('../../apps/app/src/lib/publicActions.ts', () => publicActionMocks);
+vi.mock('../../apps/app/src/lib/uxTiming.ts', () => uxTimingMocks);
 
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -249,6 +263,7 @@ async function setFieldValue(field, value) {
 
 beforeEach(() => {
     vi.clearAllMocks();
+    uxTimingMocks.interactionEnds.length = 0;
     layoutMocks.isDesktopWeb = false;
     nativeMocks.isNativePlatform = false;
     Object.keys(voiceMocks.listeners).forEach((eventName) => {
@@ -2086,6 +2101,56 @@ describe('React app messages integration', () => {
             secondSend.resolve({ conversationId: 'team', createdConversation: null, wantsAi: false });
         });
         await flush();
+    });
+
+    it('ends chat send timing only after the live sent message becomes visible', async () => {
+        const sendDeferred = createDeferred();
+        let emitMessages = null;
+        chatMocks.subscribeToTeamChatMessages.mockImplementation((_teamId, _conversationId, onMessages) => {
+            emitMessages = onMessages;
+            onMessages([
+                chatMessage({ id: 'msg-1', senderId: 'coach-1', senderName: 'Coach Jamie', text: 'Bring both jerseys.' })
+            ], { id: 'cursor' });
+            return { unsubscribe: vi.fn() };
+        });
+        chatMocks.sendTeamChatMessage.mockImplementationOnce(() => sendDeferred.promise);
+        const { container } = await renderMessages('/messages/team-1');
+        const textarea = container.querySelector('textarea');
+
+        await setFieldValue(textarea, 'Timing check');
+        await click(container, 'Send message');
+
+        expect(uxTimingMocks.startInteractionTimer).toHaveBeenCalledWith('chat send latency', {
+            attachments: 0,
+            target: 'full_team'
+        });
+        const end = uxTimingMocks.interactionEnds[0];
+        expect(end).not.toHaveBeenCalled();
+
+        const clientMessageId = chatMocks.sendTeamChatMessage.mock.calls[0][0].clientMessageId;
+        await act(async () => {
+            sendDeferred.resolve({ conversationId: 'team', createdConversation: null, wantsAi: false });
+        });
+        await flush();
+
+        expect(end).not.toHaveBeenCalled();
+
+        await act(async () => {
+            emitMessages?.([
+                chatMessage({ id: 'msg-1', senderId: 'coach-1', senderName: 'Coach Jamie', text: 'Bring both jerseys.' }),
+                chatMessage({
+                    id: 'msg-live-sent',
+                    clientMessageId,
+                    senderId: 'user-1',
+                    senderName: 'Pat Parent',
+                    text: 'Timing check',
+                    createdAt: new Date('2026-05-21T14:03:00Z')
+                })
+            ], { id: 'cursor-2' });
+        });
+        await flush();
+
+        expect(end).toHaveBeenCalledWith({ status: 'visible_sent' });
     });
 
     it('moves an optimistic selected-member send into the created conversation', async () => {

@@ -89,6 +89,7 @@ import { sharePublicUrl } from '../../../lib/publicActions';
 import { useShellLayout } from '../../../lib/useShellLayout';
 import type { AuthState } from '../../../lib/types';
 import { voiceRecognition, type VoiceListenerHandle } from '../../../lib/voiceService';
+import { startInteractionTimer, UX_TIMING } from '../../../lib/uxTiming';
 import { useChatSheets } from '../hooks/useChatSheets';
 import { useChatTeam } from '../hooks/useChatTeam';
 import { useChatMessages } from '../hooks/useChatMessages';
@@ -126,6 +127,7 @@ type PendingChatSendRequest = {
   selectedConversationId: string;
   selectedRecipientTarget: ChatTargetType;
   selectedRecipientIds: string[];
+  interaction?: ReturnType<typeof startInteractionTimer>;
 };
 
 type VirtualizedChatWindow = {
@@ -164,6 +166,13 @@ function createChatClientMessageId(userId: string) {
 
 function getChatSendErrorMessage(error: unknown) {
   return error instanceof Error && error.message ? error.message : 'Failed to send message. Tap retry to try again.';
+}
+
+function startPendingChatSendInteraction(request: Pick<PendingChatSendRequest, 'attachmentCount' | 'selectedRecipientTarget'>) {
+  return startInteractionTimer(UX_TIMING.chatSend, {
+    attachments: request.attachmentCount,
+    target: request.selectedRecipientTarget
+  });
 }
 
 function createOptimisticChatMessage(request: PendingChatSendRequest): OptimisticChatMessage {
@@ -431,7 +440,10 @@ export function ChatWindow({
     setOptimisticMessages((current) => current.filter((message) => {
       return !liveClientIds.has(message.clientMessageId || message.id);
     }));
-    confirmedClientIds.forEach((id) => pendingSendRequestsRef.current.delete(id));
+    confirmedClientIds.forEach((id) => {
+      pendingSendRequestsRef.current.get(id)?.interaction?.end({ status: 'visible_sent' });
+      pendingSendRequestsRef.current.delete(id);
+    });
   }, [messages, optimisticMessages]);
 
   const selectedConversation = useMemo(() => (
@@ -951,7 +963,8 @@ export function ChatWindow({
         selectedRecipientIds: request.selectedRecipientIds,
         onProgress: (stage) => {
           setComposerNotice(stage === 'uploading' ? attachmentNotice : 'Posting message...');
-        }
+        },
+        skipInteractionTiming: true
       });
       if (result.createdConversation) {
         await reloadConversations();
@@ -993,6 +1006,7 @@ export function ChatWindow({
       }
     } catch (sendError) {
       const message = getChatSendErrorMessage(sendError);
+      request.interaction?.end({ error: message });
       setOptimisticMessages((current) => current.map((candidate) => (
         candidate.clientMessageId === request.clientMessageId
           ? { ...candidate, sendStatus: 'failed', sendError: message }
@@ -1020,6 +1034,7 @@ export function ChatWindow({
     }
 
     setStatus(null);
+    request.interaction = startPendingChatSendInteraction(request);
     pendingScrollRef.current = true;
     setOptimisticMessages((current) => current.map((message) => (
       message.clientMessageId === clientMessageId
@@ -1056,7 +1071,11 @@ export function ChatWindow({
       selectedConversation,
       selectedConversationId: effectiveConversationId,
       selectedRecipientTarget,
-      selectedRecipientIds: [...selectedRecipientIds]
+      selectedRecipientIds: [...selectedRecipientIds],
+      interaction: startPendingChatSendInteraction({
+        attachmentCount: files.length,
+        selectedRecipientTarget
+      })
     };
 
     setStatus(null);
