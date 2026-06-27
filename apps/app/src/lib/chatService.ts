@@ -1205,14 +1205,20 @@ export async function sendTeamChatMessage({
       await withTimeout(Promise.resolve(postChatMessage(teamId, payload)), 'Chat message send');
     }
 
-    interactionHandle?.end({ path: isNativeRuntime() ? 'native' : 'sdk' });
+    if (interactionHandle) {
+      const interaction = interactionHandle;
+      interaction.end({ path: isNativeRuntime() ? 'native' : 'sdk' });
+    }
     return {
       conversationId,
       createdConversation,
       wantsAi: hasAllPlaysMention(text)
     };
   } catch (error) {
-    interactionHandle?.end({ error: (error as Error)?.message || 'Chat send failed' });
+    if (interactionHandle) {
+      const interaction = interactionHandle;
+      interaction.end({ error: (error as Error)?.message || 'Chat send failed' });
+    }
     const cleanupAttachments = uploadedAttachments.filter((attachment): attachment is ChatAttachment => Boolean(attachment));
     if (cleanupAttachments.length > 0) {
       try {
