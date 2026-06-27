@@ -88,6 +88,21 @@ describe('PublicTeamSearch', () => {
         expect(getPublicTeamsPage).not.toHaveBeenCalled();
     });
 
+    it('does not browse all teams when the search button is clicked with an empty or whitespace-only query', async () => {
+        renderSearch();
+
+        const searchButton = screen.getByRole('button', { name: 'Search public teams' });
+        const searchInput = screen.getByPlaceholderText('Search by team, city, state, or zip') as HTMLInputElement;
+
+        fireEvent.click(searchButton);
+        fireEvent.change(searchInput, { target: { value: '   ' } });
+        fireEvent.click(searchButton);
+
+        await waitFor(() => expect(getPublicTeamsPage).not.toHaveBeenCalled());
+        expect(screen.getByText('Search for public teams near you')).toBeTruthy();
+        expect(screen.queryByText('Atlanta United')).toBeNull();
+    });
+
     it('filters teams by search text when search is submitted', async () => {
         (getPublicTeamsPage as import('vitest').Mock).mockResolvedValueOnce({ teams: [mockTeams[0]], nextCursor: null });
         renderSearch();
@@ -107,6 +122,12 @@ describe('PublicTeamSearch', () => {
             .mockResolvedValueOnce({ teams: [mockTeams[0]], nextCursor: 'cursor-2' })
             .mockResolvedValueOnce({ teams: [mockTeams[1]], nextCursor: null });
         renderSearch();
+
+        const searchInput = screen.getByPlaceholderText('Search by team, city, state, or zip') as HTMLInputElement;
+        fireEvent.keyDown(searchInput, { key: 'Enter', code: 'Enter', charCode: 13 });
+        fireEvent.change(searchInput, { target: { value: '   ' } });
+        fireEvent.keyDown(searchInput, { key: 'Enter', code: 'Enter', charCode: 13 });
+        expect(getPublicTeamsPage).not.toHaveBeenCalled();
 
         fireEvent.click(screen.getByRole('button', { name: /Browse all public teams/i }));
 
