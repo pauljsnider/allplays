@@ -11,6 +11,7 @@ import {
   ChatWindow,
   areMessagesEquivalent,
   getMessageRevisionSignature,
+  getSafeMessageAttachments,
   buildVirtualizedChatLayout,
   buildVirtualizedChatWindow,
   buildVirtualizedChatWindowFromLayout
@@ -295,6 +296,20 @@ describe('ChatWindow virtualization', () => {
     } as ChatMessage;
 
     expect(getMessageRevisionSignature(message)).not.toBe(getMessageRevisionSignature(changedAttachmentMessage));
+  });
+
+  it('filters message attachments to safe media urls', () => {
+    const message = {
+      ...buildMessage('message-with-attachment', 10),
+      attachments: [
+        { type: 'image', url: 'https://example.com/a.png', name: 'a.png', mimeType: 'image/png', size: 128 },
+        { type: 'image', url: 'javascript:alert(1)', name: 'bad.png', mimeType: 'image/png', size: 128 }
+      ]
+    } as ChatMessage;
+
+    expect(getSafeMessageAttachments(message)).toMatchObject([
+      { type: 'image', url: 'https://example.com/a.png', name: 'a.png', mimeType: 'image/png', size: 128 }
+    ]);
   });
 
   it('returns a bounded render slice and spacer heights for long message lists', () => {

@@ -42,6 +42,7 @@ import {
   sendTeamChatMessage,
   sendTeamEmailMessage,
   toggleTeamChatReaction,
+  type ChatAttachment,
   type ChatConversation,
   type ChatMessage,
   type SentTeamEmail,
@@ -141,6 +142,10 @@ type VirtualizedChatWindow = {
 type VirtualizedChatLayout = {
   offsets: number[];
   totalHeight: number;
+};
+
+type SafeChatAttachment = ChatAttachment & {
+  url: string;
 };
 
 const CHAT_MESSAGE_INITIAL_WINDOW_COUNT = 40;
@@ -1765,6 +1770,12 @@ export function buildChatViewportSignature(scrollHeight: number, clientHeight: n
   return `${scrollHeight}:${clientHeight}:${distanceFromBottom}`;
 }
 
+export function getSafeMessageAttachments(message: ChatMessage): SafeChatAttachment[] {
+  return getMessageAttachments(message).filter((attachment): attachment is SafeChatAttachment => (
+    typeof attachment?.url === 'string' && isSafeChatMediaUrl(attachment.url)
+  ));
+}
+
 export function estimateChatMessageRowHeight(message: ChatMessage, previousMessage: ChatMessage | null = null) {
   const attachments = getMessageAttachments(message);
   const textLength = String(message.text || '').trim().length;
@@ -2413,10 +2424,7 @@ const MessageBubble = memo(function MessageBubble({
   const isDeleted = message.deleted === true;
   const isLocalSend = message.sendStatus === 'pending' || message.sendStatus === 'failed';
   const senderLabel = useMemo(() => getMessageSenderLabel(message, currentUserId), [currentUserId, message]);
-  const attachments = useMemo(
-    () => getMessageAttachments(message).filter((attachment: any) => isSafeChatMediaUrl(attachment.url)),
-    [message]
-  );
+  const attachments = useMemo(() => getSafeMessageAttachments(message), [message]);
   const reactions = useMemo(() => normalizeChatReactions(message), [message]);
   const messageHtml = useMemo(() => formatChatMessageHtml(message.text || ''), [message.text]);
   const createdAtLabel = useMemo(() => formatChatTime(message.createdAt), [message.createdAt]);
@@ -2666,7 +2674,7 @@ function InlineAttachmentVideo({ src, label }: { src: string; label: string }) {
   );
 }
 
-function MessageAttachments({ attachments, isOwn }: { attachments: any[]; isOwn: boolean }) {
+function MessageAttachments({ attachments, isOwn }: { attachments: SafeChatAttachment[]; isOwn: boolean }) {
   return (
     <div className={`mb-2 grid gap-2 ${attachments.length > 1 ? 'grid-cols-2' : 'grid-cols-1'}`}>
       {attachments.map((attachment, index) => {
