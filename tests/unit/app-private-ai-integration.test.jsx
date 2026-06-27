@@ -169,7 +169,16 @@ describe('private AI chat page', () => {
         expect(container.querySelector('.messages-two-pane')).toBeTruthy();
         expect(container.textContent).toContain('What do I need to handle today?');
 
+        const initialButtons = Array.from(container.querySelectorAll('button'));
+        expect(initialButtons.some((button) => button.textContent.includes('More ways to ask'))).toBe(true);
+        expect(initialButtons.some((button) => button.textContent.includes('Who still needs an RSVP?'))).toBe(false);
+
+        const expandButton = initialButtons.find((button) => button.textContent.includes('More ways to ask'));
+        expect(expandButton).toBeTruthy();
+        await click(expandButton);
+
         const suggestion = Array.from(container.querySelectorAll('button')).find((button) => button.textContent.includes('Who still needs an RSVP?'));
+        expect(suggestion).toBeTruthy();
         await click(suggestion);
 
         expect(privateAiMocks.sendPrivateAiMessage).toHaveBeenCalledWith(auth.user, 'Who still needs an RSVP?', 'default');
@@ -200,6 +209,17 @@ describe('private AI chat page', () => {
         expect(container.querySelector('.messages-two-pane')).toBeFalsy();
         expect(container.textContent).toContain('What do you need from ALL PLAYS?');
         expect(container.textContent).toContain('What do I need to handle today?');
+
+        const initialButtons = Array.from(container.querySelectorAll('button'));
+        expect(initialButtons.some((button) => button.textContent.includes('More ways to ask'))).toBe(true);
+        expect(initialButtons.some((button) => button.textContent.includes('What is my next game?'))).toBe(false);
+        expect(initialButtons.some((button) => button.textContent.includes('Show unread team messages'))).toBe(false);
+        expect(initialButtons.some((button) => button.textContent.includes('Who still needs an RSVP?'))).toBe(false);
+
+        const expandButton = initialButtons.find((button) => button.textContent.includes('More ways to ask'));
+        expect(expandButton).toBeTruthy();
+        await click(expandButton);
+
         expect(container.textContent).toContain('What is my next game?');
         expect(container.textContent).toContain('Show unread team messages');
         expect(container.textContent).toContain('Who still needs an RSVP?');
