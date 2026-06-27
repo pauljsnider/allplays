@@ -626,6 +626,39 @@ describe('ParentTools access', () => {
         expect(parentToolsServiceMocks.loadParentHouseholdInviteModel).toHaveBeenCalledTimes(1);
     });
 
+    it('keeps loaded family share links visible when a save action fails', async () => {
+        parentToolsServiceMocks.loadFamilyShareModel.mockResolvedValue({
+            children: [
+                {
+                    teamId: 'team-1',
+                    playerId: 'player-1',
+                    playerName: 'Sam Player'
+                }
+            ],
+            tokens: [
+                {
+                    id: 'token-1',
+                    label: 'Grandma',
+                    url: 'https://allplays.ai/family.html?token=token-1',
+                    childCount: 1,
+                    extraCalendarUrls: []
+                }
+            ]
+        });
+        parentToolsServiceMocks.revokeParentFamilyShare.mockRejectedValue(new Error('Unable to revoke family share link.'));
+
+        renderParentTools(['/parent-tools/share'], false, linkedAuth);
+
+        expect(await screen.findByText('Grandma')).toBeTruthy();
+        fireEvent.click(screen.getByRole('button', { name: 'Revoke' }));
+        fireEvent.click(await screen.findByRole('button', { name: 'Revoke link' }));
+
+        expect(await screen.findByText('Unable to revoke family share link.')).toBeTruthy();
+        expect(screen.getByText('Grandma')).toBeTruthy();
+        expect(screen.getByText('https://allplays.ai/family.html?token=token-1')).toBeTruthy();
+        expect(screen.getByRole('button', { name: 'Copy' })).toBeTruthy();
+    });
+
     it('opens reusable team fee checkout links when legacy fee payloads omit paymentAction', async () => {
         parentToolsServiceMocks.loadParentFeesForApp.mockResolvedValue([
             {

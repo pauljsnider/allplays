@@ -18,8 +18,10 @@ const appBaseUrl = process.env.SMOKE_APP_BASE_URL || '';
 const parentEmail = process.env.SMOKE_PARENT_EMAIL || '';
 const parentPassword = process.env.SMOKE_PARENT_PASSWORD || '';
 const hasParentCredentials = Boolean(parentEmail && parentPassword);
+const missingParentCredentials = Boolean(appBaseUrl) && !hasParentCredentials;
 
 test.skip(!appBaseUrl, 'SMOKE_APP_BASE_URL is required for live parent smoke tests');
+test.skip(missingParentCredentials, 'SMOKE_PARENT_EMAIL and SMOKE_PARENT_PASSWORD are required for live parent smoke tests');
 test.use({ viewport: { width: 390, height: 844 }, hasTouch: true });
 
 function appUrl(baseURL, hashPath) {
@@ -33,6 +35,9 @@ function appUrl(baseURL, hashPath) {
  * The auth route is #/auth; after success the app redirects to /teams (admin) or /home.
  */
 async function signIn(page, baseURL) {
+    if (!hasParentCredentials) {
+        throw new Error('SMOKE_PARENT_EMAIL and SMOKE_PARENT_PASSWORD are required for live parent smoke tests');
+    }
     await page.goto(appUrl(baseURL, '/auth'), { waitUntil: 'domcontentloaded' });
     await expect(page.getByText('Loading ALL PLAYS')).toBeHidden({ timeout: 15000 });
 
