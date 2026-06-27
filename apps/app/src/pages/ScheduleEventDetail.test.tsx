@@ -693,6 +693,67 @@ describe('ScheduleEventDetail nav visibility', () => {
     expect(screen.getAllByRole('button', { name: 'Rideshare' }).length).toBeGreaterThan(0);
     expect(screen.getAllByRole('button', { name: 'Assignments' }).length).toBeGreaterThan(0);
   });
+
+  it('defaults score-capable tracked games to the Game tab when the route omits section', async () => {
+    scheduleServiceMocks.loadParentScheduleEventDetail.mockResolvedValue({
+      events: [buildEvent({
+        canUpdateScore: true,
+        statTrackerConfigId: 'cfg-soccer'
+      })],
+      children: []
+    });
+    scheduleServiceMocks.loadHomeScoringPlayers.mockResolvedValue([]);
+    scheduleServiceMocks.loadAutoFilledLineupDraftPreviewForApp.mockResolvedValue({ availablePlayers: [], goingPlayers: [], gamePlan: null });
+    scheduleServiceMocks.loadGameDayLiveEventsForApp.mockResolvedValue([]);
+    scheduleHubMocks.buildGameHubDestinations.mockReturnValue([]);
+
+    renderScheduleEventDetailWithLocation();
+
+    await waitFor(() => {
+      expect(screen.getByRole('heading', { name: 'Game hub' })).toBeTruthy();
+    });
+
+    expect(screen.getByTestId('standard-tracker-launch')).toBeTruthy();
+    expect(screen.getByTestId('event-route').textContent).toBe('/schedule/team-1/game-1?childId=player-1');
+  });
+
+  it('keeps non-score-capable viewers on Availability when the route omits section', async () => {
+    scheduleServiceMocks.loadParentScheduleEventDetail.mockResolvedValue({
+      events: [buildEvent({
+        canUpdateScore: false,
+        statTrackerConfigId: 'cfg-soccer'
+      })],
+      children: []
+    });
+
+    renderScheduleEventDetailWithLocation();
+
+    await waitFor(() => {
+      expect(screen.getByRole('heading', { name: 'Availability' })).toBeTruthy();
+    });
+
+    expect(screen.queryByRole('heading', { name: 'Game hub' })).toBeNull();
+    expect(screen.queryByTestId('standard-tracker-launch')).toBeNull();
+  });
+
+  it('preserves an explicit section query even for score-capable viewers', async () => {
+    scheduleServiceMocks.loadParentScheduleEventDetail.mockResolvedValue({
+      events: [buildEvent({
+        canUpdateScore: true,
+        statTrackerConfigId: 'cfg-soccer'
+      })],
+      children: []
+    });
+
+    renderScheduleEventDetailWithLocation('/schedule/team-1/game-1?childId=player-1&section=availability');
+
+    await waitFor(() => {
+      expect(screen.getByRole('heading', { name: 'Availability' })).toBeTruthy();
+    });
+
+    expect(screen.queryByRole('heading', { name: 'Game hub' })).toBeNull();
+    expect(screen.getByTestId('event-route').textContent).toBe('/schedule/team-1/game-1?childId=player-1&section=availability');
+  });
 });
 
 describe('ScheduleEventDetail rideshare permissions', () => {
