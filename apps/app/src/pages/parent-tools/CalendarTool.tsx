@@ -22,7 +22,8 @@ export function CalendarTool({ auth, refreshVersion }: { auth: AuthState; refres
     const clearFeedError = feedOperation.clearError;
     const loading = loadOperation.loading;
     const exporting = exportOperation.loading;
-    const error = loadOperation.error ?? exportOperation.error ?? feedOperation.error;
+    const loadError = loadOperation.error;
+    const error = loadError ?? exportOperation.error ?? feedOperation.error;
 
     const refresh = useCallback(async (options: { force?: boolean } = {}) => {
         clearLoadError();
@@ -116,7 +117,7 @@ export function CalendarTool({ auth, refreshVersion }: { auth: AuthState; refres
                 </div>
             </section>
 
-            {loading ? <LoadingBlock label="Loading calendar teams" /> : (
+            {!loadError && (loading ? <LoadingBlock label="Loading calendar teams" /> : (
                 <section className="grid gap-3 lg:grid-cols-2">
                     {teams.length ? teams.map((team) => (
                         <div key={team.teamId} className="app-card p-4">
@@ -135,7 +136,7 @@ export function CalendarTool({ auth, refreshVersion }: { auth: AuthState; refres
                         </div>
                     )) : <div className="app-card p-5 text-center"><CalendarDays className="mx-auto h-8 w-8 text-gray-400" aria-hidden="true" /><div className="mt-3 text-sm font-black text-gray-950">No team schedules</div><div className="mt-1 text-xs font-semibold text-gray-500">Schedules appear after a player or team is linked.</div></div>}
                 </section>
-            )}
+            ))}
         </div>
     );
 }

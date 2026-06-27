@@ -116,7 +116,7 @@ export function FamilyShareTool({ auth, refreshVersion }: { auth: AuthState; ref
                 </form>
             </section>
 
-            {loading ? <LoadingBlock label="Loading share links" /> : (
+            {!error && (loading ? <LoadingBlock label="Loading share links" /> : (
                 <div className="grid gap-3 lg:grid-cols-2">
                     {tokens.length ? tokens.map((token) => (
                         <FamilyTokenCard
@@ -133,7 +133,7 @@ export function FamilyShareTool({ auth, refreshVersion }: { auth: AuthState; ref
                         />
                     )) : <EmptyState icon={Share2} title="No family links" detail="Create a link when someone needs schedule access without a full account." />}
                 </div>
-            )}
+            ))}
 
             {pendingRevokeToken ? (
                 <div className="fixed inset-0 z-50 flex items-end justify-center bg-gray-950/40 px-4 py-5 sm:items-center" role="presentation">
