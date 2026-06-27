@@ -42,6 +42,7 @@ import {
   sendTeamChatMessage,
   sendTeamEmailMessage,
   toggleTeamChatReaction,
+  type ChatAttachment,
   type ChatConversation,
   type ChatMessage,
   type SentTeamEmail,
@@ -143,11 +144,16 @@ type VirtualizedChatLayout = {
   totalHeight: number;
 };
 
+type SafeChatAttachment = ChatAttachment & {
+  url: string;
+};
+
 const CHAT_MESSAGE_INITIAL_WINDOW_COUNT = 40;
 const CHAT_MESSAGE_WINDOW_OVERSCAN_PX = 480;
 const CHAT_MESSAGE_BASE_ESTIMATED_HEIGHT = 104;
 const CHAT_MESSAGE_DAY_DIVIDER_ESTIMATED_HEIGHT = 28;
 const CHAT_MESSAGE_ATTACHMENT_ESTIMATED_HEIGHT = 144;
+const messageRevisionSignatureCache = new WeakMap<ChatMessage, string>();
 
 const allTargetOptions: Array<{ value: ChatTargetType; label: string; description: string }> = [
   { value: 'full_team', label: 'Full team', description: 'Visible to everyone in this team chat.' },
@@ -1764,6 +1770,12 @@ export function buildChatViewportSignature(scrollHeight: number, clientHeight: n
   return `${scrollHeight}:${clientHeight}:${distanceFromBottom}`;
 }
 
+export function getSafeMessageAttachments(message: ChatMessage): SafeChatAttachment[] {
+  return getMessageAttachments(message).filter((attachment): attachment is SafeChatAttachment => (
+    typeof attachment?.url === 'string' && isSafeChatMediaUrl(attachment.url)
+  ));
+}
+
 export function estimateChatMessageRowHeight(message: ChatMessage, previousMessage: ChatMessage | null = null) {
   const attachments = getMessageAttachments(message);
   const textLength = String(message.text || '').trim().length;
@@ -2353,6 +2365,7 @@ const MessageList = memo(function MessageList({
             {showDay ? <div className="my-3 text-center text-[11px] font-black uppercase text-gray-400">{day}</div> : null}
             <MessageBubble
               message={message}
+              messageRevisionSignature={getMessageRevisionSignature(message)}
               currentUserId={currentUserId}
               canModerate={canModerate}
               actionsOpen={actionMessageId === message.id}
@@ -2377,6 +2390,7 @@ MessageList.displayName = 'MessageList';
 
 type MessageBubbleProps = {
   message: ChatMessage;
+  messageRevisionSignature: string;
   currentUserId: string;
   canModerate: boolean;
   actionsOpen: boolean;
@@ -2392,6 +2406,7 @@ type MessageBubbleProps = {
 
 const MessageBubble = memo(function MessageBubble({
   message,
+  messageRevisionSignature: _messageRevisionSignature,
   currentUserId,
   canModerate,
   actionsOpen,
@@ -2409,10 +2424,7 @@ const MessageBubble = memo(function MessageBubble({
   const isDeleted = message.deleted === true;
   const isLocalSend = message.sendStatus === 'pending' || message.sendStatus === 'failed';
   const senderLabel = useMemo(() => getMessageSenderLabel(message, currentUserId), [currentUserId, message]);
-  const attachments = useMemo(
-    () => getMessageAttachments(message).filter((attachment: any) => isSafeChatMediaUrl(attachment.url)),
-    [message]
-  );
+  const attachments = useMemo(() => getSafeMessageAttachments(message), [message]);
   const reactions = useMemo(() => normalizeChatReactions(message), [message]);
   const messageHtml = useMemo(() => formatChatMessageHtml(message.text || ''), [message.text]);
   const createdAtLabel = useMemo(() => formatChatTime(message.createdAt), [message.createdAt]);
@@ -2544,35 +2556,69 @@ function areMessageBubblePropsEqual(previous: MessageBubbleProps, next: MessageB
     && previous.actionsOpen === next.actionsOpen
     && previous.reactionsOpen === next.reactionsOpen
     && previous.preferReactionPickerAbove === next.preferReactionPickerAbove
+    && previous.messageRevisionSignature === next.messageRevisionSignature
     && previous.onActionMessage === next.onActionMessage
     && previous.onReactionMessage === next.onReactionMessage
     && previous.onToggleReaction === next.onToggleReaction
     && previous.onEdit === next.onEdit
     && previous.onDelete === next.onDelete
-    && previous.onRetrySend === next.onRetrySend
-    && areMessagesEquivalent(previous.message, next.message);
+    && previous.onRetrySend === next.onRetrySend;
 }
 
-function areMessagesEquivalent(previous: ChatMessage, next: ChatMessage) {
+export function areMessagesEquivalent(previous: ChatMessage, next: ChatMessage) {
   return previous === next || (
-    previous.id === next.id
-    && previous.clientMessageId === next.clientMessageId
-    && previous.text === next.text
-    && previous.ai === next.ai
-    && previous.deleted === next.deleted
-    && previous.sendStatus === next.sendStatus
-    && previous.sendError === next.sendError
-    && previous.attachmentCount === next.attachmentCount
-    && previous.senderId === next.senderId
-    && previous.senderName === next.senderName
-    && previous.senderEmail === next.senderEmail
-    && previous.senderPhotoUrl === next.senderPhotoUrl
-    && previous.aiName === next.aiName
-    && normalizeTimestampValue(previous.createdAt) === normalizeTimestampValue(next.createdAt)
-    && normalizeTimestampValue(previous.editedAt) === normalizeTimestampValue(next.editedAt)
-    && JSON.stringify(getMessageAttachments(previous)) === JSON.stringify(getMessageAttachments(next))
-    && JSON.stringify(normalizeChatReactions(previous)) === JSON.stringify(normalizeChatReactions(next))
+    getMessageRevisionSignature(previous) === getMessageRevisionSignature(next)
   );
+}
+
+export function getMessageRevisionSignature(message: ChatMessage) {
+  const cachedSignature = messageRevisionSignatureCache.get(message);
+  if (cachedSignature) {
+    return cachedSignature;
+  }
+
+  const attachmentSignature = getMessageAttachments(message)
+    .map((attachment) => [
+      attachment?.type || '',
+      attachment?.url || '',
+      attachment?.path || '',
+      attachment?.thumbnailUrl || '',
+      attachment?.name || '',
+      attachment?.mimeType || '',
+      attachment?.size ?? '',
+      normalizeTimestampValue(attachment?.uploadedAt)
+    ].join('\u001f'))
+    .join('\u001e');
+  const normalizedReactions = normalizeChatReactions(message);
+  const reactionSignature = chatReactions
+    .map(({ key }) => {
+      const users = normalizedReactions[key] || [];
+      return users.length ? `${key}:${users.join(',')}` : '';
+    })
+    .filter(Boolean)
+    .join('|');
+  const signature = [
+    message.id,
+    message.clientMessageId || '',
+    message.text || '',
+    message.ai === true ? '1' : '0',
+    message.deleted === true ? '1' : '0',
+    message.sendStatus || '',
+    message.sendError || '',
+    message.attachmentCount ?? '',
+    message.senderId || '',
+    message.senderName || '',
+    message.senderEmail || '',
+    message.senderPhotoUrl || '',
+    message.aiName || '',
+    normalizeTimestampValue(message.createdAt),
+    normalizeTimestampValue(message.editedAt),
+    attachmentSignature,
+    reactionSignature
+  ].join('\u001d');
+
+  messageRevisionSignatureCache.set(message, signature);
+  return signature;
 }
 
 function normalizeTimestampValue(value: unknown) {
@@ -2628,7 +2674,7 @@ function InlineAttachmentVideo({ src, label }: { src: string; label: string }) {
   );
 }
 
-function MessageAttachments({ attachments, isOwn }: { attachments: any[]; isOwn: boolean }) {
+function MessageAttachments({ attachments, isOwn }: { attachments: SafeChatAttachment[]; isOwn: boolean }) {
   return (
     <div className={`mb-2 grid gap-2 ${attachments.length > 1 ? 'grid-cols-2' : 'grid-cols-1'}`}>
       {attachments.map((attachment, index) => {

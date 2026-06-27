@@ -9,10 +9,31 @@ import type { AuthState } from '../../../lib/types';
 import {
   AudienceSheet,
   ChatWindow,
+  areMessagesEquivalent,
+  getMessageRevisionSignature,
+  getSafeMessageAttachments,
   buildVirtualizedChatLayout,
   buildVirtualizedChatWindow,
   buildVirtualizedChatWindowFromLayout
 } from './ChatWindow';
+
+const normalizeChatReactionsSpy = vi.fn();
+const getMessageAttachmentsSpy = vi.fn();
+
+vi.mock('../../../lib/chatLogic', async () => {
+  const actual = await vi.importActual<typeof import('../../../lib/chatLogic')>('../../../lib/chatLogic');
+  return {
+    ...actual,
+    normalizeChatReactions: vi.fn((message: any) => {
+      normalizeChatReactionsSpy(message);
+      return actual.normalizeChatReactions(message);
+    }),
+    getMessageAttachments: vi.fn((message: any) => {
+      getMessageAttachmentsSpy(message);
+      return actual.getMessageAttachments(message);
+    })
+  };
+});
 
 const liveMessages = Array.from({ length: 220 }, (_, index) => buildMessage(`live-${index + 1}`, index + 101));
 const olderPage = Array.from({ length: 50 }, (_, index) => buildMessage(`older-${index + 1}`, index + 1));
@@ -239,6 +260,56 @@ describe('ChatWindow virtualization', () => {
   afterEach(() => {
     cleanup();
     vi.unstubAllGlobals();
+    normalizeChatReactionsSpy.mockClear();
+    getMessageAttachmentsSpy.mockClear();
+  });
+
+  it('recognizes unchanged message content without JSON serialization', () => {
+    const previous = {
+      ...buildMessage('message-1', 1),
+      text: 'Same message',
+      attachments: [{ type: 'image', url: 'https://example.com/a.png', name: 'a.png', mimeType: 'image/png', size: 128 }],
+      reactions: { thumbs_up: ['user-1'], '👍': ['user-1'] },
+      editedAt: { seconds: 5 }
+    } as ChatMessage;
+    const next = {
+      ...previous,
+      attachments: [{ type: 'image', url: 'https://example.com/a.png', name: 'a.png', mimeType: 'image/png', size: 128 }],
+      reactions: { thumbs_up: ['user-1'] }
+    } as ChatMessage;
+    const stringifySpy = vi.spyOn(JSON, 'stringify');
+
+    expect(areMessagesEquivalent(previous, next)).toBe(true);
+    expect(stringifySpy).not.toHaveBeenCalled();
+
+    stringifySpy.mockRestore();
+  });
+
+  it('includes attachment fields in the message revision signature', () => {
+    const message = {
+      ...buildMessage('message-with-attachment', 10),
+      attachments: [{ type: 'image', url: 'https://example.com/a.png', name: 'a.png', mimeType: 'image/png', size: 128 }]
+    } as ChatMessage;
+    const changedAttachmentMessage = {
+      ...message,
+      attachments: [{ type: 'image', url: 'https://example.com/b.png', name: 'b.png', mimeType: 'image/png', size: 128 }]
+    } as ChatMessage;
+
+    expect(getMessageRevisionSignature(message)).not.toBe(getMessageRevisionSignature(changedAttachmentMessage));
+  });
+
+  it('filters message attachments to safe media urls', () => {
+    const message = {
+      ...buildMessage('message-with-attachment', 10),
+      attachments: [
+        { type: 'image', url: 'https://example.com/a.png', name: 'a.png', mimeType: 'image/png', size: 128 },
+        { type: 'image', url: 'javascript:alert(1)', name: 'bad.png', mimeType: 'image/png', size: 128 }
+      ]
+    } as ChatMessage;
+
+    expect(getSafeMessageAttachments(message)).toMatchObject([
+      { type: 'image', url: 'https://example.com/a.png', name: 'a.png', mimeType: 'image/png', size: 128 }
+    ]);
   });
 
   it('returns a bounded render slice and spacer heights for long message lists', () => {
@@ -383,6 +454,38 @@ describe('ChatWindow virtualization', () => {
         expect(bubbleCount).toBeLessThan(100);
       });
     }
+  });
+
+  it('avoids JSON serialization during scroll-only viewport updates for unchanged bubbles', async () => {
+    const { container } = render(
+      <MemoryRouter>
+        <ChatWindow auth={auth} teamId="team-1" />
+      </MemoryRouter>
+    );
+
+    const thread = container.querySelector('.chat-messages-scroll') as HTMLDivElement;
+    expect(thread).toBeTruthy();
+
+    thread.scrollTop = 180;
+    fireEvent.scroll(thread);
+
+    await waitFor(() => {
+      expect(container.querySelectorAll('.message-bubble').length).toBeGreaterThan(0);
+    });
+
+    const stringifySpy = vi.spyOn(JSON, 'stringify');
+
+    for (const scrollTop of [181, 182, 183]) {
+      thread.scrollTop = scrollTop;
+      fireEvent.scroll(thread);
+      await waitFor(() => {
+        expect(container.querySelectorAll('.message-bubble').length).toBeGreaterThan(0);
+      });
+    }
+
+    expect(stringifySpy).not.toHaveBeenCalled();
+
+    stringifySpy.mockRestore();
   });
 });
 
