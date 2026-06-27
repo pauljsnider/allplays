@@ -10,6 +10,7 @@ import {
   AudienceSheet,
   ChatWindow,
   areMessagesEquivalent,
+  getMessageRevisionSignature,
   buildVirtualizedChatLayout,
   buildVirtualizedChatWindow,
   buildVirtualizedChatWindowFromLayout
@@ -281,6 +282,19 @@ describe('ChatWindow virtualization', () => {
     expect(stringifySpy).not.toHaveBeenCalled();
 
     stringifySpy.mockRestore();
+  });
+
+  it('includes attachment fields in the message revision signature', () => {
+    const message = {
+      ...buildMessage('message-with-attachment', 10),
+      attachments: [{ type: 'image', url: 'https://example.com/a.png', name: 'a.png', mimeType: 'image/png', size: 128 }]
+    } as ChatMessage;
+    const changedAttachmentMessage = {
+      ...message,
+      attachments: [{ type: 'image', url: 'https://example.com/b.png', name: 'b.png', mimeType: 'image/png', size: 128 }]
+    } as ChatMessage;
+
+    expect(getMessageRevisionSignature(message)).not.toBe(getMessageRevisionSignature(changedAttachmentMessage));
   });
 
   it('returns a bounded render slice and spacer heights for long message lists', () => {
