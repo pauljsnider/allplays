@@ -28,6 +28,7 @@ describe('issue 2281 ux timing coverage source contract', () => {
         expect(messagesSource).toContain("startScreenMountTimer('messages'");
         expect(scheduleRsvpHookSource).toContain('const interaction = startInteractionTimer(UX_TIMING.rsvpTap, { response });');
         expect(chatServiceSource).toContain('const interaction = startInteractionTimer(UX_TIMING.chatSend, {');
+        expect(chatServiceSource).toContain('if (!skipInteractionTiming) {');
     });
 
     it('keeps direct tests for timing labels, render milestones, and baseline contracts', () => {

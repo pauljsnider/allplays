@@ -1118,7 +1118,8 @@ export async function sendTeamChatMessage({
   selectedRecipientTarget,
   selectedRecipientIds,
   onProgress,
-  aiMeta
+  aiMeta,
+  skipInteractionTiming = false
 }: {
   teamId: string;
   clientMessageId?: string | null;
@@ -1133,16 +1134,21 @@ export async function sendTeamChatMessage({
   selectedRecipientIds: string[];
   onProgress?: (stage: 'uploading' | 'posting') => void;
   aiMeta?: Record<string, unknown> | null;
+  skipInteractionTiming?: boolean;
 }) {
   if (selectedRecipientTarget === 'individuals'
     && (selectedRecipientIds || []).map((id) => String(id || '').trim()).filter(Boolean).length === 0) {
     throw new Error('Choose at least one selected member before sending.');
   }
 
-  const interaction = startInteractionTimer(UX_TIMING.chatSend, {
-    attachments: files.length,
-    target: selectedRecipientTarget
-  });
+  let interactionHandle: ReturnType<typeof startInteractionTimer> | null = null;
+  if (!skipInteractionTiming) {
+    const interaction = startInteractionTimer(UX_TIMING.chatSend, {
+      attachments: files.length,
+      target: selectedRecipientTarget
+    });
+    interactionHandle = interaction;
+  }
   const uploadedAttachments: Array<ChatAttachment | undefined> = [];
   try {
     const targetMetadata = buildChatAudienceMetadata({
@@ -1199,14 +1205,20 @@ export async function sendTeamChatMessage({
       await withTimeout(Promise.resolve(postChatMessage(teamId, payload)), 'Chat message send');
     }
 
-    interaction.end({ path: isNativeRuntime() ? 'native' : 'sdk' });
+    if (interactionHandle) {
+      const interaction = interactionHandle;
+      interaction.end({ path: isNativeRuntime() ? 'native' : 'sdk' });
+    }
     return {
       conversationId,
       createdConversation,
       wantsAi: hasAllPlaysMention(text)
     };
   } catch (error) {
-    interaction.end({ error: (error as Error)?.message || 'Chat send failed' });
+    if (interactionHandle) {
+      const interaction = interactionHandle;
+      interaction.end({ error: (error as Error)?.message || 'Chat send failed' });
+    }
     const cleanupAttachments = uploadedAttachments.filter((attachment): attachment is ChatAttachment => Boolean(attachment));
     if (cleanupAttachments.length > 0) {
       try {
