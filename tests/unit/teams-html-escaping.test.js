@@ -39,6 +39,18 @@ describe('teams page HTML escaping', () => {
         expect(source).toContain("locationSearchInput.value = '';");
     });
 
+    it('preserves filtered discovery cursors for load more and clear resets back to browse mode', () => {
+        const source = readTeamsPage();
+
+        expect(source).toContain('? { searchText: locationFilter, cursor, pageSize: 24 }');
+        expect(source).toContain('browseCursor = discovery.nextCursor || null;');
+        expect(source).toContain('canLoadMore: Boolean(browseCursor),');
+        expect(source).toContain("await loadTeams(getLocationSearchValue(), { cursor: nextCursor, append: true });");
+        expect(source).toContain("browseCursor = null;");
+        expect(source).toContain("renderedTeams = [];");
+        expect(source).toContain('await loadTeams();');
+    });
+
     // This test now relies on the actual rendering logic in teams.html
     // and the `escapeHtml` and `getSafeImageUrl` functions being correctly applied.
     // Since we're importing the functions directly, we're testing their behavior,

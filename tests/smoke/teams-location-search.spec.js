@@ -16,6 +16,9 @@ const pages = {
   ],
   kansas: [
     { id: 'current', name: 'Kansas City Current', sport: 'Soccer', description: 'Midwest club', isPublic: true, zip: '64102', city: 'Kansas City', state: 'MO' }
+  ],
+  kansasNext: [
+    { id: 'kc-wave', name: 'KC Wave', sport: 'Soccer', description: 'Second search page', isPublic: true, city: 'Kansas City', state: 'KS' }
   ]
 };
 
@@ -31,7 +34,13 @@ export async function discoverPublicTeams(options = {}) {
     }
     return { teams: pages.browse, nextCursor: 'page-2' };
   }
-  return { teams: filter.includes('kansas') ? pages.kansas : [], nextCursor: null };
+  if (filter.includes('kansas')) {
+    if (options.cursor === 'search-page-2') {
+      return { teams: pages.kansasNext, nextCursor: null };
+    }
+    return { teams: pages.kansas, nextCursor: 'search-page-2' };
+  }
+  return { teams: [], nextCursor: null };
 }
 
 export async function getTeams() {
@@ -68,7 +77,7 @@ export async function resolveZip() {
 }
 `;
 
-test('browse teams location search uses bounded discovery and clear restores browse page', async ({ page, baseURL }) => {
+test('browse teams location search paginates filtered results and clear restores browse page', async ({ page, baseURL }) => {
     await page.route('**/js/auth.js?v=*', (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: AUTH_STUB }));
     await page.route('**/js/db.js?v=*', (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: DB_STUB }));
     await page.route('**/js/telemetry.js?v=*', (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: '' }));
@@ -89,7 +98,15 @@ test('browse teams location search uses bounded discovery and clear restores bro
 
     await expect(page.getByText('Kansas City Current')).toBeVisible();
     await expect(page.getByText('Alpha Soccer')).toHaveCount(0);
-    await expect.poll(() => page.evaluate(() => window.__teamSearchCalls.at(-1))).toEqual({ searchText: 'Kansas', pageSize: 24 });
+    await expect.poll(() => page.evaluate(() => window.__teamSearchCalls.at(-1))).toEqual({ searchText: 'Kansas', cursor: null, pageSize: 24 });
+    await expect(page.getByRole('button', { name: 'Load more teams' })).toBeVisible();
+
+    await page.getByRole('button', { name: 'Load more teams' }).click();
+
+    await expect(page.getByText('Kansas City Current')).toBeVisible();
+    await expect(page.getByText('KC Wave')).toBeVisible();
+    await expect(page.getByText('Alpha Soccer')).toHaveCount(0);
+    await expect.poll(() => page.evaluate(() => window.__teamSearchCalls.at(-1))).toEqual({ searchText: 'Kansas', cursor: 'search-page-2', pageSize: 24 });
     await expect.poll(() => page.evaluate(() => window.__runtimeZipFallbackCalls)).toBe(0);
     expect(new URL(page.url()).pathname).toMatch(/\/teams\.html$/);
 
