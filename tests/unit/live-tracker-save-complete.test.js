@@ -1,5 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import { commitFinishPlan, runSaveAndCompleteWorkflow } from '../../js/live-tracker-save-complete.js';
+import { hasPlayerProfileParticipation } from '../../js/player-profile-stats.js';
 
 function buildDocRef(...args) {
   if (args.length === 1) {
@@ -221,6 +222,41 @@ describe('live tracker save-and-complete workflow', () => {
         stats: { pts: 0, ast: 0, fouls: 0 }
       }
     });
+  });
+
+  it('preserves substitution-only zero-stat appearances in finish writes and player history visibility', async () => {
+    const harness = buildHarness();
+    harness.context.state.stats = {
+      'p-zero': { pts: 0, ast: 0, fouls: 0, time: 0 },
+      'p-other': { pts: 0, ast: 0, fouls: 0, time: 0 }
+    };
+    harness.context.state.onCourt = ['p-other'];
+    harness.context.state.subs = [
+      { out: 'p-other', in: 'p-zero' },
+      { out: 'p-zero', in: 'p-other' }
+    ];
+    harness.context.roster = [
+      { id: 'p-zero', name: 'Zero Stat', num: '12' },
+      { id: 'p-other', name: 'Other Player', num: '3' }
+    ];
+    harness.context.currentConfig = { columns: ['PTS', 'AST'] };
+
+    await runSaveAndCompleteWorkflow(harness.context);
+
+    const zeroStatWrite = harness.setCalls.find(({ ref }) => ref.path === 'teams/team-1/games/game-9/aggregatedStats/p-zero');
+    expect(zeroStatWrite).toEqual({
+      ref: { kind: 'doc', path: 'teams/team-1/games/game-9/aggregatedStats/p-zero' },
+      data: {
+        playerName: 'Zero Stat',
+        playerNumber: '12',
+        timeMs: 0,
+        participated: true,
+        participationStatus: 'appeared',
+        participationSource: 'live-tracker-finish',
+        stats: { pts: 0, ast: 0, fouls: 0 }
+      }
+    });
+    expect(hasPlayerProfileParticipation(zeroStatWrite.data)).toBe(true);
   });
 
   it('accepts only one in-flight finish submission and keeps the button disabled until commit settles', async () => {
