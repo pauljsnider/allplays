@@ -14,6 +14,12 @@ export function mergeGlobalCalendarIcsEvents({
     buildGlobalCalendarIcsEvent
 }) {
     const mergedEvents = [];
+    const importedTrackingIds = new Set(
+        (existingEvents || [])
+            .filter((existingEvent) => existingEvent?.source === 'ics' && existingEvent?.teamId === team?.id)
+            .map((existingEvent) => String(existingEvent?.id || '').trim())
+            .filter(Boolean)
+    );
 
     (icsEvents || []).forEach((event) => {
         if (isTrackedCalendarEvent(event, trackedUids)) return;
@@ -36,9 +42,15 @@ export function mergeGlobalCalendarIcsEvents({
                 dtstart: eventDate
             }
         });
-        if (mappedEvent) {
-            mergedEvents.push(mappedEvent);
+        if (!mappedEvent) return;
+
+        const trackingId = String(mappedEvent?.id || '').trim();
+        if (trackingId && importedTrackingIds.has(trackingId)) return;
+
+        if (trackingId) {
+            importedTrackingIds.add(trackingId);
         }
+        mergedEvents.push(mappedEvent);
     });
 
     return mergedEvents;
