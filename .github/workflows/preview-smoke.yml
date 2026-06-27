@@ -66,6 +66,8 @@ jobs:
         env:
           SMOKE_BASE_URL: http://127.0.0.1:4173
           SMOKE_APP_BASE_URL: http://127.0.0.1:5174
+          SMOKE_PARENT_EMAIL: ${{ vars.SMOKE_PARENT_EMAIL }}
+          SMOKE_PARENT_PASSWORD: ${{ secrets.SMOKE_PARENT_PASSWORD }}
           SMOKE_SUITE: preview
           SMOKE_TEAM_ID: ${{ vars.SMOKE_TEAM_ID }}
           SMOKE_GAME_ID: ${{ vars.SMOKE_GAME_ID }}

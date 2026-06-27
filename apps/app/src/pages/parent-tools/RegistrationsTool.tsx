@@ -32,13 +32,13 @@ export function RegistrationsTool({ auth, refreshVersion }: { auth: AuthState; r
                 <ToolHeader icon={Ticket} title="Registrations" detail="Published team registration forms linked to your family." action={<button type="button" className="ghost-button !min-h-9 text-xs" onClick={refresh} disabled={loading}><RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} aria-hidden="true" />Refresh</button>} />
                 {error ? <RetryableStatus error={error} fallbackMessage="Unable to load registrations." onRetry={refresh} retrying={loading} /> : null}
             </section>
-            {loading ? <LoadingBlock label="Loading registrations" /> : (
+            {!error && (loading ? <LoadingBlock label="Loading registrations" /> : (
                 <div className="grid gap-3 lg:grid-cols-2">
                     {cards.length ? cards.map((card) => <RegistrationCard key={`${card.teamId}-${card.id}`} card={card} />) : (
                         <EmptyState icon={Ticket} title="No open registrations" detail="Published registration forms will appear here." />
                     )}
                 </div>
-            )}
+            ))}
         </div>
     );
 }

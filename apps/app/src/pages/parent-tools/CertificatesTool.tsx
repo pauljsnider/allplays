@@ -31,13 +31,13 @@ export function CertificatesTool({ auth, refreshVersion }: { auth: AuthState; re
                 <ToolHeader icon={Award} title="Awards" detail="Published certificates for linked players." action={<button type="button" className="ghost-button !min-h-9 text-xs" onClick={refresh} disabled={loading}><RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} aria-hidden="true" />Refresh</button>} />
                 {error ? <RetryableStatus error={error} fallbackMessage="Unable to load awards." onRetry={refresh} retrying={loading} /> : null}
             </section>
-            {loading ? <LoadingBlock label="Loading awards" /> : (
+            {!error && (loading ? <LoadingBlock label="Loading awards" /> : (
                 <div className="grid gap-3 lg:grid-cols-2">
                     {cards.length ? cards.map((card) => <CertificateCard key={`${card.teamId}-${card.playerId}-${card.id}`} card={card} />) : (
                         <EmptyState icon={Award} title="No published awards" detail="Awards appear after a coach publishes certificates." />
                     )}
                 </div>
-            )}
+            ))}
         </div>
     );
 }

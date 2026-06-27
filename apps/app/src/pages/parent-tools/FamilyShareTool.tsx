@@ -21,7 +21,8 @@ export function FamilyShareTool({ auth, refreshVersion }: { auth: AuthState; ref
     const clearSaveError = saveOperation.clearError;
     const loading = loadOperation.loading;
     const saving = saveOperation.loading;
-    const error = loadOperation.error ?? saveOperation.error;
+    const loadError = loadOperation.error;
+    const saveError = saveOperation.error;
 
     const refresh = useCallback(async () => {
         clearLoadError();
@@ -99,7 +100,8 @@ export function FamilyShareTool({ auth, refreshVersion }: { auth: AuthState; ref
         <div className="space-y-3">
             <section className="app-card p-4">
                 <ToolHeader icon={Share2} title="Family share" detail="Share a private family page with relatives and caregivers." action={<button type="button" className="ghost-button !min-h-9 text-xs" onClick={refresh} disabled={loading}><RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} aria-hidden="true" />Refresh</button>} />
-                {error ? <RetryableStatus error={error} fallbackMessage="Unable to load family share links." onRetry={loading ? undefined : refresh} retrying={loading} /> : null}
+                {loadError ? <RetryableStatus error={loadError} fallbackMessage="Unable to load family share links." onRetry={loading ? undefined : refresh} retrying={loading} /> : null}
+                {saveError ? <RetryableStatus error={saveError} fallbackMessage="Unable to save family share changes." /> : null}
                 {message ? <Status tone="success" message={message} /> : null}
                 <div className="mt-3 flex flex-wrap gap-1.5">
                     {children.length ? children.map((child) => (
@@ -116,7 +118,7 @@ export function FamilyShareTool({ auth, refreshVersion }: { auth: AuthState; ref
                 </form>
             </section>
 
-            {loading ? <LoadingBlock label="Loading share links" /> : (
+            {!loadError && (loading ? <LoadingBlock label="Loading share links" /> : (
                 <div className="grid gap-3 lg:grid-cols-2">
                     {tokens.length ? tokens.map((token) => (
                         <FamilyTokenCard
@@ -133,7 +135,7 @@ export function FamilyShareTool({ auth, refreshVersion }: { auth: AuthState; ref
                         />
                     )) : <EmptyState icon={Share2} title="No family links" detail="Create a link when someone needs schedule access without a full account." />}
                 </div>
-            )}
+            ))}
 
             {pendingRevokeToken ? (
                 <div className="fixed inset-0 z-50 flex items-end justify-center bg-gray-950/40 px-4 py-5 sm:items-center" role="presentation">
