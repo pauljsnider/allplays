@@ -1,0 +1,130 @@
+import { describe, expect, it, vi } from 'vitest';
+
+vi.mock('@legacy/db.js', () => ({
+    addGame: vi.fn(),
+    addPractice: vi.fn(),
+    broadcastLiveEvent: vi.fn(),
+    cancelOccurrence: vi.fn(),
+    clearOccurrenceOverride: vi.fn(),
+    cancelRideRequest: vi.fn(),
+    claimAssignmentSlot: vi.fn(),
+    claimOpenOfficiatingSlot: vi.fn(),
+    closeRideOffer: vi.fn(),
+    createRideOffer: vi.fn(),
+    getConfigs: vi.fn(),
+    getAssignmentClaims: vi.fn(),
+    getGame: vi.fn(),
+    getGames: vi.fn(),
+    getLiveEvents: vi.fn(),
+    getPlayers: vi.fn(),
+    getPracticePacketCompletions: vi.fn(),
+    getPracticeSession: vi.fn(),
+    getPracticeSessionByEvent: vi.fn(),
+    getPracticeSessions: vi.fn(),
+    getRsvpBreakdownByPlayer: vi.fn(),
+    getRsvpSummaries: vi.fn(),
+    getRsvps: vi.fn(),
+    getTeam: vi.fn(),
+    getTeams: vi.fn(),
+    postChatMessage: vi.fn(),
+    postSharedGameCancellationNotification: vi.fn(),
+    releaseAssignmentClaim: vi.fn(),
+    requestRideSpot: vi.fn(),
+    respondToOfficiatingAssignment: vi.fn(),
+    submitRsvpForPlayer: vi.fn(),
+    updateEvent: vi.fn(),
+    updateGame: vi.fn(),
+    updateOccurrence: vi.fn(),
+    updatePracticeAttendance: vi.fn(),
+    updatePracticeSession: vi.fn(),
+    updateRideRequestStatus: vi.fn(),
+    updateSeries: vi.fn(),
+    updateTeam: vi.fn(),
+    upsertPracticeSessionForEvent: vi.fn(),
+    upsertPracticePacketCompletion: vi.fn(),
+    listRideOffersForEvent: vi.fn()
+}));
+
+vi.mock('@legacy/firebase.js', () => ({
+    collection: vi.fn(),
+    collectionGroup: vi.fn(),
+    db: {},
+    doc: vi.fn(),
+    deleteField: vi.fn(),
+    getDoc: vi.fn(),
+    getDocs: vi.fn(),
+    increment: vi.fn(),
+    query: vi.fn(),
+    runTransaction: vi.fn(),
+    serverTimestamp: vi.fn(),
+    Timestamp: { fromDate: vi.fn((value: Date) => value) },
+    where: vi.fn()
+}));
+
+import { buildLegacyTournamentGameDocument, buildLegacyTournamentGameDocuments } from './legacyScheduleDb';
+
+describe('legacyScheduleDb tournament mapping', () => {
+    it('maps a single-game tournament block to exactly one legacy-compatible game document', () => {
+        const basePayload = {
+            type: 'game',
+            opponent: 'Tigers',
+            date: new Date('2026-06-24T18:30:00.000Z'),
+            end: new Date('2026-06-24T20:00:00.000Z'),
+            location: 'Main Gym',
+            arrivalTime: new Date('2026-06-24T18:00:00.000Z'),
+            isHome: true,
+            notes: 'Bring dark jerseys',
+            assignments: [],
+            status: 'scheduled',
+            homeScore: 0,
+            awayScore: 0,
+            countsTowardSeasonRecord: true,
+            statTrackerConfigId: null,
+            createdBy: 'coach-1'
+        };
+        const tournament = {
+            divisionName: '10U Gold',
+            bracketName: 'Gold Bracket',
+            roundName: 'Semifinal',
+            poolName: 'Pool A'
+        };
+
+        const documents = buildLegacyTournamentGameDocuments([basePayload], tournament);
+
+        expect(documents).toEqual([
+            expect.objectContaining({
+                ...basePayload,
+                competitionType: 'tournament',
+                tournament
+            })
+        ]);
+        expect(documents).toHaveLength(1);
+    });
+
+    it('wraps legacy tournament metadata without mutating the base payload', () => {
+        const basePayload = {
+            type: 'game',
+            opponent: 'Lions',
+            competitionType: 'league'
+        };
+        const tournament = {
+            divisionName: '12U',
+            bracketName: 'Silver',
+            roundName: 'Final'
+        };
+
+        const document = buildLegacyTournamentGameDocument(basePayload, tournament);
+
+        expect(document).toEqual({
+            type: 'game',
+            opponent: 'Lions',
+            competitionType: 'tournament',
+            tournament
+        });
+        expect(basePayload).toEqual({
+            type: 'game',
+            opponent: 'Lions',
+            competitionType: 'league'
+        });
+    });
+});

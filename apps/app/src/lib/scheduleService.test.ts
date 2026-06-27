@@ -44,6 +44,18 @@ vi.mock('./adapters/legacyScheduleDb', () => ({
   getTeams: vi.fn(),
   addGame: vi.fn(),
   addPractice: vi.fn(),
+  buildLegacyTournamentGameDocument: vi.fn((payload: Record<string, unknown>, tournament: Record<string, unknown>) => ({
+    ...payload,
+    competitionType: 'tournament',
+    tournament
+  })),
+  buildLegacyTournamentGameDocuments: vi.fn((games: Array<Record<string, unknown> | null | undefined>, tournament: Record<string, unknown>) => games
+    .filter((game): game is Record<string, unknown> => Boolean(game && typeof game === 'object' && !Array.isArray(game)))
+    .map((game) => ({
+      ...game,
+      competitionType: 'tournament',
+      tournament
+    }))),
   clearOccurrenceOverride: vi.fn(),
   createRideOffer: vi.fn(),
   claimAssignmentSlot: vi.fn(),
@@ -160,7 +172,7 @@ vi.mock('./appDataCache', () => ({
   getParentScheduleSummaryCacheKey: (userId: string) => `app-schedule-summary:${userId}`
 }));
 
-import { addGame, addPractice, broadcastLiveEvent, claimOpenOfficiatingSlot, clearOccurrenceOverride, releaseAssignmentClaim, respondToOfficiatingAssignment, updateEvent, updateGame, updateOccurrence, getAssignmentClaims, getGame, getGames, getPlayers, getPracticeSession, getPracticeSessions, getRsvpBreakdownByPlayer, getRsvpSummaries, getRsvps, getTeam, getTeams, listRideOffersForEvent, submitRsvpForPlayer, updatePracticeAttendance, getDoc, getDocs } from './adapters/legacyScheduleDb';
+import { addGame, addPractice, broadcastLiveEvent, buildLegacyTournamentGameDocuments, claimOpenOfficiatingSlot, clearOccurrenceOverride, releaseAssignmentClaim, respondToOfficiatingAssignment, updateEvent, updateGame, updateOccurrence, getAssignmentClaims, getGame, getGames, getPlayers, getPracticeSession, getPracticeSessions, getRsvpBreakdownByPlayer, getRsvpSummaries, getRsvps, getTeam, getTeams, listRideOffersForEvent, submitRsvpForPlayer, updatePracticeAttendance, getDoc, getDocs } from './adapters/legacyScheduleDb';
 import { getNativeAuthIdToken } from './authService';
 import { expandRecurrence, fetchAndParseCalendar, isTeamActive } from './adapters/legacyScheduleHelpers';
 import { getCachedAppData, loadCachedAppData } from './appDataCache';
@@ -366,6 +378,23 @@ describe('scheduled tournament writes', () => {
     }, coachUser);
 
     expect(createdIds).toEqual(['game-1', 'game-2']);
+    expect(buildLegacyTournamentGameDocuments).toHaveBeenCalledWith([
+      expect.objectContaining({
+        type: 'game',
+        opponent: 'Tigers',
+        competitionType: 'tournament'
+      }),
+      expect.objectContaining({
+        type: 'game',
+        opponent: 'Lions',
+        competitionType: 'tournament'
+      })
+    ], {
+      divisionName: '10U Gold',
+      bracketName: 'Gold Bracket',
+      roundName: 'Semifinal',
+      poolName: 'Pool A'
+    });
     expect(addGame).toHaveBeenCalledTimes(2);
     expect(addGame).toHaveBeenNthCalledWith(1, 'team-1', expect.objectContaining({
       type: 'game',
@@ -381,6 +410,54 @@ describe('scheduled tournament writes', () => {
     expect(addGame).toHaveBeenNthCalledWith(2, 'team-1', expect.objectContaining({
       type: 'game',
       opponent: 'Lions',
+      competitionType: 'tournament',
+      tournament: {
+        divisionName: '10U Gold',
+        bracketName: 'Gold Bracket',
+        roundName: 'Semifinal',
+        poolName: 'Pool A'
+      }
+    }));
+  });
+
+  it('maps a single-game tournament block to one legacy document and one write', async () => {
+    vi.mocked(addGame).mockResolvedValueOnce('game-1' as any);
+
+    const createdIds = await createScheduledTournamentBlockForApp('team-1', {
+      divisionName: '10U Gold',
+      bracketName: 'Gold Bracket',
+      roundName: 'Semifinal',
+      poolName: 'Pool A',
+      games: [
+        {
+          opponent: 'Tigers',
+          startDate: new Date('2026-06-24T18:30:00.000Z'),
+          endDate: new Date('2026-06-24T20:00:00.000Z'),
+          location: 'Main Gym',
+          arrivalTime: new Date('2026-06-24T18:00:00.000Z'),
+          isHome: true,
+          notes: 'Bring dark jerseys'
+        }
+      ]
+    }, coachUser);
+
+    expect(createdIds).toEqual(['game-1']);
+    expect(buildLegacyTournamentGameDocuments).toHaveBeenCalledWith([
+      expect.objectContaining({
+        type: 'game',
+        opponent: 'Tigers',
+        competitionType: 'tournament'
+      })
+    ], {
+      divisionName: '10U Gold',
+      bracketName: 'Gold Bracket',
+      roundName: 'Semifinal',
+      poolName: 'Pool A'
+    });
+    expect(addGame).toHaveBeenCalledTimes(1);
+    expect(addGame).toHaveBeenCalledWith('team-1', expect.objectContaining({
+      type: 'game',
+      opponent: 'Tigers',
       competitionType: 'tournament',
       tournament: {
         divisionName: '10U Gold',

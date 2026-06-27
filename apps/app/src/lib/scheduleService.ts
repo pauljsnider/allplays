@@ -15,6 +15,7 @@ import {
   getTeams,
   addGame,
   addPractice,
+  buildLegacyTournamentGameDocuments,
   createRideOffer,
   claimAssignmentSlot,
   respondToOfficiatingAssignment,
@@ -1660,17 +1661,13 @@ export async function createScheduledTournamentBlockForApp(teamId: string, input
     throw new Error('Tournament blocks require at least one game.');
   }
 
-  const createdIds: string[] = [];
-  for (const game of games) {
-    const payload = {
-      ...buildScheduledGamePayload({
-        ...game,
-        competitionType: 'tournament'
-      }, user as AuthUser),
-      competitionType: 'tournament',
-      tournament
-    };
+  const payloads = buildLegacyTournamentGameDocuments(games.map((game) => buildScheduledGamePayload({
+    ...game,
+    competitionType: 'tournament'
+  }, user as AuthUser)), tournament);
 
+  const createdIds: string[] = [];
+  for (const payload of payloads) {
     try {
       const createdId = await withTimeout(Promise.resolve(addGame(normalizedTeamId, payload)), 'Scheduled tournament game create');
       createdIds.push(createdId || '');
