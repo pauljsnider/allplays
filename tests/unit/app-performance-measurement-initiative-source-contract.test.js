@@ -15,7 +15,7 @@ const mainSource = readSource('apps/app/src/main.tsx');
 const homeSource = readSource('apps/app/src/pages/Home.tsx');
 const scheduleSource = readSource('apps/app/src/pages/Schedule.tsx');
 const messagesSource = readSource('apps/app/src/pages/Messages.tsx');
-const scheduleServiceSource = readSource('apps/app/src/lib/scheduleService.ts');
+const scheduleRsvpHookSource = readSource('apps/app/src/hooks/schedule/useScheduleEventRsvp.ts');
 const chatServiceSource = readSource('apps/app/src/lib/chatService.ts');
 
 describe('app performance measurement initiative source contract', () => {
@@ -86,10 +86,10 @@ describe('app performance measurement initiative source contract', () => {
     });
 
     it('keeps RSVP and chat send latency timers around their write paths', () => {
-        expect(scheduleServiceSource).toContain("import { startInteractionTimer, startUxTimer, UX_TIMING } from './uxTiming';");
-        expect(scheduleServiceSource).toContain('const interaction = startInteractionTimer(UX_TIMING.rsvpTap, { response });');
-        expect(scheduleServiceSource).toContain("interaction.end({ path: 'sdk' });");
-        expect(scheduleServiceSource).toContain("interaction.end({ path: 'rest' });");
+        expect(scheduleRsvpHookSource).toContain("import { UX_TIMING, startInteractionTimer } from '../../lib/uxTiming';");
+        expect(scheduleRsvpHookSource).toContain('const interaction = startInteractionTimer(UX_TIMING.rsvpTap, { response });');
+        expect(scheduleRsvpHookSource).toContain('interaction.end();');
+        expect(scheduleRsvpHookSource).toContain("interaction.end({ error: 'RSVP submit failed' });");
 
         expect(chatServiceSource).toContain("import { startInteractionTimer, UX_TIMING } from './uxTiming';");
         expect(chatServiceSource).toContain('const interaction = startInteractionTimer(UX_TIMING.chatSend, {');

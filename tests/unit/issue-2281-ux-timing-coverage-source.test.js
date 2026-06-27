@@ -7,7 +7,7 @@ const performanceContractSource = readFileSync(new URL('./app-performance-baseli
 const homeSource = readFileSync(new URL('../../apps/app/src/pages/Home.tsx', import.meta.url), 'utf8');
 const scheduleSource = readFileSync(new URL('../../apps/app/src/pages/Schedule.tsx', import.meta.url), 'utf8');
 const messagesSource = readFileSync(new URL('../../apps/app/src/pages/Messages.tsx', import.meta.url), 'utf8');
-const scheduleServiceSource = readFileSync(new URL('../../apps/app/src/lib/scheduleService.ts', import.meta.url), 'utf8');
+const scheduleRsvpHookSource = readFileSync(new URL('../../apps/app/src/hooks/schedule/useScheduleEventRsvp.ts', import.meta.url), 'utf8');
 const chatServiceSource = readFileSync(new URL('../../apps/app/src/lib/chatService.ts', import.meta.url), 'utf8');
 
 describe('issue 2281 ux timing coverage source contract', () => {
@@ -26,7 +26,7 @@ describe('issue 2281 ux timing coverage source contract', () => {
         expect(scheduleSource).toContain("startScreenMountTimer('schedule'");
         expect(scheduleSource).toContain("recordFirstMeaningfulRender('schedule'");
         expect(messagesSource).toContain("startScreenMountTimer('messages'");
-        expect(scheduleServiceSource).toContain('const interaction = startInteractionTimer(UX_TIMING.rsvpTap, { response });');
+        expect(scheduleRsvpHookSource).toContain('const interaction = startInteractionTimer(UX_TIMING.rsvpTap, { response });');
         expect(chatServiceSource).toContain('const interaction = startInteractionTimer(UX_TIMING.chatSend, {');
     });
 
