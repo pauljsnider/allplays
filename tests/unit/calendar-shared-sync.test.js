@@ -57,9 +57,19 @@ describe('global calendar ICS sync helper', () => {
             summary: 'Tigers vs New Team',
             location: 'Field 4'
         };
+        const uidlessSameSlotOne = {
+            dtstart: new Date('2026-03-19T18:00:00.000Z'),
+            summary: 'Tigers vs UID-less One',
+            location: 'Field 6'
+        };
+        const uidlessSameSlotTwo = {
+            dtstart: new Date('2026-03-19T18:00:00.000Z'),
+            summary: 'Tigers vs UID-less Two',
+            location: 'Field 7'
+        };
 
         const buildGlobalCalendarIcsEvent = ({ team, teamColor, event }) => ({
-            id: event.uid,
+            id: event.id || event.uid || `ics-${event.dtstart.getTime()}`,
             teamId: team.id,
             teamName: team.name,
             teamColor,
@@ -79,7 +89,7 @@ describe('global calendar ICS sync helper', () => {
         const firstMerged = mergeGlobalCalendarIcsEvents({
             ...mergeOptions,
             existingEvents,
-            icsEvents: [trackedEvent, sameSlotEvent, dbLinkedEvent, importedEvent]
+            icsEvents: [trackedEvent, sameSlotEvent, dbLinkedEvent, importedEvent, uidlessSameSlotOne, uidlessSameSlotTwo]
         });
 
         expect(firstMerged).toEqual([
@@ -102,6 +112,26 @@ describe('global calendar ICS sync helper', () => {
                 date: importedEvent.dtstart,
                 location: 'Field 4',
                 source: 'ics'
+            },
+            {
+                id: `ics-${uidlessSameSlotOne.dtstart.getTime()}`,
+                teamId: 'team-1',
+                teamName: 'Tigers',
+                teamColor: '#f97316',
+                title: 'Tigers vs UID-less One',
+                date: uidlessSameSlotOne.dtstart,
+                location: 'Field 6',
+                source: 'ics'
+            },
+            {
+                id: `ics-${uidlessSameSlotTwo.dtstart.getTime()}`,
+                teamId: 'team-1',
+                teamName: 'Tigers',
+                teamColor: '#f97316',
+                title: 'Tigers vs UID-less Two',
+                date: uidlessSameSlotTwo.dtstart,
+                location: 'Field 7',
+                source: 'ics'
             }
         ]);
 
@@ -116,6 +146,11 @@ describe('global calendar ICS sync helper', () => {
                     location: 'Field 4'
                 },
                 {
+                    dtstart: new Date('2026-03-19T18:00:00.000Z'),
+                    summary: 'Tigers vs Cross-feed UID-less',
+                    location: 'Field 8'
+                },
+                {
                     uid: 'second-feed-unique',
                     dtstart: new Date('2026-03-18T18:00:00.000Z'),
                     summary: 'Tigers vs Fresh Feed Opponent',
@@ -125,6 +160,16 @@ describe('global calendar ICS sync helper', () => {
         });
 
         expect(secondMerged).toEqual([
+            {
+                id: `ics-${new Date('2026-03-19T18:00:00.000Z').getTime()}`,
+                teamId: 'team-1',
+                teamName: 'Tigers',
+                teamColor: '#f97316',
+                title: 'Tigers vs Cross-feed UID-less',
+                date: new Date('2026-03-19T18:00:00.000Z'),
+                location: 'Field 8',
+                source: 'ics'
+            },
             {
                 id: 'second-feed-unique',
                 teamId: 'team-1',
