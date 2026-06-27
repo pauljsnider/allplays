@@ -101,6 +101,7 @@ test('browse teams location search paginates filtered results and clear restores
     await expect.poll(() => page.evaluate(() => window.__teamSearchCalls.at(-1))).toEqual({ searchText: 'Kansas', cursor: null, pageSize: 24 });
     await expect(page.getByRole('button', { name: 'Load more teams' })).toBeVisible();
 
+    await page.locator('#location-search-input').fill('Chicago');
     await page.getByRole('button', { name: 'Load more teams' }).click();
 
     await expect(page.getByText('Kansas City Current')).toBeVisible();

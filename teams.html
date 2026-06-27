@@ -118,6 +118,7 @@
     const searchButton = document.getElementById('search-button');
     const clearSearchButton = document.getElementById('clear-search-button');
     let browseCursor = null;
+    let activeLocationFilter = '';
     let renderedTeams = [];
 
     function getLocationSearchValue() {
@@ -291,7 +292,7 @@
           onClick: async () => {
             const nextCursor = browseCursor;
             if (!nextCursor) return;
-            await loadTeams(getLocationSearchValue(), { cursor: nextCursor, append: true });
+            await loadTeams(activeLocationFilter, { cursor: nextCursor, append: true });
           }
         });
 
@@ -324,13 +325,15 @@
 
     searchForm.addEventListener('submit', async (event) => {
       event.preventDefault();
+      activeLocationFilter = getLocationSearchValue();
       browseCursor = null;
       renderedTeams = [];
-      await loadTeams(getLocationSearchValue());
+      await loadTeams(activeLocationFilter);
     });
 
     clearSearchButton.addEventListener('click', async () => {
       locationSearchInput.value = '';
+      activeLocationFilter = '';
       browseCursor = null;
       renderedTeams = [];
       await loadTeams();
