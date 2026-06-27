@@ -809,10 +809,11 @@
                 try {
                     const { getAI, getGenerativeModel, GoogleAIBackend } = await import('./js/vendor/firebase-ai.js');
                     const { getApp } = await import('./js/vendor/firebase-app.js');
+                    const scoreView = resolveGameReportScoreView(game);
 
                     const pointsKey = statKeys.find(key => ['pts', 'points', 'point'].includes(key)) || 'points';
                     let context = `Game: ${team.name} vs ${game.opponent}\n`;
-                    context += `Final Score: ${game.homeScore || 0} - ${game.awayScore || 0}\n`;
+                    context += `Final Score: ${scoreView.teamScore} - ${scoreView.opponentScore}\n`;
                     context += `Date: ${game.date ? new Date(game.date.seconds * 1000).toLocaleDateString() : new Date().toLocaleDateString()}\n`;
                     context += `Sport: ${team.sport || 'Basketball'}\n\n`;
 
@@ -895,6 +896,21 @@ Write the match report now:`;
             });
 
             cancelBtn.addEventListener('click', closeEditor);
+        }
+
+        function resolveGameReportScoreView(game = {}) {
+            const homeScore = Number(game.homeScore || 0);
+            const awayScore = Number(game.awayScore || 0);
+            const teamScore = game.isHome === false ? awayScore : homeScore;
+            const opponentScore = game.isHome === false ? homeScore : awayScore;
+
+            return {
+                teamScore,
+                opponentScore,
+                isWin: teamScore > opponentScore,
+                isLoss: teamScore < opponentScore,
+                isTie: teamScore === opponentScore && game.status === 'completed'
+            };
         }
 
         function formatMMSS(ms) {
@@ -1359,9 +1375,8 @@ Write the match report now:`;
                 }
 
                 // Render Header
-                const isWin = (game.homeScore || 0) > (game.awayScore || 0);
-                const isLoss = (game.homeScore || 0) < (game.awayScore || 0);
-                const isTie = (game.homeScore || 0) === (game.awayScore || 0) && game.status === 'completed';
+                const scoreView = resolveGameReportScoreView(game);
+                const { teamScore, opponentScore, isWin, isLoss, isTie } = scoreView;
 
                 document.getElementById('game-header').innerHTML = `
                     <div class="inline-flex items-center gap-2 mb-4">
@@ -1389,7 +1404,7 @@ Write the match report now:`;
                         <div class="text-center">
                             <div class="text-sm text-gray-500 mb-2 font-medium">${escapeHtml(resolvedTeam.name)}</div>
                             <div class="text-5xl md:text-6xl lg:text-7xl font-mono font-bold ${isWin ? 'text-green-600' : 'text-primary-600'
-                    }">${game.homeScore || 0}</div>
+                    }">${teamScore}</div>
                         </div>
                         <div class="text-3xl md:text-4xl text-gray-300 font-light">-</div>
                         <div class="text-center">
@@ -1398,7 +1413,7 @@ Write the match report now:`;
                                 <span>${escapeHtml(game.opponent)}</span>
                             </div>
                             <div class="text-5xl md:text-6xl lg:text-7xl font-mono font-bold ${isLoss ? 'text-red-600' : 'text-gray-600'
-                    }">${game.awayScore || 0}</div>
+                    }">${opponentScore}</div>
                         </div>
                     </div>
                     <div class="flex flex-wrap justify-center gap-3 mb-4">
