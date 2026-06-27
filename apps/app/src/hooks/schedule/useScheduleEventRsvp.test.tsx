@@ -161,6 +161,21 @@ describe('useScheduleEventRsvp', () => {
         expect(screen.getByTestId('submitting').textContent).toBe('');
     });
 
+    it('treats a null RSVP summary as a successful submission', async () => {
+        vi.mocked(submitParentScheduleRsvp).mockResolvedValue(null as any);
+
+        renderProbe('Running late');
+        fireEvent.click(screen.getByRole('button', { name: 'Submit going' }));
+
+        await waitFor(() => {
+            expect(screen.getByText('Avery Smith marked going.')).toBeTruthy();
+        });
+        expect(screen.getByTestId('current-rsvp').textContent).toBe('going');
+        expect(startInteractionTimer).toHaveBeenCalledWith(UX_TIMING.rsvpTap, { response: 'going' });
+        expect(rsvpInteractionEnd).toHaveBeenCalledWith();
+        expect(rsvpInteractionEnd).not.toHaveBeenCalledWith({ error: 'RSVP submit failed' });
+    });
+
     it('rolls back optimistic RSVP state when the save fails', async () => {
         vi.mocked(submitParentScheduleRsvp).mockRejectedValue(new Error('Unable to save RSVP.'));
 

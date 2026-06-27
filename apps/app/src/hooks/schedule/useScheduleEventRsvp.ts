@@ -88,7 +88,7 @@ export function useScheduleEventRsvp({ availabilityNote }: { availabilityNote: s
       setMessage(noteOnlySave
         ? `${event.childName} availability note saved.`
         : `${event.childName} marked ${response.replace('_', ' ')}.`);
-      return summary;
+      return { ok: true as const };
     }, {
       getErrorMessage: getRsvpErrorMessage,
       onError: () => {
@@ -112,7 +112,7 @@ export function useScheduleEventRsvp({ availabilityNote }: { availabilityNote: s
     });
 
     await waitForVisibleState();
-    if (result) {
+    if (result?.ok) {
       interaction.end();
       return;
     }
