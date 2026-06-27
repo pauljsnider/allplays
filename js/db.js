@@ -8915,6 +8915,14 @@ export async function getFamilyShareToken(tokenId) {
     return { id: snap.id, ...snap.data() };
 }
 
+export async function resolveFamilyShareTokenChildren(tokenId) {
+    const normalizedTokenId = String(tokenId || '').trim();
+    if (!normalizedTokenId) return [];
+    const callable = httpsCallable(functions, 'resolveFamilyShareTokenChildren');
+    const response = await callable({ tokenId: normalizedTokenId });
+    return normalizeFamilyShareChildren(response?.data?.children || []);
+}
+
 export async function listFamilyShareTokens(ownerUserId) {
     const q = query(
         collection(db, 'familyShareTokens'),

@@ -18,14 +18,23 @@ export function normalizeFamilyShareCalendarUrls(urls = []) {
         });
 }
 
+function compactString(value) {
+    return value == null ? '' : String(value).trim();
+}
+
 export function normalizeFamilyShareChildren(children = []) {
     return (children || [])
-        .filter((child) => child?.teamId && child?.playerId)
-        .map((child) => ({
-            teamId: String(child.teamId || ''),
-            teamName: String(child.teamName || ''),
-            playerId: String(child.playerId || ''),
-            playerName: String(child.playerName || ''),
-            playerPhotoUrl: child.playerPhotoUrl || null
-        }));
+        .map((child) => {
+            const teamId = compactString(child?.teamId);
+            const playerId = compactString(child?.playerId || child?.childId);
+            return {
+                teamId,
+                teamName: compactString(child?.teamName || child?.team),
+                playerId,
+                playerName: compactString(child?.playerName || child?.childName || child?.name),
+                playerNumber: compactString(child?.playerNumber ?? child?.number),
+                playerPhotoUrl: child?.playerPhotoUrl || child?.photoUrl || null
+            };
+        })
+        .filter((child) => child.teamId && child.playerId);
 }
