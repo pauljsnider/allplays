@@ -1265,8 +1265,7 @@ test('Android-sized schedule smoke covers practice packet and More workflow with
     await mockScheduleModules(page);
     await page.goto(appUrl(baseURL, '/schedule/team-1/practice-1?childId=player-1'), { waitUntil: 'domcontentloaded' });
 
-    const practiceHeading = page.getByRole('heading', { name: 'Practice' });
-    await waitForScheduleRoute(page, practiceHeading);
+    await waitForScheduleRoute(page, page.locator('.event-summary-card'));
     await expect(page.getByRole('button', { name: 'Practice packet ready, review packet' })).toBeVisible();
 
     await page.getByRole('button', { name: 'Practice packet ready, review packet' }).click();
@@ -1287,7 +1286,7 @@ test('app schedule event detail exposes parent actions and RSVP', async ({ page,
         gameHomeScore: 4,
         gameAwayScore: 2
     });
-    await page.goto(appUrl(baseURL, '/schedule/team-1/game-1?childId=player-1'), { waitUntil: 'domcontentloaded' });
+    await page.goto(appUrl(baseURL, '/schedule/team-1/game-1?childId=player-1&section=availability'), { waitUntil: 'domcontentloaded' });
 
     const eventSummaryCard = page.locator('.event-summary-card');
     await expect(eventSummaryCard.getByRole('heading', { name: 'vs. Falcons' })).toBeVisible({ timeout: 15000 });
@@ -1406,7 +1405,7 @@ test('app schedule saves edited availability notes without re-tapping RSVP', asy
         gameMyRsvp: 'going',
         gameMyRsvpNote: 'Original note'
     });
-    await page.goto(appUrl(baseURL, '/schedule/team-1/game-1?childId=player-1'), { waitUntil: 'domcontentloaded' });
+    await page.goto(appUrl(baseURL, '/schedule/team-1/game-1?childId=player-1&section=availability'), { waitUntil: 'domcontentloaded' });
 
     const availabilitySection = page.locator('section').filter({ has: page.getByRole('heading', { name: 'Availability' }) });
     await waitForScheduleRoute(page, availabilitySection.getByRole('heading', { name: 'Availability' }));

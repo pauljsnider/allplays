@@ -151,12 +151,16 @@ type EventDetailSectionId = ScheduleEventDetailSectionId;
 
 const eventDetailSectionIds = new Set<EventDetailSectionId>(['availability', 'rideshare', 'assignments', 'game']);
 
-export function parseEventDetailSection(section: string | null | undefined): EventDetailSectionId {
+function parseRequestedEventDetailSection(section: string | null | undefined): EventDetailSectionId | null {
   const normalized = String(section || '').trim().toLowerCase();
   if (normalized && eventDetailSectionIds.has(normalized as EventDetailSectionId)) {
     return normalized as EventDetailSectionId;
   }
-  return 'availability';
+  return null;
+}
+
+export function parseEventDetailSection(section: string | null | undefined): EventDetailSectionId {
+  return parseRequestedEventDetailSection(section) || 'availability';
 }
 
 const hubIconComponents: Record<ScheduleHubIcon, LucideIcon> = {
@@ -170,6 +174,13 @@ const hubIconComponents: Record<ScheduleHubIcon, LucideIcon> = {
 
 function isActiveTrackedScheduleEvent(event?: ParentScheduleEvent | null) {
   return Boolean(event?.isDbGame && !event?.isCancelled);
+}
+
+function getDefaultEventDetailSection(event?: ParentScheduleEvent | null) {
+  if (isActiveTrackedScheduleEvent(event) && event?.canUpdateScore) {
+    return 'game';
+  }
+  return 'availability';
 }
 
 function hasRideshareActivity(event?: ParentScheduleEvent | null) {
@@ -239,7 +250,9 @@ export function ScheduleEventDetail({ auth }: { auth: AuthState }) {
   const [events, setEvents] = useState<ParentScheduleEvent[]>([]);
   const [selectedChildId, setSelectedChildId] = useState(searchParams.get('childId') || '');
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
-  const [activeSection, setActiveSection] = useState<EventDetailSectionId>(() => parseEventDetailSection(searchParams.get('section')));
+  const [activeSection, setActiveSection] = useState<EventDetailSectionId | null>(() => (
+    searchParams.has('section') ? parseEventDetailSection(searchParams.get('section')) : null
+  ));
   const [detailsOpen, setDetailsOpen] = useState(false);
   const [availabilityNote, setAvailabilityNote] = useState('');
   const [initialLoadPending, setInitialLoadPending] = useState(true);
@@ -338,7 +351,7 @@ export function ScheduleEventDetail({ auth }: { auth: AuthState }) {
   }, [auth.user?.uid, decodedTeamId, decodedEventId]);
 
   useEffect(() => {
-    setActiveSection(parseEventDetailSection(searchParams.get('section')));
+    setActiveSection(searchParams.has('section') ? parseEventDetailSection(searchParams.get('section')) : null);
     const routeChildId = searchParams.get('childId') || '';
     if (routeChildId) {
       setSelectedChildId(routeChildId);
@@ -463,7 +476,12 @@ export function ScheduleEventDetail({ auth }: { auth: AuthState }) {
   const attentionItems = getAttentionItems(selectedEvent, rsvp).filter((item) => item.section !== 'availability' && item.title !== 'Practice packet ready');
   const sections = getEventDetailSections(selectedEvent);
   const sectionIds = new Set(sections.map((section) => section.id));
-  const resolvedActiveSection = sectionIds.has(activeSection) ? activeSection : sections[0]?.id || 'availability';
+  const defaultSection = getDefaultEventDetailSection(selectedEvent);
+  const resolvedActiveSection = activeSection && sectionIds.has(activeSection)
+    ? activeSection
+    : sectionIds.has(defaultSection)
+      ? defaultSection
+      : sections[0]?.id || 'availability';
 
   const addEventToCalendar = async () => {
     const icsTitle = `${title} | ${selectedEvent.teamName}`;
