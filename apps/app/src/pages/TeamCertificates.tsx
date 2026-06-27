@@ -91,6 +91,10 @@ export function TeamCertificates({ auth }: { auth: AuthState }) {
   }, [drafts, previewPlayerId]);
 
   const exportableDrafts = useMemo(() => drafts.filter((draft) => draft.includeInExport !== false), [drafts]);
+  const certificateStudioUrl = useMemo(() => {
+    const batchId = drafts[0]?.batchId || '';
+    return getCertificateStudioUrl(teamId, batchId);
+  }, [drafts, teamId]);
 
   useEffect(() => {
     if (!previewRef.current || !shared || !model || (!previewPlayer && !previewDraft)) return;
@@ -132,7 +136,7 @@ export function TeamCertificates({ auth }: { auth: AuthState }) {
 
   const onOpenWebsite = async () => {
     if (!teamId) return;
-    await openPublicUrl(getCertificateStudioUrl(teamId));
+    await openPublicUrl(certificateStudioUrl);
   };
 
   const updateDraft = (draftId: string, patch: Partial<CertificateAwardDraft>) => {
