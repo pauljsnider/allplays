@@ -168,6 +168,11 @@ describe('private AI chat page', () => {
 
         expect(container.querySelector('.messages-two-pane')).toBeTruthy();
         expect(container.textContent).toContain('What do I need to handle today?');
+        expect(container.textContent).toContain('More ways to ask');
+        expect(container.textContent).not.toContain('Who still needs an RSVP?');
+
+        const expandButton = Array.from(container.querySelectorAll('button')).find((button) => button.textContent.includes('More ways to ask'));
+        await click(expandButton);
 
         const suggestion = Array.from(container.querySelectorAll('button')).find((button) => button.textContent.includes('Who still needs an RSVP?'));
         await click(suggestion);
@@ -200,6 +205,14 @@ describe('private AI chat page', () => {
         expect(container.querySelector('.messages-two-pane')).toBeFalsy();
         expect(container.textContent).toContain('What do you need from ALL PLAYS?');
         expect(container.textContent).toContain('What do I need to handle today?');
+        expect(container.textContent).toContain('More ways to ask');
+        expect(container.textContent).not.toContain('What is my next game?');
+        expect(container.textContent).not.toContain('Show unread team messages');
+        expect(container.textContent).not.toContain('Who still needs an RSVP?');
+
+        const expandButton = Array.from(container.querySelectorAll('button')).find((button) => button.textContent.includes('More ways to ask'));
+        await click(expandButton);
+
         expect(container.textContent).toContain('What is my next game?');
         expect(container.textContent).toContain('Show unread team messages');
         expect(container.textContent).toContain('Who still needs an RSVP?');
