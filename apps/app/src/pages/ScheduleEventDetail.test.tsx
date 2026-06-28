@@ -120,7 +120,15 @@ const chatServiceMocks = vi.hoisted(() => ({
 }));
 vi.mock('../lib/chatService', () => chatServiceMocks);
 vi.mock('../lib/publicActions', () => publicActionMocks);
-vi.mock('../lib/liveGameAnnouncer', () => ({ useLiveGameAnnouncer: vi.fn() }));
+const liveGameAnnouncerMocks = vi.hoisted(() => ({
+  useLiveGameAnnouncer: vi.fn(() => ({
+    supported: true,
+    enabled: false,
+    paused: false,
+    toggleEnabled: vi.fn()
+  }))
+}));
+vi.mock('../lib/liveGameAnnouncer', () => liveGameAnnouncerMocks);
 const liveGameChatServiceMocks = vi.hoisted(() => ({
   canUseLiveGameChat: vi.fn<(game: unknown, options?: unknown) => boolean>(() => true),
   getLiveGameChatNotice: vi.fn<(game: unknown, options?: unknown) => string | null>(() => null),
@@ -1643,6 +1651,78 @@ describe('ScheduleEventDetail assignments', () => {
     expect(chatServiceMocks.sendTeamChatMessage).not.toHaveBeenCalled();
     expect(screen.queryByText('Loading lineup builder…')).toBeNull();
     expect(screen.getByText('Score autosaved and posted to live play-by-play.')).toBeTruthy();
+  });
+
+  it('keeps report sections mounted during live score updates', async () => {
+    scheduleServiceMocks.loadParentScheduleEventDetail.mockResolvedValue({
+      events: [buildEvent({
+        liveStatus: 'live',
+        status: 'live',
+        canUpdateScore: true,
+        isTeamStaff: true,
+        homeScore: 41,
+        awayScore: 38
+      })],
+      children: []
+    });
+    scheduleServiceMocks.loadHomeScoringPlayers.mockResolvedValue([
+      { id: 'p1', name: 'Avery Smith', number: '1', points: 10, fouls: 1 }
+    ]);
+    gameReportServiceMocks.loadGameReportSections.mockResolvedValue({
+      game: { id: 'game-1', liveStatus: 'live', status: 'live', homeScore: 41, awayScore: 38 },
+      plays: [
+        { id: 'play-1', period: 'Q1', clock: '02:11', text: 'Avery Smith made a layup' }
+      ],
+      summary: 'Loaded on demand.',
+      opponentRows: [],
+      opponentStatKeys: [],
+      teamInsights: [],
+      playerInsightRows: [],
+      highlightClips: [],
+      statSheetPhotoUrl: null,
+      teamStatKeys: [],
+      teamStats: {},
+      statKeys: ['pts'],
+      playerRows: [
+        { playerId: 'player-1', playerName: 'Avery Smith', number: '1', stats: { pts: 8 }, timeMs: 600000, didNotPlay: false }
+      ],
+      statLabels: { pts: 'PTS' },
+      hasPlayingTime: true,
+      team: { id: 'team-1' }
+    } as any);
+    scheduleServiceMocks.updateGameScore.mockResolvedValue({ homeScore: 42, awayScore: 38 });
+
+    renderScheduleEventDetail();
+
+    await waitFor(() => {
+      expect(screen.getAllByRole('button', { name: 'Game' }).length).toBeGreaterThan(0);
+    });
+    fireEvent.click(screen.getAllByRole('button', { name: 'Game' })[0]);
+    fireEvent.click(screen.getByRole('button', { name: 'Report sections' }));
+
+    await waitFor(() => {
+      expect(gameReportServiceMocks.loadGameReportSections).toHaveBeenCalledTimes(1);
+      expect(screen.getByText('Loaded on demand.')).toBeTruthy();
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Plays' }));
+
+    await waitFor(() => {
+      expect(screen.getByText('Avery Smith made a layup')).toBeTruthy();
+    });
+    expect(screen.getByRole('button', { name: 'Plays' }).className).toContain('bg-primary-600');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Home score up' }));
+
+    await waitFor(() => {
+      expect(scheduleServiceMocks.updateGameScore).toHaveBeenCalledWith('team-1', 'game-1', { homeScore: 42, awayScore: 38 }, auth.user);
+    }, { timeout: 2000 });
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: 'Plays' }).className).toContain('bg-primary-600');
+      expect(gameReportServiceMocks.loadGameReportSections).toHaveBeenCalledTimes(1);
+      expect(screen.getByText('Avery Smith made a layup')).toBeTruthy();
+    });
+    expect(screen.queryByText('Loading report sections...')).toBeNull();
   });
 
   it('keeps live substitutions loaded during live clock updates', async () => {
