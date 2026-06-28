@@ -5,7 +5,7 @@ import {
   type ChatConversation,
   type ChatTeam
 } from '../../../lib/chatService';
-import { DEFAULT_TEAM_CONVERSATION_ID } from '../../../lib/chatLogic';
+import { DEFAULT_TEAM_CONVERSATION_ID, isDefaultTeamConversation } from '../../../lib/chatLogic';
 import type { AuthState } from '../../../lib/types';
 
 type UseChatTeamParams = {
@@ -30,10 +30,12 @@ export function useChatTeam({ teamId, user, inboxTeam, preferredConversationId =
 
     async function loadContext() {
       if (!user) return;
+      const nextConversationId = preferredConversationId || DEFAULT_TEAM_CONVERSATION_ID;
+      const shouldBlockOnConversationHydration = !isDefaultTeamConversation(nextConversationId);
       setLoadingContext(true);
       setError(null);
       setConversations([]);
-      setSelectedConversationId(preferredConversationId || DEFAULT_TEAM_CONVERSATION_ID);
+      setSelectedConversationId(nextConversationId);
       onTeamReset?.();
 
       try {
@@ -42,7 +44,9 @@ export function useChatTeam({ teamId, user, inboxTeam, preferredConversationId =
         setTeam(context.team);
         setProfile(context.profile);
         setCanModerate(context.canModerate);
-        setLoadingContext(false);
+        if (!shouldBlockOnConversationHydration) {
+          setLoadingContext(false);
+        }
 
         try {
           const loadedConversations = await loadChatConversations(teamId, user, context.team, context.canModerate);
@@ -57,9 +61,11 @@ export function useChatTeam({ teamId, user, inboxTeam, preferredConversationId =
             }
             return DEFAULT_TEAM_CONVERSATION_ID;
           });
+          setLoadingContext(false);
         } catch {
           if (!cancelled) {
             setConversations([]);
+            setLoadingContext(false);
           }
         }
       } catch (loadError: any) {

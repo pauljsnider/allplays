@@ -108,7 +108,36 @@ describe('useChatTeam', () => {
         await waitFor(() => expect(loadChatTeamContext).toHaveBeenCalledTimes(1));
     });
 
-    it('ends blocking load after team context while conversations hydrate in the background', async () => {
+    it('ends blocking load after team context while the default conversation hydrates in the background', async () => {
+        let resolveConversations: ((value: ChatConversation[]) => void) | null = null;
+        vi.mocked(loadChatTeamContext).mockResolvedValue({
+            team: { id: 'team-1', name: 'Bears' },
+            profile: {},
+            canModerate: true
+        });
+        vi.mocked(loadChatConversations).mockImplementation(() => new Promise((resolve) => {
+            resolveConversations = resolve;
+        }));
+
+        render(<TeamProbe teamId="team-1" />);
+
+        await waitFor(() => expect(screen.getByTestId('team-name').textContent).toBe('Bears'));
+        await waitFor(() => expect(screen.getByTestId('loading').textContent).toBe('false'));
+        expect(screen.getByTestId('selected-conversation').textContent).toBe(DEFAULT_TEAM_CONVERSATION_ID);
+        expect(screen.getByTestId('conversation-count').textContent).toBe('0');
+
+        await act(async () => {
+            resolveConversations?.([
+                { id: DEFAULT_TEAM_CONVERSATION_ID, type: 'team', isDefault: true },
+                { id: 'staff', type: 'group', name: 'Staff only' }
+            ]);
+        });
+
+        await waitFor(() => expect(screen.getByTestId('conversation-count').textContent).toBe('2'));
+        expect(screen.getByTestId('selected-conversation').textContent).toBe(DEFAULT_TEAM_CONVERSATION_ID);
+    });
+
+    it('keeps blocking load for non-default conversations until conversation metadata hydrates', async () => {
         let resolveConversations: ((value: ChatConversation[]) => void) | null = null;
         vi.mocked(loadChatTeamContext).mockResolvedValue({
             team: { id: 'team-1', name: 'Bears' },
@@ -122,7 +151,7 @@ describe('useChatTeam', () => {
         render(<TeamProbe teamId="team-1" preferredConversationId="staff" />);
 
         await waitFor(() => expect(screen.getByTestId('team-name').textContent).toBe('Bears'));
-        await waitFor(() => expect(screen.getByTestId('loading').textContent).toBe('false'));
+        expect(screen.getByTestId('loading').textContent).toBe('true');
         expect(screen.getByTestId('selected-conversation').textContent).toBe('staff');
         expect(screen.getByTestId('conversation-count').textContent).toBe('0');
 
@@ -133,7 +162,8 @@ describe('useChatTeam', () => {
             ]);
         });
 
-        await waitFor(() => expect(screen.getByTestId('conversation-count').textContent).toBe('2'));
+        await waitFor(() => expect(screen.getByTestId('loading').textContent).toBe('false'));
+        expect(screen.getByTestId('conversation-count').textContent).toBe('2');
         expect(screen.getByTestId('selected-conversation').textContent).toBe('staff');
     });
 
