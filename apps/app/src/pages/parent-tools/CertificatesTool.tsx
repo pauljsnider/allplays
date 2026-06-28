@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { AlertCircle, Award, ExternalLink, RefreshCw, Share2 } from 'lucide-react';
 import { useSearchParams } from 'react-router-dom';
-import { loadParentCertificates, type ParentCertificateCard } from '../../lib/parentCertificatesService';
+import { loadParentCertificates, type LoadParentCertificatesOptions, type ParentCertificateCard } from '../../lib/parentCertificatesService';
 import { openPublicUrl, sharePublicUrl } from '../../lib/publicActions';
 import type { AuthState } from '../../lib/types';
 import { EmptyState, LoadingBlock, RetryableStatus, ToolHeader, useParentToolAsyncOperation } from './shared';
@@ -16,8 +16,11 @@ export function CertificatesTool({ auth, refreshVersion }: { auth: AuthState; re
     const hasRequestedCertificate = Boolean(requestedTeamId && requestedCertificateId);
 
     const refresh = useCallback(async () => {
+        const loadOptions: LoadParentCertificatesOptions = hasRequestedCertificate
+            ? { requestedTeamId, requestedCertificateId }
+            : {};
         return runLoad(
-            () => loadParentCertificates(auth.user),
+            () => loadParentCertificates(auth.user, loadOptions),
             'Unable to load awards.',
             {
                 onSuccess: (result) => {
@@ -25,7 +28,7 @@ export function CertificatesTool({ auth, refreshVersion }: { auth: AuthState; re
                 }
             }
         );
-    }, [auth.user, runLoad]);
+    }, [auth.user, hasRequestedCertificate, requestedCertificateId, requestedTeamId, runLoad]);
 
     useEffect(() => {
         void refresh();

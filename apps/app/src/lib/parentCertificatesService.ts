@@ -2,6 +2,8 @@ import { getTeam, listCertificatesForPlayer } from './adapters/legacyParentTools
 import type { AuthUser } from './types';
 
 const legacyOrigin = 'https://allplays.ai';
+const DEFAULT_PUBLISHED_CERTIFICATE_LIMIT = 25;
+const TARGETED_PUBLISHED_CERTIFICATE_LIMIT = 250;
 
 export type ParentCertificateCard = Record<string, any> & {
     teamId: string;
@@ -11,12 +13,23 @@ export type ParentCertificateCard = Record<string, any> & {
     url: string;
 };
 
-export async function loadParentCertificates(user: AuthUser | null): Promise<ParentCertificateCard[]> {
+export type LoadParentCertificatesOptions = {
+    requestedTeamId?: string;
+    requestedCertificateId?: string;
+};
+
+export async function loadParentCertificates(user: AuthUser | null, options: LoadParentCertificatesOptions = {}): Promise<ParentCertificateCard[]> {
     const children = normalizeFamilyChildren(user?.parentOf || []);
+    const requestedTeamId = compactString(options.requestedTeamId);
+    const requestedCertificateId = compactString(options.requestedCertificateId);
+    const hasTargetedCertificateRequest = Boolean(requestedTeamId && requestedCertificateId);
     const rows = await Promise.all(children.map(async (child: any) => {
+        const certificateLimit = hasTargetedCertificateRequest && child.teamId === requestedTeamId
+            ? TARGETED_PUBLISHED_CERTIFICATE_LIMIT
+            : DEFAULT_PUBLISHED_CERTIFICATE_LIMIT;
         const [team, certificates] = await Promise.all([
             Promise.resolve(getTeam(child.teamId)).catch(() => null),
-            Promise.resolve(listCertificatesForPlayer(child.teamId, child.playerId, { status: 'published', limit: 25 })).catch(() => [])
+            Promise.resolve(listCertificatesForPlayer(child.teamId, child.playerId, { status: 'published', limit: certificateLimit })).catch(() => [])
         ]);
         return (certificates || []).map((certificate: any) => ({
             ...certificate,

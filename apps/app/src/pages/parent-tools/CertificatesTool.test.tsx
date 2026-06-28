@@ -94,6 +94,10 @@ describe('CertificatesTool deep links', () => {
         expect(screen.getByText('Opened from a notification')).toBeTruthy();
         expect(screen.getByRole('button', { name: 'Show all awards' })).toBeTruthy();
         expect(screen.getByRole('button', { name: 'Open' })).toBeTruthy();
+        expect(parentCertificatesServiceMocks.loadParentCertificates).toHaveBeenCalledWith(auth.user, {
+            requestedTeamId: 'team-1',
+            requestedCertificateId: 'cert-1'
+        });
 
         fireEvent.click(screen.getByRole('button', { name: 'Show all awards' }));
 
