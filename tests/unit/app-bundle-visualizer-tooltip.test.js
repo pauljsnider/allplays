@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { JSDOM } from 'jsdom';
@@ -61,10 +61,20 @@ const fixedFilterThrottle = `  const throttleFilter = (callback, limit) => {
   };`;
 
 const artifactFixturePath = path.resolve(import.meta.dirname, '../fixtures/app-bundle-visualizer.fixture.html');
-const artifactFixtureHtml = readFileSync(artifactFixturePath, 'utf8');
-const brokenArtifactHtml = artifactFixtureHtml
-    .replace(fixedTooltipHandler, brokenTooltipHandler)
-    .replace(fixedFilterThrottle, brokenFilterThrottle);
+
+function readArtifactFixtureHtml() {
+    if (!existsSync(artifactFixturePath)) {
+        throw new Error(`Missing bundle visualizer fixture: ${artifactFixturePath}`);
+    }
+
+    return readFileSync(artifactFixturePath, 'utf8');
+}
+
+function buildBrokenArtifactHtml() {
+    return readArtifactFixtureHtml()
+        .replace(fixedTooltipHandler, brokenTooltipHandler)
+        .replace(fixedFilterThrottle, brokenFilterThrottle);
+}
 
 async function loadVisualizerDocument(html) {
     const dom = new JSDOM(html, {
@@ -118,13 +128,13 @@ ${brokenTooltipHandler}
         const tempFilePath = path.join(tempDirectory, 'bundle-visualizer.html');
 
         try {
-            writeFileSync(tempFilePath, brokenArtifactHtml);
+            writeFileSync(tempFilePath, buildBrokenArtifactHtml());
 
             expect(patchBundleVisualizerTooltipFile(tempFilePath)).toBe(true);
 
             const patchedHtml = readFileSync(tempFilePath, 'utf8');
 
-            expect(patchedHtml).not.toBe(brokenArtifactHtml);
+            expect(patchedHtml).not.toBe(buildBrokenArtifactHtml());
             expect(patchedHtml).toContain(fixedTooltipHandler);
             expect(patchedHtml).toContain(fixedFilterThrottle);
         } finally {
@@ -133,7 +143,7 @@ ${brokenTooltipHandler}
     });
 
     it('preserves tooltip hover state and applies the final throttled filter value in the rendered report', async () => {
-        const patchedHtml = fixBundleVisualizerTooltip(brokenArtifactHtml);
+        const patchedHtml = fixBundleVisualizerTooltip(buildBrokenArtifactHtml());
         const dom = await loadVisualizerDocument(patchedHtml);
 
         try {
@@ -169,6 +179,8 @@ ${brokenTooltipHandler}
     });
 
     it('leaves already-patched reports unchanged', () => {
+        const artifactFixtureHtml = readArtifactFixtureHtml();
+
         expect(fixBundleVisualizerTooltip(artifactFixtureHtml)).toBe(artifactFixtureHtml);
     });
 });
