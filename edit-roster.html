@@ -2411,7 +2411,7 @@ EXAMPLES:
                                             onchange="updatePlayerOperation(${index}, 'name', this.value)"
                                             class="font-semibold bg-white border border-gray-300 rounded px-2 py-1 w-full mb-1"
                                             placeholder="Player Name">
-                                        <input type="text" value="${player.number || ''}"
+                                        <input type="text" value="${escapeHtml(player.number || '')}"
                                             onchange="updatePlayerOperation(${index}, 'number', this.value)"
                                             class="text-xs bg-white border border-gray-300 rounded px-2 py-1 w-full"
                                             placeholder="Number (optional)">
@@ -2431,7 +2431,7 @@ EXAMPLES:
                                     <div class="text-sm">
                                         Player ID: ${op.playerId}<br>
                                         Changes: ${JSON.stringify(op.changes)}<br>
-                                        <span class="text-xs text-gray-600">${op.reason || ''}</span>
+                                        <span class="text-xs text-gray-600">${escapeHtml(op.reason || '')}</span>
                                     </div>
                                 </div>
                                 <button onclick="removePlayerOperation(${index})"
@@ -2447,7 +2447,7 @@ EXAMPLES:
                                     <div class="text-xs font-bold text-red-700 uppercase mb-1">⏸️ Deactivate</div>
                                     <div class="text-sm">
                                         Player ID: ${op.playerId}<br>
-                                        <span class="text-xs text-gray-600">${op.reason || 'Deactivate from active roster (preserve history)'}</span>
+                                        <span class="text-xs text-gray-600">${escapeHtml(op.reason || 'Deactivate from active roster (preserve history)')}</span>
                                     </div>
                                 </div>
                                 <button onclick="removePlayerOperation(${index})"
@@ -2463,7 +2463,7 @@ EXAMPLES:
                                     <div class="text-xs font-bold text-emerald-700 uppercase mb-1">▶️ Reactivate</div>
                                     <div class="text-sm">
                                         Player ID: ${op.playerId}<br>
-                                        <span class="text-xs text-gray-600">${op.reason || 'Reactivate to active roster'}</span>
+                                        <span class="text-xs text-gray-600">${escapeHtml(op.reason || 'Reactivate to active roster')}</span>
                                     </div>
                                 </div>
                                 <button onclick="removePlayerOperation(${index})"

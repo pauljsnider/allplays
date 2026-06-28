@@ -31,14 +31,27 @@ const USER_DATA_FIELDS = [
     'comment',
     'description',
     'photoUrl',
-    'title'
+    'title',
+    // Added after a Codex review caught player.number rendering unescaped.
+    'number',
+    'jersey',
+    'reason',
+    'nickname',
+    'firstName',
+    'lastName',
+    'phone',
+    'address',
+    'school',
+    'grade'
 ];
 
 const fieldAlternation = USER_DATA_FIELDS.join('|');
 // An interpolation in markup context: preceded by `>` (element text) or `="`
-// (attribute value), referencing a user-data field as the final property.
+// (attribute value), referencing a user-data field as the final property. The
+// trailing `(?:\s*\|\|[^{}]*)?` matches `${ field || 'default' }` forms, which
+// an earlier version of this guard missed.
 const MARKUP_INTERP = new RegExp(
-    `(>|=")\\$\\{([^{}]*\\.(?:${fieldAlternation}))[a-zA-Z0-9_?]*\\}`,
+    `(>|=")\\$\\{([^{}]*\\.(?:${fieldAlternation}))[a-zA-Z0-9_?]*(?:\\s*\\|\\|[^{}]*)?\\}`,
     'g'
 );
 
@@ -66,6 +79,9 @@ function findUnescapedSinks(source) {
         // not user-stored content and surfaces only in dev error toasts).
         if (expression.includes('escapeHtml(')) continue;
         if (/\b(error|err|e)\.(message|name)$/.test(expression)) continue;
+        // Numeric readouts (e.g. ${String(x.description || '').length}) render a
+        // count, not the user string, so they are inert.
+        if (/\.(length|size|count)\b/.test(match[0])) continue;
         const line = source.slice(0, match.index).split('\n').length;
         offenders.push(`${expression} (line ${line})`);
     }
