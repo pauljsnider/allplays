@@ -2056,7 +2056,7 @@
             const previewWrap = document.getElementById('player-photo-preview');
             const thumb = document.getElementById('player-photo-thumb');
             if (editingPhotoUrl) {
-                thumb.innerHTML = `<img src="${editingPhotoUrl}" alt="${player.name}" class="w-full h-full object-cover">`;
+                thumb.innerHTML = `<img src="${escapeHtml(editingPhotoUrl)}" alt="${escapeHtml(player.name || '')}" class="w-full h-full object-cover">`;
             } else {
                 thumb.innerHTML = `
                     <svg class="w-full h-full text-gray-400 p-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -2407,7 +2407,7 @@ EXAMPLES:
                                         <span class="text-xs font-bold text-green-700 uppercase">➕ Add</span>
                                     </div>
                                     <div class="text-sm">
-                                        <input type="text" value="${player.name}"
+                                        <input type="text" value="${escapeHtml(player.name)}"
                                             onchange="updatePlayerOperation(${index}, 'name', this.value)"
                                             class="font-semibold bg-white border border-gray-300 rounded px-2 py-1 w-full mb-1"
                                             placeholder="Player Name">

@@ -1256,8 +1256,8 @@
                 const checked = !isSameSource || previouslySelectedEmails.has(entry.email) ? ' checked' : '';
                 return `
                 <label class="flex items-center gap-2">
-                    <input type="checkbox" class="rollover-staff-email h-3.5 w-3.5 text-amber-600 border-gray-300 rounded" value="${entry.email}"${checked}>
-                    <span>${entry.email}</span>
+                    <input type="checkbox" class="rollover-staff-email h-3.5 w-3.5 text-amber-600 border-gray-300 rounded" value="${escapeHtml(entry.email)}"${checked}>
+                    <span>${escapeHtml(entry.email)}</span>
                 </label>
             `;
             }).join('');
@@ -1516,7 +1516,7 @@
 
                 if (team.photoUrl) {
                     currentPhotoUrl = team.photoUrl;
-                    document.getElementById('photo-preview').innerHTML = `<img src="${team.photoUrl}" class="w-full h-full object-cover">`;
+                    document.getElementById('photo-preview').innerHTML = `<img src="${escapeHtml(team.photoUrl)}" class="w-full h-full object-cover">`;
                 }
 
                 // Update management links

@@ -301,7 +301,7 @@
 
     <script type="module">
         import { getTeam, getPlayers, getGames, getGame, updateGame, getTrackedCalendarEventUids, getEvents } from './js/db.js?v=74';
-        import { renderHeader, renderFooter, getUrlParams, formatDate, formatTime, fetchAndParseCalendar, extractOpponent, isPracticeEvent, isTrackedCalendarEvent } from './js/utils.js?v=14';
+        import { renderHeader, renderFooter, getUrlParams, formatDate, formatTime, fetchAndParseCalendar, extractOpponent, isPracticeEvent, isTrackedCalendarEvent, escapeHtml } from './js/utils.js?v=14';
         import { checkAuth } from './js/auth.js?v=37';
         import { getTeamAccessInfo } from './js/team-access.js';
         import { createAutoSaveController } from './js/game-plan-autosave.js?v=2';
@@ -748,7 +748,7 @@
                         <div class="w-10 h-10 mx-auto rounded-full bg-gradient-to-br from-primary-100 to-primary-200 flex items-center justify-center border-2 border-primary-300 mb-1">
                             <span class="font-bold text-primary-700 text-sm">${p.number || '?'}</span>
                         </div>
-                        <div class="text-xs font-semibold text-gray-900 truncate">${p.name}</div>
+                        <div class="text-xs font-semibold text-gray-900 truncate">${escapeHtml(p.name)}</div>
                     </div>
                 `).join('');
 
@@ -845,7 +845,7 @@
                 <tr class="hover:bg-gray-50">
                     <td class="px-4 py-3 text-sm font-semibold text-gray-900 sticky left-0 bg-white z-10 border-r border-gray-300">
                         <div class="flex items-center justify-between gap-2">
-                            <span>${position.name}</span>
+                            <span>${escapeHtml(position.name)}</span>
                             <button class="fill-row-btn text-xs text-primary-700 hover:text-primary-900 bg-primary-50 px-2 py-1 rounded"
                                     data-position="${position.id}"
                                     title="Fill empty cells in this row with last selected player">Fill</button>
@@ -880,7 +880,7 @@
                                         ${changedFromPrevCell && !prevPosition ? '<span class="absolute -top-1 -right-1 text-[10px] bg-amber-500 text-white px-1 rounded">chg</span>' : ''}
                                         ${prevPosition ? '<span class="text-xs mr-0.5">↔</span>' : ''}
                                         <span class="font-bold text-xs">#${player.number || '?'}</span>
-                                        <span class="text-xs font-semibold">${player.name}</span>
+                                        <span class="text-xs font-semibold">${escapeHtml(player.name)}</span>
                                         <span class="text-xs">×</span>
                                     </div>
                                 ` : `
@@ -993,7 +993,7 @@
                          draggable="true"
                          data-player-id="${p.id}">
                         <span class="font-bold text-xs text-gray-700">#${p.number || '?'}</span>
-                        <span class="text-xs text-gray-800">${p.name}</span>
+                        <span class="text-xs text-gray-800">${escapeHtml(p.name)}</span>
                     </div>
                 `).join('') || '<span class="text-gray-400 text-xs">All assigned</span>';
 
@@ -1098,7 +1098,7 @@
                                         <span class="text-sm font-bold text-${statusColor}-700">${p.number || '?'}</span>
                                     </div>
                                     <div>
-                                        <span class="font-semibold text-gray-900">${p.name}</span>
+                                        <span class="font-semibold text-gray-900">${escapeHtml(p.name)}</span>
                                         <div class="text-xs text-${statusColor}-600 font-medium">${statusText}</div>
                                     </div>
                                 </div>

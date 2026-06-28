@@ -2522,7 +2522,7 @@
                         <div class="text-sm text-gray-600">
                             ${mapLink(practice.location) ? `<a class="text-indigo-600 hover:underline" target="_blank" rel="noopener noreferrer" href="${mapLink(practice.location)}">${practice.location || 'TBD'}</a>` : (practice.location || 'TBD')}
                         </div>
-                        ${practice.notes ? `<div class="text-sm text-gray-500 mt-1">${practice.notes}</div>` : ''}
+                        ${practice.notes ? `<div class="text-sm text-gray-500 mt-1">${escapeHtml(practice.notes)}</div>` : ''}
                         ${planSummary}
                     </div>
                     <div class="flex space-x-2">
@@ -4845,7 +4845,7 @@ PARSING RULES:
                                         </span>
                                     </div>
                                     <div class="text-sm">
-                                        <input type="text" value="${game.opponent}"
+                                        <input type="text" value="${escapeHtml(game.opponent)}"
                                             onchange="updateOperation(${index}, 'opponent', this.value)"
                                             class="font-semibold bg-white border border-gray-300 rounded px-2 py-1 w-full mb-1">
                                         <input type="datetime-local" value="${formatIsoForInput(date)}"
