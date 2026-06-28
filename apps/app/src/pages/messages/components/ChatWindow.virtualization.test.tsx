@@ -575,6 +575,7 @@ describe('ChatWindow conversation switching', () => {
       </MemoryRouter>
     );
 
+    expect(screen.getByRole('button', { name: /Staff only.*Group conversation/i })).not.toBeNull();
     fireEvent.click(screen.getByRole('button', { name: /Staff only.*Group conversation/i }));
 
     await waitFor(() => {

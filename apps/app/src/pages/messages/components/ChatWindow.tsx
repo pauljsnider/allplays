@@ -456,20 +456,18 @@ export function ChatWindow({
   const selectedConversation = useMemo(() => (
     conversations.find((conversation) => conversation.id === effectiveConversationId) || conversations[0] || null
   ), [conversations, effectiveConversationId]);
-  const conversationSheetConversations = useMemo(() => {
+  const conversationSheetConversations = useMemo<ChatConversation[]>(() => {
     if (!canModerate || conversations.some((conversation) => isStaffConversation(conversation))) {
       return conversations;
     }
-    return [
-      ...conversations,
-      {
-        id: STAFF_CONVERSATION_PLACEHOLDER_ID,
-        type: 'group',
-        name: 'Staff only',
-        participantIds: [],
-        participantRoles: ['staff']
-      }
-    ];
+    const staffPlaceholderConversation = {
+      id: STAFF_CONVERSATION_PLACEHOLDER_ID,
+      type: 'group',
+      name: 'Staff only',
+      participantIds: [],
+      participantRoles: ['staff']
+    } satisfies ChatConversation;
+    return [...conversations, staffPlaceholderConversation];
   }, [canModerate, conversations]);
   const audienceMetadata = useMemo(() => buildChatAudienceMetadata({
     selectedConversation,
