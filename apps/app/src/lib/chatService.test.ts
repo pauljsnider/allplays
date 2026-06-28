@@ -467,7 +467,7 @@ describe('sendTeamChatMessage attachment uploads', () => {
     }));
     expect(result).toEqual(expect.objectContaining({
       conversationId: 'team',
-      createdConversation: false,
+      createdConversation: null,
       wantsAi: false
     }));
   });

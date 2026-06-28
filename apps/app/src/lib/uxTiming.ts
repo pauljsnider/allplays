@@ -1,6 +1,7 @@
 import { createLogger } from './logger';
 import { recordAppUxTiming } from './telemetry';
 import { diffNativeReadMetrics, snapshotNativeReadMetrics } from './nativeReadMetrics';
+import { now, recordCompletedPerformanceSpan, startPerformanceSpan } from './performanceInstrumentation';
 
 const logger = createLogger('ux');
 
@@ -29,12 +30,11 @@ const SCREEN_MOUNT_TIMING: Record<ScreenMountRoute, typeof UX_TIMING[keyof typeo
   messages: UX_TIMING.messagesMount
 };
 
-export function now() {
-  return typeof performance !== 'undefined' ? performance.now() : Date.now();
-}
-
 export function startUxTimer(label: string, baseMeta: Record<string, unknown> = {}) {
-  const startedAt = now();
+  const performanceSpan = startPerformanceSpan(label, {
+    kind: 'ux',
+    meta: baseMeta
+  });
   const readsAtStart = snapshotNativeReadMetrics();
   return {
     end(meta: Record<string, unknown> = {}) {
@@ -46,7 +46,9 @@ export function startUxTimer(label: string, baseMeta: Record<string, unknown> = 
       const readMeta = (readDelta.reads > 0 || readDelta.dedupHits > 0)
         ? { nativeReads: readDelta.reads, nativeDedupHits: readDelta.dedupHits }
         : {};
-      recordUxTiming(label, startedAt, { ...baseMeta, ...readMeta, ...meta });
+      const mergedMeta = { ...baseMeta, ...readMeta, ...meta };
+      recordUxTiming(label, performanceSpan.startedAt, mergedMeta, { recordPerformance: false });
+      performanceSpan.end(mergedMeta);
     }
   };
 }
@@ -90,10 +92,21 @@ export function startWarmResumeTimer(baseMeta: Record<string, unknown> = {}) {
   });
 }
 
-export function recordUxTiming(label: string, startedAt: number, meta: Record<string, unknown> = {}) {
+export function recordUxTiming(
+  label: string,
+  startedAt: number,
+  meta: Record<string, unknown> = {},
+  options: { recordPerformance?: boolean } = {}
+) {
   const durationMs = Math.round(now() - startedAt);
   logger.info(label, { durationMs, ...meta });
   recordAppUxTiming(label, startedAt, meta);
+  if (options.recordPerformance !== false) {
+    recordCompletedPerformanceSpan(label, startedAt, durationMs, {
+      kind: 'ux',
+      meta
+    });
+  }
 }
 
 let firstMeaningfulRenderRecorded = false;

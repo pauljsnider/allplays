@@ -176,17 +176,47 @@ function isTelemetryEnabled() {
 function getSafePath(url = window.location.href) {
     try {
         const parsed = new URL(url, window.location.origin);
-        return parsed.pathname || '/';
+        return getSafeRoutePath(parsed.pathname || '/');
     } catch (error) {
-        return window.location.pathname || '/';
+        return getSafeRoutePath(window.location.pathname || '/');
     }
 }
 
-function getQueryKeys() {
-    return Array.from(new URLSearchParams(window.location.search).keys())
+function getSafeRoutePath(value) {
+    const route = sanitizeTelemetryText(String(value || '/').split('?')[0].split('#')[0] || '/', 220);
+    return route.startsWith('/') ? route : '/';
+}
+
+function getQueryKeys(search = window.location.search) {
+    const safeSearch = typeof search === 'string'
+        ? search.replace(/^[?#]/, '')
+        : '';
+    return Array.from(new URLSearchParams(safeSearch).keys())
         .map((key) => sanitizeTelemetryKey(key))
         .filter(Boolean)
         .slice(0, 20);
+}
+
+function getSafeAppRouteInfo(url = window.location.href) {
+    try {
+        const parsed = new URL(url, window.location.origin);
+        const hash = parsed.hash || '';
+        const hashRoute = hash.startsWith('#/') ? hash.slice(1) : '';
+        const routeSource = hashRoute || parsed.pathname || '/';
+        const querySource = hashRoute.includes('?')
+            ? hashRoute.slice(hashRoute.indexOf('?') + 1)
+            : parsed.search;
+
+        return {
+            appRoute: getSafeRoutePath(routeSource),
+            appRouteQueryKeys: getQueryKeys(querySource)
+        };
+    } catch (error) {
+        return {
+            appRoute: getSafeRoutePath(window.location.pathname || '/'),
+            appRouteQueryKeys: getQueryKeys()
+        };
+    }
 }
 
 function getSafeReferrer() {
@@ -272,6 +302,7 @@ function describeElement(element) {
 
 function buildBaseEvent(name, properties = {}) {
     const now = Date.now();
+    const appRouteInfo = getSafeAppRouteInfo();
     return {
         id: randomId('event'),
         name: sanitizeTelemetryKey(name) || 'unknown',
@@ -282,8 +313,10 @@ function buildBaseEvent(name, properties = {}) {
         signedIn: userContext.signedIn,
         clientTimestamp: new Date(now).toISOString(),
         pagePath: getSafePath(),
+        appRoute: appRouteInfo.appRoute,
         pageTitle: sanitizeTelemetryText(document.title, 120),
         queryKeys: getQueryKeys(),
+        appRouteQueryKeys: appRouteInfo.appRouteQueryKeys,
         referrer: getSafeReferrer(),
         viewport: {
             width: window.innerWidth || 0,

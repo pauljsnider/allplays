@@ -24,6 +24,7 @@ import {
 import { useShellLayout } from '../lib/useShellLayout';
 import { useRefreshOnResume } from '../lib/useRefreshOnResume';
 import { startScreenMountTimer } from '../lib/uxTiming';
+import { completeParentCoreWorkflowTimer } from '../lib/parentWorkflowTiming';
 import type { AuthState } from '../lib/types';
 import { ChatWindow, TeamAvatar } from './messages/components/ChatWindow';
 
@@ -74,6 +75,14 @@ export function Messages({ auth }: { auth: AuthState }) {
       if (inboxRequestIdRef.current !== requestId) return;
       setTeams(mergeInboxTeams(result.teams, previewUpdates));
       const totalUnread = result.teams.reduce((sum, team) => sum + team.unreadCount, 0);
+      completeParentCoreWorkflowTimer('messages', {
+        targetPage: 'messages',
+        mode: 'inbox',
+        teamId: teamId || '',
+        teamCount: result.teams.length,
+        unreadCount: totalUnread,
+        completedRoute: teamId ? `/messages/${teamId}` : '/messages'
+      });
       timer.end({
         teamCount: result.teams.length,
         unreadCount: totalUnread,
@@ -116,6 +125,12 @@ export function Messages({ auth }: { auth: AuthState }) {
           unreadCount: 0,
           deferredPreviewTargetCount: 0,
           deferredPreviewUpdateCount: 0
+        });
+        completeParentCoreWorkflowTimer('messages', {
+          targetPage: 'messages',
+          mode: 'direct_thread',
+          teamId: directThreadTeamId,
+          completedRoute: directThreadTeamId ? `/messages/${directThreadTeamId}` : '/messages'
         });
       }
       return;
@@ -504,4 +519,3 @@ function toInboxSortTime(message: ChatMessage | null | undefined) {
   const date = new Date(message.createdAt as any);
   return Number.isNaN(date.getTime()) ? 0 : date.getTime();
 }
-

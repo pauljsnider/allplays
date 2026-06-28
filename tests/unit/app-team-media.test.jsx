@@ -28,13 +28,9 @@ const chatServiceMocks = vi.hoisted(() => ({
 
 vi.mock('../../apps/app/src/lib/parentToolsService.ts', () => parentToolsServiceMocks);
 vi.mock('../../apps/app/src/lib/publicActions.ts', () => publicActionsMocks);
-vi.mock('../../apps/app/src/lib/chatService.ts', async () => {
-  const actual = await vi.importActual('../../apps/app/src/lib/chatService.ts');
-  return {
-    ...actual,
-    sendTeamChatMessage: chatServiceMocks.sendTeamChatMessage,
-  };
-});
+vi.mock('../../apps/app/src/lib/chatService', () => ({
+  sendTeamChatMessage: chatServiceMocks.sendTeamChatMessage,
+}));
 
 import { TeamMedia } from '../../apps/app/src/pages/TeamMedia.tsx';
 

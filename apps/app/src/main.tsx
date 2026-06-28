@@ -10,10 +10,12 @@ import {
 } from './lib/telemetry';
 import { startAppStartupTimer } from './lib/uxTiming';
 import { hideNativeSplashScreen, initializeNativeAppearance } from './lib/nativeAppearance';
+import { initializeWebVitalsMonitoring } from './lib/webVitals';
 import './styles/index.css';
 
 void initializeAppErrorTracking();
 installReactErrorTelemetry();
+void initializeWebVitalsMonitoring();
 void initializeNativeAppearance();
 const startupTimer = startAppStartupTimer();
 

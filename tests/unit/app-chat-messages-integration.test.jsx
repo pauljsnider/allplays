@@ -51,7 +51,8 @@ const uxTimingMocks = vi.hoisted(() => ({
         uxTimingMocks.interactionEnds.push(end);
         return { end };
     }),
-    startScreenMountTimer: vi.fn(() => ({ end: vi.fn() }))
+    startScreenMountTimer: vi.fn(() => ({ end: vi.fn() })),
+    startUxTimer: vi.fn(() => ({ end: vi.fn() }))
 }));
 
 const voiceMocks = vi.hoisted(() => {

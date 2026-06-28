@@ -1,4 +1,4 @@
-import { FormEvent, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { FormEvent, useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent, type ReactNode } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import {
   AlertCircle,
@@ -69,6 +69,8 @@ import { loadOfficialAssignmentsAccess } from '../lib/scheduleService';
 import { recordFirstMeaningfulRender, startScreenMountTimer } from '../lib/uxTiming';
 import { useAsyncOperation } from '../lib/useAsyncOperation';
 import { useRefreshOnResume } from '../lib/useRefreshOnResume';
+import { startParentCoreWorkflowTimer } from '../lib/parentWorkflowTiming';
+import { useViewLoadTimer } from '../lib/viewLoadTiming';
 import {
   emptySocialHome,
   filterSocialFeedItems,
@@ -135,6 +137,33 @@ const emptyHome = (): ParentHomeModel => ({
     packetsReady: 0
   }
 });
+
+function getHomeSectionRoute(section: HomeSectionId) {
+  return section === 'today' ? '/home' : `/home?section=${section}`;
+}
+
+function isHomeSectionReady(section: HomeSectionId, state: { loading: boolean; socialLoading: boolean; hasLoadedHomeDetails: boolean; showBlockingErrorState: boolean }) {
+  if (state.loading || state.showBlockingErrorState) return false;
+  if (section === 'today' || section === 'feed' || section === 'friends') {
+    return state.hasLoadedHomeDetails && !state.socialLoading;
+  }
+  return state.hasLoadedHomeDetails;
+}
+
+function handleParentCoreDrillInClick(
+  event: ReactMouseEvent,
+  targetRoute: string,
+  meta: Record<string, unknown> = {}
+) {
+  if (event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) {
+    return;
+  }
+  startParentCoreWorkflowTimer({
+    sourcePage: 'home',
+    targetRoute,
+    ...meta
+  });
+}
 
 export function Home({ auth }: { auth: AuthState }) {
   const [home, setHome] = useState<ParentHomeModel>(() => emptyHome());
@@ -299,6 +328,30 @@ export function Home({ auth }: { auth: AuthState }) {
   const openCount = home.metrics.rsvpNeeded + home.metrics.packetsReady + home.metrics.unreadMessages + home.fees.length + social.metrics.incomingRequests;
   const today = new Date();
   const selectedComposerType = (searchParams.get('type') || 'manual_post') as SocialPostType;
+  const homeSectionRoute = getHomeSectionRoute(activeSection);
+  const homeSectionReady = isHomeSectionReady(activeSection, { loading, socialLoading, hasLoadedHomeDetails, showBlockingErrorState });
+
+  useViewLoadTimer({
+    viewName: `home ${activeSection}`,
+    route: homeSectionRoute,
+    ready: homeSectionReady,
+    resetKey: `${authUserId || 'anonymous'}:${activeSection}`,
+    disabled: !auth.user,
+    getBaseMeta: () => ({
+      page: 'home',
+      section: activeSection
+    }),
+    getCompleteMeta: () => ({
+      playerCount: home.players.length,
+      teamCount: home.teams.length,
+      upcomingEventCount: home.upcomingEvents.length,
+      actionItemCount: home.actionItems.length,
+      feeCount: home.fees.length,
+      socialFeedCount: social.feedItems.length,
+      friendCount: social.friends.length,
+      incomingRequestCount: social.incomingRequests.length
+    })
+  });
 
   const openComposer = (type: SocialPostType = 'manual_post') => {
     const nextParams = new URLSearchParams(searchParams);
@@ -532,7 +585,11 @@ function TodaySection({
       <HomeFeedPreview social={social} loading={socialLoading} onOpenComposer={onOpenComposer} />
 
       {officialsAccess?.hasAccess ? (
-        <Link to="/officials" className="app-card block p-4">
+          <Link
+            to="/officials"
+            className="app-card block p-4"
+            onClick={(event) => handleParentCoreDrillInClick(event, '/officials', { trigger: 'officials_card' })}
+          >
           <div className="flex items-start gap-3">
             <div className="flex h-11 w-11 flex-none items-center justify-center rounded-2xl bg-primary-50 text-primary-700 ring-1 ring-primary-100">
               <Flag className="h-5 w-5" aria-hidden="true" />
@@ -551,7 +608,13 @@ function TodaySection({
       <section className="home-upcoming-section space-y-3">
         <div className="flex items-center justify-between gap-3">
           <h2 className="app-section-title">Upcoming</h2>
-          <Link to="/schedule" className="text-sm font-black text-primary-700">View all</Link>
+          <Link
+            to="/schedule"
+            className="text-sm font-black text-primary-700"
+            onClick={(event) => handleParentCoreDrillInClick(event, '/schedule', { trigger: 'upcoming_view_all' })}
+          >
+            View all
+          </Link>
         </div>
         {home.upcomingEvents.length ? nextEvents.map((event) => (
           <HomeEventCard key={`${event.teamId}-${event.id}-${event.date.toISOString()}`} event={event} />
@@ -591,7 +654,18 @@ function TodaySection({
           </div>
           <div className="mt-3 space-y-2">
             {home.fees.slice(0, 3).map((fee) => (
-              <Link key={`${fee.teamId}-${fee.id || fee.title}`} to="/parent-tools/fees" className="flex items-center justify-between gap-3 rounded-xl border border-gray-200 bg-gray-50 p-3">
+              <Link
+                key={`${fee.teamId}-${fee.id || fee.title}`}
+                to="/parent-tools/fees"
+                className="flex items-center justify-between gap-3 rounded-xl border border-gray-200 bg-gray-50 p-3"
+                onClick={(event) => handleParentCoreDrillInClick(event, '/parent-tools/fees', {
+                  trigger: 'fee_row',
+                  actionKind: 'fee',
+                  itemId: fee.id || fee.title || '',
+                  teamId: fee.teamId || '',
+                  playerId: fee.playerId || ''
+                })}
+              >
                 <span className="min-w-0">
                   <span className="block truncate text-sm font-black text-gray-950">{fee.title || 'Team fee'}</span>
                   <span className="mt-0.5 block truncate text-xs font-semibold text-gray-500">{fee.teamName || 'Team'}{fee.playerName ? ` · ${fee.playerName}` : ''}</span>
@@ -647,7 +721,15 @@ function PriorityFooter({ action, nextEvent }: { action: ParentHomeAction | null
   return (
     <div className="grid gap-2 border-t border-gray-100 bg-gray-50 p-2 sm:grid-cols-2">
       {action ? (
-        <Link to={action.to} className="group flex min-h-10 items-center justify-between gap-2 rounded-lg bg-amber-50 px-3 text-xs font-black uppercase tracking-[0.04em] text-amber-800 ring-1 ring-amber-100 transition hover:ring-amber-300">
+        <Link
+          to={action.to}
+          className="group flex min-h-10 items-center justify-between gap-2 rounded-lg bg-amber-50 px-3 text-xs font-black uppercase tracking-[0.04em] text-amber-800 ring-1 ring-amber-100 transition hover:ring-amber-300"
+          onClick={(event) => handleParentCoreDrillInClick(event, action.to, {
+            trigger: 'priority_action',
+            actionKind: action.kind,
+            itemId: action.id
+          })}
+        >
           Open action
           <ChevronRight className="h-4 w-4 flex-none transition group-hover:text-amber-600" aria-hidden="true" />
         </Link>
@@ -659,7 +741,17 @@ function PriorityFooter({ action, nextEvent }: { action: ParentHomeAction | null
       )}
 
       {nextEvent ? (
-        <Link to={getEventDetailPath(nextEvent)} className="group flex min-h-10 min-w-0 items-center justify-between gap-2 rounded-lg bg-white px-3 ring-1 ring-gray-200 transition hover:ring-primary-200">
+        <Link
+          to={getEventDetailPath(nextEvent)}
+          className="group flex min-h-10 min-w-0 items-center justify-between gap-2 rounded-lg bg-white px-3 ring-1 ring-gray-200 transition hover:ring-primary-200"
+          onClick={(event) => handleParentCoreDrillInClick(event, getEventDetailPath(nextEvent), {
+            trigger: 'next_event',
+            actionKind: 'event',
+            teamId: nextEvent.teamId,
+            playerId: nextEvent.childId || '',
+            eventId: nextEvent.id
+          })}
+        >
           <span className="min-w-0">
             <span className="block truncate text-[10px] font-black uppercase tracking-[0.04em] text-primary-700">Next up</span>
             <span className="block truncate text-xs font-black text-gray-950">{getScheduleTitle(nextEvent)} · {formatEventTimeLabel(nextEvent.date)}</span>
@@ -678,7 +770,11 @@ function PriorityFooter({ action, nextEvent }: { action: ParentHomeAction | null
 
 function SignalCard({ icon: Icon, label, value, detail, to, urgent = false }: { icon: LucideIcon; label: string; value: string; detail: string; to: string; urgent?: boolean }) {
   return (
-    <Link to={to} className={`home-signal-card group flex items-center gap-3 rounded-xl border bg-white p-3 shadow-sm transition hover:shadow-app ${urgent ? 'border-amber-200 hover:border-amber-300' : 'border-gray-200 hover:border-primary-200'}`}>
+    <Link
+      to={to}
+      className={`home-signal-card group flex items-center gap-3 rounded-xl border bg-white p-3 shadow-sm transition hover:shadow-app ${urgent ? 'border-amber-200 hover:border-amber-300' : 'border-gray-200 hover:border-primary-200'}`}
+      onClick={(event) => handleParentCoreDrillInClick(event, to, { trigger: 'signal_card', actionKind: label.toLowerCase().replace(/\s+/g, '_') })}
+    >
       <div className={`flex h-10 w-10 flex-none items-center justify-center rounded-xl ring-1 ${urgent ? 'bg-amber-50 text-amber-700 ring-amber-200' : 'bg-gray-50 text-primary-600 ring-gray-200'}`}>
         <Icon className="h-5 w-5" aria-hidden="true" />
       </div>
@@ -763,7 +859,11 @@ function AccessCard({ to, icon: Icon, title, detail, tone }: { to: string; icon:
     rose: 'bg-rose-50 text-rose-700'
   }[tone];
   return (
-    <Link to={to} className="app-card flex items-start gap-3 p-4 transition hover:border-primary-200 hover:shadow-app-lg">
+    <Link
+      to={to}
+      className="app-card flex items-start gap-3 p-4 transition hover:border-primary-200 hover:shadow-app-lg"
+      onClick={(event) => handleParentCoreDrillInClick(event, to, { trigger: 'access_card', actionKind: title.toLowerCase().replace(/\s+/g, '_') })}
+    >
       <div className={`flex h-11 w-11 flex-none items-center justify-center rounded-xl ${toneClass}`}>
         <Icon className="h-5 w-5" aria-hidden="true" />
       </div>
@@ -1763,7 +1863,15 @@ function PulseChip({ icon: Icon, label, value, urgent = false }: { icon: LucideI
 function TopAction({ action }: { action: ParentHomeAction }) {
   const Icon = actionIcons[action.kind];
   return (
-    <Link to={action.to} className={`flex min-h-8 max-w-[250px] flex-none items-center gap-1.5 rounded-full border px-2.5 text-xs font-black ${actionToneClasses[action.tone]}`}>
+    <Link
+      to={action.to}
+      className={`flex min-h-8 max-w-[250px] flex-none items-center gap-1.5 rounded-full border px-2.5 text-xs font-black ${actionToneClasses[action.tone]}`}
+      onClick={(event) => handleParentCoreDrillInClick(event, action.to, {
+        trigger: 'hero_top_action',
+        actionKind: action.kind,
+        itemId: action.id
+      })}
+    >
       <Icon className="h-3.5 w-3.5 flex-none" aria-hidden="true" />
       <span className="flex-none uppercase tracking-[0.04em] opacity-80">Do</span>
       <span className="truncate text-gray-950">{action.title}</span>
@@ -1775,7 +1883,15 @@ function TopAction({ action }: { action: ParentHomeAction }) {
 function ActionRow({ action }: { action: ParentHomeAction }) {
   const Icon = actionIcons[action.kind];
   return (
-    <Link to={action.to} className="flex items-center gap-3 rounded-xl border border-gray-200 bg-white p-3 transition hover:border-primary-200 hover:bg-primary-50/40">
+    <Link
+      to={action.to}
+      className="flex items-center gap-3 rounded-xl border border-gray-200 bg-white p-3 transition hover:border-primary-200 hover:bg-primary-50/40"
+      onClick={(event) => handleParentCoreDrillInClick(event, action.to, {
+        trigger: 'action_row',
+        actionKind: action.kind,
+        itemId: action.id
+      })}
+    >
       <div className={`flex h-10 w-10 flex-none items-center justify-center rounded-xl border ${actionToneClasses[action.tone]}`}>
         <Icon className="h-5 w-5" aria-hidden="true" />
       </div>
@@ -1790,8 +1906,18 @@ function ActionRow({ action }: { action: ParentHomeAction }) {
 
 function PlayerCard({ player }: { player: ParentHomePlayer }) {
   const actionCount = player.rsvpNeeded + player.packetsReady + player.openAssignments + (player.unreadCount > 0 ? 1 : 0);
+  const playerPath = getPlayerDetailPath(player.teamId, player.playerId);
   return (
-    <Link to={getPlayerDetailPath(player.teamId, player.playerId)} className="flex items-center gap-3 rounded-xl border border-gray-200 bg-white p-3 transition hover:border-primary-200 hover:bg-primary-50/40">
+    <Link
+      to={playerPath}
+      className="flex items-center gap-3 rounded-xl border border-gray-200 bg-white p-3 transition hover:border-primary-200 hover:bg-primary-50/40"
+      onClick={(event) => handleParentCoreDrillInClick(event, playerPath, {
+        trigger: 'player_card',
+        actionKind: 'player',
+        teamId: player.teamId,
+        playerId: player.playerId
+      })}
+    >
       <PlayerAvatar name={player.playerName} />
       <div className="min-w-0 flex-1">
         <div className="flex min-w-0 items-center gap-2">
@@ -1807,8 +1933,18 @@ function PlayerCard({ player }: { player: ParentHomePlayer }) {
 }
 
 function TeamCard({ team }: { team: ParentHomeTeam }) {
+  const teamPath = getTeamHomePath(team.teamId);
   return (
-    <Link to={getTeamHomePath(team.teamId)} className="flex items-center gap-3 rounded-xl border border-gray-200 bg-white p-3 transition hover:border-primary-200 hover:bg-primary-50/40" aria-label={`Open ${team.teamName} in My Teams`}>
+    <Link
+      to={teamPath}
+      className="flex items-center gap-3 rounded-xl border border-gray-200 bg-white p-3 transition hover:border-primary-200 hover:bg-primary-50/40"
+      aria-label={`Open ${team.teamName} in My Teams`}
+      onClick={(event) => handleParentCoreDrillInClick(event, teamPath, {
+        trigger: 'team_card',
+        actionKind: 'team',
+        teamId: team.teamId
+      })}
+    >
       <div className="flex h-11 w-11 flex-none items-center justify-center rounded-xl bg-primary-50 text-primary-700">
         <Trophy className="h-5 w-5" aria-hidden="true" />
       </div>
@@ -1830,8 +1966,19 @@ function TeamCard({ team }: { team: ParentHomeTeam }) {
 function HomeEventCard({ event }: { event: ParentScheduleEvent }) {
   const rsvp = normalizeRsvpResponse(event.myRsvp);
   const openAssignments = getOpenScheduleAssignments(event.assignments).length;
+  const eventPath = getEventDetailPath(event);
   return (
-    <Link to={getEventDetailPath(event)} className="app-card block p-3 transition hover:border-primary-200 hover:shadow-app-lg">
+    <Link
+      to={eventPath}
+      className="app-card block p-3 transition hover:border-primary-200 hover:shadow-app-lg"
+      onClick={(clickEvent) => handleParentCoreDrillInClick(clickEvent, eventPath, {
+        trigger: 'upcoming_event_card',
+        actionKind: 'event',
+        teamId: event.teamId,
+        playerId: event.childId || '',
+        eventId: event.id
+      })}
+    >
       <div className="flex items-start gap-3">
         <DateTile date={event.date} />
         <div className="min-w-0 flex-1">

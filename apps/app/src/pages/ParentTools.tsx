@@ -3,6 +3,7 @@ import { Award, CalendarDays, ChevronLeft, DollarSign, Loader2, Share2, Shield, 
 import { Link, Navigate, useLocation, useNavigate, useParams } from 'react-router-dom';
 import type { AuthState } from '../lib/types';
 import { loadParentToolPanel } from './parent-tools/loadParentToolPanel';
+import { completeParentCoreWorkflowTimer } from '../lib/parentWorkflowTiming';
 
 type ParentToolDefinition = { id: ParentToolId; label: string; icon: LucideIcon };
 type ParentToolsRedirectState = { accessLockedMessage?: string };
@@ -32,6 +33,11 @@ const lazyToolPanels = Object.fromEntries(
 ) as Record<ParentToolId, LazyExoticComponent<ComponentType<ParentToolPanelProps>>>;
 
 function trackParentToolRender(toolId: ParentToolId) {
+    completeParentCoreWorkflowTimer(toolId === 'fees' ? 'fees' : 'parent_tools', {
+        targetPage: toolId === 'fees' ? 'fees' : 'parent_tools',
+        toolId,
+        completedRoute: `/parent-tools/${toolId}`
+    });
     globalThis.__ALLPLAYS_PARENT_TOOLS_RENDER_TRACKER__?.(toolId);
 }
 

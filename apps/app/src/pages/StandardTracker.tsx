@@ -27,6 +27,7 @@ import {
 } from '../lib/standardTrackerViewModel';
 import { readStandardTrackerSession, writeStandardTrackerSession } from '../lib/standardTrackerSession';
 import { EventDetailPageSkeleton } from '../components/PageSkeletons';
+import { WORKFLOW_TIMING, startWorkflowTimer } from '../lib/workflowTiming';
 import type { AuthState } from '../lib/types';
 
 type TrackerStatus = {
@@ -181,10 +182,16 @@ export function StandardTracker({ auth }: { auth: AuthState }) {
       setStatus(null);
       setAccessDenied(false);
       serviceRef.current = null;
+      const timer = startWorkflowTimer(WORKFLOW_TIMING.standardTrackerLoad, {
+        route: 'standard-tracker'
+      });
 
       try {
         const detail = await loadParentScheduleEventDetail(signedInUser, { teamId: decodedTeamId, eventId: decodedEventId });
-        if (cancelled) return;
+        if (cancelled) {
+          timer.end({ cancelled: true });
+          return;
+        }
         const loadedEvent = detail.events.find((candidate) => candidate.teamId === decodedTeamId && candidate.id === decodedEventId) || detail.events[0] || null;
         const canTrack = Boolean(loadedEvent && loadedEvent.type === 'game' && loadedEvent.isDbGame && !loadedEvent.isCancelled && loadedEvent.canUpdateScore);
         if (!canTrack) {
@@ -196,6 +203,7 @@ export function StandardTracker({ auth }: { auth: AuthState }) {
           setOpponentTallies({});
           setEventLog([]);
           setAccessDenied(true);
+          timer.end({ canTrack: false, eventRows: detail.events.length });
           return;
         }
 
@@ -207,7 +215,10 @@ export function StandardTracker({ auth }: { auth: AuthState }) {
             : Promise.resolve([]),
           loadOpponentStatsForGame(decodedTeamId, decodedEventId).catch(() => ({}))
         ]);
-        if (cancelled) return;
+        if (cancelled) {
+          timer.end({ cancelled: true });
+          return;
+        }
 
         const trackerConfig = configs.find((candidate) => candidate.id === loadedEvent.statTrackerConfigId) || null;
         const baseScore = getSavedScore(loadedEvent);
@@ -237,11 +248,19 @@ export function StandardTracker({ auth }: { auth: AuthState }) {
         setTallies(restoredTallies);
         setOpponentTallies(restoredOpponentTallies);
         setEventLog(restoredLog);
+        timer.end({
+          canTrack: true,
+          playerCount: roster.length,
+          opponentPlayerCount: loadedOpponentPlayers.length,
+          configPresent: Boolean(trackerConfig),
+          restoredSession: canRestoreSession
+        });
       } catch (error: any) {
         if (!cancelled) {
           setStatus({ tone: 'error', message: error?.message || 'Unable to load tracker.' });
           setAccessDenied(false);
         }
+        timer.end({ error });
       } finally {
         if (!cancelled) setLoading(false);
       }
@@ -273,6 +292,11 @@ export function StandardTracker({ auth }: { auth: AuthState }) {
     const cellId = `${isOpponent ? 'opponent' : 'team'}:${cell.playerId}:${cell.column.key}`;
     setSavingCellId(cellId);
     setStatus(null);
+    const timer = startWorkflowTimer(WORKFLOW_TIMING.standardTrackerRecordStat, {
+      route: 'standard-tracker',
+      side: isOpponent ? 'opponent' : 'team',
+      statKey: cell.column.key
+    });
     try {
       const playerLabel = getPlayerLabel({ name: cell.playerName, number: cell.playerNumber });
       const nextTallies = isOpponent
@@ -324,8 +348,13 @@ export function StandardTracker({ auth }: { auth: AuthState }) {
       setEventLog(nextLog);
       persistSession(nextScore, nextTallies, nextOpponentTallies, nextLog);
       setStatus({ tone: 'success', message: `${isOpponent ? 'Opponent ' : ''}${playerLabel} ${cell.column.label} +1 recorded.` });
+      timer.end({
+        eventLogCount: nextLog.length,
+        scoreChanged: nextScore.homeScore !== score.homeScore || nextScore.awayScore !== score.awayScore
+      });
     } catch (error: any) {
       setStatus({ tone: 'error', message: error?.message || 'Unable to record stat.' });
+      timer.end({ error });
     } finally {
       setSavingCellId(null);
     }
@@ -335,10 +364,14 @@ export function StandardTracker({ auth }: { auth: AuthState }) {
     if (!auth.user || !serviceRef.current || undoing || savingCellId) return;
     setUndoing(true);
     setStatus(null);
+    const timer = startWorkflowTimer(WORKFLOW_TIMING.standardTrackerUndoStat, {
+      route: 'standard-tracker'
+    });
     try {
       const undone = await serviceRef.current.undoLastEvent(decodedTeamId, decodedEventId, auth.user);
       if (!undone) {
         setStatus({ tone: 'info', message: 'No tracker events to undo.' });
+        timer.end({ undone: false });
         return;
       }
       const nextScore = undone.scoreBefore;
@@ -355,8 +388,13 @@ export function StandardTracker({ auth }: { auth: AuthState }) {
       setEventLog(nextLog);
       persistSession(nextScore, nextTallies, nextOpponentTallies, nextLog);
       setStatus({ tone: 'success', message: `Undid ${getLogEntryLabel(undone)}.` });
+      timer.end({
+        undone: true,
+        eventLogCount: nextLog.length
+      });
     } catch (error: any) {
       setStatus({ tone: 'error', message: error?.message || 'Unable to undo last stat.' });
+      timer.end({ error });
     } finally {
       setUndoing(false);
     }

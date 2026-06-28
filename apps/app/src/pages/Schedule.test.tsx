@@ -46,6 +46,7 @@ const shellLayoutMocks = vi.hoisted(() => ({
 vi.mock('../lib/scheduleService', () => scheduleServiceMocks);
 vi.mock('../lib/appDataCache', () => appDataCacheMocks);
 vi.mock('../lib/telemetry', () => ({
+  recordAppWorkflowTiming: vi.fn(),
   startAppInitialLoadTimer: vi.fn(() => initialLoadTelemetryMocks)
 }));
 vi.mock('../lib/uxTiming', () => ({

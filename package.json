@@ -45,6 +45,7 @@
   "dependencies": {
     "@capacitor-firebase/authentication": "^8.3.0",
     "@capacitor-firebase/messaging": "^8.3.0",
+    "@capacitor-firebase/performance": "^8.3.0",
     "@capacitor/android": "^8.4.1",
     "@capacitor/app": "^8.1.0",
     "@capacitor/browser": "^8.0.3",
@@ -59,6 +60,7 @@
     "@capgo/capacitor-speech-recognition": "^8.1.7",
     "firebase": "^12.15.0",
     "html-to-image": "^1.11.13",
-    "jsdom": "^29.1.1"
+    "jsdom": "^29.1.1",
+    "web-vitals": "^5.3.0"
   }
 }

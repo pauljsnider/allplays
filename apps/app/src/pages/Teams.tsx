@@ -33,6 +33,7 @@ import { PullToRefresh } from '../components/PullToRefresh';
 import { useAsyncOperation } from '../lib/useAsyncOperation';
 import { useRefreshOnResume } from '../lib/useRefreshOnResume';
 import { useShellLayout } from '../lib/useShellLayout';
+import { completeParentCoreWorkflowTimer } from '../lib/parentWorkflowTiming';
 import {
   buildTeamNavigation,
   getTeamSchedulePath,
@@ -195,6 +196,16 @@ export function Teams({ auth }: { auth: AuthState }) {
   ), [home.teams, selectedTeamId]);
   const teamRoles = useMemo(() => getLoadedTeamRoles(home.teams), [home.teams]);
   const hasManagementTeam = useMemo(() => home.teams.some((team) => isTeamManagementRole(team.role)), [home.teams]);
+
+  useEffect(() => {
+    if (loading || !hasLoadedTeamSummary) return;
+    completeParentCoreWorkflowTimer('teams', {
+      targetPage: 'teams',
+      teamId: selectedTeam?.teamId || selectedTeamId || '',
+      teamCount: home.teams.length,
+      completedRoute: selectedTeamId ? `/teams?selectedTeamId=${selectedTeamId}` : '/teams'
+    });
+  }, [hasLoadedTeamSummary, home.teams.length, loading, selectedTeam?.teamId, selectedTeamId]);
 
   return (
     <PullToRefresh onRefresh={() => loadTeams()} disabled={!auth.user?.uid}>
