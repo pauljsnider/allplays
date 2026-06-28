@@ -1716,7 +1716,11 @@ function sanitizePracticeRecurrenceInput(input?: PracticeRecurrenceFormInput | n
   };
 }
 
-function buildScheduledPracticePayload(input: SchedulePracticeFormInput, user: AuthUser, options?: { editingPracticeId?: string | null; editingSeriesId?: string | null }) {
+function buildScheduledPracticePayload(input: SchedulePracticeFormInput, user: AuthUser, options?: {
+  editingPracticeId?: string | null;
+  editingSeriesId?: string | null;
+  existingPracticeData?: Record<string, unknown> | null;
+}) {
   const title = compactString(input.title) || 'Practice';
   const startDate = new Date(input.startDate);
   const endDate = new Date(input.endDate);
@@ -1741,6 +1745,12 @@ function buildScheduledPracticePayload(input: SchedulePracticeFormInput, user: A
   };
 
   const recurrence = sanitizePracticeRecurrenceInput(input.recurrence);
+  if (options?.editingPracticeId && recurrence.isRecurring && Array.isArray(options?.existingPracticeData?.exDates)) {
+    practiceData.exDates = options.existingPracticeData.exDates;
+  }
+  if (options?.editingPracticeId && recurrence.isRecurring && options?.existingPracticeData?.overrides && typeof options.existingPracticeData.overrides === 'object' && !Array.isArray(options.existingPracticeData.overrides)) {
+    practiceData.overrides = options.existingPracticeData.overrides as Record<string, unknown>;
+  }
   applyPracticeRecurrenceFields({
     practiceData,
     isRecurring: recurrence.isRecurring,
@@ -1836,9 +1846,18 @@ export async function updateScheduledPracticeForApp(teamId: string, input: Sched
     return { updated: true, scope, eventId: occurrence.masterId, instanceDate: occurrence.instanceDate };
   }
 
+  const recurrence = sanitizePracticeRecurrenceInput(input.recurrence);
+  const existingPracticeData = recurrence.isRecurring
+    ? await readWithNativeFallback(
+      `scheduled practice master ${normalizedEventId}`,
+      () => Promise.resolve(getGame(normalizedTeamId, normalizedEventId)),
+      () => nativeGetDocument(`teams/${encodeURIComponent(normalizedTeamId)}/games/${encodeURIComponent(normalizedEventId)}`)
+    ).catch(() => null)
+    : null;
   const payload = buildScheduledPracticePayload(input, user as AuthUser, {
     editingPracticeId: normalizedEventId,
-    editingSeriesId: options?.seriesId || null
+    editingSeriesId: options?.seriesId || null,
+    existingPracticeData: existingPracticeData && typeof existingPracticeData === 'object' ? existingPracticeData as Record<string, unknown> : null
   });
   try {
     await withTimeout(Promise.resolve(updateEvent(normalizedTeamId, normalizedEventId, payload)), 'Scheduled practice series update');
