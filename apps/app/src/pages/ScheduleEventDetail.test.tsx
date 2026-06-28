@@ -2083,6 +2083,82 @@ describe('ScheduleEventDetail assignments', () => {
     });
   });
 
+  it('shows actionable assignments before deferring filled roles behind a secondary reveal', async () => {
+    const assignments = [
+      { role: 'Snacks', value: '', claimable: true, claim: null },
+      { role: 'Drinks', value: '', claimable: true, claim: { id: 'Drinks', claimedByUserId: 'coach-1', claimedByName: 'Coach Carter' } },
+      { role: 'Setup', value: '', claimable: true, claim: { id: 'Setup', claimedByUserId: 'other-parent', claimedByName: 'Taylor' } },
+      { role: 'Scorebook', value: 'Jamie', claimable: false, claim: null }
+    ];
+
+    scheduleServiceMocks.loadParentScheduleEventDetail.mockResolvedValue({
+      events: [buildEvent({ assignments })],
+      children: []
+    });
+    scheduleServiceMocks.loadAutoFilledLineupDraftPreviewForApp.mockResolvedValue({ availablePlayers: [], goingPlayers: [], gamePlan: null });
+    scheduleServiceMocks.loadGameDayLiveEventsForApp.mockResolvedValue([]);
+    scheduleServiceMocks.loadParentScheduleAssignments.mockResolvedValue(assignments);
+
+    renderScheduleEventDetail();
+
+    await waitFor(() => {
+      expect(screen.getAllByRole('button', { name: 'Assignments' }).length).toBeGreaterThan(0);
+    });
+
+    fireEvent.click(screen.getAllByRole('button', { name: 'Assignments' })[0]);
+
+    await waitFor(() => {
+      expect(screen.getByText('4 posted · 1 open')).toBeTruthy();
+    });
+
+    expect(screen.getByText('Snacks')).toBeTruthy();
+    expect(screen.getByText('Drinks')).toBeTruthy();
+    expect(screen.queryByText('Setup')).toBeNull();
+    expect(screen.queryByText('Scorebook')).toBeNull();
+
+    const disclosure = screen.getByRole('button', { name: 'Show filled assignments (2)' });
+    expect(disclosure).toHaveAttribute('aria-expanded', 'false');
+
+    fireEvent.click(disclosure);
+
+    await waitFor(() => {
+      expect(screen.getByText('Setup')).toBeTruthy();
+    });
+    expect(screen.getByText('Scorebook')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Hide filled assignments' })).toHaveAttribute('aria-expanded', 'true');
+  });
+
+  it('shows filled assignments immediately when no actionable slots exist', async () => {
+    const assignments = [
+      { role: 'Setup', value: '', claimable: true, claim: { id: 'Setup', claimedByUserId: 'other-parent', claimedByName: 'Taylor' } },
+      { role: 'Scorebook', value: 'Jamie', claimable: false, claim: null }
+    ];
+
+    scheduleServiceMocks.loadParentScheduleEventDetail.mockResolvedValue({
+      events: [buildEvent({ assignments })],
+      children: []
+    });
+    scheduleServiceMocks.loadAutoFilledLineupDraftPreviewForApp.mockResolvedValue({ availablePlayers: [], goingPlayers: [], gamePlan: null });
+    scheduleServiceMocks.loadGameDayLiveEventsForApp.mockResolvedValue([]);
+    scheduleServiceMocks.loadParentScheduleAssignments.mockResolvedValue(assignments);
+
+    renderScheduleEventDetail();
+
+    await waitFor(() => {
+      expect(screen.getAllByRole('button', { name: 'Assignments' }).length).toBeGreaterThan(0);
+    });
+
+    fireEvent.click(screen.getAllByRole('button', { name: 'Assignments' })[0]);
+
+    await waitFor(() => {
+      expect(screen.getByText('2 posted · 0 open')).toBeTruthy();
+    });
+
+    expect(screen.getByText('Setup')).toBeTruthy();
+    expect(screen.getByText('Scorebook')).toBeTruthy();
+    expect(screen.queryByRole('button', { name: /Show filled assignments/i })).toBeNull();
+  });
+
   it('refreshes assignment cards after claim and release actions mutate the loaded array in place', async () => {
     const assignments = [
       { role: 'Snacks', value: '', claimable: true, claim: null },
@@ -2120,6 +2196,13 @@ describe('ScheduleEventDetail assignments', () => {
       expect(screen.getByText('4 posted · 1 open')).toBeTruthy();
     });
 
+    fireEvent.click(screen.getByRole('button', { name: 'Show filled assignments (2)' }));
+
+    await waitFor(() => {
+      expect(screen.getByText('Setup')).toBeTruthy();
+    });
+    expect(screen.getByText('Scorebook')).toBeTruthy();
+
     const snacksCard = screen.getByText('Snacks').closest('article');
     expect(snacksCard).toBeTruthy();
     fireEvent.click(within(snacksCard as HTMLElement).getByRole('button', { name: 'Sign up' }));
@@ -2131,10 +2214,13 @@ describe('ScheduleEventDetail assignments', () => {
       expect(screen.getByText('4 posted · 0 open')).toBeTruthy();
     });
     await waitFor(() => {
-      expect(within(snacksCard as HTMLElement).getByText('You')).toBeTruthy();
+      expect(within(screen.getByText('Snacks').closest('article') as HTMLElement).getByText('You')).toBeTruthy();
     });
+    expect(screen.getByRole('button', { name: 'Hide filled assignments' })).toHaveAttribute('aria-expanded', 'true');
+    expect(screen.getByText('Setup')).toBeTruthy();
+    expect(screen.getByText('Scorebook')).toBeTruthy();
 
-    fireEvent.click(within(snacksCard as HTMLElement).getByRole('button', { name: 'Release' }));
+    fireEvent.click(within(screen.getByText('Snacks').closest('article') as HTMLElement).getByRole('button', { name: 'Release' }));
 
     await waitFor(() => {
       expect(screen.getByText('Snacks released.')).toBeTruthy();
@@ -2143,8 +2229,11 @@ describe('ScheduleEventDetail assignments', () => {
       expect(screen.getByText('4 posted · 1 open')).toBeTruthy();
     });
     await waitFor(() => {
-      expect(within(snacksCard as HTMLElement).getByRole('button', { name: 'Sign up' })).toBeTruthy();
+      expect(within(screen.getByText('Snacks').closest('article') as HTMLElement).getByRole('button', { name: 'Sign up' })).toBeTruthy();
     });
+    expect(screen.getByRole('button', { name: 'Hide filled assignments' })).toHaveAttribute('aria-expanded', 'true');
+    expect(screen.getByText('Setup')).toBeTruthy();
+    expect(screen.getByText('Scorebook')).toBeTruthy();
   });
 });
 

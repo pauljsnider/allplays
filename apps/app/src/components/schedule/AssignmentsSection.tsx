@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useState } from 'react';
-import { AlertCircle, CheckCircle2, ClipboardCheck, RefreshCw } from 'lucide-react';
+import { AlertCircle, CheckCircle2, ChevronDown, ChevronUp, ClipboardCheck, RefreshCw } from 'lucide-react';
 import {
   claimParentScheduleAssignmentSlot,
   loadParentScheduleAssignments,
   releaseParentScheduleAssignmentClaim
 } from '../../lib/scheduleService';
 import {
+  isScheduleAssignmentClaimedByUser,
   isScheduleAssignmentOpen,
   type ScheduleAssignment
 } from '../../lib/scheduleLogic';
@@ -26,6 +27,7 @@ export function AssignmentsSection() {
   const [busyRole, setBusyRole] = useState<string | null>(null);
   const [assignmentStatus, setAssignmentStatus] = useState<string | null>(null);
   const [assignmentError, setAssignmentError] = useState<string | null>(null);
+  const [showFilledAssignments, setShowFilledAssignments] = useState(false);
 
   const handleAssignmentsChanged = useCallback((nextAssignments: ScheduleAssignment[]) => {
     updateEvents((current) => current.map((entry) => (
@@ -91,6 +93,22 @@ export function AssignmentsSection() {
   };
 
   const openCount = assignments.filter(isScheduleAssignmentOpen).length;
+  const userId = auth.user?.uid || '';
+  const actionableAssignments = assignments.filter((assignment) => (
+    isScheduleAssignmentOpen(assignment) || isScheduleAssignmentClaimedByUser(assignment, userId)
+  ));
+  const filledAssignments = assignments.filter((assignment) => !actionableAssignments.includes(assignment));
+  const shouldShowFilledAssignments = !actionableAssignments.length || showFilledAssignments;
+
+  useEffect(() => {
+    if (!filledAssignments.length) {
+      setShowFilledAssignments(false);
+      return;
+    }
+    if (!actionableAssignments.length) {
+      setShowFilledAssignments(true);
+    }
+  }, [actionableAssignments.length, filledAssignments.length]);
 
   return (
     <section className="app-card overflow-hidden p-0">
@@ -114,17 +132,49 @@ export function AssignmentsSection() {
         {assignmentStatus ? <Status tone="success" message={assignmentStatus} /> : null}
         {assignmentError ? <div className="mt-2"><Status tone="error" message={assignmentError} /></div> : null}
         <div className="mt-2 space-y-2">
-          {assignments.length ? assignments.map((assignment, index) => (
-            <AssignmentCard
-              key={`${assignment.role || 'assignment'}-${index}`}
-              assignment={assignment}
-              userId={auth.user?.uid || ''}
-              busy={busyRole === String(assignment.role || '').trim()}
-              disabled={Boolean(busyRole) || !event.isDbGame || event.isCancelled}
-              onClaim={() => claimSlot(assignment)}
-              onRelease={() => releaseSlot(assignment)}
-            />
-          )) : (
+          {assignments.length ? (
+            <>
+              {(actionableAssignments.length ? actionableAssignments : filledAssignments).map((assignment, index) => (
+                <AssignmentCard
+                  key={`${assignment.role || 'assignment'}-${index}`}
+                  assignment={assignment}
+                  userId={userId}
+                  busy={busyRole === String(assignment.role || '').trim()}
+                  disabled={Boolean(busyRole) || !event.isDbGame || event.isCancelled}
+                  onClaim={() => claimSlot(assignment)}
+                  onRelease={() => releaseSlot(assignment)}
+                />
+              ))}
+              {filledAssignments.length && actionableAssignments.length ? (
+                <div className="pt-2">
+                  <button
+                    type="button"
+                    className="inline-flex min-h-9 items-center gap-2 rounded-full border border-gray-200 bg-white px-3 text-xs font-black text-gray-700 transition hover:border-primary-200 hover:bg-primary-50 hover:text-primary-700"
+                    aria-expanded={shouldShowFilledAssignments}
+                    onClick={() => setShowFilledAssignments((current) => !current)}
+                  >
+                    {shouldShowFilledAssignments ? <ChevronUp className="h-4 w-4" aria-hidden="true" /> : <ChevronDown className="h-4 w-4" aria-hidden="true" />}
+                    {shouldShowFilledAssignments ? 'Hide filled assignments' : `Show filled assignments (${filledAssignments.length})`}
+                  </button>
+                  {shouldShowFilledAssignments ? (
+                    <div className="mt-3 space-y-2">
+                      {filledAssignments.map((assignment, index) => (
+                        <AssignmentCard
+                          key={`${assignment.role || 'filled-assignment'}-filled-${index}`}
+                          assignment={assignment}
+                          userId={userId}
+                          busy={busyRole === String(assignment.role || '').trim()}
+                          disabled={Boolean(busyRole) || !event.isDbGame || event.isCancelled}
+                          onClaim={() => claimSlot(assignment)}
+                          onRelease={() => releaseSlot(assignment)}
+                        />
+                      ))}
+                    </div>
+                  ) : null}
+                </div>
+              ) : null}
+            </>
+          ) : (
             <div className="rounded-xl border border-gray-200 bg-gray-50 p-3 text-sm font-semibold text-gray-500">None posted</div>
           )}
         </div>
