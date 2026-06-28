@@ -724,7 +724,7 @@ describe('scheduled practice writes', () => {
     }));
   });
 
-  it('preserves existing recurrence exDates and overrides on series edits', async () => {
+  it('does not rewrite existing recurrence exDates and overrides on series edits', async () => {
     const today = new Date();
     today.setHours(18, 0, 0, 0);
     const tomorrow = new Date(today);
@@ -756,8 +756,6 @@ describe('scheduled practice writes', () => {
         }
       }
     };
-    vi.mocked(getGame).mockResolvedValue(existingMaster as any);
-
     await updateScheduledPracticeForApp('team-1', {
       title: 'Updated Practice',
       startDate: new Date(today),
@@ -778,19 +776,14 @@ describe('scheduled practice writes', () => {
       scope: 'series'
     });
 
-    expect(updateEvent).toHaveBeenCalledWith('team-1', 'practice-master', expect.objectContaining({
-      exDates: [excludedDate],
-      overrides: {
-        [overrideDate]: {
-          title: 'Adjusted Practice',
-          location: 'South Field'
-        }
-      }
-    }));
+    expect(getGame).not.toHaveBeenCalled();
 
     const updateEventCalls = vi.mocked(updateEvent).mock.calls;
     const [, , payload] = updateEventCalls[updateEventCalls.length - 1] as [string, string, Record<string, unknown>];
     const { expandRecurrence: actualExpandRecurrence } = await import('../../../../js/utils.js');
+    expect(payload).not.toHaveProperty('exDates');
+    expect(payload).not.toHaveProperty('overrides');
+
     const expanded = actualExpandRecurrence({
       ...existingMaster,
       ...payload
