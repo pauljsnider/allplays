@@ -108,8 +108,15 @@ export function AppSearchDialog({ auth, open, onClose }: AppSearchDialogProps) {
     }
 
     const initialAccessibleTeams = baseTeamsRef.current;
-    setTeamsLoading(true);
-    setTeamsError('');
+    const setImmediateTeamResults = (accessibleTeams: AppSearchTeam[]) => {
+      const localTeams = getImmediateAppTeamSearchResults(trimmedQuery, accessibleTeams);
+      setTeams(localTeams);
+      setTeamsLoading(localTeams.length === 0);
+      setTeamsError('');
+    };
+
+    setImmediateTeamResults(initialAccessibleTeams);
+    setPlayers([]);
     setPlayersLoading(true);
     setPlayersError('');
     const timeoutId = window.setTimeout(() => {
@@ -126,9 +133,7 @@ export function AppSearchDialog({ auth, open, onClose }: AppSearchDialogProps) {
 
       const runSearch = async (accessibleTeams: AppSearchTeam[]) => {
         const accessibleTeamsById = new Map(accessibleTeams.map((team) => [team.id, team]));
-        const localTeams = getImmediateAppTeamSearchResults(trimmedQuery, accessibleTeams);
-        setTeams(localTeams);
-        setTeamsLoading(localTeams.length === 0);
+        setImmediateTeamResults(accessibleTeams);
 
         const [teamsResult, playersResult] = await Promise.allSettled([
           searchAppTeams(trimmedQuery, accessibleTeams, auth.user),
@@ -157,10 +162,12 @@ export function AppSearchDialog({ auth, open, onClose }: AppSearchDialogProps) {
         .then((loadedTeams) => mergeSearchTeams(initialAccessibleTeams, loadedTeams));
 
       const resolveAccessibleTeams = async () => {
+        // Keep search bounded when Firestore hydration is slow, then retry once the
+        // hydrated team scope arrives so remote team and player results do not stall.
         return Promise.race([
           hydrationPromise
             .then((hydratedTeams) => ({ teams: hydratedTeams, resolved: true }))
-            .catch(() => ({ teams: initialAccessibleTeams, resolved: false })),
+            .catch(() => ({ teams: initialAccessibleTeams, resolved: true })),
           new Promise<{ teams: AppSearchTeam[]; resolved: false }>((resolve) => {
             window.setTimeout(() => resolve({ teams: initialAccessibleTeams, resolved: false }), hydrationSearchFallbackMs);
           })
@@ -168,27 +175,22 @@ export function AppSearchDialog({ auth, open, onClose }: AppSearchDialogProps) {
       };
 
       void resolveAccessibleTeams()
-        .then(({ teams: accessibleTeams, resolved }) => {
-          void runSearch(accessibleTeams);
+        .then(async ({ teams: accessibleTeams, resolved }) => {
+          if (resolved) {
+            await runSearch(accessibleTeams);
+            return;
+          }
 
-          if (resolved) return;
+          await runSearch(accessibleTeams);
 
-          void hydrationPromise
-            .then((hydratedTeams) => {
-              if (disposed || requestId !== searchRequestId.current) return;
-              const initialTeamIds = new Set(accessibleTeams.map((team) => team.id));
-              const hasExpandedScope = hydratedTeams.some((team) => !initialTeamIds.has(team.id));
-              if (!hasExpandedScope) return;
-              setTeamsLoading(true);
-              setPlayersLoading(true);
-              return runSearch(hydratedTeams);
-            })
-            .catch(() => {
-              if (!disposed && requestId === searchRequestId.current) {
-                setTeamsLoading(false);
-                setPlayersLoading(false);
-              }
-            });
+          try {
+            const hydratedTeams = await hydrationPromise;
+            if (disposed || requestId !== searchRequestId.current) return;
+            if (haveSameSearchTeamScope(accessibleTeams, hydratedTeams)) return;
+            await runSearch(hydratedTeams);
+          } catch {
+            if (disposed || requestId !== searchRequestId.current) return;
+          }
         })
         .catch(() => {
           if (!disposed && requestId === searchRequestId.current) {
@@ -551,6 +553,13 @@ function mergeSearchTeams(...teamLists: AppSearchTeam[][]) {
     if (team?.id) teamsById.set(team.id, team);
   });
   return Array.from(teamsById.values());
+}
+
+function haveSameSearchTeamScope(left: AppSearchTeam[], right: AppSearchTeam[]) {
+  const leftIds = left.map((team) => team.id).filter(Boolean).sort();
+  const rightIds = right.map((team) => team.id).filter(Boolean).sort();
+  if (leftIds.length !== rightIds.length) return false;
+  return leftIds.every((teamId, index) => teamId === rightIds[index]);
 }
 
 function getPlayerSearchError(error: any) {
