@@ -454,6 +454,7 @@
         let currentPhotoUrl = null;
         let photoChanged = false;
         let notificationTeams = [];
+        let notificationPreferencesLoadedTeamId = '';
 
         async function loadProfile() {
             try {
@@ -631,6 +632,10 @@
             });
         }
 
+        function setNotificationPreferencesSaveEnabled(enabled) {
+            document.getElementById('save-notification-prefs-btn').disabled = !enabled;
+        }
+
         async function loadNotificationTeams() {
             const status = document.getElementById('notification-status');
             status.textContent = '';
@@ -663,11 +668,8 @@
                     select.value = notificationTeams[0].id;
                 }
 
-                try {
-                    await loadSelectedTeamNotificationPreferences();
-                } catch (error) {
-                    console.error('Error loading notification preferences:', error);
-                    writeNotificationPreferencesToForm(null);
+                const notificationPreferencesResult = await loadSelectedTeamNotificationPreferences();
+                if (!notificationPreferencesResult.ok && notificationPreferencesResult.error) {
                     setNotificationStatus('Unable to load notification preferences right now. The rest of your profile is still available.', 'error');
                 }
 
@@ -675,6 +677,8 @@
             } catch (error) {
                 console.error('Error loading notification teams:', error);
                 notificationTeams = [];
+                notificationPreferencesLoadedTeamId = '';
+                setNotificationPreferencesSaveEnabled(false);
                 select.innerHTML = '<option value="">Select a team</option>';
                 writeNotificationPreferencesToForm(null);
                 setNotificationStatus('Unable to load your teams for alerts right now. The rest of your profile is still available.', 'error');
@@ -684,13 +688,26 @@
 
         async function loadSelectedTeamNotificationPreferences() {
             const teamId = getSelectedNotificationTeamId();
+            notificationPreferencesLoadedTeamId = '';
+            setNotificationPreferencesSaveEnabled(false);
             if (!teamId) {
                 writeNotificationPreferencesToForm(null);
-                return;
+                return { ok: false, error: null };
             }
 
-            const preferences = await getNotificationPreferencesForTeam(currentUser.uid, teamId);
-            writeNotificationPreferencesToForm(preferences);
+            try {
+                const preferences = await getNotificationPreferencesForTeam(currentUser.uid, teamId);
+                writeNotificationPreferencesToForm(preferences);
+                notificationPreferencesLoadedTeamId = teamId;
+                setNotificationPreferencesSaveEnabled(true);
+                return { ok: true, error: null };
+            } catch (error) {
+                console.error('Error loading notification preferences:', error);
+                notificationPreferencesLoadedTeamId = '';
+                setNotificationPreferencesSaveEnabled(false);
+                writeNotificationPreferencesToForm(null);
+                return { ok: false, error };
+            }
         }
 
         function displayPhoto(url) {
@@ -875,13 +892,15 @@
         });
 
         renderNotificationPreferenceGroups();
+        setNotificationPreferencesSaveEnabled(false);
 
         document.getElementById('notification-team-select').addEventListener('change', async () => {
-            try {
-                await loadSelectedTeamNotificationPreferences();
+            const notificationPreferencesResult = await loadSelectedTeamNotificationPreferences();
+            if (notificationPreferencesResult.ok) {
                 setNotificationStatus('');
-            } catch (error) {
-                console.error('Error loading notification preferences:', error);
+                return;
+            }
+            if (notificationPreferencesResult.error) {
                 setNotificationStatus('Unable to load notification preferences.', 'error');
             }
         });
@@ -893,12 +912,17 @@
                 setNotificationStatus('Select a team first.', 'error');
                 return;
             }
+            if (notificationPreferencesLoadedTeamId !== teamId) {
+                setNotificationStatus('Notification preferences are unavailable until this team finishes loading.', 'error');
+                return;
+            }
 
             try {
                 button.disabled = true;
                 button.textContent = 'Saving...';
                 const saved = await saveNotificationPreferencesForTeam(currentUser.uid, teamId, readNotificationPreferencesFromForm());
                 writeNotificationPreferencesToForm(saved);
+                notificationPreferencesLoadedTeamId = teamId;
                 setNotificationStatus('Notification preferences saved.', 'success');
             } catch (error) {
                 console.error('Error saving notification preferences:', error);

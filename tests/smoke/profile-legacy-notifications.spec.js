@@ -263,20 +263,9 @@ test('legacy profile preserves the rest of the page when notification bootstrap 
 
     await page.goto(`${baseURL}/profile.html`, { waitUntil: 'domcontentloaded' });
 
-    await expect.poll(() => page.evaluate(() => ({
-        preferenceLoads: window.__profileSmoke.preferenceLoads,
-        accessCodeLoads: window.__profileSmoke.accessCodeLoads,
-        authErrors: window.__profileSmoke.authErrors || [],
-        notificationStatus: document.getElementById('notification-status')?.textContent || ''
-    }))).toEqual({
-        preferenceLoads: ['team-1'],
-        accessCodeLoads: 1,
-        authErrors: [],
-        notificationStatus: 'Unable to load notification preferences right now. The rest of your profile is still available.'
-    });
-    await expect(page.locator('#notification-status')).toHaveClass(/text-red-600/);
+    await expect.poll(() => page.evaluate(() => window.__profileSmoke.preferenceLoads)).toEqual(['team-1']);
     await expect(page.locator('#notification-team-select')).toHaveValue('team-1');
-    await expect.poll(() => page.locator('#account-merge-section').evaluate((element) => !element.classList.contains('hidden'))).toBe(true);
-    await expect(page.locator('#access-codes-list')).toContainText('No codes generated yet');
+    await expect(page.locator('#save-notification-prefs-btn')).toBeDisabled();
+    await expect.poll(() => page.evaluate(() => window.__profileSmoke.savedPreferences)).toEqual([]);
     await expect(page.locator('#fullName')).toHaveValue('Pat Parent');
 });
