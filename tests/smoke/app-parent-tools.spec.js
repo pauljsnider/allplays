@@ -570,8 +570,8 @@ test('awards deep links surface the requested certificate first on mobile', asyn
     await page.goto(appUrl(baseURL, '/parent-tools/certificates?teamId=team-1&certificateId=cert-1'), { waitUntil: 'domcontentloaded' });
 
     await expect(page.getByText('Opened from a notification')).toBeVisible({ timeout: 15000 });
-    await expect(page.getByText('Hustle Award')).toBeVisible();
-    await expect(page.getByText('Leadership Award')).toHaveCount(0);
+    await expect(page.getByText('Hustle Award', { exact: true })).toBeVisible();
+    await expect(page.getByText('Leadership Award', { exact: true })).toHaveCount(0);
     const openButton = page.getByRole('button', { name: 'Open' }).first();
     await expect(openButton).toBeVisible();
     const box = await openButton.boundingBox();
