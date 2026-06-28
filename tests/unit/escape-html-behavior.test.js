@@ -65,4 +65,18 @@ describe('escapeHtml', () => {
         expect(markup).not.toContain('"><img');
         expect(markup).toContain('&quot;&gt;&lt;img');
     });
+
+    it('neutralizes a payload that targets both attribute and element context at once', () => {
+        // A single value used in an attribute then closing back into element text
+        // must be inert in both spots after escaping.
+        const malicious = `"></td><script>alert('x')</script><td title="`;
+        const escaped = escapeHtml(malicious);
+        expect(escaped).not.toContain('"');
+        expect(escaped).not.toContain('<script');
+        expect(escaped).not.toContain('</td>');
+        // Round-trips back to the original text when decoded (lossless).
+        expect(escaped).toBe(
+            '&quot;&gt;&lt;/td&gt;&lt;script&gt;alert(&#039;x&#039;)&lt;/script&gt;&lt;td title=&quot;'
+        );
+    });
 });
