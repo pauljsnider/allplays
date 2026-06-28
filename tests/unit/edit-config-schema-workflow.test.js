@@ -3,6 +3,8 @@ import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
 import { JSDOM } from 'jsdom';
 
+import { validateStatDefinitionsForPublicLeaderboards } from '../../js/stat-leaderboards.js';
+
 function readEditConfigSource() {
     return readFileSync(new URL('../../edit-config.html', import.meta.url), 'utf8');
 }
@@ -216,10 +218,7 @@ describe('edit config schema workflow', () => {
                     { id: 'hustle', label: 'Hustle', visibility: 'private', scope: 'team', topStat: true }
                 ]
             }),
-            validateStatDefinitionsForPublicLeaderboards: () => ({
-                valid: false,
-                errors: ['Hustle cannot be a Top Stat unless visibility is public and scope is player.']
-            }),
+            validateStatDefinitionsForPublicLeaderboards,
             createConfig: async () => calls.push('create'),
             updateConfig: async () => calls.push('update'),
             resetFormState: () => calls.push('reset'),
