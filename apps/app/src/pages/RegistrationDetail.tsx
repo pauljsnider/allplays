@@ -122,7 +122,11 @@ function RegistrationDetailPage({ auth, publicAccess = false, staffReview = fals
         }
         const initialOptions = (Array.isArray(nextForm.options) && nextForm.options.length) ? nextForm.options : getActiveRegistrationOptions(nextForm, nextForm.registrationOptionCounts || {});
         const initialOptionId = selectInitialRegistrationOption(nextForm, initialOptions);
-        setSelectedOptionId((current) => current || initialOptionId);
+        setSelectedOptionId((current) => {
+          if (!current) return initialOptionId;
+          if (initialOptions.length === 1) return initialOptionId;
+          return initialOptions.some((option) => option?.id === current) ? current : initialOptionId;
+        });
       } catch (loadError: any) {
         if (!cancelled) setError(loadError?.message || 'Unable to load registration form.');
       } finally {

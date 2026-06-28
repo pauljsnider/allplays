@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
-import { MemoryRouter, Route, Routes } from 'react-router-dom';
+import { MemoryRouter, Route, Routes, useNavigate } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { RegistrationDetail } from './RegistrationDetail';
 import type { AuthState } from '../lib/types';
@@ -84,6 +84,30 @@ function renderParentRegistration() {
     <MemoryRouter initialEntries={['/parent-tools/registrations/team-1/form-1']}>
       <Routes>
         <Route path="/parent-tools/registrations/:teamId/:formId" element={<RegistrationDetail auth={auth} />} />
+        <Route path="/parent-tools/registrations" element={<div>Registrations</div>} />
+      </Routes>
+    </MemoryRouter>
+  );
+}
+
+function RouteSwapButton({ to }: { to: string }) {
+  const navigate = useNavigate();
+  return <button type="button" onClick={() => navigate(to)}>Swap route</button>;
+}
+
+function renderParentRegistrationWithRouteSwap() {
+  return render(
+    <MemoryRouter initialEntries={['/parent-tools/registrations/team-1/form-1']}>
+      <Routes>
+        <Route
+          path="/parent-tools/registrations/:teamId/:formId"
+          element={(
+            <>
+              <RouteSwapButton to="/parent-tools/registrations/team-1/form-2" />
+              <RegistrationDetail auth={auth} />
+            </>
+          )}
+        />
         <Route path="/parent-tools/registrations" element={<div>Registrations</div>} />
       </Routes>
     </MemoryRouter>
@@ -222,6 +246,52 @@ describe('RegistrationDetail payment notice', () => {
     expect(screen.queryByLabelText('Selected registration option')).toBeNull();
     expect(screen.getByRole('option', { name: 'Varsity' })).toBeTruthy();
     expect(screen.getByRole('option', { name: 'Junior Varsity' })).toBeTruthy();
+  });
+
+  it('resets a reused route to the new single active option before submit', async () => {
+    parentToolsServiceMocks.loadParentRegistrationDetail
+      .mockResolvedValueOnce(buildDetail({
+        options: [{ id: 'option-1', title: 'Varsity', capacity: 12, active: true }],
+        form: {
+          registrationOptionCounts: {
+            'option-1': { enrolled: 4 }
+          }
+        }
+      }))
+      .mockResolvedValueOnce(buildDetail({
+        form: {
+          programName: 'Fall Camp',
+          registrationOptionCounts: {
+            'option-2': { enrolled: 2 }
+          }
+        },
+        options: [{ id: 'option-2', title: 'Junior Varsity', capacity: 10, active: true }]
+      }));
+    parentToolsServiceMocks.submitOfflineRegistration.mockResolvedValue({
+      status: 'pending',
+      registrationId: 'registration-2'
+    });
+
+    renderParentRegistrationWithRouteSwap();
+
+    expect(await screen.findByText('Varsity')).toBeTruthy();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Swap route' }));
+
+    expect(await screen.findByText('Fall Camp')).toBeTruthy();
+    expect(screen.getByText('Junior Varsity')).toBeTruthy();
+    expect(screen.queryByLabelText('Registration option')).toBeNull();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Submit registration' }));
+
+    await waitFor(() => expect(parentToolsServiceMocks.submitOfflineRegistration).toHaveBeenCalledWith(
+      'team-1',
+      'form-2',
+      expect.objectContaining({
+        selectedOptionId: 'option-2',
+        selectedOption: expect.objectContaining({ id: 'option-2', title: 'Junior Varsity' })
+      })
+    ));
   });
 
   it('shows the first installment due now plus the remaining schedule before checkout', async () => {
