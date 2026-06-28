@@ -535,6 +535,52 @@ test('parent tools hub completes access, fees, calendars, share, registration, a
     await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1)).toBe(true);
 });
 
+test('awards deep links surface the requested certificate first on mobile', async ({ page, baseURL }) => {
+    await mockParentToolsModules(page);
+    await page.route(/\/src\/lib\/parentCertificatesService\.ts(\?.*)?$/, async (route) => {
+        await route.fulfill({
+            status: 200,
+            contentType: 'application/javascript',
+            body: `
+                export async function loadParentCertificates() {
+                    return [{
+                        id: 'cert-2',
+                        teamId: 'team-2',
+                        teamName: 'Falcons',
+                        playerId: 'player-2',
+                        playerName: 'Taylor Wings',
+                        title: 'Leadership Award',
+                        narrative: 'Great teammate.',
+                        url: 'https://allplays.ai/certificates.html#teamId=team-2&certificateId=cert-2'
+                    }, {
+                        id: 'cert-1',
+                        teamId: 'team-1',
+                        teamName: 'Bears',
+                        playerId: 'player-1',
+                        playerName: 'Pat Star',
+                        title: 'Hustle Award',
+                        narrative: 'Great effort.',
+                        url: 'https://allplays.ai/certificates.html#teamId=team-1&certificateId=cert-1'
+                    }];
+                }
+            `
+        });
+    });
+
+    await page.goto(appUrl(baseURL, '/parent-tools/certificates?teamId=team-1&certificateId=cert-1'), { waitUntil: 'domcontentloaded' });
+
+    await expect(page.getByText('Opened from a notification')).toBeVisible({ timeout: 15000 });
+    await expect(page.getByText('Hustle Award', { exact: true })).toBeVisible();
+    await expect(page.getByText('Leadership Award', { exact: true })).toHaveCount(0);
+    const openButton = page.getByRole('button', { name: 'Open' }).first();
+    await expect(openButton).toBeVisible();
+    const box = await openButton.boundingBox();
+    expect(box && box.y + box.height).toBeLessThanOrEqual(844);
+
+    await page.getByRole('button', { name: 'Show all awards' }).click();
+    await expect(page.getByText('Leadership Award')).toBeVisible();
+});
+
 test('team media route supports photo upload, file upload, link add, and media open', async ({ page, baseURL }) => {
     await mockParentToolsModules(page);
     await page.goto(appUrl(baseURL, '/teams/team-1/media'), { waitUntil: 'domcontentloaded' });
