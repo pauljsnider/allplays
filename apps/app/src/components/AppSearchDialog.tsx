@@ -162,6 +162,8 @@ export function AppSearchDialog({ auth, open, onClose }: AppSearchDialogProps) {
         .then((loadedTeams) => mergeSearchTeams(initialAccessibleTeams, loadedTeams));
 
       const resolveAccessibleTeams = async () => {
+        // Keep search bounded when Firestore hydration is slow, then retry once the
+        // hydrated team scope arrives so remote team and player results do not stall.
         return Promise.race([
           hydrationPromise
             .then((hydratedTeams) => ({ teams: hydratedTeams, resolved: true }))
