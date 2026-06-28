@@ -214,6 +214,21 @@ async function clickButton(container, text) {
   await flush();
 }
 
+async function ensureRegistrationOptionResolved(container, optionLabel = 'Option 1') {
+  const selector = Array.from(container.querySelectorAll('select')).find(
+    (el) => el.labels && Array.from(el.labels).some((label) => label.textContent.includes('Registration option'))
+  );
+  if (selector) {
+    await changeInputValue(container, 'Registration option', 'opt-1');
+    return;
+  }
+
+  const summary = container.querySelector('[aria-label="Selected registration option"]');
+  if (!summary) throw new Error('Registration option selector or summary not found.');
+  expect(summary.textContent).toContain('Registration option');
+  expect(summary.textContent).toContain(optionLabel);
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
   registrationFlowMocks.decideRegistrationPlacement.mockImplementation((params) => ({
@@ -923,7 +938,7 @@ describe('RegistrationDetail page', () => {
     await changeInputValue(container, 'Participant Name', 'Test Participant');
     await changeInputValue(container, 'Guardian Name', 'Test Guardian');
     await changeInputValue(container, 'I accept the waiver.', true);
-    await changeInputValue(container, 'Registration option', 'opt-1'); // Assuming select is handled by option value
+    await ensureRegistrationOptionResolved(container); // Assuming select is handled by option value
 
     await clickButton(container, 'Submit registration');
 
@@ -952,7 +967,7 @@ describe('RegistrationDetail page', () => {
     await changeInputValue(container, 'Participant Name', 'Test Participant');
     await changeInputValue(container, 'Guardian Name', 'Test Guardian');
     await changeInputValue(container, 'I accept the waiver.', true);
-    await changeInputValue(container, 'Registration option', 'opt-1');
+    await ensureRegistrationOptionResolved(container);
     await clickButton(container, 'Submit registration');
 
     expect(parentToolsServiceMocks.submitOfflineRegistration).toHaveBeenCalledWith(
@@ -992,7 +1007,7 @@ describe('RegistrationDetail page', () => {
 
     await changeInputValue(container, 'Participant Name', 'Test Participant');
     await changeInputValue(container, 'Guardian Name', 'Test Guardian');
-    await changeInputValue(container, 'Registration option', 'opt-1');
+    await ensureRegistrationOptionResolved(container);
     await changeInputValue(container, 'Payment plan', 'installments');
     await clickButton(container, 'Submit registration');
 
@@ -1043,7 +1058,7 @@ describe('RegistrationDetail page', () => {
     await changeInputValue(container, 'Participant Name', 'Test Participant');
     await changeInputValue(container, 'Guardian Name', 'Test Guardian');
     await changeInputValue(container, 'I accept the waiver.', true);
-    await changeInputValue(container, 'Registration option', 'opt-1');
+    await ensureRegistrationOptionResolved(container);
 
     await clickButton(container, 'Submit registration');
 
@@ -1064,7 +1079,7 @@ describe('RegistrationDetail page', () => {
     await changeInputValue(container, 'Participant Name', 'Test Participant');
     await changeInputValue(container, 'Guardian Name', 'Test Guardian');
     await changeInputValue(container, 'I accept the waiver.', true);
-    await changeInputValue(container, 'Registration option', 'opt-1');
+    await ensureRegistrationOptionResolved(container);
 
     await clickButton(container, 'Submit registration');
 
@@ -1100,7 +1115,7 @@ describe('RegistrationDetail page', () => {
     await changeInputValue(container, 'Participant Name', 'Test Participant');
     await changeInputValue(container, 'Guardian Name', 'Test Guardian');
     await changeInputValue(container, 'I accept the waiver.', true);
-    await changeInputValue(container, 'Registration option', 'opt-1');
+    await ensureRegistrationOptionResolved(container);
 
     await clickButton(container, 'Pay registration with Stripe');
 
@@ -1178,7 +1193,7 @@ describe('RegistrationDetail page', () => {
     await changeInputValue(container, 'Participant Name', 'Test Participant');
     await changeInputValue(container, 'Guardian Name', 'Test Guardian');
     await changeInputValue(container, 'I accept the waiver.', true);
-    await changeInputValue(container, 'Registration option', 'opt-1');
+    await ensureRegistrationOptionResolved(container);
     await clickButton(container, 'Pay registration with Stripe');
 
     await waitForText(container, 'Registration submitted. You have been added to the waitlist.');
@@ -1211,7 +1226,7 @@ describe('RegistrationDetail page', () => {
     await changeInputValue(container, 'Participant Name', 'Test Participant');
     await changeInputValue(container, 'Guardian Name', 'Test Guardian');
     await changeInputValue(container, 'I accept the waiver.', true);
-    await changeInputValue(container, 'Registration option', 'opt-1');
+    await ensureRegistrationOptionResolved(container);
     await clickButton(container, 'Pay registration with Stripe');
 
     await waitForText(container, 'Registration created, but checkout could not be opened. Stripe session failed.');
@@ -1244,7 +1259,7 @@ describe('RegistrationDetail page', () => {
     await changeInputValue(container, 'Participant Name', 'Test Participant');
     await changeInputValue(container, 'Guardian Name', 'Test Guardian');
     await changeInputValue(container, 'I accept the waiver.', true);
-    await changeInputValue(container, 'Registration option', 'opt-1');
+    await ensureRegistrationOptionResolved(container);
     await clickButton(container, 'Pay registration with Stripe');
 
     await waitForText(container, 'Registration created, but checkout could not be opened. Popup blocked.');
@@ -1400,7 +1415,7 @@ describe('RegistrationDetail page', () => {
     await changeInputValue(container, 'Participant Name', 'Test Participant');
     await changeInputValue(container, 'Guardian Name', 'Test Guardian');
     await changeInputValue(container, 'I accept the waiver.', true);
-    await changeInputValue(container, 'Registration option', 'opt-1');
+    await ensureRegistrationOptionResolved(container);
     await clickButton(container, 'Pay registration with Stripe');
 
     expect(parentToolsServiceMocks.initiateRegistrationCheckout).toHaveBeenCalledWith(
@@ -1454,7 +1469,7 @@ describe('RegistrationDetail page', () => {
     await changeInputValue(container, 'Participant Name', 'Test Participant');
     await changeInputValue(container, 'Guardian Name', 'Test Guardian');
     await changeInputValue(container, 'I accept the waiver.', true);
-    await changeInputValue(container, 'Registration option', 'opt-1');
+    await ensureRegistrationOptionResolved(container);
     await clickButton(container, 'Pay registration with Stripe');
 
     expect(parentToolsServiceMocks.submitOfflineRegistration).toHaveBeenCalledWith(
@@ -1521,7 +1536,7 @@ describe('RegistrationDetail page', () => {
     await changeInputValue(container, 'Participant Name', 'Test Participant');
     await changeInputValue(container, 'Guardian Name', 'Test Guardian');
     await changeInputValue(container, 'I accept the waiver.', true);
-    await changeInputValue(container, 'Registration option', 'opt-1');
+    await ensureRegistrationOptionResolved(container);
     await clickButton(container, 'Pay registration with Stripe');
 
     expect(parentToolsServiceMocks.submitOfflineRegistration).toHaveBeenCalledWith(
