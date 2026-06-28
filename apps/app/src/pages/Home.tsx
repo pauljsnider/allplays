@@ -1376,7 +1376,7 @@ function FriendCard({
     <div className="rounded-xl border border-gray-200 bg-white p-3">
       <div className="flex items-start gap-3">
         {friend.photoUrl ? (
-          <img src={friend.photoUrl} alt="" className="h-10 w-10 flex-none rounded-full object-cover" />
+          <img src={friend.photoUrl} alt="" loading="lazy" decoding="async" className="h-10 w-10 flex-none rounded-full object-cover" />
         ) : (
           <div className="flex h-10 w-10 flex-none items-center justify-center rounded-full bg-gray-950 text-xs font-black text-white">{getFriendInitials(friend.name)}</div>
         )}
