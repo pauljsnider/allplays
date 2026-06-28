@@ -108,8 +108,15 @@ export function AppSearchDialog({ auth, open, onClose }: AppSearchDialogProps) {
     }
 
     const initialAccessibleTeams = baseTeamsRef.current;
-    setTeamsLoading(true);
-    setTeamsError('');
+    const setImmediateTeamResults = (accessibleTeams: AppSearchTeam[]) => {
+      const localTeams = getImmediateAppTeamSearchResults(trimmedQuery, accessibleTeams);
+      setTeams(localTeams);
+      setTeamsLoading(localTeams.length === 0);
+      setTeamsError('');
+    };
+
+    setImmediateTeamResults(initialAccessibleTeams);
+    setPlayers([]);
     setPlayersLoading(true);
     setPlayersError('');
     const timeoutId = window.setTimeout(() => {
@@ -126,9 +133,7 @@ export function AppSearchDialog({ auth, open, onClose }: AppSearchDialogProps) {
 
       const runSearch = async (accessibleTeams: AppSearchTeam[]) => {
         const accessibleTeamsById = new Map(accessibleTeams.map((team) => [team.id, team]));
-        const localTeams = getImmediateAppTeamSearchResults(trimmedQuery, accessibleTeams);
-        setTeams(localTeams);
-        setTeamsLoading(localTeams.length === 0);
+        setImmediateTeamResults(accessibleTeams);
 
         const [teamsResult, playersResult] = await Promise.allSettled([
           searchAppTeams(trimmedQuery, accessibleTeams, auth.user),
@@ -160,7 +165,7 @@ export function AppSearchDialog({ auth, open, onClose }: AppSearchDialogProps) {
         return Promise.race([
           hydrationPromise
             .then((hydratedTeams) => ({ teams: hydratedTeams, resolved: true }))
-            .catch(() => ({ teams: initialAccessibleTeams, resolved: false })),
+            .catch(() => ({ teams: initialAccessibleTeams, resolved: true })),
           new Promise<{ teams: AppSearchTeam[]; resolved: false }>((resolve) => {
             window.setTimeout(() => resolve({ teams: initialAccessibleTeams, resolved: false }), hydrationSearchFallbackMs);
           })
@@ -168,27 +173,20 @@ export function AppSearchDialog({ auth, open, onClose }: AppSearchDialogProps) {
       };
 
       void resolveAccessibleTeams()
-        .then(({ teams: accessibleTeams, resolved }) => {
-          void runSearch(accessibleTeams);
+        .then(async ({ teams: accessibleTeams, resolved }) => {
+          if (resolved) {
+            await runSearch(accessibleTeams);
+            return;
+          }
 
-          if (resolved) return;
-
-          void hydrationPromise
-            .then((hydratedTeams) => {
-              if (disposed || requestId !== searchRequestId.current) return;
-              const initialTeamIds = new Set(accessibleTeams.map((team) => team.id));
-              const hasExpandedScope = hydratedTeams.some((team) => !initialTeamIds.has(team.id));
-              if (!hasExpandedScope) return;
-              setTeamsLoading(true);
-              setPlayersLoading(true);
-              return runSearch(hydratedTeams);
-            })
-            .catch(() => {
-              if (!disposed && requestId === searchRequestId.current) {
-                setTeamsLoading(false);
-                setPlayersLoading(false);
-              }
-            });
+          try {
+            const hydratedTeams = await hydrationPromise;
+            if (disposed || requestId !== searchRequestId.current) return;
+            await runSearch(hydratedTeams);
+          } catch {
+            if (disposed || requestId !== searchRequestId.current) return;
+            await runSearch(initialAccessibleTeams);
+          }
         })
         .catch(() => {
           if (!disposed && requestId === searchRequestId.current) {

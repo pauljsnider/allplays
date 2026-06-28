@@ -513,30 +513,20 @@ describe('AppSearchDialog', () => {
     await waitFor(() => expect(searchAppPlayersMock).toHaveBeenCalledTimes(1));
   });
 
-  it('reruns team and player search once hydrated access expands after a provisional fallback search', async () => {
+  it('shows provisional local team matches while hydration is pending, then runs one hydrated async search', async () => {
     vi.useFakeTimers();
     const onClose = vi.fn();
     const initialTeams: AppSearchTeam[] = [{ id: 'team-1', name: 'Bears', sport: 'Basketball', zip: '66210' }];
     const hydratedTeams: AppSearchTeam[] = [
       ...initialTeams,
-      { id: 'team-2', name: 'Rockets', sport: 'Soccer', zip: '64114' }
+      { id: 'team-2', name: 'Beacons', sport: 'Soccer', zip: '64114' }
     ];
-    const initialPlayers: AppSearchPlayer[] = [{
-      id: 'player:team-1:player-1',
-      kind: 'player',
-      title: '#9 Roc Star',
-      subtitle: 'Bears',
-      route: '/players/team-1/player-1',
-      teamId: 'team-1',
-      playerId: 'player-1',
-    }];
     const hydratedPlayers: AppSearchPlayer[] = [
-      ...initialPlayers,
       {
         id: 'player:team-2:player-2',
         kind: 'player',
-        title: '#10 Rocket Kid',
-        subtitle: 'Rockets',
+        title: '#10 Beacon Kid',
+        subtitle: 'Beacons',
         route: '/players/team-2/player-2',
         teamId: 'team-2',
         playerId: 'player-2',
@@ -548,7 +538,8 @@ describe('AppSearchDialog', () => {
     loadAppSearchTeamsMock.mockImplementationOnce(() => new Promise((resolve) => {
       releaseHydration = resolve;
     }));
-    searchAppPlayersMock.mockImplementation(async (_query, teamsById) => teamsById.has('team-2') ? hydratedPlayers : initialPlayers);
+    searchAppTeamsMock.mockImplementation(async (query, teams) => getImmediateAppTeamSearchResultsMock(query, teams));
+    searchAppPlayersMock.mockImplementation(async (_query, teamsById) => teamsById.has('team-2') ? hydratedPlayers : []);
 
     render(
       <MemoryRouter>
@@ -556,24 +547,25 @@ describe('AppSearchDialog', () => {
       </MemoryRouter>
     );
 
-    fireEvent.change(screen.getByLabelText('Search teams, players, actions, help'), { target: { value: 'ro' } });
+    fireEvent.change(screen.getByLabelText('Search teams, players, actions, help'), { target: { value: 'be' } });
 
+    expect(screen.getByRole('button', { name: /Bears/i })).not.toBeNull();
     await vi.advanceTimersByTimeAsync(430);
     await Promise.resolve();
-    expect(searchAppTeamsMock).toHaveBeenCalledTimes(1);
-    expect(searchAppPlayersMock).toHaveBeenCalledTimes(1);
-    expect(searchAppTeamsMock).toHaveBeenNthCalledWith(1, 'ro', initialTeams, null);
-    expect(searchAppPlayersMock).toHaveBeenNthCalledWith(1, 'ro', expect.any(Map), null);
+    expect(searchAppTeamsMock).not.toHaveBeenCalled();
+    expect(searchAppPlayersMock).not.toHaveBeenCalled();
 
     releaseHydration(hydratedTeams);
     await vi.advanceTimersByTimeAsync(50);
     await Promise.resolve();
     await vi.advanceTimersByTimeAsync(0);
-    expect(searchAppTeamsMock).toHaveBeenCalledTimes(2);
-    expect(searchAppPlayersMock).toHaveBeenCalledTimes(2);
-    expect(searchAppTeamsMock).toHaveBeenNthCalledWith(2, 'ro', hydratedTeams, null);
-    expect(searchAppPlayersMock).toHaveBeenNthCalledWith(2, 'ro', expect.any(Map), null);
-    expect(Array.from(searchAppPlayersMock.mock.calls[1][1].values())).toEqual(hydratedTeams);
+
+    expect(searchAppTeamsMock).toHaveBeenCalledTimes(1);
+    expect(searchAppPlayersMock).toHaveBeenCalledTimes(1);
+    expect(searchAppTeamsMock).toHaveBeenNthCalledWith(1, 'be', hydratedTeams, null);
+    expect(searchAppPlayersMock).toHaveBeenNthCalledWith(1, 'be', expect.any(Map), null);
+    expect(Array.from(searchAppPlayersMock.mock.calls[0][1].values())).toEqual(hydratedTeams);
+    expect(screen.getAllByRole('button', { name: /Beacons/i })).toHaveLength(2);
   });
 
   it('falls back to provisional search results when hydrated team loading fails', async () => {
