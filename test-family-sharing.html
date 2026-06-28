@@ -199,9 +199,21 @@
         }
 
         // Token validation logic from family.html init()
+        function toDateSafe(value) {
+            if (!value) return null;
+            const d = value?.toDate ? value.toDate() : new Date(value);
+            return Number.isNaN(d?.getTime?.()) ? null : d;
+        }
+
+        function isFamilyShareTokenExpired(token) {
+            const expiresAt = toDateSafe(token?.expiresAt);
+            return Boolean(expiresAt && expiresAt.getTime() <= Date.now());
+        }
+
         function isTokenValid(token) {
             if (!token) return false;
             if (token.active === false) return false;
+            if (isFamilyShareTokenExpired(token)) return false;
             return true;
         }
 
@@ -697,6 +709,20 @@
 
         test('Token validation', 'token with active=true is valid', () => {
             assertTrue(isTokenValid({ id: 'tok1', active: true, ownerUserId: 'u1' }), 'Active token should be valid');
+        });
+
+        test('Token validation', 'expired token is invalid', () => {
+            assertFalse(
+                isTokenValid({ id: 'tok1', active: true, ownerUserId: 'u1', expiresAt: new Date(Date.now() - HOUR).toISOString() }),
+                'Expired token should be invalid even when active=true'
+            );
+        });
+
+        test('Token validation', 'future expiresAt token remains valid', () => {
+            assertTrue(
+                isTokenValid({ id: 'tok1', active: true, ownerUserId: 'u1', expiresAt: new Date(Date.now() + HOUR).toISOString() }),
+                'Future expiry should not block a healthy token'
+            );
         });
 
         test('Token validation', 'token without active field is valid (legacy/new)', () => {
