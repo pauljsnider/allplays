@@ -1,8 +1,144 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
 
 function readRepoFile(relativePath) {
     return readFileSync(new URL(`../../${relativePath}`, import.meta.url), 'utf8');
+}
+
+function extractFunction(source, signature) {
+    const start = source.indexOf(signature);
+    if (start === -1) {
+        throw new Error(`Unable to find ${signature}`);
+    }
+
+    const bodyStart = source.indexOf('{', start);
+    let depth = 0;
+
+    for (let index = bodyStart; index < source.length; index += 1) {
+        const char = source[index];
+        if (char === '{') depth += 1;
+        if (char === '}') depth -= 1;
+        if (depth === 0) {
+            return source.slice(start, index + 1);
+        }
+    }
+
+    throw new Error(`Unable to extract ${signature}`);
+}
+
+function createCertificateStudioHarness() {
+    const studio = readRepoFile('js/certificates/studio.js');
+    const snippets = [
+        'function buildCertificatePayload',
+        'function createDraftFromSavedCertificate',
+        'function saveDraftsToLocalHistory',
+        'async function openSavedBatch',
+        'async function openSavedCertificate',
+        'function startCustomCertificate'
+    ].map((signature) => extractFunction(studio, signature)).join('\n\n');
+
+    const deps = {
+        state: {
+            demoMode: false,
+            certificatePersistenceUnavailable: false,
+            teamId: 'team-1',
+            team: { name: 'Demo Team' },
+            shared: {
+                templateId: 'banner',
+                colorMode: 'custom',
+                customColors: { accentColor: '#123456' },
+                teamNameOverride: 'Demo Team',
+                statsWindow: 10,
+                seasonLabel: 'Fall 2026',
+                footerUrl: 'allplays.ai',
+                fonts: { heading: 'classic', recipient: 'classic', body: 'friendly' },
+                signers: [],
+                foregroundImageRef: null,
+                backgroundImageRef: null,
+                backgroundOpacity: 18,
+                watermarkImageRef: null,
+                watermarkOpacity: 12,
+                awardTitle: 'Team MVP'
+            },
+            drafts: [],
+            savedCertificates: [],
+            savedBatches: [],
+            selectedPlayerIds: new Set(),
+            selectedDraftId: null,
+            descriptionGeneration: null,
+            mode: 'setup'
+        },
+        truncateCertificateDescription: (value) => String(value || '').slice(0, 350),
+        resolveColors: (shared) => shared.customColors,
+        normalizeSigners: (signers) => signers || [],
+        clonePlain: (value) => JSON.parse(JSON.stringify(value || null)),
+        buildSharedFromSavedSource: (defaults = {}, certificate = {}) => ({
+            templateId: certificate.templateId || defaults.templateId || 'banner',
+            colorMode: certificate.colorMode || defaults.colorMode || 'custom',
+            customColors: certificate.colors || defaults.customColors || {},
+            teamNameOverride: certificate.teamNameOverride || defaults.teamNameOverride || 'Demo Team',
+            awardTitle: certificate.awardTitle || defaults.awardTitle || '',
+            statsWindow: certificate.statsWindow || defaults.statsWindow || 10,
+            seasonLabel: certificate.seasonLabel || defaults.seasonLabel || '',
+            footerUrl: certificate.footerUrl || defaults.footerUrl || '',
+            fonts: certificate.fonts || defaults.fonts || {},
+            signers: certificate.signers || defaults.signers || [],
+            foregroundImageRef: certificate.foregroundImageRef || defaults.foregroundImageRef || null,
+            backgroundImageRef: certificate.backgroundImageRef || defaults.backgroundImageRef || null,
+            backgroundOpacity: certificate.backgroundOpacity ?? defaults.backgroundOpacity ?? 18,
+            watermarkImageRef: certificate.watermarkImageRef || defaults.watermarkImageRef || null,
+            watermarkOpacity: certificate.watermarkOpacity ?? defaults.watermarkOpacity ?? 12
+        }),
+        renderReview: vi.fn(),
+        showAlert: vi.fn(),
+        getCertificateBatch: vi.fn(),
+        getCertificate: vi.fn(),
+        isPermissionError: () => false
+    };
+
+    deps.loadCertificatesForSavedBatch = async (batch) => batch.generatedCertificateIds.map((id) => {
+        const certificate = deps.state.savedCertificates.find((item) => item.id === id);
+        return certificate || null;
+    }).filter(Boolean);
+
+    return new Function('deps', `
+        const state = deps.state;
+        const truncateCertificateDescription = deps.truncateCertificateDescription;
+        const resolveColors = deps.resolveColors;
+        const normalizeSigners = deps.normalizeSigners;
+        const clonePlain = deps.clonePlain;
+        const buildSharedFromSavedSource = deps.buildSharedFromSavedSource;
+        const renderReview = deps.renderReview;
+        const showAlert = deps.showAlert;
+        const loadCertificatesForSavedBatch = deps.loadCertificatesForSavedBatch;
+        const getCertificateBatch = deps.getCertificateBatch;
+        const getCertificate = deps.getCertificate;
+        const isPermissionError = deps.isPermissionError;
+        const upsertSavedCertificate = (certificate) => {
+            if (!certificate?.id) return;
+            state.savedCertificates = [
+                certificate,
+                ...state.savedCertificates.filter((item) => item.id !== certificate.id)
+            ];
+        };
+        const upsertSavedBatch = (batch) => {
+            if (!batch?.id) return;
+            state.savedBatches = [
+                batch,
+                ...state.savedBatches.filter((item) => item.id !== batch.id)
+            ];
+        };
+        ${snippets}
+        return {
+            state,
+            buildCertificatePayload,
+            createDraftFromSavedCertificate,
+            saveDraftsToLocalHistory,
+            openSavedBatch,
+            openSavedCertificate,
+            startCustomCertificate
+        };
+    `)(deps);
 }
 
 describe('awards and certificates workflow wiring', () => {
@@ -122,6 +258,82 @@ describe('awards and certificates workflow wiring', () => {
         expect(reviewGridBody).toContain('disabled aria-disabled="true" title="Descriptions are still generating"');
         expect(reviewGridBody).toContain('<button id="cert-publish-btn"');
         expect(reviewGridBody).toContain('${publishDisabledAttrs}>Publish certificates</button>');
+    });
+
+    it('persists one-off certificate drafts with stable ids and restores export selection on reopen', async () => {
+        vi.useFakeTimers();
+        vi.setSystemTime(new Date('2026-06-28T04:24:16Z'));
+
+        try {
+            const timestamp = Date.now();
+            const harness = createCertificateStudioHarness();
+            harness.startCustomCertificate();
+
+            expect(harness.state.drafts).toHaveLength(1);
+            expect(harness.state.drafts[0]).toMatchObject({
+                batchId: null,
+                certificateId: null,
+                playerId: null,
+                includeInExport: true,
+                recipientName: 'Custom Recipient'
+            });
+
+            harness.state.drafts[0].recipientName = 'Coach Choice';
+            harness.state.drafts[0].awardTitle = 'Leadership Award';
+            harness.state.drafts[0].description = 'Closed out the season with steady leadership.';
+            harness.state.drafts[0].includeInExport = false;
+
+            expect(harness.buildCertificatePayload(harness.state.drafts[0], 'draft')).toMatchObject({
+                batchId: null,
+                playerId: null,
+                recipientName: 'Coach Choice',
+                awardTitle: 'Leadership Award',
+                includeInExport: false,
+                status: 'draft'
+            });
+
+            harness.saveDraftsToLocalHistory('draft');
+
+            const expectedBatchId = `local-batch-${timestamp}`;
+            const expectedCertificateId = `local-cert-${expectedBatchId}-custom-${timestamp}`;
+
+            expect(harness.state.savedBatches).toHaveLength(1);
+            expect(harness.state.savedCertificates).toHaveLength(1);
+            expect(harness.state.drafts[0].batchId).toBe(expectedBatchId);
+            expect(harness.state.drafts[0].certificateId).toBe(expectedCertificateId);
+            expect(harness.state.savedBatches[0].selectedPlayerIds).toEqual([]);
+            expect(harness.state.savedCertificates[0]).toMatchObject({
+                id: expectedCertificateId,
+                batchId: expectedBatchId,
+                playerId: null,
+                recipientName: 'Coach Choice',
+                awardTitle: 'Leadership Award',
+                includeInExport: false
+            });
+
+            await harness.openSavedCertificate(harness.state.savedCertificates[0].id);
+            expect(harness.state.drafts).toHaveLength(1);
+            expect(harness.state.drafts[0]).toMatchObject({
+                certificateId: expectedCertificateId,
+                batchId: expectedBatchId,
+                playerId: null,
+                recipientName: 'Coach Choice',
+                awardTitle: 'Leadership Award',
+                includeInExport: false
+            });
+            expect([...harness.state.selectedPlayerIds]).toEqual([]);
+
+            await harness.openSavedBatch(harness.state.savedBatches[0].id);
+            expect(harness.state.drafts).toHaveLength(1);
+            expect(harness.state.drafts[0]).toMatchObject({
+                playerId: null,
+                recipientName: 'Coach Choice',
+                includeInExport: false
+            });
+            expect([...harness.state.selectedPlayerIds]).toEqual([]);
+        } finally {
+            vi.useRealTimers();
+        }
     });
 
     it('adds coach and parent navigation without exposing certificates on the public team page', () => {
