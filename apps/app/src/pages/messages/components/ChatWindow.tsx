@@ -28,7 +28,6 @@ import {
 import {
   deleteTeamChatMessage,
   editTeamChatMessage,
-  ensureStaffChatConversation,
   loadChatRecipientOptions,
   loadSentTeamEmails,
   loadTeamEmailDrafts,
@@ -157,7 +156,6 @@ const messageRevisionSignatureCache = new WeakMap<ChatMessage, string>();
 
 const allTargetOptions: Array<{ value: ChatTargetType; label: string; description: string }> = [
   { value: 'full_team', label: 'Full team', description: 'Visible to everyone in this team chat.' },
-  { value: 'staff', label: 'Staff only', description: 'Moves this into a staff conversation.' },
   { value: 'individuals', label: 'Selected members', description: 'Starts a direct or group conversation.' }
 ];
 
@@ -851,25 +849,6 @@ export function ChatWindow({
         switchConversation(DEFAULT_TEAM_CONVERSATION_ID);
       }
       closeAudienceSheet();
-      return;
-    }
-
-    if (target === 'staff') {
-      if (!auth.user || !team) return;
-      try {
-        const staffConversation = await ensureStaffChatConversation(teamId, auth.user, conversations);
-        setConversations((current) => (
-          current.some((conversation) => conversation.id === staffConversation.id)
-            ? current
-            : [...current, staffConversation]
-        ));
-        if (selectedConversationId !== staffConversation.id) {
-          switchConversation(staffConversation.id);
-        }
-        closeAudienceSheet();
-      } catch (staffError: any) {
-        setStatus({ tone: 'error', message: staffError?.message || 'Unable to open staff chat.' });
-      }
     }
   };
 
