@@ -27,9 +27,9 @@ function buildEvent(overrides: Record<string, unknown> = {}) {
   } as any;
 }
 
-function buildReport(summary: string) {
+function buildReport(summary: string, gameOverrides: Record<string, unknown> = {}) {
   return {
-    game: { id: 'game-1', liveStatus: 'live', status: 'live', homeScore: 41, awayScore: 38 },
+    game: { id: 'game-1', liveStatus: 'live', status: 'live', homeScore: 41, awayScore: 38, ...gameOverrides },
     plays: [],
     summary,
     opponentRows: [],
@@ -76,6 +76,29 @@ describe('GameReportSections', () => {
     expect(screen.getByRole('button', { name: 'Players' }).className).toContain('bg-primary-600');
     expect(screen.getByRole('link', { name: /#1 Avery Smith/i })).toBeTruthy();
     expect(screen.queryByText('Loading report sections...')).toBeNull();
+  });
+
+  it('reloads the report when the same event transitions to a new live status', async () => {
+    gameReportServiceMocks.loadGameReportSections
+      .mockResolvedValueOnce(buildReport('Scheduled report.', { liveStatus: 'scheduled', status: 'scheduled' }))
+      .mockResolvedValueOnce(buildReport('Live report.', { liveStatus: 'live', status: 'live' }));
+
+    const { rerender } = render(<GameReportSections event={buildEvent({ liveStatus: 'scheduled', status: 'scheduled' })} />);
+
+    await waitFor(() => {
+      expect(screen.getByText('Scheduled report.')).toBeTruthy();
+    });
+
+    rerender(<GameReportSections event={buildEvent({ liveStatus: 'live', status: 'live' })} />);
+
+    expect(screen.getByText('Loading report sections...')).toBeTruthy();
+
+    await waitFor(() => {
+      expect(gameReportServiceMocks.loadGameReportSections).toHaveBeenCalledTimes(2);
+      expect(screen.getByText('Live report.')).toBeTruthy();
+    });
+    expect(screen.queryByText('Scheduled report.')).toBeNull();
+    expect(screen.getByRole('button', { name: 'Summary' }).className).toContain('bg-primary-600');
   });
 
   it('resets the panel when the event identity changes', async () => {
