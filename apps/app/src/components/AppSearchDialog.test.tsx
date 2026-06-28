@@ -557,6 +557,7 @@ describe('AppSearchDialog', () => {
     expect(searchAppTeamsMock).toHaveBeenNthCalledWith(1, 'be', initialTeams, null);
     expect(searchAppPlayersMock).toHaveBeenNthCalledWith(1, 'be', expect.any(Map), null);
     expect(Array.from(searchAppPlayersMock.mock.calls[0][1].values())).toEqual(initialTeams);
+    expect(screen.queryByRole('button', { name: /Beacons/i })).toBeNull();
 
     releaseHydration(hydratedTeams);
     await vi.advanceTimersByTimeAsync(50);
