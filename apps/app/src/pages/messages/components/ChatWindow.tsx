@@ -76,6 +76,7 @@ import {
   insertChatMention,
   isChatComposerLinkSafe,
   isDefaultTeamConversation,
+  isStaffConversation,
   isSafeChatMediaUrl,
   mergeChatMessageLists,
   normalizeChatReactions,
@@ -158,9 +159,9 @@ const messageRevisionSignatureCache = new WeakMap<ChatMessage, string>();
 
 const allTargetOptions: Array<{ value: ChatTargetType; label: string; description: string }> = [
   { value: 'full_team', label: 'Full team', description: 'Visible to everyone in this team chat.' },
-  { value: 'staff', label: 'Staff only', description: 'Moves this into a staff conversation.' },
   { value: 'individuals', label: 'Selected members', description: 'Starts a direct or group conversation.' }
 ];
+const STAFF_CONVERSATION_PLACEHOLDER_ID = '__staff_conversation__';
 
 function createChatClientMessageId(userId: string) {
   const randomPart = typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
@@ -236,7 +237,7 @@ export function TeamAvatar({ team }: { team: Pick<ChatTeam, 'name' | 'photoUrl' 
   return (
     <div className="relative flex h-11 w-11 flex-none items-center justify-center overflow-hidden rounded-xl border border-gray-200 bg-primary-50 text-primary-700 shadow-sm">
       {team.photoUrl ? (
-        <img src={team.photoUrl} alt={`${team.name} team photo`} className="h-full w-full object-cover" />
+        <img src={team.photoUrl} alt={`${team.name} team photo`} loading="lazy" decoding="async" className="h-full w-full object-cover" />
       ) : (
         <span className="text-base font-black">{team.name.charAt(0).toUpperCase()}</span>
       )}
@@ -477,6 +478,19 @@ export function ChatWindow({
   const selectedConversation = useMemo(() => (
     conversations.find((conversation) => conversation.id === effectiveConversationId) || conversations[0] || null
   ), [conversations, effectiveConversationId]);
+  const conversationSheetConversations = useMemo<ChatConversation[]>(() => {
+    if (!canModerate || conversations.some((conversation) => isStaffConversation(conversation))) {
+      return conversations;
+    }
+    const staffPlaceholderConversation = {
+      id: STAFF_CONVERSATION_PLACEHOLDER_ID,
+      type: 'group',
+      name: 'Staff only',
+      participantIds: [],
+      participantRoles: ['staff']
+    } satisfies ChatConversation;
+    return [...conversations, staffPlaceholderConversation];
+  }, [canModerate, conversations]);
   const audienceMetadata = useMemo(() => buildChatAudienceMetadata({
     selectedConversation,
     selectedConversationId: effectiveConversationId,
@@ -862,6 +876,32 @@ export function ChatWindow({
     closeConversationSheet();
   };
 
+  const ensureAndSwitchStaffConversation = async () => {
+    if (!auth.user || !team) return;
+    try {
+      const staffConversation = await ensureStaffChatConversation(teamId, auth.user, conversations);
+      setConversations((current) => (
+        current.some((conversation) => conversation.id === staffConversation.id)
+          ? current
+          : [...current, staffConversation]
+      ));
+      if (selectedConversationId !== staffConversation.id) {
+        switchConversation(staffConversation.id);
+      }
+      closeConversationSheet();
+    } catch (staffError: any) {
+      setStatus({ tone: 'error', message: staffError?.message || 'Unable to open staff chat.' });
+    }
+  };
+
+  const handleConversationSelect = (conversationId: string) => {
+    if (conversationId === STAFF_CONVERSATION_PLACEHOLDER_ID) {
+      void ensureAndSwitchStaffConversation();
+      return;
+    }
+    switchConversation(conversationId);
+  };
+
   const handleAudienceTargetChange = async (target: ChatTargetType) => {
     setSelectedRecipientTarget(target);
     if (target !== 'individuals') {
@@ -873,25 +913,6 @@ export function ChatWindow({
         switchConversation(DEFAULT_TEAM_CONVERSATION_ID);
       }
       closeAudienceSheet();
-      return;
-    }
-
-    if (target === 'staff') {
-      if (!auth.user || !team) return;
-      try {
-        const staffConversation = await ensureStaffChatConversation(teamId, auth.user, conversations);
-        setConversations((current) => (
-          current.some((conversation) => conversation.id === staffConversation.id)
-            ? current
-            : [...current, staffConversation]
-        ));
-        if (selectedConversationId !== staffConversation.id) {
-          switchConversation(staffConversation.id);
-        }
-        closeAudienceSheet();
-      } catch (staffError: any) {
-        setStatus({ tone: 'error', message: staffError?.message || 'Unable to open staff chat.' });
-      }
     }
   };
 
@@ -1686,10 +1707,10 @@ export function ChatWindow({
 
       {showConversationSheet ? (
         <ConversationSheet
-          conversations={conversations}
+          conversations={conversationSheetConversations}
           team={team || {}}
           selectedConversationId={effectiveConversationId}
-          onSelect={switchConversation}
+          onSelect={handleConversationSelect}
           onClose={closeConversationSheet}
         />
       ) : null}
@@ -2661,7 +2682,7 @@ export function MessageAvatar({ message, label }: { message: ChatMessage; label:
     return <img src="./logo_small.png" alt="ALL PLAYS assistant avatar" className="h-8 w-8 rounded-full border border-indigo-200 object-cover" />;
   }
   if (message.senderPhotoUrl) {
-    return <img src={message.senderPhotoUrl} alt={`${label} profile photo`} className="h-8 w-8 rounded-full object-cover" />;
+    return <img src={message.senderPhotoUrl} alt={`${label} profile photo`} loading="lazy" decoding="async" className="h-8 w-8 rounded-full object-cover" />;
   }
   return (
     <div className="flex h-8 w-8 items-center justify-center rounded-full bg-gray-200 text-xs font-black text-gray-600">
@@ -3157,7 +3178,7 @@ function MediaGallerySheet({
                 <video controls preload="metadata" className="aspect-video w-full bg-black object-cover" src={entry.url} />
               ) : (
                 <a href={entry.url} target="_blank" rel="noopener noreferrer">
-                  <img src={entry.url} alt={entry.name || 'Chat media'} className="aspect-video w-full object-cover" />
+                  <img src={entry.url} alt={entry.name || 'Chat media'} loading="lazy" decoding="async" className="aspect-video w-full object-cover" />
                 </a>
               )}
               <div className="p-3">

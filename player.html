@@ -1185,7 +1185,7 @@
              
              const preview = document.getElementById('edit-photo-preview');
              if (currentPlayer.photoUrl) {
-                 preview.innerHTML = `<img src="${currentPlayer.photoUrl}" class="w-full h-full object-cover">`;
+                 preview.innerHTML = `<img src="${escapeHtml(currentPlayer.photoUrl)}" class="w-full h-full object-cover">`;
              } else {
                  preview.innerHTML = '';
              }

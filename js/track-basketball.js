@@ -280,7 +280,7 @@ function renderOpponents() {
 
     return `
       <div class="border border-slate/10 rounded-xl p-2 bg-white space-y-1">
-        <input data-opp-edit="${o.id}" value="${o.name}" class="w-full text-xs px-2 py-1 rounded border border-slate/10 font-semibold">
+        <input data-opp-edit="${escapeHtml(o.id)}" value="${escapeHtml(o.name)}" class="w-full text-xs px-2 py-1 rounded border border-slate/10 font-semibold">
         <div class="text-[11px] text-slate-500">${quickLineWithFouls || 'No stats yet'}</div>
         <div class="grid grid-cols-3 gap-1 text-[11px] font-semibold">
           ${oppBtns} ${oppBtn(o.id, 'fouls', 1, 'FLS')} <button data-opp-del="${o.id}" class="text-[11px] text-red-600">Remove</button>

@@ -1716,7 +1716,10 @@ function sanitizePracticeRecurrenceInput(input?: PracticeRecurrenceFormInput | n
   };
 }
 
-function buildScheduledPracticePayload(input: SchedulePracticeFormInput, user: AuthUser, options?: { editingPracticeId?: string | null; editingSeriesId?: string | null }) {
+function buildScheduledPracticePayload(input: SchedulePracticeFormInput, user: AuthUser, options?: {
+  editingPracticeId?: string | null;
+  editingSeriesId?: string | null;
+}) {
   const title = compactString(input.title) || 'Practice';
   const startDate = new Date(input.startDate);
   const endDate = new Date(input.endDate);

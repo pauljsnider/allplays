@@ -82,7 +82,8 @@ export function discoverRepositorySurfaces(repoRoot = DEFAULT_REPO_ROOT) {
     const ignoredHtmlPrefixes = [
         'android',
         'apps/app/dist',
-        'ios'
+        'ios',
+        'tests/fixtures'
     ];
     const ignoredGeneratedHtmlPaths = [
         'apps/app/bundle-visualizer.html'

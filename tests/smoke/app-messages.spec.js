@@ -252,8 +252,12 @@ async function mockMessagesModules(page, options = {}) {
                 }
 
                 export async function loadChatConversations() {
+                    if (${options.conversationDelayMs || 0} > 0) {
+                        await new Promise((resolve) => setTimeout(resolve, ${options.conversationDelayMs || 0}));
+                    }
                     return [
-                        { id: 'team', type: 'team', name: 'Bears Team Chat', participantIds: [], participantRoles: ['team'] }
+                        { id: 'team', type: 'team', name: 'Bears Team Chat', participantIds: [], participantRoles: ['team'] },
+                        { id: 'staff-conversation', type: 'group', name: 'Staff only', participantIds: ['user-1'], participantRoles: ['staff'] }
                     ];
                 }
 
@@ -467,7 +471,13 @@ test('messages inbox and team chat exercise real migrated chat UX', async ({ pag
     await page.getByPlaceholder('Message Bears').fill('');
 
     await page.getByRole('button', { name: /Audience: Full team/ }).click();
-    await page.getByRole('button', { name: 'Staff only' }).click();
+    await expect(page.getByRole('button', { name: 'Staff only' })).toBeHidden();
+    await page.getByRole('button', { name: 'Close Message audience' }).click();
+
+    await page.getByRole('button', { name: 'Team chat' }).click();
+    const conversationsDialog = page.getByRole('dialog', { name: 'Conversations' });
+    await expect(conversationsDialog).toBeVisible();
+    await conversationsDialog.getByRole('button', { name: 'Staff only Group conversation' }).click();
 
     await page.getByPlaceholder('Message Bears').fill('@ALL PLAYS who needs RSVP help?');
     await page.getByRole('button', { name: 'Send message' }).click();
@@ -494,6 +504,22 @@ test('messages inbox and team chat exercise real migrated chat UX', async ({ pag
         userId: 'user-1',
         conversationId: 'team'
     });
+});
+
+test('messages team thread renders before deferred conversation hydration finishes', async ({ page, baseURL }) => {
+    await mockMessagesModules(page, { conversationDelayMs: 1500 });
+    await page.goto(appUrl(baseURL, '/messages/team-1'), { waitUntil: 'domcontentloaded' });
+
+    await waitForMessagesRoute(page, page.getByPlaceholder('Message Bears'));
+    await expect(page.getByText('Bring both jerseys.')).toBeVisible();
+    await expect(page.getByText('Latest ride update.')).toBeVisible();
+    await expect(page.getByPlaceholder('Message Bears')).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Team chat' })).toBeVisible();
+
+    await page.getByRole('button', { name: 'Team chat' }).click();
+    await expect(page.getByRole('dialog', { name: 'Conversations' })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Staff only Group conversation' })).toBeVisible({ timeout: 5000 });
+    await expect(page.getByText('Latest ride update.')).toBeVisible();
 });
 
 test('messages inbox stays interactive while previews hydrate on inbox and desktop routes', async ({ page, baseURL }) => {

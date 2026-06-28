@@ -4,6 +4,8 @@ import { Search, XCircle, Loader2, Users } from 'lucide-react';
 import { type ParentHomeTeam } from '../lib/homeLogic';
 import { TeamAvatar, TeamLauncherChip, Status } from '../pages/Teams';
 import { getPublicTeamsPage } from '../lib/publicTeamsService';
+import { openPublicUrl } from '../lib/publicActions';
+import { getTeamWebsiteHashHref } from '../lib/teamNavigation';
 import { resolveZip } from '../lib/utils';
 
 export function PublicTeamSearch({ autoBrowseOnMount = false, showBackLink = false }: { autoBrowseOnMount?: boolean; showBackLink?: boolean }) {
@@ -52,7 +54,12 @@ export function PublicTeamSearch({ autoBrowseOnMount = false, showBackLink = fal
   }, []);
 
   const handleSearch = () => {
-    void fetchPublicTeams({ searchText: searchQuery.trim() || undefined });
+    const trimmedQuery = searchQuery.trim();
+    if (!trimmedQuery) {
+      return;
+    }
+
+    void fetchPublicTeams({ searchText: trimmedQuery });
   };
 
   const handleBrowseAll = () => {
@@ -73,12 +80,15 @@ export function PublicTeamSearch({ autoBrowseOnMount = false, showBackLink = fal
     setNextCursor(null);
   };
 
-  const handleOpenTeam = useCallback((team: ParentHomeTeam) => {
-    if (!team.appAccess && !team.webAccess) {
+  const handleOpenTeam = useCallback(async (team: ParentHomeTeam) => {
+    if (team.appAccess) {
+      navigate(`/teams/${encodeURIComponent(team.teamId)}`);
       return;
     }
 
-    navigate(`/teams/${encodeURIComponent(team.teamId)}`);
+    if (team.webAccess) {
+      await openPublicUrl(getTeamWebsiteHashHref('team.html', team.teamId));
+    }
   }, [navigate]);
 
   useEffect(() => {
@@ -220,7 +230,7 @@ export function PublicTeamSearch({ autoBrowseOnMount = false, showBackLink = fal
 
 function PublicTeamCard({ team, onOpenTeam }: { team: ParentHomeTeam; onOpenTeam: (team: ParentHomeTeam) => void | Promise<void> }) {
   const isActionable = Boolean(team.appAccess || team.webAccess);
-  const actionLabel = 'View team';
+  const actionLabel = team.appAccess ? 'View team' : 'Open website team page';
 
   return (
     <article className={`min-w-0 rounded-2xl border bg-white p-3 shadow-sm ${isActionable ? 'border-gray-200' : 'border-gray-200/80 bg-gray-50'}`}>

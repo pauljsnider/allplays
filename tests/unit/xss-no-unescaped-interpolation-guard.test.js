@@ -1,0 +1,129 @@
+import { describe, expect, it } from 'vitest';
+import { readFileSync, readdirSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import path from 'node:path';
+
+// Security guard: prevent stored-XSS regressions in the legacy vanilla-JS site.
+//
+// The legacy pages build markup with template literals and assign it via
+// innerHTML. Any user-controlled field interpolated directly into markup
+// context — element text `>${x.name}<` or an attribute value `="${x.name}"` —
+// must be wrapped in escapeHtml() (js/utils.js). This test fails if a new
+// unescaped interpolation of a known user-data field is introduced.
+//
+// Scope: production root *.html (test-*.html excluded) and js/**/*.js.
+
+const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
+
+// Fields that carry user-entered, stored content (Firestore-backed). Matching
+// is intentionally conservative — these are the realistic XSS carriers.
+const USER_DATA_FIELDS = [
+    'name',
+    'email',
+    'displayName',
+    'senderName',
+    'authorName',
+    'playerName',
+    'teamName',
+    'opponent',
+    'notes',
+    'note',
+    'comment',
+    'description',
+    'photoUrl',
+    'title',
+    // Added after a Codex review caught player.number rendering unescaped.
+    'number',
+    'jersey',
+    'reason',
+    'nickname',
+    'firstName',
+    'lastName',
+    'phone',
+    'address',
+    'school',
+    'grade'
+];
+
+const fieldAlternation = USER_DATA_FIELDS.join('|');
+// An interpolation in markup context: preceded by `>` (element text) or `="`
+// (attribute value), referencing a user-data field as the final property. The
+// trailing `(?:\s*\|\|[^{}]*)?` matches `${ field || 'default' }` forms, which
+// an earlier version of this guard missed.
+const MARKUP_INTERP = new RegExp(
+    `(>|=")\\$\\{([^{}]*\\.(?:${fieldAlternation}))[a-zA-Z0-9_?]*(?:\\s*\\|\\|[^{}]*)?\\}`,
+    'g'
+);
+
+function listLegacyFiles() {
+    const htmlFiles = readdirSync(repoRoot)
+        .filter((name) => name.endsWith('.html') && !name.startsWith('test'))
+        .map((name) => path.join(repoRoot, name));
+
+    const jsDir = path.join(repoRoot, 'js');
+    const walk = (dir) => readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
+        const full = path.join(dir, entry.name);
+        if (entry.isDirectory()) return walk(full);
+        if (entry.name.endsWith('.js') && !entry.name.includes('.test.')) return [full];
+        return [];
+    });
+
+    return [...htmlFiles, ...walk(jsDir)];
+}
+
+function getInterpolationExpression(interpolationMatch) {
+    return interpolationMatch.slice(interpolationMatch.indexOf('${') + 2, -1).trim();
+}
+
+function isSafeNumericReadout(interpolationMatch) {
+    const expression = getInterpolationExpression(interpolationMatch);
+    // Numeric readouts (e.g. ${String(x.description || '').length}) render a
+    // count, not the user string, so they are inert. Apply this only when the
+    // rendered expression itself is the numeric readout, not when a later
+    // fallback branch happens to reference a count.
+    return /^\s*(?:String\([^)]*\)|[^|()]+)\.(length|size|count)\s*(?:\|\|[^|]*)?\s*$/.test(expression);
+}
+
+function findUnescapedSinks(source) {
+    const offenders = [];
+    for (const match of source.matchAll(MARKUP_INTERP)) {
+        const expression = getInterpolationExpression(match[0]);
+        // Safe if the value is escaped (or is a runtime Error message, which is
+        // not user-stored content and surfaces only in dev error toasts).
+        if (expression.includes('escapeHtml(')) continue;
+        if (/\b(error|err|e)\.(message|name)$/.test(expression)) continue;
+        if (isSafeNumericReadout(match[0])) continue;
+        const line = source.slice(0, match.index).split('\n').length;
+        offenders.push(`${expression} (line ${line})`);
+    }
+    return offenders;
+}
+
+describe('findUnescapedSinks', () => {
+    it('allows numeric readouts when the rendered branch is a count', () => {
+        const offenders = findUnescapedSinks('<span>${String(player.description || \"\").length || 0}</span>');
+        expect(offenders).toEqual([]);
+    });
+
+    it('still flags unescaped user data when only the fallback is numeric', () => {
+        const offenders = findUnescapedSinks('<span>${row.name || totals.count}</span>');
+        expect(offenders).toEqual(['row.name || totals.count (line 1)']);
+    });
+});
+
+describe('legacy XSS guard: no unescaped user-data interpolation in markup', () => {
+    const files = listLegacyFiles();
+
+    it('scans a meaningful number of legacy files', () => {
+        // Sanity check so a broken glob does not silently pass.
+        expect(files.length).toBeGreaterThan(20);
+    });
+
+    for (const file of files) {
+        const relative = path.relative(repoRoot, file);
+        it(`has no unescaped user-data sinks in ${relative}`, () => {
+            const offenders = findUnescapedSinks(readFileSync(file, 'utf8'));
+            expect(offenders, `Unescaped user-data interpolation(s) in ${relative}: ${offenders.join(', ')}. Wrap with escapeHtml().`).toEqual([]);
+        });
+    }
+});

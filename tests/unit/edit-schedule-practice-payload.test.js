@@ -76,6 +76,51 @@ describe('edit schedule practice recurrence payload', () => {
         });
     });
 
+    it('preserves existing exDates and overrides when editing a recurring series', () => {
+        const existingExDates = ['2026-03-23'];
+        const existingOverrides = {
+            '2026-03-30': {
+                title: 'Adjusted Practice',
+                startTime: '18:15'
+            }
+        };
+        const practiceData = {
+            title: 'Practice',
+            exDates: existingExDates,
+            overrides: existingOverrides
+        };
+
+        const result = applyPracticeRecurrenceFields({
+            practiceData,
+            isRecurring: true,
+            editingPracticeId: 'practice-1',
+            editingSeriesId: 'series-existing',
+            recurrenceConfig: {
+                freq: 'weekly',
+                interval: 1,
+                byDays: ['MO'],
+                endType: 'count',
+                countValue: '6'
+            },
+            startDate: createLocalDate(2026, 2, 16, 17, 0),
+            endDate: createLocalDate(2026, 2, 16, 18, 30),
+            Timestamp: { fromDate: (value) => value },
+            deleteField: () => {
+                throw new Error('deleteField should not be used for recurring series updates');
+            },
+            generateSeriesId: () => 'series-new'
+        });
+
+        expect(result.exDates).toBe(existingExDates);
+        expect(result.overrides).toBe(existingOverrides);
+        expect(result.recurrence).toEqual({
+            freq: 'weekly',
+            interval: 1,
+            byDays: ['MO'],
+            count: 6
+        });
+    });
+
     it('stores overnight recurring practice end day offset', () => {
         const practiceData = {
             title: 'Late Practice'

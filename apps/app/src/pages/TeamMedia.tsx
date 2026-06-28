@@ -583,7 +583,7 @@ export function TeamMedia({ auth }: { auth: AuthState }) {
             <ChevronLeft className="h-4 w-4" aria-hidden="true" />
           </Link>
           <div className="flex h-11 w-11 flex-none items-center justify-center overflow-hidden rounded-2xl bg-primary-50 text-primary-700">
-            {isPhotoMediaItem(featured) ? <img src={featured.url} alt="" className="h-full w-full object-cover" /> : <ImageIcon className="h-5 w-5" aria-hidden="true" />}
+            {isPhotoMediaItem(featured) ? <img src={featured.url} alt="" loading="lazy" decoding="async" className="h-full w-full object-cover" /> : <ImageIcon className="h-5 w-5" aria-hidden="true" />}
           </div>
           <div className="min-w-0 flex-1">
             <div className="app-label">Team media</div>
@@ -930,7 +930,7 @@ function FolderCoverThumb({ folder, active }: { folder: TeamMediaFolder; active:
 
   return (
     <span className={`flex h-6 w-6 flex-none items-center justify-center overflow-hidden rounded-full ${active ? 'bg-white/20 text-white' : 'bg-white text-gray-500'}`} aria-hidden="true">
-      {coverUrl ? <img src={coverUrl} alt="" className="h-full w-full object-cover" /> : <ImageIcon className="h-3.5 w-3.5" aria-hidden="true" />}
+      {coverUrl ? <img src={coverUrl} alt="" loading="lazy" decoding="async" className="h-full w-full object-cover" /> : <ImageIcon className="h-3.5 w-3.5" aria-hidden="true" />}
     </span>
   );
 }

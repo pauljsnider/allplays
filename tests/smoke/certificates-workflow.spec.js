@@ -1,6 +1,6 @@
 import { test, expect } from '@playwright/test';
 
-test('certificates demo workflow creates, edits, exports, and prints', async ({ page, baseURL }) => {
+async function stubCertificateBrowserApis(page) {
     await page.addInitScript(() => {
         window.__certificatePrintCalls = 0;
         window.__certificatePrintSheetCount = 0;
@@ -20,6 +20,10 @@ test('certificates demo workflow creates, edits, exports, and prints', async ({ 
             window.__certificatePrintImageCount = document.querySelectorAll('#cert-print-root .cert-print-image').length;
         };
     });
+}
+
+test('certificates demo workflow creates, edits, exports, and prints', async ({ page, baseURL }) => {
+    await stubCertificateBrowserApis(page);
 
     await page.goto(`${baseURL}/certificates.html?demo=1#teamId=demo-junior-current`, { waitUntil: 'networkidle' });
     await expect(page.getByRole('heading', { name: 'Awards & Certificates' })).toBeVisible();
@@ -207,4 +211,56 @@ test('certificates demo workflow creates, edits, exports, and prints', async ({ 
         page.locator('#cert-zip-btn').click()
     ]);
     expect(zipDownload.suggestedFilename()).toBe('junior-current-certificates.zip');
+});
+
+test('one-off certificates save, reopen, export, and print with custom data intact', async ({ page, baseURL }) => {
+    await stubCertificateBrowserApis(page);
+
+    await page.goto(`${baseURL}/certificates.html?demo=1#teamId=demo-junior-current`, { waitUntil: 'networkidle' });
+    await expect(page.getByRole('heading', { name: 'Awards & Certificates' })).toBeVisible();
+
+    await page.locator('#cert-custom-recipient-btn').click();
+    await expect(page.locator('#cert-review-grid tbody tr')).toHaveCount(1);
+
+    await page.locator('[data-draft-field="recipientName"]').fill('Coach Choice');
+    await page.locator('[data-draft-field="awardTitle"]').fill('Leadership Award');
+    await page.locator('[data-draft-field="description"]').fill('Closed out the season with steady leadership.');
+    await page.locator('[data-draft-field="includeInExport"]').uncheck();
+    await expect(page.locator('[data-draft-field="includeInExport"]')).not.toBeChecked();
+    await expect(page.locator('#cert-review-preview .cert-recipient-name')).toContainText('Coach Choice');
+
+    await page.locator('#cert-save-drafts-btn').click();
+    await expect(page.locator('#cert-alert')).toContainText('Demo drafts saved for this session.');
+    await expect(page.locator('[data-open-batch]')).toHaveCount(1);
+    await expect(page.locator('[data-open-certificate]')).toHaveCount(1);
+
+    await page.locator('[data-open-certificate]').first().click();
+    await expect(page.locator('#cert-alert')).toContainText('Saved certificate opened for editing');
+    await expect(page.locator('[data-draft-field="recipientName"]')).toHaveValue('Coach Choice');
+    await expect(page.locator('[data-draft-field="awardTitle"]')).toHaveValue('Leadership Award');
+    await expect(page.locator('[data-draft-field="description"]')).toHaveValue('Closed out the season with steady leadership.');
+    await expect(page.locator('[data-draft-field="includeInExport"]')).not.toBeChecked();
+
+    await page.locator('[data-draft-field="includeInExport"]').check();
+    await page.locator('#cert-save-drafts-btn').click();
+    await expect(page.locator('#cert-alert')).toContainText('Demo drafts saved for this session.');
+
+    await page.locator('[data-open-batch]').first().click();
+    await expect(page.locator('#cert-alert')).toContainText('Saved run opened for editing');
+    await expect(page.locator('[data-draft-field="recipientName"]')).toHaveValue('Coach Choice');
+    await expect(page.locator('[data-draft-field="awardTitle"]')).toHaveValue('Leadership Award');
+    await expect(page.locator('[data-draft-field="description"]')).toHaveValue('Closed out the season with steady leadership.');
+    await expect(page.locator('[data-draft-field="includeInExport"]')).toBeChecked();
+
+    const [pngDownload] = await Promise.all([
+        page.waitForEvent('download'),
+        page.locator('#cert-png-btn').click()
+    ]);
+    expect(pngDownload.suggestedFilename()).toContain('coach-choice');
+
+    await page.locator('#cert-print-btn').click();
+    await expect.poll(() => page.evaluate(() => window.__certificatePrintCalls)).toBe(1);
+    await expect.poll(() => page.evaluate(() => window.__certificatePrintSheetCount)).toBe(1);
+    await expect.poll(() => page.evaluate(() => window.__certificatePrintImageCount)).toBe(1);
+    await expect(page.locator('#cert-review-preview .cert-recipient-name')).toContainText('Coach Choice');
 });

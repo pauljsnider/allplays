@@ -63,7 +63,7 @@ describe('issue 1997 awards publish export source contract', () => {
         expect(certificateAwardServiceTestSource).toContain('uses the legacy certificate narrative prompt verbatim');
         expect(certificateAwardServiceTestSource).toContain('publishes the same certificate payload shape parent certificate reads expect');
         expect(certificateAwardServiceTestSource).toContain('keeps drafts safe when AI fails and does not publish without confirmation');
-        expect(teamCertificatesTestSource).toContain('creates drafts, generates editable narratives, and does not hand off to the website');
+        expect(teamCertificatesTestSource).toContain('creates drafts, generates editable narratives, and keeps the saved batch for website handoff');
         expect(teamCertificatesTestSource).toContain('requires explicit review confirmation before publishing generated awards');
         expect(teamCertificatesTestSource).toContain('shows export failures without changing the drafted award');
     });

@@ -733,7 +733,7 @@ function DrillDetailModal({
           <div className="mt-5">
             <div className="text-sm font-black text-gray-950">Media & diagrams</div>
             <div className="mt-3 grid gap-3 sm:grid-cols-2">
-              {drill.diagramUrls.map((url, index) => <img key={`${url}-${index}`} src={url} alt={`${drill.title} diagram ${index + 1}`} className="w-full rounded-2xl border border-gray-200 object-cover" />)}
+              {drill.diagramUrls.map((url, index) => <img key={`${url}-${index}`} src={url} alt={`${drill.title} diagram ${index + 1}`} loading="lazy" decoding="async" className="w-full rounded-2xl border border-gray-200 object-cover" />)}
             </div>
           </div>
         ) : null}

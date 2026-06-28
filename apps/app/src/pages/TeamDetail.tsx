@@ -549,7 +549,7 @@ function TeamHero({ model }: { model: TeamDetailModel }) {
     <section className="app-card overflow-hidden">
       <div className="relative h-32 bg-gray-950 sm:h-44">
         {team.photoUrl ? (
-          <img src={team.photoUrl} alt={`${team.name} team photo`} className="h-full w-full object-cover opacity-90" />
+          <img src={team.photoUrl} alt={`${team.name} team photo`} decoding="async" className="h-full w-full object-cover opacity-90" />
         ) : (
           <div className="flex h-full w-full items-center justify-center bg-[linear-gradient(135deg,#111827_0%,#4338ca_50%,#047857_100%)]">
             <span className="text-5xl font-black text-white">{getInitials(team.name)}</span>

@@ -723,6 +723,83 @@ describe('scheduled practice writes', () => {
       exDates: { __deleteField: true }
     }));
   });
+
+  it('does not rewrite existing recurrence exDates and overrides on series edits', async () => {
+    const today = new Date();
+    today.setHours(18, 0, 0, 0);
+    const tomorrow = new Date(today);
+    tomorrow.setDate(today.getDate() + 1);
+    const dayAfterTomorrow = new Date(today);
+    dayAfterTomorrow.setDate(today.getDate() + 2);
+    const excludedDate = tomorrow.toISOString().slice(0, 10);
+    const overrideDate = dayAfterTomorrow.toISOString().slice(0, 10);
+
+    const existingMaster = {
+      id: 'practice-master',
+      type: 'practice',
+      title: 'Weekly Practice',
+      date: new Date(today),
+      end: new Date(today.getTime() + 90 * 60000),
+      location: 'Field 2',
+      notes: 'Master note',
+      seriesId: 'series-1',
+      isSeriesMaster: true,
+      recurrence: { freq: 'daily', interval: 1, count: 5 },
+      startTime: '18:00',
+      endTime: '19:30',
+      endDayOffset: 0,
+      exDates: [excludedDate],
+      overrides: {
+        [overrideDate]: {
+          title: 'Adjusted Practice',
+          location: 'South Field'
+        }
+      }
+    };
+    await updateScheduledPracticeForApp('team-1', {
+      title: 'Updated Practice',
+      startDate: new Date(today),
+      endDate: new Date(today.getTime() + 105 * 60000),
+      location: 'North Field',
+      notes: 'Bring water',
+      recurrence: {
+        isRecurring: true,
+        freq: 'daily',
+        interval: 1,
+        byDays: [],
+        endType: 'count',
+        countValue: 5
+      }
+    }, coachUser, {
+      eventId: 'practice-master',
+      seriesId: 'series-1',
+      scope: 'series'
+    });
+
+    expect(getGame).not.toHaveBeenCalled();
+
+    const updateEventCalls = vi.mocked(updateEvent).mock.calls;
+    const [, , payload] = updateEventCalls[updateEventCalls.length - 1] as [string, string, Record<string, unknown>];
+    const { expandRecurrence: actualExpandRecurrence } = await import('../../../../js/utils.js');
+    expect(payload).not.toHaveProperty('exDates');
+    expect(payload).not.toHaveProperty('overrides');
+
+    const expanded = actualExpandRecurrence({
+      ...existingMaster,
+      ...payload
+    }, 10);
+
+    expect(expanded.map((item: any) => item.instanceDate)).not.toContain(excludedDate);
+    expect(expanded.find((item: any) => item.instanceDate === overrideDate)).toMatchObject({
+      title: 'Adjusted Practice',
+      location: 'South Field',
+      isModified: true
+    });
+    expect(expanded.find((item: any) => item.instanceDate === today.toISOString().slice(0, 10))).toMatchObject({
+      title: 'Updated Practice',
+      location: 'North Field'
+    });
+  });
 });
 
 describe('parent game route resolution', () => {

@@ -14,6 +14,7 @@ const gameReportSections: Array<{ id: GameReportSectionId; label: string }> = [
 ];
 
 const liveReportStatuses = new Set(['live', 'in_progress', 'in-progress', 'halftime']);
+const completedReportStatuses = new Set(['final', 'completed', 'complete']);
 const liveReportPollIntervalMs = 15000;
 
 export function GameReportSections({ event }: { event: ParentScheduleEvent }) {
@@ -23,6 +24,7 @@ export function GameReportSections({ event }: { event: ParentScheduleEvent }) {
   const [reportError, setReportError] = useState<string | null>(null);
   const visibleReportSections = useMemo(() => getVisibleGameReportSections(report), [report]);
   const liveReportStatus = String(report?.game?.liveStatus || report?.game?.status || event.liveStatus || event.status || '').trim().toLowerCase();
+  const eventReportLoadStatus = normalizeGameReportLoadStatus(event.liveStatus || event.status);
   const isLivePlaysRefreshEnabled = activeReportSection === 'plays' && liveReportStatuses.has(liveReportStatus);
 
   const refreshReport = useCallback(async (showLoading = true) => {
@@ -42,7 +44,7 @@ export function GameReportSections({ event }: { event: ParentScheduleEvent }) {
     setReport(null);
     setActiveReportSection('summary');
     void refreshReport();
-  }, [event.liveStatus, event.status, event.homeScore, event.awayScore, refreshReport]);
+  }, [event.id, event.teamId, eventReportLoadStatus, refreshReport]);
 
   useEffect(() => {
     if (!isLivePlaysRefreshEnabled) return undefined;
@@ -128,6 +130,14 @@ function hasMediaReportData(report: GameReportData) {
 function shouldShowPlayByPlaySection(report: GameReportData) {
   const liveStatus = String(report.game?.liveStatus || report.game?.status || '').trim().toLowerCase();
   return report.plays.length > 0 || liveReportStatuses.has(liveStatus);
+}
+
+function normalizeGameReportLoadStatus(status: unknown) {
+  const normalized = String(status || '').trim().toLowerCase();
+  if (liveReportStatuses.has(normalized)) return 'live';
+  if (completedReportStatuses.has(normalized)) return 'completed';
+  if (!normalized || normalized === 'scheduled') return 'scheduled';
+  return normalized;
 }
 
 function getVisibleGameReportSections(report: GameReportData | null) {
