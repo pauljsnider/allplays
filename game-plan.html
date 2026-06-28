@@ -746,7 +746,7 @@
                          draggable="true"
                          data-player-id="${p.id}">
                         <div class="w-10 h-10 mx-auto rounded-full bg-gradient-to-br from-primary-100 to-primary-200 flex items-center justify-center border-2 border-primary-300 mb-1">
-                            <span class="font-bold text-primary-700 text-sm">${p.number || '?'}</span>
+                            <span class="font-bold text-primary-700 text-sm">${escapeHtml(p.number || '?')}</span>
                         </div>
                         <div class="text-xs font-semibold text-gray-900 truncate">${escapeHtml(p.name)}</div>
                     </div>
@@ -1095,7 +1095,7 @@
                             <div class="flex items-center justify-between mb-2">
                                 <div class="flex items-center gap-3">
                                     <div class="w-8 h-8 rounded-full bg-${statusColor}-100 flex items-center justify-center">
-                                        <span class="text-sm font-bold text-${statusColor}-700">${p.number || '?'}</span>
+                                        <span class="text-sm font-bold text-${statusColor}-700">${escapeHtml(p.number || '?')}</span>
                                     </div>
                                     <div>
                                         <span class="font-semibold text-gray-900">${escapeHtml(p.name)}</span>

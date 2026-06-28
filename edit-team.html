@@ -1275,7 +1275,7 @@
                 if (rolloverSourceTeams.length === 0) return;
 
                 sourceSelect.innerHTML = '<option value="">Do not copy access</option>' + rolloverSourceTeams.map((team) => `
-                    <option value="${team.id}">${team.name || 'Untitled team'}</option>
+                    <option value="${escapeHtml(team.id)}">${escapeHtml(team.name || 'Untitled team')}</option>
                 `).join('');
                 sourceSelect.addEventListener('change', renderRolloverAccessPreview);
                 panel.classList.remove('hidden');

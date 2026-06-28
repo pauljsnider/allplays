@@ -6,6 +6,7 @@ import { test, expect } from '@playwright/test';
 // genuinely exercises the fix at edit-roster.html:2410.
 
 const MALICIOUS_NAME = '"><img src=x onerror="window.__xssFired=true">';
+const MALICIOUS_NUMBER = '"><img src=y onerror="window.__xssFired=true">';
 
 // Real escapeHtml from js/utils.js — inlined so the stub does NOT neuter the fix.
 const UTILS_STUB = `
@@ -125,7 +126,7 @@ export function getGenerativeModel() {
                     text() {
                         return JSON.stringify({
                             operations: [
-                                { action: 'add', player: { name: ${JSON.stringify(MALICIOUS_NAME)}, number: '12' } }
+                                { action: 'add', player: { name: ${JSON.stringify(MALICIOUS_NAME)}, number: ${JSON.stringify(MALICIOUS_NUMBER)} } }
                             ]
                         });
                     }
@@ -163,11 +164,13 @@ test('malicious AI-imported player name is escaped in proposed changes (no XSS)'
     await expect(page.locator('#proposed-changes-section')).toBeVisible();
 
     const nameInput = page.locator('#proposed-changes-list input[placeholder="Player Name"]');
-    // The full payload is preserved as an inert input value (proves it was escaped
-    // into the attribute, not parsed as markup).
+    const numberInput = page.locator('#proposed-changes-list input[placeholder="Number (optional)"]');
+    // The full payloads are preserved as inert input values (proves both the name
+    // and the jersey number were escaped into the attribute, not parsed as markup).
     await expect(nameInput).toHaveValue(MALICIOUS_NAME);
+    await expect(numberInput).toHaveValue(MALICIOUS_NUMBER);
 
-    // No injected element and no fired handler.
+    // No injected element and no fired handler from either field.
     expect(await page.locator('#proposed-changes-list img').count()).toBe(0);
     expect(await page.evaluate(() => window.__xssFired)).toBeFalsy();
 });
