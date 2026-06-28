@@ -92,7 +92,7 @@ function renderParentRegistration() {
 
 describe('RegistrationDetail payment notice', () => {
   beforeEach(() => {
-    vi.clearAllMocks();
+    Object.values(parentToolsServiceMocks).forEach((mock) => mock.mockReset());
     openPublicUrlMock.mockReset();
   });
 
@@ -168,6 +168,62 @@ describe('RegistrationDetail payment notice', () => {
     expect(openPublicUrlMock).toHaveBeenCalledWith('https://stripe.example/checkout');
   });
 
+  it('hides the registration option selector when exactly one active option exists and still submits that option', async () => {
+    parentToolsServiceMocks.loadParentRegistrationDetail.mockResolvedValue(buildDetail({
+      options: [{ id: 'option-1', title: 'Varsity', capacity: 12, active: true }],
+      form: {
+        registrationOptionCounts: {
+          'option-1': { enrolled: 4 }
+        }
+      }
+    }));
+    parentToolsServiceMocks.submitOfflineRegistration.mockResolvedValue({
+      status: 'pending',
+      registrationId: 'registration-1'
+    });
+
+    renderParentRegistration();
+
+    expect(await screen.findByLabelText('Selected registration option')).toBeTruthy();
+    expect(screen.getByText('Varsity')).toBeTruthy();
+    expect(screen.getByText('8 spots left')).toBeTruthy();
+    expect(screen.queryByLabelText('Registration option')).toBeNull();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Submit registration' }));
+
+    await waitFor(() => expect(parentToolsServiceMocks.submitOfflineRegistration).toHaveBeenCalledWith(
+      'team-1',
+      'form-1',
+      expect.objectContaining({
+        selectedOptionId: 'option-1',
+        selectedOption: expect.objectContaining({ id: 'option-1', title: 'Varsity' })
+      })
+    ));
+  });
+
+  it('keeps the selector for multiple active options', async () => {
+    parentToolsServiceMocks.loadParentRegistrationDetail.mockResolvedValue(buildDetail({
+      options: [
+        { id: 'option-1', title: 'Varsity', capacity: 12, active: true },
+        { id: 'option-2', title: 'Junior Varsity', capacity: 12, active: true }
+      ],
+      form: {
+        registrationOptionCounts: {
+          'option-1': { enrolled: 4 },
+          'option-2': { enrolled: 6 }
+        }
+      }
+    }));
+
+    renderParentRegistration();
+
+    const optionSelect = await screen.findByLabelText('Registration option');
+    expect(optionSelect).toBeTruthy();
+    expect(screen.queryByLabelText('Selected registration option')).toBeNull();
+    expect(screen.getByRole('option', { name: 'Varsity' })).toBeTruthy();
+    expect(screen.getByRole('option', { name: 'Junior Varsity' })).toBeTruthy();
+  });
+
   it('shows the first installment due now plus the remaining schedule before checkout', async () => {
     parentToolsServiceMocks.loadPublicRegistrationDetail.mockResolvedValue(buildDetail({
       onlineCheckout: true,
@@ -232,7 +288,7 @@ describe('RegistrationDetail payment notice', () => {
     expect(screen.getByText('Your installment payment was received. Here is what remains on your payment schedule.')).toBeTruthy();
     expect(screen.getByLabelText('Remaining installment schedule')).toBeTruthy();
     expect(screen.getByText('Remaining balance')).toBeTruthy();
-    expect(screen.getByText('$41.68')).toBeTruthy();
+    expect(screen.getAllByText('$41.68')).toHaveLength(2);
     expect(screen.queryByText('Installment 2 · Due Jul 31, 2026')).toBeNull();
     expect(screen.getByText('Installment 3 · Due Aug 30, 2026')).toBeTruthy();
   });

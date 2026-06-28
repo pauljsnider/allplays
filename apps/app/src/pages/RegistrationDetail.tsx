@@ -138,7 +138,9 @@ function RegistrationDetailPage({ auth, publicAccess = false, staffReview = fals
   const activeOptions: any[] = useMemo(() => form ? ((Array.isArray(form.options) && form.options.length) ? form.options : getActiveRegistrationOptions(form, form.registrationOptionCounts || {})) : [], [form]);
   const paymentPlanChoices: any[] = useMemo(() => form ? ((Array.isArray(form.paymentPlans) && form.paymentPlans.length) ? form.paymentPlans : getPaymentPlanChoices(form)) : [], [form]);
   const showPaymentPlanSelector = paymentPlanChoices.length > 1;
-  const selectedOption = activeOptions.find((option) => option.id === selectedOptionId) || null;
+  const showRegistrationOptionSelector = activeOptions.length > 1;
+  const singleActiveOption = activeOptions.length === 1 ? activeOptions[0] : null;
+  const selectedOption = activeOptions.find((option) => option.id === selectedOptionId) || singleActiveOption || null;
   const placement = useMemo(() => {
     if (!form || !requiresRegistrationOption(form) || !selectedOptionId) return null;
     return decideRegistrationPlacement({ form, selectedOptionId, counts: form.registrationOptionCounts || {} });
@@ -227,7 +229,8 @@ function RegistrationDetailPage({ auth, publicAccess = false, staffReview = fals
     const currentParticipant = collectFieldValues(formRef.current, 'participant', participant);
     const currentGuardian = collectFieldValues(formRef.current, 'guardian', guardian);
     const currentWaiverAccepted = Boolean((formRef.current?.querySelector('[data-waiver-field]') as HTMLInputElement | null)?.checked ?? waiverAccepted);
-    const currentSelectedOptionId = String((formRef.current?.querySelector('[data-selected-option]') as HTMLSelectElement | null)?.value || selectedOptionId);
+    const selectedOptionInput = formRef.current?.querySelector('[data-selected-option]') as HTMLSelectElement | null;
+    const currentSelectedOptionId = selectedOptionInput ? String(selectedOptionInput.value) : selectedOptionId;
     const currentQuantity = hasQuantityDiscount ? Math.max(1, Number((formRef.current?.querySelector('[data-quantity-field]') as HTMLInputElement | null)?.value || quantity) || 1) : 1;
     const currentSelectedPaymentPlanId = String((formRef.current?.querySelector('[data-payment-plan]') as HTMLSelectElement | null)?.value || selectedPaymentPlanId);
     const currentSelectedOption = activeOptions.find((option) => option.id === currentSelectedOptionId) || selectedOption;
@@ -621,19 +624,24 @@ function RegistrationDetailPage({ auth, publicAccess = false, staffReview = fals
           <FieldGroup title="Participant information" fields={form.participantFields || []} values={participant} errors={fieldErrors} prefix="participant" onChange={updateParticipant} disabled={saving} />
           <FieldGroup title="Guardian information" fields={form.guardianFields || []} values={guardian} errors={fieldErrors} prefix="guardian" onChange={updateGuardian} disabled={saving} />
 
-          {activeOptions.length ? (
+          {showRegistrationOptionSelector ? (
             <fieldset className="grid gap-2">
               <legend className="text-sm font-black text-gray-950">Registration options</legend>
               <label className="min-w-0">
                 <span className="app-label">Registration option</span>
                 <select className="auth-input mt-1" data-selected-option value={selectedOptionId} onChange={(event) => setSelectedOptionId(event.target.value)} disabled={saving}>
                   <option value="">Select an option</option>
-                  {activeOptions.map((option) => <option key={option.id} value={option.id}>{option.title}</option>)}
-                </select>
+                  {activeOptions.map((option) => <option key={option.id} value={option.id}>{option.title}</option>)}</select>
               </label>
               {selectedOption ? <div className="text-xs font-semibold text-gray-500">{formatOptionAvailability(selectedOption, form.registrationOptionCounts || {})}</div> : null}
               {fieldErrors.selectedOption ? <InlineError message={fieldErrors.selectedOption} /> : null}
             </fieldset>
+          ) : singleActiveOption ? (
+            <div className="rounded-xl border border-gray-200 bg-gray-50 p-3" aria-label="Selected registration option">
+              <div className="app-label">Registration option</div>
+              <div className="mt-1 text-sm font-black text-gray-950">{singleActiveOption.title}</div>
+              <div className="mt-1 text-xs font-semibold text-gray-500">{formatOptionAvailability(singleActiveOption, form.registrationOptionCounts || {})}</div>
+            </div>
           ) : null}
 
           {hasQuantityDiscount ? (
