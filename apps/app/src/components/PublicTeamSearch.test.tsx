@@ -8,6 +8,7 @@ import { PublicTeamSearch } from './PublicTeamSearch';
 import { getPublicTeamsPage } from '../lib/publicTeamsService';
 import { openPublicUrl } from '../lib/publicActions';
 import { ParentHomeTeam } from '../lib/homeLogic';
+import { getTeamWebsiteHashHref } from '../lib/teamNavigation';
 
 vi.mock('../lib/publicTeamsService', () => ({
     getPublicTeamsPage: vi.fn() as MockInstance<(args?: { searchText?: string; cursor?: unknown | null; pageSize?: number }) => Promise<{ teams: ParentHomeTeam[]; nextCursor: unknown | null }>>,
@@ -251,7 +252,7 @@ describe('PublicTeamSearch', () => {
         expect(openPublicUrl).not.toHaveBeenCalled();
     });
 
-    it('routes to the app team page when only web access is available', async () => {
+    it('opens the website team page when only web access is available', async () => {
         renderSearch();
 
         fireEvent.click(screen.getByRole('button', { name: /Browse all public teams/i }));
@@ -260,10 +261,10 @@ describe('PublicTeamSearch', () => {
         const newYorkCard = screen.getByText('New York Knicks').closest('article');
         expect(newYorkCard).toBeTruthy();
 
-        fireEvent.click(within(newYorkCard as HTMLElement).getByRole('button', { name: 'View team' }));
+        fireEvent.click(within(newYorkCard as HTMLElement).getByRole('button', { name: 'Open website team page' }));
 
-        expect(openPublicUrl).not.toHaveBeenCalled();
-        expect(screen.getByTestId('location-probe').textContent).toBe('/teams/team-nyc-1');
+        expect(openPublicUrl).toHaveBeenCalledWith(getTeamWebsiteHashHref('team.html', 'team-nyc-1'));
+        expect(screen.getByTestId('location-probe').textContent).toBe('/teams');
     });
 
     it('renders an unavailable state when neither app nor web access exists', async () => {
