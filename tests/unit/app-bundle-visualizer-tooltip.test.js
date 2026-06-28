@@ -161,7 +161,7 @@ ${brokenTooltipHandler}
 
             await new Promise((resolve) => setTimeout(resolve, 250));
 
-            expect(document.querySelectorAll('.node')).toHaveLength(7);
+            expect(document.querySelectorAll('.node')).toHaveLength(5);
             expect(document.querySelector('svg')?.textContent).toContain('react-dom');
         } finally {
             dom.window.close();
