@@ -1533,17 +1533,15 @@ describe('React app messages integration', () => {
         expect(recipientLabels.some((label) => label.includes('Coach Jamie'))).toBe(false);
     });
 
-    it('keeps staff targeting contextual and sends the selected audience metadata', async () => {
-        const { container } = await renderMessages('/messages/team-1');
+    it('keeps staff conversation targeting contextual and sends the selected audience metadata', async () => {
+        chatMocks.loadChatConversations.mockResolvedValueOnce([
+            { id: 'team', type: 'team', name: 'Bears Team Chat', participantIds: [], participantRoles: ['team'] },
+            { id: 'staff-conversation', type: 'group', name: 'Staff only', participantIds: ['user-1'], participantRoles: ['staff'] }
+        ]);
 
-        await click(container, 'Audience: Full team');
-        await click(container, 'Staff only');
+        const { container } = await renderMessages('/messages/team-1?conversationId=staff-conversation');
 
-        expect(chatMocks.ensureStaffChatConversation).toHaveBeenCalledWith(
-            'team-1',
-            auth.user,
-            [{ id: 'team', type: 'team', name: 'Bears Team Chat', participantIds: [], participantRoles: ['team'] }]
-        );
+        expect(chatMocks.ensureStaffChatConversation).not.toHaveBeenCalled();
         expect(container.textContent).toContain('Staff only');
 
         const textarea = container.querySelector('textarea');
@@ -1767,18 +1765,21 @@ describe('React app messages integration', () => {
         expect(buttonByText(container, 'Save draft').disabled).toBe(true);
         expect(container.textContent).toContain('Draft saving is available only for Selected members.');
 
-        await click(container, 'Close');
-        await click(container, 'Audience: Full team');
-        await click(container, 'Staff only');
-        await click(container, 'Team Email');
+        chatMocks.loadChatConversations.mockResolvedValueOnce([
+            { id: 'team', type: 'team', name: 'Bears Team Chat', participantIds: [], participantRoles: ['team'] },
+            { id: 'staff-conversation', type: 'group', name: 'Staff only', participantIds: ['user-1'], participantRoles: ['staff'] }
+        ]);
+        const staffView = await renderMessages('/messages/team-1?conversationId=staff-conversation');
 
-        emailDialog = container.querySelector('[role="dialog"][aria-label="Team Email"]');
+        await click(staffView.container, 'Team Email');
+
+        emailDialog = staffView.container.querySelector('[role="dialog"][aria-label="Team Email"]');
         subjectInput = emailDialog.querySelector('input[placeholder="Team update"]');
         bodyInput = emailDialog.querySelector('textarea[placeholder="Write the email body..."]');
         await setFieldValue(subjectInput, 'Staff schedule');
         await setFieldValue(bodyInput, 'Film at 6.');
-        expect(buttonByText(container, 'Save draft').disabled).toBe(true);
-        expect(container.textContent).toContain('Draft saving is available only for Selected members.');
+        expect(buttonByText(staffView.container, 'Save draft').disabled).toBe(true);
+        expect(staffView.container.textContent).toContain('Draft saving is available only for Selected members.');
     });
 
     it('opens photo, video, and link actions from the attachment button', async () => {

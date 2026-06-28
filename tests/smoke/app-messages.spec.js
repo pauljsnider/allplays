@@ -253,7 +253,8 @@ async function mockMessagesModules(page, options = {}) {
 
                 export async function loadChatConversations() {
                     return [
-                        { id: 'team', type: 'team', name: 'Bears Team Chat', participantIds: [], participantRoles: ['team'] }
+                        { id: 'team', type: 'team', name: 'Bears Team Chat', participantIds: [], participantRoles: ['team'] },
+                        { id: 'staff-conversation', type: 'group', name: 'Staff only', participantIds: ['user-1'], participantRoles: ['staff'] }
                     ];
                 }
 
@@ -467,7 +468,13 @@ test('messages inbox and team chat exercise real migrated chat UX', async ({ pag
     await page.getByPlaceholder('Message Bears').fill('');
 
     await page.getByRole('button', { name: /Audience: Full team/ }).click();
-    await page.getByRole('button', { name: 'Staff only' }).click();
+    await expect(page.getByRole('button', { name: 'Staff only' })).toBeHidden();
+    await page.getByRole('button', { name: 'Close Message audience' }).click();
+
+    await page.getByRole('button', { name: 'Team chat' }).click();
+    const conversationsDialog = page.getByRole('dialog', { name: 'Conversations' });
+    await expect(conversationsDialog).toBeVisible();
+    await conversationsDialog.getByRole('button', { name: 'Staff only Group conversation' }).click();
 
     await page.getByPlaceholder('Message Bears').fill('@ALL PLAYS who needs RSVP help?');
     await page.getByRole('button', { name: 'Send message' }).click();

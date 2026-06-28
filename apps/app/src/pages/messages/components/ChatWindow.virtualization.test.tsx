@@ -4,7 +4,7 @@ import * as React from 'react';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { ChatMessage } from '../../../lib/chatService';
+import { ensureStaffChatConversation, type ChatConversation, type ChatMessage } from '../../../lib/chatService';
 import type { AuthState } from '../../../lib/types';
 import {
   AudienceSheet,
@@ -19,6 +19,52 @@ import {
 
 const normalizeChatReactionsSpy = vi.fn();
 const getMessageAttachmentsSpy = vi.fn();
+const mockShellLayoutState = { isDesktopWeb: false };
+const mockChatSheetsState = {
+  showConversationSheet: false,
+  showAudienceSheet: false,
+  showMediaGallery: false,
+  showAttachSheet: false,
+  showLinkSheet: false,
+  showEmailSheet: false,
+  openConversationSheet: vi.fn(),
+  closeConversationSheet: vi.fn(),
+  openAudienceSheet: vi.fn(),
+  closeAudienceSheet: vi.fn(),
+  openMediaGallery: vi.fn(),
+  closeMediaGallery: vi.fn(),
+  openAttachSheet: vi.fn(),
+  closeAttachSheet: vi.fn(),
+  openLinkSheet: vi.fn(),
+  closeLinkSheet: vi.fn(),
+  openEmailSheet: vi.fn(),
+  closeEmailSheet: vi.fn()
+};
+const mockChatTeamState: {
+  team: { id: string; name: string };
+  profile: { fullName: string };
+  canModerate: boolean;
+  conversations: ChatConversation[];
+  setConversations: ReturnType<typeof vi.fn>;
+  selectedConversationId: string;
+  setSelectedConversationId: ReturnType<typeof vi.fn>;
+  loadingContext: boolean;
+  error: string | null;
+  reloadConversations: ReturnType<typeof vi.fn>;
+  switchConversation: ReturnType<typeof vi.fn>;
+} = {
+  team: { id: 'team-1', name: 'Bears' },
+  profile: { fullName: 'Pat Parent' },
+  canModerate: true,
+  conversations: [{ id: 'team', type: 'team', name: 'Team chat', participantIds: [], participantRoles: ['team'] }],
+  setConversations: vi.fn(),
+  selectedConversationId: 'team',
+  setSelectedConversationId: vi.fn(),
+  loadingContext: false,
+  error: null,
+  reloadConversations: vi.fn(),
+  switchConversation: vi.fn(() => true)
+};
 
 vi.mock('../../../lib/chatLogic', async () => {
   const actual = await vi.importActual<typeof import('../../../lib/chatLogic')>('../../../lib/chatLogic');
@@ -101,7 +147,7 @@ vi.mock('../../../lib/publicActions', () => ({
 }));
 
 vi.mock('../../../lib/useShellLayout', () => ({
-  useShellLayout: () => ({ isDesktopWeb: false })
+  useShellLayout: () => mockShellLayoutState
 }));
 
 vi.mock('../../../lib/voiceService', () => ({
@@ -131,42 +177,11 @@ vi.mock('../../../lib/chatService', () => ({
 }));
 
 vi.mock('../hooks/useChatSheets', () => ({
-  useChatSheets: () => ({
-    showConversationSheet: false,
-    showAudienceSheet: false,
-    showMediaGallery: false,
-    showAttachSheet: false,
-    showLinkSheet: false,
-    showEmailSheet: false,
-    openConversationSheet: vi.fn(),
-    closeConversationSheet: vi.fn(),
-    openAudienceSheet: vi.fn(),
-    closeAudienceSheet: vi.fn(),
-    openMediaGallery: vi.fn(),
-    closeMediaGallery: vi.fn(),
-    openAttachSheet: vi.fn(),
-    closeAttachSheet: vi.fn(),
-    openLinkSheet: vi.fn(),
-    closeLinkSheet: vi.fn(),
-    openEmailSheet: vi.fn(),
-    closeEmailSheet: vi.fn()
-  })
+  useChatSheets: () => mockChatSheetsState
 }));
 
 vi.mock('../hooks/useChatTeam', () => ({
-  useChatTeam: () => ({
-    team: { id: 'team-1', name: 'Bears' },
-    profile: { fullName: 'Pat Parent' },
-    canModerate: true,
-    conversations: [{ id: 'team', type: 'team', name: 'Team chat', participantIds: [], participantRoles: ['team'] }],
-    setConversations: vi.fn(),
-    selectedConversationId: 'team',
-    setSelectedConversationId: vi.fn(),
-    loadingContext: false,
-    error: null,
-    reloadConversations: vi.fn(),
-    switchConversation: vi.fn(() => true)
-  })
+  useChatTeam: () => mockChatTeamState
 }));
 
 vi.mock('../hooks/useChatMessages', async () => {
@@ -222,6 +237,38 @@ class MockResizeObserver {
   observe() {}
   disconnect() {}
 }
+
+beforeEach(() => {
+  mockShellLayoutState.isDesktopWeb = false;
+  mockChatSheetsState.showConversationSheet = false;
+  mockChatSheetsState.showAudienceSheet = false;
+  mockChatSheetsState.showMediaGallery = false;
+  mockChatSheetsState.showAttachSheet = false;
+  mockChatSheetsState.showLinkSheet = false;
+  mockChatSheetsState.showEmailSheet = false;
+  Object.values(mockChatSheetsState).forEach((value) => {
+    if (typeof value === 'function' && 'mockReset' in value) {
+      value.mockReset();
+    }
+  });
+  mockChatTeamState.team = { id: 'team-1', name: 'Bears' };
+  mockChatTeamState.profile = { fullName: 'Pat Parent' };
+  mockChatTeamState.canModerate = true;
+  mockChatTeamState.conversations = [{ id: 'team', type: 'team', name: 'Team chat', participantIds: [], participantRoles: ['team'] }];
+  mockChatTeamState.selectedConversationId = 'team';
+  mockChatTeamState.loadingContext = false;
+  mockChatTeamState.error = null;
+  mockChatTeamState.setConversations.mockReset();
+  mockChatTeamState.setSelectedConversationId.mockReset();
+  mockChatTeamState.reloadConversations.mockReset();
+  mockChatTeamState.switchConversation.mockReset();
+  mockChatTeamState.switchConversation.mockReturnValue(true);
+  vi.mocked(ensureStaffChatConversation).mockReset();
+});
+
+afterEach(() => {
+  cleanup();
+});
 
 describe('ChatWindow virtualization', () => {
   beforeEach(() => {
@@ -489,6 +536,57 @@ describe('ChatWindow virtualization', () => {
   });
 });
 
+describe('ChatWindow conversation switching', () => {
+  it('keeps staff chat reachable from the conversation selector without audience-sheet staff routing', () => {
+    mockChatSheetsState.showConversationSheet = true;
+    mockChatTeamState.conversations = [
+      { id: 'team', type: 'team', name: 'Team chat', participantIds: [], participantRoles: ['team'] },
+      { id: 'staff-conversation', type: 'group', name: 'Staff only', participantIds: ['coach-1'], participantRoles: ['staff'] }
+    ];
+
+    render(
+      <MemoryRouter>
+        <ChatWindow auth={auth} teamId="team-1" />
+      </MemoryRouter>
+    );
+
+    fireEvent.click(screen.getAllByRole('button', { name: /Staff only/i })[0]);
+
+    expect(mockChatTeamState.switchConversation).toHaveBeenCalledWith('staff-conversation');
+    expect(ensureStaffChatConversation).not.toHaveBeenCalled();
+  });
+
+  it('creates the staff conversation from the selector when a team has never opened it', async () => {
+    mockChatSheetsState.showConversationSheet = true;
+    mockChatTeamState.conversations = [
+      { id: 'team', type: 'team', name: 'Team chat', participantIds: [], participantRoles: ['team'] }
+    ];
+    vi.mocked(ensureStaffChatConversation).mockResolvedValue({
+      id: 'staff-conversation',
+      type: 'group',
+      name: 'Staff only',
+      participantIds: [],
+      participantRoles: ['staff']
+    } as ChatConversation);
+
+    render(
+      <MemoryRouter>
+        <ChatWindow auth={auth} teamId="team-1" />
+      </MemoryRouter>
+    );
+
+    expect(screen.getByRole('button', { name: /Staff only.*Group conversation/i })).not.toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: /Staff only.*Group conversation/i }));
+
+    await waitFor(() => {
+      expect(ensureStaffChatConversation).toHaveBeenCalledWith('team-1', auth.user, [
+        { id: 'team', type: 'team', name: 'Team chat', participantIds: [], participantRoles: ['team'] }
+      ]);
+    });
+    expect(mockChatTeamState.switchConversation).toHaveBeenCalledWith('staff-conversation');
+  });
+});
+
 describe('AudienceSheet recipient search', () => {
   function getRecipientCheckbox(name: string) {
     return screen.getByText(name).closest('label')?.querySelector('input') as HTMLInputElement;
@@ -521,6 +619,26 @@ describe('AudienceSheet recipient search', () => {
     return render(<AudienceSheetHarness />);
   }
 
+  it('shows only full team and selected members as audience choices', () => {
+    render(
+      <AudienceSheet
+        selectedTarget="full_team"
+        selectedRecipientIds={[]}
+        recipientOptions={[]}
+        recipientOptionsLoading={false}
+        recipientOptionsError={null}
+        onTargetChange={vi.fn() as any}
+        onRecipientsChange={vi.fn()}
+        onRetryRecipientOptions={vi.fn()}
+        onClose={vi.fn()}
+      />
+    );
+
+    expect(screen.getByRole('button', { name: /Full team/i })).not.toBeNull();
+    expect(screen.getByRole('button', { name: /Selected members/i })).not.toBeNull();
+    expect(screen.queryByRole('button', { name: /Staff only/i })).toBeNull();
+  });
+
   it('filters recipient options immediately by name or detail text', () => {
     renderAudienceSheet();
 
@@ -528,43 +646,43 @@ describe('AudienceSheet recipient search', () => {
       target: { value: 'guardian for sam' }
     });
 
-    expect(screen.getByText('Taylor Guardian')).toBeInTheDocument();
-    expect(screen.queryByText('Sam Player')).not.toBeInTheDocument();
-    expect(screen.queryByText('Casey Center')).not.toBeInTheDocument();
+    expect(screen.getByText('Taylor Guardian')).not.toBeNull();
+    expect(screen.queryByText('Sam Player')).toBeNull();
+    expect(screen.queryByText('Casey Center')).toBeNull();
   });
 
   it('keeps selected recipients pinned and checked while filtering and after clearing search', () => {
     renderAudienceSheet(['player-sam']);
 
-    expect(getRecipientCheckbox('Sam Player')).toBeChecked();
-    expect(screen.getByText('Selected')).toBeInTheDocument();
+    expect(getRecipientCheckbox('Sam Player').checked).toBe(true);
+    expect(screen.getByText('Selected')).not.toBeNull();
 
     fireEvent.change(screen.getByPlaceholderText('Search by member or guardian name'), {
       target: { value: 'zzz' }
     });
 
-    expect(getRecipientCheckbox('Sam Player')).toBeChecked();
-    expect(screen.getByText('No recipients match that search yet.')).toBeInTheDocument();
+    expect(getRecipientCheckbox('Sam Player').checked).toBe(true);
+    expect(screen.getByText('No recipients match that search yet.')).not.toBeNull();
 
     fireEvent.change(screen.getByPlaceholderText('Search by member or guardian name'), {
       target: { value: '' }
     });
 
-    expect(getRecipientCheckbox('Sam Player')).toBeChecked();
-    expect(screen.queryByText('No recipients match that search yet.')).not.toBeInTheDocument();
+    expect(getRecipientCheckbox('Sam Player').checked).toBe(true);
+    expect(screen.queryByText('No recipients match that search yet.')).toBeNull();
   });
 
   it('blocks Done with no selected recipients and allows it after choosing a filtered recipient', () => {
     renderAudienceSheet();
 
-    const doneButton = screen.getByRole('button', { name: 'Done' });
-    expect(doneButton).toBeDisabled();
+    const doneButton = screen.getByRole('button', { name: 'Done' }) as HTMLButtonElement;
+    expect(doneButton.disabled).toBe(true);
 
     fireEvent.change(screen.getByPlaceholderText('Search by member or guardian name'), {
       target: { value: 'casey' }
     });
     fireEvent.click(getRecipientCheckbox('Casey Center'));
 
-    expect(doneButton).not.toBeDisabled();
+    expect(doneButton.disabled).toBe(false);
   });
 });
