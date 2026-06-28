@@ -62,5 +62,12 @@ describe('viewLoadTiming', () => {
     const view = render(<TestViewTimer ready={false} resetKey="a" />);
     view.rerender(<TestViewTimer ready={false} resetKey="b" />);
     expect(uxTimingMocks.startUxTimer).toHaveBeenCalledTimes(2);
+    expect(uxTimingMocks.timerEnd).toHaveBeenCalledWith({ outcome: 'abandoned', abandoned: 1 });
+  });
+
+  it('ends abandoned timers when a view unmounts before it is ready', () => {
+    const view = render(<TestViewTimer ready={false} />);
+    view.unmount();
+    expect(uxTimingMocks.timerEnd).toHaveBeenCalledWith({ outcome: 'abandoned', abandoned: 1 });
   });
 });

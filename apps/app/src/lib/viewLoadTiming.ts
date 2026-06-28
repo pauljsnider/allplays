@@ -47,7 +47,12 @@ export function useViewLoadTimer({
 
     return () => {
       if (activeKeyRef.current === key) {
+        const timer = timerRef.current;
         timerRef.current = null;
+        activeKeyRef.current = '';
+        if (timer && completedKeyRef.current !== key) {
+          timer.end({ outcome: 'abandoned', abandoned: 1 });
+        }
       }
     };
     // getBaseMeta is intentionally sampled only when a new timing key starts.
