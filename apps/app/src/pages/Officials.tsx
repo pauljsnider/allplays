@@ -2,6 +2,7 @@ import { AlertCircle, CalendarDays, CheckCircle2, Loader2, MapPin, Shield, UserR
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { getEventDetailPath } from '../lib/homeLogic';
+import { completeParentCoreWorkflowTimer } from '../lib/parentWorkflowTiming';
 import { claimOfficialAssignmentItem, loadOfficialAssignments, respondToOfficialAssignmentItem, type OfficialAssignmentItem } from '../lib/scheduleService';
 import { formatEventDateLabel, formatEventTimeLabel } from '../lib/scheduleLogic';
 import type { AuthState } from '../lib/types';
@@ -46,6 +47,18 @@ export function Officials({ auth }: { auth: AuthState }) {
 
   const assigned = useMemo(() => items.filter((item) => item.kind === 'assigned'), [items]);
   const open = useMemo(() => items.filter((item) => item.kind === 'open'), [items]);
+
+  useEffect(() => {
+    if (loading || !hasAccess) return;
+    completeParentCoreWorkflowTimer('officials', {
+      targetPage: 'officials',
+      teamId: requestedTeamId,
+      assignmentCount: items.length,
+      assignedCount: assigned.length,
+      openCount: open.length,
+      completedRoute: requestedTeamId ? `/officials?teamId=${requestedTeamId}` : '/officials'
+    });
+  }, [assigned.length, hasAccess, items.length, loading, open.length, requestedTeamId]);
 
   const runAction = async (item: OfficialAssignmentItem, action: () => Promise<void>, successMessage: string) => {
     const key = `${item.teamId}:${item.gameId}:${item.slotId}`;

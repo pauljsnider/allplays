@@ -15,13 +15,29 @@ const sentryMocks = vi.hoisted(() => {
   };
 });
 
+const performanceMocks = vi.hoisted(() => {
+  const end = vi.fn();
+  return {
+    end,
+    startPerformanceSpan: vi.fn((label: string) => ({
+      label,
+      traceName: `trace-${label}`,
+      startedAt: performance.now(),
+      end
+    })),
+    recordCompletedPerformanceSpan: vi.fn()
+  };
+});
+
 vi.mock('@sentry/browser', () => sentryMocks);
 vi.mock('@legacy/telemetry.js', () => ({}));
+vi.mock('./performanceInstrumentation', () => performanceMocks);
 
 describe('app telemetry bridge', () => {
   beforeEach(() => {
     vi.resetModules();
     vi.clearAllMocks();
+    performanceMocks.end.mockClear();
     delete window.AllPlaysTelemetry;
     delete window.__ALLPLAYS_REPORT_REACT_ERROR__;
     delete window.__ALLPLAYS_CONFIG__;
@@ -153,6 +169,12 @@ describe('app telemetry bridge', () => {
       }),
       { flush: true }
     );
+    expect(performanceMocks.startPerformanceSpan).toHaveBeenCalledWith('profile initial load', expect.objectContaining({
+      kind: 'initial_load'
+    }));
+    expect(performanceMocks.recordCompletedPerformanceSpan).toHaveBeenCalledWith('schedule initial load', 250, 50, expect.objectContaining({
+      kind: 'initial_load'
+    }));
   });
 
   it('records app startup timing with the canonical startup stage', async () => {
@@ -177,6 +199,35 @@ describe('app telemetry bridge', () => {
         phase: 'initial-render',
         durationMs: 100,
         outcome: 'success'
+      }),
+      {}
+    );
+    expect(performanceMocks.startPerformanceSpan).toHaveBeenCalledWith('app startup', expect.objectContaining({
+      kind: 'ux'
+    }));
+  });
+
+  it('emits workflow timing separately from generic UX spans', async () => {
+    const capture = vi.fn();
+    window.AllPlaysTelemetry = { capture };
+    const telemetry = await import('./telemetry');
+
+    vi.spyOn(performance, 'now').mockReturnValue(360);
+    telemetry.recordAppWorkflowTiming('schedule create game', 300, {
+      route: 'schedule',
+      eventCount: 1
+    });
+
+    await Promise.resolve();
+
+    expect(capture).toHaveBeenCalledWith(
+      'app_workflow_timing',
+      expect.objectContaining({
+        workflowName: 'schedule create game',
+        durationMs: 60,
+        outcome: 'success',
+        route: 'schedule',
+        eventCount: 1
       }),
       {}
     );

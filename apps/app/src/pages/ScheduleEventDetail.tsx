@@ -115,6 +115,7 @@ import {
   type RsvpResponse
 } from '../lib/scheduleLogic';
 import { DEFAULT_TEAM_CONVERSATION_ID } from '../lib/chatLogic';
+import { completeParentCoreWorkflowTimer } from '../lib/parentWorkflowTiming';
 // Type-only imports for deferred modules — runtime values loaded on demand below
 import type { LiveGameChatMessage } from '../lib/liveGameChatService';
 import type { LiveGameReaction, LiveGameReactionType } from '../lib/liveGameReactionsService';
@@ -366,6 +367,19 @@ export function ScheduleEventDetail({ auth }: { auth: AuthState }) {
   useEffect(() => {
     setAvailabilityNote(selectedEvent?.myRsvpNote || '');
   }, [selectedEvent?.eventKey, selectedEvent?.myRsvpNote]);
+
+  useEffect(() => {
+    if (!selectedEvent || loading || initialLoadPending) return;
+    completeParentCoreWorkflowTimer('schedule_event', {
+      targetPage: 'schedule_event',
+      teamId: decodedTeamId,
+      eventId: decodedEventId,
+      playerId: selectedEvent.childId || '',
+      eventType: selectedEvent.type,
+      section: searchParams.get('section') || '',
+      completedRoute: `/schedule/${decodedTeamId}/${decodedEventId}`
+    });
+  }, [decodedEventId, decodedTeamId, initialLoadPending, loading, searchParams, selectedEvent]);
 
   const updateEvents = useCallback((updater: (current: ParentScheduleEvent[]) => ParentScheduleEvent[]) => {
     setEvents((current) => updater(current));

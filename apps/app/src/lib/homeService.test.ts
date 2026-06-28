@@ -35,9 +35,33 @@ const user = {
     displayName: 'Pat Parent'
 } as any;
 
+function installTestLocalStorage() {
+    const store = new Map<string, string>();
+    Object.defineProperty(window, 'localStorage', {
+        configurable: true,
+        value: {
+            getItem: vi.fn((key: string) => store.get(key) || null),
+            setItem: vi.fn((key: string, value: string) => {
+                store.set(key, String(value));
+            }),
+            removeItem: vi.fn((key: string) => {
+                store.delete(key);
+            }),
+            key: vi.fn((index: number) => Array.from(store.keys())[index] || null),
+            clear: vi.fn(() => {
+                store.clear();
+            }),
+            get length() {
+                return store.size;
+            }
+        }
+    });
+}
+
 describe('homeService Teams bootstrap reuse', () => {
     beforeEach(() => {
         vi.clearAllMocks();
+        installTestLocalStorage();
         clearAppDataCache();
         window.localStorage.clear();
         chatServiceMocks.loadChatInbox.mockResolvedValue({ teams: [] });

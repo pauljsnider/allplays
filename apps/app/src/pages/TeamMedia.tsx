@@ -42,6 +42,7 @@ import {
   type TeamMediaModel
 } from '../lib/parentToolsService';
 import { useAppAsyncOperation } from '../lib/useAsyncOperation';
+import { WORKFLOW_TIMING, startWorkflowTimer } from '../lib/workflowTiming';
 import type { AuthState } from '../lib/types';
 
 export function TeamMedia({ auth }: { auth: AuthState }) {
@@ -376,6 +377,11 @@ export function TeamMedia({ auth }: { auth: AuthState }) {
     setMessage(`Uploading ${files.length} photo${files.length === 1 ? '' : 's'}...`);
     let uploaded = 0;
     let failed = 0;
+    let workflowError: unknown = null;
+    const timer = startWorkflowTimer(WORKFLOW_TIMING.teamMediaPhotoUpload, {
+      route: 'team-media',
+      fileCount: files.length
+    });
     const uploadedItems: TeamMediaItem[] = [];
     try {
       await runWithConcurrency(queueItems, PHOTO_UPLOAD_CONCURRENCY, async (queueItem, index) => {
@@ -411,7 +417,16 @@ export function TeamMedia({ auth }: { auth: AuthState }) {
         setMessage('');
         setError(failed > 0 ? 'No photos uploaded. Choose image files that are 10 MB or smaller.' : 'Photo upload failed.');
       }
+    } catch (error) {
+      workflowError = error;
+      throw error;
     } finally {
+      timer.end({
+        fileCount: files.length,
+        uploadedCount: uploaded,
+        failedCount: failed,
+        error: workflowError || undefined
+      });
       setUploading('');
       if (photoInputRef.current) photoInputRef.current.value = '';
     }
@@ -428,6 +443,11 @@ export function TeamMedia({ auth }: { auth: AuthState }) {
     setMessage(`Uploading ${files.length} file${files.length === 1 ? '' : 's'}...`);
     let uploaded = 0;
     let failed = 0;
+    let workflowError: unknown = null;
+    const timer = startWorkflowTimer(WORKFLOW_TIMING.teamMediaFileUpload, {
+      route: 'team-media',
+      fileCount: files.length
+    });
     const uploadedItems: TeamMediaItem[] = [];
     try {
       for (const [index, queueItem] of queueItems.entries()) {
@@ -463,7 +483,16 @@ export function TeamMedia({ auth }: { auth: AuthState }) {
         setMessage('');
         setError(failed > 0 ? 'No files uploaded. Choose supported documents that are 10 MB or smaller.' : 'File upload failed.');
       }
+    } catch (error) {
+      workflowError = error;
+      throw error;
     } finally {
+      timer.end({
+        fileCount: files.length,
+        uploadedCount: uploaded,
+        failedCount: failed,
+        error: workflowError || undefined
+      });
       setUploading('');
       if (fileInputRef.current) fileInputRef.current.value = '';
     }
@@ -476,13 +505,19 @@ export function TeamMedia({ auth }: { auth: AuthState }) {
     setCreatingAlbum(true);
     setError('');
     setMessage('');
+    const timer = startWorkflowTimer(WORKFLOW_TIMING.teamMediaAlbumCreate, {
+      route: 'team-media',
+      visibility: albumVisibility
+    });
     try {
       const folderId = await createTeamMediaAlbumForApp(teamId, { name, visibility: albumVisibility });
       setMessage('Album created. You can add photos, files, or links now.');
       setAlbumName('');
       await refresh({ showLoading: false, preferredFolderId: String(folderId || ''), folderIdsToLoad: folderId ? [String(folderId)] : [] });
+      timer.end({ refreshed: true });
     } catch (albumError: any) {
       setError(toAppServiceError(albumError, 'Unable to create album. Check your connection and permissions, then try again.').message);
+      timer.end({ error: albumError });
     } finally {
       setCreatingAlbum(false);
     }
@@ -494,14 +529,19 @@ export function TeamMedia({ auth }: { auth: AuthState }) {
     setUploading('link');
     setError('');
     setMessage('');
+    const timer = startWorkflowTimer(WORKFLOW_TIMING.teamMediaLinkAdd, {
+      route: 'team-media'
+    });
     try {
       await addParentTeamMediaLink(teamId, activeFolder.id, linkTitle, linkUrl);
       setMessage('Media link added.');
       setLinkTitle('');
       setLinkUrl('');
       await refresh({ showLoading: false, preferredFolderId: activeFolder.id, folderIdsToLoad: [activeFolder.id] });
+      timer.end({ refreshed: true });
     } catch (linkError: any) {
       setError(toAppServiceError(linkError, 'Unable to add media link.').message);
+      timer.end({ error: linkError });
     } finally {
       setUploading('');
     }

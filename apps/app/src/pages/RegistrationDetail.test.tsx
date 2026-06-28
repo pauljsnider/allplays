@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { MemoryRouter, Route, Routes, useNavigate } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { RegistrationDetail } from './RegistrationDetail';
@@ -356,9 +356,10 @@ describe('RegistrationDetail payment notice', () => {
 
     expect(await screen.findByRole('heading', { name: 'Payment successful' })).toBeTruthy();
     expect(screen.getByText('Your installment payment was received. Here is what remains on your payment schedule.')).toBeTruthy();
-    expect(screen.getByLabelText('Remaining installment schedule')).toBeTruthy();
+    const remainingSchedule = screen.getByLabelText('Remaining installment schedule');
+    expect(remainingSchedule).toBeTruthy();
     expect(screen.getByText('Remaining balance')).toBeTruthy();
-    expect(screen.getAllByText('$41.68')).toHaveLength(2);
+    expect(within(remainingSchedule).getAllByText('$41.68')).toHaveLength(2);
     expect(screen.queryByText('Installment 2 · Due Jul 31, 2026')).toBeNull();
     expect(screen.getByText('Installment 3 · Due Aug 30, 2026')).toBeTruthy();
   });

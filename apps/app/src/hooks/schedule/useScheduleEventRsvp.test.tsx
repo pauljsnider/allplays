@@ -172,7 +172,9 @@ describe('useScheduleEventRsvp', () => {
         });
         expect(screen.getByTestId('current-rsvp').textContent).toBe('going');
         expect(startInteractionTimer).toHaveBeenCalledWith(UX_TIMING.rsvpTap, { response: 'going' });
-        expect(rsvpInteractionEnd).toHaveBeenCalledWith();
+        await waitFor(() => {
+            expect(rsvpInteractionEnd).toHaveBeenCalledWith();
+        });
         expect(rsvpInteractionEnd).not.toHaveBeenCalledWith({ error: 'RSVP submit failed' });
     });
 

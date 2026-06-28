@@ -89,6 +89,7 @@ import {
 } from '../../../lib/chatLogic';
 import { sharePublicUrl } from '../../../lib/publicActions';
 import { useShellLayout } from '../../../lib/useShellLayout';
+import { useViewLoadTimer } from '../../../lib/viewLoadTiming';
 import type { AuthState } from '../../../lib/types';
 import { voiceRecognition, type VoiceListenerHandle } from '../../../lib/voiceService';
 import { startInteractionTimer, UX_TIMING } from '../../../lib/uxTiming';
@@ -418,6 +419,27 @@ export function ChatWindow({
     onLiveUpdateState: handleLiveUpdateState,
     onMessagesReset: handleMessagesReset,
     onMarkRead: handleMarkRead
+  });
+  useViewLoadTimer({
+    viewName: 'messages choose team',
+    route: `/messages/${teamId}`,
+    ready: Boolean(team && !loadingContext && !loadingMessages),
+    resetKey: `${auth.user?.uid || 'anonymous'}:${teamId}:${effectiveConversationId}`,
+    disabled: !auth.user || !teamId,
+    getBaseMeta: () => ({
+      page: 'messages',
+      teamId,
+      conversationId: effectiveConversationId,
+      embedded
+    }),
+    getCompleteMeta: () => ({
+      messageCount: messages.length,
+      conversationCount: conversations.length,
+      unreadCount: inboxTeam?.unreadCount || 0,
+      canModerate,
+      embedded,
+      error: teamError || messagesError || undefined
+    })
   });
   const sending = pendingSendCount > 0;
   const visibleMessages = useMemo(
