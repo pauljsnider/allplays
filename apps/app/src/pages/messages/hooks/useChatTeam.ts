@@ -32,6 +32,7 @@ export function useChatTeam({ teamId, user, inboxTeam, preferredConversationId =
       if (!user) return;
       setLoadingContext(true);
       setError(null);
+      setConversations([]);
       setSelectedConversationId(preferredConversationId || DEFAULT_TEAM_CONVERSATION_ID);
       onTeamReset?.();
 
@@ -41,24 +42,31 @@ export function useChatTeam({ teamId, user, inboxTeam, preferredConversationId =
         setTeam(context.team);
         setProfile(context.profile);
         setCanModerate(context.canModerate);
-        const loadedConversations = await loadChatConversations(teamId, user, context.team, context.canModerate);
-        if (cancelled) return;
-        setConversations(loadedConversations);
-        setSelectedConversationId((current: string) => {
-          if (loadedConversations.some((conversation) => conversation.id === current)) {
-            return current;
+        setLoadingContext(false);
+
+        try {
+          const loadedConversations = await loadChatConversations(teamId, user, context.team, context.canModerate);
+          if (cancelled) return;
+          setConversations(loadedConversations);
+          setSelectedConversationId((current: string) => {
+            if (loadedConversations.some((conversation) => conversation.id === current)) {
+              return current;
+            }
+            if (preferredConversationId && loadedConversations.some((conversation) => conversation.id === preferredConversationId)) {
+              return preferredConversationId;
+            }
+            return DEFAULT_TEAM_CONVERSATION_ID;
+          });
+        } catch {
+          if (!cancelled) {
+            setConversations([]);
           }
-          if (preferredConversationId && loadedConversations.some((conversation) => conversation.id === preferredConversationId)) {
-            return preferredConversationId;
-          }
-          return DEFAULT_TEAM_CONVERSATION_ID;
-        });
+        }
       } catch (loadError: any) {
         if (!cancelled) {
           setError(loadError?.message || 'Unable to load team chat.');
+          setLoadingContext(false);
         }
-      } finally {
-        if (!cancelled) setLoadingContext(false);
       }
     }
 
