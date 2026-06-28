@@ -71,22 +71,45 @@ function listLegacyFiles() {
     return [...htmlFiles, ...walk(jsDir)];
 }
 
+function getInterpolationExpression(interpolationMatch) {
+    return interpolationMatch.slice(interpolationMatch.indexOf('${') + 2, -1).trim();
+}
+
+function isSafeNumericReadout(interpolationMatch) {
+    const expression = getInterpolationExpression(interpolationMatch);
+    // Numeric readouts (e.g. ${String(x.description || '').length}) render a
+    // count, not the user string, so they are inert. Apply this only when the
+    // rendered expression itself is the numeric readout, not when a later
+    // fallback branch happens to reference a count.
+    return /^\s*(?:String\([^)]*\)|[^|()]+)\.(length|size|count)\s*(?:\|\|[^|]*)?\s*$/.test(expression);
+}
+
 function findUnescapedSinks(source) {
     const offenders = [];
     for (const match of source.matchAll(MARKUP_INTERP)) {
-        const expression = match[2];
+        const expression = getInterpolationExpression(match[0]);
         // Safe if the value is escaped (or is a runtime Error message, which is
         // not user-stored content and surfaces only in dev error toasts).
         if (expression.includes('escapeHtml(')) continue;
         if (/\b(error|err|e)\.(message|name)$/.test(expression)) continue;
-        // Numeric readouts (e.g. ${String(x.description || '').length}) render a
-        // count, not the user string, so they are inert.
-        if (/\.(length|size|count)\b/.test(match[0])) continue;
+        if (isSafeNumericReadout(match[0])) continue;
         const line = source.slice(0, match.index).split('\n').length;
         offenders.push(`${expression} (line ${line})`);
     }
     return offenders;
 }
+
+describe('findUnescapedSinks', () => {
+    it('allows numeric readouts when the rendered branch is a count', () => {
+        const offenders = findUnescapedSinks('<span>${String(player.description || \"\").length || 0}</span>');
+        expect(offenders).toEqual([]);
+    });
+
+    it('still flags unescaped user data when only the fallback is numeric', () => {
+        const offenders = findUnescapedSinks('<span>${row.name || totals.count}</span>');
+        expect(offenders).toEqual(['row.name || totals.count (line 1)']);
+    });
+});
 
 describe('legacy XSS guard: no unescaped user-data interpolation in markup', () => {
     const files = listLegacyFiles();
