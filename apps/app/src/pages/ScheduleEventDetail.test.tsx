@@ -2117,7 +2117,7 @@ describe('ScheduleEventDetail assignments', () => {
     expect(screen.queryByText('Scorebook')).toBeNull();
 
     const disclosure = screen.getByRole('button', { name: 'Show filled assignments (2)' });
-    expect(disclosure).toHaveAttribute('aria-expanded', 'false');
+    expect(disclosure.getAttribute('aria-expanded')).toBe('false');
 
     fireEvent.click(disclosure);
 
@@ -2125,7 +2125,7 @@ describe('ScheduleEventDetail assignments', () => {
       expect(screen.getByText('Setup')).toBeTruthy();
     });
     expect(screen.getByText('Scorebook')).toBeTruthy();
-    expect(screen.getByRole('button', { name: 'Hide filled assignments' })).toHaveAttribute('aria-expanded', 'true');
+    expect(screen.getByRole('button', { name: 'Hide filled assignments' }).getAttribute('aria-expanded')).toBe('true');
   });
 
   it('shows filled assignments immediately when no actionable slots exist', async () => {
@@ -2216,7 +2216,7 @@ describe('ScheduleEventDetail assignments', () => {
     await waitFor(() => {
       expect(within(screen.getByText('Snacks').closest('article') as HTMLElement).getByText('You')).toBeTruthy();
     });
-    expect(screen.getByRole('button', { name: 'Hide filled assignments' })).toHaveAttribute('aria-expanded', 'true');
+    expect(screen.getByRole('button', { name: 'Hide filled assignments' }).getAttribute('aria-expanded')).toBe('true');
     expect(screen.getByText('Setup')).toBeTruthy();
     expect(screen.getByText('Scorebook')).toBeTruthy();
 
@@ -2231,7 +2231,7 @@ describe('ScheduleEventDetail assignments', () => {
     await waitFor(() => {
       expect(within(screen.getByText('Snacks').closest('article') as HTMLElement).getByRole('button', { name: 'Sign up' })).toBeTruthy();
     });
-    expect(screen.getByRole('button', { name: 'Hide filled assignments' })).toHaveAttribute('aria-expanded', 'true');
+    expect(screen.getByRole('button', { name: 'Hide filled assignments' }).getAttribute('aria-expanded')).toBe('true');
     expect(screen.getByText('Setup')).toBeTruthy();
     expect(screen.getByText('Scorebook')).toBeTruthy();
   });
@@ -2281,7 +2281,7 @@ describe('ScheduleEventDetail staff RSVP overrides', () => {
     expect(screen.queryByTestId('staff-rsvp-row-p3')).toBeNull();
 
     const disclosure = screen.getByRole('button', { name: 'Show responded players (1 going · 1 maybe · 1 out · 0 missing)' });
-    expect(disclosure).toHaveAttribute('aria-expanded', 'false');
+    expect(disclosure.getAttribute('aria-expanded')).toBe('false');
 
     fireEvent.click(disclosure);
 
@@ -2290,7 +2290,7 @@ describe('ScheduleEventDetail staff RSVP overrides', () => {
     });
     expect(screen.getByTestId('staff-rsvp-row-p2')).toBeTruthy();
     expect(screen.getByTestId('staff-rsvp-row-p3')).toBeTruthy();
-    expect(screen.getByRole('button', { name: 'Hide responded players' })).toHaveAttribute('aria-expanded', 'true');
+    expect(screen.getByRole('button', { name: 'Hide responded players' }).getAttribute('aria-expanded')).toBe('true');
   });
 
   it('lets staff override a responded player after expanding and refreshes the counts', async () => {
