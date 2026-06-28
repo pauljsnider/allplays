@@ -60,7 +60,7 @@ const fixedFilterThrottle = `  const throttleFilter = (callback, limit) => {
       };
   };`;
 
-const artifactFixturePath = path.resolve(import.meta.dirname, '../../apps/app/bundle-visualizer.html');
+const artifactFixturePath = path.resolve(import.meta.dirname, '../fixtures/app-bundle-visualizer.fixture.html');
 const artifactFixtureHtml = readFileSync(artifactFixturePath, 'utf8');
 const brokenArtifactHtml = artifactFixtureHtml
     .replace(fixedTooltipHandler, brokenTooltipHandler)
