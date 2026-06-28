@@ -788,7 +788,8 @@ describe('scheduled practice writes', () => {
       }
     }));
 
-    const [, , payload] = vi.mocked(updateEvent).mock.calls.at(-1) as [string, string, Record<string, unknown>];
+    const updateEventCalls = vi.mocked(updateEvent).mock.calls;
+    const [, , payload] = updateEventCalls[updateEventCalls.length - 1] as [string, string, Record<string, unknown>];
     const { expandRecurrence: actualExpandRecurrence } = await import('../../../../js/utils.js');
     const expanded = actualExpandRecurrence({
       ...existingMaster,
