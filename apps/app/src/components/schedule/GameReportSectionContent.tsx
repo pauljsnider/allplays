@@ -118,7 +118,7 @@ function PlayerPerformanceRow({ player, statKeys, statLabels, hasPlayingTime, te
       <div className="flex items-center justify-between gap-3">
         <div className="flex min-w-0 items-center gap-3">
           <div className="flex h-10 w-10 flex-none items-center justify-center overflow-hidden rounded-full bg-gray-100 text-sm font-black text-gray-500">
-            {player.photoUrl ? <img src={player.photoUrl} alt="" className="h-full w-full object-cover" /> : player.playerName.slice(0, 1)}
+            {player.photoUrl ? <img src={player.photoUrl} alt="" loading="lazy" decoding="async" className="h-full w-full object-cover" /> : player.playerName.slice(0, 1)}
           </div>
           <div className="min-w-0">
             <div className="truncate text-sm font-black text-gray-950">#{player.number} {player.playerName}</div>

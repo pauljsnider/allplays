@@ -235,7 +235,7 @@ export function TeamAvatar({ team }: { team: Pick<ChatTeam, 'name' | 'photoUrl' 
   return (
     <div className="relative flex h-11 w-11 flex-none items-center justify-center overflow-hidden rounded-xl border border-gray-200 bg-primary-50 text-primary-700 shadow-sm">
       {team.photoUrl ? (
-        <img src={team.photoUrl} alt={`${team.name} team photo`} className="h-full w-full object-cover" />
+        <img src={team.photoUrl} alt={`${team.name} team photo`} loading="lazy" decoding="async" className="h-full w-full object-cover" />
       ) : (
         <span className="text-base font-black">{team.name.charAt(0).toUpperCase()}</span>
       )}
@@ -2639,7 +2639,7 @@ export function MessageAvatar({ message, label }: { message: ChatMessage; label:
     return <img src="./logo_small.png" alt="ALL PLAYS assistant avatar" className="h-8 w-8 rounded-full border border-indigo-200 object-cover" />;
   }
   if (message.senderPhotoUrl) {
-    return <img src={message.senderPhotoUrl} alt={`${label} profile photo`} className="h-8 w-8 rounded-full object-cover" />;
+    return <img src={message.senderPhotoUrl} alt={`${label} profile photo`} loading="lazy" decoding="async" className="h-8 w-8 rounded-full object-cover" />;
   }
   return (
     <div className="flex h-8 w-8 items-center justify-center rounded-full bg-gray-200 text-xs font-black text-gray-600">
@@ -3135,7 +3135,7 @@ function MediaGallerySheet({
                 <video controls preload="metadata" className="aspect-video w-full bg-black object-cover" src={entry.url} />
               ) : (
                 <a href={entry.url} target="_blank" rel="noopener noreferrer">
-                  <img src={entry.url} alt={entry.name || 'Chat media'} className="aspect-video w-full object-cover" />
+                  <img src={entry.url} alt={entry.name || 'Chat media'} loading="lazy" decoding="async" className="aspect-video w-full object-cover" />
                 </a>
               )}
               <div className="p-3">
