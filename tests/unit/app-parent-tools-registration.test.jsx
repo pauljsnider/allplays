@@ -124,9 +124,10 @@ describe('React app registration detail', () => {
         expect(serviceMocks.loadParentRegistrationDetail).toHaveBeenCalledWith(auth.user, 'team-1', 'form-1');
         expect(container.textContent).toContain('Guardian information');
         expect(container.textContent).toContain('Waiver');
-        expect(container.textContent).toContain('Selected registration option');
-        expect(container.textContent).toContain('Registration option');
-        expect(container.textContent).toContain('5 spots left');
+        const selectedOptionSummary = container.querySelector('[aria-label="Selected registration option"]');
+        expect(selectedOptionSummary).toBeTruthy();
+        expect(selectedOptionSummary?.textContent).toContain('Registration option');
+        expect(selectedOptionSummary?.textContent).toContain('5 spots left');
         expect(container.textContent).toContain('$120.00');
         expect(container.textContent).toContain('Installment plan');
         expect(container.querySelector('label[for="participant-name"]')).toBeTruthy();
