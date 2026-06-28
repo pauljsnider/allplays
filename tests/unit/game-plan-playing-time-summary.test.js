@@ -93,6 +93,9 @@ function buildHarness(overrides = {}) {
         const FORMATIONS = deps.FORMATIONS;
         const document = deps.document;
         const buildGamePlanIntervals = deps.buildGamePlanIntervals;
+        const escapeHtml = (unsafe) => unsafe === null || unsafe === undefined ? '' : String(unsafe)
+            .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;').replace(/'/g, '&#039;');
         let intervalsCache = [];
         const recentAssignments = new Map();
         let draggedPlayerId = null;
