@@ -634,35 +634,52 @@
         async function loadNotificationTeams() {
             const status = document.getElementById('notification-status');
             status.textContent = '';
-            const [memberTeams, parentTeams] = await Promise.all([
-                getUserTeamsWithAccess(currentUser.uid, currentUser.email || ''),
-                getParentTeams(currentUser.uid)
-            ]);
-
-            const map = new Map();
-            [...memberTeams, ...parentTeams].forEach((team) => {
-                if (team?.id) map.set(team.id, team);
-            });
-            notificationTeams = Array.from(map.values()).sort((a, b) => (a.name || '').localeCompare(b.name || ''));
-
             const select = document.getElementById('notification-team-select');
-            const previous = select.value;
-            select.innerHTML = '<option value="">Select a team</option>';
-            notificationTeams.forEach((team) => {
-                const option = document.createElement('option');
-                option.value = team.id;
-                option.textContent = team.name || team.id;
-                select.appendChild(option);
-            });
 
-            if (previous && map.has(previous)) {
-                select.value = previous;
-            } else if (notificationTeams.length) {
-                select.value = notificationTeams[0].id;
+            try {
+                const [memberTeams, parentTeams] = await Promise.all([
+                    getUserTeamsWithAccess(currentUser.uid, currentUser.email || ''),
+                    getParentTeams(currentUser.uid)
+                ]);
+
+                const map = new Map();
+                [...memberTeams, ...parentTeams].forEach((team) => {
+                    if (team?.id) map.set(team.id, team);
+                });
+                notificationTeams = Array.from(map.values()).sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+
+                const previous = select.value;
+                select.innerHTML = '<option value="">Select a team</option>';
+                notificationTeams.forEach((team) => {
+                    const option = document.createElement('option');
+                    option.value = team.id;
+                    option.textContent = team.name || team.id;
+                    select.appendChild(option);
+                });
+
+                if (previous && map.has(previous)) {
+                    select.value = previous;
+                } else if (notificationTeams.length) {
+                    select.value = notificationTeams[0].id;
+                }
+
+                try {
+                    await loadSelectedTeamNotificationPreferences();
+                } catch (error) {
+                    console.error('Error loading notification preferences:', error);
+                    writeNotificationPreferencesToForm(null);
+                    setNotificationStatus('Unable to load notification preferences right now. The rest of your profile is still available.', 'error');
+                }
+
+                return parentTeams;
+            } catch (error) {
+                console.error('Error loading notification teams:', error);
+                notificationTeams = [];
+                select.innerHTML = '<option value="">Select a team</option>';
+                writeNotificationPreferencesToForm(null);
+                setNotificationStatus('Unable to load your teams for alerts right now. The rest of your profile is still available.', 'error');
+                return [];
             }
-
-            await loadSelectedTeamNotificationPreferences();
-            return parentTeams;
         }
 
         async function loadSelectedTeamNotificationPreferences() {
@@ -1128,7 +1145,15 @@
             document.getElementById('email').value = user.email || '';
             showVerificationStatus(user);
             await loadProfile();
-            const parentTeams = await loadNotificationTeams();
+
+            let parentTeams = [];
+            try {
+                parentTeams = await loadNotificationTeams();
+            } catch (error) {
+                console.error('Error bootstrapping notification settings:', error);
+                setNotificationStatus('Unable to load notification preferences right now. The rest of your profile is still available.', 'error');
+            }
+
             showAccountMergeEntryPoint(parentTeams);
             await loadAccessCodes();
             await checkPasswordlessUser();
