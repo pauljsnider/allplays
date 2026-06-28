@@ -513,7 +513,7 @@ describe('AppSearchDialog', () => {
     await waitFor(() => expect(searchAppPlayersMock).toHaveBeenCalledTimes(1));
   });
 
-  it('shows provisional local team matches while hydration is pending, then runs one hydrated async search', async () => {
+  it('shows provisional local team matches while hydration is pending, then runs a provisional search before hydrating again', async () => {
     vi.useFakeTimers();
     const onClose = vi.fn();
     const initialTeams: AppSearchTeam[] = [{ id: 'team-1', name: 'Bears', sport: 'Basketball', zip: '66210' }];
@@ -552,19 +552,22 @@ describe('AppSearchDialog', () => {
     expect(screen.getByRole('button', { name: /Bears/i })).not.toBeNull();
     await vi.advanceTimersByTimeAsync(430);
     await Promise.resolve();
-    expect(searchAppTeamsMock).not.toHaveBeenCalled();
-    expect(searchAppPlayersMock).not.toHaveBeenCalled();
+    expect(searchAppTeamsMock).toHaveBeenCalledTimes(1);
+    expect(searchAppPlayersMock).toHaveBeenCalledTimes(1);
+    expect(searchAppTeamsMock).toHaveBeenNthCalledWith(1, 'be', initialTeams, null);
+    expect(searchAppPlayersMock).toHaveBeenNthCalledWith(1, 'be', expect.any(Map), null);
+    expect(Array.from(searchAppPlayersMock.mock.calls[0][1].values())).toEqual(initialTeams);
 
     releaseHydration(hydratedTeams);
     await vi.advanceTimersByTimeAsync(50);
     await Promise.resolve();
     await vi.advanceTimersByTimeAsync(0);
 
-    expect(searchAppTeamsMock).toHaveBeenCalledTimes(1);
-    expect(searchAppPlayersMock).toHaveBeenCalledTimes(1);
-    expect(searchAppTeamsMock).toHaveBeenNthCalledWith(1, 'be', hydratedTeams, null);
-    expect(searchAppPlayersMock).toHaveBeenNthCalledWith(1, 'be', expect.any(Map), null);
-    expect(Array.from(searchAppPlayersMock.mock.calls[0][1].values())).toEqual(hydratedTeams);
+    expect(searchAppTeamsMock).toHaveBeenCalledTimes(2);
+    expect(searchAppPlayersMock).toHaveBeenCalledTimes(2);
+    expect(searchAppTeamsMock).toHaveBeenNthCalledWith(2, 'be', hydratedTeams, null);
+    expect(searchAppPlayersMock).toHaveBeenNthCalledWith(2, 'be', expect.any(Map), null);
+    expect(Array.from(searchAppPlayersMock.mock.calls[1][1].values())).toEqual(hydratedTeams);
     expect(screen.getAllByRole('button', { name: /Beacons/i })).toHaveLength(2);
   });
 

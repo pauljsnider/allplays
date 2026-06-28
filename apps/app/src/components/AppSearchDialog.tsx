@@ -179,13 +179,15 @@ export function AppSearchDialog({ auth, open, onClose }: AppSearchDialogProps) {
             return;
           }
 
+          await runSearch(accessibleTeams);
+
           try {
             const hydratedTeams = await hydrationPromise;
             if (disposed || requestId !== searchRequestId.current) return;
+            if (haveSameSearchTeamScope(accessibleTeams, hydratedTeams)) return;
             await runSearch(hydratedTeams);
           } catch {
             if (disposed || requestId !== searchRequestId.current) return;
-            await runSearch(initialAccessibleTeams);
           }
         })
         .catch(() => {
@@ -549,6 +551,13 @@ function mergeSearchTeams(...teamLists: AppSearchTeam[][]) {
     if (team?.id) teamsById.set(team.id, team);
   });
   return Array.from(teamsById.values());
+}
+
+function haveSameSearchTeamScope(left: AppSearchTeam[], right: AppSearchTeam[]) {
+  const leftIds = left.map((team) => team.id).filter(Boolean).sort();
+  const rightIds = right.map((team) => team.id).filter(Boolean).sort();
+  if (leftIds.length !== rightIds.length) return false;
+  return leftIds.every((teamId, index) => teamId === rightIds[index]);
 }
 
 function getPlayerSearchError(error: any) {
