@@ -5,7 +5,7 @@ import {
   type ChatConversation,
   type ChatTeam
 } from '../../../lib/chatService';
-import { DEFAULT_TEAM_CONVERSATION_ID } from '../../../lib/chatLogic';
+import { DEFAULT_TEAM_CONVERSATION_ID, isDefaultTeamConversation } from '../../../lib/chatLogic';
 import type { AuthState } from '../../../lib/types';
 
 type UseChatTeamParams = {
@@ -30,9 +30,12 @@ export function useChatTeam({ teamId, user, inboxTeam, preferredConversationId =
 
     async function loadContext() {
       if (!user) return;
+      const nextConversationId = preferredConversationId || DEFAULT_TEAM_CONVERSATION_ID;
+      const shouldBlockOnConversationHydration = !isDefaultTeamConversation(nextConversationId);
       setLoadingContext(true);
       setError(null);
-      setSelectedConversationId(preferredConversationId || DEFAULT_TEAM_CONVERSATION_ID);
+      setConversations([]);
+      setSelectedConversationId(nextConversationId);
       onTeamReset?.();
 
       try {
@@ -41,24 +44,35 @@ export function useChatTeam({ teamId, user, inboxTeam, preferredConversationId =
         setTeam(context.team);
         setProfile(context.profile);
         setCanModerate(context.canModerate);
-        const loadedConversations = await loadChatConversations(teamId, user, context.team, context.canModerate);
-        if (cancelled) return;
-        setConversations(loadedConversations);
-        setSelectedConversationId((current: string) => {
-          if (loadedConversations.some((conversation) => conversation.id === current)) {
-            return current;
+        if (!shouldBlockOnConversationHydration) {
+          setLoadingContext(false);
+        }
+
+        try {
+          const loadedConversations = await loadChatConversations(teamId, user, context.team, context.canModerate);
+          if (cancelled) return;
+          setConversations(loadedConversations);
+          setSelectedConversationId((current: string) => {
+            if (loadedConversations.some((conversation) => conversation.id === current)) {
+              return current;
+            }
+            if (preferredConversationId && loadedConversations.some((conversation) => conversation.id === preferredConversationId)) {
+              return preferredConversationId;
+            }
+            return DEFAULT_TEAM_CONVERSATION_ID;
+          });
+          setLoadingContext(false);
+        } catch {
+          if (!cancelled) {
+            setConversations([]);
+            setLoadingContext(false);
           }
-          if (preferredConversationId && loadedConversations.some((conversation) => conversation.id === preferredConversationId)) {
-            return preferredConversationId;
-          }
-          return DEFAULT_TEAM_CONVERSATION_ID;
-        });
+        }
       } catch (loadError: any) {
         if (!cancelled) {
           setError(loadError?.message || 'Unable to load team chat.');
+          setLoadingContext(false);
         }
-      } finally {
-        if (!cancelled) setLoadingContext(false);
       }
     }
 

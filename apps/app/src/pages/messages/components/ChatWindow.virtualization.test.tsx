@@ -536,6 +536,39 @@ describe('ChatWindow virtualization', () => {
   });
 });
 
+describe('ChatWindow deferred conversation hydration', () => {
+  it('renders the active thread before conversations finish hydrating and keeps it visible afterward', async () => {
+    mockChatTeamState.loadingContext = false;
+    mockChatTeamState.conversations = [];
+    mockChatTeamState.selectedConversationId = 'team';
+
+    const { rerender } = render(
+      <MemoryRouter>
+        <ChatWindow auth={auth} teamId="team-1" />
+      </MemoryRouter>
+    );
+
+    expect(screen.getByText('Composer')).toBeVisible();
+    expect(document.querySelectorAll('.message-bubble').length).toBeGreaterThan(0);
+    expect(screen.queryByText('Loading')).toBeNull();
+
+    mockChatTeamState.conversations = [
+      { id: 'team', type: 'team', name: 'Team chat', participantIds: [], participantRoles: ['team'] },
+      { id: 'staff-conversation', type: 'group', name: 'Staff only', participantIds: ['coach-1'], participantRoles: ['staff'] }
+    ];
+
+    rerender(
+      <MemoryRouter>
+        <ChatWindow auth={auth} teamId="team-1" />
+      </MemoryRouter>
+    );
+
+    await waitFor(() => expect(document.querySelectorAll('.message-bubble').length).toBeGreaterThan(0));
+    expect(screen.getByText('Composer')).toBeVisible();
+    expect(screen.queryByText('Loading')).toBeNull();
+  });
+});
+
 describe('ChatWindow conversation switching', () => {
   it('keeps staff chat reachable from the conversation selector without audience-sheet staff routing', () => {
     mockChatSheetsState.showConversationSheet = true;
