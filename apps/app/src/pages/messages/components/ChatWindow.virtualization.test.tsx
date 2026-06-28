@@ -4,7 +4,7 @@ import * as React from 'react';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { ensureStaffChatConversation, type ChatMessage } from '../../../lib/chatService';
+import { ensureStaffChatConversation, type ChatConversation, type ChatMessage } from '../../../lib/chatService';
 import type { AuthState } from '../../../lib/types';
 import {
   AudienceSheet,
@@ -40,7 +40,19 @@ const mockChatSheetsState = {
   openEmailSheet: vi.fn(),
   closeEmailSheet: vi.fn()
 };
-const mockChatTeamState = {
+const mockChatTeamState: {
+  team: { id: string; name: string };
+  profile: { fullName: string };
+  canModerate: boolean;
+  conversations: ChatConversation[];
+  setConversations: ReturnType<typeof vi.fn>;
+  selectedConversationId: string;
+  setSelectedConversationId: ReturnType<typeof vi.fn>;
+  loadingContext: boolean;
+  error: string | null;
+  reloadConversations: ReturnType<typeof vi.fn>;
+  switchConversation: ReturnType<typeof vi.fn>;
+} = {
   team: { id: 'team-1', name: 'Bears' },
   profile: { fullName: 'Pat Parent' },
   canModerate: true,
