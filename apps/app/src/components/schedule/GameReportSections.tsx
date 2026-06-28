@@ -42,7 +42,7 @@ export function GameReportSections({ event }: { event: ParentScheduleEvent }) {
     setReport(null);
     setActiveReportSection('summary');
     void refreshReport();
-  }, [event.liveStatus, event.status, event.homeScore, event.awayScore, refreshReport]);
+  }, [event.id, event.teamId, refreshReport]);
 
   useEffect(() => {
     if (!isLivePlaysRefreshEnabled) return undefined;
