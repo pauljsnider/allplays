@@ -28,6 +28,7 @@ import {
 import {
   deleteTeamChatMessage,
   editTeamChatMessage,
+  ensureStaffChatConversation,
   loadChatRecipientOptions,
   loadSentTeamEmails,
   loadTeamEmailDrafts,
@@ -75,6 +76,7 @@ import {
   insertChatMention,
   isChatComposerLinkSafe,
   isDefaultTeamConversation,
+  isStaffConversation,
   isSafeChatMediaUrl,
   mergeChatMessageLists,
   normalizeChatReactions,
@@ -158,6 +160,7 @@ const allTargetOptions: Array<{ value: ChatTargetType; label: string; descriptio
   { value: 'full_team', label: 'Full team', description: 'Visible to everyone in this team chat.' },
   { value: 'individuals', label: 'Selected members', description: 'Starts a direct or group conversation.' }
 ];
+const STAFF_CONVERSATION_PLACEHOLDER_ID = '__staff_conversation__';
 
 function createChatClientMessageId(userId: string) {
   const randomPart = typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
@@ -453,6 +456,21 @@ export function ChatWindow({
   const selectedConversation = useMemo(() => (
     conversations.find((conversation) => conversation.id === effectiveConversationId) || conversations[0] || null
   ), [conversations, effectiveConversationId]);
+  const conversationSheetConversations = useMemo(() => {
+    if (!canModerate || conversations.some((conversation) => isStaffConversation(conversation))) {
+      return conversations;
+    }
+    return [
+      ...conversations,
+      {
+        id: STAFF_CONVERSATION_PLACEHOLDER_ID,
+        type: 'group',
+        name: 'Staff only',
+        participantIds: [],
+        participantRoles: ['staff']
+      }
+    ];
+  }, [canModerate, conversations]);
   const audienceMetadata = useMemo(() => buildChatAudienceMetadata({
     selectedConversation,
     selectedConversationId: effectiveConversationId,
@@ -836,6 +854,32 @@ export function ChatWindow({
     setReactionMessageId('');
     setActionMessageId('');
     closeConversationSheet();
+  };
+
+  const ensureAndSwitchStaffConversation = async () => {
+    if (!auth.user || !team) return;
+    try {
+      const staffConversation = await ensureStaffChatConversation(teamId, auth.user, conversations);
+      setConversations((current) => (
+        current.some((conversation) => conversation.id === staffConversation.id)
+          ? current
+          : [...current, staffConversation]
+      ));
+      if (selectedConversationId !== staffConversation.id) {
+        switchConversation(staffConversation.id);
+      }
+      closeConversationSheet();
+    } catch (staffError: any) {
+      setStatus({ tone: 'error', message: staffError?.message || 'Unable to open staff chat.' });
+    }
+  };
+
+  const handleConversationSelect = (conversationId: string) => {
+    if (conversationId === STAFF_CONVERSATION_PLACEHOLDER_ID) {
+      void ensureAndSwitchStaffConversation();
+      return;
+    }
+    switchConversation(conversationId);
   };
 
   const handleAudienceTargetChange = async (target: ChatTargetType) => {
@@ -1643,10 +1687,10 @@ export function ChatWindow({
 
       {showConversationSheet ? (
         <ConversationSheet
-          conversations={conversations}
+          conversations={conversationSheetConversations}
           team={team || {}}
           selectedConversationId={effectiveConversationId}
-          onSelect={switchConversation}
+          onSelect={handleConversationSelect}
           onClose={closeConversationSheet}
         />
       ) : null}

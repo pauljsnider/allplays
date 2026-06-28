@@ -555,6 +555,35 @@ describe('ChatWindow conversation switching', () => {
     expect(mockChatTeamState.switchConversation).toHaveBeenCalledWith('staff-conversation');
     expect(ensureStaffChatConversation).not.toHaveBeenCalled();
   });
+
+  it('creates the staff conversation from the selector when a team has never opened it', async () => {
+    mockChatSheetsState.showConversationSheet = true;
+    mockChatTeamState.conversations = [
+      { id: 'team', type: 'team', name: 'Team chat', participantIds: [], participantRoles: ['team'] }
+    ];
+    vi.mocked(ensureStaffChatConversation).mockResolvedValue({
+      id: 'staff-conversation',
+      type: 'group',
+      name: 'Staff only',
+      participantIds: [],
+      participantRoles: ['staff']
+    } as ChatConversation);
+
+    render(
+      <MemoryRouter>
+        <ChatWindow auth={auth} teamId="team-1" />
+      </MemoryRouter>
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: /Staff only.*Group conversation/i }));
+
+    await waitFor(() => {
+      expect(ensureStaffChatConversation).toHaveBeenCalledWith('team-1', auth.user, [
+        { id: 'team', type: 'team', name: 'Team chat', participantIds: [], participantRoles: ['team'] }
+      ]);
+    });
+    expect(mockChatTeamState.switchConversation).toHaveBeenCalledWith('staff-conversation');
+  });
 });
 
 describe('AudienceSheet recipient search', () => {
