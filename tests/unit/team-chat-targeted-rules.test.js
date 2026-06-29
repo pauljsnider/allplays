@@ -4,6 +4,65 @@ import { resolve } from 'node:path';
 
 const rules = readFileSync(resolve(process.cwd(), 'firestore.rules'), 'utf8');
 
+function currentUserReactionTokens(auth) {
+    const tokens = [auth.uid, `user:${auth.uid}`];
+    if (auth.email) {
+        tokens.push(auth.email.toLowerCase(), `email:${auth.email.toLowerCase()}`);
+    }
+    return tokens;
+}
+
+function hasAny(values, candidates) {
+    return candidates.some((candidate) => values.includes(candidate));
+}
+
+function hasAll(values, candidates) {
+    return candidates.every((candidate) => values.includes(candidate));
+}
+
+function isSingleReactionTokenAddRemove(before, after, auth) {
+    const actorTokens = currentUserReactionTokens(auth);
+    return (
+        hasAll(after, before) &&
+        after.length === before.length + 1 &&
+        hasAny(after, actorTokens) &&
+        !hasAny(before, actorTokens)
+    ) || (
+        hasAll(before, after) &&
+        before.length === after.length + 1 &&
+        hasAny(before, actorTokens) &&
+        !hasAny(after, actorTokens)
+    );
+}
+
+function changedTopLevelKeys(before, after) {
+    return [...new Set([...Object.keys(before), ...Object.keys(after)])]
+        .filter((key) => JSON.stringify(before[key]) !== JSON.stringify(after[key]));
+}
+
+function changedReactionKeys(before, after) {
+    const beforeReactions = before.reactions ?? {};
+    const afterReactions = after.reactions ?? {};
+    return [...new Set([...Object.keys(beforeReactions), ...Object.keys(afterReactions)])]
+        .filter((key) => JSON.stringify(beforeReactions[key]) !== JSON.stringify(afterReactions[key]));
+}
+
+function allowsReactionUpdate(beforeDoc, afterDoc, reactionKey, auth) {
+    const topLevelKeys = changedTopLevelKeys(beforeDoc, afterDoc);
+    const isNestedReactionUpdate = topLevelKeys.length === 1 && topLevelKeys[0] === `reactions.${reactionKey}`;
+    const isFullReactionMapUpdate = topLevelKeys.length === 1 &&
+        topLevelKeys[0] === 'reactions' &&
+        changedReactionKeys(beforeDoc, afterDoc).length === 1 &&
+        changedReactionKeys(beforeDoc, afterDoc)[0] === reactionKey;
+
+    return (isNestedReactionUpdate || isFullReactionMapUpdate) &&
+        isSingleReactionTokenAddRemove(
+            beforeDoc.reactions?.[reactionKey] ?? [],
+            afterDoc.reactions?.[reactionKey] ?? [],
+            auth
+        );
+}
+
 describe('targeted team chat Firestore rules', () => {
     it('keeps full-team messages readable by existing team chat members', () => {
         expect(rules).toContain('function isFullTeamChatMessage(data)');
@@ -108,5 +167,101 @@ describe('targeted team chat Firestore rules', () => {
         expect(listHelper).toContain('isTeamOwnerOrAdmin(teamId) ||');
         expect(listHelper).toContain('request.auth.uid in participantIds');
         expect(listHelper).not.toContain('!isStaffRoleChatConversation(conversationData)');
+    });
+
+    it('locks both legacy and targeted chat reactions to a single self-token toggle', () => {
+        expect(rules).toContain('function isSelfChatReactionUpdate()');
+        expect(rules).toContain('function currentUserReactionTokens()');
+        expect(rules).toContain('function isCurrentUserReactionToggle(before, after)');
+        expect(rules).toContain('isSingleReactionTokenAddRemove(before, after);');
+        expect(rules).toContain("[request.auth.uid, 'user:' + request.auth.uid, request.auth.token.email.lower(), 'email:' + request.auth.token.email.lower()]");
+        expect(rules).toContain("[request.auth.uid, 'user:' + request.auth.uid]");
+        expect(rules).toContain('isSelfChatReactionUpdateForKey(\'thumbs_up\') ||');
+
+        const legacyChatStart = rules.indexOf('match /chatMessages/{messageId} {');
+        const conversationsStart = rules.indexOf('match /chatConversations/{conversationId} {');
+        const legacyChatBlock = rules.slice(legacyChatStart, conversationsStart);
+        expect(legacyChatBlock).toContain('isSelfChatReactionUpdate();');
+
+        const targetedChatStart = rules.indexOf('match /chatMessages/{messageId} {', conversationsStart);
+        const targetedChatEnd = rules.indexOf('// Server-only dedup log', targetedChatStart);
+        const targetedChatBlock = rules.slice(targetedChatStart, targetedChatEnd);
+        expect(targetedChatBlock).toContain('isSelfChatReactionUpdate();');
+    });
+
+    it('rejects cross-user reaction tampering and multi-reaction rewrites by construction', () => {
+        expect(rules).toContain('request.resource.data.diff(resource.data).affectedKeys().size() == 1');
+        expect(rules).toContain("request.resource.data.diff(resource.data).affectedKeys().hasOnly(['reactions.' + reactionKey])");
+        expect(rules).toContain("request.resource.data.diff(resource.data).affectedKeys().hasOnly(['reactions'])");
+        expect(rules).toContain("request.resource.data.get('reactions', {}).diff(resource.data.get('reactions', {})).affectedKeys().size() == 1");
+        expect(rules).toContain("request.resource.data.get('reactions', {}).diff(resource.data.get('reactions', {})).affectedKeys().hasOnly([reactionKey])");
+        expect(rules).toContain('after.hasAll(before) &&');
+        expect(rules).toContain('before.hasAll(after) &&');
+        expect(rules).toContain('after.hasAny(currentUserReactionTokens()) &&');
+        expect(rules).toContain('!before.hasAny(currentUserReactionTokens())');
+        expect(rules).toContain('before.hasAny(currentUserReactionTokens()) &&');
+        expect(rules).toContain('!after.hasAny(currentUserReactionTokens())');
+    });
+
+    it('allows only one owned reaction token change for a message reaction key', () => {
+        const auth = { uid: 'u1', email: 'player@example.com' };
+        const before = { text: 'Go team', reactions: { thumbs_up: ['u2'] } };
+
+        expect(allowsReactionUpdate(
+            before,
+            { ...before, reactions: { thumbs_up: ['u2', 'u1'] } },
+            'thumbs_up',
+            auth
+        )).toBe(true);
+        expect(allowsReactionUpdate(
+            { ...before, reactions: { thumbs_up: ['u2', 'u1'] } },
+            before,
+            'thumbs_up',
+            auth
+        )).toBe(true);
+        expect(allowsReactionUpdate(
+            before,
+            { ...before, reactions: { thumbs_up: ['u2', 'u3'] } },
+            'thumbs_up',
+            auth
+        )).toBe(false);
+        expect(allowsReactionUpdate(
+            before,
+            { ...before, text: 'Edited', reactions: { thumbs_up: ['u2', 'u1'] } },
+            'thumbs_up',
+            auth
+        )).toBe(false);
+        expect(allowsReactionUpdate(
+            before,
+            { ...before, reactions: { thumbs_up: ['u2', 'u1'], heart: ['u1'] } },
+            'thumbs_up',
+            auth
+        )).toBe(false);
+    });
+
+    it('rejects alias-token reaction inflation by the same actor', () => {
+        const auth = { uid: 'u1', email: 'player@example.com' };
+        const beforeWithUid = { reactions: { thumbs_up: ['u1'] } };
+        const beforeWithUserAlias = { reactions: { thumbs_up: ['user:u1'] } };
+        const beforeWithEmail = { reactions: { thumbs_up: ['player@example.com'] } };
+
+        expect(allowsReactionUpdate(
+            beforeWithUid,
+            { reactions: { thumbs_up: ['u1', 'user:u1'] } },
+            'thumbs_up',
+            auth
+        )).toBe(false);
+        expect(allowsReactionUpdate(
+            beforeWithUserAlias,
+            { reactions: { thumbs_up: ['user:u1', 'email:player@example.com'] } },
+            'thumbs_up',
+            auth
+        )).toBe(false);
+        expect(allowsReactionUpdate(
+            beforeWithEmail,
+            { reactions: { thumbs_up: ['player@example.com', 'email:player@example.com'] } },
+            'thumbs_up',
+            auth
+        )).toBe(false);
     });
 });
