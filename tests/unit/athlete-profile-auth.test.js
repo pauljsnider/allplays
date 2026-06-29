@@ -34,4 +34,23 @@ describe('athlete profile auth loading', () => {
 
         expect(loads).toEqual([signedInParent]);
     });
+
+    it('marks anonymous cold-restore loads stale when a signed-in retry starts', () => {
+        const loads = [];
+        const signedInParent = { uid: 'parent-1' };
+        const handleAuthChange = createAthleteProfileAuthLoader((user, isCurrentLoad) => {
+            loads.push({ user, isCurrentLoad });
+        });
+
+        handleAuthChange(null);
+        expect(loads[0].isCurrentLoad()).toBe(true);
+
+        handleAuthChange(signedInParent);
+
+        expect(loads).toHaveLength(2);
+        expect(loads[0].user).toBe(null);
+        expect(loads[0].isCurrentLoad()).toBe(false);
+        expect(loads[1].user).toBe(signedInParent);
+        expect(loads[1].isCurrentLoad()).toBe(true);
+    });
 });

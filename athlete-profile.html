@@ -132,7 +132,7 @@
             `).join('');
         }
 
-        async function loadProfile() {
+        async function loadProfile(_user, isCurrentLoad = () => true) {
             if (!params.profileId) {
                 content.innerHTML = '<div class="text-center py-12 text-slate-500">No athlete profile selected.</div>';
                 return;
@@ -140,6 +140,7 @@
 
             try {
                 const profile = await getAthleteProfile(params.profileId);
+                if (!isCurrentLoad()) return;
                 if (!profile) {
                     content.innerHTML = '<div class="text-center py-12 text-slate-500">Athlete profile not found.</div>';
                     return;
@@ -229,6 +230,7 @@
                     });
                 });
             } catch (error) {
+                if (!isCurrentLoad()) return;
                 console.error('Unable to load athlete profile', error);
                 content.innerHTML = '<div class="text-center py-12 text-slate-500">This athlete profile is private or unavailable.</div>';
             }
