@@ -344,7 +344,7 @@
     <script type="module">
         import { renderHeader, renderFooter, escapeHtml } from './js/utils.js?v=8';
         import { checkAuth } from './js/auth.js?v=38';
-        import { getTeam, getUserProfile, getPlayers, getGames, getGameEvents, getAggregatedStatsForGames, getChatConversations, upsertChatConversation, getChatMessages, postChatMessage, editChatMessage, deleteChatMessage, getTeamEmailDrafts, saveTeamEmailDraft, getTeamEmailTemplates, saveTeamEmailTemplate, deleteTeamEmailTemplate, canAccessTeamChat, canModerateChat, updateChatLastRead, subscribeToChatMessages, sendTeamEmail, getSentTeamEmails, uploadChatImage, deleteUploadedChatAttachments, toggleChatReaction } from './js/db.js?v=77';
+        import { getTeam, getUserProfile, getPlayers, getGames, getGameEvents, getAggregatedStatsForGames, getChatConversations, upsertChatConversation, getChatMessages, postChatMessage, editChatMessage, deleteChatMessage, getTeamEmailDrafts, saveTeamEmailDraft, getTeamEmailTemplates, saveTeamEmailTemplate, deleteTeamEmailTemplate, canAccessTeamChat, canModerateChat, updateChatLastRead, subscribeToChatMessages, sendTeamEmail, getSentTeamEmails, uploadChatImage, deleteUploadedChatAttachments, toggleChatReaction } from './js/db.js?v=78';
         import { DEFAULT_TEAM_CONVERSATION_ID, buildDefaultTeamConversation, getConversationDisplayName, isDefaultTeamConversation } from './js/team-chat-conversations.js?v=2';
         import { shouldUpdateChatLastRead, shouldRetryChatLastReadOnViewReturn } from './js/team-chat-last-read.js?v=3';
         import {
@@ -1715,6 +1715,30 @@
             return 'Audience: Full team';
         }
 
+        function getTargetedConversationName(targetMetadata = {}) {
+            if (targetMetadata.targetType === 'staff') return 'Staff only';
+            if (targetMetadata.targetType !== 'individuals') return null;
+
+            const selectedOptionsById = new Map(recipientOptions.map((option) => [option.id, option]));
+            const selectedLabels = Array.from(selectedRecipientIds).map((id) => {
+                const option = selectedOptionsById.get(id);
+                if (option) return getRecipientOptionLabel(option);
+                const raw = String(id || '').trim();
+                return raw.includes(':') ? raw.split(':').slice(1).join(':') : raw;
+            }).filter(Boolean);
+
+            const fallbackLabels = Array.isArray(targetMetadata.recipientIds)
+                ? targetMetadata.recipientIds.map((id) => {
+                    const raw = String(id || '').trim();
+                    return raw.includes(':') ? raw.split(':').slice(1).join(':') : raw;
+                }).filter(Boolean)
+                : [];
+            const labels = Array.from(new Set(selectedLabels.length > 0 ? selectedLabels : fallbackLabels));
+            if (labels.length === 0) return null;
+            if (labels.length <= 3) return labels.join(', ');
+            return `${labels.slice(0, 3).join(', ')} +${labels.length - 3} more`;
+        }
+
         function renderRecipientPicker() {
             const picker = document.getElementById('recipient-picker');
             const summary = document.getElementById('recipient-summary');
@@ -2900,7 +2924,7 @@
                         participantIds,
                         participantRoles,
                         mutedBy: [],
-                        name: targetMetadata.targetType === 'staff' ? 'Staff only' : null
+                        name: getTargetedConversationName(targetMetadata)
                     });
                     conversationId = conversation.id;
                     selectedConversationId = conversationId;

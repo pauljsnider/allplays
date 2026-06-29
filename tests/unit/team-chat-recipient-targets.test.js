@@ -38,6 +38,10 @@ describe('team chat recipient targets', () => {
         expect(html).toContain("participantRoles.includes('staff')");
         expect(html).toContain('const targetMetadata = buildEmailTargetMetadata();');
         expect(html).toContain("const participantIds = targetMetadata.targetType === 'staff'\n                        ? []");
+        expect(html).toContain('function getTargetedConversationName(targetMetadata = {})');
+        expect(html).toContain('const selectedOptionsById = new Map(recipientOptions.map((option) => [option.id, option]));');
+        expect(html).toContain('name: getTargetedConversationName(targetMetadata)');
+        expect(html).not.toContain("name: targetMetadata.targetType === 'staff' ? 'Staff only' : null");
     });
 
     it('persists normalized target metadata from postChatMessage', () => {
