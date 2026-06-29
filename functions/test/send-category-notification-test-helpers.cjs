@@ -608,6 +608,44 @@ function buildNotificationTestEnv({
                 const rightValue = Number.isFinite(rightMillis) ? rightMillis : 0;
                 return direction === 'asc' ? leftValue - rightValue : rightValue - leftValue;
             });
+            const makeOrderedQuery = (direction = 'asc', cursorDoc = null) => ({
+                startAfter(nextCursorDoc) {
+                    return makeOrderedQuery(direction, nextCursorDoc);
+                },
+                limit(limitCount) {
+                    return {
+                        async get() {
+                            counts.inboxCleanupQueries += 1;
+                            counts.inboxCleanupLimitQueries += 1;
+                            inboxCleanupLimits.push(limitCount);
+                            let docs = sortDocs(getInboxDocs(), direction);
+                            if (cursorDoc) {
+                                const cursorIndex = docs.findIndex((docSnap) => docSnap.ref.path === cursorDoc.ref.path);
+                                if (cursorIndex >= 0) {
+                                    docs = docs.slice(cursorIndex + 1);
+                                } else {
+                                    const cursorMillis = comparableMillis(cursorDoc.data()?.createdAt);
+                                    docs = docs.filter((docSnap) => {
+                                        const docMillis = comparableMillis(docSnap.data()?.createdAt);
+                                        if (!Number.isFinite(docMillis) || !Number.isFinite(cursorMillis)) return false;
+                                        return direction === 'asc' ? docMillis > cursorMillis : docMillis < cursorMillis;
+                                    });
+                                }
+                            }
+                            return makeQuerySnapshot(docs.slice(0, limitCount));
+                        }
+                    };
+                },
+                offset() {
+                    counts.inboxCleanupOffsetQueries += 1;
+                    return {
+                        async get() {
+                            counts.inboxCleanupQueries += 1;
+                            return makeQuerySnapshot([]);
+                        }
+                    };
+                }
+            });
             return {
                 async add(value) {
                     counts.inboxAdds += 1;
@@ -621,27 +659,7 @@ function buildNotificationTestEnv({
                     return { id };
                 },
                 orderBy(field, direction = 'asc') {
-                    return {
-                        limit(limitCount) {
-                            return {
-                                async get() {
-                                    counts.inboxCleanupQueries += 1;
-                                    counts.inboxCleanupLimitQueries += 1;
-                                    inboxCleanupLimits.push(limitCount);
-                                    return makeQuerySnapshot(sortDocs(getInboxDocs(), direction).slice(0, limitCount));
-                                }
-                            };
-                        },
-                        offset() {
-                            counts.inboxCleanupOffsetQueries += 1;
-                            return {
-                                async get() {
-                                    counts.inboxCleanupQueries += 1;
-                                    return makeQuerySnapshot([]);
-                                }
-                            };
-                        }
-                    };
+                    return makeOrderedQuery(direction);
                 }
             };
         }

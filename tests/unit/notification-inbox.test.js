@@ -60,6 +60,8 @@ describe('notification inbox pipeline', () => {
         expect(functionsSource).toContain("firestore.collection(`users/${target.uid}/notificationInbox`)");
         expect(functionsSource).toContain('conversationId,');
         expect(functionsSource).toContain('.limit(NOTIFICATION_INBOX_MAX_ITEMS + 1)');
+        expect(functionsSource).toContain('.startAfter(oldestRetainedDoc)');
+        expect(functionsSource).toContain('.limit(500)');
         expect(functionsSource).not.toContain('.offset(NOTIFICATION_INBOX_MAX_ITEMS)');
         expect(functionsSource.match(/const inboxResult = await writeNotificationInboxRecords\(\{/g)).toHaveLength(2);
         expect(functionsSource.match(/inboxWriteCount: inboxResult.writeCount/g)).toHaveLength(2);

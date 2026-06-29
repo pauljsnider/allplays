@@ -6086,16 +6086,29 @@ async function cleanupNotificationInbox(inboxRef) {
     .limit(NOTIFICATION_INBOX_MAX_ITEMS + 1)
     .get();
 
-  const overflowDocs = retainedItemsSnap.docs.slice(NOTIFICATION_INBOX_MAX_ITEMS);
-  if (!overflowDocs.length) return 0;
+  if (retainedItemsSnap.docs.length <= NOTIFICATION_INBOX_MAX_ITEMS) return 0;
 
-  const batch = firestore.batch();
-  for (const doc of overflowDocs) {
-    batch.delete(doc.ref);
+  const oldestRetainedDoc = retainedItemsSnap.docs[NOTIFICATION_INBOX_MAX_ITEMS - 1];
+  let overflowDocs = retainedItemsSnap.docs.slice(NOTIFICATION_INBOX_MAX_ITEMS);
+  let cleanupCount = 0;
+
+  while (overflowDocs.length) {
+    const batch = firestore.batch();
+    for (const doc of overflowDocs) {
+      batch.delete(doc.ref);
+    }
+    await batch.commit();
+    cleanupCount += overflowDocs.length;
+
+    const overflowSnap = await inboxRef
+      .orderBy('createdAt', 'desc')
+      .startAfter(oldestRetainedDoc)
+      .limit(500)
+      .get();
+    overflowDocs = overflowSnap.docs;
   }
 
-  await batch.commit();
-  return overflowDocs.length;
+  return cleanupCount;
 }
 
 async function writeNotificationInboxRecords({
