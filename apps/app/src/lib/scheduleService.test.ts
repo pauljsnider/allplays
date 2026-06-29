@@ -174,7 +174,7 @@ vi.mock('./appDataCache', () => ({
 
 import { addGame, addPractice, broadcastLiveEvent, buildLegacyTournamentGameDocuments, claimOpenOfficiatingSlot, clearOccurrenceOverride, releaseAssignmentClaim, respondToOfficiatingAssignment, updateEvent, updateGame, updateOccurrence, getAssignmentClaims, getGame, getGames, getPlayers, getPracticeSession, getPracticeSessions, getRsvpBreakdownByPlayer, getRsvpSummaries, getRsvps, getTeam, getTeams, listRideOffersForEvent, submitRsvpForPlayer, updatePracticeAttendance, getDoc, getDocs } from './adapters/legacyScheduleDb';
 import { getNativeAuthIdToken } from './authService';
-import { expandRecurrence, fetchAndParseCalendar, isTeamActive } from './adapters/legacyScheduleHelpers';
+import { expandRecurrence, fetchAndParseCalendar, isTeamActive, mergeAssignmentsWithClaims } from './adapters/legacyScheduleHelpers';
 import { getCachedAppData, loadCachedAppData } from './appDataCache';
 import { mapScheduleEventRecord } from './firestore/mappers';
 import { loadProfileDocument } from './profileService';
@@ -1023,6 +1023,7 @@ describe('parent schedule detail hydration', () => {
       isDbGame: true,
       isCancelled: false,
       assignments: [],
+      openAssignmentCount: 0,
       availabilityPreferences: {},
       myRsvp: 'not_responded',
       myRsvpNote: null,
@@ -1051,6 +1052,7 @@ describe('parent schedule detail hydration', () => {
     });
     vi.mocked(listRideOffersForEvent).mockResolvedValue([] as any);
     vi.mocked(getAssignmentClaims).mockResolvedValue({} as any);
+    vi.mocked(mergeAssignmentsWithClaims).mockImplementation((assignments: any[]) => assignments);
   });
 
   it('eagerly hydrates only near-term Home events without preloading duplicate RSVP summaries', async () => {
@@ -1072,6 +1074,24 @@ describe('parent schedule detail hydration', () => {
       total: 1
     });
     expect(futureEvent.myRsvp).toBe('not_responded');
+  });
+
+  it('refreshes cached open assignment counts after assignment claim hydration', async () => {
+    const nearEvent = buildHydrationEvent('near-game', new Date(Date.now() + 24 * 60 * 60 * 1000));
+    nearEvent.assignments = [{ role: 'Scoreboard', claimable: true, value: '' }];
+    nearEvent.openAssignmentCount = 1;
+    const claimedAssignments = [{ role: 'Scoreboard', claimable: true, value: '', claim: { claimedByUserId: 'parent-2' } }];
+    vi.mocked(getAssignmentClaims).mockResolvedValue({ scoreboard: { claimedByUserId: 'parent-2' } } as any);
+    vi.mocked(mergeAssignmentsWithClaims).mockReturnValue(claimedAssignments as any);
+
+    await hydrateParentScheduleDetails({ children: [], events: [nearEvent] }, user);
+
+    expect(mergeAssignmentsWithClaims).toHaveBeenCalledWith(
+      [{ role: 'Scoreboard', claimable: true, value: '' }],
+      { scoreboard: { claimedByUserId: 'parent-2' } }
+    );
+    expect(nearEvent.assignments).toBe(claimedAssignments);
+    expect(nearEvent.openAssignmentCount).toBe(0);
   });
 
   it('preserves denormalized RSVP summaries without preloading duplicate summaries', async () => {
@@ -2341,7 +2361,7 @@ describe('native parent schedule Firestore mapping', () => {
                   mapValue: {
                     fields: {
                       role: { stringValue: 'Scoreboard' },
-                      value: { stringValue: 'Open' }
+                      claimable: { booleanValue: true }
                     }
                   }
                 }
@@ -2377,6 +2397,7 @@ describe('native parent schedule Firestore mapping', () => {
       status: 'scheduled',
       liveClockMs: 120000,
       liveClockRunning: true,
+      openAssignmentCount: 1,
       sourceType: 'registration'
     });
     expect(result.events[0].date).toEqual(new Date('2026-06-20T18:00:00.000Z'));

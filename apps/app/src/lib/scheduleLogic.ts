@@ -193,6 +193,7 @@ export type ParentScheduleEvent = {
   rsvpSummary?: ScheduleRsvpSummary | null;
   rideshareSummary?: ScheduleRideSummary | null;
   assignments: ScheduleAssignment[];
+  openAssignmentCount: number;
   availabilityLocked?: boolean;
   availabilityCutoffLabel?: string;
   availabilityPreferences?: Record<string, unknown> | null;
@@ -770,11 +771,21 @@ export function getOpenScheduleAssignments(assignments: Array<Partial<ScheduleAs
     .filter(isScheduleAssignmentOpen);
 }
 
-export function getScheduleTaskDetailSection(event: Pick<ParentScheduleEvent, 'type' | 'practiceHomePacketSummary' | 'assignments' | 'rideshareSummary' | 'isDbGame' | 'isCancelled' | 'myRsvp'>): ScheduleEventDetailSection | '' {
+export function countOpenScheduleAssignments(assignments: Array<Partial<ScheduleAssignment>> = []) {
+  return getOpenScheduleAssignments(assignments).length;
+}
+
+export function getEventOpenAssignmentCount(event: Pick<ParentScheduleEvent, 'openAssignmentCount' | 'assignments'> | Pick<CalendarScheduleEntry, 'openAssignmentCount' | 'assignments'>) {
+  return Number.isFinite(event.openAssignmentCount)
+    ? Math.max(0, Number(event.openAssignmentCount))
+    : countOpenScheduleAssignments(event.assignments);
+}
+
+export function getScheduleTaskDetailSection(event: Pick<ParentScheduleEvent, 'type' | 'practiceHomePacketSummary' | 'assignments' | 'openAssignmentCount' | 'rideshareSummary' | 'isDbGame' | 'isCancelled' | 'myRsvp'>): ScheduleEventDetailSection | '' {
   if (event.type === 'game' && event.isDbGame && !event.isCancelled && normalizeRsvpResponse(event.myRsvp) === 'not_responded') return 'availability';
   // Practice packets render in the shared game/report tab inside ScheduleEventDetail.
   if (event.type === 'practice' && event.practiceHomePacketSummary) return PRACTICE_PACKET_DETAIL_SECTION;
-  if (getOpenScheduleAssignments(event.assignments).length > 0) return 'assignments';
+  if (getEventOpenAssignmentCount(event) > 0) return 'assignments';
   const rideSummary = event.rideshareSummary;
   if (rideSummary && (rideSummary.requests > 0 || rideSummary.pending > 0 || rideSummary.seatsLeft > 0)) return 'rideshare';
   return '';
@@ -1183,6 +1194,7 @@ export function getCalendarScheduleEntries(events: ParentScheduleEvent[]): Calen
         myRsvp: normalizeRsvpResponse(event.myRsvp)
       });
     }
+    entry.openAssignmentCount = getEventOpenAssignmentCount(entry);
   });
 
   return [...byKey.values()].sort((a, b) => a.date.getTime() - b.date.getTime());

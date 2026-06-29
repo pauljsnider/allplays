@@ -2731,6 +2731,7 @@ function buildTeamReminderScheduleEvent(event: TeamDetailEvent, model: TeamDetai
     homeScore: event.homeScore,
     awayScore: event.awayScore,
     assignments: [],
+    openAssignmentCount: 0,
     isTeamStaff: true,
     isTeamRsvpReminderManager: true
   };

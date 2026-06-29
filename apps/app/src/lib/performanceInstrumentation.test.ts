@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+import { readFileSync } from 'node:fs';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const capacitorMock = vi.hoisted(() => ({
@@ -79,6 +80,13 @@ describe('performanceInstrumentation', () => {
       num: 4
     }));
     expect(firebasePerformanceMock.stopTrace).toHaveBeenCalledWith({ traceName: 'ap_workflow_schedule_import' });
+  });
+
+  it('lets Vite resolve the Firebase Performance dynamic import', () => {
+    const source = readFileSync('src/lib/performanceInstrumentation.ts', 'utf8');
+
+    expect(source).toContain("import('@capacitor-firebase/performance')");
+    expect(source).not.toContain('@vite-ignore');
   });
 
   it('records completed spans without requiring a live trace', async () => {

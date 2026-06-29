@@ -85,6 +85,7 @@ import { loadProfileDocument, saveProfileDocument } from './profileService';
 import { firebaseAuth, getNativeAuthIdToken } from './authService';
 import { startUxTimer } from './uxTiming';
 import {
+  countOpenScheduleAssignments,
   getNextRideConfirmedSeatCount,
   getScheduleRideshareSummary,
   getScheduleTitle,
@@ -2782,6 +2783,7 @@ function createScheduleEvent(input: {
     rsvpSummary: input.rsvpSummary || null,
     rideshareSummary: null,
     assignments: Array.isArray(input.assignments) ? input.assignments : [],
+    openAssignmentCount: countOpenScheduleAssignments(Array.isArray(input.assignments) ? input.assignments : []),
     availabilityLocked: isAvailabilityLocked(input.date, availabilityPreferences),
     availabilityCutoffLabel: formatAvailabilityCutoff(availabilityPreferences),
     availabilityPreferences,
@@ -3266,6 +3268,7 @@ async function hydrateEventDetails(events: ParentScheduleEvent[], user: AuthUser
     const summary = firstEvent.rsvpSummary || summarizeRsvps(rsvps);
     const rideshareSummary = getEventRideshareSummary(offers) as ScheduleRideSummary;
     const assignments = mergeAssignmentsWithClaims(firstEvent.assignments, claims) as ScheduleAssignment[];
+    const openAssignmentCount = countOpenScheduleAssignments(assignments);
     const preferences = firstEvent.availabilityPreferences || {};
     const isTeamAdmin = matchingEvents.some((event) => event.isTeamAdmin === true);
     const availabilityNotesVisible = canViewAvailabilityNotes(preferences, isTeamAdmin);
@@ -3277,6 +3280,7 @@ async function hydrateEventDetails(events: ParentScheduleEvent[], user: AuthUser
       event.rsvpSummary = summary;
       event.rideshareSummary = rideshareSummary;
       event.assignments = assignments;
+      event.openAssignmentCount = openAssignmentCount;
       event.availabilityNotesVisible = availabilityNotesVisible;
       event.availabilityNotes = availabilityNotes;
     });

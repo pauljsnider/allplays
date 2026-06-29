@@ -26,6 +26,15 @@ const layoutState = vi.hoisted(() => ({
 }));
 
 vi.mock('../../apps/app/src/lib/scheduleService.ts', () => scheduleMocks);
+vi.mock('@capacitor-firebase/performance', () => ({
+    FirebasePerformance: {
+        startTrace: vi.fn().mockResolvedValue(undefined),
+        stopTrace: vi.fn().mockResolvedValue(undefined),
+        putAttribute: vi.fn().mockResolvedValue(undefined),
+        putMetric: vi.fn().mockResolvedValue(undefined),
+        record: vi.fn().mockResolvedValue(undefined)
+    }
+}));
 vi.mock('../../apps/app/src/lib/uxTiming.ts', () => ({
     recordFirstMeaningfulRender: vi.fn(),
     startScreenMountTimer: vi.fn(() => ({ end: vi.fn() })),
