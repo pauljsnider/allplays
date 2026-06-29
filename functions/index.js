@@ -6081,32 +6081,34 @@ async function sweepStaleNotificationDeviceTokens(nowMillis = Date.now()) {
 }
 
 async function cleanupNotificationInbox(inboxRef) {
-  const oldItemsSnap = await inboxRef
+  const retainedItemsSnap = await inboxRef
     .orderBy('createdAt', 'desc')
-    .offset(NOTIFICATION_INBOX_MAX_ITEMS)
+    .limit(NOTIFICATION_INBOX_MAX_ITEMS + 1)
     .get();
 
-  if (oldItemsSnap.empty) return 0;
+  if (retainedItemsSnap.docs.length <= NOTIFICATION_INBOX_MAX_ITEMS) return 0;
 
-  let batch = firestore.batch();
-  let pendingDeletes = 0;
-  let deletedCount = 0;
-  for (const doc of oldItemsSnap.docs) {
-    batch.delete(doc.ref);
-    pendingDeletes += 1;
-    deletedCount += 1;
-    if (pendingDeletes === 450) {
-      await batch.commit();
-      batch = firestore.batch();
-      pendingDeletes = 0;
+  const oldestRetainedDoc = retainedItemsSnap.docs[NOTIFICATION_INBOX_MAX_ITEMS - 1];
+  let overflowDocs = retainedItemsSnap.docs.slice(NOTIFICATION_INBOX_MAX_ITEMS);
+  let cleanupCount = 0;
+
+  while (overflowDocs.length) {
+    const batch = firestore.batch();
+    for (const doc of overflowDocs) {
+      batch.delete(doc.ref);
     }
-  }
-
-  if (pendingDeletes) {
     await batch.commit();
+    cleanupCount += overflowDocs.length;
+
+    const overflowSnap = await inboxRef
+      .orderBy('createdAt', 'desc')
+      .startAfter(oldestRetainedDoc)
+      .limit(500)
+      .get();
+    overflowDocs = overflowSnap.docs;
   }
 
-  return deletedCount;
+  return cleanupCount;
 }
 
 async function writeNotificationInboxRecords({
