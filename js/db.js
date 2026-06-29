@@ -3951,11 +3951,15 @@ export async function setCompletedGamePlayerStats(teamId, gameId, playerId, stat
         statsPayload.statTrackerConfig || {},
         statsPayload.stats || {}
     );
+    const didNotPlay = statsPayload.didNotPlay === true;
     const basePayload = {
         playerName: statsPayload.playerName || '',
         playerNumber: statsPayload.playerNumber || '',
         timeMs: Number.isFinite(Number(statsPayload.timeMs)) ? Number(statsPayload.timeMs) : 0,
-        didNotPlay: statsPayload.didNotPlay === true
+        didNotPlay,
+        participated: !didNotPlay,
+        participationStatus: didNotPlay ? 'did-not-appear' : (statsPayload.participationStatus || 'appeared'),
+        participationSource: didNotPlay ? '' : (statsPayload.participationSource || 'post-game-stat-editor')
     };
     const gameRef = getGameDocRef(teamId, gameId);
     const publicDocRef = doc(db, `${gameRef.path}/aggregatedStats`, playerId);
