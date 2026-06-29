@@ -201,6 +201,7 @@ export function buildFinishCompletionPlan({
     awayScore: finalAway,
     summary,
     status: 'completed',
+    liveStatus: 'completed',
     opponentStats: buildOpponentStatsSnapshotFromEntries({
       opponentEntries,
       columns: safeColumns

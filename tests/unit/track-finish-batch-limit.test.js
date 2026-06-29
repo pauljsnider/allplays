@@ -127,7 +127,14 @@ describe('standard tracker finish batch limits', () => {
         ]);
         expect(secondaryBatches.flatMap((batch) => batch.operations).filter((op) => op.type === 'delete')).toHaveLength(905);
         expect(gameUpdateBatch.operations).toEqual([
-            expect.objectContaining({ type: 'update', ref: { path: 'teams/team-1/games/game-1' } })
+            expect.objectContaining({
+                type: 'update',
+                ref: { path: 'teams/team-1/games/game-1' },
+                data: expect.objectContaining({
+                    status: 'completed',
+                    liveStatus: 'completed'
+                })
+            })
         ]);
     });
 
@@ -280,7 +287,7 @@ describe('standard tracker finish batch limits', () => {
         expect(harness.batches[1].operations[0].ref.path).toBe('teams/team-1/games/game-1/events/finish-log-000501');
         expect(harness.batches[2].operations[0].ref.path).toBe('teams/team-1/games/game-1/events/finish-log-001001');
         expect(harness.batches.at(-1).operations).toEqual([
-            expect.objectContaining({ type: 'update', data: expect.objectContaining({ status: 'completed' }) })
+            expect.objectContaining({ type: 'update', data: expect.objectContaining({ status: 'completed', liveStatus: 'completed' }) })
         ]);
     });
 

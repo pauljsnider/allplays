@@ -213,6 +213,7 @@ export async function commitStandardTrackerFinishData({
         awayScore: finalAway,
         summary,
         status: 'completed',
+        liveStatus: 'completed',
         opponentStats
     });
     await gameUpdateBatch.commit();

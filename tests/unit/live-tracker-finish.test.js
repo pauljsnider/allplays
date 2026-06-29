@@ -52,6 +52,7 @@ describe('live tracker finish completion plan', () => {
       awayScore: 41,
       summary: 'Closed well in the final minute.',
       status: 'completed',
+      liveStatus: 'completed',
       opponentStats: {
         'opp-1': {
           name: 'Pat',
