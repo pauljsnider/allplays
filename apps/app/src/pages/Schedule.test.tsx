@@ -674,8 +674,58 @@ describe('Schedule', () => {
 
     fireEvent.click(screen.getByRole('button', { name: /^create tournament$/i }));
 
-    expect(await screen.findByText('Tournament division is required.')).toBeTruthy();
+    expect((await screen.findAllByText('Tournament division is required.')).length).toBeGreaterThan(0);
     expect(scheduleServiceMocks.createScheduledTournamentBlockForApp).not.toHaveBeenCalled();
+  });
+
+  it('shows tournament game field errors without losing entered values', async () => {
+    scheduleServiceMocks.loadParentSchedule
+      .mockResolvedValueOnce(buildStaffScheduleResult())
+      .mockResolvedValueOnce(buildStaffScheduleResult());
+    scheduleServiceMocks.createScheduledTournamentBlockForApp.mockResolvedValueOnce(['game-1']);
+
+    renderSchedule();
+
+    fireEvent.click(await screen.findByRole('button', { name: /manage schedule/i }));
+    fireEvent.click(await screen.findByRole('button', { name: 'New tournament block' }));
+    expect(await screen.findByRole('heading', { name: 'Add tournament for Bears' })).toBeTruthy();
+
+    fireEvent.change(screen.getByLabelText('Tournament division'), { target: { value: '10U Gold' } });
+    fireEvent.change(screen.getByLabelText('Tournament bracket'), { target: { value: 'Gold Bracket' } });
+    fireEvent.change(screen.getByLabelText('Tournament round'), { target: { value: 'Semifinal' } });
+    fireEvent.change(screen.getByLabelText('Tournament pool'), { target: { value: 'Pool A' } });
+    fireEvent.change(screen.getByLabelText('Game 1 location'), { target: { value: 'Main Gym' } });
+    fireEvent.change(screen.getByLabelText('Game 1 notes'), { target: { value: 'Bring dark jerseys' } });
+    fireEvent.change(screen.getByLabelText('Game 1 opponent'), { target: { value: '' } });
+    fireEvent.change(screen.getByLabelText('Game 1 starts'), { target: { value: '' } });
+
+    fireEvent.click(screen.getByRole('button', { name: /^create tournament$/i }));
+
+    expect((await screen.findAllByText('Game opponent is required.')).length).toBeGreaterThan(0);
+    expect(screen.getByText('Game start time is required.')).toBeTruthy();
+    expect(screen.getByDisplayValue('10U Gold')).toBeTruthy();
+    expect(screen.getByDisplayValue('Pool A')).toBeTruthy();
+    expect(screen.getByDisplayValue('Main Gym')).toBeTruthy();
+    expect(screen.getByDisplayValue('Bring dark jerseys')).toBeTruthy();
+    expect(scheduleServiceMocks.createScheduledTournamentBlockForApp).not.toHaveBeenCalled();
+
+    fireEvent.change(screen.getByLabelText('Game 1 opponent'), { target: { value: 'Tigers' } });
+    fireEvent.change(screen.getByLabelText('Game 1 starts'), { target: { value: '2026-06-24T18:30' } });
+    fireEvent.change(screen.getByLabelText('Game 1 ends'), { target: { value: '2026-06-24T20:00' } });
+    fireEvent.click(screen.getByRole('button', { name: /^create tournament$/i }));
+
+    await waitFor(() => {
+      expect(scheduleServiceMocks.createScheduledTournamentBlockForApp).toHaveBeenCalledTimes(1);
+      expect(scheduleServiceMocks.createScheduledTournamentBlockForApp).toHaveBeenCalledWith('team-1', expect.objectContaining({
+        divisionName: '10U Gold',
+        poolName: 'Pool A',
+        games: [expect.objectContaining({
+          opponent: 'Tigers',
+          location: 'Main Gym',
+          notes: 'Bring dark jerseys'
+        })]
+      }), auth.user);
+    });
   });
 
   it('submits tournament blocks with metadata and one child game from schedule tools', async () => {

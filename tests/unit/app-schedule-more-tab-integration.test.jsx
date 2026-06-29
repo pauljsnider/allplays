@@ -106,6 +106,11 @@ vi.mock('@capacitor-firebase/performance', () => ({
         record: vi.fn().mockResolvedValue(undefined)
     }
 }));
+vi.mock('../../apps/app/src/lib/performanceInstrumentation.ts', () => ({
+    now: vi.fn(() => 0),
+    startPerformanceSpan: vi.fn(() => ({ startedAt: 0, end: vi.fn() })),
+    recordCompletedPerformanceSpan: vi.fn()
+}));
 vi.mock('../../apps/app/src/lib/scheduleService.ts', () => scheduleMocks);
 vi.mock('../../apps/app/src/lib/gameReportService.ts', () => reportMocks);
 vi.mock('../../apps/app/src/lib/publicActions.ts', () => publicActionMocks);
