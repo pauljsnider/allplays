@@ -68,4 +68,24 @@ describe('targeted team chat Firestore rules', () => {
         expect(rules).toContain('(isTeamStaffChatConversationUpdate(teamId) ||');
         expect(rules).toContain('isChatConversationParticipantMetadataUpdate());');
     });
+
+    it('requires team staff/admin access and server-derived members for the canonical staff conversation', () => {
+        expect(rules).toContain("function isCanonicalStaffChatConversation(conversationId)");
+        expect(rules).toContain("return conversationId == 'group_role%3Astaff';");
+        expect(rules).toContain("function isCanonicalStaffChatConversationPayload(conversationId, data)");
+        expect(rules).toContain("data.get('type', '') == 'group'");
+        expect(rules).toContain("data.get('participantRoles', []) == ['staff']");
+        expect(rules).toContain("data.get('participantIds', []) == []");
+        expect(rules).toContain('isCanonicalStaffChatConversation(conversationId) &&');
+        expect(rules).toContain('isTeamOwnerOrAdmin(teamId) &&');
+        expect(rules).toContain('isCanonicalStaffChatConversationPayload(conversationId, conversationData)');
+    });
+
+    it('does not authorize staff-role conversations through caller-controlled participantIds', () => {
+        expect(rules).toContain('!isCanonicalStaffChatConversation(conversationId) &&');
+        expect(rules).toContain('!isStaffRoleChatConversation(conversationData) &&');
+        expect(rules).toContain('request.auth.uid in participantIds');
+        expect(rules.indexOf('!isStaffRoleChatConversation(conversationData) &&'))
+            .toBeLessThan(rules.indexOf('request.auth.uid in participantIds'));
+    });
 });

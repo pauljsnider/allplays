@@ -1214,16 +1214,42 @@ service cloud.firestore {
              );
     }
 
+    function isCanonicalStaffChatConversation(conversationId) {
+      return conversationId == 'group_role%3Astaff';
+    }
+
+    function isStaffRoleChatConversation(data) {
+      return data.get('participantRoles', []) == ['staff'];
+    }
+
+    function isCanonicalStaffChatConversationPayload(conversationId, data) {
+      return isCanonicalStaffChatConversation(conversationId) &&
+             data.get('type', '') == 'group' &&
+             isStaffRoleChatConversation(data) &&
+             data.get('participantIds', []) == [];
+    }
+
     function canAccessChatConversation(teamId, conversationId, conversationData) {
       let participantIds = conversationData.get('participantIds', []);
       return canAccessTeamChat(teamId) &&
              (
-               conversationId == 'team' ||
-               conversationData.get('type', '') == 'team' ||
-               isTeamOwnerOrAdmin(teamId) ||
-               request.auth.uid in participantIds ||
-               ('user:' + request.auth.uid) in participantIds ||
-               (request.auth.token.email != null && ('email:' + request.auth.token.email.lower()) in participantIds)
+               (
+                 isCanonicalStaffChatConversation(conversationId) &&
+                 isTeamOwnerOrAdmin(teamId) &&
+                 isCanonicalStaffChatConversationPayload(conversationId, conversationData)
+               ) ||
+               (
+                 !isCanonicalStaffChatConversation(conversationId) &&
+                 !isStaffRoleChatConversation(conversationData) &&
+                 (
+                   conversationId == 'team' ||
+                   conversationData.get('type', '') == 'team' ||
+                   isTeamOwnerOrAdmin(teamId) ||
+                   request.auth.uid in participantIds ||
+                   ('user:' + request.auth.uid) in participantIds ||
+                   (request.auth.token.email != null && ('email:' + request.auth.token.email.lower()) in participantIds)
+                 )
+               )
              );
     }
 
