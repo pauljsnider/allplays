@@ -5,7 +5,19 @@ import { createRoot } from 'react-dom/client';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 
 const serviceMocks = vi.hoisted(() => ({
-    loadParentRegistrationDetail: vi.fn()
+    acceptTeamRegistrationOfferForApp: vi.fn(),
+    approveTeamRegistrationForApp: vi.fn(),
+    cancelRegistrationCheckout: vi.fn(),
+    extendTeamRegistrationOfferForApp: vi.fn(),
+    initiateRegistrationCheckout: vi.fn(),
+    loadParentRegistrationDetail: vi.fn(),
+    loadParentRegistrations: vi.fn(),
+    loadPublicRegistrationDetail: vi.fn(),
+    loadStaffRegistrationDetail: vi.fn(),
+    loadTeamRegistrationQueuePage: vi.fn(),
+    loadTeamRegistrationRosterPlayers: vi.fn(),
+    rejectTeamRegistrationForApp: vi.fn(),
+    submitOfflineRegistration: vi.fn(),
 }));
 
 const publicActionMocks = vi.hoisted(() => ({
@@ -14,7 +26,18 @@ const publicActionMocks = vi.hoisted(() => ({
 
 // Mock registration-flow.js
 const registrationFlowMocks = vi.hoisted(() => ({
+  buildPendingRegistrationRecord: vi.fn((params = {}) => ({
+    id: 'pending-registration-1',
+    status: params.status || 'pending',
+    participant: params.participant || {},
+    guardian: params.guardian || {},
+  })),
+  getActiveRegistrationOptions: vi.fn((form = {}) => form.registrationOptions || form.options || []),
+  getPaymentPlanChoices: vi.fn(() => [{ id: 'pay_full', type: 'pay_full', title: 'Pay in full' }]),
+  getRegistrationPaymentNotice: vi.fn(() => ''),
+  hasOnlineRegistrationCheckout: vi.fn(() => true),
   hasQuantityDiscountRule: vi.fn(() => false),
+  normalizeRegistrationForm: vi.fn((form = {}) => form),
   requiresRegistrationOption: vi.fn(() => true),
   decideRegistrationPlacement: vi.fn((params) => ({
     status: 'pending',
@@ -37,7 +60,7 @@ const registrationFlowMocks = vi.hoisted(() => ({
   ])),
 }));
 
-vi.mock('../../apps/app/src/lib/parentToolsService.ts', () => serviceMocks);
+vi.mock('../../apps/app/src/lib/parentRegistrationsService.ts', () => serviceMocks);
 vi.mock('../../apps/app/src/lib/publicActions.ts', () => publicActionMocks);
 vi.mock('../../js/registration-flow.js', () => registrationFlowMocks);
 
