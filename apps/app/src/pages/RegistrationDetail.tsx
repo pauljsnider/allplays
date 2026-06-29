@@ -86,6 +86,8 @@ function RegistrationDetailPage({ auth, publicAccess = false, staffReview = fals
   const [selectedMergePlayerId, setSelectedMergePlayerId] = useState('');
   const [lastDoc, setLastDoc] = useState<any>(null);
   const [hasMore, setHasMore] = useState(false);
+  const [waitlistedLastDoc, setWaitlistedLastDoc] = useState<any>(null);
+  const [waitlistedHasMore, setWaitlistedHasMore] = useState(false);
   const [reloadKey, setReloadKey] = useState(0);
   const formRef = useRef<HTMLFormElement | null>(null);
   const cancelledCheckoutReleaseKeyRef = useRef('');
@@ -125,12 +127,16 @@ function RegistrationDetailPage({ auth, publicAccess = false, staffReview = fals
           setQueue(nextQueue);
           setLastDoc(nextPage.lastDoc);
           setHasMore(nextPage.hasMore);
+          setWaitlistedLastDoc(waitlistedPage.lastDoc);
+          setWaitlistedHasMore(waitlistedPage.hasMore);
           const firstReviewId = nextQueue.reviews[0]?.id || nextQueue.waitlistedReviews?.[0]?.id || '';
           setSelectedReviewId((current) => current && [...nextQueue.reviews, ...(nextQueue.waitlistedReviews || [])].some((review) => review.id === current) ? current : firstReviewId);
         } else {
           setQueue(null);
           setLastDoc(null);
           setHasMore(false);
+          setWaitlistedLastDoc(null);
+          setWaitlistedHasMore(false);
         }
         const initialOptions = (Array.isArray(nextForm.options) && nextForm.options.length) ? nextForm.options : getActiveRegistrationOptions(nextForm, nextForm.registrationOptionCounts || {});
         const initialOptionId = selectInitialRegistrationOption(nextForm, initialOptions);
@@ -432,6 +438,25 @@ function RegistrationDetailPage({ auth, publicAccess = false, staffReview = fals
     }
   };
 
+  const handleLoadMoreWaitlisted = async () => {
+    if (!waitlistedLastDoc || !waitlistedHasMore || saving) return;
+    setSaving(true);
+    setError('');
+    try {
+      const nextPage = await loadTeamRegistrationQueuePage(teamId, formId, { status: 'waitlisted', afterDoc: waitlistedLastDoc });
+      setQueue((current: TeamRegistrationQueueModel | null) => current ? {
+        ...current,
+        waitlistedReviews: [...(current.waitlistedReviews || []), ...nextPage.reviews]
+      } : { reviews: [], rosterPlayers: [], waitlistedReviews: nextPage.reviews });
+      setWaitlistedLastDoc(nextPage.lastDoc);
+      setWaitlistedHasMore(nextPage.hasMore);
+    } catch (loadError: any) {
+      setError(loadError?.message || 'Unable to load more waitlisted applicants.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
   if (loading) return <LoadingBlock label="Loading registration" />;
   if (!form) return <EmptyState icon={Ticket} title="Registration unavailable" detail={error || 'This registration form could not be loaded.'} actionLabel={error ? 'Retry' : ''} onAction={error ? () => setReloadKey((current) => current + 1) : undefined} />;
 
@@ -493,6 +518,12 @@ function RegistrationDetailPage({ auth, publicAccess = false, staffReview = fals
                       </button>
                     ))}
                   </div>
+                  {waitlistedHasMore ? (
+                    <button type="button" className="secondary-button mt-3 w-full text-xs" onClick={handleLoadMoreWaitlisted} disabled={saving}>
+                      {saving ? <Loader2 className="h-3 w-3 animate-spin" aria-hidden="true" /> : null}
+                      Load more waitlisted applicants
+                    </button>
+                  ) : null}
                 </div>
               ) : null}
               {queue?.reviews.length ? queue.reviews.map((review) => (
