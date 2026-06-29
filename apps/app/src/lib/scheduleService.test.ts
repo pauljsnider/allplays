@@ -507,7 +507,8 @@ describe('scheduled tournament writes', () => {
     }));
   });
 
-  it('maps a single-game tournament block to one legacy document and one write', async () => {
+  it('routes a single-game tournament block through the scheduled game save flow with one legacy document', async () => {
+    const scheduleServiceSource = readFileSync('src/lib/scheduleService.ts', 'utf8');
     vi.mocked(addGame).mockResolvedValueOnce('game-1' as any);
 
     const createdIds = await createScheduledTournamentBlockForApp('team-1', {
@@ -540,6 +541,8 @@ describe('scheduled tournament writes', () => {
       poolName: 'Pool A'
     });
     expect(buildLegacyTournamentGameDocuments).not.toHaveBeenCalled();
+    expect(scheduleServiceSource).toContain('createScheduledGameForApp(normalizedTeamId, games[0], user, {');
+    expect(scheduleServiceSource).toContain('legacyPayload,');
     expect(addGame).toHaveBeenCalledTimes(1);
     expect(addGame).toHaveBeenCalledWith('team-1', expect.objectContaining({
       type: 'game',
