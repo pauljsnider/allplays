@@ -1214,16 +1214,61 @@ service cloud.firestore {
              );
     }
 
+    function isCanonicalStaffChatConversation(conversationId) {
+      return conversationId == 'group_role%3Astaff';
+    }
+
+    function isStaffRoleChatConversation(data) {
+      return data.get('participantRoles', []) is list &&
+             'staff' in data.get('participantRoles', []);
+    }
+
+    function canListChatConversation(teamId, conversationId, conversationData) {
+      let participantIds = conversationData.get('participantIds', []);
+      return canAccessTeamChat(teamId) &&
+             (
+               isTeamOwnerOrAdmin(teamId) ||
+               (
+                 !isCanonicalStaffChatConversation(conversationId) &&
+                 (
+                   conversationId == 'team' ||
+                   conversationData.get('type', '') == 'team' ||
+                   request.auth.uid in participantIds ||
+                   ('user:' + request.auth.uid) in participantIds ||
+                   (request.auth.token.email != null && ('email:' + request.auth.token.email.lower()) in participantIds)
+                 )
+               )
+             );
+    }
+
+    function isCanonicalStaffChatConversationPayload(conversationId, data) {
+      return isCanonicalStaffChatConversation(conversationId) &&
+             data.get('type', '') == 'group' &&
+             isStaffRoleChatConversation(data) &&
+             data.get('participantIds', []) == [];
+    }
+
     function canAccessChatConversation(teamId, conversationId, conversationData) {
       let participantIds = conversationData.get('participantIds', []);
       return canAccessTeamChat(teamId) &&
              (
-               conversationId == 'team' ||
-               conversationData.get('type', '') == 'team' ||
-               isTeamOwnerOrAdmin(teamId) ||
-               request.auth.uid in participantIds ||
-               ('user:' + request.auth.uid) in participantIds ||
-               (request.auth.token.email != null && ('email:' + request.auth.token.email.lower()) in participantIds)
+               (
+                 isCanonicalStaffChatConversation(conversationId) &&
+                 isTeamOwnerOrAdmin(teamId) &&
+                 isCanonicalStaffChatConversationPayload(conversationId, conversationData)
+               ) ||
+               (
+                 !isCanonicalStaffChatConversation(conversationId) &&
+                 !isStaffRoleChatConversation(conversationData) &&
+                 (
+                   conversationId == 'team' ||
+                   conversationData.get('type', '') == 'team' ||
+                   isTeamOwnerOrAdmin(teamId) ||
+                   request.auth.uid in participantIds ||
+                   ('user:' + request.auth.uid) in participantIds ||
+                   (request.auth.token.email != null && ('email:' + request.auth.token.email.lower()) in participantIds)
+                 )
+               )
              );
     }
 
@@ -2428,7 +2473,8 @@ service cloud.firestore {
       // remains teams/{teamId}/chatMessages for compatibility; targeted threads
       // store messages under their conversation record.
       match /chatConversations/{conversationId} {
-        allow read: if canAccessChatConversation(teamId, conversationId, resource.data);
+        allow get: if canAccessChatConversation(teamId, conversationId, resource.data);
+        allow list: if canListChatConversation(teamId, conversationId, resource.data);
         allow create: if canAccessTeamChat(teamId) &&
                          isChatConversationPayloadValid(request.resource.data) &&
                          canAccessChatConversation(teamId, conversationId, request.resource.data);

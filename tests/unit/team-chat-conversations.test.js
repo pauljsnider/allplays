@@ -57,8 +57,10 @@ describe('team chat conversations', () => {
         const rules = readRepoFile('firestore.rules');
         const db = readRepoFile('js/db.js');
 
-        expect(rules).toContain('allow read: if canAccessChatConversation(teamId, conversationId, resource.data);');
+        expect(rules).toContain('allow get: if canAccessChatConversation(teamId, conversationId, resource.data);');
+        expect(rules).toContain('allow list: if canListChatConversation(teamId, conversationId, resource.data);');
         expect(rules).toContain('canAccessChatConversation(teamId, conversationId, request.resource.data) &&');
+        expect(rules).toContain("allow read: if canAccessChatConversation(teamId, conversationId, get(/databases/$(database)/documents/teams/$(teamId)/chatConversations/$(conversationId)).data);");
         expect(db).toContain("where('participantIds', 'array-contains', user.uid)");
         expect(db).toContain("where('participantIds', 'array-contains', `user:${user.uid}`)");
         expect(db).toContain("where('participantIds', 'array-contains', `email:${normalizedEmail}`)");
