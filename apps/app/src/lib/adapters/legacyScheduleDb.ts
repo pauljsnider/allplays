@@ -144,7 +144,69 @@ export async function getTeams(options?: { includePrivate?: boolean }) {
     return await Promise.resolve(options === undefined ? legacyGetTeams() : legacyGetTeams(options));
 }
 
+export class LegacyTournamentGameAdapterValidationError extends Error {
+    readonly code = 'legacy-tournament-game-adapter-validation-error';
+    readonly field: string;
+
+    constructor(field: string, message: string) {
+        super(message);
+        this.name = 'LegacyTournamentGameAdapterValidationError';
+        this.field = field;
+    }
+}
+
+function isPlainLegacyScheduleRecord(value: unknown): value is Record<string, unknown> {
+    return Boolean(value && typeof value === 'object' && !Array.isArray(value));
+}
+
+function requireLegacyTournamentText(value: unknown, field: string) {
+    if (typeof value !== 'string' || !value.trim()) {
+        throw new LegacyTournamentGameAdapterValidationError(field, `Tournament adapter requires ${field}.`);
+    }
+}
+
+function requireLegacyTournamentDate(value: unknown, field: string) {
+    if (!(value instanceof Date) || Number.isNaN(value.getTime())) {
+        throw new LegacyTournamentGameAdapterValidationError(field, `Tournament adapter requires a valid ${field}.`);
+    }
+}
+
+function validateLegacyTournamentGamePayload(payload: unknown) {
+    if (!isPlainLegacyScheduleRecord(payload)) {
+        throw new LegacyTournamentGameAdapterValidationError('payload', 'Tournament adapter requires a legacy game payload.');
+    }
+    if (payload.type !== 'game') {
+        throw new LegacyTournamentGameAdapterValidationError('type', 'Tournament adapter requires a game payload.');
+    }
+    requireLegacyTournamentText(payload.opponent, 'opponent');
+    requireLegacyTournamentDate(payload.date, 'date');
+    if (payload.end !== null && payload.end !== undefined) {
+        requireLegacyTournamentDate(payload.end, 'end');
+        if ((payload.end as Date).getTime() <= (payload.date as Date).getTime()) {
+            throw new LegacyTournamentGameAdapterValidationError('end', 'Tournament adapter requires end to be after date.');
+        }
+    }
+    if (payload.arrivalTime !== null && payload.arrivalTime !== undefined) {
+        requireLegacyTournamentDate(payload.arrivalTime, 'arrivalTime');
+    }
+}
+
+function validateLegacyTournamentMetadata(tournament: unknown) {
+    if (!isPlainLegacyScheduleRecord(tournament)) {
+        throw new LegacyTournamentGameAdapterValidationError('tournament', 'Tournament adapter requires tournament metadata.');
+    }
+    requireLegacyTournamentText(tournament.divisionName, 'tournament.divisionName');
+    requireLegacyTournamentText(tournament.bracketName, 'tournament.bracketName');
+    requireLegacyTournamentText(tournament.roundName, 'tournament.roundName');
+    if (tournament.poolName !== null && tournament.poolName !== undefined && (typeof tournament.poolName !== 'string' || !tournament.poolName.trim())) {
+        throw new LegacyTournamentGameAdapterValidationError('tournament.poolName', 'Tournament adapter requires tournament.poolName to be a non-empty string when provided.');
+    }
+}
+
 export function buildLegacyTournamentGameDocument(payload: Record<string, unknown>, tournament: Record<string, unknown>) {
+    validateLegacyTournamentGamePayload(payload);
+    validateLegacyTournamentMetadata(tournament);
+
     return {
         ...payload,
         competitionType: 'tournament',
@@ -155,8 +217,11 @@ export function buildLegacyTournamentGameDocument(payload: Record<string, unknow
 }
 
 export function buildLegacyTournamentGameDocuments(games: Array<Record<string, unknown> | null | undefined>, tournament: Record<string, unknown>) {
-    return games
-        .filter((game): game is Record<string, unknown> => Boolean(game && typeof game === 'object' && !Array.isArray(game)))
+    const tournamentGames = games
+        .filter((game): game is Record<string, unknown> => isPlainLegacyScheduleRecord(game));
+    validateLegacyTournamentMetadata(tournament);
+    tournamentGames.forEach(validateLegacyTournamentGamePayload);
+    return tournamentGames
         .map((game) => buildLegacyTournamentGameDocument(game, tournament));
 }
 
