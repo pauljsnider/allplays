@@ -74,7 +74,7 @@ describe('targeted team chat Firestore rules', () => {
         expect(rules).toContain("return conversationId == 'group_role%3Astaff';");
         expect(rules).toContain("function isCanonicalStaffChatConversationPayload(conversationId, data)");
         expect(rules).toContain("data.get('type', '') == 'group'");
-        expect(rules).toContain("data.get('participantRoles', []) == ['staff']");
+        expect(rules).toContain("'staff' in data.get('participantRoles', [])");
         expect(rules).toContain("data.get('participantIds', []) == []");
         expect(rules).toContain('isCanonicalStaffChatConversation(conversationId) &&');
         expect(rules).toContain('isTeamOwnerOrAdmin(teamId) &&');
@@ -82,10 +82,31 @@ describe('targeted team chat Firestore rules', () => {
     });
 
     it('does not authorize staff-role conversations through caller-controlled participantIds', () => {
+        expect(rules).toContain('function isStaffRoleChatConversation(data)');
+        expect(rules).toContain("data.get('participantRoles', []) is list &&");
+        expect(rules).toContain("'staff' in data.get('participantRoles', [])");
         expect(rules).toContain('!isCanonicalStaffChatConversation(conversationId) &&');
         expect(rules).toContain('!isStaffRoleChatConversation(conversationData) &&');
-        expect(rules).toContain('request.auth.uid in participantIds');
-        expect(rules.indexOf('!isStaffRoleChatConversation(conversationData) &&'))
-            .toBeLessThan(rules.indexOf('request.auth.uid in participantIds'));
+        const accessHelperStart = rules.indexOf('function canAccessChatConversation(teamId, conversationId, conversationData)');
+        const accessHelperEnd = rules.indexOf('function isChatConversationPayloadValid(data)');
+        const accessHelper = rules.slice(accessHelperStart, accessHelperEnd);
+
+        expect(accessHelper).toContain('request.auth.uid in participantIds');
+        expect(accessHelper.indexOf('!isStaffRoleChatConversation(conversationData) &&'))
+            .toBeLessThan(accessHelper.indexOf('request.auth.uid in participantIds'));
+    });
+
+    it('keeps conversation list authorization compatible with existing participant and moderator queries', () => {
+        expect(rules).toContain('allow get: if canAccessChatConversation(teamId, conversationId, resource.data);');
+        expect(rules).toContain('allow list: if canListChatConversation(teamId, conversationId, resource.data);');
+        expect(rules).toContain('function canListChatConversation(teamId, conversationId, conversationData)');
+
+        const listHelperStart = rules.indexOf('function canListChatConversation(teamId, conversationId, conversationData)');
+        const listHelperEnd = rules.indexOf('function isCanonicalStaffChatConversationPayload(conversationId, data)');
+        const listHelper = rules.slice(listHelperStart, listHelperEnd);
+
+        expect(listHelper).toContain('isTeamOwnerOrAdmin(teamId) ||');
+        expect(listHelper).toContain('request.auth.uid in participantIds');
+        expect(listHelper).not.toContain('!isStaffRoleChatConversation(conversationData)');
     });
 });

@@ -1219,7 +1219,26 @@ service cloud.firestore {
     }
 
     function isStaffRoleChatConversation(data) {
-      return data.get('participantRoles', []) == ['staff'];
+      return data.get('participantRoles', []) is list &&
+             'staff' in data.get('participantRoles', []);
+    }
+
+    function canListChatConversation(teamId, conversationId, conversationData) {
+      let participantIds = conversationData.get('participantIds', []);
+      return canAccessTeamChat(teamId) &&
+             (
+               isTeamOwnerOrAdmin(teamId) ||
+               (
+                 !isCanonicalStaffChatConversation(conversationId) &&
+                 (
+                   conversationId == 'team' ||
+                   conversationData.get('type', '') == 'team' ||
+                   request.auth.uid in participantIds ||
+                   ('user:' + request.auth.uid) in participantIds ||
+                   (request.auth.token.email != null && ('email:' + request.auth.token.email.lower()) in participantIds)
+                 )
+               )
+             );
     }
 
     function isCanonicalStaffChatConversationPayload(conversationId, data) {
@@ -2454,7 +2473,8 @@ service cloud.firestore {
       // remains teams/{teamId}/chatMessages for compatibility; targeted threads
       // store messages under their conversation record.
       match /chatConversations/{conversationId} {
-        allow read: if canAccessChatConversation(teamId, conversationId, resource.data);
+        allow get: if canAccessChatConversation(teamId, conversationId, resource.data);
+        allow list: if canListChatConversation(teamId, conversationId, resource.data);
         allow create: if canAccessTeamChat(teamId) &&
                          isChatConversationPayloadValid(request.resource.data) &&
                          canAccessChatConversation(teamId, conversationId, request.resource.data);
