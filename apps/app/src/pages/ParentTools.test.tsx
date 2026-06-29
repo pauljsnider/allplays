@@ -344,11 +344,8 @@ describe('ParentTools access', () => {
 
         await screen.findByText('Request player access');
         await waitFor(() => expect(parentToolsAccessServiceMocks.loadParentAccessTeams).toHaveBeenCalledTimes(1));
-        expect(screen.getByRole('button', { name: 'Request access without a code' })).toBeTruthy();
-        expect(screen.queryByRole('combobox', { name: 'Team' })).toBeNull();
+        expect(screen.queryByRole('button', { name: 'Request access without a code' })).toBeNull();
         expect(screen.getByRole('button', { name: 'Redeem code' })).toBeTruthy();
-
-        fireEvent.click(screen.getByRole('button', { name: 'Request access without a code' }));
 
         const teamSelect = await screen.findByRole('combobox', { name: 'Team' }) as HTMLSelectElement;
         expect(teamSelect.value).toBe('');

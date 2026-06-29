@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState, type FormEvent } from 'react';
+import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { AlertCircle, CheckCircle2, KeyRound, Loader2, RefreshCw, Shield, Users } from 'lucide-react';
 import { redeemSignedInInvite } from '../../lib/inviteRedemption';
@@ -26,6 +26,10 @@ export function AccessTool({ auth, onAccessChanged }: { auth: AuthState; onAcces
     const [selectedTeamId, setSelectedTeamId] = useState('');
     const [selectedPlayerId, setSelectedPlayerId] = useState('');
     const [relation, setRelation] = useState('Parent');
+    // Tracks the deep link we last reconciled so a NEW deep link (a different
+    // teamId opened while already mounted) is applied, while team-list refreshes
+    // for the same deep link don't clobber a later manual selection.
+    const appliedDeepLinkRef = useRef('');
     const [redeemCode, setRedeemCode] = useState('');
     const [message, setMessage] = useState('');
     const accessLoadOperation = useParentToolAsyncOperation();
@@ -118,10 +122,27 @@ export function AccessTool({ auth, onAccessChanged }: { auth: AuthState; onAcces
     }, [deepLinkedTeamId, loadTeams, loadingTeams, teams.length]);
 
     useEffect(() => {
-        if (!deepLinkedTeamId || !teams.some((team) => team.id === deepLinkedTeamId)) return;
+        if (deepLinkedTeamId) return;
+        appliedDeepLinkRef.current = '';
+    }, [deepLinkedTeamId]);
+
+    useEffect(() => {
+        // Wait until teams have loaded so we can tell whether the deep-linked team
+        // is accessible before reconciling the selection.
+        if (!deepLinkedTeamId || appliedDeepLinkRef.current === deepLinkedTeamId) return;
+        if (loadingTeams || !teams.length) return;
+        appliedDeepLinkRef.current = deepLinkedTeamId;
         setManualRequestOpen(true);
-        setSelectedTeamId((current) => current || deepLinkedTeamId);
-    }, [deepLinkedTeamId, teams]);
+        if (teams.some((team) => team.id === deepLinkedTeamId)) {
+            // A new deep link is an explicit navigation intent: switch to it even
+            // if a previous team was already selected.
+            setSelectedTeamId(deepLinkedTeamId);
+        } else {
+            // The newly deep-linked team isn't accessible — clear the stale
+            // selection so the form can't submit against the previous roster.
+            setSelectedTeamId('');
+        }
+    }, [deepLinkedTeamId, teams, loadingTeams]);
 
     useEffect(() => {
         if (!manualRequestOpen || manualTeamsRequested || teams.length || loadingTeams) return;

@@ -1,17 +1,29 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-const recordAppUxTiming = vi.fn();
-const performanceSpanEnd = vi.fn();
-const startPerformanceSpan = vi.fn((label: string) => ({
-  label,
-  traceName: `trace:${label}`,
-  startedAt: 100,
-  end: performanceSpanEnd
-}));
-const recordCompletedPerformanceSpan = vi.fn();
+const {
+  recordAppUxTiming,
+  performanceSpanEnd,
+  startPerformanceSpan,
+  recordCompletedPerformanceSpan
+} = vi.hoisted(() => {
+  const performanceSpanEnd = vi.fn();
+  const startPerformanceSpan = vi.fn((label: string) => ({
+    label,
+    traceName: `trace:${label}`,
+    startedAt: 100,
+    end: performanceSpanEnd
+  }));
+
+  return {
+    recordAppUxTiming: vi.fn(),
+    performanceSpanEnd,
+    startPerformanceSpan,
+    recordCompletedPerformanceSpan: vi.fn()
+  };
+});
 
 vi.mock('./telemetry', () => ({
-  recordAppUxTiming: (...args: unknown[]) => recordAppUxTiming(...args)
+  recordAppUxTiming
 }));
 
 vi.mock('./performanceInstrumentation', () => ({
@@ -19,7 +31,7 @@ vi.mock('./performanceInstrumentation', () => ({
   // The local mock is typed (label: string); cast the passthrough spread to a
   // tuple so it satisfies that parameter (runtime still forwards every arg).
   startPerformanceSpan: (...args: unknown[]) => startPerformanceSpan(...(args as [string])),
-  recordCompletedPerformanceSpan: (...args: unknown[]) => recordCompletedPerformanceSpan(...args)
+  recordCompletedPerformanceSpan
 }));
 
 import {
