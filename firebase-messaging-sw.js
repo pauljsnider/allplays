@@ -10,6 +10,7 @@ const CONFIG_CACHE_KEY = '/__allplays/push/firebase-config.json';
 const FIREBASE_INIT_JSON_URL = '/__/firebase/init.json';
 const WEB_PUSH_NOTIFICATION_ICON = '/img/logo_small.png';
 const WEB_PUSH_NOTIFICATION_BADGE = '/img/logo_small.png';
+const WEB_PUSH_NOTIFICATION_ACTIONS = [{ action: 'open', title: 'Open' }];
 const ALLOWED_CLICK_HOSTS = new Set([
     self.location.hostname.toLowerCase(),
     'allplays.ai',
@@ -130,6 +131,7 @@ function registerBackgroundMessageHandler(messaging) {
             body,
             icon,
             badge,
+            actions: WEB_PUSH_NOTIFICATION_ACTIONS,
             data: { link: normalizeNotificationLink(link) }
         });
     });

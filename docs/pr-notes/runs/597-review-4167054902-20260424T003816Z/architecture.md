@@ -1,7 +1,7 @@
 # Architecture
 
 ## Current State
-PR #597 adds new `db.js` named imports and a new `tournament-standings.js` module. Existing smoke fixtures for edit-schedule were still pinned to the old `db.js?v=20` route shape and older export surface.
+PR #597 adds new `db.js` named imports and a new `tournament-standings.js` module. Existing smoke fixtures for edit-schedule were still pinned to the old `db.js?v=76` route shape and older export surface.
 
 ## Proposed State
 Leave application behavior unchanged. Update smoke fixtures so their stubbed module contract matches the new import surface and stays tolerant of query-string cache busting.

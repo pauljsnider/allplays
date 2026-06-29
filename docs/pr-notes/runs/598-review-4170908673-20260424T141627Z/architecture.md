@@ -1,7 +1,7 @@
 # Architecture
 
 ## Current State
-`edit-schedule.html` imports `js/db.js?v=20`. This branch added an import from `./organization-shared-schedule.js?v=1`, but that file is absent from the repo. In a browser module graph, one missing import prevents `db.js` from evaluating and breaks pages that depend on it.
+`edit-schedule.html` imports `js/db.js?v=76`. This branch added an import from `./organization-shared-schedule.js?v=1`, but that file is absent from the repo. In a browser module graph, one missing import prevents `db.js` from evaluating and breaks pages that depend on it.
 
 ## Proposed State
 Remove the stray import and the three unused organization-shared-schedule helpers from `js/db.js`, while keeping the intended tournament advancement batch patch helper.

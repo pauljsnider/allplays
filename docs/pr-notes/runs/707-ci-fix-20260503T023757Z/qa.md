@@ -7,4 +7,4 @@
 
 ## Manual Checks
 - Inspect `js/firebase.js` and `js/firebase-images.js` imports to confirm both reference `./firebase-runtime-config.js?v=3`.
-- Inspect app/test consumers to confirm `firebase.js?v=11`, `firebase-images.js?v=4`, `auth.js?v=13`, and `db.js?v=29` are used consistently where this cache-bust chain is referenced.
+- Inspect app/test consumers to confirm `firebase.js?v=11`, `firebase-images.js?v=4`, `auth.js?v=38`, and `db.js?v=76` are used consistently where this cache-bust chain is referenced.

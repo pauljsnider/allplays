@@ -1,8 +1,8 @@
 # Code Plan
 
 ## Root Cause
-- The parent dashboard page imports `./js/db.js?v=27`.
-- The failing unit test still rewrites only `./js/db.js?v=26`.
+- The parent dashboard page imports `./js/db.js?v=76`.
+- The failing unit test still rewrites only `./js/db.js?v=76`.
 - The rewrite miss leaves `requestRideSpot` undefined when the module wires rideshare handlers.
 
 ## Minimal Fix

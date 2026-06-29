@@ -46,4 +46,3 @@ function getCurrentRoute() {
 function roundMetricValue(value: number) {
   return Math.round(Number(value || 0) * 100) / 100;
 }
-

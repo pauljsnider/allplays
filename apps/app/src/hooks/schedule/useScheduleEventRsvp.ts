@@ -8,7 +8,15 @@ import { useScheduleEventDetailContext } from '../../pages/schedule/ScheduleEven
 
 function getRsvpErrorMessage(error: unknown) {
   const mappedError = toAppServiceError(error, 'Unable to submit availability.');
-  if (mappedError.type === 'network') return 'Unable to submit availability while offline. Check your connection and try again.';
+  if (mappedError.type === 'network') {
+    // A timeout is classified as "network", but it usually isn't an offline
+    // device — the request just took too long (and the RSVP may have saved).
+    // Use a message that doesn't wrongly claim the user is offline.
+    if (/timed out|timeout/i.test(mappedError.message)) {
+      return 'Saving your availability is taking longer than expected. Refresh to check whether it saved.';
+    }
+    return 'Unable to submit availability while offline. Check your connection and try again.';
+  }
   if (mappedError.type === 'permission') return 'You do not have permission to update availability for this event.';
   if (mappedError.type === 'not_found') return 'This event is no longer available. Refresh the page and try again.';
   if (mappedError.type === 'validation') return mappedError.message;

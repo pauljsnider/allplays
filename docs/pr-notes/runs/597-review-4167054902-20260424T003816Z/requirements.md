@@ -15,4 +15,4 @@ Keep PR #597's tournament pool ranking override feature intact while restoring t
 - Smoke fixtures remain resilient to cache-bust query changes on `js/db.js`.
 
 ## Risks
-- Test-only fix could mask a real runtime regression if the production page is actually broken. Counterevidence: unit tests pass and the smoke failures line up with missing stub exports plus an exact `db.js?v=20` route.
+- Test-only fix could mask a real runtime regression if the production page is actually broken. Counterevidence: unit tests pass and the smoke failures line up with missing stub exports plus an exact `db.js?v=76` route.

@@ -16,6 +16,7 @@ import {
 import { createLogger } from './logger';
 
 const logger = createLogger('notification-inbox-service');
+const notificationInboxLimit = 50;
 
 export type NotificationInboxItem = {
     id: string;
@@ -38,6 +39,57 @@ function getStringField(data: DocumentData, key: string): string {
 function buildNotificationText(title: string, body: string, legacyText: string): string {
     if (title && body) return `${title}: ${body}`;
     return title || body || legacyText;
+}
+
+function mapNotificationInboxSnapshot(snapshot: QuerySnapshot<DocumentData>): NotificationInboxItem[] {
+    return snapshot.docs.map((docSnap) => {
+        const data = docSnap.data();
+        const category = getStringField(data, 'category') || getStringField(data, 'type');
+        const title = getStringField(data, 'title');
+        const body = getStringField(data, 'body');
+        const legacyText = getStringField(data, 'text');
+        return {
+            id: docSnap.id,
+            category,
+            type: category,
+            title,
+            body,
+            text: buildNotificationText(title, body, legacyText),
+            appRoute: getStringField(data, 'appRoute'),
+            conversationId: getStringField(data, 'conversationId'),
+            createdAt: data['createdAt'] ?? null,
+            readAt: data['readAt'] ?? null
+        };
+    });
+}
+
+function getCreatedAtTime(value: unknown): number {
+    if (value instanceof Date) {
+        const time = value.getTime();
+        return Number.isFinite(time) ? time : 0;
+    }
+    if (value && typeof value === 'object') {
+        const timestamp = value as { toDate?: () => Date; seconds?: number; nanoseconds?: number };
+        if (typeof timestamp.toDate === 'function') {
+            const time = timestamp.toDate().getTime();
+            return Number.isFinite(time) ? time : 0;
+        }
+        if (typeof timestamp.seconds === 'number') {
+            return (timestamp.seconds * 1000) + (typeof timestamp.nanoseconds === 'number' ? timestamp.nanoseconds / 1000000 : 0);
+        }
+    }
+    if (typeof value === 'number') {
+        return Number.isFinite(value) ? value : 0;
+    }
+    if (typeof value === 'string') {
+        const time = Date.parse(value);
+        return Number.isFinite(time) ? time : 0;
+    }
+    return 0;
+}
+
+function sortNotificationInboxItems(items: NotificationInboxItem[]): NotificationInboxItem[] {
+    return [...items].sort((left, right) => getCreatedAtTime(right.createdAt) - getCreatedAtTime(left.createdAt));
 }
 
 /**
@@ -94,44 +146,42 @@ export function subscribeToNotificationInbox(
     callback: (items: NotificationInboxItem[]) => void,
     onError?: (error: unknown) => void
 ): () => void {
+    const inboxRef = collection(db, `users/${uid}/notificationInbox`);
     const q = query(
-        collection(db, `users/${uid}/notificationInbox`),
+        inboxRef,
         orderBy('createdAt', 'desc'),
-        limit(50)
+        limit(notificationInboxLimit)
     );
 
-    return onSnapshot(
+    let fallbackUnsubscribe: (() => void) | null = null;
+    const primaryUnsubscribe = onSnapshot(
         q,
         (snapshot: QuerySnapshot<DocumentData>) => {
-            const items: NotificationInboxItem[] = snapshot.docs.map((docSnap) => {
-                const data = docSnap.data();
-                const category = getStringField(data, 'category') || getStringField(data, 'type');
-                const title = getStringField(data, 'title');
-                const body = getStringField(data, 'body');
-                const legacyText = getStringField(data, 'text');
-                return {
-                    id: docSnap.id,
-                    category,
-                    type: category,
-                    title,
-                    body,
-                    text: buildNotificationText(title, body, legacyText),
-                    appRoute: getStringField(data, 'appRoute'),
-                    conversationId: getStringField(data, 'conversationId'),
-                    createdAt: data['createdAt'] ?? null,
-                    readAt: data['readAt'] ?? null
-                };
-            });
-            callback(items);
+            callback(mapNotificationInboxSnapshot(snapshot));
         },
         (error: unknown) => {
-            if (onError) {
-                onError(error);
-            } else {
-                logger.error('Failed to subscribe to notification inbox.', { error });
-            }
+            logger.warn('Inbox ordered query failed; falling back to unordered inbox snapshot.', { error });
+            if (fallbackUnsubscribe) return;
+            fallbackUnsubscribe = onSnapshot(
+                inboxRef,
+                (snapshot: QuerySnapshot<DocumentData>) => {
+                    callback(sortNotificationInboxItems(mapNotificationInboxSnapshot(snapshot)).slice(0, notificationInboxLimit));
+                },
+                (fallbackError: unknown) => {
+                    if (onError) {
+                        onError(fallbackError);
+                    } else {
+                        logger.error('Failed to subscribe to notification inbox.', { error: fallbackError });
+                    }
+                }
+            );
         }
     );
+
+    return () => {
+        primaryUnsubscribe();
+        fallbackUnsubscribe?.();
+    };
 }
 
 /**

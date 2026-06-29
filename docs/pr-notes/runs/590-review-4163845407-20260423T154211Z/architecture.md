@@ -6,7 +6,7 @@
 - CI blocks the PR because the diff changes `js/auth.js` without any matching `auth.js?v=` import bump.
 
 ## Proposed State
-- Normalize all direct `auth.js` imports in tracked app entry points, helper modules, and affected tests from older pins to `auth.js?v=12`.
+- Normalize all direct `auth.js` imports in tracked app entry points, helper modules, and affected tests from older pins to `auth.js?v=38`.
 - Update generated-workflow source and test fixtures to the same version so future generated pages stay aligned.
 
 ## Why This Scope

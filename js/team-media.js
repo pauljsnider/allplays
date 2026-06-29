@@ -1,4 +1,4 @@
-import { checkAuth } from './auth.js?v=37';
+import { checkAuth } from './auth.js?v=38';
 import {
     getTeam,
     getTeamMediaFolders,
@@ -16,7 +16,7 @@ import {
     bulkDeleteTeamMediaItems,
     setTeamMediaAlbumCover,
     updateTeamMediaItem
-} from './db.js?v=74';
+} from './db.js?v=76';
 import {
     canContributeTeamMedia,
     canDeleteTeamMediaItem,

@@ -25,4 +25,3 @@ describe('performance wiring', () => {
     expect(tracker).toContain('WORKFLOW_TIMING.standardTrackerUndoStat');
   });
 });
-

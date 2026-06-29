@@ -172,6 +172,11 @@ describe('notification delivery metadata', () => {
         expect(serviceWorkerSource).toContain('badge,');
     });
 
+    it('adds an explicit open action to web push notification banners', () => {
+        expect(serviceWorkerSource).toContain("const WEB_PUSH_NOTIFICATION_ACTIONS = [{ action: 'open', title: 'Open' }];");
+        expect(serviceWorkerSource).toContain('actions: WEB_PUSH_NOTIFICATION_ACTIONS');
+    });
+
     it('normalizes web notification taps to native app hash routes when appRoute is present', () => {
         expect(serviceWorkerSource).toContain('function buildAppRouteNotificationLink');
         expect(serviceWorkerSource).toContain("new URL(`/app/#${appRoute}`, self.location.origin).toString()");

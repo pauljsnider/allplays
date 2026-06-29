@@ -2,7 +2,7 @@
 
 ## Suspected Root Cause
 The edit-schedule smoke fixtures drifted behind PR #597:
-- `edit-schedule-calendar-cancelled-import.spec.js` still intercepted `js/db.js?v=20` exactly.
+- `edit-schedule-calendar-cancelled-import.spec.js` still intercepted `js/db.js?v=76` exactly.
 - Both focused smoke specs stubbed `db.js` without the newly imported `saveTournamentPoolOverride` and `clearTournamentPoolOverride` exports.
 
 ## Minimal Patch Plan

@@ -48,6 +48,10 @@ describe('RSVP note privacy source contract', () => {
     expect(submitRsvpForPlayer).toContain('writeRsvpNote(teamId, gameId, docId');
     expect(writeRsvpNote).toContain('/rsvpNotes`');
     expect(writeRsvpNote).toContain('visibility');
+    expect(writeRsvpNote).toContain('playerId: primaryPlayerId');
+    expect(writeRsvpNote).toContain('childId: primaryPlayerId');
+    expect(submitRsvpForPlayer).toContain('playerId: normalizedPlayerId');
+    expect(submitRsvpForPlayer).toContain('childId: normalizedPlayerId');
     expect(submitRsvp).not.toMatch(/setDoc\(rsvpRef,[\s\S]*?\bnote:/);
     expect(submitRsvpForPlayer).not.toMatch(/setDoc\(rsvpRef,[\s\S]*?\bnote:/);
   });
@@ -73,6 +77,8 @@ describe('RSVP note privacy source contract', () => {
     expect(loadRsvps).toContain('/rsvpNotes');
     expect(mergeOwnRsvpNotes).toContain('loadRsvpNoteById(teamId, gameId, rsvpId)');
     expect(nativeSubmit).toContain('/rsvpNotes/');
+    expect(nativeSubmit).toContain('playerId: childId');
+    expect(nativeSubmit).toContain('childId,');
     expect(statusPatch).toContain('respondedAt');
     expect(statusPatch).not.toContain('note:');
   });
