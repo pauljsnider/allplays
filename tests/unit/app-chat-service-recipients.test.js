@@ -292,7 +292,7 @@ describe('React app chat recipient service', () => {
         }));
     });
 
-    it('only requests exact unread counts for teams whose known latest message is newer than last read', async () => {
+    it('requests exact unread counts when sibling conversation metadata is newer than the default last read', async () => {
         dbMocks.getUserProfile.mockResolvedValue({
             email: 'parent@example.com',
             chatLastRead: {
@@ -307,9 +307,12 @@ describe('React app chat recipient service', () => {
         dbMocks.getUserTeamsWithAccess.mockResolvedValue([
             {
                 id: 'team-read',
-                name: 'Already Read',
+                name: 'Already Read Default Thread',
                 sport: 'Soccer',
-                lastMessageAt: new Date('2026-05-21T12:00:00Z')
+                lastMessageAt: new Date('2026-05-21T12:00:00Z'),
+                chatConversationSummaries: [
+                    { id: 'staff-conversation', lastMessageAt: new Date('2026-05-21T15:00:00Z') }
+                ]
             },
             {
                 id: 'team-unread',
@@ -325,6 +328,7 @@ describe('React app chat recipient service', () => {
         ]);
         dbMocks.getParentTeams.mockResolvedValue([]);
         dbMocks.getUnreadChatCounts.mockResolvedValue({
+            'team-read': 2,
             'team-unread': 4,
             'team-unknown': 1
         });
@@ -336,13 +340,28 @@ describe('React app chat recipient service', () => {
             email: 'parent@example.com',
             displayName: 'Pat Parent',
             roles: ['parent']
-        });
+        }, { includeLastMessages: false });
 
-        expect(dbMocks.getUnreadChatCounts).toHaveBeenCalledWith('user-1', ['team-unread', 'team-unknown'], expect.objectContaining({
+        expect(dbMocks.getUnreadChatCounts).toHaveBeenCalledWith('user-1', ['team-read', 'team-unread', 'team-unknown'], expect.objectContaining({
             latestMessageAtByTeam: {
                 'team-read': new Date('2026-05-21T12:00:00Z'),
                 'team-unread': new Date('2026-05-21T14:00:00Z')
             },
+            latestMessageAtByConversationByTeam: {
+                'team-read': {
+                    'staff-conversation': new Date('2026-05-21T15:00:00Z'),
+                    team: new Date('2026-05-21T12:00:00Z')
+                },
+                'team-unread': {
+                    team: new Date('2026-05-21T14:00:00Z')
+                }
+            },
+            conversationIdsByTeam: {
+                'team-read': ['team', 'staff-conversation'],
+                'team-unread': ['team'],
+                'team-unknown': ['team']
+            },
+            defaultConversationOnly: true,
             conversationLookupByTeam: expect.objectContaining({
                 'team-read': expect.objectContaining({
                     user: expect.objectContaining({ uid: 'user-1', email: 'parent@example.com' }),
@@ -362,7 +381,7 @@ describe('React app chat recipient service', () => {
             })
         }));
         expect(inbox.teams).toEqual(expect.arrayContaining([
-            expect.objectContaining({ id: 'team-read', unreadCount: 0 }),
+            expect.objectContaining({ id: 'team-read', unreadCount: 2 }),
             expect.objectContaining({ id: 'team-unread', unreadCount: 4 }),
             expect.objectContaining({ id: 'team-unknown', unreadCount: 1 })
         ]));
@@ -637,7 +656,14 @@ describe('React app chat recipient service', () => {
         dbMocks.getUserProfile.mockResolvedValue({ email: 'coach@example.com' });
         dbMocks.getUserTeamsWithAccess.mockResolvedValue([
             { id: 'team-a', name: 'Alpha', sport: 'Soccer' },
-            { id: 'team-b', name: 'Beta', sport: 'Basketball' }
+            {
+                id: 'team-b',
+                name: 'Beta',
+                sport: 'Basketball',
+                chatConversationSummaries: [
+                    { id: 'staff-conversation', lastMessageAt: new Date('2026-05-21T15:00:00Z') }
+                ]
+            }
         ]);
         dbMocks.getParentTeams.mockResolvedValue([]);
         dbMocks.getUnreadChatCounts.mockResolvedValue({ 'team-b': 3 });
@@ -655,7 +681,16 @@ describe('React app chat recipient service', () => {
             expect.objectContaining({ id: 'team-b', lastMessage: null, unreadCount: 3 })
         ]);
         expect(dbMocks.getUnreadChatCounts).toHaveBeenCalledWith('user-1', ['team-a', 'team-b'], expect.objectContaining({
-            defaultConversationOnly: true
+            defaultConversationOnly: true,
+            conversationIdsByTeam: {
+                'team-a': ['team'],
+                'team-b': ['team', 'staff-conversation']
+            },
+            latestMessageAtByConversationByTeam: {
+                'team-b': {
+                    'staff-conversation': new Date('2026-05-21T15:00:00Z')
+                }
+            }
         }));
         expect(dbMocks.getChatConversations).not.toHaveBeenCalled();
         expect(dbMocks.getChatMessages).not.toHaveBeenCalled();

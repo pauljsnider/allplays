@@ -132,6 +132,15 @@ describe('direct thread mount telemetry', () => {
     expect(getMessagesInboxLoadRouteKey(false, ' team-2 ')).toBe('team-2');
   });
 
+  it('loads the inbox in bounded unread mode while deferred previews hydrate later', () => {
+    const source = readFileSync(resolveAppSourcePath('src/pages/Messages.tsx'), 'utf8');
+
+    expect(source).toContain('const result = await loadChatInbox(auth.user, {');
+    expect(source).toContain('includeLastMessages: false,');
+    expect(source).toContain('onPreview: (previewUpdate) => {');
+    expect(source).toContain('setTeams((current) => mergeInboxPreview(current, previewUpdate));');
+  });
+
   it('keeps Messages email composer dispatches on the shared action creators', () => {
     const source = readFileSync(resolveAppSourcePath('src/pages/messages/components/ChatWindow.tsx'), 'utf8');
 
