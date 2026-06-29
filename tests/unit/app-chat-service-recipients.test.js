@@ -64,6 +64,13 @@ vi.mock('../../apps/app/src/lib/authService.ts', () => ({
     },
     getNativeAuthIdToken: vi.fn()
 }));
+vi.mock('../../apps/app/src/lib/performanceInstrumentation.ts', () => ({
+    now: vi.fn(() => 1000),
+    startPerformanceSpan: vi.fn(() => ({
+        end: vi.fn()
+    })),
+    recordCompletedPerformanceSpan: vi.fn()
+}));
 
 beforeEach(() => {
     vi.clearAllMocks();
@@ -852,10 +859,19 @@ describe('React app chat recipient service', () => {
         dbMocks.uploadChatImage
             .mockResolvedValueOnce(uploadedPhoto)
             .mockResolvedValueOnce(uploadedVideo);
+        dbMocks.getPlayers.mockResolvedValue([
+            {
+                id: 'player-1',
+                name: 'Avery',
+                parents: [
+                    { userId: 'parent-2', email: 'guardian@example.com' }
+                ]
+            }
+        ]);
         dbMocks.upsertChatConversation.mockResolvedValue({
             id: 'group-player-coach',
             type: 'group',
-            participantIds: ['user-1', 'player:player-1', 'user:coach-1'],
+            participantIds: ['user-1', 'email:guardian@example.com', 'user:coach-1', 'user:parent-2'],
             participantRoles: []
         });
         dbMocks.postChatMessage.mockResolvedValue({ id: 'msg-1' });
@@ -887,9 +903,10 @@ describe('React app chat recipient service', () => {
         expect(dbMocks.uploadChatImage).toHaveBeenNthCalledWith(2, 'team-1', video, { conversationId: 'group-player-coach' });
         expect(dbMocks.upsertChatConversation).toHaveBeenCalledWith('team-1', expect.objectContaining({
             type: 'group',
-            participantIds: ['user-1', 'player:player-1', 'user:coach-1'],
+            participantIds: expect.arrayContaining(['user-1', 'user:coach-1', 'user:parent-2', 'email:guardian@example.com']),
             participantRoles: []
         }));
+        expect(dbMocks.upsertChatConversation.mock.calls[0][1].participantIds).toHaveLength(4);
         expect(dbMocks.postChatMessage).toHaveBeenCalledWith('team-1', expect.objectContaining({
             text: '@ALL PLAYS summarize this thread',
             senderId: 'user-1',
@@ -907,6 +924,38 @@ describe('React app chat recipient service', () => {
             createdConversation: expect.objectContaining({ id: 'group-player-coach' }),
             wantsAi: true
         });
+    });
+
+    it('falls back to the player participant only when a selected player has no linked guardian', async () => {
+        dbMocks.getPlayers.mockResolvedValue([{ id: 'player-1', name: 'Avery', parents: [] }]);
+        dbMocks.upsertChatConversation.mockResolvedValue({
+            id: 'group-player-only',
+            type: 'direct',
+            participantIds: ['coach-1', 'player:player-1'],
+            participantRoles: []
+        });
+        dbMocks.postChatMessage.mockResolvedValue({ id: 'msg-player-only' });
+
+        const { sendTeamChatMessage } = await import('../../apps/app/src/lib/chatService.ts');
+        await sendTeamChatMessage({
+            teamId: 'team-1',
+            user: {
+                uid: 'coach-1',
+                email: 'coach@example.com',
+                displayName: 'Coach Jamie'
+            },
+            profile: { fullName: 'Coach Jamie' },
+            text: 'Private update',
+            files: [],
+            selectedConversation: null,
+            selectedConversationId: 'team',
+            selectedRecipientTarget: 'individuals',
+            selectedRecipientIds: ['player:player-1']
+        });
+
+        expect(dbMocks.upsertChatConversation).toHaveBeenCalledWith('team-1', expect.objectContaining({
+            participantIds: ['coach-1', 'player:player-1']
+        }));
     });
 
     it('reuses only canonical staff conversations and ignores legacy coach-scoped staff threads', async () => {

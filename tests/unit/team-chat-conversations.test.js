@@ -53,6 +53,17 @@ describe('team chat conversations', () => {
         expect(isUserInConversation({ id: DEFAULT_TEAM_CONVERSATION_ID, type: 'team' }, user)).toBe(true);
     });
 
+    it('recognizes linked parent player participant tokens for defensive local filtering', () => {
+        const user = {
+            uid: 'parent-1',
+            email: 'parent@example.com',
+            parentPlayerKeys: ['team-1::player-1']
+        };
+
+        expect(isUserInConversation({ id: 'group-player', type: 'group', participantIds: ['player:player-1'] }, user)).toBe(true);
+        expect(isUserInConversation({ id: 'group-other-player', type: 'group', participantIds: ['player:player-2'] }, user)).toBe(false);
+    });
+
     it('keeps Firestore conversation reads participant-scoped and client queries participant-aware', () => {
         const rules = readRepoFile('firestore.rules');
         const db = readRepoFile('js/db.js');

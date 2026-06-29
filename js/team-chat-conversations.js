@@ -64,9 +64,14 @@ export function isUserInConversation(conversation, user = {}, { canModerate = fa
     if (canModerate) return true;
 
     const participantIds = Array.isArray(conversation.participantIds) ? conversation.participantIds : [];
+    const parentPlayerIds = (Array.isArray(user?.parentPlayerKeys) ? user.parentPlayerKeys : [])
+        .map((key) => String(key || '').split('::')[1])
+        .filter(Boolean)
+        .map((playerId) => `player:${playerId}`);
     return participantIds.includes(user?.uid) ||
         (user?.uid && participantIds.includes(`user:${user.uid}`)) ||
-        (user?.email && participantIds.includes(`email:${String(user.email).toLowerCase()}`));
+        (user?.email && participantIds.includes(`email:${String(user.email).toLowerCase()}`)) ||
+        parentPlayerIds.some((playerParticipantId) => participantIds.includes(playerParticipantId));
 }
 
 export function getConversationDisplayName(conversation, team = {}) {

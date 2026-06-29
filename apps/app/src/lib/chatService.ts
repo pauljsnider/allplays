@@ -432,8 +432,58 @@ function mapUserWithProfile(user: AuthUser, profile: Record<string, any>) {
   return {
     ...user,
     parentOf: Array.isArray(profile.parentOf) ? profile.parentOf : Array.isArray(user.parentOf) ? user.parentOf : [],
+    parentTeamIds: Array.isArray(profile.parentTeamIds) ? profile.parentTeamIds : Array.isArray(user.parentTeamIds) ? user.parentTeamIds : [],
+    parentPlayerKeys: Array.isArray(profile.parentPlayerKeys) ? profile.parentPlayerKeys : Array.isArray(user.parentPlayerKeys) ? user.parentPlayerKeys : [],
     isAdmin: profile.isAdmin === true || user.isAdmin === true || user.roles?.includes('platformAdmin')
   };
+}
+
+function getGuardianParticipantIdsForPlayer(player: Record<string, any> = {}) {
+  const parentEntries = Array.isArray(player.parents) ? player.parents : [];
+  const participantIds = parentEntries.flatMap((parent: Record<string, any> = {}) => {
+    const userId = compactString(parent.userId);
+    const email = compactString(parent.email).toLowerCase();
+    return [
+      userId ? getRecipientOptionId('user', userId) : '',
+      email ? getRecipientOptionId('email', email) : ''
+    ].filter(Boolean);
+  });
+  const parentUserId = compactString(player.parentUserId);
+  const parentEmail = compactString(player.parentEmail).toLowerCase();
+  if (parentUserId) participantIds.push(getRecipientOptionId('user', parentUserId));
+  if (parentEmail) participantIds.push(getRecipientOptionId('email', parentEmail));
+  return Array.from(new Set(participantIds));
+}
+
+async function resolveConversationParticipantIds(teamId: string, senderId: string, recipientIds: string[]) {
+  const normalizedRecipientIds = (recipientIds || []).map((id) => compactString(id)).filter(Boolean);
+  const playerIds = normalizedRecipientIds
+    .filter((id) => id.toLowerCase().startsWith('player:'))
+    .map((id) => id.slice(7).trim())
+    .filter(Boolean);
+
+  if (playerIds.length === 0) {
+    return Array.from(new Set([senderId, ...normalizedRecipientIds].filter(Boolean)));
+  }
+
+  let playersById = new Map<string, Record<string, any>>();
+  try {
+    const players = await withTimeout(Promise.resolve(getPlayers(teamId)), 'Chat player recipient resolution', 2500);
+    playersById = new Map((Array.isArray(players) ? players : [])
+      .filter((player: any) => player?.id)
+      .map((player: any) => [String(player.id), player]));
+  } catch (error) {
+    logger.warn('Failed to resolve player chat recipients to guardians.', { error });
+  }
+
+  const resolvedRecipients = normalizedRecipientIds.flatMap((recipientId) => {
+    if (!recipientId.toLowerCase().startsWith('player:')) return [recipientId];
+    const playerId = recipientId.slice(7).trim();
+    const guardianParticipantIds = getGuardianParticipantIdsForPlayer(playersById.get(playerId) || {});
+    return guardianParticipantIds.length ? guardianParticipantIds : [recipientId];
+  });
+
+  return Array.from(new Set([senderId, ...resolvedRecipients].filter(Boolean)));
 }
 
 function getTeamRole(user: AuthUser, team: Record<string, any>, profile: Record<string, any>): ChatTeam['role'] {
@@ -1272,7 +1322,7 @@ export async function sendTeamChatMessage({
     if (isDefaultTeamConversation(conversationId) && targetMetadata.targetType !== 'full_team') {
       const participantIds = targetMetadata.targetType === 'staff'
         ? []
-        : Array.from(new Set([user.uid, ...targetMetadata.recipientIds]));
+        : await resolveConversationParticipantIds(teamId, user.uid, targetMetadata.recipientIds);
       const participantRoles = targetMetadata.targetType === 'staff' ? ['staff'] : [];
       createdConversation = await withTimeout(Promise.resolve(upsertChatConversation(teamId, {
         type: participantIds.length === 2 ? 'direct' : 'group',
