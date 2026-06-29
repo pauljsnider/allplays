@@ -301,9 +301,9 @@ describe('registration roster import planning', () => {
         });
 
         expect(plan.results).toMatchObject({ updated: 1, fieldsImported: 4, fieldsSkipped: 0 });
-        expect(plan.operations[0].payload.profile.customFields).toEqual({
+        expect(plan.operations[0].payload.profile).toBeUndefined();
+        expect(plan.operations[0].privateRosterFields).toEqual({
             grade: '6',
-            note: 'keep',
             position: 'pg',
             throwsRight: true,
             birthDate: '2014-02-03'
@@ -338,10 +338,8 @@ describe('registration roster import planning', () => {
         });
 
         expect(plan.results).toMatchObject({ updated: 1, fieldsImported: 1, fieldsSkipped: 0 });
-        expect(plan.operations[0].payload.profile.customFields).toEqual({
-            grade: '7',
-            note: 'keep'
-        });
+        expect(plan.operations[0].payload.profile).toBeUndefined();
+        expect(plan.operations[0].privateRosterFields).toEqual({ grade: '7' });
     });
 
     it('skips blank, unsupported, and invalid configured roster field answers without failing import', () => {
