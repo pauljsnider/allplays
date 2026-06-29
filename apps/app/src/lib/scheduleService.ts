@@ -1650,14 +1650,26 @@ export async function loadScorekeeperStatTrackerConfigsForApp(
   return readScheduleStatTrackerConfigOptions(normalizedTeamId);
 }
 
-export async function createScheduledGameForApp(teamId: string, input: ScheduleGameFormInput, user: AuthUser | null) {
+type ScheduledGameSaveOptions = {
+  legacyPayload?: Record<string, unknown>;
+  requireCreatedId?: boolean;
+  timeoutLabel?: string;
+};
+
+export async function createScheduledGameForApp(
+  teamId: string,
+  input: ScheduleGameFormInput,
+  user: AuthUser | null,
+  options: ScheduledGameSaveOptions = {}
+) {
   const normalizedTeamId = compactString(teamId);
   if (!normalizedTeamId) throw new Error('Team is required.');
   await requireScheduleImportStaff(normalizedTeamId, user);
-  const payload = buildScheduledGamePayload(input, user as AuthUser);
+  const payload = options.legacyPayload || buildScheduledGamePayload(input, user as AuthUser);
 
+  let createdId = '';
   try {
-    return await withTimeout(Promise.resolve(addGame(normalizedTeamId, payload)), 'Scheduled game create');
+    createdId = compactString(await withTimeout(Promise.resolve(addGame(normalizedTeamId, payload)), options.timeoutLabel || 'Scheduled game create'));
   } catch (error) {
     if (!isNativeRuntime()) throw error;
     logScheduleWarning('Falling back to REST scheduled game create.', 'scheduled-game-create', error, { fallback: 'rest', teamId: normalizedTeamId });
@@ -1665,8 +1677,12 @@ export async function createScheduledGameForApp(teamId: string, input: ScheduleG
       ...payload,
       createdAt: new Date()
     });
-    return doc?.id || '';
+    createdId = compactString(doc?.id);
   }
+  if (options.requireCreatedId && !createdId) {
+    throw new Error('Tournament game save failed because no game id was returned.');
+  }
+  return createdId;
 }
 
 export async function createScheduledTournamentBlockForApp(teamId: string, input: ScheduleTournamentCreateFormInput, user: AuthUser | null) {
@@ -1680,13 +1696,20 @@ export async function createScheduledTournamentBlockForApp(teamId: string, input
     throw new Error('Tournament blocks require at least one game.');
   }
 
-  const requiresExplicitSingleGameFailure = games.length === 1;
-  const payloads = requiresExplicitSingleGameFailure
-    ? [buildSingleGameTournamentLegacySchedulePayload(games[0], tournament, user as AuthUser)]
-    : buildLegacyTournamentGameDocuments(games.map((game) => buildScheduledGamePayload({
-      ...game,
-      competitionType: 'tournament'
-    }, user as AuthUser)), tournament);
+  if (games.length === 1) {
+    const legacyPayload = buildSingleGameTournamentLegacySchedulePayload(games[0], tournament, user as AuthUser);
+    const createdId = await createScheduledGameForApp(normalizedTeamId, games[0], user, {
+      legacyPayload,
+      requireCreatedId: true,
+      timeoutLabel: 'Scheduled tournament game create'
+    });
+    return [createdId];
+  }
+
+  const payloads = buildLegacyTournamentGameDocuments(games.map((game) => buildScheduledGamePayload({
+    ...game,
+    competitionType: 'tournament'
+  }, user as AuthUser)), tournament);
   if (payloads.length !== games.length) {
     throw new Error('Tournament adapter could not build a complete legacy payload.');
   }
@@ -1704,9 +1727,6 @@ export async function createScheduledTournamentBlockForApp(teamId: string, input
         createdAt: new Date()
       });
       createdId = compactString(doc?.id);
-    }
-    if (requiresExplicitSingleGameFailure && !createdId) {
-      throw new Error('Tournament game save failed because no game id was returned.');
     }
     createdIds.push(createdId);
   }
