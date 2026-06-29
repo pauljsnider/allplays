@@ -214,9 +214,17 @@ function parseRosterCsvFieldValue(field, rawValue) {
     return { value };
 }
 
+function getRosterFieldVisibility(field = {}) {
+    return normalizeVisibility(field.visibility || field.defaultVisibility);
+}
+
 function isPublicRosterField(field = {}) {
-    const visibility = normalizeVisibility(field.visibility || field.defaultVisibility);
-    return visibility === 'public';
+    return getRosterFieldVisibility(field) === 'public';
+}
+
+function isParentReadablePrivateRosterField(field = {}) {
+    const visibility = getRosterFieldVisibility(field);
+    return visibility === 'team' || visibility === 'parents';
 }
 
 export function splitRosterProfileValuesByVisibility(fields = [], values = {}) {
@@ -226,7 +234,7 @@ export function splitRosterProfileValuesByVisibility(fields = [], values = {}) {
         if (!Object.prototype.hasOwnProperty.call(values || {}, field.key)) return;
         if (isPublicRosterField(field)) {
             publicValues[field.key] = values[field.key];
-        } else {
+        } else if (isParentReadablePrivateRosterField(field)) {
             privateValues[field.key] = values[field.key];
         }
     });
@@ -693,10 +701,15 @@ export function planRosterCsvImport({ csvText = '', fields = [], existingPlayers
 
         const existing = matches[0];
         const existingProfile = existing?.profile || {};
+        const retainedCustomFields = { ...(existingProfile.customFields || {}) };
+        normalizedFields.forEach((field) => {
+            if (!Object.prototype.hasOwnProperty.call(parsedValues, field.key)) return;
+            if (!isPublicRosterField(field)) delete retainedCustomFields[field.key];
+        });
         const profile = {
             ...mergeProfileImportValues(existingProfile, profileValues, addressValues),
             customFields: {
-                ...(existingProfile.customFields || {}),
+                ...retainedCustomFields,
                 ...publicValues
             }
         };

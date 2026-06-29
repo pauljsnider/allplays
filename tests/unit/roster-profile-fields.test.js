@@ -92,7 +92,7 @@ describe('roster profile fields', () => {
         });
     });
 
-    it('stores only public roster field values on the public player document', () => {
+    it('stores only public and parent-readable private roster field values', () => {
         const fields = normalizeRosterFieldDefinitions([
             { key: 'nickname', label: 'Nickname', visibility: 'public' },
             { key: 'birthDate', label: 'Birth Date', type: 'date', visibility: 'team' },
@@ -109,8 +109,7 @@ describe('roster profile fields', () => {
             publicValues: { nickname: 'Rocket' },
             privateValues: {
                 birthDate: '2014-02-03',
-                jerseySize: 'YM',
-                medicalNote: 'Peanut allergy'
+                jerseySize: 'YM'
             }
         });
     });

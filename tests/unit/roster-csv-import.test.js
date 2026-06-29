@@ -13,7 +13,7 @@ describe('roster CSV import planning', () => {
     it('creates and updates players from core and roster field columns', () => {
         const plan = planRosterCsvImport({
             fields,
-            existingPlayers: [{ id: 'p1', name: 'Avery Lee', number: '3', profile: { customFields: { grade: '5' } } }],
+            existingPlayers: [{ id: 'p1', name: 'Avery Lee', number: '3', profile: { customFields: { grade: '5', birthDate: '2011-01-01', medicalNote: 'Old note' } } }],
             csvText: 'Name,Number,Grade,Throws Right,Birth Date,Medical Note\nAvery Lee,4,6,yes,2014-02-03,Allergy\nSam Jones,12,7,no,2013-09-01,'
         });
 
@@ -27,8 +27,12 @@ describe('roster CSV import planning', () => {
                 number: '4',
                 profile: { customFields: { grade: '6', throwsRight: true } }
             },
-            privateRosterFields: { birthDate: '2014-02-03', medicalNote: 'Allergy' }
+            privateRosterFields: { birthDate: '2014-02-03' }
         });
+        expect(plan.operations[0].payload.profile.customFields).not.toHaveProperty('birthDate');
+        expect(plan.operations[0].payload.profile.customFields).not.toHaveProperty('medicalNote');
+        expect(JSON.stringify(plan.operations)).not.toContain('Allergy');
+
         expect(plan.operations[1]).toMatchObject({
             type: 'add',
             payload: {
@@ -393,10 +397,10 @@ describe('roster CSV import planning', () => {
         ]);
     });
 
-    it('splits non-public field values away from public player payloads', () => {
+    it('splits parent-readable private field values away from public player payloads without storing admin-only values', () => {
         expect(splitRosterProfileValuesByVisibility(fields, { grade: '6', birthDate: '2014-02-03', medicalNote: 'private' })).toEqual({
             publicValues: { grade: '6' },
-            privateValues: { birthDate: '2014-02-03', medicalNote: 'private' }
+            privateValues: { birthDate: '2014-02-03' }
         });
     });
 

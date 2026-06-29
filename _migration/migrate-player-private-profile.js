@@ -78,7 +78,10 @@ function collectTeamRosterFieldDefinitions(team = {}, rosterFieldDocs = []) {
 
 export function pickNonPublicRosterFieldValues(player = {}, rosterFields = []) {
     const nonPublicKeys = rosterFields
-        .filter((field) => normalizeVisibility(field?.visibility || field?.defaultVisibility) !== 'public')
+        .filter((field) => {
+            const visibility = normalizeVisibility(field?.visibility || field?.defaultVisibility);
+            return visibility === 'team' || visibility === 'parents';
+        })
         .map((field) => String(field?.key || field?.id || '').trim())
         .filter(Boolean);
     const sources = [
@@ -90,12 +93,11 @@ export function pickNonPublicRosterFieldValues(player = {}, rosterFields = []) {
         player.profile?.customFields
     ];
     return nonPublicKeys.reduce((acc, key) => {
-        for (const source of sources) {
+        sources.forEach((source) => {
             if (source && typeof source === 'object' && Object.prototype.hasOwnProperty.call(source, key)) {
                 acc[key] = source[key];
-                break;
             }
-        }
+        });
         return acc;
     }, {});
 }

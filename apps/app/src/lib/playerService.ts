@@ -945,7 +945,7 @@ function buildVisibleCustomRosterFields({
 
   const mergedValues = {
     ...getRosterProfileValues(player),
-    ...(access.canEditCustomRosterFields ? (privateProfile?.rosterFields || {}) : {})
+    ...(privateProfile?.rosterFields || {})
   };
 
   return normalizedFields

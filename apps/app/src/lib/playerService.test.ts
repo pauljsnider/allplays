@@ -56,7 +56,7 @@ const legacyRosterPrivacyMocks = vi.hoisted(() => ({
   normalizeRosterFieldDefinitions: vi.fn((fields) => fields),
   splitRosterProfileValuesByVisibility: vi.fn((fields, values) => ({
     publicValues: Object.fromEntries(Object.entries(values || {}).filter(([key]) => fields.find((field: any) => field.key === key && field.visibility === 'public'))),
-    privateValues: Object.fromEntries(Object.entries(values || {}).filter(([key]) => !fields.find((field: any) => field.key === key && field.visibility === 'public')))
+    privateValues: Object.fromEntries(Object.entries(values || {}).filter(([key]) => fields.find((field: any) => field.key === key && (field.visibility === 'team' || field.visibility === 'parents'))))
   })),
   validateRosterProfileValues: vi.fn(() => [])
 }));
@@ -586,7 +586,8 @@ describe('savePlayerCustomRosterFieldValues', () => {
     legacyPlayerDbMocks.getRosterFieldDefinitions.mockResolvedValue([
       { key: 'nickname', label: 'Nickname', type: 'text', visibility: 'public', sortOrder: 1 },
       { key: 'birthDate', label: 'Birth Date', type: 'date', visibility: 'team', sortOrder: 2 },
-      { key: 'jerseySize', label: 'Jersey Size', type: 'menu', visibility: 'parents', options: ['YS', 'YM'], sortOrder: 3 }
+      { key: 'jerseySize', label: 'Jersey Size', type: 'menu', visibility: 'parents', options: ['YS', 'YM'], sortOrder: 3 },
+      { key: 'medicalNote', label: 'Medical Note', type: 'text', visibility: 'admins', sortOrder: 4 }
     ]);
 
     await savePlayerCustomRosterFieldValues({
@@ -597,6 +598,7 @@ describe('savePlayerCustomRosterFieldValues', () => {
         nickname: 'Speedy',
         birthDate: '2014-02-03',
         jerseySize: 'YS',
+        medicalNote: 'Do not store in parent-readable profile',
         stale: 'must not resurrect deleted definitions'
       }
     });
@@ -715,6 +717,24 @@ describe('loadParentPlayerDetail custom roster fields', () => {
     ]);
     expect(detail.customRosterFields.some((field) => field.key === 'jerseySize')).toBe(false);
     expect(JSON.stringify(detail.customRosterFields)).not.toContain('YM');
+  });
+
+  it('includes parent-visible private roster field values for linked parents', async () => {
+    legacyPlayerDbMocks.getRosterFieldDefinitions.mockResolvedValue([
+      { key: 'nickname', label: 'Nickname', type: 'text', visibility: 'team', sortOrder: 1 },
+      { key: 'jerseySize', label: 'Jersey Size', type: 'menu', visibility: 'parents', options: ['YS', 'YM'], sortOrder: 2 }
+    ]);
+
+    const detail = await loadParentPlayerDetail({
+      uid: 'parent-1',
+      email: 'parent@example.com',
+      parentOf: [{ teamId: 'team-1', playerId: 'player-1' }]
+    } as any, 'team-1', 'player-1');
+
+    expect(detail.customRosterFields).toEqual([
+      expect.objectContaining({ key: 'nickname', value: 'Rocket' }),
+      expect.objectContaining({ key: 'jerseySize', value: 'YM' })
+    ]);
   });
 
   it('includes admin-only custom roster fields for team staff', async () => {

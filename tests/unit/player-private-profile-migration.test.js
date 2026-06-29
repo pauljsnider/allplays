@@ -15,10 +15,11 @@ vi.mock('firebase-admin/firestore', () => ({
 }), { virtual: true });
 
 describe('player private profile migration', () => {
-    it('selects team, parents, and admins roster fields for private backfill', async () => {
+    it('selects only parent-readable roster fields for private backfill and preserves current precedence', async () => {
         const { pickNonPublicRosterFieldValues } = await import('../../_migration/migrate-player-private-profile.js');
 
         expect(pickNonPublicRosterFieldValues({
+            rosterFieldValues: { birthDate: '2010-01-01' },
             profile: {
                 customFields: {
                     nickname: 'Rocket',
@@ -34,8 +35,7 @@ describe('player private profile migration', () => {
             { key: 'medicalNote', visibility: 'admins' }
         ])).toEqual({
             birthDate: '2014-02-03',
-            jerseySize: 'YM',
-            medicalNote: 'Peanut allergy'
+            jerseySize: 'YM'
         });
     });
 });
