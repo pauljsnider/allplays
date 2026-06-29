@@ -133,8 +133,8 @@ function buildScheduleEvent(index: number, overrides: Partial<ParentScheduleEven
   const assignments = Array.isArray(event.assignments) ? event.assignments : [];
   return {
     ...event,
-    openAssignmentCount: typeof event.openAssignmentCount === 'number'
-      ? event.openAssignmentCount
+    openAssignmentCount: typeof overrides.openAssignmentCount === 'number'
+      ? overrides.openAssignmentCount
       : assignments.filter((assignment: any) => assignment?.claimable && !assignment?.claim && !assignment?.value).length
   };
 }
