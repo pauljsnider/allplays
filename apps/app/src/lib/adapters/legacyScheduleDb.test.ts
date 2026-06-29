@@ -61,7 +61,7 @@ vi.mock('@legacy/firebase.js', () => ({
     where: vi.fn()
 }));
 
-import { buildLegacyTournamentGameDocument, buildLegacyTournamentGameDocuments, LegacyTournamentGameAdapterValidationError } from './legacyScheduleDb';
+import { buildLegacyTournamentGameDocument, buildLegacyTournamentGameDocuments, buildSingleLegacyTournamentGameDocument, LegacyTournamentGameAdapterValidationError } from './legacyScheduleDb';
 
 const buildValidLegacyGamePayload = (overrides: Record<string, unknown> = {}) => ({
     type: 'game',
@@ -90,20 +90,26 @@ const validTournamentMetadata = {
 };
 
 describe('legacyScheduleDb tournament mapping', () => {
-    it('maps a single-game tournament block to exactly one legacy-compatible game document', () => {
+    it('maps the supported single-game tournament adapter entry point to one legacy-compatible game document', () => {
         const basePayload = buildValidLegacyGamePayload();
         const tournament = validTournamentMetadata;
 
-        const documents = buildLegacyTournamentGameDocuments([basePayload], tournament);
+        const document = buildSingleLegacyTournamentGameDocument([basePayload], tournament);
 
-        expect(documents).toEqual([
-            expect.objectContaining({
-                ...basePayload,
-                competitionType: 'tournament',
-                tournament
-            })
-        ]);
-        expect(documents).toHaveLength(1);
+        expect(document).toEqual(expect.objectContaining({
+            ...basePayload,
+            competitionType: 'tournament',
+            tournament
+        }));
+    });
+
+    it('rejects unsupported tournament row counts at the adapter entry point', () => {
+        const basePayload = buildValidLegacyGamePayload();
+
+        expect(() => buildSingleLegacyTournamentGameDocument([], validTournamentMetadata))
+            .toThrow('Tournament adapter only supports a single completed tournament game.');
+        expect(() => buildSingleLegacyTournamentGameDocument([basePayload, buildValidLegacyGamePayload({ opponent: 'Lions' })], validTournamentMetadata))
+            .toThrow('Tournament adapter only supports a single completed tournament game.');
     });
 
     it('wraps legacy tournament metadata without mutating the base payload', () => {
@@ -156,5 +162,12 @@ describe('legacyScheduleDb tournament mapping', () => {
             buildValidLegacyGamePayload({ opponent: 'Tigers' }),
             buildValidLegacyGamePayload({ opponent: '' })
         ], validTournamentMetadata)).toThrow('Tournament adapter requires opponent.');
+    });
+
+    it('does not silently drop unsupported tournament rows from document batches', () => {
+        expect(() => buildLegacyTournamentGameDocuments([
+            buildValidLegacyGamePayload({ opponent: 'Tigers' }),
+            null
+        ], validTournamentMetadata)).toThrow('Tournament adapter requires complete tournament game payloads.');
     });
 });
