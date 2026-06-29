@@ -844,17 +844,7 @@ function buildICSOverrideOccurrence(overrideEvent, masterEvent = null) {
     return null;
   }
 
-  if (String(overrideEvent?.status || '').toUpperCase() === 'CANCELLED') {
-    return null;
-  }
-
-  const {
-    rrule: ignoredRule,
-    exDates: ignoredExDates,
-    recurrenceTimeZone: ignoredTimeZone,
-    recurrenceAbsoluteTime: ignoredAbsoluteTime,
-    ...baseMaster
-  } = masterEvent || {};
+  const baseMaster = buildICSMasterOccurrence(masterEvent, occurrenceAnchor);
   const {
     rrule,
     exDates,
@@ -869,6 +859,37 @@ function buildICSOverrideOccurrence(overrideEvent, masterEvent = null) {
     recurrenceId: new Date(occurrenceAnchor.getTime()),
     id: buildICSOccurrenceId(baseOverride.uid || baseMaster.uid, occurrenceAnchor)
   };
+}
+
+function buildICSMasterOccurrence(masterEvent, occurrenceAnchor) {
+  const {
+    rrule: ignoredRule,
+    exDates: ignoredExDates,
+    recurrenceTimeZone: ignoredTimeZone,
+    recurrenceAbsoluteTime: ignoredAbsoluteTime,
+    ...baseMaster
+  } = masterEvent || {};
+
+  if (!(occurrenceAnchor instanceof Date) || Number.isNaN(occurrenceAnchor.getTime())) {
+    return baseMaster;
+  }
+
+  const masterStart = baseMaster.dtstart;
+  if (!(masterStart instanceof Date) || Number.isNaN(masterStart.getTime())) {
+    return baseMaster;
+  }
+
+  const anchoredMaster = {
+    ...baseMaster,
+    dtstart: new Date(occurrenceAnchor.getTime())
+  };
+  if (baseMaster.dtend instanceof Date && !Number.isNaN(baseMaster.dtend.getTime())) {
+    anchoredMaster.dtend = new Date(
+      occurrenceAnchor.getTime() + (baseMaster.dtend.getTime() - masterStart.getTime())
+    );
+  }
+
+  return anchoredMaster;
 }
 
 function buildICSOccurrenceId(uid, recurrenceId) {

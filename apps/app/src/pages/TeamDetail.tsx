@@ -38,6 +38,7 @@ import { createStaffRsvpReminderPreviewLoader, sendStaffRsvpReminder, type Staff
 import type { ParentScheduleEvent, StaffRsvpReminderPreview } from '../lib/scheduleLogic';
 import { addRosterPlayerForApp, archiveTeamTrackingItemForApp, buildPublicTeamGamesIcsUrl, canExposePublicFanFeed, createRosterParentInviteForApp, createStatTrackerConfigForApp, deactivateRosterPlayerForApp, grantScorekeeperAccessForApp, grantVideographerAccessForApp, inviteTeamAdminForApp, loadParentTeamDetail, loadParentTeamDetailBootstrap, loadRosterFieldDefinitionsForApp, loadTeamDetailInsights, loadTeamDetailSponsors, loadTeamRosterParentInvites, loadTeamStaffPermissions, loadTeamTrackingAdmin, reactivateRosterPlayerForApp, revokeScorekeeperAccessForApp, revokeTeamAdminAccessForApp, revokeVideographerAccessForApp, saveTeamScheduleNotificationsForApp, saveTeamTrackingItemForApp, setPlayerTrackingStatusForApp, updateStatTrackerConfigForApp, type CreateRosterParentInviteForAppResult, type InviteTeamAdminForAppResult, type TeamDetailEvent, type TeamDetailModel, type TeamDetailPlayer, type TeamRosterFieldDefinition, type TeamRosterParentInviteSummary, type TeamScorekeeperGrantTarget, type TeamTrackingAdminItem } from '../lib/teamDetailService';
 import { buildStatTrackerConfigPayload, createBlankStatTrackerConfigColumnDraft, createEmptyStatTrackerConfigDraft, createStatTrackerConfigDraft, createStatTrackerConfigDraftFromPreset, getStatTrackerConfigPresetCatalog, validateStatTrackerConfigDraft, type StatTrackerConfigDraft } from '../lib/statTrackerConfigEditor';
+import { useViewLoadTimer } from '../lib/viewLoadTiming';
 import type { AuthState } from '../lib/types';
 
 type TeamTab = 'overview' | 'schedule' | 'roster' | 'insights' | 'more';
@@ -218,7 +219,7 @@ export function TeamDetail({ auth }: { auth: AuthState }) {
     return () => {
       cancelled = true;
     };
-  }, [activeTab, auth.user, detailCollectionsError, detailCollectionsLoaded, detailCollectionsLoading, detailCollectionsReloadVersion, model, teamId]);
+  }, [activeTab, authUserId, detailCollectionsError, detailCollectionsLoaded, detailCollectionsReloadVersion, Boolean(model), teamId]);
 
   useEffect(() => {
     let cancelled = false;
@@ -425,6 +426,53 @@ export function TeamDetail({ auth }: { auth: AuthState }) {
     insights: (model?.leaderboards.length || 0) + (model?.trackingSummaries.length || 0),
     more: model?.sponsors.length || 0
   }), [model]);
+  const trackedTeamTab = activeTab === 'schedule' || activeTab === 'roster' || activeTab === 'insights' || activeTab === 'more';
+  const teamTabRoute = `/teams/${teamId}${activeTab === 'overview' ? '' : `?tab=${activeTab}`}`;
+  const teamTabReady = Boolean(model && !loading && (
+    activeTab === 'schedule'
+      ? !detailCollectionsLoading
+      : activeTab === 'roster'
+        ? !rosterInviteLoading && !trackingLoading
+        : activeTab === 'insights'
+          ? !insightsLoading
+          : activeTab === 'more'
+            ? !detailCollectionsLoading && !staffPermissionsLoading && !sponsorsLoading
+            : false
+  ));
+  const teamTabError = activeTab === 'schedule'
+    ? detailCollectionsError
+    : activeTab === 'roster'
+      ? rosterInviteError || trackingError
+      : activeTab === 'insights'
+        ? insightsError
+        : activeTab === 'more'
+          ? detailCollectionsError || staffPermissionsError || sponsorsError
+          : '';
+
+  useViewLoadTimer({
+    viewName: `my teams team ${activeTab}`,
+    route: teamTabRoute,
+    ready: teamTabReady,
+    resetKey: `${authUserId || 'anonymous'}:${teamId}:${activeTab}:${reloadVersion}`,
+    disabled: !trackedTeamTab || !auth.user || !teamId,
+    getBaseMeta: () => ({
+      page: 'my_teams',
+      teamId,
+      tab: activeTab
+    }),
+    getCompleteMeta: () => ({
+      teamId,
+      tab: activeTab,
+      playerCount: model?.players.length || 0,
+      upcomingEventCount: model?.upcomingEvents.length || 0,
+      recentResultCount: model?.recentResults.length || 0,
+      leaderboardCount: model?.leaderboards.length || 0,
+      trackingSummaryCount: model?.trackingSummaries.length || 0,
+      sponsorCount: model?.sponsors.length || 0,
+      canManageTeam: Boolean(model?.canManageTeam),
+      error: teamTabError || undefined
+    })
+  });
 
   if (!teamId) return <Navigate to="/teams" replace />;
 
@@ -501,7 +549,7 @@ function TeamHero({ model }: { model: TeamDetailModel }) {
     <section className="app-card overflow-hidden">
       <div className="relative h-32 bg-gray-950 sm:h-44">
         {team.photoUrl ? (
-          <img src={team.photoUrl} alt={`${team.name} team photo`} className="h-full w-full object-cover opacity-90" />
+          <img src={team.photoUrl} alt={`${team.name} team photo`} decoding="async" className="h-full w-full object-cover opacity-90" />
         ) : (
           <div className="flex h-full w-full items-center justify-center bg-[linear-gradient(135deg,#111827_0%,#4338ca_50%,#047857_100%)]">
             <span className="text-5xl font-black text-white">{getInitials(team.name)}</span>

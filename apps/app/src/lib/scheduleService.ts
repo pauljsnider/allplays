@@ -15,6 +15,7 @@ import {
   getTeams,
   addGame,
   addPractice,
+  buildLegacyTournamentGameDocuments,
   createRideOffer,
   claimAssignmentSlot,
   respondToOfficiatingAssignment,
@@ -82,7 +83,7 @@ import { buildAvailabilityNoteRows, canViewAvailabilityNotes, formatAvailability
 import { buildTrackerEventDocument } from './statTrackingEvent';
 import { loadProfileDocument, saveProfileDocument } from './profileService';
 import { firebaseAuth, getNativeAuthIdToken } from './authService';
-import { startInteractionTimer, startUxTimer, UX_TIMING } from './uxTiming';
+import { startUxTimer } from './uxTiming';
 import {
   getNextRideConfirmedSeatCount,
   getScheduleRideshareSummary,
@@ -1660,17 +1661,13 @@ export async function createScheduledTournamentBlockForApp(teamId: string, input
     throw new Error('Tournament blocks require at least one game.');
   }
 
-  const createdIds: string[] = [];
-  for (const game of games) {
-    const payload = {
-      ...buildScheduledGamePayload({
-        ...game,
-        competitionType: 'tournament'
-      }, user as AuthUser),
-      competitionType: 'tournament',
-      tournament
-    };
+  const payloads = buildLegacyTournamentGameDocuments(games.map((game) => buildScheduledGamePayload({
+    ...game,
+    competitionType: 'tournament'
+  }, user as AuthUser)), tournament);
 
+  const createdIds: string[] = [];
+  for (const payload of payloads) {
     try {
       const createdId = await withTimeout(Promise.resolve(addGame(normalizedTeamId, payload)), 'Scheduled tournament game create');
       createdIds.push(createdId || '');
@@ -1719,7 +1716,10 @@ function sanitizePracticeRecurrenceInput(input?: PracticeRecurrenceFormInput | n
   };
 }
 
-function buildScheduledPracticePayload(input: SchedulePracticeFormInput, user: AuthUser, options?: { editingPracticeId?: string | null; editingSeriesId?: string | null }) {
+function buildScheduledPracticePayload(input: SchedulePracticeFormInput, user: AuthUser, options?: {
+  editingPracticeId?: string | null;
+  editingSeriesId?: string | null;
+}) {
   const title = compactString(input.title) || 'Practice';
   const startDate = new Date(input.startDate);
   const endDate = new Date(input.endDate);
@@ -3786,25 +3786,19 @@ export async function submitParentScheduleRsvp(event: ParentScheduleEvent, user:
     throw new Error('Select a child before submitting RSVP.');
   }
 
-  const interaction = startInteractionTimer(UX_TIMING.rsvpTap, { response });
   try {
-    const result = await withTimeout(Promise.resolve(submitRsvpForPlayer(event.teamId, event.id, user.uid, {
+    return await withTimeout(Promise.resolve(submitRsvpForPlayer(event.teamId, event.id, user.uid, {
       displayName: user.displayName || user.email,
       playerId: event.childId,
       response,
       note: compactString(note) || null
     })), 'RSVP submit');
-    interaction.end({ path: 'sdk' });
-    return result;
   } catch (error) {
     if (!isNativeRuntime()) {
-      interaction.end({ error: (error as Error)?.message || 'RSVP submit failed' });
       throw error;
     }
     logScheduleWarning('Falling back to REST RSVP submit.', 'parent-rsvp-submit', error, { fallback: 'rest', teamId: event.teamId, gameId: event.id, childId: event.childId });
-    const fallback = await nativeSubmitRsvpForPlayer(event.teamId, event.id, user, event.childId, response, note, event.availabilityNoteVisibility === 'team' ? 'team' : 'admins');
-    interaction.end({ path: 'rest' });
-    return fallback;
+    return nativeSubmitRsvpForPlayer(event.teamId, event.id, user, event.childId, response, note, event.availabilityNoteVisibility === 'team' ? 'team' : 'admins');
   }
 }
 

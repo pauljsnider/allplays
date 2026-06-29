@@ -7,7 +7,7 @@
 
 ## Architecture Decisions
 - Treat the failure as smoke fixture drift, not product logic failure.
-- Keep the fix inside the Playwright smoke fixture because `edit-team.html` correctly imports `getAllUsers` from `js/db.js?v=15` and `normalizeTeamPermissions` from `js/team-access.js?v=2`.
+- Keep the fix inside the Playwright smoke fixture because `edit-team.html` correctly imports `getAllUsers` from `js/db.js?v=76` and `normalizeTeamPermissions` from `js/team-access.js?v=2`.
 - Update the route stub to match the current `team-access.js?v=2` import so the test does not fall through to the real module.
 
 ## Risks And Rollback

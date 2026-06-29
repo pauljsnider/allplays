@@ -939,7 +939,7 @@
 
     <script type="module">
         import { getTeam, getTeams, getGames, getEvents, addGame, updateGame, updateTeam, deleteGame, addPractice, updateEvent, deleteEvent, getConfigs, addCalendarToTeam, removeCalendarFromTeam, getTrackedCalendarEventUids, cancelOccurrence, updateOccurrence, restoreOccurrence, clearOccurrenceOverride, updateSeries, deleteSeries, getUnreadChatCount, getPracticeSessions, cancelGame, getLatestGameAssignments, postChatMessage, getRsvpBreakdownByPlayer, getPlayers, getRsvps, applyTournamentAdvancementPatches, saveTournamentPoolOverride, clearTournamentPoolOverride, getOfficials, addOfficial, updateOfficial, deleteOfficial, createOfficiatingAssignmentNotificationRecords } from './js/db.js?v=76';
-        import { renderHeader, renderFooter, getUrlParams, formatDate, formatShortDate, formatTime, formatTimeRange, getDefaultEndTime, fetchAndParseCalendar, extractOpponent, isPracticeEvent, getCalendarEventStatus, getCalendarEventTrackingId, isTrackedCalendarEvent, generateSeriesId, expandRecurrence, formatRecurrence, shareOrCopy, escapeHtml } from './js/utils.js?v=11';
+        import { renderHeader, renderFooter, getUrlParams, formatDate, formatShortDate, formatTime, formatTimeRange, getDefaultEndTime, fetchAndParseCalendar, extractOpponent, isPracticeEvent, getCalendarEventStatus, getCalendarEventTrackingId, isTrackedCalendarEvent, generateSeriesId, expandRecurrence, formatRecurrence, shareOrCopy, escapeHtml } from './js/utils.js?v=14';
         import { mergeCalendarImportEvents, validateCalendarImportUrl } from './js/edit-schedule-calendar-import.js?v=2';
         import { checkAuth } from './js/auth.js?v=38';
         import { renderTeamAdminBanner } from './js/team-admin-banner.js';
@@ -2518,11 +2518,11 @@
                             ${badges}
                         </div>
                         <div class="text-sm text-gray-500 font-semibold uppercase tracking-wide mb-1">${formatDate(practice.date)} • ${timeDisplay || formatTime(practice.date)}</div>
-                        <div class="text-lg font-bold text-gray-900">${practice.title || 'Practice'}</div>
+                        <div class="text-lg font-bold text-gray-900">${escapeHtml(practice.title || 'Practice')}</div>
                         <div class="text-sm text-gray-600">
                             ${mapLink(practice.location) ? `<a class="text-indigo-600 hover:underline" target="_blank" rel="noopener noreferrer" href="${mapLink(practice.location)}">${practice.location || 'TBD'}</a>` : (practice.location || 'TBD')}
                         </div>
-                        ${practice.notes ? `<div class="text-sm text-gray-500 mt-1">${practice.notes}</div>` : ''}
+                        ${practice.notes ? `<div class="text-sm text-gray-500 mt-1">${escapeHtml(practice.notes)}</div>` : ''}
                         ${planSummary}
                     </div>
                     <div class="flex space-x-2">
@@ -4845,7 +4845,7 @@ PARSING RULES:
                                         </span>
                                     </div>
                                     <div class="text-sm">
-                                        <input type="text" value="${game.opponent}"
+                                        <input type="text" value="${escapeHtml(game.opponent)}"
                                             onchange="updateOperation(${index}, 'opponent', this.value)"
                                             class="font-semibold bg-white border border-gray-300 rounded px-2 py-1 w-full mb-1">
                                         <input type="datetime-local" value="${formatIsoForInput(date)}"
@@ -4868,7 +4868,7 @@ PARSING RULES:
                                             class="text-xs bg-white border border-gray-300 rounded px-2 py-1 w-full mt-1">
                                         <textarea rows="2" placeholder="Notes"
                                             onchange="updateOperation(${index}, 'notes', this.value)"
-                                            class="text-xs bg-white border border-gray-300 rounded px-2 py-1 w-full mt-1">${game.notes || ''}</textarea>
+                                            class="text-xs bg-white border border-gray-300 rounded px-2 py-1 w-full mt-1">${escapeHtml(game.notes || '')}</textarea>
                                         <input type="text" value="${formatAssignmentsForInput(game.assignments)}" placeholder="Assignments: Role:Value; Role2:Value2"
                                             onchange="updateOperation(${index}, 'assignments', this.value)"
                                             class="text-xs bg-white border border-gray-300 rounded px-2 py-1 w-full mt-1">
@@ -4889,7 +4889,7 @@ PARSING RULES:
                                     <div class="text-sm">
                                         Game ID: ${op.gameId}<br>
                                         Changes: ${JSON.stringify(op.changes)}<br>
-                                        <span class="text-xs text-gray-600">${op.reason || ''}</span>
+                                        <span class="text-xs text-gray-600">${escapeHtml(op.reason || '')}</span>
                                     </div>
                                 </div>
                                 <button onclick="removeOperation(${index})"
@@ -4905,7 +4905,7 @@ PARSING RULES:
                                     <div class="text-xs font-bold text-red-700 uppercase mb-1">🗑️ Delete</div>
                                     <div class="text-sm">
                                         Game ID: ${op.gameId}<br>
-                                        <span class="text-xs text-gray-600">${op.reason || 'Removed from schedule'}</span>
+                                        <span class="text-xs text-gray-600">${escapeHtml(op.reason || 'Removed from schedule')}</span>
                                     </div>
                                 </div>
                                 <button onclick="removeOperation(${index})"

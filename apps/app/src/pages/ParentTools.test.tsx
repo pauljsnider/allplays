@@ -626,6 +626,39 @@ describe('ParentTools access', () => {
         expect(parentToolsServiceMocks.loadParentHouseholdInviteModel).toHaveBeenCalledTimes(1);
     });
 
+    it('keeps loaded family share links visible when a save action fails', async () => {
+        parentToolsServiceMocks.loadFamilyShareModel.mockResolvedValue({
+            children: [
+                {
+                    teamId: 'team-1',
+                    playerId: 'player-1',
+                    playerName: 'Sam Player'
+                }
+            ],
+            tokens: [
+                {
+                    id: 'token-1',
+                    label: 'Grandma',
+                    url: 'https://allplays.ai/family.html?token=token-1',
+                    childCount: 1,
+                    extraCalendarUrls: []
+                }
+            ]
+        });
+        parentToolsServiceMocks.revokeParentFamilyShare.mockRejectedValue(new Error('Unable to revoke family share link.'));
+
+        renderParentTools(['/parent-tools/share'], false, linkedAuth);
+
+        expect(await screen.findByText('Grandma')).toBeTruthy();
+        fireEvent.click(screen.getByRole('button', { name: 'Revoke' }));
+        fireEvent.click(await screen.findByRole('button', { name: 'Revoke link' }));
+
+        expect(await screen.findByText('Unable to revoke family share link.')).toBeTruthy();
+        expect(screen.getByText('Grandma')).toBeTruthy();
+        expect(screen.getByText('https://allplays.ai/family.html?token=token-1')).toBeTruthy();
+        expect(screen.getByRole('button', { name: 'Copy' })).toBeTruthy();
+    });
+
     it('opens reusable team fee checkout links when legacy fee payloads omit paymentAction', async () => {
         parentToolsServiceMocks.loadParentFeesForApp.mockResolvedValue([
             {
@@ -757,6 +790,38 @@ describe('ParentTools access', () => {
         expect(await screen.findByText('Paid fee')).toBeTruthy();
         expect(screen.queryByText('Open fee')).toBeNull();
         expect(screen.getByRole('button', { name: /all/i }).getAttribute('aria-pressed')).toBe('true');
+    });
+
+    it('shows deep-linked awards from notification query params', async () => {
+        parentToolsServiceMocks.loadParentCertificates.mockResolvedValue([
+            {
+                id: 'cert-2',
+                teamId: 'team-2',
+                teamName: 'Falcons',
+                playerId: 'player-2',
+                playerName: 'Jordan Star',
+                title: 'Leadership Award',
+                narrative: 'Great teammate.',
+                url: 'https://allplays.ai/certificates.html#teamId=team-2&certificateId=cert-2'
+            },
+            {
+                id: 'cert-1',
+                teamId: 'team-1',
+                teamName: 'Bears',
+                playerId: 'player-1',
+                playerName: 'Sam Player',
+                title: 'Hustle Award',
+                narrative: 'Great effort.',
+                url: 'https://allplays.ai/certificates.html#teamId=team-1&certificateId=cert-1'
+            }
+        ]);
+
+        renderParentTools(['/parent-tools/certificates?teamId=team-1&certificateId=cert-1'], false, linkedAuth);
+
+        expect(await screen.findByText('Hustle Award')).toBeTruthy();
+        expect(screen.queryByText('Leadership Award')).toBeNull();
+        expect(screen.getByText('Opened from a notification')).toBeTruthy();
+        expect(screen.getByRole('button', { name: 'Open' })).toBeTruthy();
     });
 
     it('redirects invalid tabs without triggering a hook order violation', async () => {

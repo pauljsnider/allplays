@@ -5,7 +5,7 @@
 - Keep accept-invite module import contract aligned with current page implementation.
 
 ## Architecture Decisions
-- Treat the failure as test drift: `accept-invite.html` already imports `redeemHouseholdInvite` from `./js/db.js?v=49`, and the broader accept-invite page tests assert that same contract.
+- Treat the failure as test drift: `accept-invite.html` already imports `redeemHouseholdInvite` from `./js/db.js?v=76`, and the broader accept-invite page tests assert that same contract.
 - Update only the stale cache-busting expectation rather than reverting source code to an older db module version.
 
 ## Risks And Rollback

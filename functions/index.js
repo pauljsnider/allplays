@@ -36,6 +36,10 @@ const {
   normalizeCalendarRequest
 } = require('./team-calendar-feed-core.cjs');
 const {
+  isFamilyShareTokenReadable,
+  resolveFamilyShareChildrenFromOwnerProfile
+} = require('./family-share-core.cjs');
+const {
   hashRsvpToken,
   createRawRsvpToken,
   normalizeRsvpTokenCreateInput,
@@ -3557,9 +3561,38 @@ function normalizeTelemetryObject(value, depth = 0) {
 }
 
 function normalizeTelemetryPath(value) {
-  const path = normalizeTelemetryString(value || '/', 220);
-  if (!path || path[0] !== '/') return '/';
+  return normalizeTelemetryOptionalPath(value) || '/';
+}
+
+function normalizeTelemetryOptionalPath(value) {
+  const path = normalizeTelemetryString(value || '', 220);
+  if (!path || path[0] !== '/') return '';
   return path.split('?')[0].split('#')[0] || '/';
+}
+
+function normalizeTelemetryKeyArray(value, limit = 20) {
+  return Array.isArray(value)
+    ? value.slice(0, limit).map((key) => normalizeTelemetryKey(key, 60)).filter(Boolean)
+    : [];
+}
+
+function getTelemetryAppRoute(rawEvent, properties) {
+  const candidates = [
+    rawEvent?.appRoute,
+    properties?.completedRoute,
+    properties?.targetRoute,
+    properties?.route,
+    properties?.appRoute,
+    rawEvent?.pagePath
+  ];
+
+  for (const candidate of candidates) {
+    if (!candidate) continue;
+    const route = normalizeTelemetryOptionalPath(candidate);
+    if (route) return route;
+  }
+
+  return '/';
 }
 
 function parseTelemetryBody(req) {
@@ -3616,6 +3649,9 @@ function normalizeTelemetryEvent(rawEvent, receivedAt, authUid = null) {
   const clientTimestamp = Number.isNaN(Date.parse(rawEvent.clientTimestamp))
     ? receivedAt.toISOString()
     : new Date(rawEvent.clientTimestamp).toISOString();
+  const properties = normalizeTelemetryObject(rawEvent.properties);
+  const pagePath = normalizeTelemetryPath(rawEvent.pagePath);
+  const appRoute = getTelemetryAppRoute(rawEvent, properties);
 
   return {
     id: normalizeTelemetryIdentifier(rawEvent.id, 120) || `${sessionId}_${receivedAt.getTime()}`,
@@ -3628,18 +3664,18 @@ function normalizeTelemetryEvent(rawEvent, receivedAt, authUid = null) {
     clientTimestamp,
     createdAt: admin.firestore.FieldValue.serverTimestamp(),
     receivedAt: receivedAt.toISOString(),
-    pagePath: normalizeTelemetryPath(rawEvent.pagePath),
+    pagePath,
+    appRoute,
     pageTitle: normalizeTelemetryString(rawEvent.pageTitle, 140),
-    queryKeys: Array.isArray(rawEvent.queryKeys)
-      ? rawEvent.queryKeys.slice(0, 20).map((key) => normalizeTelemetryKey(key, 60)).filter(Boolean)
-      : [],
+    queryKeys: normalizeTelemetryKeyArray(rawEvent.queryKeys),
+    appRouteQueryKeys: normalizeTelemetryKeyArray(rawEvent.appRouteQueryKeys),
     referrer: normalizeTelemetryString(rawEvent.referrer, 160),
     viewport: normalizeTelemetryObject(rawEvent.viewport),
     screen: normalizeTelemetryObject(rawEvent.screen),
     timezone: normalizeTelemetryString(rawEvent.timezone, 80),
     language: normalizeTelemetryString(rawEvent.language, 32),
     userAgent: normalizeTelemetryString(rawEvent.userAgent, 260),
-    properties: normalizeTelemetryObject(rawEvent.properties)
+    properties
   };
 }
 
@@ -3680,6 +3716,17 @@ function applyTelemetryAggregateWrites(batch, event, dateKey, options = {}) {
     updatedAt: serverTimestamp()
   }, { merge: true });
 
+  const routeDocId = `${dateKey}_${telemetryDocId(event.appRoute || event.pagePath)}`;
+  batch.set(db.collection('telemetryRoutesDaily').doc(routeDocId), {
+    date: dateKey,
+    appRoute: event.appRoute || event.pagePath,
+    totalEvents: increment(1),
+    pageViews: increment(isPageView ? 1 : 0),
+    interactions: increment(isInteraction ? 1 : 0),
+    errors: increment(isError ? 1 : 0),
+    updatedAt: serverTimestamp()
+  }, { merge: true });
+
   const eventDocId = `${dateKey}_${telemetryDocId(event.name)}`;
   batch.set(db.collection('telemetryEventsDaily').doc(eventDocId), {
     date: dateKey,
@@ -3694,6 +3741,7 @@ function applyTelemetryAggregateWrites(batch, event, dateKey, options = {}) {
     userId: event.userId || null,
     signedIn: event.signedIn,
     lastPage: event.pagePath,
+    lastRoute: event.appRoute || event.pagePath,
     lastEventName: event.name,
     eventCount: increment(1),
     pageViews: increment(isPageView ? 1 : 0),
@@ -3704,13 +3752,14 @@ function applyTelemetryAggregateWrites(batch, event, dateKey, options = {}) {
 
   if (isPageView && !options.sessionExists) {
     sessionUpdate.entryPage = event.pagePath;
+    sessionUpdate.entryRoute = event.appRoute || event.pagePath;
   }
 
   batch.set(db.collection('telemetrySessions').doc(event.sessionId), sessionUpdate, { merge: true });
 }
 
 const MAX_TELEMETRY_EVENTS_PER_REQUEST = 25;
-const TELEMETRY_WRITES_PER_EVENT = 5;
+const TELEMETRY_WRITES_PER_EVENT = 6;
 const FIRESTORE_WRITE_SAFETY_LIMIT = 450;
 
 async function commitTelemetryEvent(db, event, dateKey) {
@@ -3893,6 +3942,46 @@ exports.teamCalendarFeed = functions.https.onRequest(async (req, res) => {
     console.error('Failed to build team calendar feed:', error);
     res.status(500).send('Calendar feed failed');
   }
+});
+
+exports.resolveFamilyShareTokenChildren = functions.https.onCall(async (data) => {
+  const tokenId = String(data?.tokenId || '').trim();
+  if (!/^[a-f0-9]{40}$/i.test(tokenId)) {
+    throw new functions.https.HttpsError('invalid-argument', 'A valid family share token is required.');
+  }
+
+  const tokenSnap = await firestore.doc(`familyShareTokens/${tokenId}`).get();
+  if (!tokenSnap.exists) {
+    throw new functions.https.HttpsError('not-found', 'Family share token not found.');
+  }
+
+  const token = tokenSnap.data() || {};
+  if (!isFamilyShareTokenReadable(token)) {
+    throw new functions.https.HttpsError('permission-denied', 'Family share token is no longer active.');
+  }
+
+  const ownerUserId = String(token.ownerUserId || '').trim();
+  if (!ownerUserId) {
+    return { children: [] };
+  }
+
+  const ownerSnap = await firestore.doc(`users/${ownerUserId}`).get();
+  if (!ownerSnap.exists) {
+    return { children: [] };
+  }
+
+  const children = await resolveFamilyShareChildrenFromOwnerProfile(ownerSnap.data() || {}, {
+    loadTeam: async (teamId) => {
+      const teamSnap = await firestore.doc(`teams/${teamId}`).get();
+      return teamSnap.exists ? { id: teamSnap.id, ...(teamSnap.data() || {}) } : null;
+    },
+    loadPlayer: async (teamId, playerId) => {
+      const playerSnap = await firestore.doc(`teams/${teamId}/players/${playerId}`).get();
+      return playerSnap.exists ? { id: playerSnap.id, ...(playerSnap.data() || {}) } : null;
+    }
+  });
+
+  return { children };
 });
 
 exports.fetchCalendarIcs = functions

@@ -451,7 +451,8 @@ describe('family plan helpers', () => {
 
     it('normalizes family share children and drops incomplete player links', () => {
         expect(normalizeFamilyShareChildren([
-            { teamId: 'team-1', teamName: 'Tigers', playerId: 'player-1', playerName: 'Sam', playerPhotoUrl: 'photo.jpg' },
+            { teamId: ' team-1 ', teamName: ' Tigers ', playerId: ' player-1 ', playerName: ' Sam ', playerNumber: ' 9 ', playerPhotoUrl: 'photo.jpg' },
+            { teamId: 'team-legacy', team: 'Legacy Team', childId: 'player-legacy', name: 'Legacy Player', number: 12, photoUrl: 'legacy.jpg' },
             { teamId: 'team-2', playerName: 'Missing player id' },
             { playerId: 'player-3', playerName: 'Missing team id' }
         ])).toEqual([
@@ -460,7 +461,16 @@ describe('family plan helpers', () => {
                 teamName: 'Tigers',
                 playerId: 'player-1',
                 playerName: 'Sam',
+                playerNumber: '9',
                 playerPhotoUrl: 'photo.jpg'
+            },
+            {
+                teamId: 'team-legacy',
+                teamName: 'Legacy Team',
+                playerId: 'player-legacy',
+                playerName: 'Legacy Player',
+                playerNumber: '12',
+                playerPhotoUrl: 'legacy.jpg'
             }
         ]);
     });

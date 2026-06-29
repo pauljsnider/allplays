@@ -3,6 +3,7 @@ import { toAppServiceError } from '../../lib/appErrors';
 import { submitParentScheduleRsvp } from '../../lib/scheduleService';
 import { useAsyncOperation } from '../../lib/useAsyncOperation';
 import { normalizeRsvpResponse, type ParentScheduleEvent, type RsvpResponse } from '../../lib/scheduleLogic';
+import { UX_TIMING, startInteractionTimer } from '../../lib/uxTiming';
 import { useScheduleEventDetailContext } from '../../pages/schedule/ScheduleEventDetailContext';
 
 function getRsvpErrorMessage(error: unknown) {
@@ -36,6 +37,16 @@ function buildOptimisticRsvpSummary(summary: ParentScheduleEvent['rsvpSummary'],
   return nextSummary as ParentScheduleEvent['rsvpSummary'];
 }
 
+function waitForVisibleState() {
+  return new Promise<void>((resolve) => {
+    if (typeof window !== 'undefined' && typeof window.requestAnimationFrame === 'function') {
+      window.requestAnimationFrame(() => resolve());
+      return;
+    }
+    setTimeout(resolve, 0);
+  });
+}
+
 export function useScheduleEventRsvp({ availabilityNote }: { availabilityNote: string }) {
   const { auth, event, updateEvents } = useScheduleEventDetailContext();
   const [submitting, setSubmitting] = useState<RsvpResponse | null>(null);
@@ -48,6 +59,7 @@ export function useScheduleEventRsvp({ availabilityNote }: { availabilityNote: s
     const currentUser = auth.user;
     if (!currentUser || !canSubmit) return;
 
+    const interaction = startInteractionTimer(UX_TIMING.rsvpTap, { response });
     const previousRsvp = normalizeRsvpResponse(event.myRsvp);
     const previousNote = String(event.myRsvpNote || '').trim();
     const note = String(availabilityNote || '').trim();
@@ -66,7 +78,7 @@ export function useScheduleEventRsvp({ availabilityNote }: { availabilityNote: s
       };
     }));
 
-    await run(async () => {
+    const result = await run(async () => {
       const summary = await submitParentScheduleRsvp(event, currentUser, response, note);
 
       updateEvents((current) => current.map((currentEvent) => {
@@ -84,6 +96,7 @@ export function useScheduleEventRsvp({ availabilityNote }: { availabilityNote: s
       setMessage(noteOnlySave
         ? `${event.childName} availability note saved.`
         : `${event.childName} marked ${response.replace('_', ' ')}.`);
+      return { ok: true as const };
     }, {
       getErrorMessage: getRsvpErrorMessage,
       onError: () => {
@@ -105,6 +118,13 @@ export function useScheduleEventRsvp({ availabilityNote }: { availabilityNote: s
       onFinally: () => setSubmitting(null),
       rethrow: false
     });
+
+    await waitForVisibleState();
+    if (result?.ok) {
+      interaction.end();
+      return;
+    }
+    interaction.end({ error: 'RSVP submit failed' });
   };
 
   return {

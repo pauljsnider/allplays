@@ -381,6 +381,17 @@ export async function getTelemetryPageDaily({ days = 30, maxPages = 500 } = {}) 
     return mapSnapshot(await getDocs(q));
 }
 
+export async function getTelemetryRouteDaily({ days = 30, maxRoutes = 500 } = {}) {
+    const startKey = toDateKey(daysAgoDate(days));
+    const q = query(
+        collection(db, 'telemetryRoutesDaily'),
+        where('date', '>=', startKey),
+        orderBy('date', 'desc'),
+        limitQuery(Math.min(Math.max(Number(maxRoutes) || 500, 50), 1000))
+    );
+    return mapSnapshot(await getDocs(q));
+}
+
 export async function getTelemetryEventDaily({ days = 30, maxEvents = 500 } = {}) {
     const startKey = toDateKey(daysAgoDate(days));
     const q = query(
@@ -8921,6 +8932,14 @@ export async function getFamilyShareToken(tokenId) {
     const snap = await getDoc(doc(db, 'familyShareTokens', tokenId));
     if (!snap.exists()) return null;
     return { id: snap.id, ...snap.data() };
+}
+
+export async function resolveFamilyShareTokenChildren(tokenId) {
+    const normalizedTokenId = String(tokenId || '').trim();
+    if (!normalizedTokenId) return [];
+    const callable = httpsCallable(functions, 'resolveFamilyShareTokenChildren');
+    const response = await callable({ tokenId: normalizedTokenId });
+    return normalizeFamilyShareChildren(response?.data?.children || []);
 }
 
 export async function listFamilyShareTokens(ownerUserId) {

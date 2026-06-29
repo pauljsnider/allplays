@@ -1265,8 +1265,7 @@ test('Android-sized schedule smoke covers practice packet and More workflow with
     await mockScheduleModules(page);
     await page.goto(appUrl(baseURL, '/schedule/team-1/practice-1?childId=player-1'), { waitUntil: 'domcontentloaded' });
 
-    const practiceHeading = page.getByRole('heading', { name: 'Practice' });
-    await waitForScheduleRoute(page, practiceHeading);
+    await waitForScheduleRoute(page, page.locator('.event-summary-card'));
     await expect(page.getByRole('button', { name: 'Practice packet ready, review packet' })).toBeVisible();
 
     await page.getByRole('button', { name: 'Practice packet ready, review packet' }).click();
@@ -1287,7 +1286,7 @@ test('app schedule event detail exposes parent actions and RSVP', async ({ page,
         gameHomeScore: 4,
         gameAwayScore: 2
     });
-    await page.goto(appUrl(baseURL, '/schedule/team-1/game-1?childId=player-1'), { waitUntil: 'domcontentloaded' });
+    await page.goto(appUrl(baseURL, '/schedule/team-1/game-1?childId=player-1&section=availability'), { waitUntil: 'domcontentloaded' });
 
     const eventSummaryCard = page.locator('.event-summary-card');
     await expect(eventSummaryCard.getByRole('heading', { name: 'vs. Falcons' })).toBeVisible({ timeout: 15000 });
@@ -1338,11 +1337,14 @@ test('app schedule event detail exposes parent actions and RSVP', async ({ page,
     const assignmentsSection = page.locator('section').filter({ has: page.getByRole('heading', { name: 'Assignments' }) });
     await expect(assignmentsSection.getByText('4 posted · 1 open')).toBeVisible();
     await expect(assignmentsSection.getByText('Snacks')).toBeVisible();
-    await expect(assignmentsSection.getByText('Scorebook: Jamie')).toBeVisible();
     await expect(assignmentsSection.getByText('Drinks')).toBeVisible();
     await expect(assignmentsSection.getByText('You')).toBeVisible();
+    await expect(assignmentsSection.getByText('Scorebook: Jamie')).toHaveCount(0);
+    await expect(assignmentsSection.getByRole('button', { name: 'Show filled assignments (2)' })).toBeVisible();
+    await assignmentsSection.getByRole('button', { name: 'Show filled assignments (2)' }).click();
     await expect(assignmentsSection.getByText('Setup')).toBeVisible();
     await expect(assignmentsSection.getByText('Taylor')).toBeVisible();
+    await expect(assignmentsSection.getByText('Scorebook: Jamie')).toBeVisible();
     await assignmentsSection.locator('article').filter({ hasText: 'Snacks' }).getByRole('button', { name: 'Sign up' }).click();
     await expect(assignmentsSection.getByText('Snacks claimed.')).toBeVisible();
     expect(await page.evaluate(() => window.__scheduleCalls.assignments.some((call) => call.action === 'claim' && call.role === 'Snacks'))).toBe(true);
@@ -1406,7 +1408,7 @@ test('app schedule saves edited availability notes without re-tapping RSVP', asy
         gameMyRsvp: 'going',
         gameMyRsvpNote: 'Original note'
     });
-    await page.goto(appUrl(baseURL, '/schedule/team-1/game-1?childId=player-1'), { waitUntil: 'domcontentloaded' });
+    await page.goto(appUrl(baseURL, '/schedule/team-1/game-1?childId=player-1&section=availability'), { waitUntil: 'domcontentloaded' });
 
     const availabilitySection = page.locator('section').filter({ has: page.getByRole('heading', { name: 'Availability' }) });
     await waitForScheduleRoute(page, availabilitySection.getByRole('heading', { name: 'Availability' }));
@@ -1480,10 +1482,13 @@ test('app schedule assignments supports parent sign up and release', async ({ pa
     const setupCard = assignmentsSection.locator('article').filter({ hasText: 'Setup' });
 
     await expect(assignmentsSection.getByText('4 posted · 1 open')).toBeVisible();
-    await expect(assignmentsSection.getByText('Scorebook: Jamie')).toBeVisible();
+    await expect(assignmentsSection.getByText('Scorebook: Jamie')).toHaveCount(0);
     await expect(snacksCard.getByRole('button', { name: 'Sign up' })).toBeVisible();
     await expect(drinksCard.getByText('You')).toBeVisible();
+    await expect(assignmentsSection.getByRole('button', { name: 'Show filled assignments (2)' })).toBeVisible();
+    await assignmentsSection.getByRole('button', { name: 'Show filled assignments (2)' }).click();
     await expect(setupCard.getByText('Taylor')).toBeVisible();
+    await expect(assignmentsSection.getByText('Scorebook: Jamie')).toBeVisible();
 
     await snacksCard.getByRole('button', { name: 'Sign up' }).click();
     await expect(assignmentsSection.getByText('Snacks claimed.')).toBeVisible();

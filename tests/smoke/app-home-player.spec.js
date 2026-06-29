@@ -2,11 +2,82 @@ import { expect, test } from '@playwright/test';
 
 test.use({ viewport: { width: 390, height: 844 }, hasTouch: true });
 
+const telemetryEndpoint = 'https://telemetry.example.test/collectTelemetry';
+
 function appUrl(baseURL, hashPath) {
     const appBaseURL = process.env.SMOKE_APP_BASE_URL || baseURL;
     const url = new URL('/', appBaseURL);
     url.hash = hashPath;
     return url.toString();
+}
+
+async function installTelemetryCollectorCapture(page) {
+    const batches = [];
+    await page.addInitScript((endpoint) => {
+        window.localStorage.clear();
+        window.sessionStorage.clear();
+        window.ALLPLAYS_PERFORMANCE_ENABLED = false;
+        window.ALLPLAYS_TELEMETRY_ENABLED = true;
+        window.ALLPLAYS_TELEMETRY_ENDPOINT = endpoint;
+        window.__ALLPLAYS_CONFIG__ = {
+            telemetryEnabled: true,
+            telemetryEndpoint: endpoint,
+            performanceMonitoringEnabled: false
+        };
+    }, telemetryEndpoint);
+
+    await page.route(telemetryEndpoint, async (route) => {
+        if (route.request().method() === 'OPTIONS') {
+            await route.fulfill({
+                status: 204,
+                headers: {
+                    'Access-Control-Allow-Origin': '*',
+                    'Access-Control-Allow-Headers': 'Authorization, Content-Type',
+                    'Access-Control-Allow-Methods': 'POST,OPTIONS'
+                }
+            });
+            return;
+        }
+
+        const body = route.request().postData();
+        if (body) {
+            batches.push(JSON.parse(body));
+        }
+        await route.fulfill({
+            status: 204,
+            headers: {
+                'Access-Control-Allow-Origin': '*',
+                'Access-Control-Allow-Headers': 'Authorization, Content-Type',
+                'Access-Control-Allow-Methods': 'POST,OPTIONS'
+            }
+        });
+    });
+
+    return batches;
+}
+
+function getTelemetryEventsFromBatches(batches) {
+    return batches.flatMap((batch) => Array.isArray(batch?.events) ? batch.events : []);
+}
+
+function getParentCoreWorkflowEvents(batches) {
+    return getTelemetryEventsFromBatches(batches).filter((event) => (
+        event?.name === 'app_workflow_timing' &&
+        event?.properties?.workflowName === 'parent core workflow drill in'
+    ));
+}
+
+function getViewLoadTelemetryEvents(batches) {
+    return getTelemetryEventsFromBatches(batches).filter((event) => (
+        event?.name === 'app_ux_timing' &&
+        event?.properties?.category === 'view_load'
+    ));
+}
+
+async function flushTelemetry(page) {
+    await page.evaluate(async () => {
+        await window.AllPlaysTelemetry?.flush?.();
+    });
 }
 
 async function waitForHomeRoute(page, readyLocator) {
@@ -31,6 +102,11 @@ async function mockHomePlayerModules(page) {
         window.__playerLoads = [];
         window.__socialPosts = [];
         window.__socialUploads = [];
+        window.__parentToolPanelLoads = [];
+        window.__parentToolRenders = [];
+        window.__ALLPLAYS_PARENT_TOOLS_RENDER_TRACKER__ = (toolId) => {
+            window.__parentToolRenders.push(toolId);
+        };
     });
 
     await page.route(/\/src\/lib\/useAuth\.ts(\?.*)?$/, async (route) => {
@@ -43,6 +119,8 @@ async function mockHomePlayerModules(page) {
                         uid: 'user-1',
                         email: 'parent@example.com',
                         displayName: 'Pat Parent',
+                        photoUrl: '',
+                        emailVerified: true,
                         roles: ['parent'],
                         parentOf: [
                             { teamId: 'team-1', playerId: 'player-1', playerName: 'Pat Star', teamName: 'Bears' }
@@ -50,7 +128,15 @@ async function mockHomePlayerModules(page) {
                     };
                     return {
                         user,
-                        profile: { parentOf: user.parentOf },
+                        profile: {
+                            parentOf: user.parentOf,
+                            fullName: 'Pat Parent',
+                            displayName: 'Pat Parent',
+                            phone: '555-0100',
+                            photoUrl: '',
+                            signInMethod: 'password',
+                            hasPassword: true
+                        },
                         loading: false,
                         error: null,
                         roles: user.roles,
@@ -62,6 +148,169 @@ async function mockHomePlayerModules(page) {
                         signOut: async () => {}
                     };
                 }
+            `
+        });
+    });
+
+    await page.route(/\/src\/lib\/authService\.ts(\?.*)?$/, async (route) => {
+        await route.fulfill({
+            status: 200,
+            contentType: 'application/javascript',
+            body: `
+                export const firebaseAuth = { app: { options: { projectId: 'test-project' } }, currentUser: null };
+                export function describeAuthError(error) { return error?.message || 'Authentication failed.'; }
+                export async function getNativeAuthIdToken() { return null; }
+                export async function hydrateFirebaseUser(user) { return user; }
+                export function observeFirebaseUser(callback) {
+                    queueMicrotask(() => callback(null));
+                    return () => {};
+                }
+                export function getCurrentFirebaseUser() { return null; }
+                export async function signInWithEmail() { return { user: { uid: 'user-1', email: 'parent@example.com' } }; }
+                export async function signUpWithEmail() { return { user: { uid: 'user-1', email: 'parent@example.com' } }; }
+                export async function signInWithGoogleAccount() { return { user: { uid: 'user-1', email: 'parent@example.com' } }; }
+                export async function completeGoogleRedirect() { return null; }
+                export async function sendResetEmail() {}
+                export async function resendVerificationEmail() {}
+                export async function reloadCurrentUser() { return true; }
+                export async function verifyResetCode() { return 'parent@example.com'; }
+                export async function confirmReset() {}
+                export async function applyEmailActionCode() {}
+                export function isEmailLink() { return false; }
+                export async function completeEmailLink() { return { user: { uid: 'user-1', email: 'parent@example.com' } }; }
+                export async function setCurrentUserPassword() {}
+                export async function redeemInviteForUser() { return { message: 'Invite accepted.', redirectUrl: '/home' }; }
+                export function rememberPendingInvite(code, type = 'parent') {
+                    try { window.localStorage.setItem('pendingInvite', JSON.stringify({ code, type })); } catch {}
+                }
+                export function readPendingInvite() { return { code: '', type: 'parent' }; }
+                export function clearPendingInvite() {}
+                export function getRouteForUser(user) { return user ? '/home' : '/auth'; }
+                export function mapLegacyRedirectToAppRoute(redirectUrl = '') { return redirectUrl || '/home'; }
+                export async function signOut() {}
+            `
+        });
+    });
+
+    await page.route(/\/src\/lib\/profileService\.ts(\?.*)?$/, async (route) => {
+        await route.fulfill({
+            status: 200,
+            contentType: 'application/javascript',
+            body: `
+                const categories = ['liveChat', 'mentions', 'liveScore', 'gameDay', 'schedule', 'rsvp', 'fees', 'practice', 'access', 'rideshare', 'media', 'awards', 'officiating'];
+
+                export function normalizeNotificationPreferences(preferences = null) {
+                    return Object.fromEntries(categories.map((category) => [category, Boolean(preferences?.[category])]));
+                }
+
+                export async function loadProfileDocument() {
+                    return {
+                        fullName: 'Pat Parent',
+                        displayName: 'Pat Parent',
+                        phone: '555-0100',
+                        photoUrl: '',
+                        signInMethod: 'password',
+                        hasPassword: true,
+                        updatedAt: new Date('2100-06-01T12:00:00Z')
+                    };
+                }
+
+                export async function saveProfileDocument() {
+                    return {
+                        fullName: 'Pat Parent',
+                        phone: '555-0100',
+                        photoUrl: '',
+                        signInMethod: 'password',
+                        hasPassword: true
+                    };
+                }
+
+                export async function loadNotificationTeams() {
+                    return [{ id: 'team-1', name: 'Bears' }];
+                }
+
+                export async function loadParentTeams() {
+                    return [{ id: 'team-1', name: 'Bears' }];
+                }
+
+                export async function loadNotificationPreferences() {
+                    return normalizeNotificationPreferences({
+                        liveChat: true,
+                        liveScore: true,
+                        gameDay: true,
+                        schedule: true,
+                        rsvp: true
+                    });
+                }
+
+                export async function saveNotificationPreferences(_userId, _teamId, preferences) {
+                    return normalizeNotificationPreferences(preferences);
+                }
+
+                export async function createProfileAccessCode() {
+                    return {
+                        id: 'code-new',
+                        code: 'NEW12345',
+                        email: '',
+                        phone: '',
+                        type: 'parent',
+                        used: false,
+                        createdAt: new Date('2100-06-02T12:00:00Z')
+                    };
+                }
+
+                export async function loadProfileAccessCodesPage() {
+                    return {
+                        codes: [{
+                            id: 'code-1',
+                            code: 'ABC12345',
+                            email: 'family@example.com',
+                            phone: '',
+                            type: 'parent',
+                            used: false,
+                            createdAt: new Date('2100-06-01T12:00:00Z')
+                        }],
+                        nextCursor: null
+                    };
+                }
+
+                export async function requestAccountMerge() {
+                    return { status: 'pending' };
+                }
+
+                export async function saveNotificationDeviceToken() {
+                    return { saved: true };
+                }
+            `
+        });
+    });
+
+    await page.route(/\/src\/lib\/pushService\.ts(\?.*)?$/, async (route) => {
+        await route.fulfill({
+            status: 200,
+            contentType: 'application/javascript',
+            body: `
+                export const androidNotificationChannels = [];
+                export async function addPushNotificationOpenListener() { return { remove: async () => {} }; }
+                export async function ensureAndroidNotificationChannels() {}
+                export async function enablePushNotificationsForUser() {
+                    return { token: 'push-token', platform: 'web' };
+                }
+                export function getPushNotificationPrimerState(context) {
+                    return { context, hasResponded: false, accepted: false, declined: false, canAskAgain: true, decidedAt: null };
+                }
+                export function recordPushNotificationPrimerDecision() {}
+                export async function runPushNotificationPrimer() { return true; }
+                export async function getPushNotificationPermissionStatus() {
+                    return {
+                        state: 'unsupported',
+                        isNative: false,
+                        platform: 'web',
+                        canRequest: false,
+                        canOpenSettings: false
+                    };
+                }
+                export async function openPushNotificationSettings() {}
             `
         });
     });
@@ -170,7 +419,18 @@ async function mockHomePlayerModules(page) {
                             priority: 10,
                             date: nextEvent.date
                         }],
-                        fees: [],
+                        fees: [{
+                            id: 'fee-1',
+                            title: 'Tournament fee',
+                            teamId: 'team-1',
+                            teamName: 'Bears',
+                            playerId: 'player-1',
+                            playerName: 'Pat Star',
+                            status: 'open',
+                            balanceDueCents: 2000,
+                            amountCents: 2000,
+                            dueDate: new Date('2100-06-10T12:00:00Z')
+                        }],
                         metrics: {
                             players: 1,
                             teams: 1,
@@ -179,6 +439,341 @@ async function mockHomePlayerModules(page) {
                             packetsReady: 1
                         }
                     };
+                }
+            `
+        });
+    });
+
+    await page.route(/\/src\/lib\/scheduleService\.ts(\?.*)?$/, async (route) => {
+        await route.fulfill({
+            status: 200,
+            contentType: 'application/javascript',
+            body: `
+                const children = [{
+                    teamId: 'team-1',
+                    teamName: 'Bears',
+                    playerId: 'player-1',
+                    playerName: 'Pat Star'
+                }];
+
+                function event(overrides = {}) {
+                    return {
+                        eventKey: overrides.eventKey || 'team-1::game-next::player-1::2100-06-01T18:00:00.000Z::game',
+                        id: overrides.id || 'game-next',
+                        teamId: 'team-1',
+                        teamName: 'Bears',
+                        type: overrides.type || 'game',
+                        date: overrides.date || new Date('2100-06-01T18:00:00Z'),
+                        endDate: overrides.endDate || new Date('2100-06-01T20:00:00Z'),
+                        location: overrides.location || 'Main Gym',
+                        opponent: overrides.opponent || 'Falcons',
+                        title: overrides.title || null,
+                        childId: 'player-1',
+                        childName: 'Pat Star',
+                        isDbGame: true,
+                        isCancelled: false,
+                        status: overrides.status || 'scheduled',
+                        liveStatus: null,
+                        homeScore: null,
+                        awayScore: null,
+                        myRsvp: overrides.myRsvp || 'not_responded',
+                        myRsvpNote: '',
+                        assignments: overrides.assignments || [],
+                        rsvpSummary: { going: 0, maybe: 0, notGoing: 0, notResponded: 1, total: 1 },
+                        rideshareSummary: { offerCount: 0, seatsLeft: 0, requests: 0, pending: 0, confirmed: 0, isFull: false },
+                        availabilityLocked: false,
+                        availabilityNotesVisible: false,
+                        availabilityNotes: [],
+                        isTeamAdmin: false,
+                        isTeamStaff: true,
+                        isTeamRsvpReminderManager: false,
+                        canUpdateScore: false,
+                        calendarUrls: [],
+                        practiceHomePacketSummary: overrides.practiceHomePacketSummary || null,
+                        gamePlan: null,
+                        ...overrides
+                    };
+                }
+
+                function scheduleEvents() {
+                    return [
+                        event(),
+                        event({
+                            eventKey: 'team-1::practice-1::player-1::2100-06-02T19:00:00.000Z::practice',
+                            id: 'practice-1',
+                            type: 'practice',
+                            title: 'Practice',
+                            date: new Date('2100-06-02T19:00:00Z'),
+                            endDate: new Date('2100-06-02T20:00:00Z'),
+                            myRsvp: 'going',
+                            practiceHomePacketSummary: '2 drills · 20 min'
+                        })
+                    ];
+                }
+
+                export async function loadParentSchedule() {
+                    return { children, events: scheduleEvents(), isPartial: false };
+                }
+
+                export async function loadParentScheduleEventDetail(_user, options = {}) {
+                    return {
+                        children,
+                        events: [event({
+                            id: options.eventId || 'game-next',
+                            eventKey: 'team-1::' + (options.eventId || 'game-next') + '::player-1::2100-06-01T18:00:00.000Z::game'
+                        })],
+                        isPartial: false
+                    };
+                }
+
+                export function resolveCachedParentScheduleEvents() {
+                    return scheduleEvents();
+                }
+
+                export async function loadOfficialAssignmentsAccess() {
+                    return { hasAccess: true, teamIds: ['team-1'], teamCount: 1 };
+                }
+
+                export async function loadOfficialAssignments() {
+                    return {
+                        hasAccess: true,
+                        teamIds: ['team-1'],
+                        teamCount: 1,
+                        assignments: [{
+                            kind: 'assigned',
+                            teamId: 'team-1',
+                            teamName: 'Bears',
+                            gameId: 'game-next',
+                            slotId: 'slot-1',
+                            position: 'Referee',
+                            status: 'pending',
+                            opponent: 'Falcons',
+                            location: 'Main Gym',
+                            date: new Date('2100-06-01T18:00:00Z'),
+                            canClaim: false,
+                            scheduleReviewRequired: false
+                        }]
+                    };
+                }
+
+                export async function loadParentScheduleAssignments() { return []; }
+                export async function loadParentScheduleRideOffers() { return []; }
+                export async function loadScheduleStatTrackerConfigsForApp() { return []; }
+                export async function loadScheduledPracticeSeriesForEdit() { return null; }
+                export async function loadParentPracticePacket() { return null; }
+                export async function loadStaffPracticePacket() { return null; }
+                export async function loadStaffPracticeAttendance() { return { players: [], statuses: {}, notes: '' }; }
+                export async function loadAutoFilledLineupDraftPreviewForApp() { return { formationId: '', assignments: [] }; }
+                export async function markParentPracticePacketComplete() { return { completedAt: new Date() }; }
+                export async function publishGamePlanForApp() { return { success: true }; }
+                export async function loadHomeScoringPlayers() { return []; }
+                export async function publishLiveScoreUpdateEvent() {}
+                export async function recordPlayerGameStat() { return { homeScore: 0, awayScore: 0, stats: {} }; }
+                export async function recordPlayerScoringStat() { return { homeScore: 0, awayScore: 0, stats: {} }; }
+                export async function undoRecordedPlayerGameStat() { return { homeScore: 0, awayScore: 0, stats: {} }; }
+                export async function saveScheduledGameLineupDraftForApp() { return { success: true }; }
+                export async function saveStaffPracticeAttendance() { return { players: [], statuses: {}, notes: '' }; }
+                export async function saveStaffPracticePacket() { return null; }
+                export async function completeGameWrapupForApp() { return { success: true }; }
+                export async function loadGameDayLiveEventsForApp() { return []; }
+                export async function saveGameDaySubstitutionForApp() { return { success: true }; }
+                export async function updateGameScore() { return { homeScore: 0, awayScore: 0, status: 'scheduled' }; }
+                export async function updateLiveGameClockState() { return null; }
+                export function buildLiveGameClockPeriods() { return []; }
+                export function resolveLiveGameClockSnapshot() { return null; }
+                export function createStaffRsvpAvailabilityLoader() { return async () => ({ rows: [], summary: {} }); }
+                export function createStaffRsvpReminderPreviewLoader() { return async () => ({ recipients: [], message: '' }); }
+                export async function submitStaffScheduleRsvpOverride() { return { response: 'going' }; }
+                export async function sendStaffRsvpReminder() { return { sentCount: 0, skippedCount: 0, recipients: [] }; }
+                export async function addTeamCalendarUrl() { return []; }
+                export async function removeTeamCalendarUrl() { return []; }
+                export async function createScheduledGameForApp() { return 'game-new'; }
+                export async function createScheduledPracticeForApp() { return 'practice-new'; }
+                export async function createScheduledTournamentBlockForApp() { return { batchId: 'batch-new', gameIds: [] }; }
+                export async function createScheduleImportGame() { return 'import-game'; }
+                export async function createScheduleImportPractice() { return 'import-practice'; }
+                export async function finalizeScheduleImportBatch() { return { success: true }; }
+                export async function cancelPracticeOccurrenceForApp() { return { cancelled: true }; }
+                export async function cancelScheduledGameForApp() { return { cancelled: true }; }
+                export async function updateScheduledGameForApp() { return { updated: true }; }
+                export async function updateScheduledPracticeForApp() { return { updated: true }; }
+                export async function revertScheduledPracticeOccurrenceForApp() { return { reverted: true }; }
+                export async function respondToOfficialAssignmentItem() {}
+                export async function claimOfficialAssignmentItem() {}
+                export async function submitParentScheduleRsvp() { return { response: 'going' }; }
+                export async function claimParentScheduleAssignmentSlot() { return { role: 'Volunteer' }; }
+                export async function releaseParentScheduleAssignmentClaim() {}
+                export async function createParentScheduleRideOffer() { return { id: 'ride-1' }; }
+                export async function requestParentScheduleRideSpot() { return { id: 'ride-request-1' }; }
+                export async function updateParentScheduleRideRequestStatus() {}
+                export async function setParentScheduleRideOfferStatus() {}
+                export async function cancelParentScheduleRideRequest() {}
+                export function summarizeParentScheduleRideOffers() { return { offerCount: 0, seatsLeft: 0, requests: 0, pending: 0, confirmed: 0, isFull: false }; }
+                export function resolveParentGameRoute() { return { teamId: 'team-1', gameId: 'game-next', route: '/schedule/team-1/game-next' }; }
+            `
+        });
+    });
+
+    await page.route(/\/src\/lib\/chatService\.ts(\?.*)?$/, async (route) => {
+        await route.fulfill({
+            status: 200,
+            contentType: 'application/javascript',
+            body: `
+                const team = {
+                    id: 'team-1',
+                    name: 'Bears',
+                    sport: 'Basketball',
+                    photoUrl: 'https://img.example.test/bears.png',
+                    active: true,
+                    role: 'Parent',
+                    canModerate: false,
+                    unreadCount: 2,
+                    preferredConversationId: 'team',
+                    isMuted: false,
+                    lastMessage: {
+                        id: 'msg-1',
+                        text: 'Practice packet posted.',
+                        senderId: 'coach-1',
+                        senderName: 'Coach Jamie',
+                        senderEmail: 'coach@example.com',
+                        senderPhotoUrl: null,
+                        createdAt: new Date('2100-06-01T12:00:00Z'),
+                        editedAt: null,
+                        deleted: false,
+                        reactions: {},
+                        attachments: [],
+                        conversationId: null
+                    }
+                };
+
+                export async function loadChatInbox(_user, options = {}) {
+                    options.onPreview?.({ teamId: 'team-1', lastMessage: team.lastMessage, preferredConversationId: 'team', isMuted: false });
+                    return { teams: [team] };
+                }
+
+                export function getChatInboxPreview(message) {
+                    return message?.text || '';
+                }
+
+                export async function loadChatTeamContext() {
+                    return { team, profile: { fullName: 'Pat Parent' }, canModerate: false };
+                }
+
+                export async function loadChatConversations() {
+                    return [{ id: 'team', label: 'Full team', targetType: 'full_team', unreadCount: 0, isMuted: false }];
+                }
+
+                export function subscribeToTeamChatMessages(_teamId, _conversationId, onSnapshot) {
+                    const message = {
+                        ...team.lastMessage,
+                        _doc: null,
+                        targetType: 'full_team',
+                        recipientIds: [],
+                        targetRole: null,
+                        clientMessageId: null
+                    };
+                    queueMicrotask(() => onSnapshot([message], null));
+                    return { unsubscribe() {} };
+                }
+
+                export async function loadOlderTeamChatMessages() { return []; }
+                export async function deleteTeamChatMessage() {}
+                export async function editTeamChatMessage() {}
+                export async function ensureStaffChatConversation() { return { id: 'staff', label: 'Staff', targetType: 'staff' }; }
+                export async function loadChatRecipientOptions() { return []; }
+                export async function loadSentTeamEmails() { return []; }
+                export async function loadTeamEmailDrafts() { return []; }
+                export async function loadTeamEmailTemplates() { return []; }
+                export async function markTeamChatRead() {}
+                export async function muteTeamChat() {}
+                export async function unmuteTeamChat() {}
+                export async function saveTeamEmailDraft() { return { id: 'draft-1' }; }
+                export async function saveTeamEmailTemplate() { return { id: 'template-1' }; }
+                export async function sendAllPlaysChatAnswer() { return { text: 'Answer' }; }
+                export async function sendTeamChatMessage() { return { id: 'msg-new' }; }
+                export async function sendTeamEmailMessage() { return { id: 'email-new' }; }
+                export async function toggleTeamChatReaction() {}
+                export async function uploadTeamChatAttachment() { return { type: 'image', url: 'https://img.example.test/chat.png', name: 'chat.png' }; }
+            `
+        });
+    });
+
+    await page.route(/\/src\/lib\/parentFeesService\.ts(\?.*)?$/, async (route) => {
+        await route.fulfill({
+            status: 200,
+            contentType: 'application/javascript',
+            body: `
+                const fee = {
+                    id: 'fee-1',
+                    teamId: 'team-1',
+                    teamName: 'Bears',
+                    playerId: 'player-1',
+                    playerName: 'Pat Star',
+                    batchId: 'batch-1',
+                    recipientId: 'recipient-1',
+                    title: 'Tournament fee',
+                    status: 'open',
+                    statusLabel: 'Open',
+                    amountCents: 2000,
+                    amountLabel: '$20.00',
+                    dueLabel: 'Jun 10',
+                    balanceDueCents: 2000,
+                    checkoutUrl: '',
+                    checkoutStatus: '',
+                    canPay: false,
+                    checkoutInitiatable: false,
+                    paymentAction: '',
+                    lineItems: [],
+                    installments: [],
+                    ledgerEntries: []
+                };
+
+                export async function loadParentFeesForApp() {
+                    return [fee];
+                }
+
+                export async function initiateParentTeamFeeCheckout() {
+                    return { success: true, checkoutUrl: 'https://checkout.example.test/session' };
+                }
+
+                export function isParentTeamFeePayActionAllowed() { return false; }
+                export function canInitiateParentTeamFeeCheckout() { return false; }
+            `
+        });
+    });
+
+    await page.route(/\/src\/lib\/parentToolsAccessService\.ts(\?.*)?$/, async (route) => {
+        await route.fulfill({
+            status: 200,
+            contentType: 'application/javascript',
+            body: `
+                export async function loadParentAccessModel() {
+                    return {
+                        teams: [],
+                        requests: [{
+                            id: 'request-1',
+                            teamId: 'team-1',
+                            teamName: 'Bears',
+                            playerId: 'player-1',
+                            playerName: 'Pat Star',
+                            relation: 'Parent',
+                            status: 'pending',
+                            decisionNote: null,
+                            createdAt: new Date('2100-06-01T12:00:00Z')
+                        }]
+                    };
+                }
+
+                export async function loadParentAccessTeams() {
+                    return [{ id: 'team-1', name: 'Bears', sport: 'Basketball', zip: '66210' }];
+                }
+
+                export async function loadParentAccessPlayers() {
+                    return [{ id: 'player-1', name: 'Pat Star', number: '9', photoUrl: null }];
+                }
+
+                export async function submitParentAccessRequest() {
+                    return { id: 'request-new', status: 'pending' };
                 }
             `
         });
@@ -638,6 +1233,458 @@ test('home dashboard drills into player detail with section submenus', async ({ 
     await page.getByRole('button', { name: 'Rules', exact: true }).click();
     await expect(page.getByText('Rules and limits')).toBeVisible();
     await expect(page.getByText('PTS: +$1.00 per pts')).toBeVisible();
+});
+
+test('parent core player drill-in sends workflow timer to telemetry storage payload', async ({ page, baseURL }) => {
+    const telemetryBatches = await installTelemetryCollectorCapture(page);
+    await mockHomePlayerModules(page);
+    await page.goto(appUrl(baseURL, '/home?section=players'), { waitUntil: 'domcontentloaded' });
+
+    await waitForHomeRoute(page, page.getByRole('heading', { name: 'Player Drill-In' }));
+    await page.locator('a[href="#/players/team-1/player-1"]').click();
+
+    await expect(page.getByRole('heading', { name: 'Pat Star' })).toBeVisible();
+    await expect.poll(() => page.evaluate(() => performance.getEntriesByType('measure').map((entry) => entry.name)), { timeout: 15000 })
+        .toContain('allplays:ap_workflow_parent_core_workflow_drill_in');
+
+    await page.evaluate(async () => {
+        await window.AllPlaysTelemetry?.flush?.();
+    });
+
+    await expect.poll(() => getTelemetryEventsFromBatches(telemetryBatches), { timeout: 15000 }).toEqual(expect.arrayContaining([
+        expect.objectContaining({
+            name: 'app_workflow_timing',
+            sessionId: expect.any(String),
+            visitorId: expect.any(String),
+            pagePath: '/',
+            appRoute: '/players/team-1/player-1',
+            properties: expect.objectContaining({
+                workflowName: 'parent core workflow drill in',
+                outcome: 'success',
+                source: 'parent_core',
+                sourcePage: 'home',
+                targetPage: 'player',
+                targetRoute: '/players/team-1/player-1',
+                trigger: 'player_card',
+                actionKind: 'player',
+                teamId: 'team-1',
+                playerId: 'player-1',
+                completedPage: 'player',
+                completedRoute: '/players/team-1/player-1',
+                expectedTargetRoute: '/players/team-1/player-1',
+                playerName: 'Pat Star',
+                durationMs: expect.any(Number)
+            })
+        })
+    ]));
+});
+
+test('parent core workflows emit baseline timers from Home drill-ins', async ({ page, baseURL }) => {
+    test.setTimeout(120000);
+    const telemetryBatches = await installTelemetryCollectorCapture(page);
+    await mockHomePlayerModules(page);
+    const baselines = [];
+    const workflows = [
+        {
+            label: 'home_to_schedule',
+            startHash: '/home',
+            expectedTargetPage: 'schedule',
+            expectedTargetRoute: '/schedule',
+            readyHome: (testPage) => testPage.getByRole('heading', { name: 'Today for your players' }),
+            action: async (testPage) => {
+                await testPage.locator('.home-upcoming-section a[href="#/schedule"]').click();
+            },
+            readyTarget: async (testPage) => {
+                await expect(testPage.getByRole('heading', { name: 'Schedule', exact: true })).toBeVisible();
+                await expect(testPage.getByRole('heading', { name: 'vs. Falcons' })).toBeVisible();
+            }
+        },
+        {
+            label: 'home_to_schedule_event',
+            startHash: '/home',
+            expectedTargetPage: 'schedule_event',
+            expectedTargetRoute: '/schedule/team-1/game-next?childId=player-1&section=availability',
+            readyHome: (testPage) => testPage.getByRole('heading', { name: 'Today for your players' }),
+            action: async (testPage) => {
+                await testPage.getByRole('link', { name: /Open action/ }).click();
+            },
+            readyTarget: async (testPage) => {
+                await expect(testPage.getByRole('heading', { name: /Falcons/ })).toBeVisible();
+            }
+        },
+        {
+            label: 'home_to_teams',
+            startHash: '/home?section=teams',
+            expectedTargetPage: 'teams',
+            expectedTargetRoute: '/teams?selectedTeamId=team-1&from=home',
+            readyHome: (testPage) => testPage.getByRole('heading', { name: 'Teams' }),
+            action: async (testPage) => {
+                await testPage.locator('a[href="#/teams?selectedTeamId=team-1&from=home"]').click();
+            },
+            readyTarget: async (testPage) => {
+                await waitForTeamsRoute(testPage, testPage.getByRole('heading', { name: '1 team ready' }));
+            }
+        },
+        {
+            label: 'home_to_player_detail',
+            startHash: '/home?section=players',
+            expectedTargetPage: 'player',
+            expectedTargetRoute: '/players/team-1/player-1',
+            readyHome: (testPage) => testPage.getByRole('heading', { name: 'Player Drill-In' }),
+            action: async (testPage) => {
+                await testPage.locator('a[href="#/players/team-1/player-1"]').click();
+            },
+            readyTarget: async (testPage) => {
+                await expect(testPage.getByRole('heading', { name: 'Pat Star' })).toBeVisible();
+            }
+        },
+        {
+            label: 'home_to_messages',
+            startHash: '/home',
+            expectedTargetPage: 'messages',
+            expectedTargetRoute: '/messages/team-1',
+            readyHome: (testPage) => testPage.getByRole('heading', { name: 'Today for your players' }),
+            action: async (testPage) => {
+                await testPage.locator('a[href="#/messages/team-1"]').first().click();
+            },
+            readyTarget: async (testPage) => {
+                await expect(testPage.getByText('Practice packet posted.').first()).toBeVisible();
+            }
+        },
+        {
+            label: 'home_to_fees',
+            startHash: '/home',
+            expectedTargetPage: 'fees',
+            expectedTargetRoute: '/parent-tools/fees',
+            readyHome: (testPage) => testPage.getByRole('heading', { name: 'Today for your players' }),
+            action: async (testPage) => {
+                await testPage.locator('a[href="#/parent-tools/fees"]').click();
+            },
+            readyTarget: async (testPage) => {
+                await expect(testPage.getByRole('heading', { name: 'Team fees' })).toBeVisible();
+            }
+        },
+        {
+            label: 'home_to_officials',
+            startHash: '/home',
+            expectedTargetPage: 'officials',
+            expectedTargetRoute: '/officials',
+            readyHome: (testPage) => testPage.getByRole('heading', { name: 'Today for your players' }),
+            action: async (testPage) => {
+                await testPage.locator('a[href="#/officials"]').click();
+            },
+            readyTarget: async (testPage) => {
+                await expect(testPage.getByRole('heading', { name: 'Assignments' })).toBeVisible();
+            }
+        }
+    ];
+
+    for (const workflow of workflows) {
+        const beforeEventCount = getParentCoreWorkflowEvents(telemetryBatches).length;
+        await page.goto(appUrl(baseURL, workflow.startHash), { waitUntil: 'domcontentloaded' });
+        await waitForHomeRoute(page, workflow.readyHome(page));
+        await workflow.action(page);
+        await workflow.readyTarget(page);
+        await flushTelemetry(page);
+
+        await expect.poll(() => {
+            const event = getParentCoreWorkflowEvents(telemetryBatches)
+                .slice(beforeEventCount)
+                .find((candidate) => (
+                    candidate.properties?.targetPage === workflow.expectedTargetPage &&
+                    candidate.properties?.targetRoute === workflow.expectedTargetRoute
+                ));
+            return event ? {
+                targetPage: event.properties?.targetPage,
+                targetRoute: event.properties?.targetRoute,
+                completedPage: event.properties?.completedPage,
+                outcome: event.properties?.outcome,
+                hasDuration: Number.isFinite(event.properties?.durationMs)
+            } : null;
+        }, { timeout: 15000 }).toEqual({
+            targetPage: workflow.expectedTargetPage,
+            targetRoute: workflow.expectedTargetRoute,
+            completedPage: workflow.expectedTargetPage,
+            outcome: 'success',
+            hasDuration: true
+        });
+
+        const event = getParentCoreWorkflowEvents(telemetryBatches)
+            .slice(beforeEventCount)
+            .find((candidate) => (
+                candidate.properties?.targetPage === workflow.expectedTargetPage &&
+                candidate.properties?.targetRoute === workflow.expectedTargetRoute
+            ));
+        expect(event, `Telemetry event for ${workflow.label}`).toBeTruthy();
+        const durationMs = Number(event.properties.durationMs);
+        expect(durationMs).toBeGreaterThanOrEqual(0);
+        expect(durationMs).toBeLessThan(30000);
+        baselines.push({
+            workflow: workflow.label,
+            durationMs,
+            appRoute: event.appRoute,
+            targetRoute: event.properties.targetRoute,
+            completedRoute: event.properties.completedRoute,
+            trigger: event.properties.trigger,
+            actionKind: event.properties.actionKind
+        });
+    }
+
+    console.log('PARENT_WORKFLOW_BASELINES ' + JSON.stringify(baselines));
+    expect(baselines.map((baseline) => baseline.workflow)).toEqual(workflows.map((workflow) => workflow.label));
+});
+
+test('requested app workflows emit DB-ready view load baseline timers', async ({ page, baseURL }) => {
+    test.setTimeout(180000);
+    const telemetryBatches = await installTelemetryCollectorCapture(page);
+    await mockHomePlayerModules(page);
+    const baselines = [];
+    const workflows = [
+        {
+            workflow: 'home_today',
+            label: 'home today load',
+            viewName: 'home today',
+            route: '/home',
+            startHash: '/home',
+            ready: async (testPage) => {
+                await waitForHomeRoute(testPage, testPage.getByRole('heading', { name: 'Today for your players' }));
+            }
+        },
+        {
+            workflow: 'home_feed',
+            label: 'home feed load',
+            viewName: 'home feed',
+            route: '/home?section=feed',
+            startHash: '/home?section=feed',
+            ready: async (testPage) => {
+                await waitForHomeRoute(testPage, testPage.getByText('Quick shares'));
+                await expect(testPage.getByText('Pat Star highlight').first()).toBeVisible();
+            }
+        },
+        {
+            workflow: 'home_players',
+            label: 'home players load',
+            viewName: 'home players',
+            route: '/home?section=players',
+            startHash: '/home?section=players',
+            ready: async (testPage) => {
+                await waitForHomeRoute(testPage, testPage.getByRole('heading', { name: 'Player Drill-In' }));
+            }
+        },
+        {
+            workflow: 'home_teams',
+            label: 'home teams load',
+            viewName: 'home teams',
+            route: '/home?section=teams',
+            startHash: '/home?section=teams',
+            ready: async (testPage) => {
+                await waitForHomeRoute(testPage, testPage.getByRole('heading', { name: 'Teams' }));
+            }
+        },
+        {
+            workflow: 'home_friends',
+            label: 'home friends load',
+            viewName: 'home friends',
+            route: '/home?section=friends',
+            startHash: '/home?section=friends',
+            ready: async (testPage) => {
+                await waitForHomeRoute(testPage, testPage.getByText('Needs response'));
+                await expect(testPage.getByText('Jamie Friend')).toBeVisible();
+            }
+        },
+        {
+            workflow: 'schedule',
+            label: 'schedule load',
+            viewName: 'schedule',
+            route: '/schedule',
+            startHash: '/schedule',
+            ready: async (testPage) => {
+                await expect(async () => {
+                    await expect(testPage.getByText('Loading ALL PLAYS')).toBeHidden({ timeout: 3000 });
+                    await expect(testPage.getByRole('heading', { name: 'Schedule', exact: true })).toBeVisible({ timeout: 3000 });
+                    await expect(testPage.getByRole('heading', { name: 'vs. Falcons' })).toBeVisible({ timeout: 3000 });
+                }).toPass({ timeout: 45000 });
+            }
+        },
+        {
+            workflow: 'messages_choose_team',
+            label: 'messages choose team load',
+            viewName: 'messages choose team',
+            route: '/messages/team-1',
+            startHash: '/messages/team-1',
+            ready: async (testPage) => {
+                await expect(async () => {
+                    await expect(testPage.getByText('Loading ALL PLAYS')).toBeHidden({ timeout: 3000 });
+                    await expect(testPage.getByText('Practice packet posted.').first()).toBeVisible({ timeout: 3000 });
+                }).toPass({ timeout: 45000 });
+            }
+        },
+        {
+            workflow: 'my_teams_team_schedule',
+            label: 'my teams team schedule load',
+            viewName: 'my teams team schedule',
+            route: '/teams/team-1?tab=schedule',
+            startHash: '/teams/team-1?tab=schedule',
+            ready: async (testPage) => {
+                await expect(async () => {
+                    await expect(testPage.getByText('Loading ALL PLAYS')).toBeHidden({ timeout: 3000 });
+                    await expect(testPage.getByText('Loading team')).toHaveCount(0, { timeout: 3000 });
+                    await expect(testPage.getByRole('heading', { name: 'Bears' })).toBeVisible({ timeout: 3000 });
+                    await expect(testPage.getByText('Team schedule')).toBeVisible({ timeout: 3000 });
+                }).toPass({ timeout: 45000 });
+            }
+        },
+        {
+            workflow: 'my_teams_team_roster',
+            label: 'my teams team roster load',
+            viewName: 'my teams team roster',
+            route: '/teams/team-1?tab=roster',
+            startHash: '/teams/team-1?tab=roster',
+            ready: async (testPage) => {
+                await expect(async () => {
+                    await expect(testPage.getByText('Loading ALL PLAYS')).toBeHidden({ timeout: 3000 });
+                    await expect(testPage.getByText('Loading team')).toHaveCount(0, { timeout: 3000 });
+                    await expect(testPage.getByRole('heading', { name: 'Bears' })).toBeVisible({ timeout: 3000 });
+                    await expect(testPage.getByText('Roster').first()).toBeVisible({ timeout: 3000 });
+                    await expect(testPage.getByText('Pat Star').first()).toBeVisible({ timeout: 3000 });
+                }).toPass({ timeout: 45000 });
+            }
+        },
+        {
+            workflow: 'my_teams_team_insights',
+            label: 'my teams team insights load',
+            viewName: 'my teams team insights',
+            route: '/teams/team-1?tab=insights',
+            startHash: '/teams/team-1?tab=insights',
+            ready: async (testPage) => {
+                await expect(async () => {
+                    await expect(testPage.getByText('Loading ALL PLAYS')).toBeHidden({ timeout: 3000 });
+                    await expect(testPage.getByText('Loading team')).toHaveCount(0, { timeout: 3000 });
+                    await expect(testPage.getByRole('heading', { name: 'Bears' })).toBeVisible({ timeout: 3000 });
+                    await expect(testPage.getByText('Player checklist')).toBeVisible({ timeout: 3000 });
+                    await expect(testPage.getByText('Leaderboards')).toBeVisible({ timeout: 3000 });
+                }).toPass({ timeout: 45000 });
+            }
+        },
+        {
+            workflow: 'my_teams_team_more',
+            label: 'my teams team more load',
+            viewName: 'my teams team more',
+            route: '/teams/team-1?tab=more',
+            startHash: '/teams/team-1?tab=more',
+            ready: async (testPage) => {
+                await expect(async () => {
+                    await expect(testPage.getByText('Loading ALL PLAYS')).toBeHidden({ timeout: 3000 });
+                    await expect(testPage.getByText('Loading team')).toHaveCount(0, { timeout: 3000 });
+                    await expect(testPage.getByRole('heading', { name: 'Bears' })).toBeVisible({ timeout: 3000 });
+                    await expect(testPage.getByText('Team links')).toBeVisible({ timeout: 3000 });
+                }).toPass({ timeout: 45000 });
+            }
+        },
+        {
+            workflow: 'profile_account',
+            label: 'profile account load',
+            viewName: 'profile account',
+            route: '/profile',
+            startHash: '/profile',
+            ready: async (testPage) => {
+                await expect(async () => {
+                    await expect(testPage.getByText('Loading ALL PLAYS')).toBeHidden({ timeout: 3000 });
+                    await expect(testPage.getByRole('heading', { name: 'Your Account' })).toBeVisible({ timeout: 3000 });
+                }).toPass({ timeout: 45000 });
+            }
+        },
+        {
+            workflow: 'profile_alerts',
+            label: 'profile alerts load',
+            viewName: 'profile alerts',
+            route: '/profile?section=alerts',
+            startHash: '/profile?section=alerts',
+            ready: async (testPage) => {
+                await expect(async () => {
+                    await expect(testPage.getByText('Loading ALL PLAYS')).toBeHidden({ timeout: 3000 });
+                    await expect(testPage.getByText('Notification preferences')).toBeVisible({ timeout: 3000 });
+                    await expect(testPage.getByText('Customize alerts')).toBeVisible({ timeout: 3000 });
+                }).toPass({ timeout: 45000 });
+            }
+        },
+        {
+            workflow: 'profile_invites',
+            label: 'profile invites load',
+            viewName: 'profile invites',
+            route: '/profile?section=invites',
+            startHash: '/profile?section=invites',
+            ready: async (testPage) => {
+                await expect(async () => {
+                    await expect(testPage.getByText('Loading ALL PLAYS')).toBeHidden({ timeout: 3000 });
+                    await expect(testPage.getByText('Invite codes')).toBeVisible({ timeout: 3000 });
+                    await expect(testPage.getByText('ABC12345')).toBeVisible({ timeout: 3000 });
+                }).toPass({ timeout: 45000 });
+            }
+        },
+        {
+            workflow: 'profile_security',
+            label: 'profile security load',
+            viewName: 'profile security',
+            route: '/profile?section=security',
+            startHash: '/profile?section=security',
+            ready: async (testPage) => {
+                await expect(async () => {
+                    await expect(testPage.getByText('Loading ALL PLAYS')).toBeHidden({ timeout: 3000 });
+                    await expect(testPage.getByText('Account settings')).toBeVisible({ timeout: 3000 });
+                    await expect(testPage.getByText('Email verified')).toBeVisible({ timeout: 3000 });
+                }).toPass({ timeout: 45000 });
+            }
+        }
+    ];
+
+    for (const workflow of workflows) {
+        const beforeEventCount = getViewLoadTelemetryEvents(telemetryBatches).length;
+        await page.goto(appUrl(baseURL, workflow.startHash), { waitUntil: 'domcontentloaded' });
+        await workflow.ready(page);
+
+        await expect.poll(async () => {
+            await flushTelemetry(page);
+            const event = getViewLoadTelemetryEvents(telemetryBatches)
+                .slice(beforeEventCount)
+                .find((candidate) => candidate.properties?.label === workflow.label);
+            return event ? {
+                label: event.properties?.label,
+                category: event.properties?.category,
+                viewName: event.properties?.viewName,
+                route: event.properties?.route,
+                outcome: event.properties?.outcome,
+                hasDuration: Number.isFinite(event.properties?.durationMs)
+            } : null;
+        }, { timeout: 15000 }).toEqual({
+            label: workflow.label,
+            category: 'view_load',
+            viewName: workflow.viewName,
+            route: workflow.route,
+            outcome: 'success',
+            hasDuration: true
+        });
+
+        const event = getViewLoadTelemetryEvents(telemetryBatches)
+            .slice(beforeEventCount)
+            .find((candidate) => candidate.properties?.label === workflow.label);
+        expect(event, `Telemetry event for ${workflow.workflow}`).toBeTruthy();
+        const durationMs = Number(event.properties.durationMs);
+        expect(durationMs).toBeGreaterThanOrEqual(0);
+        expect(durationMs).toBeLessThan(30000);
+        baselines.push({
+            workflow: workflow.workflow,
+            label: workflow.label,
+            durationMs,
+            route: event.properties.route,
+            appRoute: event.appRoute,
+            viewName: event.properties.viewName,
+            outcome: event.properties.outcome
+        });
+    }
+
+    console.log('REQUESTED_VIEW_LOAD_BASELINES ' + JSON.stringify(baselines));
+    expect(baselines.map((baseline) => baseline.workflow)).toEqual(workflows.map((workflow) => workflow.workflow));
 });
 
 test('social quick share defers changing the selected post type', async ({ page, baseURL }) => {

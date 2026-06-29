@@ -12,10 +12,16 @@ function normalizeStatus(value) {
 }
 
 function generateHouseholdInviteCode() {
+    // Household invite codes become access codes for family-plan linking, so use a
+    // cryptographically secure RNG — a non-crypto PRNG is predictable from observed
+    // outputs. The 32-char alphabet divides 256 evenly, so byte % length is unbiased.
     const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+    const cryptoApi = globalThis.crypto || globalThis.msCrypto;
+    const randomValues = new Uint8Array(8);
+    cryptoApi.getRandomValues(randomValues);
     let code = '';
-    for (let i = 0; i < 8; i += 1) {
-        code += chars.charAt(Math.floor(Math.random() * chars.length));
+    for (let i = 0; i < randomValues.length; i += 1) {
+        code += chars.charAt(randomValues[i] % chars.length);
     }
     return code;
 }

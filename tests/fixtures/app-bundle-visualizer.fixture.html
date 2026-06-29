@@ -1,0 +1,108 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <title>Bundle Visualizer Fixture</title>
+    <style>
+        .tooltip-hidden { display: none; }
+    </style>
+</head>
+<body>
+    <input id="module-filter-include" />
+    <div class="tooltip tooltip-hidden">Tooltip</div>
+    <div id="nodes"></div>
+    <svg></svg>
+    <script>
+      const tooltip = document.querySelector('.tooltip');
+      const nodesContainer = document.querySelector('#nodes');
+      const includeInput = document.querySelector('#module-filter-include');
+      const svg = document.querySelector('svg');
+      const modules = [
+          'react/index.js',
+          'react/jsx-runtime.js',
+          'react/compiler-runtime.js',
+          'react-dom/index.js',
+          'react-dom/client.js',
+          'react-dom/server.js',
+          'react-dom/server.browser.js',
+          'react-dom/test-utils.js'
+      ];
+
+      const setShowTooltip = (visible) => {
+          tooltip.className = visible ? 'tooltip' : 'tooltip tooltip-hidden';
+      };
+
+      const renderModules = (activeModules) => {
+          nodesContainer.innerHTML = '';
+          activeModules.forEach((moduleName) => {
+              const node = document.createElement('button');
+              node.className = 'node';
+              node.type = 'button';
+              node.dataset.label = moduleName;
+              node.textContent = moduleName;
+              node.addEventListener('mouseover', () => {
+                  svg.textContent = moduleName;
+                  setShowTooltip(true);
+              });
+              nodesContainer.appendChild(node);
+          });
+          svg.textContent = activeModules.join(' ');
+      };
+
+      const applyFilter = (value) => {
+          const normalizedValue = value.toLowerCase();
+          if (normalizedValue.includes('react-dom')) {
+              renderModules(modules.filter((moduleName) => moduleName.includes('react-dom')));
+              return;
+          }
+          if (normalizedValue.includes('react')) {
+              renderModules(modules.filter((moduleName) => moduleName.includes('react')));
+              return;
+          }
+          renderModules(modules);
+      };
+
+      renderModules(modules);
+
+      (() => {
+          const handleMouseOut = (event) => {
+              const target = event.target;
+              if (target instanceof Element && (target.closest(".node") || target.closest(".tooltip"))) {
+                  return;
+              }
+              setShowTooltip(false);
+          };
+          document.addEventListener("mouseover", handleMouseOut);
+          return () => {
+              document.removeEventListener("mouseover", handleMouseOut);
+          };
+      })();
+
+  const throttleFilter = (callback, limit) => {
+      let waiting = false;
+      let latestValue;
+      let lastEmittedValue;
+      return (val) => {
+          latestValue = val;
+          if (!waiting) {
+              callback(val);
+              lastEmittedValue = val;
+              waiting = true;
+              setTimeout(() => {
+                  waiting = false;
+                  if (latestValue !== lastEmittedValue) {
+                      callback(latestValue);
+                      lastEmittedValue = latestValue;
+                  }
+              }, limit);
+          }
+      };
+  };
+
+      const throttledFilter = throttleFilter(applyFilter, 200);
+      includeInput.addEventListener('input', (event) => {
+          throttledFilter(event.target.value);
+      });
+    </script>
+</body>
+</html>

@@ -1,7 +1,7 @@
 # Code Plan
 
 ## Recommended Fix
-Bump all direct `auth.js` consumer pins from prior versions to `auth.js?v=12` so the updated signup cleanup logic is fetched consistently across the site.
+Bump all direct `auth.js` consumer pins from prior versions to `auth.js?v=38` so the updated signup cleanup logic is fetched consistently across the site.
 
 ## File Scope
 - HTML entry points that import `./js/auth.js`
@@ -10,7 +10,7 @@ Bump all direct `auth.js` consumer pins from prior versions to `auth.js?v=12` so
 - `scripts/build-help-workflow-html-loop.mjs` to keep generated workflow pages aligned
 
 ## Exact Strategy
-1. Replace `auth.js?v=10` and `auth.js?v=11` with `auth.js?v=12` in tracked repo consumers.
+1. Replace `auth.js?v=38` and `auth.js?v=38` with `auth.js?v=38` in tracked repo consumers.
 2. Leave unrelated module versions unchanged.
 3. Keep existing auth behavior and tests intact.
 4. Commit as a narrow cache-bust follow-up on the PR branch.

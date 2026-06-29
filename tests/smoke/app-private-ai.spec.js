@@ -225,4 +225,18 @@ test.describe('private AI chat', () => {
         const voiceBox = await voiceButton.boundingBox();
         expect(voiceBox.y).toBeGreaterThan(textareaBox.y + textareaBox.height - 2);
     });
+
+    test('mobile conversation strip shows the active draft after tapping new chat', async ({ page, baseURL }) => {
+        await mockPrivateAiModules(page);
+        await page.setViewportSize({ width: 390, height: 844 });
+        await page.goto(appUrl(baseURL, '/home'), { waitUntil: 'domcontentloaded' });
+
+        await openPrivateAi(page);
+        await page.getByRole('button', { name: 'New AI chat' }).click();
+
+        const draftChip = page.locator('.private-ai-conversation-chip').filter({ hasText: 'New chat' });
+        await expect(draftChip).toBeVisible();
+        await expect(draftChip).toHaveAttribute('aria-pressed', 'true');
+        await expect(page.locator('.private-ai-conversation-strip')).toContainText('Recent chat');
+    });
 });

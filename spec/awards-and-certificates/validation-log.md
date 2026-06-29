@@ -250,7 +250,7 @@ Validated the reported saved-list cap:
 - Increased default Firestore saved-history reads to 100 runs and 250 certificates.
 - Expanded the demo roster to 12 players so Playwright catches full-team saved-list regressions.
 - Playwright verified a 12-certificate run saves and shows all 12 saved certificate entries in the Saved panel and View saved work flow.
-- Bumped cache versions to load the uncapped saved-list code: `studio.js?v=4` and `db.js?v=33`.
+- Bumped cache versions to load the uncapped saved-list code: `studio.js?v=4` and `db.js?v=76`.
 
 Commands run:
 

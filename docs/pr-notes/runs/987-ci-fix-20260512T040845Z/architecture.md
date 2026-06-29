@@ -1,7 +1,7 @@
 # Architecture Notes
 
 ## Current State
-- PR #987 cache-busted page imports to newer versions, including `js/auth.js?v=15` and `js/team-access.js?v=3`.
+- PR #987 cache-busted page imports to newer versions, including `js/auth.js?v=38` and `js/team-access.js?v=3`.
 - The admin invite smoke spec still mocked older exact versions, so Playwright allowed real modules to load instead of the intended stubs.
 - `js/accept-invite-flow.js` also built the admin success message only from `redeemResult.teamName`, falling back to `the team` even when the fetched team had a name.
 

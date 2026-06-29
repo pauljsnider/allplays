@@ -8,6 +8,7 @@ import { PublicTeamSearch } from './PublicTeamSearch';
 import { getPublicTeamsPage } from '../lib/publicTeamsService';
 import { openPublicUrl } from '../lib/publicActions';
 import { ParentHomeTeam } from '../lib/homeLogic';
+import { getTeamWebsiteHashHref } from '../lib/teamNavigation';
 
 vi.mock('../lib/publicTeamsService', () => ({
     getPublicTeamsPage: vi.fn() as MockInstance<(args?: { searchText?: string; cursor?: unknown | null; pageSize?: number }) => Promise<{ teams: ParentHomeTeam[]; nextCursor: unknown | null }>>,
@@ -88,6 +89,21 @@ describe('PublicTeamSearch', () => {
         expect(getPublicTeamsPage).not.toHaveBeenCalled();
     });
 
+    it('does not browse all teams when the search button is clicked with an empty or whitespace-only query', async () => {
+        renderSearch();
+
+        const searchButton = screen.getByRole('button', { name: 'Search public teams' });
+        const searchInput = screen.getByPlaceholderText('Search by team, city, state, or zip') as HTMLInputElement;
+
+        fireEvent.click(searchButton);
+        fireEvent.change(searchInput, { target: { value: '   ' } });
+        fireEvent.click(searchButton);
+
+        await waitFor(() => expect(getPublicTeamsPage).not.toHaveBeenCalled());
+        expect(screen.getByText('Search for public teams near you')).toBeTruthy();
+        expect(screen.queryByText('Atlanta United')).toBeNull();
+    });
+
     it('filters teams by search text when search is submitted', async () => {
         (getPublicTeamsPage as import('vitest').Mock).mockResolvedValueOnce({ teams: [mockTeams[0]], nextCursor: null });
         renderSearch();
@@ -107,6 +123,12 @@ describe('PublicTeamSearch', () => {
             .mockResolvedValueOnce({ teams: [mockTeams[0]], nextCursor: 'cursor-2' })
             .mockResolvedValueOnce({ teams: [mockTeams[1]], nextCursor: null });
         renderSearch();
+
+        const searchInput = screen.getByPlaceholderText('Search by team, city, state, or zip') as HTMLInputElement;
+        fireEvent.keyDown(searchInput, { key: 'Enter', code: 'Enter', charCode: 13 });
+        fireEvent.change(searchInput, { target: { value: '   ' } });
+        fireEvent.keyDown(searchInput, { key: 'Enter', code: 'Enter', charCode: 13 });
+        expect(getPublicTeamsPage).not.toHaveBeenCalled();
 
         fireEvent.click(screen.getByRole('button', { name: /Browse all public teams/i }));
 
@@ -230,7 +252,7 @@ describe('PublicTeamSearch', () => {
         expect(openPublicUrl).not.toHaveBeenCalled();
     });
 
-    it('routes to the app team page when only web access is available', async () => {
+    it('opens the website team page when only web access is available', async () => {
         renderSearch();
 
         fireEvent.click(screen.getByRole('button', { name: /Browse all public teams/i }));
@@ -239,10 +261,10 @@ describe('PublicTeamSearch', () => {
         const newYorkCard = screen.getByText('New York Knicks').closest('article');
         expect(newYorkCard).toBeTruthy();
 
-        fireEvent.click(within(newYorkCard as HTMLElement).getByRole('button', { name: 'View team' }));
+        fireEvent.click(within(newYorkCard as HTMLElement).getByRole('button', { name: 'Open website team page' }));
 
-        expect(openPublicUrl).not.toHaveBeenCalled();
-        expect(screen.getByTestId('location-probe').textContent).toBe('/teams/team-nyc-1');
+        expect(openPublicUrl).toHaveBeenCalledWith(getTeamWebsiteHashHref('team.html', 'team-nyc-1'));
+        expect(screen.getByTestId('location-probe').textContent).toBe('/teams');
     });
 
     it('renders an unavailable state when neither app nor web access exists', async () => {

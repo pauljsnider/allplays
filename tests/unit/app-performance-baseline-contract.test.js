@@ -88,13 +88,19 @@ describe('app performance baseline contract', () => {
     });
 
     it('records RSVP and chat-send interaction latency around the write paths', () => {
-        const scheduleService = readRepoFile('apps/app/src/lib/scheduleService.ts');
+        const doc = readRepoFile('docs/app-performance-baseline.md');
+        const scheduleRsvpHook = readRepoFile('apps/app/src/hooks/schedule/useScheduleEventRsvp.ts');
+        const telemetry = readRepoFile('apps/app/src/lib/telemetry.ts');
         const chatService = readRepoFile('apps/app/src/lib/chatService.ts');
 
-        expect(scheduleService).toContain("import { startInteractionTimer, startUxTimer, UX_TIMING } from './uxTiming';");
-        expect(scheduleService).toContain('const interaction = startInteractionTimer(UX_TIMING.rsvpTap, { response });');
-        expect(scheduleService).toContain("interaction.end({ path: 'sdk' });");
-        expect(scheduleService).toContain("interaction.end({ path: 'rest' });");
+        expect(doc).toContain('RSVP timing validation uses the');
+        expect(doc).toContain('`app_ux_timing` telemetry event filtered to label `rsvp tap latency`.');
+        expect(scheduleRsvpHook).toContain("import { UX_TIMING, startInteractionTimer } from '../../lib/uxTiming';");
+        expect(scheduleRsvpHook).toContain('const interaction = startInteractionTimer(UX_TIMING.rsvpTap, { response });');
+        expect(scheduleRsvpHook).toContain('interaction.end();');
+        expect(scheduleRsvpHook).toContain("interaction.end({ error: 'RSVP submit failed' });");
+        expect(telemetry).toContain("captureAppTelemetryEvent('app_ux_timing'");
+        expect(telemetry).toContain('label,');
         expect(chatService).toContain("import { startInteractionTimer, UX_TIMING } from './uxTiming';");
         expect(chatService).toContain('const interaction = startInteractionTimer(UX_TIMING.chatSend, {');
         expect(chatService).toContain("interaction.end({ path: isNativeRuntime() ? 'native' : 'sdk' });");

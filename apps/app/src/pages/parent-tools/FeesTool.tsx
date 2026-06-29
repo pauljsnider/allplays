@@ -117,7 +117,7 @@ export function FeesTool({ auth, refreshVersion }: { auth: AuthState; refreshVer
             </section>
 
             {error ? <RetryableStatus error={error} fallbackMessage="Unable to load fees." onRetry={refresh} retrying={loading} /> : null}
-            {loading ? <LoadingBlock label="Loading fees" /> : (
+            {!error && (loading ? <LoadingBlock label="Loading fees" /> : (
                 <div className="grid gap-3 lg:grid-cols-2">
                     {visibleFees.length ? visibleFees.map((fee) => {
                         const feeKey = getFeeCardKey(fee);
@@ -126,7 +126,7 @@ export function FeesTool({ auth, refreshVersion }: { auth: AuthState; refreshVer
                         <EmptyState icon={DollarSign} title="No fees in this view" detail="Paid and canceled items are available under All." />
                     )}
                 </div>
-            )}
+            ))}
         </div>
     );
 }

@@ -110,4 +110,25 @@ describe('telemetry.js payload handling', () => {
         expect(payload.events[0].name).toBe('test_event_unauth');
         expect(payload.events[0].properties).toEqual({ property: 'value' });
     });
+
+    it('adds app route context to stored events for hash-routed app screens', async () => {
+        window.history.replaceState({}, '', '/app/?telemetry=1#/players/team-1/player-1?teamId=team-1&from=home');
+
+        telemetryModule.captureTelemetryEvent('route_context_test', { property: 'value' });
+
+        await telemetryModule.flush();
+
+        expect(mockFetch).toHaveBeenCalledTimes(1);
+        const [, options] = mockFetch.mock.calls[0];
+        const payload = JSON.parse(options.body);
+        const routeEvent = payload.events.find((event) => event.name === 'route_context_test');
+        expect(routeEvent).toMatchObject({
+            name: 'route_context_test',
+            pagePath: '/app/',
+            appRoute: '/players/team-1/player-1',
+            queryKeys: ['telemetry'],
+            appRouteQueryKeys: ['teamId', 'from'],
+            properties: { property: 'value' }
+        });
+    });
 });

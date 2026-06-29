@@ -1,3 +1,4 @@
+import type { ChatAttachmentFirestoreRecord, ChatMessageFirestoreRecord } from '../firestore/types';
 import { DEFAULT_TEAM_CONVERSATION_ID as legacyDefaultTeamConversationId, buildDefaultTeamConversation as legacyBuildDefaultTeamConversation, getConversationDisplayName as legacyGetConversationDisplayName, isDefaultTeamConversation as legacyIsDefaultTeamConversation } from '@legacy/team-chat-conversations.js';
 import { MAX_CHAT_MEDIA_SIZE as legacyMaxChatMediaSize, buildChatMediaShareDetails as legacyBuildChatMediaShareDetails, collectThreadMedia as legacyCollectThreadMedia, getChatMediaActionState as legacyGetChatMediaActionState, getChatMediaDownloadName as legacyGetChatMediaDownloadName, getMessageAttachments as legacyGetMessageAttachments, isSafeChatMediaUrl as legacyIsSafeChatMediaUrl } from '@legacy/team-chat-media.js';
 import { shouldRetryChatLastReadOnViewReturn as legacyShouldRetryChatLastReadOnViewReturn, shouldUpdateChatLastRead as legacyShouldUpdateChatLastRead } from '@legacy/team-chat-last-read.js';
@@ -15,7 +16,7 @@ export const buildChatMediaShareDetails = legacyBuildChatMediaShareDetails as (.
 export const collectThreadMedia = legacyCollectThreadMedia as (...args: any[]) => any;
 export const getChatMediaActionState = legacyGetChatMediaActionState as (...args: any[]) => any;
 export const getChatMediaDownloadName = legacyGetChatMediaDownloadName as (...args: any[]) => string;
-export const getMessageAttachments = legacyGetMessageAttachments as (...args: any[]) => any;
+export const getMessageAttachments = legacyGetMessageAttachments as (message: ChatMessageFirestoreRecord | null | undefined) => ChatAttachmentFirestoreRecord[];
 export const isSafeChatMediaUrl = legacyIsSafeChatMediaUrl as (...args: any[]) => boolean;
 export const shouldRetryChatLastReadOnViewReturn = legacyShouldRetryChatLastReadOnViewReturn as (...args: any[]) => boolean;
 export const shouldUpdateChatLastRead = legacyShouldUpdateChatLastRead as (...args: any[]) => boolean;

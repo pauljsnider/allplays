@@ -1046,6 +1046,7 @@ function buildCertificatePayload(draft, status = draft.status || 'draft') {
         backgroundOpacity: state.shared.backgroundOpacity,
         watermarkImageRef: state.shared.watermarkImageRef || null,
         watermarkOpacity: state.shared.watermarkOpacity,
+        includeInExport: draft.includeInExport !== false,
         exportedPngUrl: draft.exportedPngUrl || null,
         exportedPdfUrl: draft.exportedPdfUrl || null,
         status
@@ -1442,7 +1443,7 @@ function createDraftFromSavedCertificate(certificate, index = 0) {
         descriptionSource: certificate?.descriptionSource || 'manual',
         descriptionStatus: certificate?.descriptionStatus || (description ? 'ready' : 'pending'),
         statsWindow: certificate?.statsWindow || state.shared?.statsWindow || 10,
-        includeInExport: true,
+        includeInExport: certificate?.includeInExport !== false,
         errorMessage: null,
         status: certificate?.status || 'draft',
         exportedPngUrl: certificate?.exportedPngUrl || null,

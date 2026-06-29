@@ -23,6 +23,14 @@ function readTeamPage() {
     return readFileSync(new URL('../../team.html', import.meta.url), 'utf8');
 }
 
+function readFamilyPage() {
+    return readFileSync(new URL('../../family.html', import.meta.url), 'utf8');
+}
+
+function readCalendarPage() {
+    return readFileSync(new URL('../../calendar.html', import.meta.url), 'utf8');
+}
+
 function readUtilsSource() {
     return readFileSync(new URL('../../js/utils.js', import.meta.url), 'utf8');
 }
@@ -78,10 +86,12 @@ describe('ICS recurring tracking ids', () => {
     });
 
     it('bumps utils cache tokens anywhere the new tracking exports are imported', () => {
-        expect(readEditSchedule()).toContain("./js/utils.js?v=11");
-        expect(readParentDashboard()).toContain("./js/utils.js?v=11");
-        expect(readGamePlan()).toContain("./js/utils.js?v=11");
-        expect(readTeamPage()).toContain("./js/utils.js?v=11");
+        expect(readEditSchedule()).toContain("./js/utils.js?v=14");
+        expect(readParentDashboard()).toContain("./js/utils.js?v=14");
+        expect(readFamilyPage()).toContain("./js/utils.js?v=14");
+        expect(readTeamPage()).toContain("./js/utils.js?v=14");
+        expect(readGamePlan()).toContain("./js/utils.js?v=14");
+        expect(readCalendarPage()).toContain("./js/utils.js?v=14");
     });
 
     it('declares each calendar tracking helper only once in utils before the ICS event mapper', () => {

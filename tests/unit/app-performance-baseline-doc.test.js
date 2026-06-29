@@ -56,4 +56,15 @@ describe('app performance baseline documentation', () => {
             expect(doc).toContain(needle);
         });
     });
+
+    it('documents the stable RSVP telemetry event name and label for baseline validation', () => {
+        [
+            '`app_ux_timing`',
+            '`rsvp tap latency`',
+            'RSVP timing validation uses the',
+            'telemetry event filtered to label `rsvp tap latency`'
+        ].forEach((needle) => {
+            expect(doc).toContain(needle);
+        });
+    });
 });

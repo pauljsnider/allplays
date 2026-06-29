@@ -49,6 +49,7 @@ import { createLogger } from '../lib/logger';
 import { sharePublicUrl } from '../lib/publicActions';
 import { startAppInitialLoadTimer } from '../lib/telemetry';
 import { useShellLayout } from '../lib/useShellLayout';
+import { useViewLoadTimer } from '../lib/viewLoadTiming';
 import { NOTIFICATION_PREFERENCE_GROUPS } from '../lib/adapters/legacyProfile';
 import type { AccessCodeRecord, NotificationCategory, NotificationPreferences, NotificationTeam, ProfileDocument } from '../lib/profileService';
 import type { ProfilePhotoSource } from '../lib/profilePhotoService';
@@ -82,6 +83,10 @@ const profileSections: Array<{ id: ProfileSectionId; label: string }> = [
   { id: 'invites', label: 'Invites' },
   { id: 'security', label: 'Security' }
 ];
+
+function getProfileSectionRoute(section: ProfileSectionId) {
+  return section === 'account' ? '/profile' : `/profile?section=${section}`;
+}
 
 function getLoadErrorMessage(error: unknown, fallback: string) {
   return error instanceof Error && error.message ? error.message : fallback;
@@ -178,6 +183,44 @@ export function Profile({ auth }: { auth: AuthState }) {
   const nativePushEnabled = isNative && pushPermissionStatus?.state === 'enabled';
   const nativePushBlocked = isNative && pushPermissionStatus?.state === 'blocked';
   const nativePushUnsupported = isNative && pushPermissionStatus?.state === 'unsupported';
+  const profileSectionRoute = getProfileSectionRoute(activeProfileSection);
+  const profileSectionReady = !loading && (
+    activeProfileSection === 'alerts'
+      ? notificationTeamsLoaded && !pushPermissionLoading && !selectedTeamPreferencesLoading
+      : activeProfileSection === 'invites'
+        ? accessCodesLoaded
+        : true
+  );
+  const profileSectionError = activeProfileSection === 'alerts'
+    ? notificationTeamsError || selectedTeamPreferencesError
+    : '';
+
+  useViewLoadTimer({
+    viewName: `profile ${activeProfileSection}`,
+    route: profileSectionRoute,
+    ready: profileSectionReady,
+    resetKey: `${user?.uid || 'anonymous'}:${activeProfileSection}:${activeProfileSection === 'alerts' ? selectedTeamId : ''}`,
+    disabled: !user,
+    getBaseMeta: () => ({
+      page: 'profile',
+      section: activeProfileSection,
+      selectedTeamId: activeProfileSection === 'alerts' ? selectedTeamId : ''
+    }),
+    getCompleteMeta: () => ({
+      section: activeProfileSection,
+      hasDisplayName: Boolean(fullName || profile.displayName || user?.displayName),
+      hasPhone: Boolean(phone),
+      hasPhoto: Boolean(photoUrl || photoPreview),
+      emailVerified: Boolean(user?.emailVerified),
+      signInMethod: profile.signInMethod || '',
+      hasPassword: Boolean(profile.hasPassword),
+      notificationTeamCount: notificationTeams.length,
+      selectedTeamId: activeProfileSection === 'alerts' ? selectedTeamId : '',
+      preferencesLoaded: activeProfileSection === 'alerts' ? Boolean(selectedTeamId && selectedTeamPreferencesHydrated) : false,
+      accessCodeCount: accessCodes.length,
+      error: profileSectionError || undefined
+    })
+  });
 
   const loadNotificationPreferencesOnce = useCallback((userId: string, teamId: string) => {
     const activeRequest = notificationPreferenceLoadRequestsRef.current[teamId];

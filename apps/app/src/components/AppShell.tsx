@@ -248,6 +248,29 @@ export function AppShell({ auth, children }: AppShellProps) {
     navigate(workflow.href);
   };
 
+  const renderNotificationTrigger = (className: string, iconOnly = false) => (
+    <button
+      type="button"
+      className={className}
+      onClick={() => setInboxOpen(true)}
+      aria-label="Notifications"
+      title="Notifications"
+      data-testid="app-shell-notifications-trigger"
+    >
+      <Bell className="h-5 w-5" aria-hidden="true" />
+      {iconOnly ? <span className="sr-only">Notifications</span> : null}
+      {unreadCount > 0 && (
+        <span
+          className="absolute -right-1 -top-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-primary-500 px-1 text-[10px] font-black text-white"
+          aria-label={`${unreadCount} unread`}
+          data-testid="notification-unread-badge"
+        >
+          {unreadCount > 99 ? '99+' : unreadCount}
+        </span>
+      )}
+    </button>
+  );
+
   return (
     <div className={isDesktopWeb ? `desktop-app-page ${isDesktopMessages ? 'desktop-app-page-messages' : ''}` : `app-page ${isMobileChatDetail ? 'app-page-chat-detail' : ''} ${isAiRoute ? 'app-page-ai' : ''}`}>
       <div className="sr-only" role="status" aria-live="polite" aria-atomic="true" aria-label="Notification status" data-testid="app-shell-notification-status">
@@ -282,25 +305,7 @@ export function AppShell({ auth, children }: AppShellProps) {
                   <Sparkles className="h-5 w-5" aria-hidden="true" />
                   AI
                 </button>
-                <button
-                  type="button"
-                  className="ghost-button !h-10 !min-h-10 relative"
-                  onClick={() => setInboxOpen(true)}
-                  aria-label="Notifications"
-                  title="Notifications"
-                  data-testid="app-shell-notifications-trigger"
-                >
-                  <Bell className="h-5 w-5" aria-hidden="true" />
-                  {unreadCount > 0 && (
-                    <span
-                      className="absolute -right-1 -top-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-primary-500 px-1 text-[10px] font-black text-white"
-                      aria-label={`${unreadCount} unread`}
-                      data-testid="notification-unread-badge"
-                    >
-                      {unreadCount > 99 ? '99+' : unreadCount}
-                    </span>
-                  )}
-                </button>
+                {renderNotificationTrigger('ghost-button !h-10 !min-h-10 relative')}
                 <button
                   type="button"
                   className="ghost-button !h-10 !min-h-10"
@@ -358,6 +363,12 @@ export function AppShell({ auth, children }: AppShellProps) {
         </>
       ) : (
         <>
+          {isMobileChatDetail ? (
+            <div className="pointer-events-none fixed inset-x-0 top-0 z-30 flex justify-end px-3 safe-top">
+              {renderNotificationTrigger('ghost-button pointer-events-auto !h-10 !min-h-10 !w-10 !p-0 relative', true)}
+            </div>
+          ) : null}
+
           {!isMobileChatDetail ? <header className="safe-top sticky top-0 z-40 border-b border-gray-200 bg-white/95 backdrop-blur">
             <div className="mx-auto flex max-w-5xl items-center gap-3 px-4 pb-3">
               <button
@@ -385,26 +396,7 @@ export function AppShell({ auth, children }: AppShellProps) {
                   <Sparkles className="h-5 w-5" aria-hidden="true" />
                   <span className="sr-only">Private AI</span>
                 </button>
-                <button
-                  type="button"
-                  className="ghost-button !h-10 !min-h-10 !w-10 !p-0 relative"
-                  onClick={() => setInboxOpen(true)}
-                  aria-label="Notifications"
-                  title="Notifications"
-                  data-testid="app-shell-notifications-trigger"
-                >
-                  <Bell className="h-5 w-5" aria-hidden="true" />
-                  <span className="sr-only">Notifications</span>
-                  {unreadCount > 0 && (
-                    <span
-                      className="absolute -right-1 -top-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-primary-500 px-1 text-[10px] font-black text-white"
-                      aria-label={`${unreadCount} unread`}
-                      data-testid="notification-unread-badge"
-                    >
-                      {unreadCount > 99 ? '99+' : unreadCount}
-                    </span>
-                  )}
-                </button>
+                {renderNotificationTrigger('ghost-button !h-10 !min-h-10 !w-10 !p-0 relative', true)}
                 <button
                   type="button"
                   className="ghost-button !h-10 !min-h-10 !w-10 !p-0"

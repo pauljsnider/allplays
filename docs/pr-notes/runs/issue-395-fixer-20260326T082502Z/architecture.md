@@ -1,5 +1,5 @@
 ## Current State
-- `login.html` imports `./js/auth.js?v=10`, which imports `./firebase.js?v=10`.
+- `login.html` imports `./js/auth.js?v=38`, which imports `./firebase.js?v=10`.
 - `reset-password.html` imports Firebase exports directly from `./js/firebase.js?v=10`.
 - `js/firebase.js` initializes Firebase at module load after resolving runtime config.
 

@@ -8,7 +8,7 @@
 ## Architecture Decisions
 - Treat the failure as smoke fixture drift, not production behavior regression.
 - Keep the fix scoped to `tests/smoke/admin-invite-redemption.spec.js` because the page behavior is correct once dependencies load.
-- Align route mocks and stub exports with the current page imports: `db.js?v=15` and `team-access.js?v=2`.
+- Align route mocks and stub exports with the current page imports: `db.js?v=76` and `team-access.js?v=2`.
 
 ## Risks And Rollback
 - Risk is low because the change is test-only.

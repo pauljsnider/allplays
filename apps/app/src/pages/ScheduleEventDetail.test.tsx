@@ -120,7 +120,15 @@ const chatServiceMocks = vi.hoisted(() => ({
 }));
 vi.mock('../lib/chatService', () => chatServiceMocks);
 vi.mock('../lib/publicActions', () => publicActionMocks);
-vi.mock('../lib/liveGameAnnouncer', () => ({ useLiveGameAnnouncer: vi.fn() }));
+const liveGameAnnouncerMocks = vi.hoisted(() => ({
+  useLiveGameAnnouncer: vi.fn(() => ({
+    supported: true,
+    enabled: false,
+    paused: false,
+    toggleEnabled: vi.fn()
+  }))
+}));
+vi.mock('../lib/liveGameAnnouncer', () => liveGameAnnouncerMocks);
 const liveGameChatServiceMocks = vi.hoisted(() => ({
   canUseLiveGameChat: vi.fn<(game: unknown, options?: unknown) => boolean>(() => true),
   getLiveGameChatNotice: vi.fn<(game: unknown, options?: unknown) => string | null>(() => null),
@@ -635,6 +643,125 @@ describe('ScheduleEventDetail route state', () => {
     expect(screen.getByTestId('event-route').textContent).toBe('/schedule/team-1/game-1?childId=player-2&section=assignments');
   });
 
+});
+
+describe('ScheduleEventDetail nav visibility', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    Object.defineProperty(window, 'scrollTo', {
+      value: vi.fn(),
+      writable: true
+    });
+  });
+
+  afterEach(() => {
+    cleanup();
+  });
+
+  it('hides rideshare and assignments tabs for inactive events with no related data', async () => {
+    scheduleServiceMocks.loadParentScheduleEventDetail.mockResolvedValue({
+      events: [buildEvent({
+        isDbGame: false,
+        isCancelled: true,
+        rideshareSummary: { offerCount: 0, seatsLeft: 0, requests: 0, pending: 0, confirmed: 0, isFull: false },
+        assignments: []
+      })],
+      children: []
+    });
+
+    renderScheduleEventDetailWithLocation();
+
+    await waitFor(() => {
+      expect(screen.getByRole('heading', { name: 'Availability' })).toBeTruthy();
+    });
+
+    expect(screen.queryByRole('button', { name: 'Rideshare' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Assignments' })).toBeNull();
+    expect(screen.getAllByRole('button', { name: 'Availability' }).length).toBeGreaterThan(0);
+    expect(screen.getAllByRole('button', { name: 'Game' }).length).toBeGreaterThan(0);
+  });
+
+  it('keeps rideshare and assignments tabs when inactive events still have related data', async () => {
+    scheduleServiceMocks.loadParentScheduleEventDetail.mockResolvedValue({
+      events: [buildEvent({
+        isDbGame: false,
+        isCancelled: true,
+        rideshareSummary: { offerCount: 1, seatsLeft: 0, requests: 0, pending: 0, confirmed: 1, isFull: true },
+        assignments: [{ role: 'Snacks', value: '', claimable: true, claim: null }]
+      })],
+      children: []
+    });
+
+    renderScheduleEventDetail();
+
+    await waitFor(() => {
+      expect(screen.getByRole('heading', { name: 'Availability' })).toBeTruthy();
+    });
+
+    expect(screen.getAllByRole('button', { name: 'Rideshare' }).length).toBeGreaterThan(0);
+    expect(screen.getAllByRole('button', { name: 'Assignments' }).length).toBeGreaterThan(0);
+  });
+
+  it('defaults score-capable tracked games to the Game tab when the route omits section', async () => {
+    scheduleServiceMocks.loadParentScheduleEventDetail.mockResolvedValue({
+      events: [buildEvent({
+        canUpdateScore: true,
+        statTrackerConfigId: 'cfg-soccer'
+      })],
+      children: []
+    });
+    scheduleServiceMocks.loadHomeScoringPlayers.mockResolvedValue([]);
+    scheduleServiceMocks.loadAutoFilledLineupDraftPreviewForApp.mockResolvedValue({ availablePlayers: [], goingPlayers: [], gamePlan: null });
+    scheduleServiceMocks.loadGameDayLiveEventsForApp.mockResolvedValue([]);
+    scheduleHubMocks.buildGameHubDestinations.mockReturnValue([]);
+
+    renderScheduleEventDetailWithLocation();
+
+    await waitFor(() => {
+      expect(screen.getByRole('heading', { name: 'Game hub' })).toBeTruthy();
+    });
+
+    expect(screen.getByTestId('standard-tracker-launch')).toBeTruthy();
+    expect(screen.getByTestId('event-route').textContent).toBe('/schedule/team-1/game-1?childId=player-1');
+  });
+
+  it('keeps non-score-capable viewers on Availability when the route omits section', async () => {
+    scheduleServiceMocks.loadParentScheduleEventDetail.mockResolvedValue({
+      events: [buildEvent({
+        canUpdateScore: false,
+        statTrackerConfigId: 'cfg-soccer'
+      })],
+      children: []
+    });
+
+    renderScheduleEventDetailWithLocation();
+
+    await waitFor(() => {
+      expect(screen.getByRole('heading', { name: 'Availability' })).toBeTruthy();
+    });
+
+    expect(screen.queryByRole('heading', { name: 'Game hub' })).toBeNull();
+    expect(screen.queryByTestId('standard-tracker-launch')).toBeNull();
+  });
+
+  it('preserves an explicit section query even for score-capable viewers', async () => {
+    scheduleServiceMocks.loadParentScheduleEventDetail.mockResolvedValue({
+      events: [buildEvent({
+        canUpdateScore: true,
+        statTrackerConfigId: 'cfg-soccer'
+      })],
+      children: []
+    });
+
+    renderScheduleEventDetailWithLocation('/schedule/team-1/game-1?childId=player-1&section=availability');
+
+    await waitFor(() => {
+      expect(screen.getByRole('heading', { name: 'Availability' })).toBeTruthy();
+    });
+
+    expect(screen.queryByRole('heading', { name: 'Game hub' })).toBeNull();
+    expect(screen.getByTestId('event-route').textContent).toBe('/schedule/team-1/game-1?childId=player-1&section=availability');
+  });
 });
 
 describe('ScheduleEventDetail rideshare permissions', () => {
@@ -1474,7 +1601,9 @@ describe('ScheduleEventDetail assignments', () => {
       })],
       children: []
     });
-    scheduleServiceMocks.loadHomeScoringPlayers.mockResolvedValue([]);
+    scheduleServiceMocks.loadHomeScoringPlayers.mockResolvedValue([
+      { id: 'p1', name: 'Avery Smith', number: '1', points: 10, fouls: 1 }
+    ]);
     scheduleServiceMocks.loadAutoFilledLineupDraftPreviewForApp.mockResolvedValue({
       formationId: 'basketball-5v5',
       formationName: 'Basketball 5v5',
@@ -1501,21 +1630,99 @@ describe('ScheduleEventDetail assignments', () => {
 
     await waitFor(() => {
       expect(scheduleServiceMocks.loadAutoFilledLineupDraftPreviewForApp).toHaveBeenCalledTimes(1);
-      expect(screen.getByRole('button', { name: /#1 Avery Smith/i })).toBeTruthy();
+      expect(screen.getAllByRole('button', { name: /#1 Avery Smith/i }).length).toBeGreaterThan(0);
     });
 
     fireEvent.click(screen.getByRole('button', { name: 'Home score up' }));
-    fireEvent.click(screen.getByRole('button', { name: 'Save score' }));
+    expect(screen.getByText('Autosaving manual score change…')).toBeTruthy();
+    expect(scheduleServiceMocks.updateGameScore).not.toHaveBeenCalled();
+    expect(screen.getByRole('button', { name: '#1 Avery Smith plus 2 points' })).toHaveProperty('disabled', true);
 
     await waitFor(() => {
       expect(scheduleServiceMocks.updateGameScore).toHaveBeenCalledWith('team-1', 'game-1', { homeScore: 42, awayScore: 38 }, auth.user);
+    }, { timeout: 2000 });
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: '#1 Avery Smith plus 2 points' })).toHaveProperty('disabled', false);
     });
     await waitFor(() => {
       expect(scheduleServiceMocks.loadAutoFilledLineupDraftPreviewForApp).toHaveBeenCalledTimes(1);
-      expect(screen.getByRole('button', { name: /#1 Avery Smith/i })).toBeTruthy();
+      expect(screen.getAllByRole('button', { name: /#1 Avery Smith/i }).length).toBeGreaterThan(0);
     });
     expect(chatServiceMocks.sendTeamChatMessage).not.toHaveBeenCalled();
     expect(screen.queryByText('Loading lineup builder…')).toBeNull();
+    expect(screen.getByText('Score autosaved and posted to live play-by-play.')).toBeTruthy();
+  });
+
+  it('keeps report sections mounted during live score updates', async () => {
+    scheduleServiceMocks.loadParentScheduleEventDetail.mockResolvedValue({
+      events: [buildEvent({
+        liveStatus: 'live',
+        status: 'live',
+        canUpdateScore: true,
+        isTeamStaff: true,
+        homeScore: 41,
+        awayScore: 38
+      })],
+      children: []
+    });
+    scheduleServiceMocks.loadHomeScoringPlayers.mockResolvedValue([
+      { id: 'p1', name: 'Avery Smith', number: '1', points: 10, fouls: 1 }
+    ]);
+    gameReportServiceMocks.loadGameReportSections.mockResolvedValue({
+      game: { id: 'game-1', liveStatus: 'live', status: 'live', homeScore: 41, awayScore: 38 },
+      plays: [
+        { id: 'play-1', period: 'Q1', clock: '02:11', text: 'Avery Smith made a layup' }
+      ],
+      summary: 'Loaded on demand.',
+      opponentRows: [],
+      opponentStatKeys: [],
+      teamInsights: [],
+      playerInsightRows: [],
+      highlightClips: [],
+      statSheetPhotoUrl: null,
+      teamStatKeys: [],
+      teamStats: {},
+      statKeys: ['pts'],
+      playerRows: [
+        { playerId: 'player-1', playerName: 'Avery Smith', number: '1', stats: { pts: 8 }, timeMs: 600000, didNotPlay: false }
+      ],
+      statLabels: { pts: 'PTS' },
+      hasPlayingTime: true,
+      team: { id: 'team-1' }
+    } as any);
+    scheduleServiceMocks.updateGameScore.mockResolvedValue({ homeScore: 42, awayScore: 38 });
+
+    renderScheduleEventDetail();
+
+    await waitFor(() => {
+      expect(screen.getAllByRole('button', { name: 'Game' }).length).toBeGreaterThan(0);
+    });
+    fireEvent.click(screen.getAllByRole('button', { name: 'Game' })[0]);
+    fireEvent.click(screen.getByRole('button', { name: 'Report sections' }));
+
+    await waitFor(() => {
+      expect(gameReportServiceMocks.loadGameReportSections).toHaveBeenCalledTimes(1);
+      expect(screen.getByText('Loaded on demand.')).toBeTruthy();
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Plays' }));
+
+    await waitFor(() => {
+      expect(screen.getByText('Avery Smith made a layup')).toBeTruthy();
+    });
+    expect(screen.getByRole('button', { name: 'Plays' }).className).toContain('bg-primary-600');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Home score up' }));
+
+    await waitFor(() => {
+      expect(scheduleServiceMocks.updateGameScore).toHaveBeenCalledWith('team-1', 'game-1', { homeScore: 42, awayScore: 38 }, auth.user);
+    }, { timeout: 2000 });
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: 'Plays' }).className).toContain('bg-primary-600');
+      expect(gameReportServiceMocks.loadGameReportSections).toHaveBeenCalledTimes(1);
+      expect(screen.getByText('Avery Smith made a layup')).toBeTruthy();
+    });
+    expect(screen.queryByText('Loading report sections...')).toBeNull();
   });
 
   it('keeps live substitutions loaded during live clock updates', async () => {
@@ -1876,6 +2083,82 @@ describe('ScheduleEventDetail assignments', () => {
     });
   });
 
+  it('shows actionable assignments before deferring filled roles behind a secondary reveal', async () => {
+    const assignments = [
+      { role: 'Snacks', value: '', claimable: true, claim: null },
+      { role: 'Drinks', value: '', claimable: true, claim: { id: 'Drinks', claimedByUserId: 'coach-1', claimedByName: 'Coach Carter' } },
+      { role: 'Setup', value: '', claimable: true, claim: { id: 'Setup', claimedByUserId: 'other-parent', claimedByName: 'Taylor' } },
+      { role: 'Scorebook', value: 'Jamie', claimable: false, claim: null }
+    ];
+
+    scheduleServiceMocks.loadParentScheduleEventDetail.mockResolvedValue({
+      events: [buildEvent({ assignments })],
+      children: []
+    });
+    scheduleServiceMocks.loadAutoFilledLineupDraftPreviewForApp.mockResolvedValue({ availablePlayers: [], goingPlayers: [], gamePlan: null });
+    scheduleServiceMocks.loadGameDayLiveEventsForApp.mockResolvedValue([]);
+    scheduleServiceMocks.loadParentScheduleAssignments.mockResolvedValue(assignments);
+
+    renderScheduleEventDetail();
+
+    await waitFor(() => {
+      expect(screen.getAllByRole('button', { name: 'Assignments' }).length).toBeGreaterThan(0);
+    });
+
+    fireEvent.click(screen.getAllByRole('button', { name: 'Assignments' })[0]);
+
+    await waitFor(() => {
+      expect(screen.getByText('4 posted · 1 open')).toBeTruthy();
+    });
+
+    expect(screen.getByText('Snacks')).toBeTruthy();
+    expect(screen.getByText('Drinks')).toBeTruthy();
+    expect(screen.queryByText('Setup')).toBeNull();
+    expect(screen.queryByText('Scorebook')).toBeNull();
+
+    const disclosure = screen.getByRole('button', { name: 'Show filled assignments (2)' });
+    expect(disclosure.getAttribute('aria-expanded')).toBe('false');
+
+    fireEvent.click(disclosure);
+
+    await waitFor(() => {
+      expect(screen.getByText('Setup')).toBeTruthy();
+    });
+    expect(screen.getByText('Scorebook')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Hide filled assignments' }).getAttribute('aria-expanded')).toBe('true');
+  });
+
+  it('shows filled assignments immediately when no actionable slots exist', async () => {
+    const assignments = [
+      { role: 'Setup', value: '', claimable: true, claim: { id: 'Setup', claimedByUserId: 'other-parent', claimedByName: 'Taylor' } },
+      { role: 'Scorebook', value: 'Jamie', claimable: false, claim: null }
+    ];
+
+    scheduleServiceMocks.loadParentScheduleEventDetail.mockResolvedValue({
+      events: [buildEvent({ assignments })],
+      children: []
+    });
+    scheduleServiceMocks.loadAutoFilledLineupDraftPreviewForApp.mockResolvedValue({ availablePlayers: [], goingPlayers: [], gamePlan: null });
+    scheduleServiceMocks.loadGameDayLiveEventsForApp.mockResolvedValue([]);
+    scheduleServiceMocks.loadParentScheduleAssignments.mockResolvedValue(assignments);
+
+    renderScheduleEventDetail();
+
+    await waitFor(() => {
+      expect(screen.getAllByRole('button', { name: 'Assignments' }).length).toBeGreaterThan(0);
+    });
+
+    fireEvent.click(screen.getAllByRole('button', { name: 'Assignments' })[0]);
+
+    await waitFor(() => {
+      expect(screen.getByText('2 posted · 0 open')).toBeTruthy();
+    });
+
+    expect(screen.getByText('Setup')).toBeTruthy();
+    expect(screen.getByText('Scorebook')).toBeTruthy();
+    expect(screen.queryByRole('button', { name: /Show filled assignments/i })).toBeNull();
+  });
+
   it('refreshes assignment cards after claim and release actions mutate the loaded array in place', async () => {
     const assignments = [
       { role: 'Snacks', value: '', claimable: true, claim: null },
@@ -1913,6 +2196,13 @@ describe('ScheduleEventDetail assignments', () => {
       expect(screen.getByText('4 posted · 1 open')).toBeTruthy();
     });
 
+    fireEvent.click(screen.getByRole('button', { name: 'Show filled assignments (2)' }));
+
+    await waitFor(() => {
+      expect(screen.getByText('Setup')).toBeTruthy();
+    });
+    expect(screen.getByText('Scorebook')).toBeTruthy();
+
     const snacksCard = screen.getByText('Snacks').closest('article');
     expect(snacksCard).toBeTruthy();
     fireEvent.click(within(snacksCard as HTMLElement).getByRole('button', { name: 'Sign up' }));
@@ -1924,10 +2214,13 @@ describe('ScheduleEventDetail assignments', () => {
       expect(screen.getByText('4 posted · 0 open')).toBeTruthy();
     });
     await waitFor(() => {
-      expect(within(snacksCard as HTMLElement).getByText('You')).toBeTruthy();
+      expect(within(screen.getByText('Snacks').closest('article') as HTMLElement).getByText('You')).toBeTruthy();
     });
+    expect(screen.getByRole('button', { name: 'Hide filled assignments' }).getAttribute('aria-expanded')).toBe('true');
+    expect(screen.getByText('Setup')).toBeTruthy();
+    expect(screen.getByText('Scorebook')).toBeTruthy();
 
-    fireEvent.click(within(snacksCard as HTMLElement).getByRole('button', { name: 'Release' }));
+    fireEvent.click(within(screen.getByText('Snacks').closest('article') as HTMLElement).getByRole('button', { name: 'Release' }));
 
     await waitFor(() => {
       expect(screen.getByText('Snacks released.')).toBeTruthy();
@@ -1936,8 +2229,11 @@ describe('ScheduleEventDetail assignments', () => {
       expect(screen.getByText('4 posted · 1 open')).toBeTruthy();
     });
     await waitFor(() => {
-      expect(within(snacksCard as HTMLElement).getByRole('button', { name: 'Sign up' })).toBeTruthy();
+      expect(within(screen.getByText('Snacks').closest('article') as HTMLElement).getByRole('button', { name: 'Sign up' })).toBeTruthy();
     });
+    expect(screen.getByRole('button', { name: 'Hide filled assignments' }).getAttribute('aria-expanded')).toBe('true');
+    expect(screen.getByText('Setup')).toBeTruthy();
+    expect(screen.getByText('Scorebook')).toBeTruthy();
   });
 });
 
@@ -1985,7 +2281,7 @@ describe('ScheduleEventDetail staff RSVP overrides', () => {
     expect(screen.queryByTestId('staff-rsvp-row-p3')).toBeNull();
 
     const disclosure = screen.getByRole('button', { name: 'Show responded players (1 going · 1 maybe · 1 out · 0 missing)' });
-    expect(disclosure).toHaveAttribute('aria-expanded', 'false');
+    expect(disclosure.getAttribute('aria-expanded')).toBe('false');
 
     fireEvent.click(disclosure);
 
@@ -1994,7 +2290,7 @@ describe('ScheduleEventDetail staff RSVP overrides', () => {
     });
     expect(screen.getByTestId('staff-rsvp-row-p2')).toBeTruthy();
     expect(screen.getByTestId('staff-rsvp-row-p3')).toBeTruthy();
-    expect(screen.getByRole('button', { name: 'Hide responded players' })).toHaveAttribute('aria-expanded', 'true');
+    expect(screen.getByRole('button', { name: 'Hide responded players' }).getAttribute('aria-expanded')).toBe('true');
   });
 
   it('lets staff override a responded player after expanding and refreshes the counts', async () => {

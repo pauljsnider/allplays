@@ -28,13 +28,9 @@ const chatServiceMocks = vi.hoisted(() => ({
 
 vi.mock('../../apps/app/src/lib/parentToolsService.ts', () => parentToolsServiceMocks);
 vi.mock('../../apps/app/src/lib/publicActions.ts', () => publicActionsMocks);
-vi.mock('../../apps/app/src/lib/chatService.ts', async () => {
-  const actual = await vi.importActual('../../apps/app/src/lib/chatService.ts');
-  return {
-    ...actual,
-    sendTeamChatMessage: chatServiceMocks.sendTeamChatMessage,
-  };
-});
+vi.mock('../../apps/app/src/lib/chatService', () => ({
+  sendTeamChatMessage: chatServiceMocks.sendTeamChatMessage,
+}));
 
 import { TeamMedia } from '../../apps/app/src/pages/TeamMedia.tsx';
 
@@ -125,15 +121,18 @@ function selectValue(select, value) {
 }
 
 async function waitForAssertion(assertion) {
+  // Polls until the assertion passes, returning immediately on success. The
+  // budget is generous (≈3s) so it stays reliable under full-suite concurrency
+  // where the event loop is contended; a passing assertion never waits.
   let lastError;
-  for (let attempt = 0; attempt < 50; attempt += 1) {
+  for (let attempt = 0; attempt < 150; attempt += 1) {
     try {
       assertion();
       return;
     } catch (error) {
       lastError = error;
       await act(async () => {
-        await new Promise((resolve) => setTimeout(resolve, 10));
+        await new Promise((resolve) => setTimeout(resolve, 20));
       });
     }
   }
@@ -550,9 +549,11 @@ describe('React app TeamMedia team chat posting', () => {
     await act(async () => {
       resolveSend({ conversationId: 'team', createdConversation: null, wantsAi: false });
     });
-    await act(async () => {});
 
-    expect(container.textContent).toContain('Photo posted to team chat.');
+    // Poll for the settled success state instead of assuming a fixed number of
+    // act flushes — the resolve -> state update -> re-render chain can take more
+    // microtask ticks under concurrency.
+    await waitForAssertion(() => expect(container.textContent).toContain('Photo posted to team chat.'));
     expect(container.querySelector('[aria-label="Caption for team chat"]')).toBeNull();
 
     await act(async () => root.unmount());

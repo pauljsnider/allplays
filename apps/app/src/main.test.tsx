@@ -35,6 +35,9 @@ vi.mock('./components/ErrorBoundary', () => ({
 
 vi.mock('./lib/telemetry', () => telemetryMocks);
 vi.mock('./lib/uxTiming', () => uxTimingMocks);
+vi.mock('./lib/webVitals', () => ({
+  initializeWebVitalsMonitoring: vi.fn()
+}));
 
 describe('main startup telemetry wiring', () => {
   beforeEach(() => {

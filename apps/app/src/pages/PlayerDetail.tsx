@@ -63,6 +63,7 @@ import {
   type RsvpResponse
 } from '../lib/scheduleLogic';
 import { sharePublicUrl } from '../lib/publicActions';
+import { completeParentCoreWorkflowTimer } from '../lib/parentWorkflowTiming';
 import type { AuthState } from '../lib/types';
 import type { ProfilePhotoSource } from '../lib/profilePhotoService';
 
@@ -332,6 +333,17 @@ export function PlayerDetail({ auth }: { auth: AuthState }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [auth.user?.uid, teamId, playerId]);
 
+  useEffect(() => {
+    if (loading || !data) return;
+    completeParentCoreWorkflowTimer('player', {
+      targetPage: 'player',
+      teamId,
+      playerId,
+      playerName: data.player.name || data.child.playerName || 'Player',
+      completedRoute: `/players/${teamId}/${playerId}`
+    });
+  }, [data, loading, playerId, teamId]);
+
   const selectSection = (sectionId: PlayerSectionId) => {
     setActiveSection(sectionId);
     window.requestAnimationFrame(() => {
@@ -376,7 +388,7 @@ export function PlayerDetail({ auth }: { auth: AuthState }) {
             <ChevronLeft className="h-4 w-4" aria-hidden="true" />
           </Link>
           <div className="flex h-11 w-11 flex-none items-center justify-center overflow-hidden rounded-2xl bg-primary-50 text-base font-black text-primary-700">
-            {data.player.photoUrl ? <img src={data.player.photoUrl} alt={`${playerName} profile photo`} className="h-full w-full object-cover" /> : <span>{jersey || getInitials(playerName)}</span>}
+            {data.player.photoUrl ? <img src={data.player.photoUrl} alt={`${playerName} profile photo`} loading="lazy" decoding="async" className="h-full w-full object-cover" /> : <span>{jersey || getInitials(playerName)}</span>}
           </div>
           <div className="min-w-0 flex-1">
             <div className="app-label">Player</div>

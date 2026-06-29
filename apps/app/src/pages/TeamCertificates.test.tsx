@@ -226,7 +226,7 @@ describe('TeamCertificates', () => {
     });
   });
 
-  it('creates drafts, generates editable narratives, and does not hand off to the website', async () => {
+  it('creates drafts, generates editable narratives, and keeps the saved batch for website handoff', async () => {
     render(
       <MemoryRouter initialEntries={['/teams/team-1/certificates']}>
         <Routes>
@@ -249,6 +249,12 @@ describe('TeamCertificates', () => {
       drafts: [expect.objectContaining({ certificateId: 'cert-1' })]
     }));
     expect(publicActionMocks.openPublicUrl).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Open website' }));
+
+    await waitFor(() => {
+      expect(publicActionMocks.openPublicUrl).toHaveBeenCalledWith('https://allplays.ai/certificates.html#teamId=team-1&batchId=batch-1');
+    });
   });
 
   it('requires explicit review confirmation before publishing generated awards', async () => {

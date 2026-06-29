@@ -47,6 +47,13 @@ const nativeRuntime = vi.hoisted(() => ({
   isNativePlatform: false
 }));
 
+const uxTimingMocks = vi.hoisted(() => ({
+  endInteraction: vi.fn(),
+  startInteractionTimer: vi.fn(() => ({
+    end: uxTimingMocks.endInteraction
+  }))
+}));
+
 vi.mock('@capacitor/core', () => ({
   Capacitor: {
     isNativePlatform: () => nativeRuntime.isNativePlatform
@@ -64,6 +71,13 @@ vi.mock('./authService', () => ({
     }
   },
   getNativeAuthIdToken: vi.fn()
+}));
+
+vi.mock('./uxTiming', () => ({
+  UX_TIMING: {
+    chatSend: 'chat-send'
+  },
+  startInteractionTimer: uxTimingMocks.startInteractionTimer
 }));
 
 type Deferred<T> = {
@@ -120,6 +134,9 @@ beforeEach(() => {
   vi.useRealTimers();
   vi.resetAllMocks();
   nativeRuntime.isNativePlatform = false;
+  uxTimingMocks.startInteractionTimer.mockReturnValue({
+    end: uxTimingMocks.endInteraction
+  });
   legacyChatServiceMocks.resolveImageFirebaseConfig.mockReturnValue({ apiKey: 'test-api-key', storageBucket: 'test-bucket' });
   legacyChatServiceMocks.postChatMessage.mockResolvedValue({ id: 'message-1' });
 });
@@ -434,5 +451,24 @@ describe('sendTeamChatMessage attachment uploads', () => {
     await sendPromise;
     expect(legacyChatServiceMocks.uploadChatImage).toHaveBeenCalledTimes(3);
     expect(legacyChatServiceMocks.postChatMessage).toHaveBeenCalledTimes(1);
+  });
+
+  it('skips interaction timing when requested without changing chat delivery', async () => {
+    const { sendTeamChatMessage } = await import('./chatService');
+
+    const result = await sendTeamChatMessage({
+      ...buildSendInput([]),
+      skipInteractionTiming: true
+    });
+
+    expect(uxTimingMocks.startInteractionTimer).not.toHaveBeenCalled();
+    expect(legacyChatServiceMocks.postChatMessage).toHaveBeenCalledWith('team-1', expect.objectContaining({
+      text: 'Practice photos'
+    }));
+    expect(result).toEqual(expect.objectContaining({
+      conversationId: 'team',
+      createdConversation: null,
+      wantsAi: false
+    }));
   });
 });

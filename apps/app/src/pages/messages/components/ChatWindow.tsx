@@ -42,6 +42,7 @@ import {
   sendTeamChatMessage,
   sendTeamEmailMessage,
   toggleTeamChatReaction,
+  type ChatAttachment,
   type ChatConversation,
   type ChatMessage,
   type SentTeamEmail,
@@ -75,6 +76,7 @@ import {
   insertChatMention,
   isChatComposerLinkSafe,
   isDefaultTeamConversation,
+  isStaffConversation,
   isSafeChatMediaUrl,
   mergeChatMessageLists,
   normalizeChatReactions,
@@ -87,8 +89,10 @@ import {
 } from '../../../lib/chatLogic';
 import { sharePublicUrl } from '../../../lib/publicActions';
 import { useShellLayout } from '../../../lib/useShellLayout';
+import { useViewLoadTimer } from '../../../lib/viewLoadTiming';
 import type { AuthState } from '../../../lib/types';
 import { voiceRecognition, type VoiceListenerHandle } from '../../../lib/voiceService';
+import { startInteractionTimer, UX_TIMING } from '../../../lib/uxTiming';
 import { useChatSheets } from '../hooks/useChatSheets';
 import { useChatTeam } from '../hooks/useChatTeam';
 import { useChatMessages } from '../hooks/useChatMessages';
@@ -126,6 +130,7 @@ type PendingChatSendRequest = {
   selectedConversationId: string;
   selectedRecipientTarget: ChatTargetType;
   selectedRecipientIds: string[];
+  interaction?: ReturnType<typeof startInteractionTimer>;
 };
 
 type VirtualizedChatWindow = {
@@ -141,17 +146,22 @@ type VirtualizedChatLayout = {
   totalHeight: number;
 };
 
+type SafeChatAttachment = ChatAttachment & {
+  url: string;
+};
+
 const CHAT_MESSAGE_INITIAL_WINDOW_COUNT = 40;
 const CHAT_MESSAGE_WINDOW_OVERSCAN_PX = 480;
 const CHAT_MESSAGE_BASE_ESTIMATED_HEIGHT = 104;
 const CHAT_MESSAGE_DAY_DIVIDER_ESTIMATED_HEIGHT = 28;
 const CHAT_MESSAGE_ATTACHMENT_ESTIMATED_HEIGHT = 144;
+const messageRevisionSignatureCache = new WeakMap<ChatMessage, string>();
 
 const allTargetOptions: Array<{ value: ChatTargetType; label: string; description: string }> = [
   { value: 'full_team', label: 'Full team', description: 'Visible to everyone in this team chat.' },
-  { value: 'staff', label: 'Staff only', description: 'Moves this into a staff conversation.' },
   { value: 'individuals', label: 'Selected members', description: 'Starts a direct or group conversation.' }
 ];
+const STAFF_CONVERSATION_PLACEHOLDER_ID = '__staff_conversation__';
 
 function createChatClientMessageId(userId: string) {
   const randomPart = typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
@@ -164,6 +174,13 @@ function createChatClientMessageId(userId: string) {
 
 function getChatSendErrorMessage(error: unknown) {
   return error instanceof Error && error.message ? error.message : 'Failed to send message. Tap retry to try again.';
+}
+
+function startPendingChatSendInteraction(request: Pick<PendingChatSendRequest, 'attachmentCount' | 'selectedRecipientTarget'>) {
+  return startInteractionTimer(UX_TIMING.chatSend, {
+    attachments: request.attachmentCount,
+    target: request.selectedRecipientTarget
+  });
 }
 
 function createOptimisticChatMessage(request: PendingChatSendRequest): OptimisticChatMessage {
@@ -220,7 +237,7 @@ export function TeamAvatar({ team }: { team: Pick<ChatTeam, 'name' | 'photoUrl' 
   return (
     <div className="relative flex h-11 w-11 flex-none items-center justify-center overflow-hidden rounded-xl border border-gray-200 bg-primary-50 text-primary-700 shadow-sm">
       {team.photoUrl ? (
-        <img src={team.photoUrl} alt={`${team.name} team photo`} className="h-full w-full object-cover" />
+        <img src={team.photoUrl} alt={`${team.name} team photo`} loading="lazy" decoding="async" className="h-full w-full object-cover" />
       ) : (
         <span className="text-base font-black">{team.name.charAt(0).toUpperCase()}</span>
       )}
@@ -403,6 +420,27 @@ export function ChatWindow({
     onMessagesReset: handleMessagesReset,
     onMarkRead: handleMarkRead
   });
+  useViewLoadTimer({
+    viewName: 'messages choose team',
+    route: `/messages/${teamId}`,
+    ready: Boolean(team && !loadingContext && !loadingMessages),
+    resetKey: `${auth.user?.uid || 'anonymous'}:${teamId}:${effectiveConversationId}`,
+    disabled: !auth.user || !teamId,
+    getBaseMeta: () => ({
+      page: 'messages',
+      teamId,
+      conversationId: effectiveConversationId,
+      embedded
+    }),
+    getCompleteMeta: () => ({
+      messageCount: messages.length,
+      conversationCount: conversations.length,
+      unreadCount: inboxTeam?.unreadCount || 0,
+      canModerate,
+      embedded,
+      error: teamError || messagesError || undefined
+    })
+  });
   const sending = pendingSendCount > 0;
   const visibleMessages = useMemo(
     () => mergeVisibleChatMessages(messages, optimisticMessages, effectiveConversationId),
@@ -431,12 +469,28 @@ export function ChatWindow({
     setOptimisticMessages((current) => current.filter((message) => {
       return !liveClientIds.has(message.clientMessageId || message.id);
     }));
-    confirmedClientIds.forEach((id) => pendingSendRequestsRef.current.delete(id));
+    confirmedClientIds.forEach((id) => {
+      pendingSendRequestsRef.current.get(id)?.interaction?.end({ status: 'visible_sent' });
+      pendingSendRequestsRef.current.delete(id);
+    });
   }, [messages, optimisticMessages]);
 
   const selectedConversation = useMemo(() => (
     conversations.find((conversation) => conversation.id === effectiveConversationId) || conversations[0] || null
   ), [conversations, effectiveConversationId]);
+  const conversationSheetConversations = useMemo<ChatConversation[]>(() => {
+    if (!canModerate || conversations.some((conversation) => isStaffConversation(conversation))) {
+      return conversations;
+    }
+    const staffPlaceholderConversation = {
+      id: STAFF_CONVERSATION_PLACEHOLDER_ID,
+      type: 'group',
+      name: 'Staff only',
+      participantIds: [],
+      participantRoles: ['staff']
+    } satisfies ChatConversation;
+    return [...conversations, staffPlaceholderConversation];
+  }, [canModerate, conversations]);
   const audienceMetadata = useMemo(() => buildChatAudienceMetadata({
     selectedConversation,
     selectedConversationId: effectiveConversationId,
@@ -822,6 +876,32 @@ export function ChatWindow({
     closeConversationSheet();
   };
 
+  const ensureAndSwitchStaffConversation = async () => {
+    if (!auth.user || !team) return;
+    try {
+      const staffConversation = await ensureStaffChatConversation(teamId, auth.user, conversations);
+      setConversations((current) => (
+        current.some((conversation) => conversation.id === staffConversation.id)
+          ? current
+          : [...current, staffConversation]
+      ));
+      if (selectedConversationId !== staffConversation.id) {
+        switchConversation(staffConversation.id);
+      }
+      closeConversationSheet();
+    } catch (staffError: any) {
+      setStatus({ tone: 'error', message: staffError?.message || 'Unable to open staff chat.' });
+    }
+  };
+
+  const handleConversationSelect = (conversationId: string) => {
+    if (conversationId === STAFF_CONVERSATION_PLACEHOLDER_ID) {
+      void ensureAndSwitchStaffConversation();
+      return;
+    }
+    switchConversation(conversationId);
+  };
+
   const handleAudienceTargetChange = async (target: ChatTargetType) => {
     setSelectedRecipientTarget(target);
     if (target !== 'individuals') {
@@ -833,25 +913,6 @@ export function ChatWindow({
         switchConversation(DEFAULT_TEAM_CONVERSATION_ID);
       }
       closeAudienceSheet();
-      return;
-    }
-
-    if (target === 'staff') {
-      if (!auth.user || !team) return;
-      try {
-        const staffConversation = await ensureStaffChatConversation(teamId, auth.user, conversations);
-        setConversations((current) => (
-          current.some((conversation) => conversation.id === staffConversation.id)
-            ? current
-            : [...current, staffConversation]
-        ));
-        if (selectedConversationId !== staffConversation.id) {
-          switchConversation(staffConversation.id);
-        }
-        closeAudienceSheet();
-      } catch (staffError: any) {
-        setStatus({ tone: 'error', message: staffError?.message || 'Unable to open staff chat.' });
-      }
     }
   };
 
@@ -951,7 +1012,8 @@ export function ChatWindow({
         selectedRecipientIds: request.selectedRecipientIds,
         onProgress: (stage) => {
           setComposerNotice(stage === 'uploading' ? attachmentNotice : 'Posting message...');
-        }
+        },
+        skipInteractionTiming: true
       });
       if (result.createdConversation) {
         await reloadConversations();
@@ -993,6 +1055,7 @@ export function ChatWindow({
       }
     } catch (sendError) {
       const message = getChatSendErrorMessage(sendError);
+      request.interaction?.end({ error: message });
       setOptimisticMessages((current) => current.map((candidate) => (
         candidate.clientMessageId === request.clientMessageId
           ? { ...candidate, sendStatus: 'failed', sendError: message }
@@ -1020,6 +1083,7 @@ export function ChatWindow({
     }
 
     setStatus(null);
+    request.interaction = startPendingChatSendInteraction(request);
     pendingScrollRef.current = true;
     setOptimisticMessages((current) => current.map((message) => (
       message.clientMessageId === clientMessageId
@@ -1056,7 +1120,11 @@ export function ChatWindow({
       selectedConversation,
       selectedConversationId: effectiveConversationId,
       selectedRecipientTarget,
-      selectedRecipientIds: [...selectedRecipientIds]
+      selectedRecipientIds: [...selectedRecipientIds],
+      interaction: startPendingChatSendInteraction({
+        attachmentCount: files.length,
+        selectedRecipientTarget
+      })
     };
 
     setStatus(null);
@@ -1485,7 +1553,7 @@ export function ChatWindow({
 
   return (
     <div className={`chat-window ${embedded ? 'chat-window-embedded' : 'chat-window-mobile'}`}>
-      <section className={`chat-topbar ${embedded ? 'rounded-xl' : 'safe-top sticky top-0'} z-20 border border-gray-200 bg-white/95 px-3 py-3 shadow-app backdrop-blur`}>
+      <section className={`chat-topbar ${embedded ? 'rounded-xl' : 'safe-top sticky top-0'} ${!embedded && !isDesktopWeb ? 'pr-16' : ''} z-20 border border-gray-200 bg-white/95 px-3 py-3 shadow-app backdrop-blur`}>
         <div className="flex items-center gap-2">
           {!embedded ? (
             <Link to="/messages" className="ghost-button !h-10 !min-h-10 !w-10 !p-0" aria-label="Back to messages">
@@ -1639,10 +1707,10 @@ export function ChatWindow({
 
       {showConversationSheet ? (
         <ConversationSheet
-          conversations={conversations}
+          conversations={conversationSheetConversations}
           team={team || {}}
           selectedConversationId={effectiveConversationId}
-          onSelect={switchConversation}
+          onSelect={handleConversationSelect}
           onClose={closeConversationSheet}
         />
       ) : null}
@@ -1743,6 +1811,12 @@ export function ChatWindow({
 export function buildChatViewportSignature(scrollHeight: number, clientHeight: number, scrollTop: number) {
   const distanceFromBottom = Math.max(0, scrollHeight - clientHeight - scrollTop);
   return `${scrollHeight}:${clientHeight}:${distanceFromBottom}`;
+}
+
+export function getSafeMessageAttachments(message: ChatMessage): SafeChatAttachment[] {
+  return getMessageAttachments(message).filter((attachment): attachment is SafeChatAttachment => (
+    typeof attachment?.url === 'string' && isSafeChatMediaUrl(attachment.url)
+  ));
 }
 
 export function estimateChatMessageRowHeight(message: ChatMessage, previousMessage: ChatMessage | null = null) {
@@ -2334,6 +2408,7 @@ const MessageList = memo(function MessageList({
             {showDay ? <div className="my-3 text-center text-[11px] font-black uppercase text-gray-400">{day}</div> : null}
             <MessageBubble
               message={message}
+              messageRevisionSignature={getMessageRevisionSignature(message)}
               currentUserId={currentUserId}
               canModerate={canModerate}
               actionsOpen={actionMessageId === message.id}
@@ -2358,6 +2433,7 @@ MessageList.displayName = 'MessageList';
 
 type MessageBubbleProps = {
   message: ChatMessage;
+  messageRevisionSignature: string;
   currentUserId: string;
   canModerate: boolean;
   actionsOpen: boolean;
@@ -2373,6 +2449,7 @@ type MessageBubbleProps = {
 
 const MessageBubble = memo(function MessageBubble({
   message,
+  messageRevisionSignature: _messageRevisionSignature,
   currentUserId,
   canModerate,
   actionsOpen,
@@ -2390,10 +2467,7 @@ const MessageBubble = memo(function MessageBubble({
   const isDeleted = message.deleted === true;
   const isLocalSend = message.sendStatus === 'pending' || message.sendStatus === 'failed';
   const senderLabel = useMemo(() => getMessageSenderLabel(message, currentUserId), [currentUserId, message]);
-  const attachments = useMemo(
-    () => getMessageAttachments(message).filter((attachment: any) => isSafeChatMediaUrl(attachment.url)),
-    [message]
-  );
+  const attachments = useMemo(() => getSafeMessageAttachments(message), [message]);
   const reactions = useMemo(() => normalizeChatReactions(message), [message]);
   const messageHtml = useMemo(() => formatChatMessageHtml(message.text || ''), [message.text]);
   const createdAtLabel = useMemo(() => formatChatTime(message.createdAt), [message.createdAt]);
@@ -2525,35 +2599,69 @@ function areMessageBubblePropsEqual(previous: MessageBubbleProps, next: MessageB
     && previous.actionsOpen === next.actionsOpen
     && previous.reactionsOpen === next.reactionsOpen
     && previous.preferReactionPickerAbove === next.preferReactionPickerAbove
+    && previous.messageRevisionSignature === next.messageRevisionSignature
     && previous.onActionMessage === next.onActionMessage
     && previous.onReactionMessage === next.onReactionMessage
     && previous.onToggleReaction === next.onToggleReaction
     && previous.onEdit === next.onEdit
     && previous.onDelete === next.onDelete
-    && previous.onRetrySend === next.onRetrySend
-    && areMessagesEquivalent(previous.message, next.message);
+    && previous.onRetrySend === next.onRetrySend;
 }
 
-function areMessagesEquivalent(previous: ChatMessage, next: ChatMessage) {
+export function areMessagesEquivalent(previous: ChatMessage, next: ChatMessage) {
   return previous === next || (
-    previous.id === next.id
-    && previous.clientMessageId === next.clientMessageId
-    && previous.text === next.text
-    && previous.ai === next.ai
-    && previous.deleted === next.deleted
-    && previous.sendStatus === next.sendStatus
-    && previous.sendError === next.sendError
-    && previous.attachmentCount === next.attachmentCount
-    && previous.senderId === next.senderId
-    && previous.senderName === next.senderName
-    && previous.senderEmail === next.senderEmail
-    && previous.senderPhotoUrl === next.senderPhotoUrl
-    && previous.aiName === next.aiName
-    && normalizeTimestampValue(previous.createdAt) === normalizeTimestampValue(next.createdAt)
-    && normalizeTimestampValue(previous.editedAt) === normalizeTimestampValue(next.editedAt)
-    && JSON.stringify(getMessageAttachments(previous)) === JSON.stringify(getMessageAttachments(next))
-    && JSON.stringify(normalizeChatReactions(previous)) === JSON.stringify(normalizeChatReactions(next))
+    getMessageRevisionSignature(previous) === getMessageRevisionSignature(next)
   );
+}
+
+export function getMessageRevisionSignature(message: ChatMessage) {
+  const cachedSignature = messageRevisionSignatureCache.get(message);
+  if (cachedSignature) {
+    return cachedSignature;
+  }
+
+  const attachmentSignature = getMessageAttachments(message)
+    .map((attachment) => [
+      attachment?.type || '',
+      attachment?.url || '',
+      attachment?.path || '',
+      attachment?.thumbnailUrl || '',
+      attachment?.name || '',
+      attachment?.mimeType || '',
+      attachment?.size ?? '',
+      normalizeTimestampValue(attachment?.uploadedAt)
+    ].join('\u001f'))
+    .join('\u001e');
+  const normalizedReactions = normalizeChatReactions(message);
+  const reactionSignature = chatReactions
+    .map(({ key }) => {
+      const users = normalizedReactions[key] || [];
+      return users.length ? `${key}:${users.join(',')}` : '';
+    })
+    .filter(Boolean)
+    .join('|');
+  const signature = [
+    message.id,
+    message.clientMessageId || '',
+    message.text || '',
+    message.ai === true ? '1' : '0',
+    message.deleted === true ? '1' : '0',
+    message.sendStatus || '',
+    message.sendError || '',
+    message.attachmentCount ?? '',
+    message.senderId || '',
+    message.senderName || '',
+    message.senderEmail || '',
+    message.senderPhotoUrl || '',
+    message.aiName || '',
+    normalizeTimestampValue(message.createdAt),
+    normalizeTimestampValue(message.editedAt),
+    attachmentSignature,
+    reactionSignature
+  ].join('\u001d');
+
+  messageRevisionSignatureCache.set(message, signature);
+  return signature;
 }
 
 function normalizeTimestampValue(value: unknown) {
@@ -2574,7 +2682,7 @@ export function MessageAvatar({ message, label }: { message: ChatMessage; label:
     return <img src="./logo_small.png" alt="ALL PLAYS assistant avatar" className="h-8 w-8 rounded-full border border-indigo-200 object-cover" />;
   }
   if (message.senderPhotoUrl) {
-    return <img src={message.senderPhotoUrl} alt={`${label} profile photo`} className="h-8 w-8 rounded-full object-cover" />;
+    return <img src={message.senderPhotoUrl} alt={`${label} profile photo`} loading="lazy" decoding="async" className="h-8 w-8 rounded-full object-cover" />;
   }
   return (
     <div className="flex h-8 w-8 items-center justify-center rounded-full bg-gray-200 text-xs font-black text-gray-600">
@@ -2609,7 +2717,7 @@ function InlineAttachmentVideo({ src, label }: { src: string; label: string }) {
   );
 }
 
-function MessageAttachments({ attachments, isOwn }: { attachments: any[]; isOwn: boolean }) {
+function MessageAttachments({ attachments, isOwn }: { attachments: SafeChatAttachment[]; isOwn: boolean }) {
   return (
     <div className={`mb-2 grid gap-2 ${attachments.length > 1 ? 'grid-cols-2' : 'grid-cols-1'}`}>
       {attachments.map((attachment, index) => {
@@ -3070,7 +3178,7 @@ function MediaGallerySheet({
                 <video controls preload="metadata" className="aspect-video w-full bg-black object-cover" src={entry.url} />
               ) : (
                 <a href={entry.url} target="_blank" rel="noopener noreferrer">
-                  <img src={entry.url} alt={entry.name || 'Chat media'} className="aspect-video w-full object-cover" />
+                  <img src={entry.url} alt={entry.name || 'Chat media'} loading="lazy" decoding="async" className="aspect-video w-full object-cover" />
                 </a>
               )}
               <div className="p-3">

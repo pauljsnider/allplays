@@ -115,6 +115,7 @@ import {
   type RsvpResponse
 } from '../lib/scheduleLogic';
 import { DEFAULT_TEAM_CONVERSATION_ID } from '../lib/chatLogic';
+import { completeParentCoreWorkflowTimer } from '../lib/parentWorkflowTiming';
 // Type-only imports for deferred modules — runtime values loaded on demand below
 import type { LiveGameChatMessage } from '../lib/liveGameChatService';
 import type { LiveGameReaction, LiveGameReactionType } from '../lib/liveGameReactionsService';
@@ -151,12 +152,16 @@ type EventDetailSectionId = ScheduleEventDetailSectionId;
 
 const eventDetailSectionIds = new Set<EventDetailSectionId>(['availability', 'rideshare', 'assignments', 'game']);
 
-export function parseEventDetailSection(section: string | null | undefined): EventDetailSectionId {
+function parseRequestedEventDetailSection(section: string | null | undefined): EventDetailSectionId | null {
   const normalized = String(section || '').trim().toLowerCase();
   if (normalized && eventDetailSectionIds.has(normalized as EventDetailSectionId)) {
     return normalized as EventDetailSectionId;
   }
-  return 'availability';
+  return null;
+}
+
+export function parseEventDetailSection(section: string | null | undefined): EventDetailSectionId {
+  return parseRequestedEventDetailSection(section) || 'availability';
 }
 
 const hubIconComponents: Record<ScheduleHubIcon, LucideIcon> = {
@@ -168,14 +173,44 @@ const hubIconComponents: Record<ScheduleHubIcon, LucideIcon> = {
   users: Users
 };
 
+function isActiveTrackedScheduleEvent(event?: ParentScheduleEvent | null) {
+  return Boolean(event?.isDbGame && !event?.isCancelled);
+}
+
+function getDefaultEventDetailSection(event?: ParentScheduleEvent | null) {
+  if (isActiveTrackedScheduleEvent(event) && event?.canUpdateScore) {
+    return 'game';
+  }
+  return 'availability';
+}
+
+function hasRideshareActivity(event?: ParentScheduleEvent | null) {
+  const summary = event?.rideshareSummary;
+  if (!summary) return false;
+  return [summary.offerCount, summary.requests, summary.pending, summary.confirmed, summary.seatsLeft]
+    .some((value) => Number(value || 0) > 0);
+}
+
+function hasAssignmentsPosted(event?: ParentScheduleEvent | null) {
+  return Array.isArray(event?.assignments) && event.assignments.length > 0;
+}
+
 function getEventDetailSections(event?: ParentScheduleEvent | null): Array<{ id: EventDetailSectionId; label: string; shortLabel?: string }> {
   const eventLabel = event?.type === 'practice' ? 'More' : 'Game';
-  return [
-    { id: 'availability', label: 'Availability' },
-    { id: 'rideshare', label: 'Rideshare' },
-    { id: 'assignments', label: 'Assignments', shortLabel: 'Tasks' },
-    { id: 'game', label: eventLabel }
+  const sections: Array<{ id: EventDetailSectionId; label: string; shortLabel?: string }> = [
+    { id: 'availability', label: 'Availability' }
   ];
+
+  if (isActiveTrackedScheduleEvent(event) || hasRideshareActivity(event)) {
+    sections.push({ id: 'rideshare', label: 'Rideshare' });
+  }
+
+  if (isActiveTrackedScheduleEvent(event) || hasAssignmentsPosted(event)) {
+    sections.push({ id: 'assignments', label: 'Assignments', shortLabel: 'Tasks' });
+  }
+
+  sections.push({ id: 'game', label: eventLabel });
+  return sections;
 }
 
 function getScheduleEventDetailLoadErrorMessage(error: AppServiceError, hasExistingEvent: boolean) {
@@ -216,7 +251,9 @@ export function ScheduleEventDetail({ auth }: { auth: AuthState }) {
   const [events, setEvents] = useState<ParentScheduleEvent[]>([]);
   const [selectedChildId, setSelectedChildId] = useState(searchParams.get('childId') || '');
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
-  const [activeSection, setActiveSection] = useState<EventDetailSectionId>(() => parseEventDetailSection(searchParams.get('section')));
+  const [activeSection, setActiveSection] = useState<EventDetailSectionId | null>(() => (
+    searchParams.has('section') ? parseEventDetailSection(searchParams.get('section')) : null
+  ));
   const [detailsOpen, setDetailsOpen] = useState(false);
   const [availabilityNote, setAvailabilityNote] = useState('');
   const [initialLoadPending, setInitialLoadPending] = useState(true);
@@ -315,7 +352,7 @@ export function ScheduleEventDetail({ auth }: { auth: AuthState }) {
   }, [auth.user?.uid, decodedTeamId, decodedEventId]);
 
   useEffect(() => {
-    setActiveSection(parseEventDetailSection(searchParams.get('section')));
+    setActiveSection(searchParams.has('section') ? parseEventDetailSection(searchParams.get('section')) : null);
     const routeChildId = searchParams.get('childId') || '';
     if (routeChildId) {
       setSelectedChildId(routeChildId);
@@ -330,6 +367,19 @@ export function ScheduleEventDetail({ auth }: { auth: AuthState }) {
   useEffect(() => {
     setAvailabilityNote(selectedEvent?.myRsvpNote || '');
   }, [selectedEvent?.eventKey, selectedEvent?.myRsvpNote]);
+
+  useEffect(() => {
+    if (!selectedEvent || loading || initialLoadPending) return;
+    completeParentCoreWorkflowTimer('schedule_event', {
+      targetPage: 'schedule_event',
+      teamId: decodedTeamId,
+      eventId: decodedEventId,
+      playerId: selectedEvent.childId || '',
+      eventType: selectedEvent.type,
+      section: searchParams.get('section') || '',
+      completedRoute: `/schedule/${decodedTeamId}/${decodedEventId}`
+    });
+  }, [decodedEventId, decodedTeamId, initialLoadPending, loading, searchParams, selectedEvent]);
 
   const updateEvents = useCallback((updater: (current: ParentScheduleEvent[]) => ParentScheduleEvent[]) => {
     setEvents((current) => updater(current));
@@ -439,6 +489,13 @@ export function ScheduleEventDetail({ auth }: { auth: AuthState }) {
   const hasPracticePacket = selectedEvent.type === 'practice' && Boolean(selectedEvent.practiceHomePacketSummary);
   const attentionItems = getAttentionItems(selectedEvent, rsvp).filter((item) => item.section !== 'availability' && item.title !== 'Practice packet ready');
   const sections = getEventDetailSections(selectedEvent);
+  const sectionIds = new Set(sections.map((section) => section.id));
+  const defaultSection = getDefaultEventDetailSection(selectedEvent);
+  const resolvedActiveSection = activeSection && sectionIds.has(activeSection)
+    ? activeSection
+    : sectionIds.has(defaultSection)
+      ? defaultSection
+      : sections[0]?.id || 'availability';
 
   const addEventToCalendar = async () => {
     const icsTitle = `${title} | ${selectedEvent.teamName}`;
@@ -517,7 +574,7 @@ export function ScheduleEventDetail({ auth }: { auth: AuthState }) {
               className="event-workflow-nav event-nav-desktop mt-3"
               includeBaseClass={false}
               sections={sections}
-              activeSection={activeSection}
+              activeSection={resolvedActiveSection}
               hasPracticePacket={hasPracticePacket}
               onSelect={selectSection}
             />
@@ -533,7 +590,7 @@ export function ScheduleEventDetail({ auth }: { auth: AuthState }) {
         <EventSectionNav
           className="event-nav-mobile sticky top-24 z-30 w-full max-w-full bg-gray-50/95 py-1 backdrop-blur sm:py-2"
           sections={sections}
-          activeSection={activeSection}
+          activeSection={resolvedActiveSection}
           hasPracticePacket={hasPracticePacket}
           onSelect={selectSection}
         />
@@ -543,7 +600,7 @@ export function ScheduleEventDetail({ auth }: { auth: AuthState }) {
         {statusMessage ? <Status tone="success" message={statusMessage} /> : null}
         {error ? <Status tone="error" message={error} /> : null}
 
-        {activeSection === 'availability' ? (
+        {resolvedActiveSection === 'availability' ? (
           <AvailabilitySection
             event={selectedEvent}
             rsvp={rsvp}
@@ -553,9 +610,9 @@ export function ScheduleEventDetail({ auth }: { auth: AuthState }) {
             onSelectSection={selectSection}
           />
         ) : null}
-        {activeSection === 'rideshare' ? <RideshareSection /> : null}
-        {activeSection === 'assignments' ? <AssignmentsSection /> : null}
-        {activeSection === 'game' ? <GameHubSection key={selectedEvent.eventKey} auth={auth} event={selectedEvent} childEvents={events} onScoreUpdated={handleScoreUpdated} onLiveClockUpdated={handleLiveClockUpdated} onWrapupCompleted={handleWrapupCompleted} onStatsheetImported={handleStatsheetImported} onGameCancelled={handleGameCancelled} onPracticeOccurrenceCancelled={handlePracticeOccurrenceCancelled} onGamePlanPublished={handleGamePlanPublished} /> : null}
+        {resolvedActiveSection === 'rideshare' ? <RideshareSection /> : null}
+        {resolvedActiveSection === 'assignments' ? <AssignmentsSection /> : null}
+        {resolvedActiveSection === 'game' ? <GameHubSection key={selectedEvent.eventKey} auth={auth} event={selectedEvent} childEvents={events} onScoreUpdated={handleScoreUpdated} onLiveClockUpdated={handleLiveClockUpdated} onWrapupCompleted={handleWrapupCompleted} onStatsheetImported={handleStatsheetImported} onGameCancelled={handleGameCancelled} onPracticeOccurrenceCancelled={handlePracticeOccurrenceCancelled} onGamePlanPublished={handleGamePlanPublished} /> : null}
       </div>
       </div>
     </ScheduleEventDetailProvider>
@@ -2820,6 +2877,7 @@ function getBonusState(teamFouls: number) {
 }
 
 function LiveScoreEditor({ auth, event, onScoreUpdated }: { auth: AuthState; event: ParentScheduleEvent; onScoreUpdated: (homeScore: number, awayScore: number) => void }) {
+  const autosaveDelayMs = 700;
   const savedHomeScore = Math.max(0, Number(event.homeScore ?? 0));
   const savedAwayScore = Math.max(0, Number(event.awayScore ?? 0));
   const [homeScore, setHomeScore] = useState(savedHomeScore);
@@ -2829,9 +2887,13 @@ function LiveScoreEditor({ auth, event, onScoreUpdated }: { auth: AuthState; eve
   const [loadingHomePlayers, setLoadingHomePlayers] = useState(false);
   const [playerScoringId, setPlayerScoringId] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  const [autosaveScheduled, setAutosaveScheduled] = useState(false);
   const [status, setStatus] = useState<{ tone: 'success' | 'error'; message: string } | null>(null);
   const lastSavedScoreRef = useRef({ eventKey: event.eventKey, homeScore: savedHomeScore, awayScore: savedAwayScore });
   const pendingLocalSaveRef = useRef<ScoreSnapshot | null>(null);
+  const autosaveTimeoutRef = useRef<number | null>(null);
+  const lastAutosaveFailureRef = useRef<ScoreSnapshot | null>(null);
+  const activeSaveModeRef = useRef<'manual' | 'autosave'>('manual');
 
   useEffect(() => {
     const pendingLocalSave = pendingLocalSaveRef.current;
@@ -2849,6 +2911,12 @@ function LiveScoreEditor({ auth, event, onScoreUpdated }: { auth: AuthState; eve
     }
 
     pendingLocalSaveRef.current = null;
+    lastAutosaveFailureRef.current = null;
+    if (autosaveTimeoutRef.current !== null) {
+      window.clearTimeout(autosaveTimeoutRef.current);
+      autosaveTimeoutRef.current = null;
+    }
+    setAutosaveScheduled(false);
     lastSavedScoreRef.current = { eventKey: event.eventKey, homeScore: savedHomeScore, awayScore: savedAwayScore };
   }, [event.eventKey, savedHomeScore, savedAwayScore]);
 
@@ -2880,6 +2948,7 @@ function LiveScoreEditor({ auth, event, onScoreUpdated }: { auth: AuthState; eve
     setPreviousScoreSnapshots((snapshots) => [...snapshots, { homeScore, awayScore }]);
     setHomeScore(nextHomeScore);
     setAwayScore(nextAwayScore);
+    lastAutosaveFailureRef.current = null;
     setStatus(null);
   };
 
@@ -2889,39 +2958,82 @@ function LiveScoreEditor({ auth, event, onScoreUpdated }: { auth: AuthState; eve
       if (!latestSnapshot) return snapshots;
       setHomeScore(latestSnapshot.homeScore);
       setAwayScore(latestSnapshot.awayScore);
+      lastAutosaveFailureRef.current = null;
       setStatus(null);
       return snapshots.slice(0, -1);
     });
   };
 
-  const saveScore = async () => {
+  const saveScore = async (mode: 'manual' | 'autosave' = 'manual', scoreOverride?: ScoreSnapshot) => {
     if (!auth.user) return;
+    const nextScore = scoreOverride || { homeScore, awayScore };
+    if (nextScore.homeScore === savedHomeScore && nextScore.awayScore === savedAwayScore) return;
+    if (autosaveTimeoutRef.current !== null) {
+      window.clearTimeout(autosaveTimeoutRef.current);
+      autosaveTimeoutRef.current = null;
+    }
+    setAutosaveScheduled(false);
+    activeSaveModeRef.current = mode;
     const previousScore = { homeScore: savedHomeScore, awayScore: savedAwayScore };
     setSaving(true);
     setStatus(null);
     try {
-      const payload = await updateGameScore(event.teamId, event.id, { homeScore, awayScore }, auth.user);
-      const nextHomeScore = Number(payload.homeScore ?? homeScore);
-      const nextAwayScore = Number(payload.awayScore ?? awayScore);
+      const payload = await updateGameScore(event.teamId, event.id, nextScore, auth.user);
+      const nextHomeScore = Number(payload.homeScore ?? nextScore.homeScore);
+      const nextAwayScore = Number(payload.awayScore ?? nextScore.awayScore);
       pendingLocalSaveRef.current = { homeScore: nextHomeScore, awayScore: nextAwayScore };
+      lastAutosaveFailureRef.current = null;
       onScoreUpdated(nextHomeScore, nextAwayScore);
       if (nextHomeScore === previousScore.homeScore && nextAwayScore === previousScore.awayScore) {
-        setStatus({ tone: 'success', message: 'Score saved.' });
+        setStatus({ tone: 'success', message: mode === 'autosave' ? 'Score autosaved.' : 'Score saved.' });
         return;
       }
       try {
         await publishLiveScoreUpdateEvent(event.teamId, event.id, { homeScore: nextHomeScore, awayScore: nextAwayScore }, auth.user, previousScore);
-        setStatus({ tone: 'success', message: 'Score saved and posted to live play-by-play.' });
+        setStatus({ tone: 'success', message: mode === 'autosave' ? 'Score autosaved and posted to live play-by-play.' : 'Score saved and posted to live play-by-play.' });
       } catch (publishError) {
         console.warn('[schedule-event-detail] Score saved but live play-by-play posting failed:', publishError);
-        setStatus({ tone: 'success', message: 'Score saved. Live play-by-play post failed.' });
+        setStatus({ tone: 'success', message: mode === 'autosave' ? 'Score autosaved. Live play-by-play post failed.' : 'Score saved. Live play-by-play post failed.' });
       }
     } catch (error: any) {
-      setStatus({ tone: 'error', message: error?.message || 'Unable to save score.' });
+      if (mode === 'autosave') {
+        lastAutosaveFailureRef.current = nextScore;
+      }
+      setStatus({ tone: 'error', message: error?.message || (mode === 'autosave' ? 'Unable to autosave score. Retry save.' : 'Unable to save score.') });
     } finally {
       setSaving(false);
     }
   };
+
+  useEffect(() => {
+    if (!auth.user || !dirty || saving || playerScoringId) return undefined;
+    const failedAutosave = lastAutosaveFailureRef.current;
+    if (failedAutosave && failedAutosave.homeScore === homeScore && failedAutosave.awayScore === awayScore) {
+      setAutosaveScheduled(false);
+      return undefined;
+    }
+    setAutosaveScheduled(true);
+    autosaveTimeoutRef.current = window.setTimeout(() => {
+      autosaveTimeoutRef.current = null;
+      setAutosaveScheduled(false);
+      void saveScore('autosave', { homeScore, awayScore });
+    }, autosaveDelayMs);
+
+    return () => {
+      if (autosaveTimeoutRef.current !== null) {
+        window.clearTimeout(autosaveTimeoutRef.current);
+        autosaveTimeoutRef.current = null;
+      }
+      setAutosaveScheduled(false);
+    };
+  }, [auth.user, awayScore, dirty, homeScore, playerScoringId, saving]);
+
+  const manualScoreSaveLabel = status?.tone === 'error' && dirty ? 'Retry save' : (saving ? 'Saving score' : 'Save score');
+  const helperText = autosaveScheduled
+    ? 'Autosaving manual score change…'
+    : (saving && activeSaveModeRef.current === 'autosave')
+      ? 'Saving manual score change…'
+      : 'Save or undo manual score changes before recording player stats.';
 
   const recordPlayerTwo = async (player: ScheduleHomeScoringPlayer) => {
     if (!auth.user || saving || playerScoringId || dirty) return;
@@ -2993,17 +3105,17 @@ function LiveScoreEditor({ auth, event, onScoreUpdated }: { auth: AuthState; eve
             })}
           </div>
         ) : !loadingHomePlayers ? <div className="mt-2 text-xs font-semibold text-gray-500">No active team roster players found.</div> : null}
-        {dirty ? <div className="mt-2 text-xs font-semibold text-amber-700">Save or undo manual score changes before recording player stats.</div> : null}
+        {dirty ? <div className="mt-2 text-xs font-semibold text-amber-700">{helperText}</div> : null}
       </div>
       <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
         <div className="flex flex-wrap items-center gap-2">
           <button
             type="button"
             className="primary-button min-h-11 px-4 text-sm"
-            onClick={saveScore}
+            onClick={() => void saveScore('manual')}
             disabled={saving || Boolean(playerScoringId) || !dirty}
           >
-            {saving ? 'Saving score' : 'Save score'}
+            {manualScoreSaveLabel}
           </button>
           {previousScoreSnapshots.length ? (
             <button

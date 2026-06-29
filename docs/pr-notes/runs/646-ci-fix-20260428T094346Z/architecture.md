@@ -1,7 +1,7 @@
 # Architecture Notes
 
 ## Root cause
-The preview smoke test mocked `js/db.js?v=15` and `js/utils.js?v=8`, but the page under test imports additional named exports from those modules. Because the route stubs did not export every named import required by `edit-team.html`, the browser module graph could fail during initialization and the admin invite click handler would never attach. The visible symptom was `#admin-invite-status` remaining empty after clicking `#save-admin-btn`.
+The preview smoke test mocked `js/db.js?v=76` and `js/utils.js?v=8`, but the page under test imports additional named exports from those modules. Because the route stubs did not export every named import required by `edit-team.html`, the browser module graph could fail during initialization and the admin invite click handler would never attach. The visible symptom was `#admin-invite-status` remaining empty after clicking `#save-admin-btn`.
 
 ## Affected files/functions
 - `tests/smoke/admin-invite-redemption.spec.js`

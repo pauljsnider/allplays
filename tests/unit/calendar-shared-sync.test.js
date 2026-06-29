@@ -13,9 +13,11 @@ describe('global calendar ICS sync helper', () => {
         expect(source).toContain('const trackedUids = await getTrackedCalendarEventUids(team.id, games);');
     });
 
-    it('suppresses tracked ICS events while keeping distinct same-slot imports', async () => {
+    it('suppresses tracked and already imported ICS events while keeping distinct same-slot imports', async () => {
         const { mergeGlobalCalendarIcsEvents } = await import('../../js/calendar-ics-sync.js');
 
+        const team = { id: 'team-1', name: 'Tigers' };
+        const teamColor = '#f97316';
         const existingEvents = [
             {
                 id: 'db-game-1',
@@ -55,27 +57,42 @@ describe('global calendar ICS sync helper', () => {
             summary: 'Tigers vs New Team',
             location: 'Field 4'
         };
+        const uidlessSameSlotOne = {
+            dtstart: new Date('2026-03-19T18:00:00.000Z'),
+            summary: 'Tigers vs UID-less One',
+            location: 'Field 6'
+        };
+        const uidlessSameSlotTwo = {
+            dtstart: new Date('2026-03-19T18:00:00.000Z'),
+            summary: 'Tigers vs UID-less Two',
+            location: 'Field 7'
+        };
 
-        const merged = mergeGlobalCalendarIcsEvents({
-            team: { id: 'team-1', name: 'Tigers' },
-            teamColor: '#f97316',
-            existingEvents,
-            icsEvents: [trackedEvent, sameSlotEvent, dbLinkedEvent, importedEvent],
+        const buildGlobalCalendarIcsEvent = ({ team, teamColor, event }) => ({
+            id: event.id || event.uid || `ics-${event.dtstart.getTime()}`,
+            teamId: team.id,
+            teamName: team.name,
+            teamColor,
+            title: event.summary,
+            date: event.dtstart,
+            location: event.location,
+            source: 'ics'
+        });
+        const mergeOptions = {
+            team,
+            teamColor,
             trackedUids: ['tracked-uid'],
-            isTrackedCalendarEvent: (event, trackedUids) => trackedUids.includes(event.uid),
-            buildGlobalCalendarIcsEvent: ({ team, teamColor, event }) => ({
-                id: event.uid,
-                teamId: team.id,
-                teamName: team.name,
-                teamColor,
-                title: event.summary,
-                date: event.dtstart,
-                location: event.location,
-                source: 'ics'
-            })
+            isTrackedCalendarEvent: (event, currentTrackedUids) => currentTrackedUids.includes(event.uid),
+            buildGlobalCalendarIcsEvent
+        };
+
+        const firstMerged = mergeGlobalCalendarIcsEvents({
+            ...mergeOptions,
+            existingEvents,
+            icsEvents: [trackedEvent, sameSlotEvent, dbLinkedEvent, importedEvent, uidlessSameSlotOne, uidlessSameSlotTwo]
         });
 
-        expect(merged).toEqual([
+        expect(firstMerged).toEqual([
             {
                 id: 'same-slot-uid',
                 teamId: 'team-1',
@@ -94,6 +111,73 @@ describe('global calendar ICS sync helper', () => {
                 title: 'Tigers vs New Team',
                 date: importedEvent.dtstart,
                 location: 'Field 4',
+                source: 'ics'
+            },
+            {
+                id: `ics-${uidlessSameSlotOne.dtstart.getTime()}`,
+                teamId: 'team-1',
+                teamName: 'Tigers',
+                teamColor: '#f97316',
+                title: 'Tigers vs UID-less One',
+                date: uidlessSameSlotOne.dtstart,
+                location: 'Field 6',
+                source: 'ics'
+            },
+            {
+                id: `ics-${uidlessSameSlotTwo.dtstart.getTime()}`,
+                teamId: 'team-1',
+                teamName: 'Tigers',
+                teamColor: '#f97316',
+                title: 'Tigers vs UID-less Two',
+                date: uidlessSameSlotTwo.dtstart,
+                location: 'Field 7',
+                source: 'ics'
+            }
+        ]);
+
+        const secondMerged = mergeGlobalCalendarIcsEvents({
+            ...mergeOptions,
+            existingEvents: [...existingEvents, ...firstMerged],
+            icsEvents: [
+                {
+                    uid: 'imported-uid',
+                    dtstart: new Date('2026-03-17T18:00:00.000Z'),
+                    summary: 'Tigers vs New Team',
+                    location: 'Field 4'
+                },
+                {
+                    dtstart: new Date('2026-03-19T18:00:00.000Z'),
+                    summary: 'Tigers vs Cross-feed UID-less',
+                    location: 'Field 8'
+                },
+                {
+                    uid: 'second-feed-unique',
+                    dtstart: new Date('2026-03-18T18:00:00.000Z'),
+                    summary: 'Tigers vs Fresh Feed Opponent',
+                    location: 'Field 5'
+                }
+            ]
+        });
+
+        expect(secondMerged).toEqual([
+            {
+                id: `ics-${new Date('2026-03-19T18:00:00.000Z').getTime()}`,
+                teamId: 'team-1',
+                teamName: 'Tigers',
+                teamColor: '#f97316',
+                title: 'Tigers vs Cross-feed UID-less',
+                date: new Date('2026-03-19T18:00:00.000Z'),
+                location: 'Field 8',
+                source: 'ics'
+            },
+            {
+                id: 'second-feed-unique',
+                teamId: 'team-1',
+                teamName: 'Tigers',
+                teamColor: '#f97316',
+                title: 'Tigers vs Fresh Feed Opponent',
+                date: new Date('2026-03-18T18:00:00.000Z'),
+                location: 'Field 5',
                 source: 'ics'
             }
         ]);

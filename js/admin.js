@@ -13,6 +13,7 @@ import {
     getTelemetryEvents,
     getTelemetryDaily,
     getTelemetryPageDaily,
+    getTelemetryRouteDaily,
     getTelemetryEventDaily,
     getTelemetrySessions
 } from './db.js?v=76';
@@ -38,6 +39,11 @@ import {
     matchesOfficialUserSearch
 } from './admin-user-official-links.js?v=2';
 import { buildAdminTeamOfficialsSummary } from './admin-team-officials.js?v=1';
+import {
+    buildTrackedWorkflowLoadSummary,
+    buildTelemetryPerformanceSummary,
+    formatPerformanceDuration
+} from './telemetry-performance.js?v=3';
 
 let allTeams = [];
 let allUsers = [];
@@ -178,6 +184,7 @@ let telemetryState = {
     events: [],
     daily: [],
     pages: [],
+    routes: [],
     eventDaily: [],
     sessions: []
 };
@@ -391,10 +398,11 @@ async function loadTelemetryData({ silent = false } = {}) {
     try {
         const days = telemetryState.days;
         const maxEvents = days <= 1 ? 1000 : days <= 7 ? 2000 : 5000;
-        const [events, daily, pages, eventDaily, sessions] = await Promise.all([
+        const [events, daily, pages, routes, eventDaily, sessions] = await Promise.all([
             getTelemetryEvents({ days, maxEvents }),
             getTelemetryDaily({ days }),
             getTelemetryPageDaily({ days }),
+            getTelemetryRouteDaily({ days }),
             getTelemetryEventDaily({ days }),
             getTelemetrySessions({ maxSessions: 300 })
         ]);
@@ -406,6 +414,7 @@ async function loadTelemetryData({ silent = false } = {}) {
             events,
             daily,
             pages,
+            routes,
             eventDaily,
             sessions
         };
@@ -422,6 +431,7 @@ async function loadTelemetryData({ silent = false } = {}) {
             events: [],
             daily: [],
             pages: [],
+            routes: [],
             eventDaily: [],
             sessions: []
         };
@@ -621,12 +631,24 @@ function groupTelemetry(items, key, countKey = 'count') {
     return Array.from(grouped.values()).sort((a, b) => b.count - a.count);
 }
 
+function getTelemetryRoute(event) {
+    const props = event.properties || {};
+    return event.appRoute ||
+        props.completedRoute ||
+        props.targetRoute ||
+        props.route ||
+        props.appRoute ||
+        event.pagePath ||
+        '-';
+}
+
 function getFilteredTelemetryEvents() {
     const eventFilter = document.getElementById('telemetry-event-filter')?.value || '';
     const pageFilter = (document.getElementById('telemetry-page-filter')?.value || '').toLowerCase();
     return telemetryState.events.filter((event) => {
         const eventMatches = !eventFilter || event.name === eventFilter;
-        const pageMatches = !pageFilter || (event.pagePath || '').toLowerCase().includes(pageFilter);
+        const route = String(getTelemetryRoute(event)).toLowerCase();
+        const pageMatches = !pageFilter || route.includes(pageFilter) || (event.pagePath || '').toLowerCase().includes(pageFilter);
         return eventMatches && pageMatches;
     });
 }
@@ -691,6 +713,19 @@ function renderTopTelemetryPages() {
     `, 'No page telemetry has been recorded for this range.');
 }
 
+function renderTopTelemetryRoutes() {
+    const grouped = groupTelemetry(telemetryState.routes, 'appRoute', 'totalEvents').slice(0, 20);
+    renderTelemetryList('telemetry-top-routes', grouped, ({ key, count, item }) => `
+        <div class="flex items-center justify-between gap-3 border-b border-gray-100 pb-2 last:border-0">
+            <div class="min-w-0">
+                <p class="font-medium text-gray-900 truncate">${escapeHtml(key)}</p>
+                <p class="text-xs text-gray-500">${telemetryNumber(item.pageViews)} views · ${telemetryNumber(item.interactions)} interactions · ${telemetryNumber(item.errors)} errors</p>
+            </div>
+            <span class="text-sm font-semibold text-gray-900">${telemetryNumber(count)}</span>
+        </div>
+    `, 'No app route telemetry has been recorded for this range.');
+}
+
 function renderTopTelemetryEvents() {
     const grouped = groupTelemetry(telemetryState.eventDaily, 'name', 'count').slice(0, 20);
     renderTelemetryList('telemetry-top-events', grouped, ({ key, count }) => `
@@ -736,10 +771,11 @@ function renderTelemetryNeedsAttention() {
         .slice(0, 5)
         .map((event) => {
             const createdAt = telemetryDate(event.createdAt) || telemetryDate(event.clientTimestamp);
+            const route = getTelemetryRoute(event);
             return `
                 <div class="flex flex-col md:flex-row md:items-center md:justify-between gap-1 border-b border-gray-100 pb-2 last:border-0">
                     <div class="min-w-0">
-                        <p class="text-sm font-medium text-gray-900 truncate">${escapeHtml(event.name || '-')} · ${escapeHtml(event.pagePath || '-')}</p>
+                        <p class="text-sm font-medium text-gray-900 truncate">${escapeHtml(event.name || '-')} · ${escapeHtml(route)}</p>
                         <p class="text-xs text-gray-500 truncate">Target: ${escapeHtml(getTelemetryTarget(event))}</p>
                     </div>
                     <span class="text-xs text-gray-500 whitespace-nowrap">${createdAt ? createdAt.toLocaleString() : '-'}</span>
@@ -757,6 +793,91 @@ function renderTelemetryNeedsAttention() {
     `;
 }
 
+function setTelemetryText(id, value) {
+    const element = document.getElementById(id);
+    if (element) element.textContent = value;
+}
+
+function renderTelemetryPerformanceEmpty(message = 'No app performance telemetry has been recorded for this range.') {
+    setTelemetryText('telemetry-performance-samples', '0');
+    setTelemetryText('telemetry-performance-p50', '-');
+    setTelemetryText('telemetry-performance-p95', '-');
+    setTelemetryText('telemetry-performance-slow', '0');
+    renderEmptyTelemetry('telemetry-performance-groups', message);
+    renderEmptyTelemetry('telemetry-performance-slow-events', message);
+    renderEmptyTelemetry('telemetry-performance-tracked-workflows', message);
+}
+
+function renderTelemetryPerformance() {
+    const summary = buildTelemetryPerformanceSummary(telemetryState.events, {
+        slowThresholdMs: 1500,
+        groupLimit: 8,
+        slowLimit: 8
+    });
+
+    if (!summary.count) {
+        renderTelemetryPerformanceEmpty();
+        return;
+    }
+
+    setTelemetryText('telemetry-performance-samples', telemetryNumber(summary.count));
+    setTelemetryText('telemetry-performance-p50', formatPerformanceDuration(summary.p50Ms));
+    setTelemetryText('telemetry-performance-p95', formatPerformanceDuration(summary.p95Ms));
+    setTelemetryText(
+        'telemetry-performance-slow',
+        `${telemetryNumber(summary.slowCount)} >= ${formatPerformanceDuration(summary.slowThresholdMs)}`
+    );
+
+    renderTelemetryList('telemetry-performance-groups', summary.groups, (group) => `
+        <div class="border-b border-gray-100 pb-2 last:border-0">
+            <div class="flex items-start justify-between gap-3">
+                <div class="min-w-0">
+                    <p class="text-sm font-medium text-gray-900 truncate">${escapeHtml(group.label)}</p>
+                    <p class="text-xs text-gray-500 truncate">${escapeHtml(group.route || '-')}</p>
+                </div>
+                <span class="text-xs font-semibold text-gray-900 whitespace-nowrap">P95 ${escapeHtml(formatPerformanceDuration(group.p95Ms))}</span>
+            </div>
+            <p class="text-xs text-gray-500 mt-1">${telemetryNumber(group.count)} samples · ${telemetryNumber(group.slowCount)} slow · max ${escapeHtml(formatPerformanceDuration(group.maxMs))}</p>
+        </div>
+    `, 'No app performance telemetry has been recorded for this range.');
+
+    renderTelemetryList('telemetry-performance-slow-events', summary.slowEvents, (item) => {
+        const createdAt = item.createdAt;
+        const owner = item.userId ? `User ${item.userId}` : `Session ${item.sessionId || '-'}`;
+        return `
+            <div class="border-b border-gray-100 pb-2 last:border-0">
+                <div class="flex items-start justify-between gap-3">
+                    <div class="min-w-0">
+                        <p class="text-sm font-medium text-gray-900 truncate">${escapeHtml(item.label)}</p>
+                        <p class="text-xs text-gray-500 truncate">${escapeHtml(item.route || '-')}</p>
+                    </div>
+                    <span class="text-xs font-semibold text-gray-900 whitespace-nowrap">${escapeHtml(formatPerformanceDuration(item.durationMs))}</span>
+                </div>
+                <p class="text-xs text-gray-500 mt-1">${escapeHtml(owner)}${createdAt ? ` · ${escapeHtml(createdAt.toLocaleString())}` : ''}</p>
+            </div>
+        `;
+    }, 'No slow app performance examples have been recorded for this range.');
+
+    const trackedRows = buildTrackedWorkflowLoadSummary(telemetryState.events, {
+        slowThresholdMs: summary.slowThresholdMs
+    });
+    renderTelemetryList('telemetry-performance-tracked-workflows', trackedRows, (row) => {
+        const latest = telemetryDate(row.latestAt);
+        return `
+            <div class="border-b border-gray-100 pb-2 last:border-0">
+                <div class="flex items-start justify-between gap-3">
+                    <div class="min-w-0">
+                        <p class="text-sm font-medium text-gray-900 truncate">${escapeHtml(row.label)}</p>
+                        <p class="text-xs text-gray-500 truncate">${row.route ? escapeHtml(row.route) : 'Waiting for samples'}</p>
+                    </div>
+                    <span class="text-xs font-semibold text-gray-900 whitespace-nowrap">P95 ${escapeHtml(row.count ? formatPerformanceDuration(row.p95Ms) : '-')}</span>
+                </div>
+                <p class="text-xs text-gray-500 mt-1">${telemetryNumber(row.count)} samples · P50 ${escapeHtml(row.count ? formatPerformanceDuration(row.p50Ms) : '-')} · max ${escapeHtml(row.count ? formatPerformanceDuration(row.maxMs) : '-')}${latest ? ` · latest ${escapeHtml(latest.toLocaleString())}` : ''}</p>
+            </div>
+        `;
+    }, 'No tracked workflow timers have been recorded for this range.');
+}
+
 function renderRecentTelemetrySessions() {
     const cutoff = Date.now() - telemetryState.days * 24 * 60 * 60 * 1000;
     const sessions = telemetryState.sessions
@@ -771,7 +892,7 @@ function renderRecentTelemetrySessions() {
         return `
             <div class="border-b border-gray-100 pb-3 last:border-0">
                 <div class="flex items-center justify-between gap-3">
-                    <p class="font-medium text-gray-900 truncate">${escapeHtml(session.lastPage || session.entryPage || '-')}</p>
+                    <p class="font-medium text-gray-900 truncate">${escapeHtml(session.lastRoute || session.entryRoute || session.lastPage || session.entryPage || '-')}</p>
                     <span class="text-xs text-gray-500 whitespace-nowrap">${updatedAt ? updatedAt.toLocaleString() : '-'}</span>
                 </div>
                 <p class="text-xs text-gray-500 mt-1">${telemetryNumber(session.eventCount)} events · ${telemetryNumber(session.pageViews)} views · ${telemetryNumber(session.interactions)} interactions</p>
@@ -797,11 +918,12 @@ function renderTelemetryEventsTable() {
 
     tbody.innerHTML = events.map((event) => {
         const createdAt = telemetryDate(event.createdAt) || telemetryDate(event.clientTimestamp);
+        const route = getTelemetryRoute(event);
         return `
             <tr>
                 <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">${createdAt ? createdAt.toLocaleString() : '-'}</td>
                 <td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">${escapeHtml(event.name || '-')}</td>
-                <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">${escapeHtml(event.pagePath || '-')}</td>
+                <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">${escapeHtml(route)}</td>
                 <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">${escapeHtml(getTelemetryTarget(event))}</td>
                 <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">${event.userId ? 'Signed in' : 'Anonymous'}</td>
             </tr>
@@ -824,8 +946,10 @@ function updateTelemetryDashboard() {
         renderEmptyTelemetry('telemetry-daily-trend', errorMessage);
         renderEmptyTelemetry('telemetry-needs-attention', errorMessage);
         renderEmptyTelemetry('telemetry-top-pages', errorMessage);
+        renderEmptyTelemetry('telemetry-top-routes', errorMessage);
         renderEmptyTelemetry('telemetry-top-events', errorMessage);
         renderEmptyTelemetry('telemetry-recent-sessions', errorMessage);
+        renderTelemetryPerformanceEmpty(errorMessage);
 
         const tbody = document.getElementById('telemetry-events-table');
         if (tbody) {
@@ -848,8 +972,10 @@ function updateTelemetryDashboard() {
     renderMetric('telemetry-errors', sumBy(telemetryState.daily, 'errors'));
 
     renderTelemetryNeedsAttention();
+    renderTelemetryPerformance();
     renderTelemetryTrend();
     renderTopTelemetryPages();
+    renderTopTelemetryRoutes();
     renderTopTelemetryEvents();
     renderRecentTelemetrySessions();
     renderTelemetryEventsTable();

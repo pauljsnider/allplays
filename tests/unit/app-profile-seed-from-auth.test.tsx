@@ -51,6 +51,7 @@ vi.mock('../../apps/app/src/lib/profileService', () => profileServiceMocks);
 vi.mock('../../apps/app/src/lib/publicActions', () => publicActionsMocks);
 vi.mock('../../apps/app/src/lib/pushService', () => pushServiceMocks);
 vi.mock('../../apps/app/src/lib/telemetry', () => ({
+    recordAppUxTiming: vi.fn(),
     startAppInitialLoadTimer: vi.fn(() => initialLoadTelemetryMocks)
 }));
 vi.mock('../../apps/app/src/lib/useShellLayout', () => ({

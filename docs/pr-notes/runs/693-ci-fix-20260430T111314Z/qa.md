@@ -7,5 +7,5 @@
 
 ## Failure Analysis
 - The page loaded, but `#team-header` and `#schedule-list` contained only placeholder whitespace.
-- `team.html` imports `js/db.js?v=16`, while the smoke test only intercepted `js/db.js?v=15`.
+- `team.html` imports `js/db.js?v=76`, while the smoke test only intercepted `js/db.js?v=76`.
 - Because the db stub was not applied, the page did not receive the deterministic Team A/Falcons fixture data required by the assertions.

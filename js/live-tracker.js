@@ -815,7 +815,7 @@ function renderOpponents() {
         <div class="flex items-center gap-2 min-w-0">
           ${o.photoUrl || o.name ? avatarHtml({ name: o.name, photoUrl: o.photoUrl }, 'h-6 w-6', 'text-[10px]') : ''}
           ${o.number ? `<span class="text-[10px] font-bold text-slate-500 shrink-0">#${escapeHtml(o.number)}</span>` : ''}
-          <input data-opp-edit="${o.id}" value="${o.name}" class="flex-1 min-w-0 text-xs px-2 py-1 rounded border border-slate/10 font-semibold" placeholder="Player name">
+          <input data-opp-edit="${escapeHtml(o.id)}" value="${escapeHtml(o.name)}" class="flex-1 min-w-0 text-xs px-2 py-1 rounded border border-slate/10 font-semibold" placeholder="Player name">
         </div>
         <div class="text-[11px] text-slate-500">${quickLineWithFouls || 'No stats yet'}</div>
         <div class="grid grid-cols-3 gap-1 text-[11px] font-semibold">
@@ -826,12 +826,14 @@ function renderOpponents() {
   }).join('') || '<div class="text-xs text-slate-500 text-center py-4">Add opponent players</div>';
 
   els.oppCards.querySelectorAll('[data-opp-edit]').forEach(inp => {
-    inp.addEventListener('change', () => {
+    const syncOpponentName = () => {
       const target = state.opp.find(o => o.id === inp.dataset.oppEdit);
       if (target) target.name = inp.value.trim() || target.name;
       scheduleOpponentStatsSync();
       scheduleLiveHasData();
-    });
+    };
+    inp.addEventListener('input', syncOpponentName);
+    inp.addEventListener('change', syncOpponentName);
   });
   els.oppCards.querySelectorAll('[data-opp-del]').forEach(btn => {
     btn.addEventListener('click', () => {

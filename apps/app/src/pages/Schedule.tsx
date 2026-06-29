@@ -9,6 +9,9 @@ import { getCachedAppData, getParentScheduleSummaryCacheKey, loadCachedAppData }
 import { toAppServiceError, type AppServiceError } from '../lib/appErrors';
 import { startAppInitialLoadTimer } from '../lib/telemetry';
 import { recordFirstMeaningfulRender, startScreenMountTimer } from '../lib/uxTiming';
+import { WORKFLOW_TIMING, startWorkflowTimer } from '../lib/workflowTiming';
+import { completeParentCoreWorkflowTimer } from '../lib/parentWorkflowTiming';
+import { useViewLoadTimer } from '../lib/viewLoadTiming';
 import { useAsyncOperation } from '../lib/useAsyncOperation';
 import { useRefreshOnResume } from '../lib/useRefreshOnResume';
 import { useShellLayout } from '../lib/useShellLayout';
@@ -204,6 +207,7 @@ export function Schedule({ auth }: { auth: AuthState }) {
   const [importingCsv, setImportingCsv] = useState(false);
   const [removingCalendarUrl, setRemovingCalendarUrl] = useState<string | null>(null);
   const [mobileStaffToolsOpen, setMobileStaffToolsOpen] = useState(false);
+  const [scheduleStaffToolMode, setScheduleStaffToolMode] = useState<'menu' | 'tournament'>('menu');
   const [gameForm, setGameForm] = useState<ScheduleGameFormInput>(() => getDefaultScheduleGameForm());
   const [savingGame, setSavingGame] = useState(false);
   const [gameFormError, setGameFormError] = useState<string | null>(null);
@@ -395,6 +399,15 @@ export function Schedule({ auth }: { auth: AuthState }) {
           setLoadedScheduleUserId(auth.user?.uid || null);
           setScheduleLoadError(null);
           applyScheduleResult(result);
+          completeParentCoreWorkflowTimer('schedule', {
+            targetPage: 'schedule',
+            teamId: selectedTeamId || '',
+            playerId: selectedPlayerId || '',
+            filter,
+            view,
+            eventCount: result.events.length,
+            completedRoute: '/schedule'
+          });
 
           if (filter === 'past-all') {
             pastHistoryLoadedRef.current = false;
@@ -484,6 +497,33 @@ export function Schedule({ auth }: { auth: AuthState }) {
   const visibleEvents = useMemo(() => (
     filterParentScheduleEvents(events, { filter, playerId: selectedPlayerId, teamId: selectedTeamId, timeRange })
   ), [events, filter, selectedPlayerId, selectedTeamId, timeRange]);
+  const scheduleRoute = `/schedule${searchParams.toString() ? `?${searchParams.toString()}` : ''}`;
+
+  useViewLoadTimer({
+    viewName: 'schedule',
+    route: scheduleRoute,
+    ready: hasLoadedSchedule && !scheduleReadLoading && !isInitialScheduleLoad,
+    resetKey: `${auth.user?.uid || 'anonymous'}:${scheduleRoute}`,
+    disabled: !auth.user,
+    getBaseMeta: () => ({
+      page: 'schedule',
+      filter,
+      view,
+      selectedTeamId,
+      selectedPlayerId,
+      timeRange
+    }),
+    getCompleteMeta: () => ({
+      eventCount: events.length,
+      visibleEventCount: visibleEvents.length,
+      childCount: children.length,
+      filter,
+      view,
+      selectedTeamId,
+      selectedPlayerId,
+      timeRange
+    })
+  });
 
   const listPageSize = filter === 'past-all' ? pastListPageSize : upcomingListPageSize;
 
@@ -560,14 +600,20 @@ export function Schedule({ auth }: { auth: AuthState }) {
   useEffect(() => {
     if (isDesktopWeb || !hasManageableScheduleTeams) {
       setMobileStaffToolsOpen(false);
+      setScheduleStaffToolMode('menu');
     }
   }, [hasManageableScheduleTeams, isDesktopWeb]);
 
   useEffect(() => {
     if (!isDesktopWeb || !hasManageableScheduleTeams) {
       setDesktopStaffToolsOpen(false);
+      setScheduleStaffToolMode('menu');
     }
   }, [hasManageableScheduleTeams, isDesktopWeb]);
+
+  useEffect(() => {
+    setScheduleStaffToolMode('menu');
+  }, [selectedCalendarTeam?.teamId]);
 
   const requestTrackerConfigLoad = () => {
     if (!selectedCalendarTeam) return;
@@ -671,20 +717,45 @@ export function Schedule({ auth }: { auth: AuthState }) {
           }}
           onSubmit={handleCreateGame}
         />
-        <ScheduleTournamentCreatePanel
+        <ScheduleTournamentEntryCard
           teamName={selectedCalendarTeam.teamName}
-          form={tournamentForm}
-          configs={gameTrackerConfigs}
-          saving={savingTournament}
-          error={tournamentFormError}
-          configError={gameTrackerConfigError}
-          onStartUsing={requestTrackerConfigLoad}
-          onChange={(nextForm) => {
-            setTournamentForm(nextForm);
-            if (tournamentFormError) setTournamentFormError(null);
+          onOpen={() => {
+            requestTrackerConfigLoad();
+            setTournamentFormError(null);
+            setScheduleStaffToolMode('tournament');
           }}
-          onSubmit={handleCreateTournament}
         />
+        {scheduleStaffToolMode === 'tournament' ? (
+          <ScheduleTournamentCreateModal
+            saving={savingTournament}
+            onClose={() => {
+              if (savingTournament) return;
+              setTournamentForm(getDefaultScheduleTournamentForm());
+              setTournamentFormError(null);
+              setScheduleStaffToolMode('menu');
+            }}
+          >
+            <ScheduleTournamentCreatePanel
+              teamName={selectedCalendarTeam.teamName}
+              form={tournamentForm}
+              configs={gameTrackerConfigs}
+              saving={savingTournament}
+              error={tournamentFormError}
+              configError={gameTrackerConfigError}
+              onStartUsing={requestTrackerConfigLoad}
+              onChange={(nextForm) => {
+                setTournamentForm(nextForm);
+                if (tournamentFormError) setTournamentFormError(null);
+              }}
+              onCancel={() => {
+                setTournamentForm(getDefaultScheduleTournamentForm());
+                setTournamentFormError(null);
+                setScheduleStaffToolMode('menu');
+              }}
+              onSubmit={handleCreateTournament}
+            />
+          </ScheduleTournamentCreateModal>
+        ) : null}
         <SchedulePracticeCreatePanel
           teamName={selectedCalendarTeam.teamName}
           form={practiceForm}
@@ -769,13 +840,19 @@ export function Schedule({ auth }: { auth: AuthState }) {
     setGameFormError(null);
     setStatusMessage(null);
     clearScheduleReadError();
+    const timer = startWorkflowTimer(WORKFLOW_TIMING.scheduleCreateGame, {
+      route: 'schedule',
+      hasStatTrackerConfig: Boolean(gameForm.statTrackerConfigId)
+    });
     try {
       await createScheduledGameForApp(selectedCalendarTeam.teamId, gameForm, auth.user);
       setGameForm(getDefaultScheduleGameForm());
       await refreshSchedule(true);
       setStatusMessage('Game created and schedule refreshed.');
+      timer.end({ refreshed: true });
     } catch (gameError: any) {
       setGameFormError(gameError?.message || 'Unable to create game.');
+      timer.end({ error: gameError });
     } finally {
       setSavingGame(false);
     }
@@ -788,13 +865,20 @@ export function Schedule({ auth }: { auth: AuthState }) {
     setTournamentFormError(null);
     setStatusMessage(null);
     clearScheduleReadError();
+    const timer = startWorkflowTimer(WORKFLOW_TIMING.scheduleCreateTournament, {
+      route: 'schedule',
+      gameCount: tournamentForm.games.length
+    });
     try {
       await createScheduledTournamentBlockForApp(selectedCalendarTeam.teamId, tournamentForm, auth.user);
       setTournamentForm(getDefaultScheduleTournamentForm());
+      setScheduleStaffToolMode('menu');
       await refreshSchedule(true);
       setStatusMessage('Tournament created and schedule refreshed.');
+      timer.end({ refreshed: true });
     } catch (tournamentError: any) {
       setTournamentFormError(tournamentError?.message || 'Unable to create tournament.');
+      timer.end({ error: tournamentError });
     } finally {
       setSavingTournament(false);
     }
@@ -807,13 +891,19 @@ export function Schedule({ auth }: { auth: AuthState }) {
     setPracticeFormError(null);
     setStatusMessage(null);
     clearScheduleReadError();
+    const timer = startWorkflowTimer(WORKFLOW_TIMING.scheduleCreatePractice, {
+      route: 'schedule',
+      recurring: Boolean(practiceForm.recurrence?.isRecurring)
+    });
     try {
       await createScheduledPracticeForApp(selectedCalendarTeam.teamId, practiceForm, auth.user);
       setPracticeForm(getDefaultSchedulePracticeForm());
       await refreshSchedule(true);
       setStatusMessage(practiceForm.recurrence?.isRecurring ? 'Recurring practice series created and schedule refreshed.' : 'Practice created and schedule refreshed.');
+      timer.end({ refreshed: true });
     } catch (practiceError: any) {
       setPracticeFormError(practiceError?.message || 'Unable to create practice.');
+      timer.end({ error: practiceError });
     } finally {
       setSavingPractice(false);
     }
@@ -934,6 +1024,12 @@ export function Schedule({ auth }: { auth: AuthState }) {
       }));
 
     setProcessingAiImport(true);
+    const timer = startWorkflowTimer(WORKFLOW_TIMING.scheduleAiPreview, {
+      route: 'schedule',
+      imageAttached: Boolean(aiScheduleImage),
+      textLengthBucket: aiScheduleText ? Math.min(5000, Math.ceil(aiScheduleText.length / 250) * 250) : 0,
+      currentGameCount: currentGames.length
+    });
     try {
       const { generateScheduleAiImportRows } = await loadScheduleAiImportModule();
       const result = await generateScheduleAiImportRows({
@@ -948,6 +1044,13 @@ export function Schedule({ auth }: { auth: AuthState }) {
       if (result.rows.length) {
         setStatusMessage(`AI generated ${result.rows.length} draft game row(s). Review them below before importing.`);
       }
+      timer.end({
+        rowCount: result.rows.length,
+        errorCount: result.errors.length
+      });
+    } catch (aiError: any) {
+      setAiImportErrors([aiError?.message || 'Unable to generate schedule preview.']);
+      timer.end({ error: aiError });
     } finally {
       setProcessingAiImport(false);
     }
@@ -975,47 +1078,67 @@ export function Schedule({ auth }: { auth: AuthState }) {
     const totalCount = csvPreviewRows.length;
     let importedCount = 0;
     const successfulImportIds: string[] = [];
-    for (const [index, row] of csvPreviewRows.entries()) {
-      const normalizedRow = {
-        ...row.normalized,
-        importBatch: {
-          batchId: importBatchId,
-          totalCount,
-          rowNumber: row.normalized.rowNumber || row.rowNumber || index + 1,
-          importedAt: importBatchTimestamp,
-          importedBy: auth.user.uid
+    const timer = startWorkflowTimer(WORKFLOW_TIMING.scheduleImport, {
+      route: 'schedule',
+      source: scheduleImportPreviewSource || 'csv',
+      rowCount: totalCount
+    });
+    try {
+      for (const [index, row] of csvPreviewRows.entries()) {
+        const normalizedRow = {
+          ...row.normalized,
+          importBatch: {
+            batchId: importBatchId,
+            totalCount,
+            rowNumber: row.normalized.rowNumber || row.rowNumber || index + 1,
+            importedAt: importBatchTimestamp,
+            importedBy: auth.user.uid
+          }
+        };
+        try {
+          const createdId = row.normalized.eventType === 'game'
+            ? await createScheduleImportGame(selectedCalendarTeam.teamId, normalizedRow, auth.user)
+            : await createScheduleImportPractice(selectedCalendarTeam.teamId, normalizedRow, auth.user);
+          if (createdId) {
+            successfulImportIds.push(createdId);
+          }
+          importedCount += 1;
+        } catch (importError: any) {
+          failedRows.push({
+            ...row,
+            errors: [importError?.message || 'Import failed for this row.']
+          });
         }
-      };
-      try {
-        const createdId = row.normalized.eventType === 'game'
-          ? await createScheduleImportGame(selectedCalendarTeam.teamId, normalizedRow, auth.user)
-          : await createScheduleImportPractice(selectedCalendarTeam.teamId, normalizedRow, auth.user);
-        if (createdId) {
-          successfulImportIds.push(createdId);
+      }
+
+      if (totalCount > 3 && importedCount > 0) {
+        try {
+          await finalizeScheduleImportBatch(selectedCalendarTeam.teamId, importBatchId, successfulImportIds.length || importedCount, auth.user);
+        } catch {
+          // Ignore notification finalization errors so successful imports still complete.
         }
-        importedCount += 1;
-      } catch (importError: any) {
-        failedRows.push({
-          ...row,
-          errors: [importError?.message || 'Import failed for this row.']
-        });
       }
-    }
 
-    if (totalCount > 3 && importedCount > 0) {
-      try {
-        await finalizeScheduleImportBatch(selectedCalendarTeam.teamId, importBatchId, successfulImportIds.length || importedCount, auth.user);
-      } catch {
-        // Ignore notification finalization errors so successful imports still complete.
-      }
+      setCsvPreviewRows(failedRows);
+      await refreshSchedule(true);
+      setStatusMessage(failedRows.length
+        ? `Imported ${importedCount} row(s); ${failedRows.length} row(s) failed and remain below for retry.`
+        : `Imported ${importedCount} schedule row(s) and refreshed the schedule.`);
+      timer.end({
+        importedCount,
+        failedRowCount: failedRows.length,
+        refreshed: true
+      });
+    } catch (importError: any) {
+      setCsvImportErrors([importError?.message || 'Unable to import schedule rows.']);
+      timer.end({
+        importedCount,
+        failedRowCount: failedRows.length,
+        error: importError
+      });
+    } finally {
+      setImportingCsv(false);
     }
-
-    setCsvPreviewRows(failedRows);
-    await refreshSchedule(true);
-    setStatusMessage(failedRows.length
-      ? `Imported ${importedCount} row(s); ${failedRows.length} row(s) failed and remain below for retry.`
-      : `Imported ${importedCount} schedule row(s) and refreshed the schedule.`);
-    setImportingCsv(false);
   };
 
   const handleAddCalendarUrl = async (event: FormEvent<HTMLFormElement>) => {
@@ -1372,7 +1495,13 @@ export function Schedule({ auth }: { auth: AuthState }) {
               open={desktopStaffToolsOpen}
               teamName={selectedCalendarTeam?.teamName || null}
               contentId="desktop-schedule-staff-tools"
-              onToggle={() => setDesktopStaffToolsOpen((current) => !current)}
+              onToggle={() => setDesktopStaffToolsOpen((current) => {
+                const nextOpen = !current;
+                if (!nextOpen) {
+                  setScheduleStaffToolMode('menu');
+                }
+                return nextOpen;
+              })}
             >
               {renderScheduleStaffToolsContent()}
             </ScheduleStaffToolsSection>
@@ -1385,7 +1514,11 @@ export function Schedule({ auth }: { auth: AuthState }) {
               contentId="mobile-schedule-staff-tools"
               onToggle={() => setMobileStaffToolsOpen((current) => {
                 const nextOpen = !current;
-                if (nextOpen) requestTrackerConfigLoad();
+                if (nextOpen) {
+                  requestTrackerConfigLoad();
+                } else {
+                  setScheduleStaffToolMode('menu');
+                }
                 return nextOpen;
               })}
             >
@@ -1489,7 +1622,46 @@ function ScheduleGameCreatePanel({ teamName, form, configs, saving, error, confi
   );
 }
 
-function ScheduleTournamentCreatePanel({ teamName, form, configs, saving, error, configError, onStartUsing, onChange, onSubmit }: { teamName: string; form: ScheduleTournamentCreateFormInput; configs: ScheduleStatTrackerConfigOption[]; saving: boolean; error: string | null; configError: string | null; onStartUsing?: () => void; onChange: (form: ScheduleTournamentCreateFormInput) => void; onSubmit: (event: FormEvent<HTMLFormElement>) => void }) {
+function ScheduleTournamentEntryCard({ teamName, onOpen }: { teamName: string; onOpen: () => void }) {
+  return (
+    <section className="app-card p-3 sm:p-4" aria-label="Tournament entry point">
+      <div className="app-label">Tournament scheduling</div>
+      <h2 className="mt-1 text-base font-black text-gray-950">Start a new tournament block</h2>
+      <p className="mt-1 text-sm font-semibold leading-6 text-gray-600">Open a tournament shell for {teamName} without creating any schedule data yet.</p>
+      <button type="button" className="primary-button mt-3" onClick={onOpen}>New tournament block</button>
+    </section>
+  );
+}
+
+function ScheduleTournamentCreateModal({ children, saving, onClose }: { children: ReactNode; saving: boolean; onClose: () => void }) {
+  return (
+    <Modal overlayClassName="z-[70] flex items-end justify-center bg-gray-950/40 p-0 sm:items-center sm:p-6" ariaLabel="Create tournament block" onClose={onClose}>
+      <section className="relative w-full overflow-hidden rounded-t-3xl bg-white shadow-2xl sm:mx-auto sm:max-w-4xl sm:rounded-2xl">
+        <div className="flex items-start justify-between gap-3 border-b border-gray-100 px-4 py-3">
+          <div className="min-w-0">
+            <div className="app-label">Staff schedule tools</div>
+            <h2 className="mt-1 text-lg font-black text-gray-950">Create tournament block</h2>
+            <p className="mt-1 text-xs font-semibold text-gray-500">Review the tournament shell, then cancel back to Schedule or create the block when you are ready.</p>
+          </div>
+          <button
+            type="button"
+            className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-gray-200 bg-white text-lg font-black leading-none text-gray-500 transition hover:border-gray-300 hover:text-gray-700 disabled:cursor-not-allowed disabled:opacity-60"
+            aria-label="Close tournament shell"
+            disabled={saving}
+            onClick={onClose}
+          >
+            <span aria-hidden="true">×</span>
+          </button>
+        </div>
+        <div className="max-h-[85vh] overflow-y-auto p-3 sm:p-4">
+          {children}
+        </div>
+      </section>
+    </Modal>
+  );
+}
+
+function ScheduleTournamentCreatePanel({ teamName, form, configs, saving, error, configError, onStartUsing, onChange, onCancel, onSubmit }: { teamName: string; form: ScheduleTournamentCreateFormInput; configs: ScheduleStatTrackerConfigOption[]; saving: boolean; error: string | null; configError: string | null; onStartUsing?: () => void; onChange: (form: ScheduleTournamentCreateFormInput) => void; onCancel: () => void; onSubmit: (event: FormEvent<HTMLFormElement>) => void }) {
   const updateField = (field: keyof Omit<ScheduleTournamentCreateFormInput, 'games'>, value: string) => onChange({ ...form, [field]: value });
   const updateGame = (index: number, field: keyof ScheduleGameFormInput, value: string | Date | boolean | null) => onChange({
     ...form,
@@ -1499,7 +1671,7 @@ function ScheduleTournamentCreatePanel({ teamName, form, configs, saving, error,
   const removeGame = (index: number) => onChange({ ...form, games: form.games.filter((_, gameIndex) => gameIndex !== index) });
 
   return (
-    <section className="app-card p-3 sm:p-4" aria-label="Create tournament" onFocusCapture={onStartUsing}>
+    <section className="app-card border-0 p-0 shadow-none sm:p-0" aria-label="Create tournament" onFocusCapture={onStartUsing}>
       <div className="app-label">Tournament scheduling</div>
       <h2 className="mt-1 text-base font-black text-gray-950">Add tournament for {teamName}</h2>
       <form className="mt-3 space-y-3" onSubmit={onSubmit}>
@@ -1534,7 +1706,10 @@ function ScheduleTournamentCreatePanel({ teamName, form, configs, saving, error,
         <div className="flex flex-wrap gap-2">
           <button type="button" className="rounded-full border border-gray-300 px-3 py-2 text-sm font-black text-gray-700" onClick={addGame} disabled={saving}>Add another game</button>
         </div>
-        <button type="submit" className="primary-button" disabled={saving}>{saving ? 'Creating tournament' : 'Create tournament'}</button>
+        <div className="flex flex-wrap gap-2">
+          <button type="submit" className="primary-button" disabled={saving}>{saving ? 'Creating tournament' : 'Create tournament'}</button>
+          <button type="button" className="secondary-button" onClick={onCancel} disabled={saving}>Cancel</button>
+        </div>
         {configError ? <div className="rounded-2xl border border-amber-200 bg-amber-50 px-3 py-2 text-sm font-bold text-amber-700">{configError}</div> : null}
         {error ? <div className="rounded-2xl border border-rose-200 bg-rose-50 px-3 py-2 text-sm font-bold text-rose-700">{error}</div> : null}
       </form>

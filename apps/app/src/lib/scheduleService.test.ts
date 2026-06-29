@@ -44,6 +44,18 @@ vi.mock('./adapters/legacyScheduleDb', () => ({
   getTeams: vi.fn(),
   addGame: vi.fn(),
   addPractice: vi.fn(),
+  buildLegacyTournamentGameDocument: vi.fn((payload: Record<string, unknown>, tournament: Record<string, unknown>) => ({
+    ...payload,
+    competitionType: 'tournament',
+    tournament
+  })),
+  buildLegacyTournamentGameDocuments: vi.fn((games: Array<Record<string, unknown> | null | undefined>, tournament: Record<string, unknown>) => games
+    .filter((game): game is Record<string, unknown> => Boolean(game && typeof game === 'object' && !Array.isArray(game)))
+    .map((game) => ({
+      ...game,
+      competitionType: 'tournament',
+      tournament
+    }))),
   clearOccurrenceOverride: vi.fn(),
   createRideOffer: vi.fn(),
   claimAssignmentSlot: vi.fn(),
@@ -160,7 +172,7 @@ vi.mock('./appDataCache', () => ({
   getParentScheduleSummaryCacheKey: (userId: string) => `app-schedule-summary:${userId}`
 }));
 
-import { addGame, addPractice, broadcastLiveEvent, claimOpenOfficiatingSlot, clearOccurrenceOverride, releaseAssignmentClaim, respondToOfficiatingAssignment, updateEvent, updateGame, updateOccurrence, getAssignmentClaims, getGame, getGames, getPlayers, getPracticeSession, getPracticeSessions, getRsvpBreakdownByPlayer, getRsvpSummaries, getRsvps, getTeam, getTeams, listRideOffersForEvent, submitRsvpForPlayer, updatePracticeAttendance, getDoc, getDocs } from './adapters/legacyScheduleDb';
+import { addGame, addPractice, broadcastLiveEvent, buildLegacyTournamentGameDocuments, claimOpenOfficiatingSlot, clearOccurrenceOverride, releaseAssignmentClaim, respondToOfficiatingAssignment, updateEvent, updateGame, updateOccurrence, getAssignmentClaims, getGame, getGames, getPlayers, getPracticeSession, getPracticeSessions, getRsvpBreakdownByPlayer, getRsvpSummaries, getRsvps, getTeam, getTeams, listRideOffersForEvent, submitRsvpForPlayer, updatePracticeAttendance, getDoc, getDocs } from './adapters/legacyScheduleDb';
 import { getNativeAuthIdToken } from './authService';
 import { expandRecurrence, fetchAndParseCalendar, isTeamActive } from './adapters/legacyScheduleHelpers';
 import { getCachedAppData, loadCachedAppData } from './appDataCache';
@@ -366,6 +378,23 @@ describe('scheduled tournament writes', () => {
     }, coachUser);
 
     expect(createdIds).toEqual(['game-1', 'game-2']);
+    expect(buildLegacyTournamentGameDocuments).toHaveBeenCalledWith([
+      expect.objectContaining({
+        type: 'game',
+        opponent: 'Tigers',
+        competitionType: 'tournament'
+      }),
+      expect.objectContaining({
+        type: 'game',
+        opponent: 'Lions',
+        competitionType: 'tournament'
+      })
+    ], {
+      divisionName: '10U Gold',
+      bracketName: 'Gold Bracket',
+      roundName: 'Semifinal',
+      poolName: 'Pool A'
+    });
     expect(addGame).toHaveBeenCalledTimes(2);
     expect(addGame).toHaveBeenNthCalledWith(1, 'team-1', expect.objectContaining({
       type: 'game',
@@ -381,6 +410,54 @@ describe('scheduled tournament writes', () => {
     expect(addGame).toHaveBeenNthCalledWith(2, 'team-1', expect.objectContaining({
       type: 'game',
       opponent: 'Lions',
+      competitionType: 'tournament',
+      tournament: {
+        divisionName: '10U Gold',
+        bracketName: 'Gold Bracket',
+        roundName: 'Semifinal',
+        poolName: 'Pool A'
+      }
+    }));
+  });
+
+  it('maps a single-game tournament block to one legacy document and one write', async () => {
+    vi.mocked(addGame).mockResolvedValueOnce('game-1' as any);
+
+    const createdIds = await createScheduledTournamentBlockForApp('team-1', {
+      divisionName: '10U Gold',
+      bracketName: 'Gold Bracket',
+      roundName: 'Semifinal',
+      poolName: 'Pool A',
+      games: [
+        {
+          opponent: 'Tigers',
+          startDate: new Date('2026-06-24T18:30:00.000Z'),
+          endDate: new Date('2026-06-24T20:00:00.000Z'),
+          location: 'Main Gym',
+          arrivalTime: new Date('2026-06-24T18:00:00.000Z'),
+          isHome: true,
+          notes: 'Bring dark jerseys'
+        }
+      ]
+    }, coachUser);
+
+    expect(createdIds).toEqual(['game-1']);
+    expect(buildLegacyTournamentGameDocuments).toHaveBeenCalledWith([
+      expect.objectContaining({
+        type: 'game',
+        opponent: 'Tigers',
+        competitionType: 'tournament'
+      })
+    ], {
+      divisionName: '10U Gold',
+      bracketName: 'Gold Bracket',
+      roundName: 'Semifinal',
+      poolName: 'Pool A'
+    });
+    expect(addGame).toHaveBeenCalledTimes(1);
+    expect(addGame).toHaveBeenCalledWith('team-1', expect.objectContaining({
+      type: 'game',
+      opponent: 'Tigers',
       competitionType: 'tournament',
       tournament: {
         divisionName: '10U Gold',
@@ -645,6 +722,83 @@ describe('scheduled practice writes', () => {
       overrides: { __deleteField: true },
       exDates: { __deleteField: true }
     }));
+  });
+
+  it('does not rewrite existing recurrence exDates and overrides on series edits', async () => {
+    const today = new Date();
+    today.setHours(18, 0, 0, 0);
+    const tomorrow = new Date(today);
+    tomorrow.setDate(today.getDate() + 1);
+    const dayAfterTomorrow = new Date(today);
+    dayAfterTomorrow.setDate(today.getDate() + 2);
+    const excludedDate = tomorrow.toISOString().slice(0, 10);
+    const overrideDate = dayAfterTomorrow.toISOString().slice(0, 10);
+
+    const existingMaster = {
+      id: 'practice-master',
+      type: 'practice',
+      title: 'Weekly Practice',
+      date: new Date(today),
+      end: new Date(today.getTime() + 90 * 60000),
+      location: 'Field 2',
+      notes: 'Master note',
+      seriesId: 'series-1',
+      isSeriesMaster: true,
+      recurrence: { freq: 'daily', interval: 1, count: 5 },
+      startTime: '18:00',
+      endTime: '19:30',
+      endDayOffset: 0,
+      exDates: [excludedDate],
+      overrides: {
+        [overrideDate]: {
+          title: 'Adjusted Practice',
+          location: 'South Field'
+        }
+      }
+    };
+    await updateScheduledPracticeForApp('team-1', {
+      title: 'Updated Practice',
+      startDate: new Date(today),
+      endDate: new Date(today.getTime() + 105 * 60000),
+      location: 'North Field',
+      notes: 'Bring water',
+      recurrence: {
+        isRecurring: true,
+        freq: 'daily',
+        interval: 1,
+        byDays: [],
+        endType: 'count',
+        countValue: 5
+      }
+    }, coachUser, {
+      eventId: 'practice-master',
+      seriesId: 'series-1',
+      scope: 'series'
+    });
+
+    expect(getGame).not.toHaveBeenCalled();
+
+    const updateEventCalls = vi.mocked(updateEvent).mock.calls;
+    const [, , payload] = updateEventCalls[updateEventCalls.length - 1] as [string, string, Record<string, unknown>];
+    const { expandRecurrence: actualExpandRecurrence } = await import('../../../../js/utils.js');
+    expect(payload).not.toHaveProperty('exDates');
+    expect(payload).not.toHaveProperty('overrides');
+
+    const expanded = actualExpandRecurrence({
+      ...existingMaster,
+      ...payload
+    }, 10);
+
+    expect(expanded.map((item: any) => item.instanceDate)).not.toContain(excludedDate);
+    expect(expanded.find((item: any) => item.instanceDate === overrideDate)).toMatchObject({
+      title: 'Adjusted Practice',
+      location: 'South Field',
+      isModified: true
+    });
+    expect(expanded.find((item: any) => item.instanceDate === today.toISOString().slice(0, 10))).toMatchObject({
+      title: 'Updated Practice',
+      location: 'North Field'
+    });
   });
 });
 

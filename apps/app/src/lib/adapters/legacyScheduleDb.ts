@@ -144,6 +144,22 @@ export async function getTeams(options?: { includePrivate?: boolean }) {
     return await Promise.resolve(options === undefined ? legacyGetTeams() : legacyGetTeams(options));
 }
 
+export function buildLegacyTournamentGameDocument(payload: Record<string, unknown>, tournament: Record<string, unknown>) {
+    return {
+        ...payload,
+        competitionType: 'tournament',
+        tournament: {
+            ...tournament
+        }
+    };
+}
+
+export function buildLegacyTournamentGameDocuments(games: Array<Record<string, unknown> | null | undefined>, tournament: Record<string, unknown>) {
+    return games
+        .filter((game): game is Record<string, unknown> => Boolean(game && typeof game === 'object' && !Array.isArray(game)))
+        .map((game) => buildLegacyTournamentGameDocument(game, tournament));
+}
+
 export async function addGame(teamId: string, payload: Record<string, unknown>) {
     return await Promise.resolve(legacyAddGame(teamId, payload));
 }

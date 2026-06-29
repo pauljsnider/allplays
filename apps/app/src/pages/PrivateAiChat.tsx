@@ -2,6 +2,7 @@ import { FormEvent, useEffect, useMemo, useRef, useState } from 'react';
 import type { MutableRefObject } from 'react';
 import {
   ChevronRight,
+  ChevronsDown,
   Loader2,
   MessageCircle,
   Mic,
@@ -58,7 +59,13 @@ const starterPrompts = [
   'Who still needs an RSVP?'
 ];
 
+const primaryStarterPrompt = starterPrompts[0];
+const secondaryStarterPrompts = starterPrompts.slice(1);
+const secondarySuggestedPrompts = suggestedPrompts.filter((prompt) => prompt !== primaryStarterPrompt);
+
 const isDraftConversationId = (conversationId: string) => conversationId === DRAFT_PRIVATE_AI_CONVERSATION_ID;
+const draftConversationLabel = 'New chat';
+const draftConversationPreview = 'Start typing. This draft will save after your first message.';
 
 const resolveActiveConversationId = (
   currentConversationId: string,
@@ -293,7 +300,7 @@ export function PrivateAiChat({ auth }: { auth: AuthState }) {
       if (nextConversationId !== activeConversationId) {
         setActiveConversationId(nextConversationId);
       }
-      await refreshConversations(false);
+      await refreshConversations(false, nextConversationId);
     } catch (error: any) {
       setMessages((current) => current.filter((message) => message.id !== optimisticUser.id));
       setDraft(trimmedText);
@@ -390,21 +397,33 @@ export function PrivateAiChat({ auth }: { auth: AuthState }) {
             />
 
             <section className="app-card p-3">
-              <div className="app-label">Ask about</div>
-              <div className="mt-2 space-y-2">
-                {suggestedPrompts.map((prompt) => (
-                  <button
-                    key={prompt}
-                    type="button"
-                    className="private-ai-prompt-button"
-                    onClick={() => sendSuggestion(prompt)}
-                    disabled={sending}
-                  >
-                    <span>{prompt}</span>
-                    <ChevronRight className="h-4 w-4 flex-none" aria-hidden="true" />
-                  </button>
-                ))}
-              </div>
+              {!messages.length ? (
+                <PromptSection
+                  title="Ask about"
+                  primaryPrompt={primaryStarterPrompt}
+                  secondaryPrompts={secondarySuggestedPrompts}
+                  onPrompt={sendSuggestion}
+                  disabled={sending}
+                />
+              ) : (
+                <>
+                  <div className="app-label">Ask about</div>
+                  <div className="mt-2 space-y-2">
+                    {suggestedPrompts.map((prompt) => (
+                      <button
+                        key={prompt}
+                        type="button"
+                        className="private-ai-prompt-button"
+                        onClick={() => sendSuggestion(prompt)}
+                        disabled={sending}
+                      >
+                        <span>{prompt}</span>
+                        <ChevronRight className="h-4 w-4 flex-none" aria-hidden="true" />
+                      </button>
+                    ))}
+                  </div>
+                </>
+              )}
             </section>
           </aside>
           <div className="messages-chat-pane min-w-0">
@@ -471,6 +490,8 @@ function PrivateAiConversationList({
   onNewConversation: () => void;
   compact?: boolean;
 }) {
+  const showDraftConversation = isDraftConversationId(activeConversationId);
+
   if (compact) {
     return (
       <section className="private-ai-conversation-strip" aria-label="AI conversations">
@@ -479,7 +500,19 @@ function PrivateAiConversationList({
             <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
             Loading
           </span>
-        ) : conversations.length ? conversations.map((conversation) => (
+        ) : null}
+        {!loading && showDraftConversation ? (
+          <button
+            type="button"
+            className="private-ai-conversation-chip private-ai-conversation-chip-active"
+            onClick={() => onSelect(DRAFT_PRIVATE_AI_CONVERSATION_ID)}
+            aria-pressed={true}
+          >
+            <MessageCircle className="h-4 w-4" aria-hidden="true" />
+            <span>{draftConversationLabel}</span>
+          </button>
+        ) : null}
+        {!loading && conversations.length ? conversations.map((conversation) => (
           <button
             key={conversation.id}
             type="button"
@@ -490,9 +523,10 @@ function PrivateAiConversationList({
             <MessageCircle className="h-4 w-4" aria-hidden="true" />
             <span>{conversation.title}</span>
           </button>
-        )) : (
+        )) : null}
+        {!loading && !showDraftConversation && !conversations.length ? (
           <span className="private-ai-conversation-chip private-ai-conversation-chip-muted">No saved chats</span>
-        )}
+        ) : null}
       </section>
     );
   }
@@ -521,6 +555,17 @@ function PrivateAiConversationList({
             Loading chats
           </div>
         ) : null}
+        {!loading && showDraftConversation ? (
+          <button
+            type="button"
+            className="private-ai-conversation-button private-ai-conversation-button-active"
+            onClick={() => onSelect(DRAFT_PRIVATE_AI_CONVERSATION_ID)}
+            aria-pressed={true}
+          >
+            <span className="private-ai-conversation-title">{draftConversationLabel}</span>
+            <span className="private-ai-conversation-preview">{draftConversationPreview}</span>
+          </button>
+        ) : null}
         {!loading && conversations.length ? conversations.map((conversation) => (
           <button
             key={conversation.id}
@@ -535,7 +580,7 @@ function PrivateAiConversationList({
             </span>
           </button>
         )) : null}
-        {!loading && !conversations.length ? (
+        {!loading && !showDraftConversation && !conversations.length ? (
           <div className="rounded-xl border border-dashed border-gray-300 bg-gray-50 px-3 py-4 text-sm font-bold text-gray-500">
             Start a private chat and it will stay here for later.
           </div>
@@ -671,6 +716,77 @@ function PrivateAiThread({
   );
 }
 
+function PromptSection({
+  title,
+  primaryPrompt,
+  secondaryPrompts,
+  onPrompt,
+  disabled,
+  variant = 'rail'
+}: {
+  title?: string;
+  primaryPrompt: string;
+  secondaryPrompts: string[];
+  onPrompt: (prompt: string) => void;
+  disabled: boolean;
+  variant?: 'rail' | 'welcome';
+}) {
+  const [expanded, setExpanded] = useState(false);
+  const isWelcome = variant === 'welcome';
+  const primaryButtonClass = isWelcome ? 'private-ai-starter-prompt private-ai-starter-prompt-primary' : 'private-ai-prompt-button';
+  const secondaryButtonClass = isWelcome ? 'private-ai-starter-prompt' : 'private-ai-prompt-button';
+
+  return (
+    <div>
+      {title ? <div className="app-label">{title}</div> : null}
+      <div className={isWelcome ? 'private-ai-starter-prompts' : 'mt-2 space-y-2'} aria-label={isWelcome ? 'Starter prompts' : undefined}>
+        <button
+          type="button"
+          className={primaryButtonClass}
+          onClick={() => onPrompt(primaryPrompt)}
+          disabled={disabled}
+        >
+          <span>{primaryPrompt}</span>
+          {isWelcome ? <Send className="h-3.5 w-3.5 flex-none" aria-hidden="true" /> : <ChevronRight className="h-4 w-4 flex-none" aria-hidden="true" />}
+        </button>
+      </div>
+      {secondaryPrompts.length ? (
+        <div className={isWelcome ? 'mt-3' : 'mt-2'}>
+          <button
+            type="button"
+            className={isWelcome ? 'ghost-button !min-h-10 !px-3 text-sm font-bold' : 'ghost-button !min-h-9 !px-2 text-sm font-bold'}
+            onClick={() => setExpanded((current) => !current)}
+            aria-expanded={expanded}
+            aria-controls={`secondary-prompts-${variant}`}
+          >
+            <ChevronsDown className={`h-4 w-4 ${expanded ? 'rotate-180' : ''}`} aria-hidden="true" />
+            More ways to ask
+          </button>
+          {expanded ? (
+            <div
+              id={`secondary-prompts-${variant}`}
+              className={isWelcome ? 'private-ai-starter-prompts mt-3' : 'mt-2 space-y-2'}
+            >
+              {secondaryPrompts.map((prompt) => (
+                <button
+                  key={prompt}
+                  type="button"
+                  className={secondaryButtonClass}
+                  onClick={() => onPrompt(prompt)}
+                  disabled={disabled}
+                >
+                  <span>{prompt}</span>
+                  {isWelcome ? <Send className="h-3.5 w-3.5 flex-none" aria-hidden="true" /> : <ChevronRight className="h-4 w-4 flex-none" aria-hidden="true" />}
+                </button>
+              ))}
+            </div>
+          ) : null}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 function PrivateAiWelcome({
   sending,
   onStarterPrompt
@@ -687,19 +803,14 @@ function PrivateAiWelcome({
       <div className="mt-1 text-sm font-semibold leading-6 text-gray-500">
         Ask about your teams, schedule, messages, fees, player development, coaching ideas, registrations, and profile.
       </div>
-      <div className="private-ai-starter-prompts" aria-label="Starter prompts">
-        {starterPrompts.map((prompt) => (
-          <button
-            key={prompt}
-            type="button"
-            className="private-ai-starter-prompt"
-            onClick={() => onStarterPrompt(prompt)}
-            disabled={sending}
-          >
-            <span>{prompt}</span>
-            <Send className="h-3.5 w-3.5 flex-none" aria-hidden="true" />
-          </button>
-        ))}
+      <div className="mt-4">
+        <PromptSection
+          primaryPrompt={primaryStarterPrompt}
+          secondaryPrompts={secondaryStarterPrompts}
+          onPrompt={onStarterPrompt}
+          disabled={sending}
+          variant="welcome"
+        />
       </div>
     </div>
   );

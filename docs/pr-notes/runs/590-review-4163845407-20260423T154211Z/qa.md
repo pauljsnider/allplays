@@ -13,8 +13,8 @@ Users hit cached `auth.js` from pre-fix deploy paths and miss the fail-closed Go
 - `GITHUB_EVENT_NAME=pull_request GITHUB_BASE_REF=master node scripts/check-critical-cache-bust.mjs` after the cache-bust update is committed.
 
 ## Manual Spot Check
-- Open `login.html` and confirm it imports `./js/auth.js?v=12`.
-- Open one JS consumer such as `js/admin.js` and confirm it imports `./auth.js?v=12`.
+- Open `login.html` and confirm it imports `./js/auth.js?v=38`.
+- Open one JS consumer such as `js/admin.js` and confirm it imports `./auth.js?v=38`.
 
 ## Exit Criteria
 - Unit tests above pass.

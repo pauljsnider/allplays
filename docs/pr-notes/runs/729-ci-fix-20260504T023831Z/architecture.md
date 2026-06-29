@@ -6,7 +6,7 @@
 - No production behavior changes are needed for this CI-only failure.
 
 ## Architecture Decisions
-- Root cause is test fixture drift: `team.html` now imports `getAdSpaceSponsors` from `js/db.js?v=18`, but the Playwright smoke stub for `js/db.js` does not export it.
+- Root cause is test fixture drift: `team.html` now imports `getAdSpaceSponsors` from `js/db.js?v=76`, but the Playwright smoke stub for `js/db.js` does not export it.
 - Keep fix scoped to the smoke test fixture rather than adding defensive production code, because production `js/db.js` already exports `getAdSpaceSponsors`.
 
 ## Risks And Rollback

@@ -91,36 +91,64 @@ function isReversalStatBroadcast(event) {
     return text.startsWith('UNDO ') || text.startsWith('REMOVE ');
 }
 
+function findReversedLogEntryIndex(entries, event) {
+    const reversedValue = Math.abs(Number(event?.value || 0));
+    const playerId = event?.playerId || null;
+    const statKey = String(event?.statKey || '').toLowerCase();
+    const isOpponent = Boolean(event?.isOpponent);
+
+    for (let index = entries.length - 1; index >= 0; index -= 1) {
+        const undoData = entries[index]?.undoData;
+        if (!undoData || undoData.type !== 'stat') continue;
+        if ((undoData.playerId || null) !== playerId) continue;
+        if (String(undoData.statKey || '').toLowerCase() !== statKey) continue;
+        if (Boolean(undoData.isOpponent) !== isOpponent) continue;
+        if (Number(undoData.value || 0) !== reversedValue) continue;
+        return index;
+    }
+
+    return -1;
+}
+
 export function buildResumeLogFromLiveEvents(liveEvents = [], { now = () => Date.now() } = {}) {
     if (!Array.isArray(liveEvents) || liveEvents.length === 0) return [];
 
-    return liveEvents
-        .map((event, index) => {
-            const type = event?.type;
-            if (type !== 'stat' && type !== 'note') return null;
-            if (isReversalStatBroadcast(event)) return null;
+    const entries = [];
 
-            const text = typeof event?.description === 'string' ? event.description.trim() : '';
-            if (!text) return null;
+    liveEvents.forEach((event, index) => {
+        const type = event?.type;
+        if (type !== 'stat' && type !== 'note') return;
 
-            const createdAtMs = toMillis(event.createdAt);
-            const clock = Number(event?.gameClockMs);
-            const entry = {
-                text,
-                ts: createdAtMs ?? now(),
-                period: typeof event?.period === 'string' ? event.period : '',
-                clock: formatResumeLogClock(Number.isFinite(clock) ? clock : 0),
-                __resumeOrder: index,
-                __resumeCreatedAtMs: createdAtMs
-            };
-
-            if (type === 'stat') {
-                entry.undoData = buildStatUndoDataFromLiveEvent(event);
+        if (isReversalStatBroadcast(event)) {
+            const reversedIndex = findReversedLogEntryIndex(entries, event);
+            if (reversedIndex >= 0) {
+                entries.splice(reversedIndex, 1);
             }
+            return;
+        }
 
-            return entry;
-        })
-        .filter(Boolean)
+        const text = typeof event?.description === 'string' ? event.description.trim() : '';
+        if (!text) return;
+
+        const createdAtMs = toMillis(event.createdAt);
+        const clock = Number(event?.gameClockMs);
+        const entry = {
+            text,
+            ts: createdAtMs ?? now(),
+            period: typeof event?.period === 'string' ? event.period : '',
+            clock: formatResumeLogClock(Number.isFinite(clock) ? clock : 0),
+            __resumeOrder: index,
+            __resumeCreatedAtMs: createdAtMs
+        };
+
+        if (type === 'stat') {
+            entry.undoData = buildStatUndoDataFromLiveEvent(event);
+        }
+
+        entries.push(entry);
+    });
+
+    return entries
         .sort((a, b) => {
             const aTime = Number.isFinite(a.__resumeCreatedAtMs) ? a.__resumeCreatedAtMs : null;
             const bTime = Number.isFinite(b.__resumeCreatedAtMs) ? b.__resumeCreatedAtMs : null;

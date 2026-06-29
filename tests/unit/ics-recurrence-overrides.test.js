@@ -76,7 +76,7 @@ describe('parseICS recurrence overrides', () => {
         expect(events[1].id).toBe('practice-series__2026-03-09T18:00:00.000Z');
     });
 
-    it('suppresses generated occurrences for sparse cancelled exceptions', () => {
+    it('preserves cancelled recurring exceptions as cancelled occurrences', () => {
         const ics = [
             'BEGIN:VCALENDAR',
             'BEGIN:VEVENT',
@@ -96,14 +96,20 @@ describe('parseICS recurrence overrides', () => {
 
         const events = parseICS(ics).sort((a, b) => a.dtstart - b.dtstart);
 
-        expect(events).toHaveLength(2);
+        expect(events).toHaveLength(3);
         expect(events.map((event) => event.dtstart.toISOString())).toEqual([
             '2026-03-02T18:00:00.000Z',
+            '2026-03-09T18:00:00.000Z',
             '2026-03-16T18:00:00.000Z'
         ]);
         expect(events.map((event) => event.id)).toEqual([
             'practice-series__2026-03-02T18:00:00.000Z',
+            'practice-series__2026-03-09T18:00:00.000Z',
             'practice-series__2026-03-16T18:00:00.000Z'
         ]);
+        expect(events[1].status).toBe('CANCELLED');
+        expect(events[1].recurrenceId.toISOString()).toBe('2026-03-09T18:00:00.000Z');
+        expect(events[1].dtend.toISOString()).toBe('2026-03-09T19:00:00.000Z');
+        expect(events[1].summary).toBe('Team Practice');
     });
 });
