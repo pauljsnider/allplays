@@ -122,6 +122,11 @@ export function AccessTool({ auth, onAccessChanged }: { auth: AuthState; onAcces
     }, [deepLinkedTeamId, loadTeams, loadingTeams, teams.length]);
 
     useEffect(() => {
+        if (deepLinkedTeamId) return;
+        appliedDeepLinkRef.current = '';
+    }, [deepLinkedTeamId]);
+
+    useEffect(() => {
         // Wait until teams have loaded so we can tell whether the deep-linked team
         // is accessible before reconciling the selection.
         if (!deepLinkedTeamId || appliedDeepLinkRef.current === deepLinkedTeamId) return;

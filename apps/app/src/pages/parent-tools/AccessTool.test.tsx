@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { act } from 'react';
-import { render, waitFor, cleanup } from '@testing-library/react';
+import { fireEvent, render, waitFor, cleanup } from '@testing-library/react';
 import { MemoryRouter, Route, Routes, useNavigate } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { AccessTool } from './AccessTool';
@@ -91,5 +91,28 @@ describe('AccessTool deep-link reconciliation (#3088)', () => {
             expect(select?.value).toBe('');
         });
         expect(accessServiceMocks.loadParentAccessPlayers).not.toHaveBeenCalledWith('team-z');
+    });
+
+    it('reapplies the same deep link after the param is cleared', async () => {
+        const view = renderTool('team-a');
+        await waitFor(() => expect(accessServiceMocks.loadParentAccessPlayers).toHaveBeenCalledWith('team-a'));
+
+        await act(async () => {
+            navigate('/parent-tools/access');
+        });
+        await waitFor(() => expect(window.location.search).toBe(''));
+
+        accessServiceMocks.loadParentAccessPlayers.mockClear();
+        const teamSelect = view.container.querySelector('#parent-access-team') as HTMLSelectElement;
+        fireEvent.change(teamSelect, { target: { value: 'team-b' } });
+        await waitFor(() => expect(accessServiceMocks.loadParentAccessPlayers).toHaveBeenCalledWith('team-b'));
+
+        accessServiceMocks.loadParentAccessPlayers.mockClear();
+
+        await act(async () => {
+            navigate('/parent-tools/access?teamId=team-a');
+        });
+
+        await waitFor(() => expect(accessServiceMocks.loadParentAccessPlayers).toHaveBeenCalledWith('team-a'));
     });
 });
