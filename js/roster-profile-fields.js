@@ -224,7 +224,7 @@ function isPublicRosterField(field = {}) {
 
 function isParentReadablePrivateRosterField(field = {}) {
     const visibility = getRosterFieldVisibility(field);
-    return visibility === 'team' || visibility === 'parents';
+    return visibility === 'team' || visibility === 'parents' || visibility === 'admins';
 }
 
 export function splitRosterProfileValuesByVisibility(fields = [], values = {}) {

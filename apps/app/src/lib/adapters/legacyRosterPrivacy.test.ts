@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { normalizeRosterFieldDefinitions, splitRosterProfileValuesByVisibility } from './legacyRosterPrivacy';
 
 describe('legacy roster privacy adapter', () => {
-    it('keeps team and parents roster fields out of public player profile storage without exposing admin-only values', () => {
+    it('keeps restricted roster fields out of public player profile storage while preserving private values', () => {
         const fields = normalizeRosterFieldDefinitions([
             { key: 'nickname', label: 'Nickname', visibility: 'public' },
             { key: 'birthDate', label: 'Birth Date', type: 'date', visibility: 'team' },
@@ -19,7 +19,8 @@ describe('legacy roster privacy adapter', () => {
             publicValues: { nickname: 'Rocket' },
             privateValues: {
                 birthDate: '2014-02-03',
-                jerseySize: 'YM'
+                jerseySize: 'YM',
+                medicalNote: 'Peanut allergy'
             }
         });
     });

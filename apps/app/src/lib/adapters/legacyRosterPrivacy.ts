@@ -139,7 +139,7 @@ function splitByDefinitionVisibility(fields: RosterFieldDefinition[], values: Ro
         const visibility = normalizeVisibility(field.visibility);
         if (visibility === 'public') {
             acc.publicValues[field.key] = values[field.key];
-        } else if (visibility === 'team' || visibility === 'parents') {
+        } else if (visibility === 'team' || visibility === 'parents' || visibility === 'admins') {
             acc.privateValues[field.key] = values[field.key];
         }
         return acc;
