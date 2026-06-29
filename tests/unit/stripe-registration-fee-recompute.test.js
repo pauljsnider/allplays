@@ -7,7 +7,8 @@ const source = readFileSync(new URL('../../functions/index.js', import.meta.url)
 function extractFunction(name) {
     const start = source.indexOf(`function ${name}`);
     if (start === -1) throw new Error(`${name} not found`);
-    const bodyStart = source.indexOf('{', start);
+    const signatureEnd = source.indexOf(') {', start);
+    const bodyStart = source.indexOf('{', signatureEnd);
     let depth = 0;
     for (let index = bodyStart; index < source.length; index += 1) {
         const char = source[index];
@@ -20,34 +21,8 @@ function extractFunction(name) {
 
 function loadServerFeeHelpers() {
     return Function(`
-        function isServerDiscountRuleEligible(rule, { now }) {
-            if (rule.type === 'quantity') return true;
-            if (rule.type === 'early_bird') {
-                const deadline = Date.parse(rule.earlyBirdDeadline + 'T23:59:59.999');
-                return Number.isFinite(deadline) && now.getTime() <= deadline;
-            }
-            return false;
-        }
-        function normalizeServerRegistrationDiscountRules(rules) {
-            if (!Array.isArray(rules)) return [];
-            return rules
-                .map((rule, index) => {
-                    const type = String(rule?.type || '').toLowerCase();
-                    const amountType = rule?.amountType === 'percent' ? 'percent' : 'fixed';
-                    const amountValue = Math.max(0, Number(rule?.amountValue || 0));
-                    if (!['early_bird', 'quantity'].includes(type) || amountValue <= 0) return null;
-                    return {
-                        id: String(rule?.id || 'discount_' + (index + 1)).trim(),
-                        type,
-                        amountType,
-                        amountValue,
-                        earlyBirdDeadline: String(rule?.earlyBirdDeadline || '').trim(),
-                        minimumQuantity: Math.max(1, Math.floor(Number(rule?.minimumQuantity || 1))),
-                        active: rule?.active !== false
-                    };
-                })
-                .filter(Boolean);
-        }
+        ${extractFunction('isServerDiscountRuleEligible')}
+        ${extractFunction('normalizeServerRegistrationDiscountRules')}
         ${extractFunction('computeRegistrationFeeAmountCentsFromForm')}
         return { computeRegistrationFeeAmountCentsFromForm };
     `)();
@@ -55,7 +30,7 @@ function loadServerFeeHelpers() {
 
 describe('server-side registration fee recomputation (issue #2243)', () => {
     it('defines computeRegistrationFeeAmountCentsFromForm in functions/index.js', () => {
-        expect(source).toContain('function computeRegistrationFeeAmountCentsFromForm(form, now = new Date())');
+        expect(source).toContain('function computeRegistrationFeeAmountCentsFromForm(form, now = new Date(), options = {})');
     });
 
     it('defines normalizeServerRegistrationDiscountRules in functions/index.js', () => {
@@ -64,7 +39,8 @@ describe('server-side registration fee recomputation (issue #2243)', () => {
 
     it('getRegistrationCheckoutAmountCents accepts a form argument and calls computeRegistrationFeeAmountCentsFromForm', () => {
         expect(source).toContain('function getRegistrationCheckoutAmountCents(registration = {}, form = null)');
-        expect(source).toContain('return computeRegistrationFeeAmountCentsFromForm(form)');
+        expect(source).toContain('return computeRegistrationFeeAmountCentsFromForm(form, new Date(), {');
+        expect(source).toContain('quantity: registration.feeSnapshot?.quantity || 1');
     });
 
     it('createStripeRegistrationCheckout passes form to getRegistrationCheckoutAmountCents', () => {
@@ -141,11 +117,27 @@ describe('server-side registration fee recomputation (issue #2243)', () => {
         expect(computeRegistrationFeeAmountCentsFromForm(form, now)).toBe(7650);
     });
 
+    it('the server-side fee helper only applies quantity discounts when submitted quantity meets the minimum', () => {
+        const { computeRegistrationFeeAmountCentsFromForm } = loadServerFeeHelpers();
+        const now = new Date('2026-02-01T12:00:00Z');
+        const form = {
+            feeAmountCents: 10000,
+            currency: 'USD',
+            discountRules: [
+                { id: 'sibling', type: 'quantity', amountType: 'fixed', amountValue: 2000, minimumQuantity: 2, active: true }
+            ]
+        };
+
+        expect(computeRegistrationFeeAmountCentsFromForm(form, now, { quantity: 1 })).toBe(10000);
+        expect(computeRegistrationFeeAmountCentsFromForm(form, now, { quantity: 2 })).toBe(18000);
+    });
+
     it('tampered feeSnapshot on the stored registration document cannot lower the Stripe charge amount', () => {
         // This test documents the invariant: even if a registration document were written with
         // feeSnapshot.finalAmountDueCents = 1 (tampered), the checkout function ignores it
         // because it calls getRegistrationCheckoutAmountCents(registration, form) which uses
-        // computeRegistrationFeeAmountCentsFromForm(form) — derived from the form, not the registration.
+        // computeRegistrationFeeAmountCentsFromForm(form, now, { quantity }) — derived from the
+        // authoritative form plus the server-captured registration quantity, not the stored amount.
         // We assert this via the source check above and via the algorithm test below.
         const tamperedRegistration = {
             feeSnapshot: { finalAmountDueCents: 1 },
