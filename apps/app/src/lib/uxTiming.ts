@@ -57,7 +57,7 @@ export function startUxTimer(label: string, baseMeta: Record<string, unknown> = 
       // leaked count makes later spans with the same label look already-active,
       // so startFirebaseTrace skips them and they never export. Intentionally
       // does NOT record a completed UX timing.
-      performanceSpan.end({ ...baseMeta, ...meta, abandoned: true });
+      performanceSpan.end({ ...baseMeta, ...meta, abandoned: true, outcome: 'abandoned' });
     }
   };
 }
