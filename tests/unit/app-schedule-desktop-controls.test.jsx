@@ -411,7 +411,13 @@ describe('React app desktop Schedule controls', () => {
         await waitForText(container, 'Create tournament block');
 
         const divisionInput = container.querySelector('input[aria-label="Tournament division"]');
+        const bracketInput = container.querySelector('input[aria-label="Tournament bracket"]');
+        const roundInput = container.querySelector('input[aria-label="Tournament round"]');
+        const opponentInput = container.querySelector('input[aria-label="Game 1 opponent"]');
         await changeInput(divisionInput, 'Gold');
+        await changeInput(bracketInput, 'Gold Bracket');
+        await changeInput(roundInput, 'Semifinal');
+        await changeInput(opponentInput, 'Tigers');
         await clickButton(container, 'Create tournament');
         await waitForText(container, 'Creating tournament');
 
