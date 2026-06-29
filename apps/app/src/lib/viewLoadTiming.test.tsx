@@ -6,9 +6,11 @@ import { useViewLoadTimer, getViewLoadTimingLabel } from './viewLoadTiming';
 
 const uxTimingMocks = vi.hoisted(() => {
   const timerEnd = vi.fn<(meta?: Record<string, unknown>) => void>();
+  const timerCancel = vi.fn<(meta?: Record<string, unknown>) => void>();
   return {
     timerEnd,
-    startUxTimer: vi.fn<(label: string, baseMeta?: Record<string, unknown>) => { end: typeof timerEnd }>(() => ({ end: timerEnd }))
+    timerCancel,
+    startUxTimer: vi.fn<(label: string, baseMeta?: Record<string, unknown>) => { end: typeof timerEnd; cancel: typeof timerCancel }>(() => ({ end: timerEnd, cancel: timerCancel }))
   };
 });
 
@@ -32,6 +34,7 @@ describe('viewLoadTiming', () => {
   beforeEach(() => {
     uxTimingMocks.startUxTimer.mockClear();
     uxTimingMocks.timerEnd.mockClear();
+    uxTimingMocks.timerCancel.mockClear();
   });
 
   afterEach(() => {
@@ -62,5 +65,35 @@ describe('viewLoadTiming', () => {
     const view = render(<TestViewTimer ready={false} resetKey="a" />);
     view.rerender(<TestViewTimer ready={false} resetKey="b" />);
     expect(uxTimingMocks.startUxTimer).toHaveBeenCalledTimes(2);
+  });
+
+  it('cancels (does not complete) an abandoned timer when the view unmounts before ready', () => {
+    const view = render(<TestViewTimer ready={false} />);
+    expect(uxTimingMocks.startUxTimer).toHaveBeenCalledTimes(1);
+
+    view.unmount();
+
+    expect(uxTimingMocks.timerCancel).toHaveBeenCalledTimes(1);
+    expect(uxTimingMocks.timerEnd).not.toHaveBeenCalled();
+  });
+
+  it('cancels the previous timer when the key changes before ready', () => {
+    const view = render(<TestViewTimer ready={false} resetKey="a" />);
+    view.rerender(<TestViewTimer ready={false} resetKey="b" />);
+
+    expect(uxTimingMocks.timerCancel).toHaveBeenCalledTimes(1);
+    expect(uxTimingMocks.timerEnd).not.toHaveBeenCalled();
+  });
+
+  it('does not cancel a timer that completed normally before unmount', async () => {
+    const view = render(<TestViewTimer ready={false} />);
+    view.rerender(<TestViewTimer ready />);
+    await waitFor(() => {
+      expect(uxTimingMocks.timerEnd).toHaveBeenCalledTimes(1);
+    });
+
+    view.unmount();
+
+    expect(uxTimingMocks.timerCancel).not.toHaveBeenCalled();
   });
 });
