@@ -3406,10 +3406,23 @@ Write the match report now:`;
                 await commitBatchIfNeeded(true);
 
                 // 2. Write aggregated stats for each player in chunks
-                for (const [playerId, stats] of Object.entries(gameState.playerStats)) {
+                const playerIdsToPersist = new Set(Object.keys(gameState.playerStats));
+                Object.entries(gameState.playerFieldStatus || {}).forEach(([playerId, fieldStatus]) => {
+                    const timeMs = getPlayerFieldElapsedMs(
+                        gameState.playerFieldStatus,
+                        playerId,
+                        gameState.isRunning ? Date.now() : null
+                    );
+                    if (fieldStatus?.status === 'onField' || timeMs > 0) {
+                        playerIdsToPersist.add(playerId);
+                    }
+                });
+
+                for (const playerId of playerIdsToPersist) {
                     const player = players.find(p => p.id === playerId);
                     if (player) {
                         await commitBatchIfNeeded();
+                        const stats = gameState.playerStats[playerId] || {};
                         const timeMs = getPlayerFieldElapsedMs(
                             gameState.playerFieldStatus,
                             playerId,
@@ -3420,7 +3433,10 @@ Write the match report now:`;
                             playerName: player.name,
                             playerNumber: player.number,
                             stats: stats,
-                            timeMs
+                            timeMs,
+                            participated: true,
+                            participationStatus: 'appeared',
+                            participationSource: 'legacy-live-tracker-finish'
                         });
                         batchWriteCount += 1;
                     }
