@@ -220,7 +220,7 @@ describe('React app parent player detail service', () => {
         expect(dbMocks.getAggregatedStatsForPlayer).toHaveBeenCalledWith('team-1', 'game-final', 'player-1');
         expect(dbMocks.getPlayerPrivateProfile).toHaveBeenCalledWith('team-1', 'player-1');
         expect(dbMocks.listCertificatesForPlayer).toHaveBeenCalledWith('team-1', 'player-1', { status: 'published', limit: 5 });
-        expect(dbMocks.listAthleteProfilesForParent).toHaveBeenCalledWith('user-1');
+        expect(dbMocks.listAthleteProfilesForParent).not.toHaveBeenCalled();
         expect(incentiveMocks.getIncentiveRules).toHaveBeenCalledWith('user-1', 'player-1');
         expect(incentiveMocks.getPaidGames).toHaveBeenCalledWith('user-1', 'player-1');
         expect(incentiveMocks.getCapSetting).toHaveBeenCalledWith('user-1', 'player-1');
@@ -268,9 +268,19 @@ describe('React app parent player detail service', () => {
             maxPerGameCents: 2500
         });
         expect(detail.incentives.currentRules).toHaveLength(1);
-        expect(detail.athleteProfile).toMatchObject({
-            profile: expect.objectContaining({ id: 'profile-1' }),
-            shareUrl: 'https://allplays.ai/athlete-profile.html?profileId=profile-1'
+        expect(detail.athleteProfile).toEqual({
+            profile: null,
+            shareUrl: '',
+            builderUrl: 'https://allplays.ai/athlete-profile-builder.html?teamId=team-1&playerId=player-1',
+            seasonOptions: [
+                {
+                    seasonKey: 'team-1::player-1',
+                    teamId: 'team-1',
+                    teamName: 'Bears',
+                    playerId: 'player-1',
+                    playerName: 'Pat'
+                }
+            ]
         });
     });
 

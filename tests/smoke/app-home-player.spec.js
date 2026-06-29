@@ -962,6 +962,15 @@ async function mockHomePlayerModules(page) {
                     };
                 }
 
+                export async function loadParentPlayerAthleteProfile() {
+                    return {
+                        profile: { id: 'profile-1', athlete: { name: 'Pat Star', headline: '2028 Guard' }, bio: { position: 'Guard' }, privacy: 'public', seasons: [{ teamId: 'team-1', playerId: 'player-1' }] },
+                        shareUrl: 'https://allplays.ai/athlete-profile.html?profileId=profile-1',
+                        builderUrl: 'https://allplays.ai/athlete-profile-builder.html?teamId=team-1&playerId=player-1&profileId=profile-1',
+                        seasonOptions: [{ seasonKey: 'team-1::player-1', teamId: 'team-1', teamName: 'Bears', playerId: 'player-1', playerName: 'Pat Star' }]
+                    };
+                }
+
                 export async function updateParentPlayerEditableProfile() {}
                 export async function savePlayerCustomRosterFieldValues() {}
                 export async function saveStaffPlayerRosterDetails() { return { updatedFields: [] }; }

@@ -80,7 +80,9 @@ const appDataCacheMocks = vi.hoisted(() => ({
 vi.mock('./appDataCache', () => appDataCacheMocks);
 
 import {
+  loadParentPlayerAthleteProfile,
   loadParentPlayerDetail,
+  loadParentPlayerDetailWithAthleteProfile,
   normalizeAthleteProfileHighlightClipUrl,
   saveParentAthleteProfileDraft,
   savePlayerCustomRosterFieldValues,
@@ -685,6 +687,17 @@ describe('loadParentPlayerDetail custom roster fields', () => {
       parentOf: [{ teamId: 'team-1', playerId: 'player-1' }]
     } as any, 'team-1', 'player-1');
 
+    expect(legacyPlayerDbMocks.listAthleteProfilesForParent).not.toHaveBeenCalled();
+    expect(detail.athleteProfile).toEqual(expect.objectContaining({
+      profile: null,
+      shareUrl: '',
+      builderUrl: 'https://allplays.ai/athlete-profile-builder.html?teamId=team-1&playerId=player-1',
+      seasonOptions: [
+        expect.objectContaining({
+          seasonKey: 'team-1::player-1'
+        })
+      ]
+    }));
     expect(detail.customRosterFields).toEqual([
       expect.objectContaining({
         key: 'nickname',
@@ -747,5 +760,93 @@ describe('loadParentPlayerDetail custom roster fields', () => {
       expect.objectContaining({ key: 'nickname', value: 'Rocket' })
     ]);
     expect(detail.customRosterFields.some((field) => field.key === 'jerseySize')).toBe(false);
+  });
+});
+
+describe('loadParentPlayerAthleteProfile', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('loads athlete profiles only when explicitly requested for the profile section', async () => {
+    legacyPlayerDbMocks.listAthleteProfilesForParent.mockResolvedValue([
+      {
+        id: 'profile-1',
+        privacy: 'public',
+        seasons: [
+          { teamId: 'team-1', playerId: 'player-1' },
+          { teamId: 'team-2', playerId: 'player-2' }
+        ]
+      },
+      {
+        id: 'profile-2',
+        privacy: 'private',
+        seasons: [{ teamId: 'team-9', playerId: 'player-9' }]
+      }
+    ]);
+
+    const athleteProfile = await loadParentPlayerAthleteProfile({
+      uid: 'parent-1',
+      parentOf: [
+        { teamId: 'team-1', teamName: 'Comets', playerId: 'player-1', playerName: 'Sam Player' },
+        { teamId: 'team-2', teamName: 'Storm', playerId: 'player-2', playerName: 'Alex Player' }
+      ]
+    } as any, 'team-1', 'player-1');
+
+    expect(legacyPlayerDbMocks.listAthleteProfilesForParent).toHaveBeenCalledTimes(1);
+    expect(legacyPlayerDbMocks.listAthleteProfilesForParent).toHaveBeenCalledWith('parent-1');
+    expect(athleteProfile).toEqual(expect.objectContaining({
+      profile: expect.objectContaining({ id: 'profile-1' }),
+      shareUrl: 'https://allplays.ai/athlete-profile.html?profileId=profile-1',
+      builderUrl: 'https://allplays.ai/athlete-profile-builder.html?teamId=team-1&playerId=player-1&profileId=profile-1',
+      seasonOptions: [
+        expect.objectContaining({ seasonKey: 'team-1::player-1' }),
+        expect.objectContaining({ seasonKey: 'team-2::player-2' })
+      ]
+    }));
+  });
+
+  it('hydrates the athlete profile for non-page callers that need the resolved profile record', async () => {
+    scheduleServiceMocks.loadParentPlayerSchedule.mockResolvedValue({
+      children: [{ teamId: 'team-1', teamName: 'Comets', playerId: 'player-1', playerName: 'Sam Player' }],
+      events: []
+    });
+    legacyPlayerDbMocks.getTeam.mockResolvedValue({
+      id: 'team-1',
+      name: 'Comets',
+      adminEmails: ['coach@example.com']
+    });
+    legacyPlayerDbMocks.getPlayers.mockResolvedValue([
+      {
+        id: 'player-1',
+        name: 'Sam Player'
+      }
+    ]);
+    legacyPlayerDbMocks.getGames.mockResolvedValue([]);
+    legacyPlayerDbMocks.listCertificatesForPlayer.mockResolvedValue([]);
+    legacyPlayerDbMocks.getPublicTrackingItems.mockResolvedValue([]);
+    legacyPlayerDbMocks.getPlayerTrackingStatuses.mockResolvedValue([]);
+    legacyPlayerDbMocks.getPlayerPrivateProfile.mockResolvedValue(null);
+    legacyPlayerDbMocks.getRosterFieldDefinitions.mockResolvedValue([]);
+    legacyPlayerDbMocks.listAthleteProfilesForParent.mockResolvedValue([
+      {
+        id: 'profile-1',
+        privacy: 'private',
+        seasons: [{ teamId: 'team-1', playerId: 'player-1' }]
+      }
+    ]);
+
+    const detail = await loadParentPlayerDetailWithAthleteProfile({
+      uid: 'parent-1',
+      email: 'parent@example.com',
+      parentOf: [{ teamId: 'team-1', teamName: 'Comets', playerId: 'player-1', playerName: 'Sam Player' }]
+    } as any, 'team-1', 'player-1');
+
+    expect(legacyPlayerDbMocks.listAthleteProfilesForParent).toHaveBeenCalledWith('parent-1');
+    expect(detail.athleteProfile).toEqual(expect.objectContaining({
+      profile: expect.objectContaining({ id: 'profile-1' }),
+      shareUrl: 'https://allplays.ai/athlete-profile.html?profileId=profile-1',
+      builderUrl: 'https://allplays.ai/athlete-profile-builder.html?teamId=team-1&playerId=player-1&profileId=profile-1'
+    }));
   });
 });

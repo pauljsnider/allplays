@@ -48,9 +48,13 @@ const teamMocks = vi.hoisted(() => ({
     loadParentTeamDetail: vi.fn()
 }));
 
-const playerMocks = vi.hoisted(() => ({
-    loadParentPlayerDetail: vi.fn()
-}));
+const playerMocks = vi.hoisted(() => {
+    const loadParentPlayerDetailWithAthleteProfile = vi.fn();
+    return {
+        loadParentPlayerDetail: loadParentPlayerDetailWithAthleteProfile,
+        loadParentPlayerDetailWithAthleteProfile
+    };
+});
 
 const toolsMocks = vi.hoisted(() => ({
     loadParentCertificates: vi.fn(),
@@ -156,7 +160,7 @@ beforeEach(async () => {
         trackingSummaries: [],
         counts: { games: 4, practices: 2, completedGames: 4 }
     });
-    playerMocks.loadParentPlayerDetail.mockResolvedValue({
+    playerMocks.loadParentPlayerDetailWithAthleteProfile.mockResolvedValue({
         child: { playerId: 'player-1', playerName: 'Avery', teamId: 'team-1', teamName: 'Bears' },
         player: { id: 'player-1', name: 'Avery', number: '9', position: 'Guard' },
         team: { id: 'team-1', name: 'Bears', sport: 'Basketball' },
@@ -380,7 +384,7 @@ describe('private AI service', () => {
                 })
             })
         });
-        expect(playerMocks.loadParentPlayerDetail).toHaveBeenCalledWith(authUser, 'team-1', 'player-1');
+        expect(playerMocks.loadParentPlayerDetailWithAthleteProfile).toHaveBeenCalledWith(authUser, 'team-1', 'player-1');
     });
 
     it('opts all-range AI schedule lookups into full history loads', async () => {

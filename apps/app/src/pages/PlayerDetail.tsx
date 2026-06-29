@@ -33,6 +33,7 @@ import {
   type LucideIcon
 } from 'lucide-react';
 import {
+  loadParentPlayerAthleteProfile,
   loadParentPlayerDetail,
   markParentPlayerIncentivePaid,
   retireParentPlayerIncentiveRule,
@@ -47,6 +48,7 @@ import {
   normalizeAthleteProfileHighlightClipUrl,
   type AthleteProfileHighlightClipDraft,
   type AthleteProfileHighlightClipUpload,
+  type ParentAthleteProfileData,
   type ParentPlayerDetailData,
   type ParentPlayerStatRow
 } from '../lib/playerService';
@@ -248,6 +250,10 @@ function buildAthleteProfileClipSignature(clips: AthleteProfileClipDraftState[])
   })));
 }
 
+function hasResolvedAthleteProfile(data: ParentAthleteProfileData | null | undefined) {
+  return !!(data?.profile || String(data?.shareUrl || '').trim());
+}
+
 function buildAthleteProfileClipSaveState(clips: AthleteProfileClipDraftState[]) {
   const draftClips: AthleteProfileHighlightClipDraft[] = [];
   const highlightClipUploads: AthleteProfileHighlightClipUpload[] = [];
@@ -303,6 +309,58 @@ export function PlayerDetail({ auth }: { auth: AuthState }) {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<AppServiceError | null>(null);
+  const [athleteProfileLoaded, setAthleteProfileLoaded] = useState(false);
+  const [athleteProfileLoading, setAthleteProfileLoading] = useState(false);
+  const [athleteProfileError, setAthleteProfileError] = useState<AppServiceError | null>(null);
+  const athleteProfileRequestKeyRef = useRef('');
+
+  const loadAthleteProfile = async ({
+    nextTeamId,
+    nextPlayerId,
+    force = false
+  }: {
+    nextTeamId: string;
+    nextPlayerId: string;
+    force?: boolean;
+  }): Promise<ParentAthleteProfileData | null> => {
+    if (!auth.user?.uid) {
+      return null;
+    }
+    if (athleteProfileLoading && !force) {
+      return null;
+    }
+
+    const requestKey = `${nextTeamId}::${nextPlayerId}`;
+    athleteProfileRequestKeyRef.current = requestKey;
+    setAthleteProfileLoading(true);
+    setAthleteProfileError(null);
+    try {
+      const athleteProfile = await loadParentPlayerAthleteProfile(auth.user, nextTeamId, nextPlayerId);
+      if (athleteProfileRequestKeyRef.current !== requestKey) {
+        return null;
+      }
+      setData((current) => {
+        if (!current || current.child.teamId !== nextTeamId || current.child.playerId !== nextPlayerId) {
+          return current;
+        }
+        return {
+          ...current,
+          athleteProfile
+        };
+      });
+      setAthleteProfileLoaded(true);
+      return athleteProfile;
+    } catch (loadError: any) {
+      if (athleteProfileRequestKeyRef.current === requestKey) {
+        setAthleteProfileError(toAppServiceError(loadError, 'Unable to load athlete profile.'));
+      }
+      return null;
+    } finally {
+      if (athleteProfileRequestKeyRef.current === requestKey) {
+        setAthleteProfileLoading(false);
+      }
+    }
+  };
 
   const refreshPlayer = async ({ showLoading = data === null }: { showLoading?: boolean } = {}) => {
     const fullPageLoading = showLoading || data === null;
@@ -313,7 +371,21 @@ export function PlayerDetail({ auth }: { auth: AuthState }) {
     }
     setError(null);
     try {
-      setData(await loadParentPlayerDetail(auth.user, teamId, playerId));
+      const nextData = await loadParentPlayerDetail(auth.user, teamId, playerId);
+      const nextAthleteProfileLoaded = hasResolvedAthleteProfile(nextData.athleteProfile);
+      setData(nextData);
+      setAthleteProfileLoaded(nextAthleteProfileLoaded);
+      setAthleteProfileError(null);
+      if (athleteProfileLoaded && !nextAthleteProfileLoaded) {
+        const nextAthleteProfile = await loadAthleteProfile({
+          nextTeamId: nextData.child.teamId,
+          nextPlayerId: nextData.child.playerId,
+          force: true
+        });
+        if (nextAthleteProfile) {
+          setData((current) => current ? { ...current, athleteProfile: nextAthleteProfile } : current);
+        }
+      }
     } catch (loadError: any) {
       if (fullPageLoading) {
         setData(null);
@@ -329,9 +401,21 @@ export function PlayerDetail({ auth }: { auth: AuthState }) {
   };
 
   useEffect(() => {
+    athleteProfileRequestKeyRef.current = '';
+    setAthleteProfileLoaded(false);
+    setAthleteProfileLoading(false);
+    setAthleteProfileError(null);
     refreshPlayer({ showLoading: true });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [auth.user?.uid, teamId, playerId]);
+
+  useEffect(() => {
+    if (activeSection !== 'profile' || !data || athleteProfileLoaded || athleteProfileLoading || hasResolvedAthleteProfile(data.athleteProfile)) return;
+    void loadAthleteProfile({
+      nextTeamId: data.child.teamId,
+      nextPlayerId: data.child.playerId
+    });
+  }, [activeSection, athleteProfileLoaded, athleteProfileLoading, data]);
 
   useEffect(() => {
     if (loading || !data) return;
@@ -430,7 +514,16 @@ export function PlayerDetail({ auth }: { auth: AuthState }) {
       {activeSection === 'overview' ? <OverviewSection data={data} /> : null}
       {activeSection === 'schedule' ? <PlayerScheduleSection events={data.events} /> : null}
       {activeSection === 'performance' ? <ReportsSection data={data} /> : null}
-      {activeSection === 'profile' ? <PlayerProfileSection data={data} auth={auth} onChanged={refreshPlayer} /> : null}
+      {activeSection === 'profile' ? (
+        <PlayerProfileSection
+          data={data}
+          auth={auth}
+          onChanged={refreshPlayer}
+          athleteProfileLoaded={athleteProfileLoaded}
+          athleteProfileLoading={athleteProfileLoading}
+          athleteProfileError={athleteProfileError}
+        />
+      ) : null}
     </div>
   );
 }
@@ -621,12 +714,27 @@ const profilePanels: Array<{ id: ProfilePanelId; label: string }> = [
   { id: 'incentives', label: 'Incentives' }
 ];
 
-function PlayerProfileSection({ data, auth, onChanged }: { data: ParentPlayerDetailData; auth: AuthState; onChanged: () => Promise<void> }) {
+function PlayerProfileSection({
+  data,
+  auth,
+  onChanged,
+  athleteProfileLoaded,
+  athleteProfileLoading,
+  athleteProfileError
+}: {
+  data: ParentPlayerDetailData;
+  auth: AuthState;
+  onChanged: () => Promise<void>;
+  athleteProfileLoaded: boolean;
+  athleteProfileLoading: boolean;
+  athleteProfileError: AppServiceError | null;
+}) {
   const [activePanel, setActivePanel] = useState<ProfilePanelId>('edit');
   const [athleteProfileShareState, setAthleteProfileShareState] = useState({ hasUnsavedPublishChanges: false, saving: false });
   const customRosterFields = Array.isArray(data.customRosterFields) ? data.customRosterFields : [];
   const persistedPublicProfileUrl = getPersistedPublicProfileUrl(data.athleteProfile.profile, data.athleteProfile.shareUrl);
   const persistedPublicProfileAvailable = isPersistedPublicProfileReady(data.athleteProfile.profile, data.athleteProfile.shareUrl, athleteProfileShareState);
+  const fullBuilderAvailable = athleteProfileLoaded && !!String(data.athleteProfile.builderUrl || '').trim();
 
   useEffect(() => {
     setAthleteProfileShareState((current) => {
@@ -672,22 +780,43 @@ function PlayerProfileSection({ data, auth, onChanged }: { data: ParentPlayerDet
           {customRosterFields.length ? <CustomRosterFieldsCard data={data} auth={auth} onChanged={onChanged} /> : null}
         </>
       ) : null}
+      {athleteProfileLoading ? (
+        <div className="rounded-xl border border-primary-100 bg-primary-50/60 p-3 text-sm font-semibold text-primary-800">
+          <div className="flex items-center gap-2">
+            <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
+            Loading athlete profile tools...
+          </div>
+        </div>
+      ) : null}
+      {athleteProfileError ? <Status tone="error" message={athleteProfileError.message} /> : null}
       {activePanel === 'athlete' ? (
-        <AthleteProfileBuilderCard
-          key={`${data.athleteProfile.profile?.id || 'new'}:${data.athleteProfile.profile?.privacy || 'private'}:${String(data.athleteProfile.shareUrl || '').trim()}`}
-          data={data}
-          auth={auth}
-          onChanged={onChanged}
-          onShareStateChange={setAthleteProfileShareState}
-        />
+        athleteProfileLoaded ? (
+          <AthleteProfileBuilderCard
+            key={`${data.athleteProfile.profile?.id || 'new'}:${data.athleteProfile.profile?.privacy || 'private'}:${String(data.athleteProfile.shareUrl || '').trim()}`}
+            data={data}
+            auth={auth}
+            onChanged={onChanged}
+            onShareStateChange={setAthleteProfileShareState}
+          />
+        ) : (
+          <div className="app-card p-4 text-sm font-semibold text-gray-500">Athlete profile tools will appear here after the profile data finishes loading.</div>
+        )
       ) : null}
       {activePanel === 'family' ? <CoParentInviteCard data={data} auth={auth} /> : null}
       {activePanel === 'incentives' ? <IncentivesCard data={data} auth={auth} onChanged={onChanged} /> : null}
 
       <section className="grid gap-3 sm:grid-cols-3">
-        <a href={data.athleteProfile.builderUrl} target="_blank" rel="noreferrer" className="app-card flex items-start gap-3 p-4 transition hover:border-primary-200 hover:shadow-app-lg">
+        <a
+          href={fullBuilderAvailable ? data.athleteProfile.builderUrl : '#'}
+          target={fullBuilderAvailable ? '_blank' : undefined}
+          rel={fullBuilderAvailable ? 'noreferrer' : undefined}
+          aria-disabled={!fullBuilderAvailable}
+          tabIndex={fullBuilderAvailable ? undefined : -1}
+          onClick={fullBuilderAvailable ? undefined : (event) => event.preventDefault()}
+          className={`app-card flex items-start gap-3 p-4 transition hover:border-primary-200 hover:shadow-app-lg ${fullBuilderAvailable ? '' : 'pointer-events-none opacity-60'}`}
+        >
           <IconBox icon={Sparkles} />
-          <CardText title="Full builder" detail="Open the legacy builder for headshot and highlight uploads." />
+          <CardText title="Full builder" detail={athleteProfileLoading ? 'Loading athlete profile builder...' : 'Open the legacy builder for headshot and highlight uploads.'} />
           <ExternalLink className="h-4 w-4 flex-none text-gray-400" aria-hidden="true" />
         </a>
         <a
@@ -700,7 +829,7 @@ function PlayerProfileSection({ data, auth, onChanged }: { data: ParentPlayerDet
           className={`app-card flex items-start gap-3 p-4 transition hover:border-primary-200 hover:shadow-app-lg ${persistedPublicProfileAvailable ? '' : 'pointer-events-none opacity-60'}`}
         >
           <IconBox icon={Share2} />
-          <CardText title="Public athlete profile" detail={persistedPublicProfileAvailable ? 'Open the shareable athlete profile.' : 'Publish and save this profile to enable sharing.'} />
+          <CardText title="Public athlete profile" detail={athleteProfileLoading ? 'Loading athlete profile share status...' : (persistedPublicProfileAvailable ? 'Open the shareable athlete profile.' : 'Publish and save this profile to enable sharing.')} />
           <ExternalLink className="h-4 w-4 flex-none text-gray-400" aria-hidden="true" />
         </a>
         <Link to="/parent-tools/certificates" className="app-card flex items-start gap-3 p-4 transition hover:border-primary-200 hover:shadow-app-lg">

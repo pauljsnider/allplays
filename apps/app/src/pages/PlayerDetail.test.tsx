@@ -14,6 +14,7 @@ function createDeferred<T>() {
 }
 
 const playerServiceMocks = vi.hoisted(() => ({
+  loadParentPlayerAthleteProfile: vi.fn(),
   loadParentPlayerDetail: vi.fn(),
   markParentPlayerIncentivePaid: vi.fn(),
   retireParentPlayerIncentiveRule: vi.fn(),
@@ -40,6 +41,9 @@ const profilePhotoServiceMocks = vi.hoisted(() => ({
 vi.mock('../lib/playerService', () => playerServiceMocks);
 vi.mock('../lib/publicActions', () => publicActionMocks);
 vi.mock('../lib/profilePhotoService', () => profilePhotoServiceMocks);
+vi.mock('../lib/parentWorkflowTiming', () => ({
+  completeParentCoreWorkflowTimer: vi.fn()
+}));
 
 import { PlayerDetail } from './PlayerDetail';
 import type { AuthState } from '../lib/types';
@@ -152,6 +156,7 @@ describe('PlayerDetail athlete profile season selection', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     playerServiceMocks.loadParentPlayerDetail.mockResolvedValue(buildDetailData());
+    playerServiceMocks.loadParentPlayerAthleteProfile.mockResolvedValue(buildDetailData().athleteProfile);
     playerServiceMocks.saveParentAthleteProfileDraft.mockResolvedValue({
       shareUrl: 'https://allplays.ai/athlete-profile.html?profileId=profile-1'
     });
@@ -165,6 +170,45 @@ describe('PlayerDetail athlete profile season selection', () => {
 
   afterEach(() => {
     cleanup();
+  });
+
+  it('defers athlete profile loading until the Profile section opens', async () => {
+    playerServiceMocks.loadParentPlayerAthleteProfile.mockResolvedValue({
+      ...buildDetailData().athleteProfile,
+      profile: {
+        id: 'profile-1',
+        privacy: 'public',
+        athlete: { name: 'Sam Player' },
+        bio: {},
+        clips: [],
+        seasons: [{ seasonKey: 'team-current::player-current' }]
+      },
+      shareUrl: 'https://allplays.ai/athlete-profile.html?profileId=profile-1',
+      builderUrl: 'https://allplays.ai/athlete-profile-builder.html?teamId=team-current&playerId=player-current&profileId=profile-1'
+    });
+
+    renderPlayerDetail();
+
+    await screen.findByText('Sam Player');
+    expect(playerServiceMocks.loadParentPlayerDetail).toHaveBeenCalledTimes(1);
+    expect(playerServiceMocks.loadParentPlayerAthleteProfile).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Profile' }));
+
+    await waitFor(() => {
+      expect(playerServiceMocks.loadParentPlayerAthleteProfile).toHaveBeenCalledTimes(1);
+      expect(playerServiceMocks.loadParentPlayerAthleteProfile).toHaveBeenCalledWith(auth.user, 'team-current', 'player-current');
+    });
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Athlete Profile' }));
+    expect(await screen.findByRole('button', { name: 'Share Public Profile' })).toBeTruthy();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Overview' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Profile' }));
+
+    await waitFor(() => {
+      expect(playerServiceMocks.loadParentPlayerAthleteProfile).toHaveBeenCalledTimes(1);
+    });
   });
 
   it('shows a retryable player detail error state and reloads on retry', async () => {
@@ -226,12 +270,14 @@ describe('PlayerDetail athlete profile season selection', () => {
   });
 
   it('auto-includes the only linked season and saves without season selection input', async () => {
+    const singleSeasonAthleteProfile = {
+      ...buildDetailData().athleteProfile,
+      seasonOptions: [buildDetailData().athleteProfile.seasonOptions[0]]
+    };
     playerServiceMocks.loadParentPlayerDetail.mockResolvedValue(buildDetailData({
-      athleteProfile: {
-        ...buildDetailData().athleteProfile,
-        seasonOptions: [buildDetailData().athleteProfile.seasonOptions[0]]
-      }
+      athleteProfile: singleSeasonAthleteProfile
     }));
+    playerServiceMocks.loadParentPlayerAthleteProfile.mockResolvedValue(singleSeasonAthleteProfile);
 
     renderPlayerDetail();
 
@@ -256,24 +302,26 @@ describe('PlayerDetail athlete profile season selection', () => {
   });
 
   it('clamps hidden single-season saves to the lone available linked season', async () => {
+    const singleSeasonAthleteProfile = {
+      profile: {
+        id: 'profile-1',
+        athlete: { name: 'Sam Player' },
+        bio: {},
+        privacy: 'public',
+        clips: [],
+        seasons: [
+          { seasonKey: 'team-current::player-current', teamName: 'Current Team', playerName: 'Sam Player' },
+          { seasonKey: 'team-prior::player-prior', teamName: 'Prior Team', playerName: 'Sam Player' }
+        ]
+      },
+      shareUrl: 'https://allplays.ai/athlete-profile.html?profileId=profile-1',
+      builderUrl: 'https://allplays.ai/athlete-profile-builder.html?teamId=team-current&playerId=player-current&profileId=profile-1',
+      seasonOptions: [buildDetailData().athleteProfile.seasonOptions[0]]
+    };
     playerServiceMocks.loadParentPlayerDetail.mockResolvedValue(buildDetailData({
-      athleteProfile: {
-        profile: {
-          id: 'profile-1',
-          athlete: { name: 'Sam Player' },
-          bio: {},
-          privacy: 'public',
-          clips: [],
-          seasons: [
-            { seasonKey: 'team-current::player-current', teamName: 'Current Team', playerName: 'Sam Player' },
-            { seasonKey: 'team-prior::player-prior', teamName: 'Prior Team', playerName: 'Sam Player' }
-          ]
-        },
-        shareUrl: 'https://allplays.ai/athlete-profile.html?profileId=profile-1',
-        builderUrl: 'https://allplays.ai/athlete-profile-builder.html?teamId=team-current&playerId=player-current&profileId=profile-1',
-        seasonOptions: [buildDetailData().athleteProfile.seasonOptions[0]]
-      }
+      athleteProfile: singleSeasonAthleteProfile
     }));
+    playerServiceMocks.loadParentPlayerAthleteProfile.mockResolvedValue(singleSeasonAthleteProfile);
 
     renderPlayerDetail();
 
@@ -1065,6 +1113,45 @@ describe('PlayerDetail athlete profile season selection', () => {
     expect(screen.queryByRole('button', { name: 'Share Public Profile' })).toBeNull();
     expect(screen.queryByRole('link', { name: 'Preview Public Page' })).toBeNull();
     expect(screen.getByRole('link', { name: 'Open Full Builder' }).getAttribute('href')).toBe(builderUrl);
+  });
+
+  it('disables the full builder card until athlete profile hydration finishes', async () => {
+    const pendingBuilderUrl = 'https://allplays.ai/athlete-profile-builder.html?teamId=team-current&playerId=player-current';
+    const hydratedBuilderUrl = 'https://allplays.ai/athlete-profile-builder.html?teamId=team-current&playerId=player-current&profileId=profile-1';
+    const deferredProfile = createDeferred<any>();
+
+    playerServiceMocks.loadParentPlayerDetail.mockResolvedValue(buildDetailData({
+      athleteProfile: {
+        profile: null,
+        shareUrl: '',
+        builderUrl: pendingBuilderUrl,
+        seasonOptions: buildDetailData().athleteProfile.seasonOptions
+      }
+    }));
+    playerServiceMocks.loadParentPlayerAthleteProfile.mockReturnValueOnce(deferredProfile.promise);
+
+    renderPlayerDetail();
+
+    await screen.findByText('Sam Player');
+    fireEvent.click(screen.getByRole('button', { name: 'Profile' }));
+
+    expect(await screen.findByText('Loading athlete profile tools...')).toBeTruthy();
+    const fullBuilderCard = screen.getByRole('link', { name: /Full builder/i });
+    expect(fullBuilderCard.getAttribute('href')).toBe('#');
+    expect(fullBuilderCard.getAttribute('aria-disabled')).toBe('true');
+    expect(screen.getByText('Loading athlete profile builder...')).toBeTruthy();
+
+    deferredProfile.resolve({
+      profile: { id: 'profile-1', athlete: { name: 'Sam Player' }, bio: {}, privacy: 'private', clips: [] },
+      shareUrl: '',
+      builderUrl: hydratedBuilderUrl,
+      seasonOptions: buildDetailData().athleteProfile.seasonOptions
+    });
+
+    await waitFor(() => {
+      expect(screen.getByRole('link', { name: /Full builder/i }).getAttribute('href')).toBe(hydratedBuilderUrl);
+    });
+    expect(screen.getByRole('link', { name: /Full builder/i }).getAttribute('aria-disabled')).toBe('false');
   });
 
   it('refreshes the athlete profile editor when persisted public sharing becomes available', async () => {

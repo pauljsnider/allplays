@@ -24,7 +24,7 @@ import {
   loadParentFeesForApp,
   loadParentRegistrations
 } from './parentToolsService';
-import { loadParentPlayerDetail } from './playerService';
+import { loadParentPlayerDetailWithAthleteProfile } from './playerService';
 import {
   formatEventDateLabel,
   formatEventTimeLabel,
@@ -354,7 +354,7 @@ export async function runPrivateAiTool(user: AuthUser, call: PrivateAiToolCall):
         return {
           name,
           ok: true,
-          data: summarizePlayerDevelopment(await loadParentPlayerDetail(user, player.teamId, player.playerId))
+          data: summarizePlayerDevelopment(await loadParentPlayerDetailWithAthleteProfile(user, player.teamId, player.playerId))
         };
       }
       case 'get_fees':
