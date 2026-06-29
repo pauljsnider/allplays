@@ -27,7 +27,6 @@ const MAX_ATTRIBUTE_VALUE_LENGTH = 100;
 let sequence = 0;
 let firebasePerformancePromise: Promise<FirebasePerformanceRef | null> | null = null;
 const activeFirebaseTraceCounts = new Map<string, number>();
-const FIREBASE_PERFORMANCE_MODULE_ID = '@capacitor-firebase/performance';
 
 export function now() {
   return typeof performance !== 'undefined' && typeof performance.now === 'function'
@@ -129,7 +128,7 @@ function measure(name: string, startMark: string, endMark: string) {
 async function loadFirebasePerformance(): Promise<FirebasePerformanceRef | null> {
   if (!isPerformanceExportEnabled()) return null;
   if (!firebasePerformancePromise) {
-    firebasePerformancePromise = import(/* @vite-ignore */ FIREBASE_PERFORMANCE_MODULE_ID)
+    firebasePerformancePromise = import('@capacitor-firebase/performance')
       .then((module) => ({ api: module.FirebasePerformance }))
       .catch((error) => {
         logger.debug('Firebase Performance unavailable.', { error });
