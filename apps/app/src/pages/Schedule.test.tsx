@@ -5,6 +5,7 @@ import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/re
 import { MemoryRouter, Route, Routes, useLocation, useNavigate } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { Schedule, getGenericEventDetailPath } from './Schedule';
+import type { ParentScheduleEvent } from '../lib/scheduleLogic';
 import type { AuthState } from '../lib/types';
 
 const scheduleServiceMocks = vi.hoisted(() => ({
@@ -108,8 +109,8 @@ function RouteProbe() {
   return <div data-testid="route-probe">{location.pathname}{location.search}</div>;
 }
 
-function buildScheduleEvent(index: number, overrides: Record<string, unknown> = {}) {
-  const event = {
+function buildScheduleEvent(index: number, overrides: Partial<ParentScheduleEvent> = {}): ParentScheduleEvent {
+  const event: ParentScheduleEvent = {
     eventKey: `team-1::event-${index}::player-1::2100-06-${String(index).padStart(2, '0')}T18:00:00.000Z::game`,
     id: `event-${index}`,
     teamId: 'team-1',
@@ -125,6 +126,7 @@ function buildScheduleEvent(index: number, overrides: Record<string, unknown> = 
     isCancelled: false,
     myRsvp: 'not_responded' as const,
     assignments: [],
+    openAssignmentCount: 0,
     ...overrides
   };
 
@@ -406,7 +408,7 @@ describe('Schedule', () => {
       isTeamStaff: false,
       myRsvp: 'going',
       assignments: [],
-      rideshareSummary: { requests: 1, pending: 0, seatsLeft: 0 }
+      rideshareSummary: { requests: 1, offerCount: 0, pending: 0, confirmed: 0, seatsLeft: 0, isFull: false }
     }) as any, true)).toBe('/schedule/team-1/event-1?childId=player-1&section=rideshare');
     expect(getGenericEventDetailPath(buildScheduleEvent(1, {
       id: 'practice-1',
@@ -458,7 +460,7 @@ describe('Schedule', () => {
           date: new Date('2100-06-02T18:00:00.000Z'),
           myRsvp: 'going',
           assignments: [],
-          rideshareSummary: { requests: 1, pending: 0, seatsLeft: 0 }
+          rideshareSummary: { requests: 1, offerCount: 0, pending: 0, confirmed: 0, seatsLeft: 0, isFull: false }
         })
       ]
     });
@@ -498,7 +500,7 @@ describe('Schedule', () => {
           myRsvp: 'going',
           assignments,
           openAssignmentCount: 1,
-          rideshareSummary: { requests: 2, pending: 0, seatsLeft: 0 }
+          rideshareSummary: { requests: 2, offerCount: 0, pending: 0, confirmed: 0, seatsLeft: 0, isFull: false }
         })
       ]
     });
