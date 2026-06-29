@@ -61,33 +61,38 @@ vi.mock('@legacy/firebase.js', () => ({
     where: vi.fn()
 }));
 
-import { buildLegacyTournamentGameDocument, buildLegacyTournamentGameDocuments } from './legacyScheduleDb';
+import { buildLegacyTournamentGameDocument, buildLegacyTournamentGameDocuments, LegacyTournamentGameAdapterValidationError } from './legacyScheduleDb';
+
+const buildValidLegacyGamePayload = (overrides: Record<string, unknown> = {}) => ({
+    type: 'game',
+    opponent: 'Tigers',
+    date: new Date('2026-06-24T18:30:00.000Z'),
+    end: new Date('2026-06-24T20:00:00.000Z'),
+    location: 'Main Gym',
+    arrivalTime: new Date('2026-06-24T18:00:00.000Z'),
+    isHome: true,
+    notes: 'Bring dark jerseys',
+    assignments: [],
+    status: 'scheduled',
+    homeScore: 0,
+    awayScore: 0,
+    countsTowardSeasonRecord: true,
+    statTrackerConfigId: null,
+    createdBy: 'coach-1',
+    ...overrides
+});
+
+const validTournamentMetadata = {
+    divisionName: '10U Gold',
+    bracketName: 'Gold Bracket',
+    roundName: 'Semifinal',
+    poolName: 'Pool A'
+};
 
 describe('legacyScheduleDb tournament mapping', () => {
     it('maps a single-game tournament block to exactly one legacy-compatible game document', () => {
-        const basePayload = {
-            type: 'game',
-            opponent: 'Tigers',
-            date: new Date('2026-06-24T18:30:00.000Z'),
-            end: new Date('2026-06-24T20:00:00.000Z'),
-            location: 'Main Gym',
-            arrivalTime: new Date('2026-06-24T18:00:00.000Z'),
-            isHome: true,
-            notes: 'Bring dark jerseys',
-            assignments: [],
-            status: 'scheduled',
-            homeScore: 0,
-            awayScore: 0,
-            countsTowardSeasonRecord: true,
-            statTrackerConfigId: null,
-            createdBy: 'coach-1'
-        };
-        const tournament = {
-            divisionName: '10U Gold',
-            bracketName: 'Gold Bracket',
-            roundName: 'Semifinal',
-            poolName: 'Pool A'
-        };
+        const basePayload = buildValidLegacyGamePayload();
+        const tournament = validTournamentMetadata;
 
         const documents = buildLegacyTournamentGameDocuments([basePayload], tournament);
 
@@ -102,11 +107,10 @@ describe('legacyScheduleDb tournament mapping', () => {
     });
 
     it('wraps legacy tournament metadata without mutating the base payload', () => {
-        const basePayload = {
-            type: 'game',
+        const basePayload = buildValidLegacyGamePayload({
             opponent: 'Lions',
             competitionType: 'league'
-        };
+        });
         const tournament = {
             divisionName: '12U',
             bracketName: 'Silver',
@@ -115,16 +119,42 @@ describe('legacyScheduleDb tournament mapping', () => {
 
         const document = buildLegacyTournamentGameDocument(basePayload, tournament);
 
-        expect(document).toEqual({
+        expect(document).toEqual(expect.objectContaining({
             type: 'game',
             opponent: 'Lions',
             competitionType: 'tournament',
             tournament
-        });
-        expect(basePayload).toEqual({
+        }));
+        expect(basePayload).toEqual(expect.objectContaining({
             type: 'game',
             opponent: 'Lions',
             competitionType: 'league'
-        });
+        }));
+    });
+
+    it('returns an explicit error when required tournament metadata is missing', () => {
+        expect(() => buildLegacyTournamentGameDocument(buildValidLegacyGamePayload(), {
+            divisionName: '10U Gold',
+            bracketName: '',
+            roundName: 'Semifinal'
+        })).toThrow(LegacyTournamentGameAdapterValidationError);
+        expect(() => buildLegacyTournamentGameDocument(buildValidLegacyGamePayload(), {
+            divisionName: '10U Gold',
+            bracketName: '',
+            roundName: 'Semifinal'
+        })).toThrow('Tournament adapter requires tournament.bracketName.');
+    });
+
+    it('returns an explicit error when legacy game values are invalid', () => {
+        expect(() => buildLegacyTournamentGameDocument(buildValidLegacyGamePayload({
+            end: new Date('2026-06-24T18:00:00.000Z')
+        }), validTournamentMetadata)).toThrow('Tournament adapter requires end to be after date.');
+    });
+
+    it('does not produce legacy tournament documents when validation fails', () => {
+        expect(() => buildLegacyTournamentGameDocuments([
+            buildValidLegacyGamePayload({ opponent: 'Tigers' }),
+            buildValidLegacyGamePayload({ opponent: '' })
+        ], validTournamentMetadata)).toThrow('Tournament adapter requires opponent.');
     });
 });
