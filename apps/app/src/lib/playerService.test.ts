@@ -55,8 +55,8 @@ const legacyRosterPrivacyMocks = vi.hoisted(() => ({
   })),
   normalizeRosterFieldDefinitions: vi.fn((fields) => fields),
   splitRosterProfileValuesByVisibility: vi.fn((fields, values) => ({
-    publicValues: Object.fromEntries(Object.entries(values || {}).filter(([key]) => !fields.find((field: any) => field.key === key && field.visibility === 'admins'))),
-    privateValues: Object.fromEntries(Object.entries(values || {}).filter(([key]) => !!fields.find((field: any) => field.key === key && field.visibility === 'admins')))
+    publicValues: Object.fromEntries(Object.entries(values || {}).filter(([key]) => fields.find((field: any) => field.key === key && field.visibility === 'public'))),
+    privateValues: Object.fromEntries(Object.entries(values || {}).filter(([key]) => !fields.find((field: any) => field.key === key && field.visibility === 'public')))
   })),
   validateRosterProfileValues: vi.fn(() => [])
 }));
@@ -582,13 +582,20 @@ describe('savePlayerCustomRosterFieldValues', () => {
     legacyPlayerDbMocks.setPlayerPrivateRosterProfileFields.mockResolvedValue(undefined);
   });
 
-  it('writes only currently defined custom roster values to public and private containers', async () => {
+  it('writes only public custom roster values to the public player doc', async () => {
+    legacyPlayerDbMocks.getRosterFieldDefinitions.mockResolvedValue([
+      { key: 'nickname', label: 'Nickname', type: 'text', visibility: 'public', sortOrder: 1 },
+      { key: 'birthDate', label: 'Birth Date', type: 'date', visibility: 'team', sortOrder: 2 },
+      { key: 'jerseySize', label: 'Jersey Size', type: 'menu', visibility: 'parents', options: ['YS', 'YM'], sortOrder: 3 }
+    ]);
+
     await savePlayerCustomRosterFieldValues({
       user: { uid: 'coach-1', email: 'coach@example.com' } as any,
       teamId: 'team-1',
       playerId: 'player-1',
       values: {
         nickname: 'Speedy',
+        birthDate: '2014-02-03',
         jerseySize: 'YS',
         stale: 'must not resurrect deleted definitions'
       }
@@ -603,6 +610,7 @@ describe('savePlayerCustomRosterFieldValues', () => {
       }
     });
     expect(legacyPlayerDbMocks.setPlayerPrivateRosterProfileFields).toHaveBeenCalledWith('team-1', 'player-1', {
+      birthDate: '2014-02-03',
       jerseySize: 'YS'
     });
   });

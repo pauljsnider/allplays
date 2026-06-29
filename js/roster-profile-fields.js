@@ -214,9 +214,9 @@ function parseRosterCsvFieldValue(field, rawValue) {
     return { value };
 }
 
-function isAdminOnlyRosterField(field = {}) {
-    const visibility = String(field.visibility || '').trim().toLowerCase();
-    return ['admin', 'admins', 'private', 'restricted'].includes(visibility);
+function isPublicRosterField(field = {}) {
+    const visibility = normalizeVisibility(field.visibility || field.defaultVisibility);
+    return visibility === 'public';
 }
 
 export function splitRosterProfileValuesByVisibility(fields = [], values = {}) {
@@ -224,10 +224,10 @@ export function splitRosterProfileValuesByVisibility(fields = [], values = {}) {
     const privateValues = {};
     fields.forEach((field) => {
         if (!Object.prototype.hasOwnProperty.call(values || {}, field.key)) return;
-        if (isAdminOnlyRosterField(field)) {
-            privateValues[field.key] = values[field.key];
-        } else {
+        if (isPublicRosterField(field)) {
             publicValues[field.key] = values[field.key];
+        } else {
+            privateValues[field.key] = values[field.key];
         }
     });
     return { publicValues, privateValues };

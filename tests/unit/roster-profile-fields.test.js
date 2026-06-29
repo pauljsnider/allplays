@@ -3,6 +3,7 @@ import {
     buildRosterFieldDefinitionPayload,
     getRosterProfileValues,
     normalizeRosterFieldDefinitions,
+    splitRosterProfileValuesByVisibility,
     validateRosterProfileValues
 } from '../../js/roster-profile-fields.js';
 
@@ -88,6 +89,40 @@ describe('roster profile fields', () => {
             visibility: 'parents',
             active: true,
             sortOrder: 3
+        });
+    });
+
+    it('stores only public roster field values on the public player document', () => {
+        const fields = normalizeRosterFieldDefinitions([
+            { key: 'nickname', label: 'Nickname', visibility: 'public' },
+            { key: 'birthDate', label: 'Birth Date', type: 'date', visibility: 'team' },
+            { key: 'jerseySize', label: 'Jersey Size', visibility: 'parents' },
+            { key: 'medicalNote', label: 'Medical Note', visibility: 'admins' }
+        ]);
+
+        expect(splitRosterProfileValuesByVisibility(fields, {
+            nickname: 'Rocket',
+            birthDate: '2014-02-03',
+            jerseySize: 'YM',
+            medicalNote: 'Peanut allergy'
+        })).toEqual({
+            publicValues: { nickname: 'Rocket' },
+            privateValues: {
+                birthDate: '2014-02-03',
+                jerseySize: 'YM',
+                medicalNote: 'Peanut allergy'
+            }
+        });
+    });
+
+    it('defaults unspecified roster field visibility to private team storage', () => {
+        const fields = normalizeRosterFieldDefinitions([
+            { key: 'grade', label: 'Grade' }
+        ]);
+
+        expect(splitRosterProfileValuesByVisibility(fields, { grade: '6' })).toEqual({
+            publicValues: {},
+            privateValues: { grade: '6' }
         });
     });
 

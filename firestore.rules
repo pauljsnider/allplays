@@ -431,6 +431,12 @@ service cloud.firestore {
       return rosterMap is map && rosterMap.keys().hasAny(restrictedKeys);
     }
 
+    function hasRestrictedRosterNestedMap(data, parentFieldName, fieldName, restrictedKeys) {
+      let parentMap = data.get(parentFieldName, {});
+      let rosterMap = parentMap is map ? parentMap.get(fieldName, {}) : {};
+      return rosterMap is map && rosterMap.keys().hasAny(restrictedKeys);
+    }
+
     function hasRestrictedRosterFieldValues(data) {
       let restrictedKeys = [
         'medicalInfo', 'medical_info', 'medicalNotes', 'medical_notes',
@@ -443,7 +449,9 @@ service cloud.firestore {
              hasRestrictedRosterMap(data, 'rosterFieldValues', restrictedKeys) ||
              hasRestrictedRosterMap(data, 'customFields', restrictedKeys) ||
              hasRestrictedRosterMap(data, 'profileFields', restrictedKeys) ||
-             hasRestrictedRosterMap(data, 'extraFields', restrictedKeys);
+             hasRestrictedRosterMap(data, 'extraFields', restrictedKeys) ||
+             hasRestrictedRosterNestedMap(data, 'profile', 'rosterFields', restrictedKeys) ||
+             hasRestrictedRosterNestedMap(data, 'profile', 'customFields', restrictedKeys);
     }
 
     function isIncentiveCapPayloadValid(data) {
