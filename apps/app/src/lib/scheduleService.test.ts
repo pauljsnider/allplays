@@ -468,6 +468,53 @@ describe('scheduled tournament writes', () => {
     }));
   });
 
+  it('rejects over-produced legacy tournament payloads before any writes occur', async () => {
+    vi.mocked(buildLegacyTournamentGameDocuments).mockReturnValueOnce([
+      {
+        type: 'game',
+        opponent: 'Tigers',
+        competitionType: 'tournament',
+        tournament: {
+          divisionName: '10U Gold',
+          bracketName: 'Gold Bracket',
+          roundName: 'Semifinal',
+          poolName: 'Pool A'
+        }
+      },
+      {
+        type: 'game',
+        opponent: 'Tigers',
+        competitionType: 'tournament',
+        tournament: {
+          divisionName: '10U Gold',
+          bracketName: 'Gold Bracket',
+          roundName: 'Semifinal',
+          poolName: 'Pool A'
+        }
+      }
+    ] as any);
+
+    await expect(createScheduledTournamentBlockForApp('team-1', {
+      divisionName: '10U Gold',
+      bracketName: 'Gold Bracket',
+      roundName: 'Semifinal',
+      poolName: 'Pool A',
+      games: [
+        {
+          opponent: 'Tigers',
+          startDate: new Date('2026-06-24T18:30:00.000Z'),
+          endDate: new Date('2026-06-24T20:00:00.000Z'),
+          location: 'Main Gym',
+          arrivalTime: new Date('2026-06-24T18:00:00.000Z'),
+          isHome: true,
+          notes: 'Bring dark jerseys'
+        }
+      ]
+    }, coachUser)).rejects.toThrow('Tournament adapter could not build a complete legacy payload.');
+
+    expect(addGame).not.toHaveBeenCalled();
+  });
+
   it('throws an explicit error when a single-game tournament save returns no id', async () => {
     vi.mocked(addGame).mockResolvedValueOnce(undefined as any);
 

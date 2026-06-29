@@ -1672,7 +1672,7 @@ export async function createScheduledTournamentBlockForApp(teamId: string, input
     throw new Error('Tournament adapter could not build a complete legacy payload.');
   }
 
-  const requiresExplicitSingleGameFailure = payloads.length === 1;
+  const requiresExplicitSingleGameFailure = validatedGames.length === 1;
   const createdIds: string[] = [];
   for (const payload of payloads) {
     let createdId = '';
