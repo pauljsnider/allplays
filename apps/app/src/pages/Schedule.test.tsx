@@ -658,7 +658,27 @@ describe('Schedule', () => {
     expect(screen.getByRole('button', { name: /create tournament/i })).toBeTruthy();
   });
 
-  it('submits tournament blocks with metadata and child games from schedule tools', async () => {
+  it('keeps tournament creation to one game row and validates required fields before saving', async () => {
+    scheduleServiceMocks.loadParentSchedule.mockResolvedValueOnce(buildStaffScheduleResult());
+
+    renderSchedule();
+
+    fireEvent.click(await screen.findByRole('button', { name: /manage schedule/i }));
+    fireEvent.click(await screen.findByRole('button', { name: 'New tournament block' }));
+    expect(await screen.findByRole('heading', { name: 'Add tournament for Bears' })).toBeTruthy();
+
+    expect(screen.getByText('Game 1')).toBeTruthy();
+    expect(screen.queryByText('Game 2')).toBeNull();
+    expect(screen.queryByRole('button', { name: /add another game/i })).toBeNull();
+    expect(screen.queryByRole('button', { name: /remove/i })).toBeNull();
+
+    fireEvent.click(screen.getByRole('button', { name: /^create tournament$/i }));
+
+    expect(await screen.findByText('Tournament division is required.')).toBeTruthy();
+    expect(scheduleServiceMocks.createScheduledTournamentBlockForApp).not.toHaveBeenCalled();
+  });
+
+  it('submits tournament blocks with metadata and one child game from schedule tools', async () => {
     scheduleServiceMocks.loadParentSchedule
       .mockResolvedValueOnce(buildStaffScheduleResult())
       .mockResolvedValueOnce(buildStaffScheduleResult());
