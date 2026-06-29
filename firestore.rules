@@ -1296,35 +1296,31 @@ service cloud.firestore {
       return ['thumbs_up', 'heart', 'joy', 'wow', 'sad', 'clap'];
     }
 
-    function isSingleReactionTokenAddRemove(before, after, token) {
+    function currentUserReactionTokens() {
+      return request.auth.token.email != null ?
+               [request.auth.uid, 'user:' + request.auth.uid, request.auth.token.email.lower(), 'email:' + request.auth.token.email.lower()] :
+               [request.auth.uid, 'user:' + request.auth.uid];
+    }
+
+    function isSingleReactionTokenAddRemove(before, after) {
       return (
                after.hasAll(before) &&
                after.size() == before.size() + 1 &&
-               token in after &&
-               !(token in before)
+               after.hasAny(currentUserReactionTokens()) &&
+               !before.hasAny(currentUserReactionTokens())
              ) ||
              (
                before.hasAll(after) &&
                before.size() == after.size() + 1 &&
-               token in before &&
-               !(token in after)
+               before.hasAny(currentUserReactionTokens()) &&
+               !after.hasAny(currentUserReactionTokens())
              );
     }
 
     function isCurrentUserReactionToggle(before, after) {
       return before is list &&
              after is list &&
-             (
-               isSingleReactionTokenAddRemove(before, after, request.auth.uid) ||
-               isSingleReactionTokenAddRemove(before, after, 'user:' + request.auth.uid) ||
-               (
-                 request.auth.token.email != null &&
-                 (
-                   isSingleReactionTokenAddRemove(before, after, request.auth.token.email.lower()) ||
-                   isSingleReactionTokenAddRemove(before, after, 'email:' + request.auth.token.email.lower())
-                 )
-               )
-             );
+             isSingleReactionTokenAddRemove(before, after);
     }
 
     function isSingleNestedReactionFieldUpdate(reactionKey) {
