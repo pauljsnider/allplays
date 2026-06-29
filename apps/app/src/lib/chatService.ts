@@ -498,6 +498,65 @@ function getTeamLatestMessageTime(team: Record<string, any>) {
     || null;
 }
 
+function getConversationIdFromMetadata(value: unknown): string | null {
+  if (!value || typeof value !== 'object') return null;
+  const record = value as Record<string, any>;
+  const id = String(record.id || record.conversationId || record.key || '').trim();
+  return id || null;
+}
+
+function getConversationLatestMessageTimeFromMetadata(value: unknown) {
+  if (!value || typeof value !== 'object') return null;
+  const record = value as Record<string, any>;
+  return record.lastMessageAt || record.latestMessageAt || record.updatedAt || null;
+}
+
+function getTeamConversationMetadata(team: Record<string, any>) {
+  const ids = new Set<string>();
+  const latestMessageAtByConversation: Record<string, unknown> = {};
+  const addConversation = (conversation: unknown, fallbackId?: string) => {
+    const id = getConversationIdFromMetadata(conversation) || String(fallbackId || '').trim();
+    if (!id) return;
+    ids.add(id);
+    const latestMessageAt = getConversationLatestMessageTimeFromMetadata(conversation);
+    if (latestMessageAt) {
+      latestMessageAtByConversation[id] = latestMessageAt;
+    }
+  };
+
+  [
+    team?.chatConversations,
+    team?.conversations,
+    team?.conversationSummaries,
+    team?.chatConversationSummaries,
+    team?.conversationMetadata,
+    team?.chatConversationMetadata
+  ].forEach((metadata) => {
+    if (Array.isArray(metadata)) {
+      metadata.forEach((conversation) => addConversation(conversation));
+    } else if (metadata && typeof metadata === 'object') {
+      Object.entries(metadata as Record<string, unknown>).forEach(([id, conversation]) => addConversation(conversation, id));
+    }
+  });
+
+  if (Array.isArray(team?.chatConversationIds)) {
+    team.chatConversationIds.forEach((id: unknown) => {
+      const conversationId = String(id || '').trim();
+      if (conversationId) ids.add(conversationId);
+    });
+  }
+
+  const defaultLatestMessageAt = getTeamLatestMessageTime(team);
+  if (defaultLatestMessageAt) {
+    latestMessageAtByConversation[DEFAULT_TEAM_CONVERSATION_ID] = defaultLatestMessageAt;
+  }
+
+  return {
+    ids: Array.from(ids),
+    latestMessageAtByConversation
+  };
+}
+
 async function getLatestConversationMessage(teamId: string, conversationId: string): Promise<ChatMessage | null> {
   try {
     const [message] = await withTimeout(Promise.resolve(getChatMessages(teamId, { limit: 1, conversationId })), `latest chat ${teamId}/${conversationId}`, 2500);
@@ -652,6 +711,26 @@ export async function loadChatInbox(user: AuthUser | null, options: ChatInboxLoa
     }
     return acc;
   }, {});
+  const conversationMetadataByTeam = accessibleTeams.reduce<Record<string, ReturnType<typeof getTeamConversationMetadata>>>((acc, team) => {
+    acc[team.id] = getTeamConversationMetadata(team);
+    return acc;
+  }, {});
+  const conversationIdsByTeam = accessibleTeams.reduce<Record<string, string[]>>((acc, team) => {
+    const metadata = conversationMetadataByTeam[team.id];
+    if (!includeLastMessages) {
+      acc[team.id] = Array.from(new Set([DEFAULT_TEAM_CONVERSATION_ID, ...metadata.ids]));
+    } else if (metadata.ids.length > 0) {
+      acc[team.id] = Array.from(new Set([DEFAULT_TEAM_CONVERSATION_ID, ...metadata.ids]));
+    }
+    return acc;
+  }, {});
+  const latestMessageAtByConversationByTeam = accessibleTeams.reduce<Record<string, Record<string, unknown>>>((acc, team) => {
+    const latestMessageAtByConversation = conversationMetadataByTeam[team.id]?.latestMessageAtByConversation || {};
+    if (Object.keys(latestMessageAtByConversation).length > 0) {
+      acc[team.id] = latestMessageAtByConversation;
+    }
+    return acc;
+  }, {});
   const previewInputs = accessibleTeams.map((team) => {
     const canModerate = canModerateChat(userWithProfile, { ...team, id: team.id });
     return {
@@ -681,6 +760,8 @@ export async function loadChatInbox(user: AuthUser | null, options: ChatInboxLoa
   const unreadCounts = await withTimeout(
     Promise.resolve(getUnreadChatCounts(user.uid, unreadCandidateTeamIds, {
       latestMessageAtByTeam,
+      latestMessageAtByConversationByTeam,
+      conversationIdsByTeam,
       conversationLookupByTeam,
       defaultConversationOnly: !includeLastMessages
     })),

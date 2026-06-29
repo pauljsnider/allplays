@@ -240,6 +240,43 @@ describe('chat unread count helpers', () => {
         expect(getCountFromServer).not.toHaveBeenCalled();
     });
 
+    it('uses supplied latest-message timestamps without probing the latest message', async () => {
+        const getDoc = vi.fn();
+        const doc = vi.fn();
+        const messagesRef = { path: 'teams/team-1/chatMessages' };
+        const collection = vi.fn(() => messagesRef);
+        const where = vi.fn((field, op, value) => ({ field, op, value }));
+        const orderBy = vi.fn((field, direction) => ({ field, direction }));
+        const limit = vi.fn((value) => ({ limit: value }));
+        const query = vi.fn((ref, ...constraints) => ({ ref, constraints }));
+        const getDocs = vi.fn();
+        const getCountFromServer = vi.fn()
+            .mockResolvedValueOnce(makeCountSnapshot(6))
+            .mockResolvedValueOnce(makeCountSnapshot(2));
+
+        const getUnreadChatCount = buildGetUnreadChatCount({
+            db: {},
+            getDoc,
+            doc,
+            collection,
+            query,
+            where,
+            orderBy,
+            limit,
+            getDocs,
+            getCountFromServer
+        });
+
+        await expect(getUnreadChatCount('user-1', 'team-1', {
+            userData: {},
+            latestMessageAt: { seconds: 500 }
+        })).resolves.toBe(4);
+        expect(getDocs).not.toHaveBeenCalled();
+        expect(orderBy).not.toHaveBeenCalled();
+        expect(limit).not.toHaveBeenCalled();
+        expect(getCountFromServer).toHaveBeenCalledTimes(2);
+    });
+
     it('uses conversation-scoped last-read state for non-default conversations', async () => {
         const lastRead = { seconds: 300 };
         const getDoc = vi.fn();
@@ -397,6 +434,12 @@ describe('chat unread count helpers', () => {
             latestMessageAtByTeam: {
                 'team-a': { seconds: 250 }
             },
+            latestMessageAtByConversationByTeam: {
+                'team-a': {
+                    'staff-conversation': { seconds: 240 },
+                    'direct-conversation': { seconds: 230 }
+                }
+            },
             conversationIdsByTeam: {
                 'team-a': ['team', 'staff-conversation', 'direct-conversation']
             }
@@ -411,11 +454,11 @@ describe('chat unread count helpers', () => {
         }));
         expect(getUnreadChatCount).toHaveBeenNthCalledWith(2, 'user-5', 'team-a', expect.objectContaining({
             conversationId: 'staff-conversation',
-            latestMessageAt: undefined
+            latestMessageAt: { seconds: 240 }
         }));
         expect(getUnreadChatCount).toHaveBeenNthCalledWith(3, 'user-5', 'team-a', expect.objectContaining({
             conversationId: 'direct-conversation',
-            latestMessageAt: undefined
+            latestMessageAt: { seconds: 230 }
         }));
         expect(warn).not.toHaveBeenCalled();
     });

@@ -6944,6 +6944,7 @@ export async function getUnreadChatCount(userId, teamId, options = {}) {
 export async function getUnreadChatCounts(userId, teamIds, options = {}) {
     const counts = {};
     const latestMessageAtByTeam = options?.latestMessageAtByTeam || {};
+    const latestMessageAtByConversationByTeam = options?.latestMessageAtByConversationByTeam || {};
     const conversationIdsByTeam = options?.conversationIdsByTeam || {};
     const conversationLookupByTeam = options?.conversationLookupByTeam || {};
     const defaultConversationOnly = options?.defaultConversationOnly === true;
@@ -6983,13 +6984,16 @@ export async function getUnreadChatCounts(userId, teamIds, options = {}) {
 
             const unreadCounts = await Promise.all(conversationIds.map(async (conversationId) => {
                 try {
+                    const latestMessageAtByConversation = latestMessageAtByConversationByTeam?.[teamId] || {};
                     return await getUnreadChatCount(userId, teamId, {
                         userData,
                         conversationId,
-                        latestMessageAt: isDefaultTeamConversation(conversationId)
-                            && Object.prototype.hasOwnProperty.call(latestMessageAtByTeam, teamId)
-                            ? latestMessageAtByTeam[teamId]
-                            : undefined
+                        latestMessageAt: Object.prototype.hasOwnProperty.call(latestMessageAtByConversation, conversationId)
+                            ? latestMessageAtByConversation[conversationId]
+                            : isDefaultTeamConversation(conversationId)
+                                && Object.prototype.hasOwnProperty.call(latestMessageAtByTeam, teamId)
+                                ? latestMessageAtByTeam[teamId]
+                                : undefined
                     });
                 } catch (err) {
                     console.warn(`Failed to get unread count for team ${teamId} conversation ${conversationId}:`, err);
