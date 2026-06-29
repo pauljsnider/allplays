@@ -105,6 +105,15 @@ export type ParentAthleteProfileData = {
   }>;
 };
 
+function buildParentAthleteProfileShell(parentLinks: Array<Record<string, any>>, teamId: string, playerId: string): ParentAthleteProfileData {
+  return {
+    profile: null,
+    shareUrl: '',
+    builderUrl: buildLegacyUrl('athlete-profile-builder.html', { teamId, playerId }),
+    seasonOptions: buildAthleteProfileSeasonOptions(parentLinks)
+  };
+}
+
 export type ParentPlayerDetailData = {
   child: ParentScheduleChild;
   player: Record<string, any>;
@@ -200,8 +209,7 @@ export async function loadParentPlayerDetail(user: AuthUser | null, teamId: stri
     incentiveRules,
     paidGames,
     maxPerGameCents,
-    statOptions,
-    athleteProfiles
+    statOptions
   ] = await Promise.all([
     getPlayers(resolvedTeamId, { includeInactive: true }).catch(() => []),
     getGames(resolvedTeamId).catch(() => []),
@@ -213,8 +221,7 @@ export async function loadParentPlayerDetail(user: AuthUser | null, teamId: stri
     getIncentiveRules(user.uid, resolvedPlayerId).catch(() => []),
     getPaidGames(user.uid, resolvedPlayerId).catch(() => new Map()),
     getCapSetting(user.uid, resolvedPlayerId).catch(() => null),
-    getStatOptionsForTeam(resolvedTeamId).catch(() => []),
-    listAthleteProfilesForParent(user.uid).catch(() => [])
+    getStatOptionsForTeam(resolvedTeamId).catch(() => [])
   ]);
 
   const playerDoc = (Array.isArray(players) ? players : []).find((candidate: LegacyPlayerRecord) => candidate?.id === resolvedPlayerId) || {};
@@ -287,13 +294,26 @@ export async function loadParentPlayerDetail(user: AuthUser | null, teamId: stri
       maxPerGameCents,
       statRows
     }),
-    athleteProfile: buildAthleteProfileData({
-      profiles: Array.isArray(athleteProfiles) ? athleteProfiles : [],
-      parentLinks: Array.isArray(user.parentOf) ? user.parentOf : [],
-      teamId: resolvedTeamId,
-      playerId: resolvedPlayerId
-    })
+    athleteProfile: buildParentAthleteProfileShell(
+      Array.isArray(user.parentOf) ? user.parentOf : [],
+      resolvedTeamId,
+      resolvedPlayerId
+    )
   };
+}
+
+export async function loadParentPlayerAthleteProfile(user: AuthUser | null, teamId: string, playerId: string): Promise<ParentAthleteProfileData> {
+  if (!user?.uid) {
+    throw new Error('Player details require a signed-in user.');
+  }
+
+  const profiles = await listAthleteProfilesForParent(user.uid).catch(() => []);
+  return buildAthleteProfileData({
+    profiles: Array.isArray(profiles) ? profiles : [],
+    parentLinks: Array.isArray(user.parentOf) ? user.parentOf : [],
+    teamId,
+    playerId
+  });
 }
 
 export async function savePlayerCustomRosterFieldValues({
@@ -801,24 +821,9 @@ function buildPlayerIncentiveData({
   };
 }
 
-function buildAthleteProfileData({
-  profiles,
-  parentLinks,
-  teamId,
-  playerId
-}: {
-  profiles: LegacyAthleteProfileRecord[];
-  parentLinks: Array<Record<string, any>>;
-  teamId: string;
-  playerId: string;
-}): ParentAthleteProfileData {
-  const profile = profiles.find((candidate) => (
-    Array.isArray(candidate?.seasons) &&
-    candidate.seasons.some((season: any) => season?.teamId === teamId && season?.playerId === playerId)
-  )) || null;
-  const profileId = profile?.id || '';
+function buildAthleteProfileSeasonOptions(parentLinks: Array<Record<string, any>>) {
   const seen = new Set<string>();
-  const seasonOptions = (Array.isArray(parentLinks) ? parentLinks : [])
+  return (Array.isArray(parentLinks) ? parentLinks : [])
     .map((link) => {
       const optionTeamId = String(link?.teamId || '').trim();
       const optionPlayerId = String(link?.playerId || link?.childId || '').trim();
@@ -835,11 +840,29 @@ function buildAthleteProfileData({
       };
     })
     .filter(Boolean) as ParentAthleteProfileData['seasonOptions'];
+}
+
+function buildAthleteProfileData({
+  profiles,
+  parentLinks,
+  teamId,
+  playerId
+}: {
+  profiles: LegacyAthleteProfileRecord[];
+  parentLinks: Array<Record<string, any>>;
+  teamId: string;
+  playerId: string;
+}): ParentAthleteProfileData {
+  const profile = profiles.find((candidate) => (
+    Array.isArray(candidate?.seasons) &&
+    candidate.seasons.some((season: any) => season?.teamId === teamId && season?.playerId === playerId)
+  )) || null;
+  const profileId = profile?.id || '';
   return {
     profile,
     shareUrl: profileId ? buildAthleteProfileShareUrl(getLegacyOrigin(), profileId) : '',
     builderUrl: buildLegacyUrl('athlete-profile-builder.html', { teamId, playerId, ...(profileId ? { profileId } : {}) }),
-    seasonOptions
+    seasonOptions: buildAthleteProfileSeasonOptions(parentLinks)
   };
 }
 
