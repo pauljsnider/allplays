@@ -1,14 +1,26 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-const recordAppUxTiming = vi.fn();
-const performanceSpanEnd = vi.fn();
-const startPerformanceSpan = vi.fn((label: string) => ({
-  label,
-  traceName: `trace:${label}`,
-  startedAt: 100,
-  end: performanceSpanEnd
-}));
-const recordCompletedPerformanceSpan = vi.fn();
+const {
+  recordAppUxTiming,
+  performanceSpanEnd,
+  startPerformanceSpan,
+  recordCompletedPerformanceSpan
+} = vi.hoisted(() => {
+  const performanceSpanEnd = vi.fn();
+  const startPerformanceSpan = vi.fn((label: string) => ({
+    label,
+    traceName: `trace:${label}`,
+    startedAt: 100,
+    end: performanceSpanEnd
+  }));
+
+  return {
+    recordAppUxTiming: vi.fn(),
+    performanceSpanEnd,
+    startPerformanceSpan,
+    recordCompletedPerformanceSpan: vi.fn()
+  };
+});
 
 vi.mock('./telemetry', () => ({
   recordAppUxTiming
