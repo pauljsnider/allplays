@@ -1020,7 +1020,32 @@ export async function getTeamMediaItems(teamId, folderId = null) {
     return sortByMediaOrder(resolvedItems);
 }
 
-function readTeamMediaPageOffset(cursor, folderId, sortedDocs = []) {
+function isFiniteTeamMediaOrder(value) {
+    return Number.isFinite(Number(value));
+}
+
+function isOrderedTeamMediaDoc(itemDoc, folderId) {
+    const item = itemDoc?.data?.() || {};
+    return item.deleted !== true && item.folderId === folderId && isFiniteTeamMediaOrder(item.order);
+}
+
+function isLegacyTeamMediaDoc(itemDoc, folderId) {
+    const item = itemDoc?.data?.() || {};
+    return item.deleted !== true && item.folderId === folderId && !isFiniteTeamMediaOrder(item.order);
+}
+
+function getOrderedTeamMediaCursor(cursor, folderId) {
+    if (!cursor || cursor === 'legacy') return null;
+    if (cursor?.kind === 'team-media-items-page') {
+        const cursorFolderId = String(cursor.folderId || '').trim();
+        if (cursorFolderId && cursorFolderId !== folderId) return null;
+        if (cursor.phase === 'legacy') return null;
+        return cursor.lastDoc || cursor.afterDoc || cursor.doc || cursor.snapshot || null;
+    }
+    return cursor;
+}
+
+function getLegacyTeamMediaOffset(cursor, folderId) {
     if (Number.isFinite(Number(cursor))) {
         return Math.max(0, Math.floor(Number(cursor)));
     }
@@ -1035,10 +1060,104 @@ function readTeamMediaPageOffset(cursor, folderId, sortedDocs = []) {
         }
     }
 
-    const cursorId = String(cursor?.id || '').trim();
-    if (!cursorId) return 0;
-    const cursorIndex = sortedDocs.findIndex((itemDoc) => itemDoc.id === cursorId);
-    return cursorIndex >= 0 ? cursorIndex + 1 : 0;
+    return 0;
+}
+
+async function getOrderedTeamMediaPage(teamId, folderId, pageSize, cursor) {
+    const itemsRef = getTeamMediaItemsRef(teamId);
+    const overfetch = Math.min(Math.max(pageSize + 5, pageSize), 100);
+    const pageDocs = [];
+    let scanAfterDoc = getOrderedTeamMediaCursor(cursor, folderId);
+    let lastReturnedDoc = null;
+    let hasMore = false;
+    let exhausted = false;
+
+    while (pageDocs.length < pageSize) {
+        const constraints = [
+            where('folderId', '==', folderId),
+            orderBy('order')
+        ];
+        if (scanAfterDoc) {
+            constraints.push(startAfter(scanAfterDoc));
+        }
+        constraints.push(limit(overfetch));
+
+        const snapshot = await getDocs(query(itemsRef, ...constraints));
+        const fetchedDocs = Array.isArray(snapshot?.docs) ? snapshot.docs : [];
+        if (fetchedDocs.length === 0) {
+            exhausted = true;
+            hasMore = false;
+            break;
+        }
+
+        scanAfterDoc = fetchedDocs[fetchedDocs.length - 1] || scanAfterDoc;
+        const liveDocs = fetchedDocs.filter((itemDoc) => isOrderedTeamMediaDoc(itemDoc, folderId));
+
+        while (pageDocs.length < pageSize && liveDocs.length > 0) {
+            const nextDoc = liveDocs.shift();
+            pageDocs.push(nextDoc);
+            lastReturnedDoc = nextDoc;
+        }
+
+        if (pageDocs.length >= pageSize) {
+            hasMore = liveDocs.length > 0 || fetchedDocs.length === overfetch;
+            exhausted = !hasMore && fetchedDocs.length < overfetch;
+            break;
+        }
+
+        if (fetchedDocs.length < overfetch) {
+            exhausted = true;
+            hasMore = false;
+            break;
+        }
+    }
+
+    return {
+        docs: pageDocs,
+        lastDoc: lastReturnedDoc,
+        nextCursor: hasMore && lastReturnedDoc
+            ? {
+                kind: 'team-media-items-page',
+                folderId,
+                phase: 'ordered',
+                lastDoc: lastReturnedDoc
+            }
+            : null,
+        hasMore,
+        exhausted
+    };
+}
+
+async function getLegacyTeamMediaPage(teamId, folderId, pageSize, cursor) {
+    const snapshot = await getDocs(query(
+        getTeamMediaItemsRef(teamId),
+        where('folderId', '==', folderId)
+    ));
+    const legacyDocs = (Array.isArray(snapshot?.docs) ? snapshot.docs : [])
+        .filter((itemDoc) => isLegacyTeamMediaDoc(itemDoc, folderId));
+    const docsById = new Map(legacyDocs.map((itemDoc) => [itemDoc.id, itemDoc]));
+    const sortedDocs = sortByMediaOrder(legacyDocs.map((itemDoc) => ({ id: itemDoc.id, ...itemDoc.data() })))
+        .map((item) => docsById.get(item.id))
+        .filter(Boolean);
+    const startOffset = getLegacyTeamMediaOffset(cursor, folderId);
+    const pageDocs = pageSize > 0 ? sortedDocs.slice(startOffset, startOffset + pageSize) : [];
+    const hasMore = startOffset + pageDocs.length < sortedDocs.length;
+    const lastDoc = pageDocs[pageDocs.length - 1] || null;
+
+    return {
+        docs: pageDocs,
+        lastDoc,
+        nextCursor: hasMore
+            ? {
+                kind: 'team-media-items-page',
+                folderId,
+                phase: 'legacy',
+                offset: startOffset + pageDocs.length
+            }
+            : null,
+        hasMore,
+        hasAny: sortedDocs.length > startOffset
+    };
 }
 
 export async function getTeamMediaItemsPage(teamId, folderId, options = {}) {
@@ -1056,38 +1175,44 @@ export async function getTeamMediaItemsPage(teamId, folderId, options = {}) {
         ? Math.min(Math.max(Math.floor(requestedPageSize), 1), 100)
         : 24;
     const cursor = options.cursor || options.afterDoc || null;
+    const isLegacyCursor = cursor?.kind === 'team-media-items-page' && cursor.phase === 'legacy';
 
-    const snapshot = await getDocs(query(
-        getTeamMediaItemsRef(teamId),
-        where('folderId', '==', cleanFolderId)
-    ));
-    const docs = snapshot.docs
-        .filter((itemDoc) => {
-            const item = itemDoc.data() || {};
-            return item.deleted !== true && item.folderId === cleanFolderId;
-        });
-    const docsById = new Map(docs.map((itemDoc) => [itemDoc.id, itemDoc]));
-    const sortedDocs = sortByMediaOrder(docs.map((itemDoc) => ({ id: itemDoc.id, ...itemDoc.data() })))
-        .map((item) => docsById.get(item.id))
-        .filter(Boolean);
-    const startOffset = readTeamMediaPageOffset(cursor, cleanFolderId, sortedDocs);
-    const pageDocs = sortedDocs.slice(startOffset, startOffset + pageSize);
-    const hasMore = startOffset + pageSize < sortedDocs.length;
+    const orderedPage = isLegacyCursor
+        ? { docs: [], lastDoc: null, nextCursor: null, hasMore: false, exhausted: true }
+        : await getOrderedTeamMediaPage(teamId, cleanFolderId, pageSize, cursor);
+    const remainingSlots = Math.max(pageSize - orderedPage.docs.length, 0);
+
+    let legacyPage = { docs: [], lastDoc: null, nextCursor: null, hasMore: false, hasAny: false };
+    if (isLegacyCursor) {
+        legacyPage = await getLegacyTeamMediaPage(teamId, cleanFolderId, pageSize, cursor);
+    } else if (remainingSlots > 0 || orderedPage.exhausted) {
+        legacyPage = await getLegacyTeamMediaPage(
+            teamId,
+            cleanFolderId,
+            remainingSlots > 0 ? remainingSlots : 1,
+            remainingSlots > 0 ? null : { kind: 'team-media-items-page', folderId: cleanFolderId, phase: 'legacy', offset: 0 }
+        );
+        if (remainingSlots === 0) {
+            legacyPage.docs = [];
+            legacyPage.lastDoc = null;
+            legacyPage.nextCursor = legacyPage.hasAny
+                ? { kind: 'team-media-items-page', folderId: cleanFolderId, phase: 'legacy', offset: 0 }
+                : null;
+            legacyPage.hasMore = legacyPage.hasAny;
+        }
+    }
+
+    const pageDocs = [...orderedPage.docs, ...legacyPage.docs];
     const items = pageDocs.map((itemDoc) => ({ id: itemDoc.id, ...itemDoc.data() }));
     const resolvedItems = await Promise.all(items.map((item) => resolveAuthorizedTeamMediaItem(teamId, item)));
-    const lastDoc = pageDocs[pageDocs.length - 1] || null;
+    const lastDoc = legacyPage.lastDoc || orderedPage.lastDoc || null;
+    const nextCursor = legacyPage.nextCursor || orderedPage.nextCursor || null;
 
     return {
         items: sortByMediaOrder(resolvedItems),
         lastDoc,
-        nextCursor: hasMore
-            ? {
-                kind: 'team-media-items-page',
-                folderId: cleanFolderId,
-                offset: startOffset + pageDocs.length
-            }
-            : null,
-        hasMore
+        nextCursor,
+        hasMore: legacyPage.hasMore || orderedPage.hasMore
     };
 }
 

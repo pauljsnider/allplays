@@ -310,53 +310,71 @@ describe('team media db ordering', () => {
         const docs = [
             {
                 id: 'media-1',
-                data: () => ({ folderId: 'folder-1', type: 'photo', downloadUrl: 'https://cdn.example.test/1.jpg', order: 1, deleted: false })
+                data: () => ({ folderId: 'folder-1', type: 'photo', storagePath: 'team-media/team-1/folder-1/user-1/1.jpg', order: 1, deleted: false })
             },
             {
                 id: 'media-2',
-                data: () => ({ folderId: 'folder-1', type: 'photo', downloadUrl: 'https://cdn.example.test/2.jpg', order: 2, deleted: false })
+                data: () => ({ folderId: 'folder-1', type: 'photo', storagePath: 'team-media/team-1/folder-1/user-1/2.jpg', order: 2, deleted: false })
             },
             {
                 id: 'media-3',
-                data: () => ({ folderId: 'folder-1', type: 'photo', downloadUrl: 'https://cdn.example.test/3.jpg', order: 3, deleted: false })
+                data: () => ({ folderId: 'folder-1', type: 'photo', storagePath: 'team-media/team-1/folder-1/user-1/3.jpg', order: 3, deleted: false })
             }
         ];
-        firebaseMocks.getDocs.mockResolvedValue({ docs });
+        firebaseMocks.getDocs
+            .mockResolvedValueOnce({ docs })
+            .mockResolvedValueOnce({ docs: [docs[2]] })
+            .mockResolvedValueOnce({ docs: [] });
+        firebaseMocks.getDownloadURL
+            .mockResolvedValueOnce('https://cdn.example.test/1.jpg')
+            .mockResolvedValueOnce('https://cdn.example.test/2.jpg')
+            .mockResolvedValueOnce('https://cdn.example.test/3.jpg');
 
         const { getTeamMediaItemsPage } = await import('../../js/db.js');
         const firstPage = await getTeamMediaItemsPage('team-1', 'folder-1', { pageSize: 2 });
         const secondPage = await getTeamMediaItemsPage('team-1', 'folder-1', { pageSize: 2, cursor: firstPage.nextCursor });
 
         expect(firebaseMocks.where).toHaveBeenCalledWith('folderId', '==', 'folder-1');
+        expect(firebaseMocks.orderBy).toHaveBeenCalledWith('order');
+        expect(firebaseMocks.limit).toHaveBeenCalledWith(7);
+        expect(firebaseMocks.startAfter).toHaveBeenCalledWith(docs[1]);
         expect(firstPage.items.map((item) => item.id)).toEqual(['media-1', 'media-2']);
         expect(firstPage.hasMore).toBe(true);
         expect(firstPage.lastDoc).toBe(docs[1]);
-        expect(firstPage.nextCursor).toEqual({ kind: 'team-media-items-page', folderId: 'folder-1', offset: 2 });
+        expect(firstPage.nextCursor).toEqual({ kind: 'team-media-items-page', folderId: 'folder-1', phase: 'ordered', lastDoc: docs[1] });
         expect(secondPage.items.map((item) => item.id)).toEqual(['media-3']);
         expect(secondPage.hasMore).toBe(false);
         expect(secondPage.nextCursor).toBeNull();
+        expect(firebaseMocks.getDownloadURL).toHaveBeenCalledTimes(3);
     });
 
     it('keeps deleted items from truncating later live media pages', async () => {
-        const docs = [
+        const orderedBatch = [
             {
                 id: 'media-1',
-                data: () => ({ folderId: 'folder-1', type: 'photo', downloadUrl: 'https://cdn.example.test/1.jpg', order: 1, deleted: false })
+                data: () => ({ folderId: 'folder-1', type: 'photo', storagePath: 'team-media/team-1/folder-1/user-1/1.jpg', order: 1, deleted: false })
             },
             {
                 id: 'media-deleted',
-                data: () => ({ folderId: 'folder-1', type: 'photo', downloadUrl: 'https://cdn.example.test/deleted.jpg', order: 2, deleted: true })
+                data: () => ({ folderId: 'folder-1', type: 'photo', storagePath: 'team-media/team-1/folder-1/user-1/deleted.jpg', order: 2, deleted: true })
             },
             {
                 id: 'media-2',
-                data: () => ({ folderId: 'folder-1', type: 'photo', downloadUrl: 'https://cdn.example.test/2.jpg', order: 3, deleted: false })
+                data: () => ({ folderId: 'folder-1', type: 'photo', storagePath: 'team-media/team-1/folder-1/user-1/2.jpg', order: 3, deleted: false })
             },
             {
                 id: 'media-3',
-                data: () => ({ folderId: 'folder-1', type: 'photo', downloadUrl: 'https://cdn.example.test/3.jpg', order: 4, deleted: false })
+                data: () => ({ folderId: 'folder-1', type: 'photo', storagePath: 'team-media/team-1/folder-1/user-1/3.jpg', order: 4, deleted: false })
             }
         ];
-        firebaseMocks.getDocs.mockResolvedValue({ docs });
+        firebaseMocks.getDocs
+            .mockResolvedValueOnce({ docs: orderedBatch })
+            .mockResolvedValueOnce({ docs: [orderedBatch[3]] })
+            .mockResolvedValueOnce({ docs: [] });
+        firebaseMocks.getDownloadURL
+            .mockResolvedValueOnce('https://cdn.example.test/1.jpg')
+            .mockResolvedValueOnce('https://cdn.example.test/2.jpg')
+            .mockResolvedValueOnce('https://cdn.example.test/3.jpg');
 
         const { getTeamMediaItemsPage } = await import('../../js/db.js');
         const firstPage = await getTeamMediaItemsPage('team-1', 'folder-1', { pageSize: 2 });
@@ -366,6 +384,8 @@ describe('team media db ordering', () => {
         expect(firstPage.hasMore).toBe(true);
         expect(secondPage.items.map((item) => item.id)).toEqual(['media-3']);
         expect(secondPage.hasMore).toBe(false);
+        expect(firebaseMocks.getDownloadURL).toHaveBeenCalledTimes(3);
+        expect(firebaseMocks.getDownloadURL).not.toHaveBeenCalledWith({ fullPath: 'team-media/team-1/folder-1/user-1/deleted.jpg' });
     });
 
     it('re-scopes storage-backed media when moving into a different album', async () => {
@@ -411,17 +431,29 @@ describe('team media db ordering', () => {
     });
 
     it('preserves legacy media without order fields at the end of paginated reads', async () => {
-        const docs = [
+        const orderedDocs = [
             {
                 id: 'media-ordered',
-                data: () => ({ folderId: 'folder-1', type: 'photo', downloadUrl: 'https://cdn.example.test/ordered.jpg', order: 0, deleted: false, title: 'Ordered' })
+                data: () => ({ folderId: 'folder-1', type: 'photo', storagePath: 'team-media/team-1/folder-1/user-1/ordered.jpg', order: 0, deleted: false, title: 'Ordered' })
+            }
+        ];
+        const legacyDocs = [
+            {
+                id: 'media-ordered',
+                data: () => ({ folderId: 'folder-1', type: 'photo', storagePath: 'team-media/team-1/folder-1/user-1/ordered.jpg', order: 0, deleted: false, title: 'Ordered' })
             },
             {
                 id: 'media-legacy',
-                data: () => ({ folderId: 'folder-1', type: 'photo', downloadUrl: 'https://cdn.example.test/legacy.jpg', deleted: false, title: 'Legacy' })
+                data: () => ({ folderId: 'folder-1', type: 'photo', storagePath: 'team-media/team-1/folder-1/user-1/legacy.jpg', deleted: false, title: 'Legacy' })
             }
         ];
-        firebaseMocks.getDocs.mockResolvedValue({ docs });
+        firebaseMocks.getDocs
+            .mockResolvedValueOnce({ docs: orderedDocs })
+            .mockResolvedValueOnce({ docs: legacyDocs })
+            .mockResolvedValueOnce({ docs: legacyDocs });
+        firebaseMocks.getDownloadURL
+            .mockResolvedValueOnce('https://cdn.example.test/ordered.jpg')
+            .mockResolvedValueOnce('https://cdn.example.test/legacy.jpg');
 
         const { getTeamMediaItemsPage } = await import('../../js/db.js');
         const firstPage = await getTeamMediaItemsPage('team-1', 'folder-1', { pageSize: 1 });
@@ -429,6 +461,7 @@ describe('team media db ordering', () => {
 
         expect(firstPage.items.map((item) => item.id)).toEqual(['media-ordered']);
         expect(firstPage.hasMore).toBe(true);
+        expect(firstPage.nextCursor).toEqual({ kind: 'team-media-items-page', folderId: 'folder-1', phase: 'legacy', offset: 0 });
         expect(secondPage.items.map((item) => item.id)).toEqual(['media-legacy']);
         expect(secondPage.hasMore).toBe(false);
     });

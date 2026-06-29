@@ -396,7 +396,9 @@ describe('TeamMedia bulk delete', () => {
       folderIds: ['album-1'],
       cursorsByFolderId: { 'album-1': cursor }
     });
+    expect(parentToolsServiceMocks.loadTeamMediaForApp).toHaveBeenCalledTimes(2);
     expect(await screen.findByText('Photo two')).toBeTruthy();
     expect(screen.getByText('Photo one')).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Load more' })).toBeNull();
   });
 });
