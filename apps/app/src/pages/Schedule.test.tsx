@@ -51,7 +51,8 @@ vi.mock('../lib/telemetry', () => ({
 }));
 vi.mock('../lib/uxTiming', () => ({
   recordFirstMeaningfulRender: uxTimingMocks.recordFirstMeaningfulRender,
-  startScreenMountTimer: vi.fn(() => ({ end: uxTimingMocks.end }))
+  startScreenMountTimer: vi.fn(() => ({ end: uxTimingMocks.end })),
+  startUxTimer: vi.fn(() => ({ end: vi.fn(), cancel: vi.fn() }))
 }));
 vi.mock('../lib/useShellLayout', () => ({
   useShellLayout: () => ({ isDesktopWeb: shellLayoutMocks.isDesktopWeb })

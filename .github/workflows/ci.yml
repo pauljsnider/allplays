@@ -92,3 +92,6 @@ jobs:
 
       - name: Lint app
         run: npm --prefix apps/app run lint -- --quiet
+
+      - name: Test app
+        run: npm --prefix apps/app run test:ci
