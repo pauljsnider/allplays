@@ -31,4 +31,17 @@ describe('admin dashboard statistics scope', () => {
         expect(adminHtml).toContain('id="teams-pagination-status"');
         expect(adminHtml).toContain('id="users-pagination-status"');
     });
+
+    it('bounds dashboard game reads while preserving page-scope full-history reads', () => {
+        const adminJs = fs.readFileSync('js/admin.js', 'utf8');
+        const loadGameStatsBody = adminJs.match(/async function loadGameStatsForTeams[\s\S]*?async function loadDashboardData\(\)/)?.[0] || '';
+
+        expect(adminJs).toContain('const DASHBOARD_GAME_LOOKBACK_DAYS = 30;');
+        expect(adminJs).toContain('const DASHBOARD_GAME_LOOKAHEAD_DAYS = 30;');
+        expect(loadGameStatsBody).toContain("scope === 'dashboard'");
+        expect(loadGameStatsBody).toContain('buildDashboardGameQueryWindow()');
+        expect(loadGameStatsBody).toContain('await getGames(team.id, dashboardGameQueryWindow)');
+        expect(loadGameStatsBody).toContain('await getGames(team.id);');
+        expect(loadGameStatsBody).toContain('loadedDashboardGamesKey = teamsKey;');
+    });
 });

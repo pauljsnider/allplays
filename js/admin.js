@@ -279,6 +279,15 @@ async function loadData() {
 let allGames = [];
 let dashboardGames = [];
 
+const DASHBOARD_GAME_LOOKBACK_DAYS = 30;
+const DASHBOARD_GAME_LOOKAHEAD_DAYS = 30;
+
+function buildDashboardGameQueryWindow(referenceDate = new Date()) {
+    const startDate = new Date(referenceDate.getTime() - DASHBOARD_GAME_LOOKBACK_DAYS * 24 * 60 * 60 * 1000);
+    const endDate = new Date(referenceDate.getTime() + DASHBOARD_GAME_LOOKAHEAD_DAYS * 24 * 60 * 60 * 1000);
+    return { startDate, endDate };
+}
+
 async function loadOfficialUserLinks(teams = allTeams, { scope = 'page' } = {}) {
     const teamsKey = getTeamsKey(teams);
     if (scope === 'page' && teamsKey && loadedTeamsOfficialsPageKey === teamsKey) {
@@ -341,9 +350,14 @@ async function loadGameStatsForTeams(teams = allTeams, { scope = 'page' } = {}) 
         return;
     }
 
+    const dashboardGameQueryWindow = scope === 'dashboard'
+        ? buildDashboardGameQueryWindow()
+        : null;
     const gamesPromises = teams.map(async (team) => {
         try {
-            const games = await getGames(team.id);
+            const games = dashboardGameQueryWindow
+                ? await getGames(team.id, dashboardGameQueryWindow)
+                : await getGames(team.id);
             return games.map(g => ({ ...g, teamId: team.id, teamName: team.name }));
         } catch (e) {
             return [];
