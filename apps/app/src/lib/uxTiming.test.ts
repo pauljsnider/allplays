@@ -1,8 +1,23 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const recordAppUxTiming = vi.fn();
+const performanceSpanEnd = vi.fn();
+const startPerformanceSpan = vi.fn((label: string) => ({
+  label,
+  traceName: `trace:${label}`,
+  startedAt: 100,
+  end: performanceSpanEnd
+}));
+const recordCompletedPerformanceSpan = vi.fn();
+
 vi.mock('./telemetry', () => ({
   recordAppUxTiming: (...args: unknown[]) => recordAppUxTiming(...args)
+}));
+
+vi.mock('./performanceInstrumentation', () => ({
+  now: vi.fn(() => 150),
+  startPerformanceSpan: (...args: unknown[]) => startPerformanceSpan(...args),
+  recordCompletedPerformanceSpan: (...args: unknown[]) => recordCompletedPerformanceSpan(...args)
 }));
 
 import {
@@ -20,6 +35,9 @@ import {
 describe('uxTiming', () => {
   beforeEach(() => {
     recordAppUxTiming.mockClear();
+    performanceSpanEnd.mockClear();
+    startPerformanceSpan.mockClear();
+    recordCompletedPerformanceSpan.mockClear();
     resetFirstMeaningfulRenderForTests();
     vi.spyOn(console, 'info').mockImplementation(() => {});
   });
@@ -55,6 +73,19 @@ describe('uxTiming', () => {
       category: 'interaction',
       response: 'going',
       path: 'sdk'
+    });
+  });
+
+  it('marks canceled spans as abandoned in Firebase-safe metadata', () => {
+    const timer = startUxTimer('schedule load', { route: 'schedule' });
+    timer.cancel({ source: 'unmount' });
+
+    expect(recordAppUxTiming).not.toHaveBeenCalled();
+    expect(performanceSpanEnd).toHaveBeenCalledWith({
+      route: 'schedule',
+      source: 'unmount',
+      abandoned: true,
+      outcome: 'abandoned'
     });
   });
 
