@@ -54,50 +54,33 @@ describe('notificationInboxService', () => {
         expect(callback).toHaveBeenCalledWith(3);
     });
 
-    it('falls back to counting unread items from the full inbox when the unread query fails', () => {
+    it('does not attach a full inbox fallback when the unread query fails', () => {
         const callback = vi.fn();
+        const onError = vi.fn();
         const primaryUnsubscribe = vi.fn();
-        const fallbackUnsubscribe = vi.fn();
         const primaryCollection = { kind: 'primaryCollection' };
-        const fallbackCollection = { kind: 'fallbackCollection' };
         const primaryQuery = { kind: 'primaryQuery' };
-        vi.mocked(collection)
-            .mockReturnValueOnce(primaryCollection as never)
-            .mockReturnValueOnce(fallbackCollection as never);
+        const unreadError = new Error('The query requires an index.');
+        vi.mocked(collection).mockReturnValueOnce(primaryCollection as never);
         vi.mocked(query).mockReturnValueOnce(primaryQuery as never);
-        vi.mocked(onSnapshot)
-            .mockImplementationOnce((_query, _onNext, onError) => {
-                onError?.(new Error('The query requires an index.'));
-                return primaryUnsubscribe;
-            })
-            .mockImplementationOnce((_query, onNext) => {
-                onNext({
-                    docs: [
-                        {
-                            id: 'notif-1',
-                            data: () => ({ title: 'Unread', readAt: null, createdAt: null })
-                        },
-                        {
-                            id: 'notif-2',
-                            data: () => ({ title: 'Read', readAt: { seconds: 1 }, createdAt: null })
-                        }
-                    ]
-                } as never);
-                return fallbackUnsubscribe;
-            });
+        vi.mocked(onSnapshot).mockImplementationOnce((_query, _onNext, onSnapshotError) => {
+            onSnapshotError?.(unreadError);
+            return primaryUnsubscribe;
+        });
 
-        const unsubscribe = subscribeToUnreadNotificationCount('user-123', callback);
+        const unsubscribe = subscribeToUnreadNotificationCount('user-123', callback, onError);
 
         expect(query).toHaveBeenCalledWith(primaryCollection, { kind: 'where' });
+        expect(onSnapshot).toHaveBeenCalledTimes(1);
         expect(onSnapshot).toHaveBeenNthCalledWith(1, primaryQuery, expect.any(Function), expect.any(Function));
-        expect(onSnapshot).toHaveBeenNthCalledWith(2, fallbackCollection, expect.any(Function), expect.any(Function));
+        expect(collection).toHaveBeenCalledTimes(1);
         expect(orderBy).not.toHaveBeenCalled();
         expect(limit).not.toHaveBeenCalled();
-        expect(callback).toHaveBeenCalledWith(1);
+        expect(callback).not.toHaveBeenCalled();
+        expect(onError).toHaveBeenCalledWith(unreadError);
 
         unsubscribe();
         expect(primaryUnsubscribe).toHaveBeenCalledTimes(1);
-        expect(fallbackUnsubscribe).toHaveBeenCalledTimes(1);
     });
 
     it('falls back to the full inbox snapshot when the ordered inbox query fails', () => {
