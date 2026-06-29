@@ -6505,22 +6505,26 @@ export async function upsertChatConversation(teamId, conversation = {}) {
     const hasMutedByUpdate = Object.prototype.hasOwnProperty.call(conversation, 'mutedBy');
 
     if (existing.exists()) {
-        if (hasMutedByUpdate) {
+        const existingData = existing.data() || {};
+        const shouldBackfillName = Boolean(name && !existingData.name);
+        if (hasMutedByUpdate || shouldBackfillName) {
             await setDoc(conversationRef, {
-                mutedBy: normalizedMutedBy,
+                ...(hasMutedByUpdate ? { mutedBy: normalizedMutedBy } : {}),
+                ...(shouldBackfillName ? { name } : {}),
                 updatedAt: now
             }, { merge: true });
         }
         return {
             id: conversationId,
-            ...existing.data(),
+            ...existingData,
             ...(hasMutedByUpdate ? {
                 mutedBy: normalizedMutedBy,
                 updatedAt: now
             } : {}),
-            participantIds: existing.data()?.participantIds || normalizedParticipantIds,
-            participantRoles: existing.data()?.participantRoles || normalizedParticipantRoles,
-            name: existing.data()?.name || name || null
+            ...(shouldBackfillName ? { name, updatedAt: now } : {}),
+            participantIds: existingData.participantIds || normalizedParticipantIds,
+            participantRoles: existingData.participantRoles || normalizedParticipantRoles,
+            name: existingData.name || name || null
         };
     }
 

@@ -149,6 +149,52 @@ describe('upsertChatConversation', () => {
         });
     });
 
+    it('backfills a missing display name on an existing targeted conversation', async () => {
+        const now = { seconds: 321 };
+        const conversationRef = { path: 'teams/team-1/chatConversations/direct-user-1-user-2' };
+        const getDoc = vi.fn().mockResolvedValue(makeSnapshot({
+            type: 'direct',
+            participantIds: ['user-1', 'user-2'],
+            participantRoles: [],
+            mutedBy: [],
+            createdAt: { seconds: 1 },
+            updatedAt: { seconds: 2 }
+        }));
+        const setDoc = vi.fn().mockResolvedValue(undefined);
+        const upsertChatConversation = buildUpsertChatConversation({
+            normalizeConversationType: vi.fn((value) => value),
+            normalizeConversationParticipantIds: vi.fn((ids) => [...ids].sort()),
+            buildConversationId: vi.fn(() => 'direct-user-1-user-2'),
+            Timestamp: { now: vi.fn(() => now) },
+            doc: vi.fn(() => conversationRef),
+            db: {},
+            getDoc,
+            setDoc
+        });
+
+        const result = await upsertChatConversation('team-1', {
+            type: 'direct',
+            participantIds: ['user-2', 'user-1'],
+            participantRoles: [],
+            name: 'Avery Parent'
+        });
+
+        expect(setDoc).toHaveBeenCalledWith(conversationRef, {
+            name: 'Avery Parent',
+            updatedAt: now
+        }, { merge: true });
+        expect(result).toEqual({
+            id: 'direct-user-1-user-2',
+            type: 'direct',
+            participantIds: ['user-1', 'user-2'],
+            participantRoles: [],
+            mutedBy: [],
+            name: 'Avery Parent',
+            createdAt: { seconds: 1 },
+            updatedAt: now
+        });
+    });
+
     it('builds one stable conversation id for staff-only role conversations', async () => {
         const now = { seconds: 456 };
         const getDoc = vi.fn().mockResolvedValue(makeSnapshot(null));
