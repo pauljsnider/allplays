@@ -16,7 +16,9 @@ vi.mock('./telemetry', () => ({
 
 vi.mock('./performanceInstrumentation', () => ({
   now: vi.fn(() => 150),
-  startPerformanceSpan: (...args: unknown[]) => startPerformanceSpan(...args),
+  // The local mock is typed (label: string); cast the passthrough spread to a
+  // tuple so it satisfies that parameter (runtime still forwards every arg).
+  startPerformanceSpan: (...args: unknown[]) => startPerformanceSpan(...(args as [string])),
   recordCompletedPerformanceSpan: (...args: unknown[]) => recordCompletedPerformanceSpan(...args)
 }));
 
