@@ -9,6 +9,7 @@ import {
     resolvePostGameStatFields,
     resolvePostGameTeamStatFields
 } from '../../js/post-game-stat-editor.js';
+import { hasPlayerProfileParticipation } from '../../js/player-profile-stats.js';
 
 describe('post-game stat editor helpers', () => {
     it('resolves configured fields and keeps fouls editable for completed-game corrections', () => {
@@ -64,8 +65,54 @@ describe('post-game stat editor helpers', () => {
                 fouls: 0
             },
             didNotPlay: true,
-            timeMs: 0
+            timeMs: 0,
+            participated: false,
+            participationStatus: 'did-not-appear',
+            participationSource: ''
         });
+    });
+
+    it('marks zero-stat completed-game editor saves as player history appearances', () => {
+        const payload = buildCompletedGamePlayerStatsPayload({
+            player: { name: 'Ava Cole', number: '3' },
+            statFields: [
+                { fieldName: 'pts', label: 'PTS' },
+                { fieldName: 'reb', label: 'REB' },
+                { fieldName: 'fouls', label: 'FOULS' }
+            ],
+            values: { pts: '0', reb: '0', fouls: '0' },
+            didNotPlay: false,
+            existingTimeMs: 0
+        });
+
+        expect(payload).toMatchObject({
+            didNotPlay: false,
+            timeMs: 0,
+            stats: { pts: 0, reb: 0, fouls: 0 },
+            participated: true,
+            participationStatus: 'appeared',
+            participationSource: 'post-game-stat-editor'
+        });
+        expect(hasPlayerProfileParticipation(payload)).toBe(true);
+    });
+
+    it('keeps DNP-to-appeared zero-stat completed-game editor saves visible in player history', () => {
+        const payload = buildCompletedGamePlayerStatsPayload({
+            player: { name: 'Ava Cole', number: '3' },
+            statFields: [{ fieldName: 'pts', label: 'PTS' }],
+            values: { pts: '0' },
+            didNotPlay: false,
+            existingTimeMs: 0
+        });
+
+        expect(hasPlayerProfileParticipation({
+            didNotPlay: true,
+            participated: false,
+            participationStatus: 'did-not-appear',
+            timeMs: 0,
+            stats: { pts: 0 }
+        })).toBe(false);
+        expect(hasPlayerProfileParticipation(payload)).toBe(true);
     });
 
     it('normalizes configured custom stat keys so editor inputs and payloads stay aligned', () => {
@@ -157,6 +204,9 @@ describe('post-game stat editor helpers', () => {
         expect(pageSource).toContain('id="stats-save-next-btn"');
         expect(pageSource).toContain('resolvePostGameEditorDidNotPlay');
         expect(pageSource).toContain('setCompletedGamePlayerStats');
+        expect(pageSource).toContain("from './js/db.js?v=77'");
+        expect(dbSource).toContain('participated: !didNotPlay');
+        expect(dbSource).toContain("participationStatus: didNotPlay ? 'did-not-appear' : (statsPayload.participationStatus || 'appeared')");
         expect(dbSource).toContain('await deleteDoc(privateDocRef);');
         expect(pageSource).toContain('id="team-stats-section"');
         expect(pageSource).toContain('setCompletedGameTeamStats');

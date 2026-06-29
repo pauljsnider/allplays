@@ -118,12 +118,17 @@ export function buildCompletedGamePlayerStatsPayload({
         stats[key] = didNotPlay ? 0 : normalizeNumericInput(values[key]);
     });
 
+    const appeared = didNotPlay !== true;
+
     return {
         playerName: player.name || '',
         playerNumber: player.number || player.num || '',
         stats,
-        didNotPlay: !!didNotPlay,
-        timeMs: didNotPlay ? 0 : (Number.isFinite(Number(existingTimeMs)) ? Number(existingTimeMs) : 0)
+        didNotPlay: !appeared,
+        timeMs: appeared ? (Number.isFinite(Number(existingTimeMs)) ? Number(existingTimeMs) : 0) : 0,
+        participated: appeared,
+        participationStatus: appeared ? 'appeared' : 'did-not-appear',
+        participationSource: appeared ? 'post-game-stat-editor' : ''
     };
 }
 
