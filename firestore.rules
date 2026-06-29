@@ -242,10 +242,33 @@ service cloud.firestore {
              canReadManagedTeamDocument(data);
     }
 
-    function keepsTeamPrivilegeFieldsImmutable() {
+    function isTeamOwnerOrGlobalAdmin(teamId) {
+      return isSignedIn() &&
+             (get(/databases/$(database)/documents/teams/$(teamId)).data.ownerId == request.auth.uid ||
+              isGlobalAdmin());
+    }
+
+    function keepsOwnerControlledTeamPrivilegeFieldsImmutable() {
       return request.resource.data.get('ownerId', '') == resource.data.get('ownerId', '') &&
              request.resource.data.get('isAdmin', false) == resource.data.get('isAdmin', false) &&
              request.resource.data.get('isPlatformAdmin', false) == resource.data.get('isPlatformAdmin', false);
+    }
+
+    function keepsCurrentAdminInNormalizedAdminEmailList() {
+      let existingAdminEmails = resource.data.get('adminEmails', []);
+      let nextAdminEmails = request.resource.data.get('adminEmails', []);
+      return request.auth.token.email != null &&
+             existingAdminEmails is list &&
+             nextAdminEmails is list &&
+             request.auth.token.email.lower() in existingAdminEmails &&
+             request.auth.token.email.lower() in nextAdminEmails &&
+             nextAdminEmails.size() <= existingAdminEmails.size();
+    }
+
+    function keepsTeamPrivilegeFieldsImmutable() {
+      return keepsOwnerControlledTeamPrivilegeFieldsImmutable() &&
+             (request.resource.data.get('adminEmails', []) == resource.data.get('adminEmails', []) ||
+              keepsCurrentAdminInNormalizedAdminEmailList());
     }
 
     function isSafeDocumentId(documentId) {
@@ -1782,7 +1805,8 @@ service cloud.firestore {
     match /teams/{teamId} {
       allow read: if canReadTeamDocument(resource.data);
       allow create: if isSignedIn() && request.resource.data.ownerId == request.auth.uid;
-      allow update: if isTeamOwnerOrAdmin(teamId) && keepsTeamPrivilegeFieldsImmutable();
+      allow update: if (isTeamOwnerOrGlobalAdmin(teamId) && keepsOwnerControlledTeamPrivilegeFieldsImmutable()) ||
+                       (isTeamOwnerOrAdmin(teamId) && keepsTeamPrivilegeFieldsImmutable());
       allow delete: if isGlobalAdmin();
 
 	      // Players subcollection
