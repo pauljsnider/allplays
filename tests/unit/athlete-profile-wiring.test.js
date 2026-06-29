@@ -46,6 +46,8 @@ describe('athlete profile wiring', () => {
         expect(source).toContain('Share Profile');
         expect(source).toContain('renderClipMedia');
         expect(source).toContain('data-athlete-clip-card');
+        expect(source).toContain("import { createAthleteProfileAuthLoader } from './js/athlete-profile-auth.js?v=1';");
+        expect(source).toContain('handleProfileAuthChange(user);');
     });
 
     it('adds dedicated athlete profile security rules', () => {

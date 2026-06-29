@@ -393,13 +393,20 @@
         // ============================================
 
         function initializeAthleteProfilePage(onAuthResolved, loadProfile) {
-            let hasStartedProfileLoad = false;
+            let hasLoadedWithoutUser = false;
+            let hasLoadedWithUser = false;
 
-            onAuthResolved(() => {
-                if (!hasStartedProfileLoad) {
-                    hasStartedProfileLoad = true;
-                    loadProfile();
+            onAuthResolved((user) => {
+                if (user) {
+                    if (hasLoadedWithUser) return;
+                    hasLoadedWithUser = true;
+                    loadProfile(user);
+                    return;
                 }
+
+                if (hasLoadedWithoutUser || hasLoadedWithUser) return;
+                hasLoadedWithoutUser = true;
+                loadProfile(null);
             });
         }
 
@@ -418,7 +425,7 @@
             assertEquals(loadCount, 1, 'Profile should load after auth callback runs');
         });
 
-        test('Athlete profile does not reload on later auth updates', () => {
+        test('Athlete profile retries when cold auth restore reveals signed-in parent', () => {
             let loadCount = 0;
             let authCallback = null;
 
@@ -430,7 +437,8 @@
 
             authCallback(null);
             authCallback({ uid: 'parent-1' });
-            assertEquals(loadCount, 1, 'Profile should load only once even if auth changes again');
+            authCallback({ uid: 'parent-1' });
+            assertEquals(loadCount, 2, 'Profile should retry once when auth changes from anonymous to signed-in');
         });
 
         // ============================================

@@ -29,19 +29,16 @@
         import { checkAuth } from './js/auth.js?v=38';
         import { getAthleteProfile } from './js/db.js?v=76';
         import { buildAthleteProfileShareUrl } from './js/athlete-profile-utils.js?v=2';
+        import { createAthleteProfileAuthLoader } from './js/athlete-profile-auth.js?v=1';
 
         const params = getUrlParams();
         const content = document.getElementById('profile-content');
-
-        let hasStartedProfileLoad = false;
+        const handleProfileAuthChange = createAthleteProfileAuthLoader(loadProfile);
 
         renderFooter(document.getElementById('footer-container'));
         checkAuth((user) => {
             renderHeader(document.getElementById('header-container'), user);
-            if (!hasStartedProfileLoad) {
-                hasStartedProfileLoad = true;
-                loadProfile();
-            }
+            handleProfileAuthChange(user);
         });
 
         function renderStatGrid(summary) {
