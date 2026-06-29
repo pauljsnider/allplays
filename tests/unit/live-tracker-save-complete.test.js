@@ -137,6 +137,7 @@ describe('live tracker save-and-complete workflow', () => {
           awayScore: 41,
           summary: 'Closed well in the final minute.',
           status: 'completed',
+          liveStatus: 'completed',
           opponentStats: {
             'opp-1': {
               name: 'Pat',
@@ -317,7 +318,7 @@ describe('live tracker save-and-complete workflow', () => {
       finishPlan: expect.objectContaining({
         finalHome: 44,
         finalAway: 41,
-        gameUpdate: expect.objectContaining({ status: 'completed' })
+        gameUpdate: expect.objectContaining({ status: 'completed', liveStatus: 'completed' })
       })
     });
     expect(onCommitFailure).toHaveBeenCalledWith({
@@ -325,7 +326,7 @@ describe('live tracker save-and-complete workflow', () => {
       finishPlan: expect.objectContaining({
         finalHome: 44,
         finalAway: 41,
-        gameUpdate: expect.objectContaining({ status: 'completed' })
+        gameUpdate: expect.objectContaining({ status: 'completed', liveStatus: 'completed' })
       })
     });
     expect(harness.batches).toHaveLength(0);
