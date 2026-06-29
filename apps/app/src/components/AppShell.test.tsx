@@ -172,7 +172,7 @@ describe('AppShell', () => {
     expect(screen.getByTestId('app-shell-notification-status').textContent).toBe('Loading notifications…');
   });
 
-  it('announces load failures instead of a false empty inbox state', async () => {
+  it('announces load failures without hydrating the full inbox behind the badge', async () => {
     subscribeToUnreadNotificationCountMock.mockImplementation((_uid, _onCount, onError) => {
       onError?.(new Error('offline'));
       return vi.fn();
@@ -188,6 +188,17 @@ describe('AppShell', () => {
 
     await waitFor(() => {
       expect(screen.getByTestId('app-shell-notification-status').textContent).toBe('Could not load notifications');
+    });
+    expect(subscribeToNotificationInboxMock).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByTestId('app-shell-notifications-trigger'));
+
+    await waitFor(() => {
+      expect(subscribeToNotificationInboxMock).toHaveBeenCalledWith(
+        'user-123',
+        expect.any(Function),
+        expect.any(Function)
+      );
     });
   });
 

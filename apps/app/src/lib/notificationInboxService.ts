@@ -106,34 +106,22 @@ export function subscribeToUnreadNotificationCount(
         where('readAt', '==', null)
     );
 
-    let fallbackUnsubscribe: (() => void) | null = null;
     const primaryUnsubscribe = onSnapshot(
         q,
         (snapshot: QuerySnapshot<DocumentData>) => {
             callback(snapshot.size);
         },
         (error: unknown) => {
-            logger.warn('Unread notification count query failed; falling back to inbox snapshot count.', { error });
-            if (fallbackUnsubscribe) return;
-            fallbackUnsubscribe = onSnapshot(
-                collection(db, `users/${uid}/notificationInbox`),
-                (snapshot: QuerySnapshot<DocumentData>) => {
-                    callback(snapshot.docs.filter((docSnap) => !docSnap.data()?.['readAt']).length);
-                },
-                (fallbackError: unknown) => {
-                    if (onError) {
-                        onError(fallbackError);
-                    } else {
-                        logger.error('Failed to subscribe to unread notification count.', { error: fallbackError });
-                    }
-                }
-            );
+            if (onError) {
+                onError(error);
+            } else {
+                logger.error('Failed to subscribe to unread notification count.', { error });
+            }
         }
     );
 
     return () => {
         primaryUnsubscribe();
-        fallbackUnsubscribe?.();
     };
 }
 
