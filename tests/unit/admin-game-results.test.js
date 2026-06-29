@@ -35,7 +35,9 @@ describe('admin recent game results', () => {
         expect(adminHtml).toContain('Recent Game Results');
         expect(adminHtml).toContain('id="recent-game-results"');
         expect(adminJs).toContain("import { buildRecentGameResultsRows } from './admin-game-results.js?v=1';");
-        expect(adminJs).toContain('renderRecentGameResults(visibleGames);');
+        expect(adminJs).toContain('const visibleTeamIds = new Set(visibleTeams.map(team => team.id));');
+        expect(adminJs).toContain('const visibleRecentGames = dashboardGames.filter(game => visibleTeamIds.has(game.teamId));');
+        expect(adminJs).toContain('renderRecentGameResults(visibleRecentGames);');
         expect(adminJs).toContain('No completed or scored game results yet.');
         expect(adminJs).toContain('Game Report →');
         expect(adminJs).toContain('game.html#teamId=');
