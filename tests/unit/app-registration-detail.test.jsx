@@ -4,8 +4,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createRoot } from 'react-dom/client';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 
-// Mock parentToolsService
-const parentToolsServiceMocks = vi.hoisted(() => ({
+// Mock parentRegistrationsService
+const parentRegistrationsServiceMocks = vi.hoisted(() => ({
   loadParentRegistrations: vi.fn(),
   loadStaffRegistrationDetail: vi.fn(),
   loadTeamRegistrationQueue: vi.fn(),
@@ -27,6 +27,11 @@ const publicActionsMocks = vi.hoisted(() => ({
 
 // Mock registration-flow.js
 const registrationFlowMocks = vi.hoisted(() => ({
+  buildPendingRegistrationRecord: vi.fn((params) => ({
+    ...params,
+    id: 'mock-pending-reg-id',
+    status: params.status || 'pending',
+  })),
   buildRegistrationRecord: vi.fn((params) => ({
     ...params,
     id: 'mock-reg-id',
@@ -59,7 +64,7 @@ const registrationFlowMocks = vi.hoisted(() => ({
   hasQuantityDiscountRule: vi.fn(() => false), // Default mock for new helper
 }));
 
-vi.mock('../../apps/app/src/lib/parentToolsService.ts', () => parentToolsServiceMocks);
+vi.mock('../../apps/app/src/lib/parentRegistrationsService.ts', () => parentRegistrationsServiceMocks);
 vi.mock('../../apps/app/src/lib/publicActions.ts', () => publicActionsMocks);
 vi.mock('@legacy/registration-flow.js', () => registrationFlowMocks);
 
@@ -241,7 +246,7 @@ beforeEach(() => {
   registrationFlowMocks.getActiveRegistrationOptions.mockReturnValue([{ id: 'opt-1', title: 'Option 1', capacityLimit: 10 }]);
   registrationFlowMocks.requiresRegistrationOption.mockReturnValue(true);
   registrationFlowMocks.hasQuantityDiscountRule.mockReturnValue(false);
-  parentToolsServiceMocks.loadParentRegistrations.mockResolvedValue([
+  parentRegistrationsServiceMocks.loadParentRegistrations.mockResolvedValue([
     {
       id: 'form-1',
       teamId: 'team-1',
@@ -261,7 +266,7 @@ beforeEach(() => {
       discountRules: [], // Default to no quantity discounts for most tests
     },
   ]);
-  parentToolsServiceMocks.loadPublicRegistrationDetail.mockResolvedValue({
+  parentRegistrationsServiceMocks.loadPublicRegistrationDetail.mockResolvedValue({
     teamName: 'Public Bears',
     isPublished: true,
     onlineCheckout: false,
@@ -282,7 +287,7 @@ beforeEach(() => {
     paymentNotice: '',
     paymentPlans: [{ id: 'pay_full', title: 'Pay in full' }],
   });
-  parentToolsServiceMocks.loadStaffRegistrationDetail.mockResolvedValue({
+  parentRegistrationsServiceMocks.loadStaffRegistrationDetail.mockResolvedValue({
     teamName: 'Coach Bears',
     isPublished: true,
     onlineCheckout: false,
@@ -303,7 +308,7 @@ beforeEach(() => {
     paymentNotice: '',
     paymentPlans: [{ id: 'pay_full', title: 'Pay in full' }],
   });
-  parentToolsServiceMocks.loadTeamRegistrationQueue.mockResolvedValue({
+  parentRegistrationsServiceMocks.loadTeamRegistrationQueue.mockResolvedValue({
     reviews: [{
       id: 'reg-1',
       status: 'pending',
@@ -322,21 +327,21 @@ beforeEach(() => {
     }],
     rosterPlayers: [{ id: 'player-9', name: 'Riley Runner', number: '12' }],
   });
-  parentToolsServiceMocks.submitOfflineRegistration.mockResolvedValue({
+  parentRegistrationsServiceMocks.submitOfflineRegistration.mockResolvedValue({
     success: true,
     status: 'pending',
     registrationId: 'new-reg-1',
     feeSnapshot: { finalAmountDueCents: 10000, currency: 'USD' },
   });
-  parentToolsServiceMocks.initiateRegistrationCheckout.mockResolvedValue({
+  parentRegistrationsServiceMocks.initiateRegistrationCheckout.mockResolvedValue({
     success: true,
     checkoutUrl: 'https://checkout.stripe.com/c/pay-reg-1',
   });
-  parentToolsServiceMocks.acceptTeamRegistrationOfferForApp.mockResolvedValue({ success: true });
-  parentToolsServiceMocks.approveTeamRegistrationForApp.mockResolvedValue({ success: true });
-  parentToolsServiceMocks.extendTeamRegistrationOfferForApp.mockResolvedValue({ success: true });
-  parentToolsServiceMocks.rejectTeamRegistrationForApp.mockResolvedValue({ success: true });
-  parentToolsServiceMocks.loadTeamRegistrationQueuePage.mockImplementation(async (_teamId, _formId, options = {}) => {
+  parentRegistrationsServiceMocks.acceptTeamRegistrationOfferForApp.mockResolvedValue({ success: true });
+  parentRegistrationsServiceMocks.approveTeamRegistrationForApp.mockResolvedValue({ success: true });
+  parentRegistrationsServiceMocks.extendTeamRegistrationOfferForApp.mockResolvedValue({ success: true });
+  parentRegistrationsServiceMocks.rejectTeamRegistrationForApp.mockResolvedValue({ success: true });
+  parentRegistrationsServiceMocks.loadTeamRegistrationQueuePage.mockImplementation(async (_teamId, _formId, options = {}) => {
     if (options?.status === 'waitlisted') {
       return {
         reviews: [],
@@ -365,10 +370,10 @@ beforeEach(() => {
       hasMore: false,
     };
   });
-  parentToolsServiceMocks.loadTeamRegistrationRosterPlayers.mockResolvedValue([
+  parentRegistrationsServiceMocks.loadTeamRegistrationRosterPlayers.mockResolvedValue([
     { id: 'player-9', name: 'Riley Runner', number: '12' }
   ]);
-  parentToolsServiceMocks.cancelRegistrationCheckout.mockResolvedValue(undefined);
+  parentRegistrationsServiceMocks.cancelRegistrationCheckout.mockResolvedValue(undefined);
   publicActionsMocks.openPublicUrl.mockResolvedValue(undefined);
 });
 
@@ -415,23 +420,23 @@ describe('RegistrationDetail page', () => {
     await waitForText(container, 'Travel Tryouts');
     await waitForText(container, 'Riley Runner');
 
-    expect(parentToolsServiceMocks.loadStaffRegistrationDetail).toHaveBeenCalledWith(
+    expect(parentRegistrationsServiceMocks.loadStaffRegistrationDetail).toHaveBeenCalledWith(
       expect.objectContaining({ uid: 'user-1' }),
       'team-coach',
       'form-review'
     );
-    expect(parentToolsServiceMocks.loadTeamRegistrationQueuePage).toHaveBeenNthCalledWith(
+    expect(parentRegistrationsServiceMocks.loadTeamRegistrationQueuePage).toHaveBeenNthCalledWith(
       1,
       'team-coach',
       'form-review'
     );
-    expect(parentToolsServiceMocks.loadTeamRegistrationQueuePage).toHaveBeenNthCalledWith(
+    expect(parentRegistrationsServiceMocks.loadTeamRegistrationQueuePage).toHaveBeenNthCalledWith(
       2,
       'team-coach',
       'form-review',
       { status: 'waitlisted' }
     );
-    expect(parentToolsServiceMocks.loadTeamRegistrationRosterPlayers).toHaveBeenCalledWith(
+    expect(parentRegistrationsServiceMocks.loadTeamRegistrationRosterPlayers).toHaveBeenCalledWith(
       expect.objectContaining({ uid: 'user-1' }),
       'team-coach'
     );
@@ -441,7 +446,7 @@ describe('RegistrationDetail page', () => {
     await changeInputValue(container, 'Merge into existing roster player', 'player-9');
     await clickButton(container, 'Approve application');
 
-    expect(parentToolsServiceMocks.approveTeamRegistrationForApp).toHaveBeenCalledWith(
+    expect(parentRegistrationsServiceMocks.approveTeamRegistrationForApp).toHaveBeenCalledWith(
       expect.objectContaining({ uid: 'user-1' }),
       'team-coach',
       'form-review',
@@ -452,7 +457,7 @@ describe('RegistrationDetail page', () => {
   });
 
   it('allows staff review for closed registration forms', async () => {
-    parentToolsServiceMocks.loadStaffRegistrationDetail.mockResolvedValueOnce({
+    parentRegistrationsServiceMocks.loadStaffRegistrationDetail.mockResolvedValueOnce({
       teamName: 'Coach Bears',
       isPublished: false,
       onlineCheckout: false,
@@ -481,12 +486,12 @@ describe('RegistrationDetail page', () => {
     await waitForText(container, 'Riley Runner');
 
     expect(container.textContent).not.toContain('This linked registration form is not published right now.');
-    expect(parentToolsServiceMocks.loadTeamRegistrationQueuePage).toHaveBeenNthCalledWith(
+    expect(parentRegistrationsServiceMocks.loadTeamRegistrationQueuePage).toHaveBeenNthCalledWith(
       1,
       'team-coach',
       'form-review'
     );
-    expect(parentToolsServiceMocks.loadTeamRegistrationQueuePage).toHaveBeenNthCalledWith(
+    expect(parentRegistrationsServiceMocks.loadTeamRegistrationQueuePage).toHaveBeenNthCalledWith(
       2,
       'team-coach',
       'form-review',
@@ -495,7 +500,7 @@ describe('RegistrationDetail page', () => {
   });
 
   it('loads waitlisted applicants separately when they fall outside the first all-status page', async () => {
-    parentToolsServiceMocks.loadStaffRegistrationDetail.mockResolvedValueOnce({
+    parentRegistrationsServiceMocks.loadStaffRegistrationDetail.mockResolvedValueOnce({
       teamName: 'Coach Bears',
       isPublished: true,
       onlineCheckout: false,
@@ -518,7 +523,7 @@ describe('RegistrationDetail page', () => {
       paymentNotice: '',
       paymentPlans: [{ id: 'pay_full', title: 'Pay in full' }],
     });
-    parentToolsServiceMocks.loadTeamRegistrationQueuePage
+    parentRegistrationsServiceMocks.loadTeamRegistrationQueuePage
       .mockResolvedValueOnce({
         reviews: [{
           id: 'reg-pending',
@@ -586,12 +591,12 @@ describe('RegistrationDetail page', () => {
     expect(container.textContent).toContain('Pending Parker');
     expect(container.textContent).toContain('Riley Runner');
     expect(container.textContent).toContain('Avery Ace');
-    expect(parentToolsServiceMocks.loadTeamRegistrationQueuePage).toHaveBeenNthCalledWith(
+    expect(parentRegistrationsServiceMocks.loadTeamRegistrationQueuePage).toHaveBeenNthCalledWith(
       1,
       'team-coach',
       'form-review'
     );
-    expect(parentToolsServiceMocks.loadTeamRegistrationQueuePage).toHaveBeenNthCalledWith(
+    expect(parentRegistrationsServiceMocks.loadTeamRegistrationQueuePage).toHaveBeenNthCalledWith(
       2,
       'team-coach',
       'form-review',
@@ -600,7 +605,7 @@ describe('RegistrationDetail page', () => {
   });
 
   it('lists waitlisted applicants in order and promotes them through the legacy waitlist flow', async () => {
-    parentToolsServiceMocks.loadStaffRegistrationDetail.mockResolvedValueOnce({
+    parentRegistrationsServiceMocks.loadStaffRegistrationDetail.mockResolvedValueOnce({
       teamName: 'Coach Bears',
       isPublished: true,
       onlineCheckout: false,
@@ -623,7 +628,7 @@ describe('RegistrationDetail page', () => {
       paymentNotice: '',
       paymentPlans: [{ id: 'pay_full', title: 'Pay in full' }],
     });
-    parentToolsServiceMocks.loadTeamRegistrationQueuePage
+    parentRegistrationsServiceMocks.loadTeamRegistrationQueuePage
       .mockResolvedValueOnce({
         reviews: [
           {
@@ -815,7 +820,7 @@ describe('RegistrationDetail page', () => {
 
     await clickButton(container, 'Promote from waitlist');
 
-    expect(parentToolsServiceMocks.extendTeamRegistrationOfferForApp).toHaveBeenCalledWith(
+    expect(parentRegistrationsServiceMocks.extendTeamRegistrationOfferForApp).toHaveBeenCalledWith(
       expect.objectContaining({ uid: 'user-1' }),
       'team-coach',
       'form-review',
@@ -826,7 +831,7 @@ describe('RegistrationDetail page', () => {
   });
 
   it('marks extended waitlist offers accepted through the legacy waitlist flow', async () => {
-    parentToolsServiceMocks.loadTeamRegistrationQueuePage
+    parentRegistrationsServiceMocks.loadTeamRegistrationQueuePage
       .mockResolvedValueOnce({
         reviews: [{
           id: 'reg-offer-1',
@@ -862,7 +867,7 @@ describe('RegistrationDetail page', () => {
 
     await clickButton(container, 'Mark accepted');
 
-    expect(parentToolsServiceMocks.acceptTeamRegistrationOfferForApp).toHaveBeenCalledWith(
+    expect(parentRegistrationsServiceMocks.acceptTeamRegistrationOfferForApp).toHaveBeenCalledWith(
       expect.objectContaining({ uid: 'user-1' }),
       'team-coach',
       'form-review',
@@ -872,7 +877,7 @@ describe('RegistrationDetail page', () => {
   });
 
   it('defaults the selected option to the first option with available capacity', async () => {
-    parentToolsServiceMocks.loadParentRegistrations.mockResolvedValueOnce([
+    parentRegistrationsServiceMocks.loadParentRegistrations.mockResolvedValueOnce([
       {
         id: 'form-1',
         teamId: 'team-1',
@@ -916,19 +921,19 @@ describe('RegistrationDetail page', () => {
     const { container } = await renderPublicRegistrationDetail();
     await waitForText(container, 'Open Clinic');
 
-    expect(parentToolsServiceMocks.loadPublicRegistrationDetail).toHaveBeenCalledWith('team-public', 'form-public');
-    expect(parentToolsServiceMocks.loadParentRegistrations).not.toHaveBeenCalled();
+    expect(parentRegistrationsServiceMocks.loadPublicRegistrationDetail).toHaveBeenCalledWith('team-public', 'form-public');
+    expect(parentRegistrationsServiceMocks.loadParentRegistrations).not.toHaveBeenCalled();
     expect(container.textContent).toContain('Public Bears');
     expect(container.textContent).not.toContain('Back to registrations');
   });
 
   it('blocks submit for unavailable public registration links', async () => {
-    parentToolsServiceMocks.loadPublicRegistrationDetail.mockRejectedValueOnce(new Error('This registration form is not available right now.'));
+    parentRegistrationsServiceMocks.loadPublicRegistrationDetail.mockRejectedValueOnce(new Error('This registration form is not available right now.'));
     const { container } = await renderPublicRegistrationDetail();
 
     await waitForText(container, 'This registration form is not available right now.');
     expect(container.textContent).toContain('Registration unavailable');
-    expect(parentToolsServiceMocks.submitOfflineRegistration).not.toHaveBeenCalled();
+    expect(parentRegistrationsServiceMocks.submitOfflineRegistration).not.toHaveBeenCalled();
   });
 
   it('renders the form and handles submission successfully', async () => {
@@ -942,8 +947,8 @@ describe('RegistrationDetail page', () => {
 
     await clickButton(container, 'Submit registration');
 
-    expect(parentToolsServiceMocks.submitOfflineRegistration).toHaveBeenCalledTimes(1);
-    expect(parentToolsServiceMocks.submitOfflineRegistration).toHaveBeenCalledWith(
+    expect(parentRegistrationsServiceMocks.submitOfflineRegistration).toHaveBeenCalledTimes(1);
+    expect(parentRegistrationsServiceMocks.submitOfflineRegistration).toHaveBeenCalledWith(
       'team-1',
       'form-1',
       expect.objectContaining({
@@ -970,7 +975,7 @@ describe('RegistrationDetail page', () => {
     await ensureRegistrationOptionResolved(container);
     await clickButton(container, 'Submit registration');
 
-    expect(parentToolsServiceMocks.submitOfflineRegistration).toHaveBeenCalledWith(
+    expect(parentRegistrationsServiceMocks.submitOfflineRegistration).toHaveBeenCalledWith(
       'team-1',
       'form-1',
       expect.objectContaining({
@@ -980,7 +985,7 @@ describe('RegistrationDetail page', () => {
   });
 
   it('shows the payment plan selector for multiple choices and submits the selected plan', async () => {
-    parentToolsServiceMocks.loadParentRegistrations.mockResolvedValueOnce([
+    parentRegistrationsServiceMocks.loadParentRegistrations.mockResolvedValueOnce([
       {
         id: 'form-1',
         teamId: 'team-1',
@@ -1011,7 +1016,7 @@ describe('RegistrationDetail page', () => {
     await changeInputValue(container, 'Payment plan', 'installments');
     await clickButton(container, 'Submit registration');
 
-    expect(parentToolsServiceMocks.submitOfflineRegistration).toHaveBeenCalledWith(
+    expect(parentRegistrationsServiceMocks.submitOfflineRegistration).toHaveBeenCalledWith(
       'team-1',
       'form-1',
       expect.objectContaining({
@@ -1026,21 +1031,21 @@ describe('RegistrationDetail page', () => {
 
     await clickButton(container, 'Submit registration');
     await waitForText(container, 'Participant Name is required.');
-    expect(parentToolsServiceMocks.submitOfflineRegistration).not.toHaveBeenCalled();
+    expect(parentRegistrationsServiceMocks.submitOfflineRegistration).not.toHaveBeenCalled();
 
     await changeInputValue(container, 'Participant Name', 'Test Participant');
     await clickButton(container, 'Submit registration');
     await waitForText(container, 'Guardian Name is required.');
-    expect(parentToolsServiceMocks.submitOfflineRegistration).not.toHaveBeenCalled();
+    expect(parentRegistrationsServiceMocks.submitOfflineRegistration).not.toHaveBeenCalled();
 
     await changeInputValue(container, 'Guardian Name', 'Test Guardian');
     await clickButton(container, 'Submit registration');
     await waitForText(container, 'Accept the waiver to submit.');
-    expect(parentToolsServiceMocks.submitOfflineRegistration).not.toHaveBeenCalled();
+    expect(parentRegistrationsServiceMocks.submitOfflineRegistration).not.toHaveBeenCalled();
   });
 
   it('shows a waitlisted message if placement status is waitlisted', async () => {
-    parentToolsServiceMocks.submitOfflineRegistration.mockResolvedValueOnce({
+    parentRegistrationsServiceMocks.submitOfflineRegistration.mockResolvedValueOnce({
       success: true,
       status: 'waitlisted',
       registrationId: 'new-reg-waitlisted',
@@ -1084,11 +1089,11 @@ describe('RegistrationDetail page', () => {
     await clickButton(container, 'Submit registration');
 
     await waitForText(container, 'Option is full and not accepting waitlist registrations.');
-    expect(parentToolsServiceMocks.submitOfflineRegistration).not.toHaveBeenCalled();
+    expect(parentRegistrationsServiceMocks.submitOfflineRegistration).not.toHaveBeenCalled();
   });
 
   it('launches Stripe checkout for online checkout forms', async () => {
-    parentToolsServiceMocks.loadParentRegistrations.mockResolvedValueOnce([
+    parentRegistrationsServiceMocks.loadParentRegistrations.mockResolvedValueOnce([
       {
         id: 'form-1',
         teamId: 'team-1',
@@ -1119,8 +1124,8 @@ describe('RegistrationDetail page', () => {
 
     await clickButton(container, 'Pay registration with Stripe');
 
-    expect(parentToolsServiceMocks.submitOfflineRegistration).toHaveBeenCalledTimes(1);
-    expect(parentToolsServiceMocks.initiateRegistrationCheckout).toHaveBeenCalledWith(
+    expect(parentRegistrationsServiceMocks.submitOfflineRegistration).toHaveBeenCalledTimes(1);
+    expect(parentRegistrationsServiceMocks.initiateRegistrationCheckout).toHaveBeenCalledWith(
       'team-1',
       'form-1',
       'new-reg-1',
@@ -1137,7 +1142,7 @@ describe('RegistrationDetail page', () => {
   });
 
   it('keeps online checkout validation before creating a registration', async () => {
-    parentToolsServiceMocks.loadParentRegistrations.mockResolvedValueOnce([
+    parentRegistrationsServiceMocks.loadParentRegistrations.mockResolvedValueOnce([
       {
         id: 'form-1',
         teamId: 'team-1',
@@ -1159,13 +1164,13 @@ describe('RegistrationDetail page', () => {
     await clickButton(container, 'Pay registration with Stripe');
 
     await waitForText(container, 'Participant Name is required.');
-    expect(parentToolsServiceMocks.submitOfflineRegistration).not.toHaveBeenCalled();
-    expect(parentToolsServiceMocks.initiateRegistrationCheckout).not.toHaveBeenCalled();
+    expect(parentRegistrationsServiceMocks.submitOfflineRegistration).not.toHaveBeenCalled();
+    expect(parentRegistrationsServiceMocks.initiateRegistrationCheckout).not.toHaveBeenCalled();
     expect(publicActionsMocks.openPublicUrl).not.toHaveBeenCalled();
   });
 
   it('does not launch checkout for waitlisted online checkout registrations', async () => {
-    parentToolsServiceMocks.loadParentRegistrations.mockResolvedValueOnce([
+    parentRegistrationsServiceMocks.loadParentRegistrations.mockResolvedValueOnce([
       {
         id: 'form-1',
         teamId: 'team-1',
@@ -1181,7 +1186,7 @@ describe('RegistrationDetail page', () => {
         waiverText: 'I agree to the terms and conditions.',
       },
     ]);
-    parentToolsServiceMocks.submitOfflineRegistration.mockResolvedValueOnce({
+    parentRegistrationsServiceMocks.submitOfflineRegistration.mockResolvedValueOnce({
       success: true,
       status: 'waitlisted',
       registrationId: 'new-reg-waitlisted',
@@ -1197,12 +1202,12 @@ describe('RegistrationDetail page', () => {
     await clickButton(container, 'Pay registration with Stripe');
 
     await waitForText(container, 'Registration submitted. You have been added to the waitlist.');
-    expect(parentToolsServiceMocks.initiateRegistrationCheckout).not.toHaveBeenCalled();
+    expect(parentRegistrationsServiceMocks.initiateRegistrationCheckout).not.toHaveBeenCalled();
     expect(publicActionsMocks.openPublicUrl).not.toHaveBeenCalled();
   });
 
   it('shows a post-registration error when checkout creation fails', async () => {
-    parentToolsServiceMocks.loadParentRegistrations.mockResolvedValueOnce([
+    parentRegistrationsServiceMocks.loadParentRegistrations.mockResolvedValueOnce([
       {
         id: 'form-1',
         teamId: 'team-1',
@@ -1218,7 +1223,7 @@ describe('RegistrationDetail page', () => {
         waiverText: 'I agree to the terms and conditions.',
       },
     ]);
-    parentToolsServiceMocks.initiateRegistrationCheckout.mockRejectedValueOnce(new Error('Stripe session failed.'));
+    parentRegistrationsServiceMocks.initiateRegistrationCheckout.mockRejectedValueOnce(new Error('Stripe session failed.'));
 
     const { container } = await renderRegistrationDetail();
     await waitForText(container, 'Pay registration with Stripe');
@@ -1235,7 +1240,7 @@ describe('RegistrationDetail page', () => {
   });
 
   it('shows a post-registration error when checkout URL opening fails', async () => {
-    parentToolsServiceMocks.loadParentRegistrations.mockResolvedValueOnce([
+    parentRegistrationsServiceMocks.loadParentRegistrations.mockResolvedValueOnce([
       {
         id: 'form-1',
         teamId: 'team-1',
@@ -1263,7 +1268,7 @@ describe('RegistrationDetail page', () => {
     await clickButton(container, 'Pay registration with Stripe');
 
     await waitForText(container, 'Registration created, but checkout could not be opened. Popup blocked.');
-    expect(parentToolsServiceMocks.initiateRegistrationCheckout).toHaveBeenCalledTimes(1);
+    expect(parentRegistrationsServiceMocks.initiateRegistrationCheckout).toHaveBeenCalledTimes(1);
   });
 
   it('supports online checkout forms without registration options', async () => {
@@ -1273,7 +1278,7 @@ describe('RegistrationDetail page', () => {
       .mockReturnValueOnce(false)
       .mockReturnValueOnce(false);
     registrationFlowMocks.getActiveRegistrationOptions.mockReturnValueOnce([]);
-    parentToolsServiceMocks.loadParentRegistrations.mockResolvedValueOnce([
+    parentRegistrationsServiceMocks.loadParentRegistrations.mockResolvedValueOnce([
       {
         id: 'form-1',
         teamId: 'team-1',
@@ -1298,7 +1303,7 @@ describe('RegistrationDetail page', () => {
     await changeInputValue(container, 'I accept the waiver.', true);
     await clickButton(container, 'Pay registration with Stripe');
 
-    expect(parentToolsServiceMocks.initiateRegistrationCheckout).toHaveBeenCalledWith(
+    expect(parentRegistrationsServiceMocks.initiateRegistrationCheckout).toHaveBeenCalledWith(
       'team-1',
       'form-1',
       'new-reg-1',
@@ -1316,7 +1321,7 @@ describe('RegistrationDetail page', () => {
 
   it('renders fee summary rows and updates them when quantity changes', async () => {
     registrationFlowMocks.hasQuantityDiscountRule.mockReturnValueOnce(true);
-    parentToolsServiceMocks.loadParentRegistrations.mockResolvedValueOnce([
+    parentRegistrationsServiceMocks.loadParentRegistrations.mockResolvedValueOnce([
       {
         id: 'form-1',
         teamId: 'team-1',
@@ -1353,7 +1358,7 @@ describe('RegistrationDetail page', () => {
 
   it('does not let a loaded fee snapshot freeze the displayed quantity total', async () => {
     registrationFlowMocks.hasQuantityDiscountRule.mockReturnValueOnce(true);
-    parentToolsServiceMocks.loadParentRegistrations.mockResolvedValueOnce([
+    parentRegistrationsServiceMocks.loadParentRegistrations.mockResolvedValueOnce([
       {
         id: 'form-1',
         teamId: 'team-1',
@@ -1386,7 +1391,7 @@ describe('RegistrationDetail page', () => {
   });
 
   it('uses the server-returned registration fee for checkout', async () => {
-    parentToolsServiceMocks.loadParentRegistrations.mockResolvedValueOnce([
+    parentRegistrationsServiceMocks.loadParentRegistrations.mockResolvedValueOnce([
       {
         id: 'form-1',
         teamId: 'team-1',
@@ -1402,7 +1407,7 @@ describe('RegistrationDetail page', () => {
         waiverText: 'I agree to the terms and conditions.',
       },
     ]);
-    parentToolsServiceMocks.submitOfflineRegistration.mockResolvedValueOnce({
+    parentRegistrationsServiceMocks.submitOfflineRegistration.mockResolvedValueOnce({
       success: true,
       status: 'pending',
       registrationId: 'new-reg-1',
@@ -1418,7 +1423,7 @@ describe('RegistrationDetail page', () => {
     await ensureRegistrationOptionResolved(container);
     await clickButton(container, 'Pay registration with Stripe');
 
-    expect(parentToolsServiceMocks.initiateRegistrationCheckout).toHaveBeenCalledWith(
+    expect(parentRegistrationsServiceMocks.initiateRegistrationCheckout).toHaveBeenCalledWith(
       'team-1',
       'form-1',
       'new-reg-1',
@@ -1445,7 +1450,7 @@ describe('RegistrationDetail page', () => {
 
   it('passes quantity=1 to submission and checkout when Quantity is hidden', async () => {
     registrationFlowMocks.hasQuantityDiscountRule.mockReturnValueOnce(false);
-    parentToolsServiceMocks.loadParentRegistrations.mockResolvedValueOnce([
+    parentRegistrationsServiceMocks.loadParentRegistrations.mockResolvedValueOnce([
       {
         id: 'form-1',
         teamId: 'team-1',
@@ -1472,14 +1477,14 @@ describe('RegistrationDetail page', () => {
     await ensureRegistrationOptionResolved(container);
     await clickButton(container, 'Pay registration with Stripe');
 
-    expect(parentToolsServiceMocks.submitOfflineRegistration).toHaveBeenCalledWith(
+    expect(parentRegistrationsServiceMocks.submitOfflineRegistration).toHaveBeenCalledWith(
       'team-1',
       'form-1',
       expect.objectContaining({
         quantity: 1, // Should be 1 because hasQuantityDiscountRule is false
       })
     );
-    expect(parentToolsServiceMocks.initiateRegistrationCheckout).toHaveBeenCalledWith(
+    expect(parentRegistrationsServiceMocks.initiateRegistrationCheckout).toHaveBeenCalledWith(
       'team-1',
       'form-1',
       'new-reg-1',
@@ -1496,7 +1501,7 @@ describe('RegistrationDetail page', () => {
 
   it('renders Quantity and updates fee summary when an active quantity discount rule exists', async () => {
     registrationFlowMocks.hasQuantityDiscountRule.mockReturnValueOnce(true);
-    parentToolsServiceMocks.loadParentRegistrations.mockResolvedValueOnce([
+    parentRegistrationsServiceMocks.loadParentRegistrations.mockResolvedValueOnce([
       {
         id: 'form-1',
         teamId: 'team-1',
@@ -1539,14 +1544,14 @@ describe('RegistrationDetail page', () => {
     await ensureRegistrationOptionResolved(container);
     await clickButton(container, 'Pay registration with Stripe');
 
-    expect(parentToolsServiceMocks.submitOfflineRegistration).toHaveBeenCalledWith(
+    expect(parentRegistrationsServiceMocks.submitOfflineRegistration).toHaveBeenCalledWith(
       'team-1',
       'form-1',
       expect.objectContaining({
         quantity: 2, // Should be 2 because hasQuantityDiscountRule is true and input was changed
       })
     );
-    expect(parentToolsServiceMocks.initiateRegistrationCheckout).toHaveBeenCalledWith(
+    expect(parentRegistrationsServiceMocks.initiateRegistrationCheckout).toHaveBeenCalledWith(
       'team-1',
       'form-1',
       'new-reg-1',
