@@ -601,6 +601,35 @@ test('messages selected-member, dictation, and validation flows stay usable on m
     await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1)).toBe(true);
 });
 
+test('messages native back closes an open sheet without leaving the thread or clearing drafts', async ({ page, baseURL }) => {
+    await mockMessagesModules(page);
+    await page.goto(appUrl(baseURL, '/messages/team-1'), { waitUntil: 'domcontentloaded' });
+
+    await waitForMessagesRoute(page, page.getByRole('button', { name: /Audience: Full team/ }));
+    const composer = page.getByPlaceholder('Message Bears');
+    await composer.fill('Hold this draft while I pick recipients');
+
+    await page.getByRole('button', { name: /Audience: Full team/ }).click();
+    await expect(page.getByRole('dialog', { name: 'Message audience' })).toBeVisible();
+
+    await expect.poll(() => page.evaluate(() => {
+        const event = new Event('allplays:native-back-dismiss', { cancelable: true });
+        window.dispatchEvent(event);
+        return event.defaultPrevented;
+    })).toBe(true);
+
+    await expect(page.getByRole('dialog', { name: 'Message audience' })).toBeHidden();
+    await expect(page).toHaveURL(/#\/messages\/team-1$/);
+    await expect(composer).toHaveValue('Hold this draft while I pick recipients');
+
+    const consumedAfterSheetClosed = await page.evaluate(() => {
+        const event = new Event('allplays:native-back-dismiss', { cancelable: true });
+        window.dispatchEvent(event);
+        return event.defaultPrevented;
+    });
+    expect(consumedAfterSheetClosed).toBe(false);
+});
+
 test('messages defer offscreen media requests until scroll or video interaction', async ({ page, baseURL }) => {
     const mediaRequests = [];
     await page.route('https://media.example.test/**', async (route) => {

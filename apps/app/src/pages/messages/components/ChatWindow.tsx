@@ -87,6 +87,7 @@ import {
   type ChatAudienceMetadata,
   type ChatTargetType
 } from '../../../lib/chatLogic';
+import { APP_BACK_DISMISS_EVENT } from '../../../lib/nativeBackButton';
 import { sharePublicUrl } from '../../../lib/publicActions';
 import { useShellLayout } from '../../../lib/useShellLayout';
 import { useViewLoadTimer } from '../../../lib/viewLoadTiming';
@@ -3243,7 +3244,29 @@ function EditMessageModal({
   );
 }
 
-function Sheet({ title, children, onClose, wide = false }: { title: string; children: React.ReactNode; onClose: () => void; wide?: boolean }) {
+export function Sheet({ title, children, onClose, wide = false }: { title: string; children: React.ReactNode; onClose: () => void; wide?: boolean }) {
+  const onCloseRef = useRef(onClose);
+
+  useEffect(() => {
+    onCloseRef.current = onClose;
+  }, [onClose]);
+
+  useEffect(() => {
+    const handleNativeBackDismiss = (event: Event) => {
+      if (event.defaultPrevented) {
+        return;
+      }
+
+      event.preventDefault();
+      onCloseRef.current();
+    };
+
+    window.addEventListener(APP_BACK_DISMISS_EVENT, handleNativeBackDismiss);
+    return () => {
+      window.removeEventListener(APP_BACK_DISMISS_EVENT, handleNativeBackDismiss);
+    };
+  }, []);
+
   return (
     <div className="fixed inset-0 z-50 flex items-end bg-gray-950/40 p-0 backdrop-blur-sm sm:items-center sm:justify-center sm:p-4" role="dialog" aria-modal="true" aria-label={title}>
       <div className={`safe-bottom max-h-[88vh] w-full overflow-hidden rounded-t-2xl bg-white shadow-app-lg sm:rounded-2xl ${wide ? 'sm:max-w-4xl' : 'sm:max-w-lg'}`}>
