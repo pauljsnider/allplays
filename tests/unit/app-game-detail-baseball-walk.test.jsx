@@ -68,24 +68,29 @@ afterEach(() => {
 
 describe('app GameDetail route resolution', () => {
     it('routes tracked games into the live schedule event detail workflow', async () => {
+        const cachedEvent = {
+            id: 'game-baseball',
+            teamId: 'team-baseball',
+            childId: 'player-1',
+            type: 'game',
+            isDbGame: true,
+            isCancelled: false,
+            myRsvp: 'not_responded',
+            assignments: [],
+            rideshareSummary: null,
+            isTeamStaff: true,
+            isTeamAdmin: false,
+            canUpdateScore: false
+        };
         scheduleServiceMocks.resolveParentGameRoute.mockResolvedValue({
             teamId: 'team-baseball',
             eventId: 'game-baseball',
             childId: 'player-1',
-            cachedEvent: {
-                id: 'game-baseball',
-                teamId: 'team-baseball',
-                childId: 'player-1',
-                type: 'game',
-                isDbGame: true,
-                isCancelled: false,
-                myRsvp: 'not_responded',
-                assignments: [],
-                rideshareSummary: null,
-                isTeamStaff: true,
-                isTeamAdmin: false,
-                canUpdateScore: false
-            }
+            cachedEvent
+        });
+        scheduleServiceMocks.loadParentScheduleEventDetail.mockResolvedValue({
+            children: [],
+            events: [cachedEvent]
         });
 
         const { container, root, router } = await renderGameDetail();
@@ -104,7 +109,11 @@ describe('app GameDetail route resolution', () => {
         expect(scheduleServiceMocks.resolveParentGameRoute).toHaveBeenCalledWith(coachAuth.user, 'game-baseball', {
             expandStaffPlayers: false
         });
-        expect(scheduleServiceMocks.loadParentScheduleEventDetail).not.toHaveBeenCalled();
+        expect(scheduleServiceMocks.loadParentScheduleEventDetail).toHaveBeenCalledWith(coachAuth.user, {
+            teamId: 'team-baseball',
+            eventId: 'game-baseball',
+            expandStaffPlayers: false
+        });
 
         await act(async () => {
             root.unmount();
