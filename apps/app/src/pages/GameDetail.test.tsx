@@ -1,7 +1,6 @@
 // @vitest-environment jsdom
 
 import { cleanup, render, screen, waitFor } from '@testing-library/react'
-import { useEffect } from 'react'
 import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -57,14 +56,6 @@ function buildGameEvent(overrides: Record<string, unknown> = {}) {
 }
 
 function TestScheduleEventDetail() {
-  useEffect(() => {
-    void scheduleServiceMocks.loadParentScheduleEventDetail(auth.user, {
-      teamId: 'team-bears',
-      eventId: 'game-1',
-      expandStaffPlayers: false
-    })
-  }, [])
-
   return (
     <div>
       <h1>Availability</h1>
@@ -98,16 +89,24 @@ describe('GameDetail route resolution', () => {
     cleanup()
   })
 
-  it('routes non-staff /games/:gameId links to the next task-focused section', async () => {
+  it('hydrates cached /games/:gameId links before choosing the next task-focused section', async () => {
     scheduleServiceMocks.resolveParentGameRoute.mockResolvedValue({
       teamId: 'team-bears',
       eventId: 'game-1',
       childId: 'player-7',
-      cachedEvent: buildGameEvent()
+      cachedEvent: buildGameEvent({
+        myRsvp: 'not_responded',
+        assignments: [],
+        openAssignmentCount: 0
+      })
     })
     scheduleServiceMocks.loadParentScheduleEventDetail.mockResolvedValue({
       children: [],
-      events: [buildGameEvent()]
+      events: [buildGameEvent({
+        myRsvp: 'going',
+        assignments: [{ role: 'Snacks', claimable: true }],
+        openAssignmentCount: 1
+      })]
     })
 
     renderGameDetail()
@@ -118,7 +117,7 @@ describe('GameDetail route resolution', () => {
       expect(screen.getByText('Live event workflow')).toBeTruthy()
     })
 
-    expect(screen.getByTestId('location').textContent).toBe('/schedule/team-bears/game-1?childId=player-7&section=availability')
+    expect(screen.getByTestId('location').textContent).toBe('/schedule/team-bears/game-1?childId=player-7&section=assignments')
     expect(screen.getByRole('heading', { name: 'Availability' })).toBeTruthy()
     expect(screen.getByText('Rideshare')).toBeTruthy()
     expect(screen.getByText('Assignments')).toBeTruthy()
@@ -137,12 +136,12 @@ describe('GameDetail route resolution', () => {
     })
   })
 
-  it('keeps staff-capable /games/:gameId links on the game hub', async () => {
+  it('keeps staff-capable /games/:gameId links on the game hub after hydration', async () => {
     scheduleServiceMocks.resolveParentGameRoute.mockResolvedValue({
       teamId: 'team-bears',
       eventId: 'game-1',
       childId: 'player-7',
-      cachedEvent: buildGameEvent({ isTeamStaff: true })
+      cachedEvent: buildGameEvent()
     })
     scheduleServiceMocks.loadParentScheduleEventDetail.mockResolvedValue({
       children: [],

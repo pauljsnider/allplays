@@ -54,15 +54,6 @@ export function GameDetail({ auth }: { auth: AuthState }) {
         const fallbackQuery = fallbackParams.toString()
         const fallbackTarget = `/schedule/${encodeURIComponent(targetRoute.teamId)}/${encodeURIComponent(targetRoute.eventId)}${fallbackQuery ? `?${fallbackQuery}` : ''}`
 
-        if (targetRoute.cachedEvent) {
-          setState({
-            loading: false,
-            redirectTarget: getGenericEventDetailPath(targetRoute.cachedEvent, true),
-            error: null
-          })
-          return
-        }
-
         try {
           const detail = await loadParentScheduleEventDetail(auth.user, {
             teamId: targetRoute.teamId,
