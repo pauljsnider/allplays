@@ -99,6 +99,20 @@ function getEventSummary(event, teamName) {
   return event.title || `${teamName} vs ${event.opponent || event.opponentTeamName || 'TBD'}`;
 }
 
+function formatRsvpSummary(summary) {
+  if (!summary || typeof summary !== 'object') return '';
+  const labels = [
+    ['going', 'going'],
+    ['maybe', 'maybe'],
+    ['notGoing', 'not going'],
+    ['notResponded', 'not responded']
+  ];
+  return labels
+    .map(([key, label]) => Number.isFinite(Number(summary[key])) ? `${Number(summary[key])} ${label}` : '')
+    .filter(Boolean)
+    .join(', ');
+}
+
 function getEventDescription(event) {
   const parts = [];
   if (event.status) parts.push(`Status: ${event.status}`);
@@ -107,14 +121,10 @@ function getEventDescription(event) {
   if (formattedArrival) parts.push(`Arrival: ${formattedArrival}`);
   if (event.notes) parts.push(String(event.notes));
 
-  if (Array.isArray(event.rsvps) && event.rsvps.length > 0) {
+  const rsvpSummary = formatRsvpSummary(event.rsvpSummary);
+  if (rsvpSummary) {
     parts.push(''); // Add a blank line for separation
-    parts.push('RSVPs:');
-    event.rsvps.forEach(rsvp => {
-      const displayName = rsvp.displayName || 'Unknown';
-      const response = rsvp.response || 'No Response';
-      parts.push(`  - ${displayName}: ${response}`);
-    });
+    parts.push(`RSVPs: ${rsvpSummary}`);
   }
 
   if (Array.isArray(event.officiating) && event.officiating.length > 0) {
@@ -181,6 +191,7 @@ module.exports = {
   buildTeamCalendarIcs,
   escapeIcsText,
   formatIcsDate,
+  formatRsvpSummary,
   hashCalendarToken,
   isCancelledEvent,
   isVisibleCalendarEvent,
