@@ -11,7 +11,7 @@ const startPerformanceSpan = vi.fn((label: string) => ({
 const recordCompletedPerformanceSpan = vi.fn();
 
 vi.mock('./telemetry', () => ({
-  recordAppUxTiming: (...args: unknown[]) => recordAppUxTiming(...args)
+  recordAppUxTiming
 }));
 
 vi.mock('./performanceInstrumentation', () => ({
@@ -19,7 +19,7 @@ vi.mock('./performanceInstrumentation', () => ({
   // The local mock is typed (label: string); cast the passthrough spread to a
   // tuple so it satisfies that parameter (runtime still forwards every arg).
   startPerformanceSpan: (...args: unknown[]) => startPerformanceSpan(...(args as [string])),
-  recordCompletedPerformanceSpan: (...args: unknown[]) => recordCompletedPerformanceSpan(...args)
+  recordCompletedPerformanceSpan
 }));
 
 import {
