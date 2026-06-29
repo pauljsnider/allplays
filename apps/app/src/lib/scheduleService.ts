@@ -1661,10 +1661,14 @@ export async function createScheduledTournamentBlockForApp(teamId: string, input
     throw new Error('Tournament blocks require at least one game.');
   }
 
-  const payloads = buildLegacyTournamentGameDocuments(games.map((game) => buildScheduledGamePayload({
+  const validatedGames = games.map((game) => buildScheduledGamePayload({
     ...game,
     competitionType: 'tournament'
-  }, user as AuthUser)), tournament);
+  }, user as AuthUser));
+  const payloads = buildLegacyTournamentGameDocuments(validatedGames, tournament);
+  if (payloads.length !== validatedGames.length) {
+    throw new Error('Tournament adapter could not build a complete legacy payload.');
+  }
 
   const createdIds: string[] = [];
   for (const payload of payloads) {

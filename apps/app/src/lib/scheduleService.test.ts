@@ -485,6 +485,85 @@ describe('scheduled tournament writes', () => {
       games: []
     }, coachUser)).rejects.toThrow('Tournament blocks require at least one game.');
   });
+
+  it('fails fast on invalid child games before any tournament writes occur', async () => {
+    await expect(createScheduledTournamentBlockForApp('team-1', {
+      divisionName: '10U Gold',
+      bracketName: 'Gold Bracket',
+      roundName: 'Semifinal',
+      poolName: 'Pool A',
+      games: [
+        {
+          opponent: 'Tigers',
+          startDate: new Date('2026-06-24T18:30:00.000Z'),
+          endDate: new Date('2026-06-24T20:00:00.000Z')
+        },
+        {
+          opponent: '',
+          startDate: new Date('2026-06-25T18:30:00.000Z'),
+          endDate: new Date('2026-06-25T20:00:00.000Z')
+        } as any
+      ]
+    }, coachUser)).rejects.toThrow('Games require an opponent.');
+
+    await expect(createScheduledTournamentBlockForApp('team-1', {
+      divisionName: '10U Gold',
+      bracketName: 'Gold Bracket',
+      roundName: 'Semifinal',
+      poolName: 'Pool A',
+      games: [
+        {
+          opponent: 'Tigers',
+          startDate: new Date('2026-06-24T18:30:00.000Z'),
+          endDate: new Date('2026-06-24T20:00:00.000Z')
+        },
+        {
+          opponent: 'Lions',
+          startDate: 'not-a-date',
+          endDate: new Date('2026-06-25T20:00:00.000Z')
+        } as any
+      ]
+    }, coachUser)).rejects.toThrow('Game start time is invalid.');
+
+    expect(addGame).not.toHaveBeenCalled();
+  });
+
+  it('rejects incomplete legacy tournament payloads before any writes occur', async () => {
+    vi.mocked(buildLegacyTournamentGameDocuments).mockReturnValueOnce([
+      {
+        type: 'game',
+        opponent: 'Tigers',
+        competitionType: 'tournament',
+        tournament: {
+          divisionName: '10U Gold',
+          bracketName: 'Gold Bracket',
+          roundName: 'Semifinal',
+          poolName: 'Pool A'
+        }
+      }
+    ] as any);
+
+    await expect(createScheduledTournamentBlockForApp('team-1', {
+      divisionName: '10U Gold',
+      bracketName: 'Gold Bracket',
+      roundName: 'Semifinal',
+      poolName: 'Pool A',
+      games: [
+        {
+          opponent: 'Tigers',
+          startDate: new Date('2026-06-24T18:30:00.000Z'),
+          endDate: new Date('2026-06-24T20:00:00.000Z')
+        },
+        {
+          opponent: 'Lions',
+          startDate: new Date('2026-06-25T18:30:00.000Z'),
+          endDate: new Date('2026-06-25T20:00:00.000Z')
+        }
+      ]
+    }, coachUser)).rejects.toThrow('Tournament adapter could not build a complete legacy payload.');
+
+    expect(addGame).not.toHaveBeenCalled();
+  });
 });
 
 describe('scheduled practice writes', () => {
