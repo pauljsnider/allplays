@@ -109,4 +109,36 @@ describe('targeted team chat Firestore rules', () => {
         expect(listHelper).toContain('request.auth.uid in participantIds');
         expect(listHelper).not.toContain('!isStaffRoleChatConversation(conversationData)');
     });
+
+    it('locks both legacy and targeted chat reactions to a single self-token toggle', () => {
+        expect(rules).toContain('function isSelfChatReactionUpdate()');
+        expect(rules).toContain('function isCurrentUserReactionToggle(before, after)');
+        expect(rules).toContain('isSingleReactionTokenAddRemove(before, after, request.auth.uid)');
+        expect(rules).toContain("isSingleReactionTokenAddRemove(before, after, 'user:' + request.auth.uid)");
+        expect(rules).toContain('isSingleReactionTokenAddRemove(before, after, request.auth.token.email.lower())');
+        expect(rules).toContain("isSingleReactionTokenAddRemove(before, after, 'email:' + request.auth.token.email.lower())");
+        expect(rules).toContain('isSelfChatReactionUpdateForKey(\'thumbs_up\') ||');
+
+        const legacyChatStart = rules.indexOf('match /chatMessages/{messageId} {');
+        const conversationsStart = rules.indexOf('match /chatConversations/{conversationId} {');
+        const legacyChatBlock = rules.slice(legacyChatStart, conversationsStart);
+        expect(legacyChatBlock).toContain('isSelfChatReactionUpdate();');
+
+        const targetedChatStart = rules.indexOf('match /chatMessages/{messageId} {', conversationsStart);
+        const targetedChatEnd = rules.indexOf('// Server-only dedup log', targetedChatStart);
+        const targetedChatBlock = rules.slice(targetedChatStart, targetedChatEnd);
+        expect(targetedChatBlock).toContain('isSelfChatReactionUpdate();');
+    });
+
+    it('rejects cross-user reaction tampering and multi-reaction rewrites by construction', () => {
+        expect(rules).toContain('request.resource.data.diff(resource.data).affectedKeys().size() == 1');
+        expect(rules).toContain("request.resource.data.diff(resource.data).affectedKeys().hasOnly(['reactions.' + reactionKey])");
+        expect(rules).toContain("request.resource.data.diff(resource.data).affectedKeys().hasOnly(['reactions'])");
+        expect(rules).toContain("request.resource.data.get('reactions', {}).diff(resource.data.get('reactions', {})).affectedKeys().size() == 1");
+        expect(rules).toContain("request.resource.data.get('reactions', {}).diff(resource.data.get('reactions', {})).affectedKeys().hasOnly([reactionKey])");
+        expect(rules).toContain('after.hasAll(before) &&');
+        expect(rules).toContain('before.hasAll(after) &&');
+        expect(rules).toContain('token in after &&');
+        expect(rules).toContain('token in before &&');
+    });
 });

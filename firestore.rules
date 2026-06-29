@@ -1292,6 +1292,71 @@ service cloud.firestore {
                .hasOnly(['lastMessageAt', 'mutedBy', 'updatedAt']);
     }
 
+    function chatReactionKeys() {
+      return ['thumbs_up', 'heart', 'joy', 'wow', 'sad', 'clap'];
+    }
+
+    function isSingleReactionTokenAddRemove(before, after, token) {
+      return (
+               after.hasAll(before) &&
+               after.size() == before.size() + 1 &&
+               token in after &&
+               !(token in before)
+             ) ||
+             (
+               before.hasAll(after) &&
+               before.size() == after.size() + 1 &&
+               token in before &&
+               !(token in after)
+             );
+    }
+
+    function isCurrentUserReactionToggle(before, after) {
+      return before is list &&
+             after is list &&
+             (
+               isSingleReactionTokenAddRemove(before, after, request.auth.uid) ||
+               isSingleReactionTokenAddRemove(before, after, 'user:' + request.auth.uid) ||
+               (
+                 request.auth.token.email != null &&
+                 (
+                   isSingleReactionTokenAddRemove(before, after, request.auth.token.email.lower()) ||
+                   isSingleReactionTokenAddRemove(before, after, 'email:' + request.auth.token.email.lower())
+                 )
+               )
+             );
+    }
+
+    function isSingleNestedReactionFieldUpdate(reactionKey) {
+      return request.resource.data.diff(resource.data).affectedKeys().size() == 1 &&
+             request.resource.data.diff(resource.data).affectedKeys().hasOnly(['reactions.' + reactionKey]);
+    }
+
+    function isSingleFullReactionMapUpdate(reactionKey) {
+      return request.resource.data.diff(resource.data).affectedKeys().hasOnly(['reactions']) &&
+             request.resource.data.get('reactions', {}).keys().hasOnly(chatReactionKeys()) &&
+             resource.data.get('reactions', {}).keys().hasOnly(chatReactionKeys()) &&
+             request.resource.data.get('reactions', {}).diff(resource.data.get('reactions', {})).affectedKeys().size() == 1 &&
+             request.resource.data.get('reactions', {}).diff(resource.data.get('reactions', {})).affectedKeys().hasOnly([reactionKey]);
+    }
+
+    function isSelfChatReactionUpdateForKey(reactionKey) {
+      return (isSingleNestedReactionFieldUpdate(reactionKey) || isSingleFullReactionMapUpdate(reactionKey)) &&
+             isCurrentUserReactionToggle(
+               resource.data.get('reactions', {}).get(reactionKey, []),
+               request.resource.data.get('reactions', {}).get(reactionKey, [])
+             );
+    }
+
+    function isSelfChatReactionUpdate() {
+      return isSelfChatReactionUpdateForKey('thumbs_up') ||
+             isSelfChatReactionUpdateForKey('heart') ||
+             isSelfChatReactionUpdateForKey('joy') ||
+             isSelfChatReactionUpdateForKey('wow') ||
+             isSelfChatReactionUpdateForKey('sad') ||
+             isSelfChatReactionUpdateForKey('clap');
+    }
+
     function isTeamStaffChatConversationUpdate(teamId) {
       return isTeamOwnerOrAdmin(teamId) &&
              request.resource.data.get('type', '') == resource.data.get('type', '') &&
@@ -2434,34 +2499,11 @@ service cloud.firestore {
                          (resource.data.senderId == request.auth.uid ||
                           isTeamOwnerOrAdmin(teamId));
 
-        // Update for reactions: any team member can add/remove reactions only
+        // Update for reactions: any team member can add/remove only their own reaction.
         allow update: if canAccessTeamChat(teamId) &&
                          isFullTeamChatMessage(resource.data) &&
                          isFullTeamChatMessage(request.resource.data) &&
-                         (
-                           // Current client writes nested reaction keys.
-                           request.resource.data.diff(resource.data).affectedKeys()
-                             .hasOnly([
-                               'reactions.thumbs_up',
-                               'reactions.heart',
-                               'reactions.joy',
-                               'reactions.wow',
-                               'reactions.sad',
-                               'reactions.clap'
-                             ]) ||
-                           // Backward compatibility for stale cached clients that write the full map.
-                           (
-                             request.resource.data.diff(resource.data).affectedKeys().hasOnly(['reactions']) &&
-                             request.resource.data.get('reactions', {}).keys().hasOnly([
-                               'thumbs_up',
-                               'heart',
-                               'joy',
-                               'wow',
-                               'sad',
-                               'clap'
-                             ])
-                           )
-                         );
+                         isSelfChatReactionUpdate();
       }
 
       match /teamEmails/{messageId} {
@@ -2500,28 +2542,7 @@ service cloud.firestore {
                            (resource.data.senderId == request.auth.uid ||
                             isTeamOwnerOrAdmin(teamId));
           allow update: if canAccessChatConversation(teamId, conversationId, get(/databases/$(database)/documents/teams/$(teamId)/chatConversations/$(conversationId)).data) &&
-                           (
-                             request.resource.data.diff(resource.data).affectedKeys()
-                               .hasOnly([
-                                 'reactions.thumbs_up',
-                                 'reactions.heart',
-                                 'reactions.joy',
-                                 'reactions.wow',
-                                 'reactions.sad',
-                                 'reactions.clap'
-                               ]) ||
-                             (
-                               request.resource.data.diff(resource.data).affectedKeys().hasOnly(['reactions']) &&
-                               request.resource.data.get('reactions', {}).keys().hasOnly([
-                                 'thumbs_up',
-                                 'heart',
-                                 'joy',
-                                 'wow',
-                                 'sad',
-                                 'clap'
-                               ])
-                             )
-                           );
+                           isSelfChatReactionUpdate();
         }
       }
 
