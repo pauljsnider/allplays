@@ -1063,14 +1063,20 @@ service cloud.firestore {
       return ['parentOf', 'parentTeamIds', 'parentPlayerKeys', 'playerKeys'];
     }
 
+    function teamMediaUploadGrantFields() {
+      return ['teamMediaUploadTeamIds', 'mediaUploadTeamIds'];
+    }
+
     function isOwnerUserCreatePayloadValid(data) {
       return data.get('isAdmin', false) != true &&
-             !data.keys().hasAny(userMembershipFields());
+             !data.keys().hasAny(userMembershipFields()) &&
+             !data.keys().hasAny(teamMediaUploadGrantFields());
     }
 
     function isOwnerUserUpdatePayloadValid() {
       return !request.resource.data.diff(resource.data).affectedKeys().hasAny(['isAdmin']) &&
-             !request.resource.data.diff(resource.data).affectedKeys().hasAny(userMembershipFields());
+             !request.resource.data.diff(resource.data).affectedKeys().hasAny(userMembershipFields()) &&
+             !request.resource.data.diff(resource.data).affectedKeys().hasAny(teamMediaUploadGrantFields());
     }
 
     function isFriendshipCreatePayloadValid(data) {
