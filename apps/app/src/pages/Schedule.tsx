@@ -862,6 +862,12 @@ export function Schedule({ auth }: { auth: AuthState }) {
   const handleCreateTournament = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (!selectedCalendarTeam || !auth.user || savingTournament) return;
+    const validationError = getScheduleTournamentCreateFormError(tournamentForm);
+    if (validationError) {
+      setTournamentFormError(validationError);
+      setStatusMessage(null);
+      return;
+    }
     setSavingTournament(true);
     setTournamentFormError(null);
     setStatusMessage(null);
@@ -1580,6 +1586,39 @@ function getDefaultScheduleTournamentForm(): ScheduleTournamentCreateFormInput {
   };
 }
 
+function isValidScheduleDate(value: Date | string | number | null | undefined) {
+  const date = value instanceof Date ? value : new Date(value || '');
+  return !Number.isNaN(date.getTime());
+}
+
+function getScheduleTournamentCreateFormError(form: ScheduleTournamentCreateFormInput) {
+  if (!form.divisionName.trim()) return 'Tournament division is required.';
+  if (!form.bracketName.trim()) return 'Tournament bracket is required.';
+  if (!form.roundName.trim()) return 'Tournament round is required.';
+  if (!Array.isArray(form.games) || form.games.length !== 1) return 'Tournament blocks support exactly one game in this flow.';
+  const game = form.games[0];
+  if (!game.opponent.trim()) return 'Game opponent is required.';
+  if (!isValidScheduleDate(game.startDate)) return 'Game start time is required.';
+  if (!isValidScheduleDate(game.endDate)) return 'Game end time is required.';
+  const startDate = game.startDate instanceof Date ? game.startDate : new Date(game.startDate);
+  const endDate = game.endDate instanceof Date ? game.endDate : new Date(game.endDate || '');
+  if (endDate.getTime() <= startDate.getTime()) return 'Game end time must be after the start time.';
+  if (game.arrivalTime && !isValidScheduleDate(game.arrivalTime)) return 'Arrival time is invalid.';
+  return null;
+}
+
+function getSingleScheduleTournamentGame(form: ScheduleTournamentCreateFormInput) {
+  return form.games[0] || getDefaultScheduleTournamentGameForm();
+}
+
+function getScheduleTournamentFormWithSingleGame(form: ScheduleTournamentCreateFormInput, game: ScheduleGameFormInput): ScheduleTournamentCreateFormInput {
+  return { ...form, games: [game] };
+}
+
+function ScheduleRequiredHint() {
+  return <span className="ml-1 text-rose-600" aria-hidden="true">*</span>;
+}
+
 function getDefaultSchedulePracticeForm(): SchedulePracticeFormInput {
   const startDate = new Date();
   startDate.setDate(startDate.getDate() + 1);
@@ -1663,49 +1702,37 @@ function ScheduleTournamentCreateModal({ children, saving, onClose }: { children
 }
 
 function ScheduleTournamentCreatePanel({ teamName, form, configs, saving, error, configError, onStartUsing, onChange, onCancel, onSubmit }: { teamName: string; form: ScheduleTournamentCreateFormInput; configs: ScheduleStatTrackerConfigOption[]; saving: boolean; error: string | null; configError: string | null; onStartUsing?: () => void; onChange: (form: ScheduleTournamentCreateFormInput) => void; onCancel: () => void; onSubmit: (event: FormEvent<HTMLFormElement>) => void }) {
-  const updateField = (field: keyof Omit<ScheduleTournamentCreateFormInput, 'games'>, value: string) => onChange({ ...form, [field]: value });
-  const updateGame = (index: number, field: keyof ScheduleGameFormInput, value: string | Date | boolean | null) => onChange({
-    ...form,
-    games: form.games.map((game, gameIndex) => gameIndex === index ? { ...game, [field]: value } : game)
-  });
-  const addGame = () => onChange({ ...form, games: [...form.games, getDefaultScheduleTournamentGameForm()] });
-  const removeGame = (index: number) => onChange({ ...form, games: form.games.filter((_, gameIndex) => gameIndex !== index) });
+  const game = getSingleScheduleTournamentGame(form);
+  const updateField = (field: keyof Omit<ScheduleTournamentCreateFormInput, 'games'>, value: string) => onChange({ ...form, games: [game], [field]: value });
+  const updateGame = (field: keyof ScheduleGameFormInput, value: string | Date | boolean | null) => onChange(getScheduleTournamentFormWithSingleGame(form, { ...game, [field]: value }));
 
   return (
     <section className="app-card border-0 p-0 shadow-none sm:p-0" aria-label="Create tournament" onFocusCapture={onStartUsing}>
       <div className="app-label">Tournament scheduling</div>
       <h2 className="mt-1 text-base font-black text-gray-950">Add tournament for {teamName}</h2>
-      <form className="mt-3 space-y-3" onSubmit={onSubmit}>
+      <form className="mt-3 space-y-3" noValidate onSubmit={onSubmit}>
+        <p className="text-xs font-bold text-gray-500">Required fields are marked with <span className="text-rose-600">*</span>.</p>
         <div className="grid gap-3 sm:grid-cols-2">
-          <label className="text-xs font-bold uppercase tracking-wide text-gray-600">Tournament division<input aria-label="Tournament division" className="auth-input mt-1" value={form.divisionName} onChange={(event) => updateField('divisionName', event.target.value)} /></label>
-          <label className="text-xs font-bold uppercase tracking-wide text-gray-600">Bracket<input aria-label="Tournament bracket" className="auth-input mt-1" value={form.bracketName} onChange={(event) => updateField('bracketName', event.target.value)} /></label>
-          <label className="text-xs font-bold uppercase tracking-wide text-gray-600">Round<input aria-label="Tournament round" className="auth-input mt-1" value={form.roundName} onChange={(event) => updateField('roundName', event.target.value)} /></label>
+          <label className="text-xs font-bold uppercase tracking-wide text-gray-600">Tournament division<ScheduleRequiredHint /><input aria-label="Tournament division" className="auth-input mt-1" required value={form.divisionName} onChange={(event) => updateField('divisionName', event.target.value)} /></label>
+          <label className="text-xs font-bold uppercase tracking-wide text-gray-600">Bracket<ScheduleRequiredHint /><input aria-label="Tournament bracket" className="auth-input mt-1" required value={form.bracketName} onChange={(event) => updateField('bracketName', event.target.value)} /></label>
+          <label className="text-xs font-bold uppercase tracking-wide text-gray-600">Round<ScheduleRequiredHint /><input aria-label="Tournament round" className="auth-input mt-1" required value={form.roundName} onChange={(event) => updateField('roundName', event.target.value)} /></label>
           <label className="text-xs font-bold uppercase tracking-wide text-gray-600">Pool<input aria-label="Tournament pool" className="auth-input mt-1" value={form.poolName || ''} onChange={(event) => updateField('poolName', event.target.value)} /></label>
         </div>
 
         <div className="space-y-3">
-          {form.games.map((game, index) => (
-            <div key={`tournament-game-${index}`} className="rounded-2xl border border-gray-200 bg-gray-50 p-3">
-              <div className="flex items-center justify-between gap-3">
-                <div className="text-sm font-black text-gray-900">Game {index + 1}</div>
-                <button type="button" className="text-xs font-black text-gray-500 disabled:text-gray-300" onClick={() => removeGame(index)} disabled={saving || form.games.length <= 0}>Remove</button>
-              </div>
-              <div className="mt-3 grid gap-3 sm:grid-cols-2">
-                <label className="text-xs font-bold uppercase tracking-wide text-gray-600">Opponent<input aria-label={`Game ${index + 1} opponent`} className="auth-input mt-1" value={game.opponent} onChange={(event) => updateGame(index, 'opponent', event.target.value)} /></label>
-                <label className="text-xs font-bold uppercase tracking-wide text-gray-600">Location<input aria-label={`Game ${index + 1} location`} className="auth-input mt-1" value={game.location || ''} onChange={(event) => updateGame(index, 'location', event.target.value)} /></label>
-                <label className="text-xs font-bold uppercase tracking-wide text-gray-600">Starts<input aria-label={`Game ${index + 1} starts`} type="datetime-local" className="auth-input mt-1" value={toDatetimeLocalInputValue(game.startDate)} onChange={(event) => updateGame(index, 'startDate', new Date(event.target.value))} /></label>
-                <label className="text-xs font-bold uppercase tracking-wide text-gray-600">Ends<input aria-label={`Game ${index + 1} ends`} type="datetime-local" className="auth-input mt-1" value={toDatetimeLocalInputValue(game.endDate)} onChange={(event) => updateGame(index, 'endDate', event.target.value ? new Date(event.target.value) : null)} /></label>
-                <label className="text-xs font-bold uppercase tracking-wide text-gray-600">Arrival<input aria-label={`Game ${index + 1} arrival`} type="datetime-local" className="auth-input mt-1" value={toDatetimeLocalInputValue(game.arrivalTime)} onChange={(event) => updateGame(index, 'arrivalTime', event.target.value ? new Date(event.target.value) : null)} /></label>
-                <label className="text-xs font-bold uppercase tracking-wide text-gray-600">Home / away<select aria-label={`Game ${index + 1} home away`} className="auth-input mt-1" value={game.isHome === false ? 'away' : game.isHome === true ? 'home' : 'neutral'} onChange={(event) => updateGame(index, 'isHome', event.target.value === 'neutral' ? null : event.target.value === 'home')}><option value="home">Home</option><option value="away">Away</option><option value="neutral">Neutral</option></select></label>
-                <label className="text-xs font-bold uppercase tracking-wide text-gray-600">Tracker config<select aria-label={`Game ${index + 1} tracker config`} className="auth-input mt-1" value={game.statTrackerConfigId || ''} onChange={(event) => updateGame(index, 'statTrackerConfigId', event.target.value)}><option value="">No tracker config</option>{configs.map((config) => <option key={`${index}-${config.id}`} value={config.id}>{config.name}</option>)}</select></label>
-              </div>
-              <label className="mt-3 block text-xs font-bold uppercase tracking-wide text-gray-600">Notes<textarea aria-label={`Game ${index + 1} notes`} className="auth-input mt-1 min-h-20" value={game.notes || ''} onChange={(event) => updateGame(index, 'notes', event.target.value)} /></label>
+          <div className="rounded-2xl border border-gray-200 bg-gray-50 p-3">
+            <div className="text-sm font-black text-gray-900">Game 1</div>
+            <div className="mt-3 grid gap-3 sm:grid-cols-2">
+              <label className="text-xs font-bold uppercase tracking-wide text-gray-600">Opponent<ScheduleRequiredHint /><input aria-label="Game 1 opponent" className="auth-input mt-1" required value={game.opponent} onChange={(event) => updateGame('opponent', event.target.value)} /></label>
+              <label className="text-xs font-bold uppercase tracking-wide text-gray-600">Location<input aria-label="Game 1 location" className="auth-input mt-1" value={game.location || ''} onChange={(event) => updateGame('location', event.target.value)} /></label>
+              <label className="text-xs font-bold uppercase tracking-wide text-gray-600">Starts<ScheduleRequiredHint /><input aria-label="Game 1 starts" type="datetime-local" className="auth-input mt-1" required value={toDatetimeLocalInputValue(game.startDate)} onChange={(event) => updateGame('startDate', new Date(event.target.value))} /></label>
+              <label className="text-xs font-bold uppercase tracking-wide text-gray-600">Ends<ScheduleRequiredHint /><input aria-label="Game 1 ends" type="datetime-local" className="auth-input mt-1" required value={toDatetimeLocalInputValue(game.endDate)} onChange={(event) => updateGame('endDate', event.target.value ? new Date(event.target.value) : null)} /></label>
+              <label className="text-xs font-bold uppercase tracking-wide text-gray-600">Arrival<input aria-label="Game 1 arrival" type="datetime-local" className="auth-input mt-1" value={toDatetimeLocalInputValue(game.arrivalTime)} onChange={(event) => updateGame('arrivalTime', event.target.value ? new Date(event.target.value) : null)} /></label>
+              <label className="text-xs font-bold uppercase tracking-wide text-gray-600">Home / away<select aria-label="Game 1 home away" className="auth-input mt-1" value={game.isHome === false ? 'away' : game.isHome === true ? 'home' : 'neutral'} onChange={(event) => updateGame('isHome', event.target.value === 'neutral' ? null : event.target.value === 'home')}><option value="home">Home</option><option value="away">Away</option><option value="neutral">Neutral</option></select></label>
+              <label className="text-xs font-bold uppercase tracking-wide text-gray-600">Tracker config<select aria-label="Game 1 tracker config" className="auth-input mt-1" value={game.statTrackerConfigId || ''} onChange={(event) => updateGame('statTrackerConfigId', event.target.value)}><option value="">No tracker config</option>{configs.map((config) => <option key={config.id} value={config.id}>{config.name}</option>)}</select></label>
             </div>
-          ))}
-        </div>
-
-        <div className="flex flex-wrap gap-2">
-          <button type="button" className="rounded-full border border-gray-300 px-3 py-2 text-sm font-black text-gray-700" onClick={addGame} disabled={saving}>Add another game</button>
+            <label className="mt-3 block text-xs font-bold uppercase tracking-wide text-gray-600">Notes<textarea aria-label="Game 1 notes" className="auth-input mt-1 min-h-20" value={game.notes || ''} onChange={(event) => updateGame('notes', event.target.value)} /></label>
+          </div>
         </div>
         <div className="flex flex-wrap gap-2">
           <button type="submit" className="primary-button" disabled={saving}>{saving ? 'Creating tournament' : 'Create tournament'}</button>
