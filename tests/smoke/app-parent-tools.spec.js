@@ -112,7 +112,7 @@ const parentRegistrationsServiceMock = `
     export async function cancelRegistrationCheckout() {
         return { released: true };
     }
-    export async function loadParentRegistrationDetail() {
+    function buildRegistrationDetail() {
         return {
             teamName: 'Bears',
             isPublished: true,
@@ -133,6 +133,33 @@ const parentRegistrationsServiceMock = `
             paymentNotice: 'Online checkout available.',
             paymentPlans: []
         };
+    }
+    export async function loadParentRegistrationDetail() {
+        return buildRegistrationDetail();
+    }
+    export async function loadPublicRegistrationDetail() {
+        return buildRegistrationDetail();
+    }
+    export async function loadStaffRegistrationDetail() {
+        return buildRegistrationDetail();
+    }
+    export async function loadTeamRegistrationQueuePage() {
+        return { reviews: [], lastDoc: null, hasMore: false, totalWaitlisted: 0 };
+    }
+    export async function loadTeamRegistrationRosterPlayers() {
+        return [];
+    }
+    export async function approveTeamRegistrationForApp() {
+        return { success: true };
+    }
+    export async function rejectTeamRegistrationForApp() {
+        return { success: true };
+    }
+    export async function extendTeamRegistrationOfferForApp() {
+        return { success: true };
+    }
+    export async function acceptTeamRegistrationOfferForApp() {
+        return { success: true };
     }
 `;
 
@@ -504,7 +531,7 @@ test('parent tools hub completes access, fees, calendars, share, registration, a
     await page.getByRole('button', { name: 'Pay registration with Stripe' }).click();
     await expect.poll(() => page.evaluate(() => window.__openedPublicUrls.at(-1))).toBe('https://pay.example.test/registration-checkout');
 
-    await page.getByRole('button', { name: 'Awards' }).click();
+    await page.goto(appUrl(baseURL, '/parent-tools/certificates'), { waitUntil: 'domcontentloaded' });
     await expect(page.getByText('Hustle Award')).toBeVisible();
     await page.getByRole('button', { name: 'Share' }).last().click();
     await expect.poll(() => page.evaluate(() => window.__sharedUrls.at(-1)?.url)).toBe('https://allplays.ai/certificates.html#teamId=team-1&certificateId=cert-1');
