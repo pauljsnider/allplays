@@ -979,7 +979,12 @@ describe('parent game route resolution', () => {
     expect(result).toEqual({
       teamId: 'team-bravo',
       eventId: 'game-7',
-      childId: 'child-2'
+      childId: 'child-2',
+      cachedEvent: expect.objectContaining({
+        id: 'game-7',
+        teamId: 'team-bravo',
+        childId: 'child-2'
+      })
     });
     expect(getCachedAppData).toHaveBeenCalledWith('app-schedule-summary:parent-1');
     expect(loadProfileDocument).not.toHaveBeenCalled();

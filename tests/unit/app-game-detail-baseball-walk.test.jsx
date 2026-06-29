@@ -10,10 +10,7 @@ const scheduleServiceMocks = vi.hoisted(() => ({
     loadParentScheduleEventDetail: vi.fn()
 }));
 
-vi.mock('../../apps/app/src/lib/scheduleService', async (importOriginal) => ({
-    ...(await importOriginal()),
-    ...scheduleServiceMocks
-}));
+vi.mock('../../apps/app/src/lib/scheduleService', () => scheduleServiceMocks);
 
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -71,28 +68,29 @@ afterEach(() => {
 
 describe('app GameDetail route resolution', () => {
     it('routes tracked games into the live schedule event detail workflow', async () => {
+        const cachedEvent = {
+            id: 'game-baseball',
+            teamId: 'team-baseball',
+            childId: 'player-1',
+            type: 'game',
+            isDbGame: true,
+            isCancelled: false,
+            myRsvp: 'not_responded',
+            assignments: [],
+            rideshareSummary: null,
+            isTeamStaff: true,
+            isTeamAdmin: false,
+            canUpdateScore: false
+        };
         scheduleServiceMocks.resolveParentGameRoute.mockResolvedValue({
             teamId: 'team-baseball',
             eventId: 'game-baseball',
-            childId: 'player-1'
+            childId: 'player-1',
+            cachedEvent
         });
-
         scheduleServiceMocks.loadParentScheduleEventDetail.mockResolvedValue({
             children: [],
-            events: [{
-                id: 'game-baseball',
-                teamId: 'team-baseball',
-                childId: 'player-1',
-                type: 'game',
-                isDbGame: true,
-                isCancelled: false,
-                myRsvp: 'not_responded',
-                assignments: [],
-                rideshareSummary: null,
-                isTeamStaff: true,
-                isTeamAdmin: false,
-                canUpdateScore: false
-            }]
+            events: [cachedEvent]
         });
 
         const { container, root, router } = await renderGameDetail();
