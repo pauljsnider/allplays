@@ -1670,10 +1670,14 @@ export async function createScheduledTournamentBlockForApp(teamId: string, input
     throw new Error('Tournament adapter could not build a complete legacy payload.');
   }
 
+  const requiresExplicitSingleGameFailure = payloads.length === 1;
   const createdIds: string[] = [];
   for (const payload of payloads) {
     try {
       const createdId = await withTimeout(Promise.resolve(addGame(normalizedTeamId, payload)), 'Scheduled tournament game create');
+      if (requiresExplicitSingleGameFailure && !compactString(createdId)) {
+        throw new Error('Tournament game save failed because no game id was returned.');
+      }
       createdIds.push(createdId || '');
     } catch (error) {
       if (!isNativeRuntime()) throw error;
@@ -1682,7 +1686,11 @@ export async function createScheduledTournamentBlockForApp(teamId: string, input
         ...payload,
         createdAt: new Date()
       });
-      createdIds.push(doc?.id || '');
+      const createdId = compactString(doc?.id);
+      if (requiresExplicitSingleGameFailure && !createdId) {
+        throw new Error('Tournament game save failed because no game id was returned.');
+      }
+      createdIds.push(createdId);
     }
   }
 

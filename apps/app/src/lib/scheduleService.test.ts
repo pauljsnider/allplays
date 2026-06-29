@@ -468,6 +468,30 @@ describe('scheduled tournament writes', () => {
     }));
   });
 
+  it('throws an explicit error when a single-game tournament save returns no id', async () => {
+    vi.mocked(addGame).mockResolvedValueOnce(undefined as any);
+
+    await expect(createScheduledTournamentBlockForApp('team-1', {
+      divisionName: '10U Gold',
+      bracketName: 'Gold Bracket',
+      roundName: 'Semifinal',
+      poolName: 'Pool A',
+      games: [
+        {
+          opponent: 'Tigers',
+          startDate: new Date('2026-06-24T18:30:00.000Z'),
+          endDate: new Date('2026-06-24T20:00:00.000Z'),
+          location: 'Main Gym',
+          arrivalTime: new Date('2026-06-24T18:00:00.000Z'),
+          isHome: true,
+          notes: 'Bring dark jerseys'
+        }
+      ]
+    }, coachUser)).rejects.toThrow('Tournament game save failed because no game id was returned.');
+
+    expect(addGame).toHaveBeenCalledTimes(1);
+  });
+
   it('rejects tournament blocks without required metadata or child games', async () => {
     await expect(createScheduledTournamentBlockForApp('team-1', {
       divisionName: '',
