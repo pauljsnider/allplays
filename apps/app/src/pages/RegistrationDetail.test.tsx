@@ -108,6 +108,24 @@ function renderStaffRegistrationReview() {
   );
 }
 
+function buildReview(overrides: Record<string, any> = {}) {
+  return {
+    id: 'review-1',
+    status: 'pending',
+    participantName: 'Pat Star',
+    guardianLabel: 'Parent One',
+    participant: { name: 'Pat Star' },
+    guardian: { email: 'parent@example.com' },
+    selectedOption: { id: 'opt-1' },
+    selectedOptionLabel: 'Full week',
+    paymentLabel: '$75.00',
+    waiverAccepted: true,
+    linkedPlayerId: '',
+    decisionNote: '',
+    ...overrides
+  };
+}
+
 function RouteSwapButton({ to }: { to: string }) {
   const navigate = useNavigate();
   return <button type="button" onClick={() => navigate(to)}>Swap route</button>;
@@ -430,5 +448,60 @@ describe('RegistrationDetail payment notice', () => {
       'review-1',
       { playerId: undefined }
     ));
+  });
+
+  it('paginates applications and waitlisted applicants with separate cursors', async () => {
+    parentRegistrationsServiceMocks.loadStaffRegistrationDetail.mockResolvedValue(buildDetail({
+      form: {
+        registrationOptionCounts: {
+          'opt-1': { enrolled: 4, waitlisted: 27 }
+        }
+      },
+      options: [{ id: 'opt-1', title: 'Full week', capacityLimit: 20, waitlistEnabled: true }]
+    }));
+    parentRegistrationsServiceMocks.loadTeamRegistrationQueuePage
+      .mockResolvedValueOnce({
+        reviews: [buildReview({ id: 'review-1', participantName: 'Pat Star' })],
+        lastDoc: 'main-cursor-1',
+        hasMore: true
+      })
+      .mockResolvedValueOnce({
+        reviews: [buildReview({ id: 'waitlist-1', status: 'waitlisted', participantName: 'Wendy Waitlist' })],
+        lastDoc: 'waitlist-cursor-1',
+        hasMore: true
+      })
+      .mockResolvedValueOnce({
+        reviews: [buildReview({ id: 'review-2', participantName: 'Alex Applicant' })],
+        lastDoc: null,
+        hasMore: false
+      })
+      .mockResolvedValueOnce({
+        reviews: [buildReview({ id: 'waitlist-2', status: 'waitlisted', participantName: 'Page Two Waitlist' })],
+        lastDoc: null,
+        hasMore: false
+      });
+    parentRegistrationsServiceMocks.loadTeamRegistrationRosterPlayers.mockResolvedValue([]);
+
+    renderStaffRegistrationReview();
+
+    expect(await screen.findAllByText('Pat Star')).not.toHaveLength(0);
+    expect(screen.getByText('Wendy Waitlist')).toBeTruthy();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Wendy Waitlist Parent One waitlisted Full week · $75.00' }));
+    expect(await screen.findByRole('heading', { name: 'Wendy Waitlist' })).toBeTruthy();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Load more' }));
+
+    expect(await screen.findByText('Alex Applicant')).toBeTruthy();
+    expect(screen.queryByText('Page Two Waitlist')).toBeNull();
+    expect(screen.getByRole('heading', { name: 'Wendy Waitlist' })).toBeTruthy();
+    expect(parentRegistrationsServiceMocks.loadTeamRegistrationQueuePage).toHaveBeenNthCalledWith(3, 'team-1', 'form-1', { afterDoc: 'main-cursor-1' });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Load more waitlisted applicants' }));
+
+    expect(await screen.findByText('Page Two Waitlist')).toBeTruthy();
+    expect(screen.getByText('Alex Applicant')).toBeTruthy();
+    expect(screen.getByRole('heading', { name: 'Wendy Waitlist' })).toBeTruthy();
+    expect(parentRegistrationsServiceMocks.loadTeamRegistrationQueuePage).toHaveBeenNthCalledWith(4, 'team-1', 'form-1', { status: 'waitlisted', afterDoc: 'waitlist-cursor-1' });
   });
 });
