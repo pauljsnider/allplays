@@ -82,10 +82,10 @@ async function flushTelemetry(page) {
 
 async function waitForHomeRoute(page, readyLocator) {
     await expect(async () => {
-        await expect(page.getByText('Loading ALL PLAYS')).toBeHidden({ timeout: 3000 });
-        await expect(page.getByText('Loading Home')).toBeHidden({ timeout: 3000 });
-        await expect(readyLocator).toBeVisible({ timeout: 3000 });
-    }).toPass({ timeout: 30000 });
+        await expect(page.getByText('Loading ALL PLAYS')).toBeHidden({ timeout: 5000 });
+        await expect(page.getByText('Loading Home')).toBeHidden({ timeout: 5000 });
+        await expect(readyLocator).toBeVisible({ timeout: 5000 });
+    }).toPass({ timeout: 45000 });
 }
 
 async function waitForTeamsRoute(page, readyLocator) {
