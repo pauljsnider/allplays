@@ -1115,6 +1115,45 @@ describe('PlayerDetail athlete profile season selection', () => {
     expect(screen.getByRole('link', { name: 'Open Full Builder' }).getAttribute('href')).toBe(builderUrl);
   });
 
+  it('disables the full builder card until athlete profile hydration finishes', async () => {
+    const pendingBuilderUrl = 'https://allplays.ai/athlete-profile-builder.html?teamId=team-current&playerId=player-current';
+    const hydratedBuilderUrl = 'https://allplays.ai/athlete-profile-builder.html?teamId=team-current&playerId=player-current&profileId=profile-1';
+    const deferredProfile = createDeferred<any>();
+
+    playerServiceMocks.loadParentPlayerDetail.mockResolvedValue(buildDetailData({
+      athleteProfile: {
+        profile: null,
+        shareUrl: '',
+        builderUrl: pendingBuilderUrl,
+        seasonOptions: buildDetailData().athleteProfile.seasonOptions
+      }
+    }));
+    playerServiceMocks.loadParentPlayerAthleteProfile.mockReturnValueOnce(deferredProfile.promise);
+
+    renderPlayerDetail();
+
+    await screen.findByText('Sam Player');
+    fireEvent.click(screen.getByRole('button', { name: 'Profile' }));
+
+    expect(await screen.findByText('Loading athlete profile tools...')).toBeTruthy();
+    const fullBuilderCard = screen.getByRole('link', { name: /Full builder/i });
+    expect(fullBuilderCard.getAttribute('href')).toBe('#');
+    expect(fullBuilderCard.getAttribute('aria-disabled')).toBe('true');
+    expect(screen.getByText('Loading athlete profile builder...')).toBeTruthy();
+
+    deferredProfile.resolve({
+      profile: { id: 'profile-1', athlete: { name: 'Sam Player' }, bio: {}, privacy: 'private', clips: [] },
+      shareUrl: '',
+      builderUrl: hydratedBuilderUrl,
+      seasonOptions: buildDetailData().athleteProfile.seasonOptions
+    });
+
+    await waitFor(() => {
+      expect(screen.getByRole('link', { name: /Full builder/i }).getAttribute('href')).toBe(hydratedBuilderUrl);
+    });
+    expect(screen.getByRole('link', { name: /Full builder/i }).getAttribute('aria-disabled')).toBe('false');
+  });
+
   it('refreshes the athlete profile editor when persisted public sharing becomes available', async () => {
     const shareUrl = 'https://allplays.ai/athlete-profile.html?profileId=profile-1';
     const builderUrl = 'https://allplays.ai/athlete-profile-builder.html?teamId=team-current&playerId=player-current&profileId=profile-1';

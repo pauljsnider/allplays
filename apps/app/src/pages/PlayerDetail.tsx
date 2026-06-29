@@ -734,6 +734,7 @@ function PlayerProfileSection({
   const customRosterFields = Array.isArray(data.customRosterFields) ? data.customRosterFields : [];
   const persistedPublicProfileUrl = getPersistedPublicProfileUrl(data.athleteProfile.profile, data.athleteProfile.shareUrl);
   const persistedPublicProfileAvailable = isPersistedPublicProfileReady(data.athleteProfile.profile, data.athleteProfile.shareUrl, athleteProfileShareState);
+  const fullBuilderAvailable = athleteProfileLoaded && !!String(data.athleteProfile.builderUrl || '').trim();
 
   useEffect(() => {
     setAthleteProfileShareState((current) => {
@@ -805,9 +806,17 @@ function PlayerProfileSection({
       {activePanel === 'incentives' ? <IncentivesCard data={data} auth={auth} onChanged={onChanged} /> : null}
 
       <section className="grid gap-3 sm:grid-cols-3">
-        <a href={data.athleteProfile.builderUrl} target="_blank" rel="noreferrer" className="app-card flex items-start gap-3 p-4 transition hover:border-primary-200 hover:shadow-app-lg">
+        <a
+          href={fullBuilderAvailable ? data.athleteProfile.builderUrl : '#'}
+          target={fullBuilderAvailable ? '_blank' : undefined}
+          rel={fullBuilderAvailable ? 'noreferrer' : undefined}
+          aria-disabled={!fullBuilderAvailable}
+          tabIndex={fullBuilderAvailable ? undefined : -1}
+          onClick={fullBuilderAvailable ? undefined : (event) => event.preventDefault()}
+          className={`app-card flex items-start gap-3 p-4 transition hover:border-primary-200 hover:shadow-app-lg ${fullBuilderAvailable ? '' : 'pointer-events-none opacity-60'}`}
+        >
           <IconBox icon={Sparkles} />
-          <CardText title="Full builder" detail="Open the legacy builder for headshot and highlight uploads." />
+          <CardText title="Full builder" detail={athleteProfileLoading ? 'Loading athlete profile builder...' : 'Open the legacy builder for headshot and highlight uploads.'} />
           <ExternalLink className="h-4 w-4 flex-none text-gray-400" aria-hidden="true" />
         </a>
         <a

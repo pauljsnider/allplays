@@ -316,6 +316,19 @@ export async function loadParentPlayerAthleteProfile(user: AuthUser | null, team
   });
 }
 
+export async function loadParentPlayerDetailWithAthleteProfile(user: AuthUser | null, teamId: string, playerId: string): Promise<ParentPlayerDetailData> {
+  const detail = await loadParentPlayerDetail(user, teamId, playerId);
+  if (detail?.athleteProfile?.profile) {
+    return detail;
+  }
+
+  const athleteProfile = await loadParentPlayerAthleteProfile(user, detail.child.teamId, detail.child.playerId).catch(() => detail.athleteProfile);
+  return {
+    ...detail,
+    athleteProfile: athleteProfile || detail.athleteProfile
+  };
+}
+
 export async function savePlayerCustomRosterFieldValues({
   user,
   teamId,
