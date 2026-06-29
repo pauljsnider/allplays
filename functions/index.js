@@ -848,8 +848,8 @@ exports.submitPublicRegistration = functions.https.onCall(async (data, context =
   return result;
 });
 
-function isServerDiscountRuleEligible(rule, { now }) {
-  if (rule.type === 'quantity') return true; // quantity discounts always apply (single registration = quantity 1 satisfies minimum >= 1)
+function isServerDiscountRuleEligible(rule, { quantity = 1, now }) {
+  if (rule.type === 'quantity') return quantity >= rule.minimumQuantity;
   if (rule.type === 'early_bird') {
     const deadline = Date.parse(`${rule.earlyBirdDeadline}T23:59:59.999`);
     return Number.isFinite(deadline) && now.getTime() <= deadline;
@@ -879,16 +879,17 @@ function normalizeServerRegistrationDiscountRules(rules) {
 }
 
 /**
- * Recompute the expected checkout amount from the authoritative form document.
- * This prevents clients from submitting a tampered feeSnapshot with a lower amount —
- * pricing authority lives in the server-fetched registrationForm, not in the
- * client-submitted registration document.
+ * Recompute the expected checkout amount from the authoritative form document
+ * and the server-captured registration quantity. This prevents clients from
+ * submitting a tampered feeSnapshot amount while preserving the quantity rules
+ * applied when the registration was submitted.
  */
-function computeRegistrationFeeAmountCentsFromForm(form, now = new Date()) {
+function computeRegistrationFeeAmountCentsFromForm(form, now = new Date(), options = {}) {
   const originalFeeAmountCents = Math.max(0, Math.round(Number(form.feeAmountCents || 0)));
-  let remainingAmountCents = originalFeeAmountCents;
+  const quantity = Math.max(1, Math.floor(Number(options.quantity || 1)));
+  let remainingAmountCents = originalFeeAmountCents * quantity;
   normalizeServerRegistrationDiscountRules(form.discountRules || []).forEach((rule) => {
-    if (!rule.active || !isServerDiscountRuleEligible(rule, { now })) return;
+    if (!rule.active || !isServerDiscountRuleEligible(rule, { quantity, now })) return;
     let discountAmountCents;
     if (rule.amountType === 'percent') {
       const percentDiscountRate = rule.amountValue / 100;
@@ -978,9 +979,11 @@ function getRegistrationCheckoutAmountCents(registration = {}, form = null) {
     return Math.max(0, Math.round(Number(installmentState.currentInstallment?.amountCents || 0) || 0));
   }
   if (form) {
-    // Use the server-recomputed amount from the authoritative form document so
-    // a tampered feeSnapshot stored on the stored registration cannot lower the charge.
-    return computeRegistrationFeeAmountCentsFromForm(form);
+    // Recompute from the authoritative form pricing rules using the quantity
+    // captured on the server-created registration snapshot for this submission.
+    return computeRegistrationFeeAmountCentsFromForm(form, new Date(), {
+      quantity: registration.feeSnapshot?.quantity || 1
+    });
   }
   if (registration.paymentPlan?.id === 'installments') {
     const installmentState = buildRegistrationInstallmentPaymentState(registration, null);
