@@ -316,9 +316,7 @@ export function Home({ auth }: { auth: AuthState }) {
 
   useEffect(() => {
     const section = searchParams.get('section') as HomeSectionId | null;
-    if (section && homeSections.some((item) => item.id === section)) {
-      setActiveSection(section);
-    }
+    setActiveSection(section && homeSections.some((item) => item.id === section) ? section : 'today');
     setComposerOpen(searchParams.get('social') === 'create');
   }, [searchParams]);
 
