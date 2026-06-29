@@ -105,6 +105,8 @@ import { ScheduleEventDetail, getAvailabilityNoteSaveState, parseEventDetailSect
 
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 
+const mountedRoots = [];
+
 const auth = {
     user: {
         uid: 'user-1',
@@ -190,6 +192,8 @@ async function renderDetail(initialEntry) {
             )
         ));
     });
+
+    mountedRoots.push({ container, root });
 
     return { container, root };
 }
@@ -322,7 +326,14 @@ beforeEach(() => {
     window.scrollTo = vi.fn();
 });
 
-afterEach(() => {
+afterEach(async () => {
+    while (mountedRoots.length > 0) {
+        const mounted = mountedRoots.pop();
+        await act(async () => {
+            mounted.root.unmount();
+        });
+        mounted.container.remove();
+    }
     vi.useRealTimers();
     document.body.innerHTML = '';
 });
