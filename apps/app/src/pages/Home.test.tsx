@@ -31,7 +31,8 @@ const scheduleServiceMocks = vi.hoisted(() => ({
 
 const uxTimingMocks = vi.hoisted(() => ({
   recordFirstMeaningfulRender: vi.fn(),
-  startScreenMountTimer: vi.fn(() => ({ end: vi.fn() }))
+  startScreenMountTimer: vi.fn(() => ({ end: vi.fn() })),
+  startUxTimer: vi.fn(() => ({ end: vi.fn(), cancel: vi.fn() }))
 }));
 
 vi.mock('../components/PageSkeletons', () => ({
