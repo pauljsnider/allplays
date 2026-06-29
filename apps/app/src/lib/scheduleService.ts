@@ -15,6 +15,7 @@ import {
   getTeams,
   addGame,
   addPractice,
+  buildLegacyTournamentGameDocument,
   buildLegacyTournamentGameDocuments,
   createRideOffer,
   claimAssignmentSlot,
@@ -1667,12 +1668,14 @@ export async function createScheduledTournamentBlockForApp(teamId: string, input
     ...game,
     competitionType: 'tournament'
   }, user as AuthUser));
-  const payloads = buildLegacyTournamentGameDocuments(validatedGames, tournament);
+  const requiresExplicitSingleGameFailure = validatedGames.length === 1;
+  const payloads = requiresExplicitSingleGameFailure
+    ? [buildLegacyTournamentGameDocument(validatedGames[0], tournament)]
+    : buildLegacyTournamentGameDocuments(validatedGames, tournament);
   if (payloads.length !== validatedGames.length) {
     throw new Error('Tournament adapter could not build a complete legacy payload.');
   }
 
-  const requiresExplicitSingleGameFailure = validatedGames.length === 1;
   const createdIds: string[] = [];
   for (const payload of payloads) {
     let createdId = '';
