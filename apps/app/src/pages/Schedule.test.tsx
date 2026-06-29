@@ -49,6 +49,11 @@ vi.mock('../lib/telemetry', () => ({
   recordAppWorkflowTiming: vi.fn(),
   startAppInitialLoadTimer: vi.fn(() => initialLoadTelemetryMocks)
 }));
+vi.mock('../lib/performanceInstrumentation', () => ({
+  now: vi.fn(() => 0),
+  startPerformanceSpan: vi.fn(() => ({ startedAt: 0, end: vi.fn() })),
+  recordCompletedPerformanceSpan: vi.fn()
+}));
 vi.mock('../lib/uxTiming', () => ({
   recordFirstMeaningfulRender: uxTimingMocks.recordFirstMeaningfulRender,
   startScreenMountTimer: vi.fn(() => ({ end: uxTimingMocks.end })),
@@ -104,7 +109,7 @@ function RouteProbe() {
 }
 
 function buildScheduleEvent(index: number, overrides: Record<string, unknown> = {}) {
-  return {
+  const event = {
     eventKey: `team-1::event-${index}::player-1::2100-06-${String(index).padStart(2, '0')}T18:00:00.000Z::game`,
     id: `event-${index}`,
     teamId: 'team-1',
@@ -121,6 +126,14 @@ function buildScheduleEvent(index: number, overrides: Record<string, unknown> = 
     myRsvp: 'not_responded' as const,
     assignments: [],
     ...overrides
+  };
+
+  const assignments = Array.isArray(event.assignments) ? event.assignments : [];
+  return {
+    ...event,
+    openAssignmentCount: typeof event.openAssignmentCount === 'number'
+      ? event.openAssignmentCount
+      : assignments.filter((assignment: any) => assignment?.claimable && !assignment?.claim && !assignment?.value).length
   };
 }
 
@@ -465,6 +478,48 @@ describe('Schedule', () => {
 
     expect(queueLinks).toContain('/schedule/team-1/event-1?childId=player-1&section=assignments');
     expect(queueLinks).toContain('/schedule/team-1/event-2?childId=player-1&section=rideshare');
+  });
+
+  it('reuses cached open assignment counts across schedule summaries and view changes', async () => {
+    shellLayoutMocks.isDesktopWeb = true;
+    const assignments = [
+      { role: 'Snack bar', claimable: true, value: '' },
+      { role: 'Bench help', claimable: true, claim: { claimedByUserId: 'parent-2' } },
+      { role: 'Water', claimable: true, value: 'Filled' }
+    ];
+    const assignmentFilterSpy = vi.spyOn(assignments, 'filter');
+
+    scheduleServiceMocks.loadParentSchedule.mockResolvedValueOnce({
+      children: [
+        { playerId: 'player-1', playerName: 'Pat', teamId: 'team-1', teamName: 'Bears' }
+      ],
+      events: [
+        buildScheduleEvent(1, {
+          myRsvp: 'going',
+          assignments,
+          openAssignmentCount: 1,
+          rideshareSummary: { requests: 2, pending: 0, seatsLeft: 0 }
+        })
+      ]
+    });
+
+    const { container } = renderSchedule();
+
+    expect(await screen.findByText('1 task open')).toBeTruthy();
+    expect(screen.getByText('1 open assignment')).toBeTruthy();
+    expect(screen.getByText('2 ride requests')).toBeTruthy();
+    expect(assignmentFilterSpy).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Filters and views' }));
+    expect(container.querySelector('.schedule-control-panel')?.textContent || '').toContain('1Tasks');
+
+    fireEvent.click(screen.getAllByRole('button', { name: 'Calendar' })[0]!);
+    fireEvent.click(screen.getAllByRole('button', { name: 'List' })[0]!);
+
+    await waitFor(() => {
+      expect(screen.getByText('1 task open')).toBeTruthy();
+    });
+    expect(assignmentFilterSpy).not.toHaveBeenCalled();
   });
 
   it('shows the remaining event count when only one more event is hidden', async () => {

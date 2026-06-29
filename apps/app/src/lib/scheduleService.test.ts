@@ -2341,7 +2341,7 @@ describe('native parent schedule Firestore mapping', () => {
                   mapValue: {
                     fields: {
                       role: { stringValue: 'Scoreboard' },
-                      value: { stringValue: 'Open' }
+                      claimable: { booleanValue: true }
                     }
                   }
                 }
@@ -2377,6 +2377,7 @@ describe('native parent schedule Firestore mapping', () => {
       status: 'scheduled',
       liveClockMs: 120000,
       liveClockRunning: true,
+      openAssignmentCount: 1,
       sourceType: 'registration'
     });
     expect(result.events[0].date).toEqual(new Date('2026-06-20T18:00:00.000Z'));

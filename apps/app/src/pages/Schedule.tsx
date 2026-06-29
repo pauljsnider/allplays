@@ -22,6 +22,7 @@ import {
   formatEventDateLabel,
   formatEventTimeLabel,
   getCalendarScheduleEntries,
+  getEventOpenAssignmentCount,
   getGenericEventDetailPath,
   getParentScheduleTeamOptions,
   getScheduleEventDetailPath,
@@ -2208,12 +2209,12 @@ type ScheduleWebInsights = {
   rideRequests: number;
 };
 
-function buildScheduleWebInsights(events: ParentScheduleEvent[]): ScheduleWebInsights {
+function buildScheduleWebInsights(events: Array<ParentScheduleEvent | CalendarScheduleEntry>): ScheduleWebInsights {
   return events.reduce<ScheduleWebInsights>((insights, event) => {
     if (!insights.nextEvent && !event.isCancelled) insights.nextEvent = event;
     if (event.isDbGame && !event.isCancelled && normalizeRsvpResponse(event.myRsvp) === 'not_responded') insights.rsvpNeeded += 1;
     if (event.type === 'practice' && event.practiceHomePacketSummary) insights.packetsReady += 1;
-    insights.openAssignments += event.assignments.filter((assignment) => assignment.claimable && !assignment.claim && !assignment.value).length;
+    insights.openAssignments += getEventOpenAssignmentCount(event);
     insights.rideRequests += event.rideshareSummary?.requests || 0;
     return insights;
   }, {
@@ -2843,7 +2844,7 @@ function getScheduleChildLabel(event: ParentScheduleEvent | CalendarScheduleEntr
 function getEventPrimaryActionText(event: ParentScheduleEvent, rsvp: RsvpResponse) {
   if (rsvp === 'not_responded' && event.isDbGame && !event.isCancelled) return 'Set availability';
   if (event.type === 'practice' && event.practiceHomePacketSummary) return 'Review packet';
-  if (getOpenAssignmentCount(event) > 0) return 'Review assignments';
+  if (getEventOpenAssignmentCount(event) > 0) return 'Review assignments';
   if ((event.rideshareSummary?.requests || 0) > 0) return 'Check ride requests';
   return event.type === 'practice' ? 'Open practice' : 'Open game';
 }
@@ -2852,7 +2853,7 @@ function getEventActionSummary(event: ParentScheduleEvent) {
   const rsvp = normalizeRsvpResponse(event.myRsvp);
   if (rsvp === 'not_responded' && event.isDbGame && !event.isCancelled) return `RSVP needed for ${event.childName}`;
   if (event.type === 'practice' && event.practiceHomePacketSummary) return `Packet ready: ${event.practiceHomePacketSummary}`;
-  const openAssignments = getOpenAssignmentCount(event);
+  const openAssignments = getEventOpenAssignmentCount(event);
   if (openAssignments > 0) return `${openAssignments} open ${openAssignments === 1 ? 'assignment' : 'assignments'}`;
   const rideRequests = event.rideshareSummary?.requests || 0;
   if (rideRequests > 0) return `${rideRequests} ride ${rideRequests === 1 ? 'request' : 'requests'}`;
@@ -2863,7 +2864,7 @@ function getEventCardActionPills(event: ParentScheduleEvent | CalendarScheduleEn
   const pills: string[] = [];
   if (rsvp === 'not_responded' && event.isDbGame && !event.isCancelled) pills.push('Availability needed');
   if (event.type === 'practice' && event.practiceHomePacketSummary) pills.push(`Packet: ${event.practiceHomePacketSummary}`);
-  const openAssignments = getOpenAssignmentCount(event);
+  const openAssignments = getEventOpenAssignmentCount(event);
   if (openAssignments > 0) pills.push(`${openAssignments} task${openAssignments === 1 ? '' : 's'} open`);
   const seatsLeft = event.rideshareSummary?.seatsLeft || 0;
   const rideRequests = event.rideshareSummary?.requests || 0;
@@ -2891,10 +2892,6 @@ function getScoreLabel(event: ParentScheduleEvent | CalendarScheduleEntry) {
   const isPastScheduledResult = event.date.getTime() < Date.now() - pastScheduleCutoffMs;
   if (!isCompleted && !isPastScheduledResult) return '';
   return `${event.homeScore}-${event.awayScore}`;
-}
-
-function getOpenAssignmentCount(event: ParentScheduleEvent | CalendarScheduleEntry) {
-  return event.assignments.filter((assignment) => assignment.claimable && !assignment.claim && !assignment.value).length;
 }
 
 function CalendarSchedule({ month, entries, selectedDay, selectedDayEntries, preferGameHubForStaff, onMonthChange, onDaySelect, onDayClose }: {
