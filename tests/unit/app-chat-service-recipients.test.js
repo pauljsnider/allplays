@@ -21,6 +21,7 @@ const dbMocks = vi.hoisted(() => ({
     getTeam: vi.fn(),
     getUnreadChatCounts: vi.fn(),
     getUserByEmail: vi.fn(),
+    getUsersByParentPlayerKey: vi.fn(),
     getUserProfile: vi.fn(),
     getUserTeamsWithAccess: vi.fn(),
     postChatMessage: vi.fn(),
@@ -63,6 +64,13 @@ vi.mock('../../apps/app/src/lib/authService.ts', () => ({
         }
     },
     getNativeAuthIdToken: vi.fn()
+}));
+vi.mock('../../apps/app/src/lib/performanceInstrumentation.ts', () => ({
+    now: vi.fn(() => 1000),
+    startPerformanceSpan: vi.fn(() => ({
+        end: vi.fn()
+    })),
+    recordCompletedPerformanceSpan: vi.fn()
 }));
 
 beforeEach(() => {
@@ -852,10 +860,19 @@ describe('React app chat recipient service', () => {
         dbMocks.uploadChatImage
             .mockResolvedValueOnce(uploadedPhoto)
             .mockResolvedValueOnce(uploadedVideo);
+        dbMocks.getPlayers.mockResolvedValue([
+            {
+                id: 'player-1',
+                name: 'Avery',
+                parents: [
+                    { userId: 'parent-2', email: 'guardian@example.com' }
+                ]
+            }
+        ]);
         dbMocks.upsertChatConversation.mockResolvedValue({
             id: 'group-player-coach',
             type: 'group',
-            participantIds: ['user-1', 'player:player-1', 'user:coach-1'],
+            participantIds: ['user-1', 'email:guardian@example.com', 'user:coach-1', 'user:parent-2'],
             participantRoles: []
         });
         dbMocks.postChatMessage.mockResolvedValue({ id: 'msg-1' });
@@ -887,9 +904,10 @@ describe('React app chat recipient service', () => {
         expect(dbMocks.uploadChatImage).toHaveBeenNthCalledWith(2, 'team-1', video, { conversationId: 'group-player-coach' });
         expect(dbMocks.upsertChatConversation).toHaveBeenCalledWith('team-1', expect.objectContaining({
             type: 'group',
-            participantIds: ['user-1', 'player:player-1', 'user:coach-1'],
+            participantIds: expect.arrayContaining(['user-1', 'user:coach-1', 'user:parent-2', 'email:guardian@example.com']),
             participantRoles: []
         }));
+        expect(dbMocks.upsertChatConversation.mock.calls[0][1].participantIds).toHaveLength(4);
         expect(dbMocks.postChatMessage).toHaveBeenCalledWith('team-1', expect.objectContaining({
             text: '@ALL PLAYS summarize this thread',
             senderId: 'user-1',
@@ -907,6 +925,67 @@ describe('React app chat recipient service', () => {
             createdConversation: expect.objectContaining({ id: 'group-player-coach' }),
             wantsAi: true
         });
+    });
+
+    it('resolves selected players through user parentPlayerKeys before creating a private conversation', async () => {
+        dbMocks.getPlayers.mockResolvedValue([{ id: 'player-1', name: 'Avery', parents: [] }]);
+        dbMocks.getUsersByParentPlayerKey.mockResolvedValue([
+            { id: 'parent-1', email: 'guardian@example.com', parentPlayerKeys: ['team-1::player-1'] }
+        ]);
+        dbMocks.upsertChatConversation.mockResolvedValue({
+            id: 'group-linked-parent',
+            type: 'direct',
+            participantIds: ['coach-1', 'user:parent-1', 'email:guardian@example.com'],
+            participantRoles: []
+        });
+        dbMocks.postChatMessage.mockResolvedValue({ id: 'msg-linked-parent' });
+
+        const { sendTeamChatMessage } = await import('../../apps/app/src/lib/chatService.ts');
+        await sendTeamChatMessage({
+            teamId: 'team-1',
+            user: {
+                uid: 'coach-1',
+                email: 'coach@example.com',
+                displayName: 'Coach Jamie'
+            },
+            profile: { fullName: 'Coach Jamie' },
+            text: 'Private update',
+            files: [],
+            selectedConversation: null,
+            selectedConversationId: 'team',
+            selectedRecipientTarget: 'individuals',
+            selectedRecipientIds: ['player:player-1']
+        });
+
+        expect(dbMocks.getUsersByParentPlayerKey).toHaveBeenCalledWith('team-1::player-1');
+        expect(dbMocks.upsertChatConversation).toHaveBeenCalledWith('team-1', expect.objectContaining({
+            participantIds: ['coach-1', 'user:parent-1', 'email:guardian@example.com']
+        }));
+    });
+
+    it('does not create undiscoverable player-token conversations when a selected player has no linked guardian', async () => {
+        dbMocks.getPlayers.mockResolvedValue([{ id: 'player-1', name: 'Avery', parents: [] }]);
+        dbMocks.getUsersByParentPlayerKey.mockResolvedValue([]);
+
+        const { sendTeamChatMessage } = await import('../../apps/app/src/lib/chatService.ts');
+        await expect(sendTeamChatMessage({
+            teamId: 'team-1',
+            user: {
+                uid: 'coach-1',
+                email: 'coach@example.com',
+                displayName: 'Coach Jamie'
+            },
+            profile: { fullName: 'Coach Jamie' },
+            text: 'Private update',
+            files: [],
+            selectedConversation: null,
+            selectedConversationId: 'team',
+            selectedRecipientTarget: 'individuals',
+            selectedRecipientIds: ['player:player-1']
+        })).rejects.toThrow('Selected player recipients must have a linked guardian');
+
+        expect(dbMocks.upsertChatConversation).not.toHaveBeenCalled();
+        expect(dbMocks.postChatMessage).not.toHaveBeenCalled();
     });
 
     it('reuses only canonical staff conversations and ignores legacy coach-scoped staff threads', async () => {

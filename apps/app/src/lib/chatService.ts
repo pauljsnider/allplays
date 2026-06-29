@@ -23,6 +23,7 @@ import {
   getTeam,
   getUnreadChatCounts,
   getUserByEmail,
+  getUsersByParentPlayerKey,
   getUserProfile,
   getUserTeamsWithAccess,
   isTeamActive,
@@ -402,6 +403,21 @@ async function nativeQueryTeamsByField(fieldPath: string, op: string, value: str
   });
 }
 
+async function nativeGetUsersByParentPlayerKey(parentPlayerKey: string) {
+  if (!parentPlayerKey) return [];
+  return nativeRunQuery({
+    from: [{ collectionId: 'users' }],
+    where: {
+      fieldFilter: {
+        field: { fieldPath: 'parentPlayerKeys' },
+        op: 'ARRAY_CONTAINS',
+        value: encodeFirestoreValue(parentPlayerKey)
+      }
+    },
+    limit: 25
+  }).catch(() => []);
+}
+
 async function nativeGetUserByEmail(email: string) {
   const [user] = await nativeRunQuery({
     from: [{ collectionId: 'users' }],
@@ -432,8 +448,101 @@ function mapUserWithProfile(user: AuthUser, profile: Record<string, any>) {
   return {
     ...user,
     parentOf: Array.isArray(profile.parentOf) ? profile.parentOf : Array.isArray(user.parentOf) ? user.parentOf : [],
+    parentTeamIds: Array.isArray(profile.parentTeamIds) ? profile.parentTeamIds : Array.isArray(user.parentTeamIds) ? user.parentTeamIds : [],
+    parentPlayerKeys: Array.isArray(profile.parentPlayerKeys) ? profile.parentPlayerKeys : Array.isArray(user.parentPlayerKeys) ? user.parentPlayerKeys : [],
     isAdmin: profile.isAdmin === true || user.isAdmin === true || user.roles?.includes('platformAdmin')
   };
+}
+
+function getGuardianParticipantIdsForPlayer(player: Record<string, any> = {}) {
+  const parentEntries = Array.isArray(player.parents) ? player.parents : [];
+  const participantIds = parentEntries.flatMap((parent: Record<string, any> = {}) => {
+    const userId = compactString(parent.userId);
+    const email = compactString(parent.email).toLowerCase();
+    return [
+      userId ? getRecipientOptionId('user', userId) : '',
+      email ? getRecipientOptionId('email', email) : ''
+    ].filter(Boolean);
+  });
+  const parentUserId = compactString(player.parentUserId);
+  const parentEmail = compactString(player.parentEmail).toLowerCase();
+  if (parentUserId) participantIds.push(getRecipientOptionId('user', parentUserId));
+  if (parentEmail) participantIds.push(getRecipientOptionId('email', parentEmail));
+  return Array.from(new Set(participantIds));
+}
+
+function getGuardianParticipantIdsForUsers(users: Record<string, any>[] = []) {
+  return Array.from(new Set(users.flatMap((user) => {
+    const userId = compactString(user?.id || user?.uid);
+    const email = compactString(user?.email).toLowerCase();
+    return [
+      userId ? getRecipientOptionId('user', userId) : '',
+      email ? getRecipientOptionId('email', email) : ''
+    ].filter(Boolean);
+  })));
+}
+
+async function resolveLinkedGuardianParticipantIds(teamId: string, playerId: string) {
+  const parentPlayerKey = `${teamId}::${playerId}`;
+  try {
+    const users = await withTimeout(Promise.resolve(getUsersByParentPlayerKey(parentPlayerKey)), 'Chat linked guardian resolution', 2500)
+      .catch(async (error) => {
+        if (!isNativeRuntime()) throw error;
+        logger.warn('Falling back to REST linked guardian resolution.', { error });
+        return nativeGetUsersByParentPlayerKey(parentPlayerKey);
+      });
+    return getGuardianParticipantIdsForUsers(Array.isArray(users) ? users : []);
+  } catch (error) {
+    logger.warn('Failed to resolve linked player guardians.', { error });
+    return [];
+  }
+}
+
+async function resolveConversationParticipantIds(teamId: string, senderId: string, recipientIds: string[]) {
+  const normalizedRecipientIds = (recipientIds || []).map((id) => compactString(id)).filter(Boolean);
+  const playerIds = normalizedRecipientIds
+    .filter((id) => id.toLowerCase().startsWith('player:'))
+    .map((id) => id.slice(7).trim())
+    .filter(Boolean);
+
+  if (playerIds.length === 0) {
+    return Array.from(new Set([senderId, ...normalizedRecipientIds].filter(Boolean)));
+  }
+
+  let playersById = new Map<string, Record<string, any>>();
+  try {
+    const players = await withTimeout(Promise.resolve(getPlayers(teamId)), 'Chat player recipient resolution', 2500);
+    playersById = new Map((Array.isArray(players) ? players : [])
+      .filter((player: any) => player?.id)
+      .map((player: any) => [String(player.id), player]));
+  } catch (error) {
+    logger.warn('Failed to resolve player chat recipients to guardians.', { error });
+  }
+
+  const linkedGuardiansByPlayerId = new Map<string, string[]>();
+  await Promise.all(playerIds.map(async (playerId) => {
+    const rosterGuardianIds = getGuardianParticipantIdsForPlayer(playersById.get(playerId) || {});
+    if (rosterGuardianIds.length) {
+      linkedGuardiansByPlayerId.set(playerId, rosterGuardianIds);
+      return;
+    }
+    linkedGuardiansByPlayerId.set(playerId, await resolveLinkedGuardianParticipantIds(teamId, playerId));
+  }));
+
+  const unresolvedPlayerIds: string[] = [];
+  const resolvedRecipients = normalizedRecipientIds.flatMap((recipientId) => {
+    if (!recipientId.toLowerCase().startsWith('player:')) return [recipientId];
+    const playerId = recipientId.slice(7).trim();
+    const guardianParticipantIds = linkedGuardiansByPlayerId.get(playerId) || [];
+    if (!guardianParticipantIds.length) unresolvedPlayerIds.push(playerId);
+    return guardianParticipantIds;
+  });
+
+  if (unresolvedPlayerIds.length) {
+    throw new Error('Selected player recipients must have a linked guardian before starting a private chat.');
+  }
+
+  return Array.from(new Set([senderId, ...resolvedRecipients].filter(Boolean)));
 }
 
 function getTeamRole(user: AuthUser, team: Record<string, any>, profile: Record<string, any>): ChatTeam['role'] {
@@ -1272,7 +1381,7 @@ export async function sendTeamChatMessage({
     if (isDefaultTeamConversation(conversationId) && targetMetadata.targetType !== 'full_team') {
       const participantIds = targetMetadata.targetType === 'staff'
         ? []
-        : Array.from(new Set([user.uid, ...targetMetadata.recipientIds]));
+        : await resolveConversationParticipantIds(teamId, user.uid, targetMetadata.recipientIds);
       const participantRoles = targetMetadata.targetType === 'staff' ? ['staff'] : [];
       createdConversation = await withTimeout(Promise.resolve(upsertChatConversation(teamId, {
         type: participantIds.length === 2 ? 'direct' : 'group',
