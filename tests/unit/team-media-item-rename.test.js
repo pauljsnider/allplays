@@ -16,7 +16,7 @@ const mocks = vi.hoisted(() => ({
     checkAuth: vi.fn()
 }));
 
-vi.mock('../../js/db.js?v=76', () => {
+vi.mock('../../js/db.js?v=77', () => {
     return {
         getTeam: mocks.getTeam,
         getTeamMediaFolders: mocks.getTeamMediaFolders,
@@ -69,7 +69,7 @@ describe('team media item renaming', () => {
         mocks.getTeamMediaFolders.mockResolvedValue([{ id: 'folderA', name: 'Album A', visibility: 'team' }]);
         mocks.getTeamMediaItemsPage.mockResolvedValue({
             items: [
-                { id: 'item1', folderId: 'folderA', title: 'Original Photo', type: 'photo', url: 'https://example.com/photo1.jpg', uploadedBy: 'user123' },
+                { id: 'item1', folderId: 'folderA', title: 'Original Photo', type: 'photo', downloadUrl: 'https://example.com/photo1.jpg', uploadedBy: 'user123' },
             ],
             hasMore: false,
             nextCursor: null
@@ -268,5 +268,42 @@ describe('team media item renaming', () => {
         await vi.waitUntil(() => mocks.updateTeamMediaItem.mock.calls.length > 0);
         expect(mocks.updateTeamMediaItem).toHaveBeenCalledOnce();
         resolveRename(true);
+    });
+
+    it('appends later album pages with the stored cursor', async () => {
+        const nextCursor = { kind: 'team-media-items-page', folderId: 'folderA', phase: 'ordered', lastDoc: { id: 'item1' } };
+        mocks.getTeamMediaItemsPage
+            .mockResolvedValueOnce({
+                items: [
+                    { id: 'item1', folderId: 'folderA', title: 'Original Photo', type: 'photo', downloadUrl: 'https://example.com/photo1.jpg', uploadedBy: 'user123' }
+                ],
+                hasMore: true,
+                nextCursor
+            })
+            .mockResolvedValueOnce({
+                items: [
+                    { id: 'item2', folderId: 'folderA', title: 'Second Photo', type: 'photo', downloadUrl: 'https://example.com/photo2.jpg', uploadedBy: 'user123' }
+                ],
+                hasMore: false,
+                nextCursor: null
+            });
+
+        await loadModule();
+
+        const albumDetail = document.getElementById('album-detail');
+        await vi.waitUntil(() => albumDetail.textContent.includes('Original Photo'));
+
+        const loadMoreButton = albumDetail.querySelector('[data-load-more-media]');
+        expect(loadMoreButton).not.toBeNull();
+        loadMoreButton.click();
+
+        await vi.waitUntil(() => mocks.getTeamMediaItemsPage.mock.calls.length === 2);
+        expect(mocks.getTeamMediaItemsPage).toHaveBeenNthCalledWith(2, 'team123', 'folderA', {
+            pageSize: 24,
+            cursor: nextCursor
+        });
+        await vi.waitUntil(() => albumDetail.textContent.includes('Second Photo'));
+        expect(albumDetail.textContent).toContain('Original Photo');
+        expect(albumDetail.querySelector('[data-load-more-media]')).toBeNull();
     });
 });
