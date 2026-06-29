@@ -254,9 +254,21 @@ service cloud.firestore {
              request.resource.data.get('isPlatformAdmin', false) == resource.data.get('isPlatformAdmin', false);
     }
 
+    function keepsCurrentAdminInNormalizedAdminEmailList() {
+      let existingAdminEmails = resource.data.get('adminEmails', []);
+      let nextAdminEmails = request.resource.data.get('adminEmails', []);
+      return request.auth.token.email != null &&
+             existingAdminEmails is list &&
+             nextAdminEmails is list &&
+             request.auth.token.email.lower() in existingAdminEmails &&
+             request.auth.token.email.lower() in nextAdminEmails &&
+             nextAdminEmails.size() <= existingAdminEmails.size();
+    }
+
     function keepsTeamPrivilegeFieldsImmutable() {
       return keepsOwnerControlledTeamPrivilegeFieldsImmutable() &&
-             request.resource.data.get('adminEmails', []) == resource.data.get('adminEmails', []);
+             (request.resource.data.get('adminEmails', []) == resource.data.get('adminEmails', []) ||
+              keepsCurrentAdminInNormalizedAdminEmailList());
     }
 
     function isSafeDocumentId(documentId) {

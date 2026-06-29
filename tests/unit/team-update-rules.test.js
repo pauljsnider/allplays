@@ -12,9 +12,12 @@ describe('team update Firestore rules', () => {
         expect(rules).toContain("request.resource.data.get('isPlatformAdmin', false) == resource.data.get('isPlatformAdmin', false)");
     });
 
-    it('prevents ordinary team admins from mutating adminEmails directly', () => {
-        expect(rules).toContain('function keepsTeamPrivilegeFieldsImmutable()');
+    it('allows ordinary team admins to save normalized legacy adminEmails without expanding the list', () => {
+        expect(rules).toContain('function keepsCurrentAdminInNormalizedAdminEmailList()');
         expect(rules).toContain("request.resource.data.get('adminEmails', []) == resource.data.get('adminEmails', [])");
+        expect(rules).toContain('request.auth.token.email.lower() in existingAdminEmails');
+        expect(rules).toContain('request.auth.token.email.lower() in nextAdminEmails');
+        expect(rules).toContain('nextAdminEmails.size() <= existingAdminEmails.size()');
         expect(rules).toContain('(isTeamOwnerOrAdmin(teamId) && keepsTeamPrivilegeFieldsImmutable())');
     });
 
