@@ -105,10 +105,12 @@ function buildNotificationTestEnv({
     deviceDocs = {},
     invalidTokenResponses = [],
     sendEachErrors = [],
+    notificationInboxDocs = {},
     nowMillis = Date.parse('2026-06-28T12:00:00.000Z')
 } = {}) {
     const dedupWrites = [];
     const inboxWrites = [];
+    const inboxCleanupLimits = [];
     const auditWrites = [];
     const deletedPaths = [];
     const updatedDocs = [];
@@ -126,6 +128,8 @@ function buildNotificationTestEnv({
         userRecordGets: 0,
         inboxAdds: 0,
         inboxCleanupQueries: 0,
+        inboxCleanupLimitQueries: 0,
+        inboxCleanupOffsetQueries: 0,
         dedupTransactions: 0,
         deleteCalls: 0
     };
@@ -189,6 +193,24 @@ function buildNotificationTestEnv({
             toMillis: () => millis
         };
     }
+
+    Object.entries(notificationInboxDocs || {}).forEach(([uid, entries]) => {
+        const inboxEntries = Array.isArray(entries) ? entries : [];
+        inboxEntries.forEach((entry, index) => {
+            const id = entry?.id || `existing-${index}`;
+            const millis = Number.isFinite(Number(entry?.createdAtMillis))
+                ? Number(entry.createdAtMillis)
+                : nowMillis - ((index + 1) * 1000);
+            writeStoredDoc(`users/${uid}/notificationInbox/${id}`, {
+                category: 'schedule',
+                title: `Existing ${index}`,
+                body: '',
+                createdAt: makeTimestamp(millis),
+                readAt: null,
+                ...(entry?.data || {})
+            });
+        });
+    });
 
     function comparableMillis(value) {
         if (typeof value?.toMillis === 'function') {
@@ -567,15 +589,51 @@ function buildNotificationTestEnv({
 
         const inboxMatch = path.match(/^users\/([^/]+)\/notificationInbox$/);
         if (inboxMatch) {
+            const uid = inboxMatch[1];
+            const getInboxDocs = () => {
+                const prefix = `${path}/`;
+                return Array.from(docStore.entries())
+                    .filter(([docPath]) => docPath.startsWith(prefix) && !docPath.slice(prefix.length).includes('/'))
+                    .map(([docPath, data]) => makeDocSnapshot({
+                        id: docPath.slice(prefix.length),
+                        ref: doc(docPath),
+                        data,
+                        exists: true
+                    }));
+            };
+            const sortDocs = (docs, direction = 'desc') => docs.sort((left, right) => {
+                const leftMillis = comparableMillis(left.data()?.createdAt);
+                const rightMillis = comparableMillis(right.data()?.createdAt);
+                const leftValue = Number.isFinite(leftMillis) ? leftMillis : 0;
+                const rightValue = Number.isFinite(rightMillis) ? rightMillis : 0;
+                return direction === 'asc' ? leftValue - rightValue : rightValue - leftValue;
+            });
             return {
                 async add(value) {
                     counts.inboxAdds += 1;
-                    inboxWrites.push({ uid: inboxMatch[1], value });
-                    return { id: `inbox-${inboxWrites.length}` };
+                    const id = `inbox-${inboxWrites.length + 1}`;
+                    const storedValue = {
+                        ...clone(value),
+                        createdAt: makeTimestamp(nowMillis + inboxWrites.length + 1)
+                    };
+                    writeStoredDoc(`${path}/${id}`, storedValue);
+                    inboxWrites.push({ uid, value });
+                    return { id };
                 },
-                orderBy() {
+                orderBy(field, direction = 'asc') {
                     return {
+                        limit(limitCount) {
+                            return {
+                                async get() {
+                                    counts.inboxCleanupQueries += 1;
+                                    counts.inboxCleanupLimitQueries += 1;
+                                    inboxCleanupLimits.push(limitCount);
+                                    return makeQuerySnapshot(sortDocs(getInboxDocs(), direction).slice(0, limitCount));
+                                }
+                            };
+                        },
                         offset() {
+                            counts.inboxCleanupOffsetQueries += 1;
                             return {
                                 async get() {
                                     counts.inboxCleanupQueries += 1;
@@ -614,6 +672,9 @@ function buildNotificationTestEnv({
             },
             orderBy() {
                 return {
+                    limit() {
+                        return { get: async () => makeQuerySnapshot([]) };
+                    },
                     offset() {
                         return { get: async () => makeQuerySnapshot([]) };
                     }
@@ -735,9 +796,16 @@ function buildNotificationTestEnv({
         dedupWrites,
         deletedPaths,
         inboxWrites,
+        inboxCleanupLimits,
         auditWrites,
         updatedDocs,
         messagingCalls,
+        getNotificationInboxDocCount(uid) {
+            const prefix = `users/${uid}/notificationInbox/`;
+            return Array.from(docStore.keys())
+                .filter((docPath) => docPath.startsWith(prefix) && !docPath.slice(prefix.length).includes('/'))
+                .length;
+        },
         adminStub,
         firestoreState,
         functionsStub: makeFunctionsStub(),
