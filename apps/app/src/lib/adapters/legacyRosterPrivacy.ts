@@ -136,10 +136,11 @@ function normalizeRosterProfileValues(value: unknown): RosterProfileValues {
 function splitByDefinitionVisibility(fields: RosterFieldDefinition[], values: RosterProfileValues) {
     return fields.reduce<{ publicValues: RosterProfileValues; privateValues: RosterProfileValues }>((acc, field) => {
         if (!Object.prototype.hasOwnProperty.call(values, field.key)) return acc;
-        if (field.visibility === 'admins') {
-            acc.privateValues[field.key] = values[field.key];
-        } else {
+        const visibility = normalizeVisibility(field.visibility);
+        if (visibility === 'public') {
             acc.publicValues[field.key] = values[field.key];
+        } else if (visibility === 'team' || visibility === 'parents' || visibility === 'admins') {
+            acc.privateValues[field.key] = values[field.key];
         }
         return acc;
     }, { publicValues: {}, privateValues: {} });

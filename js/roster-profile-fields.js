@@ -214,20 +214,28 @@ function parseRosterCsvFieldValue(field, rawValue) {
     return { value };
 }
 
-function isAdminOnlyRosterField(field = {}) {
-    const visibility = String(field.visibility || '').trim().toLowerCase();
-    return ['admin', 'admins', 'private', 'restricted'].includes(visibility);
+function getRosterFieldVisibility(field = {}) {
+    return normalizeVisibility(field.visibility || field.defaultVisibility);
 }
 
-export function splitRosterProfileValuesByVisibility(fields = [], values = {}) {
+function isPublicRosterField(field = {}) {
+    return getRosterFieldVisibility(field) === 'public';
+}
+
+function isPrivateRosterField(field = {}, { includeAdminPrivate = true } = {}) {
+    const visibility = getRosterFieldVisibility(field);
+    return visibility === 'team' || visibility === 'parents' || (includeAdminPrivate && visibility === 'admins');
+}
+
+export function splitRosterProfileValuesByVisibility(fields = [], values = {}, options = {}) {
     const publicValues = {};
     const privateValues = {};
     fields.forEach((field) => {
         if (!Object.prototype.hasOwnProperty.call(values || {}, field.key)) return;
-        if (isAdminOnlyRosterField(field)) {
-            privateValues[field.key] = values[field.key];
-        } else {
+        if (isPublicRosterField(field)) {
             publicValues[field.key] = values[field.key];
+        } else if (isPrivateRosterField(field, options)) {
+            privateValues[field.key] = values[field.key];
         }
     });
     return { publicValues, privateValues };
@@ -682,7 +690,7 @@ export function planRosterCsvImport({ csvText = '', fields = [], existingPlayers
         });
 
         if (!name) return;
-        const { publicValues, privateValues } = splitRosterProfileValuesByVisibility(normalizedFields, parsedValues);
+        const { publicValues, privateValues } = splitRosterProfileValuesByVisibility(normalizedFields, parsedValues, { includeAdminPrivate: false });
         const contactPlan = buildRosterCsvContactPlan(contactValues, rowNumber);
         contactPlan.errors.forEach((error) => errors.push(error));
         const matches = existingByName.get(name.toLowerCase()) || [];
@@ -693,10 +701,15 @@ export function planRosterCsvImport({ csvText = '', fields = [], existingPlayers
 
         const existing = matches[0];
         const existingProfile = existing?.profile || {};
+        const retainedCustomFields = { ...(existingProfile.customFields || {}) };
+        normalizedFields.forEach((field) => {
+            if (!Object.prototype.hasOwnProperty.call(parsedValues, field.key)) return;
+            if (!isPublicRosterField(field)) delete retainedCustomFields[field.key];
+        });
         const profile = {
             ...mergeProfileImportValues(existingProfile, profileValues, addressValues),
             customFields: {
-                ...(existingProfile.customFields || {}),
+                ...retainedCustomFields,
                 ...publicValues
             }
         };

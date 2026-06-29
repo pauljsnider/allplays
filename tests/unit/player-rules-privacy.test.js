@@ -27,6 +27,11 @@ describe('player Firestore privacy rules', () => {
         expect(teamPlayerRules).toContain('!hasRestrictedRosterFieldValues(resource.data)');
     });
 
+    it('checks nested profile custom roster maps before allowing public player doc reads', () => {
+        expect(rules).toContain("hasRestrictedRosterNestedMap(data, 'profile', 'rosterFields', restrictedKeys)");
+        expect(rules).toContain("hasRestrictedRosterNestedMap(data, 'profile', 'customFields', restrictedKeys)");
+    });
+
     it('allows linked parents to write household contacts only through the private profile doc', () => {
         expect(rules).not.toContain("affectedKeys().hasOnly(['parents'])");
         expect(rules).toContain("request.resource.data.keys().hasOnly(['emergencyContact', 'medicalInfo', 'parents', 'updatedAt'])");

@@ -18,6 +18,7 @@
  */
 
 import { readFileSync } from 'fs';
+import { pathToFileURL } from 'url';
 import { initializeApp, cert, getApps } from 'firebase-admin/app';
 import { getFirestore, FieldValue } from 'firebase-admin/firestore';
 
@@ -40,6 +41,13 @@ function initAdmin() {
     }
 }
 
+function normalizeVisibility(value) {
+    const normalized = String(value || 'team').trim().toLowerCase();
+    if (normalized === 'private' || normalized === 'admin' || normalized === 'restricted') return 'admins';
+    if (normalized === 'family') return 'parents';
+    return ['public', 'team', 'parents', 'admins'].includes(normalized) ? normalized : 'team';
+}
+
 function pickSensitive(player) {
     const out = {};
     if (Object.prototype.hasOwnProperty.call(player, 'emergencyContact')) {
@@ -49,6 +57,61 @@ function pickSensitive(player) {
         out.medicalInfo = player.medicalInfo ?? '';
     }
     return out;
+}
+
+function collectTeamRosterFieldDefinitions(team = {}, rosterFieldDocs = []) {
+    const fieldsByKey = new Map();
+    const teamFields = team.rosterFields || team.rosterProfileFields || team.playerProfileFields || team.customRosterFields || [];
+    if (Array.isArray(teamFields)) {
+        teamFields.forEach((field) => {
+            const key = String(field?.key || field?.id || '').trim();
+            if (key) fieldsByKey.set(key, field);
+        });
+    }
+    rosterFieldDocs.forEach((docSnap) => {
+        const data = docSnap.data?.() || {};
+        const key = String(data.key || data.id || docSnap.id || '').trim();
+        if (key) fieldsByKey.set(key, { ...data, key });
+    });
+    return Array.from(fieldsByKey.values());
+}
+
+export function pickNonPublicRosterFieldValues(player = {}, rosterFields = []) {
+    const nonPublicKeys = rosterFields
+        .filter((field) => {
+            const visibility = normalizeVisibility(field?.visibility || field?.defaultVisibility);
+            return visibility === 'team' || visibility === 'parents';
+        })
+        .map((field) => String(field?.key || field?.id || '').trim())
+        .filter(Boolean);
+    const sources = [
+        player.rosterFieldValues,
+        player.customFields,
+        player.profileFields,
+        player.extraFields,
+        player.profile?.rosterFields,
+        player.profile?.customFields
+    ];
+    return nonPublicKeys.reduce((acc, key) => {
+        sources.forEach((source) => {
+            if (source && typeof source === 'object' && Object.prototype.hasOwnProperty.call(source, key)) {
+                acc[key] = source[key];
+            }
+        });
+        return acc;
+    }, {});
+}
+
+function buildNonPublicRosterFieldDeleteUpdate(nonPublicValues = {}) {
+    return Object.keys(nonPublicValues).reduce((acc, key) => {
+        ['rosterFieldValues', 'customFields', 'profileFields', 'extraFields'].forEach((source) => {
+            acc[`${source}.${key}`] = FieldValue.delete();
+        });
+        ['profile.rosterFields', 'profile.customFields'].forEach((source) => {
+            acc[`${source}.${key}`] = FieldValue.delete();
+        });
+        return acc;
+    }, {});
 }
 
 async function migrate() {
@@ -73,6 +136,8 @@ async function migrate() {
         const teamId = teamDoc.id;
         console.log(`Team ${teamId}...`);
 
+        const rosterFieldDocs = await db.collection(`teams/${teamId}/rosterFields`).get().then((snap) => snap.docs).catch(() => []);
+        const rosterFields = collectTeamRosterFieldDefinitions(teamDoc.data() || {}, rosterFieldDocs);
         const playersSnap = await db.collection(`teams/${teamId}/players`).get();
         console.log(`  Players: ${playersSnap.size}`);
 
@@ -81,7 +146,8 @@ async function migrate() {
             const player = pDoc.data() || {};
 
             const sensitive = pickSensitive(player);
-            if (Object.keys(sensitive).length === 0) {
+            const nonPublicRosterFields = pickNonPublicRosterFieldValues(player, rosterFields);
+            if (Object.keys(sensitive).length === 0 && Object.keys(nonPublicRosterFields).length === 0) {
                 skippedPlayers++;
                 continue;
             }
@@ -89,7 +155,7 @@ async function migrate() {
             const privateRef = db.doc(`teams/${teamId}/players/${playerId}/private/profile`);
 
             if (DRY_RUN) {
-                console.log(`  DRY_RUN move ${teamId}/${playerId}:`, Object.keys(sensitive));
+                console.log(`  DRY_RUN move ${teamId}/${playerId}:`, [...Object.keys(sensitive), ...Object.keys(nonPublicRosterFields)]);
                 movedPlayers++;
                 continue;
             }
@@ -99,6 +165,7 @@ async function migrate() {
                 await privateRef.set(
                     {
                         ...sensitive,
+                        ...(Object.keys(nonPublicRosterFields).length ? { rosterFields: nonPublicRosterFields } : {}),
                         updatedAt: FieldValue.serverTimestamp()
                     },
                     { merge: true }
@@ -108,6 +175,7 @@ async function migrate() {
                 await pDoc.ref.update({
                     emergencyContact: FieldValue.delete(),
                     medicalInfo: FieldValue.delete(),
+                    ...buildNonPublicRosterFieldDeleteUpdate(nonPublicRosterFields),
                     updatedAt: FieldValue.serverTimestamp()
                 });
 
@@ -126,10 +194,12 @@ async function migrate() {
     console.log(`Errors:  ${errors}`);
 }
 
-migrate()
-    .then(() => process.exit(0))
-    .catch((err) => {
-        console.error('Migration failed:', err?.message || err);
-        process.exit(1);
-    });
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+    migrate()
+        .then(() => process.exit(0))
+        .catch((err) => {
+            console.error('Migration failed:', err?.message || err);
+            process.exit(1);
+        });
+}
 

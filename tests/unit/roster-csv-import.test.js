@@ -4,16 +4,16 @@ import { planRosterCsvImport, splitRosterProfileValuesByVisibility } from '../..
 
 describe('roster CSV import planning', () => {
     const fields = [
-        { key: 'grade', label: 'Grade', type: 'menu', options: ['5', '6', '7'].map((value) => ({ value, label: value })), active: true },
-        { key: 'throwsRight', label: 'Throws Right', type: 'checkbox', active: true },
-        { key: 'birthDate', label: 'Birth Date', type: 'date', active: true },
+        { key: 'grade', label: 'Grade', type: 'menu', visibility: 'public', options: ['5', '6', '7'].map((value) => ({ value, label: value })), active: true },
+        { key: 'throwsRight', label: 'Throws Right', type: 'checkbox', visibility: 'public', active: true },
+        { key: 'birthDate', label: 'Birth Date', type: 'date', visibility: 'team', active: true },
         { key: 'medicalNote', label: 'Medical Note', type: 'text', visibility: 'admins', active: true }
     ];
 
     it('creates and updates players from core and roster field columns', () => {
         const plan = planRosterCsvImport({
             fields,
-            existingPlayers: [{ id: 'p1', name: 'Avery Lee', number: '3', profile: { customFields: { grade: '5' } } }],
+            existingPlayers: [{ id: 'p1', name: 'Avery Lee', number: '3', profile: { customFields: { grade: '5', birthDate: '2011-01-01', medicalNote: 'Old note' } } }],
             csvText: 'Name,Number,Grade,Throws Right,Birth Date,Medical Note\nAvery Lee,4,6,yes,2014-02-03,Allergy\nSam Jones,12,7,no,2013-09-01,'
         });
 
@@ -25,17 +25,22 @@ describe('roster CSV import planning', () => {
             payload: {
                 name: 'Avery Lee',
                 number: '4',
-                profile: { customFields: { grade: '6', throwsRight: true, birthDate: '2014-02-03' } }
+                profile: { customFields: { grade: '6', throwsRight: true } }
             },
-            privateRosterFields: { medicalNote: 'Allergy' }
+            privateRosterFields: { birthDate: '2014-02-03' }
         });
+        expect(plan.operations[0].payload.profile.customFields).not.toHaveProperty('birthDate');
+        expect(plan.operations[0].payload.profile.customFields).not.toHaveProperty('medicalNote');
+        expect(JSON.stringify(plan.operations)).not.toContain('Allergy');
+
         expect(plan.operations[1]).toMatchObject({
             type: 'add',
             payload: {
                 name: 'Sam Jones',
                 number: '12',
-                profile: { customFields: { grade: '7', throwsRight: false, birthDate: '2013-09-01' } }
-            }
+                profile: { customFields: { grade: '7', throwsRight: false } }
+            },
+            privateRosterFields: { birthDate: '2013-09-01' }
         });
     });
 
@@ -137,8 +142,8 @@ describe('roster CSV import planning', () => {
     it('keeps configured roster fields ahead of built-in profile aliases', () => {
         const plan = planRosterCsvImport({
             fields: [
-                { key: 'position', label: 'Position', type: 'text', active: true },
-                { key: 'gender', label: 'Gender', type: 'text', active: true }
+                { key: 'position', label: 'Position', type: 'text', visibility: 'public', active: true },
+                { key: 'gender', label: 'Gender', type: 'text', visibility: 'public', active: true }
             ],
             csvText: 'Name,Position,Gender\nAvery Lee,Forward,Female'
         });
@@ -392,10 +397,10 @@ describe('roster CSV import planning', () => {
         ]);
     });
 
-    it('splits admin-only field values away from public player payloads', () => {
-        expect(splitRosterProfileValuesByVisibility(fields, { grade: '6', medicalNote: 'private' })).toEqual({
+    it('splits parent-readable private field values away from public player payloads without storing admin-only values', () => {
+        expect(splitRosterProfileValuesByVisibility(fields, { grade: '6', birthDate: '2014-02-03', medicalNote: 'private' }, { includeAdminPrivate: false })).toEqual({
             publicValues: { grade: '6' },
-            privateValues: { medicalNote: 'private' }
+            privateValues: { birthDate: '2014-02-03' }
         });
     });
 
