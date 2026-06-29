@@ -23,6 +23,11 @@ let roster = [];
 let isFinishing = false;
 let allowNavigation = false;
 
+function isCancelledGame(game) {
+  const status = String(game?.status || '').toLowerCase();
+  return status === 'cancelled' || status === 'canceled';
+}
+
 function statDefaults(columns) {
   const stats = { time: 0, fouls: 0 }; // Always track fouls
   columns.forEach(col => {
@@ -709,6 +714,13 @@ async function saveAndComplete() {
   const sendEmail = els.finishSendEmail?.checked;
 
   try {
+    const latestGame = await getGame(currentTeamId, currentGameId);
+    if (isCancelledGame(latestGame || currentGame)) {
+      alert('Cancelled games cannot be completed. Restore or reschedule the game before saving stats.');
+      window.location.href = `edit-schedule.html#teamId=${currentTeamId}`;
+      return;
+    }
+
     // 1. Build opponentStats in same shape as track.html
     const opponentStats = {};
     state.opp.forEach(opp => {
@@ -1397,6 +1409,12 @@ async function init() {
 
     if (game.type === 'practice') {
       alert('Practice events cannot be tracked.');
+      window.location.href = `edit-schedule.html#teamId=${teamId}`;
+      return;
+    }
+
+    if (isCancelledGame(game)) {
+      alert('Cancelled games cannot be tracked. Restore or reschedule the game before tracking.');
       window.location.href = `edit-schedule.html#teamId=${teamId}`;
       return;
     }
