@@ -511,6 +511,37 @@ function getConversationLatestMessageTimeFromMetadata(value: unknown) {
   return record.lastMessageAt || record.latestMessageAt || record.updatedAt || null;
 }
 
+function shouldRequestUnreadCount(
+  profile: Record<string, any>,
+  teamId: string,
+  latestMessageAt: unknown,
+  latestMessageAtByConversation: Record<string, unknown> = {}
+) {
+  const teamState = getTeamChatStateEntry(profile, teamId);
+  const defaultLastReadAt = teamState.lastReadAt || profile?.chatLastRead?.[teamId] || null;
+  const lastReadByConversation = teamState.lastReadByConversation || {};
+
+  for (const [conversationId, conversationLatestMessageAt] of Object.entries(latestMessageAtByConversation)) {
+    const conversationLatestTime = toDate(conversationLatestMessageAt)?.getTime() || 0;
+    if (conversationLatestTime === 0) return true;
+
+    const conversationLastReadAt = isDefaultTeamConversation(conversationId)
+      ? defaultLastReadAt
+      : lastReadByConversation[conversationId] || null;
+    if (!conversationLastReadAt) return true;
+
+    const conversationLastReadTime = toDate(conversationLastReadAt)?.getTime() || 0;
+    if (conversationLastReadTime === 0 || conversationLatestTime > conversationLastReadTime) return true;
+  }
+
+  if (!latestMessageAt) return true;
+  if (!defaultLastReadAt) return true;
+
+  const latestTime = toDate(latestMessageAt)?.getTime() || 0;
+  const lastReadTime = toDate(defaultLastReadAt)?.getTime() || 0;
+  return latestTime === 0 || lastReadTime === 0 || latestTime > lastReadTime;
+}
+
 function getTeamConversationMetadata(team: Record<string, any>) {
   const ids = new Set<string>();
   const latestMessageAtByConversation: Record<string, unknown> = {};
@@ -747,15 +778,12 @@ export async function loadChatInbox(user: AuthUser | null, options: ChatInboxLoa
     return acc;
   }, {});
   const unreadCandidateTeamIds = accessibleTeams
-    .filter((team) => {
-      const latestMessageAt = latestMessageAtByTeam[team.id];
-      if (!latestMessageAt) return true;
-      const lastReadAt = getTeamChatStateEntry(profile, team.id).lastReadAt || profile?.chatLastRead?.[team.id] || null;
-      if (!lastReadAt) return true;
-      const latestTime = toDate(latestMessageAt)?.getTime() || 0;
-      const lastReadTime = toDate(lastReadAt)?.getTime() || 0;
-      return latestTime === 0 || latestTime > lastReadTime;
-    })
+    .filter((team) => shouldRequestUnreadCount(
+      profile,
+      team.id,
+      latestMessageAtByTeam[team.id],
+      latestMessageAtByConversationByTeam[team.id]
+    ))
     .map((team) => team.id);
   const unreadCounts = await withTimeout(
     Promise.resolve(getUnreadChatCounts(user.uid, unreadCandidateTeamIds, {

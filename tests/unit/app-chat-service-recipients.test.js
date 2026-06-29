@@ -292,7 +292,7 @@ describe('React app chat recipient service', () => {
         }));
     });
 
-    it('only requests exact unread counts for teams whose known latest message is newer than last read', async () => {
+    it('requests exact unread counts when sibling conversation metadata is newer than the default last read', async () => {
         dbMocks.getUserProfile.mockResolvedValue({
             email: 'parent@example.com',
             chatLastRead: {
@@ -307,9 +307,12 @@ describe('React app chat recipient service', () => {
         dbMocks.getUserTeamsWithAccess.mockResolvedValue([
             {
                 id: 'team-read',
-                name: 'Already Read',
+                name: 'Already Read Default Thread',
                 sport: 'Soccer',
-                lastMessageAt: new Date('2026-05-21T12:00:00Z')
+                lastMessageAt: new Date('2026-05-21T12:00:00Z'),
+                chatConversationSummaries: [
+                    { id: 'staff-conversation', lastMessageAt: new Date('2026-05-21T15:00:00Z') }
+                ]
             },
             {
                 id: 'team-unread',
@@ -325,6 +328,7 @@ describe('React app chat recipient service', () => {
         ]);
         dbMocks.getParentTeams.mockResolvedValue([]);
         dbMocks.getUnreadChatCounts.mockResolvedValue({
+            'team-read': 2,
             'team-unread': 4,
             'team-unknown': 1
         });
@@ -338,13 +342,14 @@ describe('React app chat recipient service', () => {
             roles: ['parent']
         }, { includeLastMessages: false });
 
-        expect(dbMocks.getUnreadChatCounts).toHaveBeenCalledWith('user-1', ['team-unread', 'team-unknown'], expect.objectContaining({
+        expect(dbMocks.getUnreadChatCounts).toHaveBeenCalledWith('user-1', ['team-read', 'team-unread', 'team-unknown'], expect.objectContaining({
             latestMessageAtByTeam: {
                 'team-read': new Date('2026-05-21T12:00:00Z'),
                 'team-unread': new Date('2026-05-21T14:00:00Z')
             },
             latestMessageAtByConversationByTeam: {
                 'team-read': {
+                    'staff-conversation': new Date('2026-05-21T15:00:00Z'),
                     team: new Date('2026-05-21T12:00:00Z')
                 },
                 'team-unread': {
@@ -352,7 +357,7 @@ describe('React app chat recipient service', () => {
                 }
             },
             conversationIdsByTeam: {
-                'team-read': ['team'],
+                'team-read': ['team', 'staff-conversation'],
                 'team-unread': ['team'],
                 'team-unknown': ['team']
             },
@@ -376,7 +381,7 @@ describe('React app chat recipient service', () => {
             })
         }));
         expect(inbox.teams).toEqual(expect.arrayContaining([
-            expect.objectContaining({ id: 'team-read', unreadCount: 0 }),
+            expect.objectContaining({ id: 'team-read', unreadCount: 2 }),
             expect.objectContaining({ id: 'team-unread', unreadCount: 4 }),
             expect.objectContaining({ id: 'team-unknown', unreadCount: 1 })
         ]));
