@@ -468,7 +468,7 @@ describe('scheduled tournament writes', () => {
     }));
   });
 
-  it('caps repeated single-game tournament handling to one write in one save operation', async () => {
+  it('rejects over-produced legacy tournament payloads before any writes occur', async () => {
     vi.mocked(buildLegacyTournamentGameDocuments).mockReturnValueOnce([
       {
         type: 'game',
@@ -493,9 +493,8 @@ describe('scheduled tournament writes', () => {
         }
       }
     ] as any);
-    vi.mocked(addGame).mockResolvedValueOnce('game-1' as any);
 
-    const createdIds = await createScheduledTournamentBlockForApp('team-1', {
+    await expect(createScheduledTournamentBlockForApp('team-1', {
       divisionName: '10U Gold',
       bracketName: 'Gold Bracket',
       roundName: 'Semifinal',
@@ -511,15 +510,9 @@ describe('scheduled tournament writes', () => {
           notes: 'Bring dark jerseys'
         }
       ]
-    }, coachUser);
+    }, coachUser)).rejects.toThrow('Tournament adapter could not build a complete legacy payload.');
 
-    expect(createdIds).toEqual(['game-1']);
-    expect(addGame).toHaveBeenCalledTimes(1);
-    expect(addGame).toHaveBeenCalledWith('team-1', expect.objectContaining({
-      type: 'game',
-      opponent: 'Tigers',
-      competitionType: 'tournament'
-    }));
+    expect(addGame).not.toHaveBeenCalled();
   });
 
   it('throws an explicit error when a single-game tournament save returns no id', async () => {
