@@ -398,7 +398,7 @@ describe('roster CSV import planning', () => {
     });
 
     it('splits parent-readable private field values away from public player payloads without storing admin-only values', () => {
-        expect(splitRosterProfileValuesByVisibility(fields, { grade: '6', birthDate: '2014-02-03', medicalNote: 'private' })).toEqual({
+        expect(splitRosterProfileValuesByVisibility(fields, { grade: '6', birthDate: '2014-02-03', medicalNote: 'private' }, { includeAdminPrivate: false })).toEqual({
             publicValues: { grade: '6' },
             privateValues: { birthDate: '2014-02-03' }
         });

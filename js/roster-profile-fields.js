@@ -222,19 +222,19 @@ function isPublicRosterField(field = {}) {
     return getRosterFieldVisibility(field) === 'public';
 }
 
-function isParentReadablePrivateRosterField(field = {}) {
+function isPrivateRosterField(field = {}, { includeAdminPrivate = true } = {}) {
     const visibility = getRosterFieldVisibility(field);
-    return visibility === 'team' || visibility === 'parents' || visibility === 'admins';
+    return visibility === 'team' || visibility === 'parents' || (includeAdminPrivate && visibility === 'admins');
 }
 
-export function splitRosterProfileValuesByVisibility(fields = [], values = {}) {
+export function splitRosterProfileValuesByVisibility(fields = [], values = {}, options = {}) {
     const publicValues = {};
     const privateValues = {};
     fields.forEach((field) => {
         if (!Object.prototype.hasOwnProperty.call(values || {}, field.key)) return;
         if (isPublicRosterField(field)) {
             publicValues[field.key] = values[field.key];
-        } else if (isParentReadablePrivateRosterField(field)) {
+        } else if (isPrivateRosterField(field, options)) {
             privateValues[field.key] = values[field.key];
         }
     });
@@ -690,7 +690,7 @@ export function planRosterCsvImport({ csvText = '', fields = [], existingPlayers
         });
 
         if (!name) return;
-        const { publicValues, privateValues } = splitRosterProfileValuesByVisibility(normalizedFields, parsedValues);
+        const { publicValues, privateValues } = splitRosterProfileValuesByVisibility(normalizedFields, parsedValues, { includeAdminPrivate: false });
         const contactPlan = buildRosterCsvContactPlan(contactValues, rowNumber);
         contactPlan.errors.forEach((error) => errors.push(error));
         const matches = existingByName.get(name.toLowerCase()) || [];
