@@ -1,13 +1,25 @@
 import { useEffect, useMemo, useRef, useState, type InputHTMLAttributes, type SyntheticEvent } from 'react';
 import { Link, useParams, useSearchParams } from 'react-router-dom';
-import * as parentToolsService from '../lib/parentToolsService';
 import { AlertCircle, CheckCircle2, ChevronLeft, ExternalLink, Loader2, Send, Ticket, UserPlus, XCircle, type LucideIcon } from 'lucide-react';
 import { openPublicUrl } from '../lib/publicActions';
-import type {
-  ParentRegistrationCard,
-  ParentRegistrationDetailModel,
-  TeamRegistrationQueueModel
-} from '../lib/parentToolsService';
+import {
+  acceptTeamRegistrationOfferForApp,
+  approveTeamRegistrationForApp,
+  cancelRegistrationCheckout,
+  extendTeamRegistrationOfferForApp,
+  initiateRegistrationCheckout,
+  loadParentRegistrationDetail,
+  loadParentRegistrations,
+  loadPublicRegistrationDetail,
+  loadStaffRegistrationDetail,
+  loadTeamRegistrationQueuePage,
+  loadTeamRegistrationRosterPlayers,
+  rejectTeamRegistrationForApp,
+  submitOfflineRegistration,
+  type ParentRegistrationCard,
+  type ParentRegistrationDetailModel,
+  type TeamRegistrationQueueModel
+} from '../lib/parentRegistrationsService';
 import {
   calculateRegistrationFeeSnapshot,
   decideRegistrationPlacement,
@@ -99,9 +111,9 @@ function RegistrationDetailPage({ auth, publicAccess = false, staffReview = fals
         setForm(nextForm);
         if (staffReview) {
           const [nextPage, waitlistedPage, rosterPlayers] = await Promise.all([
-            (parentToolsService as any).loadTeamRegistrationQueuePage(teamId, formId) as Promise<{ reviews: any[]; lastDoc: any; hasMore: boolean }>,
-            (parentToolsService as any).loadTeamRegistrationQueuePage(teamId, formId, { status: 'waitlisted' }) as Promise<{ reviews: any[]; lastDoc: any; hasMore: boolean }>,
-            (parentToolsService as any).loadTeamRegistrationRosterPlayers(auth.user, teamId).catch(() => [])
+            loadTeamRegistrationQueuePage(teamId, formId),
+            loadTeamRegistrationQueuePage(teamId, formId, { status: 'waitlisted' }),
+            loadTeamRegistrationRosterPlayers(auth.user, teamId).catch(() => [])
           ]);
           if (cancelled) return;
           const nextQueue: TeamRegistrationQueueModel = {
@@ -204,7 +216,7 @@ function RegistrationDetailPage({ auth, publicAccess = false, staffReview = fals
       ? 'Stripe payment was cancelled. You can retry payment for this registration.'
       : 'Stripe payment was cancelled.');
 
-    void parentToolsService.cancelRegistrationCheckout(
+    void cancelRegistrationCheckout(
       teamId,
       formId,
       returnRegistrationId,
@@ -266,7 +278,7 @@ function RegistrationDetailPage({ auth, publicAccess = false, staffReview = fals
             setError('We could not restore your previous checkout attempt. Please restart registration or contact the organizer.');
             return;
           }
-          const checkout = await parentToolsService.initiateRegistrationCheckout(
+          const checkout = await initiateRegistrationCheckout(
             form.teamId,
             form.id,
             currentPublicCheckoutCapability ? '' : returnRegistrationId,
@@ -287,7 +299,7 @@ function RegistrationDetailPage({ auth, publicAccess = false, staffReview = fals
         }
       }
 
-      const result = await parentToolsService.submitOfflineRegistration(form.teamId, form.id, {
+      const result = await submitOfflineRegistration(form.teamId, form.id, {
         participant: currentParticipant,
         guardian: currentGuardian,
         waiverAccepted: currentWaiverAccepted,
@@ -306,7 +318,7 @@ function RegistrationDetailPage({ auth, publicAccess = false, staffReview = fals
       const checkoutFeeSnapshot = serverFeeSnapshot || currentFeeSnapshot;
       if (form.onlineCheckout && Number(checkoutFeeSnapshot.finalAmountDueCents || 0) > 0) {
         try {
-          const checkout = await parentToolsService.initiateRegistrationCheckout(
+          const checkout = await initiateRegistrationCheckout(
             form.teamId,
             form.id,
             result.registrationId,
@@ -344,7 +356,7 @@ function RegistrationDetailPage({ auth, publicAccess = false, staffReview = fals
     setError('');
     setMessage('');
     try {
-      await (parentToolsService as any).approveTeamRegistrationForApp(auth.user, teamId, formId, selectedReview.id, {
+      await approveTeamRegistrationForApp(auth.user, teamId, formId, selectedReview.id, {
         playerId: selectedMergePlayerId || undefined
       });
       setMessage('Registration approved. Roster and parent links were updated using the legacy approval flow.');
@@ -362,7 +374,7 @@ function RegistrationDetailPage({ auth, publicAccess = false, staffReview = fals
     setError('');
     setMessage('');
     try {
-      await (parentToolsService as any).rejectTeamRegistrationForApp(auth.user, teamId, formId, selectedReview.id);
+      await rejectTeamRegistrationForApp(auth.user, teamId, formId, selectedReview.id);
       setMessage('Registration declined.');
       setReloadKey((current) => current + 1);
     } catch (actionError: any) {
@@ -378,7 +390,7 @@ function RegistrationDetailPage({ auth, publicAccess = false, staffReview = fals
     setError('');
     setMessage('');
     try {
-      await (parentToolsService as any).extendTeamRegistrationOfferForApp(auth.user, teamId, formId, selectedReview.id);
+      await extendTeamRegistrationOfferForApp(auth.user, teamId, formId, selectedReview.id);
       setMessage('Waitlist offer extended using the legacy registration flow.');
       setReloadKey((current) => current + 1);
     } catch (actionError: any) {
@@ -394,7 +406,7 @@ function RegistrationDetailPage({ auth, publicAccess = false, staffReview = fals
     setError('');
     setMessage('');
     try {
-      await (parentToolsService as any).acceptTeamRegistrationOfferForApp(auth.user, teamId, formId, selectedReview.id);
+      await acceptTeamRegistrationOfferForApp(auth.user, teamId, formId, selectedReview.id);
       setMessage('Waitlist offer marked accepted. This registration can now be approved to the roster.');
       setReloadKey((current) => current + 1);
     } catch (actionError: any) {
@@ -409,7 +421,7 @@ function RegistrationDetailPage({ auth, publicAccess = false, staffReview = fals
     setSaving(true);
     setError('');
     try {
-      const nextPage = await (parentToolsService as any).loadTeamRegistrationQueuePage(teamId, formId, { afterDoc: lastDoc }) as { reviews: any[]; lastDoc: any; hasMore: boolean };
+      const nextPage = await loadTeamRegistrationQueuePage(teamId, formId, { afterDoc: lastDoc });
       setQueue((current: TeamRegistrationQueueModel | null) => current ? { ...current, reviews: [...current.reviews, ...nextPage.reviews] } : { reviews: nextPage.reviews, rosterPlayers: [] });
       setLastDoc(nextPage.lastDoc);
       setHasMore(nextPage.hasMore);
@@ -784,25 +796,22 @@ function validate(form: ParentRegistrationCard, participant: Record<string, stri
 
 async function loadRegistrationForm(user: any, teamId: string, formId: string, publicAccess = false, staffReview = false): Promise<ParentRegistrationCard | null> {
   if (staffReview) {
-    const detail: ParentRegistrationDetailModel = await (parentToolsService as any).loadStaffRegistrationDetail(user, teamId, formId);
+    const detail: ParentRegistrationDetailModel = await loadStaffRegistrationDetail(user, teamId, formId);
     return toRegistrationCardFromDetail(detail, teamId, formId);
   }
   if (publicAccess) {
-    const detail: ParentRegistrationDetailModel = await (parentToolsService as any).loadPublicRegistrationDetail(teamId, formId);
+    const detail: ParentRegistrationDetailModel = await loadPublicRegistrationDetail(teamId, formId);
     return toRegistrationCardFromDetail(detail, teamId, formId);
   }
 
   try {
-    const loadDetail = (parentToolsService as any).loadParentRegistrationDetail;
-    if (typeof loadDetail === 'function') {
-      const detail: ParentRegistrationDetailModel = await loadDetail(user, teamId, formId);
-      return toRegistrationCardFromDetail(detail, teamId, formId);
-    }
+    const detail: ParentRegistrationDetailModel = await loadParentRegistrationDetail(user, teamId, formId);
+    return toRegistrationCardFromDetail(detail, teamId, formId);
   } catch (error: any) {
     if (!String(error?.message || '').includes('loadParentRegistrationDetail')) throw error;
   }
 
-  const forms = await parentToolsService.loadParentRegistrations(user);
+  const forms = await loadParentRegistrations(user);
   return forms.find((candidate: ParentRegistrationCard) => candidate.teamId === teamId && candidate.id === formId) || null;
 }
 

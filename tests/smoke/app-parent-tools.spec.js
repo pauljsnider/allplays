@@ -103,6 +103,15 @@ const parentRegistrationsServiceMock = `
             url: 'https://allplays.ai/registration.html?teamId=team-1&formId=form-1'
         }];
     }
+    export async function submitOfflineRegistration() {
+        return { status: 'pending', registrationId: 'registration-1' };
+    }
+    export async function initiateRegistrationCheckout() {
+        return { success: true, checkoutUrl: 'https://pay.example.test/registration-checkout' };
+    }
+    export async function cancelRegistrationCheckout() {
+        return { released: true };
+    }
     export async function loadParentRegistrationDetail() {
         return {
             teamName: 'Bears',
@@ -382,43 +391,6 @@ async function mockParentToolsModules(page) {
                 }
                 export async function revokeParentFamilyShare() {}
                 export async function updateParentFamilyShareCalendars() {}
-                export async function loadParentRegistrations() {
-                    return [{
-                        id: 'form-1',
-                        teamId: 'team-1',
-                        teamName: 'Bears',
-                        programName: 'Summer Camp',
-                        description: 'Skills week',
-                        season: 'Summer',
-                        feeLabel: '$75.00',
-                        paymentNotice: 'Online checkout available.',
-                        onlineCheckout: true,
-                        options: [{ id: 'opt-1' }],
-                        url: 'https://allplays.ai/registration.html?teamId=team-1&formId=form-1'
-                    }];
-                }
-                export async function loadParentRegistrationDetail() {
-                    return {
-                        teamName: 'Bears',
-                        isPublished: true,
-                        onlineCheckout: true,
-                        legacyUrl: 'https://allplays.ai/registration.html?teamId=team-1&formId=form-1',
-                        form: {
-                            programName: 'Summer Camp',
-                            description: 'Skills week',
-                            season: 'Summer',
-                            currency: 'USD',
-                            participantFields: [],
-                            guardianFields: [],
-                            waiverText: '',
-                            registrationOptionCounts: {}
-                        },
-                        options: [{ id: 'opt-1', title: 'Full week', description: 'Skills week', capacityLimit: 20, waitlistEnabled: true }],
-                        feeSnapshot: { finalAmountDueCents: 7500 },
-                        paymentNotice: 'Online checkout available.',
-                        paymentPlans: []
-                    };
-                }
                 export async function loadParentCertificates() {
                     return [{
                         id: 'cert-1',
@@ -527,6 +499,10 @@ test('parent tools hub completes access, fees, calendars, share, registration, a
     await expect(page.getByRole('link', { name: /Review/ })).toBeVisible();
     await page.getByRole('button', { name: /Legacy form/ }).click();
     await expect.poll(() => page.evaluate(() => window.__openedPublicUrls.at(-1))).toBe('https://allplays.ai/registration.html?teamId=team-1&formId=form-1');
+    await page.getByRole('link', { name: /Review/ }).click();
+    await expect(page.getByRole('button', { name: 'Pay registration with Stripe' })).toBeVisible();
+    await page.getByRole('button', { name: 'Pay registration with Stripe' }).click();
+    await expect.poll(() => page.evaluate(() => window.__openedPublicUrls.at(-1))).toBe('https://pay.example.test/registration-checkout');
 
     await page.getByRole('button', { name: 'Awards' }).click();
     await expect(page.getByText('Hustle Award')).toBeVisible();

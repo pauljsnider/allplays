@@ -18,4 +18,11 @@ describe('Parent Tools focused service imports', () => {
         expect(source).toContain(focusedImport);
         expect(source).not.toContain("../../lib/parentToolsService");
     });
+
+    it('RegistrationDetail imports only the focused registrations service module', () => {
+        const source = readFileSync(resolve(__dirname, '..', 'RegistrationDetail.tsx'), 'utf8');
+
+        expect(source).toContain("../lib/parentRegistrationsService");
+        expect(source).not.toContain("../lib/parentToolsService");
+    });
 });

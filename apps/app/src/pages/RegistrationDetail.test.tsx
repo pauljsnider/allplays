@@ -2,20 +2,27 @@
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { MemoryRouter, Route, Routes, useNavigate } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { RegistrationDetail } from './RegistrationDetail';
+import { RegistrationDetail, TeamRegistrationReview } from './RegistrationDetail';
 import type { AuthState } from '../lib/types';
 
-const parentToolsServiceMocks = vi.hoisted(() => ({
+const parentRegistrationsServiceMocks = vi.hoisted(() => ({
+  acceptTeamRegistrationOfferForApp: vi.fn(),
+  approveTeamRegistrationForApp: vi.fn(),
   cancelRegistrationCheckout: vi.fn(),
+  extendTeamRegistrationOfferForApp: vi.fn(),
   initiateRegistrationCheckout: vi.fn(),
   loadParentRegistrationDetail: vi.fn(),
   loadPublicRegistrationDetail: vi.fn(),
   loadParentRegistrations: vi.fn(),
+  loadStaffRegistrationDetail: vi.fn(),
+  loadTeamRegistrationQueuePage: vi.fn(),
+  loadTeamRegistrationRosterPlayers: vi.fn(),
+  rejectTeamRegistrationForApp: vi.fn(),
   submitOfflineRegistration: vi.fn()
 }));
 const openPublicUrlMock = vi.hoisted(() => vi.fn());
 
-vi.mock('../lib/parentToolsService', () => parentToolsServiceMocks);
+vi.mock('../lib/parentRegistrationsService', () => parentRegistrationsServiceMocks);
 vi.mock('../lib/publicActions', () => ({
   openPublicUrl: openPublicUrlMock
 }));
@@ -90,6 +97,17 @@ function renderParentRegistration() {
   );
 }
 
+function renderStaffRegistrationReview() {
+  return render(
+    <MemoryRouter initialEntries={['/teams/team-1/registrations/form-1/review']}>
+      <Routes>
+        <Route path="/teams/:teamId/registrations/:formId/review" element={<TeamRegistrationReview auth={{ ...auth, user: { ...auth.user!, roles: ['coach'], coachOf: ['team-1'] } as any, roles: ['coach'], isParent: false, isCoach: true }} />} />
+        <Route path="/teams/:teamId" element={<div>Team detail</div>} />
+      </Routes>
+    </MemoryRouter>
+  );
+}
+
 function RouteSwapButton({ to }: { to: string }) {
   const navigate = useNavigate();
   return <button type="button" onClick={() => navigate(to)}>Swap route</button>;
@@ -116,7 +134,7 @@ function renderParentRegistrationWithRouteSwap() {
 
 describe('RegistrationDetail payment notice', () => {
   beforeEach(() => {
-    Object.values(parentToolsServiceMocks).forEach((mock) => mock.mockReset());
+    Object.values(parentRegistrationsServiceMocks).forEach((mock) => mock.mockReset());
     openPublicUrlMock.mockReset();
   });
 
@@ -125,7 +143,7 @@ describe('RegistrationDetail payment notice', () => {
   });
 
   it('renders the payment section for public online checkout forms', async () => {
-    parentToolsServiceMocks.loadPublicRegistrationDetail.mockResolvedValue(buildDetail({
+    parentRegistrationsServiceMocks.loadPublicRegistrationDetail.mockResolvedValue(buildDetail({
       paymentNotice: 'Payment will be collected in Stripe before your registration is complete.',
       onlineCheckout: true
     }));
@@ -138,42 +156,42 @@ describe('RegistrationDetail payment notice', () => {
   });
 
   it('hides the payment section when no notice exists for authenticated parent forms', async () => {
-    parentToolsServiceMocks.loadParentRegistrationDetail.mockResolvedValue(buildDetail());
+    parentRegistrationsServiceMocks.loadParentRegistrationDetail.mockResolvedValue(buildDetail());
 
     renderParentRegistration();
 
     expect(await screen.findByRole('button', { name: 'Submit registration' })).toBeTruthy();
     expect(screen.queryByRole('heading', { name: 'Payment' })).toBeNull();
-    expect(parentToolsServiceMocks.loadParentRegistrationDetail).toHaveBeenCalledWith(auth.user, 'team-1', 'form-1');
+    expect(parentRegistrationsServiceMocks.loadParentRegistrationDetail).toHaveBeenCalledWith(auth.user, 'team-1', 'form-1');
   });
 
   it('shows retry guidance and releases cancelled checkout attempts on Stripe cancel returns', async () => {
-    parentToolsServiceMocks.loadPublicRegistrationDetail.mockResolvedValue(buildDetail({
+    parentRegistrationsServiceMocks.loadPublicRegistrationDetail.mockResolvedValue(buildDetail({
       paymentNotice: 'Payment will be collected in Stripe before your registration is complete.',
       onlineCheckout: true
     }));
-    parentToolsServiceMocks.cancelRegistrationCheckout.mockResolvedValue({ released: true, nextPublicCheckoutCapability: 'cap-2' });
+    parentRegistrationsServiceMocks.cancelRegistrationCheckout.mockResolvedValue({ released: true, nextPublicCheckoutCapability: 'cap-2' });
 
     renderPublicRegistration('/registration?teamId=team-1&formId=form-1&publicCheckoutCapability=cap-1&retryPayment=1&status=cancelled');
 
     expect(await screen.findByText('Stripe payment was cancelled. You can retry payment for this registration.')).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Retry payment with Stripe' })).toBeTruthy();
-    await waitFor(() => expect(parentToolsServiceMocks.cancelRegistrationCheckout).toHaveBeenCalledWith('team-1', 'form-1', '', '', 'cap-1'));
+    await waitFor(() => expect(parentRegistrationsServiceMocks.cancelRegistrationCheckout).toHaveBeenCalledWith('team-1', 'form-1', '', '', 'cap-1'));
   });
 
   it('retries Stripe checkout without creating a duplicate registration', async () => {
-    parentToolsServiceMocks.loadPublicRegistrationDetail.mockResolvedValue(buildDetail({
+    parentRegistrationsServiceMocks.loadPublicRegistrationDetail.mockResolvedValue(buildDetail({
       onlineCheckout: true,
       paymentNotice: 'Pay online.'
     }));
-    parentToolsServiceMocks.cancelRegistrationCheckout.mockResolvedValue({ released: true, nextPublicCheckoutCapability: 'cap-2' });
-    parentToolsServiceMocks.initiateRegistrationCheckout.mockResolvedValue({ success: true, checkoutUrl: 'https://stripe.example/checkout' });
+    parentRegistrationsServiceMocks.cancelRegistrationCheckout.mockResolvedValue({ released: true, nextPublicCheckoutCapability: 'cap-2' });
+    parentRegistrationsServiceMocks.initiateRegistrationCheckout.mockResolvedValue({ success: true, checkoutUrl: 'https://stripe.example/checkout' });
 
     renderPublicRegistration('/registration?teamId=team-1&formId=form-1&publicCheckoutCapability=cap-1&retryPayment=1&status=cancelled');
 
     fireEvent.click(await screen.findByRole('button', { name: 'Retry payment with Stripe' }));
 
-    await waitFor(() => expect(parentToolsServiceMocks.initiateRegistrationCheckout).toHaveBeenCalledWith(
+    await waitFor(() => expect(parentRegistrationsServiceMocks.initiateRegistrationCheckout).toHaveBeenCalledWith(
       'team-1',
       'form-1',
       '',
@@ -188,12 +206,12 @@ describe('RegistrationDetail payment notice', () => {
         publicCheckoutCapability: 'cap-2'
       }
     ));
-    expect(parentToolsServiceMocks.submitOfflineRegistration).not.toHaveBeenCalled();
+    expect(parentRegistrationsServiceMocks.submitOfflineRegistration).not.toHaveBeenCalled();
     expect(openPublicUrlMock).toHaveBeenCalledWith('https://stripe.example/checkout');
   });
 
   it('hides the registration option selector when exactly one active option exists and still submits that option', async () => {
-    parentToolsServiceMocks.loadParentRegistrationDetail.mockResolvedValue(buildDetail({
+    parentRegistrationsServiceMocks.loadParentRegistrationDetail.mockResolvedValue(buildDetail({
       options: [{ id: 'option-1', title: 'Varsity', capacity: 12, active: true }],
       form: {
         registrationOptionCounts: {
@@ -201,7 +219,7 @@ describe('RegistrationDetail payment notice', () => {
         }
       }
     }));
-    parentToolsServiceMocks.submitOfflineRegistration.mockResolvedValue({
+    parentRegistrationsServiceMocks.submitOfflineRegistration.mockResolvedValue({
       status: 'pending',
       registrationId: 'registration-1'
     });
@@ -215,7 +233,7 @@ describe('RegistrationDetail payment notice', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Submit registration' }));
 
-    await waitFor(() => expect(parentToolsServiceMocks.submitOfflineRegistration).toHaveBeenCalledWith(
+    await waitFor(() => expect(parentRegistrationsServiceMocks.submitOfflineRegistration).toHaveBeenCalledWith(
       'team-1',
       'form-1',
       expect.objectContaining({
@@ -226,7 +244,7 @@ describe('RegistrationDetail payment notice', () => {
   });
 
   it('keeps the selector for multiple active options', async () => {
-    parentToolsServiceMocks.loadParentRegistrationDetail.mockResolvedValue(buildDetail({
+    parentRegistrationsServiceMocks.loadParentRegistrationDetail.mockResolvedValue(buildDetail({
       options: [
         { id: 'option-1', title: 'Varsity', capacity: 12, active: true },
         { id: 'option-2', title: 'Junior Varsity', capacity: 12, active: true }
@@ -249,7 +267,7 @@ describe('RegistrationDetail payment notice', () => {
   });
 
   it('resets a reused route to the new single active option before submit', async () => {
-    parentToolsServiceMocks.loadParentRegistrationDetail
+    parentRegistrationsServiceMocks.loadParentRegistrationDetail
       .mockResolvedValueOnce(buildDetail({
         options: [{ id: 'option-1', title: 'Varsity', capacity: 12, active: true }],
         form: {
@@ -267,7 +285,7 @@ describe('RegistrationDetail payment notice', () => {
         },
         options: [{ id: 'option-2', title: 'Junior Varsity', capacity: 10, active: true }]
       }));
-    parentToolsServiceMocks.submitOfflineRegistration.mockResolvedValue({
+    parentRegistrationsServiceMocks.submitOfflineRegistration.mockResolvedValue({
       status: 'pending',
       registrationId: 'registration-2'
     });
@@ -284,7 +302,7 @@ describe('RegistrationDetail payment notice', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Submit registration' }));
 
-    await waitFor(() => expect(parentToolsServiceMocks.submitOfflineRegistration).toHaveBeenCalledWith(
+    await waitFor(() => expect(parentRegistrationsServiceMocks.submitOfflineRegistration).toHaveBeenCalledWith(
       'team-1',
       'form-2',
       expect.objectContaining({
@@ -295,7 +313,7 @@ describe('RegistrationDetail payment notice', () => {
   });
 
   it('shows the first installment due now plus the remaining schedule before checkout', async () => {
-    parentToolsServiceMocks.loadPublicRegistrationDetail.mockResolvedValue(buildDetail({
+    parentRegistrationsServiceMocks.loadPublicRegistrationDetail.mockResolvedValue(buildDetail({
       onlineCheckout: true,
       paymentNotice: 'Pay online.',
       paymentPlans: [{ id: 'pay_full', title: 'Pay in full' }, { id: 'installments', title: 'Monthly installments' }],
@@ -323,7 +341,7 @@ describe('RegistrationDetail payment notice', () => {
   });
 
   it('replaces the form with a success confirmation after Stripe success returns', async () => {
-    parentToolsServiceMocks.loadPublicRegistrationDetail.mockResolvedValue(buildDetail({
+    parentRegistrationsServiceMocks.loadPublicRegistrationDetail.mockResolvedValue(buildDetail({
       onlineCheckout: true,
       paymentNotice: 'Pay online.'
     }));
@@ -337,7 +355,7 @@ describe('RegistrationDetail payment notice', () => {
   });
 
   it('shows remaining installments after a successful installment payment', async () => {
-    parentToolsServiceMocks.loadPublicRegistrationDetail.mockResolvedValue(buildDetail({
+    parentRegistrationsServiceMocks.loadPublicRegistrationDetail.mockResolvedValue(buildDetail({
       onlineCheckout: true,
       paymentNotice: 'Pay online.',
       paymentPlans: [{ id: 'pay_full', title: 'Pay in full' }, { id: 'installments', title: 'Monthly installments' }],
@@ -362,5 +380,55 @@ describe('RegistrationDetail payment notice', () => {
     expect(within(remainingSchedule).getAllByText('$41.68')).toHaveLength(2);
     expect(screen.queryByText('Installment 2 · Due Jul 31, 2026')).toBeNull();
     expect(screen.getByText('Installment 3 · Due Aug 30, 2026')).toBeTruthy();
+  });
+
+  it('loads the staff review workflow from the focused registration service and approves a pending registration', async () => {
+    parentRegistrationsServiceMocks.loadStaffRegistrationDetail.mockResolvedValue(buildDetail({
+      form: {
+        registrationOptionCounts: {
+          'opt-1': { enrolled: 4, waitlisted: 0 }
+        }
+      },
+      options: [{ id: 'opt-1', title: 'Full week', capacityLimit: 20, waitlistEnabled: true }]
+    }));
+    parentRegistrationsServiceMocks.loadTeamRegistrationQueuePage
+      .mockResolvedValueOnce({
+        reviews: [{
+          id: 'review-1',
+          status: 'pending',
+          participantName: 'Pat Star',
+          guardianLabel: 'Parent One',
+          participant: { name: 'Pat Star' },
+          guardian: { email: 'parent@example.com' },
+          selectedOption: { id: 'opt-1' },
+          selectedOptionLabel: 'Full week',
+          paymentLabel: '$75.00',
+          waiverAccepted: true,
+          linkedPlayerId: '',
+          decisionNote: ''
+        }],
+        lastDoc: null,
+        hasMore: false
+      })
+      .mockResolvedValueOnce({ reviews: [], lastDoc: null, hasMore: false });
+    parentRegistrationsServiceMocks.loadTeamRegistrationRosterPlayers.mockResolvedValue([
+      { id: 'player-1', name: 'Pat Star', number: '9' }
+    ]);
+    parentRegistrationsServiceMocks.approveTeamRegistrationForApp.mockResolvedValue({ success: true });
+
+    renderStaffRegistrationReview();
+
+    expect(await screen.findByText('Applications')).toBeTruthy();
+    expect(screen.getByRole('heading', { name: 'Pat Star' })).toBeTruthy();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Approve application' }));
+
+    await waitFor(() => expect(parentRegistrationsServiceMocks.approveTeamRegistrationForApp).toHaveBeenCalledWith(
+      expect.objectContaining({ uid: 'parent-1' }),
+      'team-1',
+      'form-1',
+      'review-1',
+      { playerId: undefined }
+    ));
   });
 });
