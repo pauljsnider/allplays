@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 
 import { cleanup, render, screen, waitFor } from '@testing-library/react'
+import { useEffect } from 'react'
 import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -37,22 +38,51 @@ function LocationProbe() {
   return <div data-testid="location">{`${location.pathname}${location.search}`}</div>
 }
 
+function buildGameEvent(overrides: Record<string, unknown> = {}) {
+  return {
+    id: 'game-1',
+    teamId: 'team-bears',
+    childId: 'player-7',
+    type: 'game',
+    isDbGame: true,
+    isCancelled: false,
+    myRsvp: 'not_responded',
+    assignments: [],
+    rideshareSummary: null,
+    isTeamStaff: false,
+    isTeamAdmin: false,
+    canUpdateScore: false,
+    ...overrides
+  }
+}
+
+function TestScheduleEventDetail() {
+  useEffect(() => {
+    void scheduleServiceMocks.loadParentScheduleEventDetail(auth.user, {
+      teamId: 'team-bears',
+      eventId: 'game-1',
+      expandStaffPlayers: false
+    })
+  }, [])
+
+  return (
+    <div>
+      <h1>Availability</h1>
+      <div>Rideshare</div>
+      <div>Assignments</div>
+      <div>Game hub</div>
+      <div>Live event workflow</div>
+      <LocationProbe />
+    </div>
+  )
+}
+
 function renderGameDetail(path = '/games/game-1') {
   return render(
     <MemoryRouter initialEntries={[path]}>
       <Routes>
         <Route path="/games/:gameId" element={<GameDetail auth={auth} />} />
-        <Route path="/schedule/:teamId/:eventId" element={(
-          <div>
-            <h1>Availability</h1>
-            <div>Rideshare</div>
-            <div>Assignments</div>
-            <div>Game hub</div>
-            <div>Live event workflow</div>
-            <LocationProbe />
-          </div>
-        )}
-        />
+        <Route path="/schedule/:teamId/:eventId" element={<TestScheduleEventDetail />} />
         <Route path="/schedule" element={<div>Schedule home</div>} />
       </Routes>
     </MemoryRouter>
@@ -72,24 +102,12 @@ describe('GameDetail route resolution', () => {
     scheduleServiceMocks.resolveParentGameRoute.mockResolvedValue({
       teamId: 'team-bears',
       eventId: 'game-1',
-      childId: 'player-7'
+      childId: 'player-7',
+      cachedEvent: buildGameEvent()
     })
     scheduleServiceMocks.loadParentScheduleEventDetail.mockResolvedValue({
       children: [],
-      events: [{
-        id: 'game-1',
-        teamId: 'team-bears',
-        childId: 'player-7',
-        type: 'game',
-        isDbGame: true,
-        isCancelled: false,
-        myRsvp: 'not_responded',
-        assignments: [],
-        rideshareSummary: null,
-        isTeamStaff: false,
-        isTeamAdmin: false,
-        canUpdateScore: false
-      }]
+      events: [buildGameEvent()]
     })
 
     renderGameDetail()
@@ -109,6 +127,9 @@ describe('GameDetail route resolution', () => {
     expect(scheduleServiceMocks.resolveParentGameRoute).toHaveBeenCalledWith(auth.user, 'game-1', {
       expandStaffPlayers: false
     })
+    await waitFor(() => {
+      expect(scheduleServiceMocks.loadParentScheduleEventDetail).toHaveBeenCalledTimes(1)
+    })
     expect(scheduleServiceMocks.loadParentScheduleEventDetail).toHaveBeenCalledWith(auth.user, {
       teamId: 'team-bears',
       eventId: 'game-1',
@@ -120,24 +141,12 @@ describe('GameDetail route resolution', () => {
     scheduleServiceMocks.resolveParentGameRoute.mockResolvedValue({
       teamId: 'team-bears',
       eventId: 'game-1',
-      childId: 'player-7'
+      childId: 'player-7',
+      cachedEvent: buildGameEvent({ isTeamStaff: true })
     })
     scheduleServiceMocks.loadParentScheduleEventDetail.mockResolvedValue({
       children: [],
-      events: [{
-        id: 'game-1',
-        teamId: 'team-bears',
-        childId: 'player-7',
-        type: 'game',
-        isDbGame: true,
-        isCancelled: false,
-        myRsvp: 'not_responded',
-        assignments: [],
-        rideshareSummary: null,
-        isTeamStaff: true,
-        isTeamAdmin: false,
-        canUpdateScore: false
-      }]
+      events: [buildGameEvent({ isTeamStaff: true })]
     })
 
     renderGameDetail()
@@ -147,6 +156,9 @@ describe('GameDetail route resolution', () => {
     })
 
     expect(screen.getByTestId('location').textContent).toBe('/schedule/team-bears/game-1?childId=player-7&section=game')
+    await waitFor(() => {
+      expect(scheduleServiceMocks.loadParentScheduleEventDetail).toHaveBeenCalledTimes(1)
+    })
   })
 
   it('falls back to the resolved schedule route when detail refresh fails', async () => {

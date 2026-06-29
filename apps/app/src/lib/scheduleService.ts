@@ -246,6 +246,7 @@ export type ParentGameRouteResolution = {
   teamId: string;
   eventId: string;
   childId: string | null;
+  cachedEvent?: ParentScheduleEvent;
 };
 
 export type StaffScheduleRsvpRow = {
@@ -3535,7 +3536,8 @@ export async function resolveParentGameRoute(user: AuthUser | null, gameId: stri
     const resolution = {
       teamId: compactString(cachedMatch.teamId),
       eventId: requestedGameId,
-      childId: childId && !childId.startsWith(`staff-team-${compactString(cachedMatch.teamId)}`) ? childId : null
+      childId: childId && !childId.startsWith(`staff-team-${compactString(cachedMatch.teamId)}`) ? childId : null,
+      cachedEvent: cachedMatch
     };
     timer.end({ gameId: requestedGameId, expandStaffPlayers, cacheHit: true, matched: true });
     return resolution;
