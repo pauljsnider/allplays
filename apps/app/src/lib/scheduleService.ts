@@ -1384,6 +1384,8 @@ export type ScheduleTournamentCreateFormInput = {
   games: ScheduleTournamentGameFormInput[];
 };
 
+export type ScheduleTournamentMetadataInput = Pick<ScheduleTournamentCreateFormInput, 'divisionName' | 'bracketName' | 'roundName' | 'poolName'>;
+
 export type ScheduleStatTrackerConfigOption = {
   id: string;
   name: string;
@@ -1496,7 +1498,7 @@ function buildScheduledGamePayload(input: ScheduleGameFormInput, user: AuthUser)
   };
 }
 
-function buildScheduledTournamentMetadata(input: ScheduleTournamentCreateFormInput) {
+function buildScheduledTournamentMetadata(input: ScheduleTournamentMetadataInput) {
   const divisionName = compactString(input.divisionName);
   const bracketName = compactString(input.bracketName);
   const roundName = compactString(input.roundName);
@@ -1510,6 +1512,20 @@ function buildScheduledTournamentMetadata(input: ScheduleTournamentCreateFormInp
     roundName,
     ...(poolName ? { poolName } : {})
   };
+}
+
+export function buildSingleGameTournamentLegacySchedulePayload(
+  game: ScheduleTournamentGameFormInput,
+  tournamentMetadata: ScheduleTournamentMetadataInput,
+  user: AuthUser
+) {
+  const tournament = buildScheduledTournamentMetadata(tournamentMetadata);
+  const payload = buildScheduledGamePayload({
+    ...game,
+    competitionType: 'tournament'
+  }, user);
+
+  return buildLegacyTournamentGameDocument(payload, tournament);
 }
 
 function buildScheduledGameUpdatePayload(input: ScheduleGameFormInput, user: AuthUser) {
@@ -1664,15 +1680,14 @@ export async function createScheduledTournamentBlockForApp(teamId: string, input
     throw new Error('Tournament blocks require at least one game.');
   }
 
-  const validatedGames = games.map((game) => buildScheduledGamePayload({
-    ...game,
-    competitionType: 'tournament'
-  }, user as AuthUser));
-  const requiresExplicitSingleGameFailure = validatedGames.length === 1;
+  const requiresExplicitSingleGameFailure = games.length === 1;
   const payloads = requiresExplicitSingleGameFailure
-    ? [buildLegacyTournamentGameDocument(validatedGames[0], tournament)]
-    : buildLegacyTournamentGameDocuments(validatedGames, tournament);
-  if (payloads.length !== validatedGames.length) {
+    ? [buildSingleGameTournamentLegacySchedulePayload(games[0], tournament, user as AuthUser)]
+    : buildLegacyTournamentGameDocuments(games.map((game) => buildScheduledGamePayload({
+      ...game,
+      competitionType: 'tournament'
+    }, user as AuthUser)), tournament);
+  if (payloads.length !== games.length) {
     throw new Error('Tournament adapter could not build a complete legacy payload.');
   }
 
