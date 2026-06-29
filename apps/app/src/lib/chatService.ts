@@ -23,6 +23,7 @@ import {
   getTeam,
   getUnreadChatCounts,
   getUserByEmail,
+  getUsersByParentPlayerKey,
   getUserProfile,
   getUserTeamsWithAccess,
   isTeamActive,
@@ -402,6 +403,21 @@ async function nativeQueryTeamsByField(fieldPath: string, op: string, value: str
   });
 }
 
+async function nativeGetUsersByParentPlayerKey(parentPlayerKey: string) {
+  if (!parentPlayerKey) return [];
+  return nativeRunQuery({
+    from: [{ collectionId: 'users' }],
+    where: {
+      fieldFilter: {
+        field: { fieldPath: 'parentPlayerKeys' },
+        op: 'ARRAY_CONTAINS',
+        value: encodeFirestoreValue(parentPlayerKey)
+      }
+    },
+    limit: 25
+  }).catch(() => []);
+}
+
 async function nativeGetUserByEmail(email: string) {
   const [user] = await nativeRunQuery({
     from: [{ collectionId: 'users' }],
@@ -455,6 +471,33 @@ function getGuardianParticipantIdsForPlayer(player: Record<string, any> = {}) {
   return Array.from(new Set(participantIds));
 }
 
+function getGuardianParticipantIdsForUsers(users: Record<string, any>[] = []) {
+  return Array.from(new Set(users.flatMap((user) => {
+    const userId = compactString(user?.id || user?.uid);
+    const email = compactString(user?.email).toLowerCase();
+    return [
+      userId ? getRecipientOptionId('user', userId) : '',
+      email ? getRecipientOptionId('email', email) : ''
+    ].filter(Boolean);
+  })));
+}
+
+async function resolveLinkedGuardianParticipantIds(teamId: string, playerId: string) {
+  const parentPlayerKey = `${teamId}::${playerId}`;
+  try {
+    const users = await withTimeout(Promise.resolve(getUsersByParentPlayerKey(parentPlayerKey)), 'Chat linked guardian resolution', 2500)
+      .catch(async (error) => {
+        if (!isNativeRuntime()) throw error;
+        logger.warn('Falling back to REST linked guardian resolution.', { error });
+        return nativeGetUsersByParentPlayerKey(parentPlayerKey);
+      });
+    return getGuardianParticipantIdsForUsers(Array.isArray(users) ? users : []);
+  } catch (error) {
+    logger.warn('Failed to resolve linked player guardians.', { error });
+    return [];
+  }
+}
+
 async function resolveConversationParticipantIds(teamId: string, senderId: string, recipientIds: string[]) {
   const normalizedRecipientIds = (recipientIds || []).map((id) => compactString(id)).filter(Boolean);
   const playerIds = normalizedRecipientIds
@@ -476,12 +519,28 @@ async function resolveConversationParticipantIds(teamId: string, senderId: strin
     logger.warn('Failed to resolve player chat recipients to guardians.', { error });
   }
 
+  const linkedGuardiansByPlayerId = new Map<string, string[]>();
+  await Promise.all(playerIds.map(async (playerId) => {
+    const rosterGuardianIds = getGuardianParticipantIdsForPlayer(playersById.get(playerId) || {});
+    if (rosterGuardianIds.length) {
+      linkedGuardiansByPlayerId.set(playerId, rosterGuardianIds);
+      return;
+    }
+    linkedGuardiansByPlayerId.set(playerId, await resolveLinkedGuardianParticipantIds(teamId, playerId));
+  }));
+
+  const unresolvedPlayerIds: string[] = [];
   const resolvedRecipients = normalizedRecipientIds.flatMap((recipientId) => {
     if (!recipientId.toLowerCase().startsWith('player:')) return [recipientId];
     const playerId = recipientId.slice(7).trim();
-    const guardianParticipantIds = getGuardianParticipantIdsForPlayer(playersById.get(playerId) || {});
-    return guardianParticipantIds.length ? guardianParticipantIds : [recipientId];
+    const guardianParticipantIds = linkedGuardiansByPlayerId.get(playerId) || [];
+    if (!guardianParticipantIds.length) unresolvedPlayerIds.push(playerId);
+    return guardianParticipantIds;
   });
+
+  if (unresolvedPlayerIds.length) {
+    throw new Error('Selected player recipients must have a linked guardian before starting a private chat.');
+  }
 
   return Array.from(new Set([senderId, ...resolvedRecipients].filter(Boolean)));
 }

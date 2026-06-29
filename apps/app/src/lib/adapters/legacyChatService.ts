@@ -32,6 +32,7 @@ export const getStoredTeamEmailTemplates = (...args: any[]) => callLegacyDb('get
 export const getTeam = (...args: any[]) => callLegacyDb('getTeam', args);
 export const getUnreadChatCounts = (...args: any[]) => callLegacyDb('getUnreadChatCounts', args);
 export const getUserByEmail = (...args: any[]) => callLegacyDb('getUserByEmail', args);
+export const getUsersByParentPlayerKey = (...args: any[]) => callLegacyDb('getUsersByParentPlayerKey', args);
 export const getUserProfile = (...args: any[]) => callLegacyDb('getUserProfile', args);
 export const getUserTeamsWithAccess = (...args: any[]) => callLegacyDb('getUserTeamsWithAccess', args);
 export const postChatMessage = (...args: any[]) => callLegacyDb('postChatMessage', args);

@@ -1966,6 +1966,14 @@ export async function getUserByEmail(email) {
     return { id: snapshot.docs[0].id, ...snapshot.docs[0].data() };
 }
 
+export async function getUsersByParentPlayerKey(parentPlayerKey) {
+    const normalizedKey = String(parentPlayerKey || '').trim();
+    if (!normalizedKey) return [];
+    const q = query(collection(db, "users"), where("parentPlayerKeys", "array-contains", normalizedKey), limit(25));
+    const snapshot = await getDocs(q);
+    return snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+}
+
 export async function createTeam(teamData) {
     teamData.createdAt = Timestamp.now();
     teamData.updatedAt = Timestamp.now();
