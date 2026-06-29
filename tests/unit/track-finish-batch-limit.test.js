@@ -127,8 +127,15 @@ describe('standard tracker finish batch limits', () => {
         ]);
         expect(secondaryBatches.flatMap((batch) => batch.operations).filter((op) => op.type === 'delete')).toHaveLength(905);
         expect(gameUpdateBatch.operations).toEqual([
-            expect.objectContaining({ type: 'update', ref: { path: 'teams/team-1/games/game-1' } })
+            expect.objectContaining({
+                type: 'update',
+                ref: { path: 'teams/team-1/games/game-1' },
+                data: expect.objectContaining({
+                    status: 'completed'
+                })
+            })
         ]);
+        expect(gameUpdateBatch.operations[0].data).not.toHaveProperty('liveStatus');
     });
 
     it('keeps zero-stat standard tracker records as did not appear on resave', async () => {
@@ -282,6 +289,7 @@ describe('standard tracker finish batch limits', () => {
         expect(harness.batches.at(-1).operations).toEqual([
             expect.objectContaining({ type: 'update', data: expect.objectContaining({ status: 'completed' }) })
         ]);
+        expect(harness.batches.at(-1).operations[0].data).not.toHaveProperty('liveStatus');
     });
 
     it('preserves beta basketball finish event clocks, jersey numbers, playing time, and DNP status', async () => {
