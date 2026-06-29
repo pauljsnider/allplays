@@ -26,4 +26,20 @@ describe('Messages Sheet native back behavior', () => {
     expect(event.defaultPrevented).toBe(true);
     expect(onClose).toHaveBeenCalledTimes(1);
   });
+
+  it('ignores native back dismiss events already consumed by a higher overlay', () => {
+    const onClose = vi.fn();
+
+    render(
+      <Sheet title="Message audience" onClose={onClose}>
+        <button type="button">Selected members</button>
+      </Sheet>
+    );
+
+    const event = new Event(APP_BACK_DISMISS_EVENT, { cancelable: true });
+    event.preventDefault();
+    window.dispatchEvent(event);
+
+    expect(onClose).not.toHaveBeenCalled();
+  });
 });

@@ -3253,6 +3253,10 @@ export function Sheet({ title, children, onClose, wide = false }: { title: strin
 
   useEffect(() => {
     const handleNativeBackDismiss = (event: Event) => {
+      if (event.defaultPrevented) {
+        return;
+      }
+
       event.preventDefault();
       onCloseRef.current();
     };
