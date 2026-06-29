@@ -9,9 +9,11 @@ describe('admin dashboard statistics scope', () => {
         expect(adminJs).toContain('const sourceUsers = getDashboardUsers();');
         expect(adminJs).toContain("const visibleTeams = showInactiveTeams ? sourceTeams : sourceTeams.filter(isTeamActive);");
         expect(adminJs).toContain('const visibleTeamIds = new Set(visibleTeams.map(team => team.id));');
-        expect(adminJs).toContain('const visibleGames = dashboardGames.filter(game => visibleTeamIds.has(game.teamId));');
+        expect(adminJs).toContain('const visibleRecentGames = dashboardGames.filter(game => visibleTeamIds.has(game.teamId));');
         expect(adminJs).toContain("document.getElementById('stat-total-users').textContent = sourceUsers.length;");
-        expect(adminJs).toContain('const teamsWithGames = new Set(visibleGames.map(g => g.teamId)).size;');
+        expect(adminJs).toContain('const visibleAllTimeGameStats = visibleTeams.reduce((totals, team) => {');
+        expect(adminJs).toContain("document.getElementById('stat-total-games').textContent = visibleAllTimeGameStats.total;");
+        expect(adminJs).toContain('const teamsWithGames = visibleAllTimeGameStats.teamsWithGames;');
     });
 
     it('boots from paged teams and users before lazy team detail fan-out', () => {
@@ -42,6 +44,22 @@ describe('admin dashboard statistics scope', () => {
         expect(loadGameStatsBody).toContain('buildDashboardGameQueryWindow()');
         expect(loadGameStatsBody).toContain('await getGames(team.id, dashboardGameQueryWindow)');
         expect(loadGameStatsBody).toContain('await getGames(team.id);');
+        expect(loadGameStatsBody).toContain('await loadDashboardAllTimeGameStats(teams);');
         expect(loadGameStatsBody).toContain('loadedDashboardGamesKey = teamsKey;');
+    });
+
+    it('keeps all-time dashboard game totals separate from bounded recent-game reads', () => {
+        const adminJs = fs.readFileSync('js/admin.js', 'utf8');
+
+        expect(adminJs).toContain('let dashboardGameStatsByTeamId = new Map();');
+        expect(adminJs).toContain('async function loadDashboardAllTimeGameStats(teams = [])');
+        expect(adminJs).toContain('getCountFromServer(gamesRef)');
+        expect(adminJs).toContain("getCountFromServer(query(gamesRef, where('status', '==', 'completed')))");
+        expect(adminJs).toContain("getCountFromServer(query(gamesRef, where('status', '==', 'scheduled')))");
+        expect(adminJs).toContain('totals.total += stats.total;');
+        expect(adminJs).toContain('totals.completed += stats.completed;');
+        expect(adminJs).toContain('totals.scheduled += stats.scheduled;');
+        expect(adminJs).toContain('if (stats.total > 0) totals.teamsWithGames += 1;');
+        expect(adminJs).toContain('renderRecentGameResults(visibleRecentGames);');
     });
 });

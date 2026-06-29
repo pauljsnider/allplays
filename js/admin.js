@@ -17,7 +17,7 @@ import {
     getTelemetryEventDaily,
     getTelemetrySessions
 } from './db.js?v=76';
-import { db, collection, getDocs, doc, setDoc, updateDoc, serverTimestamp } from './firebase.js?v=19';
+import { db, collection, getDocs, doc, setDoc, updateDoc, serverTimestamp, getCountFromServer, query, where } from './firebase.js?v=19';
 import { renderHeader, renderFooter, escapeHtml } from './utils.js?v=8';
 import { checkAuth } from './auth.js?v=38';
 import { DEFAULT_ADMIN_PAGE_SIZE, loadAdminCollectionPage, loadInitialAdminBootstrap } from './admin-bootstrap.js?v=1';
@@ -242,6 +242,7 @@ async function loadData() {
         loadedUsersOfficialsKey = '';
         allGames = [];
         dashboardGames = [];
+        dashboardGameStatsByTeamId = new Map();
         dashboardTeams = [];
         dashboardUsers = [];
         officialUserLookup = new Map();
@@ -278,6 +279,7 @@ async function loadData() {
 
 let allGames = [];
 let dashboardGames = [];
+let dashboardGameStatsByTeamId = new Map();
 
 const DASHBOARD_GAME_LOOKBACK_DAYS = 30;
 const DASHBOARD_GAME_LOOKAHEAD_DAYS = 30;
@@ -341,6 +343,29 @@ async function loadVisibleOfficialUserLinks(users = allUsers) {
     loadedUsersOfficialsKey = usersKey;
 }
 
+async function loadDashboardAllTimeGameStats(teams = []) {
+    const statsEntries = await Promise.all(teams.map(async (team) => {
+        try {
+            const gamesRef = collection(db, 'teams', team.id, 'games');
+            const [totalSnapshot, completedSnapshot, scheduledSnapshot] = await Promise.all([
+                getCountFromServer(gamesRef),
+                getCountFromServer(query(gamesRef, where('status', '==', 'completed'))),
+                getCountFromServer(query(gamesRef, where('status', '==', 'scheduled')))
+            ]);
+            const total = totalSnapshot.data().count || 0;
+            return [team.id, {
+                total,
+                completed: completedSnapshot.data().count || 0,
+                scheduled: scheduledSnapshot.data().count || 0
+            }];
+        } catch (error) {
+            console.warn('Failed to load all-time game stats for admin dashboard:', team.id, error);
+            return [team.id, { total: 0, completed: 0, scheduled: 0 }];
+        }
+    }));
+    dashboardGameStatsByTeamId = new Map(statsEntries);
+}
+
 async function loadGameStatsForTeams(teams = allTeams, { scope = 'page' } = {}) {
     const teamsKey = getTeamsKey(teams);
     if (scope === 'page' && teamsKey && loadedGamesPageKey === teamsKey) {
@@ -368,6 +393,7 @@ async function loadGameStatsForTeams(teams = allTeams, { scope = 'page' } = {}) 
 
     if (scope === 'dashboard') {
         dashboardGames = nextGames;
+        await loadDashboardAllTimeGameStats(teams);
         loadedDashboardGamesKey = teamsKey;
         return;
     }
@@ -460,7 +486,15 @@ function updateDashboard() {
     const sourceUsers = getDashboardUsers();
     const visibleTeams = showInactiveTeams ? sourceTeams : sourceTeams.filter(isTeamActive);
     const visibleTeamIds = new Set(visibleTeams.map(team => team.id));
-    const visibleGames = dashboardGames.filter(game => visibleTeamIds.has(game.teamId));
+    const visibleRecentGames = dashboardGames.filter(game => visibleTeamIds.has(game.teamId));
+    const visibleAllTimeGameStats = visibleTeams.reduce((totals, team) => {
+        const stats = dashboardGameStatsByTeamId.get(team.id) || { total: 0, completed: 0, scheduled: 0 };
+        totals.total += stats.total;
+        totals.completed += stats.completed;
+        totals.scheduled += stats.scheduled;
+        if (stats.total > 0) totals.teamsWithGames += 1;
+        return totals;
+    }, { total: 0, completed: 0, scheduled: 0, teamsWithGames: 0 });
     const now = new Date();
     const sevenDaysAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
     const thirtyDaysAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
@@ -476,14 +510,14 @@ function updateDashboard() {
     document.getElementById('stat-users-growth').textContent = `+${newUsersLast30} this month`;
 
     // Total games
-    const completedGames = visibleGames.filter(g => g.status === 'completed').length;
-    const scheduledGames = visibleGames.filter(g => g.status === 'scheduled').length;
-    document.getElementById('stat-total-games').textContent = visibleGames.length;
+    const completedGames = visibleAllTimeGameStats.completed;
+    const scheduledGames = visibleAllTimeGameStats.scheduled;
+    document.getElementById('stat-total-games').textContent = visibleAllTimeGameStats.total;
     document.getElementById('stat-games-breakdown').textContent = `${completedGames} played, ${scheduledGames} scheduled`;
-    renderRecentGameResults(visibleGames);
+    renderRecentGameResults(visibleRecentGames);
 
     // Activity (teams with games in last 7 days)
-    const activeTeams = new Set(visibleGames.filter(g => {
+    const activeTeams = new Set(visibleRecentGames.filter(g => {
         const gameDate = g.date.toDate ? g.date.toDate() : new Date(g.date);
         return gameDate > sevenDaysAgo;
     }).map(g => g.teamId)).size;
@@ -508,7 +542,7 @@ function updateDashboard() {
     // Team details
     const publicTeams = visibleTeams.filter(t => t.isPublic !== false).length;
     const privateTeams = visibleTeams.length - publicTeams;
-    const teamsWithGames = new Set(visibleGames.map(g => g.teamId)).size;
+    const teamsWithGames = visibleAllTimeGameStats.teamsWithGames;
     document.getElementById('stat-team-details').innerHTML = `
         <div class="flex justify-between items-center">
             <span class="text-gray-700">Public</span>
