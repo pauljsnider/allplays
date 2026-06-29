@@ -178,7 +178,7 @@ import { expandRecurrence, fetchAndParseCalendar, isTeamActive, mergeAssignments
 import { getCachedAppData, loadCachedAppData } from './appDataCache';
 import { mapScheduleEventRecord } from './firestore/mappers';
 import { loadProfileDocument } from './profileService';
-import { buildPlayerScoringLiveEvent, claimOfficialAssignmentItem, createScheduledGameForApp, createScheduledPracticeForApp, createScheduledTournamentBlockForApp, createStaffRsvpAvailabilityLoader, flushPendingLivePublishOperations, hydrateParentScheduleDetails, loadOfficialAssignments, loadParentSchedule, loadParentScheduleChildren, loadParentScheduleEventDetail, loadScheduledPracticeSeriesForEdit, loadStaffPracticeAttendance, loadStaffScheduleRsvpBreakdown, publishLiveScoreUpdateEvent, recordPlayerGameStat, recordPlayerScoringStat, releaseParentScheduleAssignmentClaim, resolveCachedParentScheduleEvents, resolveLiveGameClockSnapshot, resolveParentGameRoute, respondToOfficialAssignmentItem, revertScheduledPracticeOccurrenceForApp, saveScheduledGameLineupDraftForApp, saveStaffPracticeAttendance, submitStaffScheduleRsvpOverride, undoRecordedPlayerGameStat, updateLiveGameClockState, updateScheduledPracticeForApp } from './scheduleService';
+import { buildPlayerScoringLiveEvent, buildSingleGameTournamentLegacySchedulePayload, claimOfficialAssignmentItem, createScheduledGameForApp, createScheduledPracticeForApp, createScheduledTournamentBlockForApp, createStaffRsvpAvailabilityLoader, flushPendingLivePublishOperations, hydrateParentScheduleDetails, loadOfficialAssignments, loadParentSchedule, loadParentScheduleChildren, loadParentScheduleEventDetail, loadScheduledPracticeSeriesForEdit, loadStaffPracticeAttendance, loadStaffScheduleRsvpBreakdown, publishLiveScoreUpdateEvent, recordPlayerGameStat, recordPlayerScoringStat, releaseParentScheduleAssignmentClaim, resolveCachedParentScheduleEvents, resolveLiveGameClockSnapshot, resolveParentGameRoute, respondToOfficialAssignmentItem, revertScheduledPracticeOccurrenceForApp, saveScheduledGameLineupDraftForApp, saveStaffPracticeAttendance, submitStaffScheduleRsvpOverride, undoRecordedPlayerGameStat, updateLiveGameClockState, updateScheduledPracticeForApp } from './scheduleService';
 
 function playerSnapshot(id: string, data: Record<string, unknown> | null) {
   return {
@@ -386,6 +386,50 @@ describe('scheduled tournament writes', () => {
       opponentTeamPhoto: null,
       createdBy: 'coach-1'
     });
+  });
+
+  it('adapts one completed tournament row into a normalized legacy game payload', () => {
+    const payload = buildSingleGameTournamentLegacySchedulePayload({
+      opponent: '  Tigers  ',
+      startDate: new Date('2026-06-24T18:30:00.000Z'),
+      endDate: new Date('2026-06-24T20:00:00.000Z'),
+      location: '  Main Gym  ',
+      arrivalTime: new Date('2026-06-24T18:00:00.000Z'),
+      isHome: true,
+      notes: '  Bring dark jerseys  ',
+      competitionType: 'league'
+    }, {
+      divisionName: '  10U Gold  ',
+      bracketName: '  Gold Bracket  ',
+      roundName: '  Semifinal  ',
+      poolName: '  Pool A  '
+    }, coachUser);
+
+    expect(buildLegacyTournamentGameDocument).toHaveBeenCalledWith(expect.objectContaining({
+      type: 'game',
+      opponent: 'Tigers',
+      location: 'Main Gym',
+      notes: 'Bring dark jerseys',
+      competitionType: 'tournament',
+      createdBy: 'coach-1'
+    }), {
+      divisionName: '10U Gold',
+      bracketName: 'Gold Bracket',
+      roundName: 'Semifinal',
+      poolName: 'Pool A'
+    });
+    expect(payload).toEqual(expect.objectContaining({
+      type: 'game',
+      opponent: 'Tigers',
+      competitionType: 'tournament',
+      tournament: {
+        divisionName: '10U Gold',
+        bracketName: 'Gold Bracket',
+        roundName: 'Semifinal',
+        poolName: 'Pool A'
+      }
+    }));
+    expect(addGame).not.toHaveBeenCalled();
   });
 
   it('creates tournament child games with the legacy-compatible tournament shape', async () => {
