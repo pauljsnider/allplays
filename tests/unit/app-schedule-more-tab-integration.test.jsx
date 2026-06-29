@@ -97,6 +97,15 @@ const publicActionMocks = vi.hoisted(() => ({
     sharePublicUrl: vi.fn()
 }));
 
+vi.mock('@capacitor-firebase/performance', () => ({
+    FirebasePerformance: {
+        startTrace: vi.fn().mockResolvedValue(undefined),
+        stopTrace: vi.fn().mockResolvedValue(undefined),
+        putAttribute: vi.fn().mockResolvedValue(undefined),
+        putMetric: vi.fn().mockResolvedValue(undefined),
+        record: vi.fn().mockResolvedValue(undefined)
+    }
+}));
 vi.mock('../../apps/app/src/lib/scheduleService.ts', () => scheduleMocks);
 vi.mock('../../apps/app/src/lib/gameReportService.ts', () => reportMocks);
 vi.mock('../../apps/app/src/lib/publicActions.ts', () => publicActionMocks);
