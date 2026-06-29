@@ -131,11 +131,11 @@ describe('standard tracker finish batch limits', () => {
                 type: 'update',
                 ref: { path: 'teams/team-1/games/game-1' },
                 data: expect.objectContaining({
-                    status: 'completed',
-                    liveStatus: 'completed'
+                    status: 'completed'
                 })
             })
         ]);
+        expect(gameUpdateBatch.operations[0].data).not.toHaveProperty('liveStatus');
     });
 
     it('keeps zero-stat standard tracker records as did not appear on resave', async () => {
@@ -287,8 +287,9 @@ describe('standard tracker finish batch limits', () => {
         expect(harness.batches[1].operations[0].ref.path).toBe('teams/team-1/games/game-1/events/finish-log-000501');
         expect(harness.batches[2].operations[0].ref.path).toBe('teams/team-1/games/game-1/events/finish-log-001001');
         expect(harness.batches.at(-1).operations).toEqual([
-            expect.objectContaining({ type: 'update', data: expect.objectContaining({ status: 'completed', liveStatus: 'completed' }) })
+            expect.objectContaining({ type: 'update', data: expect.objectContaining({ status: 'completed' }) })
         ]);
+        expect(harness.batches.at(-1).operations[0].data).not.toHaveProperty('liveStatus');
     });
 
     it('preserves beta basketball finish event clocks, jersey numbers, playing time, and DNP status', async () => {
