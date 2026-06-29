@@ -49,6 +49,15 @@ export function startUxTimer(label: string, baseMeta: Record<string, unknown> = 
       const mergedMeta = { ...baseMeta, ...readMeta, ...meta };
       recordUxTiming(label, performanceSpan.startedAt, mergedMeta, { recordPerformance: false });
       performanceSpan.end(mergedMeta);
+    },
+    cancel(meta: Record<string, unknown> = {}) {
+      // The timed view/interaction was abandoned (e.g. the user navigated away,
+      // or the timing key changed, before it became ready). End the underlying
+      // performance span so its active Firebase-trace count is released — a
+      // leaked count makes later spans with the same label look already-active,
+      // so startFirebaseTrace skips them and they never export. Intentionally
+      // does NOT record a completed UX timing.
+      performanceSpan.end({ ...baseMeta, ...meta, abandoned: true, outcome: 'abandoned' });
     }
   };
 }

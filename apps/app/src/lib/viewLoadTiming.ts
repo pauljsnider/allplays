@@ -47,7 +47,13 @@ export function useViewLoadTimer({
 
     return () => {
       if (activeKeyRef.current === key) {
+        // If the view is left (or its timing key changes) before `ready` flips
+        // true, the started span was never ended. Cancel it so the active
+        // Firebase-trace count is released; otherwise the leak blocks later
+        // loads of the same label from exporting.
+        const pendingTimer = timerRef.current;
         timerRef.current = null;
+        pendingTimer?.cancel?.({ route, viewName });
       }
     };
     // getBaseMeta is intentionally sampled only when a new timing key starts.
