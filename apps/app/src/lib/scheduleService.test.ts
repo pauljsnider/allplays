@@ -468,6 +468,60 @@ describe('scheduled tournament writes', () => {
     }));
   });
 
+  it('caps repeated single-game tournament handling to one write in one save operation', async () => {
+    vi.mocked(buildLegacyTournamentGameDocuments).mockReturnValueOnce([
+      {
+        type: 'game',
+        opponent: 'Tigers',
+        competitionType: 'tournament',
+        tournament: {
+          divisionName: '10U Gold',
+          bracketName: 'Gold Bracket',
+          roundName: 'Semifinal',
+          poolName: 'Pool A'
+        }
+      },
+      {
+        type: 'game',
+        opponent: 'Tigers',
+        competitionType: 'tournament',
+        tournament: {
+          divisionName: '10U Gold',
+          bracketName: 'Gold Bracket',
+          roundName: 'Semifinal',
+          poolName: 'Pool A'
+        }
+      }
+    ] as any);
+    vi.mocked(addGame).mockResolvedValueOnce('game-1' as any);
+
+    const createdIds = await createScheduledTournamentBlockForApp('team-1', {
+      divisionName: '10U Gold',
+      bracketName: 'Gold Bracket',
+      roundName: 'Semifinal',
+      poolName: 'Pool A',
+      games: [
+        {
+          opponent: 'Tigers',
+          startDate: new Date('2026-06-24T18:30:00.000Z'),
+          endDate: new Date('2026-06-24T20:00:00.000Z'),
+          location: 'Main Gym',
+          arrivalTime: new Date('2026-06-24T18:00:00.000Z'),
+          isHome: true,
+          notes: 'Bring dark jerseys'
+        }
+      ]
+    }, coachUser);
+
+    expect(createdIds).toEqual(['game-1']);
+    expect(addGame).toHaveBeenCalledTimes(1);
+    expect(addGame).toHaveBeenCalledWith('team-1', expect.objectContaining({
+      type: 'game',
+      opponent: 'Tigers',
+      competitionType: 'tournament'
+    }));
+  });
+
   it('throws an explicit error when a single-game tournament save returns no id', async () => {
     vi.mocked(addGame).mockResolvedValueOnce(undefined as any);
 

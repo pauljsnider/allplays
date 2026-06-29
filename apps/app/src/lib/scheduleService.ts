@@ -1668,13 +1668,15 @@ export async function createScheduledTournamentBlockForApp(teamId: string, input
     competitionType: 'tournament'
   }, user as AuthUser));
   const payloads = buildLegacyTournamentGameDocuments(validatedGames, tournament);
-  if (payloads.length !== validatedGames.length) {
+  const isSingleGameTournamentSave = validatedGames.length === 1;
+  const writablePayloads = isSingleGameTournamentSave ? payloads.slice(0, 1) : payloads;
+  if (writablePayloads.length !== validatedGames.length) {
     throw new Error('Tournament adapter could not build a complete legacy payload.');
   }
 
-  const requiresExplicitSingleGameFailure = payloads.length === 1;
+  const requiresExplicitSingleGameFailure = isSingleGameTournamentSave;
   const createdIds: string[] = [];
-  for (const payload of payloads) {
+  for (const payload of writablePayloads) {
     let createdId = '';
     try {
       createdId = compactString(await withTimeout(Promise.resolve(addGame(normalizedTeamId, payload)), 'Scheduled tournament game create'));
