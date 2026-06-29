@@ -15,8 +15,7 @@ import {
   getTeams,
   addGame,
   addPractice,
-  buildLegacyTournamentGameDocument,
-  buildLegacyTournamentGameDocuments,
+  buildSingleLegacyTournamentGameDocument,
   createRideOffer,
   claimAssignmentSlot,
   respondToOfficiatingAssignment,
@@ -1525,7 +1524,7 @@ export function buildSingleGameTournamentLegacySchedulePayload(
     competitionType: 'tournament'
   }, user);
 
-  return buildLegacyTournamentGameDocument(payload, tournament);
+  return buildSingleLegacyTournamentGameDocument([payload], tournament);
 }
 
 function buildScheduledGameUpdatePayload(input: ScheduleGameFormInput, user: AuthUser) {
@@ -1706,32 +1705,7 @@ export async function createScheduledTournamentBlockForApp(teamId: string, input
     return [createdId];
   }
 
-  const payloads = buildLegacyTournamentGameDocuments(games.map((game) => buildScheduledGamePayload({
-    ...game,
-    competitionType: 'tournament'
-  }, user as AuthUser)), tournament);
-  if (payloads.length !== games.length) {
-    throw new Error('Tournament adapter could not build a complete legacy payload.');
-  }
-
-  const createdIds: string[] = [];
-  for (const payload of payloads) {
-    let createdId = '';
-    try {
-      createdId = compactString(await withTimeout(Promise.resolve(addGame(normalizedTeamId, payload)), 'Scheduled tournament game create'));
-    } catch (error) {
-      if (!isNativeRuntime()) throw error;
-      logScheduleWarning('Falling back to REST scheduled tournament game create.', 'scheduled-tournament-game-create', error, { fallback: 'rest', teamId: normalizedTeamId });
-      const doc = await nativeCreateDocument(`teams/${encodeURIComponent(normalizedTeamId)}/games`, {
-        ...payload,
-        createdAt: new Date()
-      });
-      createdId = compactString(doc?.id);
-    }
-    createdIds.push(createdId);
-  }
-
-  return createdIds;
+  throw new Error('Tournament blocks currently support exactly one completed game.');
 }
 
 export async function updateScheduledGameForApp(teamId: string, gameId: string, input: ScheduleGameFormInput, user: AuthUser | null) {

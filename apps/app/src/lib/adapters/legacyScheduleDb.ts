@@ -216,13 +216,32 @@ export function buildLegacyTournamentGameDocument(payload: Record<string, unknow
     };
 }
 
+export function buildSingleLegacyTournamentGameDocument(games: Array<Record<string, unknown> | null | undefined>, tournament: Record<string, unknown>) {
+    if (!Array.isArray(games)) {
+        throw new LegacyTournamentGameAdapterValidationError('games', 'Tournament adapter requires a single completed tournament game.');
+    }
+    if (games.length !== 1) {
+        throw new LegacyTournamentGameAdapterValidationError('games', 'Tournament adapter only supports a single completed tournament game.');
+    }
+    if (!isPlainLegacyScheduleRecord(games[0])) {
+        throw new LegacyTournamentGameAdapterValidationError('games[0]', 'Tournament adapter requires a complete tournament game payload.');
+    }
+    return buildLegacyTournamentGameDocument(games[0], tournament);
+}
+
 export function buildLegacyTournamentGameDocuments(games: Array<Record<string, unknown> | null | undefined>, tournament: Record<string, unknown>) {
-    const tournamentGames = games
-        .filter((game): game is Record<string, unknown> => isPlainLegacyScheduleRecord(game));
+    if (!Array.isArray(games)) {
+        throw new LegacyTournamentGameAdapterValidationError('games', 'Tournament adapter requires tournament game payloads.');
+    }
     validateLegacyTournamentMetadata(tournament);
-    tournamentGames.forEach(validateLegacyTournamentGamePayload);
-    return tournamentGames
-        .map((game) => buildLegacyTournamentGameDocument(game, tournament));
+    games.forEach((game, index) => {
+        if (!isPlainLegacyScheduleRecord(game)) {
+            throw new LegacyTournamentGameAdapterValidationError(`games[${index}]`, 'Tournament adapter requires complete tournament game payloads.');
+        }
+        validateLegacyTournamentGamePayload(game);
+    });
+    return games
+        .map((game) => buildLegacyTournamentGameDocument(game as Record<string, unknown>, tournament));
 }
 
 export async function addGame(teamId: string, payload: Record<string, unknown>) {
