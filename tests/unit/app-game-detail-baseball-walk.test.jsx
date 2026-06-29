@@ -10,10 +10,7 @@ const scheduleServiceMocks = vi.hoisted(() => ({
     loadParentScheduleEventDetail: vi.fn()
 }));
 
-vi.mock('../../apps/app/src/lib/scheduleService', async (importOriginal) => ({
-    ...(await importOriginal()),
-    ...scheduleServiceMocks
-}));
+vi.mock('../../apps/app/src/lib/scheduleService', () => scheduleServiceMocks);
 
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -74,12 +71,8 @@ describe('app GameDetail route resolution', () => {
         scheduleServiceMocks.resolveParentGameRoute.mockResolvedValue({
             teamId: 'team-baseball',
             eventId: 'game-baseball',
-            childId: 'player-1'
-        });
-
-        scheduleServiceMocks.loadParentScheduleEventDetail.mockResolvedValue({
-            children: [],
-            events: [{
+            childId: 'player-1',
+            cachedEvent: {
                 id: 'game-baseball',
                 teamId: 'team-baseball',
                 childId: 'player-1',
@@ -92,7 +85,7 @@ describe('app GameDetail route resolution', () => {
                 isTeamStaff: true,
                 isTeamAdmin: false,
                 canUpdateScore: false
-            }]
+            }
         });
 
         const { container, root, router } = await renderGameDetail();
@@ -111,11 +104,7 @@ describe('app GameDetail route resolution', () => {
         expect(scheduleServiceMocks.resolveParentGameRoute).toHaveBeenCalledWith(coachAuth.user, 'game-baseball', {
             expandStaffPlayers: false
         });
-        expect(scheduleServiceMocks.loadParentScheduleEventDetail).toHaveBeenCalledWith(coachAuth.user, {
-            teamId: 'team-baseball',
-            eventId: 'game-baseball',
-            expandStaffPlayers: false
-        });
+        expect(scheduleServiceMocks.loadParentScheduleEventDetail).not.toHaveBeenCalled();
 
         await act(async () => {
             root.unmount();
