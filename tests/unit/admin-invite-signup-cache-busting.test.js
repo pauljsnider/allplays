@@ -40,7 +40,7 @@ describe('admin invite signup cache busting', () => {
 
         const editTeamSource = readFileSync(resolve(process.cwd(), 'edit-team.html'), 'utf8');
         expect(editTeamSource).toContain("import { checkAuth, sendInviteEmail } from './js/auth.js?v=38';");
-        expect(editTeamSource).not.toContain("import { checkAuth, sendInviteEmail } from './js/auth.js?v=38';");
+        expect(editTeamSource).not.toContain("import { checkAuth, sendInviteEmail } from './js/auth.js?v=37';");
     });
 
     it('keeps the shared header logout import pinned to auth.js v22', () => {
