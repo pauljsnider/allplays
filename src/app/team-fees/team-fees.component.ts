@@ -291,7 +291,7 @@ export class TeamFeesComponent implements OnInit {
         batchId,
         recipientId: docSnap.id,
         name: data.title || data.feeTitle || data.name || 'Team Fee',
-        amount: normalizeAmount(data),
+        amount: isPaid || isCanceled ? normalizeAmount(data) : balanceCents / 100,
         status: isCanceled ? 'canceled' : isPaid ? 'paid' : 'unpaid',
         isPaid,
         collectionMode,

@@ -290,6 +290,42 @@ describe('TeamFeesComponent checkout flow', () => {
     ]);
   });
 
+  it('shows partially paid parent fees using the remaining balance used for checkout eligibility', async () => {
+    const partiallyPaidFee = feeDoc('teams/team-real/feeBatches/batch-partial/feeRecipients/recipient-partial', 'recipient-partial', {
+      parentUserId: 'parent-123',
+      title: 'Partially paid registration',
+      amountDueCents: 12500,
+      paidAmountCents: 5000,
+      status: 'unpaid',
+      collectionMode: 'online_stripe'
+    });
+    mockGetDocs
+      .mockResolvedValueOnce({ docs: [partiallyPaidFee] })
+      .mockResolvedValueOnce({ docs: [] })
+      .mockResolvedValueOnce({ docs: [] });
+
+    await component.ngOnInit();
+
+    expect(component.teamFees).toEqual([
+      {
+        id: 'recipient-partial',
+        teamId: 'team-real',
+        batchId: 'batch-partial',
+        recipientId: 'recipient-partial',
+        name: 'Partially paid registration',
+        amount: 75,
+        status: 'unpaid',
+        isPaid: false,
+        collectionMode: 'online_stripe',
+        canPayOnline: true,
+        offlinePaymentInstructions: ''
+      }
+    ]);
+    expect(component.outstandingFees.map((fee) => ({ id: fee.id, amount: fee.amount, canPayOnline: fee.canPayOnline }))).toEqual([
+      { id: 'recipient-partial', amount: 75, canPayOnline: true }
+    ]);
+  });
+
   it('maps unpaid offline manual fees without a pay action and keeps offline instructions', async () => {
     const offlineFee = feeDoc('teams/team-real/feeBatches/batch-real/feeRecipients/recipient-offline', 'recipient-offline', {
       parentUserId: 'parent-123',
