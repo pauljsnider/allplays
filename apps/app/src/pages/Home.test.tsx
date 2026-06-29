@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
-import { MemoryRouter, Route, Routes } from 'react-router-dom';
+import { Link, MemoryRouter, Route, Routes } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { Home } from './Home';
 import type { AuthState } from '../lib/types';
@@ -352,6 +352,31 @@ describe('Home', () => {
 
     expect(await screen.findByRole('heading', { name: 'Feed' })).toBeTruthy();
     expect(homeServiceMocks.loadParentHomeSummaryBootstrap).not.toHaveBeenCalled();
+  });
+
+  it('resets to Today when navigation removes the Home section query param', async () => {
+    render(
+      <MemoryRouter initialEntries={['/home?section=feed']}>
+        <Routes>
+          <Route
+            path="/home"
+            element={(
+              <>
+                <Link to="/home">Home nav</Link>
+                <Home auth={signedInAuth} />
+              </>
+            )}
+          />
+        </Routes>
+      </MemoryRouter>
+    );
+
+    expect(await screen.findByRole('heading', { name: 'Feed' })).toBeTruthy();
+
+    fireEvent.click(screen.getByRole('link', { name: 'Home nav' }));
+
+    expect(await screen.findByRole('heading', { name: 'Today for your players' })).toBeTruthy();
+    expect(screen.queryByRole('heading', { name: 'Feed' })).toBeNull();
   });
 
   it('shows network-specific Home retry copy after an initial load failure', async () => {
