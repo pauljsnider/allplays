@@ -451,11 +451,11 @@ function updateNativeCameraPanel() {
   if (!state.nativeCameraStream) {
     const session = state.game?.broadcastSession;
     if (session?.status === BROADCAST_SETUP_STATUSES.READY) {
-      setNativeCameraStatus(`${session.name || 'Broadcast session'} is ready for a future managed stream.`, 'success');
+      setNativeCameraStatus(`${session.name || 'Broadcast setup'} has saved camera and microphone setup. No live stream has started.`, 'success');
     } else if (session?.status === BROADCAST_SETUP_STATUSES.FAILED) {
       setNativeCameraStatus('Previous setup could not verify camera or microphone access. Retry when permissions are fixed.', 'error');
     } else {
-      setNativeCameraStatus('Camera and microphone permission required before this game can be marked stream-ready.');
+      setNativeCameraStatus('Camera and microphone permission required before setup can be saved.');
     }
   }
 }
@@ -508,7 +508,7 @@ async function startNativeCameraPreview() {
       await saveBroadcastSetupSession(BROADCAST_SETUP_STATUSES.READY, {
         permissions: { camera: true, microphone: true }
       });
-      setNativeCameraStatus('Camera and microphone verified. Broadcast session is ready for a future managed stream; no live ingest or recording starts yet.', 'success');
+      setNativeCameraStatus('Camera and microphone verified. Setup is saved for future broadcast tooling; no live ingest, recording, or stream starts yet.', 'success');
     } catch (saveError) {
       console.warn('Failed to save broadcast setup ready state:', saveError);
       setNativeCameraStatus('Camera and microphone verified, but the broadcast session status could not be saved. Retry setup before game time.', 'error');
