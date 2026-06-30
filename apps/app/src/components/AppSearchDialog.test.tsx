@@ -72,14 +72,24 @@ vi.mock('../lib/searchService', () => ({
       route: `/teams/${team.id}`,
     }));
     const allHelpItems = normalizedQuery.length >= 2
-      ? [{
+      ? [
+        {
+          id: 'help:parent-fees',
+          kind: 'help',
+          title: 'Parent fee guide',
+          subtitle: 'Pay and track team fees',
+          route: '/help/parent-fees',
+          roles: ['parent']
+        },
+        {
           id: 'help:coach-search',
           kind: 'help',
           title: 'Search like a coach',
           subtitle: 'Use filters to find coaching answers fast',
           route: '/help/coach-search',
           roles: ['coach']
-        }]
+        }
+      ]
       : [];
     const helpItems = helpRoleFilter === 'all'
       ? allHelpItems
@@ -230,7 +240,7 @@ describe('AppSearchDialog', () => {
     }
   });
 
-  it('shows help results without role filters once the query reaches two characters', async () => {
+  it('shows help results for the signed-in user role once the query reaches two characters', async () => {
     const onClose = vi.fn();
     searchAppPlayersMock.mockResolvedValueOnce([{
       id: 'player:team-2:player-2',
@@ -253,7 +263,8 @@ describe('AppSearchDialog', () => {
     await waitFor(() => expect(screen.queryByLabelText('Filter help by role')).toBeNull());
     expect(await screen.findByText('Players')).not.toBeNull();
     expect(await screen.findByRole('button', { name: /#10 Rocket Kid/i })).not.toBeNull();
-    expect(screen.getByRole('button', { name: /Search like a coach/i })).not.toBeNull();
+    expect(screen.getByRole('button', { name: /Parent fee guide/i })).not.toBeNull();
+    expect(screen.queryByRole('button', { name: /Search like a coach/i })).toBeNull();
     expect(screen.getByRole('button', { name: /More help results/i })).not.toBeNull();
   });
 
@@ -275,7 +286,7 @@ describe('AppSearchDialog', () => {
     expect(navigateMock).toHaveBeenCalledWith('/help', {
       state: {
         helpQuery: 'ro',
-        helpRoleFilter: 'all'
+        helpRoleFilter: 'parent'
       }
     });
   });
@@ -304,7 +315,7 @@ describe('AppSearchDialog', () => {
     expect(navigateMock).toHaveBeenCalledWith('/help', {
       state: {
         helpQuery: 'ro',
-        helpRoleFilter: 'all'
+        helpRoleFilter: 'parent'
       }
     });
   });

@@ -3,6 +3,7 @@ import type { CSSProperties, KeyboardEvent, ReactNode } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Capacitor } from '@capacitor/core';
 import { ChevronRight, Search, X } from 'lucide-react';
+import { derivePrimaryHelpRole } from '../lib/helpRoles';
 import { openPublicUrl } from '../lib/publicActions';
 import { preloadSearchRoute } from '../lib/searchRoutePreload';
 import {
@@ -45,10 +46,11 @@ export function AppSearchDialog({ auth, open, onClose }: AppSearchDialogProps) {
   const baseTeamsRef = useRef<AppSearchTeam[]>([]);
   const hydratedTeamsPromiseRef = useRef<Promise<AppSearchTeam[]> | null>(null);
   const navigate = useNavigate();
+  const helpRoleFilter = derivePrimaryHelpRole(auth);
 
   const results = useMemo(
-    () => computeAppSearchResults({ queryText: query, auth, teams, players, helpRoleFilter: 'all' }),
-    [auth, players, query, teams]
+    () => computeAppSearchResults({ queryText: query, auth, teams, players, helpRoleFilter }),
+    [auth, helpRoleFilter, players, query, teams]
   );
   const helpResults = results.help ?? [];
   const flatResults = results.flat ?? [...results.actions, ...results.teams, ...helpResults, ...results.players];
@@ -292,7 +294,7 @@ export function AppSearchDialog({ auth, open, onClose }: AppSearchDialogProps) {
     navigate('/help', {
       state: {
         helpQuery: trimmedQuery,
-        helpRoleFilter: 'all'
+        helpRoleFilter
       }
     });
   };

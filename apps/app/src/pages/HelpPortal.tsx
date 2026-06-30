@@ -2,8 +2,10 @@ import { useEffect, useMemo, useState } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import { LifeBuoy, Search } from 'lucide-react';
 import { getHelpKnowledgeDocs, searchHelpKnowledge } from '../lib/helpKnowledgeService';
+import { derivePrimaryHelpRole, type HelpRoleFilter } from '../lib/helpRoles';
+import { useAuth } from '../lib/useAuth';
 
-type HelpPortalRoleFilter = 'all' | 'parent' | 'coach' | 'admin' | 'member';
+type HelpPortalRoleFilter = HelpRoleFilter;
 
 type HelpPortalListItem = {
   id: string;
@@ -22,7 +24,9 @@ const helpRoleOptions: Array<{ value: HelpPortalRoleFilter; label: string }> = [
 
 export function HelpPortal() {
   const location = useLocation();
-  const portalState = useMemo(() => normalizePortalState(location.state), [location.state]);
+  const auth = useAuth();
+  const defaultRoleFilter = derivePrimaryHelpRole(auth);
+  const portalState = useMemo(() => normalizePortalState(location.state, defaultRoleFilter), [defaultRoleFilter, location.state]);
   const [query, setQuery] = useState(portalState.helpQuery);
   const [roleFilter, setRoleFilter] = useState<HelpPortalRoleFilter>(portalState.helpRoleFilter);
   const helpDocs = useMemo(() => getHelpKnowledgeDocs(), []);
@@ -162,11 +166,11 @@ export function HelpPortal() {
   );
 }
 
-function normalizePortalState(state: unknown) {
+function normalizePortalState(state: unknown, defaultRoleFilter: HelpPortalRoleFilter) {
   const candidate = state as { helpQuery?: string; helpRoleFilter?: HelpPortalRoleFilter } | null;
   return {
     helpQuery: typeof candidate?.helpQuery === 'string' ? candidate.helpQuery : '',
-    helpRoleFilter: isRoleFilter(candidate?.helpRoleFilter) ? candidate.helpRoleFilter : 'all'
+    helpRoleFilter: isRoleFilter(candidate?.helpRoleFilter) ? candidate.helpRoleFilter : defaultRoleFilter
   };
 }
 

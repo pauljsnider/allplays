@@ -9,7 +9,26 @@ const helpMocks = vi.hoisted(() => ({
     searchHelpKnowledge: vi.fn()
 }));
 
+const authMock = vi.hoisted(() => ({
+    state: {
+        user: { uid: 'parent-1', email: 'parent@example.com', displayName: 'Pat Parent', roles: ['parent'] },
+        profile: null,
+        loading: false,
+        error: null,
+        roles: ['parent'],
+        isParent: true,
+        isCoach: false,
+        isAdmin: false,
+        isPlatformAdmin: false,
+        refresh: vi.fn(),
+        signOut: vi.fn()
+    }
+}));
+
 vi.mock('../../apps/app/src/lib/helpKnowledgeService.ts', () => helpMocks);
+vi.mock('../../apps/app/src/lib/useAuth.ts', () => ({
+    useAuth: () => authMock.state
+}));
 
 import { HelpArticle } from '../../apps/app/src/pages/HelpArticle.tsx';
 import { HelpPortal } from '../../apps/app/src/pages/HelpPortal.tsx';
@@ -96,6 +115,19 @@ async function clickElement(element) {
 afterEach(() => {
     document.body.innerHTML = '';
     vi.clearAllMocks();
+    authMock.state = {
+        user: { uid: 'parent-1', email: 'parent@example.com', displayName: 'Pat Parent', roles: ['parent'] },
+        profile: null,
+        loading: false,
+        error: null,
+        roles: ['parent'],
+        isParent: true,
+        isCoach: false,
+        isAdmin: false,
+        isPlatformAdmin: false,
+        refresh: vi.fn(),
+        signOut: vi.fn()
+    };
 });
 
 describe('HelpPortal', () => {
@@ -108,8 +140,22 @@ describe('HelpPortal', () => {
         expect(container.querySelector('input[aria-label="Search help articles"]')).toBeTruthy();
         expect(container.textContent).toContain('Role filter');
         expect(container.textContent).toContain('ALL PLAYS basics');
-        expect(container.textContent).toContain('Coach schedule tools');
         expect(container.textContent).toContain('Parent fee guide');
+        expect(container.textContent).not.toContain('Coach schedule tools');
+
+        await act(async () => root.unmount());
+    });
+
+    it('defaults the role filter to the signed-in user role when navigation state omits it', async () => {
+        helpMocks.getHelpKnowledgeDocs.mockReturnValue(docs);
+        helpMocks.searchHelpKnowledge.mockReturnValue([]);
+
+        const { container, root } = await renderHelp();
+
+        expect(Array.from(container.querySelectorAll('button')).find((button) => button.textContent === 'Parent')?.getAttribute('aria-pressed')).toBe('true');
+        expect(container.textContent).toContain('ALL PLAYS basics');
+        expect(container.textContent).toContain('Parent fee guide');
+        expect(container.textContent).not.toContain('Coach schedule tools');
 
         await act(async () => root.unmount());
     });
