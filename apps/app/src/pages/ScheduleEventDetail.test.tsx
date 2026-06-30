@@ -645,6 +645,74 @@ describe('ScheduleEventDetail route state', () => {
 
 });
 
+describe('ScheduleEventDetail availability attention', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    Object.defineProperty(window, 'scrollTo', {
+      value: vi.fn(),
+      writable: true
+    });
+    scheduleServiceMocks.loadParentScheduleRideOffers.mockResolvedValue([]);
+    scheduleServiceMocks.loadParentScheduleAssignments.mockResolvedValue([]);
+  });
+
+  afterEach(() => {
+    cleanup();
+  });
+
+  it('hides the caught-up attention state when RSVP is still missing with no other actions', async () => {
+    scheduleServiceMocks.loadParentScheduleEventDetail.mockResolvedValue({
+      events: [buildEvent({ myRsvp: 'not_responded', assignments: [] })],
+      children: []
+    });
+
+    renderScheduleEventDetail();
+
+    await waitFor(() => {
+      expect(screen.getByText('Availability needed')).toBeTruthy();
+    });
+
+    expect(screen.queryByText('All caught up')).toBeNull();
+    expect(screen.queryByText('No parent actions need attention right now.')).toBeNull();
+  });
+
+  it('keeps other attention items visible when RSVP is missing', async () => {
+    scheduleServiceMocks.loadParentScheduleEventDetail.mockResolvedValue({
+      events: [buildEvent({
+        myRsvp: 'not_responded',
+        assignments: [{ role: 'Snacks', value: '', claimable: true, claim: null }]
+      })],
+      children: []
+    });
+
+    renderScheduleEventDetail();
+
+    await waitFor(() => {
+      expect(screen.getByText('Availability needed')).toBeTruthy();
+    });
+
+    expect(screen.getByText('Review assignments')).toBeTruthy();
+    expect(screen.queryByText('Set availability')).toBeNull();
+    expect(screen.queryByText('All caught up')).toBeNull();
+  });
+
+  it('shows the caught-up attention state after RSVP is saved with no other actions', async () => {
+    scheduleServiceMocks.loadParentScheduleEventDetail.mockResolvedValue({
+      events: [buildEvent({ myRsvp: 'going', assignments: [] })],
+      children: []
+    });
+
+    renderScheduleEventDetail();
+
+    await waitFor(() => {
+      expect(screen.getByText('Availability saved')).toBeTruthy();
+    });
+
+    expect(screen.getByText('All caught up')).toBeTruthy();
+    expect(screen.getByText('No parent actions need attention right now.')).toBeTruthy();
+  });
+});
+
 describe('ScheduleEventDetail nav visibility', () => {
   beforeEach(() => {
     vi.clearAllMocks();
