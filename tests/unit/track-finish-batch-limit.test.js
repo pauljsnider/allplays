@@ -138,7 +138,7 @@ describe('standard tracker finish batch limits', () => {
         expect(gameUpdateBatch.operations[0].data).not.toHaveProperty('liveStatus');
     });
 
-    it('keeps zero-stat standard tracker records as did not appear on resave', async () => {
+    it('preserves zero-stat DNP participation metadata when resaving standard tracker games', async () => {
         const harness = createFirestoreHarness();
 
         await commitStandardTrackerFinishData({
@@ -158,6 +158,9 @@ describe('standard tracker finish batch limits', () => {
             playerStatsByPlayerId: {
                 p1: { pts: 6, ast: 1 },
                 p3: { pts: 0, ast: 0 }
+            },
+            playerParticipationByPlayerId: {
+                p3: { participated: false, participationStatus: 'did-not-appear', didNotPlay: true }
             },
             columns: ['PTS', 'AST'],
             finalHome: 6,
@@ -503,8 +506,10 @@ describe('standard tracker finish batch limits', () => {
 
         expect(source).toContain("import { commitStandardTrackerFinishData } from './js/track-finish.js?v=2';");
         expect(source).toContain('await commitStandardTrackerFinishData({');
+        expect(source).toContain('gameState.playerParticipationByPlayerId[doc.id]');
 
         const helperAwaitIndex = source.indexOf('await commitStandardTrackerFinishData({');
+        const participationParamIndex = source.indexOf('playerParticipationByPlayerId: gameState.playerParticipationByPlayerId', helperAwaitIndex);
         const successLogIndex = source.indexOf("console.log('Game data saved successfully')", helperAwaitIndex);
         const finishingFlagIndex = source.indexOf('isFinishing = true;', helperAwaitIndex);
         const mailtoRedirectIndex = source.indexOf('window.location.href = mailto;', helperAwaitIndex);
@@ -512,12 +517,14 @@ describe('standard tracker finish batch limits', () => {
         const catchIndex = source.indexOf('} catch (error) {', helperAwaitIndex);
         const alertIndex = source.indexOf("alert('Error finishing game: ' + error.message);", catchIndex);
 
+        expect(participationParamIndex).toBeGreaterThan(helperAwaitIndex);
         expect(successLogIndex).toBeGreaterThan(helperAwaitIndex);
         expect(finishingFlagIndex).toBeGreaterThan(helperAwaitIndex);
         expect(mailtoRedirectIndex).toBeGreaterThan(helperAwaitIndex);
         expect(gameRedirectIndex).toBeGreaterThan(helperAwaitIndex);
         expect(catchIndex).toBeGreaterThan(helperAwaitIndex);
         expect(alertIndex).toBeGreaterThan(catchIndex);
+        expect(participationParamIndex).toBeLessThan(catchIndex);
         expect(successLogIndex).toBeLessThan(catchIndex);
         expect(finishingFlagIndex).toBeLessThan(catchIndex);
         expect(mailtoRedirectIndex).toBeLessThan(catchIndex);
