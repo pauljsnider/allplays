@@ -55,7 +55,9 @@ export function buildAggregatedStatsWrites({ players = [], playerStatsByPlayerId
         const playerStats = hasPlayerStatsRecord ? safeStatsByPlayerId[player.id] || {} : {};
 
         const normalizedStats = buildNormalizedPlayerStats(playerStats, columns);
-        const playerAppeared = hasTrackedPlayerActivity(playerStats, normalizedStats, includeTimeMs);
+        const playerAppeared = includeTimeMs
+            ? hasTrackedPlayerActivity(playerStats, normalizedStats, includeTimeMs)
+            : hasPlayerStatsRecord || hasTrackedPlayerActivity(playerStats, normalizedStats, includeTimeMs);
         // If we are including timeMs, ensure the internal 'time' accumulator is not persisted as a stat.
         if (includeTimeMs && normalizedStats.time !== undefined) {
             delete normalizedStats.time;

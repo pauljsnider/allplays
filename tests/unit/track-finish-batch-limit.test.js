@@ -138,7 +138,7 @@ describe('standard tracker finish batch limits', () => {
         expect(gameUpdateBatch.operations[0].data).not.toHaveProperty('liveStatus');
     });
 
-    it('keeps zero-stat standard tracker records as did not appear on resave', async () => {
+    it('keeps zero-stat standard tracker player records in profile history', async () => {
         const harness = createFirestoreHarness();
 
         await commitStandardTrackerFinishData({
@@ -183,13 +183,13 @@ describe('standard tracker finish batch limits', () => {
         expect(explicitZeroStatWrite.data).toEqual({
             playerName: 'Cam',
             playerNumber: '11',
-            participated: false,
-            participationStatus: 'did-not-appear',
+            participated: true,
+            participationStatus: 'appeared',
             participationSource: 'standard-tracker-finish',
-            didNotPlay: true,
             stats: { pts: 0, ast: 0 }
         });
-        expect(hasPlayerProfileParticipation(explicitZeroStatWrite.data)).toBe(false);
+        expect(explicitZeroStatWrite.data).not.toHaveProperty('didNotPlay');
+        expect(hasPlayerProfileParticipation(explicitZeroStatWrite.data)).toBe(true);
     });
 
     it('writes private player stats to manager-only docs when finishing a standard tracker game', async () => {
