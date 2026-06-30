@@ -21,11 +21,32 @@ describe('co-parent invite workflow regression', () => {
         expect(acceptInviteSource).toContain("./js/accept-invite-flow.js?v=8");
     });
 
-    it('exports a dedicated co-parent redemption handler from db.js', () => {
+    it('routes co-parent membership grants through a callable instead of browser membership writes', () => {
         const dbSource = readFileSync(resolve(process.cwd(), 'js/db.js'), 'utf8');
+        const handlerIndex = dbSource.indexOf('export async function redeemCoParentInvite');
+        expect(handlerIndex).toBeGreaterThanOrEqual(0);
 
-        expect(dbSource).toContain('export async function redeemCoParentInvite');
-        expect(dbSource).toContain("latestCodeData.type !== 'coparent_invite'");
-        expect(dbSource).toContain("relation = codeData.relation || 'Co-parent'");
+        const handlerSource = dbSource.slice(handlerIndex, handlerIndex + 1400);
+        expect(handlerSource).toContain("httpsCallable(functions, 'redeemCoParentInvite')");
+        expect(handlerSource).toContain('await syncPublicUserProfile(userId);');
+        expect(handlerSource).not.toContain('parentOf: arrayUnion');
+        expect(handlerSource).not.toContain('parentTeamIds: arrayUnion');
+        expect(handlerSource).not.toContain('parentPlayerKeys: arrayUnion');
+    });
+
+    it('privileged callable links the co-parent, private profile, and invite atomically', () => {
+        const functionsSource = readFileSync(resolve(process.cwd(), 'functions/index.js'), 'utf8');
+        const handlerIndex = functionsSource.indexOf('exports.redeemCoParentInvite');
+        expect(handlerIndex).toBeGreaterThanOrEqual(0);
+
+        const handlerSource = functionsSource.slice(handlerIndex, handlerIndex + 5200);
+        expect(handlerSource).toContain('firestore.runTransaction(async (transaction) =>');
+        expect(handlerSource).toContain("codeData.type !== 'coparent_invite'");
+        expect(handlerSource).toContain('userId !== context.auth.uid');
+        expect(handlerSource).toContain('parentOf: appendUniqueParentLink');
+        expect(handlerSource).toContain('parentTeamIds: appendUniqueValue');
+        expect(handlerSource).toContain('parentPlayerKeys: appendUniqueValue');
+        expect(handlerSource).toContain('admin.firestore.FieldValue.arrayUnion');
+        expect(handlerSource).toContain("status: 'accepted'");
     });
 });
