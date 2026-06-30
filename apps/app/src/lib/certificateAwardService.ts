@@ -178,6 +178,11 @@ export async function publishCertificateAwardsForApp({
   if (publishDrafts.some((draft) => !draft.certificateId)) {
     throw new Error('Create certificate drafts before publishing.');
   }
+  const blockedDrafts = publishDrafts.filter((draft) => draft.descriptionStatus !== 'ready');
+  if (blockedDrafts.length) {
+    const blockedNames = blockedDrafts.map((draft) => draft.recipientName || 'certificate').join(', ');
+    throw new Error(`Review or fix certificates marked Needs review or Error before publishing: ${blockedNames}.`);
+  }
 
   const team = await getTeam(teamId, { includeInactive: true });
   if (!team) throw new Error('Team not found.');

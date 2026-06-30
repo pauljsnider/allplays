@@ -91,6 +91,8 @@ export function TeamCertificates({ auth }: { auth: AuthState }) {
   }, [drafts, previewPlayerId]);
 
   const exportableDrafts = useMemo(() => drafts.filter((draft) => draft.includeInExport !== false), [drafts]);
+  const blockedPublishDrafts = useMemo(() => exportableDrafts.filter((draft) => draft.descriptionStatus !== 'ready'), [exportableDrafts]);
+  const canPublishDrafts = reviewConfirmed && !generating && !publishing && exportableDrafts.length > 0 && blockedPublishDrafts.length === 0;
   const certificateStudioUrl = useMemo(() => {
     const batchId = drafts[0]?.batchId || '';
     return getCertificateStudioUrl(teamId, batchId);
@@ -232,6 +234,10 @@ export function TeamCertificates({ auth }: { auth: AuthState }) {
     const publishDrafts = exportableDrafts;
     if (!publishDrafts.length) {
       setError('Select at least one certificate before publishing.');
+      return;
+    }
+    if (blockedPublishDrafts.length) {
+      setError('Review or fix certificates marked Needs review or Error before publishing.');
       return;
     }
     if (!window.confirm(`Publish ${publishDrafts.length} certificate${publishDrafts.length === 1 ? '' : 's'} for parent viewing?`)) {
@@ -528,7 +534,12 @@ export function TeamCertificates({ auth }: { auth: AuthState }) {
                   />
                   <span>I reviewed these certificate descriptions and they are ready for parents.</span>
                 </label>
-                <button type="button" className="primary-button mt-3" disabled={!reviewConfirmed || generating || publishing || exportableDrafts.length === 0} onClick={() => void onPublishDrafts()}>
+                {blockedPublishDrafts.length ? (
+                  <div className="mt-2 text-xs font-bold text-amber-900">
+                    Fix or manually review {blockedPublishDrafts.length} selected certificate{blockedPublishDrafts.length === 1 ? '' : 's'} marked Needs review or Error before publishing.
+                  </div>
+                ) : null}
+                <button type="button" className="primary-button mt-3" disabled={!canPublishDrafts} onClick={() => void onPublishDrafts()}>
                   {publishing ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <Send className="h-4 w-4" aria-hidden="true" />}
                   Publish selected
                 </button>

@@ -173,6 +173,39 @@ describe('certificateAwardService', () => {
     expect(legacyDraftMocks.updateCertificate).not.toHaveBeenCalled();
   });
 
+  it('blocks selected certificates that still need review or have errors before parent publishing', async () => {
+    const unsafeDrafts = [
+      {
+        ...draft,
+        description: 'Fallback text needs coach review.',
+        descriptionSource: 'fallback' as const,
+        descriptionStatus: 'needs-review' as const
+      },
+      {
+        ...draft,
+        id: 'cert-2',
+        certificateId: 'cert-2',
+        playerId: 'player-2',
+        recipientName: 'Sam Star',
+        description: 'AI failed before completion.',
+        descriptionSource: 'fallback' as const,
+        descriptionStatus: 'error' as const
+      }
+    ];
+
+    await expect(publishCertificateAwardsForApp({
+      teamId: 'team-1',
+      user,
+      shared,
+      drafts: unsafeDrafts,
+      reviewConfirmed: true
+    })).rejects.toThrow('Review or fix certificates marked Needs review or Error before publishing: Pat Star, Sam Star.');
+
+    expect(legacyDraftMocks.updateCertificate).not.toHaveBeenCalled();
+    expect(legacyDraftMocks.updateCertificateBatch).not.toHaveBeenCalled();
+    expect(legacyDraftMocks.setCertificateDefaults).not.toHaveBeenCalled();
+  });
+
   it('publishes the same certificate payload shape parent certificate reads expect', async () => {
     const readyDraft = {
       ...draft,
