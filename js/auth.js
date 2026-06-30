@@ -15,8 +15,8 @@ import {
     signInWithEmailLink,
     updatePassword
 } from './firebase.js?v=19';
-import { validateAccessCode, markAccessCodeAsUsed, updateUserProfile, redeemParentInvite, getUserProfile, getUserTeams, getUserByEmail, getTeam, listMyParentMembershipRequests, normalizeParentScopeLinks } from './db.js?v=76';
-import { executeEmailPasswordSignup } from './signup-flow.js?v=5';
+import { validateAccessCode, markAccessCodeAsUsed, updateUserProfile, redeemParentInvite, redeemHouseholdInvite, redeemCoParentInvite, getUserProfile, getUserTeams, getUserByEmail, getTeam, listMyParentMembershipRequests, normalizeParentScopeLinks } from './db.js?v=77';
+import { executeEmailPasswordSignup } from './signup-flow.js?v=6';
 import { redeemAdminInviteAcceptance } from './admin-invite.js?v=5';
 import { mergeApprovedParentMembershipRequests } from './parent-membership-utils.js?v=2';
 
@@ -55,6 +55,28 @@ async function linkParentInviteOrRollback(user, parentInviteCode) {
     }
 }
 
+async function redeemHouseholdInviteOrRollback(user, code) {
+    try {
+        await redeemHouseholdInvite(user.uid, code);
+    } catch (inviteLinkError) {
+        console.error('Error linking household invite:', inviteLinkError);
+        clearPendingActivationCode();
+        await cleanupFailedNewUser(user, 'household invite link failure');
+        throw inviteLinkError;
+    }
+}
+
+async function redeemCoParentInviteOrRollback(user, code) {
+    try {
+        await redeemCoParentInvite(user.uid, code, user.email);
+    } catch (inviteLinkError) {
+        console.error('Error linking co-parent invite:', inviteLinkError);
+        clearPendingActivationCode();
+        await cleanupFailedNewUser(user, 'co-parent invite link failure');
+        throw inviteLinkError;
+    }
+}
+
 export async function login(email, password) {
     const userCredential = await signInWithEmailAndPassword(auth, email, password);
 
@@ -82,6 +104,8 @@ export async function signup(email, password, activationCode) {
             createUserWithEmailAndPassword,
             redeemParentInvite,
             redeemAdminInviteAcceptance,
+            redeemHouseholdInvite,
+            redeemCoParentInvite,
             updateUserProfile,
             markAccessCodeAsUsed,
             getTeam,
@@ -187,6 +211,32 @@ async function processGoogleAuthResult(result, activationCode = null) {
                 });
             } catch (e) {
                 console.error('Error creating user profile after parent invite redeem:', e);
+            }
+        } else if (validation.type === 'household_invite') {
+            await redeemHouseholdInviteOrRollback(result.user, validation.data?.code || code);
+
+            try {
+                await updateUserProfile(userId, {
+                    email: result.user.email,
+                    fullName: result.user.displayName,
+                    photoUrl: result.user.photoURL,
+                    createdAt: new Date()
+                });
+            } catch (e) {
+                console.error('Error creating user profile after household invite redeem:', e);
+            }
+        } else if (validation.type === 'coparent_invite') {
+            await redeemCoParentInviteOrRollback(result.user, validation.data?.code || code);
+
+            try {
+                await updateUserProfile(userId, {
+                    email: result.user.email,
+                    fullName: result.user.displayName,
+                    photoUrl: result.user.photoURL,
+                    createdAt: new Date()
+                });
+            } catch (e) {
+                console.error('Error creating user profile after co-parent invite redeem:', e);
             }
         } else if (validation.type === 'admin_invite') {
             try {

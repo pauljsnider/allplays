@@ -6,6 +6,8 @@ const signInWithRedirectMock = vi.fn();
 const getRedirectResultMock = vi.fn();
 const validateAccessCodeMock = vi.fn();
 const redeemParentInviteMock = vi.fn();
+const redeemHouseholdInviteMock = vi.fn();
+const redeemCoParentInviteMock = vi.fn();
 const updateUserProfileMock = vi.fn();
 const markAccessCodeAsUsedMock = vi.fn();
 
@@ -27,11 +29,13 @@ vi.mock('../../js/firebase.js?v=19', () => ({
     updatePassword: vi.fn()
 }));
 
-vi.mock('../../js/db.js?v=76', () => ({
+vi.mock('../../js/db.js?v=77', () => ({
     validateAccessCode: validateAccessCodeMock,
     markAccessCodeAsUsed: markAccessCodeAsUsedMock,
     updateUserProfile: updateUserProfileMock,
     redeemParentInvite: redeemParentInviteMock,
+    redeemHouseholdInvite: redeemHouseholdInviteMock,
+    redeemCoParentInvite: redeemCoParentInviteMock,
     getUserProfile: vi.fn(),
     getUserTeams: vi.fn(),
     getUserByEmail: vi.fn(),
@@ -39,7 +43,7 @@ vi.mock('../../js/db.js?v=76', () => ({
     listMyParentMembershipRequests: vi.fn()
 }));
 
-vi.mock('../../js/signup-flow.js?v=5', () => ({
+vi.mock('../../js/signup-flow.js?v=6', () => ({
     executeEmailPasswordSignup: vi.fn()
 }));
 
@@ -70,6 +74,73 @@ describe('loginWithGoogle parent invite failure cleanup', () => {
 
     afterEach(() => {
         vi.unstubAllGlobals();
+    });
+
+
+    it('redeems household invites during Google signup instead of generically consuming the code', async () => {
+        const result = {
+            user: {
+                uid: 'user-123',
+                email: 'household@example.com',
+                displayName: 'Household User',
+                photoURL: 'https://example.com/photo.png',
+                metadata: {
+                    creationTime: '2026-03-01T11:00:00.000Z',
+                    lastSignInTime: '2026-03-01T11:00:00.000Z'
+                },
+                delete: vi.fn().mockResolvedValue(undefined)
+            }
+        };
+
+        signInWithPopupMock.mockResolvedValue(result);
+        validateAccessCodeMock.mockResolvedValue({
+            valid: true,
+            type: 'household_invite',
+            codeId: 'code-household-1',
+            data: { code: 'HOME1234' }
+        });
+        redeemHouseholdInviteMock.mockResolvedValue({ success: true });
+
+        const { loginWithGoogle } = await import('../../js/auth.js');
+
+        await loginWithGoogle('HOME1234');
+
+        expect(redeemHouseholdInviteMock).toHaveBeenCalledWith('user-123', 'HOME1234');
+        expect(markAccessCodeAsUsedMock).not.toHaveBeenCalled();
+        expect(updateUserProfileMock).toHaveBeenCalledTimes(1);
+        expect(sessionStorageMock.removeItem).toHaveBeenCalledWith('pendingActivationCode');
+    });
+
+    it('redeems co-parent invites during Google signup with the Google email', async () => {
+        const result = {
+            user: {
+                uid: 'user-456',
+                email: 'coparent@example.com',
+                displayName: 'Co Parent',
+                photoURL: 'https://example.com/photo.png',
+                metadata: {
+                    creationTime: '2026-03-01T11:00:00.000Z',
+                    lastSignInTime: '2026-03-01T11:00:00.000Z'
+                },
+                delete: vi.fn().mockResolvedValue(undefined)
+            }
+        };
+
+        signInWithPopupMock.mockResolvedValue(result);
+        validateAccessCodeMock.mockResolvedValue({
+            valid: true,
+            type: 'coparent_invite',
+            codeId: 'code-coparent-1',
+            data: { code: 'COPO1234' }
+        });
+        redeemCoParentInviteMock.mockResolvedValue({ success: true });
+
+        const { loginWithGoogle } = await import('../../js/auth.js');
+
+        await loginWithGoogle('COPO1234');
+
+        expect(redeemCoParentInviteMock).toHaveBeenCalledWith('user-456', 'COPO1234', 'coparent@example.com');
+        expect(markAccessCodeAsUsedMock).not.toHaveBeenCalled();
     });
 
     it('deletes auth user, signs out, and rethrows when parent invite linking fails', async () => {

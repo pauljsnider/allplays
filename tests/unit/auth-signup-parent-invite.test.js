@@ -27,6 +27,8 @@ const dbMocks = vi.hoisted(() => ({
     markAccessCodeAsUsed: vi.fn(),
     updateUserProfile: vi.fn(),
     redeemParentInvite: vi.fn(),
+    redeemHouseholdInvite: vi.fn(),
+    redeemCoParentInvite: vi.fn(),
     getTeam: vi.fn(),
     addTeamAdminEmail: vi.fn(),
     getUserProfile: vi.fn(),
@@ -36,7 +38,10 @@ const dbMocks = vi.hoisted(() => ({
 }));
 
 vi.mock('../../js/firebase.js?v=19', () => firebaseMocks);
-vi.mock('../../js/db.js?v=76', () => dbMocks);
+vi.mock('../../js/db.js?v=77', () => dbMocks);
+vi.mock('../../js/admin-invite.js?v=5', () => ({
+    redeemAdminInviteAcceptance: vi.fn()
+}));
 
 const { signup, loginWithGoogle, handleGoogleRedirectResult } = await import('../../js/auth.js');
 

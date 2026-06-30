@@ -21,17 +21,23 @@ vi.mock('../../js/firebase.js?v=19', () => ({
     updatePassword: vi.fn()
 }));
 
-vi.mock('../../js/db.js?v=76', () => ({
+vi.mock('../../js/db.js?v=77', () => ({
     validateAccessCode: vi.fn(),
     markAccessCodeAsUsed: vi.fn(),
     updateUserProfile: vi.fn(),
     redeemParentInvite: vi.fn(),
+    redeemHouseholdInvite: vi.fn(),
+    redeemCoParentInvite: vi.fn(),
     getTeam: vi.fn(),
     addTeamAdminEmail: vi.fn(),
     getUserProfile: vi.fn(),
     getUserTeams: vi.fn(),
     getUserByEmail: getUserByEmailMock,
     listMyParentMembershipRequests: vi.fn()
+}));
+
+vi.mock('../../js/admin-invite.js?v=5', () => ({
+    redeemAdminInviteAcceptance: vi.fn()
 }));
 
 describe('sendInviteEmail localStorage behavior', () => {

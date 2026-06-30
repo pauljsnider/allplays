@@ -1,0 +1,23 @@
+import { describe, expect, it } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
+
+describe('React app email signup invite redemption dependencies', () => {
+  it('passes household and co-parent invite redeemers into the shared signup flow', () => {
+    const authServiceSource = readFileSync(resolve(process.cwd(), 'apps/app/src/lib/authService.ts'), 'utf8');
+
+    const signupStart = authServiceSource.indexOf('export async function signUpWithEmail');
+    const signupEnd = authServiceSource.indexOf('async function signInWithNativeGoogleCredential', signupStart);
+    const signupSource = authServiceSource.slice(signupStart, signupEnd);
+
+    expect(signupSource).toContain('redeemParentInvite: dbModule.redeemParentInvite');
+    expect(signupSource).toContain('redeemHouseholdInvite: dbModule.redeemHouseholdInvite');
+    expect(signupSource).toContain('redeemCoParentInvite: dbModule.redeemCoParentInvite');
+  });
+
+  it('keeps the legacy auth db adapter typed for co-parent invite redemption', () => {
+    const adapterSource = readFileSync(resolve(process.cwd(), 'apps/app/src/lib/adapters/legacyAuth.ts'), 'utf8');
+
+    expect(adapterSource).toContain('redeemCoParentInvite: (...args: any[]) => Promise<unknown>;');
+  });
+});
