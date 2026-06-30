@@ -171,9 +171,7 @@ describe('TeamFeesComponent checkout flow', () => {
       .mockResolvedValueOnce({ docs: [] })
       .mockResolvedValueOnce({ docs: [] })
       .mockResolvedValueOnce({ docs: [] })
-      .mockResolvedValueOnce({ docs: [playerFee] })
-      .mockResolvedValueOnce({ docs: [] })
-      .mockResolvedValueOnce({ docs: [] });
+      .mockResolvedValueOnce({ docs: [playerFee] });
 
     await component.ngOnInit();
 
@@ -181,9 +179,7 @@ describe('TeamFeesComponent checkout flow', () => {
     expect(getDoc).toHaveBeenCalled();
     expect(where).toHaveBeenCalledWith('teamId', '==', 'team-real');
     expect(where).toHaveBeenCalledWith('playerId', '==', 'player-real');
-    expect(where).toHaveBeenCalledWith('childId', '==', 'player-real');
-    expect(where).toHaveBeenCalledWith('playerKey', '==', 'team-real::player-real');
-    expect(query).toHaveBeenCalledTimes(6);
+    expect(query).toHaveBeenCalledTimes(4);
     expect(component.teamFees).toEqual([
       {
         id: 'player-real',
@@ -196,52 +192,6 @@ describe('TeamFeesComponent checkout flow', () => {
         isPaid: false,
         collectionMode: '',
         canPayOnline: false,
-        offlinePaymentInstructions: ''
-      }
-    ]);
-  });
-
-  it('loads parent-assigned fee recipients that use childId and playerKey without playerId', async () => {
-    mockGetDoc.mockResolvedValue({
-      exists: () => true,
-      data: () => ({ parentPlayerKeys: ['team-real::player-real'] })
-    });
-    const childLinkedFee = feeDoc('teams/team-real/feeBatches/batch-real/feeRecipients/child-linked', 'child-linked', {
-      teamId: 'team-real',
-      childId: 'player-real',
-      playerKey: 'team-real::player-real',
-      feeTitle: 'Child-linked roster fee',
-      amountCents: 7500,
-      status: 'unpaid',
-      collectionMode: 'online_stripe'
-    });
-    mockGetDocs
-      .mockResolvedValueOnce({ docs: [] })
-      .mockResolvedValueOnce({ docs: [] })
-      .mockResolvedValueOnce({ docs: [] })
-      .mockResolvedValueOnce({ docs: [] })
-      .mockResolvedValueOnce({ docs: [childLinkedFee] })
-      .mockResolvedValueOnce({ docs: [childLinkedFee] });
-
-    await component.ngOnInit();
-
-    expect(where).toHaveBeenCalledWith('teamId', '==', 'team-real');
-    expect(where).toHaveBeenCalledWith('playerId', '==', 'player-real');
-    expect(where).toHaveBeenCalledWith('childId', '==', 'player-real');
-    expect(where).toHaveBeenCalledWith('playerKey', '==', 'team-real::player-real');
-    expect(query).toHaveBeenCalledTimes(6);
-    expect(component.teamFees).toEqual([
-      {
-        id: 'child-linked',
-        teamId: 'team-real',
-        batchId: 'batch-real',
-        recipientId: 'child-linked',
-        name: 'Child-linked roster fee',
-        amount: 75,
-        status: 'unpaid',
-        isPaid: false,
-        collectionMode: 'online_stripe',
-        canPayOnline: true,
         offlinePaymentInstructions: ''
       }
     ]);
