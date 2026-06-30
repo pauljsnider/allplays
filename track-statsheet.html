@@ -225,6 +225,8 @@
     let parsedHomeRows = [];
     let parsedVisitorRows = [];
     let isSwapped = false;
+    let homeScoreInputDerivedFromRows = false;
+    let visitorScoreInputDerivedFromRows = false;
 
     checkAuth((user) => {
       if (!user) {
@@ -496,8 +498,10 @@
         if (field) {
           if (field === 'include') {
             homeRows[index][field] = event.target.checked;
+            updateScoreInputs();
           } else if (field === 'totalPoints') {
             homeRows[index][field] = Number(event.target.value || 0);
+            updateScoreInputs();
           } else if (field === 'fouls') {
             homeRows[index][field] = clampFouls(event.target.value);
           } else {
@@ -513,6 +517,14 @@
         const field = event.target.dataset.field;
         if (field === 'mappedPlayerId') {
           homeRows[index][field] = event.target.value;
+          if (event.target.value) {
+            homeRows[index].include = true;
+            const includeCheckbox = row.querySelector('[data-field="include"]');
+            if (includeCheckbox) {
+              includeCheckbox.checked = true;
+            }
+            updateScoreInputs();
+          }
         }
       });
 
@@ -576,13 +588,23 @@
       const visitorTotal = visitorRows.filter(r => r.include).reduce((sum, r) => sum + Number(r.totalPoints || 0), 0);
       const homeScoreInput = document.getElementById('home-score-input');
       const visitorScoreInput = document.getElementById('visitor-score-input');
-      if (!homeScoreInput.value || Number(homeScoreInput.value) === 0) {
+      if (homeScoreInputDerivedFromRows || !homeScoreInput.value || Number(homeScoreInput.value) === 0) {
         homeScoreInput.value = homeTotal;
+        homeScoreInputDerivedFromRows = true;
       }
-      if (!visitorScoreInput.value || Number(visitorScoreInput.value) === 0) {
+      if (visitorScoreInputDerivedFromRows || !visitorScoreInput.value || Number(visitorScoreInput.value) === 0) {
         visitorScoreInput.value = visitorTotal;
+        visitorScoreInputDerivedFromRows = true;
       }
     }
+
+    document.getElementById('home-score-input').addEventListener('input', () => {
+      homeScoreInputDerivedFromRows = false;
+    });
+
+    document.getElementById('visitor-score-input').addEventListener('input', () => {
+      visitorScoreInputDerivedFromRows = false;
+    });
 
     document.getElementById('analyze-btn').addEventListener('click', async () => {
       if (!statSheetFile) {
@@ -695,6 +717,8 @@ RETURN JSON:
         const visitorScoreInput = document.getElementById('visitor-score-input');
         homeScoreInput.value = Number(response?.scores?.homeFinal || 0);
         visitorScoreInput.value = Number(response?.scores?.visitorFinal || 0);
+        homeScoreInputDerivedFromRows = false;
+        visitorScoreInputDerivedFromRows = false;
 
         isSwapped = shouldSwap;
         homeRows = autoAssignRosterMatches(shouldSwap ? parsedVisitorRows : parsedHomeRows);

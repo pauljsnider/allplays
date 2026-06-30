@@ -22,6 +22,12 @@ describe('track statsheet apply helpers', () => {
         });
     });
 
+    it('re-includes an unmatched home row and refreshes derived scores when an admin maps it to a roster player', () => {
+        expect(trackStatsheetSource).toMatch(/if \(field === 'mappedPlayerId'\) \{[\s\S]*homeRows\[index\]\[field\] = event\.target\.value;[\s\S]*if \(event\.target\.value\) \{[\s\S]*homeRows\[index\]\.include = true;[\s\S]*includeCheckbox\.checked = true;[\s\S]*updateScoreInputs\(\);/);
+        expect(trackStatsheetSource).toMatch(/if \(homeScoreInputDerivedFromRows \|\| !homeScoreInput\.value \|\| Number\(homeScoreInput\.value\) === 0\) \{[\s\S]*homeScoreInput\.value = homeTotal;[\s\S]*homeScoreInputDerivedFromRows = true;/);
+        expect(trackStatsheetSource).toContain("document.getElementById('home-score-input').addEventListener('input', () => {");
+    });
+
     it('blocks apply when no home row is included for saving', () => {
         expect(validateTrackStatsheetApplyRows([
             { include: false, mappedPlayerId: '' }
