@@ -108,6 +108,43 @@ describe('StaffRsvpReminderPanel', () => {
             expect(sendStaffRsvpReminder).toHaveBeenCalledWith(expect.objectContaining({ id: 'game-1' }), auth.user, auth.profile);
         });
         expect(screen.getByText('RSVP reminder sent to team chat and 3 parent/guardian emails.')).toBeTruthy();
+        expect(screen.getByText('Sent')).toBeTruthy();
+        expect(screen.queryByRole('button', { name: 'Send reminder' })).toBeNull();
+        expect(screen.getByRole('button', { name: 'Send again' })).toBeTruthy();
+    });
+
+    it('keeps repeat reminders secondary and confirmed after a successful send', async () => {
+        const staffRsvpLoader = createStaffRsvpLoader();
+        staffRsvpLoader.loadReminderPreview.mockResolvedValue(preview);
+        vi.mocked(sendStaffRsvpReminder).mockResolvedValue({
+            ...preview,
+            emailSentCount: 3
+        });
+        const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValueOnce(true).mockReturnValueOnce(false).mockReturnValueOnce(true);
+
+        renderPanel({}, staffRsvpLoader);
+
+        await waitFor(() => {
+            expect(screen.getByRole('button', { name: 'Send reminder' })).toBeTruthy();
+        });
+
+        fireEvent.click(screen.getByRole('button', { name: 'Send reminder' }));
+
+        await waitFor(() => {
+            expect(screen.getByRole('button', { name: 'Send again' })).toBeTruthy();
+        });
+        expect(sendStaffRsvpReminder).toHaveBeenCalledTimes(1);
+
+        fireEvent.click(screen.getByRole('button', { name: 'Send again' }));
+        expect(confirmSpy).toHaveBeenCalledTimes(2);
+        expect(sendStaffRsvpReminder).toHaveBeenCalledTimes(1);
+
+        fireEvent.click(screen.getByRole('button', { name: 'Send again' }));
+
+        await waitFor(() => {
+            expect(sendStaffRsvpReminder).toHaveBeenCalledTimes(2);
+        });
+        expect(confirmSpy).toHaveBeenCalledTimes(3);
     });
 
     it('does not render when there are no missing player RSVPs', async () => {

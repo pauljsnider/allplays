@@ -14,6 +14,7 @@ export function StaffRsvpReminderPanel({ refreshToken = 0, staffRsvpLoader }: { 
   const [sending, setSending] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [hasSentReminder, setHasSentReminder] = useState(false);
 
   const canLoad = Boolean(auth.user && event.isTeamRsvpReminderManager && event.isDbGame && !event.isCancelled);
 
@@ -33,6 +34,7 @@ export function StaffRsvpReminderPanel({ refreshToken = 0, staffRsvpLoader }: { 
 
   useEffect(() => {
     setStatus(null);
+    setHasSentReminder(false);
     if (canLoad) {
       refreshPreview();
     } else {
@@ -57,6 +59,7 @@ export function StaffRsvpReminderPanel({ refreshToken = 0, staffRsvpLoader }: { 
     try {
       const result: StaffRsvpReminderSendResult = await sendStaffRsvpReminder(event, auth.user, auth.profile || {});
       setPreview(result);
+      setHasSentReminder(true);
       setStatus(`RSVP reminder sent to team chat and ${result.emailSentCount} parent/guardian ${result.emailSentCount === 1 ? 'email' : 'emails'}.`);
     } catch (sendError: any) {
       setError(sendError?.message || 'Unable to send RSVP reminder.');
@@ -74,14 +77,28 @@ export function StaffRsvpReminderPanel({ refreshToken = 0, staffRsvpLoader }: { 
             {preview.missingPlayerCount} no-response {preview.missingPlayerCount === 1 ? 'player' : 'players'} · {preview.eligibleEmailCount} eligible parent/guardian {preview.eligibleEmailCount === 1 ? 'email' : 'emails'}.
           </div>
         </div>
-        <button
-          type="button"
-          className="primary-button min-h-9 flex-none px-3 text-xs"
-          disabled={sending || loading}
-          onClick={sendReminder}
-        >
-          {sending ? 'Sending…' : 'Send reminder'}
-        </button>
+        {hasSentReminder ? (
+          <div className="flex flex-none flex-col items-end gap-1">
+            <div className="rounded-full bg-emerald-100 px-3 py-1 text-xs font-black text-emerald-800">Sent</div>
+            <button
+              type="button"
+              className="text-xs font-bold text-primary-700 underline-offset-2 hover:underline disabled:text-gray-400"
+              disabled={sending || loading}
+              onClick={sendReminder}
+            >
+              {sending ? 'Sending…' : 'Send again'}
+            </button>
+          </div>
+        ) : (
+          <button
+            type="button"
+            className="primary-button min-h-9 flex-none px-3 text-xs"
+            disabled={sending || loading}
+            onClick={sendReminder}
+          >
+            {sending ? 'Sending…' : 'Send reminder'}
+          </button>
+        )}
       </div>
       {status ? <div className="mt-2 text-xs font-bold text-emerald-700">{status}</div> : null}
       {error ? <div className="mt-2 text-xs font-bold text-rose-700">{error}</div> : null}
