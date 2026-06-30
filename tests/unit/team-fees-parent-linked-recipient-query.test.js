@@ -8,10 +8,10 @@ const componentSource = readFileSync(
 );
 
 describe('Team Fees parent-linked recipient queries', () => {
-  it('fetches child-linked fee recipients by playerId, childId, and playerKey', () => {
+  it('fetches child-linked fee recipients only by rules-authorized player fields', () => {
     expect(componentSource).toContain('...childLinks.flatMap((child) => [');
     expect(componentSource).toContain("where('playerId', '==', child.playerId)");
-    expect(componentSource).toContain("where('childId', '==', child.playerId)");
     expect(componentSource).toContain("where('playerKey', '==', getParentPlayerKey(child.teamId || '', child.playerId || ''))");
+    expect(componentSource).not.toContain("where('childId', '==', child.playerId)");
   });
 });

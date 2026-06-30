@@ -256,11 +256,6 @@ export class TeamFeesComponent implements OnInit {
             query(
               recipientsRef,
               where('teamId', '==', child.teamId),
-              where('childId', '==', child.playerId)
-            ),
-            query(
-              recipientsRef,
-              where('teamId', '==', child.teamId),
               where('playerKey', '==', getParentPlayerKey(child.teamId || '', child.playerId || ''))
             )
           ])
