@@ -4835,6 +4835,131 @@ export async function redeemParentInvite(userId, code, authEmail = null) {
     };
 }
 
+export async function redeemCoParentInvite(userId, code, authEmail = null) {
+    console.log('[redeemCoParentInvite] start', { userId, code });
+
+    const codeDoc = await getValidatedAccessCodeDoc(code);
+    const codeRef = codeDoc.ref;
+    let codeData;
+
+    const resolvedAuthEmail = normalizeInviteEmail(
+        authEmail || auth.currentUser?.email || (await getUserProfile(userId))?.email
+    );
+
+    await runTransaction(db, async (transaction) => {
+        const latestCodeSnapshot = await transaction.get(codeRef);
+        if (!latestCodeSnapshot.exists()) {
+            throw new Error('Invalid or used code');
+        }
+
+        const latestCodeData = latestCodeSnapshot.data() || {};
+        if (latestCodeData.type !== 'coparent_invite') {
+            throw new Error('Not a co-parent invite code');
+        }
+        if (latestCodeData.used || latestCodeData.revoked === true || latestCodeData.status === 'removed') {
+            throw new Error('Invalid or used code');
+        }
+        if (isAccessCodeExpired(latestCodeData.expiresAt)) {
+            throw new Error('Code has expired');
+        }
+
+        const invitedEmail = normalizeInviteEmail(latestCodeData.email);
+        if (invitedEmail && (!resolvedAuthEmail || invitedEmail !== resolvedAuthEmail)) {
+            throw new Error(getInviteEmailMismatchMessage(invitedEmail));
+        }
+
+        transaction.update(codeRef, {
+            used: true,
+            usedBy: userId,
+            usedAt: Timestamp.now()
+        });
+
+        codeData = latestCodeData;
+    });
+
+    let team = null;
+    let player = null;
+    try {
+        [team, player] = await Promise.all([
+            getTeam(codeData.teamId),
+            getPlayers(codeData.teamId).then(ps => ps.find(p => p.id === codeData.playerId))
+        ]);
+
+        if (!team || !player) {
+            throw new Error('Team or Player not found');
+        }
+
+        const relation = codeData.relation || 'Co-parent';
+        const userRef = doc(db, 'users', userId);
+        await setDoc(userRef, {
+            parentOf: arrayUnion({
+                teamId: codeData.teamId,
+                playerId: codeData.playerId,
+                teamName: team.name,
+                playerName: player.name,
+                playerNumber: player.number,
+                playerPhotoUrl: player.photoUrl || null,
+                relation
+            }),
+            parentTeamIds: arrayUnion(codeData.teamId),
+            parentPlayerKeys: arrayUnion(`${codeData.teamId}::${codeData.playerId}`),
+            roles: arrayUnion('parent')
+        }, { merge: true });
+        await syncPublicUserProfile(userId);
+
+        try {
+            const privateProfileRef = doc(db, `teams/${codeData.teamId}/players/${codeData.playerId}/private/profile`);
+            await setDoc(privateProfileRef, {
+                parents: arrayUnion({
+                    userId,
+                    email: codeData.email || 'pending',
+                    relation,
+                    status: 'accepted',
+                    acceptedAt: Timestamp.now(),
+                    addedAt: Timestamp.now()
+                })
+            }, { merge: true });
+        } catch (err) {
+            console.error('redeemCoParentInvite: error updating private player parents (non-fatal)', {
+                message: err?.message,
+                code: err?.code,
+                name: err?.name
+            });
+        }
+    } catch (err) {
+        try {
+            await runTransaction(db, async (transaction) => {
+                const latestCodeSnapshot = await transaction.get(codeRef);
+                if (!latestCodeSnapshot.exists()) {
+                    return;
+                }
+
+                const latestCodeData = latestCodeSnapshot.data() || {};
+                if (latestCodeData.used === true && latestCodeData.usedBy === userId) {
+                    transaction.update(codeRef, {
+                        used: false,
+                        usedBy: null,
+                        usedAt: null
+                    });
+                }
+            });
+        } catch (rollbackErr) {
+            console.error('redeemCoParentInvite: failed to rollback code claim', rollbackErr);
+        }
+        throw err;
+    }
+
+    console.log('[redeemCoParentInvite] completed', { codeId: codeDoc.id });
+    return {
+        success: true,
+        teamId: codeData.teamId,
+        teamName: team?.name || codeData.teamName || null,
+        playerId: codeData.playerId || null,
+        playerName: player?.name || codeData.playerName || null,
+        playerNum: player?.number ?? codeData.playerNum ?? null
+    };
+}
+
 function normalizeHouseholdInviteEmail(email) {
     return String(email || '').trim().toLowerCase();
 }

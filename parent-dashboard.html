@@ -388,7 +388,7 @@
             listFamilyShareTokens,
             revokeFamilyShareToken,
             updateFamilyShareTokenCalendars
-        } from './js/db.js?v=76';
+        } from './js/db.js?v=77';
         import { renderHeader, renderFooter, escapeHtml, fetchAndParseCalendar, extractOpponent, isPracticeEvent, expandRecurrence, getCalendarEventTrackingId, isTrackedCalendarEvent } from './js/utils.js?v=14';
         import {
             getIncentiveRules,
@@ -547,10 +547,16 @@
                     statusEl.textContent = '';
                 }
 
-                await inviteCoParentToAthlete(currentUserId, teamId, playerId, coParentEmail, playerName);
+                const invite = await inviteCoParentToAthlete(currentUserId, teamId, playerId, coParentEmail, playerName);
+                const inviteCode = String(invite?.code || '').trim().toUpperCase();
+                const inviteUrl = inviteCode
+                    ? `${window.location.origin}${window.location.pathname.replace(/[^/]*$/, '')}accept-invite.html?code=${encodeURIComponent(inviteCode)}&type=coparent_invite`
+                    : '';
 
                 if (statusEl) {
-                    statusEl.textContent = 'Invitation sent successfully!';
+                    statusEl.innerHTML = inviteUrl
+                        ? `Co-parent invite created. Share this link with ${escapeHtml(coParentEmail)}: <a class="underline font-medium break-all" href="${escapeHtml(inviteUrl)}">${escapeHtml(inviteUrl)}</a><br><span class="text-xs text-gray-600">Invite code: <span class="font-mono font-semibold">${escapeHtml(inviteCode)}</span></span>`
+                        : 'Co-parent invite created. Share the invite code with the co-parent.';
                     statusEl.className = 'text-sm mt-2 text-green-600';
                     statusEl.classList.remove('hidden');
                 }

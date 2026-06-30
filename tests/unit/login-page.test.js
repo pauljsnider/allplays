@@ -94,6 +94,17 @@ describe('login page redirect coordination', () => {
             .toBe('accept-invite.html?code=AB12CD34&type=household');
     });
 
+    it('redeems co-parent invite links after login', () => {
+        const { coordinator } = createCoordinator({
+            search: '?code=ab12cd34&type=coparent_invite',
+            defaultRedirect: 'parent-dashboard.html'
+        });
+
+        expect(coordinator.shouldRedeemInviteFromLogin).toBe(true);
+        expect(coordinator.getPostAuthRedirect({ uid: 'user-1' }, coordinator.shouldRedeemInviteFromLogin))
+            .toBe('accept-invite.html?code=AB12CD34&type=coparent_invite');
+    });
+
     it('redeems type-less 8-character invite links after login', () => {
         const { coordinator } = createCoordinator({
             search: '?code=ab12cd34',

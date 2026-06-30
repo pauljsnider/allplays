@@ -87,7 +87,8 @@ export async function processInviteCode(userId, code, deps, authEmail = null) {
         updateUserProfile,
         markAccessCodeAsUsed,
         redeemAdminInviteAtomically,
-        redeemHouseholdInvite
+        redeemHouseholdInvite,
+        redeemCoParentInvite
     } = deps;
 
     const validation = await validateAccessCode(code);
@@ -130,6 +131,27 @@ export async function processInviteCode(userId, code, deps, authEmail = null) {
         return {
             success: true,
             message: `You've been added to follow ${playerLabel} on ${team?.name || redeemResult?.teamName || validation.data?.teamName || 'the team'}!`,
+            redirectUrl: 'parent-dashboard.html'
+        };
+    }
+
+    if (validation.type === 'coparent_invite') {
+        assertInviteEmailMatches(validation.data?.email, authEmail);
+
+        if (typeof redeemCoParentInvite !== 'function') {
+            throw new Error('Missing co-parent invite redemption handler');
+        }
+
+        const redeemResult = await redeemCoParentInvite(userId, code, authEmail);
+        const teamId = redeemResult?.teamId || null;
+        const team = teamId ? await getTeam(teamId) : null;
+        const playerLabel = redeemResult?.playerNum || validation.data?.playerNum
+            ? `#${redeemResult?.playerNum || validation.data?.playerNum}`
+            : redeemResult?.playerName || validation.data?.playerName || 'a player';
+
+        return {
+            success: true,
+            message: `You've been added as a co-parent for ${playerLabel} on ${team?.name || redeemResult?.teamName || validation.data?.teamName || 'the team'}!`,
             redirectUrl: 'parent-dashboard.html'
         };
     }

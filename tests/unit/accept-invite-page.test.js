@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 import { createInviteProcessor, getInviteDashboardUrl, isInviteAlreadyRedeemedError } from '../../js/accept-invite-flow.js';
 
 const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
-const ACCEPT_INVITE_DB_IMPORT = "import { validateAccessCode, redeemParentInvite, redeemHouseholdInvite, redeemAdminInviteAtomically, updateUserProfile, updateTeam, getTeam, getUserProfile, markAccessCodeAsUsed } from './js/db.js?v=76';";
+const ACCEPT_INVITE_DB_IMPORT = "import { validateAccessCode, redeemParentInvite, redeemHouseholdInvite, redeemCoParentInvite, redeemAdminInviteAtomically, updateUserProfile, updateTeam, getTeam, getUserProfile, markAccessCodeAsUsed } from './js/db.js?v=77';";
 
 class MockClassList {
     constructor(initial = []) {
@@ -109,10 +109,10 @@ const setTimeout = deps.setTimeout;
         )
         .replace(
             ACCEPT_INVITE_DB_IMPORT,
-            'const { validateAccessCode, redeemParentInvite, redeemHouseholdInvite, redeemAdminInviteAtomically, updateUserProfile, updateTeam, getTeam, getUserProfile, markAccessCodeAsUsed } = deps.db;'
+            'const { validateAccessCode, redeemParentInvite, redeemHouseholdInvite, redeemCoParentInvite, redeemAdminInviteAtomically, updateUserProfile, updateTeam, getTeam, getUserProfile, markAccessCodeAsUsed } = deps.db;'
         )
         .replace(
-            "import { createInviteProcessor, getInviteDashboardUrl, isInviteAlreadyRedeemedError } from './js/accept-invite-flow.js?v=7';",
+            "import { createInviteProcessor, getInviteDashboardUrl, isInviteAlreadyRedeemedError } from './js/accept-invite-flow.js?v=8';",
             'const { createInviteProcessor, getInviteDashboardUrl, isInviteAlreadyRedeemedError } = deps.acceptInviteFlow;'
         )
         .replace(
@@ -206,6 +206,7 @@ async function bootAcceptInvite({
         }),
         redeemParentInvite: vi.fn().mockResolvedValue({ success: true, teamId: 'team-1', playerNum: '22' }),
         redeemHouseholdInvite: vi.fn().mockResolvedValue(undefined),
+        redeemCoParentInvite: vi.fn().mockResolvedValue(undefined),
         redeemAdminInviteAtomically: vi.fn(),
         updateUserProfile: vi.fn().mockResolvedValue(undefined),
         updateTeam: vi.fn().mockResolvedValue(undefined),
