@@ -315,6 +315,7 @@
             gameLog: [],
             playerNotes: {},
             playerStats: {}, // In-memory player stats (replaces real-time DB writes)
+            playerParticipationByPlayerId: {},
             opponentStats: {},
             currentPeriod: 'Q1'
         };
@@ -440,7 +441,13 @@
                 // Load existing aggregated stats from Firestore into gameState
                 const statsSnapshot = await getDocs(collection(db, `teams/${teamId}/games/${gameId}/aggregatedStats`));
                 statsSnapshot.forEach(doc => {
-                    gameState.playerStats[doc.id] = doc.data().stats || {};
+                    const data = doc.data() || {};
+                    gameState.playerStats[doc.id] = data.stats || {};
+                    gameState.playerParticipationByPlayerId[doc.id] = {
+                        participated: data.participated,
+                        participationStatus: data.participationStatus,
+                        didNotPlay: data.didNotPlay
+                    };
                 });
 
                 // Also load existing scores from aggregated stats
@@ -881,6 +888,7 @@
                 gameState.isRunning = false;
                 gameState.gameLog = [];
                 gameState.playerStats = {}; // Clear in-memory player stats
+                gameState.playerParticipationByPlayerId = {};
                 homeScore = 0;
                 awayScore = 0;
 
@@ -1313,6 +1321,7 @@ Write the match report now:`;
                     gameLog: gameState.gameLog,
                     players,
                     playerStatsByPlayerId: gameState.playerStats,
+                    playerParticipationByPlayerId: gameState.playerParticipationByPlayerId,
                     columns: currentConfig.columns,
                     statTrackerConfig: currentConfig,
                     finalHome,

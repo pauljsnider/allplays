@@ -44,10 +44,13 @@ function hasTrackedPlayerActivity(playerStats = {}, normalizedStats = {}, includ
     return includeTimeMs && (Number(playerStats.time) || 0) > 0;
 }
 
-export function buildAggregatedStatsWrites({ players = [], playerStatsByPlayerId = {}, columns = [], statTrackerConfig = {}, includeTimeMs = false } = {}) {
+export function buildAggregatedStatsWrites({ players = [], playerStatsByPlayerId = {}, playerParticipationByPlayerId = {}, columns = [], statTrackerConfig = {}, includeTimeMs = false } = {}) {
     const safePlayers = Array.isArray(players) ? players : [];
     const safeStatsByPlayerId = playerStatsByPlayerId && typeof playerStatsByPlayerId === 'object'
         ? playerStatsByPlayerId
+        : {};
+    const safeParticipationByPlayerId = playerParticipationByPlayerId && typeof playerParticipationByPlayerId === 'object'
+        ? playerParticipationByPlayerId
         : {};
 
     return safePlayers.map((player) => {
@@ -55,9 +58,15 @@ export function buildAggregatedStatsWrites({ players = [], playerStatsByPlayerId
         const playerStats = hasPlayerStatsRecord ? safeStatsByPlayerId[player.id] || {} : {};
 
         const normalizedStats = buildNormalizedPlayerStats(playerStats, columns);
-        const playerAppeared = includeTimeMs
-            ? hasTrackedPlayerActivity(playerStats, normalizedStats, includeTimeMs)
-            : hasPlayerStatsRecord || hasTrackedPlayerActivity(playerStats, normalizedStats, includeTimeMs);
+        const participation = safeParticipationByPlayerId[player.id] || {};
+        const hasStoredParticipation = participation.participated === true
+            || participation.participated === false
+            || participation.didNotPlay === true
+            || ['appeared', 'did-not-appear'].includes(participation.participationStatus);
+        const hasActivity = hasTrackedPlayerActivity(playerStats, normalizedStats, includeTimeMs);
+        const playerAppeared = hasActivity || (hasStoredParticipation
+            ? participation.didNotPlay !== true && (participation.participated === true || participation.participationStatus === 'appeared')
+            : false);
         // If we are including timeMs, ensure the internal 'time' accumulator is not persisted as a stat.
         if (includeTimeMs && normalizedStats.time !== undefined) {
             delete normalizedStats.time;
@@ -108,6 +117,7 @@ export async function commitStandardTrackerFinishData({
     gameLog = [],
     players = [],
     playerStatsByPlayerId = {},
+    playerParticipationByPlayerId = {},
     columns = [],
     statTrackerConfig = {},
     finalHome,
@@ -124,6 +134,7 @@ export async function commitStandardTrackerFinishData({
     const aggregatedStatsWrites = buildAggregatedStatsWrites({
         players,
         playerStatsByPlayerId,
+        playerParticipationByPlayerId,
         columns,
         statTrackerConfig,
         includeTimeMs
