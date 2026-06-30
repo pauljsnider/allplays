@@ -133,6 +133,7 @@
                 "autoAcceptParentInviteForExistingUser",
                 "confirmParentAccountMerge",
                 "previewAccountMerge",
+                "redeemCoParentInvite",
                 "validateAccessCodeForAcceptance"
             ],
             "unitTests": [

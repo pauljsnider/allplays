@@ -258,6 +258,61 @@ describe('accept invite flow', () => {
         expect(deps.redeemParentInvite).not.toHaveBeenCalled();
     });
 
+    it('redeems co-parent invite codes through the co-parent redemption handler', async () => {
+        const deps = {
+            validateAccessCode: vi.fn(async () => ({
+                valid: true,
+                type: 'coparent_invite',
+                data: {
+                    teamId: 'team-1',
+                    playerId: 'player-1',
+                    playerName: 'Sam',
+                    email: 'coparent@example.com'
+                }
+            })),
+            redeemParentInvite: vi.fn(),
+            redeemCoParentInvite: vi.fn().mockResolvedValue({
+                success: true,
+                teamId: 'team-1',
+                playerId: 'player-1',
+                playerName: 'Sam'
+            }),
+            getTeam: vi.fn(async () => ({ id: 'team-1', name: 'Tigers' }))
+        };
+
+        const processInvite = createInviteProcessor(deps);
+        const result = await processInvite('user-11', 'COPO1234', 'CoParent@Example.com');
+
+        expect(result).toEqual({
+            success: true,
+            message: "You've been added as a co-parent for Sam on Tigers!",
+            redirectUrl: 'parent-dashboard.html'
+        });
+        expect(deps.redeemCoParentInvite).toHaveBeenCalledWith('user-11', 'COPO1234', 'CoParent@Example.com');
+        expect(deps.redeemParentInvite).not.toHaveBeenCalled();
+    });
+
+    it('rejects co-parent invite redemption when the signed-in email does not match', async () => {
+        const deps = {
+            validateAccessCode: vi.fn(async () => ({
+                valid: true,
+                type: 'coparent_invite',
+                data: {
+                    email: 'coparent@example.com'
+                }
+            })),
+            redeemParentInvite: vi.fn(),
+            redeemCoParentInvite: vi.fn()
+        };
+
+        const processInvite = createInviteProcessor(deps);
+
+        await expect(processInvite('user-12', 'COPO1234', 'other@example.com')).rejects.toThrow(
+            'This invite was sent to coparent@example.com. Sign in with that email to accept it.'
+        );
+        expect(deps.redeemCoParentInvite).not.toHaveBeenCalled();
+    });
+
     it('rejects admin invite redemption when the signed-in email does not match the invited email', async () => {
         const deps = {
             validateAccessCode: vi.fn(async () => ({

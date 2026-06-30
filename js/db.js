@@ -4835,6 +4835,34 @@ export async function redeemParentInvite(userId, code, authEmail = null) {
     };
 }
 
+export async function redeemCoParentInvite(userId, code, authEmail = null) {
+    console.log('[redeemCoParentInvite] start', { userId, code });
+    if (!userId) {
+        throw new Error('You must be signed in to accept a co-parent invite');
+    }
+
+    const redeemCoParentInviteCallable = httpsCallable(functions, 'redeemCoParentInvite');
+    const result = await redeemCoParentInviteCallable({
+        userId,
+        code: String(code || '').trim().toUpperCase(),
+        authEmail: normalizeInviteEmail(authEmail || auth.currentUser?.email || '')
+    });
+    const payload = result?.data || result || {};
+
+    await syncPublicUserProfile(userId);
+
+    console.log('[redeemCoParentInvite] completed', { codeId: payload.codeId });
+    return {
+        success: payload.success === true,
+        teamId: payload.teamId || null,
+        teamName: payload.teamName || null,
+        playerId: payload.playerId || null,
+        playerName: payload.playerName || null,
+        playerNum: payload.playerNum ?? null
+    };
+}
+
+
 function normalizeHouseholdInviteEmail(email) {
     return String(email || '').trim().toLowerCase();
 }

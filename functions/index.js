@@ -2212,6 +2212,128 @@ exports.autoAcceptParentInviteForExistingUser = functions.https.onCall(async (da
   return { autoLinked: true, userId: userRef.id };
 });
 
+
+exports.redeemCoParentInvite = functions.https.onCall(async (data, context) => {
+  if (!context.auth?.uid) {
+    throw new functions.https.HttpsError('unauthenticated', 'Sign in before accepting a co-parent invite.');
+  }
+
+  const userId = normalizeFirestoreId(data?.userId || context.auth.uid, 'userId');
+  if (userId !== context.auth.uid) {
+    throw new functions.https.HttpsError('permission-denied', 'You can only accept an invite for your own account.');
+  }
+
+  const code = String(data?.code || '').trim().toUpperCase();
+  if (!code) {
+    throw new functions.https.HttpsError('invalid-argument', 'Access code is required.');
+  }
+
+  const codeQuerySnap = await firestore.collection('accessCodes').where('code', '==', code).limit(1).get();
+  if (codeQuerySnap.empty) {
+    throw new functions.https.HttpsError('not-found', 'Co-parent invite could not be found.');
+  }
+
+  const codeRef = codeQuerySnap.docs[0].ref;
+  let responsePayload = null;
+
+  await firestore.runTransaction(async (transaction) => {
+    const latestCodeSnap = await transaction.get(codeRef);
+    if (!latestCodeSnap.exists) {
+      throw new functions.https.HttpsError('not-found', 'Co-parent invite could not be found.');
+    }
+
+    const codeData = latestCodeSnap.data() || {};
+    if (codeData.type !== 'coparent_invite') {
+      throw new functions.https.HttpsError('failed-precondition', 'Not a co-parent invite code.');
+    }
+    if (codeData.used || codeData.revoked === true || codeData.status === 'removed') {
+      throw new functions.https.HttpsError('failed-precondition', 'Co-parent invite is no longer available.');
+    }
+    if (isParentInviteExpired(codeData.expiresAt)) {
+      throw new functions.https.HttpsError('failed-precondition', 'Co-parent invite has expired.');
+    }
+
+    const invitedEmail = normalizeParentInviteEmail(codeData.email);
+    const signedInEmail = normalizeParentInviteEmail(context.auth.token?.email || data?.authEmail);
+    if (invitedEmail && (!signedInEmail || invitedEmail !== signedInEmail)) {
+      throw new functions.https.HttpsError('permission-denied', `This invite was sent to ${invitedEmail}. Sign in with that email to accept it.`);
+    }
+
+    const teamId = normalizeFirestoreId(codeData.teamId, 'teamId');
+    const playerId = normalizeFirestoreId(codeData.playerId, 'playerId');
+    const userRef = firestore.doc(`users/${userId}`);
+    const teamRef = firestore.doc(`teams/${teamId}`);
+    const playerRef = firestore.doc(`teams/${teamId}/players/${playerId}`);
+    const privateProfileRef = firestore.doc(`teams/${teamId}/players/${playerId}/private/profile`);
+
+    const [teamSnap, playerSnap, userSnap] = await Promise.all([
+      transaction.get(teamRef),
+      transaction.get(playerRef),
+      transaction.get(userRef)
+    ]);
+
+    if (!teamSnap.exists) {
+      throw new functions.https.HttpsError('not-found', 'Team not found.');
+    }
+    if (!playerSnap.exists) {
+      throw new functions.https.HttpsError('not-found', 'Player not found.');
+    }
+
+    const team = { id: teamSnap.id, ...(teamSnap.data() || {}) };
+    const player = { id: playerSnap.id, ...(playerSnap.data() || {}) };
+    const userData = userSnap.exists ? userSnap.data() || {} : {};
+    const relation = codeData.relation || 'Co-parent';
+    const parentLink = {
+      teamId,
+      playerId,
+      teamName: team.name || codeData.teamName || null,
+      playerName: player.name || codeData.playerName || null,
+      playerNumber: player.number ?? codeData.playerNum ?? null,
+      playerPhotoUrl: player.photoUrl || null,
+      relation
+    };
+    const playerKey = `${teamId}::${playerId}`;
+    const now = admin.firestore.Timestamp.now();
+
+    transaction.set(userRef, {
+      parentOf: appendUniqueParentLink(userData.parentOf, parentLink),
+      parentTeamIds: appendUniqueValue(userData.parentTeamIds, teamId),
+      parentPlayerKeys: appendUniqueValue(userData.parentPlayerKeys, playerKey),
+      roles: appendUniqueValue(userData.roles, 'parent')
+    }, { merge: true });
+
+    transaction.set(privateProfileRef, {
+      parents: admin.firestore.FieldValue.arrayUnion({
+        userId,
+        email: codeData.email || signedInEmail || 'pending',
+        relation,
+        status: 'accepted',
+        acceptedAt: now,
+        addedAt: now
+      })
+    }, { merge: true });
+
+    transaction.update(codeRef, {
+      used: true,
+      usedBy: userId,
+      usedAt: now,
+      status: 'accepted'
+    });
+
+    responsePayload = {
+      success: true,
+      codeId: latestCodeSnap.id,
+      teamId,
+      teamName: parentLink.teamName,
+      playerId,
+      playerName: parentLink.playerName,
+      playerNum: parentLink.playerNumber
+    };
+  });
+
+  return responsePayload;
+});
+
 exports.validateAccessCodeForAcceptance = functions.https.onCall(async (data, context) => {
   const code = String(data?.code || '').trim().toUpperCase();
   if (!code) {

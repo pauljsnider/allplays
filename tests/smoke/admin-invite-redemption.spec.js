@@ -196,6 +196,10 @@ export async function redeemHouseholdInvite() {
     throw new Error('household invite should not be redeemed in this scenario');
 }
 
+export async function redeemCoParentInvite() {
+    throw new Error('co-parent invite should not be redeemed in this scenario');
+}
+
 export async function redeemAdminInviteAtomically(codeId, userId, authEmail) {
     console.log('redeemAdminInviteAtomically called with:', { codeId, userId, authEmail });
     window.__acceptInviteCalls.push({ type: 'redeem', codeId, userId, authEmail });
