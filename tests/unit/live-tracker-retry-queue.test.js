@@ -144,7 +144,7 @@ function buildModuleSource(source = readFileSync(new URL('../../js/live-tracker.
     rewritten = replaceNamedImportByModulePath(rewritten, './live-sport-config.js', 'const { getDefaultLivePeriod, getSportPeriodLabels } = deps.liveSportConfig;');
     rewritten = replaceNamedImportByModulePath(rewritten, './live-tracker-finish.js', 'const { buildOpponentStatsSnapshotFromEntries } = deps.liveTrackerFinish;');
     rewritten = replaceNamedImportByModulePath(rewritten, './live-tracker-queue.js', 'const { readPersistedLiveTrackerQueue, writePersistedLiveTrackerQueue, readPersistedLiveTrackerPendingFinish, writePersistedLiveTrackerPendingFinish, readPersistedLiveTrackerState, writePersistedLiveTrackerState } = deps.liveTrackerQueue;');
-    rewritten = replaceNamedImportByModulePath(rewritten, './live-tracker-save-complete.js', 'const { commitFinishPlan, runSaveAndCompleteWorkflow } = deps.liveTrackerSaveComplete;');
+    rewritten = replaceNamedImportByModulePath(rewritten, './live-tracker-save-complete.js', 'const { commitFinishPlan, isTransientFinalizationFailure, runSaveAndCompleteWorkflow } = deps.liveTrackerSaveComplete;');
 
     return rewritten
         .replace(authHook, '')
@@ -178,7 +178,7 @@ const runModule = new AsyncFunction(
     moduleSource
 );
 
-async function bootHarness({ broadcastImpl, commitImpl = async () => {}, setGameLiveStatusImpl = async () => {}, randomUUID = vi.fn(), storage = createStorage() }) {
+async function bootHarness({ broadcastImpl, commitImpl = async () => {}, setGameLiveStatusImpl = async () => {}, randomUUID = vi.fn(), storage = createStorage(), alertImpl = () => {} }) {
     const { document } = createEnvironment();
     const scheduledTimeouts = new Map();
     let nextTimeoutId = 1;
@@ -276,6 +276,11 @@ async function bootHarness({ broadcastImpl, commitImpl = async () => {}, setGame
         },
         liveTrackerSaveComplete: {
             commitFinishPlan: commitImpl,
+            isTransientFinalizationFailure: (error) => {
+                if (error?.code === 'unavailable' || error?.code === 'deadline-exceeded') return true;
+                if (error?.code === 'permission-denied' || error?.code === 'unauthenticated' || error?.code === 'invalid-argument') return false;
+                return /offline|network/i.test(String(error?.message || ''));
+            },
             runSaveAndCompleteWorkflow: async () => ({})
         }
     };
@@ -311,7 +316,7 @@ async function bootHarness({ broadcastImpl, commitImpl = async () => {}, setGame
         console,
         setTimeoutStub,
         clearTimeoutStub,
-        () => {}
+        alertImpl
     );
 
     return {
@@ -493,6 +498,53 @@ describe('live tracker retry queue persistence', () => {
         expect(page.liveState.pendingFinish).toBeNull();
         expect(readPersistedLiveTrackerQueue(page.storage, 'team-1', 'game-9')).toEqual([]);
         expect(readPersistedLiveTrackerPendingFinish(page.storage, 'team-1', 'game-9')).toBeNull();
+    });
+
+
+    it('does not keep auto-retrying pending finalization after a permanent permissions failure', async () => {
+        const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+        const alertCalls = [];
+        const pendingFinish = {
+            version: 1,
+            queuedAt: 123,
+            finishPlan: {
+                finalHome: 9,
+                finalAway: 7,
+                eventWrites: [],
+                aggregatedStatsWrites: [],
+                gameUpdate: { homeScore: 9, awayScore: 7, status: 'completed' }
+            }
+        };
+        const page = await bootHarness({
+            broadcastImpl: async () => {},
+            commitImpl: async () => {
+                const error = new Error('Missing or insufficient permissions');
+                error.code = 'permission-denied';
+                throw error;
+            },
+            alertImpl: (message) => {
+                alertCalls.push(message);
+            }
+        });
+
+        page.setContext({ teamId: 'team-1', gameId: 'game-9' });
+        page.liveState.pendingFinish = pendingFinish;
+        page.persistPendingFinalization();
+
+        await page.retryPendingFinalizationNow({ resetBackoff: true });
+
+        expect(page.liveState.pendingFinish).toMatchObject({
+            ...pendingFinish,
+            lastError: 'Missing or insufficient permissions'
+        });
+        expect(page.liveState.finishRetryAttempt).toBe(0);
+        expect(page.liveState.finishRetryTimeout).toBeNull();
+        expect(alertCalls).toEqual(['Finalization sync failed: Missing or insufficient permissions']);
+        expect(readPersistedLiveTrackerPendingFinish(page.storage, 'team-1', 'game-9')).toMatchObject({
+            ...pendingFinish,
+            lastError: 'Missing or insufficient permissions'
+        });
+        warnSpy.mockRestore();
     });
 
     it('keeps a failed pending finalization visible and retryable', async () => {
