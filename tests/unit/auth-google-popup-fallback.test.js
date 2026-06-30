@@ -26,6 +26,8 @@ vi.mock('../../js/db.js?v=76', () => ({
     markAccessCodeAsUsed: vi.fn(),
     updateUserProfile: vi.fn(),
     redeemParentInvite: vi.fn(),
+    redeemHouseholdInvite: vi.fn(),
+    redeemCoParentInvite: vi.fn(),
     getUserProfile: vi.fn(),
     getUserTeams: vi.fn(),
     getUserByEmail: vi.fn(),
@@ -33,7 +35,7 @@ vi.mock('../../js/db.js?v=76', () => ({
     listMyParentMembershipRequests: vi.fn()
 }));
 
-vi.mock('../../js/signup-flow.js?v=5', () => ({
+vi.mock('../../js/signup-flow.js?v=6', () => ({
     executeEmailPasswordSignup: vi.fn()
 }));
 

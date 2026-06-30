@@ -16,6 +16,8 @@ function createDependencies(overrides = {}) {
         }),
         redeemParentInvite: vi.fn().mockResolvedValue(undefined),
         redeemAdminInviteAcceptance: vi.fn().mockResolvedValue(undefined),
+        redeemHouseholdInvite: vi.fn().mockResolvedValue(undefined),
+        redeemCoParentInvite: vi.fn().mockResolvedValue(undefined),
         updateUserProfile: vi.fn().mockResolvedValue(undefined),
         markAccessCodeAsUsed: vi.fn().mockResolvedValue(undefined),
         getTeam: vi.fn().mockResolvedValue({ id: 'team-42', name: 'Blue Rockets' }),
@@ -28,6 +30,64 @@ function createDependencies(overrides = {}) {
 }
 
 describe('executeEmailPasswordSignup', () => {
+
+
+    it('redeems household invites during email signup instead of generically consuming the code', async () => {
+        const dependencies = createDependencies({
+            validateAccessCode: vi.fn().mockResolvedValue({
+                valid: true,
+                type: 'household_invite',
+                codeId: 'code-household-1',
+                data: { code: 'HOME1234' }
+            })
+        });
+        const auth = {
+            currentUser: {
+                email: 'household@example.com',
+                reload: vi.fn().mockResolvedValue(undefined)
+            }
+        };
+
+        await executeEmailPasswordSignup({
+            email: 'household@example.com',
+            password: 'password123',
+            activationCode: 'HOME1234',
+            auth,
+            dependencies
+        });
+
+        expect(dependencies.redeemHouseholdInvite).toHaveBeenCalledWith('user-123', 'HOME1234');
+        expect(dependencies.markAccessCodeAsUsed).not.toHaveBeenCalled();
+        expect(dependencies.updateUserProfile).toHaveBeenCalledTimes(1);
+    });
+
+    it('redeems co-parent invites during email signup with the signup email', async () => {
+        const dependencies = createDependencies({
+            validateAccessCode: vi.fn().mockResolvedValue({
+                valid: true,
+                type: 'coparent_invite',
+                codeId: 'code-coparent-1',
+                data: { code: 'COPO1234' }
+            })
+        });
+        const auth = {
+            currentUser: {
+                email: 'coparent@example.com',
+                reload: vi.fn().mockResolvedValue(undefined)
+            }
+        };
+
+        await executeEmailPasswordSignup({
+            email: 'coparent@example.com',
+            password: 'password123',
+            activationCode: 'COPO1234',
+            auth,
+            dependencies
+        });
+
+        expect(dependencies.redeemCoParentInvite).toHaveBeenCalledWith('user-123', 'COPO1234', 'coparent@example.com');
+        expect(dependencies.markAccessCodeAsUsed).not.toHaveBeenCalled();
+    });
 
     it('rolls back signup when parent invite redemption rejects a mismatched email', async () => {
         const mismatchError = new Error('This invite was sent to invited@example.com. Sign in with that email to accept it.');

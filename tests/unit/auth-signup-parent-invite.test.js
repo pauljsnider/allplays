@@ -27,6 +27,8 @@ const dbMocks = vi.hoisted(() => ({
     markAccessCodeAsUsed: vi.fn(),
     updateUserProfile: vi.fn(),
     redeemParentInvite: vi.fn(),
+    redeemHouseholdInvite: vi.fn(),
+    redeemCoParentInvite: vi.fn(),
     getTeam: vi.fn(),
     addTeamAdminEmail: vi.fn(),
     getUserProfile: vi.fn(),

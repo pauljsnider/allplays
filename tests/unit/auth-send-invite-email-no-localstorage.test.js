@@ -26,6 +26,8 @@ vi.mock('../../js/db.js?v=76', () => ({
     markAccessCodeAsUsed: vi.fn(),
     updateUserProfile: vi.fn(),
     redeemParentInvite: vi.fn(),
+    redeemHouseholdInvite: vi.fn(),
+    redeemCoParentInvite: vi.fn(),
     getTeam: vi.fn(),
     addTeamAdminEmail: vi.fn(),
     getUserProfile: vi.fn(),

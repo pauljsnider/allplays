@@ -10,6 +10,8 @@ export async function executeEmailPasswordSignup({
         createUserWithEmailAndPassword,
         redeemParentInvite,
         redeemAdminInviteAcceptance,
+        redeemHouseholdInvite,
+        redeemCoParentInvite,
         updateUserProfile,
         markAccessCodeAsUsed,
         getTeam,
@@ -69,6 +71,18 @@ export async function executeEmailPasswordSignup({
         }
     }
 
+    async function writeSignupProfile(profileFields) {
+        try {
+            await updateUserProfile(userId, {
+                ...profileFields,
+                createdAt: new Date(),
+                emailVerificationRequired: true
+            });
+        } catch (e) {
+            console.error('Error creating user profile after invite redeem:', e);
+        }
+    }
+
     if (validation.type === 'parent_invite') {
         try {
             await redeemParentInvite(userId, activationCode, email);
@@ -79,15 +93,7 @@ export async function executeEmailPasswordSignup({
         }
 
         // Best-effort profile write after invite redemption.
-        try {
-            await updateUserProfile(userId, {
-                email: email,
-                createdAt: new Date(),
-                emailVerificationRequired: true
-            });
-        } catch (e) {
-            console.error('Error creating user profile after parent invite redeem:', e);
-        }
+        await writeSignupProfile({ email });
     } else if (validation.type === 'admin_invite') {
         try {
             await redeemAdminInviteAcceptance({
@@ -97,13 +103,33 @@ export async function executeEmailPasswordSignup({
                 getTeam,
                 getUserProfile
             });
-            await updateUserProfile(userId, {
-                email: email,
-                createdAt: new Date(),
-                emailVerificationRequired: true
-            });
+            await writeSignupProfile({ email });
         } catch (e) {
             console.error('Error redeeming admin invite:', e);
+            await cleanupFailedParentInviteSignup(userCredential?.user);
+            throw e;
+        }
+    } else if (validation.type === 'household_invite') {
+        try {
+            if (typeof redeemHouseholdInvite !== 'function') {
+                throw new Error('Missing household invite redemption handler');
+            }
+            await redeemHouseholdInvite(userId, validation.data?.code || activationCode);
+            await writeSignupProfile({ email });
+        } catch (e) {
+            console.error('Error redeeming household invite:', e);
+            await cleanupFailedParentInviteSignup(userCredential?.user);
+            throw e;
+        }
+    } else if (validation.type === 'coparent_invite') {
+        try {
+            if (typeof redeemCoParentInvite !== 'function') {
+                throw new Error('Missing co-parent invite redemption handler');
+            }
+            await redeemCoParentInvite(userId, validation.data?.code || activationCode, email);
+            await writeSignupProfile({ email });
+        } catch (e) {
+            console.error('Error redeeming co-parent invite:', e);
             await cleanupFailedParentInviteSignup(userCredential?.user);
             throw e;
         }

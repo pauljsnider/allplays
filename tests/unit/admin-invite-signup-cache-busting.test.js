@@ -6,7 +6,7 @@ describe('admin invite signup cache busting', () => {
     it('pins fresh module versions for the admin invite signup path', () => {
         const authSource = readFileSync(resolve(process.cwd(), 'js/auth.js'), 'utf8');
 
-        expect(authSource).toContain("import { executeEmailPasswordSignup } from './signup-flow.js?v=5';");
+        expect(authSource).toContain("import { executeEmailPasswordSignup } from './signup-flow.js?v=6';");
         expect(authSource).toContain("import { redeemAdminInviteAcceptance } from './admin-invite.js?v=5';");
         expect(authSource).toContain("from './db.js?v=76';");
     });
@@ -24,7 +24,7 @@ describe('admin invite signup cache busting', () => {
 
     it('bumps auth module consumers after signup flow changes', () => {
         const authConsumers = {
-            'login.html': 'auth.js?v=38',
+            'login.html': 'auth.js?v=39',
             'accept-invite.html': 'auth.js?v=38',
             'edit-team.html': 'auth.js?v=38',
             'js/admin.js': 'auth.js?v=38',
