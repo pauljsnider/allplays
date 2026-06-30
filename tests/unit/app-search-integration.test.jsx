@@ -432,7 +432,7 @@ describe('React app shell search', () => {
         expect(dbMocks.discoverPublicTeams).toHaveBeenCalledTimes(1);
     });
 
-    it('shows unfiltered help matches in search and routes advanced help filtering to the help portal', async () => {
+    it('scopes dialog help matches to the user role and routes advanced help filtering to the help portal', async () => {
         helpMocks.searchHelpKnowledge.mockReturnValue([
             {
                 id: 'coach-roster-help',
@@ -466,15 +466,15 @@ describe('React app shell search', () => {
         expect(helpMocks.searchHelpKnowledge).toHaveBeenLastCalledWith({
             query: 'help',
             roles: ['parent'],
-            roleFilter: 'all',
+            roleFilter: 'parent',
             limit: 5
         });
-        expect(container.textContent).toContain('Manage a roster');
+        expect(container.textContent).not.toContain('Manage a roster');
         expect(container.textContent).toContain('Reset a password');
         expect(buttonByText(container, 'More help results')).toBeTruthy();
 
         await pressDialogKey(container, 'Enter');
-        expect(container.querySelector('[data-testid="route"]').textContent).toBe('/help/coach-roster-help');
+        expect(container.querySelector('[data-testid="route"]').textContent).toBe('/help/parent-password-help');
         expect(publicActionMocks.openPublicUrl).not.toHaveBeenCalled();
 
         await clickButton(container, 'Search');
@@ -511,7 +511,7 @@ describe('React app shell search', () => {
         expect(publicActionMocks.openPublicUrl).not.toHaveBeenCalled();
     });
 
-    it('keeps dialog help search scoped to the default all-roles filter', async () => {
+    it('keeps dialog help search scoped to the user primary role filter', async () => {
         helpMocks.searchHelpKnowledge.mockImplementation(({ roleFilter }) => {
             if (roleFilter === 'coach') {
                 return [{
@@ -539,7 +539,13 @@ describe('React app shell search', () => {
                 score: 21
             }];
         });
-        const { container } = await renderShell();
+        const coachParentAuth = {
+            ...auth,
+            user: { ...auth.user, roles: ['parent', 'coach'] },
+            roles: ['parent', 'coach'],
+            isCoach: true
+        };
+        const { container } = await renderShell(coachParentAuth);
 
         await clickButton(container, 'Search');
         await fillSearch(container, 'live tracker');
@@ -549,12 +555,12 @@ describe('React app shell search', () => {
         expect(Array.from(container.querySelectorAll('button')).some((button) => button.textContent === 'Member')).toBe(false);
         expect(helpMocks.searchHelpKnowledge).toHaveBeenLastCalledWith({
             query: 'live tracker',
-            roles: ['parent'],
-            roleFilter: 'all',
+            roles: ['parent', 'coach'],
+            roleFilter: 'coach',
             limit: 5
         });
-        expect(container.textContent).toContain('Watch Live Games and Replays');
-        expect(container.textContent).not.toContain('Track Live Games with the Live Tracker');
+        expect(container.textContent).toContain('Track Live Games with the Live Tracker');
+        expect(container.textContent).not.toContain('Watch Live Games and Replays');
         expect(buttonByText(container, 'More help results')).toBeTruthy();
     });
 
