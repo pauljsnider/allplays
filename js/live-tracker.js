@@ -26,7 +26,7 @@ import {
   readPersistedLiveTrackerState,
   writePersistedLiveTrackerState
 } from './live-tracker-queue.js?v=1';
-import { commitFinishPlan, runSaveAndCompleteWorkflow } from './live-tracker-save-complete.js';
+import { commitFinishPlan, isTransientFinalizationFailure, runSaveAndCompleteWorkflow } from './live-tracker-save-complete.js';
 
 let currentTeamId = null;
 let currentGameId = null;
@@ -1512,10 +1512,21 @@ async function retryPendingFinalizationNow({ resetBackoff = false } = {}) {
     console.warn('Pending finalization sync failed:', error);
     if (liveState.pendingFinish) {
       liveState.pendingFinish.lastError = error?.message || '';
-      liveState.finishRetryAttempt += 1;
       persistPendingFinalization();
     }
     renderLiveSyncStatus();
+
+    if (!isTransientFinalizationFailure(error)) {
+      if (typeof alert === 'function') {
+        alert('Finalization sync failed: ' + (error?.message || 'Please sign in again or check your team access.'));
+      }
+      return;
+    }
+
+    if (liveState.pendingFinish) {
+      liveState.finishRetryAttempt += 1;
+      persistPendingFinalization();
+    }
     schedulePendingFinalizationRetry();
   }
 }
@@ -2019,6 +2030,9 @@ async function saveAndComplete() {
       await drainPendingLiveEventQueue();
     },
     onCommitFailure: ({ error, finishPlan }) => {
+      if (!isTransientFinalizationFailure(error)) {
+        return { pending: false };
+      }
       queuePendingFinalization(finishPlan, error);
       addLog('Finalization saved locally. It will sync when connection returns.');
       return { pending: true };

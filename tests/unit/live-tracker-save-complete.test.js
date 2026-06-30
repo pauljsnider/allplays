@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { commitFinishPlan, runSaveAndCompleteWorkflow } from '../../js/live-tracker-save-complete.js';
+import { commitFinishPlan, isTransientFinalizationFailure, runSaveAndCompleteWorkflow } from '../../js/live-tracker-save-complete.js';
 import { hasPlayerProfileParticipation } from '../../js/player-profile-stats.js';
 
 function buildDocRef(...args) {
@@ -114,6 +114,16 @@ function buildHarness({ commitControl } = {}) {
 }
 
 describe('live tracker save-and-complete workflow', () => {
+
+  it('classifies only offline/connectivity finalization failures as retryable', () => {
+    expect(isTransientFinalizationFailure({ code: 'unavailable', message: 'backend unavailable' })).toBe(true);
+    expect(isTransientFinalizationFailure({ code: 'deadline-exceeded', message: 'deadline exceeded' })).toBe(true);
+    expect(isTransientFinalizationFailure(new Error('Client is offline.'), { navigatorRef: { onLine: true } })).toBe(true);
+    expect(isTransientFinalizationFailure({ code: 'permission-denied', message: 'Missing or insufficient permissions' })).toBe(false);
+    expect(isTransientFinalizationFailure({ code: 'unauthenticated', message: 'Auth token expired' })).toBe(false);
+    expect(isTransientFinalizationFailure({ code: 'invalid-argument', message: 'Invalid final score' })).toBe(false);
+  });
+
   it('persists coach-entered final scores and composes email from corrected totals', async () => {
     const harness = buildHarness();
 

@@ -2,6 +2,54 @@ import { acquireSingleFlightLock, releaseSingleFlightLock } from './live-tracker
 import { resolveSummaryRecipient } from './live-tracker-email.js?v=2';
 import { buildFinishCompletionPlan, executeFinishNavigationPlan } from './live-tracker-finish.js?v=3';
 
+
+const TRANSIENT_FINALIZATION_ERROR_CODES = new Set([
+  'aborted',
+  'deadline-exceeded',
+  'unavailable'
+]);
+
+const PERMANENT_FINALIZATION_ERROR_CODES = new Set([
+  'already-exists',
+  'cancelled',
+  'data-loss',
+  'failed-precondition',
+  'invalid-argument',
+  'not-found',
+  'out-of-range',
+  'permission-denied',
+  'resource-exhausted',
+  'unauthenticated',
+  'unimplemented'
+]);
+
+function normalizeErrorCode(error) {
+  return String(error?.code || '')
+    .trim()
+    .toLowerCase()
+    .replace(/^firestore\//, '');
+}
+
+export function isTransientFinalizationFailure(error, { navigatorRef = globalThis?.navigator } = {}) {
+  if (navigatorRef?.onLine === false) {
+    return true;
+  }
+
+  const code = normalizeErrorCode(error);
+  if (code.startsWith('auth/') && code !== 'auth/network-request-failed') {
+    return false;
+  }
+  if (PERMANENT_FINALIZATION_ERROR_CODES.has(code)) {
+    return false;
+  }
+  if (TRANSIENT_FINALIZATION_ERROR_CODES.has(code) || code === 'auth/network-request-failed') {
+    return true;
+  }
+
+  const message = String(error?.message || '').toLowerCase();
+  return /\b(client is offline|offline|network error|network request failed|failed to fetch|internet connection)\b/.test(message);
+}
+
 export const LIVE_TRACKER_MAX_PRIMARY_BATCH_WRITES = 500;
 export const LIVE_TRACKER_MAX_EVENT_BATCH_WRITES = 500;
 export const LIVE_TRACKER_MAX_AGGREGATED_STATS_BATCH_WRITES = 450;
