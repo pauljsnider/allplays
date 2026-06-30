@@ -8,7 +8,7 @@ describe('admin invite signup cache busting', () => {
 
         expect(authSource).toContain("import { executeEmailPasswordSignup } from './signup-flow.js?v=6';");
         expect(authSource).toContain("import { redeemAdminInviteAcceptance } from './admin-invite.js?v=5';");
-        expect(authSource).toContain("from './db.js?v=76';");
+        expect(authSource).toContain("from './db.js?v=77';");
     });
 
     it('pins fresh invite acceptance module versions for admin invite redemption', () => {

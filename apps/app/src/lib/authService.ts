@@ -983,6 +983,8 @@ export async function signUpWithEmail(email: string, password: string, activatio
       validateAccessCode: dbModule.validateAccessCode,
       createUserWithEmailAndPassword,
       redeemParentInvite: dbModule.redeemParentInvite,
+      redeemHouseholdInvite: dbModule.redeemHouseholdInvite,
+      redeemCoParentInvite: dbModule.redeemCoParentInvite,
       redeemAdminInviteAcceptance,
       updateUserProfile: dbModule.updateUserProfile,
       markAccessCodeAsUsed: dbModule.markAccessCodeAsUsed,
