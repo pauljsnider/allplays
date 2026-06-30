@@ -223,6 +223,7 @@ describe('live broadcast tracker finish batch limits', () => {
         expect(source).toContain("const eventId = `finish-log-${String(eventIndex + 1).padStart(6, '0')}`;");
         expect(source).toContain('await commitBatchIfNeeded(true);');
         expect(source).toContain('const stats = gameState.playerStats[playerId] || {};');
+        expect(source).not.toContain('for (const [playerId, stats] of Object.entries(gameState.playerStats))');
         expect(eventLoopIndex).toBeGreaterThan(finishSubmitIndex);
         expect(statsSetIndex).toBeGreaterThan(eventLoopIndex);
         expect(statsLoopIndex).toBeGreaterThan(statsSetIndex);
