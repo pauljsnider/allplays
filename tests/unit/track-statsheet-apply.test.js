@@ -22,6 +22,10 @@ describe('track statsheet apply helpers', () => {
         });
     });
 
+    it('re-includes an unmatched home row when an admin maps it to a roster player', () => {
+        expect(trackStatsheetSource).toMatch(/if \(field === 'mappedPlayerId'\) \{[\s\S]*homeRows\[index\]\[field\] = event\.target\.value;[\s\S]*if \(event\.target\.value\) \{[\s\S]*homeRows\[index\]\.include = true;[\s\S]*includeCheckbox\.checked = true;/);
+    });
+
     it('blocks apply when no home row is included for saving', () => {
         expect(validateTrackStatsheetApplyRows([
             { include: false, mappedPlayerId: '' }

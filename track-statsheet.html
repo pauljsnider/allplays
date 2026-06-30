@@ -513,6 +513,13 @@
         const field = event.target.dataset.field;
         if (field === 'mappedPlayerId') {
           homeRows[index][field] = event.target.value;
+          if (event.target.value) {
+            homeRows[index].include = true;
+            const includeCheckbox = row.querySelector('[data-field="include"]');
+            if (includeCheckbox) {
+              includeCheckbox.checked = true;
+            }
+          }
         }
       });
 
