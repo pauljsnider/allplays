@@ -215,14 +215,17 @@ describe('live broadcast tracker finish batch limits', () => {
         const source = readFileSync(new URL('../../track-live.html', import.meta.url), 'utf8');
         const finishSubmitIndex = source.indexOf("finishForm.addEventListener('submit'");
         const eventLoopIndex = source.indexOf('for (const [eventIndex, entry] of gameState.gameLog.entries())', finishSubmitIndex);
-        const statsLoopIndex = source.indexOf('for (const [playerId, stats] of Object.entries(gameState.playerStats))', eventLoopIndex);
+        const statsSetIndex = source.indexOf('const playerIdsToPersist = new Set(Object.keys(gameState.playerStats));', eventLoopIndex);
+        const statsLoopIndex = source.indexOf('for (const playerId of playerIdsToPersist)', statsSetIndex);
         const finalUpdateIndex = source.indexOf("status: 'completed'", statsLoopIndex);
 
         expect(source).toContain('const maxBatchWrites = 500;');
         expect(source).toContain("const eventId = `finish-log-${String(eventIndex + 1).padStart(6, '0')}`;");
         expect(source).toContain('await commitBatchIfNeeded(true);');
+        expect(source).toContain('const stats = gameState.playerStats[playerId] || {};');
         expect(eventLoopIndex).toBeGreaterThan(finishSubmitIndex);
-        expect(statsLoopIndex).toBeGreaterThan(eventLoopIndex);
+        expect(statsSetIndex).toBeGreaterThan(eventLoopIndex);
+        expect(statsLoopIndex).toBeGreaterThan(statsSetIndex);
         expect(finalUpdateIndex).toBeGreaterThan(statsLoopIndex);
     });
 });
