@@ -539,7 +539,13 @@ describe('React app shell search', () => {
                 score: 21
             }];
         });
-        const { container } = await renderShell();
+        const coachParentAuth = {
+            ...auth,
+            user: { ...auth.user, roles: ['parent', 'coach'] },
+            roles: ['parent', 'coach'],
+            isCoach: true
+        };
+        const { container } = await renderShell(coachParentAuth);
 
         await clickButton(container, 'Search');
         await fillSearch(container, 'live tracker');
@@ -549,12 +555,12 @@ describe('React app shell search', () => {
         expect(Array.from(container.querySelectorAll('button')).some((button) => button.textContent === 'Member')).toBe(false);
         expect(helpMocks.searchHelpKnowledge).toHaveBeenLastCalledWith({
             query: 'live tracker',
-            roles: ['parent'],
-            roleFilter: 'parent',
+            roles: ['parent', 'coach'],
+            roleFilter: 'coach',
             limit: 5
         });
-        expect(container.textContent).toContain('Watch Live Games and Replays');
-        expect(container.textContent).not.toContain('Track Live Games with the Live Tracker');
+        expect(container.textContent).toContain('Track Live Games with the Live Tracker');
+        expect(container.textContent).not.toContain('Watch Live Games and Replays');
         expect(buttonByText(container, 'More help results')).toBeTruthy();
     });
 

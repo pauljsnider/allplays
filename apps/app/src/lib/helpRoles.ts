@@ -5,14 +5,15 @@ export type HelpRoleFilter = 'all' | 'parent' | 'coach' | 'admin' | 'member';
 type HelpRoleAuth = Pick<AuthState, 'user' | 'roles' | 'isParent' | 'isCoach' | 'isAdmin' | 'isPlatformAdmin'>;
 
 export function derivePrimaryHelpRole(auth: Partial<HelpRoleAuth> | null | undefined): HelpRoleFilter {
-  const explicitRole = [...(auth?.roles || []), ...(auth?.user?.roles || [])]
+  const explicitRoles = [...(auth?.roles || []), ...(auth?.user?.roles || [])]
     .map(normalizeHelpRole)
-    .find((role): role is Exclude<HelpRoleFilter, 'all'> => Boolean(role));
+    .filter((role): role is Exclude<HelpRoleFilter, 'all'> => Boolean(role));
+  const roleSet = new Set(explicitRoles);
 
-  if (explicitRole) return explicitRole;
-  if (auth?.isAdmin || auth?.isPlatformAdmin || auth?.user?.isAdmin || auth?.user?.isPlatformAdmin) return 'admin';
-  if (auth?.isCoach) return 'coach';
-  if (auth?.isParent) return 'parent';
+  if (roleSet.has('admin') || auth?.isAdmin || auth?.isPlatformAdmin || auth?.user?.isAdmin || auth?.user?.isPlatformAdmin) return 'admin';
+  if (roleSet.has('coach') || auth?.isCoach) return 'coach';
+  if (roleSet.has('parent') || auth?.isParent) return 'parent';
+  if (roleSet.has('member')) return 'member';
   return 'all';
 }
 
