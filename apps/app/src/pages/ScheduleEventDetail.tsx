@@ -941,7 +941,9 @@ function AvailabilitySection({ event, rsvp, availabilityNote, onAvailabilityNote
       <div className="px-3 pb-3 sm:px-4">
         {rsvpWorkflow.message ? <Status tone="success" message={rsvpWorkflow.message} /> : null}
         {rsvpWorkflow.error ? <div className="mt-2"><Status tone="error" message={rsvpWorkflow.error} /></div> : null}
-        <AttentionPanel items={attentionItems} onSelectSection={onSelectSection} />
+        {attentionItems.length > 0 || rsvp !== 'not_responded' ? (
+          <AttentionPanel items={attentionItems} onSelectSection={onSelectSection} />
+        ) : null}
         <StaffRsvpBreakdownPanel
           breakdown={staffRsvp.breakdown}
           loading={staffRsvp.loading}
