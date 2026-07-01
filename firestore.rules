@@ -685,6 +685,34 @@ service cloud.firestore {
              );
     }
 
+    function canReadSharedGameForExistingTeam(data, teamId) {
+      let teamPath = /databases/$(database)/documents/teams/$(teamId);
+      let teamData = get(teamPath).data;
+      return teamData != null &&
+             (
+               isTeamOwnerOrAdmin(teamId) ||
+               isParentForTeam(teamId) ||
+               canReadPublicGameDocument(teamData, data)
+             );
+    }
+
+    function canReadSharedGameForTeamId(data, teamId) {
+      return teamId is string &&
+             teamId.size() > 0 &&
+             canReadSharedGameForExistingTeam(data, teamId);
+    }
+
+    function canReadCollectionGroupSharedGameDocument(data) {
+      return canReadSharedGameForTeamId(data, data.get('homeTeamId', null)) ||
+             canReadSharedGameForTeamId(data, data.get('awayTeamId', null));
+    }
+
+    function canReadSharedGameSubcollectionDocument(sharedGamePath) {
+      let sharedGame = get(sharedGamePath).data;
+      return sharedGame != null &&
+             canReadCollectionGroupSharedGameDocument(sharedGame);
+    }
+
     function isTrackingItemPayloadValid(teamId, data) {
       return data.keys().hasOnly([
                'teamId', 'name', 'description', 'visibility', 'status', 'active', 'archived',
@@ -1656,6 +1684,26 @@ service cloud.firestore {
 	    // Collection group rule for games - allows cross-team queries (e.g., live games, recent games)
 	    match /{path=**}/games/{gameId} {
       allow read: if canReadCollectionGroupGameDocument(path, resource.data);
+    }
+
+    // Collection group rule for shared games - allows homepage and team shared schedule discovery.
+    match /{path=**}/sharedGames/{gameId} {
+      allow read: if canReadCollectionGroupSharedGameDocument(resource.data);
+    }
+
+    // Live viewers open shared games by synthetic ID, then read live/replay data
+    // from the decoded sharedGames document path.
+    match /{path=**}/sharedGames/{gameId}/{liveGameCollection}/{docId} {
+      allow read: if liveGameCollection in [
+                    'events',
+                    'aggregatedStats',
+                    'liveEvents',
+                    'liveChat',
+                    'liveReactions'
+                  ] &&
+                  canReadSharedGameSubcollectionDocument(
+                    /databases/$(database)/documents/$(path)/sharedGames/$(gameId)
+                  );
     }
 
     // Collection group rule for players - enables collectionGroup('players') queries.
