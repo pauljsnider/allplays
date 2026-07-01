@@ -127,6 +127,24 @@
                     </div>
                 </div>
 
+                <div id="post-create-next-steps" class="hidden rounded-xl border border-emerald-200 bg-emerald-50 p-4 space-y-3">
+                    <div>
+                        <p class="text-xs font-semibold uppercase tracking-wide text-emerald-700">Team created</p>
+                        <h3 class="mt-1 text-base font-semibold text-emerald-950">Next, set up the roster or schedule</h3>
+                        <p class="mt-1 text-sm text-emerald-800">The team is saved. Add players or start building the season schedule when you are ready.</p>
+                    </div>
+                    <div class="flex flex-col gap-3 sm:flex-row">
+                        <a id="post-create-roster-btn" href="#"
+                            class="flex-1 rounded-lg bg-emerald-700 px-4 py-2 text-center text-sm font-semibold text-white transition hover:bg-emerald-800">
+                            Manage Roster
+                        </a>
+                        <a id="post-create-schedule-btn" href="#"
+                            class="flex-1 rounded-lg border border-emerald-300 bg-white px-4 py-2 text-center text-sm font-semibold text-emerald-800 transition hover:bg-emerald-100">
+                            Manage Schedule
+                        </a>
+                    </div>
+                </div>
+
                 <details id="advanced-team-setup" class="rounded-lg border border-slate-200 bg-slate-50 p-4">
                     <summary class="cursor-pointer select-none text-sm font-semibold text-slate-900 hover:text-indigo-700">
                         Advanced team setup
@@ -420,7 +438,7 @@
                     <p id="rollover-member-note" class="text-xs text-amber-800">Fan/member carry-forward is omitted because member access is tied to player links in the current data model.</p>
                 </div>
 
-                <div class="bg-indigo-50 border border-indigo-200 rounded-lg p-4">
+                <div id="team-management-card" class="hidden bg-indigo-50 border border-indigo-200 rounded-lg p-4">
                     <h3 class="font-semibold text-indigo-900 text-sm mb-3">Team Management</h3>
                     <div class="flex gap-3">
                         <a id="manage-roster-btn" href="#"
@@ -569,7 +587,9 @@
 
         renderFooter(document.getElementById('footer-container'));
 
-        const { teamId: initialTeamId } = getUrlParams();
+        const initialUrlParams = getUrlParams();
+        const { teamId: initialTeamId } = initialUrlParams;
+        const isInitialCreatedState = initialUrlParams.created === '1';
         let currentUser = null;
         let currentTeamId = initialTeamId || null;
         let currentPhotoUrl = null;
@@ -584,6 +604,24 @@
             }
         }
         syncAdvancedTeamSetupDisclosure();
+
+        function updateTeamManagementActions(teamId, options = {}) {
+            const rosterUrl = teamId ? `edit-roster.html?teamId=${teamId}` : '#';
+            const scheduleUrl = teamId ? `edit-schedule.html?teamId=${teamId}` : '#';
+            const managementCard = document.getElementById('team-management-card');
+            const createdNextSteps = document.getElementById('post-create-next-steps');
+            const showCreatedNextSteps = Boolean(teamId && options.created);
+
+            document.getElementById('manage-roster-btn').href = rosterUrl;
+            document.getElementById('manage-schedule-btn').href = scheduleUrl;
+            document.getElementById('post-create-roster-btn').href = rosterUrl;
+            document.getElementById('post-create-schedule-btn').href = scheduleUrl;
+
+            managementCard.classList.toggle('hidden', !teamId || showCreatedNextSteps);
+            createdNextSteps.classList.toggle('hidden', !showCreatedNextSteps);
+        }
+
+        updateTeamManagementActions(initialTeamId, { created: isInitialCreatedState });
         let pendingAdminInviteEmails = [];
         let confirmedTeamMembers = [];
         let teamPermissions = normalizeTeamPermissions();
@@ -1519,9 +1557,7 @@
                     document.getElementById('photo-preview').innerHTML = `<img src="${escapeHtml(team.photoUrl)}" class="w-full h-full object-cover">`;
                 }
 
-                // Update management links
-                document.getElementById('manage-roster-btn').href = `edit-roster.html?teamId=${initialTeamId}`;
-                document.getElementById('manage-schedule-btn').href = `edit-schedule.html?teamId=${initialTeamId}`;
+                updateTeamManagementActions(initialTeamId, { created: isInitialCreatedState });
 
                 // Fetch unread count and render banner
                 let unreadCount = 0;
