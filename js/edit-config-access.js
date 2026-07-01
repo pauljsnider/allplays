@@ -4,12 +4,9 @@ function hasRulesCompatibleConfigWriteAccess(user, team) {
     if (!user || !team) return false;
     if (team.ownerId === user.uid || user.isAdmin === true) return true;
 
-    const authEmail = String(user.email || '').toLowerCase();
-    return Boolean(
-        authEmail &&
-        Array.isArray(team.adminEmails) &&
-        team.adminEmails.includes(authEmail)
-    );
+    const authEmail = String(user.email || '').trim().toLowerCase();
+    const adminEmails = Array.isArray(team.adminEmails) ? team.adminEmails : [];
+    return Boolean(authEmail && adminEmails.includes(authEmail));
 }
 
 export function getEditConfigAccessDecision(user, team, teamId, configType = 'stat_settings') {

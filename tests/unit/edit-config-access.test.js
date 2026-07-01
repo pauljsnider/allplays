@@ -32,7 +32,7 @@ describe('edit config access decision', () => {
         });
     });
 
-    it('denies legacy-normalized admin emails that Firestore would reject for config writes', () => {
+    it('denies legacy-normalized admin emails for stats configs because Firestore writes require canonical admin emails', () => {
         const legacyTeam = {
             ...TEAM,
             adminEmails: [' Coach@Example.com ']
