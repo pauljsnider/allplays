@@ -27,6 +27,9 @@ test('isPrivateIpAddress correctly identifies private IPs', () => {
 
   assert.strictEqual(isPrivateIpAddress('::1'), true, '::1 should be private (IPv6 loopback)');
   assert.strictEqual(isPrivateIpAddress('fe80::1'), true, 'fe80::1 should be private (IPv6 link-local)');
+  assert.strictEqual(isPrivateIpAddress('fe90::1'), true, 'fe90::1 should be private (IPv6 link-local fe80::/10)');
+  assert.strictEqual(isPrivateIpAddress('fea0::1'), true, 'fea0::1 should be private (IPv6 link-local fe80::/10)');
+  assert.strictEqual(isPrivateIpAddress('febf:ffff:ffff:ffff:ffff:ffff:ffff:ffff'), true, 'febf::/10 upper bound should be private (IPv6 link-local)');
   assert.strictEqual(isPrivateIpAddress('fc00::1'), true, 'fc00::1 should be private (IPv6 ULA)');
   assert.strictEqual(isPrivateIpAddress('fd00::1'), true, 'fd00::1 should be private (IPv6 ULA)');
   assert.strictEqual(isPrivateIpAddress('fec0::1'), true, 'fec0::1 should be private (IPv6 site-local)');
@@ -52,6 +55,7 @@ test('assertPublicHost prevents blocked hosts and private IPs', async () => {
   await assert.rejects(assertPublicHost('::ffff:127.0.0.1'), { message: 'Blocked host address' }, 'IPv4-mapped IPv6 loopback should be blocked');
   await assert.rejects(assertPublicHost('::ffff:169.254.169.254'), { message: 'Blocked host address' }, 'IPv4-mapped IPv6 link-local should be blocked');
   await assert.rejects(assertPublicHost('0000:0000:0000:0000:0000:ffff:7f00:0001'), { message: 'Blocked host address' }, 'zero-padded IPv4-mapped IPv6 loopback should be blocked');
+  await assert.rejects(assertPublicHost('fe90::1'), { message: 'Blocked host address' }, 'IPv6 link-local fe80::/10 should be blocked');
   await assert.rejects(assertPublicHost('fec0::1234'), { message: 'Blocked host address' }, 'IPv6 site-local should be blocked');
 
   const publicIp = await assertPublicHost('8.8.8.8');

@@ -52,6 +52,11 @@ function _setClientModulesForTesting(mockHttp, mockHttps) {
   _https = mockHttps || require('node:https');
 }
 
+function isIpv6LinkLocalAddress(ip) {
+  const firstHextet = Number.parseInt(ip.split(':')[0], 16);
+  return firstHextet >= 0xfe80 && firstHextet <= 0xfebf;
+}
+
 function isPrivateIpAddress(ip) {
   const ipVersion = net.isIP(ip);
   if (!ipVersion) {
@@ -77,7 +82,7 @@ function isPrivateIpAddress(ip) {
 
   const normalized = ip.toLowerCase();
   if (normalized === '::1' || normalized === '::') return true;
-  if (normalized.startsWith('fe80:')) return true;
+  if (isIpv6LinkLocalAddress(normalized)) return true;
   if (normalized.startsWith('fc') || normalized.startsWith('fd')) return true;
   const siteLocalPrefix = normalized.slice(0, 3);
   if (siteLocalPrefix >= 'fec' && siteLocalPrefix <= 'fef') return true;
