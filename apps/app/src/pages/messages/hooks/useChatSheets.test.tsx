@@ -109,4 +109,19 @@ describe('useChatSheets', () => {
         expectSheetState('attach', false);
         expectSheetState('link', true);
     });
+
+    it('resets every other sheet when opening the link sheet', () => {
+        render(<HookProbe />);
+
+        fireEvent.click(screen.getByRole('button', { name: 'Open email' }));
+        expectSheetState('email', true);
+
+        fireEvent.click(screen.getByRole('button', { name: 'Open link' }));
+        expectSheetState('conversation', false);
+        expectSheetState('audience', false);
+        expectSheetState('media', false);
+        expectSheetState('attach', false);
+        expectSheetState('email', false);
+        expectSheetState('link', true);
+    });
 });
