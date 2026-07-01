@@ -1,11 +1,11 @@
-import { getTeamAccessInfo, normalizeAdminEmailList } from './team-access.js';
+import { getTeamAccessInfo } from './team-access.js';
 
 function hasRulesCompatibleConfigWriteAccess(user, team) {
     if (!user || !team) return false;
     if (team.ownerId === user.uid || user.isAdmin === true) return true;
 
     const authEmail = String(user.email || '').trim().toLowerCase();
-    const adminEmails = normalizeAdminEmailList(team.adminEmails);
+    const adminEmails = Array.isArray(team.adminEmails) ? team.adminEmails : [];
     return Boolean(authEmail && adminEmails.includes(authEmail));
 }
 
