@@ -343,13 +343,17 @@ describe('ParentTools access', () => {
         renderParentTools(['/parent-tools/access?teamId=missing-team']);
 
         await screen.findByText('Request player access');
-        await waitFor(() => expect(parentToolsAccessServiceMocks.loadParentAccessTeams).toHaveBeenCalledTimes(1));
-        expect(screen.queryByRole('button', { name: 'Request access without a code' })).toBeNull();
-        expect(screen.getByRole('button', { name: 'Redeem code' })).toBeTruthy();
-
+        // Wait for the manual-request panel to actually render (only true once
+        // teams have loaded and the deep-link reconciliation effect has run) before
+        // asserting on its contents — asserting synchronously right after only the
+        // load call was observed races the state update under full-suite load and
+        // was intermittently failing in CI while passing in isolation.
         const teamSelect = await screen.findByRole('combobox', { name: 'Team' }) as HTMLSelectElement;
         expect(teamSelect.value).toBe('');
         expect(await screen.findByRole('option', { name: 'Bears - Soccer' })).toBeTruthy();
+        expect(parentToolsAccessServiceMocks.loadParentAccessTeams).toHaveBeenCalledTimes(1);
+        expect(screen.queryByRole('button', { name: 'Request access without a code' })).toBeNull();
+        expect(screen.getByRole('button', { name: 'Redeem code' })).toBeTruthy();
         expect(parentToolsAccessServiceMocks.loadParentAccessPlayers).not.toHaveBeenCalled();
     });
 

@@ -627,13 +627,6 @@ service cloud.firestore {
              teamData.get('active', true) != false;
     }
 
-    // Lets anonymous spectators on public live-game views resolve a team's stat
-    // tracker config (sport/columns) without granting them broader team access.
-    function isPublicTeamForConfigRead(teamId) {
-      let teamPath = /databases/$(database)/documents/teams/$(teamId);
-      return exists(teamPath) && isPublicGameReadTeam(get(teamPath).data);
-    }
-
     function isShareableGameDocument(data) {
       let visibility = data.get('visibility', '');
       return visibility != 'private' &&
@@ -2362,10 +2355,17 @@ service cloud.firestore {
       }
 
       // Stat tracker configs subcollection
+      // Left open to anonymous reads (unlike rosterFields): live-game.js loads
+      // getConfigs(state.teamId) for the *specific* shareable/public game a
+      // replay link points to, but that read isn't scoped to a gameId — it's a
+      // team-wide collection query — and a game can be individually shareable
+      // (isShareableGameDocument) even when its team is inactive/non-public.
+      // Without knowing which game the client is loading, this rule can't
+      // reproduce that per-game exception, so requiring team-level public+active
+      // status here breaks replay links for exactly the teams that need it most.
+      // The data itself (sport type + column names) has no meaningful sensitivity.
       match /statTrackerConfigs/{configId} {
-        allow read: if isTeamOwnerOrAdmin(teamId) ||
-                       isParentForTeam(teamId) ||
-                       isPublicTeamForConfigRead(teamId);
+        allow read: if true;
         allow write: if isTeamOwnerOrAdmin(teamId);
       }
 

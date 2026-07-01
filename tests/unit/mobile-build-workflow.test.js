@@ -50,4 +50,20 @@ describe('mobile-build CI workflow', () => {
         expect(gateSection).toContain("needs.ios-simulator.result }}\" != \"success\"");
         expect(gateSection).toContain('exit 1');
     });
+
+    it('fails closed instead of silently skipping when the changes-detection job itself does not succeed', () => {
+        // Codex caught this: the gate job uses `if: always()`, so it also runs
+        // when `changes` fails (e.g. a checkout/diff error). In that case
+        // needs.changes.outputs.mobile is empty — not "true" — so without this
+        // check the gate would take the "no mobile changes" skip path and report
+        // success even though neither native build ran, exactly the gap this job
+        // exists to close.
+        const gateSection = workflow.slice(workflow.indexOf('  mobile-build:'));
+        const changesResultCheckIndex = gateSection.indexOf('needs.changes.result }}\" != \"success\"');
+        const mobileOutputCheckIndex = gateSection.indexOf('needs.changes.outputs.mobile }}\" != \"true\"');
+
+        expect(changesResultCheckIndex).toBeGreaterThan(-1);
+        expect(mobileOutputCheckIndex).toBeGreaterThan(-1);
+        expect(changesResultCheckIndex).toBeLessThan(mobileOutputCheckIndex);
+    });
 });

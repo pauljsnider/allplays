@@ -23,23 +23,19 @@ describe('firestore.rules architecture fixes', () => {
         expect(rosterFieldsRules).toContain('allow read: if isTeamOwnerOrAdmin(teamId) || isParentForTeam(teamId);');
     });
 
-    it('does not allow unauthenticated/public reads of stat tracker configs except for public teams', () => {
+    it('keeps stat tracker configs publicly readable so shareable replay links keep working', () => {
+        // Codex caught a regression here: live-game.js loads getConfigs(state.teamId)
+        // for a specific shareable/public *game*, but that read isn't scoped to a
+        // gameId, and a game can be individually shareable even when its team is
+        // inactive/non-public (isShareableGameDocument, independent of team-level
+        // isPublic/active). Requiring team-level public+active status broke replay
+        // links for exactly the teams that need them. The data (sport type + column
+        // names) has no meaningful sensitivity, so it stays open.
         const start = rules.indexOf('match /statTrackerConfigs/{configId}');
         const end = rules.indexOf('\n      }', start) + '\n      }'.length;
         const statTrackerConfigRules = rules.slice(start, end);
 
-        expect(statTrackerConfigRules).not.toContain('allow read: if true;');
-        expect(statTrackerConfigRules).toContain('isTeamOwnerOrAdmin(teamId)');
-        expect(statTrackerConfigRules).toContain('isParentForTeam(teamId)');
-        expect(statTrackerConfigRules).toContain('isPublicTeamForConfigRead(teamId)');
-    });
-
-    it('gates the public stat tracker config fallback on the team being public and active', () => {
-        expect(rules).toContain('function isPublicTeamForConfigRead(teamId) {');
-        const start = rules.indexOf('function isPublicTeamForConfigRead(teamId) {');
-        const end = rules.indexOf('\n    }', start) + '\n    }'.length;
-        const helper = rules.slice(start, end);
-
-        expect(helper).toContain('isPublicGameReadTeam(get(teamPath).data)');
+        expect(statTrackerConfigRules).toContain('allow read: if true;');
+        expect(statTrackerConfigRules).toContain('allow write: if isTeamOwnerOrAdmin(teamId);');
     });
 });

@@ -226,6 +226,11 @@ jobs:
     steps:
       - name: Check native build results
         run: |
+          if [ "${{ needs.changes.result }}" != "success" ]; then
+            echo "changes job did not complete successfully (${{ needs.changes.result }}) — failing closed instead of assuming no mobile-relevant changes."
+            exit 1
+          fi
+
           if [ "${{ needs.changes.outputs.mobile }}" != "true" ]; then
             echo "No mobile-relevant changes — skipping native build requirement."
             exit 0
