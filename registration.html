@@ -130,6 +130,7 @@
         const retryPaymentRequested = params.get('retryPayment') === '1' && !!(retryPublicCheckoutCapability || retryRegistrationId);
         let activeForm = null;
         let currentPublicCheckoutCapability = retryPublicCheckoutCapability;
+        let cancelledCheckoutReleasePromise = Promise.resolve();
 
         const loadingState = document.getElementById('loading-state');
         const payRegistrationButton = document.getElementById('pay-registration');
@@ -156,7 +157,7 @@
                 const cancelledCheckoutAttemptToken = urlParams.get('checkoutAttemptToken') || '';
                 const cancelledPublicCheckoutCapability = urlParams.get('publicCheckoutCapability') || '';
                 if (cancelledRegistrationId || cancelledPublicCheckoutCapability) {
-                    void releaseCancelledStripeRegistration(cancelledRegistrationId, cancelledCheckoutAttemptToken, cancelledPublicCheckoutCapability);
+                    cancelledCheckoutReleasePromise = releaseCancelledStripeRegistration(cancelledRegistrationId, cancelledCheckoutAttemptToken, cancelledPublicCheckoutCapability);
                 }
                 errorMessage.textContent = 'Stripe payment was cancelled. You can try again.';
                 errorMessage.classList.remove('hidden');
@@ -642,26 +643,9 @@
             payRegistrationButton.disabled = true;
             paymentLoadingState.classList.remove('hidden');
 
-            const submission = { // Re-use submission object for validation
-                participant: readGroupValues('participant', activeForm.participantFields),
-                guardian: readGroupValues('guardian', activeForm.guardianFields),
-                waiverAccepted: document.getElementById('waiver-accepted').checked,
-                selectedPaymentPlanId: formElement.querySelector('input[name="paymentPlanId"]:checked')?.value || 'pay_full',
-                selectedOptionId: formElement.querySelector('input[name="registrationOptionId"]:checked')?.value || '',
-                feeSnapshot: calculateRegistrationFeeSnapshot(activeForm, { quantity: getRegistrationQuantity(), now: new Date() })
-            };
-            const validationErrors = validateRegistrationSubmission(activeForm, submission);
-
-            if (validationErrors.length > 0) {
-                errorMessage.textContent = validationErrors.join(' ');
-                errorMessage.classList.remove('hidden');
-                payRegistrationButton.disabled = false;
-                paymentLoadingState.classList.add('hidden');
-                return;
-            }
-
             try {
                 if (retryPaymentRequested) {
+                    await cancelledCheckoutReleasePromise;
                     const checkoutUrl = await initiateStripeCheckout({
                         teamId,
                         formId,
@@ -675,6 +659,22 @@
                     } else {
                         showFormError('Failed to get Stripe checkout URL.');
                     }
+                    return;
+                }
+
+                const submission = { // Re-use submission object for validation
+                    participant: readGroupValues('participant', activeForm.participantFields),
+                    guardian: readGroupValues('guardian', activeForm.guardianFields),
+                    waiverAccepted: document.getElementById('waiver-accepted').checked,
+                    selectedPaymentPlanId: formElement.querySelector('input[name="paymentPlanId"]:checked')?.value || 'pay_full',
+                    selectedOptionId: formElement.querySelector('input[name="registrationOptionId"]:checked')?.value || '',
+                    feeSnapshot: calculateRegistrationFeeSnapshot(activeForm, { quantity: getRegistrationQuantity(), now: new Date() })
+                };
+                const validationErrors = validateRegistrationSubmission(activeForm, submission);
+
+                if (validationErrors.length > 0) {
+                    errorMessage.textContent = validationErrors.join(' ');
+                    errorMessage.classList.remove('hidden');
                     return;
                 }
 
