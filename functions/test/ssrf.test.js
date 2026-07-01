@@ -1,5 +1,6 @@
-import test from 'node:test';
 import assert from 'node:assert';
+
+const { test } = import.meta.vitest ?? await import('node:test');
 import { promises as dns } from 'node:dns';
 import * as https from 'node:https';
 import * as http from 'node:http';
