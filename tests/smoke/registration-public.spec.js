@@ -152,6 +152,9 @@ async function mockRegistrationModules(page, { form = registrationForm(), submit
                 }
                 export async function cancelStripeRegistrationCheckout(params) {
                     window.__registrationCancelCalls.push(params);
+                    if (window.__registrationHoldCancelRelease && window.__registrationCancelReleasePromise) {
+                        await window.__registrationCancelReleasePromise;
+                    }
                     return { released: true, nextPublicCheckoutCapability: 'cap-next' };
                 }
             `
@@ -279,7 +282,7 @@ test('online registration prepares one server registration and redirects to Stri
     });
 });
 
-test('cancelled checkout retry releases the held registration and retries without duplicate submission or re-entered form fields', async ({ page, baseURL }) => {
+test('cancelled checkout retry waits for release before retrying without duplicate submission or re-entered form fields', async ({ page, baseURL }) => {
     await mockRegistrationModules(page, {
         form: registrationForm({
             paymentSettings: {
@@ -288,6 +291,12 @@ test('cancelled checkout retry releases the held registration and retries withou
             }
         })
     });
+    await page.addInitScript(() => {
+        window.__registrationHoldCancelRelease = true;
+        window.__registrationCancelReleasePromise = new Promise((resolve) => {
+            window.__resolveRegistrationCancelRelease = resolve;
+        });
+    });
     await page.goto(buildUrl(baseURL, '/registration.html?teamId=team-1&formId=form-1&retryPayment=1&publicCheckoutCapability=cap-1&checkoutAttemptToken=tok-1&status=cancelled'), { waitUntil: 'domcontentloaded' });
 
     await expect(page.getByText('Stripe payment was cancelled. You can try again.')).toBeVisible();
@@ -295,7 +304,11 @@ test('cancelled checkout retry releases the held registration and retries withou
     await expect(page.locator('[name="participant.firstName"]')).toHaveValue('');
     await expect(page.locator('[name="guardian.guardianName"]')).toHaveValue('');
 
-    await page.getByRole('button', { name: 'Retry payment with Stripe' }).click();
+    const retryClick = page.getByRole('button', { name: 'Retry payment with Stripe' }).click();
+    await expect.poll(() => page.evaluate(() => window.__registrationCancelCalls.length)).toBe(1);
+    expect(await page.evaluate(() => window.__registrationStripeCalls)).toEqual([]);
+    await page.evaluate(() => window.__resolveRegistrationCancelRelease());
+    await retryClick;
     await expect(page).toHaveURL(/#stripe-checkout$/);
 
     const result = await page.evaluate(() => ({
