@@ -22,7 +22,7 @@ function isHidden(container, selector) {
     return container.querySelector(selector).classList.contains('hidden');
 }
 
-describe('renderHeader role-aware authenticated navigation', () => {
+describe('renderHeader authenticated navigation dashboard reachability', () => {
     beforeEach(() => {
         vi.spyOn(console, 'warn').mockImplementation(() => {});
     });
@@ -34,38 +34,30 @@ describe('renderHeader role-aware authenticated navigation', () => {
         delete globalThis.navigator;
     });
 
-    it('shows only My Teams for coach-only users', () => {
-        const { container } = renderHeaderFor({ uid: 'coach-1', coachOf: ['team-1'], parentOf: [] });
+    it('keeps My Teams reachable before full-access dashboard lookup hydrates coach links', () => {
+        const { container } = renderHeaderFor({ uid: 'coach-1', email: 'coach@example.com', coachOf: [], parentOf: [] });
+
+        expect(isHidden(container, '#nav-my-teams-desktop')).toBe(false);
+        expect(isHidden(container, '#nav-my-teams-mobile')).toBe(false);
+        expect(container.querySelector('#nav-my-teams-desktop').getAttribute('href')).toBe('dashboard.html');
+        expect(container.querySelector('#nav-my-teams-mobile').getAttribute('href')).toBe('dashboard.html');
+    });
+
+    it('keeps My Players reachable so parents can redeem codes or request access', () => {
+        const { container } = renderHeaderFor({ uid: 'parent-1', email: 'parent@example.com', parentOf: [], coachOf: [] });
+
+        expect(isHidden(container, '#nav-my-players-desktop')).toBe(false);
+        expect(isHidden(container, '#nav-my-players-mobile')).toBe(false);
+        expect(container.querySelector('#nav-my-players-desktop').getAttribute('href')).toBe('parent-dashboard.html');
+        expect(container.querySelector('#nav-my-players-mobile').getAttribute('href')).toBe('parent-dashboard.html');
+    });
+
+    it('hides dashboard links for signed-out users', () => {
+        const { container } = renderHeaderFor(null);
 
         expect(isHidden(container, '#nav-my-players-desktop')).toBe(true);
         expect(isHidden(container, '#nav-my-players-mobile')).toBe(true);
-        expect(isHidden(container, '#nav-my-teams-desktop')).toBe(false);
-        expect(isHidden(container, '#nav-my-teams-mobile')).toBe(false);
-    });
-
-    it('shows only My Players for parent-only users', () => {
-        const { container } = renderHeaderFor({
-            uid: 'parent-1',
-            parentOf: [{ teamId: 'team-1', playerId: 'player-1' }],
-            coachOf: []
-        });
-
-        expect(isHidden(container, '#nav-my-players-desktop')).toBe(false);
-        expect(isHidden(container, '#nav-my-players-mobile')).toBe(false);
         expect(isHidden(container, '#nav-my-teams-desktop')).toBe(true);
         expect(isHidden(container, '#nav-my-teams-mobile')).toBe(true);
-    });
-
-    it('shows both role links for mixed-role users', () => {
-        const { container } = renderHeaderFor({
-            uid: 'mixed-1',
-            parentOf: [{ teamId: 'team-1', playerId: 'player-1' }],
-            coachOf: ['team-2']
-        });
-
-        expect(isHidden(container, '#nav-my-players-desktop')).toBe(false);
-        expect(isHidden(container, '#nav-my-players-mobile')).toBe(false);
-        expect(isHidden(container, '#nav-my-teams-desktop')).toBe(false);
-        expect(isHidden(container, '#nav-my-teams-mobile')).toBe(false);
     });
 });

@@ -131,16 +131,13 @@ export function renderHeader(container, user) {
     const navMyTeams = container.querySelector(`#nav-my-teams-${suffix}`);
 
     if (user) {
-      const hasParentLinks = Array.isArray(user.parentOf) && user.parentOf.length > 0;
-      const hasCoachAccess = user.isAdmin || (Array.isArray(user.coachOf) && user.coachOf.length > 0);
-
       if (navMyPlayers) {
-        navMyPlayers.classList.toggle('hidden', !hasParentLinks);
+        navMyPlayers.classList.remove('hidden');
         navMyPlayers.href = 'parent-dashboard.html';
       }
 
       if (navMyTeams) {
-        navMyTeams.classList.toggle('hidden', !hasCoachAccess);
+        navMyTeams.classList.remove('hidden');
         navMyTeams.href = 'dashboard.html';
       }
 
