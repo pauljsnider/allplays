@@ -194,6 +194,9 @@ function createEnvironment(initialState, overrides = {}) {
         'team-admin-banner',
         'page-title',
         'team-create-options',
+        'post-create-next-steps',
+        'post-create-roster-btn',
+        'post-create-schedule-btn',
         'team-create-mode-registration',
         'registration-import-panel',
         'registration-source-select',
@@ -241,6 +244,7 @@ function createEnvironment(initialState, overrides = {}) {
         'roster-rollover-status',
         'roster-rollover-preview',
         'access-rollover-panel',
+        'team-management-card',
         'rollover-source-team',
         'rollover-staff-review',
         'rollover-staff-enabled',
@@ -282,6 +286,8 @@ function createEnvironment(initialState, overrides = {}) {
 
     const elements = new Map(ids.map((id) => [id, new MockElement(id)]));
     elements.get('page-title').textContent = 'Create New Team';
+    elements.get('post-create-next-steps').classList.add('hidden');
+    elements.get('team-management-card').classList.add('hidden');
     elements.get('add-admin-form').classList.add('hidden');
     elements.get('admin-invite-status').classList.add('hidden');
     elements.get('admin-invite-code').classList.add('hidden');
