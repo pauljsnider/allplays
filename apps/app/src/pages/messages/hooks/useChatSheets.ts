@@ -18,11 +18,18 @@ const initialState: ChatSheetsState = {
     showEmailSheet: false
 };
 
+function activateSheet(sheetName: keyof ChatSheetsState): ChatSheetsState {
+    return {
+        ...initialState,
+        [sheetName]: true
+    };
+}
+
 export function useChatSheets() {
     const [sheets, setSheets] = useState<ChatSheetsState>(initialState);
 
     const openConversationSheet = useCallback(() => {
-        setSheets((current) => ({ ...current, showConversationSheet: true }));
+        setSheets(activateSheet('showConversationSheet'));
     }, []);
 
     const closeConversationSheet = useCallback(() => {
@@ -30,7 +37,7 @@ export function useChatSheets() {
     }, []);
 
     const openAudienceSheet = useCallback(() => {
-        setSheets((current) => ({ ...current, showAudienceSheet: true }));
+        setSheets(activateSheet('showAudienceSheet'));
     }, []);
 
     const closeAudienceSheet = useCallback(() => {
@@ -38,7 +45,7 @@ export function useChatSheets() {
     }, []);
 
     const openMediaGallery = useCallback(() => {
-        setSheets((current) => ({ ...current, showMediaGallery: true }));
+        setSheets(activateSheet('showMediaGallery'));
     }, []);
 
     const closeMediaGallery = useCallback(() => {
@@ -46,7 +53,7 @@ export function useChatSheets() {
     }, []);
 
     const openAttachSheet = useCallback(() => {
-        setSheets((current) => ({ ...current, showAttachSheet: true }));
+        setSheets(activateSheet('showAttachSheet'));
     }, []);
 
     const closeAttachSheet = useCallback(() => {
@@ -54,11 +61,7 @@ export function useChatSheets() {
     }, []);
 
     const openLinkSheet = useCallback(() => {
-        setSheets((current) => ({
-            ...current,
-            showAttachSheet: false,
-            showLinkSheet: true
-        }));
+        setSheets(activateSheet('showLinkSheet'));
     }, []);
 
     const closeLinkSheet = useCallback(() => {
@@ -66,7 +69,7 @@ export function useChatSheets() {
     }, []);
 
     const openEmailSheet = useCallback(() => {
-        setSheets((current) => ({ ...current, showEmailSheet: true }));
+        setSheets(activateSheet('showEmailSheet'));
     }, []);
 
     const closeEmailSheet = useCallback(() => {

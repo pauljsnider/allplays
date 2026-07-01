@@ -20,6 +20,8 @@ import {
 const normalizeChatReactionsSpy = vi.fn();
 const getMessageAttachmentsSpy = vi.fn();
 const mockShellLayoutState = { isDesktopWeb: false };
+type MockActiveChatSheet = 'conversation' | 'audience' | 'media' | 'attach' | 'link' | 'email' | null;
+let useStatefulChatSheets = false;
 const mockChatSheetsState = {
   showConversationSheet: false,
   showAudienceSheet: false,
@@ -176,9 +178,42 @@ vi.mock('../../../lib/chatService', () => ({
   toggleTeamChatReaction: vi.fn()
 }));
 
-vi.mock('../hooks/useChatSheets', () => ({
-  useChatSheets: () => mockChatSheetsState
-}));
+vi.mock('../hooks/useChatSheets', async () => {
+  const React = await import('react');
+  const closeIfActive = (setActiveSheet: React.Dispatch<React.SetStateAction<MockActiveChatSheet>>, sheet: MockActiveChatSheet) => {
+    setActiveSheet((current) => (current === sheet ? null : current));
+  };
+
+  return {
+    useChatSheets: () => {
+      if (!useStatefulChatSheets) {
+        return mockChatSheetsState;
+      }
+
+      const [activeSheet, setActiveSheet] = React.useState<MockActiveChatSheet>(null);
+      return {
+        showConversationSheet: activeSheet === 'conversation',
+        showAudienceSheet: activeSheet === 'audience',
+        showMediaGallery: activeSheet === 'media',
+        showAttachSheet: activeSheet === 'attach',
+        showLinkSheet: activeSheet === 'link',
+        showEmailSheet: activeSheet === 'email',
+        openConversationSheet: () => setActiveSheet('conversation'),
+        closeConversationSheet: () => closeIfActive(setActiveSheet, 'conversation'),
+        openAudienceSheet: () => setActiveSheet('audience'),
+        closeAudienceSheet: () => closeIfActive(setActiveSheet, 'audience'),
+        openMediaGallery: () => setActiveSheet('media'),
+        closeMediaGallery: () => closeIfActive(setActiveSheet, 'media'),
+        openAttachSheet: () => setActiveSheet('attach'),
+        closeAttachSheet: () => closeIfActive(setActiveSheet, 'attach'),
+        openLinkSheet: () => setActiveSheet('link'),
+        closeLinkSheet: () => closeIfActive(setActiveSheet, 'link'),
+        openEmailSheet: () => setActiveSheet('email'),
+        closeEmailSheet: () => closeIfActive(setActiveSheet, 'email')
+      };
+    }
+  };
+});
 
 vi.mock('../hooks/useChatTeam', () => ({
   useChatTeam: () => mockChatTeamState
@@ -239,6 +274,7 @@ class MockResizeObserver {
 }
 
 beforeEach(() => {
+  useStatefulChatSheets = false;
   mockShellLayoutState.isDesktopWeb = false;
   mockChatSheetsState.showConversationSheet = false;
   mockChatSheetsState.showAudienceSheet = false;
@@ -461,6 +497,26 @@ describe('ChatWindow virtualization', () => {
     expect(bubbleCount).toBeGreaterThan(0);
     expect(bubbleCount).toBeLessThan(100);
     expect(bubbleCount).toBeLessThan(liveMessages.length);
+  });
+
+  it('replaces an open conversation sheet when the media gallery opens', async () => {
+    useStatefulChatSheets = true;
+    render(
+      <MemoryRouter>
+        <ChatWindow auth={auth} teamId="team-1" />
+      </MemoryRouter>
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: /Team chat/i }));
+    expect(screen.getByRole('dialog', { name: 'Conversations' })).toBeVisible();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Open photos and videos' }));
+
+    await waitFor(() => {
+      expect(screen.getByRole('dialog', { name: 'Photos & videos' })).toBeVisible();
+    });
+    expect(screen.queryByRole('dialog', { name: 'Conversations' })).toBeNull();
+    expect(screen.getAllByRole('dialog')).toHaveLength(1);
   });
 
   it('preserves the scroll anchor when older history loads above the current viewport', async () => {
