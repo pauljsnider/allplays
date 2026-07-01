@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Capacitor } from '@capacitor/core';
+import { isNativeRuntime as readNativeRuntime } from './nativeRuntime';
 
 const desktopQuery = '(min-width: 1024px)';
 
@@ -10,10 +10,6 @@ type MediaQueryWithLegacyListeners = MediaQueryList & {
 
 function readDesktopMatch() {
   return typeof window !== 'undefined' && typeof window.matchMedia === 'function' && window.matchMedia(desktopQuery).matches;
-}
-
-function readNativeRuntime() {
-  return typeof window !== 'undefined' && (Capacitor.isNativePlatform() || window.location.protocol === 'capacitor:');
 }
 
 function subscribeToMediaQuery(media: MediaQueryWithLegacyListeners, listener: (event: MediaQueryListEvent) => void) {

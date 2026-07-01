@@ -1,5 +1,6 @@
 import { Capacitor } from '@capacitor/core';
 import { FirebaseAuthentication } from '@capacitor-firebase/authentication';
+import { isNativeRuntime } from './nativeRuntime';
 import {
   auth,
   applyActionCode,
@@ -146,10 +147,6 @@ function normalizeEmail(email: string) {
 
 function normalizeCode(code: string | null | undefined) {
   return String(code || '').trim().toUpperCase();
-}
-
-function isNativeRuntime() {
-  return Capacitor.isNativePlatform() || window.location.protocol === 'capacitor:';
 }
 
 function withTimeout<T>(promise: Promise<T>, message: string, timeoutMs = authTimeoutMs): Promise<T> {

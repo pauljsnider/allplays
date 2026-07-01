@@ -1,10 +1,5 @@
-import { Capacitor } from '@capacitor/core';
+import { isNativeRuntime } from './nativeRuntime';
 import type { NotificationInboxItem } from './notificationInboxService';
-
-function isNativeRuntime(): boolean {
-    const protocol = typeof window === 'undefined' ? '' : window.location.protocol;
-    return Capacitor.isNativePlatform() || protocol === 'capacitor:';
-}
 
 export function normalizeAppIconBadgeCount(count: unknown): number {
     const numericCount = typeof count === 'number' ? count : Number(count);

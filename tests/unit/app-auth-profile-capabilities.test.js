@@ -259,6 +259,7 @@ describe('React app auth/profile capability parity', () => {
         const appPackageLock = readProjectFile('apps/app/package-lock.json');
         const profilePage = readProjectFile('apps/app/src/pages/Profile.tsx');
         const profilePhotoService = readProjectFile('apps/app/src/lib/profilePhotoService.ts');
+        const nativeRuntime = readProjectFile('apps/app/src/lib/nativeRuntime.ts');
         const androidManifest = readProjectFile('android/app/src/main/AndroidManifest.xml');
         const androidSettings = readProjectFile('android/capacitor.settings.gradle');
         const androidCapacitorBuild = readProjectFile('android/app/capacitor.build.gradle');
@@ -268,13 +269,19 @@ describe('React app auth/profile capability parity', () => {
         expectContains(rootPackageLock, ['"node_modules/@capacitor/camera"']);
         expectContains(appPackage, ['"@capacitor/camera":']);
         expectContains(appPackageLock, ['"node_modules/@capacitor/camera"']);
+        // Native-runtime detection is centralized in nativeRuntime.ts (not reimplemented
+        // per-file) so profilePhotoService just imports and calls it.
         expectContains(profilePhotoService, [
             "from '@capacitor/camera'",
-            'Capacitor.isNativePlatform() || window.location.protocol === \'capacitor:\'',
+            "isNativeRuntime } from './nativeRuntime'",
             'Camera.getPhoto',
             'CameraResultType.Uri',
             'CameraSource.Camera',
             'CameraSource.Photos'
+        ]);
+        expectContains(nativeRuntime, [
+            'Capacitor.isNativePlatform()',
+            "window.location.protocol === 'capacitor:'"
         ]);
         expectContains(profilePage, [
             "handleNativePhotoChoice('camera')",

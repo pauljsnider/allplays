@@ -1,5 +1,4 @@
 import { lazy, ReactNode, Suspense, useEffect, useRef, useState } from 'react';
-import { Capacitor } from '@capacitor/core';
 import { Navigate, Route, Routes, useLocation, useNavigate } from 'react-router-dom';
 import { AppShell } from './components/AppShell';
 import { ErrorBoundary } from './components/ErrorBoundary';
@@ -15,6 +14,7 @@ import {
   type NativeBackButtonEvent
 } from './lib/nativeBackButton';
 import { addNativeDeepLinkListener } from './lib/nativeDeepLinkRouting';
+import { isNativeRuntime } from './lib/nativeRuntime';
 import { clearPendingPushRoute, readPendingPushRoute } from './lib/pushNotificationRouting';
 import { readAuthBootstrapHint } from './lib/authBootstrapHint';
 import { getRouteForUser } from './lib/authService';
@@ -156,9 +156,7 @@ export default function App() {
       return;
     }
 
-    const isNativeRuntime = Capacitor.isNativePlatform()
-      || (typeof window !== 'undefined' && window.location.protocol === 'capacitor:');
-    if (!isNativeRuntime) {
+    if (!isNativeRuntime()) {
       return;
     }
 
