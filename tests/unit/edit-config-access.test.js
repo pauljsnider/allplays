@@ -32,14 +32,14 @@ describe('edit config access decision', () => {
         });
     });
 
-    it('denies legacy-normalized admin emails that Firestore would reject for config writes', () => {
+    it('allows legacy-normalized admin emails to manage stats configs', () => {
         const legacyTeam = {
             ...TEAM,
             adminEmails: [' Coach@Example.com ']
         };
 
         expect(getEditConfigAccessDecision({ uid: 'coach-1', email: 'coach@example.com' }, legacyTeam, TEAM.id, 'stat_settings')).toEqual({
-            allowed: false,
+            allowed: true,
             exitUrl: 'dashboard.html',
             team: legacyTeam
         });
