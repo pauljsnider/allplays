@@ -61,7 +61,10 @@ export function useChatSheets() {
     }, []);
 
     const openLinkSheet = useCallback(() => {
-        setSheets(activateSheet('showLinkSheet'));
+        setSheets({
+            ...initialState,
+            showLinkSheet: true
+        });
     }, []);
 
     const closeLinkSheet = useCallback(() => {
