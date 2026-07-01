@@ -642,24 +642,6 @@
             payRegistrationButton.disabled = true;
             paymentLoadingState.classList.remove('hidden');
 
-            const submission = { // Re-use submission object for validation
-                participant: readGroupValues('participant', activeForm.participantFields),
-                guardian: readGroupValues('guardian', activeForm.guardianFields),
-                waiverAccepted: document.getElementById('waiver-accepted').checked,
-                selectedPaymentPlanId: formElement.querySelector('input[name="paymentPlanId"]:checked')?.value || 'pay_full',
-                selectedOptionId: formElement.querySelector('input[name="registrationOptionId"]:checked')?.value || '',
-                feeSnapshot: calculateRegistrationFeeSnapshot(activeForm, { quantity: getRegistrationQuantity(), now: new Date() })
-            };
-            const validationErrors = validateRegistrationSubmission(activeForm, submission);
-
-            if (validationErrors.length > 0) {
-                errorMessage.textContent = validationErrors.join(' ');
-                errorMessage.classList.remove('hidden');
-                payRegistrationButton.disabled = false;
-                paymentLoadingState.classList.add('hidden');
-                return;
-            }
-
             try {
                 if (retryPaymentRequested) {
                     const checkoutUrl = await initiateStripeCheckout({
@@ -675,6 +657,22 @@
                     } else {
                         showFormError('Failed to get Stripe checkout URL.');
                     }
+                    return;
+                }
+
+                const submission = { // Re-use submission object for validation
+                    participant: readGroupValues('participant', activeForm.participantFields),
+                    guardian: readGroupValues('guardian', activeForm.guardianFields),
+                    waiverAccepted: document.getElementById('waiver-accepted').checked,
+                    selectedPaymentPlanId: formElement.querySelector('input[name="paymentPlanId"]:checked')?.value || 'pay_full',
+                    selectedOptionId: formElement.querySelector('input[name="registrationOptionId"]:checked')?.value || '',
+                    feeSnapshot: calculateRegistrationFeeSnapshot(activeForm, { quantity: getRegistrationQuantity(), now: new Date() })
+                };
+                const validationErrors = validateRegistrationSubmission(activeForm, submission);
+
+                if (validationErrors.length > 0) {
+                    errorMessage.textContent = validationErrors.join(' ');
+                    errorMessage.classList.remove('hidden');
                     return;
                 }
 

@@ -279,7 +279,7 @@ test('online registration prepares one server registration and redirects to Stri
     });
 });
 
-test('cancelled checkout retry releases the held registration and retries without duplicate submission', async ({ page, baseURL }) => {
+test('cancelled checkout retry releases the held registration and retries without duplicate submission or re-entered form fields', async ({ page, baseURL }) => {
     await mockRegistrationModules(page, {
         form: registrationForm({
             paymentSettings: {
@@ -292,14 +292,17 @@ test('cancelled checkout retry releases the held registration and retries withou
 
     await expect(page.getByText('Stripe payment was cancelled. You can try again.')).toBeVisible();
     await expect(page.getByText('Use the button below to retry payment without submitting a new registration.')).toBeVisible();
-    await fillRequiredRegistrationFields(page);
+    await expect(page.locator('[name="participant.firstName"]')).toHaveValue('');
+    await expect(page.locator('[name="guardian.guardianName"]')).toHaveValue('');
+
     await page.getByRole('button', { name: 'Retry payment with Stripe' }).click();
     await expect(page).toHaveURL(/#stripe-checkout$/);
 
     const result = await page.evaluate(() => ({
         submitCalls: window.__registrationCalls.filter((call) => call.name === 'submitPublicRegistration'),
         stripeCalls: window.__registrationStripeCalls,
-        cancelCalls: window.__registrationCancelCalls
+        cancelCalls: window.__registrationCancelCalls,
+        errorText: document.getElementById('error-message')?.textContent || ''
     }));
     expect(result.cancelCalls).toEqual([
         {
@@ -311,6 +314,7 @@ test('cancelled checkout retry releases the held registration and retries withou
         }
     ]);
     expect(result.submitCalls).toHaveLength(0);
+    expect(result.errorText).not.toContain('is required');
     expect(result.stripeCalls).toEqual([
         {
             teamId: 'team-1',
