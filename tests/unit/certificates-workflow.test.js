@@ -31,6 +31,9 @@ function createCertificateStudioHarness() {
     const snippets = [
         'function buildCertificatePayload',
         'function createDraftFromSavedCertificate',
+        'function getPublishBlockedDrafts',
+        'function formatPublishBlockedDraftNames',
+        'function guardPublishableDraftDescriptions',
         'function saveDraftsToLocalHistory',
         'async function openSavedBatch',
         'async function openSavedCertificate',
@@ -90,6 +93,7 @@ function createCertificateStudioHarness() {
             watermarkOpacity: certificate.watermarkOpacity ?? defaults.watermarkOpacity ?? 12
         }),
         renderReview: vi.fn(),
+        renderReviewGrid: vi.fn(),
         showAlert: vi.fn(),
         getCertificateBatch: vi.fn(),
         getCertificate: vi.fn(),
@@ -109,6 +113,7 @@ function createCertificateStudioHarness() {
         const clonePlain = deps.clonePlain;
         const buildSharedFromSavedSource = deps.buildSharedFromSavedSource;
         const renderReview = deps.renderReview;
+        const renderReviewGrid = deps.renderReviewGrid;
         const showAlert = deps.showAlert;
         const loadCertificatesForSavedBatch = deps.loadCertificatesForSavedBatch;
         const getCertificateBatch = deps.getCertificateBatch;
@@ -131,8 +136,13 @@ function createCertificateStudioHarness() {
         ${snippets}
         return {
             state,
+            showAlert,
+            renderReviewGrid,
             buildCertificatePayload,
             createDraftFromSavedCertificate,
+            getPublishBlockedDrafts,
+            formatPublishBlockedDraftNames,
+            guardPublishableDraftDescriptions,
             saveDraftsToLocalHistory,
             openSavedBatch,
             openSavedCertificate,
@@ -238,6 +248,7 @@ describe('awards and certificates workflow wiring', () => {
         expect(generateBody).toContain('const batchId = state.demoMode ? `demo-batch-${Date.now()}` : null;');
         expect(generateBody).not.toContain('createCertificateBatch(state.teamId');
         expect(generateBody).not.toContain('createCertificate(state.teamId');
+        expect(saveBody).toContain('if (!guardPublishableDraftDescriptions(status)) return;');
         expect(saveBody).toContain('createCertificateBatch(state.teamId');
         expect(saveBody).toContain('createCertificate(state.teamId');
     });
@@ -255,9 +266,44 @@ describe('awards and certificates workflow wiring', () => {
         expect(generateBody).toContain('state.activeRegenerationPromise = null;');
         expect(waitBody).toContain('await state.activeRegenerationPromise;');
         expect(reviewGridBody).toContain('const descriptionGenerationActive = Boolean(state.descriptionGeneration?.active);');
-        expect(reviewGridBody).toContain('disabled aria-disabled="true" title="Descriptions are still generating"');
+        expect(reviewGridBody).toContain("? 'Descriptions are still generating'");
+        expect(reviewGridBody).toContain("? 'Review or fix descriptions before publishing'");
+        expect(reviewGridBody).toContain('disabled aria-disabled="true" title="${escapeAttr(publishDisabledReason)}"');
         expect(reviewGridBody).toContain('<button id="cert-publish-btn"');
         expect(reviewGridBody).toContain('${publishDisabledAttrs}>Publish certificates</button>');
+    });
+
+    it('blocks website certificate publishing until every description is ready', () => {
+        const harness = createCertificateStudioHarness();
+        harness.state.drafts = [
+            {
+                id: 'cert-1',
+                recipientName: 'Pat Star',
+                descriptionStatus: 'ready',
+                includeInExport: true
+            },
+            {
+                id: 'cert-2',
+                recipientName: 'Sam Star',
+                descriptionStatus: 'needs-review',
+                includeInExport: true
+            },
+            {
+                id: 'cert-3',
+                recipientName: 'Lee Star',
+                descriptionStatus: 'error',
+                includeInExport: false
+            }
+        ];
+
+        expect(harness.getPublishBlockedDrafts().map((draft) => draft.recipientName)).toEqual(['Sam Star', 'Lee Star']);
+        expect(harness.guardPublishableDraftDescriptions('draft')).toBe(true);
+        expect(harness.guardPublishableDraftDescriptions('published')).toBe(false);
+        expect(harness.showAlert).toHaveBeenCalledWith(
+            'Review or fix certificates marked Needs review or Error before publishing: Sam Star, Lee Star.',
+            'error'
+        );
+        expect(harness.renderReviewGrid).toHaveBeenCalled();
     });
 
     it('persists one-off certificate drafts with stable ids and restores export selection on reopen', async () => {

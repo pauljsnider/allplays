@@ -1641,10 +1641,33 @@ function renderDescriptionProgress() {
     `;
 }
 
+function getPublishBlockedDrafts() {
+    return state.drafts.filter((draft) => draft.descriptionStatus !== 'ready');
+}
+
+function formatPublishBlockedDraftNames(drafts) {
+    return drafts.map((draft) => draft.recipientName || 'certificate').join(', ');
+}
+
+function guardPublishableDraftDescriptions(status) {
+    if (status !== 'published') return true;
+    const blockedDrafts = getPublishBlockedDrafts();
+    if (!blockedDrafts.length) return true;
+    showAlert(`Review or fix certificates marked Needs review or Error before publishing: ${formatPublishBlockedDraftNames(blockedDrafts)}.`, 'error');
+    renderReviewGrid();
+    return false;
+}
+
 function renderReviewGrid() {
     const descriptionGenerationActive = Boolean(state.descriptionGeneration?.active);
-    const publishDisabledAttrs = descriptionGenerationActive
-        ? 'disabled aria-disabled="true" title="Descriptions are still generating"'
+    const blockedPublishDrafts = getPublishBlockedDrafts();
+    const publishDisabledReason = descriptionGenerationActive
+        ? 'Descriptions are still generating'
+        : blockedPublishDrafts.length
+            ? 'Review or fix descriptions before publishing'
+            : '';
+    const publishDisabledAttrs = publishDisabledReason
+        ? `disabled aria-disabled="true" title="${escapeAttr(publishDisabledReason)}"`
         : '';
     const rows = state.drafts.map((draft) => {
         const remaining = DESCRIPTION_MAX_LENGTH - String(draft.description || '').length;
@@ -1852,6 +1875,8 @@ async function regenerateDrafts(draftIds) {
 
 async function saveDrafts(status) {
     await waitForActiveRegeneration();
+
+    if (!guardPublishableDraftDescriptions(status)) return;
 
     if (state.demoMode || state.certificatePersistenceUnavailable) {
         saveDraftsToLocalHistory(status);
