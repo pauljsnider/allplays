@@ -3,7 +3,7 @@ import { Link, useLocation } from 'react-router-dom';
 import { LifeBuoy, Search } from 'lucide-react';
 import { getHelpKnowledgeDocs, searchHelpKnowledge } from '../lib/helpKnowledgeService';
 import { derivePrimaryHelpRole, type HelpRoleFilter } from '../lib/helpRoles';
-import { useAuth } from '../lib/useAuth';
+import type { AuthState } from '../lib/types';
 
 type HelpPortalRoleFilter = HelpRoleFilter;
 
@@ -22,9 +22,8 @@ const helpRoleOptions: Array<{ value: HelpPortalRoleFilter; label: string }> = [
   { value: 'member', label: 'Member' }
 ];
 
-export function HelpPortal() {
+export function HelpPortal({ auth }: { auth: AuthState }) {
   const location = useLocation();
-  const auth = useAuth();
   const defaultRoleFilter = derivePrimaryHelpRole(auth);
   const portalState = useMemo(() => normalizePortalState(location.state, defaultRoleFilter), [defaultRoleFilter, location.state]);
   const [query, setQuery] = useState(portalState.helpQuery);

@@ -26,9 +26,6 @@ const authMock = vi.hoisted(() => ({
 }));
 
 vi.mock('../../apps/app/src/lib/helpKnowledgeService.ts', () => helpMocks);
-vi.mock('../../apps/app/src/lib/useAuth.ts', () => ({
-    useAuth: () => authMock.state
-}));
 
 import { HelpArticle } from '../../apps/app/src/pages/HelpArticle.tsx';
 import { HelpPortal } from '../../apps/app/src/pages/HelpPortal.tsx';
@@ -88,7 +85,7 @@ async function renderHelp(initialEntry = '/help', extraHelpContent = null) {
                 null,
                 React.createElement(Route, {
                     path: '/help',
-                    element: React.createElement(React.Fragment, null, extraHelpContent, React.createElement(HelpPortal))
+                    element: React.createElement(React.Fragment, null, extraHelpContent, React.createElement(HelpPortal, { auth: authMock.state }))
                 }),
                 React.createElement(Route, { path: '/help/:helpId', element: React.createElement(HelpArticle) })
             )
