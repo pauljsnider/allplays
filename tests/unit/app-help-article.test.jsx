@@ -72,7 +72,10 @@ describe('HelpArticle', () => {
         );
         expect(appSource).toContain("const HelpArticle = lazy(() => import('./pages/HelpArticle').then((module) => ({ default: module.HelpArticle })));"
         );
-        expect(appSource).toContain('<Route path="/help" element={<Protected auth={auth}><HelpPortal /></Protected>} />');
+        // HelpPortal takes auth as a prop (like every other page) instead of calling
+        // useAuth() itself, so navigating here doesn't mount a second, redundant
+        // auth listener alongside the one App.tsx already set up.
+        expect(appSource).toContain('<Route path="/help" element={<Protected auth={auth}><HelpPortal auth={auth} /></Protected>} />');
         expect(appSource).toContain('<Route path="/help/:helpId" element={<Protected auth={auth}><HelpArticle /></Protected>} />');
     });
 

@@ -4,10 +4,17 @@ import { readFileSync } from 'node:fs';
 const rules = readFileSync(new URL('../../firestore.rules', import.meta.url), 'utf8');
 
 describe('team fee recipient Firestore rules', () => {
+    it('defines the feeRecipients collection-group rule exactly once', () => {
+        // Regression guard: this rule was previously duplicated into two back-to-back
+        // match blocks with equivalent (but not identical) logic, which made the ruleset
+        // harder to audit. See tests/unit/firestore-rules-architecture-fixes.test.js.
+        const occurrences = rules.split('match /{path=**}/feeRecipients/{recipientId}').length - 1;
+        expect(occurrences).toBe(1);
+    });
+
     it('passes teamId to the parent recipient helper for collection-group reads', () => {
         expect(rules).toContain('function isTeamFeeRecipientForCurrentParent(data, teamId)');
         expect(rules).not.toContain('isTeamFeeRecipientForCurrentParent(resource.data) ||');
-        expect(rules).toContain("isTeamFeeRecipientForCurrentParent(resource.data, resource.data.get('teamId', ''))");
         expect(rules).toContain('isTeamFeeRecipientForCurrentParent(resource.data, resource.data.teamId)');
     });
 

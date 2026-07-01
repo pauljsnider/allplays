@@ -1,9 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { CSSProperties, KeyboardEvent, ReactNode } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Capacitor } from '@capacitor/core';
 import { ChevronRight, Search, X } from 'lucide-react';
 import { derivePrimaryHelpRole } from '../lib/helpRoles';
+import { isNativeRuntime } from '../lib/nativeRuntime';
 import { openPublicUrl } from '../lib/publicActions';
 import { preloadSearchRoute } from '../lib/searchRoutePreload';
 import {
@@ -222,10 +222,9 @@ export function AppSearchDialog({ auth, open, onClose }: AppSearchDialogProps) {
       return;
     }
 
-    const isNativeRuntime = Capacitor.isNativePlatform() || window.location.protocol === 'capacitor:';
     const visualViewport = window.visualViewport;
 
-    if (!isNativeRuntime || !visualViewport) {
+    if (!isNativeRuntime() || !visualViewport) {
       setKeyboardInset(0);
       return;
     }

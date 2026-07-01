@@ -9,6 +9,7 @@ export type TrackerScoreState = {
 export type TrackerStatConfig = {
   columns?: string[];
   statDefinitions?: Array<{ id?: string; scope?: string; visibility?: string }>;
+  scoringColumn?: string;
 };
 
 export type TrackerLogEntry = {
@@ -72,7 +73,20 @@ function normalizeStatsNumber(value: unknown) {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
 }
 
-function isScoringStatKey(statKey: string) {
+// Mirrors js/track-basketball.js and js/live-tracker.js's getConfiguredPointsColumn():
+// a team's statTrackerConfig.scoringColumn (when it names an actual column) always
+// wins, so a custom scoring column name is honored consistently across all three
+// trackers instead of only the two legacy ones.
+function getConfiguredScoringStatKey(config: TrackerStatConfig = {}) {
+  const configured = normalizeStatKey(config.scoringColumn);
+  if (!configured) return '';
+  const columns = Array.isArray(config.columns) ? config.columns : [];
+  return columns.some((column) => normalizeStatKey(column) === configured) ? configured : '';
+}
+
+function isScoringStatKey(statKey: string, config: TrackerStatConfig = {}) {
+  const configuredScoringStatKey = getConfiguredScoringStatKey(config);
+  if (configuredScoringStatKey) return statKey === configuredScoringStatKey;
   return statKey === 'pts' || statKey === 'points' || statKey === 'goals' || statKey === 'goal';
 }
 
@@ -308,7 +322,7 @@ export function createStatTrackingService({
 
     const scoreBefore = { ...currentScore };
     const scoreAfter = { ...scoreBefore };
-    if (event.type === 'stat' && statKey && isScoringStatKey(statKey) && delta !== 0) {
+    if (event.type === 'stat' && statKey && isScoringStatKey(statKey, statConfig) && delta !== 0) {
       const scoreSide = input.teamSide === 'away' ? 'away' : 'home';
       if (scoreSide === 'away') {
         scoreAfter.awayScore = normalizeScoreValue(scoreAfter.awayScore + delta);

@@ -117,6 +117,12 @@ export function AccessTool({ auth, onAccessChanged }: { auth: AuthState; onAcces
     }, [auth.user?.uid]);
 
     useEffect(() => {
+        if (!deepLinkedTeamId) return;
+        setManualRequestOpen(true);
+        setManualTeamsRequested(true);
+    }, [deepLinkedTeamId]);
+
+    useEffect(() => {
         if (!deepLinkedTeamId || teams.length || loadingTeams) return;
         void loadTeams();
     }, [deepLinkedTeamId, loadTeams, loadingTeams, teams.length]);

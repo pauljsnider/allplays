@@ -63,6 +63,27 @@ describe('AccessTool deep-link reconciliation (#3088)', () => {
 
     afterEach(() => cleanup());
 
+    it('opens the manual request form while deep-linked teams are still loading', async () => {
+        let resolveTeams: (teams: Array<{ id: string; name: string }>) => void = () => {};
+        accessServiceMocks.loadParentAccessTeams.mockReturnValue(new Promise((resolve) => {
+            resolveTeams = resolve;
+        }));
+
+        const view = renderTool('team-a');
+
+        await waitFor(() => expect(accessServiceMocks.loadParentAccessTeams).toHaveBeenCalledTimes(1));
+        await waitFor(() => {
+            const select = view.container.querySelector('#parent-access-team') as HTMLSelectElement | null;
+            expect(select).not.toBeNull();
+            expect(select?.disabled).toBe(true);
+            expect(select?.textContent).toContain('Loading public teams...');
+        });
+
+        await act(async () => {
+            resolveTeams([{ id: 'team-a', name: 'Team A' }]);
+        });
+    });
+
     it('switches to a newly deep-linked team while already mounted', async () => {
         renderTool('team-a');
         await waitFor(() => expect(accessServiceMocks.loadParentAccessPlayers).toHaveBeenCalledWith('team-a'));

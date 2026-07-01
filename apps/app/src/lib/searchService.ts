@@ -572,7 +572,7 @@ function helpResultMatchesRole(resultRoles: string[] = [], helpRoleFilter: Exclu
   return normalizedRoles.includes('all') || normalizedRoles.includes(helpRoleFilter);
 }
 
-export function resetAppSearchCacheForTests() {
+export function resetAppSearchCache() {
   cachedTeams = null;
   cachedTeamsLoadedAt = 0;
   cachedTeamsUserKey = '';

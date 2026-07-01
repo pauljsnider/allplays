@@ -1691,24 +1691,6 @@ service cloud.firestore {
                        isTeamOwnerOrAdmin(resource.data.teamId);
     }
 
-    // Collection group rule for assigned team fee recipient records.
-    // Parents can only read records tied directly to their account or linked players.
-    match /{path=**}/feeRecipients/{recipientId} {
-      allow read: if resource.data.get('teamId', '') is string &&
-                     (isTeamFeeRecipientForCurrentParent(resource.data, resource.data.get('teamId', '')) ||
-                      isTeamOwnerOrAdmin(resource.data.get('teamId', '')));
-      allow create: if request.resource.data.get('teamId', '') is string &&
-                       hasNoPrivateTeamFeeBillingFields(request.resource.data) &&
-                       isTeamOwnerOrAdmin(request.resource.data.get('teamId', ''));
-      allow update: if resource.data.get('teamId', '') is string &&
-                       request.resource.data.get('teamId', '') == resource.data.get('teamId', '') &&
-                       hasNoIntroducedPrivateTeamFeeBillingFields() &&
-                       isTeamOwnerOrAdmin(resource.data.get('teamId', ''));
-      allow delete: if resource.data.get('teamId', '') is string &&
-                       isTeamOwnerOrAdmin(resource.data.get('teamId', ''));
-    }
-
-
     // Parent-managed athlete profiles with explicit public/private sharing.
     match /athleteProfiles/{profileId} {
       allow read: if resource.data.privacy == 'public' ||
@@ -1867,7 +1849,7 @@ service cloud.firestore {
       }
 
       match /rosterFields/{fieldId} {
-        allow read: if true;
+        allow read: if isTeamOwnerOrAdmin(teamId) || isParentForTeam(teamId);
         allow create, update, delete: if isTeamOwnerOrAdmin(teamId);
       }
 
@@ -2373,6 +2355,15 @@ service cloud.firestore {
       }
 
       // Stat tracker configs subcollection
+      // Left open to anonymous reads (unlike rosterFields): live-game.js loads
+      // getConfigs(state.teamId) for the *specific* shareable/public game a
+      // replay link points to, but that read isn't scoped to a gameId — it's a
+      // team-wide collection query — and a game can be individually shareable
+      // (isShareableGameDocument) even when its team is inactive/non-public.
+      // Without knowing which game the client is loading, this rule can't
+      // reproduce that per-game exception, so requiring team-level public+active
+      // status here breaks replay links for exactly the teams that need it most.
+      // The data itself (sport type + column names) has no meaningful sensitivity.
       match /statTrackerConfigs/{configId} {
         allow read: if true;
         allow write: if isTeamOwnerOrAdmin(teamId);

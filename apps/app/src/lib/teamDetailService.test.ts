@@ -102,11 +102,13 @@ import {
   loadParentTeamDetail,
   loadParentTeamDetailBootstrap,
   loadTeamTrackingAdmin,
+  revokeTeamAdminAccessForApp,
   saveTeamTrackingItemForApp,
   setPlayerTrackingStatusForApp,
   updateTeamSettingsForApp
 } from './teamDetailService';
 import { computeNativeStandings } from '../../../../js/native-standings.js';
+import { hasFullTeamAccess } from '../../../../js/team-access.js';
 
 describe('createStatTrackerConfigForApp', () => {
   beforeEach(() => {
@@ -346,6 +348,50 @@ describe('tracking admin helpers', () => {
       updatedBy: 'coach-1',
       updatedByEmail: 'coach@example.com'
     }));
+  });
+});
+
+describe('canManageTeamAdmins adminEmails parity with legacy js/team-access.js', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    // Use the real legacy hasFullTeamAccess (not the file-level always-true mock) so this
+    // test actually exercises owner/adminEmails/isAdmin parity instead of trivially passing.
+    vi.mocked(hasFullTeamAccess).mockImplementation((user: any, team: any) => {
+      if (!user || !team) return false;
+      const isOwner = team.ownerId === user.uid;
+      const normalizedEmail = String(user.email || '').trim().toLowerCase();
+      const adminEmails = (Array.isArray(team.adminEmails) ? team.adminEmails : [])
+        .map((email: string) => String(email || '').trim().toLowerCase());
+      const isTeamAdmin = adminEmails.includes(normalizedEmail);
+      const isPlatformAdmin = user.isAdmin === true;
+      return isOwner || isTeamAdmin || isPlatformAdmin;
+    });
+    dbMocks.getTeam.mockResolvedValue({
+      id: 'team-1',
+      ownerId: 'owner-uid',
+      ownerEmail: 'owner@example.com',
+      adminEmails: ['teamadmin@example.com']
+    });
+    dbMocks.updateTeam.mockResolvedValue(undefined);
+    __resetTeamDetailBaseSnapshotCacheForTests();
+  });
+
+  it('allows a user listed in team.adminEmails (not owner, not isAdmin) to manage admins', async () => {
+    const teamAdminUser = { uid: 'admin-uid', email: 'teamadmin@example.com', roles: [] } as any;
+
+    await expect(
+      revokeTeamAdminAccessForApp('team-1', 'someoneelse@example.com', teamAdminUser)
+    ).resolves.toBeUndefined();
+    expect(dbMocks.updateTeam).toHaveBeenCalled();
+  });
+
+  it('denies a user who is neither owner, adminEmails member, isAdmin, isPlatformAdmin, nor admin-role', async () => {
+    const randomUser = { uid: 'random-uid', email: 'random@example.com', roles: [] } as any;
+
+    await expect(
+      revokeTeamAdminAccessForApp('team-1', 'teamadmin@example.com', randomUser)
+    ).rejects.toThrow('You do not have permission to manage admins for this team.');
+    expect(dbMocks.updateTeam).not.toHaveBeenCalled();
   });
 });
 

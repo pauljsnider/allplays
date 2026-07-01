@@ -153,6 +153,81 @@ describe('statTrackingService', () => {
     expect(service.getEventLog()).toHaveLength(1);
   });
 
+  it('credits a team-configured custom scoring column, matching js/track-basketball.js and js/live-tracker.js getConfiguredPointsColumn() semantics', async () => {
+    const dependencies = createDependencies();
+    const service = createStatTrackingService({
+      statConfig: { columns: ['SCORE', 'REB', 'AST'], scoringColumn: 'SCORE' },
+      initialScore: { homeScore: 0, awayScore: 0 },
+      dependencies
+    });
+
+    await service.recordEvent('team-1', 'game-1', {
+      text: '#4 Alex SCORE +5',
+      playerName: 'Alex',
+      playerNumber: '4',
+      teamSide: 'home',
+      undoData: {
+        type: 'stat',
+        playerId: 'player-1',
+        statKey: 'SCORE',
+        value: 5,
+        isOpponent: false
+      }
+    }, { uid: 'coach-1' });
+
+    expect(service.getCurrentScore()).toEqual({ homeScore: 5, awayScore: 0 });
+  });
+
+  it('does not credit the default PTS column as score once a different column is configured as scoringColumn', async () => {
+    const dependencies = createDependencies();
+    const service = createStatTrackingService({
+      statConfig: { columns: ['PTS', 'SCORE', 'REB'], scoringColumn: 'SCORE' },
+      initialScore: { homeScore: 0, awayScore: 0 },
+      dependencies
+    });
+
+    await service.recordEvent('team-1', 'game-1', {
+      text: '#4 Alex PTS +5',
+      playerName: 'Alex',
+      playerNumber: '4',
+      teamSide: 'home',
+      undoData: {
+        type: 'stat',
+        playerId: 'player-1',
+        statKey: 'PTS',
+        value: 5,
+        isOpponent: false
+      }
+    }, { uid: 'coach-1' });
+
+    expect(service.getCurrentScore()).toEqual({ homeScore: 0, awayScore: 0 });
+  });
+
+  it('falls back to the default PTS/POINTS/GOALS scoring keys when scoringColumn does not name a real column', async () => {
+    const dependencies = createDependencies();
+    const service = createStatTrackingService({
+      statConfig: { columns: ['PTS', 'REB'], scoringColumn: 'DOES_NOT_EXIST' },
+      initialScore: { homeScore: 0, awayScore: 0 },
+      dependencies
+    });
+
+    await service.recordEvent('team-1', 'game-1', {
+      text: '#4 Alex PTS +5',
+      playerName: 'Alex',
+      playerNumber: '4',
+      teamSide: 'home',
+      undoData: {
+        type: 'stat',
+        playerId: 'player-1',
+        statKey: 'PTS',
+        value: 5,
+        isOpponent: false
+      }
+    }, { uid: 'coach-1' });
+
+    expect(service.getCurrentScore()).toEqual({ homeScore: 5, awayScore: 0 });
+  });
+
   it('accepts legacy custom stat column keys with punctuation', async () => {
     const dependencies = createDependencies();
     const service = createStatTrackingService({

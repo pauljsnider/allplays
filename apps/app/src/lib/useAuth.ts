@@ -3,8 +3,25 @@ import type { AuthState, AuthUser } from './types';
 import { clearAuthBootstrapHint, writeAuthBootstrapHint } from './authBootstrapHint';
 import { hydrateFirebaseUser, observeFirebaseUser, signOut } from './authService';
 import { createLogger } from './logger';
+import { resetChatAiModel } from './chatService';
+import { resetGameWrapupAiModel } from './gameWrapupService';
+import { resetLineupAiModel } from './gameDayLineupBuilder';
+import { resetPrivateAiModel } from './privateAiService';
+import { resetAppSearchCache } from './searchService';
 
 const logger = createLogger('app-auth');
+
+function clearPerUserCaches() {
+  // These module-level caches key on the signed-in user (search results, help
+  // roles) or hold generative-model handles tied to the session's Firebase
+  // app. Without this, a second user signing in on the same tab/device could
+  // briefly see the previous user's cached search results.
+  resetAppSearchCache();
+  resetChatAiModel();
+  resetGameWrapupAiModel();
+  resetPrivateAiModel();
+  resetLineupAiModel();
+}
 
 export function useAuth(): AuthState {
   const [user, setUser] = useState<AuthUser | null>(null);
@@ -86,6 +103,7 @@ export function useAuth(): AuthState {
     setUser(null);
     setProfile(null);
     clearAuthBootstrapHint();
+    clearPerUserCaches();
     setLoading(false);
     try {
       await cleanup;

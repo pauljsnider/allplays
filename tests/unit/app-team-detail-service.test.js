@@ -166,16 +166,34 @@ describe('React app team detail model', () => {
         expect(inviteAdmin).not.toHaveBeenCalled();
     });
 
-    it('requires owner or platform admin access before creating or revoking team admin access', async () => {
+    it('requires owner, adminEmails membership, or platform admin access before creating or revoking team admin access', async () => {
         getTeam.mockResolvedValue({ id: 'team-1', ownerId: 'owner-1', ownerEmail: 'owner@example.com', adminEmails: [' coach@example.com ', 'COACH@example.com '] });
         getPlayers.mockResolvedValue([]);
         getGames.mockResolvedValue([]);
         getConfigs.mockResolvedValue([]);
         updateTeam.mockResolvedValue(undefined);
+        inviteAdmin.mockResolvedValue({ code: 'CODE1', teamName: 'Bears', existingUser: false });
+        addTeamAdminEmail.mockResolvedValue(undefined);
+        sendInviteEmail.mockResolvedValue({ success: true });
 
-        await expect(inviteTeamAdminForApp('team-1', 'newcoach@example.com', { uid: 'coach-1', email: 'coach@example.com', roles: ['coach'] })).rejects.toThrow('You do not have permission to manage admins for this team.');
-        await expect(revokeTeamAdminAccessForApp('team-1', 'coach@example.com', { uid: 'coach-1', email: 'coach@example.com', roles: ['coach'] })).rejects.toThrow('You do not have permission to manage admins for this team.');
+        // A user with no relationship to the team at all (not owner, not in
+        // adminEmails, not platform admin) must still be rejected.
+        await expect(inviteTeamAdminForApp('team-1', 'newcoach@example.com', { uid: 'stranger-1', email: 'stranger@example.com', roles: [] })).rejects.toThrow('You do not have permission to manage admins for this team.');
+        await expect(revokeTeamAdminAccessForApp('team-1', 'coach@example.com', { uid: 'stranger-1', email: 'stranger@example.com', roles: [] })).rejects.toThrow('You do not have permission to manage admins for this team.');
 
+        // A user listed in team.adminEmails (but not owner/platformAdmin) has full team
+        // access on the legacy site (js/team-access.js hasFullTeamAccess, gating
+        // edit-team.html's admin management UI), so the app must allow it too instead
+        // of drifting into a narrower, owner/platform-admin-only check.
+        await expect(inviteTeamAdminForApp('team-1', 'newcoach@example.com', { uid: 'coach-1', email: 'coach@example.com', roles: ['coach'] })).resolves.toMatchObject({ email: 'newcoach@example.com' });
+        await revokeTeamAdminAccessForApp('team-1', 'coach@example.com', { uid: 'coach-1', email: 'coach@example.com', roles: ['coach'] });
+        expect(updateTeam).toHaveBeenCalledWith('team-1', {
+            adminEmails: [],
+            updatedAt: expect.any(Date)
+        });
+
+        updateTeam.mockClear();
+        getTeam.mockResolvedValue({ id: 'team-1', ownerId: 'owner-1', ownerEmail: 'owner@example.com', adminEmails: [' coach@example.com ', 'COACH@example.com '] });
         await revokeTeamAdminAccessForApp('team-1', ' Coach@Example.com ', { uid: 'owner-1', email: 'owner@example.com', roles: ['coach'] });
         expect(updateTeam).toHaveBeenCalledWith('team-1', {
             adminEmails: [],

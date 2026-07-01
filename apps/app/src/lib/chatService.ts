@@ -1,4 +1,4 @@
-import { Capacitor } from '@capacitor/core';
+import { isNativeRuntime } from './nativeRuntime';
 import {
   GoogleAIBackend,
   canAccessTeamChat,
@@ -191,8 +191,8 @@ type ImageUploadSession = {
 
 let aiModelCache: any = null;
 
-function isNativeRuntime() {
-  return Capacitor.isNativePlatform() || window.location.protocol === 'capacitor:';
+export function resetChatAiModel() {
+  aiModelCache = null;
 }
 
 function withTimeout<T>(promise: Promise<T>, label: string, timeoutMs = primaryDataTimeoutMs): Promise<T> {

@@ -1,5 +1,5 @@
-import { Capacitor } from '@capacitor/core';
 import { createLogger } from './logger';
+import { isNativeRuntime } from './nativeRuntime';
 
 const logger = createLogger('native');
 
@@ -29,8 +29,4 @@ export async function hideNativeSplashScreen() {
   } catch (error) {
     logger.warn('Unable to hide splash screen.', { error });
   }
-}
-
-function isNativeRuntime() {
-  return Capacitor.isNativePlatform() || (typeof window !== 'undefined' && window.location.protocol === 'capacitor:');
 }

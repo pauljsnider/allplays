@@ -34,13 +34,13 @@ import {
   buildAppWrapupCompletionPayload,
   buildGameWrapupEmailDraft,
   generateGameWrapupArtifactsForApp,
-  resetGameWrapupAiModelForTests
+  resetGameWrapupAiModel
 } from './gameWrapupService';
 
 describe('gameWrapupService', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    resetGameWrapupAiModelForTests();
+    resetGameWrapupAiModel();
     dbMocks.getTeam.mockResolvedValue({ id: 'team-1', name: 'Falcons', sport: 'Basketball' });
     dbMocks.getGame.mockResolvedValue({
       id: 'game-1',

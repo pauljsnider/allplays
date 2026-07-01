@@ -50,7 +50,7 @@ vi.mock('../../apps/app/src/lib/helpKnowledgeService.ts', () => helpMocks);
 vi.mock('../../apps/app/src/lib/searchRoutePreload.ts', () => routePreloadMocks);
 
 import { AppShell } from '../../apps/app/src/components/AppShell.tsx';
-import { resetAppSearchCacheForTests } from '../../apps/app/src/lib/searchService.ts';
+import { resetAppSearchCache } from '../../apps/app/src/lib/searchService.ts';
 
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -167,7 +167,7 @@ async function waitForText(container, text) {
 
 beforeEach(() => {
     vi.clearAllMocks();
-    resetAppSearchCacheForTests();
+    resetAppSearchCache();
     window.matchMedia = vi.fn(() => ({
         matches: false,
         media: '(min-width: 1024px)',
@@ -696,7 +696,7 @@ describe('React app shell search', () => {
         expect(container.textContent).toContain('Team search unavailable');
 
         await clickButton(container, 'Close search');
-        resetAppSearchCacheForTests();
+        resetAppSearchCache();
         homeMocks.loadParentHome.mockResolvedValueOnce({ teams: [] });
         firebaseMocks.getDocs.mockRejectedValue(Object.assign(new Error('Permission denied'), { code: 'permission-denied' }));
 
@@ -705,7 +705,7 @@ describe('React app shell search', () => {
         expect(container.textContent).toContain('Player search unavailable for this account.');
 
         await clickButton(container, 'Close search');
-        resetAppSearchCacheForTests();
+        resetAppSearchCache();
         homeMocks.loadParentHome.mockResolvedValueOnce({ teams: [] });
         firebaseMocks.getDocs.mockRejectedValue(Object.assign(new Error('not ready yet: create index'), { code: 'failed-precondition' }));
 

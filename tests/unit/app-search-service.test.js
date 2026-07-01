@@ -40,7 +40,7 @@ import {
     getKnownAppSearchTeams,
     getSearchHelpRoles,
     loadAppSearchTeams,
-    resetAppSearchCacheForTests,
+    resetAppSearchCache,
     scoreSearchText,
     searchAppTeams,
     searchAppPlayers,
@@ -92,7 +92,7 @@ beforeEach(() => {
     vi.clearAllMocks();
     firebaseMocks.getDoc.mockReset();
     dbMocks.discoverPublicTeams.mockResolvedValue({ teams: [], nextCursor: null });
-    resetAppSearchCacheForTests();
+    resetAppSearchCache();
     helpMocks.searchHelpKnowledge.mockReturnValue([]);
     homeMocks.loadParentHomeSummary.mockImplementation((...args) => homeMocks.loadParentHome(...args));
 });
@@ -755,7 +755,7 @@ describe('React app search service', () => {
         expect(homeMocks.loadParentHomeSummary).toHaveBeenCalledTimes(1);
         expect(first.map((team) => team.id)).toEqual(['team-home']);
 
-        resetAppSearchCacheForTests();
+        resetAppSearchCache();
         firebaseMocks.getDocs
             .mockRejectedValueOnce(new Error('direct access down'))
             .mockResolvedValueOnce({ docs: [] })

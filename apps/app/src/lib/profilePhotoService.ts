@@ -7,6 +7,7 @@ import {
 import { Capacitor } from '@capacitor/core';
 import { resolveImageFirebaseConfig } from './adapters/legacyProfilePhotoDb';
 import { createLogger } from './logger';
+import { isNativeRuntime } from './nativeRuntime';
 import { uploadUserPhoto } from './adapters/legacyProfilePhotoDb';
 
 const profileTimeoutMs = 8000;
@@ -49,10 +50,6 @@ function withTimeout<T>(promise: Promise<T>, label: string, timeoutMs = profileT
       window.clearTimeout(timeoutId);
     }
   });
-}
-
-function isNativeRuntime() {
-  return Capacitor.isNativePlatform() || window.location.protocol === 'capacitor:';
 }
 
 function isNativeCameraAvailable() {
