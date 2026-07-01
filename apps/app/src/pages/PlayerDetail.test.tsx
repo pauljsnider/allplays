@@ -1371,6 +1371,7 @@ describe('PlayerDetail staff roster editing', () => {
       }
     }));
     playerServiceMocks.saveStaffPlayerRosterDetails.mockResolvedValue({ updatedFields: ['number'] });
+    playerServiceMocks.updateParentPlayerEditableProfile.mockResolvedValue({});
     window.scrollTo = vi.fn();
     window.requestAnimationFrame = vi.fn((callback: FrameRequestCallback) => {
       callback(0);
@@ -1427,6 +1428,87 @@ describe('PlayerDetail staff roster editing', () => {
 
     await screen.findByText('Player profile');
     expect(screen.queryByText('Roster Details')).toBeNull();
+  });
+
+  it('renders one photo upload path for linked parents who can edit roster details', async () => {
+    playerServiceMocks.loadParentPlayerDetail.mockResolvedValue(buildDetailData({
+      access: {
+        isLinkedParent: true,
+        isTeamStaff: true,
+        canEditRosterDetails: true,
+        canEditCustomRosterFields: false
+      }
+    }));
+
+    const view = renderPlayerDetail();
+
+    await screen.findByText('Sam Player');
+    fireEvent.click(screen.getByRole('button', { name: 'Profile' }));
+
+    expect(await screen.findByText('Roster Details')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Edit Profile' })).toBeTruthy();
+    expect(screen.getByLabelText('Roster photo')).toBeTruthy();
+    expect(screen.queryByLabelText('Player photo')).toBeNull();
+    expect(view.container.querySelectorAll('input[type="file"]')).toHaveLength(1);
+  });
+
+  it('saves private profile details without a photo input when roster editing is available', async () => {
+    playerServiceMocks.loadParentPlayerDetail.mockResolvedValue(buildDetailData({
+      access: {
+        isLinkedParent: true,
+        isTeamStaff: true,
+        canEditRosterDetails: true,
+        canEditCustomRosterFields: false
+      },
+      privateProfile: {
+        emergencyContact: { name: 'Old Contact', phone: '555-0100' },
+        medicalInfo: 'Old notes'
+      }
+    }));
+
+    renderPlayerDetail();
+
+    await screen.findByText('Sam Player');
+    fireEvent.click(screen.getByRole('button', { name: 'Profile' }));
+    await screen.findByText('Roster Details');
+
+    expect(screen.queryByLabelText('Player photo')).toBeNull();
+    fireEvent.change(screen.getByLabelText('Emergency contact'), { target: { value: 'New Contact' } });
+    fireEvent.change(screen.getByLabelText('Emergency phone'), { target: { value: '555-0199' } });
+    fireEvent.change(screen.getByLabelText('Medical info / notes'), { target: { value: 'Carries inhaler' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save Profile' }));
+
+    await waitFor(() => {
+      expect(playerServiceMocks.updateParentPlayerEditableProfile).toHaveBeenCalledWith({
+        user: auth.user,
+        teamId: 'team-current',
+        playerId: 'player-current',
+        emergencyContactName: 'New Contact',
+        emergencyContactPhone: '555-0199',
+        medicalInfo: 'Carries inhaler',
+        photoFile: null
+      });
+    });
+  });
+
+  it('keeps the parent-only player photo input when roster editing is unavailable', async () => {
+    playerServiceMocks.loadParentPlayerDetail.mockResolvedValue(buildDetailData({
+      access: {
+        isLinkedParent: true,
+        isTeamStaff: false,
+        canEditRosterDetails: false,
+        canEditCustomRosterFields: false
+      }
+    }));
+
+    const view = renderPlayerDetail();
+
+    await screen.findByText('Sam Player');
+    fireEvent.click(screen.getByRole('button', { name: 'Profile' }));
+
+    expect(await screen.findByLabelText('Player photo')).toBeTruthy();
+    expect(screen.queryByLabelText('Roster photo')).toBeNull();
+    expect(view.container.querySelectorAll('input[type="file"]')).toHaveLength(1);
   });
 });
 
