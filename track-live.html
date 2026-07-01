@@ -703,9 +703,9 @@
         let awayScore = 0;
         let players = [];
         let opponentPlayers = [
-            { id: 'opp1', name: '' },
-            { id: 'opp2', name: '' },
-            { id: 'opp3', name: '' }
+            { id: 'opp1', name: '', number: '' },
+            { id: 'opp2', name: '', number: '' },
+            { id: 'opp3', name: '', number: '' }
         ];
         let isFinishing = false; // Flag to disable beforeunload warning when finishing game
         let liveState = {
@@ -862,7 +862,8 @@
                     gameState.opponentStats = JSON.parse(JSON.stringify(game.opponentStats));
                     opponentPlayers = Object.entries(gameState.opponentStats).map(([id, data]) => ({
                         id,
-                        name: data?.name || ''
+                        name: data?.name || '',
+                        number: data?.number || data?.playerNumber || data?.jerseyNumber || ''
                     }));
                     console.log('Loaded existing opponent stats:', gameState.opponentStats);
                 } else {
@@ -1585,7 +1586,7 @@
                 snapshot[opp.id] = {
                     ...existing,
                     name: opp.name || existing.name || '',
-                    number: existing.number || ''
+                    number: opp.number || existing.number || ''
                 };
                 currentConfig.columns.forEach((col) => {
                     const key = col.toLowerCase();
@@ -1892,6 +1893,8 @@
                     <td class="player-name text-left p-1">
                         <input type="text" class="notes-input" placeholder="Player name..." value="${escapeHtml(opp.name)}"
                             onchange="updateOpponentName('${opp.id}', this.value)">
+                        <input type="text" class="notes-input mt-1" placeholder="#" value="${escapeHtml(opp.number || '')}"
+                            onchange="updateOpponentNumber('${opp.id}', this.value)">
                     </td>`;
                 rowHTML += `<td class="stat-cell-wide p-1">
                     <div class="text-[10px] text-sand/60 font-semibold">Away</div>
@@ -1939,6 +1942,17 @@
             if (opp) opp.name = name;
             if (gameState.opponentStats[oppId]) {
                 gameState.opponentStats[oppId].name = name;
+            }
+            scheduleOpponentStatsSync();
+            scheduleLiveHasData();
+        };
+
+        window.updateOpponentNumber = function (oppId, number) {
+            const cleanNumber = String(number || '').trim().replace(/^#/, '');
+            const opp = opponentPlayers.find(o => o.id === oppId);
+            if (opp) opp.number = cleanNumber;
+            if (gameState.opponentStats[oppId]) {
+                gameState.opponentStats[oppId].number = cleanNumber;
             }
             scheduleOpponentStatsSync();
             scheduleLiveHasData();
@@ -2342,7 +2356,8 @@
         document.getElementById('addOpponentBtn').addEventListener('click', () => {
             const newOpp = {
                 id: 'opp' + Date.now(),
-                name: ''
+                name: '',
+                number: ''
             };
             gameState.opponentStats[newOpp.id] = { name: '', number: '' };
             currentConfig.columns.forEach(col => {

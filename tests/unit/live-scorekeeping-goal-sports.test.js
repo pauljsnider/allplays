@@ -95,4 +95,18 @@ describe('goal sport scorekeeping helpers', () => {
     expect(resolveGoalSportScorer(players, '#11')?.id).toBe('p2');
     expect(resolveGoalSportScorer(players, 'Unknown')).toBeNull();
   });
+
+  it('keeps away opponent jersey numbers in the live scorer lookup pool', () => {
+    const html = readFileSync(new URL('../../track-live.html', import.meta.url), 'utf8');
+
+    expect(resolveGoalSportScorer([
+      { id: 'opp1', name: 'Rival Forward', number: '11' }
+    ], '#11')?.id).toBe('opp1');
+    expect(html).toContain("{ id: 'opp1', name: '', number: '' }");
+    expect(html).toContain('number: data?.number || data?.playerNumber || data?.jerseyNumber ||');
+    expect(html).toContain('number: opp.number || existing.number ||');
+    expect(html).toContain('onchange="updateOpponentNumber');
+    expect(html).toContain('window.updateOpponentNumber = function (oppId, number)');
+    expect(html).toContain("replace(/^#/, '')");
+  });
 });
