@@ -707,6 +707,12 @@ service cloud.firestore {
              canReadSharedGameForTeamId(data, data.get('awayTeamId', null));
     }
 
+    function canReadSharedGameSubcollectionDocument(sharedGamePath) {
+      let sharedGame = get(sharedGamePath).data;
+      return sharedGame != null &&
+             canReadCollectionGroupSharedGameDocument(sharedGame);
+    }
+
     function isTrackingItemPayloadValid(teamId, data) {
       return data.keys().hasOnly([
                'teamId', 'name', 'description', 'visibility', 'status', 'active', 'archived',
@@ -1683,6 +1689,21 @@ service cloud.firestore {
     // Collection group rule for shared games - allows homepage and team shared schedule discovery.
     match /{path=**}/sharedGames/{gameId} {
       allow read: if canReadCollectionGroupSharedGameDocument(resource.data);
+    }
+
+    // Live viewers open shared games by synthetic ID, then read live/replay data
+    // from the decoded sharedGames document path.
+    match /{path=**}/sharedGames/{gameId}/{liveGameCollection}/{docId} {
+      allow read: if liveGameCollection in [
+                    'events',
+                    'aggregatedStats',
+                    'liveEvents',
+                    'liveChat',
+                    'liveReactions'
+                  ] &&
+                  canReadSharedGameSubcollectionDocument(
+                    /databases/$(database)/documents/$(path)/sharedGames/$(gameId)
+                  );
     }
 
     // Collection group rule for players - enables collectionGroup('players') queries.
