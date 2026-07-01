@@ -194,6 +194,9 @@ function createEnvironment(initialState, overrides = {}) {
         'team-admin-banner',
         'page-title',
         'team-create-options',
+        'post-create-next-steps',
+        'post-create-roster-btn',
+        'post-create-schedule-btn',
         'team-create-mode-registration',
         'registration-import-panel',
         'registration-source-select',
@@ -241,6 +244,7 @@ function createEnvironment(initialState, overrides = {}) {
         'roster-rollover-status',
         'roster-rollover-preview',
         'access-rollover-panel',
+        'team-management-card',
         'rollover-source-team',
         'rollover-staff-review',
         'rollover-staff-enabled',
@@ -282,6 +286,8 @@ function createEnvironment(initialState, overrides = {}) {
 
     const elements = new Map(ids.map((id) => [id, new MockElement(id)]));
     elements.get('page-title').textContent = 'Create New Team';
+    elements.get('post-create-next-steps').classList.add('hidden');
+    elements.get('team-management-card').classList.add('hidden');
     elements.get('add-admin-form').classList.add('hidden');
     elements.get('admin-invite-status').classList.add('hidden');
     elements.get('admin-invite-code').classList.add('hidden');
@@ -651,6 +657,38 @@ describe('edit team admin access persistence', () => {
             expect(createEnv.elements.get('advanced-team-setup').open).toBe(false);
         } finally {
             createEnv.cleanup();
+        }
+    });
+
+    it('boots the created-state next-step actions in the edit-team harness', async () => {
+        const initialState = {
+            currentUser: { uid: 'owner-1', email: 'owner@example.com' },
+            team: {
+                id: 'team-1',
+                ownerId: 'owner-1',
+                name: 'Spring Sharks',
+                description: 'First season',
+                sport: 'Basketball',
+                notificationEmail: '',
+                leagueUrl: '',
+                standingsConfig: { enabled: false, rankingMode: 'points', tiebreakers: [] },
+                zip: '66209',
+                isPublic: true,
+                adminEmails: []
+            },
+            updateCalls: []
+        };
+
+        const env = await bootEditTeam(initialState, { href: 'http://example.com/edit-team.html?teamId=team-1&created=1' });
+        try {
+            expect(env.elements.get('post-create-next-steps').classList.contains('hidden')).toBe(false);
+            expect(env.elements.get('team-management-card').classList.contains('hidden')).toBe(true);
+            expect(env.elements.get('post-create-roster-btn').href).toBe('edit-roster.html?teamId=team-1');
+            expect(env.elements.get('post-create-schedule-btn').href).toBe('edit-schedule.html?teamId=team-1');
+            expect(env.elements.get('manage-roster-btn').href).toBe('edit-roster.html?teamId=team-1');
+            expect(env.elements.get('manage-schedule-btn').href).toBe('edit-schedule.html?teamId=team-1');
+        } finally {
+            env.cleanup();
         }
     });
 

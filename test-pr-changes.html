@@ -360,6 +360,18 @@
             };
         }
 
+        function getTeamManagementActionState(teamId, created = false) {
+            const hasTeamId = Boolean(teamId);
+            const rosterUrl = hasTeamId ? `edit-roster.html?teamId=${teamId}` : '#';
+            const scheduleUrl = hasTeamId ? `edit-schedule.html?teamId=${teamId}` : '#';
+            return {
+                managementCardVisible: hasTeamId && !created,
+                postCreateActionsVisible: hasTeamId && created,
+                rosterUrl,
+                scheduleUrl
+            };
+        }
+
         test('buildTeamEditUrl should include the teamId hash param', () => {
             assertEquals(
                 buildTeamEditUrl('team_123'),
@@ -386,6 +398,30 @@
             const state = getTeamIdPanelState('abc123team');
             assertTrue(state.visible, 'Panel should be visible when a team ID exists');
             assertEquals(state.value, 'abc123team', 'Panel should show the current team ID');
+        });
+
+        test('Team Management actions should stay hidden before a team exists', () => {
+            const state = getTeamManagementActionState('');
+            assertFalse(state.managementCardVisible, 'Management card should not show dead links before save');
+            assertFalse(state.postCreateActionsVisible, 'Post-create actions should wait for a saved team');
+            assertEquals(state.rosterUrl, '#', 'Roster URL should not point to a workflow without a team ID');
+            assertEquals(state.scheduleUrl, '#', 'Schedule URL should not point to a workflow without a team ID');
+        });
+
+        test('created team URL state should prioritize roster and schedule next steps', () => {
+            const state = getTeamManagementActionState('team_123', true);
+            assertFalse(state.managementCardVisible, 'Created state should defer the normal management card');
+            assertTrue(state.postCreateActionsVisible, 'Created state should show post-create next-step actions');
+            assertEquals(state.rosterUrl, 'edit-roster.html?teamId=team_123', 'Roster action should receive the saved team ID');
+            assertEquals(state.scheduleUrl, 'edit-schedule.html?teamId=team_123', 'Schedule action should receive the saved team ID');
+        });
+
+        test('existing teams should still show normal management links', () => {
+            const state = getTeamManagementActionState('team_123', false);
+            assertTrue(state.managementCardVisible, 'Existing edit flow should keep the normal management card');
+            assertFalse(state.postCreateActionsVisible, 'Existing edit flow should not show first-create success actions');
+            assertEquals(state.rosterUrl, 'edit-roster.html?teamId=team_123', 'Existing roster link should keep the team ID');
+            assertEquals(state.scheduleUrl, 'edit-schedule.html?teamId=team_123', 'Existing schedule link should keep the team ID');
         });
 
         // ============================================
