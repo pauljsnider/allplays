@@ -119,4 +119,23 @@ describe('help and workflow page inventory', () => {
         expect(appHelpIndex).not.toContain('"id": "workflow-awards-certificates"');
         expect(appHelpIndex).not.toContain('"summary": "Workflow Guide"');
     });
+
+    it('keeps Game Day broadcast workflow copy aligned with setup-only support', () => {
+        const html = readRepoFile('workflow-game-day.html');
+        const appHelpIndex = readRepoFile('apps/app/src/lib/helpKnowledgeIndex.ts');
+        const gameDayHelpEntry = appHelpIndex.match(/\{\n    "id": "game-day"[\s\S]*?\n  \}/)?.[0] || '';
+
+        expect(html).toContain('Open broadcast setup');
+        expect(html).toContain('Current streaming support uses external provider/setup tools');
+        expect(html).toContain('it does not yet start a native managed broadcast or server-side stream pipeline');
+        expect(gameDayHelpEntry).toContain('Open broadcast setup');
+        expect(gameDayHelpEntry).toContain('Current streaming support uses external provider/setup tools');
+        expect(gameDayHelpEntry).toContain('it does not yet start a native managed broadcast or server-side stream pipeline');
+        expect(html).not.toContain('Begin Streaming button');
+        expect(html).not.toContain('native camera capture');
+        expect(html).not.toContain('Confirm camera/microphone permission is granted');
+        expect(gameDayHelpEntry).not.toContain('Begin Streaming button');
+        expect(gameDayHelpEntry).not.toContain('native camera capture');
+        expect(gameDayHelpEntry).not.toContain('Confirm camera/microphone permission is granted');
+    });
 });
