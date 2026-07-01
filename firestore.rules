@@ -685,6 +685,28 @@ service cloud.firestore {
              );
     }
 
+    function canReadSharedGameForExistingTeam(data, teamId) {
+      let teamPath = /databases/$(database)/documents/teams/$(teamId);
+      let teamData = get(teamPath).data;
+      return teamData != null &&
+             (
+               isTeamOwnerOrAdmin(teamId) ||
+               isParentForTeam(teamId) ||
+               canReadPublicGameDocument(teamData, data)
+             );
+    }
+
+    function canReadSharedGameForTeamId(data, teamId) {
+      return teamId is string &&
+             teamId.size() > 0 &&
+             canReadSharedGameForExistingTeam(data, teamId);
+    }
+
+    function canReadCollectionGroupSharedGameDocument(data) {
+      return canReadSharedGameForTeamId(data, data.get('homeTeamId', null)) ||
+             canReadSharedGameForTeamId(data, data.get('awayTeamId', null));
+    }
+
     function isTrackingItemPayloadValid(teamId, data) {
       return data.keys().hasOnly([
                'teamId', 'name', 'description', 'visibility', 'status', 'active', 'archived',
@@ -1656,6 +1678,11 @@ service cloud.firestore {
 	    // Collection group rule for games - allows cross-team queries (e.g., live games, recent games)
 	    match /{path=**}/games/{gameId} {
       allow read: if canReadCollectionGroupGameDocument(path, resource.data);
+    }
+
+    // Collection group rule for shared games - allows homepage and team shared schedule discovery.
+    match /{path=**}/sharedGames/{gameId} {
+      allow read: if canReadCollectionGroupSharedGameDocument(resource.data);
     }
 
     // Collection group rule for players - enables collectionGroup('players') queries.

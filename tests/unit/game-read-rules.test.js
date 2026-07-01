@@ -6,6 +6,10 @@ const collectionGroupGamesHelperMatch = rules.match(/function canReadCollectionG
 const collectionGroupGamesHelper = collectionGroupGamesHelperMatch?.[0] || '';
 const collectionGroupGamesMatch = rules.match(/match \/\{path=\*\*}\/games\/\{gameId} \{[\s\S]*?\n\s*}/);
 const collectionGroupGamesRules = collectionGroupGamesMatch?.[0] || '';
+const collectionGroupSharedGamesHelperMatch = rules.match(/function canReadCollectionGroupSharedGameDocument\(data\) \{[\s\S]*?\n\s*}/);
+const collectionGroupSharedGamesHelper = collectionGroupSharedGamesHelperMatch?.[0] || '';
+const collectionGroupSharedGamesMatch = rules.match(/match \/\{path=\*\*}\/sharedGames\/\{gameId} \{[\s\S]*?\n\s*}/);
+const collectionGroupSharedGamesRules = collectionGroupSharedGamesMatch?.[0] || '';
 const teamGamesStart = rules.indexOf('match /games/{gameId} {');
 const teamGamesEnd = rules.indexOf('// Live Events subcollection - for real-time game broadcasting', teamGamesStart);
 const teamGamesRules = teamGamesStart === -1 || teamGamesEnd === -1
@@ -62,5 +66,18 @@ describe('game Firestore read rules', () => {
         expect(rules).toContain('canVideographGame(teamId, gameId)');
         expect(rules).toContain('isAuthorizedOfficialForGame(data)');
         expect(rules).toContain("request.auth.uid in data.get('officiatingAuthorizedUserIds', [])");
+    });
+
+    it('allows sharedGames collection-group reads through referenced team visibility only', () => {
+        expect(rules).toContain('function canReadSharedGameForExistingTeam(data, teamId)');
+        expect(rules).toContain('function canReadSharedGameForTeamId(data, teamId)');
+        expect(rules).toContain('function canReadCollectionGroupSharedGameDocument(data)');
+        expect(collectionGroupSharedGamesRules).toContain('allow read: if canReadCollectionGroupSharedGameDocument(resource.data);');
+        expect(collectionGroupSharedGamesRules).not.toContain('allow read: if true;');
+        expect(collectionGroupSharedGamesHelper).toContain("canReadSharedGameForTeamId(data, data.get('homeTeamId', null))");
+        expect(collectionGroupSharedGamesHelper).toContain("canReadSharedGameForTeamId(data, data.get('awayTeamId', null))");
+        expect(rules).toContain('canReadPublicGameDocument(teamData, data)');
+        expect(rules).toContain('isTeamOwnerOrAdmin(teamId) ||');
+        expect(rules).toContain('isParentForTeam(teamId) ||');
     });
 });
