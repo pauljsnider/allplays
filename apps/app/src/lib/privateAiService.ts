@@ -89,7 +89,7 @@ const maxAnswerCharacters = 2400;
 
 let aiModelCache: any = null;
 
-export function resetPrivateAiModelForTests() {
+export function resetPrivateAiModel() {
   aiModelCache = null;
 }
 

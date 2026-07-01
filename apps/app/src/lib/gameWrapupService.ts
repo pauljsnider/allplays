@@ -41,7 +41,7 @@ export type GameWrapupEmailDraft = {
 
 let aiModelCache: any = null;
 
-export function resetGameWrapupAiModelForTests() {
+export function resetGameWrapupAiModel() {
   aiModelCache = null;
 }
 

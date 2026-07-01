@@ -182,7 +182,7 @@ beforeEach(async () => {
     toolsMocks.loadParentRegistrations.mockResolvedValue([]);
     toolsMocks.loadParentCertificates.mockResolvedValue([]);
     const service = await import('../../apps/app/src/lib/privateAiService.ts');
-    service.resetPrivateAiModelForTests();
+    service.resetPrivateAiModel();
 });
 
 describe('private AI service', () => {

@@ -230,6 +230,10 @@ export function parseAiLineupPlan(
 
 let lineupAiModelCache: any = null;
 
+export function resetLineupAiModel() {
+  lineupAiModelCache = null;
+}
+
 export async function getLineupAiModel() {
   if (lineupAiModelCache) return lineupAiModelCache;
   const firebaseApp = getApp();
