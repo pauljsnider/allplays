@@ -383,10 +383,11 @@ function invalidateTeamDetailBaseSnapshotCache(teamId: string) {
 
 function canManageTeamAdmins(user: AuthUser | null, team: any) {
   if (!user || !team) return false;
-  return cleanString(team?.ownerId) === cleanString(user?.uid)
-    || user?.isAdmin === true
+  // Delegates owner/adminEmails/isAdmin checks to the legacy source of truth
+  // (js/team-access.js) so this stays in sync with the legacy site instead of drifting.
+  return hasFullTeamAccess(user, team)
     || user?.isPlatformAdmin === true
-    || Array.isArray(user?.roles) && (user.roles.includes('admin') || user.roles.includes('platformAdmin'));
+    || (Array.isArray(user?.roles) && (user.roles.includes('admin') || user.roles.includes('platformAdmin')));
 }
 
 function withTimeout<T>(promise: Promise<T>, label: string, timeoutMs = primaryDataTimeoutMs): Promise<T> {
