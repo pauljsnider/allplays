@@ -2,25 +2,9 @@ name: mobile-build
 
 on:
   pull_request:
-    paths:
-      - ".github/workflows/mobile-build.yml"
-      - "apps/app/**"
-      - "android/**"
-      - "ios/**"
-      - "capacitor.config.json"
-      - "package.json"
-      - "package-lock.json"
   push:
     branches:
       - master
-    paths:
-      - ".github/workflows/mobile-build.yml"
-      - "apps/app/**"
-      - "android/**"
-      - "ios/**"
-      - "capacitor.config.json"
-      - "package.json"
-      - "package-lock.json"
   workflow_dispatch:
 
 concurrency:
@@ -28,7 +12,57 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      mobile: ${{ steps.filter.outputs.mobile }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Detect mobile-relevant changes
+        id: filter
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          BEFORE_SHA: ${{ github.event.before }}
+          AFTER_SHA: ${{ github.event.after }}
+        run: |
+          set -euo pipefail
+
+          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            echo "Manual run — always building." >&2
+            echo "mobile=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          if [ "$EVENT_NAME" = "pull_request" ]; then
+            CHANGED=$(git diff --name-only "$BASE_SHA...$HEAD_SHA")
+          elif [ "$EVENT_NAME" = "push" ] && [ -n "$BEFORE_SHA" ] && git cat-file -e "$BEFORE_SHA" 2>/dev/null; then
+            CHANGED=$(git diff --name-only "$BEFORE_SHA" "$AFTER_SHA")
+          else
+            # New branch / unknown before-sha (e.g. force push) — fall back to
+            # treating this as mobile-relevant so we don't silently skip a real
+            # native build.
+            echo "mobile=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          echo "Changed files:" >&2
+          echo "$CHANGED" >&2
+
+          if echo "$CHANGED" | grep -Eq '^(\.github/workflows/mobile-build\.yml|apps/app/|android/|ios/|capacitor\.config\.json|package\.json|package-lock\.json)'; then
+            echo "mobile=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "mobile=false" >> "$GITHUB_OUTPUT"
+          fi
+
   android-debug:
+    needs: changes
+    if: needs.changes.outputs.mobile == 'true'
     runs-on: ubuntu-latest
 
     steps:
@@ -101,6 +135,8 @@ jobs:
           retention-days: 7
 
   ios-simulator:
+    needs: changes
+    if: needs.changes.outputs.mobile == 'true'
     runs-on: macos-15
 
     steps:
@@ -176,3 +212,33 @@ jobs:
             -destination 'generic/platform=iOS Simulator' \
             CODE_SIGNING_ALLOWED=NO \
             build
+
+  # Single required status check with a stable name/context, regardless of
+  # whether this PR's changes actually triggered a native build. Branch
+  # protection requires this job (not the path-filtered android-debug/
+  # ios-simulator jobs) so a PR that never touches mobile paths isn't stuck
+  # waiting on a check that never runs, while a PR that does touch mobile
+  # paths can't merge with a red native build (the gap this job closes).
+  mobile-build:
+    needs: [changes, android-debug, ios-simulator]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check native build results
+        run: |
+          if [ "${{ needs.changes.outputs.mobile }}" != "true" ]; then
+            echo "No mobile-relevant changes — skipping native build requirement."
+            exit 0
+          fi
+
+          if [ "${{ needs.android-debug.result }}" != "success" ]; then
+            echo "android-debug build did not succeed (${{ needs.android-debug.result }})."
+            exit 1
+          fi
+
+          if [ "${{ needs.ios-simulator.result }}" != "success" ]; then
+            echo "ios-simulator build did not succeed (${{ needs.ios-simulator.result }})."
+            exit 1
+          fi
+
+          echo "Native builds succeeded."
