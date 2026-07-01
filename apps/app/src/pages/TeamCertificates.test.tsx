@@ -271,7 +271,7 @@ describe('TeamCertificates', () => {
     expect(await screen.findByDisplayValue('AI narrative for Pat Player')).toBeTruthy();
 
     const publishButton = screen.getByRole('button', { name: /publish selected/i });
-    expect(publishButton).toBeDisabled();
+    expect(publishButton).toHaveProperty('disabled', true);
 
     fireEvent.click(screen.getByLabelText('I reviewed these certificate descriptions and they are ready for parents.'));
     fireEvent.click(screen.getByRole('button', { name: /publish selected/i }));
@@ -287,6 +287,45 @@ describe('TeamCertificates', () => {
       }));
     });
     expect(await screen.findByText('Published 1 certificate for parent viewing.')).toBeTruthy();
+  });
+
+  it('keeps publish disabled for selected awards that still need review', async () => {
+    certificateAwardServiceMocks.generateCertificateAwardNarrativesForApp.mockResolvedValueOnce([{
+      id: 'cert-1',
+      certificateId: 'cert-1',
+      batchId: 'batch-1',
+      playerId: 'player-1',
+      recipientName: 'Pat Player',
+      playerNumber: '12',
+      playerPhotoUrl: null,
+      awardTitle: 'Most Improved Player',
+      description: 'Fallback narrative needs review.',
+      descriptionSource: 'fallback',
+      descriptionStatus: 'needs-review',
+      statsWindow: 10,
+      includeInExport: true,
+      errorMessage: null,
+      status: 'draft',
+      customDescriptionHint: ''
+    }]);
+
+    render(
+      <MemoryRouter initialEntries={['/teams/team-1/certificates']}>
+        <Routes>
+          <Route path="/teams/:teamId/certificates" element={<TeamCertificates auth={auth} />} />
+        </Routes>
+      </MemoryRouter>
+    );
+
+    expect(await screen.findByRole('heading', { name: 'Awards studio' })).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: /create drafts/i }));
+    expect(await screen.findByDisplayValue('Fallback narrative needs review.')).toBeTruthy();
+
+    fireEvent.click(screen.getByLabelText('I reviewed these certificate descriptions and they are ready for parents.'));
+
+    expect(screen.getByText('Fix or manually review 1 selected certificate marked Needs review or Error before publishing.')).toBeTruthy();
+    expect(screen.getByRole('button', { name: /publish selected/i })).toHaveProperty('disabled', true);
+    expect(certificateAwardServiceMocks.publishCertificateAwardsForApp).not.toHaveBeenCalled();
   });
 
   it('shows export failures without changing the drafted award', async () => {
