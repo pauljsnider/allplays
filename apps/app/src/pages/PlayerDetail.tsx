@@ -952,6 +952,8 @@ function StaffRosterDetailsCard({ data, auth, onChanged }: { data: ParentPlayerD
 
 function EditablePlayerProfileCard({ data, auth, onChanged }: { data: ParentPlayerDetailData; auth: AuthState; onChanged: () => Promise<void> }) {
   const canEditProfile = data.access.isLinkedParent || auth.isAdmin || auth.isPlatformAdmin;
+  const canEditRosterDetails = data.access.canEditRosterDetails;
+  const canEditPhoto = !canEditRosterDetails;
   const [emergencyName, setEmergencyName] = useState(data.privateProfile?.emergencyContact?.name || '');
   const [emergencyPhone, setEmergencyPhone] = useState(data.privateProfile?.emergencyContact?.phone || '');
   const [medicalInfo, setMedicalInfo] = useState(data.privateProfile?.medicalInfo || '');
@@ -959,13 +961,19 @@ function EditablePlayerProfileCard({ data, auth, onChanged }: { data: ParentPlay
   const [saving, setSaving] = useState(false);
   const [status, setStatus] = useState<{ tone: 'error' | 'success'; message: string } | null>(null);
   const playerName = data.player.name || data.child.playerName || 'Player';
-  const previewUrl = useMemo(() => photoFile ? URL.createObjectURL(photoFile) : (data.player.photoUrl || ''), [photoFile, data.player.photoUrl]);
+  const previewUrl = useMemo(() => canEditPhoto ? (photoFile ? URL.createObjectURL(photoFile) : (data.player.photoUrl || '')) : '', [canEditPhoto, photoFile, data.player.photoUrl]);
 
   useEffect(() => {
     return () => {
       if (previewUrl.startsWith('blob:')) URL.revokeObjectURL(previewUrl);
     };
   }, [previewUrl]);
+
+  useEffect(() => {
+    if (!canEditPhoto) {
+      setPhotoFile(null);
+    }
+  }, [canEditPhoto]);
 
   if (!canEditProfile) {
     return null;
@@ -1006,20 +1014,24 @@ function EditablePlayerProfileCard({ data, auth, onChanged }: { data: ParentPlay
             <Edit3 className="h-4 w-4 text-primary-600" aria-hidden="true" />
             Edit Profile
           </div>
-          <p className="mt-1 text-xs font-semibold leading-5 text-gray-500">Parents can update the player photo and private emergency/medical details.</p>
+          <p className="mt-1 text-xs font-semibold leading-5 text-gray-500">
+            {canEditPhoto ? 'Parents can update the player photo and private emergency/medical details.' : 'Parents can update private emergency and medical details here. Use Roster Details for the team roster photo.'}
+          </p>
         </div>
       </div>
 
       <form className="mt-4 space-y-3" onSubmit={submit}>
-        <label className="block">
-          <span className="text-xs font-black uppercase tracking-[0.04em] text-gray-500">Player photo</span>
-          <input
-            type="file"
-            accept="image/*"
-            className="mt-1 block w-full rounded-xl border border-gray-200 bg-gray-50 px-3 py-2 text-sm font-semibold text-gray-700"
-            onChange={(event) => setPhotoFile(event.currentTarget.files?.[0] || null)}
-          />
-        </label>
+        {canEditPhoto ? (
+          <label className="block">
+            <span className="text-xs font-black uppercase tracking-[0.04em] text-gray-500">Player photo</span>
+            <input
+              type="file"
+              accept="image/*"
+              className="mt-1 block w-full rounded-xl border border-gray-200 bg-gray-50 px-3 py-2 text-sm font-semibold text-gray-700"
+              onChange={(event) => setPhotoFile(event.currentTarget.files?.[0] || null)}
+            />
+          </label>
+        ) : null}
         <div className="grid gap-3 sm:grid-cols-2">
           <TextField label="Emergency contact" value={emergencyName} onChange={setEmergencyName} placeholder="Name" />
           <TextField label="Emergency phone" value={emergencyPhone} onChange={setEmergencyPhone} placeholder="Phone" type="tel" />
