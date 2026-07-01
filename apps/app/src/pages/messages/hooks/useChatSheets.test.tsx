@@ -79,16 +79,49 @@ describe('useChatSheets', () => {
         expectSheetState('email', false);
     });
 
-    it('keeps unrelated sheet state intact when closing the email composer', () => {
+    it('replaces the active sheet when opening a different sheet', () => {
         render(<HookProbe />);
 
         fireEvent.click(screen.getByRole('button', { name: 'Open conversation' }));
-        fireEvent.click(screen.getByRole('button', { name: 'Open email' }));
         expectSheetState('conversation', true);
+
+        fireEvent.click(screen.getByRole('button', { name: 'Open email' }));
+        expectSheetState('conversation', false);
         expectSheetState('email', true);
 
-        fireEvent.click(screen.getByRole('button', { name: 'Close email' }));
-        expectSheetState('conversation', true);
+        fireEvent.click(screen.getByRole('button', { name: 'Open media' }));
         expectSheetState('email', false);
+        expectSheetState('media', true);
+
+        fireEvent.click(screen.getByRole('button', { name: 'Close media' }));
+        expectSheetState('media', false);
+        expectSheetState('conversation', false);
+        expectSheetState('email', false);
+    });
+
+    it('keeps attach to link as a single-task handoff without stacked sheets', () => {
+        render(<HookProbe />);
+
+        fireEvent.click(screen.getByRole('button', { name: 'Open attach' }));
+        expectSheetState('attach', true);
+
+        fireEvent.click(screen.getByRole('button', { name: 'Open link' }));
+        expectSheetState('attach', false);
+        expectSheetState('link', true);
+    });
+
+    it('resets every other sheet when opening the link sheet', () => {
+        render(<HookProbe />);
+
+        fireEvent.click(screen.getByRole('button', { name: 'Open email' }));
+        expectSheetState('email', true);
+
+        fireEvent.click(screen.getByRole('button', { name: 'Open link' }));
+        expectSheetState('conversation', false);
+        expectSheetState('audience', false);
+        expectSheetState('media', false);
+        expectSheetState('attach', false);
+        expectSheetState('email', false);
+        expectSheetState('link', true);
     });
 });
