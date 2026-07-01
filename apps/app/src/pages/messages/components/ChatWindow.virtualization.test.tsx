@@ -186,11 +186,11 @@ vi.mock('../hooks/useChatSheets', async () => {
 
   return {
     useChatSheets: () => {
+      const [activeSheet, setActiveSheet] = React.useState<MockActiveChatSheet>(null);
       if (!useStatefulChatSheets) {
         return mockChatSheetsState;
       }
 
-      const [activeSheet, setActiveSheet] = React.useState<MockActiveChatSheet>(null);
       return {
         showConversationSheet: activeSheet === 'conversation',
         showAudienceSheet: activeSheet === 'audience',
