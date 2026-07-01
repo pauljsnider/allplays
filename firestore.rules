@@ -627,6 +627,13 @@ service cloud.firestore {
              teamData.get('active', true) != false;
     }
 
+    // Lets anonymous spectators on public live-game views resolve a team's stat
+    // tracker config (sport/columns) without granting them broader team access.
+    function isPublicTeamForConfigRead(teamId) {
+      let teamPath = /databases/$(database)/documents/teams/$(teamId);
+      return exists(teamPath) && isPublicGameReadTeam(get(teamPath).data);
+    }
+
     function isShareableGameDocument(data) {
       let visibility = data.get('visibility', '');
       return visibility != 'private' &&
@@ -1691,24 +1698,6 @@ service cloud.firestore {
                        isTeamOwnerOrAdmin(resource.data.teamId);
     }
 
-    // Collection group rule for assigned team fee recipient records.
-    // Parents can only read records tied directly to their account or linked players.
-    match /{path=**}/feeRecipients/{recipientId} {
-      allow read: if resource.data.get('teamId', '') is string &&
-                     (isTeamFeeRecipientForCurrentParent(resource.data, resource.data.get('teamId', '')) ||
-                      isTeamOwnerOrAdmin(resource.data.get('teamId', '')));
-      allow create: if request.resource.data.get('teamId', '') is string &&
-                       hasNoPrivateTeamFeeBillingFields(request.resource.data) &&
-                       isTeamOwnerOrAdmin(request.resource.data.get('teamId', ''));
-      allow update: if resource.data.get('teamId', '') is string &&
-                       request.resource.data.get('teamId', '') == resource.data.get('teamId', '') &&
-                       hasNoIntroducedPrivateTeamFeeBillingFields() &&
-                       isTeamOwnerOrAdmin(resource.data.get('teamId', ''));
-      allow delete: if resource.data.get('teamId', '') is string &&
-                       isTeamOwnerOrAdmin(resource.data.get('teamId', ''));
-    }
-
-
     // Parent-managed athlete profiles with explicit public/private sharing.
     match /athleteProfiles/{profileId} {
       allow read: if resource.data.privacy == 'public' ||
@@ -1867,7 +1856,7 @@ service cloud.firestore {
       }
 
       match /rosterFields/{fieldId} {
-        allow read: if true;
+        allow read: if isTeamOwnerOrAdmin(teamId) || isParentForTeam(teamId);
         allow create, update, delete: if isTeamOwnerOrAdmin(teamId);
       }
 
@@ -2374,7 +2363,9 @@ service cloud.firestore {
 
       // Stat tracker configs subcollection
       match /statTrackerConfigs/{configId} {
-        allow read: if true;
+        allow read: if isTeamOwnerOrAdmin(teamId) ||
+                       isParentForTeam(teamId) ||
+                       isPublicTeamForConfigRead(teamId);
         allow write: if isTeamOwnerOrAdmin(teamId);
       }
 
