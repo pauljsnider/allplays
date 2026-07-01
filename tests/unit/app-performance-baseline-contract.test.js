@@ -93,8 +93,9 @@ describe('app performance baseline contract', () => {
         const telemetry = readRepoFile('apps/app/src/lib/telemetry.ts');
         const chatService = readRepoFile('apps/app/src/lib/chatService.ts');
 
-        expect(doc).toContain('RSVP timing validation uses the');
-        expect(doc).toContain('`app_ux_timing` telemetry event filtered to label `rsvp tap latency`.');
+        expect(doc).toContain('Open a Schedule event and tap "Going" → RSVP confirmed');
+        expect(doc).toContain('lab action "open a Schedule event and tap Going"');
+        expect(doc).toContain('telemetry event filtered to label `rsvp tap latency`.');
         expect(scheduleRsvpHook).toContain("import { UX_TIMING, startInteractionTimer } from '../../lib/uxTiming';");
         expect(scheduleRsvpHook).toContain('const interaction = startInteractionTimer(UX_TIMING.rsvpTap, { response });');
         expect(scheduleRsvpHook).toContain('interaction.end();');

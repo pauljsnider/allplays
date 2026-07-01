@@ -119,4 +119,14 @@ describe('help and workflow page inventory', () => {
         expect(appHelpIndex).not.toContain('"id": "workflow-awards-certificates"');
         expect(appHelpIndex).not.toContain('"summary": "Workflow Guide"');
     });
+
+    it('keeps Game Day broadcast workflow copy aligned with setup-only support', () => {
+        const html = readRepoFile('workflow-game-day.html');
+
+        expect(html).toContain('Open broadcast setup');
+        expect(html).toContain('Current streaming support uses external provider/setup tools');
+        expect(html).toContain('it does not yet start a native managed broadcast or server-side stream pipeline');
+        expect(html).not.toContain('Begin Streaming button');
+        expect(html).not.toContain('native camera capture');
+    });
 });

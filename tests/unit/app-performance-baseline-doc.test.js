@@ -61,7 +61,9 @@ describe('app performance baseline documentation', () => {
         [
             '`app_ux_timing`',
             '`rsvp tap latency`',
+            'Open a Schedule event and tap "Going" → RSVP confirmed',
             'RSVP timing validation uses the',
+            'lab action "open a Schedule event and tap Going"',
             'telemetry event filtered to label `rsvp tap latency`'
         ].forEach((needle) => {
             expect(doc).toContain(needle);

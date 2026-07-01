@@ -20,7 +20,7 @@ rather than assumed.
 | Firestore reads / Schedule mount | Read/REST count to render the schedule | Dev read-count instrumentation |
 | Firestore reads / Messages mount | Read/REST count to render the inbox | Dev read-count instrumentation |
 | Entry chunk size (gzip) | Bytes parsed/executed before first render | `npm run app:build` build log |
-| RSVP tap latency | Tap "Going" → confirmed | `app_ux_timing` telemetry event filtered to label `rsvp tap latency` |
+| RSVP tap latency | Open a Schedule event and tap "Going" → RSVP confirmed | `app_ux_timing` telemetry event filtered to label `rsvp tap latency` |
 | Chat send latency | Tap send → message confirmed | `chat send latency` span |
 
 ## Instrumentation
@@ -36,7 +36,8 @@ The app records these spans through `recordUxTiming` /
   navigation start, so this is the true cold-start cost.
 - `rsvp tap latency` — `startInteractionTimer(UX_TIMING.rsvpTap)` around the
   parent RSVP submit in `scheduleService.ts`. RSVP timing validation uses the
-  `app_ux_timing` telemetry event filtered to label `rsvp tap latency`.
+  lab action "open a Schedule event and tap Going" and the `app_ux_timing`
+  telemetry event filtered to label `rsvp tap latency`.
 - `chat send latency` — `startInteractionTimer(UX_TIMING.chatSend)` around
   `sendTeamChatMessage` in `chatService.ts`.
 
