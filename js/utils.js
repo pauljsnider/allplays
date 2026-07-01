@@ -131,14 +131,9 @@ export function renderHeader(container, user) {
     const navMyTeams = container.querySelector(`#nav-my-teams-${suffix}`);
 
     if (user) {
-      const hasParentLinks = Array.isArray(user.parentOf) && user.parentOf.length > 0;
-      const hasCoachAccess = user.isAdmin || (Array.isArray(user.coachOf) && user.coachOf.length > 0);
-
       if (navMyPlayers) {
         navMyPlayers.classList.remove('hidden');
         navMyPlayers.href = 'parent-dashboard.html';
-        // Optional: if user has no parent links, we still let them in;
-        // the page will explain they have no linked players.
       }
 
       if (navMyTeams) {
