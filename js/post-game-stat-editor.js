@@ -3,7 +3,7 @@ import { normalizeStatTrackerConfig } from './stat-leaderboards.js?v=2';
 
 const DEFAULT_POST_GAME_STAT_FIELDS = [
     { fieldName: 'pts', label: 'PTS' },
-    { fieldName: 'rebs', label: 'REBS' },
+    { fieldName: 'reb', label: 'REB' },
     { fieldName: 'ast', label: 'AST' },
     { fieldName: 'fouls', label: 'FOULS' }
 ];
