@@ -339,6 +339,10 @@
                     <input id="goal-note-input" class="mt-1 w-full px-3 py-2 rounded border border-teal/30 bg-ink/40 text-sm text-sand" placeholder="Assist, set piece, power play...">
                 </label>
             </div>
+            <div class="mb-3 rounded border border-coral/30 bg-coral/10 p-2">
+                <div class="text-[11px] font-semibold uppercase tracking-wide text-coral mb-2">Away scorer lookup</div>
+                <div id="goal-sport-away-roster" class="space-y-2"></div>
+            </div>
             <div class="grid grid-cols-2 gap-2">
                 <button id="record-home-goal" class="bg-teal text-ink px-3 py-3 rounded font-bold text-sm hover:bg-teal/80">Home Goal</button>
                 <button id="record-away-goal" class="bg-coral text-white px-3 py-3 rounded font-bold text-sm hover:bg-coral/80">Away Goal</button>
@@ -703,9 +707,9 @@
         let awayScore = 0;
         let players = [];
         let opponentPlayers = [
-            { id: 'opp1', name: '' },
-            { id: 'opp2', name: '' },
-            { id: 'opp3', name: '' }
+            { id: 'opp1', name: '', number: '' },
+            { id: 'opp2', name: '', number: '' },
+            { id: 'opp3', name: '', number: '' }
         ];
         let isFinishing = false; // Flag to disable beforeunload warning when finishing game
         let liveState = {
@@ -862,7 +866,8 @@
                     gameState.opponentStats = JSON.parse(JSON.stringify(game.opponentStats));
                     opponentPlayers = Object.entries(gameState.opponentStats).map(([id, data]) => ({
                         id,
-                        name: data?.name || ''
+                        name: data?.name || '',
+                        number: data?.number || data?.playerNumber || data?.jerseyNumber || ''
                     }));
                     console.log('Loaded existing opponent stats:', gameState.opponentStats);
                 } else {
@@ -1228,6 +1233,7 @@
             genericPanels?.classList.toggle('hidden', isGoalSportMode || gameState.isBaseballScorekeeping || volleyballMode || isFootballTrackingConfig());
             if (!isGoalSportMode) return;
 
+            renderGoalSportAwayRoster();
             const title = document.getElementById('goal-sport-title');
             const help = document.getElementById('goal-sport-help');
             const homeButton = document.getElementById('record-home-goal');
@@ -1242,6 +1248,19 @@
                 awayButton.textContent = `${awayName} Goal`;
                 awayButton.setAttribute('aria-label', `Record goal for ${awayName}`);
             }
+        }
+
+        function renderGoalSportAwayRoster() {
+            const roster = document.getElementById('goal-sport-away-roster');
+            if (!roster) return;
+            roster.innerHTML = opponentPlayers.map((opp, index) => `
+                <div class="grid grid-cols-[1fr_5rem] gap-2">
+                    <input type="text" class="notes-input" aria-label="Away player ${index + 1} name" placeholder="Away player name" value="${escapeHtml(opp.name)}"
+                        onchange="updateOpponentName('${opp.id}', this.value)">
+                    <input type="text" class="notes-input" aria-label="Away player ${index + 1} jersey number" placeholder="#" value="${escapeHtml(opp.number || '')}"
+                        onchange="updateOpponentNumber('${opp.id}', this.value)">
+                </div>
+            `).join('');
         }
 
         function getGoalSportStatKey() {
@@ -1585,7 +1604,7 @@
                 snapshot[opp.id] = {
                     ...existing,
                     name: opp.name || existing.name || '',
-                    number: existing.number || ''
+                    number: opp.number || existing.number || ''
                 };
                 currentConfig.columns.forEach((col) => {
                     const key = col.toLowerCase();
@@ -1892,6 +1911,8 @@
                     <td class="player-name text-left p-1">
                         <input type="text" class="notes-input" placeholder="Player name..." value="${escapeHtml(opp.name)}"
                             onchange="updateOpponentName('${opp.id}', this.value)">
+                        <input type="text" class="notes-input mt-1" placeholder="#" value="${escapeHtml(opp.number || '')}"
+                            onchange="updateOpponentNumber('${opp.id}', this.value)">
                     </td>`;
                 rowHTML += `<td class="stat-cell-wide p-1">
                     <div class="text-[10px] text-sand/60 font-semibold">Away</div>
@@ -1939,6 +1960,17 @@
             if (opp) opp.name = name;
             if (gameState.opponentStats[oppId]) {
                 gameState.opponentStats[oppId].name = name;
+            }
+            scheduleOpponentStatsSync();
+            scheduleLiveHasData();
+        };
+
+        window.updateOpponentNumber = function (oppId, number) {
+            const cleanNumber = String(number || '').trim().replace(/^#/, '');
+            const opp = opponentPlayers.find(o => o.id === oppId);
+            if (opp) opp.number = cleanNumber;
+            if (gameState.opponentStats[oppId]) {
+                gameState.opponentStats[oppId].number = cleanNumber;
             }
             scheduleOpponentStatsSync();
             scheduleLiveHasData();
@@ -2342,7 +2374,8 @@
         document.getElementById('addOpponentBtn').addEventListener('click', () => {
             const newOpp = {
                 id: 'opp' + Date.now(),
-                name: ''
+                name: '',
+                number: ''
             };
             gameState.opponentStats[newOpp.id] = { name: '', number: '' };
             currentConfig.columns.forEach(col => {
