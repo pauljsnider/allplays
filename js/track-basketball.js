@@ -6,7 +6,7 @@ import { checkAuth } from './auth.js?v=38';
 import { writeBatch, doc, setDoc, addDoc } from './firebase.js?v=19';
 import { getAI, getGenerativeModel, GoogleAIBackend } from './vendor/firebase-ai.js';
 import { getApp } from './vendor/firebase-app.js';
-import { canApplySubstitution, applySubstitution, resolveFinalScoreForCompletion } from './live-tracker-integrity.js?v=3';
+import { canApplySubstitution, applySubstitution, canApplySubstitutionQueue, canApplyQueuedSubstitution, resolveFinalScoreForCompletion } from './live-tracker-integrity.js?v=4';
 import { resolveFinalScore, resolveSummaryRecipient } from './live-tracker-email.js?v=2';
 import { commitStandardTrackerFinishData } from './track-finish.js?v=2';
 import { getPrivatePlayerStatIds } from './stat-leaderboards.js?v=2';
@@ -996,7 +996,11 @@ function attachEvents() {
     const btn = e.target.closest('[data-sub-in]');
     if (!btn) return;
     state.pendingIn = btn.dataset.subIn;
-    if (!canApplySubstitution(state.onCourt, state.pendingOut, state.pendingIn)) {
+    if (!canApplyPendingSubstitution()) {
+      if (state.queueMode && state.pendingOut && state.pendingIn) {
+        alert('That swap conflicts with the current queue. Choose a different player.');
+      }
+      state.pendingIn = null;
       renderSubPlayers();
       updateSubButton();
       return;
@@ -1023,7 +1027,7 @@ function attachEvents() {
   els.subConfirm.addEventListener('click', () => {
     if (state.queueMode) {
       // Add pending swap to queue if exists
-      if (canApplySubstitution(state.onCourt, state.pendingOut, state.pendingIn)) {
+      if (canApplyPendingSubstitution()) {
         state.subQueue.push({ out: state.pendingOut, in: state.pendingIn });
         state.pendingOut = null;
         state.pendingIn = null;
@@ -1197,8 +1201,15 @@ function updateSubHint() {
   }
 }
 
+function canApplyPendingSubstitution() {
+  if (state.queueMode) {
+    return canApplyQueuedSubstitution(state.onCourt, state.bench, state.subQueue, state.pendingOut, state.pendingIn);
+  }
+  return canApplySubstitution(state.onCourt, state.pendingOut, state.pendingIn);
+}
+
 function updateSubButton() {
-  const pendingValid = canApplySubstitution(state.onCourt, state.pendingOut, state.pendingIn);
+  const pendingValid = canApplyPendingSubstitution();
   if (state.queueMode) {
     const hasQueue = state.subQueue.length > 0;
     els.subConfirm.disabled = !hasQueue && !pendingValid;
@@ -1241,9 +1252,12 @@ function renderSubPlayers() {
   // Render on-court players
   els.subOut.innerHTML = state.onCourt.map(id => {
     const selected = state.pendingOut === id;
-    const cls = selected ? 'bg-teal text-ink border-teal' : 'bg-white border-slate/10';
+    const disabled = state.queueMode && state.subQueue.some(pair => pair.out === id);
+    const cls = disabled
+      ? 'bg-slate-100 border-slate-200 text-slate-400 cursor-not-allowed'
+      : selected ? 'bg-teal text-ink border-teal' : 'bg-white border-slate/10';
     const p = roster.find(r => r.id === id);
-    return `<button class="w-full px-3 py-2 text-left border-2 rounded-lg font-medium ${cls} flex items-center gap-2" data-sub-out="${id}">
+    return `<button class="w-full px-3 py-2 text-left border-2 rounded-lg font-medium ${cls} flex items-center gap-2" data-sub-out="${id}" ${disabled ? 'disabled aria-disabled="true"' : ''}>
       ${avatarHtml(p, 'h-5 w-5', 'text-[9px]')}
       <span class="truncate">#${escapeHtml(p?.num || '')} ${escapeHtml(p?.name || '')}</span>
     </button>`;
@@ -1252,7 +1266,10 @@ function renderSubPlayers() {
   // Render bench players
   els.subIn.innerHTML = state.bench.map(id => {
     const selected = state.pendingIn === id;
-    const disabled = state.onCourt.includes(id);
+    const queueConflict = state.queueMode && (state.pendingOut
+      ? !canApplyQueuedSubstitution(state.onCourt, state.bench, state.subQueue, state.pendingOut, id)
+      : state.subQueue.some(pair => pair.in === id));
+    const disabled = state.onCourt.includes(id) || queueConflict;
     const cls = disabled
       ? 'bg-slate-100 border-slate-200 text-slate-400 cursor-not-allowed'
       : selected ? 'bg-teal text-ink border-teal' : 'bg-white border-slate/10';
@@ -1292,6 +1309,13 @@ function applySub(outId, inId) {
 
 function applyQueue(closeModal = true) {
   if (!state.subQueue.length) {
+    return;
+  }
+  if (!canApplySubstitutionQueue(state.onCourt, state.bench, state.subQueue)) {
+    alert('Queued substitutions conflict. Fix the queue before applying.');
+    renderSubPlayers();
+    renderQueue();
+    updateSubButton();
     return;
   }
   saveHistory(`Applied ${state.subQueue.length} sub${state.subQueue.length > 1 ? 's' : ''}`);

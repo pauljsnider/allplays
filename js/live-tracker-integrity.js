@@ -37,6 +37,26 @@ export function applySubstitution(onCourt = [], bench = [], outId, inId) {
   return { applied: true, onCourt: nextOnCourt, bench: nextBench };
 }
 
+export function canApplySubstitutionQueue(onCourt = [], bench = [], queue = []) {
+  let nextOnCourt = Array.isArray(onCourt) ? [...onCourt] : [];
+  let nextBench = Array.isArray(bench) ? [...bench] : [];
+
+  for (const pair of queue) {
+    const result = applySubstitution(nextOnCourt, nextBench, pair?.out, pair?.in);
+    if (!result.applied) {
+      return false;
+    }
+    nextOnCourt = result.onCourt;
+    nextBench = result.bench;
+  }
+
+  return true;
+}
+
+export function canApplyQueuedSubstitution(onCourt = [], bench = [], queue = [], outId, inId) {
+  return canApplySubstitutionQueue(onCourt, bench, [...(Array.isArray(queue) ? queue : []), { out: outId, in: inId }]);
+}
+
 export function acquireSingleFlightLock(lock) {
   if (!lock || lock.active) return false;
   lock.active = true;
