@@ -494,6 +494,24 @@
 
         let draggedPlayerId = null;
 
+        function getGamePlanGameDate(game) {
+            if (!game?.date) return null;
+            return game.date.toDate ? game.date.toDate() : new Date(game.date);
+        }
+
+        function isGamePlanSelectableGame(game, now = new Date()) {
+            const gameDate = getGamePlanGameDate(game);
+            if (!gameDate || Number.isNaN(gameDate.getTime())) return false;
+
+            const status = String(game.status || '').toLowerCase();
+            const liveStatus = String(game.liveStatus || '').toLowerCase();
+            if (status === 'completed' || status === 'cancelled' || status === 'canceled' || liveStatus === 'completed') {
+                return false;
+            }
+
+            return gameDate >= now || liveStatus === 'live' || liveStatus === 'in-progress';
+        }
+
         checkAuth((user) => {
             if (!user) {
                 window.location.href = 'login.html';
@@ -587,12 +605,13 @@
                     }
                 }
 
-                // Get all games sorted by date (newest first)
+                // Get upcoming or still-active games sorted by nearest upcoming first
                 combinedGames = [...games.map(g => ({ ...g, source: 'db' })), ...calendarGames]
+                    .filter(g => isGamePlanSelectableGame(g))
                     .sort((a, b) => {
-                        const aDate = a.date.toDate ? a.date.toDate() : new Date(a.date);
-                        const bDate = b.date.toDate ? b.date.toDate() : new Date(b.date);
-                        return bDate - aDate;
+                        const aDate = getGamePlanGameDate(a);
+                        const bDate = getGamePlanGameDate(b);
+                        return aDate - bDate;
                     });
 
                 // Populate game selector
@@ -608,8 +627,8 @@
                     gameSelector.classList.remove('hidden');
                     gameSelector.innerHTML = '<option value="">Select a game...</option>' +
                         combinedGames.map(g => {
-                            const date = g.date.toDate ? g.date.toDate() : new Date(g.date);
-                            const statusLabel = g.status === 'completed' ? ' (Completed)' : (g.isCalendar ? ' (Calendar)' : '');
+                            const date = getGamePlanGameDate(g);
+                            const statusLabel = g.isCalendar ? ' (Calendar)' : '';
                             return `<option value="${g.id}">${formatDate(date)} - vs ${g.opponent}${statusLabel}</option>`;
                         }).join('');
                 }
