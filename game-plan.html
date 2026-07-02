@@ -493,6 +493,7 @@
         let gamePlan = createDefaultGamePlan();
 
         let draggedPlayerId = null;
+        const GAME_PLAN_SELECTABLE_GRACE_MS = 3 * 60 * 60 * 1000;
 
         function getGamePlanGameDate(game) {
             if (!game?.date) return null;
@@ -509,7 +510,8 @@
                 return false;
             }
 
-            return gameDate >= now || liveStatus === 'live' || liveStatus === 'in-progress';
+            const selectableCutoff = new Date(now.getTime() - GAME_PLAN_SELECTABLE_GRACE_MS);
+            return gameDate >= selectableCutoff || liveStatus === 'live' || liveStatus === 'in-progress';
         }
 
         checkAuth((user) => {
