@@ -213,8 +213,8 @@ export default function App() {
         <Route path="/reset-password" element={<ResetPassword />} />
         <Route path="/verify-pending" element={<VerifyPending auth={auth} />} />
         <Route path="/registration" element={<AppShell auth={auth}><RegistrationDetail auth={auth} publicAccess /></AppShell>} />
-        <Route path="/" element={<Navigate to={auth.user ? signedInDefaultRoute : '/auth'} replace />} />
-        <Route path="/home" element={<Protected auth={auth}><Home auth={auth} /></Protected>} />
+        <Route path="/" element={auth.user ? <Navigate to={signedInDefaultRoute} replace /> : auth.loading ? <LoadingScreen /> : <AppShell auth={auth}><Home auth={auth} /></AppShell>} />
+        <Route path="/home" element={auth.user || auth.loading ? <Protected auth={auth}><Home auth={auth} /></Protected> : <AppShell auth={auth}><Home auth={auth} /></AppShell>} />
         <Route path="/officials" element={<Protected auth={auth}><Officials auth={auth} /></Protected>} />
         <Route path="/schedule" element={<Protected auth={auth}><Schedule auth={auth} /></Protected>} />
         <Route path="/schedule/:teamId/:eventId/track" element={<Protected auth={auth}><StandardTracker auth={auth} /></Protected>} />
