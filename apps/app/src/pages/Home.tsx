@@ -548,6 +548,11 @@ function TodaySection({
   const firstUnreadTeam = unreadTeams[0] || null;
   const nextEvent = nextEvents[0] || null;
   const remainingActions = topAction ? home.actionItems.slice(1, 6) : home.actionItems.slice(0, 6);
+  const isFirstRunParent = home.players.length === 0 && home.teams.length === 0;
+
+  if (isFirstRunParent) {
+    return <FirstRunAccessSection />;
+  }
 
   return (
     <div className="home-section-content space-y-3">
@@ -829,6 +834,24 @@ function TeamsSection({ teams }: { teams: ParentHomeTeam[] }) {
         {teams.map((team) => (
           <TeamCard key={team.teamId} team={team} />
         ))}
+      </div>
+    </section>
+  );
+}
+
+function FirstRunAccessSection() {
+  return (
+    <section className="home-section-content space-y-3">
+      <div className="app-card overflow-hidden border-primary-100">
+        <div className="p-4">
+          <div className="app-label text-primary-700">Do first</div>
+          <h2 className="mt-1 text-xl font-black leading-tight text-gray-950">Get linked to your player</h2>
+          <p className="mt-1 text-sm font-semibold leading-5 text-gray-600">Accept a coach invite or request player access so schedules, chats, packets, and fees can appear here.</p>
+        </div>
+        <div className="grid gap-3 border-t border-gray-100 bg-gray-50 p-3 sm:grid-cols-2">
+          <AccessCard to="/accept-invite" icon={Shield} title="Accept invite" detail="Redeem a coach invite code." tone="primary" />
+          <AccessCard to="/parent-tools/access" icon={Users} title="Request player access" detail="Choose team, player, and relationship." tone="emerald" />
+        </div>
       </div>
     </section>
   );

@@ -154,6 +154,17 @@ const baseSocial = {
   }
 };
 
+const emptyHome = {
+  ...baseHome,
+  players: [],
+  teams: [],
+  metrics: {
+    ...baseHome.metrics,
+    players: 0,
+    teams: 0
+  }
+};
+
 function buildLargeHomeModel() {
   return {
     players: Array.from({ length: 4 }, (_, index) => ({
@@ -397,6 +408,31 @@ describe('Home', () => {
     expect(await screen.findByText('Home could not connect')).toBeTruthy();
     expect(screen.getByText('Check your connection and try loading Home again.')).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Retry loading Home' })).toBeTruthy();
+  });
+
+  it('shows first-run access actions instead of an empty Today dashboard when no players or teams are linked', async () => {
+    homeServiceMocks.loadParentHomeSummaryBootstrap.mockResolvedValueOnce({ home: emptyHome, schedule: [] });
+    homeServiceMocks.loadParentHomeWithSecondaryData.mockResolvedValueOnce(emptyHome);
+
+    renderHome(signedInAuth);
+
+    expect(await screen.findByRole('heading', { name: 'Get linked to your player' })).toBeTruthy();
+    expect(screen.getByRole('link', { name: /Accept invite/i }).getAttribute('href')).toBe('/accept-invite');
+    expect(screen.getByRole('link', { name: /Request player access/i }).getAttribute('href')).toBe('/parent-tools/access');
+    expect(screen.queryByText('All caught up')).toBeNull();
+    expect(screen.queryByRole('heading', { name: 'Team feed' })).toBeNull();
+    expect(screen.queryByText('Availability')).toBeNull();
+    expect(screen.queryByText('Team chats')).toBeNull();
+    expect(screen.queryByText('Practice packets')).toBeNull();
+  });
+
+  it('keeps the normal Today dashboard when at least one player or team is linked', async () => {
+    renderHome(signedInAuth);
+
+    expect(await screen.findByRole('heading', { name: 'Today for your players' })).toBeTruthy();
+    expect(screen.getByRole('heading', { name: 'All caught up' })).toBeTruthy();
+    expect(screen.getByRole('heading', { name: 'Team feed' })).toBeTruthy();
+    expect(screen.queryByRole('heading', { name: 'Get linked to your player' })).toBeNull();
   });
 
   it('renders secondary Home slices progressively via onPartial (#2037)', async () => {
