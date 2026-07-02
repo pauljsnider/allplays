@@ -3,6 +3,8 @@ import { readFileSync } from 'node:fs';
 import {
   applySubstitution,
   canApplySubstitution,
+  canApplySubstitutionQueue,
+  canApplyQueuedSubstitution,
   canTrustScoreLogForFinalization,
   reconcileFinalScoreFromLog,
   resolveFinalScoreForCompletion,
@@ -40,6 +42,39 @@ describe('live tracker integrity helpers', () => {
     expect(result.applied).toBe(true);
     expect(result.bench).toContain('p1');
     expect(result.bench).not.toContain('p6');
+  });
+
+  it('rejects queued substitutions that reuse an incoming player after projection', () => {
+    const onCourt = ['p1', 'p2', 'p3', 'p4', 'p5'];
+    const bench = ['p6', 'p7'];
+
+    expect(canApplySubstitutionQueue(onCourt, bench, [
+      { out: 'p1', in: 'p6' },
+      { out: 'p2', in: 'p6' }
+    ])).toBe(false);
+
+    expect(canApplyQueuedSubstitution(onCourt, bench, [
+      { out: 'p1', in: 'p6' }
+    ], 'p2', 'p6')).toBe(false);
+  });
+
+  it('allows queued substitutions when each swap is valid against projected lineup state', () => {
+    expect(canApplySubstitutionQueue(
+      ['p1', 'p2', 'p3', 'p4', 'p5'],
+      ['p6', 'p7'],
+      [
+        { out: 'p1', in: 'p6' },
+        { out: 'p2', in: 'p7' }
+      ]
+    )).toBe(true);
+  });
+
+  it('wires basketball queued substitutions through projected queue validation', () => {
+    const basketballTrackerSource = readFileSync(new URL('../../js/track-basketball.js', import.meta.url), 'utf8');
+    const applyQueueBody = basketballTrackerSource.match(/function applyQueue[\s\S]*?function subIn/)?.[0] || '';
+
+    expect(basketballTrackerSource).toContain('canApplyQueuedSubstitution');
+    expect(applyQueueBody).toContain('canApplySubstitutionQueue(state.onCourt, state.bench, state.subQueue)');
   });
 
   it('reconciles final score to event-derived score when mismatched', () => {
