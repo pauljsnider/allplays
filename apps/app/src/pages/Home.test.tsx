@@ -426,6 +426,19 @@ describe('Home', () => {
     expect(screen.queryByText('Practice packets')).toBeNull();
   });
 
+  it('keeps officials access visible for first-run users with no linked players or teams', async () => {
+    homeServiceMocks.loadParentHomeSummaryBootstrap.mockResolvedValueOnce({ home: emptyHome, schedule: [] });
+    homeServiceMocks.loadParentHomeWithSecondaryData.mockResolvedValueOnce(emptyHome);
+    scheduleServiceMocks.loadOfficialAssignmentsAccess.mockResolvedValueOnce({ hasAccess: true, teamCount: 1 });
+
+    renderHome(signedInAuth);
+
+    expect(await screen.findByRole('heading', { name: 'Get linked to your player' })).toBeTruthy();
+    expect(await screen.findByRole('heading', { name: 'Manage assignments' })).toBeTruthy();
+    expect(screen.getByRole('link', { name: /Officials Manage assignments/i }).getAttribute('href')).toBe('/officials');
+    expect(screen.getByText('1 linked team')).toBeTruthy();
+  });
+
   it('keeps the normal Today dashboard when at least one player or team is linked', async () => {
     renderHome(signedInAuth);
 
