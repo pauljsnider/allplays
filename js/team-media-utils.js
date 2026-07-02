@@ -81,7 +81,7 @@ export function canReadTeamMediaAlbum(folder, canManage = false) {
 export function canViewTeamMediaFolder(folder, accessLevel) {
     if (!folder) return false;
     if (accessLevel === 'full') return true;
-    return accessLevel === 'parent' && canReadTeamMediaAlbum(folder, false);
+    return ['parent', 'media'].includes(accessLevel) && canReadTeamMediaAlbum(folder, false);
 }
 
 function normalizeTeamMediaNotificationAlbumVisibility(folder = {}) {

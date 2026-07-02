@@ -99,6 +99,8 @@ describe('team media video albums', () => {
     it('hides private albums from parents', () => {
         expect(canViewTeamMediaFolder({ visibility: 'team' }, 'parent')).toBe(true);
         expect(canViewTeamMediaFolder({ visibility: 'private' }, 'parent')).toBe(false);
+        expect(canViewTeamMediaFolder({ visibility: 'team' }, 'media')).toBe(true);
+        expect(canViewTeamMediaFolder({ visibility: 'private' }, 'media')).toBe(false);
         expect(canViewTeamMediaFolder({ visibility: 'private' }, 'full')).toBe(true);
     });
 });
