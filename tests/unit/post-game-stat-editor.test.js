@@ -28,6 +28,30 @@ describe('post-game stat editor helpers', () => {
         ]);
     });
 
+    it('uses canonical default box-score fields when a completed game has no config or saved stats', () => {
+        const statFields = resolvePostGameStatFields({
+            resolvedConfig: null,
+            statsMap: {}
+        });
+
+        expect(statFields).toEqual([
+            { fieldName: 'pts', label: 'PTS' },
+            { fieldName: 'reb', label: 'REB' },
+            { fieldName: 'ast', label: 'AST' },
+            { fieldName: 'fouls', label: 'FOULS' }
+        ]);
+        expect(buildCompletedGamePlayerStatsPayload({
+            player: { name: 'Ava Cole', number: '3' },
+            statFields,
+            values: { pts: '10', reb: '6', ast: '2', fouls: '1' }
+        }).stats).toEqual({
+            pts: 10,
+            reb: 6,
+            ast: 2,
+            fouls: 1
+        });
+    });
+
     it('adds private player stat definitions to the manager editor fields', () => {
         expect(resolvePostGameStatFields({
             resolvedConfig: {

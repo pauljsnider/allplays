@@ -1,6 +1,13 @@
 import { buildConfiguredStatFields } from './game-report-stats.js?v=1';
 import { normalizeStatTrackerConfig } from './stat-leaderboards.js?v=2';
 
+const DEFAULT_POST_GAME_STAT_FIELDS = [
+    { fieldName: 'pts', label: 'PTS' },
+    { fieldName: 'reb', label: 'REB' },
+    { fieldName: 'ast', label: 'AST' },
+    { fieldName: 'fouls', label: 'FOULS' }
+];
+
 export function normalizeStatKey(key) {
     return String(key || '').trim().toLowerCase().replace(/[^a-z0-9]/g, '');
 }
@@ -27,6 +34,10 @@ export function resolvePostGameStatFields({ resolvedConfig = null, statsMap = {}
             .filter(Boolean)
             .sort()
             .map((key) => ({ fieldName: key, label: key.toUpperCase() }));
+
+        if (fields.length === 0) {
+            fields = DEFAULT_POST_GAME_STAT_FIELDS.map((field) => ({ ...field }));
+        }
     }
 
     const existingFieldNames = new Set(fields.map((field) => normalizeStatKey(field?.fieldName)).filter(Boolean));
