@@ -261,6 +261,30 @@ describe('App protected route loading', () => {
     expect(screen.queryByRole('navigation', { name: 'Primary navigation' })).toBeNull();
   });
 
+  it('keeps signed-out visitors on the public Home entry from the root route', async () => {
+    homeRenderMode = 'render';
+    authMock.state = {
+      ...authMock.signedInAuth,
+      user: null,
+      loading: false,
+      roles: [],
+      isParent: false,
+      isCoach: false,
+      isAdmin: false,
+      isPlatformAdmin: false
+    };
+
+    render(
+      <MemoryRouter initialEntries={['/']}>
+        <App />
+      </MemoryRouter>
+    );
+
+    expect(await screen.findByText('Home page')).toBeTruthy();
+    expect(screen.getByRole('navigation', { name: 'Primary navigation' })).toBeTruthy();
+    expect(screen.queryByText('Loading ALL PLAYS')).toBeNull();
+  });
+
   it('routes signed-in coach users from the root route to Teams', async () => {
     authMock.state = {
       ...authMock.signedInAuth,
