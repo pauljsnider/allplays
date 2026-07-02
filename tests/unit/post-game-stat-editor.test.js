@@ -28,6 +28,18 @@ describe('post-game stat editor helpers', () => {
         ]);
     });
 
+    it('uses default box-score fields when a completed game has no config or saved stats', () => {
+        expect(resolvePostGameStatFields({
+            resolvedConfig: null,
+            statsMap: {}
+        })).toEqual([
+            { fieldName: 'pts', label: 'PTS' },
+            { fieldName: 'rebs', label: 'REBS' },
+            { fieldName: 'ast', label: 'AST' },
+            { fieldName: 'fouls', label: 'FOULS' }
+        ]);
+    });
+
     it('adds private player stat definitions to the manager editor fields', () => {
         expect(resolvePostGameStatFields({
             resolvedConfig: {
