@@ -105,6 +105,9 @@ describe('goal sport scorekeeping helpers', () => {
     expect(html).toContain("{ id: 'opp1', name: '', number: '' }");
     expect(html).toContain('number: data?.number || data?.playerNumber || data?.jerseyNumber ||');
     expect(html).toContain('number: opp.number || existing.number ||');
+    expect(html).toContain('id="goal-sport-away-roster"');
+    expect(html).toContain('renderGoalSportAwayRoster();');
+    expect(html).toContain('aria-label="Away player ${index + 1} jersey number"');
     expect(html).toContain('onchange="updateOpponentNumber');
     expect(html).toContain('window.updateOpponentNumber = function (oppId, number)');
     expect(html).toContain("replace(/^#/, '')");
