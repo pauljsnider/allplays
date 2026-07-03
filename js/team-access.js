@@ -201,12 +201,12 @@ export function getTeamAccessInfo(user, team, options = {}) {
     return { hasAccess: true, accessLevel: 'videographer', exitUrl: teamExitUrl };
   }
 
-  if (hasTeamMediaAccess(user, team)) {
-    return { hasAccess: true, accessLevel: 'media', exitUrl: teamExitUrl };
-  }
-
   if (hasParentTeamAccess(user, team.id)) {
     return { hasAccess: true, accessLevel: 'parent', exitUrl: 'parent-dashboard.html' };
+  }
+
+  if (hasTeamMediaAccess(user, team)) {
+    return { hasAccess: true, accessLevel: 'media', exitUrl: teamExitUrl };
   }
 
   return { hasAccess: false, accessLevel: null, exitUrl: 'index.html' };

@@ -275,6 +275,19 @@ describe('team access helpers', () => {
     });
   });
 
+  it('preserves parent access level when a linked parent also has media upload grants', () => {
+    expect(getTeamAccessInfo({
+      uid: 'parent-media-user',
+      parentOf: [{ teamId: 'team-1', playerId: 'p1' }],
+      teamMediaUploadTeamIds: ['team-1'],
+      mediaUploadTeamIds: ['team-1']
+    }, TEAM)).toEqual({
+      hasAccess: true,
+      accessLevel: 'parent',
+      exitUrl: 'parent-dashboard.html'
+    });
+  });
+
   it('does not grant media access from upload grants for another team', () => {
     expect(hasTeamMediaAccess({ uid: 'media-user', teamMediaUploadTeamIds: ['other-team'] }, TEAM)).toBe(false);
     expect(getTeamAccessInfo({ uid: 'media-user', teamMediaUploadTeamIds: ['other-team'] }, TEAM)).toEqual({
