@@ -578,6 +578,7 @@ async function mockHomePlayerModules(page) {
                 export async function loadGameDayLiveEventsForApp() { return []; }
                 export async function saveGameDaySubstitutionForApp() { return { success: true }; }
                 export async function updateGameScore() { return { homeScore: 0, awayScore: 0, status: 'scheduled' }; }
+                export async function adjustGameScore() { return { homeScore: 0, awayScore: 0, shared: false }; }
                 export async function updateLiveGameClockState() { return null; }
                 export function buildLiveGameClockPeriods() { return []; }
                 export function resolveLiveGameClockSnapshot() { return null; }
