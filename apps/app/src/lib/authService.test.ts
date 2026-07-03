@@ -34,11 +34,11 @@ vi.mock('@capacitor/core', () => ({
   Capacitor: {
     isNativePlatform: vi.fn(() => true)
   }
-}), { virtual: true });
+}));
 
 vi.mock('@capacitor-firebase/authentication', () => ({
   FirebaseAuthentication: {}
-}), { virtual: true });
+}));
 
 vi.mock('./firebaseAuthRuntime', () => ({
   auth: authState,
@@ -222,7 +222,7 @@ function createJsonResponse(payload: unknown) {
   return {
     ok: true,
     json: vi.fn(async () => payload)
-  } as Response;
+  } as unknown as Response;
 }
 
 function installIndexedDbMock() {
