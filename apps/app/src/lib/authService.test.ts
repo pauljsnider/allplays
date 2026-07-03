@@ -22,6 +22,14 @@ const parentMembershipMocks = vi.hoisted(() => ({
   mergeApprovedParentMembershipRequests: vi.fn()
 }));
 
+const appDataCacheMocks = vi.hoisted(() => ({
+  clearAppDataCache: vi.fn()
+}));
+
+const authObserverMocks = vi.hoisted(() => ({
+  onAuthStateChanged: vi.fn()
+}));
+
 vi.mock('@capacitor/core', () => ({
   Capacitor: {
     isNativePlatform: vi.fn(() => true)
@@ -40,7 +48,7 @@ vi.mock('./firebaseAuthRuntime', () => ({
   getRedirectResult: vi.fn(),
   GoogleAuthProvider: class {},
   isSignInWithEmailLink: vi.fn(),
-  onAuthStateChanged: vi.fn(),
+  onAuthStateChanged: authObserverMocks.onAuthStateChanged,
   sendEmailVerification: vi.fn(),
   sendPasswordResetEmail: vi.fn(),
   signInWithEmailAndPassword: vi.fn(),
@@ -60,6 +68,10 @@ vi.mock('./adapters/legacyAuth', () => ({
   loadLegacySignupFlow: vi.fn()
 }));
 
+vi.mock('./appDataCache', () => ({
+  clearAppDataCache: appDataCacheMocks.clearAppDataCache
+}));
+
 vi.mock('./logger', () => ({
   createLogger: () => ({
     info: vi.fn(),
@@ -68,7 +80,7 @@ vi.mock('./logger', () => ({
   })
 }));
 
-import { hydrateFirebaseUser } from './authService';
+import { hydrateFirebaseUser, observeFirebaseUser, signOut } from './authService';
 
 describe('hydrateFirebaseUser', () => {
   beforeEach(() => {
@@ -101,5 +113,60 @@ describe('hydrateFirebaseUser', () => {
     expect(legacyAuthMocks.getUserProfile).toHaveBeenCalledWith('coach-1');
     expect(hydrated.user.roles).toContain('coach');
     expect(hydrated.user.roles).not.toEqual(['parent']);
+  });
+});
+
+describe('signOut', () => {
+  beforeEach(() => {
+    appDataCacheMocks.clearAppDataCache.mockReset();
+  });
+
+  it('clears persisted app-data cache so the next user cannot read cached data', async () => {
+    await signOut();
+    expect(appDataCacheMocks.clearAppDataCache).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('observeFirebaseUser', () => {
+  beforeEach(() => {
+    appDataCacheMocks.clearAppDataCache.mockReset();
+    authObserverMocks.onAuthStateChanged.mockReset();
+  });
+
+  function wireObserver() {
+    let handler: ((user: unknown) => void) | null = null;
+    authObserverMocks.onAuthStateChanged.mockImplementation((_auth: unknown, cb: (user: unknown) => void) => {
+      handler = cb;
+      return () => {};
+    });
+    observeFirebaseUser(() => {});
+    return (user: unknown) => handler?.(user);
+  }
+
+  it('does not clear the cache on the initial restored session', () => {
+    const emit = wireObserver();
+    emit({ uid: 'user-a' });
+    expect(appDataCacheMocks.clearAppDataCache).not.toHaveBeenCalled();
+  });
+
+  it('clears cached data when the account switches to a different uid', () => {
+    const emit = wireObserver();
+    emit({ uid: 'user-a' });
+    emit({ uid: 'user-b' });
+    expect(appDataCacheMocks.clearAppDataCache).toHaveBeenCalledTimes(1);
+  });
+
+  it('clears cached data when the session transitions to signed-out', () => {
+    const emit = wireObserver();
+    emit({ uid: 'user-a' });
+    emit(null);
+    expect(appDataCacheMocks.clearAppDataCache).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not clear the cache on repeated snapshots of the same uid', () => {
+    const emit = wireObserver();
+    emit({ uid: 'user-a' });
+    emit({ uid: 'user-a' });
+    expect(appDataCacheMocks.clearAppDataCache).not.toHaveBeenCalled();
   });
 });
