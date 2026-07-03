@@ -13,6 +13,7 @@ const firebaseConfig = JSON.parse(
  */
 describe('hosting cache headers for hashed app assets', () => {
     const headers = firebaseConfig.hosting?.headers ?? [];
+    const rewrites = firebaseConfig.hosting?.rewrites ?? [];
 
     function findRule(source) {
         return headers.find((rule) => rule.source === source);
@@ -44,6 +45,15 @@ describe('hosting cache headers for hashed app assets', () => {
         const assetsIndex = headers.findIndex((rule) => rule.source === '/app/assets/**');
         expect(genericIndex).toBeGreaterThan(-1);
         expect(assetsIndex).toBeGreaterThan(genericIndex);
+    });
+
+    it('excludes missing /app/assets files from the app shell rewrite', () => {
+        // Stale hashed chunk URLs should 404 instead of rewriting to /index.html
+        // with the immutable /app/assets cache header applied to the app shell.
+        expect(rewrites).toContainEqual({
+            source: '!/app/assets/**',
+            destination: '/index.html',
+        });
     });
 
     it('does not put unknown keys in header rule objects (keeps firebase deploy valid)', () => {
