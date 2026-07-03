@@ -1,9 +1,10 @@
 import { expect, test } from '@playwright/test';
 
+const appBaseUrl = process.env.SMOKE_APP_BASE_URL || '';
+test.skip(!appBaseUrl, 'SMOKE_APP_BASE_URL is required for React app smoke tests');
+
 function appUrl(baseURL, hashPath) {
-    const defaultBaseURL = 'http://localhost:3000/'; // A safe default for local testing
-    const appBaseURL = process.env.SMOKE_APP_BASE_URL || baseURL || defaultBaseURL;
-    const url = new URL('/', appBaseURL);
+    const url = new URL('/', appBaseUrl || baseURL);
     url.hash = hashPath;
     return url.toString();
 }

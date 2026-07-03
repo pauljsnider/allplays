@@ -1,9 +1,11 @@
 import { expect, test } from '@playwright/test';
 import { buildUrl } from './helpers/boot-path.js';
 
+const appBaseUrl = process.env.SMOKE_APP_BASE_URL || '';
+test.skip(!appBaseUrl, 'SMOKE_APP_BASE_URL is required for React app smoke tests');
+
 function appUrl(baseURL, hashPath) {
-    const appBaseURL = process.env.SMOKE_APP_BASE_URL || baseURL;
-    const url = new URL(buildUrl(appBaseURL, '/'));
+    const url = new URL(buildUrl(appBaseUrl || baseURL, '/'));
     url.hash = hashPath;
     return url.toString();
 }

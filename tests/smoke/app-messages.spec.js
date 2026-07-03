@@ -1,10 +1,12 @@
 import { expect, test } from '@playwright/test';
 
+const appBaseUrl = process.env.SMOKE_APP_BASE_URL || '';
+test.skip(!appBaseUrl, 'SMOKE_APP_BASE_URL is required for React app smoke tests');
+
 test.use({ viewport: { width: 390, height: 844 }, hasTouch: true });
 
 function appUrl(baseURL, hashPath) {
-    const appBaseURL = process.env.SMOKE_APP_BASE_URL || baseURL;
-    const url = new URL('/', appBaseURL);
+    const url = new URL('/', appBaseUrl || baseURL);
     url.hash = hashPath;
     return url.toString();
 }
