@@ -109,6 +109,7 @@ describe('Capacitor native config', () => {
         // data may be captured by backup or device transfer.
         expect(androidManifest).toContain('android:allowBackup="false"');
         expect(androidManifest).not.toContain('android:allowBackup="true"');
+        expect(androidManifest).toContain('android:fullBackupContent="false"');
         expect(androidManifest).toContain('android:dataExtractionRules="@xml/data_extraction_rules"');
 
         expect(extractionRules).toContain('<cloud-backup>');
