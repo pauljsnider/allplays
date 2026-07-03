@@ -1273,7 +1273,14 @@ describe('official assignments app service', () => {
     ]);
     expect(result.assignments.map((item) => item.gameId)).not.toContain('game-past');
     expect(result.assignments.map((item) => item.gameId)).not.toContain('game-cancelled');
-    expect(getGames).toHaveBeenCalledWith('team-alpha');
+    // Regression for #3420: the officials load must bound the game read by date instead
+    // of scanning the full games collection. The start date is a small look-behind so
+    // same-day / in-progress games stay in range.
+    expect(getGames).toHaveBeenCalledWith('team-alpha', { startDate: expect.any(Date) });
+    const [, range] = vi.mocked(getGames).mock.calls[0] as [string, { startDate: Date }];
+    expect(range.startDate).toBeInstanceOf(Date);
+    expect(range.startDate.getTime()).toBeLessThanOrEqual(Date.now());
+    expect(range.startDate.getTime()).toBeGreaterThan(Date.now() - 48 * 60 * 60 * 1000);
   });
 
   it('hides officials access when no official link matches the signed-in user', async () => {
@@ -1306,7 +1313,7 @@ describe('official assignments app service', () => {
     ]);
     expect(result.assignments.map((item) => item.kind)).toEqual(['assigned']);
     expect(getTeam).toHaveBeenCalledWith('team-alpha', { includeInactive: true });
-    expect(getGames).toHaveBeenCalledWith('team-alpha');
+    expect(getGames).toHaveBeenCalledWith('team-alpha', { startDate: expect.any(Date) });
   });
 
   it('delegates accept, decline, and claim writes to legacy officiating actions', async () => {

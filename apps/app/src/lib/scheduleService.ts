@@ -5279,6 +5279,10 @@ function extractTeamIdFromOfficialRefPath(path: string) {
   return teamIndex >= 0 ? compactString(parts[teamIndex + 1]) : '';
 }
 
+// Look-behind buffer for the officials game query so same-day / in-progress games stay
+// in range while still bounding the read (avoids scanning a team's full game history).
+const officialAssignmentsLookBehindMs = 24 * 60 * 60 * 1000;
+
 function isUpcomingOfficialGame(game: any, now = new Date()) {
   const date = normalizeScheduleDate(game?.date);
   const status = compactString(game?.status).toLowerCase();
@@ -5354,10 +5358,15 @@ export async function loadOfficialAssignments(user: AuthUser, options: { teamId?
   }
 
   const now = new Date();
+  // Only upcoming games are ever surfaced (isUpcomingOfficialGame requires date >= now),
+  // so bound the read to a small look-behind window instead of scanning the team's entire
+  // game history on every officials load. The look-behind keeps in-progress / same-day games
+  // (whose stored date is the start time) in range; the filter below still trims to upcoming.
+  const officialGamesSince = new Date(now.getTime() - officialAssignmentsLookBehindMs);
   const teamResults = await Promise.all(teamIds.map(async (teamId) => {
     const [team, games] = await Promise.all([
       getTeam(teamId, { includeInactive: true }).catch(() => null),
-      getGames(teamId).catch(() => [])
+      getGames(teamId, { startDate: officialGamesSince }).catch(() => [])
     ]);
     const canClaim = isEligibleOpenOfficiatingSlotParticipant(team || {}, userProfile as Record<string, any>, user);
     const teamName = compactString(team?.name) || 'Team';
