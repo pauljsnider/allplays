@@ -459,6 +459,10 @@ async function getNativeAccessCodeValidationOptions(result: UserCredential) {
 
 async function persistNativeRestAuthSession(signInPayload: NativeRestSignInPayload, lookupUser: NativeRestLookupUser = {}): Promise<FirebaseUser> {
   const email = signInPayload.email || lookupUser.email || '';
+  const previousUid = auth.currentUser?.uid || readNativeAuthSession()?.uid || null;
+  if (previousUid && previousUid !== signInPayload.localId) {
+    clearCachedUserData();
+  }
   const expiresInSeconds = Number.parseInt(signInPayload.expiresIn || '3600', 10);
   const expirationTime = Date.now() + Math.max(expiresInSeconds - 30, 60) * 1000;
   const now = `${Date.now()}`;

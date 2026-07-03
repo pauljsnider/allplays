@@ -11,6 +11,7 @@ const defaultTtlMs = 60 * 1000;
 const defaultMaxStaleMs = 24 * 60 * 60 * 1000;
 const storagePrefix = 'allplays:appDataCache:';
 const cache = new Map<string, CacheEntry<unknown>>();
+let cacheInvalidationVersion = 0;
 const logger = createLogger('app-data-cache');
 
 type LoadCachedAppDataOptions<T> = {
@@ -88,6 +89,7 @@ export function loadCachedAppData<T>(
 }
 
 export function clearAppDataCache(prefix = '') {
+  cacheInvalidationVersion += 1;
   [...cache.keys()].forEach((key) => {
     if (!prefix || key.startsWith(prefix)) {
       cache.delete(key);
@@ -108,7 +110,25 @@ function loadAndStoreCachedAppData<T>(
     shouldCache
   }: { ttlMs: number; persist: boolean; onRefresh?: (value: T) => void; shouldCache?: (value: T) => boolean }
 ) {
+  const loadInvalidationVersion = cacheInvalidationVersion;
   const promise = loader().then((value) => {
+    if (loadInvalidationVersion !== cacheInvalidationVersion) {
+      const current = cache.get(key);
+      if (current?.promise === promise) {
+        if (existing && hasCachedValue(existing)) {
+          cache.set(key, {
+            value: existing.value,
+            expiresAt: existing.expiresAt,
+            hydratedFromStorage: existing.hydratedFromStorage
+          });
+        } else {
+          cache.delete(key);
+        }
+      }
+      onRefresh?.(value);
+      return value;
+    }
+
     if (shouldCache && !shouldCache(value)) {
       if (existing && hasCachedValue(existing)) {
         cache.set(key, {

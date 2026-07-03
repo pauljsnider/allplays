@@ -34,11 +34,11 @@ vi.mock('@capacitor/core', () => ({
   Capacitor: {
     isNativePlatform: vi.fn(() => true)
   }
-}));
+}), { virtual: true });
 
 vi.mock('@capacitor-firebase/authentication', () => ({
   FirebaseAuthentication: {}
-}));
+}), { virtual: true });
 
 vi.mock('./firebaseAuthRuntime', () => ({
   auth: authState,
@@ -80,7 +80,7 @@ vi.mock('./logger', () => ({
   })
 }));
 
-import { hydrateFirebaseUser, observeFirebaseUser, signOut } from './authService';
+import { hydrateFirebaseUser, observeFirebaseUser, signInWithEmail, signOut } from './authService';
 
 describe('hydrateFirebaseUser', () => {
   beforeEach(() => {
@@ -123,6 +123,53 @@ describe('signOut', () => {
 
   it('clears persisted app-data cache so the next user cannot read cached data', async () => {
     await signOut();
+    expect(appDataCacheMocks.clearAppDataCache).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('native REST sign-in', () => {
+  beforeEach(() => {
+    authState.currentUser = null;
+    appDataCacheMocks.clearAppDataCache.mockReset();
+    legacyAuthMocks.updateUserProfile.mockReset();
+    legacyAuthMocks.updateUserProfile.mockResolvedValue(undefined);
+    window.localStorage.clear();
+    installIndexedDbMock();
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+      if (url.includes('accounts:signInWithPassword')) {
+        return createJsonResponse({
+          localId: 'new-user',
+          email: 'new@example.com',
+          idToken: 'new-id-token',
+          refreshToken: 'new-refresh-token',
+          expiresIn: '3600'
+        });
+      }
+      return createJsonResponse({
+        users: [{
+          email: 'new@example.com',
+          emailVerified: true,
+          displayName: 'New User'
+        }]
+      });
+    }));
+  });
+
+  it('clears cached user data before replacing a persisted native REST session with a different uid', async () => {
+    window.localStorage.setItem('allplays-native-auth-session', JSON.stringify({
+      uid: 'previous-user',
+      email: 'previous@example.com',
+      idToken: 'previous-id-token',
+      refreshToken: 'previous-refresh-token',
+      expirationTime: Date.now() + 3600_000,
+      apiKey: 'test-api-key',
+      provider: 'rest'
+    }));
+
+    const result = await signInWithEmail('new@example.com', 'password123');
+
+    expect(result.nativeRest).toBe(true);
+    expect(result.user.uid).toBe('new-user');
     expect(appDataCacheMocks.clearAppDataCache).toHaveBeenCalledTimes(1);
   });
 });
@@ -170,3 +217,65 @@ describe('observeFirebaseUser', () => {
     expect(appDataCacheMocks.clearAppDataCache).not.toHaveBeenCalled();
   });
 });
+
+function createJsonResponse(payload: unknown) {
+  return {
+    ok: true,
+    json: vi.fn(async () => payload)
+  } as Response;
+}
+
+function installIndexedDbMock() {
+  const objectStore = {
+    delete: vi.fn(),
+    put: vi.fn()
+  };
+  const database = {
+    close: vi.fn(),
+    createObjectStore: vi.fn(),
+    objectStoreNames: {
+      contains: vi.fn(() => true)
+    },
+    transaction: vi.fn(() => {
+      const transaction: {
+        error: Error | null;
+        objectStore: ReturnType<typeof vi.fn>;
+        onabort: (() => void) | null;
+        oncomplete: (() => void) | null;
+        onerror: (() => void) | null;
+      } = {
+        error: null,
+        objectStore: vi.fn(() => objectStore),
+        onabort: null,
+        oncomplete: null,
+        onerror: null
+      };
+      window.setTimeout(() => transaction.oncomplete?.(), 0);
+      return transaction;
+    })
+  };
+  const indexedDB = {
+    open: vi.fn(() => {
+      const request: {
+        error: Error | null;
+        result: typeof database;
+        onerror: (() => void) | null;
+        onsuccess: (() => void) | null;
+        onupgradeneeded: (() => void) | null;
+      } = {
+        error: null,
+        result: database,
+        onerror: null,
+        onsuccess: null,
+        onupgradeneeded: null
+      };
+      window.setTimeout(() => request.onsuccess?.(), 0);
+      return request;
+    })
+  };
+
+  Object.defineProperty(window, 'indexedDB', {
+    configurable: true,
+    value: indexedDB
+  });
+}

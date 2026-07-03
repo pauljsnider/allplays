@@ -39,6 +39,22 @@ describe('appDataCache', () => {
     await expect(second).resolves.toEqual({ ok: true });
   });
 
+  it('does not repopulate memory or storage when an in-flight load resolves after cache clear', async () => {
+    const cache = await loadCacheModule();
+    let resolveLoader: ((value: { userId: string }) => void) | null = null;
+    const loader = vi.fn(() => new Promise<{ userId: string }>((resolve) => {
+      resolveLoader = resolve;
+    }));
+
+    const load = cache.loadCachedAppData('signed-out:key', loader);
+    cache.clearAppDataCache();
+    resolveLoader?.({ userId: 'previous-user' });
+
+    await expect(load).resolves.toEqual({ userId: 'previous-user' });
+    expect(cache.getCachedAppData('signed-out:key')).toBeNull();
+    expect(window.localStorage.getItem('allplays:appDataCache:signed-out%3Akey')).toBeNull();
+  });
+
   it('caches falsy values until their TTL expires', async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date('2026-06-12T12:00:00Z'));
