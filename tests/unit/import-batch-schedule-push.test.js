@@ -295,4 +295,57 @@ describe('schedule import batch push notifications', () => {
             harness.cleanup();
         }
     });
+
+    it('preserves finalized partial totals when delayed create triggers register later', async () => {
+        const harness = loadNotificationInternals({
+            teamDoc: { ownerId: 'user-1' },
+            indexedTargets: [{
+                uid: 'user-1',
+                deviceId: 'device-1',
+                token: 'token-1',
+                categories: { schedule: true }
+            }]
+        });
+
+        try {
+            const batchRef = harness.env.firestoreState
+                .doc('teams/team-1/scheduleImportNotificationBatches/batch-lagging');
+            await batchRef.set({
+                batchId: 'batch-lagging',
+                totalCount: 3,
+                eventIds: ['game-1', 'game-2'],
+                gameCount: 2,
+                practiceCount: 0,
+                importCompletedAt: {},
+                sentAt: {}
+            });
+
+            await harness.internals.notifyGameCreated(
+                createSnapshot({
+                    type: 'practice',
+                    title: 'Late practice',
+                    status: 'scheduled',
+                    createdBy: 'coach-1',
+                    importBatch: {
+                        batchId: 'batch-lagging',
+                        totalCount: 4,
+                        rowNumber: 3
+                    }
+                }),
+                { params: { teamId: 'team-1', gameId: 'game-3' } }
+            );
+
+            const batchSnapshot = await batchRef.get();
+            expect(batchSnapshot.data()).toMatchObject({
+                batchId: 'batch-lagging',
+                totalCount: 3,
+                eventIds: ['game-1', 'game-2', 'game-3'],
+                gameCount: 2,
+                practiceCount: 1
+            });
+            expect(harness.env.messagingCalls).toHaveLength(0);
+        } finally {
+            harness.cleanup();
+        }
+    });
 });

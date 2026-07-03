@@ -6714,7 +6714,10 @@ async function registerScheduleImportBatchEvent({ teamId, gameId, game, batch })
     const alreadyCounted = currentEventIds.includes(gameId);
     const nextGameCount = Math.max(0, Number(current.gameCount || 0)) + (!alreadyCounted && String(game?.type || '').toLowerCase() !== 'practice' ? 1 : 0);
     const nextPracticeCount = Math.max(0, Number(current.practiceCount || 0)) + (!alreadyCounted && String(game?.type || '').toLowerCase() === 'practice' ? 1 : 0);
-    const totalCount = Math.max(batch.totalCount, Number(current.totalCount || 0));
+    const currentTotalCount = Math.max(0, Number(current.totalCount || 0));
+    const totalCount = current.importCompletedAt && currentTotalCount > 0
+      ? currentTotalCount
+      : Math.max(batch.totalCount, currentTotalCount);
     const shouldSendSummary = !current.sentAt && !current.notificationClaimedAt && nextEventIds.length >= totalCount;
 
     txn.set(batchRef, {

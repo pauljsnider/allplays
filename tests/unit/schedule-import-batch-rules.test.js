@@ -24,11 +24,13 @@ describe('schedule import notification batch Firestore rules', () => {
         expect(block).toContain('allow read: if isTeamOwnerOrAdmin(teamId)');
         expect(block).toContain('allow create: if isTeamOwnerOrAdmin(teamId)');
         expect(block).toContain('allow update: if isTeamOwnerOrAdmin(teamId)');
+        expect(block).toContain('request.resource.data.batchId == batchId');
         // Only the finalize fields are writable; server-owned fields stay admin-only.
         expect(block).toContain("hasOnly(['batchId', 'totalCount', 'importCompletedAt', 'updatedAt', 'finalizedBy'])");
+        expect(block).toContain("hasOnly(['totalCount', 'importCompletedAt', 'updatedAt', 'finalizedBy'])");
         expect(block).toContain('request.resource.data.finalizedBy == request.auth.uid');
         // Updates must scope the writable key set to the diff so a client cannot
-        // clobber server-managed fields such as eventIds or sentAt.
+        // change immutable or server-managed fields such as batchId, eventIds, or sentAt.
         expect(block).toContain('request.resource.data.diff(resource.data).affectedKeys()');
     });
 

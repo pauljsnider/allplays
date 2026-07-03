@@ -2095,11 +2095,12 @@ service cloud.firestore {
         allow read: if isTeamOwnerOrAdmin(teamId);
         allow create: if isTeamOwnerOrAdmin(teamId) &&
                         request.resource.data.finalizedBy == request.auth.uid &&
+                        request.resource.data.batchId == batchId &&
                         request.resource.data.keys().hasOnly(['batchId', 'totalCount', 'importCompletedAt', 'updatedAt', 'finalizedBy']);
         allow update: if isTeamOwnerOrAdmin(teamId) &&
                         request.resource.data.finalizedBy == request.auth.uid &&
                         request.resource.data.diff(resource.data).affectedKeys()
-                          .hasOnly(['batchId', 'totalCount', 'importCompletedAt', 'updatedAt', 'finalizedBy']);
+                          .hasOnly(['totalCount', 'importCompletedAt', 'updatedAt', 'finalizedBy']);
       }
 
       // Games subcollection
