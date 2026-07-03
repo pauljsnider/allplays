@@ -100,4 +100,21 @@ describe('Capacitor native config', () => {
         expect(iosEntitlements).toContain('com.apple.developer.associated-domains');
         expect(iosEntitlements).toContain('applinks:allplays.ai');
     });
+
+    it('disables Android backup so the persisted Firebase session cannot be exfiltrated via adb backup (#3417)', () => {
+        const androidManifest = readProjectFile('android/app/src/main/AndroidManifest.xml');
+        const extractionRules = readProjectFile('android/app/src/main/res/xml/data_extraction_rules.xml');
+
+        // The WebView stores a Firebase refresh/ID token in localStorage, so no app
+        // data may be captured by backup or device transfer.
+        expect(androidManifest).toContain('android:allowBackup="false"');
+        expect(androidManifest).not.toContain('android:allowBackup="true"');
+        expect(androidManifest).toContain('android:dataExtractionRules="@xml/data_extraction_rules"');
+
+        expect(extractionRules).toContain('<cloud-backup>');
+        expect(extractionRules).toContain('<device-transfer>');
+        expect(extractionRules).toContain('<exclude domain="root" />');
+        expect(extractionRules).toContain('<exclude domain="database" />');
+        expect(extractionRules).toContain('<exclude domain="sharedpref" />');
+    });
 });

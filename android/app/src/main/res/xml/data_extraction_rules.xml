@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Defense-in-depth for #3417. The WebView persists a Firebase refresh/ID token in
+  localStorage (allplays-native-auth-session), so no app data may leave the device
+  via cloud backup or device-to-device transfer. allowBackup="false" already blocks
+  legacy backup; these rules keep Android 12+ cloud-backup and transfer disabled too.
+-->
+<data-extraction-rules>
+    <cloud-backup>
+        <exclude domain="root" />
+        <exclude domain="file" />
+        <exclude domain="database" />
+        <exclude domain="sharedpref" />
+        <exclude domain="external" />
+    </cloud-backup>
+    <device-transfer>
+        <exclude domain="root" />
+        <exclude domain="file" />
+        <exclude domain="database" />
+        <exclude domain="sharedpref" />
+        <exclude domain="external" />
+    </device-transfer>
+</data-extraction-rules>
