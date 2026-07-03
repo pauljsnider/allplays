@@ -12,7 +12,7 @@ const scheduleServiceMocks = vi.hoisted(() => ({
   loadOpponentStatsForGame: vi.fn(),
   loadParentScheduleEventDetail: vi.fn(),
   loadScorekeeperStatTrackerConfigsForApp: vi.fn(),
-  updateGameScore: vi.fn()
+  adjustGameScore: vi.fn()
 }));
 
 const statTrackingMocks = vi.hoisted(() => {

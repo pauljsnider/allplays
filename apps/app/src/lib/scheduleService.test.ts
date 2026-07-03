@@ -186,7 +186,7 @@ import { expandRecurrence, fetchAndParseCalendar, isTeamActive, mergeAssignments
 import { getCachedAppData, loadCachedAppData } from './appDataCache';
 import { mapScheduleEventRecord } from './firestore/mappers';
 import { loadProfileDocument } from './profileService';
-import { buildPlayerScoringLiveEvent, buildSingleGameTournamentLegacySchedulePayload, claimOfficialAssignmentItem, createScheduledGameForApp, createScheduledPracticeForApp, createScheduledTournamentBlockForApp, createStaffRsvpAvailabilityLoader, flushPendingLivePublishOperations, hydrateParentScheduleDetails, loadOfficialAssignments, loadParentSchedule, loadParentScheduleChildren, loadParentScheduleEventDetail, loadScheduledPracticeSeriesForEdit, loadStaffPracticeAttendance, loadStaffScheduleRsvpBreakdown, publishLiveScoreUpdateEvent, recordPlayerGameStat, recordPlayerScoringStat, releaseParentScheduleAssignmentClaim, resolveCachedParentScheduleEvents, resolveLiveGameClockSnapshot, resolveParentGameRoute, respondToOfficialAssignmentItem, revertScheduledPracticeOccurrenceForApp, saveScheduledGameLineupDraftForApp, saveStaffPracticeAttendance, submitStaffScheduleRsvpOverride, undoRecordedPlayerGameStat, updateLiveGameClockState, updateScheduledPracticeForApp } from './scheduleService';
+import { adjustGameScore, buildPlayerScoringLiveEvent, buildSingleGameTournamentLegacySchedulePayload, claimOfficialAssignmentItem, createScheduledGameForApp, createScheduledPracticeForApp, createScheduledTournamentBlockForApp, createStaffRsvpAvailabilityLoader, flushPendingLivePublishOperations, hydrateParentScheduleDetails, loadOfficialAssignments, loadParentSchedule, loadParentScheduleChildren, loadParentScheduleEventDetail, loadScheduledPracticeSeriesForEdit, loadStaffPracticeAttendance, loadStaffScheduleRsvpBreakdown, publishLiveScoreUpdateEvent, recordPlayerGameStat, recordPlayerScoringStat, releaseParentScheduleAssignmentClaim, resolveCachedParentScheduleEvents, resolveLiveGameClockSnapshot, resolveParentGameRoute, respondToOfficialAssignmentItem, revertScheduledPracticeOccurrenceForApp, saveScheduledGameLineupDraftForApp, saveStaffPracticeAttendance, submitStaffScheduleRsvpOverride, undoRecordedPlayerGameStat, updateLiveGameClockState, updateScheduledPracticeForApp } from './scheduleService';
 
 function playerSnapshot(id: string, data: Record<string, unknown> | null) {
   return {
@@ -2771,5 +2771,75 @@ describe('resolveCachedParentScheduleEvents (#2649)', () => {
   it('returns empty on a cache miss', () => {
     vi.mocked(getCachedAppData).mockReturnValue(null);
     expect(resolveCachedParentScheduleEvents('u1', 't1', 'e1')).toEqual([]);
+  });
+});
+
+describe('adjustGameScore', () => {
+  const user = { uid: 'coach-1', displayName: 'Coach', email: 'coach@example.com', roles: [] } as any;
+
+  beforeEach(() => {
+    (globalThis as any).window = { location: { protocol: 'https:' }, setTimeout, clearTimeout } as any;
+    vi.clearAllMocks();
+    mocks.transactionGet.mockReset();
+  });
+
+  it('atomically adds the delta to the authoritative server score', async () => {
+    mocks.transactionGet.mockResolvedValue({
+      exists: () => true,
+      data: () => ({ homeScore: 10, awayScore: 8 })
+    });
+
+    const result = await adjustGameScore('team-1', 'game-1', { homeScore: 2, awayScore: 0 } as any, user);
+
+    expect(mocks.runTransactionMock).toHaveBeenCalledTimes(1);
+    expect(mocks.transactionSet).toHaveBeenCalledWith(
+      expect.objectContaining({ path: 'teams/team-1/games/game-1' }),
+      expect.objectContaining({ homeScore: 12, awayScore: 8, scoreUpdatedBy: 'coach-1' }),
+      { merge: true }
+    );
+    expect(result).toMatchObject({ homeScore: 12, awayScore: 8, shared: false });
+    // Non-shared games are written once inside the transaction; no absolute mirror write.
+    expect(vi.mocked(updateGame)).not.toHaveBeenCalled();
+  });
+
+  it('applies a negative (undo) delta and never drops the score below zero', async () => {
+    mocks.transactionGet.mockResolvedValue({
+      exists: () => true,
+      data: () => ({ homeScore: 1, awayScore: 0 })
+    });
+
+    const result = await adjustGameScore('team-1', 'game-1', { homeScore: -2, awayScore: 0 } as any, user);
+
+    expect(mocks.transactionSet).toHaveBeenCalledWith(
+      expect.objectContaining({ path: 'teams/team-1/games/game-1' }),
+      expect.objectContaining({ homeScore: 0, awayScore: 0 }),
+      { merge: true }
+    );
+    expect(result).toMatchObject({ homeScore: 0, awayScore: 0 });
+  });
+
+  it('is a no-op for a zero delta and does not open a transaction', async () => {
+    const result = await adjustGameScore('team-1', 'game-1', { homeScore: 0, awayScore: 0 } as any, user);
+
+    expect(mocks.runTransactionMock).not.toHaveBeenCalled();
+    expect(mocks.transactionSet).not.toHaveBeenCalled();
+    expect(result).toMatchObject({ homeScore: null, awayScore: null, shared: false });
+  });
+
+  it('mirrors the resolved absolute score through updateGame for shared-schedule games', async () => {
+    mocks.transactionGet.mockResolvedValue({
+      exists: () => true,
+      data: () => ({ homeScore: 4, awayScore: 5, sharedScheduleId: 'shared_team-1_game-1' })
+    });
+
+    const result = await adjustGameScore('team-1', 'game-1', { homeScore: 0, awayScore: 3 } as any, user);
+
+    expect(result).toMatchObject({ homeScore: 4, awayScore: 8, shared: true });
+    expect(vi.mocked(updateGame)).toHaveBeenCalledWith('team-1', 'game-1', expect.objectContaining({ homeScore: 4, awayScore: 8 }));
+  });
+
+  it('rejects when the game or user is missing', async () => {
+    await expect(adjustGameScore('', 'game-1', { homeScore: 1, awayScore: 0 } as any, user)).rejects.toThrow('A scheduled game is required');
+    await expect(adjustGameScore('team-1', 'game-1', { homeScore: 1, awayScore: 0 } as any, null as any)).rejects.toThrow('Sign in');
   });
 });

@@ -10,7 +10,7 @@ function createDependencies() {
     setDoc: vi.fn(async () => undefined),
     deleteDoc: vi.fn(async () => undefined),
     increment: vi.fn((value: number) => ({ __increment: value })),
-    updateGameScore: vi.fn(async () => undefined)
+    adjustGameScore: vi.fn(async () => undefined)
   };
 }
 
@@ -142,9 +142,9 @@ describe('statTrackingService', () => {
         pts: { __increment: 2 }
       }
     }, { merge: true });
-    expect(dependencies.updateGameScore).toHaveBeenCalledWith('team-1', 'game-1', {
-      homeScore: 12,
-      awayScore: 8
+    expect(dependencies.adjustGameScore).toHaveBeenCalledWith('team-1', 'game-1', {
+      homeScore: 2,
+      awayScore: 0
     }, {
       uid: 'coach-1',
       email: 'coach@example.com'
@@ -285,7 +285,7 @@ describe('statTrackingService', () => {
     }, user);
 
     dependencies.setDoc.mockClear();
-    dependencies.updateGameScore.mockClear();
+    dependencies.adjustGameScore.mockClear();
 
     const undone = await service.undoLastEvent('team-1', 'game-1', user);
 
@@ -295,13 +295,14 @@ describe('statTrackingService', () => {
         pts: { __increment: -2 }
       }
     }), { merge: true });
-    expect(dependencies.updateGameScore).toHaveBeenCalledWith('team-1', 'game-1', {
-      homeScore: 10,
-      awayScore: 8
+    // Undo reverses the +2 home delta with an equal-and-opposite delta.
+    expect(dependencies.adjustGameScore).toHaveBeenCalledWith('team-1', 'game-1', {
+      homeScore: -2,
+      awayScore: 0
     }, user);
     expect(dependencies.deleteDoc).toHaveBeenCalledWith({ path: expect.stringContaining('teams/team-1/games/game-1/events/app-track-') });
     expect(dependencies.setDoc.mock.invocationCallOrder[0]).toBeLessThan(dependencies.deleteDoc.mock.invocationCallOrder[0]);
-    expect(dependencies.updateGameScore.mock.invocationCallOrder[0]).toBeLessThan(dependencies.deleteDoc.mock.invocationCallOrder[0]);
+    expect(dependencies.adjustGameScore.mock.invocationCallOrder[0]).toBeLessThan(dependencies.deleteDoc.mock.invocationCallOrder[0]);
     expect(service.getCurrentScore()).toEqual({ homeScore: 10, awayScore: 8 });
     expect(service.getEventLog()).toHaveLength(0);
     expect(await service.undoLastEvent('team-1', 'game-1', user)).toBeNull();
@@ -399,8 +400,8 @@ describe('statTrackingService', () => {
         goals: { __increment: -1 }
       }
     }), { merge: true });
-    expect(dependencies.updateGameScore).toHaveBeenCalledWith('team-1', 'game-1', {
-      homeScore: 1,
+    expect(dependencies.adjustGameScore).toHaveBeenCalledWith('team-1', 'game-1', {
+      homeScore: -1,
       awayScore: 0
     }, user);
     expect(dependencies.deleteDoc).toHaveBeenCalledWith({ path: 'teams/team-1/games/game-1/events/restored-event-1' });
@@ -433,7 +434,7 @@ describe('statTrackingService', () => {
     })).rejects.toThrow('Unknown stat column key: blk');
 
     expect(dependencies.setDoc).not.toHaveBeenCalled();
-    expect(dependencies.updateGameScore).not.toHaveBeenCalled();
+    expect(dependencies.adjustGameScore).not.toHaveBeenCalled();
   });
 
   it('routes private stat definitions to privatePlayerStats while preserving participation', async () => {
@@ -509,7 +510,7 @@ describe('statTrackingService', () => {
     })).rejects.toThrow('aggregate failed');
 
     expect(dependencies.deleteDoc).toHaveBeenCalledWith({ path: expect.stringContaining('teams/team-1/games/game-1/events/app-track-') });
-    expect(dependencies.updateGameScore).not.toHaveBeenCalled();
+    expect(dependencies.adjustGameScore).not.toHaveBeenCalled();
     expect(service.getEventLog()).toHaveLength(0);
   });
 
@@ -538,7 +539,7 @@ describe('statTrackingService', () => {
     }, user);
 
     dependencies.setDoc.mockClear();
-    dependencies.updateGameScore.mockClear();
+    dependencies.adjustGameScore.mockClear();
     dependencies.deleteDoc.mockRejectedValueOnce(new Error('delete failed'));
 
     await expect(service.undoLastEvent('team-1', 'game-1', user)).rejects.toThrow('delete failed');
@@ -553,13 +554,15 @@ describe('statTrackingService', () => {
         pts: { __increment: 2 }
       }
     }), { merge: true });
-    expect(dependencies.updateGameScore).toHaveBeenNthCalledWith(1, 'team-1', 'game-1', {
-      homeScore: 10,
-      awayScore: 8
+    // Undo applies the reversing delta, then the failed delete rolls it back with
+    // the original delta.
+    expect(dependencies.adjustGameScore).toHaveBeenNthCalledWith(1, 'team-1', 'game-1', {
+      homeScore: -2,
+      awayScore: 0
     }, user);
-    expect(dependencies.updateGameScore).toHaveBeenNthCalledWith(2, 'team-1', 'game-1', {
-      homeScore: 12,
-      awayScore: 8
+    expect(dependencies.adjustGameScore).toHaveBeenNthCalledWith(2, 'team-1', 'game-1', {
+      homeScore: 2,
+      awayScore: 0
     }, user);
     expect(service.getCurrentScore()).toEqual({ homeScore: 12, awayScore: 8 });
     expect(service.getEventLog()).toHaveLength(1);
@@ -640,9 +643,9 @@ describe('statTrackingService', () => {
         }
       }
     }, { merge: true });
-    expect(dependencies.updateGameScore).toHaveBeenCalledWith('team-1', 'game-1', {
-      homeScore: 10,
-      awayScore: 11
+    expect(dependencies.adjustGameScore).toHaveBeenCalledWith('team-1', 'game-1', {
+      homeScore: 0,
+      awayScore: 3
     }, {
       uid: 'coach-1'
     });
@@ -685,7 +688,7 @@ describe('statTrackingService', () => {
         }
       }
     }, { merge: true });
-    expect(dependencies.updateGameScore).toHaveBeenCalledWith('team-1', 'game-1', {
+    expect(dependencies.adjustGameScore).toHaveBeenCalledWith('team-1', 'game-1', {
       homeScore: 1,
       awayScore: 0
     }, {
@@ -741,7 +744,7 @@ describe('statTrackingService', () => {
     expect(service.getCurrentScore()).toEqual({ homeScore: 10, awayScore: 10 });
 
     dependencies.setDoc.mockClear();
-    dependencies.updateGameScore.mockClear();
+    dependencies.adjustGameScore.mockClear();
     const undone = await service.undoLastEvent('team-1', 'game-1', user);
 
     expect(undone?.isOpponent).toBe(true);
@@ -757,9 +760,9 @@ describe('statTrackingService', () => {
         }
       }
     }, { merge: true });
-    expect(dependencies.updateGameScore).toHaveBeenCalledWith('team-1', 'game-1', {
-      homeScore: 10,
-      awayScore: 8
+    expect(dependencies.adjustGameScore).toHaveBeenCalledWith('team-1', 'game-1', {
+      homeScore: 0,
+      awayScore: -2
     }, user);
     expect(service.getCurrentScore()).toEqual({ homeScore: 10, awayScore: 8 });
   });
@@ -839,5 +842,56 @@ describe('statTrackingService', () => {
 
     await service.undoLastEvent('team-1', 'game-1', user);
     expect(service.getCurrentScore()).toEqual({ homeScore: 0, awayScore: 0 });
+  });
+
+  it('keeps the persisted score correct when two devices track the same game (regression for #3419)', async () => {
+    // Shared "server" score that the delta-applying adjustGameScore mutates, the way
+    // adjustGameScore()'s Firestore transaction applies each delta to the authoritative
+    // value. Before the fix, each device wrote an absolute client-local score and the
+    // last writer clobbered the other's points.
+    const serverScore = { homeScore: 0, awayScore: 0 };
+    const adjustGameScore = vi.fn(async (_teamId: string, _gameId: string, delta: { homeScore: number; awayScore: number }) => {
+      serverScore.homeScore = Math.max(0, serverScore.homeScore + delta.homeScore);
+      serverScore.awayScore = Math.max(0, serverScore.awayScore + delta.awayScore);
+      return { ...serverScore };
+    });
+
+    function createDevice() {
+      return createStatTrackingService({
+        statConfig: { columns: ['PTS'] },
+        initialScore: { homeScore: 0, awayScore: 0 },
+        dependencies: {
+          db: { name: 'db' } as any,
+          doc: vi.fn((_db: unknown, ...segments: string[]) => ({ path: segments.join('/') })),
+          setDoc: vi.fn(async () => undefined),
+          deleteDoc: vi.fn(async () => undefined),
+          increment: vi.fn((value: number) => ({ __increment: value })),
+          adjustGameScore
+        }
+      });
+    }
+
+    const deviceA = createDevice();
+    const deviceB = createDevice();
+    const user = { uid: 'coach-1' };
+
+    const madeBasket = (playerId: string) => ({
+      text: `${playerId} PTS +2`,
+      playerName: 'Player',
+      playerNumber: '4',
+      teamSide: 'home' as const,
+      undoData: { type: 'stat' as const, playerId, statKey: 'PTS', value: 2, isOpponent: false }
+    });
+
+    // Device A scores 3 baskets (6), device B scores 2 (4), interleaved.
+    await deviceA.recordEvent('team-1', 'game-1', madeBasket('a1'), user);
+    await deviceB.recordEvent('team-1', 'game-1', madeBasket('b1'), user);
+    await deviceA.recordEvent('team-1', 'game-1', madeBasket('a2'), user);
+    await deviceB.recordEvent('team-1', 'game-1', madeBasket('b2'), user);
+    await deviceA.recordEvent('team-1', 'game-1', madeBasket('a3'), user);
+
+    // 5 made baskets * 2 = 10. Absolute writes would have clobbered to 6 (device A's
+    // last local value) or 4 (device B's).
+    expect(serverScore).toEqual({ homeScore: 10, awayScore: 0 });
   });
 });

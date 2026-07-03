@@ -3859,6 +3859,87 @@ export async function updateGameScore(teamId: string, gameId: string, score: Gam
   return payload;
 }
 
+/**
+ * Atomically apply a score delta to a live game (#3419).
+ *
+ * The live stat tracker used to compute the new score from client-local state and
+ * write it as an absolute value, so two devices tracking the same game clobbered
+ * each other's score (while the increment()-based aggregate stats stayed correct).
+ * This reads-modifies-writes the game score inside a Firestore transaction, so
+ * concurrent writers each add their delta to the authoritative server value.
+ *
+ * `updateGameScore` remains the absolute setter for manual score edits.
+ */
+export async function adjustGameScore(
+  teamId: string,
+  gameId: string,
+  scoreDelta: GameScoreInput,
+  user: AuthUser
+) {
+  if (!teamId || !gameId) {
+    throw new Error('A scheduled game is required before updating the score.');
+  }
+  if (!user?.uid) {
+    throw new Error('Sign in before updating the score.');
+  }
+
+  const homeDelta = Math.trunc(Number(scoreDelta.homeScore) || 0);
+  const awayDelta = Math.trunc(Number(scoreDelta.awayScore) || 0);
+  const scoreStreamSessionId = compactString(scoreDelta.scoreStreamSessionId);
+  if (homeDelta === 0 && awayDelta === 0) {
+    return { homeScore: null, awayScore: null, shared: false };
+  }
+
+  const gameRef = doc(db, `teams/${teamId}/games/${gameId}`);
+
+  const buildPayload = (current: Record<string, any>) => {
+    const payload: Record<string, unknown> = {
+      homeScore: normalizeGameScoreValue(normalizeGameScoreValue(current?.homeScore) + homeDelta),
+      awayScore: normalizeGameScoreValue(normalizeGameScoreValue(current?.awayScore) + awayDelta),
+      scoreUpdatedAt: new Date(),
+      scoreUpdatedBy: user.uid
+    };
+    if (scoreStreamSessionId) {
+      payload.scoreStreamSessionId = scoreStreamSessionId;
+    }
+    return payload;
+  };
+
+  let resolved: Record<string, unknown> & { homeScore: number; awayScore: number };
+  let shared = false;
+  try {
+    resolved = await runTransaction(db, async (transaction: any) => {
+      const snapshot = await transaction.get(gameRef);
+      const current = (snapshot.exists?.() ? snapshot.data() : snapshot.exists ? snapshot.data() : {}) || {};
+      shared = Boolean(current.sharedScheduleId);
+      const payload = buildPayload(current);
+      transaction.set(gameRef, payload, { merge: true });
+      return payload as Record<string, unknown> & { homeScore: number; awayScore: number };
+    });
+  } catch (error) {
+    if (!isNativeRuntime()) throw error;
+    logScheduleWarning('Falling back to REST score adjust.', 'game-score-adjust', error, { fallback: 'rest', teamId, gameId });
+    const current = (await nativeGetDocument(`teams/${encodeURIComponent(teamId)}/games/${encodeURIComponent(gameId)}`)) || {};
+    shared = Boolean((current as Record<string, any>).sharedScheduleId);
+    resolved = buildPayload(current as Record<string, any>) as Record<string, unknown> & { homeScore: number; awayScore: number };
+    await nativePatchDocument(`teams/${encodeURIComponent(teamId)}/games/${encodeURIComponent(gameId)}`, resolved);
+  }
+
+  // Shared-schedule games mirror their score to the linked opponent's game via
+  // updateGame(). Re-issue the resolved absolute score through updateGame so that
+  // client-side mirroring still runs; the transaction already committed the
+  // authoritative value, and this absolute write is idempotent for a given result.
+  if (shared) {
+    try {
+      await updateGame(teamId, gameId, resolved);
+    } catch (error) {
+      logScheduleWarning('Unable to mirror shared-schedule score after adjust.', 'game-score-adjust-mirror', error, { teamId, gameId });
+    }
+  }
+
+  return { ...resolved, shared };
+}
+
 export async function completeGameWrapupForApp(teamId: string, gameId: string, payload: Record<string, unknown>, user: AuthUser) {
   if (!teamId || !gameId) {
     throw new Error('A scheduled game is required before completing wrap-up.');
