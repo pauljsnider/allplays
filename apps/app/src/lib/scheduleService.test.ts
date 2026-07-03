@@ -2826,16 +2826,47 @@ describe('adjustGameScore', () => {
     expect(result).toMatchObject({ homeScore: null, awayScore: null, shared: false });
   });
 
-  it('mirrors the resolved absolute score through updateGame for shared-schedule games', async () => {
-    mocks.transactionGet.mockResolvedValue({
+  it('mirrors the resolved absolute score inside the transaction for shared-schedule games', async () => {
+    mocks.transactionGet.mockResolvedValueOnce({
       exists: () => true,
-      data: () => ({ homeScore: 4, awayScore: 5, sharedScheduleId: 'shared_team-1_game-1' })
+      data: () => ({
+        homeScore: 4,
+        awayScore: 5,
+        sharedScheduleId: 'shared_team-1_game-1',
+        sharedScheduleOpponentTeamId: 'team-2',
+        sharedScheduleOpponentGameId: 'game-2'
+      })
+    }).mockResolvedValueOnce({
+      exists: () => true,
+      data: () => ({ homeScore: 5, awayScore: 4 })
     });
 
     const result = await adjustGameScore('team-1', 'game-1', { homeScore: 0, awayScore: 3 } as any, user);
 
     expect(result).toMatchObject({ homeScore: 4, awayScore: 8, shared: true });
-    expect(vi.mocked(updateGame)).toHaveBeenCalledWith('team-1', 'game-1', expect.objectContaining({ homeScore: 4, awayScore: 8 }));
+    expect(mocks.transactionSet).toHaveBeenCalledWith(
+      expect.objectContaining({ path: 'teams/team-1/games/game-1' }),
+      expect.objectContaining({ homeScore: 4, awayScore: 8 }),
+      { merge: true }
+    );
+    expect(mocks.transactionSet).toHaveBeenCalledWith(
+      expect.objectContaining({ path: 'teams/team-2/games/game-2' }),
+      expect.objectContaining({ homeScore: 8, awayScore: 4 }),
+      { merge: true }
+    );
+    expect(vi.mocked(updateGame)).not.toHaveBeenCalled();
+  });
+
+  it('rejects a missing game instead of creating a partial score document', async () => {
+    mocks.transactionGet.mockResolvedValue({
+      exists: () => false,
+      data: () => null
+    });
+
+    await expect(adjustGameScore('team-1', 'missing-game', { homeScore: 1, awayScore: 0 } as any, user)).rejects.toThrow('Scheduled game not found');
+
+    expect(mocks.transactionSet).not.toHaveBeenCalled();
+    expect(vi.mocked(updateGame)).not.toHaveBeenCalled();
   });
 
   it('rejects when the game or user is missing', async () => {

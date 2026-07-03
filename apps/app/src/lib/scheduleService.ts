@@ -3910,30 +3910,67 @@ export async function adjustGameScore(
   try {
     resolved = await runTransaction(db, async (transaction: any) => {
       const snapshot = await transaction.get(gameRef);
-      const current = (snapshot.exists?.() ? snapshot.data() : snapshot.exists ? snapshot.data() : {}) || {};
+      const exists = typeof snapshot.exists === 'function' ? snapshot.exists() : snapshot.exists === true;
+      if (!exists) {
+        throw new Error('Scheduled game not found.');
+      }
+      const current = snapshot.data?.() || {};
       shared = Boolean(current.sharedScheduleId);
+      const counterpartTeamId = shared ? compactString(current.sharedScheduleOpponentTeamId) : '';
+      const counterpartGameId = shared ? compactString(current.sharedScheduleOpponentGameId) : '';
+      const counterpartRef = counterpartTeamId && counterpartGameId
+        ? doc(db, `teams/${counterpartTeamId}/games/${counterpartGameId}`)
+        : null;
+      if (counterpartRef) {
+        const counterpartSnapshot = await transaction.get(counterpartRef);
+        const counterpartExists = typeof counterpartSnapshot.exists === 'function'
+          ? counterpartSnapshot.exists()
+          : counterpartSnapshot.exists === true;
+        if (!counterpartExists) {
+          throw new Error('Shared scheduled game counterpart not found.');
+        }
+      }
       const payload = buildPayload(current);
       transaction.set(gameRef, payload, { merge: true });
+      if (counterpartRef) {
+        transaction.set(counterpartRef, {
+          homeScore: payload.awayScore,
+          awayScore: payload.homeScore,
+          scoreUpdatedAt: payload.scoreUpdatedAt,
+          scoreUpdatedBy: payload.scoreUpdatedBy,
+          ...(scoreStreamSessionId ? { scoreStreamSessionId } : {})
+        }, { merge: true });
+      }
       return payload as Record<string, unknown> & { homeScore: number; awayScore: number };
     });
   } catch (error) {
     if (!isNativeRuntime()) throw error;
     logScheduleWarning('Falling back to REST score adjust.', 'game-score-adjust', error, { fallback: 'rest', teamId, gameId });
-    const current = (await nativeGetDocument(`teams/${encodeURIComponent(teamId)}/games/${encodeURIComponent(gameId)}`)) || {};
+    const current = await nativeGetDocument(`teams/${encodeURIComponent(teamId)}/games/${encodeURIComponent(gameId)}`);
+    if (!current) {
+      throw new Error('Scheduled game not found.');
+    }
     shared = Boolean((current as Record<string, any>).sharedScheduleId);
     resolved = buildPayload(current as Record<string, any>) as Record<string, unknown> & { homeScore: number; awayScore: number };
+    const counterpartTeamId = shared ? compactString((current as Record<string, any>).sharedScheduleOpponentTeamId) : '';
+    const counterpartGameId = shared ? compactString((current as Record<string, any>).sharedScheduleOpponentGameId) : '';
+    let counterpartPath = '';
+    if (counterpartTeamId && counterpartGameId) {
+      counterpartPath = `teams/${encodeURIComponent(counterpartTeamId)}/games/${encodeURIComponent(counterpartGameId)}`;
+      const counterpart = await nativeGetDocument(counterpartPath);
+      if (!counterpart) {
+        throw new Error('Shared scheduled game counterpart not found.');
+      }
+    }
     await nativePatchDocument(`teams/${encodeURIComponent(teamId)}/games/${encodeURIComponent(gameId)}`, resolved);
-  }
-
-  // Shared-schedule games mirror their score to the linked opponent's game via
-  // updateGame(). Re-issue the resolved absolute score through updateGame so that
-  // client-side mirroring still runs; the transaction already committed the
-  // authoritative value, and this absolute write is idempotent for a given result.
-  if (shared) {
-    try {
-      await updateGame(teamId, gameId, resolved);
-    } catch (error) {
-      logScheduleWarning('Unable to mirror shared-schedule score after adjust.', 'game-score-adjust-mirror', error, { teamId, gameId });
+    if (counterpartPath) {
+      await nativePatchDocument(counterpartPath, {
+        homeScore: resolved.awayScore,
+        awayScore: resolved.homeScore,
+        scoreUpdatedAt: resolved.scoreUpdatedAt,
+        scoreUpdatedBy: resolved.scoreUpdatedBy,
+        ...(scoreStreamSessionId ? { scoreStreamSessionId } : {})
+      });
     }
   }
 
