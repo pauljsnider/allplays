@@ -6,6 +6,7 @@ import { describe, expect, it } from 'vitest';
 
 const repoRoot = process.cwd();
 const appRoot = path.join(repoRoot, 'apps/app');
+const appPackageJson = JSON.parse(readFileSync(path.join(appRoot, 'package.json'), 'utf8'));
 
 function buildAppCss() {
     const outDir = mkdtempSync(path.join(tmpdir(), 'allplays-app-css-'));
@@ -33,6 +34,17 @@ function buildAppCss() {
 }
 
 describe('app production CSS pipeline', () => {
+    it('uses the Tailwind 4 PostCSS plugin package', async () => {
+        const postcssConfig = await import(path.join(appRoot, 'postcss.config.js'));
+
+        expect(appPackageJson.devDependencies).toMatchObject({
+            '@tailwindcss/postcss': '^4.3.2',
+            tailwindcss: '^4.3.2'
+        });
+        expect(postcssConfig.default.plugins).toHaveProperty('@tailwindcss/postcss');
+        expect(postcssConfig.default.plugins).not.toHaveProperty('tailwindcss');
+    });
+
     it('compiles Tailwind utilities and mobile shell CSS through Vite PostCSS', () => {
         const css = buildAppCss();
 
@@ -44,5 +56,10 @@ describe('app production CSS pipeline', () => {
         expect(css).toContain('env(safe-area-inset-bottom)');
         expect(css).toContain('.app-search-overlay');
         expect(css).toContain('--app-search-keyboard-inset');
+        expect(css).toContain('.fixed');
+        expect(css).toContain('.inset-0');
+        expect(css).toContain('.inset-x-0');
+        expect(css).toContain('.top-0');
+        expect(css).toContain('.bottom-0');
     }, 30000);
 });
