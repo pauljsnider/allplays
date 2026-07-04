@@ -39,6 +39,7 @@ export function useChatMessages({
   const [loadingMessages, setLoadingMessages] = useState(true);
   const [loadingOlder, setLoadingOlder] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [retryVersion, setRetryVersion] = useState(0);
   const initialSnapshotLoadedRef = useRef(false);
   const conversationId = normalizeConversationId(selectedConversationId);
 
@@ -79,7 +80,20 @@ export function useChatMessages({
     return () => {
       subscription.unsubscribe();
     };
-  }, [conversationId, onBeforeLiveUpdate, onLiveUpdateState, onMarkRead, onMessagesReset, team?.id, teamId, user?.uid]);
+  }, [conversationId, onBeforeLiveUpdate, onLiveUpdateState, onMarkRead, onMessagesReset, retryVersion, team?.id, teamId, user?.uid]);
+
+  const retryMessages = useCallback(() => {
+    if (!team || !user) return;
+    setLoadingMessages(true);
+    setError(null);
+    setOlderMessages([]);
+    setLiveMessages([]);
+    setLiveOldestDoc(null);
+    setHasMoreMessages(false);
+    initialSnapshotLoadedRef.current = false;
+    onMessagesReset?.();
+    setRetryVersion((current) => current + 1);
+  }, [onMessagesReset, team, user]);
 
   const loadOlderMessages = useCallback(async () => {
     if (loadingOlder || !hasMoreMessages) return;
@@ -105,6 +119,7 @@ export function useChatMessages({
     loadingOlder,
     error,
     setError,
+    retryMessages,
     loadOlderMessages,
     initialSnapshotLoadedRef
   };
