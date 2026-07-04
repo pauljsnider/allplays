@@ -2085,6 +2085,24 @@ service cloud.firestore {
         allow update, delete: if isTeamOwnerOrAdmin(teamId);
       }
 
+      // Schedule import notification batches.
+      // Server functions own most of this document via the admin SDK; team staff
+      // are only allowed to stamp the finalize fields so partial CSV/AI imports
+      // still trigger the batch summary push. Restricting the writable key set
+      // keeps clients from tampering with server-managed fields (eventIds, sentAt,
+      // notificationClaimedAt, ...).
+      match /scheduleImportNotificationBatches/{batchId} {
+        allow read: if isTeamOwnerOrAdmin(teamId);
+        allow create: if isTeamOwnerOrAdmin(teamId) &&
+                        request.resource.data.finalizedBy == request.auth.uid &&
+                        request.resource.data.batchId == batchId &&
+                        request.resource.data.keys().hasOnly(['batchId', 'totalCount', 'importCompletedAt', 'updatedAt', 'finalizedBy']);
+        allow update: if isTeamOwnerOrAdmin(teamId) &&
+                        request.resource.data.finalizedBy == request.auth.uid &&
+                        request.resource.data.diff(resource.data).affectedKeys()
+                          .hasOnly(['totalCount', 'importCompletedAt', 'updatedAt', 'finalizedBy']);
+      }
+
       // Games subcollection
       match /games/{gameId} {
         allow read: if canReadGameDocument(teamId, gameId, resource.data);
