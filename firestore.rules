@@ -2158,6 +2158,7 @@ service cloud.firestore {
                  data.text.size() > 0 &&
                  data.text.size() <= 2000 &&
                  (!('senderName' in data) ||
+                   data.senderName == null ||
                    (data.senderName is string &&
                     data.senderName.size() > 0 &&
                     data.senderName.size() <= 80)) &&
