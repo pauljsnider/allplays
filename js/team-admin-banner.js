@@ -123,7 +123,7 @@ function actionCard({ href, label, iconName, active, unreadCount = 0 }) {
  * @param {string} options.teamId - Team ID
  * @param {string} options.active - Active nav item: 'view', 'edit', 'roster', 'schedule', 'gameplan', 'stats', 'chat'
  * @param {number} options.unreadCount - Unread chat message count
- * @param {string} options.accessLevel - 'full' for coach/admin, 'parent' for parent-only access
+ * @param {string} options.accessLevel - 'full' for coach/admin, 'parent' for parent-only access, 'media' for delegated Team Media upload access
  * @param {string} options.exitUrl - URL for exit button (default: 'dashboard.html')
  */
 export function renderTeamAdminBanner(container, { team, teamId, active = '', unreadCount = 0, accessLevel = 'full', exitUrl = 'dashboard.html' } = {}) {
@@ -137,7 +137,7 @@ export function renderTeamAdminBanner(container, { team, teamId, active = '', un
   const sport = team?.sport || '';
   const photoUrl = team?.photoUrl || '';
   const isFullAccess = accessLevel === 'full';
-  const canViewMedia = isFullAccess || accessLevel === 'parent';
+  const canViewMedia = isFullAccess || accessLevel === 'parent' || accessLevel === 'media';
   const helpRole = isFullAccess ? 'coach' : 'parent';
 
   const hrefs = {

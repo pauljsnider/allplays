@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { hasFullTeamAccess, hasScorekeepingTeamAccess, hasStreamTeamAccess, hasVideographerTeamAccess, getTeamAccessInfo, normalizeTeamPermissions } from '../../js/team-access.js';
+import { hasFullTeamAccess, hasScorekeepingTeamAccess, hasStreamTeamAccess, hasVideographerTeamAccess, hasTeamMediaAccess, getTeamAccessInfo, normalizeTeamPermissions } from '../../js/team-access.js';
 
 const TEAM = {
   id: 'team-1',
@@ -261,6 +261,39 @@ describe('team access helpers', () => {
       hasAccess: true,
       accessLevel: 'full',
       exitUrl: 'dashboard.html'
+    });
+  });
+
+  it('returns media access for delegated Team Media upload grants', () => {
+    expect(hasTeamMediaAccess({ uid: 'media-user', teamMediaUploadTeamIds: [' team-1 '] }, TEAM)).toBe(true);
+    expect(hasTeamMediaAccess({ uid: 'legacy-media-user', mediaUploadTeamIds: ['team-1'] }, TEAM)).toBe(true);
+    expect(hasFullTeamAccess({ uid: 'media-user', teamMediaUploadTeamIds: ['team-1'] }, TEAM)).toBe(false);
+    expect(getTeamAccessInfo({ uid: 'media-user', teamMediaUploadTeamIds: ['team-1'] }, TEAM)).toEqual({
+      hasAccess: true,
+      accessLevel: 'media',
+      exitUrl: 'team.html#teamId=team-1'
+    });
+  });
+
+  it('preserves parent access level when a linked parent also has media upload grants', () => {
+    expect(getTeamAccessInfo({
+      uid: 'parent-media-user',
+      parentOf: [{ teamId: 'team-1', playerId: 'p1' }],
+      teamMediaUploadTeamIds: ['team-1'],
+      mediaUploadTeamIds: ['team-1']
+    }, TEAM)).toEqual({
+      hasAccess: true,
+      accessLevel: 'parent',
+      exitUrl: 'parent-dashboard.html'
+    });
+  });
+
+  it('does not grant media access from upload grants for another team', () => {
+    expect(hasTeamMediaAccess({ uid: 'media-user', teamMediaUploadTeamIds: ['other-team'] }, TEAM)).toBe(false);
+    expect(getTeamAccessInfo({ uid: 'media-user', teamMediaUploadTeamIds: ['other-team'] }, TEAM)).toEqual({
+      hasAccess: false,
+      accessLevel: null,
+      exitUrl: 'index.html'
     });
   });
 

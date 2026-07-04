@@ -136,9 +136,27 @@ export function hasVideographerTeamAccess(user, team) {
   return normalizeMemberIdList(permissions.videography.memberIds).includes(String(user.uid || '').trim());
 }
 
+function hasTeamMediaUploadGrant(user, teamId) {
+  const normalizedTeamId = String(teamId || '').trim();
+  if (!user || !normalizedTeamId) return false;
+
+  return normalizeMemberIdList(user.teamMediaUploadTeamIds).includes(normalizedTeamId) ||
+    normalizeMemberIdList(user.mediaUploadTeamIds).includes(normalizedTeamId);
+}
+
+/**
+ * Check whether a user has delegated Team Media upload access.
+ * Media upload access never implies full team management access.
+ */
+export function hasTeamMediaAccess(user, team) {
+  if (!user || !team) return false;
+  if (hasFullTeamAccess(user, team)) return true;
+  return hasTeamMediaUploadGrant(user, team.id);
+}
+
 /**
  * Determine user's access level for a team.
- * @returns {{ hasAccess: boolean, accessLevel: 'full'|'scorekeep'|'stream'|'stream-score'|'videographer'|'parent'|null, exitUrl: string }}
+ * @returns {{ hasAccess: boolean, accessLevel: 'full'|'scorekeep'|'stream'|'stream-score'|'videographer'|'parent'|'media'|null, exitUrl: string }}
  */
 function hasParentTeamAccess(user, teamId) {
   if (!user || !teamId) return false;
@@ -185,6 +203,10 @@ export function getTeamAccessInfo(user, team, options = {}) {
 
   if (hasParentTeamAccess(user, team.id)) {
     return { hasAccess: true, accessLevel: 'parent', exitUrl: 'parent-dashboard.html' };
+  }
+
+  if (hasTeamMediaAccess(user, team)) {
+    return { hasAccess: true, accessLevel: 'media', exitUrl: teamExitUrl };
   }
 
   return { hasAccess: false, accessLevel: null, exitUrl: 'index.html' };
