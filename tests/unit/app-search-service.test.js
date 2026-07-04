@@ -1138,17 +1138,16 @@ describe('React app search service', () => {
         expect(firebaseMocks.getDocs).toHaveBeenCalledTimes(playerSearchFirestoreQueryBudget);
     });
 
-    it('prioritizes private and query-matching teams before capping player search fanout', async () => {
+    it('prioritizes query-matching private teams before capping player search fanout', async () => {
         const prioritizedTeams = [
-            { id: 'team-private', name: 'Private Team', sport: 'Basketball', isPublic: false, fromAppAccess: true },
             ...Array.from({ length: 8 }, (_, index) => ({
-                id: `team-public-${index}`,
-                name: `Alpha Team ${index}`,
+                id: `team-private-${index}`,
+                name: `Alpha Private ${index}`,
                 sport: 'Basketball',
-                isPublic: true,
+                isPublic: false,
                 fromAppAccess: true
             })),
-            { id: 'team-match', name: 'Patriots', sport: 'Basketball', isPublic: true, fromAppAccess: true }
+            { id: 'team-match', name: 'Patriots', sport: 'Basketball', isPublic: false, fromAppAccess: true }
         ];
         const visibleTeams = new Map(prioritizedTeams.map((team) => [team.id, team]));
         homeMocks.loadParentHome.mockResolvedValue({ teams: [] });
@@ -1164,11 +1163,13 @@ describe('React app search service', () => {
         });
 
         const queriedTeamIds = new Set();
+        let playerQueryCount = 0;
         firebaseMocks.getDocs.mockImplementation(async (request) => {
             const ref = request.parts?.[0] || request || {};
             const collectionName = ref.collectionName || '';
             const match = collectionName.match(/^teams\/([^/]+)\/players$/);
             if (match) {
+                playerQueryCount += 1;
                 queriedTeamIds.add(match[1]);
                 if (match[1] === 'team-match') {
                     return {
@@ -1181,9 +1182,9 @@ describe('React app search service', () => {
 
         const players = await searchAppPlayers('pat', visibleTeams, auth.user);
 
-        expect(queriedTeamIds.has('team-private')).toBe(true);
         expect(queriedTeamIds.has('team-match')).toBe(true);
-        expect(queriedTeamIds.has('team-public-7')).toBe(false);
+        expect(queriedTeamIds.has('team-private-7')).toBe(false);
+        expect(playerQueryCount).toBe(playerSearchFirestoreQueryBudget);
         expect(players).toEqual([{
             id: 'player:team-match:player-1',
             kind: 'player',

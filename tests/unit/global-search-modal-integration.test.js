@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { playerSearchFirestoreQueryBudget } from '../../js/player-search-budget.js';
 
 const dbMocks = vi.hoisted(() => ({
     discoverPublicTeams: vi.fn()
@@ -34,6 +35,14 @@ function firestoreDoc(id, data, exists = true) {
     return {
         id,
         exists: () => exists,
+        data: () => data
+    };
+}
+
+function firestorePlayer(path, data) {
+    return {
+        id: path.split('/').pop(),
+        ref: { path },
         data: () => data
     };
 }
@@ -180,5 +189,70 @@ describe('legacy global search modal', () => {
 
         expect(firebaseMocks.doc).toHaveBeenCalledWith(firebaseMocks.db, 'teams', 'team-app-access-only');
         expect(document.body.textContent).toContain('Stored Access Rockets');
+    });
+
+    it('searches a query-matching private team beyond the first eight private teams', async () => {
+        const { setupHeaderSearch } = await import('../../js/global-search.js?v=8');
+        const privateTeams = [
+            ...Array.from({ length: 8 }, (_, index) => ({
+                teamId: `team-private-${index}`,
+                teamName: `Alpha Private ${index}`,
+                sport: 'Basketball',
+                isPublic: false,
+                active: true,
+                status: 'active'
+            })),
+            {
+                teamId: 'team-match',
+                teamName: 'Patriots',
+                sport: 'Basketball',
+                isPublic: false,
+                active: true,
+                status: 'active'
+            }
+        ];
+        const queriedTeamIds = new Set();
+        let playerQueryCount = 0;
+
+        firebaseMocks.getDocs.mockImplementation(async (request) => {
+            const ref = request.parts?.[0] || request || {};
+            const path = ref.path || '';
+            const match = path.match(/^teams\/([^/]+)\/players$/);
+            if (match) {
+                playerQueryCount += 1;
+                queriedTeamIds.add(match[1]);
+                if (match[1] === 'team-match') {
+                    return {
+                        docs: [firestorePlayer('teams/team-match/players/player-1', { name: 'Pat Forward', number: '3' })]
+                    };
+                }
+            }
+            return { docs: [] };
+        });
+
+        setupHeaderSearch({
+            user: {
+                uid: 'parent-1',
+                email: 'parent@example.com',
+                parentOf: privateTeams
+            },
+            headerContainer: null
+        });
+
+        window.dispatchEvent(new KeyboardEvent('keydown', { key: 'k', ctrlKey: true, bubbles: true }));
+        await flushAsyncWork();
+        await flushAsyncWork();
+
+        const input = document.querySelector('[data-global-search-input="1"]');
+        input.value = 'pat';
+        input.dispatchEvent(new Event('input', { bubbles: true }));
+        await vi.advanceTimersByTimeAsync(200);
+        await flushAsyncWork();
+
+        expect(queriedTeamIds.has('team-match')).toBe(true);
+        expect(queriedTeamIds.has('team-private-7')).toBe(false);
+        expect(playerQueryCount).toBe(playerSearchFirestoreQueryBudget);
+        expect(document.body.textContent).toContain('#3 Pat Forward');
+        expect(document.body.textContent).toContain('Patriots');
     });
 });
