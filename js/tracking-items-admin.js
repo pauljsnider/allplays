@@ -204,8 +204,8 @@ async function initTrackingItemsAdminPage() {
     renderFooter(document.getElementById('footer-container'));
 
     const [dbModule, authModule, firebaseModule] = await Promise.all([
-        import('./db.js?v=76'),
-        import('./auth.js?v=38'),
+        import('./db.js?v=79'),
+        import('./auth.js?v=40'),
         import('./firebase.js?v=20')
     ]);
     const { getTeam, getUserProfile, canModerateChat } = dbModule;
