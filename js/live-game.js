@@ -2300,9 +2300,7 @@ async function generateAiResponse(question) {
       senderId: state.user?.uid || null,
       senderName: 'ALL PLAYS',
       senderPhotoUrl: null,
-      isAnonymous: false,
-      ai: true,
-      aiQuestion: question
+      isAnonymous: false
     });
   } catch (error) {
     console.warn('AI response failed:', error);
@@ -2311,9 +2309,7 @@ async function generateAiResponse(question) {
       senderId: state.user?.uid || null,
       senderName: 'ALL PLAYS',
       senderPhotoUrl: null,
-      isAnonymous: false,
-      ai: true,
-      aiQuestion: question
+      isAnonymous: false
     });
   } finally {
     hideAiThinking();

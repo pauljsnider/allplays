@@ -36,6 +36,8 @@ function extractMatchBlock(source, collectionPattern) {
 const liveEventsBlock = extractMatchBlock(rulesSource, 'match /liveEvents/{eventId}');
 const liveChatBlock = extractMatchBlock(rulesSource, 'match /liveChat/{messageId}');
 const liveReactionsBlock = extractMatchBlock(rulesSource, 'match /liveReactions/{reactionId}');
+const liveChatValidatorBlock = extractMatchBlock(rulesSource, 'function isValidLiveChatCreate(data)');
+const liveReactionValidatorBlock = extractMatchBlock(rulesSource, 'function isValidLiveReactionCreate(data)');
 
 describe('firestore rules — live game read visibility helpers', () => {
     it('keeps live events, chat, and reactions behind the shared game visibility helper', () => {
@@ -72,17 +74,31 @@ describe('firestore rules — liveChat authentication requirements', () => {
     });
 
     it('validates that liveChat create requires text and senderId fields', () => {
-        expect(liveChatBlock).toContain("hasAll(['text', 'senderId'])");
+        expect(liveChatBlock).toContain('isValidLiveChatCreate(request.resource.data)');
+        expect(liveChatValidatorBlock).toContain("data.keys().hasAll(['text', 'senderId', 'createdAt'])");
     });
 
     it('validates that liveChat create checks senderId matches auth uid', () => {
-        expect(liveChatBlock).toContain('request.resource.data.senderId == request.auth.uid');
+        expect(liveChatValidatorBlock).toContain('data.senderId == request.auth.uid');
     });
 
     it('validates liveChat text field is a non-empty string capped at 2000 chars', () => {
-        expect(liveChatBlock).toContain('request.resource.data.text is string');
-        expect(liveChatBlock).toContain('request.resource.data.text.size() > 0');
-        expect(liveChatBlock).toContain('request.resource.data.text.size() <= 2000');
+        expect(liveChatValidatorBlock).toContain('data.text is string');
+        expect(liveChatValidatorBlock).toContain('data.text.size() > 0');
+        expect(liveChatValidatorBlock).toContain('data.text.size() <= 2000');
+    });
+
+    it('limits liveChat creates to the approved client payload shape', () => {
+        expect(liveChatValidatorBlock).toContain(
+            "data.keys().hasOnly([\n                   'text', 'senderId', 'senderName', 'senderPhotoUrl', 'isAnonymous', 'createdAt'\n                 ])"
+        );
+        expect(liveChatValidatorBlock).toContain('data.createdAt == request.time');
+        expect(liveChatValidatorBlock).toContain('data.senderName == null');
+        expect(liveChatValidatorBlock).toContain('data.senderName.size() <= 80');
+        expect(liveChatValidatorBlock).toContain('data.senderPhotoUrl.size() <= 2048');
+        expect(liveChatValidatorBlock).toContain("!('isAnonymous' in data) || data.isAnonymous is bool");
+        expect(liveChatValidatorBlock).not.toContain("'ai'");
+        expect(liveChatValidatorBlock).not.toContain("'aiQuestion'");
     });
 });
 
@@ -97,10 +113,18 @@ describe('firestore rules — liveReactions authentication requirements', () => 
     });
 
     it('validates that liveReactions create requires type and senderId fields', () => {
-        expect(liveReactionsBlock).toContain("hasAll(['type', 'senderId'])");
+        expect(liveReactionsBlock).toContain('isValidLiveReactionCreate(request.resource.data)');
+        expect(liveReactionValidatorBlock).toContain("data.keys().hasAll(['type', 'senderId', 'createdAt'])");
     });
 
     it('validates that liveReactions create checks senderId matches auth uid', () => {
-        expect(liveReactionsBlock).toContain('request.resource.data.senderId == request.auth.uid');
+        expect(liveReactionValidatorBlock).toContain('data.senderId == request.auth.uid');
+    });
+
+    it('limits liveReactions creates to request-time supported reaction payloads', () => {
+        expect(liveReactionValidatorBlock).toContain("data.keys().hasOnly(['type', 'senderId', 'createdAt'])");
+        expect(liveReactionValidatorBlock).toContain('data.createdAt == request.time');
+        expect(liveReactionValidatorBlock).toContain("data.type in ['fire', 'clap', 'wow', 'heart', 'hundred']");
+        expect(liveReactionValidatorBlock).not.toContain("'metadata'");
     });
 });

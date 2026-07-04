@@ -2147,6 +2147,36 @@ service cloud.firestore {
         }
 
         // Live Chat subcollection - game-specific chat for live viewers
+        function isValidLiveChatCreate(data) {
+          return data.keys().hasOnly([
+                   'text', 'senderId', 'senderName', 'senderPhotoUrl', 'isAnonymous', 'createdAt'
+                 ]) &&
+                 data.keys().hasAll(['text', 'senderId', 'createdAt']) &&
+                 data.senderId == request.auth.uid &&
+                 data.createdAt == request.time &&
+                 data.text is string &&
+                 data.text.size() > 0 &&
+                 data.text.size() <= 2000 &&
+                 (!('senderName' in data) ||
+                   data.senderName == null ||
+                   (data.senderName is string &&
+                    data.senderName.size() > 0 &&
+                    data.senderName.size() <= 80)) &&
+                 (!('senderPhotoUrl' in data) ||
+                   data.senderPhotoUrl == null ||
+                   (data.senderPhotoUrl is string &&
+                    data.senderPhotoUrl.size() <= 2048)) &&
+                 (!('isAnonymous' in data) || data.isAnonymous is bool);
+        }
+
+        function isValidLiveReactionCreate(data) {
+          return data.keys().hasOnly(['type', 'senderId', 'createdAt']) &&
+                 data.keys().hasAll(['type', 'senderId', 'createdAt']) &&
+                 data.senderId == request.auth.uid &&
+                 data.createdAt == request.time &&
+                 data.type in ['fire', 'clap', 'wow', 'heart', 'hundred'];
+        }
+
         match /liveChat/{messageId} {
           allow read: if canReadGameSubcollectionDocument(teamId, gameId);
           allow create: if isSignedIn()
@@ -2155,11 +2185,7 @@ service cloud.firestore {
                  isShareableGameDocument(
                    get(/databases/$(database)/documents/teams/$(teamId)/games/$(gameId)).data
                  )))
-            && request.resource.data.keys().hasAll(['text', 'senderId'])
-            && request.resource.data.senderId == request.auth.uid
-            && request.resource.data.text is string
-            && request.resource.data.text.size() > 0
-            && request.resource.data.text.size() <= 2000;
+            && isValidLiveChatCreate(request.resource.data);
           allow update: if false;  // Messages are immutable
           allow delete: if isTeamOwnerOrAdmin(teamId);  // Moderation only
         }
@@ -2173,8 +2199,7 @@ service cloud.firestore {
                  isShareableGameDocument(
                    get(/databases/$(database)/documents/teams/$(teamId)/games/$(gameId)).data
                  )))
-            && request.resource.data.keys().hasAll(['type', 'senderId'])
-            && request.resource.data.senderId == request.auth.uid;
+            && isValidLiveReactionCreate(request.resource.data);
           allow update, delete: if false;  // Reactions are immutable
         }
 
