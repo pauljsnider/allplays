@@ -386,6 +386,7 @@ describe('React app auth/profile capability parity', () => {
             readProjectFile('apps/app/src/pages/messages/components/ChatWindow.tsx')
         ].join('\n');
         const chatService = readProjectFile('apps/app/src/lib/chatService.ts');
+        const chatAiService = readProjectFile('apps/app/src/lib/chatAiService.ts');
         const chatLogic = readProjectFile('apps/app/src/lib/chatLogic.ts');
 
         expectContains(legacyTeamChat, [
@@ -424,10 +425,12 @@ describe('React app auth/profile capability parity', () => {
             'upsertChatConversation',
             'uploadTeamChatAttachment',
             'deleteUploadedChatAttachments',
-            'sendAllPlaysChatAnswer',
-            'getGenerativeModel',
             'nativeUploadChatMedia',
             'nativePostChatMessage'
+        ]);
+        expectContains(chatAiService, [
+            'sendAllPlaysChatAnswer',
+            'getGenerativeModel'
         ]);
         expectContains(chatLogic, [
             'formatChatMessageHtml',
