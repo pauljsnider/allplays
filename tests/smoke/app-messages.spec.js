@@ -87,7 +87,8 @@ async function mockMessagesModules(page, options = {}) {
             edits: [],
             deletes: [],
             reads: [],
-            ai: []
+            ai: [],
+            subscriptions: []
         };
         if (speech) {
             class MockSpeechRecognition {
@@ -272,8 +273,22 @@ async function mockMessagesModules(page, options = {}) {
                     ];
                 }
 
-                export function subscribeToTeamChatMessages(teamId, conversationId, onMessages) {
-                    ${options.threadMessagesScript || buildDefaultThreadMessagesScript()}
+                export function subscribeToTeamChatMessages(teamId, conversationId, onMessages, onError) {
+                    window.__chatCalls.subscriptions.push({ teamId, conversationId });
+                    if (${Boolean(options.failFirstThreadLoad)}) {
+                        window.__threadSubscriptionAttempts = (window.__threadSubscriptionAttempts || 0) + 1;
+                        if (window.__threadSubscriptionAttempts <= ${options.failFirstThreadLoadAttempts || 1}) {
+                            setTimeout(() => onError(new Error('Unable to load chat messages.')), 0);
+                            return { unsubscribe: () => {} };
+                        }
+                    }
+                    if (${options.threadMessagesDelayMs || 0} > 0) {
+                        setTimeout(() => {
+                            ${options.threadMessagesScript || buildDefaultThreadMessagesScript()}
+                        }, ${options.threadMessagesDelayMs || 0});
+                    } else {
+                        ${options.threadMessagesScript || buildDefaultThreadMessagesScript()}
+                    }
                     return { unsubscribe: () => {} };
                 }
 
@@ -520,6 +535,25 @@ test('messages team thread renders before deferred conversation hydration finish
     await expect(page.getByRole('dialog', { name: 'Conversations' })).toBeVisible();
     await expect(page.getByRole('button', { name: 'Staff only Group conversation' })).toBeVisible({ timeout: 5000 });
     await expect(page.getByText('Latest ride update.')).toBeVisible();
+});
+
+test('messages team thread retries a failed subscription in place on mobile', async ({ page, baseURL }) => {
+    await mockMessagesModules(page, { failFirstThreadLoad: true, threadMessagesDelayMs: 1000 });
+    await page.goto(appUrl(baseURL, '/messages/team-1'), { waitUntil: 'domcontentloaded' });
+
+    await expect(page.getByText('Loading ALL PLAYS')).toBeHidden({ timeout: 30000 });
+    await expect(page.getByText('Unable to load chat messages.')).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Retry' })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Back to messages' })).toBeVisible();
+
+    await page.getByRole('button', { name: 'Retry' }).click();
+
+    await expect(page.getByText('Loading messages...')).toBeVisible();
+    await expect(page.getByText('Bring both jerseys.')).toBeVisible();
+    await expect(page.getByPlaceholder('Message Bears')).toBeVisible();
+    await expect(page).toHaveURL(/#\/messages\/team-1$/);
+    await expect.poll(() => page.evaluate(() => window.__chatCalls.subscriptions.length)).toBeGreaterThanOrEqual(2);
+    await expect.poll(() => page.evaluate(() => window.__chatCalls.subscriptions.at(-1))).toEqual({ teamId: 'team-1', conversationId: 'team' });
 });
 
 test('messages inbox stays interactive while previews hydrate on inbox and desktop routes', async ({ page, baseURL }) => {

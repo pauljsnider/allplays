@@ -61,13 +61,16 @@ function MessagesProbe({
             <div data-testid="loading-older">{String(state.loadingOlder)}</div>
             <div data-testid="message-ids">{state.messages.map((item) => item.id).join(',')}</div>
             <div data-testid="has-more">{String(state.hasMoreMessages)}</div>
+            <div data-testid="error">{state.error || ''}</div>
             <button type="button" onClick={() => void state.loadOlderMessages().catch(onLoadOlderError)}>Load older</button>
+            <button type="button" onClick={state.retryMessages}>Retry</button>
         </div>
     );
 }
 
 describe('useChatMessages', () => {
     let liveCallback: ((messages: ChatMessage[], oldestDoc: unknown | null) => void) | undefined;
+    let errorCallback: ((error: Error) => void) | undefined;
     let unsubscribe: () => void;
 
     afterEach(() => {
@@ -77,9 +80,11 @@ describe('useChatMessages', () => {
     beforeEach(() => {
         vi.clearAllMocks();
         liveCallback = undefined;
+        errorCallback = undefined;
         unsubscribe = vi.fn() as () => void;
-        vi.mocked(subscribeToTeamChatMessages).mockImplementation((_teamId, _conversationId, onMessages) => {
+        vi.mocked(subscribeToTeamChatMessages).mockImplementation((_teamId, _conversationId, onMessages, onError) => {
             liveCallback = onMessages;
+            errorCallback = onError;
             return { unsubscribe };
         });
     });
@@ -168,6 +173,35 @@ describe('useChatMessages', () => {
         rerender(<MessagesProbeWithUser authUser={secondUser} />);
 
         await waitFor(() => expect(subscribeToTeamChatMessages).toHaveBeenCalledTimes(1));
+    });
+
+    it('retries a failed live subscription for the same team and conversation', async () => {
+        const onMessagesReset = vi.fn();
+        render(<MessagesProbe conversationId="staff" onMessagesReset={onMessagesReset} />);
+
+        act(() => {
+            errorCallback?.(new Error('Subscription failed'));
+        });
+
+        await waitFor(() => expect(screen.getByTestId('loading').textContent).toBe('false'));
+        expect(screen.getByTestId('error').textContent).toBe('Subscription failed');
+
+        fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+
+        expect(screen.getByTestId('loading').textContent).toBe('true');
+        expect(screen.getByTestId('error').textContent).toBe('');
+        expect(screen.getByTestId('message-ids').textContent).toBe('');
+        await waitFor(() => expect(subscribeToTeamChatMessages).toHaveBeenCalledTimes(2));
+        expect(unsubscribe).toHaveBeenCalled();
+        expect(onMessagesReset).toHaveBeenCalledTimes(3);
+        expect(subscribeToTeamChatMessages).toHaveBeenLastCalledWith('team-1', 'staff', expect.any(Function), expect.any(Function));
+
+        act(() => {
+            liveCallback?.([message('recovered', 30)], { cursor: 'recovered' });
+        });
+
+        await waitFor(() => expect(screen.getByTestId('loading').textContent).toBe('false'));
+        expect(screen.getByTestId('message-ids').textContent).toBe('recovered');
     });
 
     it('resets the loading state when loading older messages fails and still rejects to the caller', async () => {
