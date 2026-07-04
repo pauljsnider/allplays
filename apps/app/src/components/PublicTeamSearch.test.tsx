@@ -118,6 +118,54 @@ describe('PublicTeamSearch', () => {
         expect(screen.getByRole('button', { name: 'Clear public team search' })).toBeTruthy();
     });
 
+    it('shows the submitted query in the loading copy before filtered results resolve', async () => {
+        let resolveSearch: ((value: { teams: ParentHomeTeam[]; nextCursor: unknown | null }) => void) | null = null;
+        (getPublicTeamsPage as import('vitest').Mock).mockImplementationOnce(() => new Promise((resolve) => {
+            resolveSearch = resolve;
+        }));
+        renderSearch();
+
+        const searchInput = screen.getByPlaceholderText('Search by team, city, state, or zip') as HTMLInputElement;
+        fireEvent.change(searchInput, { target: { value: 'atlanta' } });
+        fireEvent.click(screen.getByRole('button', { name: 'Search public teams' }));
+
+        expect(screen.getByText('Loading public teams')).toBeTruthy();
+        expect(screen.getByText('Searching public teams for "atlanta".')).toBeTruthy();
+        expect(screen.queryByText('Browsing teams across all regions.')).toBeNull();
+
+        if (!resolveSearch) {
+            throw new Error('Expected public team search request to be captured before resolving it.');
+        }
+
+        (resolveSearch as (value: { teams: ParentHomeTeam[]; nextCursor: unknown | null }) => void)({ teams: [mockTeams[0]], nextCursor: null });
+        await waitFor(() => expect(screen.getByText('Atlanta United')).toBeTruthy());
+    });
+
+    it('suppresses duplicate same-query submissions while the search is loading', async () => {
+        let resolveSearch: ((value: { teams: ParentHomeTeam[]; nextCursor: unknown | null }) => void) | null = null;
+        (getPublicTeamsPage as import('vitest').Mock).mockImplementationOnce(() => new Promise((resolve) => {
+            resolveSearch = resolve;
+        }));
+        renderSearch();
+
+        const searchInput = screen.getByPlaceholderText('Search by team, city, state, or zip') as HTMLInputElement;
+        const searchButton = screen.getByRole('button', { name: 'Search public teams' });
+        fireEvent.change(searchInput, { target: { value: 'atlanta' } });
+        fireEvent.click(searchButton);
+        fireEvent.click(searchButton);
+        fireEvent.keyDown(searchInput, { key: 'Enter', code: 'Enter', charCode: 13 });
+
+        expect(getPublicTeamsPage).toHaveBeenCalledTimes(1);
+        expect(searchButton).toBeDisabled();
+
+        if (!resolveSearch) {
+            throw new Error('Expected public team search request to be captured before resolving it.');
+        }
+
+        (resolveSearch as (value: { teams: ParentHomeTeam[]; nextCursor: unknown | null }) => void)({ teams: [mockTeams[0]], nextCursor: null });
+        await waitFor(() => expect(screen.getByText('Atlanta United')).toBeTruthy());
+    });
+
     it('loads all public teams only when browse all is used and can load the next page', async () => {
         (getPublicTeamsPage as import('vitest').Mock)
             .mockResolvedValueOnce({ teams: [mockTeams[0]], nextCursor: 'cursor-2' })
@@ -322,6 +370,8 @@ describe('PublicTeamSearch', () => {
         fireEvent.click(screen.getByRole('button', { name: 'Search public teams' }));
 
         await waitFor(() => expect(getPublicTeamsPage).toHaveBeenNthCalledWith(2, { searchText: 'atlanta', cursor: null }));
+        expect(screen.getByText('Searching public teams for "atlanta".')).toBeTruthy();
+        expect(screen.queryByText('Browsing teams across all regions.')).toBeNull();
 
         if (!resolveSearch || !resolveBrowseAll) {
             throw new Error('Expected both public team requests to be captured before resolving them.');
@@ -334,6 +384,33 @@ describe('PublicTeamSearch', () => {
         (resolveBrowseAll as (value: { teams: ParentHomeTeam[]; nextCursor: unknown | null }) => void)({ teams: [], nextCursor: null });
         await waitFor(() => expect(screen.getByText('Atlanta Fire')).toBeTruthy());
         expect(searchInput.value).toBe('atlanta');
+    });
+
+    it('clears pending filtered search state and ignores the stale response', async () => {
+        let resolveSearch: ((value: { teams: ParentHomeTeam[]; nextCursor: unknown | null }) => void) | null = null;
+        (getPublicTeamsPage as import('vitest').Mock).mockImplementationOnce(() => new Promise((resolve) => {
+            resolveSearch = resolve;
+        }));
+        renderSearch();
+
+        const searchInput = screen.getByPlaceholderText('Search by team, city, state, or zip') as HTMLInputElement;
+        fireEvent.change(searchInput, { target: { value: 'atlanta' } });
+        fireEvent.click(screen.getByRole('button', { name: 'Search public teams' }));
+        expect(screen.getByText('Searching public teams for "atlanta".')).toBeTruthy();
+
+        fireEvent.click(screen.getByRole('button', { name: 'Clear public team search' }));
+
+        expect(searchInput.value).toBe('');
+        expect(screen.getByText('Search for public teams near you')).toBeTruthy();
+        expect(screen.queryByText('Searching public teams for "atlanta".')).toBeNull();
+
+        if (!resolveSearch) {
+            throw new Error('Expected public team search request to be captured before resolving it.');
+        }
+
+        (resolveSearch as (value: { teams: ParentHomeTeam[]; nextCursor: unknown | null }) => void)({ teams: [mockTeams[0]], nextCursor: null });
+        await waitFor(() => expect(screen.queryByText('Atlanta United')).toBeNull());
+        expect(screen.getByText('Search for public teams near you')).toBeTruthy();
     });
 
     it('can auto-browse on mount for the dedicated discovery route', async () => {

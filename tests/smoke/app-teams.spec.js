@@ -453,10 +453,11 @@ async function mockTeamsModules(page, { scenario = '' } = {}) {
     });
 }
 
-async function mockPublicTeamsBrowseModule(page) {
-    await page.addInitScript(() => {
+async function mockPublicTeamsBrowseModule(page, { slowSearch = false } = {}) {
+    await page.addInitScript(({ shouldSlowSearch }) => {
         window.__publicTeamSearchCalls = [];
-    });
+        window.__slowPublicTeamSearch = shouldSlowSearch;
+    }, { shouldSlowSearch: slowSearch });
 
     await page.route(/\/src\/lib\/publicTeamsService\.ts(\?.*)?$/, async (route) => {
         await route.fulfill({
@@ -518,6 +519,9 @@ async function mockPublicTeamsBrowseModule(page) {
 
                 export async function getPublicTeamsPage({ searchText, cursor = null } = {}) {
                     window.__publicTeamSearchCalls.push({ searchText, cursor });
+                    if (searchText === 'atlanta' && cursor === null && window.__slowPublicTeamSearch) {
+                        await new Promise((resolve) => setTimeout(resolve, 1000));
+                    }
                     if (searchText === 'atlanta' && cursor === null) {
                         return { teams: firstPage, nextCursor: 'search-page-2' };
                     }
@@ -600,7 +604,7 @@ test.describe('mobile My Teams', () => {
 
     test('browse teams paginates searched results on mobile without clearing the query', async ({ page, baseURL }) => {
         await mockTeamsModules(page, { scenario: 'empty' });
-        await mockPublicTeamsBrowseModule(page);
+        await mockPublicTeamsBrowseModule(page, { slowSearch: true });
         await page.goto(appUrl(baseURL, '/teams/browse'), { waitUntil: 'domcontentloaded' });
 
         await expect(page.getByRole('heading', { name: 'Discover Public Teams' })).toBeVisible();
@@ -608,6 +612,9 @@ test.describe('mobile My Teams', () => {
         await searchInput.fill('atlanta');
         await page.getByRole('button', { name: 'Search public teams' }).click();
 
+        await expect(page.getByText('Searching public teams for "atlanta".')).toBeVisible();
+        await expect(page.getByText('Browsing teams across all regions.')).toHaveCount(0);
+        await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1)).toBe(true);
         await expect(page.getByText('Atlanta Fire')).toBeVisible();
         await expect(page.getByRole('button', { name: 'Load more teams' })).toBeVisible();
         await expect.poll(() => page.evaluate(() => window.__publicTeamSearchCalls.at(-1))).toEqual({ searchText: 'atlanta', cursor: null });
