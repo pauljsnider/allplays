@@ -187,6 +187,140 @@ describe('live broadcast tracker finish batch limits', () => {
         ]);
     });
 
+    it('rewrites deterministic live finish docs when retrying after the final game update fails', async () => {
+        const gameUpdateFailure = new Error('Final game update failed');
+        const harness = createFirestoreHarness({
+            commitFailuresByBatchIndex: {
+                2: gameUpdateFailure
+            }
+        });
+        const firstFinishPlan = {
+            eventWrites: [
+                { data: { text: 'Ava made a basket', clock: '05:11', period: 'Q2', timestamp: 123 } },
+                { data: { text: 'Ava drew a foul', clock: '04:58', period: 'Q2', timestamp: 124 } }
+            ],
+            aggregatedStatsWrites: [
+                {
+                    playerId: 'p1',
+                    data: {
+                        playerName: 'Ava',
+                        stats: { pts: 2 }
+                    },
+                    privateData: {
+                        playerName: 'Ava',
+                        stats: { effort: 4 }
+                    }
+                }
+            ],
+            gameUpdate: {
+                homeScore: 14,
+                awayScore: 12,
+                status: 'completed',
+                liveStatus: 'completed'
+            }
+        };
+
+        await expect(commitFinishPlan({
+            finishPlan: firstFinishPlan,
+            db: harness.db,
+            currentTeamId: 'team-1',
+            currentGameId: 'game-1',
+            createBatch: harness.writeBatch,
+            createCollectionRef: harness.collection,
+            createDocRef: harness.doc
+        })).rejects.toBe(gameUpdateFailure);
+
+        const firstAttemptEventPaths = harness.batches[0].operations.map((op) => op.ref.path);
+        const firstAttemptStatPaths = harness.batches[1].operations.map((op) => op.ref.path);
+
+        expect(firstAttemptEventPaths).toEqual([
+            'teams/team-1/games/game-1/events/finish-log-000001',
+            'teams/team-1/games/game-1/events/finish-log-000002'
+        ]);
+        expect(firstAttemptStatPaths).toEqual([
+            'teams/team-1/games/game-1/aggregatedStats/p1',
+            'teams/team-1/games/game-1/privatePlayerStats/p1'
+        ]);
+        expect(harness.batches[2].operations).toEqual([
+            expect.objectContaining({
+                type: 'update',
+                ref: { path: 'teams/team-1/games/game-1' },
+                data: expect.objectContaining({
+                    homeScore: 14,
+                    awayScore: 12,
+                    status: 'completed',
+                    liveStatus: 'completed'
+                })
+            })
+        ]);
+
+        const result = await commitFinishPlan({
+            finishPlan: {
+                ...firstFinishPlan,
+                aggregatedStatsWrites: [
+                    {
+                        playerId: 'p1',
+                        data: {
+                            playerName: 'Ava',
+                            stats: { pts: 5 }
+                        },
+                        privateData: {
+                            playerName: 'Ava',
+                            stats: { effort: 7 }
+                        }
+                    }
+                ],
+                gameUpdate: {
+                    homeScore: 18,
+                    awayScore: 16,
+                    status: 'completed',
+                    liveStatus: 'completed'
+                }
+            },
+            db: harness.db,
+            currentTeamId: 'team-1',
+            currentGameId: 'game-1',
+            createBatch: harness.writeBatch,
+            createCollectionRef: harness.collection,
+            createDocRef: harness.doc
+        });
+
+        expect(result).toMatchObject({
+            eventBatchSizes: [2],
+            aggregatedStatsBatchSizes: [2],
+            gameUpdateBatchSize: 1
+        });
+        expect(harness.batches).toHaveLength(6);
+        expect(harness.batches.map((batch) => batch.commitCount)).toEqual([1, 1, 1, 1, 1, 1]);
+        expect(harness.batches[3].operations.map((op) => op.ref.path)).toEqual(firstAttemptEventPaths);
+        expect(harness.batches[4].operations.map((op) => op.ref.path)).toEqual(firstAttemptStatPaths);
+        expect(harness.batches[4].operations).toEqual([
+            expect.objectContaining({
+                ref: { path: 'teams/team-1/games/game-1/aggregatedStats/p1' },
+                data: expect.objectContaining({ stats: { pts: 5 } })
+            }),
+            expect.objectContaining({
+                ref: { path: 'teams/team-1/games/game-1/privatePlayerStats/p1' },
+                data: expect.objectContaining({ stats: { effort: 7 } })
+            })
+        ]);
+        expect(harness.batches[5].operations).toEqual([
+            expect.objectContaining({
+                type: 'update',
+                ref: { path: 'teams/team-1/games/game-1' },
+                data: {
+                    homeScore: 18,
+                    awayScore: 16,
+                    status: 'completed',
+                    liveStatus: 'completed'
+                }
+            })
+        ]);
+        expect(harness.batches.slice(3).filter((batch) => (
+            batch.operations.some((op) => op.type === 'update' && op.ref.path === 'teams/team-1/games/game-1')
+        ))).toHaveLength(1);
+    });
+
     it('rejects when a secondary aggregated stats batch fails before primary commit', async () => {
         const statsBatchFailure = new Error('Secondary aggregated stats batch failed');
         const harness = createFirestoreHarness({
