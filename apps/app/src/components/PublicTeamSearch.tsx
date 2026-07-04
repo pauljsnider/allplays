@@ -8,6 +8,13 @@ import { openPublicUrl } from '../lib/publicActions';
 import { getTeamWebsiteHashHref } from '../lib/teamNavigation';
 import { resolveZip } from '../lib/utils';
 
+type PendingSearchMode = 'browse' | 'search';
+
+function publicTeamRequestKey(searchText?: string | null) {
+  const trimmedSearchText = searchText?.trim();
+  return trimmedSearchText ? `search:${trimmedSearchText}` : 'browse';
+}
+
 export function PublicTeamSearch({ autoBrowseOnMount = false, showBackLink = false }: { autoBrowseOnMount?: boolean; showBackLink?: boolean }) {
   const navigate = useNavigate();
   const [searchQuery, setSearchQuery] = useState<string>('');
@@ -15,28 +22,35 @@ export function PublicTeamSearch({ autoBrowseOnMount = false, showBackLink = fal
   const [loading, setLoading] = useState<boolean>(false);
   const [error, setError] = useState<string>('');
   const [activeSearchQuery, setActiveSearchQuery] = useState<string | null>(null);
+  const [pendingSearchQuery, setPendingSearchQuery] = useState<string | null>(null);
+  const [pendingMode, setPendingMode] = useState<PendingSearchMode | null>(null);
+  const [pendingRequestKey, setPendingRequestKey] = useState<string | null>(null);
   const [hasSearched, setHasSearched] = useState<boolean>(false);
   const [nextCursor, setNextCursor] = useState<unknown | null>(null);
   const autoBrowseTriggeredRef = useRef(false);
   const latestRequestIdRef = useRef(0);
 
   const fetchPublicTeams = useCallback(async ({ searchText, cursor = null, append = false }: { searchText?: string; cursor?: unknown | null; append?: boolean } = {}) => {
+    const submittedSearchText = searchText?.trim() || undefined;
     const requestId = latestRequestIdRef.current + 1;
     latestRequestIdRef.current = requestId;
 
     setLoading(true);
     if (!append) {
       setError('');
+      setPendingSearchQuery(submittedSearchText || null);
+      setPendingMode(submittedSearchText ? 'search' : 'browse');
+      setPendingRequestKey(publicTeamRequestKey(submittedSearchText));
     }
     setHasSearched(true);
     try {
-      const result = await getPublicTeamsPage({ searchText, cursor });
+      const result = await getPublicTeamsPage({ searchText: submittedSearchText, cursor });
       if (requestId !== latestRequestIdRef.current) {
         return;
       }
       setPublicTeams((current) => append ? [...current, ...result.teams] : result.teams);
       setNextCursor(result.nextCursor);
-      setActiveSearchQuery(searchText || null);
+      setActiveSearchQuery(submittedSearchText || null);
     } catch (err: any) {
       if (requestId !== latestRequestIdRef.current) {
         return;
@@ -49,6 +63,9 @@ export function PublicTeamSearch({ autoBrowseOnMount = false, showBackLink = fal
     } finally {
       if (requestId === latestRequestIdRef.current) {
         setLoading(false);
+        setPendingSearchQuery(null);
+        setPendingMode(null);
+        setPendingRequestKey(null);
       }
     }
   }, []);
@@ -56,6 +73,9 @@ export function PublicTeamSearch({ autoBrowseOnMount = false, showBackLink = fal
   const handleSearch = () => {
     const trimmedQuery = searchQuery.trim();
     if (!trimmedQuery) {
+      return;
+    }
+    if (loading && pendingRequestKey === publicTeamRequestKey(trimmedQuery)) {
       return;
     }
 
@@ -72,11 +92,16 @@ export function PublicTeamSearch({ autoBrowseOnMount = false, showBackLink = fal
   };
 
   const handleClear = () => {
+    latestRequestIdRef.current += 1;
     setSearchQuery('');
     setPublicTeams([]);
     setError('');
     setActiveSearchQuery(null);
+    setPendingSearchQuery(null);
+    setPendingMode(null);
+    setPendingRequestKey(null);
     setHasSearched(false);
+    setLoading(false);
     setNextCursor(null);
   };
 
@@ -112,6 +137,12 @@ export function PublicTeamSearch({ autoBrowseOnMount = false, showBackLink = fal
     return groups;
   }, [publicTeams]);
 
+  const trimmedSearchQuery = searchQuery.trim();
+  const isDuplicatePendingSearch = loading && Boolean(trimmedSearchQuery) && pendingRequestKey === publicTeamRequestKey(trimmedSearchQuery);
+  const loadingStatusCopy = pendingMode === 'search' && pendingSearchQuery
+    ? `Searching public teams for "${pendingSearchQuery}".`
+    : 'Browsing teams across all regions.';
+
   return (
     <section className="app-card p-3 sm:p-4 space-y-4">
       <div className="flex items-center justify-between gap-3">
@@ -145,7 +176,7 @@ export function PublicTeamSearch({ autoBrowseOnMount = false, showBackLink = fal
           type="button"
           className="primary-button !min-h-10 !px-3 text-sm"
           onClick={handleSearch}
-          disabled={loading && !searchQuery.trim()}
+          disabled={loading && (!trimmedSearchQuery || isDuplicatePendingSearch)}
           aria-label="Search public teams"
         >
           {loading ? (
@@ -155,12 +186,11 @@ export function PublicTeamSearch({ autoBrowseOnMount = false, showBackLink = fal
           )}
           <span className="hidden sm:inline">Search</span>
         </button>
-        {searchQuery || activeSearchQuery ? (
+        {searchQuery || activeSearchQuery || pendingSearchQuery ? (
           <button
             type="button"
             className="ghost-button !min-h-10 !px-3 text-sm"
             onClick={handleClear}
-            disabled={loading}
             aria-label="Clear public team search"
           >
             <XCircle className="h-4 w-4" aria-hidden="true" />
@@ -187,7 +217,7 @@ export function PublicTeamSearch({ autoBrowseOnMount = false, showBackLink = fal
         <div className="app-card p-6 text-center">
           <Loader2 className="mx-auto h-8 w-8 animate-spin text-primary-600" aria-hidden="true" />
           <div className="mt-3 text-sm font-black text-gray-900">Loading public teams</div>
-          <div className="mt-1 text-xs font-semibold text-gray-500">{activeSearchQuery ? `Searching public teams for "${activeSearchQuery}".` : 'Browsing teams across all regions.'}</div>
+          <div className="mt-1 text-xs font-semibold text-gray-500">{loadingStatusCopy}</div>
         </div>
       ) : error ? (
         <Status tone="error" message={error} />
