@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { fireEvent, render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, within } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { CertificatesTool } from './CertificatesTool';
@@ -136,11 +136,12 @@ describe('CertificatesTool deep links', () => {
             }
         ]);
 
-        renderCertificatesTool();
+        const { container } = renderCertificatesTool();
+        const currentRender = within(container);
 
-        expect(await screen.findByText('Hustle Award')).toBeTruthy();
-        expect(screen.getByText('Leadership Award')).toBeTruthy();
-        expect(screen.getByText('Sam Player - Bears')).toBeTruthy();
-        expect(screen.getByText('Jordan Star - Bears')).toBeTruthy();
+        expect(await currentRender.findByText('Hustle Award')).toBeTruthy();
+        expect(currentRender.getByText('Leadership Award')).toBeTruthy();
+        expect(currentRender.getByText('Sam Player - Bears')).toBeTruthy();
+        expect(currentRender.getByText('Jordan Star - Bears')).toBeTruthy();
     });
 });
