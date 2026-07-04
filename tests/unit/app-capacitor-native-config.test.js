@@ -64,7 +64,9 @@ describe('Capacitor native config', () => {
         expect(appPackageLock.packages[''].devDependencies.vite).toBe('^8.0.16');
         expect(appPackageLock.packages['node_modules/vite'].version).toBe('8.0.16');
         expect(appPnpmLock).toContain('vite@8.0.16:');
-        expect(appPnpmLock).toContain("'@vitejs/plugin-react@5.2.0(vite@8.0.16");
+        const pluginReactVersion = appPackage.devDependencies['@vitejs/plugin-react'].replace(/^\^/, '');
+        expect(appPackageLock.packages['node_modules/@vitejs/plugin-react'].version).toBe(pluginReactVersion);
+        expect(appPnpmLock).toContain(`'@vitejs/plugin-react@${pluginReactVersion}(vite@8.0.16`);
     });
 
     it('wires first paint splash hiding and status bar setup into the app bootstrap', () => {
