@@ -17,11 +17,15 @@ import {
   buildVirtualizedChatWindowFromLayout
 } from './ChatWindow';
 
+const mockRouter = vi.hoisted(() => ({
+  navigate: vi.fn()
+}));
 const normalizeChatReactionsSpy = vi.fn();
 const getMessageAttachmentsSpy = vi.fn();
 const mockShellLayoutState = { isDesktopWeb: false };
 type MockActiveChatSheet = 'conversation' | 'audience' | 'media' | 'attach' | 'link' | 'email' | null;
 let useStatefulChatSheets = false;
+let mockThreadLoadScenario: 'normal' | 'retrySuccess' = 'normal';
 const mockChatSheetsState = {
   showConversationSheet: false,
   showAudienceSheet: false,
@@ -135,7 +139,7 @@ vi.mock('react-router-dom', async () => {
   const actual = await vi.importActual<typeof import('react-router-dom')>('react-router-dom');
   return {
     ...actual,
-    useNavigate: () => vi.fn(),
+    useNavigate: () => mockRouter.navigate,
     Link: ({ children, ...props }: any) => <a {...props}>{children}</a>
   };
 });
@@ -223,8 +227,27 @@ vi.mock('../hooks/useChatMessages', async () => {
   const React = await import('react');
   return {
     useChatMessages: () => {
+      const [phase, setPhase] = React.useState<'error' | 'loading' | 'ready'>('error');
       const [olderMessages, setOlderMessages] = React.useState<ChatMessage[]>([]);
       const [loadingOlder, setLoadingOlder] = React.useState(false);
+
+      if (mockThreadLoadScenario === 'retrySuccess') {
+        return {
+          messages: phase === 'ready' ? [buildMessage('recovered-message', 999)] : [],
+          olderMessages: [],
+          hasMoreMessages: false,
+          loadingMessages: phase === 'loading',
+          loadingOlder: false,
+          error: phase === 'error' ? 'Unable to load chat messages.' : null,
+          retryMessages: () => {
+            setPhase('loading');
+            window.setTimeout(() => setPhase('ready'), 0);
+          },
+          loadOlderMessages: async () => {},
+          initialSnapshotLoadedRef: { current: phase === 'ready' }
+        };
+      }
+
       return {
         messages: [...olderMessages, ...liveMessages],
         olderMessages,
@@ -232,6 +255,7 @@ vi.mock('../hooks/useChatMessages', async () => {
         loadingMessages: false,
         loadingOlder,
         error: null,
+        retryMessages: () => {},
         loadOlderMessages: async () => {
           setLoadingOlder(true);
           scrollHeightValue = 3000;
@@ -275,6 +299,8 @@ class MockResizeObserver {
 
 beforeEach(() => {
   useStatefulChatSheets = false;
+  mockThreadLoadScenario = 'normal';
+  mockRouter.navigate.mockReset();
   mockShellLayoutState.isDesktopWeb = false;
   mockChatSheetsState.showConversationSheet = false;
   mockChatSheetsState.showAudienceSheet = false;
@@ -497,6 +523,27 @@ describe('ChatWindow virtualization', () => {
     expect(bubbleCount).toBeGreaterThan(0);
     expect(bubbleCount).toBeLessThan(100);
     expect(bubbleCount).toBeLessThan(liveMessages.length);
+  });
+
+  it('offers in-place retry for a failed message subscription and keeps back navigation available', async () => {
+    mockThreadLoadScenario = 'retrySuccess';
+    render(
+      <MemoryRouter initialEntries={['/messages/team-1']}>
+        <ChatWindow auth={auth} teamId="team-1" />
+      </MemoryRouter>
+    );
+
+    expect(screen.getByText('Unable to load chat messages.')).toBeVisible();
+    expect(screen.getByRole('button', { name: 'Retry' })).toBeVisible();
+    fireEvent.click(screen.getByRole('button', { name: 'Back to messages' }));
+    expect(mockRouter.navigate).toHaveBeenCalledWith('/messages');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+
+    expect(screen.getByText('Loading messages...')).toBeVisible();
+    await waitFor(() => expect(screen.getByText('Message recovered-message')).toBeVisible());
+    expect(screen.getByText('Composer')).toBeVisible();
+    expect(mockRouter.navigate).toHaveBeenCalledTimes(1);
   });
 
   it('replaces an open conversation sheet when the media gallery opens', async () => {

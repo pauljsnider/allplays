@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { mapChatConversationDocument, mapChatMessageDocument, mapChatMessageRecord, mapChatMessageRecords } from './firestore/mappers';
@@ -470,5 +471,32 @@ describe('sendTeamChatMessage attachment uploads', () => {
       createdConversation: null,
       wantsAi: false
     }));
+  });
+});
+
+describe('subscribeToTeamChatMessages', () => {
+  it('forwards async Firestore listener errors to the caller', async () => {
+    const unsubscribe = vi.fn();
+    const onMessages = vi.fn();
+    const onError = vi.fn();
+    legacyChatServiceMocks.subscribeToChatMessages.mockReturnValue(unsubscribe);
+
+    const { subscribeToTeamChatMessages } = await import('./chatService');
+    const subscription = subscribeToTeamChatMessages('team-1', 'team', onMessages, onError);
+
+    expect(legacyChatServiceMocks.subscribeToChatMessages).toHaveBeenCalledWith(
+      'team-1',
+      { limit: 50, conversationId: 'team' },
+      expect.any(Function),
+      onError
+    );
+
+    const forwardedOnError = legacyChatServiceMocks.subscribeToChatMessages.mock.calls[0][3];
+    const listenerError = new Error('Firestore listener failed');
+    forwardedOnError(listenerError);
+
+    expect(onError).toHaveBeenCalledWith(listenerError);
+    subscription.unsubscribe();
+    expect(unsubscribe).toHaveBeenCalled();
   });
 });

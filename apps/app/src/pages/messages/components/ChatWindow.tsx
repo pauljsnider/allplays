@@ -409,6 +409,7 @@ export function ChatWindow({
     loadingMessages,
     loadingOlder,
     error: messagesError,
+    retryMessages,
     loadOlderMessages: loadOlderChatMessages,
     initialSnapshotLoadedRef
   } = useChatMessages({
@@ -454,6 +455,7 @@ export function ChatWindow({
     preferTopWindow: olderMessages.length > 0 && messageViewportState.scrollTop <= 0
   }), [messageLayout, messageViewportState.scrollTop, messageViewportState.viewportHeight, olderMessages.length, visibleMessages]);
   const error = teamError || messagesError;
+  const canRetryMessagesError = Boolean(messagesError && !teamError);
 
   const handleMessageRowHeightChange = useCallback((messageId: string, height: number) => {
     if (!messageId || !Number.isFinite(height) || height <= 0) return;
@@ -1547,7 +1549,15 @@ export function ChatWindow({
     return (
       <section className={`chat-window app-card p-5 ${embedded ? 'chat-window-embedded' : ''}`}>
         <div className="text-base font-black text-rose-700">{error}</div>
-        <button type="button" className="secondary-button mt-4" onClick={() => navigate('/messages')}>Back to messages</button>
+        <div className="mt-4 flex flex-wrap gap-2">
+          {canRetryMessagesError ? (
+            <button type="button" className="primary-button" onClick={retryMessages}>
+              <RefreshCw className="h-4 w-4" aria-hidden="true" />
+              Retry
+            </button>
+          ) : null}
+          <button type="button" className="secondary-button" onClick={() => navigate('/messages')}>Back to messages</button>
+        </div>
       </section>
     );
   }
