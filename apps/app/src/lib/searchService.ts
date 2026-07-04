@@ -980,9 +980,9 @@ function getPlayerSearchTeamIds(rawQuery: string, teamsById: Map<string, AppSear
   const privateTeams = searchableTeams.filter((team) => team?.isPublic === false);
   const publicTeams = searchableTeams.filter((team) => team?.isPublic !== false);
   const tokens = splitSearchTokens(rawQuery);
-  const rankTeams = (teams: AppSearchTeam[]) => tokens.length === 0
-    ? teams
-    : teams
+  const rankedTeams = tokens.length === 0
+    ? [...privateTeams, ...publicTeams]
+    : searchableTeams
       .map((team, index) => ({
         team,
         index,
@@ -991,7 +991,7 @@ function getPlayerSearchTeamIds(rawQuery: string, teamsById: Map<string, AppSear
       .sort((a, b) => (b.score - a.score) || (a.index - b.index))
       .map((entry) => entry.team);
 
-  return [...rankTeams(privateTeams), ...rankTeams(publicTeams)]
+  return rankedTeams
     .slice(0, playerSearchTeamLimit)
     .map((team) => team.id)
     .filter(Boolean);
