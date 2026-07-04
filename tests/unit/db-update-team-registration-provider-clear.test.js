@@ -4,7 +4,7 @@ const updateDoc = vi.fn();
 const deleteField = vi.fn(() => '__DELETE_FIELD__');
 const doc = vi.fn((database, ...segments) => ({ database, path: segments.join('/') }));
 
-vi.mock('../../js/firebase.js?v=19', () => ({
+vi.mock('../../js/firebase.js?v=20', () => ({
     db: { name: 'mock-db' },
     auth: {},
     storage: {},
@@ -40,7 +40,7 @@ vi.mock('../../js/firebase.js?v=19', () => ({
     deleteObject: vi.fn()
 }));
 
-vi.mock('../../js/firebase-images.js?v=6', () => ({
+vi.mock('../../js/firebase-images.js?v=9', () => ({
     imageStorage: {},
     ensureImageAuth: vi.fn(),
     requireImageAuth: vi.fn()

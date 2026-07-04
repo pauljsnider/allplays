@@ -17,7 +17,7 @@ import {
     where,
     orderBy,
     limit
-} from './firebase.js?v=19';
+} from './firebase.js?v=20';
 
 let cachedAccessibleTeams = null;
 let cachedAccessibleTeamsLoadedAt = 0;

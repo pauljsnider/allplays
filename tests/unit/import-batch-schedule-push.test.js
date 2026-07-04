@@ -23,7 +23,7 @@ describe('schedule import batch push notifications', () => {
         });
 
         try {
-            const result = await harness.internals.notifyGameCreated(
+            const result = await harness.moduleExports.notifyGameCreated(
                 createSnapshot({
                     type: 'game',
                     opponent: 'Falcons',
@@ -57,7 +57,7 @@ describe('schedule import batch push notifications', () => {
                 totalCount: 4
             };
             for (let index = 0; index < 4; index += 1) {
-                await harness.internals.notifyGameCreated(
+                await harness.moduleExports.notifyGameCreated(
                     createSnapshot({
                         type: index % 2 === 0 ? 'game' : 'practice',
                         title: index % 2 === 0 ? null : `Practice ${index + 1}`,
@@ -119,7 +119,7 @@ describe('schedule import batch push notifications', () => {
                 totalCount: 3
             };
             for (let index = 0; index < 3; index += 1) {
-                await harness.internals.notifyGameCreated(
+                await harness.moduleExports.notifyGameCreated(
                     createSnapshot({
                         type: index === 2 ? 'practice' : 'game',
                         title: index === 2 ? 'Speed Session' : null,
@@ -167,7 +167,7 @@ describe('schedule import batch push notifications', () => {
             ];
 
             for (const item of events) {
-                await harness.internals.notifyGameCreated(
+                await harness.moduleExports.notifyGameCreated(
                     createSnapshot({
                         type: item.type,
                         title: item.title || null,
@@ -185,7 +185,7 @@ describe('schedule import batch push notifications', () => {
 
             expect(harness.env.messagingCalls).toHaveLength(0);
 
-            await harness.internals.notifyGameCreated(
+            await harness.moduleExports.notifyGameCreated(
                 createSnapshot({
                     type: 'practice',
                     title: 'Practice 4',
@@ -232,7 +232,7 @@ describe('schedule import batch push notifications', () => {
             ];
 
             for (const item of events) {
-                await harness.internals.notifyGameCreated(
+                await harness.moduleExports.notifyGameCreated(
                     createSnapshot({
                         type: item.type,
                         title: item.title || null,
@@ -269,7 +269,7 @@ describe('schedule import batch push notifications', () => {
                 createdBy: 'coach-1'
             });
 
-            await harness.internals.notifyScheduleImportBatchCompleted(
+            await harness.moduleExports.notifyScheduleImportBatchCompleted(
                 {
                     before: createSnapshot(null),
                     after: {
@@ -320,7 +320,7 @@ describe('schedule import batch push notifications', () => {
                 sentAt: {}
             });
 
-            await harness.internals.notifyGameCreated(
+            await harness.moduleExports.notifyGameCreated(
                 createSnapshot({
                     type: 'practice',
                     title: 'Late practice',

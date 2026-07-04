@@ -6,7 +6,7 @@ const collectionMock = vi.fn((database, path) => ({ database, path }));
 const whereMock = vi.fn((field, op, value) => ({ field, op, value }));
 const queryMock = vi.fn((...parts) => parts);
 
-vi.mock('../../js/firebase.js?v=19', () => ({
+vi.mock('../../js/firebase.js?v=20', () => ({
     db: {},
     auth: {},
     functions: {},
@@ -44,7 +44,7 @@ vi.mock('../../js/firebase.js?v=19', () => ({
     deleteObject: vi.fn()
 }));
 
-vi.mock('../../js/firebase-images.js?v=6', () => ({
+vi.mock('../../js/firebase-images.js?v=9', () => ({
     imageStorage: {},
     ensureImageAuth: vi.fn(),
     requireImageAuth: vi.fn()

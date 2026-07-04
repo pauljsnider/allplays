@@ -1,5 +1,5 @@
 
-import { getFunctions, httpsCallable } from './firebase.js?v=19';
+import { getFunctions, httpsCallable } from './firebase.js?v=20';
 
 export async function initiateStripeCheckout(params) {
     try {

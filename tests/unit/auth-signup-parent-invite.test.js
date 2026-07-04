@@ -37,7 +37,7 @@ const dbMocks = vi.hoisted(() => ({
     listMyParentMembershipRequests: vi.fn()
 }));
 
-vi.mock('../../js/firebase.js?v=19', () => firebaseMocks);
+vi.mock('../../js/firebase.js?v=20', () => firebaseMocks);
 vi.mock('../../js/db.js?v=77', () => dbMocks);
 vi.mock('../../js/admin-invite.js?v=5', () => ({
     redeemAdminInviteAcceptance: vi.fn()

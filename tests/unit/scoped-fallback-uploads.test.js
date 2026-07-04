@@ -16,7 +16,7 @@ const firebaseMocks = vi.hoisted(() => ({
     getDownloadURL: vi.fn(async (storageRef) => `https://cdn.example.test/${storageRef.fullPath}`)
 }));
 
-vi.mock('../../js/firebase.js?v=19', () => ({
+vi.mock('../../js/firebase.js?v=20', () => ({
     db: {},
     auth: { currentUser: { uid: 'user-42' } },
     storage: 'main-storage',
@@ -52,7 +52,7 @@ vi.mock('../../js/firebase.js?v=19', () => ({
     deleteObject: vi.fn()
 }));
 
-vi.mock('../../js/firebase-images.js?v=6', () => ({
+vi.mock('../../js/firebase-images.js?v=9', () => ({
     imageStorage: 'image-storage',
     ensureImageAuth: vi.fn(),
     requireImageAuth: vi.fn()
