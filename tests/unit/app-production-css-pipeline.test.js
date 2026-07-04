@@ -56,5 +56,10 @@ describe('app production CSS pipeline', () => {
         expect(css).toContain('env(safe-area-inset-bottom)');
         expect(css).toContain('.app-search-overlay');
         expect(css).toContain('--app-search-keyboard-inset');
+        expect(css).toContain('.fixed');
+        expect(css).toContain('.inset-0');
+        expect(css).toContain('.inset-x-0');
+        expect(css).toContain('.top-0');
+        expect(css).toContain('.bottom-0');
     }, 30000);
 });
