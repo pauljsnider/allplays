@@ -36,7 +36,7 @@
     "@playwright/test": "^1.61.1",
     "@sentry/browser": "^10.63.0",
     "@testing-library/react": "^16.3.2",
-    "firebase-tools": "^14.25.0",
+    "firebase-tools": "^15.22.4",
     "react": "^19.2.7",
     "react-dom": "^19.2.7",
     "react-router-dom": "^7.18.1",
