@@ -528,7 +528,7 @@ test('messages inbox and team chat exercise real migrated chat UX', async ({ pag
         {
             text: 'See you at practice',
             selectedConversationId: 'team',
-            selectedConversationRoles: [],
+            selectedConversationRoles: ['team'],
             selectedRecipientTarget: 'full_team',
             selectedRecipientIds: [],
             fileCount: 0
@@ -551,7 +551,7 @@ test('messages inbox and team chat exercise real migrated chat UX', async ({ pag
     }]);
 
     await page.getByRole('button', { name: 'Add reaction' }).last().click();
-    await expect(page.locator('.chat-reaction-picker-above')).toBeVisible();
+    await expect(page.locator('.chat-reaction-picker')).toBeVisible();
     await page.getByRole('button', { name: 'Like' }).click();
     await expect.poll(() => page.evaluate(() => window.__chatCalls.reactions[0])).toMatchObject({
         teamId: 'team-1',
