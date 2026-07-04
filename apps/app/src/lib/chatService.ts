@@ -1057,7 +1057,7 @@ export function subscribeToTeamChatMessages(
         const mappedMessages = mapChatMessageRecords(messages);
         onMessages(mappedMessages, oldestDoc);
       }
-    });
+    }, onError);
   } catch (error: any) {
     if (!isNativeRuntime()) {
       onError?.(error);
