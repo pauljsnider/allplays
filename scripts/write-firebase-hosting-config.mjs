@@ -4,6 +4,40 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const defaultRootDir = path.resolve(scriptDir, '..');
+const appAssetsCacheHeader = {
+    key: 'Cache-Control',
+    value: 'public, max-age=31536000, immutable'
+};
+
+function toHostingPath(filePath, publicDir) {
+    return `/${path.relative(publicDir, filePath).split(path.sep).join('/')}`;
+}
+
+function listAppAssetHeaderRules(publicDir) {
+    const appAssetsDir = path.join(publicDir, 'app', 'assets');
+    if (!fs.existsSync(appAssetsDir)) {
+        return [];
+    }
+
+    const assetPaths = [];
+    const visit = (currentDir) => {
+        for (const entry of fs.readdirSync(currentDir, { withFileTypes: true })) {
+            const entryPath = path.join(currentDir, entry.name);
+            if (entry.isDirectory()) {
+                visit(entryPath);
+            } else if (entry.isFile()) {
+                assetPaths.push(toHostingPath(entryPath, publicDir));
+            }
+        }
+    };
+
+    visit(appAssetsDir);
+
+    return assetPaths.sort().map((source) => ({
+        source,
+        headers: [appAssetsCacheHeader]
+    }));
+}
 
 export function writeFirebaseHostingConfig(publicDir, outputFile, { rootDir = defaultRootDir } = {}) {
     if (!publicDir) {
@@ -18,7 +52,11 @@ export function writeFirebaseHostingConfig(publicDir, outputFile, { rootDir = de
 
     config.hosting = {
         ...config.hosting,
-        public: path.resolve(publicDir)
+        public: path.resolve(publicDir),
+        headers: [
+            ...(config.hosting?.headers ?? []),
+            ...listAppAssetHeaderRules(path.resolve(publicDir))
+        ]
     };
 
     const resolvedOutputFile = path.resolve(outputFile);

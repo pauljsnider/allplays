@@ -87,4 +87,38 @@ describe('pages bundle staging', () => {
         expect(config.hosting.rewrites).toEqual([{ source: '**', destination: '/index.html' }]);
         expect(config.firestore.rules).toBe('firestore.rules');
     });
+
+    it('adds immutable headers only for concrete staged app asset files', () => {
+        const rootDir = makeTempDir();
+        const publicDir = path.join(makeTempDir(), 'site');
+        const outputFile = path.join(rootDir, '.firebase-generated.json');
+
+        writeFile(path.join(rootDir, 'firebase.json'), JSON.stringify({
+            hosting: {
+                public: '.',
+                headers: [
+                    {
+                        source: '**/*.@(js|css)',
+                        headers: [{ key: 'Cache-Control', value: 'max-age=3600' }]
+                    }
+                ],
+                rewrites: [{ source: '!/app/assets/**', destination: '/index.html' }]
+            }
+        }));
+        writeFile(path.join(publicDir, 'app', 'assets', 'index-BUk4z7Xq.js'), 'console.log("app");');
+        writeFile(path.join(publicDir, 'app', 'assets', 'style-C1ab2c3d.css'), 'body {}');
+
+        const resolvedOutputFile = writeFirebaseHostingConfig(publicDir, outputFile, { rootDir });
+        const config = JSON.parse(fs.readFileSync(resolvedOutputFile, 'utf8'));
+        const immutableSources = config.hosting.headers
+            .filter((rule) => rule.headers?.some((header) => header.value === 'public, max-age=31536000, immutable'))
+            .map((rule) => rule.source);
+
+        expect(immutableSources).toEqual([
+            '/app/assets/index-BUk4z7Xq.js',
+            '/app/assets/style-C1ab2c3d.css'
+        ]);
+        expect(immutableSources).not.toContain('/app/assets/**');
+        expect(immutableSources).not.toContain('/app/assets/missing.js');
+    });
 });

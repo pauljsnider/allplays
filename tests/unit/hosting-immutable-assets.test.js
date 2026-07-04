@@ -23,12 +23,8 @@ describe('hosting cache headers for hashed app assets', () => {
         return (rule?.headers ?? []).find((header) => header.key === 'Cache-Control')?.value;
     }
 
-    it('serves /app/assets with an immutable one-year cache lifetime', () => {
-        const assetsRule = findRule('/app/assets/**');
-        expect(assetsRule).toBeTruthy();
-        const value = cacheControl(assetsRule);
-        expect(value).toContain('immutable');
-        expect(value).toContain('max-age=31536000');
+    it('does not put an immutable wildcard header on /app/assets misses', () => {
+        expect(findRule('/app/assets/**')).toBeUndefined();
     });
 
     it('keeps the generic js/css rule short-lived for cache-busted legacy assets', () => {
@@ -37,19 +33,9 @@ describe('hosting cache headers for hashed app assets', () => {
         expect(cacheControl(genericRule)).toBe('max-age=3600');
     });
 
-    it('orders the immutable /app/assets rule after the generic js/css rule so it wins', () => {
-        // Firebase Hosting applies the last matching source for a given header key,
-        // so the specific immutable rule must appear after the generic js/css rule
-        // for hashed /app/assets/*.js files to receive the long cache lifetime.
-        const genericIndex = headers.findIndex((rule) => rule.source === '**/*.@(js|css)');
-        const assetsIndex = headers.findIndex((rule) => rule.source === '/app/assets/**');
-        expect(genericIndex).toBeGreaterThan(-1);
-        expect(assetsIndex).toBeGreaterThan(genericIndex);
-    });
-
     it('excludes missing /app/assets files from the app shell rewrite', () => {
         // Stale hashed chunk URLs should 404 instead of rewriting to /index.html
-        // with the immutable /app/assets cache header applied to the app shell.
+        // while avoiding an immutable wildcard header on the 404 response.
         expect(rewrites).toContainEqual({
             source: '!/app/assets/**',
             destination: '/index.html',
