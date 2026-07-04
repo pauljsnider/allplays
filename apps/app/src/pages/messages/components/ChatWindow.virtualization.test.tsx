@@ -227,8 +227,11 @@ vi.mock('../hooks/useChatMessages', async () => {
   const React = await import('react');
   return {
     useChatMessages: () => {
+      const [phase, setPhase] = React.useState<'error' | 'loading' | 'ready'>('error');
+      const [olderMessages, setOlderMessages] = React.useState<ChatMessage[]>([]);
+      const [loadingOlder, setLoadingOlder] = React.useState(false);
+
       if (mockThreadLoadScenario === 'retrySuccess') {
-        const [phase, setPhase] = React.useState<'error' | 'loading' | 'ready'>('error');
         return {
           messages: phase === 'ready' ? [buildMessage('recovered-message', 999)] : [],
           olderMessages: [],
@@ -245,8 +248,6 @@ vi.mock('../hooks/useChatMessages', async () => {
         };
       }
 
-      const [olderMessages, setOlderMessages] = React.useState<ChatMessage[]>([]);
-      const [loadingOlder, setLoadingOlder] = React.useState(false);
       return {
         messages: [...olderMessages, ...liveMessages],
         olderMessages,
