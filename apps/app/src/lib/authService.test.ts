@@ -127,12 +127,32 @@ describe('signOut', () => {
   });
 });
 
+function installTestLocalStorage() {
+  const values = new Map<string, string>();
+  Object.defineProperty(window, 'localStorage', {
+    configurable: true,
+    value: {
+      getItem: vi.fn((key: string) => values.get(key) ?? null),
+      setItem: vi.fn((key: string, value: string) => {
+        values.set(key, String(value));
+      }),
+      removeItem: vi.fn((key: string) => {
+        values.delete(key);
+      }),
+      clear: vi.fn(() => {
+        values.clear();
+      })
+    }
+  });
+}
+
 describe('native REST sign-in', () => {
   beforeEach(() => {
     authState.currentUser = null;
     appDataCacheMocks.clearAppDataCache.mockReset();
     legacyAuthMocks.updateUserProfile.mockReset();
     legacyAuthMocks.updateUserProfile.mockResolvedValue(undefined);
+    installTestLocalStorage();
     window.localStorage.clear();
     installIndexedDbMock();
     vi.stubGlobal('fetch', vi.fn(async (url: string) => {

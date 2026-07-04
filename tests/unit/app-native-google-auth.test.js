@@ -80,7 +80,7 @@ vi.mock('../../apps/app/node_modules/@capacitor-firebase/authentication/dist/plu
     FirebaseAuthentication: nativeAuthMocks
 }));
 
-vi.mock('../../js/firebase.js?v=19', () => firebaseMocks);
+vi.mock('../../js/firebase.js?v=20', () => firebaseMocks);
 vi.mock('../../js/db.js', () => dbMocks);
 vi.mock('../../js/admin-invite.js', () => ({
     redeemAdminInviteAcceptance: vi.fn()

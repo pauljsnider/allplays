@@ -39,7 +39,11 @@ describe('firebase runtime config', () => {
         const config = await resolvePrimaryFirebaseConfig();
 
         expect(config.projectId).toBe('game-flow-c6311');
-        expect(config.appId).toBe('1:1030107289033:web:7154238712942475143046');
+        // The fallback must carry the real game-flow-c6311 web app id (project
+        // number 982493478258) — the old 1030107289033 pair belonged to another
+        // project and broke Installations/FCM/Performance wherever the fallback ran.
+        expect(config.appId).toBe('1:982493478258:web:1f942c420cef6c40e8b1eb');
+        expect(config.messagingSenderId).toBe('982493478258');
         expect(globalThis.fetch).toHaveBeenCalledOnce();
     });
 

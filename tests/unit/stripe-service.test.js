@@ -3,7 +3,7 @@ import { cancelStripeRegistrationCheckout, initiateStripeCheckout, initiateTeamF
 
 const mockInnerCallable = vi.fn();
 
-vi.mock('../../js/firebase.js?v=19', () => {
+vi.mock('../../js/firebase.js?v=20', () => {
     return {
         getFunctions: vi.fn(() => ({})),
         httpsCallable: vi.fn(() => mockInnerCallable)
@@ -14,7 +14,7 @@ describe('Stripe Service', () => {
     let httpsCallable;
 
     beforeEach(async () => {
-        const firebaseMocks = await import('../../js/firebase.js?v=19');
+        const firebaseMocks = await import('../../js/firebase.js?v=20');
         httpsCallable = firebaseMocks.httpsCallable;
         httpsCallable.mockClear();
         mockInnerCallable.mockReset();

@@ -56,7 +56,10 @@ describe('schedule and RSVP notification contract', () => {
         expect(functionsSource).toContain("dedupKey: `import-batch:${batchId}`");
         expect(functionsSource).toContain("eventIds.map((eventId) => markNotificationDedupSent(teamId, 'schedule', eventId))");
         expect(functionsSource).toContain('exports.notifyScheduleImportBatchCompleted = notifyScheduleImportBatchCompleted;');
-        expect(functionsSource).toContain('exports._internal.notifyScheduleImportBatchCompleted = notifyScheduleImportBatchCompleted;');
+        // Deploy-safety: triggers must NOT also be exported under exports._internal —
+        // Firebase deploy rejects the resulting `_internal-*` function names and the
+        // entire production deploy fails. Tests reach triggers via top-level exports.
+        expect(functionsSource).not.toContain('exports._internal.notifyScheduleImportBatchCompleted');
     });
 
     it('sends recurring practice creation through the standard schedule notification path', async () => {

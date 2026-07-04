@@ -1,4 +1,4 @@
-import { imageStorage, requireImageAuth } from '../firebase-images.js?v=8';
+import { imageStorage, requireImageAuth } from '../firebase-images.js?v=9';
 import {
     db,
     collection,
@@ -7,7 +7,7 @@ import {
     ref,
     uploadBytes,
     getDownloadURL
-} from '../firebase.js?v=19';
+} from '../firebase.js?v=20';
 
 const MAX_CERTIFICATE_ASSET_BYTES = 5 * 1024 * 1024;
 const ALLOWED_CERTIFICATE_IMAGE_TYPES = new Set(['image/png', 'image/jpeg', 'image/jpg', 'image/webp']);

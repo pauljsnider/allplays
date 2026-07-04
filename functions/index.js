@@ -9093,7 +9093,6 @@ const notifyGameCreated = functions.firestore
   });
 
 exports.notifyGameCreated = notifyGameCreated;
-exports._internal.notifyGameCreated = notifyGameCreated;
 
 const notifyScheduleImportBatchCompleted = functions.firestore
   .document('teams/{teamId}/scheduleImportNotificationBatches/{batchId}')
@@ -9111,7 +9110,6 @@ const notifyScheduleImportBatchCompleted = functions.firestore
   });
 
 exports.notifyScheduleImportBatchCompleted = notifyScheduleImportBatchCompleted;
-exports._internal.notifyScheduleImportBatchCompleted = notifyScheduleImportBatchCompleted;
 
 const notifyRideOfferCreated = functions.firestore
   .document('teams/{teamId}/games/{gameId}/rideOffers/{offerId}')
@@ -9149,7 +9147,6 @@ const notifyRideOfferCreated = functions.firestore
   });
 
 exports.notifyRideOfferCreated = notifyRideOfferCreated;
-exports._internal.notifyRideOfferCreated = notifyRideOfferCreated;
 
 const notifyRideClaimCreated = functions.firestore
   .document('teams/{teamId}/games/{gameId}/rideOffers/{offerId}/requests/{requestId}')
@@ -9158,7 +9155,6 @@ const notifyRideClaimCreated = functions.firestore
   });
 
 exports.notifyRideClaimCreated = notifyRideClaimCreated;
-exports._internal.notifyRideClaimCreated = notifyRideClaimCreated;
 
 const notifyRideClaimUpdated = functions.firestore
   .document('teams/{teamId}/games/{gameId}/rideOffers/{offerId}/requests/{requestId}')
@@ -9170,7 +9166,6 @@ const notifyRideClaimUpdated = functions.firestore
   });
 
 exports.notifyRideClaimUpdated = notifyRideClaimUpdated;
-exports._internal.notifyRideClaimUpdated = notifyRideClaimUpdated;
 
 const notifyRideOfferCancelled = functions.firestore
   .document('teams/{teamId}/games/{gameId}/rideOffers/{offerId}')
@@ -9218,7 +9213,6 @@ const notifyRideOfferCancelled = functions.firestore
   });
 
 exports.notifyRideOfferCancelled = notifyRideOfferCancelled;
-exports._internal.notifyRideOfferCancelled = notifyRideOfferCancelled;
 
 exports.syncApprovedParentMembershipRequestUserLink = functions.firestore
   .document('teams/{teamId}/membershipRequests/{requestId}')

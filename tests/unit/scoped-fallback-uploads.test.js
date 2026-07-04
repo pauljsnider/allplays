@@ -16,7 +16,7 @@ const firebaseMocks = vi.hoisted(() => ({
     getDownloadURL: vi.fn(async (storageRef) => `https://cdn.example.test/${storageRef.fullPath}`)
 }));
 
-vi.mock('../../js/firebase.js?v=19', () => ({
+vi.mock('../../js/firebase.js?v=20', () => ({
     db: {},
     auth: { currentUser: { uid: 'user-42' } },
     storage: 'main-storage',
@@ -52,7 +52,7 @@ vi.mock('../../js/firebase.js?v=19', () => ({
     deleteObject: vi.fn()
 }));
 
-vi.mock('../../js/firebase-images.js?v=6', () => ({
+vi.mock('../../js/firebase-images.js?v=9', () => ({
     imageStorage: 'image-storage',
     ensureImageAuth: vi.fn(),
     requireImageAuth: vi.fn()
@@ -67,7 +67,7 @@ describe('scoped fallback uploads', () => {
     });
 
     it('falls back to a team-scoped stat sheet path when image storage rejects the upload', async () => {
-        const { uploadStatSheetPhoto } = await import('../../js/db.js?v=76');
+        const { uploadStatSheetPhoto } = await import('../../js/db.js?v=79');
 
         const url = await uploadStatSheetPhoto('team/alpha', {
             name: 'box score (1).png',
@@ -81,7 +81,7 @@ describe('scoped fallback uploads', () => {
     });
 
     it('falls back to a team-scoped drill path when image storage rejects the upload', async () => {
-        const { uploadDrillDiagram } = await import('../../js/db.js?v=76');
+        const { uploadDrillDiagram } = await import('../../js/db.js?v=79');
 
         const url = await uploadDrillDiagram('team/alpha', 'drill 7', {
             name: 'diagram #1.png',

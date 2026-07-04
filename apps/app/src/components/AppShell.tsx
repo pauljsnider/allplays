@@ -77,7 +77,16 @@ export function AppShell({ auth, children }: AppShellProps) {
   const navigate = useNavigate();
   const location = useLocation();
   const routeStartedAtRef = useRef(typeof performance !== 'undefined' ? performance.now() : Date.now());
+  const routeTimingKeyRef = useRef(`${location.pathname}${location.search}`);
   const lastInboxUidRef = useRef<string | null>(auth.user?.uid ?? null);
+  // Rebaseline during the render that first sees a new location, so the span
+  // measures navigation → paint. Resetting only after the previous route's
+  // paint (the old behavior) counted all dwell time on that route.
+  const routeTimingKey = `${location.pathname}${location.search}`;
+  if (routeTimingKeyRef.current !== routeTimingKey) {
+    routeTimingKeyRef.current = routeTimingKey;
+    routeStartedAtRef.current = typeof performance !== 'undefined' ? performance.now() : Date.now();
+  }
   const isAiRoute = location.pathname === '/ai';
   const isMobileChatDetail = !isDesktopWeb && location.pathname.startsWith('/messages/') && location.pathname !== '/messages';
   const isDesktopMessages = isDesktopWeb && (location.pathname.startsWith('/messages') || isAiRoute);
@@ -95,7 +104,6 @@ export function AppShell({ auth, children }: AppShellProps) {
     const startedAt = routeStartedAtRef.current;
     const frame = window.requestAnimationFrame(() => {
       recordUxTiming('route paint', startedAt, { route: `${location.pathname}${location.search}` || '/' });
-      routeStartedAtRef.current = performance.now();
     });
     return () => window.cancelAnimationFrame(frame);
   }, [location.pathname, location.search]);

@@ -27,6 +27,20 @@ const MAX_ATTRIBUTE_VALUE_LENGTH = 100;
 let sequence = 0;
 let firebasePerformancePromise: Promise<FirebasePerformanceRef | null> | null = null;
 const activeFirebaseTraceCounts = new Map<string, number>();
+const firebaseTraceQueues = new Map<string, Promise<void>>();
+
+/**
+ * Plugin trace calls are async, so a short-lived span can issue stopTrace
+ * while its startTrace is still in flight ("No trace was found"). Chain all
+ * plugin operations for a trace name so start/stop pairs run in order. The
+ * queue map stays bounded because trace names come from a fixed label set.
+ */
+function enqueueFirebaseTraceOp(traceName: string, op: () => Promise<void>) {
+  const prev = firebaseTraceQueues.get(traceName) || Promise.resolve();
+  const run = prev.then(op, op);
+  firebaseTraceQueues.set(traceName, run.catch(() => {}));
+  return run;
+}
 
 export function now() {
   return typeof performance !== 'undefined' && typeof performance.now === 'function'
@@ -128,14 +142,32 @@ function measure(name: string, startMark: string, endMark: string) {
 async function loadFirebasePerformance(): Promise<FirebasePerformanceRef | null> {
   if (!isPerformanceExportEnabled()) return null;
   if (!firebasePerformancePromise) {
-    firebasePerformancePromise = import('@capacitor-firebase/performance')
-      .then((module) => ({ api: module.FirebasePerformance }))
-      .catch((error) => {
-        logger.debug('Firebase Performance unavailable.', { error });
-        return null;
-      });
+    firebasePerformancePromise = (async () => {
+      if (getPerformancePlatform() === 'web') {
+        // The plugin's web implementation reads the npm firebase SDK's
+        // '[DEFAULT]' app, but the app shell initializes the vendored legacy
+        // SDK — a separate registry. Without this init every web trace call
+        // fails with app/no-app.
+        await ensureNpmFirebaseAppInitialized();
+      }
+      const module = await import('@capacitor-firebase/performance');
+      return { api: module.FirebasePerformance };
+    })().catch((error) => {
+      logger.debug('Firebase Performance unavailable.', { error });
+      return null;
+    });
   }
   return firebasePerformancePromise;
+}
+
+async function ensureNpmFirebaseAppInitialized() {
+  const [{ getApps, initializeApp }, { resolvePrimaryFirebaseConfig }] = await Promise.all([
+    import('firebase/app'),
+    import('./adapters/legacyFirebaseAuthSdk')
+  ]);
+  if (!getApps().length) {
+    initializeApp(await resolvePrimaryFirebaseConfig());
+  }
 }
 
 async function startFirebaseTrace(traceName: string, meta: PerformanceMeta = {}) {
@@ -143,14 +175,16 @@ async function startFirebaseTrace(traceName: string, meta: PerformanceMeta = {})
   activeFirebaseTraceCounts.set(traceName, currentCount + 1);
   if (currentCount > 0) return;
 
-  try {
-    const firebasePerformance = await loadFirebasePerformance();
-    if (!firebasePerformance) return;
-    await firebasePerformance.api.startTrace({ traceName });
-    await applyFirebaseAttributes(firebasePerformance.api, traceName, meta);
-  } catch (error) {
-    logger.debug('Firebase trace start failed.', { error, traceName });
-  }
+  await enqueueFirebaseTraceOp(traceName, async () => {
+    try {
+      const firebasePerformance = await loadFirebasePerformance();
+      if (!firebasePerformance) return;
+      await firebasePerformance.api.startTrace({ traceName });
+      await applyFirebaseAttributes(firebasePerformance.api, traceName, meta);
+    } catch (error) {
+      logger.debug('Firebase trace start failed.', { error, traceName });
+    }
+  });
 }
 
 async function stopFirebaseTrace(traceName: string, meta: PerformanceMeta = {}, durationMs = 0) {
@@ -161,15 +195,17 @@ async function stopFirebaseTrace(traceName: string, meta: PerformanceMeta = {}, 
   }
   activeFirebaseTraceCounts.delete(traceName);
 
-  try {
-    const firebasePerformance = await loadFirebasePerformance();
-    if (!firebasePerformance) return;
-    await applyFirebaseAttributes(firebasePerformance.api, traceName, meta);
-    await applyFirebaseMetrics(firebasePerformance.api, traceName, meta, durationMs);
-    await firebasePerformance.api.stopTrace({ traceName });
-  } catch (error) {
-    logger.debug('Firebase trace stop failed.', { error, traceName });
-  }
+  await enqueueFirebaseTraceOp(traceName, async () => {
+    try {
+      const firebasePerformance = await loadFirebasePerformance();
+      if (!firebasePerformance) return;
+      await applyFirebaseAttributes(firebasePerformance.api, traceName, meta);
+      await applyFirebaseMetrics(firebasePerformance.api, traceName, meta, durationMs);
+      await firebasePerformance.api.stopTrace({ traceName });
+    } catch (error) {
+      logger.debug('Firebase trace stop failed.', { error, traceName });
+    }
+  });
 }
 
 async function recordFirebaseTrace(traceName: string, startTime: number, durationMs: number, meta: PerformanceMeta = {}) {

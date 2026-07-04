@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
-import { MemoryRouter, Route, Routes } from 'react-router-dom';
+import { Link, MemoryRouter, Route, Routes } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { AppShell } from './AppShell';
 import type { NotificationInboxItem } from '../lib/notificationInboxService';
@@ -34,8 +34,10 @@ vi.mock('../lib/useShellLayout', () => ({
   useShellLayout: useShellLayoutMock,
 }));
 
+const recordUxTimingMock = vi.hoisted(() => vi.fn());
+
 vi.mock('../lib/uxTiming', () => ({
-  recordUxTiming: vi.fn(),
+  recordUxTiming: recordUxTimingMock,
 }));
 
 vi.mock('../lib/publicActions', () => publicActionMocks);
@@ -129,6 +131,34 @@ describe('AppShell', () => {
 
   afterEach(() => {
     cleanup();
+  });
+
+  it('measures route paint from navigation, not from the previous route paint', () => {
+    // Regression: the baseline was only reset after the previous route's
+    // paint, so dwell time on that route inflated every route paint metric.
+    let nowValue = 1000;
+    vi.spyOn(performance, 'now').mockImplementation(() => nowValue);
+    recordUxTimingMock.mockClear();
+
+    render(
+      <MemoryRouter initialEntries={['/home']}>
+        <AppShell auth={auth}>
+          <Routes>
+            <Route path="/home" element={<Link to="/schedule">Go schedule</Link>} />
+            <Route path="/schedule" element={<div>Schedule</div>} />
+          </Routes>
+        </AppShell>
+      </MemoryRouter>
+    );
+
+    expect(recordUxTimingMock).toHaveBeenCalledWith('route paint', 1000, { route: '/home' });
+
+    // Dwell on /home for a minute, then navigate.
+    nowValue = 61000;
+    fireEvent.click(screen.getByText('Go schedule'));
+
+    const schedulePaint = recordUxTimingMock.mock.calls.find((call) => call[2]?.route === '/schedule');
+    expect(schedulePaint?.[1]).toBe(61000);
   });
 
   it('adds an explicit accessible label to the desktop search button', () => {

@@ -6,9 +6,15 @@ const DEFAULT_PRIMARY_FIREBASE_CONFIG = {
     authDomain: 'game-flow-c6311.firebaseapp.com',
     projectId: 'game-flow-c6311',
     storageBucket: 'game-flow-c6311.firebasestorage.app',
-    messagingSenderId: '1030107289033',
-    appId: '1:1030107289033:web:7154238712942475143046',
-    measurementId: 'G-E48D0L8L40'
+    // Must match the project's real web app registration (see
+    // /__/firebase/init.json on Firebase Hosting). The previous sender/app id
+    // pair belonged to another project (game-flow-c6311's project number is
+    // 982493478258), so Installations — and with it FCM web push and
+    // Performance export — failed with 403 wherever this fallback was used
+    // (GitHub Pages, local dev).
+    messagingSenderId: '982493478258',
+    appId: '1:982493478258:web:1f942c420cef6c40e8b1eb',
+    measurementId: 'G-VTLSFV4PHW'
 };
 const DEFAULT_IMAGE_FIREBASE_CONFIG = {
     apiKey: 'AIzaSyCerM6cMh3M9wH6FcvbOjoBog4ukikWRZM',

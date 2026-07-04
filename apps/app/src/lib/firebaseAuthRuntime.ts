@@ -2,7 +2,6 @@ import {
   applyActionCode,
   confirmPasswordReset,
   createUserWithEmailAndPassword,
-  getApp,
   getApps,
   getAuth,
   getRedirectResult,
@@ -28,7 +27,11 @@ import { createLogger } from './logger';
 const logger = createLogger('firebase');
 
 const firebaseConfig = await resolvePrimaryFirebaseConfig();
-const app = getApps().length ? getApp() : initializeApp(firebaseConfig);
+// Only reuse the primary '[DEFAULT]' app. Other named apps (e.g. the
+// game-flow-img image-upload project) can register while the config fetch
+// above is awaiting, and getApp() throws app/no-app when only they exist.
+const existingDefaultApp = getApps().find((candidate) => candidate?.name === '[DEFAULT]');
+const app = existingDefaultApp || initializeApp(firebaseConfig);
 
 function isCapacitorNativeRuntime() {
   const protocol = typeof window !== 'undefined' ? window.location?.protocol : '';
