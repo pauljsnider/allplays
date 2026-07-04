@@ -34,7 +34,10 @@ type StatTrackingDependencies = {
   deleteDoc: typeof deleteDoc;
   increment: typeof increment;
   db: typeof db;
-  updateGameScore: (teamId: string, gameId: string, score: TrackerScoreState, user: TrackerUser) => Promise<unknown>;
+  // Applies a score *delta* (can be negative) atomically. Delta-based so that two
+  // devices tracking the same game each add to the authoritative server score
+  // instead of clobbering it with a client-local absolute value (#3419).
+  adjustGameScore: (teamId: string, gameId: string, scoreDelta: TrackerScoreState, user: TrackerUser) => Promise<unknown>;
 };
 
 type OpponentStatsEntryFallback = {
@@ -58,6 +61,22 @@ function normalizeScoreState(score: Partial<TrackerScoreState> | null | undefine
     homeScore: normalizeScoreValue(score?.homeScore),
     awayScore: normalizeScoreValue(score?.awayScore)
   };
+}
+
+/** Difference between two score states, per side (can be negative). */
+function scoreStateDelta(before: TrackerScoreState, after: TrackerScoreState): TrackerScoreState {
+  return {
+    homeScore: after.homeScore - before.homeScore,
+    awayScore: after.awayScore - before.awayScore
+  };
+}
+
+function isNonZeroScoreDelta(delta: TrackerScoreState) {
+  return delta.homeScore !== 0 || delta.awayScore !== 0;
+}
+
+function negateScoreDelta(delta: TrackerScoreState): TrackerScoreState {
+  return { homeScore: -delta.homeScore, awayScore: -delta.awayScore };
 }
 
 function normalizeText(value: unknown) {
@@ -395,13 +414,14 @@ export function createStatTrackingService({
         opponentStatsApplied = true;
       }
 
-      if (scoreAfter.homeScore !== scoreBefore.homeScore || scoreAfter.awayScore !== scoreBefore.awayScore) {
-        await dependencies.updateGameScore(teamId, gameId, scoreAfter, user);
+      const scoreDelta = scoreStateDelta(scoreBefore, scoreAfter);
+      if (isNonZeroScoreDelta(scoreDelta)) {
+        await dependencies.adjustGameScore(teamId, gameId, scoreDelta, user);
         scoreApplied = true;
       }
     } catch (error) {
       if (scoreApplied) {
-        await dependencies.updateGameScore(teamId, gameId, scoreBefore, user);
+        await dependencies.adjustGameScore(teamId, gameId, negateScoreDelta(scoreStateDelta(scoreBefore, scoreAfter)), user);
       }
       if (aggregateApplied && event.playerId && statKey && delta !== 0 && event.type === 'stat' && !event.isOpponent) {
         await applyAggregateWrite({
@@ -498,11 +518,9 @@ export function createStatTrackingService({
         opponentStatsReverted = true;
       }
 
-      if (
-        entry.scoreAfter.homeScore !== entry.scoreBefore.homeScore
-        || entry.scoreAfter.awayScore !== entry.scoreBefore.awayScore
-      ) {
-        await dependencies.updateGameScore(teamId, gameId, entry.scoreBefore, user);
+      const undoScoreDelta = scoreStateDelta(entry.scoreAfter, entry.scoreBefore);
+      if (isNonZeroScoreDelta(undoScoreDelta)) {
+        await dependencies.adjustGameScore(teamId, gameId, undoScoreDelta, user);
         scoreReverted = true;
       }
 
@@ -531,7 +549,7 @@ export function createStatTrackingService({
         });
       }
       if (scoreReverted) {
-        await dependencies.updateGameScore(teamId, gameId, entry.scoreAfter, user);
+        await dependencies.adjustGameScore(teamId, gameId, scoreStateDelta(entry.scoreBefore, entry.scoreAfter), user);
       }
       throw error;
     }
@@ -566,7 +584,7 @@ export function createDefaultStatTrackingService(options: {
   statConfig?: TrackerStatConfig;
   initialScore?: Partial<TrackerScoreState>;
   initialEventLog?: TrackerLogEntry[];
-  updateGameScore: StatTrackingDependencies['updateGameScore'];
+  adjustGameScore: StatTrackingDependencies['adjustGameScore'];
 }) {
   return createStatTrackingService({
     ...options,
@@ -576,7 +594,7 @@ export function createDefaultStatTrackingService(options: {
       setDoc,
       deleteDoc,
       increment,
-      updateGameScore: options.updateGameScore
+      adjustGameScore: options.adjustGameScore
     }
   });
 }

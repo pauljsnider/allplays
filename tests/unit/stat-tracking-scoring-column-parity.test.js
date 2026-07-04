@@ -80,7 +80,7 @@ function createDependencies() {
         setDoc: vi.fn(async () => undefined),
         deleteDoc: vi.fn(async () => undefined),
         increment: vi.fn((value) => ({ __increment: value })),
-        updateGameScore: vi.fn(async () => undefined)
+        adjustGameScore: vi.fn(async () => undefined)
     };
 }
 

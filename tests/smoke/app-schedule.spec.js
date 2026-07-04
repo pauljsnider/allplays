@@ -549,6 +549,15 @@ async function mockScheduleModules(page, options = {}) {
                     return payload;
                 }
 
+                export async function adjustGameScore(teamId, gameId, scoreDelta, user) {
+                    const delta = {
+                        homeScore: Number(scoreDelta?.homeScore ?? 0),
+                        awayScore: Number(scoreDelta?.awayScore ?? 0)
+                    };
+                    window.__scheduleCalls.scoreAdjustments = (window.__scheduleCalls.scoreAdjustments || []).concat({ teamId, gameId, delta, adjustedBy: user?.uid || null });
+                    return { homeScore: delta.homeScore, awayScore: delta.awayScore, shared: false };
+                }
+
                 export async function publishLiveScoreUpdateEvent(teamId, gameId, score, user, previousScore) {
                     const payload = {
                         homeScore: Number(score?.homeScore ?? 0),

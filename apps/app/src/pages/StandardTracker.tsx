@@ -7,7 +7,7 @@ import {
   loadOpponentStatsForGame,
   loadParentScheduleEventDetail,
   loadScorekeeperStatTrackerConfigsForApp,
-  updateGameScore,
+  adjustGameScore,
   type ScheduleHomeScoringPlayer,
   type ScheduleOpponentStatsEntry,
   type ScheduleStatTrackerConfigOption
@@ -238,7 +238,7 @@ export function StandardTracker({ auth }: { auth: AuthState }) {
           statConfig: trackerConfig || {},
           initialScore: restoredScore,
           initialEventLog: restoredLog,
-          updateGameScore: (nextTeamId, nextGameId, nextScore) => updateGameScore(nextTeamId, nextGameId, nextScore, signedInUser)
+          adjustGameScore: (nextTeamId, nextGameId, nextScoreDelta) => adjustGameScore(nextTeamId, nextGameId, nextScoreDelta, signedInUser)
         });
         setEvent(loadedEvent);
         setConfig(trackerConfig);

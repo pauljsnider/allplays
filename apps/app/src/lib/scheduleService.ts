@@ -3859,6 +3859,124 @@ export async function updateGameScore(teamId: string, gameId: string, score: Gam
   return payload;
 }
 
+/**
+ * Atomically apply a score delta to a live game (#3419).
+ *
+ * The live stat tracker used to compute the new score from client-local state and
+ * write it as an absolute value, so two devices tracking the same game clobbered
+ * each other's score (while the increment()-based aggregate stats stayed correct).
+ * This reads-modifies-writes the game score inside a Firestore transaction, so
+ * concurrent writers each add their delta to the authoritative server value.
+ *
+ * `updateGameScore` remains the absolute setter for manual score edits.
+ */
+export async function adjustGameScore(
+  teamId: string,
+  gameId: string,
+  scoreDelta: GameScoreInput,
+  user: AuthUser
+) {
+  if (!teamId || !gameId) {
+    throw new Error('A scheduled game is required before updating the score.');
+  }
+  if (!user?.uid) {
+    throw new Error('Sign in before updating the score.');
+  }
+
+  const homeDelta = Math.trunc(Number(scoreDelta.homeScore) || 0);
+  const awayDelta = Math.trunc(Number(scoreDelta.awayScore) || 0);
+  const scoreStreamSessionId = compactString(scoreDelta.scoreStreamSessionId);
+  if (homeDelta === 0 && awayDelta === 0) {
+    return { homeScore: null, awayScore: null, shared: false };
+  }
+
+  const gameRef = doc(db, `teams/${teamId}/games/${gameId}`);
+
+  const buildPayload = (current: Record<string, any>) => {
+    const payload: Record<string, unknown> = {
+      homeScore: normalizeGameScoreValue(normalizeGameScoreValue(current?.homeScore) + homeDelta),
+      awayScore: normalizeGameScoreValue(normalizeGameScoreValue(current?.awayScore) + awayDelta),
+      scoreUpdatedAt: new Date(),
+      scoreUpdatedBy: user.uid
+    };
+    if (scoreStreamSessionId) {
+      payload.scoreStreamSessionId = scoreStreamSessionId;
+    }
+    return payload;
+  };
+
+  let resolved: Record<string, unknown> & { homeScore: number; awayScore: number };
+  let shared = false;
+  try {
+    resolved = await runTransaction(db, async (transaction: any) => {
+      const snapshot = await transaction.get(gameRef);
+      const exists = typeof snapshot.exists === 'function' ? snapshot.exists() : snapshot.exists === true;
+      if (!exists) {
+        throw new Error('Scheduled game not found.');
+      }
+      const current = snapshot.data?.() || {};
+      shared = Boolean(current.sharedScheduleId);
+      const counterpartTeamId = shared ? compactString(current.sharedScheduleOpponentTeamId) : '';
+      const counterpartGameId = shared ? compactString(current.sharedScheduleOpponentGameId) : '';
+      const counterpartRef = counterpartTeamId && counterpartGameId
+        ? doc(db, `teams/${counterpartTeamId}/games/${counterpartGameId}`)
+        : null;
+      if (counterpartRef) {
+        const counterpartSnapshot = await transaction.get(counterpartRef);
+        const counterpartExists = typeof counterpartSnapshot.exists === 'function'
+          ? counterpartSnapshot.exists()
+          : counterpartSnapshot.exists === true;
+        if (!counterpartExists) {
+          throw new Error('Shared scheduled game counterpart not found.');
+        }
+      }
+      const payload = buildPayload(current);
+      transaction.set(gameRef, payload, { merge: true });
+      if (counterpartRef) {
+        transaction.set(counterpartRef, {
+          homeScore: payload.awayScore,
+          awayScore: payload.homeScore,
+          scoreUpdatedAt: payload.scoreUpdatedAt,
+          scoreUpdatedBy: payload.scoreUpdatedBy,
+          ...(scoreStreamSessionId ? { scoreStreamSessionId } : {})
+        }, { merge: true });
+      }
+      return payload as Record<string, unknown> & { homeScore: number; awayScore: number };
+    });
+  } catch (error) {
+    if (!isNativeRuntime()) throw error;
+    logScheduleWarning('Falling back to REST score adjust.', 'game-score-adjust', error, { fallback: 'rest', teamId, gameId });
+    const current = await nativeGetDocument(`teams/${encodeURIComponent(teamId)}/games/${encodeURIComponent(gameId)}`);
+    if (!current) {
+      throw new Error('Scheduled game not found.');
+    }
+    shared = Boolean((current as Record<string, any>).sharedScheduleId);
+    resolved = buildPayload(current as Record<string, any>) as Record<string, unknown> & { homeScore: number; awayScore: number };
+    const counterpartTeamId = shared ? compactString((current as Record<string, any>).sharedScheduleOpponentTeamId) : '';
+    const counterpartGameId = shared ? compactString((current as Record<string, any>).sharedScheduleOpponentGameId) : '';
+    let counterpartPath = '';
+    if (counterpartTeamId && counterpartGameId) {
+      counterpartPath = `teams/${encodeURIComponent(counterpartTeamId)}/games/${encodeURIComponent(counterpartGameId)}`;
+      const counterpart = await nativeGetDocument(counterpartPath);
+      if (!counterpart) {
+        throw new Error('Shared scheduled game counterpart not found.');
+      }
+    }
+    await nativePatchDocument(`teams/${encodeURIComponent(teamId)}/games/${encodeURIComponent(gameId)}`, resolved);
+    if (counterpartPath) {
+      await nativePatchDocument(counterpartPath, {
+        homeScore: resolved.awayScore,
+        awayScore: resolved.homeScore,
+        scoreUpdatedAt: resolved.scoreUpdatedAt,
+        scoreUpdatedBy: resolved.scoreUpdatedBy,
+        ...(scoreStreamSessionId ? { scoreStreamSessionId } : {})
+      });
+    }
+  }
+
+  return { ...resolved, shared };
+}
+
 export async function completeGameWrapupForApp(teamId: string, gameId: string, payload: Record<string, unknown>, user: AuthUser) {
   if (!teamId || !gameId) {
     throw new Error('A scheduled game is required before completing wrap-up.');

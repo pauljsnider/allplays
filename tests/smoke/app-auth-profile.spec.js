@@ -454,6 +454,15 @@ async function mockAppModules(page, { user = null, emailLink = false } = {}) {
                     };
                 }
 
+                export async function adjustGameScore(teamId, gameId, scoreDelta, user) {
+                    return {
+                        homeScore: Number(scoreDelta?.homeScore ?? 0),
+                        awayScore: Number(scoreDelta?.awayScore ?? 0),
+                        scoreUpdatedBy: user?.uid || null,
+                        shared: false
+                    };
+                }
+
                 export async function cancelScheduledGameForApp() {
                     return { status: 'cancelled', isCancelled: true };
                 }
