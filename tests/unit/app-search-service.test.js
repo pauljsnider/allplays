@@ -1138,13 +1138,14 @@ describe('React app search service', () => {
         expect(firebaseMocks.getDocs).toHaveBeenCalledTimes(playerSearchFirestoreQueryBudget);
     });
 
-    it('prioritizes query-matching private teams before capping player search fanout', async () => {
+    it('keeps private teams ahead of public metadata matches before capping player search fanout', async () => {
         const prioritizedTeams = [
+            { id: 'team-private', name: 'Private Roster', sport: 'Soccer', isPublic: false, fromAppAccess: true },
             ...Array.from({ length: 8 }, (_, index) => ({
-                id: `team-private-${index}`,
-                name: `Alpha Private ${index}`,
+                id: `team-public-${index}`,
+                name: `Pat Public ${index}`,
                 sport: 'Basketball',
-                isPublic: false,
+                isPublic: true,
                 fromAppAccess: true
             })),
             { id: 'team-match', name: 'Patriots', sport: 'Basketball', isPublic: false, fromAppAccess: true }
@@ -1182,8 +1183,9 @@ describe('React app search service', () => {
 
         const players = await searchAppPlayers('pat', visibleTeams, auth.user);
 
+        expect(queriedTeamIds.has('team-private')).toBe(true);
         expect(queriedTeamIds.has('team-match')).toBe(true);
-        expect(queriedTeamIds.has('team-private-7')).toBe(false);
+        expect(queriedTeamIds.has('team-public-7')).toBe(false);
         expect(playerQueryCount).toBe(playerSearchFirestoreQueryBudget);
         expect(players).toEqual([{
             id: 'player:team-match:player-1',
