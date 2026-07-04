@@ -7,8 +7,11 @@ function readRepoFile(relativePath) {
 
 describe('team media entry point', () => {
     it('adds Media navigation for full-access, parent, and delegated upload users', () => {
+        const teamHtml = readRepoFile('team.html');
         const bannerJs = readRepoFile('js/team-admin-banner.js');
 
+        expect(teamHtml).toContain('if (profile.teamMediaUploadTeamIds) currentUser.teamMediaUploadTeamIds = profile.teamMediaUploadTeamIds;');
+        expect(teamHtml).toContain('if (profile.mediaUploadTeamIds) currentUser.mediaUploadTeamIds = profile.mediaUploadTeamIds;');
         expect(bannerJs).toContain('media: `team-media.html#teamId=${teamId}`');
         expect(bannerJs).toContain("label: 'Media', iconName: 'media', active: active === 'media'");
         expect(bannerJs).toContain('// Parent: View, Chat, Media, Help');

@@ -264,14 +264,14 @@ describe('team access helpers', () => {
     });
   });
 
-  it('keeps delegated Team Media upload grants out of generic team access', () => {
+  it('returns media access for delegated Team Media upload grants', () => {
     expect(hasTeamMediaAccess({ uid: 'media-user', teamMediaUploadTeamIds: [' team-1 '] }, TEAM)).toBe(true);
     expect(hasTeamMediaAccess({ uid: 'legacy-media-user', mediaUploadTeamIds: ['team-1'] }, TEAM)).toBe(true);
     expect(hasFullTeamAccess({ uid: 'media-user', teamMediaUploadTeamIds: ['team-1'] }, TEAM)).toBe(false);
     expect(getTeamAccessInfo({ uid: 'media-user', teamMediaUploadTeamIds: ['team-1'] }, TEAM)).toEqual({
-      hasAccess: false,
-      accessLevel: null,
-      exitUrl: 'index.html'
+      hasAccess: true,
+      accessLevel: 'media',
+      exitUrl: 'team.html#teamId=team-1'
     });
   });
 
