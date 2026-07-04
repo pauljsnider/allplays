@@ -28,6 +28,7 @@ import {
   loadLegacySignupFlow
 } from './adapters/legacyAuth';
 import { createLogger } from './logger';
+import { clearAppDataCache } from './appDataCache';
 import type { AuthUser, UserRole } from './types';
 
 export const firebaseAuth = auth;
@@ -253,6 +254,19 @@ function clearNativeAuthSession() {
   }
 }
 
+/**
+ * Drop every persisted app-data cache entry (schedule summary, home dashboard,
+ * fees, event details, etc.). Sign-out and account switches must call this so a
+ * previous user's data is never served from localStorage on a shared device.
+ */
+function clearCachedUserData() {
+  try {
+    clearAppDataCache();
+  } catch (error) {
+    logger.warn('Unable to clear cached app data during auth change.', { error });
+  }
+}
+
 async function clearFirebaseAuthStorageSession() {
   if (!window.indexedDB) {
     return;
@@ -445,6 +459,10 @@ async function getNativeAccessCodeValidationOptions(result: UserCredential) {
 
 async function persistNativeRestAuthSession(signInPayload: NativeRestSignInPayload, lookupUser: NativeRestLookupUser = {}): Promise<FirebaseUser> {
   const email = signInPayload.email || lookupUser.email || '';
+  const previousUid = auth.currentUser?.uid || readNativeAuthSession()?.uid || null;
+  if (previousUid && previousUid !== signInPayload.localId) {
+    clearCachedUserData();
+  }
   const expiresInSeconds = Number.parseInt(signInPayload.expiresIn || '3600', 10);
   const expirationTime = Date.now() + Math.max(expiresInSeconds - 30, 60) * 1000;
   const now = `${Date.now()}`;
@@ -897,12 +915,24 @@ export async function hydrateFirebaseUser(user: FirebaseUser): Promise<HydratedU
 
 export function observeFirebaseUser(callback: (user: FirebaseUser | null) => void) {
   let timeoutId: number | undefined;
+  let lastObservedUid: string | null | undefined;
+
+  const emit = (user: FirebaseUser | null) => {
+    const nextUid = user?.uid ?? null;
+    // When the signed-in account changes (including sign-out), purge any cached
+    // app data so the incoming user can never read the previous user's data.
+    if (lastObservedUid !== undefined && lastObservedUid !== nextUid) {
+      clearCachedUserData();
+    }
+    lastObservedUid = nextUid;
+    callback(user);
+  };
 
   if (isNativeRuntime()) {
     timeoutId = window.setTimeout(() => {
       const fallbackUser = getNativeAuthFallbackUser();
       if (fallbackUser) {
-        callback(fallbackUser);
+        emit(fallbackUser);
       }
     }, nativeAuthObserverTimeoutMs);
   }
@@ -913,10 +943,10 @@ export function observeFirebaseUser(callback: (user: FirebaseUser | null) => voi
       timeoutId = undefined;
     }
     if (user) {
-      callback(user);
+      emit(user);
       return;
     }
-    callback(isNativeRuntime() ? getNativeAuthFallbackUser() : null);
+    emit(isNativeRuntime() ? getNativeAuthFallbackUser() : null);
   });
 
   return () => {
@@ -1330,6 +1360,7 @@ export function mapLegacyRedirectToAppRoute(redirectUrl?: string) {
 
 export async function signOut() {
   clearNativeAuthSession();
+  clearCachedUserData();
   await runBestEffortAuthCleanup('Firebase auth storage cleanup', clearFirebaseAuthStorageSession);
   await runBestEffortAuthCleanup('Native Firebase sign-out', async () => {
     if ((Capacitor as any).isPluginAvailable?.('FirebaseAuthentication')) {

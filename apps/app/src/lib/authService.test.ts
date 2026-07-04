@@ -22,6 +22,14 @@ const parentMembershipMocks = vi.hoisted(() => ({
   mergeApprovedParentMembershipRequests: vi.fn()
 }));
 
+const appDataCacheMocks = vi.hoisted(() => ({
+  clearAppDataCache: vi.fn()
+}));
+
+const authObserverMocks = vi.hoisted(() => ({
+  onAuthStateChanged: vi.fn()
+}));
+
 vi.mock('@capacitor/core', () => ({
   Capacitor: {
     isNativePlatform: vi.fn(() => true)
@@ -40,7 +48,7 @@ vi.mock('./firebaseAuthRuntime', () => ({
   getRedirectResult: vi.fn(),
   GoogleAuthProvider: class {},
   isSignInWithEmailLink: vi.fn(),
-  onAuthStateChanged: vi.fn(),
+  onAuthStateChanged: authObserverMocks.onAuthStateChanged,
   sendEmailVerification: vi.fn(),
   sendPasswordResetEmail: vi.fn(),
   signInWithEmailAndPassword: vi.fn(),
@@ -60,6 +68,10 @@ vi.mock('./adapters/legacyAuth', () => ({
   loadLegacySignupFlow: vi.fn()
 }));
 
+vi.mock('./appDataCache', () => ({
+  clearAppDataCache: appDataCacheMocks.clearAppDataCache
+}));
+
 vi.mock('./logger', () => ({
   createLogger: () => ({
     info: vi.fn(),
@@ -68,7 +80,7 @@ vi.mock('./logger', () => ({
   })
 }));
 
-import { hydrateFirebaseUser } from './authService';
+import { hydrateFirebaseUser, observeFirebaseUser, signInWithEmail, signOut } from './authService';
 
 describe('hydrateFirebaseUser', () => {
   beforeEach(() => {
@@ -103,3 +115,167 @@ describe('hydrateFirebaseUser', () => {
     expect(hydrated.user.roles).not.toEqual(['parent']);
   });
 });
+
+describe('signOut', () => {
+  beforeEach(() => {
+    appDataCacheMocks.clearAppDataCache.mockReset();
+  });
+
+  it('clears persisted app-data cache so the next user cannot read cached data', async () => {
+    await signOut();
+    expect(appDataCacheMocks.clearAppDataCache).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('native REST sign-in', () => {
+  beforeEach(() => {
+    authState.currentUser = null;
+    appDataCacheMocks.clearAppDataCache.mockReset();
+    legacyAuthMocks.updateUserProfile.mockReset();
+    legacyAuthMocks.updateUserProfile.mockResolvedValue(undefined);
+    window.localStorage.clear();
+    installIndexedDbMock();
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+      if (url.includes('accounts:signInWithPassword')) {
+        return createJsonResponse({
+          localId: 'new-user',
+          email: 'new@example.com',
+          idToken: 'new-id-token',
+          refreshToken: 'new-refresh-token',
+          expiresIn: '3600'
+        });
+      }
+      return createJsonResponse({
+        users: [{
+          email: 'new@example.com',
+          emailVerified: true,
+          displayName: 'New User'
+        }]
+      });
+    }));
+  });
+
+  it('clears cached user data before replacing a persisted native REST session with a different uid', async () => {
+    window.localStorage.setItem('allplays-native-auth-session', JSON.stringify({
+      uid: 'previous-user',
+      email: 'previous@example.com',
+      idToken: 'previous-id-token',
+      refreshToken: 'previous-refresh-token',
+      expirationTime: Date.now() + 3600_000,
+      apiKey: 'test-api-key',
+      provider: 'rest'
+    }));
+
+    const result = await signInWithEmail('new@example.com', 'password123');
+
+    expect(result.nativeRest).toBe(true);
+    expect(result.user.uid).toBe('new-user');
+    expect(appDataCacheMocks.clearAppDataCache).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('observeFirebaseUser', () => {
+  beforeEach(() => {
+    appDataCacheMocks.clearAppDataCache.mockReset();
+    authObserverMocks.onAuthStateChanged.mockReset();
+  });
+
+  function wireObserver() {
+    let handler: ((user: unknown) => void) | null = null;
+    authObserverMocks.onAuthStateChanged.mockImplementation((_auth: unknown, cb: (user: unknown) => void) => {
+      handler = cb;
+      return () => {};
+    });
+    observeFirebaseUser(() => {});
+    return (user: unknown) => handler?.(user);
+  }
+
+  it('does not clear the cache on the initial restored session', () => {
+    const emit = wireObserver();
+    emit({ uid: 'user-a' });
+    expect(appDataCacheMocks.clearAppDataCache).not.toHaveBeenCalled();
+  });
+
+  it('clears cached data when the account switches to a different uid', () => {
+    const emit = wireObserver();
+    emit({ uid: 'user-a' });
+    emit({ uid: 'user-b' });
+    expect(appDataCacheMocks.clearAppDataCache).toHaveBeenCalledTimes(1);
+  });
+
+  it('clears cached data when the session transitions to signed-out', () => {
+    const emit = wireObserver();
+    emit({ uid: 'user-a' });
+    emit(null);
+    expect(appDataCacheMocks.clearAppDataCache).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not clear the cache on repeated snapshots of the same uid', () => {
+    const emit = wireObserver();
+    emit({ uid: 'user-a' });
+    emit({ uid: 'user-a' });
+    expect(appDataCacheMocks.clearAppDataCache).not.toHaveBeenCalled();
+  });
+});
+
+function createJsonResponse(payload: unknown) {
+  return {
+    ok: true,
+    json: vi.fn(async () => payload)
+  } as unknown as Response;
+}
+
+function installIndexedDbMock() {
+  const objectStore = {
+    delete: vi.fn(),
+    put: vi.fn()
+  };
+  const database = {
+    close: vi.fn(),
+    createObjectStore: vi.fn(),
+    objectStoreNames: {
+      contains: vi.fn(() => true)
+    },
+    transaction: vi.fn(() => {
+      const transaction: {
+        error: Error | null;
+        objectStore: ReturnType<typeof vi.fn>;
+        onabort: (() => void) | null;
+        oncomplete: (() => void) | null;
+        onerror: (() => void) | null;
+      } = {
+        error: null,
+        objectStore: vi.fn(() => objectStore),
+        onabort: null,
+        oncomplete: null,
+        onerror: null
+      };
+      window.setTimeout(() => transaction.oncomplete?.(), 0);
+      return transaction;
+    })
+  };
+  const indexedDB = {
+    open: vi.fn(() => {
+      const request: {
+        error: Error | null;
+        result: typeof database;
+        onerror: (() => void) | null;
+        onsuccess: (() => void) | null;
+        onupgradeneeded: (() => void) | null;
+      } = {
+        error: null,
+        result: database,
+        onerror: null,
+        onsuccess: null,
+        onupgradeneeded: null
+      };
+      window.setTimeout(() => request.onsuccess?.(), 0);
+      return request;
+    })
+  };
+
+  Object.defineProperty(window, 'indexedDB', {
+    configurable: true,
+    value: indexedDB
+  });
+}
