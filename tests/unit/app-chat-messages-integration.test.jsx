@@ -136,7 +136,7 @@ vi.mock('../../apps/app/src/lib/voiceService.ts', () => ({
     voiceRecognition: voiceMocks
 }));
 vi.mock('../../apps/app/src/lib/chatService.ts', () => chatMocks);
-vi.mock('../../apps/app/src/lib/chatAiService.ts', () => ({
+vi.mock('../../apps/app/src/lib/chatAiService', () => ({
     sendAllPlaysChatAnswer: chatMocks.sendAllPlaysChatAnswer
 }));
 vi.mock('../../apps/app/src/lib/useShellLayout.ts', () => ({
