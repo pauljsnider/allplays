@@ -29,4 +29,17 @@ describe('live game auth-required chat and reactions', () => {
         expect(source).toContain('senderId: state.user?.uid || null');
         expect(source).toContain('if (!state.user) return;');
     });
+
+    it('keeps client-created ALL PLAYS bot chat writes inside the approved chat payload shape', () => {
+        const source = readFile('js/live-game.js');
+        const generateAiResponseStart = source.indexOf('async function generateAiResponse(question)');
+        const buildAiPromptStart = source.indexOf('function buildAiPrompt(question)');
+        const generateAiResponseSource = source.slice(generateAiResponseStart, buildAiPromptStart);
+
+        expect(generateAiResponseSource).toContain("senderName: 'ALL PLAYS'");
+        expect(generateAiResponseSource).toContain('senderPhotoUrl: null');
+        expect(generateAiResponseSource).toContain('isAnonymous: false');
+        expect(generateAiResponseSource).not.toContain('ai: true');
+        expect(generateAiResponseSource).not.toContain('aiQuestion');
+    });
 });
