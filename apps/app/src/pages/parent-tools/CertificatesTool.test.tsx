@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { fireEvent, render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, within } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { CertificatesTool } from './CertificatesTool';
@@ -110,5 +110,38 @@ describe('CertificatesTool deep links', () => {
         expect(await screen.findByText('Leadership Award')).toBeTruthy();
         expect(screen.getByText('That award is no longer available. Showing all published awards instead.')).toBeTruthy();
         expect(screen.getAllByText('Hustle Award').length).toBeGreaterThan(0);
+    });
+
+    it('renders multiple award cards from the same team', async () => {
+        parentCertificatesServiceMocks.loadParentCertificates.mockResolvedValueOnce([
+            {
+                id: 'cert-1',
+                teamId: 'team-1',
+                teamName: 'Bears',
+                playerId: 'player-1',
+                playerName: 'Sam Player',
+                title: 'Hustle Award',
+                narrative: 'Great effort.',
+                url: 'https://allplays.ai/certificates.html#teamId=team-1&certificateId=cert-1'
+            },
+            {
+                id: 'cert-2',
+                teamId: 'team-1',
+                teamName: 'Bears',
+                playerId: 'player-2',
+                playerName: 'Jordan Star',
+                title: 'Leadership Award',
+                narrative: 'Great teammate.',
+                url: 'https://allplays.ai/certificates.html#teamId=team-1&certificateId=cert-2'
+            }
+        ]);
+
+        const { container } = renderCertificatesTool();
+        const currentRender = within(container);
+
+        expect(await currentRender.findByText('Hustle Award')).toBeTruthy();
+        expect(currentRender.getByText('Leadership Award')).toBeTruthy();
+        expect(currentRender.getByText('Sam Player - Bears')).toBeTruthy();
+        expect(currentRender.getByText('Jordan Star - Bears')).toBeTruthy();
     });
 });

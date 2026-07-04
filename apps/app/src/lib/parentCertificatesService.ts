@@ -23,12 +23,19 @@ export async function loadParentCertificates(user: AuthUser | null, options: Loa
     const requestedTeamId = compactString(options.requestedTeamId);
     const requestedCertificateId = compactString(options.requestedCertificateId);
     const hasTargetedCertificateRequest = Boolean(requestedTeamId && requestedCertificateId);
+    const teamReads = new Map<string, Promise<any>>();
+    const readTeam = (teamId: string) => {
+        if (!teamReads.has(teamId)) {
+            teamReads.set(teamId, Promise.resolve(getTeam(teamId)).catch(() => null));
+        }
+        return teamReads.get(teamId)!;
+    };
     const rows = await Promise.all(children.map(async (child: any) => {
         const certificateLimit = hasTargetedCertificateRequest && child.teamId === requestedTeamId
             ? TARGETED_PUBLISHED_CERTIFICATE_LIMIT
             : DEFAULT_PUBLISHED_CERTIFICATE_LIMIT;
         const [team, certificates] = await Promise.all([
-            Promise.resolve(getTeam(child.teamId)).catch(() => null),
+            readTeam(child.teamId),
             Promise.resolve(listCertificatesForPlayer(child.teamId, child.playerId, { status: 'published', limit: certificateLimit })).catch(() => [])
         ]);
         return (certificates || []).map((certificate: any) => ({
