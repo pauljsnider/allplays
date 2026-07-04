@@ -156,7 +156,7 @@ export function hasTeamMediaAccess(user, team) {
 
 /**
  * Determine user's access level for a team.
- * @returns {{ hasAccess: boolean, accessLevel: 'full'|'scorekeep'|'stream'|'stream-score'|'videographer'|'media'|'parent'|null, exitUrl: string }}
+ * @returns {{ hasAccess: boolean, accessLevel: 'full'|'scorekeep'|'stream'|'stream-score'|'videographer'|'parent'|null, exitUrl: string }}
  */
 function hasParentTeamAccess(user, teamId) {
   if (!user || !teamId) return false;
@@ -203,10 +203,6 @@ export function getTeamAccessInfo(user, team, options = {}) {
 
   if (hasParentTeamAccess(user, team.id)) {
     return { hasAccess: true, accessLevel: 'parent', exitUrl: 'parent-dashboard.html' };
-  }
-
-  if (hasTeamMediaAccess(user, team)) {
-    return { hasAccess: true, accessLevel: 'media', exitUrl: teamExitUrl };
   }
 
   return { hasAccess: false, accessLevel: null, exitUrl: 'index.html' };
