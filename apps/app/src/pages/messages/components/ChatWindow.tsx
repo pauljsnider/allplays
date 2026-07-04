@@ -38,7 +38,6 @@ import {
   unmuteTeamChat,
   saveTeamEmailDraft,
   saveTeamEmailTemplate,
-  sendAllPlaysChatAnswer,
   sendTeamChatMessage,
   sendTeamEmailMessage,
   toggleTeamChatReaction,
@@ -94,6 +93,7 @@ import { useViewLoadTimer } from '../../../lib/viewLoadTiming';
 import type { AuthState } from '../../../lib/types';
 import { voiceRecognition, type VoiceListenerHandle } from '../../../lib/voiceService';
 import { startInteractionTimer, UX_TIMING } from '../../../lib/uxTiming';
+import type { sendAllPlaysChatAnswer } from '../../../lib/chatAiService';
 import { useChatSheets } from '../hooks/useChatSheets';
 import { useChatTeam } from '../hooks/useChatTeam';
 import { useChatMessages } from '../hooks/useChatMessages';
@@ -163,6 +163,11 @@ const allTargetOptions: Array<{ value: ChatTargetType; label: string; descriptio
   { value: 'individuals', label: 'Selected members', description: 'Starts a direct or group conversation.' }
 ];
 const STAFF_CONVERSATION_PLACEHOLDER_ID = '__staff_conversation__';
+
+export async function sendLazyAllPlaysChatAnswer(input: Parameters<typeof sendAllPlaysChatAnswer>[0]) {
+  const chatAiService = await import('../../../lib/chatAiService');
+  return chatAiService.sendAllPlaysChatAnswer(input);
+}
 
 function createChatClientMessageId(userId: string) {
   const randomPart = typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
@@ -1039,7 +1044,7 @@ export function ChatWindow({
         } else {
           setAiThinking(true);
           try {
-            await sendAllPlaysChatAnswer({
+            await sendLazyAllPlaysChatAnswer({
               teamId,
               team: request.team,
               user: request.user,

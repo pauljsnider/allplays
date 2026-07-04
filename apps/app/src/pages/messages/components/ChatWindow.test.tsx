@@ -1,11 +1,29 @@
 // @vitest-environment jsdom
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
+import '@testing-library/jest-dom/vitest';
 import { cleanup, render, screen } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { APP_BACK_DISMISS_EVENT } from '../../../lib/nativeBackButton';
-import { Sheet } from './ChatWindow';
+import { Sheet, sendLazyAllPlaysChatAnswer } from './ChatWindow';
+
+const chatAiServiceMocks = vi.hoisted(() => ({
+  sendAllPlaysChatAnswer: vi.fn()
+}));
+
+vi.mock('../../../lib/chatAiService', () => chatAiServiceMocks);
+
+function resolveAppSourcePath(relativePath: string) {
+  const cwd = process.cwd();
+  const appRoot = cwd.endsWith('/apps/app') || cwd.endsWith('\\apps\\app')
+    ? cwd
+    : resolve(cwd, 'apps/app');
+  return resolve(appRoot, relativePath);
+}
 
 afterEach(() => {
   cleanup();
+  vi.clearAllMocks();
 });
 
 describe('Messages Sheet native back behavior', () => {
@@ -41,5 +59,47 @@ describe('Messages Sheet native back behavior', () => {
     window.dispatchEvent(event);
 
     expect(onClose).not.toHaveBeenCalled();
+  });
+});
+
+describe('Messages ALL PLAYS lazy loading', () => {
+  it('keeps the AI answer module behind the wantsAi send branch', () => {
+    const sourcePath = resolveAppSourcePath('src/pages/messages/components/ChatWindow.tsx');
+    const source = readFileSync(sourcePath, 'utf8');
+    const chatServiceImport = source.match(/import \{[\s\S]*?\} from '..\/..\/..\/lib\/chatService';/)?.[0] || '';
+    const chatServiceSource = readFileSync(resolveAppSourcePath('src/lib/chatService.ts'), 'utf8');
+    const legacyChatServiceSource = readFileSync(resolveAppSourcePath('src/lib/adapters/legacyChatService.ts'), 'utf8');
+
+    expect(chatServiceImport).not.toContain('sendAllPlaysChatAnswer');
+    expect(source).toContain("await import('../../../lib/chatAiService')");
+    expect(source.indexOf('if (result.wantsAi)')).toBeLessThan(source.indexOf('await sendLazyAllPlaysChatAnswer({'));
+    expect(chatServiceSource).not.toContain('getAI');
+    expect(chatServiceSource).not.toContain('getGenerativeModel');
+    expect(chatServiceSource).not.toContain('GoogleAIBackend');
+    expect(legacyChatServiceSource).not.toContain('firebase-ai');
+  });
+
+  it('loads and calls the AI module only through the lazy answer helper', async () => {
+    const input = {
+      teamId: 'team-1',
+      team: { id: 'team-1', name: 'Bears' },
+      user: { uid: 'user-1', email: 'coach@example.test', displayName: 'Coach Taylor', roles: ['coach'] as const },
+      question: 'who needs RSVP help?',
+      selectedConversation: { id: 'staff-conversation', participantRoles: ['staff'] },
+      selectedConversationId: 'staff-conversation',
+      selectedRecipientTarget: 'staff' as const,
+      selectedRecipientIds: ['user:coach-1']
+    };
+
+    await sendLazyAllPlaysChatAnswer(input as any);
+
+    expect(chatAiServiceMocks.sendAllPlaysChatAnswer).toHaveBeenCalledTimes(1);
+    expect(chatAiServiceMocks.sendAllPlaysChatAnswer).toHaveBeenCalledWith(expect.objectContaining({
+      teamId: 'team-1',
+      question: 'who needs RSVP help?',
+      selectedConversationId: 'staff-conversation',
+      selectedRecipientTarget: 'staff',
+      selectedRecipientIds: ['user:coach-1']
+    }));
   });
 });

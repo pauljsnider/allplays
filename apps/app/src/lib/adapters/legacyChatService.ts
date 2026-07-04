@@ -2,7 +2,6 @@
  * Bindings re-exported as-is so existing js/* test mocks apply via the @legacy alias. */
 import * as legacyDb from '@legacy/db.js';
 import { getApp as legacy_getApp } from '@legacy/vendor/firebase-app.js';
-import { getAI as legacy_getAI, getGenerativeModel as legacy_getGenerativeModel, GoogleAIBackend as legacy_GoogleAIBackend } from '@legacy/vendor/firebase-ai.js';
 import { resolveImageFirebaseConfig as legacy_resolveImageFirebaseConfig } from '@legacy/firebase-runtime-config.js';
 import { isTeamActive as legacy_isTeamActive } from '@legacy/team-visibility.js';
 
@@ -47,8 +46,5 @@ export const clearChatMuted = (...args: any[]) => callLegacyDb('clearChatMuted',
 export const uploadChatImage = (...args: any[]) => callLegacyDb('uploadChatImage', args);
 export const upsertChatConversation = (...args: any[]) => callLegacyDb('upsertChatConversation', args);
 export const getApp = legacy_getApp as (...args: any[]) => any;
-export const getAI = legacy_getAI as (...args: any[]) => any;
-export const getGenerativeModel = legacy_getGenerativeModel as (...args: any[]) => any;
-export const GoogleAIBackend = legacy_GoogleAIBackend as new (...args: any[]) => unknown;
 export const resolveImageFirebaseConfig = legacy_resolveImageFirebaseConfig as (...args: any[]) => any;
 export const isTeamActive = legacy_isTeamActive as (...args: any[]) => any;

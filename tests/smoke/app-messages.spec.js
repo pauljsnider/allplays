@@ -88,6 +88,7 @@ async function mockMessagesModules(page, options = {}) {
             deletes: [],
             reads: [],
             ai: [],
+            chatAiModuleRequests: [],
             subscriptions: []
         };
         if (speech) {
@@ -308,10 +309,6 @@ async function mockMessagesModules(page, options = {}) {
                     return { conversationId: 'team', createdConversation: null, wantsAi: input.text.includes('@ALL PLAYS') };
                 }
 
-                export async function sendAllPlaysChatAnswer(input) {
-                    window.__chatCalls.ai.push(input.question);
-                }
-
                 export async function toggleTeamChatReaction(teamId, messageId, reactionKey, userId, conversationId) {
                     window.__chatCalls.reactions.push({ teamId, messageId, reactionKey, userId, conversationId });
                     return true;
@@ -380,6 +377,25 @@ async function mockMessagesModules(page, options = {}) {
                         size: file.size || 0,
                         url: 'https://media.example.test/' + file.name
                     };
+                }
+            `
+        });
+    });
+
+    await page.route(/\/src\/lib\/chatAiService\.ts(\?.*)?$/, async (route) => {
+        await route.fulfill({
+            status: 200,
+            contentType: 'application/javascript',
+            body: `
+                window.__chatCalls.chatAiModuleRequests.push(new URL(import.meta.url).pathname);
+
+                export async function sendAllPlaysChatAnswer(input) {
+                    window.__chatCalls.ai.push({
+                        question: input.question,
+                        selectedConversationId: input.selectedConversationId,
+                        selectedRecipientTarget: input.selectedRecipientTarget,
+                        selectedRecipientIds: input.selectedRecipientIds
+                    });
                 }
             `
         });
@@ -489,6 +505,17 @@ test('messages inbox and team chat exercise real migrated chat UX', async ({ pag
     await expect(page.getByRole('button', { name: 'Staff only' })).toBeHidden();
     await page.getByRole('button', { name: 'Close Message audience' }).click();
 
+    await page.getByPlaceholder('Message Bears').fill('See you at practice');
+    await page.getByRole('button', { name: 'Send message' }).click();
+    await expect.poll(() => page.evaluate(() => window.__chatCalls.sends[0])).toMatchObject({
+        text: 'See you at practice',
+        selectedConversationId: 'team',
+        selectedRecipientTarget: 'full_team',
+        selectedRecipientIds: [],
+        fileCount: 0
+    });
+    await expect.poll(() => page.evaluate(() => window.__chatCalls.chatAiModuleRequests)).toEqual([]);
+
     await page.getByRole('button', { name: 'Team chat' }).click();
     const conversationsDialog = page.getByRole('dialog', { name: 'Conversations' });
     await expect(conversationsDialog).toBeVisible();
@@ -499,6 +526,14 @@ test('messages inbox and team chat exercise real migrated chat UX', async ({ pag
 
     await expect.poll(() => page.evaluate(() => window.__chatCalls.sends)).toEqual([
         {
+            text: 'See you at practice',
+            selectedConversationId: 'team',
+            selectedConversationRoles: ['team'],
+            selectedRecipientTarget: 'full_team',
+            selectedRecipientIds: [],
+            fileCount: 0
+        },
+        {
             text: '@ALL PLAYS who needs RSVP help?',
             selectedConversationId: 'staff-conversation',
             selectedConversationRoles: ['staff'],
@@ -507,10 +542,16 @@ test('messages inbox and team chat exercise real migrated chat UX', async ({ pag
             fileCount: 0
         }
     ]);
-    await expect.poll(() => page.evaluate(() => window.__chatCalls.ai)).toEqual(['who needs RSVP help?']);
+    await expect.poll(() => page.evaluate(() => window.__chatCalls.chatAiModuleRequests.length)).toBe(1);
+    await expect.poll(() => page.evaluate(() => window.__chatCalls.ai)).toEqual([{
+        question: 'who needs RSVP help?',
+        selectedConversationId: 'team',
+        selectedRecipientTarget: 'full_team',
+        selectedRecipientIds: []
+    }]);
 
     await page.getByRole('button', { name: 'Add reaction' }).last().click();
-    await expect(page.locator('.chat-reaction-picker-above')).toBeVisible();
+    await expect(page.locator('.chat-reaction-picker')).toBeVisible();
     await page.getByRole('button', { name: 'Like' }).click();
     await expect.poll(() => page.evaluate(() => window.__chatCalls.reactions[0])).toMatchObject({
         teamId: 'team-1',
