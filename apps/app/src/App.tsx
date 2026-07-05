@@ -32,7 +32,7 @@ const Messages = lazy(() => import('./pages/Messages').then((module) => ({ defau
 const Officials = lazy(() => import('./pages/Officials').then((module) => ({ default: module.Officials })));
 const ParentTools = lazy(() => import('./pages/ParentTools').then((module) => ({ default: module.ParentTools })));
 const RegistrationDetail = lazy(() => import('./pages/RegistrationDetail').then((module) => ({ default: module.RegistrationDetail })));
-const TeamRegistrationReview = lazy(() => import('./pages/RegistrationDetail').then((module) => ({ default: module.TeamRegistrationReview })));
+const TeamRegistrationReview = lazy(() => import('./pages/TeamRegistrationReview').then((module) => ({ default: module.TeamRegistrationReview })));
 const PlayerDetail = lazy(() => import('./pages/PlayerDetail').then((module) => ({ default: module.PlayerDetail })));
 const PrivateAiChat = lazy(() => import('./pages/PrivateAiChat').then((module) => ({ default: module.PrivateAiChat })));
 const Profile = lazy(() => import('./pages/Profile').then((module) => ({ default: module.Profile })));
