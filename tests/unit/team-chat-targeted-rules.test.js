@@ -127,6 +127,14 @@ describe('targeted team chat Firestore rules', () => {
                 fields: [
                     { fieldPath: 'targetType', order: 'ASCENDING' },
                     { fieldPath: 'recipientIds', order: 'ASCENDING' },
+                    { fieldPath: 'createdAt', order: 'ASCENDING' }
+                ]
+            }),
+            expect.objectContaining({
+                queryScope: 'COLLECTION',
+                fields: [
+                    { fieldPath: 'targetType', order: 'ASCENDING' },
+                    { fieldPath: 'recipientIds', order: 'ASCENDING' },
                     { fieldPath: 'senderId', order: 'ASCENDING' },
                     { fieldPath: 'createdAt', order: 'ASCENDING' }
                 ]
