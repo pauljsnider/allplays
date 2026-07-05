@@ -68,7 +68,8 @@ vi.mock('../../apps/app/src/lib/parentRegistrationsService.ts', () => parentRegi
 vi.mock('../../apps/app/src/lib/publicActions.ts', () => publicActionsMocks);
 vi.mock('@legacy/registration-flow.js', () => registrationFlowMocks);
 
-import { RegistrationDetail, TeamRegistrationReview, selectInitialRegistrationOption } from '../../apps/app/src/pages/RegistrationDetail.tsx';
+import { RegistrationDetail, selectInitialRegistrationOption } from '../../apps/app/src/pages/RegistrationDetail.tsx';
+import { TeamRegistrationReview } from '../../apps/app/src/pages/TeamRegistrationReview.tsx';
 
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 

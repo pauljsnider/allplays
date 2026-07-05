@@ -2,7 +2,8 @@
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { MemoryRouter, Route, Routes, useNavigate } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { RegistrationDetail, TeamRegistrationReview } from './RegistrationDetail';
+import { RegistrationDetail } from './RegistrationDetail';
+import { TeamRegistrationReview } from './TeamRegistrationReview';
 import type { AuthState } from '../lib/types';
 
 const parentRegistrationsServiceMocks = vi.hoisted(() => ({

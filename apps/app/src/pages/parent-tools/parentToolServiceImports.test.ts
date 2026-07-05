@@ -25,4 +25,30 @@ describe('Parent Tools focused service imports', () => {
         expect(source).toContain("../lib/parentRegistrationsService");
         expect(source).not.toContain("../lib/parentToolsService");
     });
+
+    it('keeps staff registration review imports out of the parent registration detail module', () => {
+        const parentSource = readFileSync(resolve(__dirname, '..', 'RegistrationDetail.tsx'), 'utf8');
+        const staffSource = readFileSync(resolve(__dirname, '..', 'TeamRegistrationReview.tsx'), 'utf8');
+        const staffOnlyImports = [
+            'loadStaffRegistrationDetail',
+            'loadTeamRegistrationQueuePage',
+            'loadTeamRegistrationRosterPlayers',
+            'approveTeamRegistrationForApp',
+            'rejectTeamRegistrationForApp',
+            'extendTeamRegistrationOfferForApp'
+        ];
+
+        staffOnlyImports.forEach((staffOnlyImport) => {
+            expect(parentSource).not.toContain(staffOnlyImport);
+            expect(staffSource).toContain(staffOnlyImport);
+        });
+    });
+
+    it('lazy-loads staff registration review from a distinct route module', () => {
+        const source = readFileSync(resolve(__dirname, '..', '..', 'App.tsx'), 'utf8');
+
+        expect(source).toContain("import('./pages/RegistrationDetail')");
+        expect(source).toContain("import('./pages/TeamRegistrationReview')");
+        expect(source.indexOf("import('./pages/RegistrationDetail')")).not.toBe(source.indexOf("import('./pages/TeamRegistrationReview')"));
+    });
 });
