@@ -3298,10 +3298,12 @@ function GameDayFoulTrackerPanel({ auth, event, homePlayers, loadingHomePlayers,
   const [status, setStatus] = useState<{ tone: 'success' | 'error'; message: string } | null>(null);
   const [liveEvents, setLiveEvents] = useState<any[]>(() => Array.isArray(event.liveEvents) ? event.liveEvents : []);
   const [recordedFouls, setRecordedFouls] = useState<PlayerGameStatResult[]>([]);
+  const [foulHistoryLoadFailed, setFoulHistoryLoadFailed] = useState(false);
 
   useEffect(() => {
     setLiveEvents(Array.isArray(event.liveEvents) ? event.liveEvents : []);
     setRecordedFouls([]);
+    setFoulHistoryLoadFailed(false);
     setStatus(null);
   }, [event.eventKey, event.liveEvents]);
 
@@ -3309,6 +3311,7 @@ function GameDayFoulTrackerPanel({ auth, event, homePlayers, loadingHomePlayers,
     let cancelled = false;
     async function loadLiveEvents() {
       setLoading(true);
+      setFoulHistoryLoadFailed(false);
       try {
         const { loadGameDayLiveEventsForApp } = await loadScheduleGameDayService();
         const loadedLiveEvents = await loadGameDayLiveEventsForApp(event.teamId, event.id);
@@ -3318,6 +3321,8 @@ function GameDayFoulTrackerPanel({ auth, event, homePlayers, loadingHomePlayers,
         if (!cancelled) {
           console.warn('[schedule-event-detail] Unable to load foul tracker state:', error);
           setLiveEvents([]);
+          setFoulHistoryLoadFailed(true);
+          setStatus({ tone: 'error', message: 'Foul history could not be loaded. Refresh before recording fouls.' });
         }
       } finally {
         if (!cancelled) setLoading(false);
@@ -3339,9 +3344,10 @@ function GameDayFoulTrackerPanel({ auth, event, homePlayers, loadingHomePlayers,
     }, 0)
   ), [activePeriod, liveEvents]);
   const bonusState = getBonusState(homeTeamFouls);
+  const foulEntryDisabled = loading || foulHistoryLoadFailed;
 
   const recordFoul = async (player: ScheduleHomeScoringPlayer) => {
-    if (!auth.user || savingPlayerId) return;
+    if (!auth.user || savingPlayerId || foulEntryDisabled) return;
     setSavingPlayerId(player.id);
     setStatus(null);
     try {
@@ -3427,7 +3433,7 @@ function GameDayFoulTrackerPanel({ auth, event, homePlayers, loadingHomePlayers,
                   type="button"
                   className="primary-button mt-3 min-h-11 w-full px-4 text-sm disabled:opacity-60"
                   onClick={() => recordFoul(player)}
-                  disabled={busy || Boolean(savingPlayerId)}
+                  disabled={busy || Boolean(savingPlayerId) || foulEntryDisabled}
                   aria-label={`${label} add foul`}
                 >
                   {busy ? 'Saving foul' : '+ Foul'}

@@ -1292,6 +1292,37 @@ describe('ScheduleEventDetail assignments', () => {
     expect(scheduleServiceMocks.loadGameDayLiveEventsForApp).toHaveBeenCalledTimes(1);
   });
 
+  it('keeps foul entry disabled when foul history fails to load', async () => {
+    scheduleServiceMocks.loadParentScheduleEventDetail.mockResolvedValue({
+      events: [buildEvent({
+        liveStatus: 'live',
+        canUpdateScore: true,
+        liveClockPeriod: 'Q1',
+        gamePlan: { numPeriods: 4 }
+      })],
+      children: []
+    });
+    scheduleServiceMocks.loadHomeScoringPlayers.mockResolvedValue([
+      { id: 'p1', name: 'Avery Smith', number: '12', points: 10, fouls: 1 }
+    ]);
+    scheduleServiceMocks.loadGameDayLiveEventsForApp.mockRejectedValue(new Error('History unavailable'));
+    scheduleServiceMocks.loadAutoFilledLineupDraftPreviewForApp.mockResolvedValue({ availablePlayers: [], goingPlayers: [], gamePlan: null });
+    scheduleHubMocks.buildGameHubDestinations.mockReturnValue([]);
+
+    renderScheduleEventDetailWithRouteControls();
+
+    await waitFor(() => {
+      expect(screen.getByText('Foul history could not be loaded. Refresh before recording fouls.')).toBeTruthy();
+    });
+
+    const addFoulButton = screen.getByRole('button', { name: '#12 Avery Smith add foul' });
+    expect(addFoulButton).toHaveProperty('disabled', true);
+
+    fireEvent.click(addFoulButton);
+
+    expect(scheduleServiceMocks.recordPlayerGameStat).not.toHaveBeenCalled();
+  });
+
   it('invalidates the shared scoring roster once when switching game hub events', async () => {
     scheduleServiceMocks.loadParentScheduleEventDetail.mockImplementation(async (_user, { eventId }) => ({
       events: [eventId === 'game-2'
