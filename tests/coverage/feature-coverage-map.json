@@ -618,7 +618,8 @@
                 "tests/unit/app-parent-tools-registration.test.jsx"
             ],
             "workflowTests": [
-                "tests/smoke/app-parent-tools.spec.js"
+                "tests/smoke/app-parent-tools.spec.js",
+                "tests/smoke/parent-dashboard-family-share.spec.js"
             ],
             "knownGaps": [
                 {

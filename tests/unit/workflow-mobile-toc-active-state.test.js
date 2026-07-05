@@ -16,7 +16,11 @@ function expectMobileTocActiveStateSupport(source) {
     expect(source).toContain("allLinks.forEach((a) => a.classList.toggle('is-active'");
     expect(source).toContain('const addLinkHandlers = (tocLinks) => {');
     expect(source).toContain("window.addEventListener('hashchange', () => setActive(window.location.hash.slice(1)));");
-    expect(source).toContain("window.addEventListener('resize', ensureMobileToc, { passive: true });");
+    expect(source).toContain('const syncHashActiveAfterResize = () => {');
+    expect(source).toContain("if (!window.location.hash) return;");
+    expect(source).toContain("window.requestAnimationFrame(() => {");
+    expect(source).toContain("window.addEventListener('resize', () => {");
+    expect(source).toContain('syncHashActiveAfterResize();');
     expect(source).not.toContain("links.forEach((a) => a.classList.toggle('is-active'");
 }
 
