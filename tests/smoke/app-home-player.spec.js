@@ -972,6 +972,10 @@ async function mockHomePlayerModules(page) {
                     };
                 }
 
+                export async function loadParentPlayerVideoClips() {
+                    return [{ title: 'Fast break', url: 'https://video.example.test/clip', gameLabel: 'vs. Falcons' }];
+                }
+
                 export async function updateParentPlayerEditableProfile() {}
                 export async function savePlayerCustomRosterFieldValues() {}
                 export async function saveStaffPlayerRosterDetails() { return { updatedFields: [] }; }
