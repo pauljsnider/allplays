@@ -116,17 +116,7 @@ import {
   type ScheduleRideOffer,
   type ScheduleRideSummary
 } from './scheduleLogic';
-import {
-  LINEUP_FORMATIONS,
-  buildAutoFilledLineupDraft,
-  buildLineupPublishPayload,
-  buildLineupPublishMessage,
-  countLineupChanges,
-  getLineupFormation,
-  type AutoFilledLineupPlayer,
-  type GamePlanPublishPayloadInput
-} from './gameDayLineupPublish';
-import { sendTeamChatMessage } from './chatService';
+import type { AutoFilledLineupPlayer, GamePlanPublishPayloadInput } from './gameDayLineupPublish';
 import { DEFAULT_TEAM_CONVERSATION_ID } from './chatLogic';
 import { getCachedAppData, getParentScheduleSummaryCacheKey, loadCachedAppData } from './appDataCache';
 import { toAppServiceError } from './appErrors';
@@ -149,6 +139,7 @@ const parentHomeHydrationLookBehindMs = 12 * 60 * 60 * 1000;
 // an explicit full-history load. Tune here if season length assumptions change.
 const defaultScheduleHistoryWindowMs = 400 * 24 * 60 * 60 * 1000;
 const logger = createLogger('schedule-service');
+type GameDayLineupPublishModule = typeof import('./gameDayLineupPublish');
 
 function logScheduleWarning(message: string, operation: string, error: unknown, context: Record<string, unknown> = {}) {
   logger.warn(message, {
@@ -530,8 +521,8 @@ function normalizeLineupAssignments(lineups: Record<string, unknown> | null | un
   }, {});
 }
 
-function buildManualLineupDraft(formationId: string, lineups: Record<string, string>, previousGamePlan: Record<string, any> | null | undefined) {
-  const formation = getLineupFormation(formationId);
+function buildManualLineupDraft(lineupModule: GameDayLineupPublishModule, formationId: string, lineups: Record<string, string>, previousGamePlan: Record<string, any> | null | undefined) {
+  const formation = lineupModule.getLineupFormation(formationId);
   if (!formation) {
     throw new Error('Select a supported formation before saving a lineup draft.');
   }
@@ -555,8 +546,8 @@ function buildManualLineupDraft(formationId: string, lineups: Record<string, str
   };
 }
 
-function buildLineupDraftPreview(formationId: string, availablePlayers: AutoFilledLineupPlayer[], goingPlayers: AutoFilledLineupPlayer[], gamePlan: Record<string, any> | null | undefined): LineupDraftPreviewResult {
-  const formation = getLineupFormation(formationId);
+function buildLineupDraftPreview(lineupModule: GameDayLineupPublishModule, formationId: string, availablePlayers: AutoFilledLineupPlayer[], goingPlayers: AutoFilledLineupPlayer[], gamePlan: Record<string, any> | null | undefined): LineupDraftPreviewResult {
+  const formation = lineupModule.getLineupFormation(formationId);
   if (!formation) {
     throw new Error('Select a supported formation before saving a lineup draft.');
   }
@@ -569,7 +560,7 @@ function buildLineupDraftPreview(formationId: string, availablePlayers: AutoFill
     };
   } else {
     try {
-      draft = buildAutoFilledLineupDraft({ formationId, goingPlayers, previousGamePlan: gamePlan || {} });
+      draft = lineupModule.buildAutoFilledLineupDraft({ formationId, goingPlayers, previousGamePlan: gamePlan || {} });
     } catch (error: any) {
       if (!String(error?.message || '').includes('No Going players')) throw error;
     }
@@ -604,14 +595,15 @@ function assertLineupDraftEvent(event: ParentScheduleEvent, user: AuthUser | nul
 
 export async function loadAutoFilledLineupDraftPreviewForApp(event: ParentScheduleEvent, user: AuthUser | null, formationId: string): Promise<LineupDraftPreviewResult> {
   assertLineupDraftEvent(event, user);
-  if (!LINEUP_FORMATIONS[compactString(formationId)]) {
+  const lineupModule = await import('./gameDayLineupPublish');
+  if (!lineupModule.LINEUP_FORMATIONS[compactString(formationId)]) {
     throw new Error('Select a supported formation before saving a lineup draft.');
   }
   const [players, rsvps] = await Promise.all([
     loadPlayers(event.teamId),
     loadRsvps(event.teamId, event.id)
   ]);
-  return buildLineupDraftPreview(formationId, getAvailableLineupPlayers(players), getGoingLineupPlayers(players, rsvps), event.gamePlan || {});
+  return buildLineupDraftPreview(lineupModule, formationId, getAvailableLineupPlayers(players), getGoingLineupPlayers(players, rsvps), event.gamePlan || {});
 }
 
 export async function saveScheduledGameLineupDraftForApp(
@@ -621,6 +613,7 @@ export async function saveScheduledGameLineupDraftForApp(
   options?: { lineups?: Record<string, string> | null }
 ): Promise<LineupDraftPreviewResult> {
   assertLineupDraftEvent(event, user);
+  const lineupModule = await import('./gameDayLineupPublish');
   const [players, rsvps] = await Promise.all([
     loadPlayers(event.teamId),
     loadRsvps(event.teamId, event.id)
@@ -632,8 +625,8 @@ export async function saveScheduledGameLineupDraftForApp(
     ? normalizeLineupAssignments(options.lineups)
     : null;
   const nextGamePlan = hasLineupOverride
-    ? buildManualLineupDraft(formationId, overrideLineups || {}, event.gamePlan || {})
-    : buildAutoFilledLineupDraft({ formationId, goingPlayers, previousGamePlan: event.gamePlan || {} });
+    ? buildManualLineupDraft(lineupModule, formationId, overrideLineups || {}, event.gamePlan || {})
+    : lineupModule.buildAutoFilledLineupDraft({ formationId, goingPlayers, previousGamePlan: event.gamePlan || {} });
   const payload: Record<string, unknown> = { gamePlan: nextGamePlan };
 
   try {
@@ -644,7 +637,7 @@ export async function saveScheduledGameLineupDraftForApp(
     await nativePatchDocument(`teams/${encodeURIComponent(event.teamId)}/games/${encodeURIComponent(event.id)}`, payload);
   }
 
-  return buildLineupDraftPreview(formationId, availablePlayers, goingPlayers, nextGamePlan);
+  return buildLineupDraftPreview(lineupModule, formationId, availablePlayers, goingPlayers, nextGamePlan);
 }
 
 export async function publishGamePlanForApp(event: ParentScheduleEvent, user: AuthUser): Promise<PublishGamePlanResult> {
@@ -659,12 +652,13 @@ export async function publishGamePlanForApp(event: ParentScheduleEvent, user: Au
   }
 
   const { teamId, id: gameId } = event;
+  const lineupModule = await import('./gameDayLineupPublish');
   const currentTeamPlayers = await loadPlayers(teamId);
   const recipientPlayerIds = uniqueNonEmptyStrings(currentTeamPlayers.map((p: any) => p.id));
   const recipientParentIds = uniqueNonEmptyStrings(currentTeamPlayers.flatMap(getPlayerParentUserIds));
 
   const previousGamePlan = event.gamePlan;
-  const nextGamePlan = buildLineupPublishPayload({
+  const nextGamePlan = lineupModule.buildLineupPublishPayload({
     previousGamePlan,
     publishedBy: user.uid,
     publishedByName: user.displayName || user.email || 'Coach',
@@ -685,13 +679,14 @@ export async function publishGamePlanForApp(event: ParentScheduleEvent, user: Au
     await nativePatchDocument(`teams/${encodeURIComponent(teamId)}/games/${encodeURIComponent(gameId)}`, payload);
   }
 
-  const changedAssignments = countLineupChanges(
+  const changedAssignments = lineupModule.countLineupChanges(
     previousGamePlan?.publishedLineups,
     nextGamePlan.publishedLineups
   );
 
   let notificationError: string | null = null;
   try {
+    const { sendTeamChatMessage } = await import('./chatService');
     await sendTeamChatMessage({
       teamId: event.teamId,
       user,
@@ -699,7 +694,7 @@ export async function publishGamePlanForApp(event: ParentScheduleEvent, user: Au
         fullName: user.displayName || null,
         photoUrl: user.photoUrl || null
       },
-      text: buildLineupPublishMessage({
+      text: lineupModule.buildLineupPublishMessage({
         opponentName: event.opponent || event.title || null,
         publishedVersion: nextGamePlan.publishedVersion,
         changedAssignments
@@ -5238,6 +5233,7 @@ export async function sendStaffRsvpReminder(event: ParentScheduleEvent, user: Au
   }
 
   const emailResult = await sendPublicRsvpReminderEmailsNativeSafe(event);
+  const { sendTeamChatMessage } = await import('./chatService');
   await sendTeamChatMessage({
     teamId: event.teamId,
     user,
