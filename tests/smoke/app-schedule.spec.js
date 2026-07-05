@@ -1233,10 +1233,14 @@ test('iOS-sized schedule smoke covers list, event nav, and rideshare without ove
 
     await expect(mobileScheduleFilter(page)).toBeVisible({ timeout: 15000 });
     await expect(page.locator('.schedule-web-sidebar')).toBeHidden();
-    await expect(page.locator('.schedule-list > a').first()).toBeVisible();
+    const firstScheduleRow = page.locator('.schedule-list > a').first();
+    await expect(firstScheduleRow).toBeVisible();
+    await expect(firstScheduleRow.getByText('1 task open')).toBeVisible();
+    await expect(firstScheduleRow.getByText('4 seats open')).toBeVisible();
     const scheduleRowCount = await page.locator('.schedule-list > a').count();
     expect(scheduleRowCount).toBeGreaterThanOrEqual(2);
     expect(scheduleRowCount).toBeLessThanOrEqual(3);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth + 1)).toBe(true);
 
     await page.goto(appUrl(baseURL, '/schedule/team-1/game-1?childId=player-1'), { waitUntil: 'domcontentloaded' });
     await expect(page.locator('.event-summary-card').getByRole('heading', { name: 'vs. Falcons' })).toBeVisible();
@@ -1533,7 +1537,7 @@ test('app schedule keeps filters compact on phone', async ({ page, baseURL }) =>
 
         const rowHeights = await mobileRows.evaluateAll((rows) => rows.map((row) => row.getBoundingClientRect().height));
         for (const rowHeight of rowHeights) {
-            expect(rowHeight).toBeLessThanOrEqual(86);
+            expect(rowHeight).toBeLessThanOrEqual(104);
         }
     }).toPass({ timeout: 30000 });
 

@@ -507,9 +507,11 @@ describe('Schedule', () => {
 
     const { container } = renderSchedule();
 
-    expect(await screen.findByText('1 task open')).toBeTruthy();
+    await waitFor(() => {
+      expect(screen.getAllByText('1 task open').length).toBeGreaterThan(0);
+    });
     expect(screen.getByText('1 open assignment')).toBeTruthy();
-    expect(screen.getByText('2 ride requests')).toBeTruthy();
+    expect(screen.getAllByText('2 ride requests').length).toBeGreaterThan(0);
     expect(assignmentFilterSpy).not.toHaveBeenCalled();
 
     fireEvent.click(screen.getByRole('button', { name: 'Filters and views' }));
@@ -519,9 +521,36 @@ describe('Schedule', () => {
     fireEvent.click(screen.getAllByRole('button', { name: 'List' })[0]!);
 
     await waitFor(() => {
-      expect(screen.getByText('1 task open')).toBeTruthy();
+      expect(screen.getAllByText('1 task open').length).toBeGreaterThan(0);
     });
     expect(assignmentFilterSpy).not.toHaveBeenCalled();
+  });
+
+  it('shows assignment and rideshare indicators on mobile schedule rows', async () => {
+    shellLayoutMocks.isDesktopWeb = false;
+    scheduleServiceMocks.loadParentSchedule.mockResolvedValueOnce({
+      children: [
+        { playerId: 'player-1', playerName: 'Pat', teamId: 'team-1', teamName: 'Bears' }
+      ],
+      events: [
+        buildScheduleEvent(1, {
+          myRsvp: 'going',
+          openAssignmentCount: 1,
+          rideshareSummary: { requests: 0, offerCount: 1, pending: 0, confirmed: 0, seatsLeft: 4, isFull: false }
+        })
+      ]
+    });
+
+    const { container } = renderSchedule();
+
+    const mobileRow = await waitFor(() => {
+      const row = container.querySelector('.schedule-list > a');
+      expect(row).toBeTruthy();
+      return row as HTMLAnchorElement;
+    });
+
+    expect(mobileRow.textContent).toContain('1 task open');
+    expect(mobileRow.textContent).toContain('4 seats open');
   });
 
   it('shows the remaining event count when only one more event is hidden', async () => {
