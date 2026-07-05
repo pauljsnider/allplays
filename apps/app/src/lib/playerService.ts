@@ -302,11 +302,15 @@ export async function loadParentPlayerVideoClips(user: AuthUser | null, teamId: 
     throw new Error('Player details require a signed-in user.');
   }
 
-  const resolvedTeamId = decodeURIComponent(teamId || '');
-  const resolvedPlayerId = decodeURIComponent(playerId || '');
+  const schedule = await loadParentPlayerSchedule(user, { teamId, playerId });
+  const linkedChild = findLinkedChild(schedule.children, teamId, playerId);
+  const requestedTeamId = decodeURIComponent(teamId || '');
+  const requestedPlayerId = decodeURIComponent(playerId || '');
+  const resolvedTeamId = linkedChild?.teamId || requestedTeamId;
+  const resolvedPlayerId = linkedChild?.playerId || requestedPlayerId;
   const team = await getTeam(resolvedTeamId, { includeInactive: true });
   const access = buildPlayerAccess(user, resolvedTeamId, resolvedPlayerId, team);
-  if (!access.isLinkedParent && !access.isTeamStaff) {
+  if (!linkedChild && !access.isLinkedParent && !access.isTeamStaff) {
     throw new Error('This player is not linked to your account.');
   }
 

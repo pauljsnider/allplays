@@ -831,6 +831,42 @@ describe('loadParentPlayerDetail custom roster fields', () => {
     expect(result).toEqual(clips.slice(0, 8));
   });
 
+  it('allows profile-hydrated parent links to load video clips on demand', async () => {
+    const games = [{ id: 'game-1' }];
+    const clips = [{
+      id: 'clip-1',
+      title: 'Fast break',
+      gameDate: '',
+      playLabel: '',
+      url: 'https://video.example/clip-1.mp4',
+      thumbnailUrl: '',
+      gameLabel: 'Game'
+    }];
+    scheduleServiceMocks.loadParentPlayerSchedule.mockResolvedValue({
+      children: [{ teamId: 'team-1', teamName: 'Bears', playerId: 'player-1', playerName: 'Sam Player' }],
+      events: []
+    });
+    legacyPlayerDbMocks.getGames.mockResolvedValue(games);
+    legacyPlayerProfileMocks.collectPlayerVideoClips.mockReturnValue(clips as any);
+
+    const result = await loadParentPlayerVideoClips({
+      uid: 'parent-1',
+      email: 'parent@example.com',
+      parentOf: []
+    } as any, 'team-1', 'player-1');
+
+    expect(scheduleServiceMocks.loadParentPlayerSchedule).toHaveBeenCalledWith(
+      expect.objectContaining({ uid: 'parent-1' }),
+      { teamId: 'team-1', playerId: 'player-1' }
+    );
+    expect(legacyPlayerDbMocks.getGames).toHaveBeenCalledWith('team-1');
+    expect(legacyPlayerProfileMocks.collectPlayerVideoClips).toHaveBeenCalledWith(games, {
+      teamId: 'team-1',
+      playerId: 'player-1'
+    });
+    expect(result).toEqual(clips);
+  });
+
   it('surfaces video clip game fetch failures to the caller', async () => {
     legacyPlayerDbMocks.getGames.mockRejectedValue(new Error('Game fetch failed.'));
 
