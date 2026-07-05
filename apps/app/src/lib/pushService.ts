@@ -50,6 +50,8 @@ type PushRegistrationResult = {
 };
 
 const nativePushTimeoutMs = 15000;
+const webPushVapidKey = String(import.meta.env?.VITE_ALLPLAYS_FCM_VAPID_KEY || '').trim();
+const webPushBlockedMessage = 'Notifications are blocked for this site in your browser. Allow notifications in your browser site settings, then try again.';
 const iosNotificationSettingsUrl = 'app-settings:';
 const androidNotificationSettingsUrl = 'intent:#Intent;action=android.settings.APP_NOTIFICATION_SETTINGS;S.extra_app_package=ai.allplays.lite;end';
 const androidAppSettingsUrl = 'app-settings:';
@@ -138,8 +140,25 @@ export async function enablePushNotificationsForUser(userId: string): Promise<Pu
   }
 
   if (!Capacitor.isNativePlatform()) {
+    const permissionStatus = getWebPushPermissionStatus();
+    if (permissionStatus.state === 'unsupported') {
+      throw new PushPermissionError('Push notifications are not supported in this browser.', 'push-unsupported', permissionStatus);
+    }
+    if (permissionStatus.state === 'blocked') {
+      throw new PushPermissionError(webPushBlockedMessage, 'push-permission-blocked', permissionStatus);
+    }
+
     const { registerPushNotifications } = await import('@legacy/push-notifications.js');
-    const { token } = await registerPushNotifications();
+    let token = '';
+    try {
+      ({ token } = await registerPushNotifications(webPushVapidKey ? { vapidKey: webPushVapidKey } : {}));
+    } catch (error) {
+      const statusAfterAttempt = getWebPushPermissionStatus();
+      if (statusAfterAttempt.state === 'blocked') {
+        throw new PushPermissionError(webPushBlockedMessage, 'push-permission-blocked', statusAfterAttempt);
+      }
+      throw error;
+    }
     await saveNotificationDeviceToken(userId, {
       token,
       platform: 'web',
@@ -230,7 +249,7 @@ export async function runPushNotificationPrimer(
 
 export async function getPushNotificationPermissionStatus(): Promise<PushNotificationPermissionStatus> {
   if (!Capacitor.isNativePlatform()) {
-    return buildPushPermissionStatus('unsupported', 'web');
+    return getWebPushPermissionStatus();
   }
 
   const platform = Capacitor.getPlatform();
@@ -271,8 +290,30 @@ function buildPushPermissionStatus(state: PushNotificationPermissionState, platf
     isNative: platform !== 'web',
     platform,
     canPrompt: state === 'prompt',
-    canOpenSettings: state === 'blocked'
+    canOpenSettings: state === 'blocked' && platform !== 'web'
   };
+}
+
+function isWebPushSupported(): boolean {
+  return typeof window !== 'undefined'
+    && window.isSecureContext !== false
+    && typeof Notification !== 'undefined'
+    && typeof navigator !== 'undefined'
+    && 'serviceWorker' in navigator
+    && 'PushManager' in window;
+}
+
+function getWebPushPermissionStatus(): PushNotificationPermissionStatus {
+  if (!isWebPushSupported()) {
+    return buildPushPermissionStatus('unsupported', 'web');
+  }
+  if (Notification.permission === 'granted') {
+    return buildPushPermissionStatus('enabled', 'web');
+  }
+  if (Notification.permission === 'denied') {
+    return buildPushPermissionStatus('blocked', 'web');
+  }
+  return buildPushPermissionStatus('prompt', 'web');
 }
 
 function getPushNotificationPrimerCopy(context: PushNotificationPrimerContext): PushNotificationPrimerCopy {
