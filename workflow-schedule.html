@@ -665,12 +665,22 @@
           setActive(window.location.hash.slice(1) || null);
         };
 
+        const syncHashActiveAfterResize = () => {
+          if (!window.location.hash) return;
+          window.requestAnimationFrame(() => {
+            window.requestAnimationFrame(() => setActive(window.location.hash.slice(1)));
+          });
+        };
+
         addLinkHandlers(links);
         ensureMobileToc();
 
         window.addEventListener('scroll', () => setActive(null), { passive: true });
         window.addEventListener('hashchange', () => setActive(window.location.hash.slice(1)));
-        window.addEventListener('resize', ensureMobileToc, { passive: true });
+        window.addEventListener('resize', () => {
+          ensureMobileToc();
+          syncHashActiveAfterResize();
+        }, { passive: true });
         setActive(window.location.hash.slice(1) || null);
       })();
     </script>
