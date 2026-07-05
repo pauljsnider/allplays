@@ -284,17 +284,18 @@ function getPlayerSearchTeamIds(rawQuery, teamsById) {
     const privateTeams = searchableTeams.filter((team) => team?.isPublic === false);
     const publicTeams = searchableTeams.filter((team) => team?.isPublic !== false);
     const tokens = splitTokens(rawQuery);
-    const rankedPublicTeams = tokens.length === 0
-        ? publicTeams
-        : publicTeams
-            .map((team) => ({
+    const rankedTeams = tokens.length === 0
+        ? [...privateTeams, ...publicTeams]
+        : searchableTeams
+            .map((team, index) => ({
                 team,
+                index,
                 score: scoreText([team.name, team.sport, team.zip].filter(Boolean).join(' '), tokens)
             }))
-            .sort((a, b) => b.score - a.score)
+            .sort((a, b) => (b.score - a.score) || (a.index - b.index))
             .map((entry) => entry.team);
 
-    return [...privateTeams, ...rankedPublicTeams]
+    return rankedTeams
         .slice(0, playerSearchTeamLimit)
         .map((team) => String(team?.id || '').trim())
         .filter(Boolean);
