@@ -100,6 +100,7 @@ test.describe('help topic and workflow pages', () => {
 
         await expect(page.locator('#workflow-mobile-toc details')).toHaveCount(0);
         await page.setViewportSize({ width: 390, height: 844 });
+        await expect(page.locator('#workflow-mobile-toc details')).toHaveCount(1);
 
         const mobilePrerequisitesLink = page.locator('#workflow-mobile-toc a[href="#prerequisites"]');
         const desktopPrerequisitesLink = page.locator('.wf-sidebar #workflow-toc a[href="#prerequisites"]');
