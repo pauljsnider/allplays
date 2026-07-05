@@ -549,13 +549,14 @@
             await refreshSavedProfiles();
         }
 
-        async function uploadPendingMedia() {
+        async function uploadPendingMedia(onUploadedPath = () => {}) {
             const newlyUploadedPaths = [];
             let profilePhoto = null;
 
             if (pendingProfilePhotoFile) {
                 const uploadedPhoto = await uploadAthleteProfileMedia(currentUser.uid, workingProfileId, pendingProfilePhotoFile, { kind: 'profile-photo' });
                 newlyUploadedPaths.push(uploadedPhoto.storagePath);
+                onUploadedPath(uploadedPhoto.storagePath);
                 profilePhoto = uploadedPhoto;
             } else if (profilePhotoState?.storagePath || profilePhotoState?.url) {
                 profilePhoto = {
@@ -576,6 +577,7 @@
                     }
                     const uploadedClip = await uploadAthleteProfileMedia(currentUser.uid, workingProfileId, file, { kind: 'clip' });
                     newlyUploadedPaths.push(uploadedClip.storagePath);
+                    onUploadedPath(uploadedClip.storagePath);
                     clips.push({
                         id: clip.id,
                         source: 'upload',
@@ -713,8 +715,7 @@
 
             let newlyUploadedPaths = [];
             try {
-                const prepared = await uploadPendingMedia();
-                newlyUploadedPaths = prepared.newlyUploadedPaths;
+                const prepared = await uploadPendingMedia((path) => newlyUploadedPaths.push(path));
                 currentProfile = await saveAthleteProfile(currentUser.uid, prepared.draft, {
                     profileId: currentProfile?.id || params.profileId || workingProfileId
                 });
