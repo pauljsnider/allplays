@@ -6470,6 +6470,12 @@ function getTeamChatMessagesRef(teamId, conversationId = DEFAULT_TEAM_CONVERSATI
     return collection(db, 'teams', teamId, 'chatConversations', conversationId, 'chatMessages');
 }
 
+function getDefaultTeamChatMessageConstraints(conversationId = DEFAULT_TEAM_CONVERSATION_ID) {
+    return isDefaultTeamConversation(conversationId)
+        ? [where('targetType', '==', 'full_team'), where('recipientIds', '==', [])]
+        : [];
+}
+
 /**
  * Get conversations for a team. The default team-wide channel is virtual and keeps
  * using teams/{teamId}/chatMessages for backwards compatibility.
@@ -6577,10 +6583,11 @@ export async function upsertChatConversation(teamId, conversation = {}) {
  */
 export async function getChatMessages(teamId, { limit = 50, startAfterDoc = null, conversationId = DEFAULT_TEAM_CONVERSATION_ID } = {}) {
     const messagesRef = getTeamChatMessagesRef(teamId, conversationId);
-    let q = query(messagesRef, orderBy('createdAt', 'desc'), limitQuery(limit));
+    const defaultMessageConstraints = getDefaultTeamChatMessageConstraints(conversationId);
+    let q = query(messagesRef, ...defaultMessageConstraints, orderBy('createdAt', 'desc'), limitQuery(limit));
 
     if (startAfterDoc) {
-        q = query(messagesRef, orderBy('createdAt', 'desc'), startAfterQuery(startAfterDoc), limitQuery(limit));
+        q = query(messagesRef, ...defaultMessageConstraints, orderBy('createdAt', 'desc'), startAfterQuery(startAfterDoc), limitQuery(limit));
     }
 
     const snapshot = await getDocs(q);
@@ -6593,7 +6600,7 @@ export async function getChatMessages(teamId, { limit = 50, startAfterDoc = null
  */
 export function subscribeToChatMessages(teamId, { limit = 50, conversationId = DEFAULT_TEAM_CONVERSATION_ID } = {}, onMessages, onError = null) {
     const messagesRef = getTeamChatMessagesRef(teamId, conversationId);
-    const q = query(messagesRef, orderBy('createdAt', 'desc'), limitQuery(limit));
+    const q = query(messagesRef, ...getDefaultTeamChatMessageConstraints(conversationId), orderBy('createdAt', 'desc'), limitQuery(limit));
     return onSnapshot(q, (snapshot) => {
         const docs = snapshot.docs.map(d => ({ id: d.id, ...d.data(), _doc: d }));
         const oldestDoc = snapshot.docs.length ? snapshot.docs[snapshot.docs.length - 1] : null;
@@ -6944,7 +6951,7 @@ export async function getUnreadChatCount(userId, teamId, options = {}) {
     let latestMessageAt = options.latestMessageAt;
 
     if (latestMessageAt === undefined) {
-        const latestMessageSnapshot = await getDocs(query(messagesRef, orderBy('createdAt', 'desc'), limit(1)));
+        const latestMessageSnapshot = await getDocs(query(messagesRef, ...getDefaultTeamChatMessageConstraints(conversationId), orderBy('createdAt', 'desc'), limit(1)));
         latestMessageAt = latestMessageSnapshot.docs[0]?.data?.()?.createdAt || null;
     }
 
@@ -6956,7 +6963,7 @@ export async function getUnreadChatCount(userId, teamId, options = {}) {
         return 0;
     }
 
-    const unreadConstraints = [];
+    const unreadConstraints = getDefaultTeamChatMessageConstraints(conversationId);
 
     if (lastRead) {
         unreadConstraints.push(where('createdAt', '>', lastRead));

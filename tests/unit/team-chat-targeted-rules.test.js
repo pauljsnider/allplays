@@ -73,36 +73,50 @@ describe('targeted team chat Firestore rules', () => {
         expect(rules).toContain('isFullTeamChatMessage(data) ||');
     });
 
-    it('keeps legacy team chat list queries compatible with messages missing target fields', () => {
+    it('keeps legacy team chat list queries constrained to full-team messages', () => {
         const legacyChatStart = rules.indexOf('match /chatMessages/{messageId} {');
         const conversationsStart = rules.indexOf('match /chatConversations/{conversationId} {');
         const legacyChatBlock = rules.slice(legacyChatStart, conversationsStart);
 
-        expect(legacyChatBlock).toContain('allow list: if canAccessTeamChat(teamId);');
+        expect(legacyChatBlock).toContain('allow list: if isFullTeamChatMessage(resource.data) &&');
+        expect(legacyChatBlock).toContain('canReadChatMessage(teamId, resource.data);');
         expect(legacyChatBlock).toContain('allow get: if isFullTeamChatMessage(resource.data) &&');
         expect(legacyChatBlock).toContain('canReadChatMessage(teamId, resource.data);');
         expect(legacyChatBlock).not.toContain('allow read: if isFullTeamChatMessage(resource.data) &&');
+        expect(legacyChatBlock).not.toContain('allow list: if canAccessTeamChat(teamId);');
         expect(rules).toContain('allow create: if canAccessTeamChat(teamId) &&');
         expect(rules).toContain('isFullTeamChatMessage(request.resource.data);');
         expect(rules).not.toContain('allow read: if canReadChatMessage(teamId, resource.data);');
     });
 
-    it('does not require target fields when listing or counting legacy team chat messages', () => {
-        expect(dbSource).not.toContain("where('targetType', '==', 'full_team')");
-        expect(dbSource).not.toContain("where('recipientIds', '==', [])");
-        expect(dbSource).toContain("query(messagesRef, orderBy('createdAt', 'desc'), limitQuery(limit))");
-        expect(dbSource).toContain("query(messagesRef, orderBy('createdAt', 'desc'), limit(1))");
-        expect(dbSource).toContain('const totalUnreadQuery = query(messagesRef, ...unreadConstraints);');
+    it('requires target fields when listing or counting default legacy team chat messages', () => {
+        expect(dbSource).toContain('function getDefaultTeamChatMessageConstraints(conversationId = DEFAULT_TEAM_CONVERSATION_ID)');
+        expect(dbSource).toContain("where('targetType', '==', 'full_team')");
+        expect(dbSource).toContain("where('recipientIds', '==', [])");
+        expect(dbSource).toContain("query(messagesRef, ...defaultMessageConstraints, orderBy('createdAt', 'desc'), limitQuery(limit))");
+        expect(dbSource).toContain("query(messagesRef, ...getDefaultTeamChatMessageConstraints(conversationId), orderBy('createdAt', 'desc'), limit(1))");
+        expect(dbSource).toContain('const unreadConstraints = getDefaultTeamChatMessageConstraints(conversationId);');
     });
 
-    it('does not declare target-field indexes for legacy team chat queries', () => {
+    it('declares target-field indexes for legacy team chat queries', () => {
         const chatMessageIndexes = firestoreIndexes.indexes.filter((index) => index.collectionGroup === 'chatMessages');
-        expect(chatMessageIndexes).not.toEqual(expect.arrayContaining([
+        expect(chatMessageIndexes).toEqual(expect.arrayContaining([
             expect.objectContaining({
-                fields: expect.arrayContaining([
+                queryScope: 'COLLECTION',
+                fields: [
                     { fieldPath: 'targetType', order: 'ASCENDING' },
-                    { fieldPath: 'recipientIds', order: 'ASCENDING' }
-                ])
+                    { fieldPath: 'recipientIds', order: 'ASCENDING' },
+                    { fieldPath: 'createdAt', order: 'DESCENDING' }
+                ]
+            }),
+            expect.objectContaining({
+                queryScope: 'COLLECTION',
+                fields: [
+                    { fieldPath: 'targetType', order: 'ASCENDING' },
+                    { fieldPath: 'recipientIds', order: 'ASCENDING' },
+                    { fieldPath: 'senderId', order: 'ASCENDING' },
+                    { fieldPath: 'createdAt', order: 'ASCENDING' }
+                ]
             })
         ]));
     });
