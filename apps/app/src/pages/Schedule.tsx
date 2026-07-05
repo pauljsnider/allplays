@@ -2753,6 +2753,9 @@ function ScheduleEventCard({ event, preferGameHubForStaff }: {
   const isRsvpNeeded = rsvp === 'not_responded' && event.isDbGame && !event.isCancelled;
   const hasPracticePacket = event.type === 'practice' && Boolean(event.practiceHomePacketSummary);
   const actionPills = getEventCardActionPills(event, rsvp);
+  const mobileActionPills = actionPills
+    .filter((pill) => pill !== 'Availability needed' && !pill.startsWith('Packet:'))
+    .slice(0, 2);
   const metadataPills = getEventMetadataPills(event);
   const mapHref = getScheduleMapHref(event.location);
   const forecastHref = getScheduleForecastHref(event.location, event.date);
@@ -2781,6 +2784,15 @@ function ScheduleEventCard({ event, preferGameHubForStaff }: {
             {tournamentInfo.isTournament ? (
               <div className="truncate text-xs font-bold leading-5 text-indigo-700">
                 {tournamentInfo.label}{tournamentInfo.details ? ` - ${tournamentInfo.details}` : ''}
+              </div>
+            ) : null}
+            {mobileActionPills.length ? (
+              <div className="mt-1 flex max-h-5 flex-wrap gap-1 overflow-hidden">
+                {mobileActionPills.map((pill) => (
+                  <span key={pill} className="inline-flex min-h-5 items-center rounded-full border border-gray-200 bg-white px-1.5 text-[10px] font-black leading-none text-gray-700">
+                    {pill}
+                  </span>
+                ))}
               </div>
             ) : null}
           </div>
