@@ -113,7 +113,6 @@ describe('ScheduleEventDetail decomposition initiative source contract', () => {
         [
             "import { CompactMeta } from '../components/schedule/CompactMeta';",
             "import { ScheduleEventHeader } from '../components/schedule/ScheduleEventHeader';",
-            "import { GameReportSections } from '../components/schedule/GameReportSections';",
             "import { PlayerSwitcher } from '../components/schedule/PlayerSwitcher';",
             "import { PracticeAttendancePanel } from '../components/schedule/PracticeAttendancePanel';",
             "import { ReportMarkdownText } from '../components/schedule/ReportMarkdownText';",
@@ -173,9 +172,11 @@ describe('ScheduleEventDetail decomposition initiative source contract', () => {
 
     it('keeps child switching and game report rendering in extracted schedule components', () => {
         expect(detailSource).toContain("import { PlayerSwitcher } from '../components/schedule/PlayerSwitcher';");
-        expect(detailSource).toContain("import { GameReportSections } from '../components/schedule/GameReportSections';");
+        expect(detailSource).toContain("type GameReportSectionsModule = typeof import('../components/schedule/GameReportSections');");
+        expect(detailSource).toContain("gameReportSectionsModulePromise = import('../components/schedule/GameReportSections');");
+        expect(detailSource).toContain('const DeferredGameReportSections = lazy(() => (');
         expect(detailSource).toContain('<PlayerSwitcher events={events} selectedChildId={selectedEvent.childId} onSelect={selectChild} compact />');
-        expect(detailSource).toContain('<GameReportSections event={event} />');
+        expect(detailSource).toContain('<DeferredGameReportSections event={event} />');
         expect(detailSource).not.toMatch(/^function PlayerSwitcher\b/m);
         expect(detailSource).not.toMatch(/^function GameReportSections\b/m);
         expect(detailSource).not.toMatch(/^function GameReportSectionContent\b/m);
