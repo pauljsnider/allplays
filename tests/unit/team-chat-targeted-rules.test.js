@@ -5,6 +5,10 @@ import { resolve } from 'node:path';
 const rules = readFileSync(resolve(process.cwd(), 'firestore.rules'), 'utf8');
 const dbSource = readFileSync(resolve(process.cwd(), 'js/db.js'), 'utf8');
 const firestoreIndexes = JSON.parse(readFileSync(resolve(process.cwd(), 'firestore.indexes.json'), 'utf8'));
+const legacyChatBackfillSource = readFileSync(
+    resolve(process.cwd(), '_migration/backfill-legacy-team-chat-target-fields.js'),
+    'utf8'
+);
 
 function currentUserReactionTokens(auth) {
     const tokens = [auth.uid, `user:${auth.uid}`];
@@ -96,6 +100,15 @@ describe('targeted team chat Firestore rules', () => {
         expect(dbSource).toContain("query(messagesRef, ...defaultMessageConstraints, orderBy('createdAt', 'desc'), limitQuery(limit))");
         expect(dbSource).toContain("query(messagesRef, ...getDefaultTeamChatMessageConstraints(conversationId), orderBy('createdAt', 'desc'), limit(1))");
         expect(dbSource).toContain('const unreadConstraints = getDefaultTeamChatMessageConstraints(conversationId);');
+    });
+
+    it('includes a backfill for fieldless legacy full-team messages before constrained reads ship', () => {
+        expect(legacyChatBackfillSource).toContain('function getLegacyFullTeamBackfill(data = {})');
+        expect(legacyChatBackfillSource).toContain("String(data.targetType || 'full_team').trim() || 'full_team'");
+        expect(legacyChatBackfillSource).toContain("updates.targetType = 'full_team';");
+        expect(legacyChatBackfillSource).toContain('updates.recipientIds = [];');
+        expect(legacyChatBackfillSource).toContain("targetType !== 'full_team' || !hasEmptyRecipients");
+        expect(legacyChatBackfillSource).toContain('legacyTargetFieldsBackfilledAt');
     });
 
     it('declares target-field indexes for legacy team chat queries', () => {
