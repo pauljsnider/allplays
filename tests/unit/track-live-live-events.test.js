@@ -60,7 +60,7 @@ describe('track-live live event publishing', () => {
     expect(source).toContain('buildGoalSportEvent({');
     expect(source).toContain("const liveNote = addLiveNoteRecord(buildGoalSportNoteText(noteTeamLabel, event.note), 'goal');");
     expect(source).toContain('liveNoteId: liveNote?.id || null');
-    expect(source).toContain('liveNoteText: liveNote?.text || null');
+    expect(source).toContain('event.liveNoteText = liveNote?.text || null');
     expect(source).toContain('removeLiveNoteRecord(undoData.liveNoteId, undoData.liveNoteText);');
     expect(source).toContain('function renderLiveNotes()');
   });

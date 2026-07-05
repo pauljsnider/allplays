@@ -1342,6 +1342,8 @@
                 ? resolveOpponentDisplayName(currentGame)
                 : currentTeam?.name || 'Home';
             const liveNote = addLiveNoteRecord(buildGoalSportNoteText(noteTeamLabel, event.note), 'goal');
+            event.liveNoteId = liveNote?.id || null;
+            event.liveNoteText = liveNote?.text || null;
             await addLogEntry(event.description, {
                 type: 'goal',
                 statKey: event.statKey,
@@ -1355,8 +1357,8 @@
                 playerNumber: event.playerNumber,
                 opponentPlayerName: event.opponentPlayerName,
                 opponentPlayerNumber: event.opponentPlayerNumber,
-                liveNoteId: liveNote?.id || null,
-                liveNoteText: liveNote?.text || null
+                liveNoteId: event.liveNoteId,
+                liveNoteText: event.liveNoteText
             });
             broadcastLiveEvent(currentTeamId, currentGameId, event).catch(console.warn);
             scheduleLiveHasData();
