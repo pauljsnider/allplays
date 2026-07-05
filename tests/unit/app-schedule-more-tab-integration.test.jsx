@@ -213,7 +213,7 @@ async function renderDetail(initialEntry) {
 }
 
 async function waitForText(container, text) {
-    for (let index = 0; index < 25; index += 1) {
+    for (let index = 0; index < 100; index += 1) {
         if (container.textContent.includes(text)) return;
         await act(async () => {
             if (vi.isFakeTimers()) {
@@ -1027,7 +1027,6 @@ describe('React app ScheduleEventDetail More tab integration', () => {
     });
 
     it('creates a lineup draft from Going players and enables publish without reloading', async () => {
-        vi.useFakeTimers();
         scheduleMocks.loadParentSchedule.mockResolvedValue({
             events: [event({ canUpdateScore: true, isTeamStaff: true, gamePlan: { lineups: {} } })]
         });
@@ -1045,7 +1044,7 @@ describe('React app ScheduleEventDetail More tab integration', () => {
         });
         await waitForText(container, '#1 Avery');
         await act(async () => {
-            await vi.advanceTimersByTimeAsync(900);
+            await new Promise((resolve) => setTimeout(resolve, 900));
         });
 
         expect(scheduleMocks.saveScheduledGameLineupDraftForApp).toHaveBeenCalledWith(expect.objectContaining({ id: 'game-1' }), auth.user, 'basketball-5v5', expect.objectContaining({

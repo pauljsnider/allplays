@@ -16,7 +16,9 @@ describe('ScheduleEventDetail decomposition', () => {
         expect(source).toContain("from '../components/schedule/AssignmentsSection'");
         expect(source).toContain("from '../components/schedule/CompactMeta'");
         expect(source).toContain("from '../components/schedule/EventSectionNav'");
-        expect(source).toContain("from '../components/schedule/GameReportSections'");
+        expect(source).toContain("type GameReportSectionsModule = typeof import('../components/schedule/GameReportSections');");
+        expect(source).toContain("gameReportSectionsModulePromise = import('../components/schedule/GameReportSections');");
+        expect(source).toContain('const DeferredGameReportSections = lazy(() => (');
         expect(source).toContain("from '../components/schedule/PlayerSwitcher'");
         expect(source).toContain("from '../components/schedule/PracticeAttendancePanel'");
         expect(source).toContain("from '../components/schedule/ReportMarkdownText'");
@@ -32,7 +34,7 @@ describe('ScheduleEventDetail decomposition', () => {
         expect(source).toContain('<ScheduleEventDetailProvider value={{');
         expect(source).toContain('useScheduleEventRsvp({ availabilityNote })');
         expect(source).toContain('useStaffRsvpBreakdown(staffRsvpLoader)');
-        expect(source).toContain('<GameReportSections event={event} />');
+        expect(source).toContain('<DeferredGameReportSections event={event} />');
         expect(source).toContain('<PlayerSwitcher events={events} selectedChildId={selectedEvent.childId} onSelect={selectChild} compact />');
         expect(source).not.toMatch(/^function GameReportSections\b/m);
         expect(source).not.toMatch(/^function GameReportSectionContent\b/m);
