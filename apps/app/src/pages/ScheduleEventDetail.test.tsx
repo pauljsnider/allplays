@@ -1998,6 +1998,48 @@ describe('ScheduleEventDetail assignments', () => {
     });
   });
 
+  it('passes the recurring practice occurrence through cancellation without falling back to the series', async () => {
+    const recurringOccurrence = buildEvent({
+      eventKey: 'team-1::practice-master__2026-06-04::player-1::2026-06-04T18:00:00.000Z::practice',
+      id: 'practice-master__2026-06-04',
+      type: 'practice',
+      title: 'Skills practice',
+      opponent: null,
+      isTeamAdmin: true,
+      isTeamStaff: true
+    });
+    scheduleServiceMocks.loadParentScheduleEventDetail.mockResolvedValue({
+      events: [recurringOccurrence],
+      children: []
+    });
+    scheduleServiceMocks.cancelPracticeOccurrenceForApp.mockResolvedValue({
+      cancelled: true,
+      masterId: 'practice-master',
+      instanceDate: '2026-06-04'
+    });
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+
+    renderScheduleEventDetail();
+
+    await waitFor(() => {
+      expect(screen.getAllByRole('button', { name: 'More' }).length).toBeGreaterThan(0);
+    });
+    fireEvent.click(screen.getAllByRole('button', { name: 'More' })[0]);
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel this occurrence' }));
+
+    await waitFor(() => {
+      expect(scheduleServiceMocks.cancelPracticeOccurrenceForApp).toHaveBeenCalledWith(
+        expect.objectContaining({
+          id: 'practice-master__2026-06-04',
+          type: 'practice',
+          isTeamAdmin: true
+        }),
+        auth.user
+      );
+    });
+    expect(screen.getByText('Practice occurrence cancelled for this date only.')).toBeTruthy();
+  });
+
   it('resets deferred game hub panels before rendering a switched event', async () => {
     scheduleServiceMocks.loadParentScheduleEventDetail.mockImplementation(async (_user, { eventId }) => ({
       events: [eventId === 'game-2'
