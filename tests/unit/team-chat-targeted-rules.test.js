@@ -73,57 +73,36 @@ describe('targeted team chat Firestore rules', () => {
         expect(rules).toContain('isFullTeamChatMessage(data) ||');
     });
 
-    it('restricts legacy team chat reads to full-team messages readable by the caller', () => {
+    it('keeps legacy team chat list queries compatible with messages missing target fields', () => {
         const legacyChatStart = rules.indexOf('match /chatMessages/{messageId} {');
         const conversationsStart = rules.indexOf('match /chatConversations/{conversationId} {');
         const legacyChatBlock = rules.slice(legacyChatStart, conversationsStart);
 
-        expect(legacyChatBlock).toContain('allow read: if isFullTeamChatMessage(resource.data) &&');
+        expect(legacyChatBlock).toContain('allow list: if canAccessTeamChat(teamId);');
+        expect(legacyChatBlock).toContain('allow get: if isFullTeamChatMessage(resource.data) &&');
         expect(legacyChatBlock).toContain('canReadChatMessage(teamId, resource.data);');
-        expect(legacyChatBlock).not.toContain('allow list: if canAccessTeamChat(teamId);');
-        expect(legacyChatBlock).not.toContain('allow get: if isFullTeamChatMessage(resource.data) &&');
+        expect(legacyChatBlock).not.toContain('allow read: if isFullTeamChatMessage(resource.data) &&');
         expect(rules).toContain('allow create: if canAccessTeamChat(teamId) &&');
         expect(rules).toContain('isFullTeamChatMessage(request.resource.data);');
         expect(rules).not.toContain('allow read: if canReadChatMessage(teamId, resource.data);');
     });
 
-    it('constrains legacy team chat list and count queries to full-team records', () => {
-        expect(dbSource).toContain('function getTeamChatMessageListConstraints(conversationId = DEFAULT_TEAM_CONVERSATION_ID)');
-        expect(dbSource).toContain("return isDefaultTeamConversation(conversationId)\n        ? [where('targetType', '==', 'full_team'), where('recipientIds', '==', [])]\n        : [];");
-        expect(dbSource).toContain("query(messagesRef, ...listConstraints, orderBy('createdAt', 'desc'), limitQuery(limit))");
-        expect(dbSource).toContain("query(messagesRef, ...getTeamChatMessageListConstraints(conversationId), orderBy('createdAt', 'desc'), limitQuery(limit))");
-        expect(dbSource).toContain("query(messagesRef, ...listConstraints, orderBy('createdAt', 'desc'), limit(1))");
-        expect(dbSource).toContain('unreadConstraints.push(...listConstraints);');
+    it('does not require target fields when listing or counting legacy team chat messages', () => {
+        expect(dbSource).not.toContain("where('targetType', '==', 'full_team')");
+        expect(dbSource).not.toContain("where('recipientIds', '==', [])");
+        expect(dbSource).toContain("query(messagesRef, orderBy('createdAt', 'desc'), limitQuery(limit))");
+        expect(dbSource).toContain("query(messagesRef, orderBy('createdAt', 'desc'), limit(1))");
+        expect(dbSource).toContain('const totalUnreadQuery = query(messagesRef, ...unreadConstraints);');
     });
 
-    it('declares indexes required by rules-safe legacy team chat queries', () => {
-        expect(firestoreIndexes.indexes).toEqual(expect.arrayContaining([
+    it('does not declare target-field indexes for legacy team chat queries', () => {
+        const chatMessageIndexes = firestoreIndexes.indexes.filter((index) => index.collectionGroup === 'chatMessages');
+        expect(chatMessageIndexes).not.toEqual(expect.arrayContaining([
             expect.objectContaining({
-                collectionGroup: 'chatMessages',
-                queryScope: 'COLLECTION',
-                fields: [
+                fields: expect.arrayContaining([
                     { fieldPath: 'targetType', order: 'ASCENDING' },
-                    { fieldPath: 'recipientIds', order: 'ASCENDING' },
-                    { fieldPath: 'createdAt', order: 'DESCENDING' }
-                ]
-            }),
-            expect.objectContaining({
-                collectionGroup: 'chatMessages',
-                queryScope: 'COLLECTION',
-                fields: [
-                    { fieldPath: 'targetType', order: 'ASCENDING' },
-                    { fieldPath: 'recipientIds', order: 'ASCENDING' },
-                    { fieldPath: 'createdAt', order: 'ASCENDING' }
-                ]
-            }),
-            expect.objectContaining({
-                collectionGroup: 'chatMessages',
-                queryScope: 'COLLECTION',
-                fields: [
-                    { fieldPath: 'targetType', order: 'ASCENDING' },
-                    { fieldPath: 'recipientIds', order: 'ASCENDING' },
-                    { fieldPath: 'senderId', order: 'ASCENDING' }
-                ]
+                    { fieldPath: 'recipientIds', order: 'ASCENDING' }
+                ])
             })
         ]));
     });
