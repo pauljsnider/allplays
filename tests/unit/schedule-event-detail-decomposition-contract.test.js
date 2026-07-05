@@ -17,7 +17,6 @@ describe('ScheduleEventDetail decomposition contract', () => {
             "import { EventDetailsPanel } from '../components/schedule/EventDetailsPanel';",
             "import { ScheduleEventHeader } from '../components/schedule/ScheduleEventHeader';",
             "import { EventSectionNav } from '../components/schedule/EventSectionNav';",
-            "import { GameReportSections } from '../components/schedule/GameReportSections';",
             "import { PlayerSwitcher } from '../components/schedule/PlayerSwitcher';",
             "import { PracticeAttendancePanel } from '../components/schedule/PracticeAttendancePanel';",
             "import { ReportMarkdownText } from '../components/schedule/ReportMarkdownText';",
@@ -213,8 +212,12 @@ describe('ScheduleEventDetail decomposition contract', () => {
         const content = readRepoFile('apps/app/src/components/schedule/GameReportSectionContent.tsx');
         const markdown = readRepoFile('apps/app/src/components/schedule/ReportMarkdownText.tsx');
 
-        expect(page).toContain("import { GameReportSections } from '../components/schedule/GameReportSections';");
-        expect(page).toContain('<GameReportSections event={event} />');
+        expect(page).not.toContain("import { GameReportSections } from '../components/schedule/GameReportSections';");
+        expect(page).toContain("type GameReportSectionsModule = typeof import('../components/schedule/GameReportSections');");
+        expect(page).toContain('export function loadGameReportSectionsModule()');
+        expect(page).toContain("gameReportSectionsModulePromise = import('../components/schedule/GameReportSections');");
+        expect(page).toContain('loadGameReportSectionsModule().then((module) => ({ default: module.GameReportSections }))');
+        expect(page).toContain('<DeferredGameReportSections event={event} />');
         expect(page).not.toMatch(/^function GameReportSections\b/m);
         expect(page).not.toMatch(/^function GameReportSectionContent\b/m);
         expect(page).not.toMatch(/loadGameReportSections\(/);
