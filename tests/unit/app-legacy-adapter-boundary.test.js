@@ -86,7 +86,8 @@ describe('app legacy adapter boundary', () => {
         expect(directLegacyImportPattern.test(detailSource)).toBe(false);
         expect(directLegacyImportPattern.test(rsvpHookSource)).toBe(false);
         expect(directLegacyImportPattern.test(scheduleServiceSource)).toBe(false);
-        expect(detailSource).toContain("from '../lib/adapters/legacyScheduleHelpers'");
+        expect(detailSource).toContain("typeof import('../lib/adapters/legacyScheduleHelpers')");
+        expect(detailSource).toContain("import('../lib/adapters/legacyScheduleHelpers')");
         expect(rsvpHookSource).toContain("from '../../lib/scheduleService'");
         expect(scheduleServiceSource).toContain("from './adapters/legacyScheduleHelpers'");
         expect(helperAdapterSource).toContain("from '@legacy/parent-dashboard-rsvp.js'");
