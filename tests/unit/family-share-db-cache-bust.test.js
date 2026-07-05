@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 
 // Regression for the #3232 gap (Codex P1, unaddressed at merge): family.html
 // imports the newly added `resolveFamilyShareTokenChildren` export from db.js but
-// kept the old `?v=74` cache key. Clients/CDNs holding a cached db.js?v=80 from
+// kept the old `?v=74` cache key. Clients/CDNs holding a cached db.js?v=81 from
 // before the export was added would fail the named import and render a blank
 // family-share page. The import's cache-bust version must be >= 75 (the version
 // at/after which the export exists).
