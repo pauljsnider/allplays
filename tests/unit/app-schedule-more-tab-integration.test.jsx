@@ -212,8 +212,8 @@ async function renderDetail(initialEntry) {
     return { container, root };
 }
 
-async function waitForText(container, text) {
-    for (let index = 0; index < 100; index += 1) {
+async function waitForText(container, text, attempts = 100) {
+    for (let index = 0; index < attempts; index += 1) {
         if (container.textContent.includes(text)) return;
         await act(async () => {
             if (vi.isFakeTimers()) {
@@ -225,6 +225,21 @@ async function waitForText(container, text) {
         });
     }
     throw new Error(`Timed out waiting for text: ${text}`);
+}
+
+async function waitForMockCall(mock, label) {
+    for (let index = 0; index < 100; index += 1) {
+        if (mock.mock.calls.length > 0) return;
+        await act(async () => {
+            if (vi.isFakeTimers()) {
+                await vi.advanceTimersByTimeAsync(1);
+                await Promise.resolve();
+                return;
+            }
+            await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+    }
+    throw new Error(`Timed out waiting for mock call: ${label}`);
 }
 
 function buttonByText(container, text) {
@@ -833,6 +848,8 @@ describe('React app ScheduleEventDetail More tab integration', () => {
         await clickButton(container, 'Game');
         await waitForText(container, 'Live score');
 
+        await waitForMockCall(scheduleMocks.buildLiveGameClockPeriods, 'buildLiveGameClockPeriods');
+        await waitForMockCall(scheduleMocks.resolveLiveGameClockSnapshot, 'resolveLiveGameClockSnapshot');
         expect(scheduleMocks.buildLiveGameClockPeriods).toHaveBeenCalledWith(expect.objectContaining({ id: 'game-1' }));
         expect(scheduleMocks.resolveLiveGameClockSnapshot).toHaveBeenCalledWith(expect.objectContaining({ id: 'game-1' }), expect.any(Date));
 
@@ -1020,7 +1037,7 @@ describe('React app ScheduleEventDetail More tab integration', () => {
         await clickButton(container, 'Game');
         await waitForText(container, 'Lineup builder');
         await clickButton(container, 'Lineup builder');
-        await waitForText(container, 'No lineup draft is available yet.');
+        await waitForText(container, 'No lineup draft is available yet.', 500);
 
         expect(container.querySelector('#game-hub-lineup-formation')).not.toBeNull();
         expect(buttonByText(container, 'Publish lineup').disabled).toBe(true);
@@ -1042,7 +1059,7 @@ describe('React app ScheduleEventDetail More tab integration', () => {
             select.value = 'basketball-5v5';
             select.dispatchEvent(new Event('change', { bubbles: true }));
         });
-        await waitForText(container, '#1 Avery');
+        await waitForText(container, '#1 Avery', 500);
         await act(async () => {
             await new Promise((resolve) => setTimeout(resolve, 900));
         });

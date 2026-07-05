@@ -94,6 +94,37 @@ const scheduleServiceMocks = vi.hoisted(() => ({
 }));
 
 vi.mock('../lib/scheduleService', () => scheduleServiceMocks);
+vi.mock('../lib/scheduleGameDayService', () => ({
+  loadAutoFilledLineupDraftPreviewForApp: scheduleServiceMocks.loadAutoFilledLineupDraftPreviewForApp,
+  publishGamePlanForApp: scheduleServiceMocks.publishGamePlanForApp,
+  publishLiveScoreUpdateEvent: scheduleServiceMocks.publishLiveScoreUpdateEvent,
+  recordPlayerGameStat: scheduleServiceMocks.recordPlayerGameStat,
+  recordPlayerScoringStat: scheduleServiceMocks.recordPlayerScoringStat,
+  undoRecordedPlayerGameStat: scheduleServiceMocks.undoRecordedPlayerGameStat,
+  saveScheduledGameLineupDraftForApp: scheduleServiceMocks.saveScheduledGameLineupDraftForApp,
+  completeGameWrapupForApp: scheduleServiceMocks.completeGameWrapupForApp,
+  loadGameDayLiveEventsForApp: scheduleServiceMocks.loadGameDayLiveEventsForApp,
+  saveGameDaySubstitutionForApp: scheduleServiceMocks.saveGameDaySubstitutionForApp,
+  updateLiveGameClockState: scheduleServiceMocks.updateLiveGameClockState,
+  buildLiveGameClockPeriods: scheduleServiceMocks.buildLiveGameClockPeriods,
+  resolveLiveGameClockSnapshot: scheduleServiceMocks.resolveLiveGameClockSnapshot,
+  LINEUP_FORMATIONS: {
+    'basketball-5v5': {
+      id: 'basketball-5v5',
+      name: 'Basketball 5v5',
+      numPeriods: 4,
+      positions: [
+        { id: 'pg', name: 'PG' },
+        { id: 'sg', name: 'SG' },
+        { id: 'sf', name: 'SF' },
+        { id: 'pf', name: 'PF' },
+        { id: 'c', name: 'C' }
+      ]
+    }
+  },
+  getLineupPublishStatus: vi.fn((gamePlan: any) => gamePlan?.isPublished ? 'Published lineup is current.' : 'Lineup draft is not published.'),
+  hasLineupDraft: vi.fn((gamePlan: any) => Boolean(gamePlan?.lineups && Object.keys(gamePlan.lineups).length))
+}));
 const publicActionMocks = vi.hoisted(() => ({
   exportCalendarIcsFile: vi.fn(),
   openPublicUrl: vi.fn(),
@@ -204,7 +235,9 @@ import {
   loadGameWrapupServiceModule,
   loadLegacyScheduleHelpersModule,
   loadPracticeTimelineServiceModule,
+  loadScheduleGameDayService,
   loadStatsheetImportServiceModule,
+  setScheduleGameDayServiceImporterForTest,
   shouldAutosaveGeneratedLineupDraft,
   shouldAutosaveLineupDraft,
   shouldPersistLineupDraft
@@ -362,7 +395,12 @@ function buildLiveChatMessages(count: number) {
 
 describe('ScheduleEventDetail deferred game hub loaders', () => {
   it('keeps closed game hub implementation modules out of the route static imports', () => {
-    const source = readFileSync('src/pages/ScheduleEventDetail.tsx', 'utf8');
+    let source = '';
+    try {
+      source = readFileSync('src/pages/ScheduleEventDetail.tsx', 'utf8');
+    } catch {
+      source = readFileSync('apps/app/src/pages/ScheduleEventDetail.tsx', 'utf8');
+    }
 
     [
       '../lib/gameDayLineupBuilder',
@@ -370,7 +408,9 @@ describe('ScheduleEventDetail deferred game hub loaders', () => {
       '../lib/practiceTimelineService',
       '../lib/statsheetImportService',
       '../lib/adapters/legacyScheduleHelpers',
-      '../components/schedule/GameReportSections'
+      '../components/schedule/GameReportSections',
+      '../lib/scheduleGameDayService',
+      '../lib/gameDayLineupPublish'
     ].forEach((modulePath) => {
       expect(source).not.toMatch(new RegExp(`import\\s+(?!type\\b)[^;]+from ['"]${modulePath.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}['"]`));
     });
@@ -383,7 +423,8 @@ describe('ScheduleEventDetail deferred game hub loaders', () => {
       { load: loadPracticeTimelineServiceModule, exportName: 'loadPracticeTimelineModel' },
       { load: loadStatsheetImportServiceModule, exportName: 'loadTrackStatsheetContextForApp' },
       { load: loadLegacyScheduleHelpersModule, exportName: 'getSubstitutionOptions' },
-      { load: loadGameReportSectionsModule, exportName: 'GameReportSections' }
+      { load: loadGameReportSectionsModule, exportName: 'GameReportSections' },
+      { load: loadScheduleGameDayService, exportName: 'loadAutoFilledLineupDraftPreviewForApp' }
     ];
 
     for (const { load, exportName } of loaders) {
@@ -392,6 +433,36 @@ describe('ScheduleEventDetail deferred game hub loaders', () => {
       expect(secondLoad).toBe(firstLoad);
       await expect(firstLoad).resolves.toHaveProperty(exportName);
     }
+  });
+
+  it('caches the lazy game-day schedule service import across panels', async () => {
+    const importer = vi.fn(async () => ({
+      loadAutoFilledLineupDraftPreviewForApp: vi.fn(),
+      publishGamePlanForApp: vi.fn(),
+      publishLiveScoreUpdateEvent: vi.fn(),
+      recordPlayerGameStat: vi.fn(),
+      recordPlayerScoringStat: vi.fn(),
+      undoRecordedPlayerGameStat: vi.fn(),
+      saveScheduledGameLineupDraftForApp: vi.fn(),
+      completeGameWrapupForApp: vi.fn(),
+      loadGameDayLiveEventsForApp: vi.fn(),
+      saveGameDaySubstitutionForApp: vi.fn(),
+      updateLiveGameClockState: vi.fn(),
+      buildLiveGameClockPeriods: vi.fn(),
+      resolveLiveGameClockSnapshot: vi.fn(),
+      LINEUP_FORMATIONS: {},
+      getLineupPublishStatus: vi.fn(),
+      hasLineupDraft: vi.fn()
+    }) as any);
+    setScheduleGameDayServiceImporterForTest(importer);
+
+    const firstLoad = loadScheduleGameDayService();
+    const secondLoad = loadScheduleGameDayService();
+
+    expect(secondLoad).toBe(firstLoad);
+    await firstLoad;
+    expect(importer).toHaveBeenCalledTimes(1);
+    setScheduleGameDayServiceImporterForTest();
   });
 });
 
@@ -872,6 +943,32 @@ describe('ScheduleEventDetail nav visibility', () => {
     expect(screen.queryByRole('heading', { name: 'Game hub' })).toBeNull();
     expect(screen.getByTestId('event-route').textContent).toBe('/schedule/team-1/game-1?childId=player-1&section=availability');
   });
+
+  it('does not import game-day service for availability or rideshare initial renders', async () => {
+    const importer = vi.fn(async () => ({}) as any);
+    setScheduleGameDayServiceImporterForTest(importer);
+    scheduleServiceMocks.loadParentScheduleEventDetail.mockResolvedValue({
+      events: [buildEvent({
+        canUpdateScore: true,
+        rideshareSummary: { offerCount: 1, seatsLeft: 2, requests: 0, pending: 0, confirmed: 0, isFull: false }
+      })],
+      children: []
+    });
+
+    const availabilityRender = renderScheduleEventDetailWithLocation('/schedule/team-1/game-1?childId=player-1&section=availability');
+    await waitFor(() => {
+      expect(screen.getByRole('heading', { name: 'Availability' })).toBeTruthy();
+    });
+    expect(importer).not.toHaveBeenCalled();
+    availabilityRender.unmount();
+
+    renderScheduleEventDetailWithLocation('/schedule/team-1/game-1?childId=player-1&section=rideshare');
+    await waitFor(() => {
+      expect(screen.getByRole('heading', { name: 'Rideshare' })).toBeTruthy();
+    });
+    expect(importer).not.toHaveBeenCalled();
+    setScheduleGameDayServiceImporterForTest();
+  });
 });
 
 describe('ScheduleEventDetail rideshare permissions', () => {
@@ -1246,6 +1343,81 @@ describe('ScheduleEventDetail assignments', () => {
     });
 
     expect(screen.getAllByText(/LIVE · Q2/i).length).toBeGreaterThan(0);
+  });
+
+  it('preserves elapsed running clock time while the game-day service import is loading', async () => {
+    const updatedAt = new Date(Date.now() - 30_000).toISOString();
+    const updateLiveGameClockState = vi.fn(async (_teamId, _gameId, payload) => ({
+      liveClockMs: payload.liveClockMs,
+      liveClockRunning: payload.liveClockRunning,
+      liveClockPeriod: payload.liveClockPeriod,
+      period: payload.liveClockPeriod,
+      liveClockUpdatedAt: new Date(),
+      liveStatus: 'live'
+    }));
+    let resolveImporter: (module: any) => void = () => {};
+    const importerPromise = new Promise<any>((resolve) => {
+      resolveImporter = resolve;
+    });
+    const importer = vi.fn(() => importerPromise);
+    setScheduleGameDayServiceImporterForTest(importer);
+    scheduleServiceMocks.loadParentScheduleEventDetail.mockResolvedValue({
+      events: [buildEvent({
+        liveStatus: 'live',
+        canUpdateScore: true,
+        liveClockMs: 60_000,
+        liveClockRunning: true,
+        liveClockPeriod: 'Q1',
+        liveClockUpdatedAt: updatedAt,
+        gamePlan: { numPeriods: 4 }
+      })],
+      children: []
+    });
+    scheduleServiceMocks.loadHomeScoringPlayers.mockResolvedValue([]);
+    scheduleServiceMocks.loadGameDayLiveEventsForApp.mockResolvedValue([]);
+    scheduleHubMocks.buildGameHubDestinations.mockReturnValue([]);
+
+    try {
+      renderScheduleEventDetailWithRouteControls();
+
+      await waitFor(() => {
+        expect(screen.getByTestId('live-game-clock-panel')).toBeTruthy();
+      });
+
+      fireEvent.click(screen.getByRole('button', { name: 'Pause clock' }));
+
+      expect(updateLiveGameClockState).not.toHaveBeenCalled();
+
+      resolveImporter({
+        loadAutoFilledLineupDraftPreviewForApp: vi.fn(() => Promise.resolve({ availablePlayers: [], goingPlayers: [], gamePlan: null })),
+        publishGamePlanForApp: vi.fn(),
+        publishLiveScoreUpdateEvent: vi.fn(),
+        recordPlayerGameStat: vi.fn(),
+        recordPlayerScoringStat: vi.fn(),
+        undoRecordedPlayerGameStat: vi.fn(),
+        saveScheduledGameLineupDraftForApp: vi.fn(),
+        completeGameWrapupForApp: vi.fn(),
+        loadGameDayLiveEventsForApp: vi.fn(() => Promise.resolve([])),
+        saveGameDaySubstitutionForApp: vi.fn(),
+        updateLiveGameClockState,
+        buildLiveGameClockPeriods: vi.fn(() => ['Q1', 'Q2', 'Q3', 'Q4']),
+        resolveLiveGameClockSnapshot: vi.fn(),
+        LINEUP_FORMATIONS: {},
+        getLineupPublishStatus: vi.fn(() => 'Lineup draft is not published.'),
+        hasLineupDraft: vi.fn(() => false)
+      });
+
+      await waitFor(() => {
+        expect(updateLiveGameClockState).toHaveBeenCalledWith('team-1', 'game-1', expect.objectContaining({
+          liveClockMs: expect.any(Number),
+          liveClockRunning: false,
+          liveClockPeriod: 'Q1'
+        }), auth.user);
+      });
+      expect(updateLiveGameClockState.mock.calls[0][2].liveClockMs).toBeGreaterThanOrEqual(89_000);
+    } finally {
+      setScheduleGameDayServiceImporterForTest();
+    }
   });
 
   it('tracks player fouls, shows bonus state, and resets team fouls by period', async () => {

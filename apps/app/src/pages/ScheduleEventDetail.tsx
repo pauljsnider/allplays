@@ -18,24 +18,11 @@ import {
   loadStaffPracticeAttendance,
   loadParentScheduleEventDetail,
   resolveCachedParentScheduleEvents,
-  loadAutoFilledLineupDraftPreviewForApp,
   markParentPracticePacketComplete,
-  publishGamePlanForApp,
   loadHomeScoringPlayers,
-  publishLiveScoreUpdateEvent,
-  recordPlayerGameStat,
-  recordPlayerScoringStat,
-  undoRecordedPlayerGameStat,
-  saveScheduledGameLineupDraftForApp,
   saveStaffPracticeAttendance,
   saveStaffPracticePacket,
-  completeGameWrapupForApp,
-  loadGameDayLiveEventsForApp,
-  saveGameDaySubstitutionForApp,
   updateGameScore,
-  updateLiveGameClockState,
-  buildLiveGameClockPeriods,
-  resolveLiveGameClockSnapshot,
   createStaffRsvpAvailabilityLoader,
   type PracticeAttendancePlayer,
   type StaffPracticeAttendance,
@@ -44,10 +31,8 @@ import {
   type ParentPracticePacket,
   type ParentPracticePacketChild,
   type ScheduleHomeScoringPlayer,
-  type PlayerGameStatResult,
-  type LineupDraftPreviewResult
 } from '../lib/scheduleService';
-import { LINEUP_FORMATIONS, getLineupPublishStatus, hasLineupDraft } from '../lib/gameDayLineupPublish';
+import type { PlayerGameStatResult, LineupDraftPreviewResult } from '../lib/scheduleGameDayService';
 import { exportCalendarIcsFile, openPublicUrl, sharePublicUrl } from '../lib/publicActions';
 import { buildParentScheduleEventIcs } from '../lib/parentToolsService';
 import {
@@ -112,6 +97,7 @@ type PracticeTimelineServiceModule = typeof import('../lib/practiceTimelineServi
 type StatsheetImportServiceModule = typeof import('../lib/statsheetImportService');
 type LegacyScheduleHelpersModule = typeof import('../lib/adapters/legacyScheduleHelpers');
 type GameReportSectionsModule = typeof import('../components/schedule/GameReportSections');
+type ScheduleGameDayServiceModule = typeof import('../lib/scheduleGameDayService');
 
 // Module-level promise caches — each module loads at most once per session
 let liveGameChatModulePromise: Promise<LiveGameChatModule> | null = null;
@@ -122,6 +108,8 @@ let practiceTimelineServiceModulePromise: Promise<PracticeTimelineServiceModule>
 let statsheetImportServiceModulePromise: Promise<StatsheetImportServiceModule> | null = null;
 let legacyScheduleHelpersModulePromise: Promise<LegacyScheduleHelpersModule> | null = null;
 let gameReportSectionsModulePromise: Promise<GameReportSectionsModule> | null = null;
+let scheduleGameDayServiceModulePromise: Promise<ScheduleGameDayServiceModule> | null = null;
+let scheduleGameDayServiceImporter = () => import('../lib/scheduleGameDayService');
 
 function loadLiveGameChatModule() {
   if (!liveGameChatModulePromise) {
@@ -177,6 +165,18 @@ export function loadGameReportSectionsModule() {
     gameReportSectionsModulePromise = import('../components/schedule/GameReportSections');
   }
   return gameReportSectionsModulePromise;
+}
+
+export function loadScheduleGameDayService() {
+  if (!scheduleGameDayServiceModulePromise) {
+    scheduleGameDayServiceModulePromise = scheduleGameDayServiceImporter();
+  }
+  return scheduleGameDayServiceModulePromise;
+}
+
+export function setScheduleGameDayServiceImporterForTest(importer?: () => Promise<ScheduleGameDayServiceModule>) {
+  scheduleGameDayServiceModulePromise = null;
+  scheduleGameDayServiceImporter = importer || (() => import('../lib/scheduleGameDayService'));
 }
 
 const DeferredGameReportSections = lazy(() => (
@@ -283,7 +283,9 @@ export function shouldAutosaveLineupDraft(isDirty: boolean, formationId: string,
 }
 
 export function shouldAutosaveGeneratedLineupDraft(existingGamePlan: Record<string, any> | null | undefined, previewGamePlan: Record<string, any> | null | undefined) {
-  return !hasLineupDraft(existingGamePlan) && hasLineupDraft(previewGamePlan);
+  const hasExistingDraft = Boolean(existingGamePlan?.lineups && typeof existingGamePlan.lineups === 'object' && Object.keys(existingGamePlan.lineups).length);
+  const hasPreviewDraft = Boolean(previewGamePlan?.lineups && typeof previewGamePlan.lineups === 'object' && Object.keys(previewGamePlan.lineups).length);
+  return !hasExistingDraft && hasPreviewDraft;
 }
 
 export function ScheduleEventDetail({ auth }: { auth: AuthState }) {
@@ -2077,6 +2079,7 @@ function GameWrapupPanel({ auth, event, onScoreUpdated, onWrapupCompleted }: {
 
       if (nextHomeScore !== previousScore.homeScore || nextAwayScore !== previousScore.awayScore) {
         try {
+          const { publishLiveScoreUpdateEvent } = await loadScheduleGameDayService();
           await publishLiveScoreUpdateEvent(event.teamId, event.id, { homeScore: nextHomeScore, awayScore: nextAwayScore }, auth.user, previousScore);
         } catch (publishError) {
           console.warn('[schedule-event-detail] Wrap-up score saved but live play-by-play posting failed:', publishError);
@@ -2109,6 +2112,7 @@ function GameWrapupPanel({ auth, event, onScoreUpdated, onWrapupCompleted }: {
         awayScore: nextAwayScore,
         postGameNotes: trimmedNotes
       });
+      const { completeGameWrapupForApp } = await loadScheduleGameDayService();
       await completeGameWrapupForApp(event.teamId, event.id, {
         ...completionPayload,
         summary: finalSummary,
@@ -2355,11 +2359,17 @@ function GameDaySubstitutionPanel({ auth, event }: { auth: AuthState; event: Par
     let cancelled = false;
     setLoading(true);
     Promise.all([
-      loadAutoFilledLineupDraftPreviewForApp(event, auth.user, formationId),
-      loadGameDayLiveEventsForApp(event.teamId, event.id),
+      loadScheduleGameDayService(),
       loadGameDayLineupBuilderModule()
     ])
-      .then(([preview, loadedLiveEvents, builder]) => {
+      .then(async ([gameDayService, builder]) => {
+        const [preview, loadedLiveEvents] = await Promise.all([
+          gameDayService.loadAutoFilledLineupDraftPreviewForApp(event, auth.user, formationId),
+          gameDayService.loadGameDayLiveEventsForApp(event.teamId, event.id)
+        ]);
+        return { preview, loadedLiveEvents, builder };
+      })
+      .then(({ preview, loadedLiveEvents, builder }) => {
         if (cancelled) return;
         const loadedPlayers = builder.buildLineupEditorPlayers(preview?.availablePlayers || [], preview?.goingPlayers || []);
         setPlayers(loadedPlayers.map((player) => ({ id: player.id, name: player.name, number: player.number || null })));
@@ -2420,6 +2430,7 @@ function GameDaySubstitutionPanel({ auth, event }: { auth: AuthState; event: Par
     setSaving(true);
     setStatus(null);
     try {
+      const { saveGameDaySubstitutionForApp } = await loadScheduleGameDayService();
       const saved = await saveGameDaySubstitutionForApp(event.teamId, event.id, auth.user, {
         rotationPlan: result.rotationPlan,
         rotationActual: result.rotationActual,
@@ -2513,6 +2524,7 @@ function GameDaySubstitutionPanel({ auth, event }: { auth: AuthState; event: Par
 }
 
 function GameHubLineupBuilderPanel({ auth, event, onGamePlanSaved }: { auth: AuthState; event: ParentScheduleEvent; onGamePlanSaved: (gamePlan: Record<string, any>) => void }) {
+  const [gameDayService, setGameDayService] = useState<ScheduleGameDayServiceModule | null>(null);
   const [lineupBuilderModule, setLineupBuilderModule] = useState<GameDayLineupBuilderModule | null>(null);
   const [formationId, setFormationId] = useState(event.gamePlan?.formationId || '');
   const [preview, setPreview] = useState<LineupDraftPreviewResult | null>(null);
@@ -2528,7 +2540,7 @@ function GameHubLineupBuilderPanel({ auth, event, onGamePlanSaved }: { auth: Aut
   const latestDraftRef = useRef<Record<string, string>>({});
   const latestPreviewRef = useRef<LineupDraftPreviewResult | null>(null);
 
-  const formation = LINEUP_FORMATIONS[formationId] || null;
+  const formation = gameDayService?.LINEUP_FORMATIONS[formationId] || null;
   const lineupPeriods = useMemo(() => (
     lineupBuilderModule ? lineupBuilderModule.getOrderedLineupPeriods(formationId, preview?.gamePlan || event.gamePlan || null) : []
   ), [lineupBuilderModule, formationId, preview?.gamePlan, event.gamePlan]);
@@ -2536,12 +2548,18 @@ function GameHubLineupBuilderPanel({ auth, event, onGamePlanSaved }: { auth: Aut
     lineupBuilderModule ? lineupBuilderModule.buildLineupEditorPlayers(preview?.availablePlayers || [], preview?.goingPlayers || []) : []
   ), [lineupBuilderModule, preview?.availablePlayers, preview?.goingPlayers]);
   const playerById = useMemo(() => new Map(editorPlayers.map((player) => [player.id, player])), [editorPlayers]);
-  const hasSavedDraft = hasLineupDraft(preview?.gamePlan ?? event.gamePlan);
+  const hasSavedDraft = gameDayService?.hasLineupDraft(preview?.gamePlan ?? event.gamePlan) || false;
   const hasDraft = Object.keys(draftLineups).length > 0 || (!dirtyRef.current && hasSavedDraft);
-  const statusCopy = getLineupPublishStatus(event.gamePlan);
+  const statusCopy = gameDayService?.getLineupPublishStatus(event.gamePlan) || null;
 
   useEffect(() => {
-    void loadGameDayLineupBuilderModule().then(setLineupBuilderModule);
+    void Promise.all([
+      loadScheduleGameDayService(),
+      loadGameDayLineupBuilderModule()
+    ]).then(([service, builder]) => {
+      setGameDayService(service);
+      setLineupBuilderModule(builder);
+    });
   }, []);
 
   useEffect(() => {
@@ -2565,11 +2583,16 @@ function GameHubLineupBuilderPanel({ auth, event, onGamePlanSaved }: { auth: Aut
 
     setLoadingPreview(true);
     Promise.all([
-      loadAutoFilledLineupDraftPreviewForApp(event, auth.user, formationId),
+      loadScheduleGameDayService(),
       loadGameDayLineupBuilderModule()
     ])
-      .then(([result, builder]) => {
+      .then(async ([service, builder]) => {
+        const result = await service.loadAutoFilledLineupDraftPreviewForApp(event, auth.user, formationId);
+        return { result, builder, service };
+      })
+      .then(({ result, builder, service }) => {
         if (cancelled) return;
+        setGameDayService(service);
         setPreview(result);
         latestPreviewRef.current = result;
         const seeded = builder.buildLineupEditorAssignments(formationId, result.gamePlan || event.gamePlan || null);
@@ -2599,6 +2622,7 @@ function GameHubLineupBuilderPanel({ auth, event, onGamePlanSaved }: { auth: Aut
     setSaving(true);
     if (reason !== 'autosave') setStatus(null);
     try {
+      const { saveScheduledGameLineupDraftForApp } = await loadScheduleGameDayService();
       const result = await saveScheduledGameLineupDraftForApp(event, auth.user, formationId, { lineups });
       setPreview(result);
       latestPreviewRef.current = result;
@@ -2669,6 +2693,7 @@ function GameHubLineupBuilderPanel({ auth, event, onGamePlanSaved }: { auth: Aut
     if (!saved) return;
     setPublishing(true);
     try {
+      const { publishGamePlanForApp } = await loadScheduleGameDayService();
       const result = await publishGamePlanForApp({ ...event, gamePlan: latestPreviewRef.current?.gamePlan || event.gamePlan }, auth.user);
       onGamePlanSaved(result.gamePlan);
       const version = Number.parseInt(String(result.gamePlan?.publishedVersion || ''), 10) || 0;
@@ -2697,7 +2722,7 @@ function GameHubLineupBuilderPanel({ auth, event, onGamePlanSaved }: { auth: Aut
             disabled={!auth.user || event.isCancelled || saving || publishing}
           >
             <option value="">Select formation</option>
-            {Object.values(LINEUP_FORMATIONS).map((option) => (
+            {Object.values(gameDayService?.LINEUP_FORMATIONS || {}).map((option) => (
               <option key={option.id} value={option.id}>{option.name}</option>
             ))}
           </select>
@@ -2828,10 +2853,32 @@ type ScoreSnapshot = {
 
 function LiveGameClockPanel({ auth, event, onLiveClockUpdated }: { auth: AuthState; event: ParentScheduleEvent; onLiveClockUpdated: (payload: Partial<ParentScheduleEvent> & { period?: string | null }) => void }) {
   const clockNow = useLiveGameClockNow();
+  const [gameDayService, setGameDayService] = useState<ScheduleGameDayServiceModule | null>(null);
   const [saving, setSaving] = useState(false);
   const [status, setStatus] = useState<{ tone: 'success' | 'error'; message: string } | null>(null);
-  const periods = useMemo(() => buildLiveGameClockPeriods(event as Record<string, any>), [event]);
-  const clockState = useMemo(() => resolveLiveGameClockSnapshot(event as Record<string, any>, clockNow), [event, clockNow]);
+  useEffect(() => {
+    void loadScheduleGameDayService().then(setGameDayService);
+  }, []);
+  const fallbackPeriods = useMemo(() => (
+    Number((event.gamePlan as Record<string, any> | null | undefined)?.numPeriods) === 4 ? ['Q1', 'Q2', 'Q3', 'Q4'] : ['H1', 'H2']
+  ), [event.gamePlan]);
+  const periods = useMemo(() => gameDayService?.buildLiveGameClockPeriods(event as Record<string, any>) || fallbackPeriods, [event, fallbackPeriods, gameDayService]);
+  const clockState = useMemo(() => {
+    const serviceSnapshot = gameDayService?.resolveLiveGameClockSnapshot(event as Record<string, any>, clockNow);
+    if (serviceSnapshot) return serviceSnapshot;
+
+    const persistedClockMs = Math.max(0, Number(event.liveClockMs || 0));
+    const parsedUpdatedAt = event.liveClockUpdatedAt ? new Date(event.liveClockUpdatedAt as any) : clockNow;
+    const updatedAt = Number.isFinite(parsedUpdatedAt.getTime()) ? parsedUpdatedAt : clockNow;
+    const elapsedClockMs = event.liveClockRunning === true ? Math.max(0, clockNow.getTime() - updatedAt.getTime()) : 0;
+    return {
+      persistedClockMs,
+      effectiveClockMs: persistedClockMs + elapsedClockMs,
+      running: event.liveClockRunning === true,
+      period: event.liveClockPeriod || (event as Record<string, any>).period || periods[0] || 'H1',
+      updatedAt
+    };
+  }, [event, clockNow, periods, gameDayService]);
   const activePeriodIndex = Math.max(0, periods.indexOf(clockState.period));
   const activePeriod = periods[activePeriodIndex] || clockState.period;
   const hasNextPeriod = activePeriodIndex < periods.length - 1;
@@ -2849,6 +2896,7 @@ function LiveGameClockPanel({ auth, event, onLiveClockUpdated }: { auth: AuthSta
     setSaving(true);
     setStatus(null);
     try {
+      const { updateLiveGameClockState } = await loadScheduleGameDayService();
       const payload = await updateLiveGameClockState(event.teamId, event.id, {
         liveClockMs: clockState.effectiveClockMs,
         liveClockRunning: next.running,
@@ -3069,6 +3117,7 @@ function LiveScoreEditor({ auth, event, onScoreUpdated }: { auth: AuthState; eve
         return;
       }
       try {
+        const { publishLiveScoreUpdateEvent } = await loadScheduleGameDayService();
         await publishLiveScoreUpdateEvent(event.teamId, event.id, { homeScore: nextHomeScore, awayScore: nextAwayScore }, auth.user, previousScore);
         setStatus({ tone: 'success', message: mode === 'autosave' ? 'Score autosaved and posted to live play-by-play.' : 'Score saved and posted to live play-by-play.' });
       } catch (publishError) {
@@ -3120,6 +3169,7 @@ function LiveScoreEditor({ auth, event, onScoreUpdated }: { auth: AuthState; eve
     setPlayerScoringId(player.id);
     setStatus(null);
     try {
+      const { recordPlayerScoringStat } = await loadScheduleGameDayService();
       const result = await recordPlayerScoringStat(event.teamId, event.id, player.id, {
         statKey: 'pts',
         value: 2,
@@ -3234,6 +3284,7 @@ function GameDayFoulTrackerPanel({ auth, event }: { auth: AuthState; event: Pare
     async function loadPlayers() {
       setLoading(true);
       try {
+        const { loadGameDayLiveEventsForApp } = await loadScheduleGameDayService();
         const [players, loadedLiveEvents] = await Promise.all([
           loadHomeScoringPlayers(event.teamId, event.id),
           loadGameDayLiveEventsForApp(event.teamId, event.id)
@@ -3257,7 +3308,7 @@ function GameDayFoulTrackerPanel({ auth, event }: { auth: AuthState; event: Pare
     };
   }, [event.teamId, event.id, event.eventKey]);
 
-  const activePeriod = useMemo(() => resolveLiveGameClockSnapshot(event as Record<string, any>).period || event.liveClockPeriod || (event as Record<string, any>).period || 'Q1', [event]);
+  const activePeriod = event.liveClockPeriod || (event as Record<string, any>).period || 'Q1';
   const homeTeamFouls = useMemo(() => Math.max(0,
     (Array.isArray(liveEvents) ? liveEvents : []).reduce((total, entry) => {
       if (entry?.type !== 'stat' || entry?.isOpponent === true) return total;
@@ -3273,6 +3324,7 @@ function GameDayFoulTrackerPanel({ auth, event }: { auth: AuthState; event: Pare
     setSavingPlayerId(player.id);
     setStatus(null);
     try {
+      const { recordPlayerGameStat } = await loadScheduleGameDayService();
       const result = await recordPlayerGameStat(event.teamId, event.id, player.id, {
         statKey: 'fouls',
         value: 1,
@@ -3299,6 +3351,7 @@ function GameDayFoulTrackerPanel({ auth, event }: { auth: AuthState; event: Pare
     setSavingPlayerId(latest.playerId);
     setStatus(null);
     try {
+      const { undoRecordedPlayerGameStat } = await loadScheduleGameDayService();
       const result = await undoRecordedPlayerGameStat(event.teamId, event.id, {
         trackerEventId: latest.trackerEventId,
         liveEventId: latest.liveEventId,
