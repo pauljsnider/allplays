@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
-import { Link, MemoryRouter, Route, Routes } from 'react-router-dom';
+import { Link, MemoryRouter, Route, Routes, useLocation } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { AppShell } from './AppShell';
 import type { NotificationInboxItem } from '../lib/notificationInboxService';
@@ -112,6 +112,11 @@ const signedInAuth: AuthState = {
     roles: ['parent'],
   },
 };
+
+function LocationDisplay() {
+  const location = useLocation();
+  return <div data-testid="current-route">{location.pathname}</div>;
+}
 
 describe('AppShell', () => {
   beforeEach(() => {
@@ -433,6 +438,29 @@ describe('AppShell', () => {
 
     const searchButton = screen.getByTestId('app-shell-search-trigger');
     expect(searchButton.getAttribute('aria-label')).toBe('Search');
+  });
+
+  it('opens search from a mobile message thread without leaving the thread', async () => {
+    useShellLayoutMock.mockReturnValue({ isDesktopWeb: false });
+
+    render(
+      <MemoryRouter initialEntries={['/messages/team-1']}>
+        <Routes>
+          <Route
+            path="/messages/:conversationId"
+            element={<AppShell auth={auth}><div>Thread<LocationDisplay /></div></AppShell>}
+          />
+        </Routes>
+      </MemoryRouter>
+    );
+
+    const searchButton = screen.getByTestId('app-shell-search-trigger');
+    expect(searchButton.getAttribute('aria-label')).toBe('Search');
+    expect(screen.getByTestId('current-route').textContent).toBe('/messages/team-1');
+
+    fireEvent.click(searchButton);
+    await waitFor(() => expect(screen.getByRole('dialog', { name: 'Search teams, players, actions, and help' })).toBeTruthy());
+    expect(screen.getByTestId('current-route').textContent).toBe('/messages/team-1');
   });
 
   it('opens the search dialog immediately when the desktop search button is clicked', async () => {
