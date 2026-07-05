@@ -400,13 +400,6 @@
         { "fieldPath": "status", "order": "ASCENDING" },
         { "fieldPath": "submittedAt", "order": "DESCENDING" }
       ]
-    },
-    {
-      "collectionGroup": "registrations",
-      "queryScope": "COLLECTION",
-      "fields": [
-        { "fieldPath": "submittedAt", "order": "DESCENDING" }
-      ]
     }
   ],
   "fieldOverrides": [
