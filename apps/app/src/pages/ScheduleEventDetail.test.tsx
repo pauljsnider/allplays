@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { readFileSync } from 'node:fs';
 import { MemoryRouter, Route, Routes, useLocation, useNavigate } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -198,6 +199,12 @@ vi.mock('../lib/statsheetImportService', () => statsheetImportServiceMocks);
 import {
   ScheduleEventDetail,
   isLiveGameChatNearBottom,
+  loadGameDayLineupBuilderModule,
+  loadGameReportSectionsModule,
+  loadGameWrapupServiceModule,
+  loadLegacyScheduleHelpersModule,
+  loadPracticeTimelineServiceModule,
+  loadStatsheetImportServiceModule,
   shouldAutosaveGeneratedLineupDraft,
   shouldAutosaveLineupDraft,
   shouldPersistLineupDraft
@@ -352,6 +359,41 @@ function buildLiveChatMessages(count: number) {
     createdAt: `2026-06-04T18:${String(index + 1).padStart(2, '0')}:00.000Z`
   }));
 }
+
+describe('ScheduleEventDetail deferred game hub loaders', () => {
+  it('keeps closed game hub implementation modules out of the route static imports', () => {
+    const source = readFileSync('src/pages/ScheduleEventDetail.tsx', 'utf8');
+
+    [
+      '../lib/gameDayLineupBuilder',
+      '../lib/gameWrapupService',
+      '../lib/practiceTimelineService',
+      '../lib/statsheetImportService',
+      '../lib/adapters/legacyScheduleHelpers',
+      '../components/schedule/GameReportSections'
+    ].forEach((modulePath) => {
+      expect(source).not.toMatch(new RegExp(`import\\s+(?!type\\b)[^;]+from ['"]${modulePath.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}['"]`));
+    });
+  });
+
+  it('caches deferred game hub module loaders and resolves expected modules', async () => {
+    const loaders = [
+      { load: loadGameDayLineupBuilderModule, exportName: 'buildLineupEditorPlayers' },
+      { load: loadGameWrapupServiceModule, exportName: 'generateGameWrapupArtifactsForApp' },
+      { load: loadPracticeTimelineServiceModule, exportName: 'loadPracticeTimelineModel' },
+      { load: loadStatsheetImportServiceModule, exportName: 'loadTrackStatsheetContextForApp' },
+      { load: loadLegacyScheduleHelpersModule, exportName: 'getSubstitutionOptions' },
+      { load: loadGameReportSectionsModule, exportName: 'GameReportSections' }
+    ];
+
+    for (const { load, exportName } of loaders) {
+      const firstLoad = load();
+      const secondLoad = load();
+      expect(secondLoad).toBe(firstLoad);
+      await expect(firstLoad).resolves.toHaveProperty(exportName);
+    }
+  });
+});
 
 describe('ScheduleEventDetail live chat scroll helpers', () => {
   it('treats live chat positions within 96 pixels of the bottom as near bottom', () => {
