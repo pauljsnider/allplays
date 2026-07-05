@@ -190,6 +190,7 @@ import { useStaffRsvpBreakdown } from '../hooks/schedule/useStaffRsvpBreakdown';
 export { getAvailabilityNoteSaveState } from '../components/schedule/AvailabilityPanels';
 
 type EventDetailSectionId = ScheduleEventDetailSectionId;
+type HomeScoringPlayersUpdater = (players: ScheduleHomeScoringPlayer[]) => ScheduleHomeScoringPlayer[];
 
 const eventDetailSectionIds = new Set<EventDetailSectionId>(['availability', 'rideshare', 'assignments', 'game']);
 
@@ -1406,6 +1407,8 @@ function GameHubSection({ auth, event, childEvents, onScoreUpdated, onLiveClockU
   const [cancelStatus, setCancelStatus] = useState<{ tone: 'success' | 'error'; message: string } | null>(null);
   const [cancelling, setCancelling] = useState(false);
   const [openPanels, setOpenPanels] = useState<Record<string, boolean>>({});
+  const [homeScoringPlayers, setHomeScoringPlayers] = useState<ScheduleHomeScoringPlayer[]>([]);
+  const [loadingHomeScoringPlayers, setLoadingHomeScoringPlayers] = useState(false);
   const statusLabel = getEventStatusLabel(event);
   const scoreLabel = getScoreLabel(event);
   const isPractice = event.type === 'practice';
@@ -1424,6 +1427,35 @@ function GameHubSection({ auth, event, childEvents, onScoreUpdated, onLiveClockU
   useEffect(() => {
     setOpenPanels({});
   }, [event.eventKey]);
+
+  useEffect(() => {
+    let cancelled = false;
+    if (!canUpdateScore) {
+      setHomeScoringPlayers([]);
+      setLoadingHomeScoringPlayers(false);
+      return undefined;
+    }
+    async function loadPlayers() {
+      setLoadingHomeScoringPlayers(true);
+      try {
+        const players = await loadHomeScoringPlayers(event.teamId, event.id);
+        if (!cancelled) setHomeScoringPlayers(Array.isArray(players) ? players : []);
+      } catch (error) {
+        console.warn('[schedule-event-detail] Unable to load home scoring players:', error);
+        if (!cancelled) setHomeScoringPlayers([]);
+      } finally {
+        if (!cancelled) setLoadingHomeScoringPlayers(false);
+      }
+    }
+    void loadPlayers();
+    return () => {
+      cancelled = true;
+    };
+  }, [canUpdateScore, event.teamId, event.id, event.eventKey]);
+
+  const updateHomeScoringPlayers = useCallback((updater: HomeScoringPlayersUpdater) => {
+    setHomeScoringPlayers(updater);
+  }, []);
 
   const togglePanel = useCallback((panelId: string) => {
     setOpenPanels((current) => ({
@@ -1535,8 +1567,25 @@ function GameHubSection({ auth, event, childEvents, onScoreUpdated, onLiveClockU
               Standard tracker
             </Link>
           ) : null}
-          {canUpdateScore ? <LiveScoreEditor auth={auth} event={event} onScoreUpdated={onScoreUpdated} /> : null}
-          {canUpdateScore ? <GameDayFoulTrackerPanel auth={auth} event={event} /> : null}
+          {canUpdateScore ? (
+            <LiveScoreEditor
+              auth={auth}
+              event={event}
+              homePlayers={homeScoringPlayers}
+              loadingHomePlayers={loadingHomeScoringPlayers}
+              onHomePlayersUpdated={updateHomeScoringPlayers}
+              onScoreUpdated={onScoreUpdated}
+            />
+          ) : null}
+          {canUpdateScore ? (
+            <GameDayFoulTrackerPanel
+              auth={auth}
+              event={event}
+              homePlayers={homeScoringPlayers}
+              loadingHomePlayers={loadingHomeScoringPlayers}
+              onHomePlayersUpdated={updateHomeScoringPlayers}
+            />
+          ) : null}
 
           {!isPractice ? (
             <LazyGameHubPanel
@@ -3004,15 +3053,13 @@ function getBonusState(teamFouls: number) {
   };
 }
 
-function LiveScoreEditor({ auth, event, onScoreUpdated }: { auth: AuthState; event: ParentScheduleEvent; onScoreUpdated: (homeScore: number, awayScore: number) => void }) {
+function LiveScoreEditor({ auth, event, homePlayers, loadingHomePlayers, onHomePlayersUpdated, onScoreUpdated }: { auth: AuthState; event: ParentScheduleEvent; homePlayers: ScheduleHomeScoringPlayer[]; loadingHomePlayers: boolean; onHomePlayersUpdated: (updater: HomeScoringPlayersUpdater) => void; onScoreUpdated: (homeScore: number, awayScore: number) => void }) {
   const autosaveDelayMs = 700;
   const savedHomeScore = Math.max(0, Number(event.homeScore ?? 0));
   const savedAwayScore = Math.max(0, Number(event.awayScore ?? 0));
   const [homeScore, setHomeScore] = useState(savedHomeScore);
   const [awayScore, setAwayScore] = useState(savedAwayScore);
   const [previousScoreSnapshots, setPreviousScoreSnapshots] = useState<ScoreSnapshot[]>([]);
-  const [homePlayers, setHomePlayers] = useState<ScheduleHomeScoringPlayer[]>([]);
-  const [loadingHomePlayers, setLoadingHomePlayers] = useState(false);
   const [playerScoringId, setPlayerScoringId] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [autosaveScheduled, setAutosaveScheduled] = useState(false);
@@ -3047,26 +3094,6 @@ function LiveScoreEditor({ auth, event, onScoreUpdated }: { auth: AuthState; eve
     setAutosaveScheduled(false);
     lastSavedScoreRef.current = { eventKey: event.eventKey, homeScore: savedHomeScore, awayScore: savedAwayScore };
   }, [event.eventKey, savedHomeScore, savedAwayScore]);
-
-  useEffect(() => {
-    let cancelled = false;
-    async function loadPlayers() {
-      setLoadingHomePlayers(true);
-      try {
-        const players = await loadHomeScoringPlayers(event.teamId, event.id);
-        if (!cancelled) setHomePlayers(Array.isArray(players) ? players : []);
-      } catch (error) {
-        console.warn('[schedule-event-detail] Unable to load home scoring players:', error);
-        if (!cancelled) setHomePlayers([]);
-      } finally {
-        if (!cancelled) setLoadingHomePlayers(false);
-      }
-    }
-    loadPlayers();
-    return () => {
-      cancelled = true;
-    };
-  }, [event.teamId, event.id, event.eventKey]);
 
   const dirty = homeScore !== savedHomeScore || awayScore !== savedAwayScore;
   const adjust = (side: 'home' | 'away', delta: number) => {
@@ -3181,7 +3208,7 @@ function LiveScoreEditor({ auth, event, onScoreUpdated }: { auth: AuthState; eve
       setAwayScore(result.awayScore);
       pendingLocalSaveRef.current = { homeScore: result.homeScore, awayScore: result.awayScore };
       onScoreUpdated(result.homeScore, result.awayScore);
-      setHomePlayers((players) => players.map((candidate) => (
+      onHomePlayersUpdated((players) => players.map((candidate) => (
         candidate.id === player.id ? { ...candidate, points: result.playerPoints } : candidate
       )));
       setPreviousScoreSnapshots([]);
@@ -3265,44 +3292,43 @@ function LiveScoreEditor({ auth, event, onScoreUpdated }: { auth: AuthState; eve
   );
 }
 
-function GameDayFoulTrackerPanel({ auth, event }: { auth: AuthState; event: ParentScheduleEvent }) {
-  const [homePlayers, setHomePlayers] = useState<ScheduleHomeScoringPlayer[]>([]);
+function GameDayFoulTrackerPanel({ auth, event, homePlayers, loadingHomePlayers, onHomePlayersUpdated }: { auth: AuthState; event: ParentScheduleEvent; homePlayers: ScheduleHomeScoringPlayer[]; loadingHomePlayers: boolean; onHomePlayersUpdated: (updater: HomeScoringPlayersUpdater) => void }) {
   const [loading, setLoading] = useState(false);
   const [savingPlayerId, setSavingPlayerId] = useState<string | null>(null);
   const [status, setStatus] = useState<{ tone: 'success' | 'error'; message: string } | null>(null);
   const [liveEvents, setLiveEvents] = useState<any[]>(() => Array.isArray(event.liveEvents) ? event.liveEvents : []);
   const [recordedFouls, setRecordedFouls] = useState<PlayerGameStatResult[]>([]);
+  const [foulHistoryLoadFailed, setFoulHistoryLoadFailed] = useState(false);
 
   useEffect(() => {
     setLiveEvents(Array.isArray(event.liveEvents) ? event.liveEvents : []);
     setRecordedFouls([]);
+    setFoulHistoryLoadFailed(false);
     setStatus(null);
   }, [event.eventKey, event.liveEvents]);
 
   useEffect(() => {
     let cancelled = false;
-    async function loadPlayers() {
+    async function loadLiveEvents() {
       setLoading(true);
+      setFoulHistoryLoadFailed(false);
       try {
         const { loadGameDayLiveEventsForApp } = await loadScheduleGameDayService();
-        const [players, loadedLiveEvents] = await Promise.all([
-          loadHomeScoringPlayers(event.teamId, event.id),
-          loadGameDayLiveEventsForApp(event.teamId, event.id)
-        ]);
+        const loadedLiveEvents = await loadGameDayLiveEventsForApp(event.teamId, event.id);
         if (cancelled) return;
-        setHomePlayers(Array.isArray(players) ? players : []);
         setLiveEvents(Array.isArray(loadedLiveEvents) ? loadedLiveEvents : []);
       } catch (error) {
         if (!cancelled) {
           console.warn('[schedule-event-detail] Unable to load foul tracker state:', error);
-          setHomePlayers([]);
           setLiveEvents([]);
+          setFoulHistoryLoadFailed(true);
+          setStatus({ tone: 'error', message: 'Foul history could not be loaded. Refresh before recording fouls.' });
         }
       } finally {
         if (!cancelled) setLoading(false);
       }
     }
-    void loadPlayers();
+    void loadLiveEvents();
     return () => {
       cancelled = true;
     };
@@ -3318,9 +3344,10 @@ function GameDayFoulTrackerPanel({ auth, event }: { auth: AuthState; event: Pare
     }, 0)
   ), [activePeriod, liveEvents]);
   const bonusState = getBonusState(homeTeamFouls);
+  const foulEntryDisabled = loading || foulHistoryLoadFailed;
 
   const recordFoul = async (player: ScheduleHomeScoringPlayer) => {
-    if (!auth.user || savingPlayerId) return;
+    if (!auth.user || savingPlayerId || foulEntryDisabled) return;
     setSavingPlayerId(player.id);
     setStatus(null);
     try {
@@ -3332,7 +3359,7 @@ function GameDayFoulTrackerPanel({ auth, event }: { auth: AuthState; event: Pare
         playerName: player.name,
         playerNumber: player.number
       }, auth.user);
-      setHomePlayers((players) => players.map((candidate) => (
+      onHomePlayersUpdated((players) => players.map((candidate) => (
         candidate.id === player.id ? { ...candidate, fouls: result.playerStatTotal } : candidate
       )));
       setLiveEvents((entries) => [...entries, result.liveEvent]);
@@ -3362,7 +3389,7 @@ function GameDayFoulTrackerPanel({ auth, event }: { auth: AuthState; event: Pare
         value: 1,
         teamSide: event.isHome === false ? 'away' : 'home'
       }, auth.user);
-      setHomePlayers((players) => players.map((candidate) => (
+      onHomePlayersUpdated((players) => players.map((candidate) => (
         candidate.id === latest.playerId ? { ...candidate, fouls: result.playerStatTotal } : candidate
       )));
       setLiveEvents((entries) => result.liveEvent ? [...entries, result.liveEvent] : entries);
@@ -3406,7 +3433,7 @@ function GameDayFoulTrackerPanel({ auth, event }: { auth: AuthState; event: Pare
                   type="button"
                   className="primary-button mt-3 min-h-11 w-full px-4 text-sm disabled:opacity-60"
                   onClick={() => recordFoul(player)}
-                  disabled={busy || Boolean(savingPlayerId)}
+                  disabled={busy || Boolean(savingPlayerId) || foulEntryDisabled}
                   aria-label={`${label} add foul`}
                 >
                   {busy ? 'Saving foul' : '+ Foul'}
@@ -3415,7 +3442,7 @@ function GameDayFoulTrackerPanel({ auth, event }: { auth: AuthState; event: Pare
             );
           })}
         </div>
-      ) : !loading ? <div className="mt-3 text-xs font-semibold text-gray-500">No active team roster players found.</div> : null}
+      ) : !(loading || loadingHomePlayers) ? <div className="mt-3 text-xs font-semibold text-gray-500">No active team roster players found.</div> : null}
       <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
         <div className="text-xs font-semibold text-gray-500">Team fouls reset when the live clock advances to a new period.</div>
         <button
