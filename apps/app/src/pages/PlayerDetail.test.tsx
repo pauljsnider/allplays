@@ -250,6 +250,47 @@ describe('PlayerDetail athlete profile season selection', () => {
     });
   });
 
+  it('does not auto-retry failed video clip loads until the user retries', async () => {
+    playerServiceMocks.loadParentPlayerVideoClips
+      .mockRejectedValueOnce(new Error('Clip network failed.'))
+      .mockResolvedValueOnce([
+        {
+          id: 'clip-1',
+          title: 'Putback score',
+          gameDate: '2026-01-15',
+          playLabel: 'Score',
+          url: 'https://video.example/clip-1.mp4',
+          thumbnailUrl: '',
+          gameLabel: 'Comets vs Storm'
+        }
+      ]);
+
+    renderPlayerDetail();
+
+    await screen.findByText('Sam Player');
+    fireEvent.click(screen.getByRole('button', { name: 'Reports' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Video Clips' }));
+
+    expect(await screen.findByText('Clip network failed.')).toBeTruthy();
+    await waitFor(() => {
+      expect(playerServiceMocks.loadParentPlayerVideoClips).toHaveBeenCalledTimes(1);
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Game Stats' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Video Clips' }));
+
+    await waitFor(() => {
+      expect(playerServiceMocks.loadParentPlayerVideoClips).toHaveBeenCalledTimes(1);
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Retry clips' }));
+
+    await waitFor(() => {
+      expect(playerServiceMocks.loadParentPlayerVideoClips).toHaveBeenCalledTimes(2);
+    });
+    expect(await screen.findByText('Putback score')).toBeTruthy();
+  });
+
   it('shows a retryable player detail error state and reloads on retry', async () => {
     playerServiceMocks.loadParentPlayerDetail
       .mockRejectedValueOnce(new Error('Player detail unavailable.'))

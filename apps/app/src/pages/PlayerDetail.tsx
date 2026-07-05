@@ -332,7 +332,7 @@ export function PlayerDetail({ auth }: { auth: AuthState }) {
     if (!auth.user?.uid) {
       return null;
     }
-    if ((videoClipsLoaded || videoClipsLoading) && !force) {
+    if ((videoClipsLoaded || videoClipsLoading || videoClipsError) && !force) {
       return null;
     }
 

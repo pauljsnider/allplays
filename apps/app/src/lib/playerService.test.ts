@@ -830,6 +830,18 @@ describe('loadParentPlayerDetail custom roster fields', () => {
     });
     expect(result).toEqual(clips.slice(0, 8));
   });
+
+  it('surfaces video clip game fetch failures to the caller', async () => {
+    legacyPlayerDbMocks.getGames.mockRejectedValue(new Error('Game fetch failed.'));
+
+    await expect(loadParentPlayerVideoClips({
+      uid: 'parent-1',
+      email: 'parent@example.com',
+      parentOf: [{ teamId: 'team-1', playerId: 'player-1' }]
+    } as any, 'team-1', 'player-1')).rejects.toThrow('Game fetch failed.');
+
+    expect(legacyPlayerProfileMocks.collectPlayerVideoClips).not.toHaveBeenCalled();
+  });
 });
 
 describe('loadParentPlayerAthleteProfile', () => {

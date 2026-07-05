@@ -310,7 +310,7 @@ export async function loadParentPlayerVideoClips(user: AuthUser | null, teamId: 
     throw new Error('This player is not linked to your account.');
   }
 
-  const games = await getGames(resolvedTeamId).catch(() => []);
+  const games = await getGames(resolvedTeamId);
   return collectPlayerVideoClips(games, {
     teamId: resolvedTeamId,
     playerId: resolvedPlayerId
