@@ -319,7 +319,8 @@
                 "registration.html"
             ],
             "appPages": [
-                "apps/app/src/pages/RegistrationDetail.tsx"
+                "apps/app/src/pages/RegistrationDetail.tsx",
+                "apps/app/src/pages/TeamRegistrationReview.tsx"
             ],
             "cloudFunctions": [
                 "cancelStripeRegistrationCheckout",
