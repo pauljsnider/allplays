@@ -120,6 +120,11 @@ export function formatChatTime(value: any) {
   return date.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
 }
 
+export function buildChatViewportSignature(scrollHeight: number, clientHeight: number, scrollTop: number) {
+  const distanceFromBottom = Math.max(0, scrollHeight - clientHeight - scrollTop);
+  return `${scrollHeight}:${clientHeight}:${distanceFromBottom}`;
+}
+
 export function formatChatDay(value: any) {
   const date = toChatDate(value);
   if (!date) return '';

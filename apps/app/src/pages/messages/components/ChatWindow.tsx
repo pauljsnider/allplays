@@ -55,6 +55,7 @@ import {
   MAX_CHAT_MEDIA_SIZE,
   buildChatAudienceMetadata,
   buildChatMentionSuggestions,
+  buildChatViewportSignature,
   buildEmailAudienceMetadata,
   buildChatMediaShareDetails,
   chatReactions,
@@ -1824,10 +1825,7 @@ export function ChatWindow({
   );
 }
 
-export function buildChatViewportSignature(scrollHeight: number, clientHeight: number, scrollTop: number) {
-  const distanceFromBottom = Math.max(0, scrollHeight - clientHeight - scrollTop);
-  return `${scrollHeight}:${clientHeight}:${distanceFromBottom}`;
-}
+export { buildChatViewportSignature };
 
 export function getSafeMessageAttachments(message: ChatMessage): SafeChatAttachment[] {
   return getMessageAttachments(message).filter((attachment): attachment is SafeChatAttachment => (

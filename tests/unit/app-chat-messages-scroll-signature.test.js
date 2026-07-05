@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { buildChatViewportSignature } from '../../apps/app/src/pages/Messages.tsx';
+import { buildChatViewportSignature } from '../../apps/app/src/lib/chatLogic.ts';
 
 describe('buildChatViewportSignature', () => {
     it('changes when the viewport height changes even if message height stays the same', () => {
