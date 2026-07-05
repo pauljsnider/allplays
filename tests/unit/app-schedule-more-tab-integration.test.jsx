@@ -227,6 +227,21 @@ async function waitForText(container, text) {
     throw new Error(`Timed out waiting for text: ${text}`);
 }
 
+async function waitForMockCall(mock, label) {
+    for (let index = 0; index < 100; index += 1) {
+        if (mock.mock.calls.length > 0) return;
+        await act(async () => {
+            if (vi.isFakeTimers()) {
+                await vi.advanceTimersByTimeAsync(1);
+                await Promise.resolve();
+                return;
+            }
+            await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+    }
+    throw new Error(`Timed out waiting for mock call: ${label}`);
+}
+
 function buttonByText(container, text) {
     const button = Array.from(container.querySelectorAll('button')).find((candidate) => (
         candidate.textContent.trim() === text || candidate.getAttribute('aria-label') === text
@@ -833,6 +848,8 @@ describe('React app ScheduleEventDetail More tab integration', () => {
         await clickButton(container, 'Game');
         await waitForText(container, 'Live score');
 
+        await waitForMockCall(scheduleMocks.buildLiveGameClockPeriods, 'buildLiveGameClockPeriods');
+        await waitForMockCall(scheduleMocks.resolveLiveGameClockSnapshot, 'resolveLiveGameClockSnapshot');
         expect(scheduleMocks.buildLiveGameClockPeriods).toHaveBeenCalledWith(expect.objectContaining({ id: 'game-1' }));
         expect(scheduleMocks.resolveLiveGameClockSnapshot).toHaveBeenCalledWith(expect.objectContaining({ id: 'game-1' }), expect.any(Date));
 
