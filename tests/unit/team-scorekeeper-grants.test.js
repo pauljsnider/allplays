@@ -48,7 +48,7 @@ describe('team scorekeeper grants', () => {
     it('pins the latest db cache-busting version for the team page module', () => {
         const source = readTeamHtml();
 
-        expect(source).toContain("from './js/db.js?v=79'");
+        expect(source).toContain("from './js/db.js?v=81'");
     });
 
     it('wires the team page to grant and revoke scoped scorekeeper access', () => {

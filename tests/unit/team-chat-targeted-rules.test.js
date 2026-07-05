@@ -3,6 +3,12 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
 const rules = readFileSync(resolve(process.cwd(), 'firestore.rules'), 'utf8');
+const dbSource = readFileSync(resolve(process.cwd(), 'js/db.js'), 'utf8');
+const firestoreIndexes = JSON.parse(readFileSync(resolve(process.cwd(), 'firestore.indexes.json'), 'utf8'));
+const legacyChatBackfillSource = readFileSync(
+    resolve(process.cwd(), '_migration/backfill-legacy-team-chat-target-fields.js'),
+    'utf8'
+);
 
 function currentUserReactionTokens(auth) {
     const tokens = [auth.uid, `user:${auth.uid}`];
@@ -71,12 +77,69 @@ describe('targeted team chat Firestore rules', () => {
         expect(rules).toContain('isFullTeamChatMessage(data) ||');
     });
 
-    it('keeps legacy team chat queries open for members while limiting stored docs to full-team messages', () => {
-        expect(rules).toContain('allow list: if canAccessTeamChat(teamId);');
-        expect(rules).toContain('allow get: if isFullTeamChatMessage(resource.data) &&');
+    it('keeps legacy team chat list queries constrained to full-team messages', () => {
+        const legacyChatStart = rules.indexOf('match /chatMessages/{messageId} {');
+        const conversationsStart = rules.indexOf('match /chatConversations/{conversationId} {');
+        const legacyChatBlock = rules.slice(legacyChatStart, conversationsStart);
+
+        expect(legacyChatBlock).toContain('allow list: if isFullTeamChatMessage(resource.data) &&');
+        expect(legacyChatBlock).toContain('canReadChatMessage(teamId, resource.data);');
+        expect(legacyChatBlock).toContain('allow get: if isFullTeamChatMessage(resource.data) &&');
+        expect(legacyChatBlock).toContain('canReadChatMessage(teamId, resource.data);');
+        expect(legacyChatBlock).not.toContain('allow read: if isFullTeamChatMessage(resource.data) &&');
+        expect(legacyChatBlock).not.toContain('allow list: if canAccessTeamChat(teamId);');
         expect(rules).toContain('allow create: if canAccessTeamChat(teamId) &&');
         expect(rules).toContain('isFullTeamChatMessage(request.resource.data);');
         expect(rules).not.toContain('allow read: if canReadChatMessage(teamId, resource.data);');
+    });
+
+    it('requires target fields when listing or counting default legacy team chat messages', () => {
+        expect(dbSource).toContain('function getDefaultTeamChatMessageConstraints(conversationId = DEFAULT_TEAM_CONVERSATION_ID)');
+        expect(dbSource).toContain("where('targetType', '==', 'full_team')");
+        expect(dbSource).toContain("where('recipientIds', '==', [])");
+        expect(dbSource).toContain("query(messagesRef, ...defaultMessageConstraints, orderBy('createdAt', 'desc'), limitQuery(limit))");
+        expect(dbSource).toContain("query(messagesRef, ...getDefaultTeamChatMessageConstraints(conversationId), orderBy('createdAt', 'desc'), limit(1))");
+        expect(dbSource).toContain('const unreadConstraints = getDefaultTeamChatMessageConstraints(conversationId);');
+    });
+
+    it('includes a backfill for fieldless legacy full-team messages before constrained reads ship', () => {
+        expect(legacyChatBackfillSource).toContain('function getLegacyFullTeamBackfill(data = {})');
+        expect(legacyChatBackfillSource).toContain("String(data.targetType || 'full_team').trim() || 'full_team'");
+        expect(legacyChatBackfillSource).toContain("updates.targetType = 'full_team';");
+        expect(legacyChatBackfillSource).toContain('updates.recipientIds = [];');
+        expect(legacyChatBackfillSource).toContain("targetType !== 'full_team' || !hasEmptyRecipients");
+        expect(legacyChatBackfillSource).toContain('legacyTargetFieldsBackfilledAt');
+    });
+
+    it('declares target-field indexes for legacy team chat queries', () => {
+        const chatMessageIndexes = firestoreIndexes.indexes.filter((index) => index.collectionGroup === 'chatMessages');
+        expect(chatMessageIndexes).toEqual(expect.arrayContaining([
+            expect.objectContaining({
+                queryScope: 'COLLECTION',
+                fields: [
+                    { fieldPath: 'targetType', order: 'ASCENDING' },
+                    { fieldPath: 'recipientIds', order: 'ASCENDING' },
+                    { fieldPath: 'createdAt', order: 'DESCENDING' }
+                ]
+            }),
+            expect.objectContaining({
+                queryScope: 'COLLECTION',
+                fields: [
+                    { fieldPath: 'targetType', order: 'ASCENDING' },
+                    { fieldPath: 'recipientIds', order: 'ASCENDING' },
+                    { fieldPath: 'createdAt', order: 'ASCENDING' }
+                ]
+            }),
+            expect.objectContaining({
+                queryScope: 'COLLECTION',
+                fields: [
+                    { fieldPath: 'targetType', order: 'ASCENDING' },
+                    { fieldPath: 'recipientIds', order: 'ASCENDING' },
+                    { fieldPath: 'senderId', order: 'ASCENDING' },
+                    { fieldPath: 'createdAt', order: 'ASCENDING' }
+                ]
+            })
+        ]));
     });
 
     it('keeps targeted conversation traffic under conversation-scoped rules', () => {
