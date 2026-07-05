@@ -3,6 +3,8 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
 const rules = readFileSync(resolve(process.cwd(), 'firestore.rules'), 'utf8');
+const dbSource = readFileSync(resolve(process.cwd(), 'js/db.js'), 'utf8');
+const firestoreIndexes = JSON.parse(readFileSync(resolve(process.cwd(), 'firestore.indexes.json'), 'utf8'));
 
 function currentUserReactionTokens(auth) {
     const tokens = [auth.uid, `user:${auth.uid}`];
@@ -71,12 +73,59 @@ describe('targeted team chat Firestore rules', () => {
         expect(rules).toContain('isFullTeamChatMessage(data) ||');
     });
 
-    it('keeps legacy team chat queries open for members while limiting stored docs to full-team messages', () => {
-        expect(rules).toContain('allow list: if canAccessTeamChat(teamId);');
-        expect(rules).toContain('allow get: if isFullTeamChatMessage(resource.data) &&');
+    it('restricts legacy team chat reads to full-team messages readable by the caller', () => {
+        const legacyChatStart = rules.indexOf('match /chatMessages/{messageId} {');
+        const conversationsStart = rules.indexOf('match /chatConversations/{conversationId} {');
+        const legacyChatBlock = rules.slice(legacyChatStart, conversationsStart);
+
+        expect(legacyChatBlock).toContain('allow read: if isFullTeamChatMessage(resource.data) &&');
+        expect(legacyChatBlock).toContain('canReadChatMessage(teamId, resource.data);');
+        expect(legacyChatBlock).not.toContain('allow list: if canAccessTeamChat(teamId);');
+        expect(legacyChatBlock).not.toContain('allow get: if isFullTeamChatMessage(resource.data) &&');
         expect(rules).toContain('allow create: if canAccessTeamChat(teamId) &&');
         expect(rules).toContain('isFullTeamChatMessage(request.resource.data);');
         expect(rules).not.toContain('allow read: if canReadChatMessage(teamId, resource.data);');
+    });
+
+    it('constrains legacy team chat list and count queries to full-team records', () => {
+        expect(dbSource).toContain('function getTeamChatMessageListConstraints(conversationId = DEFAULT_TEAM_CONVERSATION_ID)');
+        expect(dbSource).toContain("return isDefaultTeamConversation(conversationId)\n        ? [where('targetType', '==', 'full_team'), where('recipientIds', '==', [])]\n        : [];");
+        expect(dbSource).toContain("query(messagesRef, ...listConstraints, orderBy('createdAt', 'desc'), limitQuery(limit))");
+        expect(dbSource).toContain("query(messagesRef, ...getTeamChatMessageListConstraints(conversationId), orderBy('createdAt', 'desc'), limitQuery(limit))");
+        expect(dbSource).toContain("query(messagesRef, ...listConstraints, orderBy('createdAt', 'desc'), limit(1))");
+        expect(dbSource).toContain('unreadConstraints.push(...listConstraints);');
+    });
+
+    it('declares indexes required by rules-safe legacy team chat queries', () => {
+        expect(firestoreIndexes.indexes).toEqual(expect.arrayContaining([
+            expect.objectContaining({
+                collectionGroup: 'chatMessages',
+                queryScope: 'COLLECTION',
+                fields: [
+                    { fieldPath: 'targetType', order: 'ASCENDING' },
+                    { fieldPath: 'recipientIds', order: 'ASCENDING' },
+                    { fieldPath: 'createdAt', order: 'DESCENDING' }
+                ]
+            }),
+            expect.objectContaining({
+                collectionGroup: 'chatMessages',
+                queryScope: 'COLLECTION',
+                fields: [
+                    { fieldPath: 'targetType', order: 'ASCENDING' },
+                    { fieldPath: 'recipientIds', order: 'ASCENDING' },
+                    { fieldPath: 'createdAt', order: 'ASCENDING' }
+                ]
+            }),
+            expect.objectContaining({
+                collectionGroup: 'chatMessages',
+                queryScope: 'COLLECTION',
+                fields: [
+                    { fieldPath: 'targetType', order: 'ASCENDING' },
+                    { fieldPath: 'recipientIds', order: 'ASCENDING' },
+                    { fieldPath: 'senderId', order: 'ASCENDING' }
+                ]
+            })
+        ]));
     });
 
     it('keeps targeted conversation traffic under conversation-scoped rules', () => {

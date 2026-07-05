@@ -16,6 +16,11 @@ function getFunctionSource(functionName) {
 function buildGetUnreadChatCount({ db, getDoc, doc, collection, query, where, orderBy, limit, getDocs, getCountFromServer, DEFAULT_TEAM_CONVERSATION_ID = 'team', isDefaultTeamConversation = (conversationId) => conversationId === 'team' }) {
     const functionSource = getFunctionSource('getUnreadChatCount')
         .replace('export async function getUnreadChatCount', 'return async function getUnreadChatCount');
+    const getTeamChatMessageListConstraints = (conversationId = DEFAULT_TEAM_CONVERSATION_ID) => (
+        isDefaultTeamConversation(conversationId)
+            ? [where('targetType', '==', 'full_team'), where('recipientIds', '==', [])]
+            : []
+    );
 
     return new Function(
         'db',
@@ -30,6 +35,7 @@ function buildGetUnreadChatCount({ db, getDoc, doc, collection, query, where, or
         'getCountFromServer',
         'DEFAULT_TEAM_CONVERSATION_ID',
         'isDefaultTeamConversation',
+        'getTeamChatMessageListConstraints',
         functionSource
     )(
         db,
@@ -43,7 +49,8 @@ function buildGetUnreadChatCount({ db, getDoc, doc, collection, query, where, or
         getDocs,
         getCountFromServer,
         DEFAULT_TEAM_CONVERSATION_ID,
-        isDefaultTeamConversation
+        isDefaultTeamConversation,
+        getTeamChatMessageListConstraints
     );
 }
 
@@ -145,13 +152,19 @@ describe('chat unread count helpers', () => {
         await expect(getUnreadChatCount('user-1', 'team-1')).resolves.toBe(5);
         expect(getCountFromServer).toHaveBeenCalledTimes(2);
         expect(query).toHaveBeenNthCalledWith(1, messagesRef,
+            { field: 'targetType', op: '==', value: 'full_team' },
+            { field: 'recipientIds', op: '==', value: [] },
             { field: 'createdAt', direction: 'desc' },
             { limit: 1 }
         );
         expect(query).toHaveBeenNthCalledWith(2, messagesRef,
+            { field: 'targetType', op: '==', value: 'full_team' },
+            { field: 'recipientIds', op: '==', value: [] },
             { field: 'createdAt', op: '>', value: lastRead }
         );
         expect(query).toHaveBeenNthCalledWith(3, messagesRef,
+            { field: 'targetType', op: '==', value: 'full_team' },
+            { field: 'recipientIds', op: '==', value: [] },
             { field: 'createdAt', op: '>', value: lastRead },
             { field: 'senderId', op: '==', value: 'user-1' }
         );
@@ -190,11 +203,18 @@ describe('chat unread count helpers', () => {
 
         await expect(getUnreadChatCount('user-2', 'team-9')).resolves.toBe(3);
         expect(query).toHaveBeenNthCalledWith(1, messagesRef,
+            { field: 'targetType', op: '==', value: 'full_team' },
+            { field: 'recipientIds', op: '==', value: [] },
             { field: 'createdAt', direction: 'desc' },
             { limit: 1 }
         );
-        expect(query).toHaveBeenNthCalledWith(2, messagesRef);
+        expect(query).toHaveBeenNthCalledWith(2, messagesRef,
+            { field: 'targetType', op: '==', value: 'full_team' },
+            { field: 'recipientIds', op: '==', value: [] }
+        );
         expect(query).toHaveBeenNthCalledWith(3, messagesRef,
+            { field: 'targetType', op: '==', value: 'full_team' },
+            { field: 'recipientIds', op: '==', value: [] },
             { field: 'senderId', op: '==', value: 'user-2' }
         );
         expect(getCountFromServer).toHaveBeenCalledTimes(2);

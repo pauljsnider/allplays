@@ -2588,9 +2588,8 @@ service cloud.firestore {
       match /chatMessages/{messageId} {
         // Legacy team-wide chat stays query-safe because this collection only accepts
         // full-team messages. Targeted traffic belongs under chatConversations.
-        allow list: if canAccessTeamChat(teamId);
-        allow get: if isFullTeamChatMessage(resource.data) &&
-                      canReadChatMessage(teamId, resource.data);
+        allow read: if isFullTeamChatMessage(resource.data) &&
+                       canReadChatMessage(teamId, resource.data);
 
         // Create: any team member, but the legacy path only accepts full-team messages.
         allow create: if canAccessTeamChat(teamId) &&
