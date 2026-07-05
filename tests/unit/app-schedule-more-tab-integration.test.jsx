@@ -212,8 +212,8 @@ async function renderDetail(initialEntry) {
     return { container, root };
 }
 
-async function waitForText(container, text) {
-    for (let index = 0; index < 100; index += 1) {
+async function waitForText(container, text, attempts = 100) {
+    for (let index = 0; index < attempts; index += 1) {
         if (container.textContent.includes(text)) return;
         await act(async () => {
             if (vi.isFakeTimers()) {
@@ -1037,7 +1037,7 @@ describe('React app ScheduleEventDetail More tab integration', () => {
         await clickButton(container, 'Game');
         await waitForText(container, 'Lineup builder');
         await clickButton(container, 'Lineup builder');
-        await waitForText(container, 'No lineup draft is available yet.');
+        await waitForText(container, 'No lineup draft is available yet.', 500);
 
         expect(container.querySelector('#game-hub-lineup-formation')).not.toBeNull();
         expect(buttonByText(container, 'Publish lineup').disabled).toBe(true);
@@ -1059,7 +1059,7 @@ describe('React app ScheduleEventDetail More tab integration', () => {
             select.value = 'basketball-5v5';
             select.dispatchEvent(new Event('change', { bubbles: true }));
         });
-        await waitForText(container, '#1 Avery');
+        await waitForText(container, '#1 Avery', 500);
         await act(async () => {
             await new Promise((resolve) => setTimeout(resolve, 900));
         });
