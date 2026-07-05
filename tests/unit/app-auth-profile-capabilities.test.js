@@ -346,7 +346,8 @@ describe('React app auth/profile capability parity', () => {
         expectContains(pushService, [
             'if (!Capacitor.isNativePlatform()) {',
             "await import('@legacy/push-notifications.js')",
-            'const { token } = await registerPushNotifications();',
+            'webPushVapidKey ? { vapidKey: webPushVapidKey } : {}',
+            'await registerPushNotifications(webPushVapidKey ? { vapidKey: webPushVapidKey } : {})',
             'await saveNotificationDeviceToken(userId, {',
             "platform: 'web'",
             'FirebaseMessaging.requestPermissions()',
