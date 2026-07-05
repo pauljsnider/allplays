@@ -35,6 +35,7 @@ import {
 import {
   loadParentPlayerAthleteProfile,
   loadParentPlayerDetail,
+  loadParentPlayerVideoClips,
   markParentPlayerIncentivePaid,
   retireParentPlayerIncentiveRule,
   savePlayerCustomRosterFieldValues,
@@ -50,7 +51,8 @@ import {
   type AthleteProfileHighlightClipUpload,
   type ParentAthleteProfileData,
   type ParentPlayerDetailData,
-  type ParentPlayerStatRow
+  type ParentPlayerStatRow,
+  type PlayerVideoClip
 } from '../lib/playerService';
 import { DetailLoadErrorState } from '../components/DetailLoadErrorState';
 import { getEventDetailPath } from '../lib/homeLogic';
@@ -312,7 +314,59 @@ export function PlayerDetail({ auth }: { auth: AuthState }) {
   const [athleteProfileLoaded, setAthleteProfileLoaded] = useState(false);
   const [athleteProfileLoading, setAthleteProfileLoading] = useState(false);
   const [athleteProfileError, setAthleteProfileError] = useState<AppServiceError | null>(null);
+  const [videoClipsLoaded, setVideoClipsLoaded] = useState(false);
+  const [videoClipsLoading, setVideoClipsLoading] = useState(false);
+  const [videoClipsError, setVideoClipsError] = useState<AppServiceError | null>(null);
   const athleteProfileRequestKeyRef = useRef('');
+  const videoClipsRequestKeyRef = useRef('');
+
+  const loadVideoClips = async ({
+    nextTeamId,
+    nextPlayerId,
+    force = false
+  }: {
+    nextTeamId: string;
+    nextPlayerId: string;
+    force?: boolean;
+  }): Promise<PlayerVideoClip[] | null> => {
+    if (!auth.user?.uid) {
+      return null;
+    }
+    if ((videoClipsLoaded || videoClipsLoading) && !force) {
+      return null;
+    }
+
+    const requestKey = `${nextTeamId}::${nextPlayerId}`;
+    videoClipsRequestKeyRef.current = requestKey;
+    setVideoClipsLoading(true);
+    setVideoClipsError(null);
+    try {
+      const clips = await loadParentPlayerVideoClips(auth.user, nextTeamId, nextPlayerId);
+      if (videoClipsRequestKeyRef.current !== requestKey) {
+        return null;
+      }
+      setData((current) => {
+        if (!current || current.child.teamId !== nextTeamId || current.child.playerId !== nextPlayerId) {
+          return current;
+        }
+        return {
+          ...current,
+          clips
+        };
+      });
+      setVideoClipsLoaded(true);
+      return clips;
+    } catch (loadError: any) {
+      if (videoClipsRequestKeyRef.current === requestKey) {
+        setVideoClipsError(toAppServiceError(loadError, 'Unable to load video clips.'));
+      }
+      return null;
+    } finally {
+      if (videoClipsRequestKeyRef.current === requestKey) {
+        setVideoClipsLoading(false);
+      }
+    }
+  };
 
   const loadAthleteProfile = async ({
     nextTeamId,
@@ -376,6 +430,14 @@ export function PlayerDetail({ auth }: { auth: AuthState }) {
       setData(nextData);
       setAthleteProfileLoaded(nextAthleteProfileLoaded);
       setAthleteProfileError(null);
+      setVideoClipsError(null);
+      if (videoClipsLoaded) {
+        await loadVideoClips({
+          nextTeamId: nextData.child.teamId,
+          nextPlayerId: nextData.child.playerId,
+          force: true
+        });
+      }
       if (athleteProfileLoaded && !nextAthleteProfileLoaded) {
         const nextAthleteProfile = await loadAthleteProfile({
           nextTeamId: nextData.child.teamId,
@@ -402,9 +464,13 @@ export function PlayerDetail({ auth }: { auth: AuthState }) {
 
   useEffect(() => {
     athleteProfileRequestKeyRef.current = '';
+    videoClipsRequestKeyRef.current = '';
     setAthleteProfileLoaded(false);
     setAthleteProfileLoading(false);
     setAthleteProfileError(null);
+    setVideoClipsLoaded(false);
+    setVideoClipsLoading(false);
+    setVideoClipsError(null);
     refreshPlayer({ showLoading: true });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [auth.user?.uid, teamId, playerId]);
@@ -513,7 +579,22 @@ export function PlayerDetail({ auth }: { auth: AuthState }) {
       {error ? <Status tone="error" message={error.message} /> : null}
       {activeSection === 'overview' ? <OverviewSection data={data} /> : null}
       {activeSection === 'schedule' ? <PlayerScheduleSection events={data.events} /> : null}
-      {activeSection === 'performance' ? <ReportsSection data={data} /> : null}
+      {activeSection === 'performance' ? (
+        <ReportsSection
+          data={data}
+          videoClipsLoading={videoClipsLoading}
+          videoClipsError={videoClipsError}
+          onVideoClipsOpen={() => loadVideoClips({
+            nextTeamId: data.child.teamId,
+            nextPlayerId: data.child.playerId
+          })}
+          onRetryVideoClips={() => loadVideoClips({
+            nextTeamId: data.child.teamId,
+            nextPlayerId: data.child.playerId,
+            force: true
+          })}
+        />
+      ) : null}
       {activeSection === 'profile' ? (
         <PlayerProfileSection
           data={data}
@@ -596,9 +677,28 @@ const reportPanels: Array<{ id: ReportPanelId; label: string }> = [
   { id: 'clips', label: 'Video Clips' }
 ];
 
-function ReportsSection({ data }: { data: ParentPlayerDetailData }) {
+function ReportsSection({
+  data,
+  videoClipsLoading,
+  videoClipsError,
+  onVideoClipsOpen,
+  onRetryVideoClips
+}: {
+  data: ParentPlayerDetailData;
+  videoClipsLoading: boolean;
+  videoClipsError: AppServiceError | null;
+  onVideoClipsOpen: () => void;
+  onRetryVideoClips: () => void;
+}) {
   const [activePanel, setActivePanel] = useState<ReportPanelId>('games');
   const trackingRows = Array.isArray(data.trackingSummary) ? data.trackingSummary[0]?.items || [] : [];
+
+  useEffect(() => {
+    if (activePanel === 'clips') {
+      onVideoClipsOpen();
+    }
+  }, [activePanel, onVideoClipsOpen]);
+
   return (
     <div className="player-section-content space-y-4">
       <section className="app-card p-4">
@@ -630,7 +730,14 @@ function ReportsSection({ data }: { data: ParentPlayerDetailData }) {
           {activePanel === 'games' ? <GameStatsPanel rows={data.statRows} /> : null}
           {activePanel === 'season' ? <SeasonAveragesPanel rows={data.statRows} /> : null}
           {activePanel === 'events' ? <GameEventsPanel events={data.events} /> : null}
-          {activePanel === 'clips' ? <ClipsPanel clips={data.clips} /> : null}
+          {activePanel === 'clips' ? (
+            <ClipsPanel
+              clips={data.clips}
+              loading={videoClipsLoading}
+              error={videoClipsError}
+              onRetry={onRetryVideoClips}
+            />
+          ) : null}
         </div>
       </section>
 
@@ -689,7 +796,35 @@ function GameEventsPanel({ events }: { events: ParentScheduleEvent[] }) {
   );
 }
 
-function ClipsPanel({ clips }: { clips: Array<Record<string, any>> }) {
+function ClipsPanel({
+  clips,
+  loading,
+  error,
+  onRetry
+}: {
+  clips: Array<Record<string, any>>;
+  loading: boolean;
+  error: AppServiceError | null;
+  onRetry: () => void;
+}) {
+  if (loading) {
+    return (
+      <div className="rounded-xl border border-gray-200 bg-gray-50 p-3 text-sm font-semibold text-gray-500">
+        <Loader2 className="mr-2 inline h-4 w-4 animate-spin text-primary-600" aria-hidden="true" />
+        Loading video clips...
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="rounded-xl border border-rose-200 bg-rose-50 p-3">
+        <div className="text-sm font-black text-rose-900">{error.message}</div>
+        <button type="button" className="mt-2 text-xs font-black text-rose-700" onClick={onRetry}>Retry clips</button>
+      </div>
+    );
+  }
+
   return (
     <div className="grid gap-2 sm:grid-cols-2">
       {clips.length ? clips.map((clip) => (

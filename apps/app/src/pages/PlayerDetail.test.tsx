@@ -16,6 +16,7 @@ function createDeferred<T>() {
 const playerServiceMocks = vi.hoisted(() => ({
   loadParentPlayerAthleteProfile: vi.fn(),
   loadParentPlayerDetail: vi.fn(),
+  loadParentPlayerVideoClips: vi.fn(),
   markParentPlayerIncentivePaid: vi.fn(),
   retireParentPlayerIncentiveRule: vi.fn(),
   saveParentAthleteProfileDraft: vi.fn(),
@@ -157,6 +158,7 @@ describe('PlayerDetail athlete profile season selection', () => {
     vi.clearAllMocks();
     playerServiceMocks.loadParentPlayerDetail.mockResolvedValue(buildDetailData());
     playerServiceMocks.loadParentPlayerAthleteProfile.mockResolvedValue(buildDetailData().athleteProfile);
+    playerServiceMocks.loadParentPlayerVideoClips.mockResolvedValue([]);
     playerServiceMocks.saveParentAthleteProfileDraft.mockResolvedValue({
       shareUrl: 'https://allplays.ai/athlete-profile.html?profileId=profile-1'
     });
@@ -208,6 +210,43 @@ describe('PlayerDetail athlete profile season selection', () => {
 
     await waitFor(() => {
       expect(playerServiceMocks.loadParentPlayerAthleteProfile).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  it('lazy-loads video clips once when the Video Clips report opens', async () => {
+    playerServiceMocks.loadParentPlayerVideoClips.mockResolvedValue([
+      {
+        id: 'clip-1',
+        title: 'Fast break finish',
+        gameDate: '2026-01-15',
+        playLabel: 'Score',
+        url: 'https://video.example/clip-1.mp4',
+        thumbnailUrl: '',
+        gameLabel: 'Comets vs Storm'
+      }
+    ]);
+
+    renderPlayerDetail();
+
+    await screen.findByText('Sam Player');
+    expect(playerServiceMocks.loadParentPlayerVideoClips).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Reports' }));
+    expect(playerServiceMocks.loadParentPlayerVideoClips).not.toHaveBeenCalled();
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Video Clips' }));
+
+    await waitFor(() => {
+      expect(playerServiceMocks.loadParentPlayerVideoClips).toHaveBeenCalledTimes(1);
+      expect(playerServiceMocks.loadParentPlayerVideoClips).toHaveBeenCalledWith(auth.user, 'team-current', 'player-current');
+    });
+    expect(await screen.findByText('Fast break finish')).toBeTruthy();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Game Stats' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Video Clips' }));
+
+    await waitFor(() => {
+      expect(playerServiceMocks.loadParentPlayerVideoClips).toHaveBeenCalledTimes(1);
     });
   });
 
