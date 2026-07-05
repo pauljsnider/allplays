@@ -63,6 +63,14 @@ describe('Messages Sheet native back behavior', () => {
 });
 
 describe('Messages ALL PLAYS lazy loading', () => {
+  it('reserves enough mobile chat topbar space for both shell overlay buttons', () => {
+    const sourcePath = resolveAppSourcePath('src/pages/messages/components/ChatWindow.tsx');
+    const source = readFileSync(sourcePath, 'utf8');
+
+    expect(source).toContain("${!embedded && !isDesktopWeb ? 'pr-28' : ''}");
+    expect(source).not.toContain("${!embedded && !isDesktopWeb ? 'pr-16' : ''}");
+  });
+
   it('keeps the AI answer module behind the wantsAi send branch', () => {
     const sourcePath = resolveAppSourcePath('src/pages/messages/components/ChatWindow.tsx');
     const source = readFileSync(sourcePath, 'utf8');

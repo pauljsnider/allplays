@@ -1569,7 +1569,7 @@ export function ChatWindow({
 
   return (
     <div className={`chat-window ${embedded ? 'chat-window-embedded' : 'chat-window-mobile'}`}>
-      <section className={`chat-topbar ${embedded ? 'rounded-xl' : 'safe-top sticky top-0'} ${!embedded && !isDesktopWeb ? 'pr-16' : ''} z-20 border border-gray-200 bg-white/95 px-3 py-3 shadow-app backdrop-blur`}>
+      <section className={`chat-topbar ${embedded ? 'rounded-xl' : 'safe-top sticky top-0'} ${!embedded && !isDesktopWeb ? 'pr-28' : ''} z-20 border border-gray-200 bg-white/95 px-3 py-3 shadow-app backdrop-blur`}>
         <div className="flex items-center gap-2">
           {!embedded ? (
             <Link to="/messages" className="ghost-button !h-10 !min-h-10 !w-10 !p-0" aria-label="Back to messages">

@@ -208,6 +208,8 @@ describe('Notification bell in AppShell', () => {
 
         const bellButton = screen.getByTestId('app-shell-notifications-trigger');
         expect(bellButton.getAttribute('aria-label')).toBe('Notifications');
+        const searchButton = screen.getByTestId('app-shell-search-trigger');
+        expect(searchButton.getAttribute('aria-label')).toBe('Search');
         expect(screen.getByTestId('current-route').textContent).toBe('/messages/team-1');
         expect(screen.queryByTestId('notification-unread-badge')).toBeNull();
 

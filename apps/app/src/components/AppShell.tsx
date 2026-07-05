@@ -372,7 +372,18 @@ export function AppShell({ auth, children }: AppShellProps) {
       ) : (
         <>
           {isMobileChatDetail ? (
-            <div className="pointer-events-none fixed inset-x-0 top-0 z-30 flex justify-end px-3 safe-top">
+            <div className="pointer-events-none fixed inset-x-0 top-0 z-30 flex justify-end gap-2 px-3 safe-top">
+              <button
+                type="button"
+                className="ghost-button pointer-events-auto !h-10 !min-h-10 !w-10 !p-0"
+                onClick={() => setSearchOpen(true)}
+                aria-label="Search"
+                title="Search (Ctrl+K / Cmd+K)"
+                data-testid="app-shell-search-trigger"
+              >
+                <Search className="h-5 w-5" aria-hidden="true" />
+                <span className="sr-only">Search</span>
+              </button>
               {renderNotificationTrigger('ghost-button pointer-events-auto !h-10 !min-h-10 !w-10 !p-0 relative', true)}
             </div>
           ) : null}
