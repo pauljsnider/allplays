@@ -30,6 +30,7 @@ const socialMocks = vi.hoisted(() => ({
 
 const playerMocks = vi.hoisted(() => ({
     loadParentPlayerDetail: vi.fn(),
+    loadParentPlayerVideoClips: vi.fn(),
     markParentPlayerIncentivePaid: vi.fn(),
     retireParentPlayerIncentiveRule: vi.fn(),
     saveParentAthleteProfileDraft: vi.fn(),
@@ -513,6 +514,9 @@ beforeEach(() => {
             builderUrl: 'https://allplays.ai/athlete-profile-builder.html?teamId=team-1&playerId=player-1&profileId=profile-1'
         }
     });
+    playerMocks.loadParentPlayerVideoClips.mockResolvedValue([
+        { title: 'Fast break', url: 'https://video.example.test/clip', gameLabel: 'vs. Falcons' }
+    ]);
     playerMocks.updateParentPlayerEditableProfile.mockResolvedValue();
     playerMocks.saveParentAthleteProfileDraft.mockResolvedValue({
         shareUrl: 'https://allplays.ai/athlete-profile.html?profileId=profile-1'

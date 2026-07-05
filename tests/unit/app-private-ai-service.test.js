@@ -50,9 +50,11 @@ const teamMocks = vi.hoisted(() => ({
 
 const playerMocks = vi.hoisted(() => {
     const loadParentPlayerDetailWithAthleteProfile = vi.fn();
+    const loadParentPlayerVideoClips = vi.fn();
     return {
         loadParentPlayerDetail: loadParentPlayerDetailWithAthleteProfile,
-        loadParentPlayerDetailWithAthleteProfile
+        loadParentPlayerDetailWithAthleteProfile,
+        loadParentPlayerVideoClips
     };
 });
 
@@ -178,6 +180,7 @@ beforeEach(async () => {
         certificates: [],
         clips: []
     });
+    playerMocks.loadParentPlayerVideoClips.mockResolvedValue([]);
     toolsMocks.loadParentFeesForApp.mockResolvedValue([]);
     toolsMocks.loadParentRegistrations.mockResolvedValue([]);
     toolsMocks.loadParentCertificates.mockResolvedValue([]);
@@ -366,6 +369,9 @@ describe('private AI service', () => {
     });
 
     it('uses linked player detail data for player development coaching answers', async () => {
+        playerMocks.loadParentPlayerVideoClips.mockResolvedValueOnce([
+            { id: 'clip-1', title: 'Fast break', url: 'https://video.example.test/fast-break.mp4' }
+        ]);
         const { runPrivateAiTool } = await import('../../apps/app/src/lib/privateAiService.ts');
 
         await expect(runPrivateAiTool(authUser, { name: 'get_player_development', args: { playerName: 'ave' } })).resolves.toMatchObject({
@@ -381,10 +387,36 @@ describe('private AI service', () => {
                 incentives: expect.objectContaining({
                     totalEarnedCents: 800,
                     unpaidCents: 200
-                })
+                }),
+                clips: [
+                    expect.objectContaining({
+                        id: 'clip-1',
+                        title: 'Fast break',
+                        url: 'https://video.example.test/fast-break.mp4'
+                    })
+                ]
             })
         });
         expect(playerMocks.loadParentPlayerDetailWithAthleteProfile).toHaveBeenCalledWith(authUser, 'team-1', 'player-1');
+        expect(playerMocks.loadParentPlayerVideoClips).toHaveBeenCalledWith(authUser, 'team-1', 'player-1');
+    });
+
+    it('keeps player development answers available when optional video clips fail to load', async () => {
+        playerMocks.loadParentPlayerVideoClips.mockRejectedValueOnce(new Error('Games unavailable'));
+        const { runPrivateAiTool } = await import('../../apps/app/src/lib/privateAiService.ts');
+
+        await expect(runPrivateAiTool(authUser, { name: 'get_player_development', args: { playerName: 'ave' } })).resolves.toMatchObject({
+            ok: true,
+            data: expect.objectContaining({
+                player: expect.objectContaining({
+                    id: 'player-1',
+                    name: 'Avery'
+                }),
+                clips: []
+            })
+        });
+        expect(playerMocks.loadParentPlayerDetailWithAthleteProfile).toHaveBeenCalledWith(authUser, 'team-1', 'player-1');
+        expect(playerMocks.loadParentPlayerVideoClips).toHaveBeenCalledWith(authUser, 'team-1', 'player-1');
     });
 
     it('opts all-range AI schedule lookups into full history loads', async () => {

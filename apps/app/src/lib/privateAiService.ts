@@ -24,7 +24,10 @@ import {
   loadParentFeesForApp,
   loadParentRegistrations
 } from './parentToolsService';
-import { loadParentPlayerDetailWithAthleteProfile } from './playerService';
+import {
+  loadParentPlayerDetailWithAthleteProfile,
+  loadParentPlayerVideoClips
+} from './playerService';
 import {
   formatEventDateLabel,
   formatEventTimeLabel,
@@ -351,10 +354,17 @@ export async function runPrivateAiTool(user: AuthUser, call: PrivateAiToolCall):
         if (!player) {
           return { name, ok: false, error: 'No matching player was found for this account.' };
         }
+        const [detail, clips] = await Promise.all([
+          loadParentPlayerDetailWithAthleteProfile(user, player.teamId, player.playerId),
+          loadParentPlayerVideoClips(user, player.teamId, player.playerId).catch(() => [])
+        ]);
         return {
           name,
           ok: true,
-          data: summarizePlayerDevelopment(await loadParentPlayerDetailWithAthleteProfile(user, player.teamId, player.playerId))
+          data: summarizePlayerDevelopment({
+            ...detail,
+            clips
+          })
         };
       }
       case 'get_fees':

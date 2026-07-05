@@ -8,17 +8,27 @@ function readRepoFile(relativePath) {
 function expectMobileTocActiveStateSupport(source) {
     expect(source).toContain(".filter((h) => h.id !== 'in-this-article');");
     expect(source).toContain('const allLinks = [...links];');
+    expect(source).toContain('let preserveHashActiveUntil = 0;');
     expect(source).toContain('const ensureMobileToc = () => {');
     expect(source).toContain('if (!mobileToc || mobileWrapper || window.innerWidth >= 1024) return;');
     expect(source).toContain("const mobileLinks = Array.from(list.querySelectorAll('a'));");
     expect(source).toContain('allLinks.push(...mobileLinks);');
     expect(source).toContain('addLinkHandlers(mobileLinks);');
+    expect(source).toContain('const pickActiveFromViewport = () => {');
+    expect(source).toContain('const activationLine = Math.min(180, Math.max(120, window.innerHeight * 0.22));');
+    expect(source).toContain('nearestDistance <= 140');
     expect(source).toContain("allLinks.forEach((a) => a.classList.toggle('is-active'");
     expect(source).toContain('const addLinkHandlers = (tocLinks) => {');
     expect(source).toContain("window.addEventListener('hashchange', () => setActive(window.location.hash.slice(1)));");
     expect(source).toContain('const syncHashActiveAfterResize = () => {');
     expect(source).toContain("if (!window.location.hash) return;");
+    expect(source).toContain('preserveHashActiveUntil = performance.now() + 120;');
+    expect(source).toContain('const activeHash = window.location.hash.slice(1);');
+    expect(source).toContain('window.setTimeout(() => {');
+    expect(source).toContain('preserveHashActiveUntil = 0;');
     expect(source).toContain("window.requestAnimationFrame(() => {");
+    expect(source).toContain('performance.now() < preserveHashActiveUntil');
+    expect(source).toContain('setActive(null);');
     expect(source).toContain("window.addEventListener('resize', () => {");
     expect(source).toContain('syncHashActiveAfterResize();');
     expect(source).not.toContain("links.forEach((a) => a.classList.toggle('is-active'");

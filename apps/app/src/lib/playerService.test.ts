@@ -83,6 +83,7 @@ import {
   loadParentPlayerAthleteProfile,
   loadParentPlayerDetail,
   loadParentPlayerDetailWithAthleteProfile,
+  loadParentPlayerVideoClips,
   normalizeAthleteProfileHighlightClipUrl,
   saveParentAthleteProfileDraft,
   savePlayerCustomRosterFieldValues,
@@ -719,6 +720,18 @@ describe('loadParentPlayerDetail custom roster fields', () => {
     expect(JSON.stringify(detail.customRosterFields)).not.toContain('YM');
   });
 
+  it('does not load team games or collect clips for the initial detail payload', async () => {
+    const detail = await loadParentPlayerDetail({
+      uid: 'parent-1',
+      email: 'parent@example.com',
+      parentOf: [{ teamId: 'team-1', playerId: 'player-1' }]
+    } as any, 'team-1', 'player-1');
+
+    expect(legacyPlayerDbMocks.getGames).not.toHaveBeenCalled();
+    expect(legacyPlayerProfileMocks.collectPlayerVideoClips).not.toHaveBeenCalled();
+    expect(detail.clips).toEqual([]);
+  });
+
   it('includes parent-visible private roster field values for linked parents', async () => {
     legacyPlayerDbMocks.getRosterFieldDefinitions.mockResolvedValue([
       { key: 'nickname', label: 'Nickname', type: 'text', visibility: 'team', sortOrder: 1 },
@@ -788,6 +801,82 @@ describe('loadParentPlayerDetail custom roster fields', () => {
       expect.objectContaining({ key: 'nickname', value: 'Rocket' })
     ]);
     expect(detail.customRosterFields.some((field) => field.key === 'jerseySize')).toBe(false);
+  });
+
+  it('loads video clips on demand and limits the player clips to 8', async () => {
+    const games = [{ id: 'game-1' }, { id: 'game-2' }];
+    const clips = Array.from({ length: 9 }, (_, index) => ({
+      id: `clip-${index + 1}`,
+      title: `Clip ${index + 1}`,
+      gameDate: '',
+      playLabel: '',
+      url: `https://video.example/clip-${index + 1}.mp4`,
+      thumbnailUrl: '',
+      gameLabel: 'Game'
+    }));
+    legacyPlayerDbMocks.getGames.mockResolvedValue(games);
+    legacyPlayerProfileMocks.collectPlayerVideoClips.mockReturnValue(clips as any);
+
+    const result = await loadParentPlayerVideoClips({
+      uid: 'parent-1',
+      email: 'parent@example.com',
+      parentOf: [{ teamId: 'team-1', playerId: 'player-1' }]
+    } as any, 'team-1', 'player-1');
+
+    expect(legacyPlayerDbMocks.getGames).toHaveBeenCalledWith('team-1');
+    expect(legacyPlayerProfileMocks.collectPlayerVideoClips).toHaveBeenCalledWith(games, {
+      teamId: 'team-1',
+      playerId: 'player-1'
+    });
+    expect(result).toEqual(clips.slice(0, 8));
+  });
+
+  it('allows profile-hydrated parent links to load video clips on demand', async () => {
+    const games = [{ id: 'game-1' }];
+    const clips = [{
+      id: 'clip-1',
+      title: 'Fast break',
+      gameDate: '',
+      playLabel: '',
+      url: 'https://video.example/clip-1.mp4',
+      thumbnailUrl: '',
+      gameLabel: 'Game'
+    }];
+    scheduleServiceMocks.loadParentPlayerSchedule.mockResolvedValue({
+      children: [{ teamId: 'team-1', teamName: 'Bears', playerId: 'player-1', playerName: 'Sam Player' }],
+      events: []
+    });
+    legacyPlayerDbMocks.getGames.mockResolvedValue(games);
+    legacyPlayerProfileMocks.collectPlayerVideoClips.mockReturnValue(clips as any);
+
+    const result = await loadParentPlayerVideoClips({
+      uid: 'parent-1',
+      email: 'parent@example.com',
+      parentOf: []
+    } as any, 'team-1', 'player-1');
+
+    expect(scheduleServiceMocks.loadParentPlayerSchedule).toHaveBeenCalledWith(
+      expect.objectContaining({ uid: 'parent-1' }),
+      { teamId: 'team-1', playerId: 'player-1' }
+    );
+    expect(legacyPlayerDbMocks.getGames).toHaveBeenCalledWith('team-1');
+    expect(legacyPlayerProfileMocks.collectPlayerVideoClips).toHaveBeenCalledWith(games, {
+      teamId: 'team-1',
+      playerId: 'player-1'
+    });
+    expect(result).toEqual(clips);
+  });
+
+  it('surfaces video clip game fetch failures to the caller', async () => {
+    legacyPlayerDbMocks.getGames.mockRejectedValue(new Error('Game fetch failed.'));
+
+    await expect(loadParentPlayerVideoClips({
+      uid: 'parent-1',
+      email: 'parent@example.com',
+      parentOf: [{ teamId: 'team-1', playerId: 'player-1' }]
+    } as any, 'team-1', 'player-1')).rejects.toThrow('Game fetch failed.');
+
+    expect(legacyPlayerProfileMocks.collectPlayerVideoClips).not.toHaveBeenCalled();
   });
 });
 

@@ -62,6 +62,7 @@ vi.mock('../../apps/app/src/lib/scheduleService.ts', () => scheduleMocks);
 
 import {
     loadParentPlayerDetail,
+    loadParentPlayerVideoClips,
     normalizeAthleteProfileHighlightClipUrl,
     saveParentAthleteProfileDraft,
     saveParentPlayerIncentiveRule,
@@ -207,7 +208,7 @@ beforeEach(() => {
 });
 
 describe('React app parent player detail service', () => {
-    it('loads a team-scoped linked player with schedule actions, stats, clips, certificates, and tracking', async () => {
+    it('loads a team-scoped linked player with schedule actions, stats, certificates, and tracking without eager clips', async () => {
         const detail = await loadParentPlayerDetail(user(), 'team-1', 'player-1');
 
         expect(scheduleMocks.loadParentPlayerSchedule).toHaveBeenCalledWith(expect.objectContaining({ uid: 'user-1' }), {
@@ -216,7 +217,7 @@ describe('React app parent player detail service', () => {
         });
         expect(dbMocks.getTeam).toHaveBeenCalledWith('team-1', { includeInactive: true });
         expect(dbMocks.getPlayers).toHaveBeenCalledWith('team-1', { includeInactive: true });
-        expect(dbMocks.getGames).toHaveBeenCalledWith('team-1');
+        expect(dbMocks.getGames).not.toHaveBeenCalled();
         expect(dbMocks.getAggregatedStatsForPlayer).toHaveBeenCalledWith('team-1', 'game-final', 'player-1');
         expect(dbMocks.getPlayerPrivateProfile).toHaveBeenCalledWith('team-1', 'player-1');
         expect(dbMocks.listCertificatesForPlayer).toHaveBeenCalledWith('team-1', 'player-1', { status: 'published', limit: 5 });
@@ -225,10 +226,7 @@ describe('React app parent player detail service', () => {
         expect(incentiveMocks.getPaidGames).toHaveBeenCalledWith('user-1', 'player-1');
         expect(incentiveMocks.getCapSetting).toHaveBeenCalledWith('user-1', 'player-1');
         expect(incentiveMocks.getStatOptionsForTeam).toHaveBeenCalledWith('team-1');
-        expect(profileStatMocks.collectPlayerVideoClips).toHaveBeenCalledWith(expect.any(Array), {
-            teamId: 'team-1',
-            playerId: 'player-1'
-        });
+        expect(profileStatMocks.collectPlayerVideoClips).not.toHaveBeenCalled();
         expect(trackingMocks.getVisiblePlayerTrackingSummary).toHaveBeenCalledWith({
             items: [{ id: 'item-1', title: 'Bring ball' }],
             statuses: [{ playerId: 'player-1', itemId: 'item-1', status: 'complete' }],
@@ -254,7 +252,7 @@ describe('React app parent player detail service', () => {
             event: expect.objectContaining({ id: 'game-final' }),
             stats: { pts: 12, reb: 4 }
         });
-        expect(detail.clips).toHaveLength(1);
+        expect(detail.clips).toEqual([]);
         expect(detail.certificates).toEqual([{ id: 'cert-1', title: 'Hustle Award' }]);
         expect(detail.trackingSummary).toEqual([{ playerId: 'player-1', items: [{ id: 'item-1', title: 'Bring ball', isComplete: true }] }]);
         expect(detail.privateProfile).toEqual({
@@ -282,6 +280,14 @@ describe('React app parent player detail service', () => {
                 }
             ]
         });
+
+        const clips = await loadParentPlayerVideoClips(user(), 'team-1', 'player-1');
+        expect(dbMocks.getGames).toHaveBeenCalledWith('team-1');
+        expect(profileStatMocks.collectPlayerVideoClips).toHaveBeenCalledWith([{ id: 'game-final', clips: [] }], {
+            teamId: 'team-1',
+            playerId: 'player-1'
+        });
+        expect(clips).toEqual([{ title: 'Fast break', url: 'https://video.example.test/clip', gameLabel: 'vs. Falcons' }]);
     });
 
     it('falls back to the legacy player-only route and blocks unlinked players', async () => {

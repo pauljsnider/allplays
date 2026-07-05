@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
-import { MemoryRouter, Route, Routes } from 'react-router-dom';
+import { MemoryRouter, Route, Routes, useNavigate } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 function createDeferred<T>() {
@@ -16,6 +16,7 @@ function createDeferred<T>() {
 const playerServiceMocks = vi.hoisted(() => ({
   loadParentPlayerAthleteProfile: vi.fn(),
   loadParentPlayerDetail: vi.fn(),
+  loadParentPlayerVideoClips: vi.fn(),
   markParentPlayerIncentivePaid: vi.fn(),
   retireParentPlayerIncentiveRule: vi.fn(),
   saveParentAthleteProfileDraft: vi.fn(),
@@ -152,11 +153,33 @@ function renderPlayerDetail() {
   );
 }
 
+function PlayerDetailWithRouteSwitcher() {
+  const navigate = useNavigate();
+  return (
+    <>
+      <button type="button" onClick={() => navigate('/players/team-next/player-next')}>Next player route</button>
+      <PlayerDetail auth={auth} />
+    </>
+  );
+}
+
+function renderPlayerDetailWithRouteSwitcher() {
+  return render(
+    <MemoryRouter initialEntries={['/players/team-current/player-current']}>
+      <Routes>
+        <Route path="/players/:teamId/:playerId" element={<PlayerDetailWithRouteSwitcher />} />
+        <Route path="/home" element={<div>Home</div>} />
+      </Routes>
+    </MemoryRouter>
+  );
+}
+
 describe('PlayerDetail athlete profile season selection', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     playerServiceMocks.loadParentPlayerDetail.mockResolvedValue(buildDetailData());
     playerServiceMocks.loadParentPlayerAthleteProfile.mockResolvedValue(buildDetailData().athleteProfile);
+    playerServiceMocks.loadParentPlayerVideoClips.mockResolvedValue([]);
     playerServiceMocks.saveParentAthleteProfileDraft.mockResolvedValue({
       shareUrl: 'https://allplays.ai/athlete-profile.html?profileId=profile-1'
     });
@@ -209,6 +232,141 @@ describe('PlayerDetail athlete profile season selection', () => {
     await waitFor(() => {
       expect(playerServiceMocks.loadParentPlayerAthleteProfile).toHaveBeenCalledTimes(1);
     });
+  });
+
+  it('lazy-loads video clips once when the Video Clips report opens', async () => {
+    playerServiceMocks.loadParentPlayerVideoClips.mockResolvedValue([
+      {
+        id: 'clip-1',
+        title: 'Fast break finish',
+        gameDate: '2026-01-15',
+        playLabel: 'Score',
+        url: 'https://video.example/clip-1.mp4',
+        thumbnailUrl: '',
+        gameLabel: 'Comets vs Storm'
+      }
+    ]);
+
+    renderPlayerDetail();
+
+    await screen.findByText('Sam Player');
+    expect(playerServiceMocks.loadParentPlayerVideoClips).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Reports' }));
+    expect(playerServiceMocks.loadParentPlayerVideoClips).not.toHaveBeenCalled();
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Video Clips' }));
+
+    await waitFor(() => {
+      expect(playerServiceMocks.loadParentPlayerVideoClips).toHaveBeenCalledTimes(1);
+      expect(playerServiceMocks.loadParentPlayerVideoClips).toHaveBeenCalledWith(auth.user, 'team-current', 'player-current');
+    });
+    expect(await screen.findByText('Fast break finish')).toBeTruthy();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Game Stats' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Video Clips' }));
+
+    await waitFor(() => {
+      expect(playerServiceMocks.loadParentPlayerVideoClips).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  it('does not preload clips when navigating to another player after clips were opened', async () => {
+    playerServiceMocks.loadParentPlayerDetail
+      .mockResolvedValueOnce(buildDetailData())
+      .mockResolvedValueOnce(buildDetailData({
+        child: {
+          teamId: 'team-next',
+          teamName: 'Next Team',
+          playerId: 'player-next',
+          playerName: 'Jordan Player'
+        },
+        player: {
+          id: 'player-next',
+          teamId: 'team-next',
+          teamName: 'Next Team',
+          name: 'Jordan Player',
+          number: '24',
+          photoUrl: ''
+        },
+        team: { id: 'team-next', name: 'Next Team' }
+      }));
+    playerServiceMocks.loadParentPlayerVideoClips.mockResolvedValue([
+      {
+        id: 'clip-1',
+        title: 'Fast break finish',
+        gameDate: '2026-01-15',
+        playLabel: 'Score',
+        url: 'https://video.example/clip-1.mp4',
+        thumbnailUrl: '',
+        gameLabel: 'Comets vs Storm'
+      }
+    ]);
+
+    renderPlayerDetailWithRouteSwitcher();
+
+    await screen.findByText('Sam Player');
+    fireEvent.click(screen.getByRole('button', { name: 'Reports' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Video Clips' }));
+
+    await waitFor(() => {
+      expect(playerServiceMocks.loadParentPlayerVideoClips).toHaveBeenCalledTimes(1);
+      expect(playerServiceMocks.loadParentPlayerVideoClips).toHaveBeenCalledWith(auth.user, 'team-current', 'player-current');
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Next player route' }));
+
+    await screen.findByText('Jordan Player');
+    expect(playerServiceMocks.loadParentPlayerDetail).toHaveBeenLastCalledWith(auth.user, 'team-next', 'player-next');
+    expect(playerServiceMocks.loadParentPlayerVideoClips).toHaveBeenCalledTimes(1);
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Video Clips' }));
+
+    await waitFor(() => {
+      expect(playerServiceMocks.loadParentPlayerVideoClips).toHaveBeenCalledTimes(2);
+      expect(playerServiceMocks.loadParentPlayerVideoClips).toHaveBeenLastCalledWith(auth.user, 'team-next', 'player-next');
+    });
+  });
+
+  it('does not auto-retry failed video clip loads until the user retries', async () => {
+    playerServiceMocks.loadParentPlayerVideoClips
+      .mockRejectedValueOnce(new Error('Clip network failed.'))
+      .mockResolvedValueOnce([
+        {
+          id: 'clip-1',
+          title: 'Putback score',
+          gameDate: '2026-01-15',
+          playLabel: 'Score',
+          url: 'https://video.example/clip-1.mp4',
+          thumbnailUrl: '',
+          gameLabel: 'Comets vs Storm'
+        }
+      ]);
+
+    renderPlayerDetail();
+
+    await screen.findByText('Sam Player');
+    fireEvent.click(screen.getByRole('button', { name: 'Reports' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Video Clips' }));
+
+    expect(await screen.findByText('Clip network failed.')).toBeTruthy();
+    await waitFor(() => {
+      expect(playerServiceMocks.loadParentPlayerVideoClips).toHaveBeenCalledTimes(1);
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Game Stats' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Video Clips' }));
+
+    await waitFor(() => {
+      expect(playerServiceMocks.loadParentPlayerVideoClips).toHaveBeenCalledTimes(1);
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Retry clips' }));
+
+    await waitFor(() => {
+      expect(playerServiceMocks.loadParentPlayerVideoClips).toHaveBeenCalledTimes(2);
+    });
+    expect(await screen.findByText('Putback score')).toBeTruthy();
   });
 
   it('shows a retryable player detail error state and reloads on retry', async () => {

@@ -106,6 +106,7 @@ test.describe('help topic and workflow pages', () => {
         const desktopPrerequisitesLink = page.locator('.wf-sidebar #workflow-toc a[href="#prerequisites"]');
         await expect(mobilePrerequisitesLink).toHaveClass(/is-active/);
         await expect(desktopPrerequisitesLink).toHaveClass(/is-active/);
+        await page.waitForTimeout(120);
 
         const targetSection = page.locator('.help-workflow-body h2#common-questions');
         await targetSection.evaluate((element) => element.scrollIntoView());

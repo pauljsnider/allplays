@@ -59,6 +59,8 @@ import { loadParentPlayerSchedule, type ParentScheduleChild } from './scheduleSe
 import { clearAppDataCache } from './appDataCache';
 import type { AuthUser } from './types';
 
+export type { PlayerVideoClip };
+
 export type ParentPlayerStatRow = {
   event: ParentScheduleEvent;
   stats: Record<string, unknown>;
@@ -200,7 +202,6 @@ export async function loadParentPlayerDetail(user: AuthUser | null, teamId: stri
 
   const [
     players,
-    games,
     certificates,
     trackingItems,
     trackingStatuses,
@@ -212,7 +213,6 @@ export async function loadParentPlayerDetail(user: AuthUser | null, teamId: stri
     statOptions
   ] = await Promise.all([
     getPlayers(resolvedTeamId, { includeInactive: true }).catch(() => []),
-    getGames(resolvedTeamId).catch(() => []),
     listCertificatesForPlayer(resolvedTeamId, resolvedPlayerId, { status: 'published', limit: 5 }).catch(() => []),
     getPublicTrackingItems(resolvedTeamId).catch(() => []),
     getPlayerTrackingStatuses(resolvedTeamId, [resolvedPlayerId]).catch(() => []),
@@ -248,11 +248,6 @@ export async function loadParentPlayerDetail(user: AuthUser | null, teamId: stri
     stats: await getAggregatedStatsForPlayer(resolvedTeamId, event.id, resolvedPlayerId).catch(() => ({})) || {}
   })));
 
-  const clips = collectPlayerVideoClips(games, {
-    teamId: resolvedTeamId,
-    playerId: resolvedPlayerId
-  }).slice(0, 8);
-
   const trackingSummary = getVisiblePlayerTrackingSummary({
     items: trackingItems,
     statuses: trackingStatuses,
@@ -283,7 +278,7 @@ export async function loadParentPlayerDetail(user: AuthUser | null, teamId: stri
       openAssignments: upcoming.reduce((total, event) => total + getOpenScheduleAssignments(event.assignments).length, 0)
     },
     statRows,
-    clips,
+    clips: [],
     certificates: Array.isArray(certificates) ? certificates : [],
     trackingSummary,
     privateProfile: normalizePrivateProfile(privateProfile),
@@ -300,6 +295,30 @@ export async function loadParentPlayerDetail(user: AuthUser | null, teamId: stri
       resolvedPlayerId
     )
   };
+}
+
+export async function loadParentPlayerVideoClips(user: AuthUser | null, teamId: string, playerId: string): Promise<PlayerVideoClip[]> {
+  if (!user?.uid) {
+    throw new Error('Player details require a signed-in user.');
+  }
+
+  const schedule = await loadParentPlayerSchedule(user, { teamId, playerId });
+  const linkedChild = findLinkedChild(schedule.children, teamId, playerId);
+  const requestedTeamId = decodeURIComponent(teamId || '');
+  const requestedPlayerId = decodeURIComponent(playerId || '');
+  const resolvedTeamId = linkedChild?.teamId || requestedTeamId;
+  const resolvedPlayerId = linkedChild?.playerId || requestedPlayerId;
+  const team = await getTeam(resolvedTeamId, { includeInactive: true });
+  const access = buildPlayerAccess(user, resolvedTeamId, resolvedPlayerId, team);
+  if (!linkedChild && !access.isLinkedParent && !access.isTeamStaff) {
+    throw new Error('This player is not linked to your account.');
+  }
+
+  const games = await getGames(resolvedTeamId);
+  return collectPlayerVideoClips(games, {
+    teamId: resolvedTeamId,
+    playerId: resolvedPlayerId
+  }).slice(0, 8);
 }
 
 export async function loadParentPlayerAthleteProfile(user: AuthUser | null, teamId: string, playerId: string): Promise<ParentAthleteProfileData> {
