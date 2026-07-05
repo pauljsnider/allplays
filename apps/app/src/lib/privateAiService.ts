@@ -356,7 +356,7 @@ export async function runPrivateAiTool(user: AuthUser, call: PrivateAiToolCall):
         }
         const [detail, clips] = await Promise.all([
           loadParentPlayerDetailWithAthleteProfile(user, player.teamId, player.playerId),
-          loadParentPlayerVideoClips(user, player.teamId, player.playerId)
+          loadParentPlayerVideoClips(user, player.teamId, player.playerId).catch(() => [])
         ]);
         return {
           name,
