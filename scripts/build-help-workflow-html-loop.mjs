@@ -529,6 +529,7 @@ function renderArticle({ title, roles, bodyHtml, summary, readTimeMin }) {
         });
         const allLinks = [...links];
         let mobileWrapper = null;
+        let preserveHashActiveUntil = 0;
 
         const sectionById = new Map(headings.map((h) => [h.id, h]));
         const pickActiveFromViewport = () => {
@@ -594,16 +595,28 @@ function renderArticle({ title, roles, bodyHtml, summary, readTimeMin }) {
 
         const syncHashActiveAfterResize = () => {
           if (!window.location.hash) return;
+          preserveHashActiveUntil = performance.now() + 120;
+          const activeHash = window.location.hash.slice(1);
           window.requestAnimationFrame(() => {
-            window.requestAnimationFrame(() => setActive(window.location.hash.slice(1)));
+            window.requestAnimationFrame(() => setActive(activeHash));
           });
+          window.setTimeout(() => {
+            setActive(activeHash);
+            preserveHashActiveUntil = 0;
+          }, 80);
         };
 
         addLinkHandlers(links);
         ensureMobileToc();
 
         window.addEventListener('scroll', () => {
-          window.requestAnimationFrame(() => setActive(null));
+          window.requestAnimationFrame(() => {
+            if (window.location.hash && performance.now() < preserveHashActiveUntil) {
+              setActive(window.location.hash.slice(1));
+              return;
+            }
+            setActive(null);
+          });
         }, { passive: true });
         window.addEventListener('hashchange', () => setActive(window.location.hash.slice(1)));
         window.addEventListener('resize', () => {
