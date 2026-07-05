@@ -1345,6 +1345,81 @@ describe('ScheduleEventDetail assignments', () => {
     expect(screen.getAllByText(/LIVE · Q2/i).length).toBeGreaterThan(0);
   });
 
+  it('preserves elapsed running clock time while the game-day service import is loading', async () => {
+    const updatedAt = new Date(Date.now() - 30_000).toISOString();
+    const updateLiveGameClockState = vi.fn(async (_teamId, _gameId, payload) => ({
+      liveClockMs: payload.liveClockMs,
+      liveClockRunning: payload.liveClockRunning,
+      liveClockPeriod: payload.liveClockPeriod,
+      period: payload.liveClockPeriod,
+      liveClockUpdatedAt: new Date(),
+      liveStatus: 'live'
+    }));
+    let resolveImporter: (module: any) => void = () => {};
+    const importerPromise = new Promise<any>((resolve) => {
+      resolveImporter = resolve;
+    });
+    const importer = vi.fn(() => importerPromise);
+    setScheduleGameDayServiceImporterForTest(importer);
+    scheduleServiceMocks.loadParentScheduleEventDetail.mockResolvedValue({
+      events: [buildEvent({
+        liveStatus: 'live',
+        canUpdateScore: true,
+        liveClockMs: 60_000,
+        liveClockRunning: true,
+        liveClockPeriod: 'Q1',
+        liveClockUpdatedAt: updatedAt,
+        gamePlan: { numPeriods: 4 }
+      })],
+      children: []
+    });
+    scheduleServiceMocks.loadHomeScoringPlayers.mockResolvedValue([]);
+    scheduleServiceMocks.loadGameDayLiveEventsForApp.mockResolvedValue([]);
+    scheduleHubMocks.buildGameHubDestinations.mockReturnValue([]);
+
+    try {
+      renderScheduleEventDetailWithRouteControls();
+
+      await waitFor(() => {
+        expect(screen.getByTestId('live-game-clock-panel')).toBeTruthy();
+      });
+
+      fireEvent.click(screen.getByRole('button', { name: 'Pause clock' }));
+
+      expect(updateLiveGameClockState).not.toHaveBeenCalled();
+
+      resolveImporter({
+        loadAutoFilledLineupDraftPreviewForApp: vi.fn(() => Promise.resolve({ availablePlayers: [], goingPlayers: [], gamePlan: null })),
+        publishGamePlanForApp: vi.fn(),
+        publishLiveScoreUpdateEvent: vi.fn(),
+        recordPlayerGameStat: vi.fn(),
+        recordPlayerScoringStat: vi.fn(),
+        undoRecordedPlayerGameStat: vi.fn(),
+        saveScheduledGameLineupDraftForApp: vi.fn(),
+        completeGameWrapupForApp: vi.fn(),
+        loadGameDayLiveEventsForApp: vi.fn(() => Promise.resolve([])),
+        saveGameDaySubstitutionForApp: vi.fn(),
+        updateLiveGameClockState,
+        buildLiveGameClockPeriods: vi.fn(() => ['Q1', 'Q2', 'Q3', 'Q4']),
+        resolveLiveGameClockSnapshot: vi.fn(),
+        LINEUP_FORMATIONS: {},
+        getLineupPublishStatus: vi.fn(() => 'Lineup draft is not published.'),
+        hasLineupDraft: vi.fn(() => false)
+      });
+
+      await waitFor(() => {
+        expect(updateLiveGameClockState).toHaveBeenCalledWith('team-1', 'game-1', expect.objectContaining({
+          liveClockMs: expect.any(Number),
+          liveClockRunning: false,
+          liveClockPeriod: 'Q1'
+        }), auth.user);
+      });
+      expect(updateLiveGameClockState.mock.calls[0][2].liveClockMs).toBeGreaterThanOrEqual(89_000);
+    } finally {
+      setScheduleGameDayServiceImporterForTest();
+    }
+  });
+
   it('tracks player fouls, shows bonus state, and resets team fouls by period', async () => {
     scheduleServiceMocks.updateLiveGameClockState.mockResolvedValueOnce({
       liveClockMs: 0,

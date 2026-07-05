@@ -2863,15 +2863,22 @@ function LiveGameClockPanel({ auth, event, onLiveClockUpdated }: { auth: AuthSta
     Number((event.gamePlan as Record<string, any> | null | undefined)?.numPeriods) === 4 ? ['Q1', 'Q2', 'Q3', 'Q4'] : ['H1', 'H2']
   ), [event.gamePlan]);
   const periods = useMemo(() => gameDayService?.buildLiveGameClockPeriods(event as Record<string, any>) || fallbackPeriods, [event, fallbackPeriods, gameDayService]);
-  const clockState = useMemo(() => (
-    gameDayService?.resolveLiveGameClockSnapshot(event as Record<string, any>, clockNow) || {
-      persistedClockMs: Math.max(0, Number(event.liveClockMs || 0)),
-      effectiveClockMs: Math.max(0, Number(event.liveClockMs || 0)),
+  const clockState = useMemo(() => {
+    const serviceSnapshot = gameDayService?.resolveLiveGameClockSnapshot(event as Record<string, any>, clockNow);
+    if (serviceSnapshot) return serviceSnapshot;
+
+    const persistedClockMs = Math.max(0, Number(event.liveClockMs || 0));
+    const parsedUpdatedAt = event.liveClockUpdatedAt ? new Date(event.liveClockUpdatedAt as any) : clockNow;
+    const updatedAt = Number.isFinite(parsedUpdatedAt.getTime()) ? parsedUpdatedAt : clockNow;
+    const elapsedClockMs = event.liveClockRunning === true ? Math.max(0, clockNow.getTime() - updatedAt.getTime()) : 0;
+    return {
+      persistedClockMs,
+      effectiveClockMs: persistedClockMs + elapsedClockMs,
       running: event.liveClockRunning === true,
       period: event.liveClockPeriod || (event as Record<string, any>).period || periods[0] || 'H1',
-      updatedAt: event.liveClockUpdatedAt ? new Date(event.liveClockUpdatedAt as any) : clockNow
-    }
-  ), [event, clockNow, periods, gameDayService]);
+      updatedAt
+    };
+  }, [event, clockNow, periods, gameDayService]);
   const activePeriodIndex = Math.max(0, periods.indexOf(clockState.period));
   const activePeriod = periods[activePeriodIndex] || clockState.period;
   const hasNextPeriod = activePeriodIndex < periods.length - 1;
