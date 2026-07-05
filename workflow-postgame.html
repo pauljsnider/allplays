@@ -496,13 +496,30 @@
         let mobileWrapper = null;
 
         const sectionById = new Map(headings.map((h) => [h.id, h]));
-        const setActive = (activeId) => {
-          let active = sectionById.get(activeId) || headings[0];
-          if (!sectionById.has(activeId)) {
-            for (const h of headings) {
-              if (h.getBoundingClientRect().top <= 140) active = h;
+        const pickActiveFromViewport = () => {
+          const activationLine = Math.min(180, Math.max(120, window.innerHeight * 0.22));
+          let active = headings[0];
+          let nearest = headings[0];
+          let nearestDistance = Number.POSITIVE_INFINITY;
+
+          for (const h of headings) {
+            const top = h.getBoundingClientRect().top;
+            const distance = Math.abs(top - activationLine);
+            if (distance < nearestDistance) {
+              nearest = h;
+              nearestDistance = distance;
             }
+            if (top <= activationLine) active = h;
           }
+
+          if (nearest && nearest !== active && nearest.getBoundingClientRect().top > 0 && nearestDistance <= 140) {
+            return nearest;
+          }
+
+          return active;
+        };
+        const setActive = (activeId) => {
+          const active = sectionById.get(activeId) || pickActiveFromViewport();
           allLinks.forEach((a) => a.classList.toggle('is-active', a.getAttribute('href') === '#' + active.id));
         };
 

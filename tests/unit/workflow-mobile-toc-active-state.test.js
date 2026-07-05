@@ -13,6 +13,9 @@ function expectMobileTocActiveStateSupport(source) {
     expect(source).toContain("const mobileLinks = Array.from(list.querySelectorAll('a'));");
     expect(source).toContain('allLinks.push(...mobileLinks);');
     expect(source).toContain('addLinkHandlers(mobileLinks);');
+    expect(source).toContain('const pickActiveFromViewport = () => {');
+    expect(source).toContain('const activationLine = Math.min(180, Math.max(120, window.innerHeight * 0.22));');
+    expect(source).toContain('nearestDistance <= 140');
     expect(source).toContain("allLinks.forEach((a) => a.classList.toggle('is-active'");
     expect(source).toContain('const addLinkHandlers = (tocLinks) => {');
     expect(source).toContain("window.addEventListener('hashchange', () => setActive(window.location.hash.slice(1)));");
