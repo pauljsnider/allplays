@@ -46,7 +46,7 @@ describe('athlete profile wiring', () => {
         expect(source).toContain('Share Profile');
         expect(source).toContain('renderClipMedia');
         expect(source).toContain('data-athlete-clip-card');
-        expect(source).toContain("import { createAthleteProfileAuthLoader } from './js/athlete-profile-auth.js?v=1';");
+        expect(source).toMatch(/import \{ createAthleteProfileAuthLoader \} from '\.\/js\/athlete-profile-auth\.js\?v=\d+';/);
         expect(source).toContain('handleProfileAuthChange(user);');
         expect(source).toContain('async function loadProfile(_user, isCurrentLoad = () => true)');
         expect(source).toContain('if (!isCurrentLoad()) return;');
