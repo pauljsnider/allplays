@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const capacitorState = {
     isNativePlatform: vi.fn(),
@@ -19,6 +19,11 @@ const profileServiceMocks = {
     saveNotificationDeviceToken: vi.fn()
 };
 
+const legacyPushMocks = {
+    canUsePushNotifications: vi.fn(),
+    registerPushNotifications: vi.fn()
+};
+
 const locationAssignMock = vi.fn();
 let localStorageEntries: Map<string, string>;
 
@@ -26,10 +31,35 @@ async function loadPushService() {
     return await import('./pushService');
 }
 
+function setWebPushSupport(permission: NotificationPermission = 'default') {
+    Object.defineProperty(window, 'PushManager', {
+        configurable: true,
+        value: function PushManager() {}
+    });
+    Object.defineProperty(navigator, 'serviceWorker', {
+        configurable: true,
+        value: {}
+    });
+    Object.defineProperty(window, 'Notification', {
+        configurable: true,
+        value: {
+            permission,
+            requestPermission: vi.fn(async () => permission)
+        }
+    });
+}
+
+function clearWebPushSupport() {
+    Reflect.deleteProperty(window, 'PushManager');
+    Reflect.deleteProperty(navigator, 'serviceWorker');
+    Reflect.deleteProperty(window, 'Notification');
+}
+
 describe('pushService permission states', () => {
     beforeEach(() => {
         vi.resetModules();
         vi.clearAllMocks();
+        vi.stubEnv('VITE_ALLPLAYS_FCM_VAPID_KEY', 'test-vapid-key');
         capacitorState.isNativePlatform.mockReturnValue(true);
         capacitorState.getPlatform.mockReturnValue('ios');
         firebaseMessagingMocks.isSupported.mockResolvedValue({ isSupported: true });
@@ -39,6 +69,8 @@ describe('pushService permission states', () => {
         firebaseMessagingMocks.checkPermissions.mockResolvedValue({ receive: 'prompt' });
         firebaseMessagingMocks.requestPermissions.mockResolvedValue({ receive: 'prompt' });
         profileServiceMocks.saveNotificationDeviceToken.mockResolvedValue(undefined);
+        legacyPushMocks.canUsePushNotifications.mockResolvedValue(true);
+        legacyPushMocks.registerPushNotifications.mockResolvedValue({ token: 'web-token' });
         vi.doMock('@capacitor/core', () => ({
             Capacitor: capacitorState
         }));
@@ -50,6 +82,7 @@ describe('pushService permission states', () => {
             rememberPendingPushRoute: vi.fn(),
             resolvePushNotificationRoute: vi.fn()
         }));
+        vi.doMock('@legacy/push-notifications.js', () => legacyPushMocks);
         Object.defineProperty(window, 'location', {
             configurable: true,
             value: {
@@ -73,6 +106,11 @@ describe('pushService permission states', () => {
                 })
             }
         });
+    });
+
+    afterEach(() => {
+        vi.unstubAllEnvs();
+        clearWebPushSupport();
     });
 
     it('maps granted native permissions to enabled state', async () => {
@@ -140,9 +178,52 @@ describe('pushService permission states', () => {
         });
     });
 
-    it('maps non-native shells to unsupported state for settings recovery UI', async () => {
+    it('maps web default permissions to prompt state for browser registration', async () => {
         capacitorState.isNativePlatform.mockReturnValue(false);
         capacitorState.getPlatform.mockReturnValue('web');
+        setWebPushSupport('default');
+        const { getPushNotificationPermissionStatus } = await loadPushService();
+
+        await expect(getPushNotificationPermissionStatus()).resolves.toEqual({
+            state: 'prompt',
+            isNative: false,
+            platform: 'web',
+            canPrompt: true,
+            canOpenSettings: false
+        });
+    });
+
+    it('maps granted and denied web permissions without opening device settings', async () => {
+        capacitorState.isNativePlatform.mockReturnValue(false);
+        capacitorState.getPlatform.mockReturnValue('web');
+        setWebPushSupport('granted');
+        let service = await loadPushService();
+
+        await expect(service.getPushNotificationPermissionStatus()).resolves.toEqual({
+            state: 'enabled',
+            isNative: false,
+            platform: 'web',
+            canPrompt: false,
+            canOpenSettings: false
+        });
+
+        vi.resetModules();
+        setWebPushSupport('denied');
+        service = await loadPushService();
+
+        await expect(service.getPushNotificationPermissionStatus()).resolves.toEqual({
+            state: 'blocked',
+            isNative: false,
+            platform: 'web',
+            canPrompt: false,
+            canOpenSettings: false
+        });
+    });
+
+    it('maps unsupported web browsers to unsupported state', async () => {
+        capacitorState.isNativePlatform.mockReturnValue(false);
+        capacitorState.getPlatform.mockReturnValue('web');
+        clearWebPushSupport();
         const { getPushNotificationPermissionStatus } = await loadPushService();
 
         await expect(getPushNotificationPermissionStatus()).resolves.toEqual({
@@ -151,6 +232,69 @@ describe('pushService permission states', () => {
             platform: 'web',
             canPrompt: false,
             canOpenSettings: false
+        });
+    });
+
+    it('maps Firebase Messaging unsupported web browsers to unsupported state before prompting', async () => {
+        capacitorState.isNativePlatform.mockReturnValue(false);
+        capacitorState.getPlatform.mockReturnValue('web');
+        setWebPushSupport('default');
+        legacyPushMocks.canUsePushNotifications.mockResolvedValue(false);
+        const { enablePushNotificationsForUser, getPushNotificationPermissionStatus } = await loadPushService();
+
+        await expect(getPushNotificationPermissionStatus()).resolves.toEqual({
+            state: 'unsupported',
+            isNative: false,
+            platform: 'web',
+            canPrompt: false,
+            canOpenSettings: false
+        });
+        await expect(enablePushNotificationsForUser('user-1')).rejects.toMatchObject({
+            code: 'push-unsupported',
+            permissionStatus: {
+                state: 'unsupported',
+                platform: 'web'
+            }
+        });
+        expect(legacyPushMocks.registerPushNotifications).not.toHaveBeenCalled();
+    });
+
+    it('registers web push with the configured VAPID key', async () => {
+        capacitorState.isNativePlatform.mockReturnValue(false);
+        capacitorState.getPlatform.mockReturnValue('web');
+        setWebPushSupport('default');
+        const { enablePushNotificationsForUser } = await loadPushService();
+
+        await expect(enablePushNotificationsForUser('user-1')).resolves.toEqual({
+            token: 'web-token',
+            platform: 'web'
+        });
+
+        expect(legacyPushMocks.registerPushNotifications).toHaveBeenCalledWith({ vapidKey: 'test-vapid-key' });
+        expect(profileServiceMocks.saveNotificationDeviceToken).toHaveBeenCalledWith('user-1', {
+            token: 'web-token',
+            platform: 'web',
+            userAgent: navigator.userAgent || ''
+        });
+    });
+
+    it('throws a blocked permission error when the browser prompt is denied', async () => {
+        capacitorState.isNativePlatform.mockReturnValue(false);
+        capacitorState.getPlatform.mockReturnValue('web');
+        setWebPushSupport('default');
+        legacyPushMocks.registerPushNotifications.mockImplementation(async () => {
+            setWebPushSupport('denied');
+            throw new Error('Notification permission was not granted.');
+        });
+        const { enablePushNotificationsForUser } = await loadPushService();
+
+        await expect(enablePushNotificationsForUser('user-1')).rejects.toMatchObject({
+            code: 'push-permission-blocked',
+            permissionStatus: {
+                state: 'blocked',
+                platform: 'web',
+                canOpenSettings: false
+            }
         });
     });
 

@@ -1,19 +1,26 @@
 // @vitest-environment jsdom
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-const legacySdkMock = vi.hoisted(() => {
-  const resolvedConfig = { projectId: 'primary-project' };
+const firebaseAuthSdk = vi.hoisted(() => {
+  const resolvedConfig = {
+    apiKey: 'api-key',
+    authDomain: 'example.firebaseapp.com',
+    projectId: 'example',
+    messagingSenderId: 'sender',
+    appId: 'app-id'
+  };
+
   return {
     resolvedConfig,
     applyActionCode: vi.fn(),
     confirmPasswordReset: vi.fn(),
     createUserWithEmailAndPassword: vi.fn(),
-    getApps: vi.fn<() => Array<{ name: string }>>(() => []),
-    getAuth: vi.fn((app: unknown) => ({ app })),
+    getApps: vi.fn<() => Array<{ name?: string }>>(() => []),
+    getAuth: vi.fn((app: unknown) => ({ app, auth: true })),
     getRedirectResult: vi.fn(),
     GoogleAuthProvider: class {},
-    indexedDBLocalPersistence: {},
-    initializeApp: vi.fn(() => ({ name: '[DEFAULT]', initialized: true })),
+    indexedDBLocalPersistence: { type: 'indexedDBLocalPersistence' },
+    initializeApp: vi.fn(() => ({ name: '[DEFAULT]', created: true })),
     initializeAuth: vi.fn(),
     isSignInWithEmailLink: vi.fn(),
     onAuthStateChanged: vi.fn(),
@@ -30,33 +37,44 @@ const legacySdkMock = vi.hoisted(() => {
   };
 });
 
-vi.mock('./adapters/legacyFirebaseAuthSdk', () => legacySdkMock);
+vi.mock('./adapters/legacyFirebaseAuthSdk', () => firebaseAuthSdk);
+
+vi.mock('./logger', () => ({
+  createLogger: vi.fn(() => ({
+    warn: vi.fn()
+  }))
+}));
 
 describe('firebaseAuthRuntime', () => {
   beforeEach(() => {
     vi.resetModules();
     vi.clearAllMocks();
+    firebaseAuthSdk.getApps.mockReturnValue([]);
+    firebaseAuthSdk.initializeApp.mockReturnValue({ name: '[DEFAULT]', created: true });
+    firebaseAuthSdk.getAuth.mockImplementation((app: unknown) => ({ app, auth: true }));
+    firebaseAuthSdk.resolvePrimaryFirebaseConfig.mockResolvedValue(firebaseAuthSdk.resolvedConfig);
   });
 
   it('initializes the default app when only named apps are registered', async () => {
     // The image-upload project registers a named app while the primary config
-    // fetch is still awaiting. getApp() on a registry with no '[DEFAULT]' app
-    // throws app/no-app and killed the whole module graph (blank screen).
-    legacySdkMock.getApps.mockReturnValue([{ name: 'game-flow-img' }]);
+    // fetch is still awaiting. Only reuse '[DEFAULT]' so named apps cannot
+    // break the auth runtime during startup.
+    firebaseAuthSdk.getApps.mockReturnValue([{ name: 'game-flow-img' }]);
 
-    await import('./firebaseAuthRuntime');
+    const runtime = await import('./firebaseAuthRuntime');
 
-    expect(legacySdkMock.initializeApp).toHaveBeenCalledWith(legacySdkMock.resolvedConfig);
-    expect(legacySdkMock.getAuth).toHaveBeenCalledWith({ name: '[DEFAULT]', initialized: true });
+    expect(firebaseAuthSdk.initializeApp).toHaveBeenCalledWith(firebaseAuthSdk.resolvedConfig);
+    expect(firebaseAuthSdk.getAuth).toHaveBeenCalledWith({ name: '[DEFAULT]', created: true });
+    expect(runtime.auth).toEqual({ app: { name: '[DEFAULT]', created: true }, auth: true });
   });
 
   it('reuses an existing default app', async () => {
-    const defaultApp = { name: '[DEFAULT]' };
-    legacySdkMock.getApps.mockReturnValue([{ name: 'game-flow-img' }, defaultApp]);
+    const existingDefaultApp = { name: '[DEFAULT]' };
+    firebaseAuthSdk.getApps.mockReturnValue([{ name: 'game-flow-img' }, existingDefaultApp]);
 
     await import('./firebaseAuthRuntime');
 
-    expect(legacySdkMock.initializeApp).not.toHaveBeenCalled();
-    expect(legacySdkMock.getAuth).toHaveBeenCalledWith(defaultApp);
+    expect(firebaseAuthSdk.initializeApp).not.toHaveBeenCalled();
+    expect(firebaseAuthSdk.getAuth).toHaveBeenCalledWith(existingDefaultApp);
   });
 });

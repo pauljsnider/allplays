@@ -48,7 +48,7 @@ const pushServiceMocks = vi.hoisted(() => ({
     canOpenSettings: false
   })),
   openPushNotificationSettings: vi.fn(async () => undefined),
-  runPushNotificationPrimer: vi.fn(async () => ({ completed: false, status: 'skipped' }))
+  runPushNotificationPrimer: vi.fn(async () => true)
 }));
 
 vi.mock('../lib/authService', () => authServiceMocks);
@@ -141,6 +141,16 @@ function createDeferredPromise<T>() {
 describe('Profile', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    profileServiceMocks.loadNotificationPreferences.mockResolvedValue({ liveChat: true, liveScore: false, schedule: true });
+    profileServiceMocks.loadNotificationTeams.mockResolvedValue([{ id: 'team-1', name: 'Blue Team' }]);
+    pushServiceMocks.getPushNotificationPermissionStatus.mockResolvedValue({
+      state: 'prompt',
+      isNative: false,
+      platform: 'web',
+      canPrompt: true,
+      canOpenSettings: false
+    });
+    pushServiceMocks.runPushNotificationPrimer.mockResolvedValue(true);
     Object.defineProperty(window, 'scrollTo', {
       value: vi.fn(),
       writable: true
@@ -209,6 +219,41 @@ describe('Profile', () => {
     await waitFor(() => {
       expect(screen.queryByText('Loading alerts for Blue Team…')).toBeNull();
     });
+  });
+
+  it('shows browser-specific recovery when web notifications are blocked', async () => {
+    pushServiceMocks.getPushNotificationPermissionStatus.mockResolvedValue({
+      state: 'blocked',
+      isNative: false,
+      platform: 'web',
+      canPrompt: false,
+      canOpenSettings: false
+    });
+
+    renderProfile('/profile?section=alerts');
+
+    expect(await screen.findByText('Notifications are blocked in this browser')).toBeTruthy();
+    expect(screen.getByText('Notifications are blocked in this browser. Allow notifications in site settings, then check again.')).toBeTruthy();
+    expect(screen.getAllByRole('button', { name: 'Check browser settings again' }).length).toBeGreaterThan(0);
+    expect(screen.queryByRole('button', { name: 'Open device settings' })).toBeNull();
+  });
+
+  it('enables web game-day alerts through push registration and preference save', async () => {
+    renderProfile('/profile?section=alerts');
+
+    expect(await screen.findByLabelText('Live Score')).toBeTruthy();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Turn on game-day alerts' }));
+
+    await waitFor(() => {
+      expect(pushServiceMocks.runPushNotificationPrimer).toHaveBeenCalledWith('game_day_alerts');
+      expect(pushServiceMocks.enablePushNotificationsForUser).toHaveBeenCalledWith('user-1');
+      expect(profileServiceMocks.saveNotificationPreferences).toHaveBeenCalledWith('user-1', 'team-1', expect.objectContaining({
+        liveScore: true,
+        schedule: true
+      }));
+    });
+    expect(await screen.findByText('Game-day alerts are on for this team.')).toBeTruthy();
   });
 
   it('ignores stale initial alert preferences after switching teams mid-load', async () => {

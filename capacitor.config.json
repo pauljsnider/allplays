@@ -9,6 +9,13 @@
         "google.com"
       ]
     },
+    "FirebaseMessaging": {
+      "presentationOptions": [
+        "badge",
+        "sound",
+        "alert"
+      ]
+    },
     "SplashScreen": {
       "launchAutoHide": false,
       "launchShowDuration": 0,
