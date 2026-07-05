@@ -416,7 +416,13 @@ export function PlayerDetail({ auth }: { auth: AuthState }) {
     }
   };
 
-  const refreshPlayer = async ({ showLoading = data === null }: { showLoading?: boolean } = {}) => {
+  const refreshPlayer = async ({
+    showLoading = data === null,
+    reloadVideoClips = videoClipsLoaded
+  }: {
+    showLoading?: boolean;
+    reloadVideoClips?: boolean;
+  } = {}) => {
     const fullPageLoading = showLoading || data === null;
     if (fullPageLoading) {
       setLoading(true);
@@ -431,7 +437,7 @@ export function PlayerDetail({ auth }: { auth: AuthState }) {
       setAthleteProfileLoaded(nextAthleteProfileLoaded);
       setAthleteProfileError(null);
       setVideoClipsError(null);
-      if (videoClipsLoaded) {
+      if (reloadVideoClips) {
         await loadVideoClips({
           nextTeamId: nextData.child.teamId,
           nextPlayerId: nextData.child.playerId,
@@ -471,7 +477,7 @@ export function PlayerDetail({ auth }: { auth: AuthState }) {
     setVideoClipsLoaded(false);
     setVideoClipsLoading(false);
     setVideoClipsError(null);
-    refreshPlayer({ showLoading: true });
+    refreshPlayer({ showLoading: true, reloadVideoClips: false });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [auth.user?.uid, teamId, playerId]);
 
