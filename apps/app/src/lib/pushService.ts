@@ -140,7 +140,7 @@ export async function enablePushNotificationsForUser(userId: string): Promise<Pu
   }
 
   if (!Capacitor.isNativePlatform()) {
-    const permissionStatus = getWebPushPermissionStatus();
+    const permissionStatus = await getWebPushPermissionStatus();
     if (permissionStatus.state === 'unsupported') {
       throw new PushPermissionError('Push notifications are not supported in this browser.', 'push-unsupported', permissionStatus);
     }
@@ -153,7 +153,7 @@ export async function enablePushNotificationsForUser(userId: string): Promise<Pu
     try {
       ({ token } = await registerPushNotifications(webPushVapidKey ? { vapidKey: webPushVapidKey } : {}));
     } catch (error) {
-      const statusAfterAttempt = getWebPushPermissionStatus();
+      const statusAfterAttempt = await getWebPushPermissionStatus();
       if (statusAfterAttempt.state === 'blocked') {
         throw new PushPermissionError(webPushBlockedMessage, 'push-permission-blocked', statusAfterAttempt);
       }
@@ -249,7 +249,7 @@ export async function runPushNotificationPrimer(
 
 export async function getPushNotificationPermissionStatus(): Promise<PushNotificationPermissionStatus> {
   if (!Capacitor.isNativePlatform()) {
-    return getWebPushPermissionStatus();
+    return await getWebPushPermissionStatus();
   }
 
   const platform = Capacitor.getPlatform();
@@ -303,8 +303,13 @@ function isWebPushSupported(): boolean {
     && 'PushManager' in window;
 }
 
-function getWebPushPermissionStatus(): PushNotificationPermissionStatus {
+async function getWebPushPermissionStatus(): Promise<PushNotificationPermissionStatus> {
   if (!isWebPushSupported()) {
+    return buildPushPermissionStatus('unsupported', 'web');
+  }
+  const { canUsePushNotifications } = await import('@legacy/push-notifications.js');
+  const firebaseMessagingSupported = await canUsePushNotifications();
+  if (!firebaseMessagingSupported) {
     return buildPushPermissionStatus('unsupported', 'web');
   }
   if (Notification.permission === 'granted') {

@@ -20,6 +20,7 @@ const profileServiceMocks = {
 };
 
 const legacyPushMocks = {
+    canUsePushNotifications: vi.fn(),
     registerPushNotifications: vi.fn()
 };
 
@@ -68,6 +69,7 @@ describe('pushService permission states', () => {
         firebaseMessagingMocks.checkPermissions.mockResolvedValue({ receive: 'prompt' });
         firebaseMessagingMocks.requestPermissions.mockResolvedValue({ receive: 'prompt' });
         profileServiceMocks.saveNotificationDeviceToken.mockResolvedValue(undefined);
+        legacyPushMocks.canUsePushNotifications.mockResolvedValue(true);
         legacyPushMocks.registerPushNotifications.mockResolvedValue({ token: 'web-token' });
         vi.doMock('@capacitor/core', () => ({
             Capacitor: capacitorState
@@ -231,6 +233,30 @@ describe('pushService permission states', () => {
             canPrompt: false,
             canOpenSettings: false
         });
+    });
+
+    it('maps Firebase Messaging unsupported web browsers to unsupported state before prompting', async () => {
+        capacitorState.isNativePlatform.mockReturnValue(false);
+        capacitorState.getPlatform.mockReturnValue('web');
+        setWebPushSupport('default');
+        legacyPushMocks.canUsePushNotifications.mockResolvedValue(false);
+        const { enablePushNotificationsForUser, getPushNotificationPermissionStatus } = await loadPushService();
+
+        await expect(getPushNotificationPermissionStatus()).resolves.toEqual({
+            state: 'unsupported',
+            isNative: false,
+            platform: 'web',
+            canPrompt: false,
+            canOpenSettings: false
+        });
+        await expect(enablePushNotificationsForUser('user-1')).rejects.toMatchObject({
+            code: 'push-unsupported',
+            permissionStatus: {
+                state: 'unsupported',
+                platform: 'web'
+            }
+        });
+        expect(legacyPushMocks.registerPushNotifications).not.toHaveBeenCalled();
     });
 
     it('registers web push with the configured VAPID key', async () => {
