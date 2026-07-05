@@ -14,4 +14,10 @@ describe('player public page load performance', () => {
         expect(source).toContain('const gameTeamStats = gameLoadResults.find((entry) => entry.gameId === selectedGameId)?.statsByPlayerId || {};');
         expect(source).not.toContain('const teamStatsSnapshot = await getDocs(collection(db, `teams/${teamId}/games/${selectedGameId}/aggregatedStats`));');
     });
+
+    it('keeps the public profile bootable when optional per-game reads are denied', () => {
+        expect(source).toContain("console.warn('Player stats unavailable for game:', gameId, error);");
+        expect(source).toContain("console.warn('Player events unavailable for game:', gameId, error);");
+        expect(source).toContain('playerGameStats: null,');
+    });
 });

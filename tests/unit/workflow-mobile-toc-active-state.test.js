@@ -19,6 +19,7 @@ function expectMobileTocActiveStateSupport(source) {
     expect(source).toContain('const syncHashActiveAfterResize = () => {');
     expect(source).toContain("if (!window.location.hash) return;");
     expect(source).toContain("window.requestAnimationFrame(() => {");
+    expect(source).toContain("window.requestAnimationFrame(() => setActive(null));");
     expect(source).toContain("window.addEventListener('resize', () => {");
     expect(source).toContain('syncHashActiveAfterResize();');
     expect(source).not.toContain("links.forEach((a) => a.classList.toggle('is-active'");

@@ -585,7 +585,9 @@ function renderArticle({ title, roles, bodyHtml, summary, readTimeMin }) {
         addLinkHandlers(links);
         ensureMobileToc();
 
-        window.addEventListener('scroll', () => setActive(null), { passive: true });
+        window.addEventListener('scroll', () => {
+          window.requestAnimationFrame(() => setActive(null));
+        }, { passive: true });
         window.addEventListener('hashchange', () => setActive(window.location.hash.slice(1)));
         window.addEventListener('resize', () => {
           ensureMobileToc();

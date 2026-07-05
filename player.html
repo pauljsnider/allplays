@@ -424,22 +424,26 @@
         async function loadPlayerGameData(teamId, games, playerId, playerName) {
             return Promise.all(games.map(async (game) => {
                 const gameId = game.id;
-                const statsSnapshot = await getDocs(collection(db, `teams/${teamId}/games/${gameId}/aggregatedStats`));
                 const teamStatsByPlayerId = {};
                 let selectedPlayerStats = null;
 
-                statsSnapshot.forEach((docSnap) => {
-                    const statData = docSnap.data() || {};
-                    const playerStats = statData.stats || {};
-                    teamStatsByPlayerId[docSnap.id] = playerStats;
+                try {
+                    const statsSnapshot = await getDocs(collection(db, `teams/${teamId}/games/${gameId}/aggregatedStats`));
+                    statsSnapshot.forEach((docSnap) => {
+                        const statData = docSnap.data() || {};
+                        const playerStats = statData.stats || {};
+                        teamStatsByPlayerId[docSnap.id] = playerStats;
 
-                    if (docSnap.id === playerId && hasPlayerProfileParticipation(statData)) {
-                        selectedPlayerStats = {
-                            stats: playerStats,
-                            timeMs: typeof statData.timeMs === 'number' ? statData.timeMs : 0
-                        };
-                    }
-                });
+                        if (docSnap.id === playerId && hasPlayerProfileParticipation(statData)) {
+                            selectedPlayerStats = {
+                                stats: playerStats,
+                                timeMs: typeof statData.timeMs === 'number' ? statData.timeMs : 0
+                            };
+                        }
+                    });
+                } catch (error) {
+                    console.warn('Player stats unavailable for game:', gameId, error);
+                }
 
                 if (!selectedPlayerStats) {
                     return {
@@ -454,15 +458,20 @@
                     collection(db, `teams/${teamId}/games/${gameId}/events`),
                     orderBy('timestamp', 'asc')
                 );
-                const eventsSnapshot = await getDocs(eventsQuery);
-                const events = eventsSnapshot.docs
-                    .map((docSnap) => docSnap.data())
-                    .filter((event) => event.playerId === playerId || (event.text && event.text.includes(playerName)))
-                    .map((event) => ({
-                        ...event,
-                        gameId,
-                        opponent: game.opponent || 'Opponent'
-                    }));
+                let events = [];
+                try {
+                    const eventsSnapshot = await getDocs(eventsQuery);
+                    events = eventsSnapshot.docs
+                        .map((docSnap) => docSnap.data())
+                        .filter((event) => event.playerId === playerId || (event.text && event.text.includes(playerName)))
+                        .map((event) => ({
+                            ...event,
+                            gameId,
+                            opponent: game.opponent || 'Opponent'
+                        }));
+                } catch (error) {
+                    console.warn('Player events unavailable for game:', gameId, error);
+                }
 
                 return {
                     gameId,
