@@ -1,4 +1,4 @@
-import { createContext, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from 'react';
+import { Suspense, createContext, lazy, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from 'react';
 import { Link, useParams, useSearchParams } from 'react-router-dom';
 import { CalendarDays, ChevronDown, ChevronLeft, ClipboardCheck, ExternalLink, FileText, Radio, RefreshCw, Share2, Users, Video, type LucideIcon } from 'lucide-react';
 import {
@@ -48,25 +48,6 @@ import {
   type LineupDraftPreviewResult
 } from '../lib/scheduleService';
 import { LINEUP_FORMATIONS, getLineupPublishStatus, hasLineupDraft } from '../lib/gameDayLineupPublish';
-import {
-  assignLineupPlayer,
-  buildLineupAiPrompt,
-  buildLineupEditorAssignments,
-  buildLineupEditorPlayers,
-  buildProjectedPlayingTimeSummary,
-  buildRoundRobinLineup,
-  clearLineupPlayer,
-  getLineupAiModel,
-  getLineupSlotKey,
-  getOrderedLineupPeriods,
-  moveLineupPlayer,
-  parseAiLineupPlan
-} from '../lib/gameDayLineupBuilder';
-import { buildAppWrapupCompletionPayload, buildGameWrapupEmailDraft, generateGameWrapupArtifactsForApp, type PracticeFeedItem } from '../lib/gameWrapupService';
-import { appendPracticeTimelineLiveNoteForApp, createPracticeTimelineBlockFromOption, getPracticeTimelineTotalMinutes, loadPracticeTimelineModel, savePracticeTimelineForApp, type PracticeTimelineBlock, type PracticeTimelineDrillOption } from '../lib/practiceTimelineService';
-import { acquireTrackStatsheetPhoto, analyzeTrackStatsheetPhoto, applyTrackStatsheetImportForApp, loadTrackStatsheetContextForApp, type TrackStatsheetReviewRow } from '../lib/statsheetImportService';
-import { buildRotationPlanFromGamePlan } from '../lib/adapters/legacyScheduleHelpers';
-import { applyLiveSubstitution, getSubstitutionOptions } from '../lib/adapters/legacyScheduleHelpers';
 import { exportCalendarIcsFile, openPublicUrl, sharePublicUrl } from '../lib/publicActions';
 import { buildParentScheduleEventIcs } from '../lib/parentToolsService';
 import {
@@ -83,7 +64,6 @@ import { CompactMeta } from '../components/schedule/CompactMeta';
 import { EventDetailsPanel } from '../components/schedule/EventDetailsPanel';
 import { ScheduleEventHeader } from '../components/schedule/ScheduleEventHeader';
 import { EventSectionNav } from '../components/schedule/EventSectionNav';
-import { GameReportSections } from '../components/schedule/GameReportSections';
 import { PlayerSwitcher } from '../components/schedule/PlayerSwitcher';
 import { PracticeAttendancePanel } from '../components/schedule/PracticeAttendancePanel';
 import { ReportMarkdownText } from '../components/schedule/ReportMarkdownText';
@@ -119,14 +99,29 @@ import { completeParentCoreWorkflowTimer } from '../lib/parentWorkflowTiming';
 // Type-only imports for deferred modules — runtime values loaded on demand below
 import type { LiveGameChatMessage } from '../lib/liveGameChatService';
 import type { LiveGameReaction, LiveGameReactionType } from '../lib/liveGameReactionsService';
+import type { PracticeFeedItem } from '../lib/gameWrapupService';
+import type { PracticeTimelineBlock, PracticeTimelineDrillOption } from '../lib/practiceTimelineService';
+import type { TrackStatsheetReviewRow } from '../lib/statsheetImportService';
 
 // Deferred module type aliases for promise caches
 type LiveGameChatModule = typeof import('../lib/liveGameChatService');
 type LiveGameReactionsModule = typeof import('../lib/liveGameReactionsService');
+type GameDayLineupBuilderModule = typeof import('../lib/gameDayLineupBuilder');
+type GameWrapupServiceModule = typeof import('../lib/gameWrapupService');
+type PracticeTimelineServiceModule = typeof import('../lib/practiceTimelineService');
+type StatsheetImportServiceModule = typeof import('../lib/statsheetImportService');
+type LegacyScheduleHelpersModule = typeof import('../lib/adapters/legacyScheduleHelpers');
+type GameReportSectionsModule = typeof import('../components/schedule/GameReportSections');
 
 // Module-level promise caches — each module loads at most once per session
 let liveGameChatModulePromise: Promise<LiveGameChatModule> | null = null;
 let liveGameReactionsModulePromise: Promise<LiveGameReactionsModule> | null = null;
+let gameDayLineupBuilderModulePromise: Promise<GameDayLineupBuilderModule> | null = null;
+let gameWrapupServiceModulePromise: Promise<GameWrapupServiceModule> | null = null;
+let practiceTimelineServiceModulePromise: Promise<PracticeTimelineServiceModule> | null = null;
+let statsheetImportServiceModulePromise: Promise<StatsheetImportServiceModule> | null = null;
+let legacyScheduleHelpersModulePromise: Promise<LegacyScheduleHelpersModule> | null = null;
+let gameReportSectionsModulePromise: Promise<GameReportSectionsModule> | null = null;
 
 function loadLiveGameChatModule() {
   if (!liveGameChatModulePromise) {
@@ -141,6 +136,52 @@ function loadLiveGameReactionsModule() {
   }
   return liveGameReactionsModulePromise;
 }
+
+export function loadGameDayLineupBuilderModule() {
+  if (!gameDayLineupBuilderModulePromise) {
+    gameDayLineupBuilderModulePromise = import('../lib/gameDayLineupBuilder');
+  }
+  return gameDayLineupBuilderModulePromise;
+}
+
+export function loadGameWrapupServiceModule() {
+  if (!gameWrapupServiceModulePromise) {
+    gameWrapupServiceModulePromise = import('../lib/gameWrapupService');
+  }
+  return gameWrapupServiceModulePromise;
+}
+
+export function loadPracticeTimelineServiceModule() {
+  if (!practiceTimelineServiceModulePromise) {
+    practiceTimelineServiceModulePromise = import('../lib/practiceTimelineService');
+  }
+  return practiceTimelineServiceModulePromise;
+}
+
+export function loadStatsheetImportServiceModule() {
+  if (!statsheetImportServiceModulePromise) {
+    statsheetImportServiceModulePromise = import('../lib/statsheetImportService');
+  }
+  return statsheetImportServiceModulePromise;
+}
+
+export function loadLegacyScheduleHelpersModule() {
+  if (!legacyScheduleHelpersModulePromise) {
+    legacyScheduleHelpersModulePromise = import('../lib/adapters/legacyScheduleHelpers');
+  }
+  return legacyScheduleHelpersModulePromise;
+}
+
+export function loadGameReportSectionsModule() {
+  if (!gameReportSectionsModulePromise) {
+    gameReportSectionsModulePromise = import('../components/schedule/GameReportSections');
+  }
+  return gameReportSectionsModulePromise;
+}
+
+const DeferredGameReportSections = lazy(() => (
+  loadGameReportSectionsModule().then((module) => ({ default: module.GameReportSections }))
+));
 import type { AuthState } from '../lib/types';
 import { ScheduleEventDetailProvider } from './schedule/ScheduleEventDetailContext';
 import { useScheduleEventRsvp } from '../hooks/schedule/useScheduleEventRsvp';
@@ -1371,7 +1412,8 @@ function GameHubSection({ auth, event, childEvents, onScoreUpdated, onLiveClockU
   const canUpdateScore = Boolean(!isPractice && event.isDbGame && !event.isCancelled && event.canUpdateScore && auth.user);
   const canWrapup = canUpdateScore;
   const canCancelGame = Boolean(!isPractice && event.isDbGame && !event.isCancelled && event.canUpdateScore && auth.user);
-  const canCancelPracticeOccurrence = Boolean(isPractice && event.isDbGame && !event.isCancelled && event.isTeamAdmin && auth.user && event.id.includes('__'));
+  const isRecurringPracticeOccurrence = Boolean(isPractice && event.id.includes('__'));
+  const canCancelPracticeOccurrence = Boolean(isRecurringPracticeOccurrence && event.isDbGame && !event.isCancelled && event.isTeamAdmin && auth.user);
   const canPublishLineup = Boolean(!isPractice && event.isDbGame && event.isTeamStaff);
   const notifiesCounterpartTeam = Boolean(event.opponentTeamId || event.sharedScheduleOpponentTeamId);
   const hubDestinations = isPractice ? buildPracticeHubDestinations(event) : buildGameHubDestinations(event);
@@ -1630,7 +1672,9 @@ function GameHubSection({ auth, event, childEvents, onScoreUpdated, onLiveClockU
           open={Boolean(openPanels.report)}
           onToggle={() => togglePanel('report')}
         >
-          <GameReportSections event={event} />
+          <Suspense fallback={<div className="mt-3 rounded-2xl border border-gray-200 bg-gray-50 p-3 text-sm font-semibold text-gray-500">Loading report sections...</div>}>
+            <DeferredGameReportSections event={event} />
+          </Suspense>
         </LazyGameHubPanel>
       ) : null}
     </section>
@@ -1667,6 +1711,7 @@ function StatsheetImportPanel({ event, onImported }: { event: ParentScheduleEven
     }
     setLoadingContext(true)
     try {
+      const { loadTrackStatsheetContextForApp } = await loadStatsheetImportServiceModule()
       const context = await loadTrackStatsheetContextForApp(event.teamId, event.id)
       const nextRoster = Array.isArray(context.roster) ? context.roster : []
       const nextColumns = Array.isArray(context.config?.columns) ? context.config.columns : []
@@ -1723,6 +1768,7 @@ function StatsheetImportPanel({ event, onImported }: { event: ParentScheduleEven
   const handleNativePhotoChoice = async (source: 'camera' | 'photos') => {
     setStatus(null)
     try {
+      const { acquireTrackStatsheetPhoto } = await loadStatsheetImportServiceModule()
       const nextFile = await acquireTrackStatsheetPhoto(source)
       handlePhotoSelection(nextFile)
     } catch (error: any) {
@@ -1749,6 +1795,7 @@ function StatsheetImportPanel({ event, onImported }: { event: ParentScheduleEven
     setStatus(null)
     try {
       const context = await ensureContext()
+      const { analyzeTrackStatsheetPhoto } = await loadStatsheetImportServiceModule()
       const review = await analyzeTrackStatsheetPhoto(file, context.roster)
       setHomeRows(review.homeRows)
       setVisitorRows(review.visitorRows)
@@ -1777,6 +1824,7 @@ function StatsheetImportPanel({ event, onImported }: { event: ParentScheduleEven
     setStatus(null)
     try {
       const context = await ensureContext()
+      const { applyTrackStatsheetImportForApp } = await loadStatsheetImportServiceModule()
       const result = await applyTrackStatsheetImportForApp({
         teamId: event.teamId,
         gameId: event.id,
@@ -2038,6 +2086,7 @@ function GameWrapupPanel({ auth, event, onScoreUpdated, onWrapupCompleted }: {
       let aiFailure = false;
       if (shouldGenerateSummary) {
         try {
+          const { generateGameWrapupArtifactsForApp } = await loadGameWrapupServiceModule();
           const artifacts = await generateGameWrapupArtifactsForApp({
             teamId: event.teamId,
             gameId: event.id,
@@ -2054,6 +2103,7 @@ function GameWrapupPanel({ auth, event, onScoreUpdated, onWrapupCompleted }: {
         }
       }
 
+      const { buildAppWrapupCompletionPayload, buildGameWrapupEmailDraft } = await loadGameWrapupServiceModule();
       const completionPayload = buildAppWrapupCompletionPayload({
         homeScore: nextHomeScore,
         awayScore: nextAwayScore,
@@ -2249,8 +2299,10 @@ function formatSubstitutionPlayer(player: { name?: string; number?: string | nul
 
 function GameDaySubstitutionPanel({ auth, event }: { auth: AuthState; event: ParentScheduleEvent }) {
   const formationId = event.gamePlan?.publishedFormationId || event.gamePlan?.formationId || '';
+  const [lineupBuilderModule, setLineupBuilderModule] = useState<GameDayLineupBuilderModule | null>(null);
+  const [legacyHelpersModule, setLegacyHelpersModule] = useState<LegacyScheduleHelpersModule | null>(null);
   const [players, setPlayers] = useState<Array<{ id: string; name: string; number?: string | null }>>([]);
-  const [rotationPlan, setRotationPlan] = useState<Record<string, any>>(() => event.rotationPlan || buildRotationPlanFromGamePlan(event.gamePlan || {}));
+  const [rotationPlan, setRotationPlan] = useState<Record<string, any>>(() => event.rotationPlan || {});
   const [rotationActual, setRotationActual] = useState<Record<string, any>>(() => event.rotationActual || {});
   const [coachingNotes, setCoachingNotes] = useState<any[]>(() => Array.isArray(event.coachingNotes) ? event.coachingNotes : []);
   const [liveEvents, setLiveEvents] = useState<any[]>(() => Array.isArray(event.liveEvents) ? event.liveEvents : []);
@@ -2263,17 +2315,27 @@ function GameDaySubstitutionPanel({ auth, event }: { auth: AuthState; event: Par
 
   const periods = useMemo(() => Object.keys(rotationPlan || {}), [rotationPlan]);
   const activePeriod = period || periods[0] || '';
-  const projectedTime = useMemo(() => buildProjectedPlayingTimeSummary(formationId, event.gamePlan || null, players as any), [formationId, event.gamePlan, players]);
-  const subOptions = useMemo(() => getSubstitutionOptions({
+  const projectedTime = useMemo(() => (
+    lineupBuilderModule ? lineupBuilderModule.buildProjectedPlayingTimeSummary(formationId, event.gamePlan || null, players as any) : []
+  ), [lineupBuilderModule, formationId, event.gamePlan, players]);
+  const subOptions = useMemo(() => legacyHelpersModule ? legacyHelpersModule.getSubstitutionOptions({
     period: activePeriod,
     rotationPlan,
     rotationActual,
     players
-  }), [activePeriod, rotationPlan, rotationActual, players]);
+  }) : { onFieldPlayers: [], offFieldPlayers: [] }, [legacyHelpersModule, activePeriod, rotationPlan, rotationActual, players]);
   const logEntries = useMemo(() => buildGameDayLogEntries(coachingNotes, liveEvents), [coachingNotes, liveEvents]);
 
   useEffect(() => {
-    const nextPlan = event.rotationPlan || buildRotationPlanFromGamePlan(event.gamePlan || {});
+    void loadGameDayLineupBuilderModule().then(setLineupBuilderModule);
+    void loadLegacyScheduleHelpersModule().then((module) => {
+      setLegacyHelpersModule(module);
+      setRotationPlan((current) => Object.keys(current || {}).length ? current : module.buildRotationPlanFromGamePlan(event.gamePlan || {}));
+    });
+  }, [event.gamePlan]);
+
+  useEffect(() => {
+    const nextPlan = event.rotationPlan || legacyHelpersModule?.buildRotationPlanFromGamePlan(event.gamePlan || {}) || {};
     setRotationPlan(nextPlan);
     setRotationActual(event.rotationActual || {});
     setCoachingNotes(Array.isArray(event.coachingNotes) ? event.coachingNotes : []);
@@ -2282,7 +2344,7 @@ function GameDaySubstitutionPanel({ auth, event }: { auth: AuthState; event: Par
     setOutPlayerId('');
     setInPlayerId('');
     setStatus(null);
-  }, [event.eventKey, event.gamePlan, event.rotationPlan, event.rotationActual, event.coachingNotes, event.liveEvents]);
+  }, [legacyHelpersModule, event.eventKey, event.gamePlan, event.rotationPlan, event.rotationActual, event.coachingNotes, event.liveEvents]);
 
   useEffect(() => {
     if (!auth.user || !formationId || event.isCancelled) {
@@ -2294,11 +2356,12 @@ function GameDaySubstitutionPanel({ auth, event }: { auth: AuthState; event: Par
     setLoading(true);
     Promise.all([
       loadAutoFilledLineupDraftPreviewForApp(event, auth.user, formationId),
-      loadGameDayLiveEventsForApp(event.teamId, event.id)
+      loadGameDayLiveEventsForApp(event.teamId, event.id),
+      loadGameDayLineupBuilderModule()
     ])
-      .then(([preview, loadedLiveEvents]) => {
+      .then(([preview, loadedLiveEvents, builder]) => {
         if (cancelled) return;
-        const loadedPlayers = buildLineupEditorPlayers(preview?.availablePlayers || [], preview?.goingPlayers || []);
+        const loadedPlayers = builder.buildLineupEditorPlayers(preview?.availablePlayers || [], preview?.goingPlayers || []);
         setPlayers(loadedPlayers.map((player) => ({ id: player.id, name: player.name, number: player.number || null })));
         setLiveEvents(Array.isArray(loadedLiveEvents) ? loadedLiveEvents : []);
       })
@@ -2329,6 +2392,7 @@ function GameDaySubstitutionPanel({ auth, event }: { auth: AuthState; event: Par
 
   const executeSubstitution = async () => {
     if (!auth.user || !activePeriod || !outPlayerId || !inPlayerId) return;
+    const { applyLiveSubstitution } = await loadLegacyScheduleHelpersModule();
     const now = new Date();
     const result = applyLiveSubstitution({
       period: activePeriod,
@@ -2449,6 +2513,7 @@ function GameDaySubstitutionPanel({ auth, event }: { auth: AuthState; event: Par
 }
 
 function GameHubLineupBuilderPanel({ auth, event, onGamePlanSaved }: { auth: AuthState; event: ParentScheduleEvent; onGamePlanSaved: (gamePlan: Record<string, any>) => void }) {
+  const [lineupBuilderModule, setLineupBuilderModule] = useState<GameDayLineupBuilderModule | null>(null);
   const [formationId, setFormationId] = useState(event.gamePlan?.formationId || '');
   const [preview, setPreview] = useState<LineupDraftPreviewResult | null>(null);
   const [draftLineups, setDraftLineups] = useState<Record<string, string>>({});
@@ -2464,12 +2529,20 @@ function GameHubLineupBuilderPanel({ auth, event, onGamePlanSaved }: { auth: Aut
   const latestPreviewRef = useRef<LineupDraftPreviewResult | null>(null);
 
   const formation = LINEUP_FORMATIONS[formationId] || null;
-  const lineupPeriods = useMemo(() => getOrderedLineupPeriods(formationId, preview?.gamePlan || event.gamePlan || null), [formationId, preview?.gamePlan, event.gamePlan]);
-  const editorPlayers = useMemo(() => buildLineupEditorPlayers(preview?.availablePlayers || [], preview?.goingPlayers || []), [preview?.availablePlayers, preview?.goingPlayers]);
+  const lineupPeriods = useMemo(() => (
+    lineupBuilderModule ? lineupBuilderModule.getOrderedLineupPeriods(formationId, preview?.gamePlan || event.gamePlan || null) : []
+  ), [lineupBuilderModule, formationId, preview?.gamePlan, event.gamePlan]);
+  const editorPlayers = useMemo(() => (
+    lineupBuilderModule ? lineupBuilderModule.buildLineupEditorPlayers(preview?.availablePlayers || [], preview?.goingPlayers || []) : []
+  ), [lineupBuilderModule, preview?.availablePlayers, preview?.goingPlayers]);
   const playerById = useMemo(() => new Map(editorPlayers.map((player) => [player.id, player])), [editorPlayers]);
   const hasSavedDraft = hasLineupDraft(preview?.gamePlan ?? event.gamePlan);
   const hasDraft = Object.keys(draftLineups).length > 0 || (!dirtyRef.current && hasSavedDraft);
   const statusCopy = getLineupPublishStatus(event.gamePlan);
+
+  useEffect(() => {
+    void loadGameDayLineupBuilderModule().then(setLineupBuilderModule);
+  }, []);
 
   useEffect(() => {
     setFormationId(event.gamePlan?.formationId || '');
@@ -2491,12 +2564,15 @@ function GameHubLineupBuilderPanel({ auth, event, onGamePlanSaved }: { auth: Aut
     }
 
     setLoadingPreview(true);
-    loadAutoFilledLineupDraftPreviewForApp(event, auth.user, formationId)
-      .then((result) => {
+    Promise.all([
+      loadAutoFilledLineupDraftPreviewForApp(event, auth.user, formationId),
+      loadGameDayLineupBuilderModule()
+    ])
+      .then(([result, builder]) => {
         if (cancelled) return;
         setPreview(result);
         latestPreviewRef.current = result;
-        const seeded = buildLineupEditorAssignments(formationId, result.gamePlan || event.gamePlan || null);
+        const seeded = builder.buildLineupEditorAssignments(formationId, result.gamePlan || event.gamePlan || null);
         setDraftLineups(seeded);
         latestDraftRef.current = seeded;
         dirtyRef.current = shouldAutosaveGeneratedLineupDraft(event.gamePlan, result.gamePlan);
@@ -2558,28 +2634,29 @@ function GameHubLineupBuilderPanel({ auth, event, onGamePlanSaved }: { auth: Aut
 
   const applySelectedPlayerToSlot = (slotKey: string) => {
     if (!selectedPlayerId) return;
-    updateDraft(assignLineupPlayer(draftLineups, slotKey, selectedPlayerId));
+    if (!lineupBuilderModule) return;
+    updateDraft(lineupBuilderModule.assignLineupPlayer(draftLineups, slotKey, selectedPlayerId));
   };
 
   const runAiSuggestion = async () => {
-    if (!formation || !preview?.goingPlayers?.length) return;
+    if (!formation || !preview?.goingPlayers?.length || !lineupBuilderModule) return;
     setAiLoading(true);
     setStatus(null);
     try {
-      const model = await getLineupAiModel();
-      const prompt = buildLineupAiPrompt({
+      const model = await lineupBuilderModule.getLineupAiModel();
+      const prompt = lineupBuilderModule.buildLineupAiPrompt({
         periods: lineupPeriods,
         positions: formation.positions,
         goingPlayers: preview.goingPlayers,
         formationId: formation.id
       });
       const result = await model.generateContent(prompt);
-      const suggestion = parseAiLineupPlan(result?.response?.text?.() || '', lineupPeriods, formation.positions, preview.goingPlayers)
-        || buildRoundRobinLineup(lineupPeriods, formation.positions, preview.goingPlayers);
+      const suggestion = lineupBuilderModule.parseAiLineupPlan(result?.response?.text?.() || '', lineupPeriods, formation.positions, preview.goingPlayers)
+        || lineupBuilderModule.buildRoundRobinLineup(lineupPeriods, formation.positions, preview.goingPlayers);
       updateDraft(suggestion);
       setStatus({ tone: 'success', message: 'AI lineup suggestion applied. You can still edit every slot.' });
     } catch {
-      updateDraft(buildRoundRobinLineup(lineupPeriods, formation.positions, preview?.goingPlayers || []));
+      updateDraft(lineupBuilderModule.buildRoundRobinLineup(lineupPeriods, formation.positions, preview?.goingPlayers || []));
       setStatus({ tone: 'success', message: 'AI was unavailable, so a balanced local lineup was applied instead.' });
     } finally {
       setAiLoading(false);
@@ -2687,7 +2764,7 @@ function GameHubLineupBuilderPanel({ auth, event, onGamePlanSaved }: { auth: Aut
                   <tr key={position.id}>
                     <td className="pr-2 text-sm font-black text-gray-900">{position.name}</td>
                     {lineupPeriods.map((period) => {
-                      const slotKey = getLineupSlotKey(period, position.id);
+                      const slotKey = lineupBuilderModule?.getLineupSlotKey(period, position.id) || `${period}-${position.id}`;
                       const player = playerById.get(draftLineups[slotKey] || '');
                       return (
                         <td key={slotKey}>
@@ -2697,16 +2774,17 @@ function GameHubLineupBuilderPanel({ auth, event, onGamePlanSaved }: { auth: Aut
                             data-testid={`lineup-slot-${slotKey}`}
                             className="min-h-20 w-full min-w-28 rounded-2xl border border-gray-200 bg-gray-50 px-3 py-2 text-left shadow-sm"
                             onClick={() => applySelectedPlayerToSlot(slotKey)}
-                            onDoubleClick={() => updateDraft(clearLineupPlayer(draftLineups, slotKey))}
+                            onDoubleClick={() => lineupBuilderModule ? updateDraft(lineupBuilderModule.clearLineupPlayer(draftLineups, slotKey)) : undefined}
                             onDragOver={(dragEvent) => dragEvent.preventDefault()}
                             onDrop={(dropEvent) => {
                               dropEvent.preventDefault();
+                              if (!lineupBuilderModule) return;
                               try {
                                 const payload = JSON.parse(dropEvent.dataTransfer.getData('text/plain') || '{}');
                                 if (payload.sourceKey) {
-                                  updateDraft(moveLineupPlayer(draftLineups, payload.sourceKey, slotKey));
+                                  updateDraft(lineupBuilderModule.moveLineupPlayer(draftLineups, payload.sourceKey, slotKey));
                                 } else if (payload.playerId) {
-                                  updateDraft(assignLineupPlayer(draftLineups, slotKey, payload.playerId));
+                                  updateDraft(lineupBuilderModule.assignLineupPlayer(draftLineups, slotKey, payload.playerId));
                                 }
                               } catch {
                                 // ignore invalid drops
@@ -3302,6 +3380,7 @@ function GameDayFoulTrackerPanel({ auth, event }: { auth: AuthState; event: Pare
 }
 
 function PracticeTimelineSection({ auth, event }: { auth: AuthState; event: ParentScheduleEvent }) {
+  const [timelineModule, setTimelineModule] = useState<PracticeTimelineServiceModule | null>(null);
   const [sessionId, setSessionId] = useState<string | null>(event.practiceSessionId || null);
   const [blocks, setBlocks] = useState<PracticeTimelineBlock[]>([]);
   const [drillOptions, setDrillOptions] = useState<PracticeTimelineDrillOption[]>([]);
@@ -3312,8 +3391,12 @@ function PracticeTimelineSection({ auth, event }: { auth: AuthState; event: Pare
   const [saving, setSaving] = useState(false);
   const [status, setStatus] = useState<{ tone: 'success' | 'error'; message: string } | null>(null);
   const canManageTimeline = Boolean(auth.user && event.isDbGame && event.isTeamAdmin && !event.isCancelled);
-  const totalMinutes = getPracticeTimelineTotalMinutes(blocks);
+  const totalMinutes = timelineModule ? timelineModule.getPracticeTimelineTotalMinutes(blocks) : blocks.reduce((sum, block) => sum + (Number(block.duration) || 0), 0);
   const activeBlock = blocks[activeDrillIndex] || null;
+
+  useEffect(() => {
+    void loadPracticeTimelineServiceModule().then(setTimelineModule);
+  }, []);
 
   const refreshTimeline = useCallback(async () => {
     if (!auth.user || !event.isTeamAdmin) {
@@ -3326,6 +3409,7 @@ function PracticeTimelineSection({ auth, event }: { auth: AuthState; event: Pare
     setLoading(true);
     setStatus(null);
     try {
+      const { loadPracticeTimelineModel } = await loadPracticeTimelineServiceModule();
       const model = await loadPracticeTimelineModel(event.teamId, event.id, auth.user);
       setSessionId(model.sessionId);
       setBlocks(model.blocks);
@@ -3352,6 +3436,7 @@ function PracticeTimelineSection({ auth, event }: { auth: AuthState; event: Pare
     setSaving(true);
     setStatus(null);
     try {
+      const { savePracticeTimelineForApp } = await loadPracticeTimelineServiceModule();
       const nextSessionId = await savePracticeTimelineForApp({
         teamId: event.teamId,
         eventId: event.id,
@@ -3375,6 +3460,7 @@ function PracticeTimelineSection({ auth, event }: { auth: AuthState; event: Pare
   const addDrill = async () => {
     const option = drillOptions.find((candidate) => candidate.id === selectedDrillId) || drillOptions[0];
     if (!option) return;
+    const { createPracticeTimelineBlockFromOption } = await loadPracticeTimelineServiceModule();
     const nextBlocks = [...blocks, createPracticeTimelineBlockFromOption(option, blocks.length)];
     setActiveDrillIndex(nextBlocks.length - 1);
     await persistTimeline(nextBlocks, `${option.title} added to the practice timeline.`);
@@ -3415,6 +3501,7 @@ function PracticeTimelineSection({ auth, event }: { auth: AuthState; event: Pare
     setSaving(true);
     setStatus(null);
     try {
+      const { appendPracticeTimelineLiveNoteForApp } = await loadPracticeTimelineServiceModule();
       const result = await appendPracticeTimelineLiveNoteForApp({
         teamId: event.teamId,
         eventId: event.id,

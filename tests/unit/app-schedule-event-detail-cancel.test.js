@@ -28,7 +28,8 @@ describe('React app schedule event detail cancellation action', () => {
         const source = readDetailSource();
 
         expect(source).toContain('cancelPracticeOccurrenceForApp');
-        expect(source).toContain("const canCancelPracticeOccurrence = Boolean(isPractice && event.isDbGame && !event.isCancelled && event.isTeamAdmin && auth.user && event.id.includes('__'));");
+        expect(source).toContain("const isRecurringPracticeOccurrence = Boolean(isPractice && event.id.includes('__'));");
+        expect(source).toContain("const canCancelPracticeOccurrence = Boolean(isRecurringPracticeOccurrence && event.isDbGame && !event.isCancelled && event.isTeamAdmin && auth.user);");
         expect(source).toContain("Cancel only ${practiceLabel} on ${formatEventDateLabel(event.date)}? This cancels just this occurrence, not the full recurring series.`);");
         expect(source).toContain('Practice occurrence cancelled for this date only.');
         expect(source).toContain('Cancel this occurrence');
