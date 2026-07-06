@@ -874,6 +874,51 @@ async function nativeListScheduleEventDocuments(path: string): Promise<ScheduleE
   return mapScheduleEventDocuments((payload.documents || []) as NativeFirestoreDocument[]);
 }
 
+async function nativeQueryScheduleEventDocuments(teamId: string, range: ScheduleDateRange): Promise<ScheduleEventFirestoreRecord[]> {
+  const filters = [
+    range.startDate
+      ? {
+          fieldFilter: {
+            field: { fieldPath: 'date' },
+            op: 'GREATER_THAN_OR_EQUAL',
+            value: encodeFirestoreValue(range.startDate)
+          }
+        }
+      : null,
+    range.endDate
+      ? {
+          fieldFilter: {
+            field: { fieldPath: 'date' },
+            op: 'LESS_THAN_OR_EQUAL',
+            value: encodeFirestoreValue(range.endDate)
+          }
+        }
+      : null
+  ].filter(Boolean) as Array<Record<string, unknown>>;
+  const where = filters.length === 1
+    ? filters[0]
+    : {
+        compositeFilter: {
+          op: 'AND',
+          filters
+        }
+      };
+  const payload = await nativeFirestoreRequest(`/teams/${encodeURIComponent(teamId)}:runQuery`, {
+    method: 'POST',
+    body: JSON.stringify({
+      structuredQuery: {
+        from: [{ collectionId: 'games' }],
+        where,
+        orderBy: [{ field: { fieldPath: 'date' }, direction: 'ASCENDING' }]
+      }
+    })
+  });
+
+  return Array.isArray(payload)
+    ? mapScheduleEventDocuments(payload.map((entry) => entry?.document).filter(Boolean) as NativeFirestoreDocument[])
+    : [];
+}
+
 const nativeDeleteFieldSentinel = { __deleteField: true };
 
 function escapeFirestoreFieldPathSegment(segment: string) {
@@ -2434,7 +2479,9 @@ async function loadGames(teamId: string, range: ScheduleDateRange = {}): Promise
     `games ${teamId}`,
     async () => mapScheduleEventRecords(await getGames(teamId, range)),
     async () => {
-      const docs = await nativeListScheduleEventDocuments(`teams/${encodeURIComponent(teamId)}/games`);
+      const docs = (range.startDate || range.endDate)
+        ? await nativeQueryScheduleEventDocuments(teamId, range)
+        : await nativeListScheduleEventDocuments(`teams/${encodeURIComponent(teamId)}/games`);
       const windowed = (range.startDate || range.endDate)
         ? docs.filter((doc) => isEventWithinRange(doc, range))
         : docs;
