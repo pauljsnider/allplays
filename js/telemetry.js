@@ -39,7 +39,6 @@ let visitorIdCache = null;
 let sessionCache = null;
 let lastSessionStorageWrite = 0;
 let firebaseAuthModulePromise = null;
-let cachedAuthToken = null;
 
 function loadFirebaseAuthModule() {
     if (!firebaseAuthModulePromise) {
@@ -159,6 +158,10 @@ function resolveEndpoint() {
     return DEFAULT_ENDPOINT;
 }
 
+function isLocalDevelopment() {
+    return ['localhost', '127.0.0.1', '0.0.0.0', ''].includes(window.location.hostname);
+}
+
 function isTelemetryEnabled() {
     const params = new URLSearchParams(window.location.search);
     if (params.get('telemetry') === '0') return false;
@@ -170,7 +173,7 @@ function isTelemetryEnabled() {
         return false;
     }
 
-    return config.enabled === true || config.telemetryEnabled === true || window.ALLPLAYS_TELEMETRY_ENABLED === true;
+    return !isLocalDevelopment() || config.enabled === true || config.telemetryEnabled === true || window.ALLPLAYS_TELEMETRY_ENABLED === true;
 }
 
 function getSafePath(url = window.location.href) {
@@ -365,10 +368,9 @@ export function captureTelemetryEvent(name, properties = {}, options = {}) {
 
 export async function sendEvents(events, keepalive = false) {
     // Keepalive sends happen while the page is being torn down (pagehide /
-    // hidden). Awaiting an ID-token fetch there usually outlives the page, and
-    // a stale token makes collectTelemetry reject the whole batch. Reuse the
-    // last verified token when we have one so the session doc keeps its UID.
-    const authToken = keepalive ? cachedAuthToken : await getAuthToken();
+    // hidden). Auth is intentionally omitted here because a stale cached token
+    // makes collectTelemetry reject otherwise valid visitor/session events.
+    const authToken = keepalive ? null : await getAuthToken();
     const payloadObject = {
         sentAt: new Date().toISOString(),
         events
@@ -406,8 +408,7 @@ export async function getAuthToken() {
     if (!user?.getIdToken) return null;
 
     try {
-        cachedAuthToken = await user.getIdToken();
-        return cachedAuthToken;
+        return await user.getIdToken();
     } catch (error) {
         return null;
     }
@@ -571,9 +572,6 @@ function setupAuthContext() {
     loadFirebaseAuthModule().then((firebaseAuth) => {
         if (!firebaseAuth?.auth || !firebaseAuth?.onAuthStateChanged) return;
         firebaseAuth.onAuthStateChanged(firebaseAuth.auth, (user) => {
-            if (!user) {
-                cachedAuthToken = null;
-            }
             userContext = {
                 userId: user?.uid || null,
                 signedIn: !!user

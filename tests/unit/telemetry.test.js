@@ -1,4 +1,5 @@
 /** @vitest-environment jsdom */
+/** @vitest-environment-options {"url":"https://allplays.ai/"} */
 import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
 
 const mockFetch = vi.fn(() => Promise.resolve({ ok: true }));
@@ -134,9 +135,30 @@ describe('telemetry.js payload handling', () => {
         expect(payload.events.map((event) => event.name)).toContain('explicit_config_enabled');
     });
 
-    it('drains the whole queue via beacons using the cached auth token on keepalive flush', async () => {
-        // Page-close flush cannot wait on getIdToken(), but dropping auth after
-        // a normal signed-in flush would make the collector clear session UID.
+    it('starts telemetry by default on production hosts without explicit config', async () => {
+        vi.resetModules();
+        delete window.__allplaysTelemetry;
+        delete window.ALLPLAYS_TELEMETRY_ENABLED;
+        window.localStorage.clear();
+        window.sessionStorage.clear();
+        window.__ALLPLAYS_CONFIG__ = {
+            telemetryEndpoint: 'http://mock-telemetry-endpoint.com'
+        };
+        window.history.replaceState({}, '', '/dashboard.html');
+        mockFetch.mockClear();
+
+        const defaultProductionModule = await import('../../js/telemetry.js');
+        defaultProductionModule.captureTelemetryEvent('production_default_enabled');
+        await defaultProductionModule.flush();
+
+        expect(mockFetch).toHaveBeenCalledTimes(1);
+        const [, options] = mockFetch.mock.calls[0];
+        const payload = JSON.parse(options.body);
+        expect(payload.events.map((event) => event.name)).toContain('production_default_enabled');
+    });
+
+    it('drains the whole queue via unauthenticated beacons on keepalive flush', async () => {
+        // Page-close flush cannot risk a stale cached token rejecting the batch.
         firebaseMocks.getIdToken.mockResolvedValue('mockAuthToken456');
         firebaseMocks.auth.currentUser = { getIdToken: firebaseMocks.getIdToken };
 
@@ -161,7 +183,7 @@ describe('telemetry.js payload handling', () => {
         expect(names).toContain('burst_event_0');
         expect(names).toContain('burst_event_31');
         allPayloads.forEach((payload) => {
-            expect(payload.authToken).toBe('mockAuthToken456');
+            expect(payload.authToken).toBeUndefined();
         });
     });
 
