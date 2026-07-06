@@ -2204,6 +2204,8 @@ function seekReplay(targetMs) {
   state.eventIds = new Set();
   state.stats = {};
   state.opponentStats = {};
+  state.onCourt = [];
+  state.bench = [];
   state.homeScore = 0;
   state.awayScore = 0;
   state.period = getDefaultLivePeriod({ game: state.game, team: state.team });
@@ -2212,6 +2214,9 @@ function seekReplay(targetMs) {
   state.replayChatIndex = 0;
   state.replayReactionIndex = 0;
   state.chatMessages = [];
+  state.lastStatChange = null;
+  state.scoringRun = { team: null, points: 0 };
+  state.lastRunAnnounced = 0;
 
   if (els.playsFeed) els.playsFeed.innerHTML = '';
   if (els.chatMessages) {
@@ -2230,6 +2235,8 @@ function seekReplay(targetMs) {
 
   advanceReplayStreams(targetMs);
   renderScoreboard();
+  renderStats();
+  renderLineup();
   if (els.replayCurrent) els.replayCurrent.textContent = formatClock(targetMs);
 }
 

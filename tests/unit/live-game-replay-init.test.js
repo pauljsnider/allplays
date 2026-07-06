@@ -551,6 +551,9 @@ async function bootReplayPage({ replayEvents }) {
         replayControls: ensureElement('replay-controls'),
         replayStartRebaseCalls,
         seekReplay: moduleInstance.seekReplay,
+        opponentStats: ensureElement('opponent-stats'),
+        lineupOnCourt: ensureElement('lineup-oncourt'),
+        lineupBench: ensureElement('lineup-bench'),
         state: moduleInstance.state
     };
 }
@@ -609,6 +612,42 @@ describe('live game replay initialization', () => {
         });
         expect(page.state.replayStartTime).toBe(12345);
         expect(page.state.gameClockMs).toBe(30_000);
+    });
+
+    it('reconciles stats and lineup when seeking before replay events', async () => {
+        const page = await bootReplayPage({
+            replayEvents: [
+                {
+                    id: 'event-1',
+                    type: 'stat',
+                    statKey: 'pts',
+                    value: 2,
+                    playerId: 'player-1',
+                    period: 'Q1',
+                    gameClockMs: 10_000,
+                    description: 'Basket',
+                    createdAt: { toMillis: () => 10_000 }
+                }
+            ]
+        });
+
+        page.state.stats = { 'player-1': { pts: 2 } };
+        page.state.opponentStats = { 'opp-1': { name: 'Future Opponent', pts: 2 } };
+        page.state.onCourt = ['player-1'];
+        page.state.bench = ['player-2'];
+        page.opponentStats.innerHTML = '<div>Future Opponent 2 PTS</div>';
+        page.lineupOnCourt.innerHTML = '<div>Future Player 2 PTS</div>';
+        page.lineupBench.innerHTML = '<div>Future Bench</div>';
+
+        page.seekReplay(0);
+
+        expect(page.state.stats).toEqual({});
+        expect(page.state.opponentStats).toEqual({});
+        expect(page.state.onCourt).toEqual([]);
+        expect(page.state.bench).toEqual([]);
+        expect(page.opponentStats.innerHTML).toBe('');
+        expect(page.lineupOnCourt.innerHTML).toBe('');
+        expect(page.lineupBench.innerHTML).toBe('');
     });
 
     it('applies the same replay chat lockout whether replay events exist or not', async () => {
