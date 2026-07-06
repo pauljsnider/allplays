@@ -99,8 +99,8 @@ const URL = deps.URL;
 const Blob = deps.Blob;
 ` + match[1]
         .replace(
-            /import \{ getUserTeamsWithAccess, getParentTeams, getGames, getTeam, getTrackedCalendarEventUids, getUserProfile, submitRsvp, submitRsvpForPlayer, getMyRsvp, getRsvpSummaries, getRsvps \} from '\.\/js\/db\.js\?v=\d+';/,
-            'const { getUserTeamsWithAccess, getParentTeams, getGames, getTeam, getTrackedCalendarEventUids, getUserProfile, submitRsvp, submitRsvpForPlayer, getMyRsvp, getRsvpSummaries, getRsvps } = deps.db;'
+            /import \{ getUserTeamsWithAccess, getParentTeams, getGames, getTeam, getTrackedCalendarEventUids, getUserProfile, submitRsvp, submitRsvpForPlayer, getMyRsvp, getRsvps \} from '\.\/js\/db\.js\?v=\d+';/,
+            'const { getUserTeamsWithAccess, getParentTeams, getGames, getTeam, getTrackedCalendarEventUids, getUserProfile, submitRsvp, submitRsvpForPlayer, getMyRsvp, getRsvps } = deps.db;'
         )
         .replace(
             /import \{ renderHeader, renderFooter, escapeHtml, formatDate, formatTime, fetchAndParseCalendar, expandRecurrence, buildGlobalCalendarIcsEvent, isTrackedCalendarEvent \} from '\.\/js\/utils\.js\?v=\d+';/,
@@ -214,6 +214,7 @@ function createEnvironment() {
 
 function createDeps(submitRecorder, overrides = {}) {
     const getMyRsvpCalls = [];
+    const getRsvpsCalls = [];
     const eventDate = overrides.eventDate || new Date('2026-03-15T18:00:00.000Z');
     const initialSummary = overrides.initialSummary || { going: 1, maybe: 0, notGoing: 0, notResponded: 1, total: 2 };
     const updatedSummary = overrides.updatedSummary || { going: 1, maybe: 1, notGoing: 0, notResponded: 0, total: 2 };
@@ -278,11 +279,9 @@ function createDeps(submitRecorder, overrides = {}) {
                 getMyRsvpCalls.push({ teamId, gameId, userId, playerIds });
                 return overrides.myRsvp || null;
             },
-            async getRsvpSummaries() {
-                return new Map([['game-1', initialSummary]]);
-            },
-            async getRsvps() {
-                return [];
+            async getRsvps(teamId, gameId) {
+                getRsvpsCalls.push({ teamId, gameId });
+                return overrides.rsvps || [];
             }
         },
         utils: {
@@ -399,8 +398,12 @@ function createDeps(submitRecorder, overrides = {}) {
             }
         },
         availabilityPreferences: {
-            buildAvailabilityNoteRows() { return []; },
-            canViewAvailabilityNotes() { return false; },
+            buildAvailabilityNoteRows(rsvps) {
+                return (rsvps || [])
+                    .filter((rsvp) => rsvp.note)
+                    .map((rsvp) => ({ displayName: rsvp.displayName || 'Player', note: rsvp.note }));
+            },
+            canViewAvailabilityNotes() { return !!overrides.notesVisible; },
             formatAvailabilityCutoff() { return 'No cutoff'; },
             isAvailabilityLocked() { return false; },
             normalizeAvailabilityPreferences() { return { cutoffMinutesBeforeStart: 0, noteVisibility: 'admins' }; }
@@ -423,7 +426,8 @@ function createDeps(submitRecorder, overrides = {}) {
         eventDate,
         initialSummary,
         updatedSummary,
-        getMyRsvpCalls
+        getMyRsvpCalls,
+        getRsvpsCalls
     };
 }
 
@@ -445,8 +449,53 @@ async function bootCalendar(overrides = {}) {
 }
 
 describe('calendar day modal RSVP refresh', () => {
-    it('hydrates calendar RSVP state from linked player RSVP docs', async () => {
-        const { elements, getMyRsvpCalls, window } = await bootCalendar({
+    it('keeps initial calendar boot summary-only for off-screen RSVP data', async () => {
+        const eventDate = new Date('2026-03-15T18:00:00.000Z');
+        const games = Array.from({ length: 25 }, (_, index) => ({
+            id: `game-${index + 1}`,
+            type: 'game',
+            opponent: `Opponent ${index + 1}`,
+            date: new Date(eventDate.getTime() + index * 86400000).toISOString(),
+            location: 'North Field',
+            status: 'scheduled',
+            rsvpSummary: { going: index, maybe: 0, notGoing: 0, notResponded: 1, total: index + 1 }
+        }));
+        const { elements, getMyRsvpCalls, getRsvpsCalls, window } = await bootCalendar({ eventDate, games });
+
+        expect(getMyRsvpCalls).toEqual([]);
+        expect(getRsvpsCalls).toEqual([]);
+
+        window.setTimeRange('all');
+
+        expect(elements.get('calendar-content').innerHTML).toContain('0 going · 0 maybe · 0 can\'t go · 1 no response');
+        expect(elements.get('calendar-content').innerHTML).toContain('24 going · 0 maybe · 0 can\'t go · 1 no response');
+    });
+
+    it('hydrates day-detail RSVP state from linked player RSVP docs only for the selected day', async () => {
+        const selectedDate = new Date('2026-03-15T18:00:00.000Z');
+        const offscreenDate = new Date('2026-04-20T18:00:00.000Z');
+        const { elements, getMyRsvpCalls, getRsvpsCalls, window } = await bootCalendar({
+            eventDate: selectedDate,
+            games: [
+                {
+                    id: 'game-1',
+                    type: 'game',
+                    opponent: 'Lions',
+                    date: selectedDate.toISOString(),
+                    location: 'North Field',
+                    status: 'scheduled',
+                    rsvpSummary: { going: 1, maybe: 0, notGoing: 0, notResponded: 1, total: 2 }
+                },
+                {
+                    id: 'game-2',
+                    type: 'game',
+                    opponent: 'Bears',
+                    date: offscreenDate.toISOString(),
+                    location: 'South Field',
+                    status: 'scheduled',
+                    rsvpSummary: { going: 0, maybe: 1, notGoing: 0, notResponded: 1, total: 2 }
+                }
+            ],
             parentOf: [
                 { teamId: 'team-1', playerId: 'player-1', playerName: 'Avery' },
                 { teamId: 'team-1', playerId: 'player-2', playerName: 'Blake' }
@@ -459,23 +508,51 @@ describe('calendar day modal RSVP refresh', () => {
             }
         });
 
-        expect(getMyRsvpCalls).toContainEqual({
+        await window.openDayDetail(selectedDate.getUTCFullYear(), selectedDate.getUTCMonth(), selectedDate.getUTCDate());
+
+        expect(getMyRsvpCalls).toEqual([{
             teamId: 'team-1',
             gameId: 'game-1',
             userId: 'user-1',
             playerIds: ['player-1', 'player-2']
+        }]);
+        expect(getRsvpsCalls).toEqual([]);
+
+        expect(elements.get('day-modal-content').innerHTML).toContain('bg-green-600 text-white border-green-600');
+        expect(elements.get('day-modal-content').innerHTML).not.toContain('Bears');
+    });
+
+    it('uses the day-detail RSVP hydration cache when reopening the same day', async () => {
+        const eventDate = new Date('2026-03-15T18:00:00.000Z');
+        const { getMyRsvpCalls, getRsvpsCalls, window } = await bootCalendar({
+            eventDate,
+            notesVisible: true,
+            myRsvp: {
+                id: 'user-1__player-1',
+                userId: 'user-1',
+                playerId: 'player-1',
+                response: 'maybe'
+            },
+            rsvps: [
+                {
+                    displayName: 'Avery',
+                    note: 'Running late'
+                }
+            ]
         });
 
-        window.setTimeRange('all');
+        await window.openDayDetail(eventDate.getUTCFullYear(), eventDate.getUTCMonth(), eventDate.getUTCDate());
+        await window.openDayDetail(eventDate.getUTCFullYear(), eventDate.getUTCMonth(), eventDate.getUTCDate());
 
-        expect(elements.get('calendar-content').innerHTML).toContain('bg-green-600 text-white border-green-600');
+        expect(getMyRsvpCalls).toHaveLength(1);
+        expect(getRsvpsCalls).toEqual([{ teamId: 'team-1', gameId: 'game-1' }]);
     });
 
     it('keeps the day-detail modal open and refreshes RSVP state after a save', async () => {
         const { elements, submitRecorder, updatedSummary, eventDate, window } = await bootCalendar();
 
         window.setView('calendar');
-        window.openDayDetail(eventDate.getUTCFullYear(), eventDate.getUTCMonth(), eventDate.getUTCDate());
+        await window.openDayDetail(eventDate.getUTCFullYear(), eventDate.getUTCMonth(), eventDate.getUTCDate());
 
         const beforeHtml = elements.get('day-modal-content').innerHTML;
         expect(beforeHtml).toContain('submitCalendarRsvpFromButton');
