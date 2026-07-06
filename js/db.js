@@ -1263,17 +1263,40 @@ export async function updateTeamMediaFolder(teamId, folderId, draft = {}) {
 
 export async function deleteTeamMediaFolder(teamId, folderId) {
     if (!teamId || !folderId) throw new Error('Album is required.');
-    const folderItems = await getTeamMediaItems(teamId, folderId);
-    const batch = writeBatch(db);
-    batch.delete(doc(db, `teams/${teamId}/mediaFolders`, folderId));
+    const snapshot = await getDocs(query(getTeamMediaItemsRef(teamId), where('folderId', '==', folderId)));
+    const folderItems = snapshot.docs
+        .map((itemDoc) => ({ id: itemDoc.id, ...itemDoc.data() }))
+        .filter((item) => item.deleted !== true && item.folderId === folderId);
+    const batches = [];
+    const createBatch = () => {
+        const batch = writeBatch(db);
+        batches.push({ batch, writeCount: 0 });
+        return batches[batches.length - 1];
+    };
+    let currentBatch = null;
+    const getCurrentBatch = () => {
+        if (!currentBatch || currentBatch.writeCount >= 450) {
+            currentBatch = createBatch();
+        }
+        return currentBatch;
+    };
+
     folderItems.forEach((item) => {
-        batch.update(doc(db, `teams/${teamId}/mediaItems`, item.id), {
+        currentBatch = getCurrentBatch();
+        currentBatch.batch.update(doc(db, `teams/${teamId}/mediaItems`, item.id), {
             deleted: true,
             deletedAt: serverTimestamp(),
             updatedAt: serverTimestamp()
         });
+        currentBatch.writeCount += 1;
     });
-    await batch.commit();
+    currentBatch = getCurrentBatch();
+    currentBatch.batch.delete(doc(db, `teams/${teamId}/mediaFolders`, folderId));
+    currentBatch.writeCount += 1;
+
+    for (const { batch } of batches) {
+        await batch.commit();
+    }
 }
 
 export async function createTeamMediaLink(teamId, folderId, media = {}) {

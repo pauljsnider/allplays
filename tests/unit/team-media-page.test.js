@@ -24,7 +24,7 @@ describe('team media entry point', () => {
         const pageJs = readRepoFile('js/team-media.js');
         const rules = readRepoFile('firestore.rules');
 
-        expect(pageHtml).toContain('<script type="module" src="js/team-media.js?v=10"></script>');
+        expect(pageHtml).toContain('<script type="module" src="js/team-media.js?v=11"></script>');
         expect(pageHtml).toContain('id="team-media-upload-panel"');
         expect(pageHtml).toContain('id="team-media-admin-panel"');
         expect(pageHtml).toContain('id="bulk-actions"');
@@ -36,7 +36,7 @@ describe('team media entry point', () => {
         expect(pageHtml).toContain('CSVs up to 10 MB each');
         expect(pageHtml).toContain('Save video link');
         expect(pageJs).toMatch(/import \{ checkAuth \} from '\.\/auth\.js\?v=\d+';/);
-        expect(pageJs).toContain("from './db.js?v=81'");
+        expect(pageJs).toContain("from './db.js?v=82'");
         expect(pageJs).toContain('team.html#teamId=${encodeURIComponent(state.teamId)}');
         expect(pageJs).toContain('state.canManage = canManageTeamMedia(user, state.team);');
         expect(pageJs).toContain('uploadTeamMediaPhoto');
@@ -45,6 +45,8 @@ describe('team media entry point', () => {
         expect(pageJs).toContain('getMediaPermissionMessage');
         expect(pageJs).toContain('updateTeamMediaFolder');
         expect(pageJs).toContain('deleteTeamMediaFolder');
+        expect(pageJs).toContain('await deleteTeamMediaFolder(state.teamId, folder.id);');
+        expect(pageJs).toContain("}, 'Album deleted.');");
         expect(pageJs).toContain('canReadTeamMediaAlbum');
         expect(pageJs).toContain('bulkDeleteTeamMediaItems');
         expect(pageJs).toContain('setTeamMediaAlbumCover');
