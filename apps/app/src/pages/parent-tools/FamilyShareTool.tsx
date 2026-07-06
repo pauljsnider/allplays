@@ -5,6 +5,13 @@ import { sharePublicUrl } from '../../lib/publicActions';
 import type { AuthState } from '../../lib/types';
 import { EmptyState, LoadingBlock, RetryableStatus, Status, ToolHeader, copyText, splitLines, useParentToolAsyncOperation } from './shared';
 
+type CreatedFamilyShareLink = {
+    tokenId: string;
+    url: string;
+    label: string;
+    ownerUid: string;
+};
+
 export function FamilyShareTool({ auth, refreshVersion }: { auth: AuthState; refreshVersion: number }) {
     const [tokens, setTokens] = useState<FamilyShareTokenCard[]>([]);
     const [children, setChildren] = useState<any[]>([]);
@@ -12,6 +19,7 @@ export function FamilyShareTool({ auth, refreshVersion }: { auth: AuthState; ref
     const [calendarText, setCalendarText] = useState('');
     const [editingTokenId, setEditingTokenId] = useState('');
     const [pendingRevokeToken, setPendingRevokeToken] = useState<FamilyShareTokenCard | null>(null);
+    const [createdLink, setCreatedLink] = useState<CreatedFamilyShareLink | null>(null);
     const [message, setMessage] = useState('');
     const loadOperation = useParentToolAsyncOperation();
     const saveOperation = useParentToolAsyncOperation();
@@ -23,6 +31,8 @@ export function FamilyShareTool({ auth, refreshVersion }: { auth: AuthState; ref
     const saving = saveOperation.loading;
     const loadError = loadOperation.error;
     const saveError = saveOperation.error;
+    const activeUserUid = auth.user?.uid || '';
+    const visibleCreatedLink = createdLink?.ownerUid === activeUserUid ? createdLink : null;
 
     const refresh = useCallback(async () => {
         clearLoadError();
@@ -43,15 +53,26 @@ export function FamilyShareTool({ auth, refreshVersion }: { auth: AuthState; ref
         void refresh();
     }, [auth.user?.uid, refresh, refreshVersion]);
 
+    useEffect(() => {
+        setCreatedLink(null);
+    }, [auth.user?.uid]);
+
     const create = async (event: FormEvent) => {
         event.preventDefault();
         clearSaveError();
         setMessage('');
+        const createdLabel = label || 'Family share';
         await runSave(
-            () => createParentFamilyShare(auth.user, label || 'Family share', splitLines(calendarText)),
+            () => createParentFamilyShare(auth.user, createdLabel, splitLines(calendarText)),
             'Unable to create family share link.',
             {
                 onSuccess: async (result) => {
+                    setCreatedLink({
+                        tokenId: result.tokenId,
+                        url: result.url,
+                        label: createdLabel,
+                        ownerUid: activeUserUid
+                    });
                     setMessage('Family link created.');
                     setLabel('');
                     setCalendarText('');
@@ -70,6 +91,7 @@ export function FamilyShareTool({ auth, refreshVersion }: { auth: AuthState; ref
             'Unable to revoke family share link.',
             {
                 onSuccess: async () => {
+                    setCreatedLink((current) => current?.tokenId === tokenId ? null : current);
                     setMessage('Family link revoked.');
                     await refresh();
                 },
@@ -116,6 +138,23 @@ export function FamilyShareTool({ auth, refreshVersion }: { auth: AuthState; ref
                         Create share link
                     </button>
                 </form>
+                {visibleCreatedLink ? (
+                    <div className="mt-3 rounded-xl border border-emerald-200 bg-emerald-50 p-3">
+                        <div className="text-xs font-black uppercase text-emerald-800">New family link</div>
+                        <div className="mt-1 text-sm font-black text-gray-950">{visibleCreatedLink.label}</div>
+                        <div className="mt-2 break-all rounded-xl border border-emerald-200 bg-white p-3 text-xs font-semibold text-gray-700">{visibleCreatedLink.url}</div>
+                        <div className="mt-3 grid grid-cols-2 gap-2">
+                            <button type="button" className="secondary-button !min-h-9 justify-center text-xs" aria-label="Copy newly created family link" onClick={() => copyText(visibleCreatedLink.url, setMessage)}>
+                                <Copy className="h-4 w-4" aria-hidden="true" />
+                                Copy
+                            </button>
+                            <button type="button" className="secondary-button !min-h-9 justify-center text-xs" aria-label="Share newly created family link" onClick={() => sharePublicUrl({ title: 'ALL PLAYS family page', text: visibleCreatedLink.label || 'Family schedule', url: visibleCreatedLink.url })}>
+                                <Share2 className="h-4 w-4" aria-hidden="true" />
+                                Share
+                            </button>
+                        </div>
+                    </div>
+                ) : null}
             </section>
 
             {!loadError && (loading ? <LoadingBlock label="Loading share links" /> : (
