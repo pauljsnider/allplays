@@ -281,6 +281,7 @@ describe('team media db ordering', () => {
     });
 
     it('drops persisted storage urls when fresh authorization cannot be resolved', async () => {
+        const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
         firebaseMocks.getDocs.mockResolvedValueOnce({
             docs: [{
                 id: 'media-stale',
@@ -298,25 +299,34 @@ describe('team media db ordering', () => {
         firebaseMocks.getDownloadURL.mockRejectedValueOnce(new Error('storage/unauthorized'));
 
         const { getTeamMediaItems } = await import('../../js/db.js');
-        const items = await getTeamMediaItems('team-1', 'folder-1');
+        let items;
+        try {
+            items = await getTeamMediaItems('team-1', 'folder-1');
 
-        expect(firebaseMocks.updateDoc).toHaveBeenCalledWith(
-            { path: 'teams/team-1/mediaItems/media-stale' },
-            {
-                url: 'DELETE_FIELD',
-                src: 'DELETE_FIELD',
-                updatedAt: 'server-ts'
-            }
-        );
-        expect(items).toEqual([
-            expect.objectContaining({
-                id: 'media-stale',
-                storagePath: 'team-media/team-1/folder-1/user-1/stale.jpg'
-            })
-        ]);
-        expect(items[0]).not.toHaveProperty('url');
-        expect(items[0]).not.toHaveProperty('src');
-        expect(items[0]).not.toHaveProperty('downloadUrl');
+            expect(firebaseMocks.updateDoc).toHaveBeenCalledWith(
+                { path: 'teams/team-1/mediaItems/media-stale' },
+                {
+                    url: 'DELETE_FIELD',
+                    src: 'DELETE_FIELD',
+                    updatedAt: 'server-ts'
+                }
+            );
+            expect(warnSpy).toHaveBeenCalledWith(
+                'Unable to resolve authorized team media download URL:',
+                expect.any(Error)
+            );
+            expect(items).toEqual([
+                expect.objectContaining({
+                    id: 'media-stale',
+                    storagePath: 'team-media/team-1/folder-1/user-1/stale.jpg'
+                })
+            ]);
+            expect(items[0]).not.toHaveProperty('url');
+            expect(items[0]).not.toHaveProperty('src');
+            expect(items[0]).not.toHaveProperty('downloadUrl');
+        } finally {
+            warnSpy.mockRestore();
+        }
     });
 
     it('soft-deletes large albums in multiple metadata-only batches without resolving storage URLs', async () => {
