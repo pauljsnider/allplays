@@ -64,7 +64,9 @@
         }
 
         function isCompleted(game) {
-            return normalizeStatus(game?.liveStatus) === 'completed' || normalizeStatus(game?.status) === 'completed';
+            const liveStatus = normalizeStatus(game?.liveStatus);
+            const status = normalizeStatus(game?.status);
+            return liveStatus === 'completed' || liveStatus === 'final' || status === 'completed' || status === 'final';
         }
 
         function isLive(game) {
