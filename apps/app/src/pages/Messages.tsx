@@ -56,6 +56,36 @@ export function Messages({ auth }: { auth: AuthState }) {
     if (!auth.user) return;
     const requestId = inboxRequestIdRef.current + 1;
     const previewUpdates = new Map<string, ChatInboxPreviewUpdate>();
+    const pendingPreviewUpdates = new Map<string, ChatInboxPreviewUpdate>();
+    let cancelScheduledPreviewFlush: (() => void) | null = null;
+    const flushPreviewUpdates = () => {
+      cancelScheduledPreviewFlush = null;
+      if (pendingPreviewUpdates.size === 0) return;
+      if (inboxRequestIdRef.current !== requestId) {
+        pendingPreviewUpdates.clear();
+        return;
+      }
+      const updates = new Map(pendingPreviewUpdates);
+      pendingPreviewUpdates.clear();
+      setTeams((current) => mergeInboxTeams(current, updates));
+    };
+    const schedulePreviewFlush = () => {
+      if (cancelScheduledPreviewFlush) return;
+      if (typeof window !== 'undefined' && typeof window.requestAnimationFrame === 'function') {
+        const frameId = window.requestAnimationFrame(flushPreviewUpdates);
+        cancelScheduledPreviewFlush = () => window.cancelAnimationFrame(frameId);
+        return;
+      }
+      const timeoutId = globalThis.setTimeout(flushPreviewUpdates, 16);
+      cancelScheduledPreviewFlush = () => globalThis.clearTimeout(timeoutId);
+    };
+    const cancelPreviewFlush = () => {
+      if (cancelScheduledPreviewFlush) {
+        cancelScheduledPreviewFlush();
+        cancelScheduledPreviewFlush = null;
+      }
+      pendingPreviewUpdates.clear();
+    };
     const timer = startScreenMountTimer('messages', {
       mode: 'inbox',
       hasTeamRoute: Boolean(teamId)
@@ -69,10 +99,15 @@ export function Messages({ auth }: { auth: AuthState }) {
         onPreview: (previewUpdate) => {
           if (inboxRequestIdRef.current !== requestId) return;
           previewUpdates.set(previewUpdate.teamId, previewUpdate);
-          setTeams((current) => mergeInboxPreview(current, previewUpdate));
+          pendingPreviewUpdates.set(previewUpdate.teamId, previewUpdate);
+          schedulePreviewFlush();
         }
       });
-      if (inboxRequestIdRef.current !== requestId) return;
+      if (inboxRequestIdRef.current !== requestId) {
+        cancelPreviewFlush();
+        return;
+      }
+      cancelPreviewFlush();
       setTeams(mergeInboxTeams(result.teams, previewUpdates));
       const totalUnread = result.teams.reduce((sum, team) => sum + team.unreadCount, 0);
       completeParentCoreWorkflowTimer('messages', {
@@ -90,7 +125,11 @@ export function Messages({ auth }: { auth: AuthState }) {
         deferredPreviewUpdateCount: previewUpdates.size
       });
     } catch (loadError: any) {
-      if (inboxRequestIdRef.current !== requestId) return;
+      if (inboxRequestIdRef.current !== requestId) {
+        cancelPreviewFlush();
+        return;
+      }
+      cancelPreviewFlush();
       const message = loadError?.message || 'Unable to load messages.';
       setError(message);
       setTeams([]);
@@ -104,6 +143,8 @@ export function Messages({ auth }: { auth: AuthState }) {
     } finally {
       if (inboxRequestIdRef.current === requestId) {
         setLoading(false);
+      } else {
+        cancelPreviewFlush();
       }
     }
   }, [auth.user, teamId]);
@@ -456,25 +497,6 @@ export function mergeInboxTeams(nextTeams: ChatTeam[], previewUpdates: Map<strin
       isMuted: previewUpdate.isMuted
     };
   }));
-}
-
-function mergeInboxPreview(
-  teams: ChatTeam[],
-  previewUpdate: { teamId: string; lastMessage: ChatMessage | null; preferredConversationId: string | null; isMuted: boolean; }
-) {
-  let changed = false;
-  const nextTeams = teams.map((team) => {
-    if (team.id !== previewUpdate.teamId) return team;
-    changed = true;
-    return {
-      ...team,
-      lastMessage: previewUpdate.lastMessage,
-      preferredConversationId: previewUpdate.preferredConversationId,
-      isMuted: previewUpdate.isMuted
-    };
-  });
-  if (!changed) return teams;
-  return sortInboxTeams(nextTeams);
 }
 
 function updateInboxTeamMuteState(

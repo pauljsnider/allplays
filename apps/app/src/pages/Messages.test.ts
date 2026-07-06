@@ -29,10 +29,10 @@ function buildTeam(overrides: Partial<ChatTeam> = {}): ChatTeam {
 }
 
 describe('mergeInboxTeams', () => {
-  it('applies deferred previews collected during the active inbox load', () => {
-    const previewUpdate: ChatInboxPreviewUpdate = {
-      teamId: 'team-1',
-      lastMessage: {
+  function previewUpdate(overrides: Partial<ChatInboxPreviewUpdate> = {}): ChatInboxPreviewUpdate {
+    return {
+      teamId: overrides.teamId || 'team-1',
+      lastMessage: overrides.lastMessage ?? {
         id: 'msg-1',
         text: 'Practice packet is posted.',
         senderId: 'coach-1',
@@ -42,14 +42,79 @@ describe('mergeInboxTeams', () => {
         reactions: {},
         deleted: false,
       },
-      preferredConversationId: null,
-      isMuted: true,
+      preferredConversationId: overrides.preferredConversationId ?? null,
+      isMuted: overrides.isMuted ?? false,
     };
+  }
 
-    const merged = mergeInboxTeams([buildTeam()], new Map([[previewUpdate.teamId, previewUpdate]]));
+  it('applies deferred previews collected during the active inbox load', () => {
+    const update = previewUpdate({ isMuted: true });
+
+    const merged = mergeInboxTeams([buildTeam()], new Map([[update.teamId, update]]));
 
     expect(merged[0].lastMessage?.text).toBe('Practice packet is posted.');
     expect(merged[0].isMuted).toBe(true);
+  });
+
+  it('coalesces batched deferred previews, keeps the latest update per team, and sorts once by preview recency', () => {
+    const olderUpdate = previewUpdate({
+      teamId: 'team-1',
+      lastMessage: {
+        id: 'older',
+        text: 'Older Bears update.',
+        senderId: 'coach-1',
+        senderName: 'Coach Jamie',
+        senderEmail: 'coach@example.com',
+        createdAt: new Date('2026-06-15T01:00:00Z'),
+        reactions: {},
+        deleted: false,
+      },
+      preferredConversationId: 'staff-room',
+      isMuted: true,
+    });
+    const latestUpdate = previewUpdate({
+      teamId: 'team-1',
+      lastMessage: {
+        id: 'latest',
+        text: 'Latest Bears update wins.',
+        senderId: 'coach-1',
+        senderName: 'Coach Jamie',
+        senderEmail: 'coach@example.com',
+        createdAt: new Date('2026-06-15T04:00:00Z'),
+        reactions: {},
+        deleted: false,
+      },
+      preferredConversationId: null,
+      isMuted: false,
+    });
+    const thunderUpdate = previewUpdate({
+      teamId: 'team-2',
+      lastMessage: {
+        id: 'thunder',
+        text: 'Thunder checks in.',
+        senderId: 'coach-2',
+        senderName: 'Coach Morgan',
+        senderEmail: 'morgan@example.com',
+        createdAt: new Date('2026-06-15T03:00:00Z'),
+        reactions: {},
+        deleted: false,
+      },
+    });
+    const batchedUpdates = new Map<string, ChatInboxPreviewUpdate>();
+    batchedUpdates.set(olderUpdate.teamId, olderUpdate);
+    batchedUpdates.set(thunderUpdate.teamId, thunderUpdate);
+    batchedUpdates.set(latestUpdate.teamId, latestUpdate);
+
+    const merged = mergeInboxTeams([
+      buildTeam({ id: 'team-2', name: 'Thunder' }),
+      buildTeam({ id: 'team-1', name: 'Bears' }),
+    ], batchedUpdates);
+
+    expect(merged.map((team) => team.id)).toEqual(['team-1', 'team-2']);
+    expect(merged[0].lastMessage?.text).toBe('Latest Bears update wins.');
+    expect(merged[0].preferredConversationId).toBeNull();
+    expect(merged[0].isMuted).toBe(false);
+    expect(merged[1].lastMessage?.text).toBe('Thunder checks in.');
   });
 
   it('resets teams back to placeholder previews when a new inbox load has no deferred preview yet', () => {
@@ -138,7 +203,10 @@ describe('direct thread mount telemetry', () => {
     expect(source).toContain('const result = await loadChatInbox(auth.user, {');
     expect(source).toContain('includeLastMessages: false,');
     expect(source).toContain('onPreview: (previewUpdate) => {');
-    expect(source).toContain('setTeams((current) => mergeInboxPreview(current, previewUpdate));');
+    expect(source).toContain('pendingPreviewUpdates.set(previewUpdate.teamId, previewUpdate);');
+    expect(source).toContain('schedulePreviewFlush();');
+    expect(source).toContain('setTeams((current) => mergeInboxTeams(current, updates));');
+    expect(source).not.toContain('mergeInboxPreview');
   });
 
   it('keeps Messages email composer dispatches on the shared action creators', () => {
