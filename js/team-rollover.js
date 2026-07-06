@@ -9,6 +9,30 @@ const ROLLOVER_OMITTED_PLAYER_FIELDS = new Set([
 
 ]);
 
+const ROLLOVER_SENSITIVE_PLAYER_FIELDS = new Set([
+    'medicalInfo', 'medical_info', 'medicalNotes', 'medical_notes',
+    'emergencyContact', 'emergency_contact', 'emergencyContactName', 'emergencyContactPhone',
+    'parents', 'parent', 'parentEmail', 'parentPhone', 'parentRelation',
+    'guardian', 'guardians', 'guardianEmail', 'guardianPhone', 'guardianRelation',
+    'householdContact', 'householdContacts', 'householdEmail', 'householdPhone', 'householdRelation'
+]);
+
+const ROLLOVER_ROSTER_FIELD_SOURCES = new Set([
+    'rosterFieldValues',
+    'customFields',
+    'profileFields',
+    'extraFields'
+]);
+
+function omitSensitiveRosterFields(source = {}) {
+    const copy = {};
+    Object.entries(source).forEach(([key, value]) => {
+        if (ROLLOVER_SENSITIVE_PLAYER_FIELDS.has(key)) return;
+        copy[key] = value;
+    });
+    return copy;
+}
+
 export function buildRolloverPlayerCopy(sourcePlayer, sourceTeamId, rolledOverAt) {
     if (!sourcePlayer || typeof sourcePlayer !== 'object') {
         throw new Error('Source player is required');
@@ -17,6 +41,11 @@ export function buildRolloverPlayerCopy(sourcePlayer, sourceTeamId, rolledOverAt
     const copy = {};
     Object.entries(sourcePlayer).forEach(([key, value]) => {
         if (ROLLOVER_OMITTED_PLAYER_FIELDS.has(key)) return;
+        if (ROLLOVER_SENSITIVE_PLAYER_FIELDS.has(key)) return;
+        if (ROLLOVER_ROSTER_FIELD_SOURCES.has(key) && value && typeof value === 'object' && !Array.isArray(value)) {
+            copy[key] = omitSensitiveRosterFields(value);
+            return;
+        }
         copy[key] = value;
     });
 
