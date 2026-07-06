@@ -39,6 +39,7 @@ let visitorIdCache = null;
 let sessionCache = null;
 let lastSessionStorageWrite = 0;
 let firebaseAuthModulePromise = null;
+let cachedAuthToken = null;
 
 function loadFirebaseAuthModule() {
     if (!firebaseAuthModulePromise) {
@@ -158,10 +159,6 @@ function resolveEndpoint() {
     return DEFAULT_ENDPOINT;
 }
 
-function isLocalDevelopment() {
-    return ['localhost', '127.0.0.1', '0.0.0.0', ''].includes(window.location.hostname);
-}
-
 function isTelemetryEnabled() {
     const params = new URLSearchParams(window.location.search);
     if (params.get('telemetry') === '0') return false;
@@ -169,11 +166,11 @@ function isTelemetryEnabled() {
     if (getLocalStorageValue(OPT_OUT_KEY) === '1') return false;
 
     const config = window.__ALLPLAYS_CONFIG__ || {};
-    if (config.telemetryEnabled === false || window.ALLPLAYS_TELEMETRY_ENABLED === false) {
+    if (config.enabled === false || config.telemetryEnabled === false || window.ALLPLAYS_TELEMETRY_ENABLED === false) {
         return false;
     }
 
-    return !isLocalDevelopment() || config.telemetryEnabled === true || window.ALLPLAYS_TELEMETRY_ENABLED === true;
+    return config.enabled === true || config.telemetryEnabled === true || window.ALLPLAYS_TELEMETRY_ENABLED === true;
 }
 
 function getSafePath(url = window.location.href) {
@@ -369,9 +366,9 @@ export function captureTelemetryEvent(name, properties = {}, options = {}) {
 export async function sendEvents(events, keepalive = false) {
     // Keepalive sends happen while the page is being torn down (pagehide /
     // hidden). Awaiting an ID-token fetch there usually outlives the page, and
-    // a stale token makes collectTelemetry reject the whole batch — so send
-    // unauthenticated and let events join via visitorId/sessionId.
-    const authToken = keepalive ? null : await getAuthToken();
+    // a stale token makes collectTelemetry reject the whole batch. Reuse the
+    // last verified token when we have one so the session doc keeps its UID.
+    const authToken = keepalive ? cachedAuthToken : await getAuthToken();
     const payloadObject = {
         sentAt: new Date().toISOString(),
         events
@@ -409,7 +406,8 @@ export async function getAuthToken() {
     if (!user?.getIdToken) return null;
 
     try {
-        return await user.getIdToken();
+        cachedAuthToken = await user.getIdToken();
+        return cachedAuthToken;
     } catch (error) {
         return null;
     }
@@ -573,6 +571,9 @@ function setupAuthContext() {
     loadFirebaseAuthModule().then((firebaseAuth) => {
         if (!firebaseAuth?.auth || !firebaseAuth?.onAuthStateChanged) return;
         firebaseAuth.onAuthStateChanged(firebaseAuth.auth, (user) => {
+            if (!user) {
+                cachedAuthToken = null;
+            }
             userContext = {
                 userId: user?.uid || null,
                 signedIn: !!user

@@ -111,17 +111,44 @@ describe('telemetry.js payload handling', () => {
         expect(payload.events[0].properties).toEqual({ property: 'value' });
     });
 
-    it('drains the whole queue via beacons without token fetches on keepalive flush', async () => {
-        // Page-close flush used to await getIdToken() (which can outlive the
-        // page) and send only one batch of 15 — everything else was lost.
+    it('starts telemetry from explicit enabled config without a query override', async () => {
+        vi.resetModules();
+        delete window.__allplaysTelemetry;
+        delete window.ALLPLAYS_TELEMETRY_ENABLED;
+        window.localStorage.clear();
+        window.sessionStorage.clear();
+        window.__ALLPLAYS_CONFIG__ = {
+            enabled: true,
+            telemetryEndpoint: 'http://mock-telemetry-endpoint.com'
+        };
+        window.history.replaceState({}, '', '/');
+        mockFetch.mockClear();
+
+        const enabledConfigModule = await import('../../js/telemetry.js');
+        enabledConfigModule.captureTelemetryEvent('explicit_config_enabled');
+        await enabledConfigModule.flush();
+
+        expect(mockFetch).toHaveBeenCalledTimes(1);
+        const [, options] = mockFetch.mock.calls[0];
+        const payload = JSON.parse(options.body);
+        expect(payload.events.map((event) => event.name)).toContain('explicit_config_enabled');
+    });
+
+    it('drains the whole queue via beacons using the cached auth token on keepalive flush', async () => {
+        // Page-close flush cannot wait on getIdToken(), but dropping auth after
+        // a normal signed-in flush would make the collector clear session UID.
         firebaseMocks.getIdToken.mockResolvedValue('mockAuthToken456');
         firebaseMocks.auth.currentUser = { getIdToken: firebaseMocks.getIdToken };
+
+        telemetryModule.captureTelemetryEvent('warm_auth_cache');
+        await telemetryModule.flush();
 
         for (let i = 0; i < 32; i += 1) {
             telemetryModule.captureTelemetryEvent(`burst_event_${i}`);
         }
         mockSendBeacon.mockClear();
         mockFetch.mockClear();
+        firebaseMocks.getIdToken.mockClear();
 
         await telemetryModule.flush(true);
 
@@ -134,7 +161,7 @@ describe('telemetry.js payload handling', () => {
         expect(names).toContain('burst_event_0');
         expect(names).toContain('burst_event_31');
         allPayloads.forEach((payload) => {
-            expect(payload.authToken).toBeUndefined();
+            expect(payload.authToken).toBe('mockAuthToken456');
         });
     });
 
