@@ -219,6 +219,10 @@ function renderFolderOptions() {
     els.photoFolder.innerHTML = placeholder + options;
     els.fileFolder.innerHTML = placeholder + options;
     els.moveFolder.innerHTML = placeholder + options;
+    const selectedFolderId = hasFolders && state.selectedFolderId ? state.selectedFolderId : '';
+    [els.linkFolder, els.photoFolder, els.fileFolder, els.moveFolder].forEach((element) => {
+        if (element && selectedFolderId) element.value = selectedFolderId;
+    });
     [els.linkFolder, els.linkTitle, els.linkUrl, els.linkSubmit, els.photoFolder, els.photoFiles, els.fileFolder, els.mediaFiles].forEach((element) => {
         if (!element) return;
         element.disabled = !hasFolders;
