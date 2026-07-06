@@ -137,8 +137,10 @@ service cloud.firestore {
              request.resource.data.diff(resource.data).affectedKeys().hasOnly(['used', 'usedBy', 'usedAt']) &&
              resource.data.used == false &&
              resource.data.get('revoked', false) != true &&
+             resource.data.get('active', true) != false &&
              resource.data.get('status', 'active') != 'removed' &&
              resource.data.get('status', 'active') != 'cancelled' &&
+             resource.data.get('status', 'active') != 'revoked' &&
              (resource.data.get('expiresAt', null) == null ||
               (resource.data.expiresAt is timestamp && resource.data.expiresAt > request.time)) &&
              (!('email' in resource.data) ||

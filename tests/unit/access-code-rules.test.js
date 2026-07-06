@@ -80,8 +80,10 @@ describe('access code Firestore rules', () => {
     it('requires parent_invite redemption to use an active invite owned by the signed-in email', () => {
         expect(parentInviteRedemptionRule).toContain('resource.data.used == false');
         expect(parentInviteRedemptionRule).toContain("resource.data.get('revoked', false) != true");
+        expect(parentInviteRedemptionRule).toContain("resource.data.get('active', true) != false");
         expect(parentInviteRedemptionRule).toContain("resource.data.get('status', 'active') != 'removed'");
         expect(parentInviteRedemptionRule).toContain("resource.data.get('status', 'active') != 'cancelled'");
+        expect(parentInviteRedemptionRule).toContain("resource.data.get('status', 'active') != 'revoked'");
         expect(parentInviteRedemptionRule).toContain("resource.data.get('expiresAt', null) == null");
         expect(parentInviteRedemptionRule).toContain('resource.data.expiresAt > request.time');
         expect(parentInviteRedemptionRule).toContain("!('email' in resource.data)");
@@ -96,6 +98,8 @@ describe('access code Firestore rules', () => {
         const authorizationGuards = parentInviteRedemptionRule.slice(affectedKeysIndex);
         expect(authorizationGuards).toContain('resource.data.used == false');
         expect(authorizationGuards).toContain("resource.data.get('revoked', false) != true");
+        expect(authorizationGuards).toContain("resource.data.get('active', true) != false");
+        expect(authorizationGuards).toContain("resource.data.get('status', 'active') != 'revoked'");
         expect(authorizationGuards).toContain('request.auth.token.email.lower() == resource.data.email.lower()');
     });
 
