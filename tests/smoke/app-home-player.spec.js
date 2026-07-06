@@ -1,5 +1,10 @@
 import { expect, test } from '@playwright/test';
 
+test.skip(
+    process.env.SMOKE_SUITE === 'production',
+    'Module-mocked app specs need the Vite dev server; production runs cover the deployed bundle via app-production-bootstrap.spec.js'
+);
+
 test.use({ viewport: { width: 390, height: 844 }, hasTouch: true });
 
 const telemetryEndpoint = 'https://telemetry.example.test/collectTelemetry';
