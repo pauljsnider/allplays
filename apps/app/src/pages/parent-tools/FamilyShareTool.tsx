@@ -9,6 +9,7 @@ type CreatedFamilyShareLink = {
     tokenId: string;
     url: string;
     label: string;
+    ownerUid: string;
 };
 
 export function FamilyShareTool({ auth, refreshVersion }: { auth: AuthState; refreshVersion: number }) {
@@ -30,6 +31,8 @@ export function FamilyShareTool({ auth, refreshVersion }: { auth: AuthState; ref
     const saving = saveOperation.loading;
     const loadError = loadOperation.error;
     const saveError = saveOperation.error;
+    const activeUserUid = auth.user?.uid || '';
+    const visibleCreatedLink = createdLink?.ownerUid === activeUserUid ? createdLink : null;
 
     const refresh = useCallback(async () => {
         clearLoadError();
@@ -50,6 +53,10 @@ export function FamilyShareTool({ auth, refreshVersion }: { auth: AuthState; ref
         void refresh();
     }, [auth.user?.uid, refresh, refreshVersion]);
 
+    useEffect(() => {
+        setCreatedLink(null);
+    }, [auth.user?.uid]);
+
     const create = async (event: FormEvent) => {
         event.preventDefault();
         clearSaveError();
@@ -63,7 +70,8 @@ export function FamilyShareTool({ auth, refreshVersion }: { auth: AuthState; ref
                     setCreatedLink({
                         tokenId: result.tokenId,
                         url: result.url,
-                        label: createdLabel
+                        label: createdLabel,
+                        ownerUid: activeUserUid
                     });
                     setMessage('Family link created.');
                     setLabel('');
@@ -130,17 +138,17 @@ export function FamilyShareTool({ auth, refreshVersion }: { auth: AuthState; ref
                         Create share link
                     </button>
                 </form>
-                {createdLink ? (
+                {visibleCreatedLink ? (
                     <div className="mt-3 rounded-xl border border-emerald-200 bg-emerald-50 p-3">
                         <div className="text-xs font-black uppercase text-emerald-800">New family link</div>
-                        <div className="mt-1 text-sm font-black text-gray-950">{createdLink.label}</div>
-                        <div className="mt-2 break-all rounded-xl border border-emerald-200 bg-white p-3 text-xs font-semibold text-gray-700">{createdLink.url}</div>
+                        <div className="mt-1 text-sm font-black text-gray-950">{visibleCreatedLink.label}</div>
+                        <div className="mt-2 break-all rounded-xl border border-emerald-200 bg-white p-3 text-xs font-semibold text-gray-700">{visibleCreatedLink.url}</div>
                         <div className="mt-3 grid grid-cols-2 gap-2">
-                            <button type="button" className="secondary-button !min-h-9 justify-center text-xs" aria-label="Copy newly created family link" onClick={() => copyText(createdLink.url, setMessage)}>
+                            <button type="button" className="secondary-button !min-h-9 justify-center text-xs" aria-label="Copy newly created family link" onClick={() => copyText(visibleCreatedLink.url, setMessage)}>
                                 <Copy className="h-4 w-4" aria-hidden="true" />
                                 Copy
                             </button>
-                            <button type="button" className="secondary-button !min-h-9 justify-center text-xs" aria-label="Share newly created family link" onClick={() => sharePublicUrl({ title: 'ALL PLAYS family page', text: createdLink.label || 'Family schedule', url: createdLink.url })}>
+                            <button type="button" className="secondary-button !min-h-9 justify-center text-xs" aria-label="Share newly created family link" onClick={() => sharePublicUrl({ title: 'ALL PLAYS family page', text: visibleCreatedLink.label || 'Family schedule', url: visibleCreatedLink.url })}>
                                 <Share2 className="h-4 w-4" aria-hidden="true" />
                                 Share
                             </button>

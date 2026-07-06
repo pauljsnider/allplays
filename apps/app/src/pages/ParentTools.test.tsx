@@ -769,6 +769,64 @@ describe('ParentTools access', () => {
         });
     });
 
+    it('clears the created family link panel when the signed-in parent changes', async () => {
+        const children = [
+            {
+                teamId: 'team-1',
+                playerId: 'player-1',
+                playerName: 'Sam Player'
+            }
+        ];
+        const otherLinkedAuth: AuthState = {
+            ...linkedAuth,
+            user: linkedAuth.user ? {
+                ...linkedAuth.user,
+                uid: 'parent-2',
+                email: 'other-parent@example.com'
+            } : null
+        };
+        parentToolsServiceMocks.loadFamilyShareModel.mockImplementation(async (user) => ({
+            children,
+            tokens: user?.uid === 'parent-2' ? [
+                {
+                    id: 'token-9',
+                    label: 'Other family',
+                    url: 'https://allplays.ai/family.html?token=token-9',
+                    childCount: 1,
+                    extraCalendarUrls: []
+                }
+            ] : []
+        }));
+        parentToolsServiceMocks.createParentFamilyShare.mockResolvedValue({
+            tokenId: 'token-2',
+            url: 'https://allplays.ai/family.html?token=token-2'
+        });
+
+        const view = renderParentTools(['/parent-tools/share'], false, linkedAuth);
+
+        await screen.findByText('No family links');
+        fireEvent.change(screen.getByPlaceholderText('Label, like Grandma or babysitter'), { target: { value: 'Aunt Chris' } });
+        fireEvent.click(screen.getByRole('button', { name: 'Create share link' }));
+
+        expect(await screen.findByText('https://allplays.ai/family.html?token=token-2')).toBeTruthy();
+
+        view.rerender(
+            <MemoryRouter initialEntries={['/parent-tools/share']}>
+                <Routes>
+                    <Route path="/parent-tools/:toolId" element={<ParentToolsRoute authState={otherLinkedAuth} />} />
+                </Routes>
+            </MemoryRouter>
+        );
+
+        await waitFor(() => {
+            expect(parentToolsServiceMocks.loadFamilyShareModel).toHaveBeenCalledWith(otherLinkedAuth.user);
+            expect(screen.queryByText('https://allplays.ai/family.html?token=token-2')).toBeNull();
+            expect(screen.queryByText('New family link')).toBeNull();
+        });
+        expect(await screen.findByText('Other family')).toBeTruthy();
+        expect(screen.getByText('https://allplays.ai/family.html?token=token-9')).toBeTruthy();
+    });
+
     it('opens reusable team fee checkout links when legacy fee payloads omit paymentAction', async () => {
         parentToolsServiceMocks.loadParentFeesForApp.mockResolvedValue([
             {
