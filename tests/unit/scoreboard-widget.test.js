@@ -48,7 +48,7 @@ describe('scoreboard widget embed', () => {
         const source = readPage('widget-scoreboard.html');
 
         expect(source).toContain("const status = normalizeStatus(game?.status);");
-        expect(source).toContain("return liveStatus === 'completed' || status === 'completed' || status === 'final';");
+        expect(source).toContain("return liveStatus === 'completed' || liveStatus === 'final' || status === 'completed' || status === 'final';");
         expect(source).toContain('.filter((game) => game._date && (isLive(game) || game._date >= now || (isCompleted(game) && game._date >= recentCutoff)))');
         expect(source).toContain("if (isCompleted(game)) return 'Final';");
         expect(source).toContain('game.html?teamId=${encodeURIComponent(state.teamId)}&gameId=${encodeURIComponent(gameId)}');

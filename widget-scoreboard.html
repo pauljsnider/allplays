@@ -66,7 +66,7 @@
         function isCompleted(game) {
             const liveStatus = normalizeStatus(game?.liveStatus);
             const status = normalizeStatus(game?.status);
-            return liveStatus === 'completed' || status === 'completed' || status === 'final';
+            return liveStatus === 'completed' || liveStatus === 'final' || status === 'completed' || status === 'final';
         }
 
         function isLive(game) {
