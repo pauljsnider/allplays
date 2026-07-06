@@ -55,6 +55,12 @@ export async function getConfigs(teamId) {
 }
 
 export async function createConfig(teamId, config) {
+    window.__configWrites = window.__configWrites || [];
+    window.__configWrites.push({
+        action: 'create',
+        teamId,
+        config: JSON.parse(JSON.stringify(config))
+    });
     const newConfig = {
         id: 'cfg-' + (configs.length + 1),
         ...config
@@ -64,6 +70,13 @@ export async function createConfig(teamId, config) {
 }
 
 export async function updateConfig(teamId, configId, config) {
+    window.__configWrites = window.__configWrites || [];
+    window.__configWrites.push({
+        action: 'update',
+        teamId,
+        configId,
+        config: JSON.parse(JSON.stringify(config))
+    });
     const index = configs.findIndex((entry) => entry.id === configId);
     if (index >= 0) {
         configs[index] = { ...configs[index], ...config };
@@ -125,6 +138,10 @@ export function getEditConfigAccessDecision(user, team, teamId) {
 `;
 
 const STAT_LEADERBOARDS_STUB = `
+function normalizeStatId(value) {
+    return String(value || '').trim().toLowerCase().replace(/[^a-z0-9_]+/g, '');
+}
+
 export function parseAdvancedStatDefinitions(input) {
     if (!input || !String(input).trim()) return [];
     return String(input)
@@ -134,28 +151,43 @@ export function parseAdvancedStatDefinitions(input) {
         .map((line) => {
             const [head, ...segments] = line.split('|');
             const [label, statId = ''] = head.split('=');
+            const attributes = {};
+            segments.forEach((segment) => {
+                const [key, ...rawValue] = segment.split('=');
+                if (!key || rawValue.length === 0) return;
+                attributes[key.trim()] = rawValue.join('=').trim();
+            });
+            const formula = attributes.formula || '';
             const definition = {
-                id: statId.trim(),
+                id: normalizeStatId(statId || label),
                 label: label.trim(),
                 acronym: label.trim(),
-                type: head.includes('formula=') ? 'derived' : 'base'
+                type: formula ? 'derived' : 'base',
+                formula: formula || null,
+                group: attributes.group || 'General',
+                scope: attributes.scope === 'team' ? 'team' : 'player',
+                visibility: attributes.visibility === 'private' ? 'private' : 'public',
+                format: attributes.format === 'percentage' ? 'percentage' : 'number',
+                precision: Number.parseInt(attributes.precision || (formula ? '2' : '0'), 10),
+                rankingOrder: attributes.rankingOrder === 'asc' ? 'asc' : 'desc',
+                topStat: attributes.topStat === 'true'
             };
-            segments.forEach((segment) => {
-                const [key, value = ''] = segment.split('=');
-                if (key === 'formula') {
-                    definition.formula = value.trim();
-                    definition.type = 'derived';
-                }
-                if (key === 'topStat') {
-                    definition.topStat = value.trim() === 'true';
-                }
-            });
             return definition;
         });
 }
 
-export function validateStatDefinitionsForPublicLeaderboards() {
-    return { valid: true, errors: [] };
+export function validateStatDefinitionsForPublicLeaderboards(statDefinitions = []) {
+    const invalidTopStats = (Array.isArray(statDefinitions) ? statDefinitions : [])
+        .filter((definition) => definition?.topStat && (definition.scope !== 'player' || definition.visibility !== 'public'));
+
+    if (!invalidTopStats.length) return { valid: true, errors: [] };
+
+    return {
+        valid: false,
+        errors: invalidTopStats.map((definition) => (
+            (definition.label || definition.id || 'Stat') + ' cannot be a Top Stat unless visibility is public and scope is player.'
+        ))
+    };
 }
 `;
 
@@ -205,6 +237,86 @@ async function mockDependencies(page) {
     await page.route('**/js/stat-leaderboards.js?v=2', (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: STAT_LEADERBOARDS_STUB }));
     await page.route('**/js/stat-config-presets.js?v=1', (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: STAT_CONFIG_PRESETS_STUB }));
 }
+
+test('platform admin saves advanced stat definition metadata through edit-config controls', async ({ page, baseURL }) => {
+    await mockDependencies(page);
+
+    await page.goto(`${baseURL}/edit-config.html#teamId=team-a`, { waitUntil: 'domcontentloaded' });
+
+    await page.fill('#configName', 'Advanced Metadata Config');
+    await page.fill('#columns', 'PTS');
+    await page.fill('#statDefinitionLabel', 'Assist Rate');
+    await page.fill('#statDefinitionId', 'assist_rate');
+    await page.fill('#statDefinitionGroup', 'Efficiency');
+    await page.fill('#statDefinitionFormula', 'AST/TO');
+    await page.selectOption('#statDefinitionFormat', 'percentage');
+    await page.fill('#statDefinitionPrecision', '1');
+    await page.selectOption('#statDefinitionRankingOrder', 'asc');
+    await page.selectOption('#statDefinitionVisibility', 'public');
+    await page.selectOption('#statDefinitionScope', 'player');
+    await page.check('#statDefinitionTopStat');
+    await page.click('#add-stat-definition-btn');
+
+    await expect(page.locator('#advancedStatDefinitions')).toHaveValue(
+        'Assist Rate=assist_rate|formula=AST/TO|group=Efficiency|visibility=public|scope=player|format=percentage|precision=1|rankingOrder=asc|topStat=true'
+    );
+
+    await page.click('#add-config-form button[type="submit"]');
+
+    const writes = await page.evaluate(() => window.__configWrites || []);
+    expect(writes).toHaveLength(1);
+    expect(writes[0]).toMatchObject({
+        action: 'create',
+        teamId: 'team-a',
+        config: {
+            name: 'Advanced Metadata Config',
+            columns: ['PTS'],
+            statDefinitions: [
+                {
+                    id: 'assist_rate',
+                    label: 'Assist Rate',
+                    formula: 'AST/TO',
+                    group: 'Efficiency',
+                    visibility: 'public',
+                    scope: 'player',
+                    format: 'percentage',
+                    precision: 1,
+                    rankingOrder: 'asc',
+                    topStat: true
+                }
+            ]
+        }
+    });
+});
+
+test('platform admin invalid Top Stat controls do not mutate or save config', async ({ page, baseURL }) => {
+    await mockDependencies(page);
+
+    const dialogs = [];
+    page.on('dialog', async (dialog) => {
+        dialogs.push(dialog.message());
+        await dialog.accept();
+    });
+
+    await page.goto(`${baseURL}/edit-config.html#teamId=team-a`, { waitUntil: 'domcontentloaded' });
+
+    await page.fill('#configName', 'Invalid Top Stat Config');
+    await page.fill('#statDefinitionLabel', 'Team Rating');
+    await page.fill('#statDefinitionId', 'team_rating');
+    await page.selectOption('#statDefinitionVisibility', 'private');
+    await page.selectOption('#statDefinitionScope', 'team');
+    await page.check('#statDefinitionTopStat');
+    await page.click('#add-stat-definition-btn');
+
+    await expect(page.locator('#advancedStatDefinitions')).toHaveValue('');
+    await page.click('#add-config-form button[type="submit"]');
+
+    const writes = await page.evaluate(() => window.__configWrites || []);
+    expect(writes).toEqual([]);
+    expect(dialogs).toEqual([
+        'Team Rating cannot be a Top Stat unless visibility is public and scope is player.'
+    ]);
+});
 
 test('platform admin can manage stats configs from the edit-config workflow', async ({ page, baseURL }) => {
     await mockDependencies(page);
