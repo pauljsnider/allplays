@@ -1,5 +1,10 @@
 import { expect, test } from '@playwright/test';
 
+test.skip(
+    process.env.SMOKE_SUITE === 'production',
+    'Module-mocked app specs need the Vite dev server; production runs cover the deployed bundle via app-production-bootstrap.spec.js'
+);
+
 function appUrl(baseURL, hashPath) {
     const defaultBaseURL = 'http://localhost:3000/'; // A safe default for local testing
     const appBaseURL = process.env.SMOKE_APP_BASE_URL || baseURL || defaultBaseURL;
