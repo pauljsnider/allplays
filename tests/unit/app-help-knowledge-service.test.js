@@ -186,4 +186,39 @@ describe('app help knowledge service', () => {
             })
         ]));
     });
+
+    it('keeps Team Operations household revocation guidance searchable for parents', async () => {
+        const { searchHelpKnowledge } = await import('../../apps/app/src/lib/helpKnowledgeService.ts');
+        const results = searchHelpKnowledge({
+            query: 'revoke household contact access invite tokens',
+            roles: ['parent'],
+            limit: 5
+        });
+
+        expect(results).toEqual(expect.arrayContaining([
+            expect.objectContaining({
+                id: 'team-operations',
+                file: 'help-team-operations.html',
+                snippet: expect.stringMatching(/membership revoked|invite tokens/i)
+            })
+        ]));
+    });
+
+    it('keeps Team Operations officials directory guidance searchable for coaches', async () => {
+        const { getHelpKnowledgeDocs, searchHelpKnowledge } = await import('../../apps/app/src/lib/helpKnowledgeService.ts');
+        const results = searchHelpKnowledge({
+            query: 'officials directory edit schedule',
+            roles: ['coach'],
+            limit: 5
+        });
+        const teamOperationsDoc = getHelpKnowledgeDocs().find((doc) => doc.id === 'team-operations');
+
+        expect(results).toEqual(expect.arrayContaining([
+            expect.objectContaining({
+                id: 'team-operations',
+                file: 'help-team-operations.html'
+            })
+        ]));
+        expect(teamOperationsDoc?.text).toMatch(/Maintain an officials directory in edit-schedule\.html/i);
+    });
 });

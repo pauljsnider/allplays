@@ -236,4 +236,28 @@ describe('HelpPortal', () => {
 
         await act(async () => root.unmount());
     });
+
+    it('searches the real help index and opens Team Operations Top Stat guidance in-app', async () => {
+        const realHelpService = await vi.importActual('../../apps/app/src/lib/helpKnowledgeService.ts');
+        realHelpService.resetHelpKnowledgeCachesForTests();
+        helpMocks.getHelpKnowledgeDocs.mockImplementation(realHelpService.getHelpKnowledgeDocs);
+        helpMocks.searchHelpKnowledge.mockImplementation(realHelpService.searchHelpKnowledge);
+
+        const { container, root } = await renderHelp();
+
+        await setInputValue(
+            container.querySelector('input[aria-label="Search help articles"]'),
+            'Top Stat public leaderboard visibility'
+        );
+
+        const teamOperationsLink = container.querySelector('a[href="/help/team-operations"]');
+        expect(teamOperationsLink).toBeTruthy();
+
+        await clickElement(teamOperationsLink);
+
+        expect(container.textContent).toContain('Team Operations');
+        expect(container.textContent).toMatch(/Stats marked as public leaderboard Top Stats must have public-player visibility/i);
+
+        await act(async () => root.unmount());
+    });
 });
