@@ -29,6 +29,18 @@ function canAccessChatAttachment({ authUid, conversationId = 'team', isTeamAdmin
         (conversationId === 'team' || isTeamAdmin || isParticipant);
 }
 
+function isAllowedChatAttachmentUpload({ size, contentType }) {
+    return size > 0 &&
+        size <= 5 * 1024 * 1024 &&
+        (contentType.startsWith('image/') || contentType.startsWith('video/'));
+}
+
+function canCreateChatFallback({ authUid, pathUserId, conversationId = 'team', isTeamAdmin = false, isTeamParent = false, isParticipant = false, size = 1024, contentType = 'image/png' }) {
+    return canAccessChatAttachment({ authUid, conversationId, isTeamAdmin, isTeamParent, isParticipant }) &&
+        authUid === pathUserId &&
+        isAllowedChatAttachmentUpload({ size, contentType });
+}
+
 function canCreateScopedFallback({ authUid, pathUserId, conversationId = 'team', isTeamAdmin = false, isTeamParent = false, isParticipant = false }) {
     return canAccessChatAttachment({ authUid, conversationId, isTeamAdmin, isTeamParent, isParticipant }) && authUid === pathUserId;
 }
@@ -64,6 +76,7 @@ describe('fallback media paths and Storage rules', () => {
         expect(rules).toContain("('user:' + request.auth.uid) in participantIds");
         expect(rules).toContain("('email:' + request.auth.token.email.lower()) in participantIds");
         expect(chatFallbackRules).toContain('request.auth.uid == userId');
+        expect(chatFallbackRules).toContain('isAllowedChatAttachmentUpload(request.resource.contentType, request.resource.size);');
         expect(chatFallbackRules).toContain('allow delete: if isTeamOwnerOrAdmin(teamId) || request.auth.uid == userId;');
         expect(legacyChatFallbackRules).toContain('allow get: if isTeamOwnerOrAdmin(teamId) || request.auth.uid == userId;');
         expect(legacyChatFallbackRules).toContain('allow create: if false;');
@@ -80,6 +93,48 @@ describe('fallback media paths and Storage rules', () => {
         expect(canCreateScopedFallback({ authUid: 'parent-2', pathUserId: 'parent-1', isTeamParent: true })).toBe(false);
         expect(canDeleteScopedFallback({ authUid: 'coach-1', pathUserId: 'parent-1', isTeamAdmin: true })).toBe(true);
         expect(canDeleteScopedFallback({ authUid: 'parent-2', pathUserId: 'parent-1' })).toBe(false);
+    });
+
+    it('restricts fallback chat creates to image/video uploads no larger than 5 MB', () => {
+        expect(rules).toContain('function isAllowedChatAttachmentUpload(contentType, size)');
+        expect(rules).toContain("contentType.matches('image/.*')");
+        expect(rules).toContain("contentType.matches('video/.*')");
+        expect(rules).toContain('size <= 5 * 1024 * 1024');
+        expect(chatFallbackRules).not.toContain('request.resource.size <= 20 * 1024 * 1024');
+
+        expect(canCreateChatFallback({
+            authUid: 'parent-1',
+            pathUserId: 'parent-1',
+            conversationId: 'direct-1',
+            isTeamParent: true,
+            isParticipant: true,
+            size: 5 * 1024 * 1024,
+            contentType: 'image/jpeg'
+        })).toBe(true);
+
+        expect(canCreateChatFallback({
+            authUid: 'parent-1',
+            pathUserId: 'parent-1',
+            isTeamParent: true,
+            size: 512 * 1024,
+            contentType: 'video/mp4'
+        })).toBe(true);
+
+        expect(canCreateChatFallback({
+            authUid: 'parent-1',
+            pathUserId: 'parent-1',
+            isTeamParent: true,
+            size: 1024,
+            contentType: 'text/plain'
+        })).toBe(false);
+
+        expect(canCreateChatFallback({
+            authUid: 'parent-1',
+            pathUserId: 'parent-1',
+            isTeamParent: true,
+            size: (5 * 1024 * 1024) + 1,
+            contentType: 'image/png'
+        })).toBe(false);
     });
 
     it('denies unrelated signed-in users from scoped game clip reads and deletes', () => {

@@ -32,6 +32,7 @@ export function validateFirebaseRulesCi() {
     const firebaseJson = JSON.parse(readText('firebase.json'));
     const firestoreRules = readText('firestore.rules');
     const storageRules = readText('storage.rules');
+    const chatFallbackRules = extractMatchBlock(storageRules, 'match /stat-sheets/team-chat/{teamId}/{conversationId}/{userId}/{fileName}');
     const legacyGameClipRules = extractMatchBlock(storageRules, 'match /game-clips/{fileName} {');
     const collectionGroupGamesHelper = (firestoreRules.match(/function canReadCollectionGroupGameDocument\(teamPath, data\) \{[\s\S]*?\n\s*}/) || [''])[0];
     const gameEventsRules = (firestoreRules.match(/match \/events\/\{eventId} \{[\s\S]*?\n\s*}/) || [''])[0];
@@ -102,6 +103,11 @@ export function validateFirebaseRulesCi() {
     assertIncludes(storageRules, 'request.resource.contentType.matches(\'video/.*\')', 'Scoped Storage video content-type rules');
     assertIncludes(storageRules, 'match /game-clips/{fileName} {', 'Legacy Storage game clip rules');
     assertIncludes(legacyGameClipRules, 'allow get, create, delete: if false;', 'Legacy Storage deny-all rule');
+    assertIncludes(storageRules, 'function isAllowedChatAttachmentUpload(contentType, size)', 'Chat fallback attachment upload helper');
+    assertIncludes(storageRules, 'size <= 5 * 1024 * 1024', 'Chat fallback attachment size limit');
+    assertIncludes(storageRules, 'contentType.matches(\'image/.*\')', 'Chat fallback image content-type rules');
+    assertIncludes(storageRules, 'contentType.matches(\'video/.*\')', 'Chat fallback video content-type rules');
+    assertIncludes(chatFallbackRules, 'isAllowedChatAttachmentUpload(request.resource.contentType, request.resource.size);', 'Chat fallback create upload guard');
 
     assertIncludes(regressionGuards, 'npm run ci:firebase-rules', 'Regression guard workflow');
     assertIncludes(regressionGuards, 'npm run test:smoke:team-fallback', 'Regression guard workflow');
