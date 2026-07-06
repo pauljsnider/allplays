@@ -70,7 +70,8 @@ export function doc(first, ...segments) {
     }
 
     const id = segments.at(-1);
-    return { id, path: segments.join('/') };
+    const basePath = first.path ? first.path + '/' : '';
+    return { id, path: basePath + segments.join('/') };
 }
 
 export async function getDocs(ref) {
@@ -110,7 +111,7 @@ async function mockTrackingItemsAdminModules(page) {
     await page.route(/https:\/\/cdn\.tailwindcss\.com\/.*/, (route) => route.fulfill({
         status: 200,
         contentType: 'application/javascript',
-        body: "const style = document.createElement('style'); style.textContent = '.hidden{display:none!important}'; document.head.appendChild(style);"
+        body: "window.tailwind = window.tailwind || {}; const style = document.createElement('style'); style.textContent = '.hidden{display:none!important}'; document.head.appendChild(style);"
     }));
     await page.route(/\/js\/telemetry\.js(?:\?v=\d+)?$/, (route) => route.fulfill({
         status: 200,
@@ -161,6 +162,7 @@ test('tracking items admin creates and archives items through the page workflow'
     await expect(page.getByRole('heading', { name: 'Medical release' })).toBeVisible();
 
     const setDocCall = await page.evaluate(() => window.__trackingItemsAdminState.setDocCalls[0]);
+    expect(setDocCall).toBeDefined();
     expect(setDocCall.ref.path).toBe('teams/team-1/trackingItems/tracking-item-1');
     expect(setDocCall.payload).toMatchObject({
         name: 'Medical release',
@@ -183,6 +185,7 @@ test('tracking items admin creates and archives items through the page workflow'
     await expect(page.getByRole('heading', { name: 'Medical release' })).toHaveCount(0);
 
     const updateDocCall = await page.evaluate(() => window.__trackingItemsAdminState.updateDocCalls[0]);
+    expect(updateDocCall).toBeDefined();
     expect(updateDocCall.ref.path).toBe('teams/team-1/trackingItems/tracking-item-1');
     expect(updateDocCall.payload).toMatchObject({
         status: 'archived',
