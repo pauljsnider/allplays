@@ -111,6 +111,53 @@ describe('telemetry.js payload handling', () => {
         expect(payload.events[0].properties).toEqual({ property: 'value' });
     });
 
+    it('drains the whole queue via beacons without token fetches on keepalive flush', async () => {
+        // Page-close flush used to await getIdToken() (which can outlive the
+        // page) and send only one batch of 15 — everything else was lost.
+        firebaseMocks.getIdToken.mockResolvedValue('mockAuthToken456');
+        firebaseMocks.auth.currentUser = { getIdToken: firebaseMocks.getIdToken };
+
+        for (let i = 0; i < 32; i += 1) {
+            telemetryModule.captureTelemetryEvent(`burst_event_${i}`);
+        }
+        mockSendBeacon.mockClear();
+        mockFetch.mockClear();
+
+        await telemetryModule.flush(true);
+
+        expect(firebaseMocks.getIdToken).not.toHaveBeenCalled();
+        expect(mockFetch).not.toHaveBeenCalled();
+        expect(mockSendBeacon.mock.calls.length).toBeGreaterThanOrEqual(3);
+        const allPayloads = await Promise.all(mockSendBeacon.mock.calls.map(async ([, blob]) => JSON.parse(await blob.text())));
+        const names = allPayloads.flatMap((payload) => payload.events.map((event) => event.name));
+        expect(names).toHaveLength(32);
+        expect(names).toContain('burst_event_0');
+        expect(names).toContain('burst_event_31');
+        allPayloads.forEach((payload) => {
+            expect(payload.authToken).toBeUndefined();
+        });
+    });
+
+    it('buffers bursts larger than the old 40-event cap without dropping', async () => {
+        for (let i = 0; i < 60; i += 1) {
+            telemetryModule.captureTelemetryEvent(`queued_event_${i}`);
+        }
+        mockFetch.mockClear();
+
+        // Drain with repeated normal flushes; every queued event must survive.
+        for (let i = 0; i < 6; i += 1) {
+            await telemetryModule.flush();
+        }
+
+        const names = mockFetch.mock.calls
+            .map(([, options]) => JSON.parse(options.body))
+            .flatMap((payload) => payload.events.map((event) => event.name))
+            .filter((name) => name.startsWith('queued_event_'));
+        expect(names).toHaveLength(60);
+        expect(names).toContain('queued_event_0');
+        expect(names).toContain('queued_event_59');
+    });
+
     it('adds app route context to stored events for hash-routed app screens', async () => {
         window.history.replaceState({}, '', '/app/?telemetry=1#/players/team-1/player-1?teamId=team-1&from=home');
 
