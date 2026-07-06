@@ -554,6 +554,19 @@ export function Schedule({ auth }: { auth: AuthState }) {
       setVisibleListCount((current) => current + listPageSize);
     }
   };
+  const handleShowMorePackets = async () => {
+    if (visibleListCount < packetRows.length) {
+      setVisibleListCount((current) => Math.min(current + listPageSize, packetRows.length));
+      return;
+    }
+    if (filter !== 'past-all' || !pastHistoryHasMore || loadingPastHistory) {
+      return;
+    }
+    const loaded = await loadPastSchedulePage();
+    if (loaded) {
+      setVisibleListCount((current) => current + listPageSize);
+    }
+  };
   const parentLinkedPlayerIds = useMemo(() => new Set(children.map((child) => child.playerId)), [children]);
   const teamOptions = useMemo(() => getParentScheduleTeamOptions(events, children), [children, events]);
   const packetRows = useMemo(() => getPracticePacketRows(visibleEvents), [visibleEvents]);
@@ -1490,7 +1503,14 @@ export function Schedule({ auth }: { auth: AuthState }) {
               onDayClose={() => setSelectedDay(null)}
             />
           ) : view === 'packets' ? (
-            <PracticePacketsPanel rows={packetRows} />
+            <PracticePacketsPanel
+              rows={packetRows}
+              visibleCount={visibleListCount}
+              pageSize={listPageSize}
+              canShowMore={canLoadMorePastHistory || visibleListCount < packetRows.length}
+              loadingMore={filter === 'past-all' && loadingPastHistory}
+              onShowMore={handleShowMorePackets}
+            />
           ) : view === 'compact' ? (
             <CompactScheduleList
               events={listEntries}
@@ -2692,7 +2712,14 @@ function CompactScheduleList({ events, visibleCount, pageSize, canShowMore, load
   );
 }
 
-function PracticePacketsPanel({ rows }: { rows: PracticePacketScheduleRow[] }) {
+function PracticePacketsPanel({ rows, visibleCount, pageSize, canShowMore, loadingMore, onShowMore }: {
+  rows: PracticePacketScheduleRow[];
+  visibleCount: number;
+  pageSize: number;
+  canShowMore: boolean;
+  loadingMore: boolean;
+  onShowMore: () => void;
+}) {
   if (!rows.length) {
     return (
       <div className="app-card p-8 text-center">
@@ -2704,6 +2731,8 @@ function PracticePacketsPanel({ rows }: { rows: PracticePacketScheduleRow[] }) {
   }
 
   const readyCount = rows.filter((row) => row.needsAction).length;
+  const renderedRows = rows.slice(0, visibleCount);
+  const remainingCount = Math.max(rows.length - renderedRows.length, 0);
 
   return (
     <section className="space-y-3">
@@ -2716,7 +2745,7 @@ function PracticePacketsPanel({ rows }: { rows: PracticePacketScheduleRow[] }) {
         </div>
       </div>
       <div className="schedule-list overflow-hidden rounded-xl border border-gray-200 bg-white shadow-app sm:space-y-3 sm:overflow-visible sm:border-0 sm:bg-transparent sm:shadow-none">
-        {rows.map((row) => (
+        {renderedRows.map((row) => (
           <Link key={`${row.event.eventKey}-packet`} to={getGenericEventDetailPath(row.event)} className="block border-b border-gray-100 px-3 py-3 transition last:border-b-0 hover:bg-gray-50 sm:rounded-xl sm:border sm:border-blue-100 sm:bg-white sm:shadow-sm sm:hover:border-blue-200 sm:hover:bg-blue-50">
             <div className="flex items-center justify-between gap-3">
               <div className="min-w-0">
@@ -2738,6 +2767,16 @@ function PracticePacketsPanel({ rows }: { rows: PracticePacketScheduleRow[] }) {
           </Link>
         ))}
       </div>
+      {canShowMore ? (
+        <div className="rounded-xl border border-gray-200 bg-white p-3 text-center shadow-sm">
+          <div className="text-xs font-bold text-gray-500">
+            Showing {renderedRows.length} of {rows.length} packets
+          </div>
+          <button type="button" className="secondary-button mt-2 min-h-9 px-3 py-2 text-xs" onClick={onShowMore} disabled={loadingMore}>
+            {loadingMore ? 'Loading more…' : `Show ${Math.min(pageSize, remainingCount || pageSize)} more`}
+          </button>
+        </div>
+      ) : null}
     </section>
   );
 }
