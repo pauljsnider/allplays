@@ -515,6 +515,53 @@ describe('calendar day modal RSVP refresh', () => {
         expect(elements.get('calendar-content').innerHTML).toContain('bg-green-600 text-white border-green-600');
     });
 
+    it('keeps detailed RSVP saves from being overwritten by cached hydration', async () => {
+        const eventDate = new Date();
+        const { elements, getMyRsvpCalls, submitRecorder, updatedSummary, window } = await bootCalendar({
+            eventDate,
+            games: [
+                {
+                    id: 'game-1',
+                    type: 'game',
+                    opponent: 'Lions',
+                    date: eventDate.toISOString(),
+                    location: 'North Field',
+                    status: 'scheduled',
+                    rsvpSummary: { going: 1, maybe: 0, notGoing: 0, notResponded: 1, total: 2 }
+                }
+            ],
+            myRsvp: {
+                id: 'user-1__player-1',
+                userId: 'user-1',
+                playerId: 'player-1',
+                response: 'going'
+            }
+        });
+
+        await flushCalendarHydration();
+        expect(elements.get('calendar-content').innerHTML).toContain('bg-green-600 text-white border-green-600');
+
+        await window.submitCalendarRsvp('team-1', 'game-1', 'maybe');
+        await flushCalendarHydration();
+
+        expect(submitRecorder.calls).toEqual([
+            {
+                teamId: 'team-1',
+                gameId: 'game-1',
+                currentUserId: 'user-1',
+                payload: {
+                    displayName: 'Parent User',
+                    playerIds: ['player-1'],
+                    response: 'maybe'
+                }
+            }
+        ]);
+        expect(getMyRsvpCalls).toHaveLength(1);
+        expect(elements.get('calendar-content').innerHTML).toContain('bg-yellow-500 text-white border-yellow-500');
+        expect(elements.get('calendar-content').innerHTML).not.toContain('bg-green-600 text-white border-green-600');
+        expect(elements.get('calendar-content').innerHTML).toContain(`${updatedSummary.going} going · ${updatedSummary.maybe} maybe · ${updatedSummary.notGoing} can't go · ${updatedSummary.notResponded} no response`);
+    });
+
     it('hydrates day-detail RSVP state from linked player RSVP docs only for the selected day', async () => {
         const selectedDate = new Date('2026-03-15T18:00:00.000Z');
         const offscreenDate = new Date('2026-04-20T18:00:00.000Z');
