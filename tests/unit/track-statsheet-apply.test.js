@@ -201,10 +201,11 @@ describe('track statsheet apply helpers', () => {
         ]);
     });
 
-    it('clears all tracked and live state when replacing previously tracked game data', () => {
+    it('clears mutable tracked state without deleting immutable live events', () => {
         expect(trackStatsheetSource).toContain("const privateStatsSnap = await getDocs(collection(db, `teams/${currentTeamId}/games/${currentGameId}/privatePlayerStats`));");
-        expect(trackStatsheetSource).toContain("const liveEventsSnap = await getDocs(collection(db, `teams/${currentTeamId}/games/${currentGameId}/liveEvents`));");
-        expect(trackStatsheetSource).toMatch(/if \(eventsSnap\.size > 0 \|\| statsSnap\.size > 0 \|\| liveEventsSnap\.size > 0 \|\| privateStatsSnap\.size > 0\) \{[\s\S]*await Promise\.all\(liveEventsSnap\.docs\.map\(docItem => deleteDoc\(docItem\.ref\)\)\);[\s\S]*await Promise\.all\(privateStatsSnap\.docs\.map\(docItem => deleteDoc\(docItem\.ref\)\)\);/);
+        expect(trackStatsheetSource).not.toContain("const liveEventsSnap = await getDocs(collection(db, `teams/${currentTeamId}/games/${currentGameId}/liveEvents`));");
+        expect(trackStatsheetSource).not.toContain('liveEventsSnap.docs.map');
+        expect(trackStatsheetSource).toMatch(/if \(eventsSnap\.size > 0 \|\| statsSnap\.size > 0 \|\| privateStatsSnap\.size > 0\) \{[\s\S]*await Promise\.all\(eventsSnap\.docs\.map\(docItem => deleteDoc\(docItem\.ref\)\)\);[\s\S]*await Promise\.all\(statsSnap\.docs\.map\(docItem => deleteDoc\(docItem\.ref\)\)\);[\s\S]*await Promise\.all\(privateStatsSnap\.docs\.map\(docItem => deleteDoc\(docItem\.ref\)\)\);/);
         expect(buildTrackStatsheetApplyPlan().gameUpdate).toMatchObject({
             liveStatus: 'completed',
             liveHasData: false,
