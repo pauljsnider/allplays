@@ -895,14 +895,12 @@ async function nativeQueryScheduleEventDocuments(teamId: string, range: Schedule
         }
       : null
   ].filter(Boolean) as Array<Record<string, unknown>>;
-  const where = filters.length === 1
-    ? filters[0]
-    : {
-        compositeFilter: {
-          op: 'AND',
-          filters
-        }
-      };
+  const where = {
+    compositeFilter: {
+      op: 'AND',
+      filters
+    }
+  };
   const payload = await nativeFirestoreRequest(`/teams/${encodeURIComponent(teamId)}:runQuery`, {
     method: 'POST',
     body: JSON.stringify({

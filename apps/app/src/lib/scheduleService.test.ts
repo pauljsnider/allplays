@@ -2566,6 +2566,74 @@ describe('native parent schedule Firestore mapping', () => {
     });
   });
 
+  it('wraps native game fallback start-only filters in a composite filter', async () => {
+    const startDate = new Date('2026-06-01T00:00:00.000Z');
+    vi.mocked(globalThis.fetch).mockResolvedValue({
+      ok: true,
+      json: async () => ([])
+    } as any);
+
+    await loadParentSchedule({ uid: 'parent-1', email: 'parent@example.com', roles: [] } as any, {
+      hydrateDetails: false,
+      expandStaffPlayers: false,
+      scheduleRangeByTeam: {
+        'team-1': { startDate }
+      }
+    });
+
+    expect(globalThis.fetch).toHaveBeenCalledTimes(1);
+    const [, requestInit] = vi.mocked(globalThis.fetch).mock.calls[0] as [string, RequestInit];
+    const body = JSON.parse(String(requestInit.body));
+    expect(body.structuredQuery.where).toEqual({
+      compositeFilter: {
+        op: 'AND',
+        filters: [
+          {
+            fieldFilter: {
+              field: { fieldPath: 'date' },
+              op: 'GREATER_THAN_OR_EQUAL',
+              value: { timestampValue: startDate.toISOString() }
+            }
+          }
+        ]
+      }
+    });
+  });
+
+  it('wraps native game fallback end-only filters in a composite filter', async () => {
+    const endDate = new Date('2026-06-30T23:59:59.000Z');
+    vi.mocked(globalThis.fetch).mockResolvedValue({
+      ok: true,
+      json: async () => ([])
+    } as any);
+
+    await loadParentSchedule({ uid: 'parent-1', email: 'parent@example.com', roles: [] } as any, {
+      hydrateDetails: false,
+      expandStaffPlayers: false,
+      scheduleRangeByTeam: {
+        'team-1': { endDate }
+      }
+    });
+
+    expect(globalThis.fetch).toHaveBeenCalledTimes(1);
+    const [, requestInit] = vi.mocked(globalThis.fetch).mock.calls[0] as [string, RequestInit];
+    const body = JSON.parse(String(requestInit.body));
+    expect(body.structuredQuery.where).toEqual({
+      compositeFilter: {
+        op: 'AND',
+        filters: [
+          {
+            fieldFilter: {
+              field: { fieldPath: 'date' },
+              op: 'LESS_THAN_OR_EQUAL',
+              value: { timestampValue: endDate.toISOString() }
+            }
+          }
+        ]
+      }
+    });
+  });
+
   it('drops malformed Firestore schedule event records at the mapper boundary', async () => {
     vi.mocked(globalThis.fetch).mockResolvedValue({
       ok: true,
