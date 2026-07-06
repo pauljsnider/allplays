@@ -61,6 +61,11 @@ function splitTrailingPunctuation(match) {
     let candidate = match;
 
     while (candidate.length > 0 && /[),.;!?]$/.test(candidate)) {
+        if (candidate.endsWith(')')) {
+            const openParens = (candidate.match(/\(/g) || []).length;
+            const closeParens = (candidate.match(/\)/g) || []).length;
+            if (closeParens <= openParens) break;
+        }
         const trimmed = candidate.slice(0, -1);
         if (!normalizeSafeHttpUrl(trimmed)) break;
         trailingChars.unshift(candidate.slice(-1));
