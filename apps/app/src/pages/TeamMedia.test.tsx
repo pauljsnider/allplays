@@ -2,7 +2,7 @@
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { TeamMedia } from './TeamMedia';
+import { TeamMedia, getSelectedVisibleTeamMediaItems, getVisibleTeamMediaWindow } from './TeamMedia';
 import type { AuthState } from '../lib/types';
 
 const parentToolsServiceMocks = vi.hoisted(() => ({
@@ -73,6 +73,20 @@ function createModel(overrides: Record<string, any> = {}) {
   };
 }
 
+function createMediaItems(count: number, type: 'photo' | 'file' = 'photo', start = 1) {
+  return Array.from({ length: count }, (_, index) => {
+    const itemNumber = start + index;
+    const padded = String(itemNumber).padStart(2, '0');
+    return {
+      id: `${type}-${padded}`,
+      title: `${type === 'photo' ? 'Photo' : 'File'} ${padded}`,
+      type,
+      url: `https://example.com/${type}-${padded}.${type === 'photo' ? 'jpg' : 'pdf'}`,
+      uploadedBy: 'coach-1'
+    };
+  });
+}
+
 function renderTeamMedia(customAuth: AuthState = auth) {
   return render(
     <MemoryRouter initialEntries={['/teams/team-1/media']}>
@@ -111,6 +125,22 @@ describe('TeamMedia bulk delete', () => {
   afterEach(() => {
     cleanup();
     vi.unstubAllGlobals();
+  });
+
+  it('derives visible media windows and selected items with bounded Set lookups', () => {
+    const items = createMediaItems(4);
+
+    expect(getVisibleTeamMediaWindow(items, 2, true)).toEqual({
+      renderedItems: items.slice(0, 2),
+      canShowMoreLoaded: true,
+      canLoadMoreRemote: false
+    });
+    expect(getVisibleTeamMediaWindow(items.slice(0, 2), 2, true)).toEqual({
+      renderedItems: items.slice(0, 2),
+      canShowMoreLoaded: false,
+      canLoadMoreRemote: true
+    });
+    expect(getSelectedVisibleTeamMediaItems(items, new Set(['photo-02', 'photo-02', 'missing']))).toEqual([items[1]]);
   });
 
   it('retries a retryable media load failure from the shared error state', async () => {
@@ -190,6 +220,120 @@ describe('TeamMedia bulk delete', () => {
     expect(await screen.findByText('Delete failed.')).toBeTruthy();
     expect(selectPhotoOne.checked).toBe(true);
     expect(screen.getByText('1 selected in this view')).toBeTruthy();
+  });
+
+  it('limits large loaded albums to the visible item window and reveals the next window on demand', async () => {
+    parentToolsServiceMocks.loadTeamMediaForApp.mockResolvedValueOnce(createModel({
+      folders: [
+        {
+          id: 'album-1',
+          name: 'Game day',
+          visibility: 'team',
+          itemCount: 72,
+          itemsLoaded: true,
+          itemsHasMore: false,
+          items: createMediaItems(72)
+        }
+      ]
+    }));
+
+    renderTeamMedia();
+
+    await screen.findByText('Bears media');
+    expect(screen.getByText('1 albums - 72 items')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'All72' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Photos72' })).toBeTruthy();
+    expect(screen.getByText('Photo 01')).toBeTruthy();
+    expect(screen.getByText('Photo 24')).toBeTruthy();
+    expect(screen.queryByText('Photo 25')).toBeNull();
+    expect(screen.queryByText('Photo 72')).toBeNull();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Show more' }));
+
+    expect(screen.getByText('Photo 25')).toBeTruthy();
+    expect(screen.getByText('Photo 48')).toBeTruthy();
+    expect(screen.queryByText('Photo 49')).toBeNull();
+  });
+
+  it('resets the visible window when filtering media types', async () => {
+    parentToolsServiceMocks.loadTeamMediaForApp.mockResolvedValueOnce(createModel({
+      folders: [
+        {
+          id: 'album-1',
+          name: 'Game day',
+          visibility: 'team',
+          itemCount: 60,
+          itemsLoaded: true,
+          itemsHasMore: false,
+          items: [
+            ...createMediaItems(36, 'photo'),
+            ...createMediaItems(24, 'file')
+          ]
+        }
+      ]
+    }));
+
+    renderTeamMedia();
+
+    await screen.findByText('Bears media');
+    fireEvent.click(screen.getByRole('button', { name: 'Show more' }));
+    expect(screen.getByText('Photo 36')).toBeTruthy();
+    expect(screen.getByText('File 12')).toBeTruthy();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Photos36' }));
+
+    expect(screen.getByText('Photo 24')).toBeTruthy();
+    expect(screen.queryByText('Photo 25')).toBeNull();
+    expect(screen.queryByText('Photo 36')).toBeNull();
+    expect(screen.queryByText('File 01')).toBeNull();
+  });
+
+  it('bulk deletes only selected visible items after filtering a loaded album', async () => {
+    const files = createMediaItems(30, 'file');
+    parentToolsServiceMocks.loadTeamMediaForApp
+      .mockResolvedValueOnce(createModel({
+        folders: [
+          {
+            id: 'album-1',
+            name: 'Game day',
+            visibility: 'team',
+            itemCount: 30,
+            itemsLoaded: true,
+            itemsHasMore: false,
+            items: files
+          }
+        ]
+      }))
+      .mockResolvedValueOnce(createModel({
+        folders: [
+          {
+            id: 'album-1',
+            name: 'Game day',
+            visibility: 'team',
+            itemCount: 29,
+            itemsLoaded: true,
+            itemsHasMore: false,
+            items: files.slice(1)
+          }
+        ]
+      }));
+    parentToolsServiceMocks.bulkDeleteTeamMediaItemsForApp.mockResolvedValue(undefined);
+
+    renderTeamMedia();
+
+    await screen.findByText('Bears media');
+    fireEvent.click(screen.getByRole('button', { name: 'Files30' }));
+    expect(screen.getByText('File 24')).toBeTruthy();
+    expect(screen.queryByText('File 25')).toBeNull();
+
+    fireEvent.click(screen.getByLabelText('Select File 01'));
+    fireEvent.click(screen.getByRole('button', { name: 'Delete selected' }));
+
+    expect(parentToolsServiceMocks.bulkDeleteTeamMediaItemsForApp).toHaveBeenCalledWith('team-1', [
+      expect.objectContaining({ id: 'file-01' })
+    ]);
+    expect(parentToolsServiceMocks.bulkDeleteTeamMediaItemsForApp.mock.calls[0][1]).toHaveLength(1);
+    expect(await screen.findByText('1 media item deleted.')).toBeTruthy();
   });
 
   it('posts a photo to the default team conversation', async () => {

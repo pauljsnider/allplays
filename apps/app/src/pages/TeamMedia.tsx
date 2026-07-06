@@ -52,6 +52,7 @@ export function TeamMedia({ auth }: { auth: AuthState }) {
   const [model, setModel] = useState<TeamMediaModel | null>(null);
   const [activeFolderId, setActiveFolderId] = useState('');
   const [selectedMediaType, setSelectedMediaType] = useState<MediaTypeFilter>('all');
+  const [visibleMediaCount, setVisibleMediaCount] = useState(TEAM_MEDIA_VISIBLE_WINDOW_SIZE);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [linkTitle, setLinkTitle] = useState('');
   const [linkUrl, setLinkUrl] = useState('');
@@ -148,9 +149,14 @@ export function TeamMedia({ auth }: { auth: AuthState }) {
         cursorsByFolderId: { [folderToLoad.id]: folderToLoad.itemsNextCursor },
         append: true
       });
+      setVisibleMediaCount((current) => current + TEAM_MEDIA_VISIBLE_WINDOW_SIZE);
     } finally {
       setLoadingMoreFolderId('');
     }
+  };
+
+  const handleShowMoreLoadedItems = () => {
+    setVisibleMediaCount((current) => current + TEAM_MEDIA_VISIBLE_WINDOW_SIZE);
   };
 
   const handleRenameItem = async (item: TeamMediaItem, nextTitle: string) => {
@@ -302,20 +308,35 @@ export function TeamMedia({ auth }: { auth: AuthState }) {
   const loadedItems = useMemo(() => model?.folders.flatMap((folder) => folder.items.map((item) => ({ ...item, folderName: folder.name || 'Album' }))) || [], [model]);
   const mediaTypeCounts = useMemo(() => getMediaTypeCounts(activeFolder?.items || []), [activeFolder]);
   const filteredItems = useMemo(() => (activeFolder?.items || []).filter((item) => matchesMediaTypeFilter(item, selectedMediaType)), [activeFolder, selectedMediaType]);
-  const visibleItemIds = useMemo(() => filteredItems.map((item) => item.id).filter(Boolean), [filteredItems]);
-  const selectedItems = useMemo(() => filteredItems.filter((item) => selectedIds.includes(item.id)), [filteredItems, selectedIds]);
+  const visibleMediaWindow = useMemo(
+    () => getVisibleTeamMediaWindow(filteredItems, visibleMediaCount, Boolean(activeFolder?.itemsHasMore)),
+    [activeFolder?.itemsHasMore, filteredItems, visibleMediaCount]
+  );
+  const visibleItems = visibleMediaWindow.renderedItems;
+  const visibleItemIds = useMemo(() => visibleItems.map((item) => item.id).filter(Boolean), [visibleItems]);
+  const visibleItemIdSet = useMemo(() => new Set(visibleItemIds), [visibleItemIds]);
+  const selectedIdSet = useMemo(() => new Set(selectedIds), [selectedIds]);
+  const selectedItems = useMemo(() => getSelectedVisibleTeamMediaItems(visibleItems, selectedIdSet), [selectedIdSet, visibleItems]);
   const selectedCount = selectedItems.length;
   const selectedMediaTypeLabel = MEDIA_TYPE_FILTERS.find((filter) => filter.id === selectedMediaType)?.label || 'All';
   const emptyStateLabel = selectedMediaType === 'all' ? 'media' : selectedMediaTypeLabel.toLowerCase();
   const featured = activeFolder ? getFolderCoverMedia(activeFolder) || loadedItems[0] || null : loadedItems[0] || null;
+  const alternateFolders = useMemo(() => (model?.folders || []).filter((folder) => folder.id && folder.id !== activeFolder?.id), [activeFolder?.id, model]);
 
   useEffect(() => {
-    setSelectedIds((current) => current.filter((itemId) => visibleItemIds.includes(itemId)));
-  }, [visibleItemIds]);
+    setSelectedIds((current) => current.filter((itemId) => visibleItemIdSet.has(itemId)));
+  }, [visibleItemIdSet]);
+
+  useEffect(() => {
+    setVisibleMediaCount(TEAM_MEDIA_VISIBLE_WINDOW_SIZE);
+  }, [activeFolder?.id, selectedMediaType]);
 
   const toggleItemSelection = (itemId: string, checked: boolean) => {
     if (!itemId || !model?.canManage) return;
-    setSelectedIds((current) => checked ? current.includes(itemId) ? current : [...current, itemId] : current.filter((selectedId) => selectedId !== itemId));
+    setSelectedIds((current) => {
+      const currentSet = new Set(current);
+      return checked ? currentSet.has(itemId) ? current : [...current, itemId] : current.filter((selectedId) => selectedId !== itemId);
+    });
   };
 
   const handleBulkDelete = async () => {
@@ -604,6 +625,7 @@ export function TeamMedia({ auth }: { auth: AuthState }) {
               onClick={() => {
                 setSelectedMediaType('all');
                 setSelectedIds([]);
+                setVisibleMediaCount(TEAM_MEDIA_VISIBLE_WINDOW_SIZE);
                 if (folder.itemsLoaded || folder.items.length) {
                   setActiveFolderId(folder.id);
                   return;
@@ -734,6 +756,7 @@ export function TeamMedia({ auth }: { auth: AuthState }) {
               onClick={() => {
                 setSelectedMediaType(filter.id);
                 setSelectedIds([]);
+                setVisibleMediaCount(TEAM_MEDIA_VISIBLE_WINDOW_SIZE);
               }}
               aria-pressed={selectedMediaType === filter.id}
             >
@@ -763,7 +786,7 @@ export function TeamMedia({ auth }: { auth: AuthState }) {
           </div>
         ) : null}
         <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-          {filteredItems.length ? filteredItems.map((item) => (
+          {filteredItems.length ? visibleItems.map((item) => (
             <TeamMediaItemCard
               key={item.id}
               item={item}
@@ -771,11 +794,11 @@ export function TeamMedia({ auth }: { auth: AuthState }) {
               canManage={model.canManage}
               canPostToChat={model.canPostChat && model.canContribute && Boolean(auth.user)}
               currentUserId={auth.user?.uid || ''}
-              folders={model.folders}
+              alternateFolders={alternateFolders}
               currentFolderId={activeFolder?.id || ''}
               deleting={deletingItemId === item.id}
               selectable={model.canManage}
-              selected={selectedIds.includes(item.id)}
+              selected={selectedIdSet.has(item.id)}
               renaming={renamingItemId === item.id}
               moving={movingItemId === item.id}
               settingCover={coverItemId === item.id}
@@ -791,17 +814,17 @@ export function TeamMedia({ auth }: { auth: AuthState }) {
             <div className="rounded-xl border border-gray-200 bg-gray-50 p-4 text-sm font-semibold text-gray-500">No {emptyStateLabel} in this album.</div>
           )}
         </div>
-        {activeFolder?.itemsHasMore ? (
+        {visibleMediaWindow.canShowMoreLoaded || visibleMediaWindow.canLoadMoreRemote ? (
           <div className="mt-3 flex justify-center">
             <button
               type="button"
               className="ghost-button justify-center disabled:opacity-60"
-              onClick={handleLoadMoreItems}
-              disabled={loadingMoreFolderId === activeFolder.id}
-              aria-disabled={loadingMoreFolderId === activeFolder.id}
+              onClick={visibleMediaWindow.canShowMoreLoaded ? handleShowMoreLoadedItems : handleLoadMoreItems}
+              disabled={loadingMoreFolderId === activeFolder?.id}
+              aria-disabled={loadingMoreFolderId === activeFolder?.id}
             >
-              {loadingMoreFolderId === activeFolder.id ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <RefreshCw className="h-4 w-4" aria-hidden="true" />}
-              {loadingMoreFolderId === activeFolder.id ? 'Loading more' : 'Load more'}
+              {loadingMoreFolderId === activeFolder?.id ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <RefreshCw className="h-4 w-4" aria-hidden="true" />}
+              {loadingMoreFolderId === activeFolder?.id ? 'Loading more' : visibleMediaWindow.canShowMoreLoaded ? 'Show more' : 'Load more'}
             </button>
           </div>
         ) : null}
@@ -827,6 +850,20 @@ const MEDIA_TYPE_FILTERS: { id: MediaTypeFilter; label: string }[] = [
 ];
 const MAX_PHOTO_UPLOAD_BYTES = 10 * 1024 * 1024;
 const PHOTO_UPLOAD_CONCURRENCY = 3;
+const TEAM_MEDIA_VISIBLE_WINDOW_SIZE = 24;
+
+export function getVisibleTeamMediaWindow<T>(items: T[], visibleCount: number, itemsHasMore: boolean) {
+  const safeVisibleCount = Math.max(0, Math.floor(Number(visibleCount) || 0));
+  return {
+    renderedItems: items.slice(0, safeVisibleCount),
+    canShowMoreLoaded: items.length > safeVisibleCount,
+    canLoadMoreRemote: items.length <= safeVisibleCount && Boolean(itemsHasMore)
+  };
+}
+
+export function getSelectedVisibleTeamMediaItems<T extends { id: string }>(items: T[], selectedIdSet: ReadonlySet<string>) {
+  return items.filter((item) => selectedIdSet.has(item.id));
+}
 
 function isSupportedPhotoUpload(file: File) {
   return Boolean(file?.type?.startsWith('image/')) && Number(file.size || 0) > 0 && Number(file.size || 0) <= MAX_PHOTO_UPLOAD_BYTES;
@@ -941,7 +978,7 @@ function TeamMediaItemCard({
   canManage,
   canPostToChat,
   currentUserId,
-  folders,
+  alternateFolders,
   currentFolderId,
   deleting,
   selectable,
@@ -962,7 +999,7 @@ function TeamMediaItemCard({
   canManage: boolean;
   canPostToChat: boolean;
   currentUserId: string;
-  folders: TeamMediaFolder[];
+  alternateFolders: TeamMediaFolder[];
   currentFolderId: string;
   deleting: boolean;
   selectable: boolean;
@@ -986,7 +1023,6 @@ function TeamMediaItemCard({
   const [draftTitle, setDraftTitle] = useState(title);
   const [postCaption, setPostCaption] = useState('');
   const [moveFolderId, setMoveFolderId] = useState('');
-  const alternateFolders = folders.filter((folder) => folder.id && folder.id !== currentFolderId);
   const canMove = canManage && alternateFolders.length > 0;
   const selectedMoveFolderId = moveFolderId && moveFolderId !== currentFolderId ? moveFolderId : '';
   const canRename = canManage || item.uploadedBy === currentUserId;
