@@ -129,7 +129,11 @@ import type { AuthUser } from './types';
 const buildPracticePacketCompletionPayloadBase = buildPracticePacketCompletionPayload;
 
 const primaryDataTimeoutMs = 5000;
-const parentScheduleTeamConcurrency = 3;
+// Per-team schedule builds are network-bound (team + games + practiceSessions
+// reads each); 3 workers made a 5-team account load in two serialized waves
+// (~18 sequential-ish Firestore round trips measured via the parent schedule
+// service load timer). 6 covers typical multi-team accounts in one wave.
+const parentScheduleTeamConcurrency = 6;
 const parentSchedulePlayerConcurrency = 8;
 const scheduleHydrationCacheTtlMs = 30 * 1000;
 const parentHomeHydrationLookAheadMs = 14 * 24 * 60 * 60 * 1000;
