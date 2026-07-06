@@ -139,6 +139,22 @@ function buildScheduleEvent(index: number, overrides: Partial<ParentScheduleEven
   };
 }
 
+function buildPracticePacketEvent(index: number, overrides: Partial<ParentScheduleEvent> = {}): ParentScheduleEvent {
+  const date = new Date(Date.UTC(2100, 5, index, 18, 0, 0));
+  return buildScheduleEvent(index, {
+    eventKey: `team-1::practice-${index}::player-1::${date.toISOString()}::practice`,
+    id: `practice-${index}`,
+    type: 'practice',
+    isDbGame: false,
+    date,
+    opponent: null,
+    title: `Practice Packet ${index}`,
+    practiceHomePacketSummary: `${index} drills`,
+    practicePacketCompletions: [],
+    ...overrides
+  });
+}
+
 function buildStaffScheduleResult() {
   return {
     children: [
@@ -565,6 +581,52 @@ describe('Schedule', () => {
 
     expect(await screen.findByText('Showing 20 of 21 events')).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Show 1 more' })).toBeTruthy();
+  });
+
+  it('paginates practice packet rows while keeping the all-packet summary count', async () => {
+    scheduleServiceMocks.loadParentSchedule.mockResolvedValueOnce({
+      children: [
+        { playerId: 'player-1', playerName: 'Pat', teamId: 'team-1', teamName: 'Bears' }
+      ],
+      events: Array.from({ length: 21 }, (_, index) => buildPracticePacketEvent(index + 1))
+    });
+
+    renderSchedule('/schedule?view=packets');
+
+    expect(await screen.findByText('21 practice packets need review')).toBeTruthy();
+    expect(screen.getByText('Showing 20 of 21 packets')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Show 1 more' })).toBeTruthy();
+    expect(screen.getByText('Practice Packet 20')).toBeTruthy();
+    expect(screen.queryByText('Practice Packet 21')).toBeNull();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Show 1 more' }));
+
+    expect(await screen.findByText('Practice Packet 21')).toBeTruthy();
+    expect(screen.getByText('21 practice packets need review')).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Show 1 more' })).toBeNull();
+  });
+
+  it('does not show packet pagination when only non-packet past events are hidden', async () => {
+    scheduleServiceMocks.loadParentSchedule.mockResolvedValueOnce({
+      children: [
+        { playerId: 'player-1', playerName: 'Pat', teamId: 'team-1', teamName: 'Bears' }
+      ],
+      events: [
+        ...Array.from({ length: 5 }, (_, index) => buildPracticePacketEvent(index + 1, {
+          date: new Date(Date.UTC(2025, 5, index + 1, 18, 0, 0))
+        })),
+        ...Array.from({ length: 25 }, (_, index) => buildScheduleEvent(index + 6, {
+          date: new Date(Date.UTC(2025, 5, index + 6, 18, 0, 0))
+        }))
+      ]
+    });
+
+    renderSchedule('/schedule?filter=past-all&view=packets');
+
+    expect(await screen.findByText('Practice Packet 5')).toBeTruthy();
+    expect(screen.getByText('All visible packets are handled')).toBeTruthy();
+    expect(screen.queryByText('Showing 5 of 5 packets')).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Show 10 more' })).toBeNull();
   });
 
   it('applies schedule team and view query params on direct links', async () => {
