@@ -40,6 +40,11 @@ import {
 } from './admin-user-official-links.js?v=2';
 import { buildAdminTeamOfficialsSummary } from './admin-team-officials.js?v=1';
 import {
+    hasAdminGlobalSearchTerm,
+    normalizeAdminSearchTerm,
+    selectAdminSearchCollection
+} from './admin-search.js?v=1';
+import {
     buildTrackedWorkflowLoadSummary,
     buildTelemetryPerformanceSummary,
     formatPerformanceDuration
@@ -47,6 +52,8 @@ import {
 
 let allTeams = [];
 let allUsers = [];
+let globalSearchTeams = [];
+let globalSearchUsers = [];
 let dashboardTeams = [];
 let dashboardUsers = [];
 let officialUserLookup = new Map();
@@ -80,6 +87,10 @@ let loadedGamesPageKey = '';
 let loadedDashboardGamesKey = '';
 let loadedTeamsOfficialsPageKey = '';
 let loadedUsersOfficialsKey = '';
+let globalSearchTeamsLoaded = false;
+let globalSearchUsersLoaded = false;
+let globalSearchTeamsPromise = null;
+let globalSearchUsersPromise = null;
 
 function getCurrentTeamPage() {
     return teamPageState.pages[teamPageState.currentIndex] || [];
@@ -117,6 +128,69 @@ function applyCurrentTeamPage() {
 
 function applyCurrentUsersPage() {
     allUsers = getCurrentUsersPage();
+}
+
+function resetGlobalAdminSearchCollections() {
+    globalSearchTeams = [];
+    globalSearchUsers = [];
+    globalSearchTeamsLoaded = false;
+    globalSearchUsersLoaded = false;
+    globalSearchTeamsPromise = null;
+    globalSearchUsersPromise = null;
+}
+
+async function ensureGlobalAdminTeamsForSearch() {
+    if (globalSearchTeamsLoaded) return globalSearchTeams;
+    if (!globalSearchTeamsPromise) {
+        globalSearchTeamsPromise = getTeams({ includeInactive: true })
+            .then((teams) => {
+                globalSearchTeams = Array.isArray(teams) ? teams : [];
+                globalSearchTeamsLoaded = true;
+                return globalSearchTeams;
+            })
+            .finally(() => {
+                globalSearchTeamsPromise = null;
+            });
+    }
+    return globalSearchTeamsPromise;
+}
+
+async function ensureGlobalAdminUsersForSearch() {
+    if (globalSearchUsersLoaded) return globalSearchUsers;
+    if (!globalSearchUsersPromise) {
+        globalSearchUsersPromise = getAllUsers()
+            .then((users) => {
+                globalSearchUsers = Array.isArray(users) ? users : [];
+                globalSearchUsersLoaded = true;
+                return globalSearchUsers;
+            })
+            .finally(() => {
+                globalSearchUsersPromise = null;
+            });
+    }
+    return globalSearchUsersPromise;
+}
+
+async function getAdminTeamsForSearch(searchTerm = '') {
+    if (hasAdminGlobalSearchTerm(searchTerm)) {
+        await ensureGlobalAdminTeamsForSearch();
+    }
+    return selectAdminSearchCollection({
+        searchTerm,
+        pageItems: allTeams,
+        globalItems: globalSearchTeams
+    });
+}
+
+async function getAdminUsersForSearch(searchTerm = '') {
+    if (hasAdminGlobalSearchTerm(searchTerm)) {
+        await ensureGlobalAdminUsersForSearch();
+    }
+    return selectAdminSearchCollection({
+        searchTerm,
+        pageItems: allUsers,
+        globalItems: globalSearchUsers
+    });
 }
 
 function setTeamsPage(page, nextCursor, index = 0) {
@@ -245,6 +319,7 @@ async function loadData() {
         dashboardGameStatsByTeamId = new Map();
         dashboardTeams = [];
         dashboardUsers = [];
+        resetGlobalAdminSearchCollections();
         officialUserLookup = new Map();
         officialsByTeamId = new Map();
 
@@ -405,6 +480,10 @@ async function loadGameStatsForTeams(teams = allTeams, { scope = 'page' } = {}) 
 async function loadDashboardData() {
     dashboardTeams = await getTeams({ includeInactive: true });
     dashboardUsers = await getAllUsers();
+    globalSearchTeams = dashboardTeams;
+    globalSearchUsers = dashboardUsers;
+    globalSearchTeamsLoaded = true;
+    globalSearchUsersLoaded = true;
     await loadGameStatsForTeams(dashboardTeams, { scope: 'dashboard' });
 }
 
@@ -1602,9 +1681,14 @@ async function saveRegistrationForm(event) {
     }
 }
 
-function renderCurrentTeamsView() {
-    const term = (document.getElementById('search-teams')?.value || '').toLowerCase();
-    const filtered = getVisibleTeams().filter((team) =>
+async function renderCurrentTeamsView() {
+    const term = normalizeAdminSearchTerm(document.getElementById('search-teams')?.value || '');
+    const teams = await getAdminTeamsForSearch(term);
+    const latestTerm = normalizeAdminSearchTerm(document.getElementById('search-teams')?.value || '');
+    if (term !== latestTerm) return;
+
+    const visibleTeams = showInactiveTeams ? teams : teams.filter(isTeamActive);
+    const filtered = visibleTeams.filter((team) =>
         !term
         || (team.name || '').toLowerCase().includes(term)
         || (team.sport || '').toLowerCase().includes(term)
@@ -1612,10 +1696,14 @@ function renderCurrentTeamsView() {
     renderTeams(filtered);
 }
 
-function renderCurrentUsersView() {
-    const term = (document.getElementById('search-users')?.value || '').toLowerCase();
+async function renderCurrentUsersView() {
+    const term = normalizeAdminSearchTerm(document.getElementById('search-users')?.value || '');
     const officialFilter = document.getElementById('filter-users-official-status')?.value || 'all';
-    const filtered = allUsers.filter((u) => {
+    const users = await getAdminUsersForSearch(term);
+    const latestTerm = normalizeAdminSearchTerm(document.getElementById('search-users')?.value || '');
+    if (term !== latestTerm) return;
+
+    const filtered = users.filter((u) => {
         const officialSummary = getOfficialUserSummary(u, officialUserLookup);
         if (officialFilter === 'officials' && !officialSummary) return false;
         if (officialFilter === 'non-officials' && officialSummary) return false;
