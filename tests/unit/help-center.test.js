@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
+import { JSDOM } from 'jsdom';
 import {
     normalizeHelpRole,
     getHelpGuidesForRole,
@@ -12,6 +13,22 @@ import {
 
 function readRepoFile(relativePath) {
     return readFileSync(new URL(`../../${relativePath}`, import.meta.url), 'utf8');
+}
+
+function getHelpWatchChatContextLinks() {
+    const helpPage = readRepoFile('help-watch-chat.html');
+    return [...helpPage.matchAll(/<a\b[^>]*data-help-context-link[^>]*>/g)].map(([anchor]) => ({
+        guideId: anchor.match(/\bdata-guide-id="([^"]+)"/)?.[1],
+        quickLinkLabel: anchor.match(/\bdata-quick-link-label="([^"]+)"/)?.[1],
+        routeTemplate: anchor.match(/\bdata-route-template="([^"]+)"/)?.[1]
+    }));
+}
+
+function renderHelpWatchChat(url) {
+    return new JSDOM(readRepoFile('help-watch-chat.html'), {
+        url,
+        runScripts: 'dangerously'
+    }).window.document;
 }
 
 describe('help center deep workflow coverage', () => {
@@ -84,5 +101,36 @@ describe('help center deep workflow coverage', () => {
         expect(helpPage).toContain('@ALL PLAYS');
         expect(helpPage).toContain('Use the recipient picker, not @ mentions');
         expect(helpPage).not.toContain('Use targeted mentions');
+    });
+
+    it('keeps Help Watch Chat CTAs aligned with watch and team-chat quick links', () => {
+        const pageLinksByGuideAndLabel = new Map(
+            getHelpWatchChatContextLinks().map((link) => [`${link.guideId}:${link.quickLinkLabel}`, link.routeTemplate])
+        );
+
+        const requiredQuickLinks = [
+            ['watch-game', 'Team Page'],
+            ['watch-game', 'Game Viewer'],
+            ['team-chat-basics', 'Open Team Chat']
+        ];
+
+        requiredQuickLinks.forEach(([guideId, label]) => {
+            const guide = getGuideById('parent', guideId);
+            expect(guide, `Guide "${guideId}" should exist for parent help`).toBeDefined();
+            expect(Array.isArray(guide.quickLinks), `Guide "${guideId}" should define quick links`).toBe(true);
+
+            const quickLink = guide.quickLinks.find((link) => link.label === label);
+            expect(quickLink, `Guide "${guideId}" should include quick link "${label}"`).toBeDefined();
+
+            expect(pageLinksByGuideAndLabel.get(`${guideId}:${label}`)).toBe(quickLink.url);
+        });
+    });
+
+    it('removes empty Help Watch Chat context parameters from CTA links', () => {
+        const document = renderHelpWatchChat('https://allplays.test/help-watch-chat.html?role=parent');
+
+        expect(document.querySelector('[data-quick-link-label="Team Page"]')?.getAttribute('href')).toBe('team.html');
+        expect(document.querySelector('[data-quick-link-label="Game Viewer"]')?.getAttribute('href')).toBe('live-game.html');
+        expect(document.querySelector('[data-quick-link-label="Open Team Chat"]')?.getAttribute('href')).toBe('team-chat.html');
     });
 });
