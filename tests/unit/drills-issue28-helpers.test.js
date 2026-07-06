@@ -97,7 +97,7 @@ describe('issue 28 drill helpers', () => {
         expect(rendered).not.toContain('&amp;amp;list=abc');
         expect(rendered).toContain('Bad URL https://example..com/path should stay text');
         expect(rendered).not.toContain('href="https://example..com/path"');
-        expect(rendered).toContain('href="https://example.com/?a=1%22onclick=%22alert(1"');
+        expect(rendered).toContain('href="https://example.com/?a=1%22onclick=%22alert(1)"');
         expect(rendered).not.toContain('onclick="alert(1)"');
     });
 });
