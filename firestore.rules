@@ -135,6 +135,18 @@ service cloud.firestore {
       return resource.data.get('type', null) == 'parent_invite' &&
              request.resource.data.get('type', resource.data.get('type', null)) == 'parent_invite' &&
              request.resource.data.diff(resource.data).affectedKeys().hasOnly(['used', 'usedBy', 'usedAt']) &&
+             resource.data.used == false &&
+             resource.data.get('revoked', false) != true &&
+             resource.data.get('status', 'active') != 'removed' &&
+             resource.data.get('status', 'active') != 'cancelled' &&
+             (resource.data.get('expiresAt', null) == null ||
+              (resource.data.expiresAt is timestamp && resource.data.expiresAt > request.time)) &&
+             (!('email' in resource.data) ||
+              resource.data.email == null ||
+              resource.data.email == '' ||
+              (resource.data.email is string &&
+               request.auth.token.email is string &&
+               request.auth.token.email.lower() == resource.data.email.lower())) &&
              request.resource.data.used == true &&
              request.resource.data.usedBy == request.auth.uid &&
              request.resource.data.usedAt is timestamp;
