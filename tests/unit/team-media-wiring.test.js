@@ -38,6 +38,22 @@ describe('team media page wiring', () => {
         expect(source).toContain('data-load-more-media');
     });
 
+    it('keeps jsdom team media db mocks aligned with the runtime db import', () => {
+        const source = fs.readFileSync(path.join(repoRoot, 'js/team-media.js'), 'utf8');
+        const dbImportVersion = source.match(/from '\.\/db\.js\?v=(\d+)'/)?.[1];
+
+        expect(dbImportVersion).toBe('82');
+
+        for (const testFile of [
+            'tests/unit/team-media-item-rename.test.js',
+            'tests/unit/team-media-legacy-upload-forms.test.js'
+        ]) {
+            const testSource = fs.readFileSync(path.join(repoRoot, testFile), 'utf8');
+            expect(testSource).toContain(`vi.mock('../../js/db.js?v=${dbImportVersion}'`);
+            expect(testSource).not.toContain("vi.mock('../../js/db.js?v=81'");
+        }
+    });
+
     it('keeps media reads member-scoped and uploads explicitly approved', () => {
         const rules = fs.readFileSync(path.join(repoRoot, 'firestore.rules'), 'utf8');
         expect(rules).toContain('match /mediaFolders/{folderId}');
