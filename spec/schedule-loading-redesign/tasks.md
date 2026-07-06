@@ -5,7 +5,7 @@ Execute one task at a time with `/spec-execute-task`; stop for review after each
 ## Phase 1 — Client quick wins (no schema change)
 
 - [ ] 1. Fix the attendance "not linked to a session yet" dead end
-  - In `apps/app/src/lib/scheduleService.ts`, change `saveStaffPracticeAttendance` to write via `set(doc(teams/{teamId}/practiceSessions/{eventId}), payload, { merge: true })` (native path: PATCH to the deterministic path), creating the session on first mark with `sessionId == eventId`.
+  - In `apps/app/src/lib/scheduleService.ts`, change `saveStaffPracticeAttendance` to write via `set(doc(teams/{teamId}/practiceSessions/{eventId}), { attendance: normalizedAttendance, attendancePlayers, aiContext: { attendanceSummary } }, { merge: true })` (native path: PATCH to the deterministic path), creating the session on first mark with `sessionId == eventId` while preserving the existing nested attendance document shape.
   - Change `loadStaffPracticeAttendance` to return an empty roster-based sheet instead of throwing when no session exists.
   - Resolve sessions by exact event ID first; keep the `eventId ==` query as legacy fallback for reads only.
   - Tests: regression unit test that fails on current code (load throws / save requires pre-existing session); test that save with no session creates doc at deterministic ID; test legacy-fallback read still finds old query-keyed sessions.
@@ -28,8 +28,8 @@ Execute one task at a time with `/spec-execute-task`; stop for review after each
   - _Requirements: 3.2, UX 1_
 
 - [ ] 5. Use windowed `:runQuery` in the native REST fallback
-  - Replace full-collection `nativeListScheduleEventDocuments`/`nativeListCollection` fallbacks for `games` and `practiceSessions` with structuredQuery date-range filters (extend the existing `nativeRunQuery` helper to support range operators).
-  - Tests: unit tests asserting the structuredQuery payload shape (collection, field filters, date bounds) for both collections.
+  - Replace full-collection `nativeListScheduleEventDocuments`/`nativeListCollection` fallbacks for `games` and `practiceSessions` with structuredQuery date-range filters posted to the team parent path (`/documents/teams/{teamId}:runQuery`, or equivalent parent-scoped endpoint), not the root `/documents:runQuery`. Extend or wrap the existing `nativeRunQuery` helper to support parent paths plus range operators.
+  - Tests: unit tests asserting the structuredQuery payload shape (parent path, collection, field filters, date bounds) for both collections.
   - _Requirements: 3.3_
 
 - [ ] 6. Prune redundant reads in scope resolution
@@ -40,12 +40,12 @@ Execute one task at a time with `/spec-execute-task`; stop for review after each
 ## Phase 2 — Server-side calendar sync and canonical events
 
 - [ ] 7. Create `functions/calendar-sync-core.cjs` (pure reconcile module)
-  - Implement parse → RRULE horizon expansion (past 30d / future 12mo, RECURRENCE-ID exceptions) → diff (create / allowlist patch / cancel-on-missing with `missingCount` / un-cancel / guarded delete) → batched write plan. Deterministic doc IDs `ics-{urlHash8}-{uidKey}` with UID sanitization; adoption of legacy docs via `calendarEventUid` lookup; invalid/empty ICS rejection leaves docs untouched.
-  - Tests (fixture ICS files in `tests/unit/`): each diff branch; app-owned fields preserved on patch; two teams sharing one feed stay namespaced; truncated feed causes zero writes.
+  - Implement parse → RRULE horizon expansion (past 30d / future 12mo, RECURRENCE-ID exceptions) → tracking-id computation matching `getCalendarEventTrackingId(event)` → diff (create / allowlist patch / cancel-on-missing with `missingCount` / un-cancel / guarded delete) → batched write plan. Deterministic doc IDs `ics-{urlHash8}-{trackingKey}` with tracking-id sanitization; `calendarEventUid` stores the tracking id (raw UID only for non-recurring events, occurrence id for recurring instances); adoption of legacy docs via `calendarEventUid` lookup; invalid/empty ICS rejection leaves docs untouched.
+  - Tests (fixture ICS files in `tests/unit/`): each diff branch; app-owned fields preserved on patch; recurring occurrences store distinct tracking IDs in `calendarEventUid`; two teams sharing one feed stay namespaced; truncated feed causes zero writes.
   - _Requirements: 2.1–2.9, 1.6_
 
 - [ ] 8. Add the `syncTeamCalendars` scheduled function
-  - `functions.pubsub.schedule('every 60 minutes')`, 300s timeout: sweep teams with `calendarUrls`, conditional fetch (ETag/If-Modified-Since + `contentHash`) via `calendar-ics-fetch-core.cjs`, run the reconcile core, persist `calendarSyncs/{urlHash}` state (`lastFetchedAt`, `lastSuccessAt`, `etag`, `contentHash`, `lastError`, `lastRunCounts`) and `syncStatus/global.lastSweepAt`. Per-calendar try/catch isolation.
+  - `functions.pubsub.schedule('every 60 minutes')`, 300s timeout: sweep teams with `calendarUrls`, conditional fetch (ETag/If-Modified-Since + `contentHash`) via the guarded fetch implementation currently inline in `exports.fetchCalendarIcs` (`normalizeTargetUrl`, `fetchWithTimeout`, `BEGIN:VCALENDAR` validation) plus the `calendar-ics-fetch-core.cjs` cache helpers, run the reconcile core, persist `calendarSyncs/{urlHash}` state (`lastFetchedAt`, `lastSuccessAt`, `etag`, `contentHash`, `lastError`, `lastRunCounts`) and `syncStatus/global.lastSweepAt`. Per-calendar try/catch isolation.
   - Tests: extend `tests/unit/functions-deployable-exports.test.js` for the new export (no `_internal` collision); unit tests for conditional-fetch skip and per-calendar failure isolation.
   - _Requirements: 1.1, 1.2, 1.5, 6.2, 6.3_
 

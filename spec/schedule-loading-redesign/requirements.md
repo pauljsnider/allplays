@@ -33,15 +33,15 @@ This feature moves calendar data server-side (a scheduled Cloud Function syncs I
 
 1.5. THE SYSTEM SHALL persist per-calendar sync state in a `calendarSyncs` document: `lastFetchedAt`, `etag`, `contentHash`, `lastError`, `lastSuccessAt`.
 
-1.6. THE SYSTEM SHALL reuse the existing server-side fetch core (`functions/calendar-ics-fetch-core.cjs` SSRF guards, ICS validation) for all sync fetches.
+1.6. THE SYSTEM SHALL reuse the existing guarded server-side ICS fetch path for all sync fetches: either call/extract the logic currently inline in `exports.fetchCalendarIcs` (`normalizeTargetUrl` + `fetchWithTimeout` + `BEGIN:VCALENDAR` validation) and wrap it with the cache helpers from `functions/calendar-ics-fetch-core.cjs`, or first move that guarded logic into a shared function module used by both `fetchCalendarIcs` and the sync. The sync SHALL NOT fetch arbitrary `calendarUrls` through a new unguarded HTTP client.
 
 ### 2. Reconciliation semantics
 
-2.1. THE SYSTEM SHALL use the ICS `UID` (plus `RECURRENCE-ID` for exceptions) as event identity, with a deterministic Firestore doc ID derived from the calendar URL hash and UID.
+2.1. THE SYSTEM SHALL use the shared calendar tracking id as event identity: raw ICS `UID` for single events and `getCalendarEventTrackingId(event)` / `uid__occurrenceStart` for recurring occurrences and `RECURRENCE-ID` exceptions. Firestore doc IDs SHALL be deterministic and derived from the calendar URL hash plus that tracking id.
 
-2.2. WHEN a new UID appears in a feed, THE SYSTEM SHALL create an event doc with `source: 'calendar'`, `calendarEventUid`, and the feed's `SEQUENCE`/`DTSTAMP` as `sourceRevision`.
+2.2. WHEN a new tracking id appears in a feed, THE SYSTEM SHALL create an event doc with `source: 'calendar'`, `calendarEventUid` set to the tracking id, and the feed's `SEQUENCE`/`DTSTAMP` as `sourceRevision`.
 
-2.3. WHEN an existing UID's content changes, THE SYSTEM SHALL patch only source-owned fields (date, end, location, title/summary, cancelled status) and SHALL NOT modify app-owned fields (`statTrackerConfigId`, `arrivalTime`, `notes`, `kitColor`, assignments, `gamePlan`).
+2.3. WHEN an existing tracking id's content changes, THE SYSTEM SHALL patch only source-owned fields (date, end, location, title/summary, cancelled status) and SHALL NOT modify app-owned fields (`statTrackerConfigId`, `arrivalTime`, `notes`, `kitColor`, assignments, `gamePlan`).
 
 2.4. WHEN an event's date or time changes in the feed, THE SYSTEM SHALL update the existing doc in place so attendance, RSVPs, and practice sessions remain attached.
 
@@ -49,9 +49,9 @@ This feature moves calendar data server-side (a scheduled Cloud Function syncs I
 
 2.6. WHEN a feed event carries `STATUS:CANCELLED` or a `[CANCELED]` summary marker, THE SYSTEM SHALL mark the event doc cancelled.
 
-2.7. WHEN a feed event has an `RRULE`, THE SYSTEM SHALL expand occurrences server-side within a bounded horizon (past 30 days to future 12 months) into occurrence docs keyed `uid__instanceDate`, applying `RECURRENCE-ID` exceptions as per-occurrence patches, and SHALL roll the horizon forward on each scheduled run.
+2.7. WHEN a feed event has an `RRULE`, THE SYSTEM SHALL expand occurrences server-side within a bounded horizon (past 30 days to future 12 months) into occurrence docs keyed by the same occurrence tracking id used by `getCalendarEventTrackingId(event)` (for example `uid__2026-03-10T23:00:00.000Z`), applying `RECURRENCE-ID` exceptions as per-occurrence patches, and SHALL roll the horizon forward on each scheduled run.
 
-2.8. WHEN a game doc already exists with `calendarEventUid` equal to a feed UID (e.g. created by the legacy manual import), THE SYSTEM SHALL patch that doc rather than creating a duplicate.
+2.8. WHEN a game doc already exists with `calendarEventUid` equal to a feed tracking id (e.g. created by the legacy manual import), THE SYSTEM SHALL patch that doc rather than creating a duplicate.
 
 2.9. WHEN a feed returns invalid or empty ICS, THE SYSTEM SHALL record the error on the `calendarSyncs` doc and SHALL leave all previously synced event docs untouched.
 
@@ -81,7 +81,7 @@ This feature moves calendar data server-side (a scheduled Cloud Function syncs I
 
 ### 5. Backward compatibility (legacy site + React app)
 
-5.1. THE SYSTEM SHALL stamp every synced event doc with `calendarEventUid` so the existing suppression logic in both clients (legacy `js/calendar-ics-sync.js` merge; app `isTrackedCalendarEvent`) hides duplicate client-fetched ICS events without client changes.
+5.1. THE SYSTEM SHALL stamp every synced event doc with `calendarEventUid` equal to the same tracking id produced by `getCalendarEventTrackingId(event)` so the existing suppression logic in both clients (legacy `js/calendar-ics-sync.js` merge; app `isTrackedCalendarEvent`) hides duplicate client-fetched ICS events without client changes. Recurring occurrence docs SHALL NOT store only the raw UID.
 
 5.2. WHEN the sync is live, events synced from calendars SHALL appear exactly once in both the legacy site and the React app.
 
