@@ -78,11 +78,22 @@
         gameId: context.get('gameId') || ''
       };
 
-      const resolveRouteTemplate = (template) => template
+      const removeEmptyHashParameters = (route) => {
+        const [base, hash] = route.split('#');
+        if (hash === undefined) {
+          return route;
+        }
+
+        const parameters = hash
+          .split('&')
+          .filter((parameter) => parameter !== 'teamId=' && parameter !== 'gameId=');
+
+        return parameters.length > 0 ? `${base}#${parameters.join('&')}` : base;
+      };
+
+      const resolveRouteTemplate = (template) => removeEmptyHashParameters(template
         .replaceAll('{teamId}', encodeURIComponent(values.teamId))
-        .replaceAll('{gameId}', encodeURIComponent(values.gameId))
-        .replace(/#teamId=$/, '')
-        .replace(/&gameId=$/, '');
+        .replaceAll('{gameId}', encodeURIComponent(values.gameId)));
 
       document.querySelectorAll('[data-help-context-link]').forEach((link) => {
         link.href = resolveRouteTemplate(link.dataset.routeTemplate || link.getAttribute('href'));
