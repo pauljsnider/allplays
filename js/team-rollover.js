@@ -33,6 +33,22 @@ function omitSensitiveRosterFields(source = {}) {
     return copy;
 }
 
+function isPlainRosterMap(value) {
+    return value && typeof value === 'object' && !Array.isArray(value);
+}
+
+function omitSensitiveProfileRosterFields(profile = {}) {
+    const copy = {};
+    Object.entries(profile).forEach(([key, value]) => {
+        if ((key === 'rosterFields' || key === 'customFields') && isPlainRosterMap(value)) {
+            copy[key] = omitSensitiveRosterFields(value);
+            return;
+        }
+        copy[key] = value;
+    });
+    return copy;
+}
+
 export function buildRolloverPlayerCopy(sourcePlayer, sourceTeamId, rolledOverAt) {
     if (!sourcePlayer || typeof sourcePlayer !== 'object') {
         throw new Error('Source player is required');
@@ -42,8 +58,12 @@ export function buildRolloverPlayerCopy(sourcePlayer, sourceTeamId, rolledOverAt
     Object.entries(sourcePlayer).forEach(([key, value]) => {
         if (ROLLOVER_OMITTED_PLAYER_FIELDS.has(key)) return;
         if (ROLLOVER_SENSITIVE_PLAYER_FIELDS.has(key)) return;
-        if (ROLLOVER_ROSTER_FIELD_SOURCES.has(key) && value && typeof value === 'object' && !Array.isArray(value)) {
+        if (ROLLOVER_ROSTER_FIELD_SOURCES.has(key) && isPlainRosterMap(value)) {
             copy[key] = omitSensitiveRosterFields(value);
+            return;
+        }
+        if (key === 'profile' && isPlainRosterMap(value)) {
+            copy[key] = omitSensitiveProfileRosterFields(value);
             return;
         }
         copy[key] = value;

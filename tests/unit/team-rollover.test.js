@@ -100,6 +100,17 @@ describe('team rollover player copy', () => {
                 height: '5-8',
                 medicalInfo: 'asthma'
             },
+            profile: {
+                nickname: 'Sam',
+                rosterFields: {
+                    graduationYear: '2030',
+                    medicalNotes: 'uses inhaler'
+                },
+                customFields: {
+                    bats: 'right',
+                    parentEmail: 'parent@example.com'
+                }
+            },
             createdAt: { old: true },
             updatedAt: { old: true }
         }, 'team-old', rolledOverAt);
@@ -112,6 +123,15 @@ describe('team rollover player copy', () => {
             active: true,
             rosterFieldValues: {
                 height: '5-8'
+            },
+            profile: {
+                nickname: 'Sam',
+                rosterFields: {
+                    graduationYear: '2030'
+                },
+                customFields: {
+                    bats: 'right'
+                }
             },
             sourceTeamId: 'team-old',
             sourcePlayerId: 'player-1',
@@ -160,6 +180,16 @@ describe('team rollover player copy', () => {
                     rosterFieldValues: {
                         school: 'Central',
                         guardianPhone: '555-9999'
+                    },
+                    profile: {
+                        rosterFields: {
+                            graduationYear: '2030',
+                            emergencyContactPhone: '555-0000'
+                        },
+                        customFields: {
+                            throws: 'right',
+                            householdEmail: 'household@example.com'
+                        }
                     }
                 },
                 {
@@ -190,6 +220,10 @@ describe('team rollover player copy', () => {
             active: true,
             number: '12',
             rosterFieldValues: { school: 'Central' },
+            profile: {
+                rosterFields: { graduationYear: '2030' },
+                customFields: { throws: 'right' }
+            },
             sourceTeamId: 'team-old',
             sourcePlayerId: 'player-1'
         });
@@ -204,6 +238,8 @@ describe('team rollover player copy', () => {
         expect(harness.batch.setCalls[0].payload).not.toHaveProperty('emergencyContact');
         expect(harness.batch.setCalls[0].payload).not.toHaveProperty('medicalInfo');
         expect(harness.batch.setCalls[0].payload.rosterFieldValues).not.toHaveProperty('guardianPhone');
+        expect(harness.batch.setCalls[0].payload.profile.rosterFields).not.toHaveProperty('emergencyContactPhone');
+        expect(harness.batch.setCalls[0].payload.profile.customFields).not.toHaveProperty('householdEmail');
         expect(harness.batch.setCalls[1].payload).not.toHaveProperty('parentEmail');
         expect(harness.batch.setCalls[1].payload).not.toHaveProperty('householdContact');
         expect(harness.batch.setCalls[1].payload.customFields).not.toHaveProperty('emergencyContactName');
