@@ -6,7 +6,10 @@ import {
 
 const TELEMETRY_VERSION = '1.0.0';
 const DEFAULT_ENDPOINT = 'https://us-central1-game-flow-c6311.cloudfunctions.net/collectTelemetry';
-const MAX_QUEUE_SIZE = 40;
+// Sized so a burst (app screen mounts emit ~8+ ux-timing events each, batches
+// flush 15 at a time behind an async POST) doesn't silently drop the oldest
+// events before the next flush completes.
+const MAX_QUEUE_SIZE = 120;
 const MAX_BATCH_SIZE = 15;
 const FLUSH_INTERVAL_MS = 5000;
 const SESSION_TIMEOUT_MS = 30 * 60 * 1000;
@@ -166,11 +169,11 @@ function isTelemetryEnabled() {
     if (getLocalStorageValue(OPT_OUT_KEY) === '1') return false;
 
     const config = window.__ALLPLAYS_CONFIG__ || {};
-    if (config.telemetryEnabled === false || window.ALLPLAYS_TELEMETRY_ENABLED === false) {
+    if (config.enabled === false || config.telemetryEnabled === false || window.ALLPLAYS_TELEMETRY_ENABLED === false) {
         return false;
     }
 
-    return !isLocalDevelopment() || config.telemetryEnabled === true || window.ALLPLAYS_TELEMETRY_ENABLED === true;
+    return !isLocalDevelopment() || config.enabled === true || config.telemetryEnabled === true || window.ALLPLAYS_TELEMETRY_ENABLED === true;
 }
 
 function getSafePath(url = window.location.href) {
@@ -364,7 +367,10 @@ export function captureTelemetryEvent(name, properties = {}, options = {}) {
 }
 
 export async function sendEvents(events, keepalive = false) {
-    const authToken = await getAuthToken();
+    // Keepalive sends happen while the page is being torn down (pagehide /
+    // hidden). Auth is intentionally omitted here because a stale cached token
+    // makes collectTelemetry reject otherwise valid visitor/session events.
+    const authToken = keepalive ? null : await getAuthToken();
     const payloadObject = {
         sentAt: new Date().toISOString(),
         events
@@ -415,6 +421,21 @@ export async function flush(keepalive = false) {
     }
     if (!enabled || !endpoint || queue.length === 0) return;
 
+    if (keepalive) {
+        // The page is going away — drain everything now. Each batch goes out
+        // as a synchronous beacon (no token fetch on this path), so events
+        // beyond the first batch are no longer lost at page close.
+        while (queue.length > 0) {
+            const events = queue.splice(0, MAX_BATCH_SIZE);
+            try {
+                await sendEvents(events, true);
+            } catch (error) {
+                // No retry path while the page is unloading.
+            }
+        }
+        return;
+    }
+
     const events = queue.splice(0, MAX_BATCH_SIZE);
     try {
         await sendEvents(events, keepalive);
@@ -422,7 +443,7 @@ export async function flush(keepalive = false) {
         queue = events.concat(queue).slice(0, MAX_QUEUE_SIZE);
     }
 
-    if (!keepalive && queue.length > 0) {
+    if (queue.length > 0) {
         scheduleFlush(queue.length >= MAX_BATCH_SIZE ? 0 : FLUSH_INTERVAL_MS);
     }
 }
