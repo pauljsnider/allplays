@@ -625,6 +625,8 @@
         let pendingAdminInviteEmails = [];
         let confirmedTeamMembers = [];
         let teamPermissions = normalizeTeamPermissions();
+        let loadedTeamHasTeamPermissions = false;
+        let teamPermissionsTouched = false;
         let rolloverSourceTeams = [];
         let rolloverAccessPreview = null;
         let currentRegistrationSource = null;
@@ -1378,6 +1380,7 @@
 
             list.querySelectorAll(`.${kind}-member-checkbox`).forEach((input) => {
                 input.addEventListener('change', () => {
+                    teamPermissionsTouched = true;
                     const current = new Set(getPermissionState(kind).memberIds);
                     if (input.checked) {
                         current.add(input.value);
@@ -1451,6 +1454,7 @@
 
         ['scorekeeping', 'streaming'].forEach((kind) => {
             document.getElementById(`${kind}AccessMode`).addEventListener('change', (event) => {
+                teamPermissionsTouched = true;
                 teamPermissions = normalizeTeamPermissions({
                     ...teamPermissions,
                     [kind]: {
@@ -1461,6 +1465,10 @@
                 renderPermissionMemberList(kind);
             });
         });
+
+        function shouldPersistTeamPermissions() {
+            return !currentTeamId || loadedTeamHasTeamPermissions || teamPermissionsTouched;
+        }
 
         function syncStreamVolunteerPanel() {
             const mode = document.getElementById('streamAccessMode').value;
@@ -1538,6 +1546,7 @@
                     teamId: initialTeamId,
                     getTeamAccessCodes
                 });
+                loadedTeamHasTeamPermissions = Object.prototype.hasOwnProperty.call(team, 'teamPermissions');
                 teamPermissions = normalizeTeamPermissions(team.teamPermissions);
                 await loadConfirmedTeamMembers(initialTeamId);
                 streamVolunteerEmails = normalizeStreamVolunteerEmailList(team.streamVolunteerEmails);
@@ -2018,7 +2027,7 @@
                         }
                     } : {}),
                     ...(rolloverStaffUpdate ? { accessRolloverAudit: rolloverStaffUpdate.accessRolloverAudit } : {}),
-                    teamPermissions: normalizeTeamPermissions(teamPermissions),
+                    ...(shouldPersistTeamPermissions() ? { teamPermissions: normalizeTeamPermissions(teamPermissions) } : {}),
                     streamAccessMode: document.getElementById('streamAccessMode').value,
                     streamVolunteerEmails: normalizedStreamVolunteerEmails,
                     defaultAssignments: getDefaultAssignmentsFromForm(),
