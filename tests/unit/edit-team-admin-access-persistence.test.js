@@ -692,6 +692,76 @@ describe('edit team admin access persistence', () => {
         }
     });
 
+    it('does not backfill team permissions when saving an unrelated edit to a legacy team', async () => {
+        const initialState = {
+            currentUser: { uid: 'owner-1', email: 'owner@example.com' },
+            team: {
+                id: 'team-1',
+                ownerId: 'owner-1',
+                name: 'Legacy Sharks',
+                description: 'Travel team',
+                sport: 'Basketball',
+                notificationEmail: '',
+                leagueUrl: '',
+                standingsConfig: { enabled: false, rankingMode: 'points', tiebreakers: [] },
+                zip: '66209',
+                isPublic: true,
+                adminEmails: []
+            },
+            updateCalls: []
+        };
+
+        const env = await bootEditTeam(initialState);
+        try {
+            env.elements.get('name').value = 'Legacy Sharks Updated';
+
+            await env.elements.get('team-form').requestSubmit();
+
+            expect(env.state.updateCalls).toHaveLength(1);
+            expect(env.state.updateCalls[0].teamData.name).toBe('Legacy Sharks Updated');
+            expect(env.state.updateCalls[0].teamData).not.toHaveProperty('teamPermissions');
+        } finally {
+            env.cleanup();
+        }
+    });
+
+    it('persists team permissions for legacy teams after the permissions UI is changed', async () => {
+        const initialState = {
+            currentUser: { uid: 'owner-1', email: 'owner@example.com' },
+            team: {
+                id: 'team-1',
+                ownerId: 'owner-1',
+                name: 'Legacy Sharks',
+                description: 'Travel team',
+                sport: 'Basketball',
+                notificationEmail: '',
+                leagueUrl: '',
+                standingsConfig: { enabled: false, rankingMode: 'points', tiebreakers: [] },
+                zip: '66209',
+                isPublic: true,
+                adminEmails: []
+            },
+            updateCalls: []
+        };
+
+        const env = await bootEditTeam(initialState);
+        try {
+            env.elements.get('scorekeepingAccessMode').value = 'selected';
+            await env.elements.get('scorekeepingAccessMode').dispatchEvent(new MockEvent('change'));
+
+            await env.elements.get('team-form').requestSubmit();
+
+            expect(env.state.updateCalls).toHaveLength(1);
+            expect(env.state.updateCalls[0].teamData.teamPermissions).toMatchObject({
+                scorekeeping: { mode: 'selected', memberIds: [] },
+                streaming: { mode: 'all_confirmed', memberIds: [] },
+                videography: { mode: 'selected', memberIds: [] }
+            });
+        } finally {
+            env.cleanup();
+        }
+    });
+
     it('blocks Sports Connect roster import until a stored provider snapshot exists', () => {
         const html = readFileSync(new URL('../../edit-roster.html', import.meta.url), 'utf8');
 
