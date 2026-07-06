@@ -97,6 +97,15 @@ export function buildTrackStatsheetApplyPlan({
             awayScore: Number(awayScore || 0) || 0,
             opponentStats,
             status: 'completed',
+            liveStatus: 'completed',
+            liveHasData: false,
+            liveClockMs: 0,
+            liveClockRunning: false,
+            liveClockPeriod: 'Q1',
+            liveLineup: {
+                onCourt: [],
+                bench: []
+            },
             statSheetPhotoUrl: statSheetPhotoUrl || null
         }
     };
