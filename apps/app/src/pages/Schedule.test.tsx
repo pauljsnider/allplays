@@ -606,6 +606,29 @@ describe('Schedule', () => {
     expect(screen.queryByRole('button', { name: 'Show 1 more' })).toBeNull();
   });
 
+  it('does not show packet pagination when only non-packet past events are hidden', async () => {
+    scheduleServiceMocks.loadParentSchedule.mockResolvedValueOnce({
+      children: [
+        { playerId: 'player-1', playerName: 'Pat', teamId: 'team-1', teamName: 'Bears' }
+      ],
+      events: [
+        ...Array.from({ length: 5 }, (_, index) => buildPracticePacketEvent(index + 1, {
+          date: new Date(Date.UTC(2025, 5, index + 1, 18, 0, 0))
+        })),
+        ...Array.from({ length: 25 }, (_, index) => buildScheduleEvent(index + 6, {
+          date: new Date(Date.UTC(2025, 5, index + 6, 18, 0, 0))
+        }))
+      ]
+    });
+
+    renderSchedule('/schedule?filter=past-all&view=packets');
+
+    expect(await screen.findByText('Practice Packet 5')).toBeTruthy();
+    expect(screen.getByText('All visible packets are handled')).toBeTruthy();
+    expect(screen.queryByText('Showing 5 of 5 packets')).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Show 10 more' })).toBeNull();
+  });
+
   it('applies schedule team and view query params on direct links', async () => {
     scheduleServiceMocks.loadParentSchedule.mockResolvedValueOnce({
       children: [

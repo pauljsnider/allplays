@@ -539,7 +539,9 @@ export function Schedule({ auth }: { auth: AuthState }) {
 
   const calendarEntries = useMemo(() => getCalendarScheduleEntries(visibleEvents), [visibleEvents]);
   const listEntries = calendarEntries;
+  const packetRows = useMemo(() => getPracticePacketRows(visibleEvents), [visibleEvents]);
   const canLoadMorePastHistory = filter === 'past-all' && (pastHistoryHasMore || visibleListCount < listEntries.length);
+  const canLoadMorePacketRows = (filter === 'past-all' && pastHistoryHasMore) || visibleListCount < packetRows.length;
 
   const handleShowMore = async () => {
     if (visibleListCount < listEntries.length) {
@@ -569,7 +571,6 @@ export function Schedule({ auth }: { auth: AuthState }) {
   };
   const parentLinkedPlayerIds = useMemo(() => new Set(children.map((child) => child.playerId)), [children]);
   const teamOptions = useMemo(() => getParentScheduleTeamOptions(events, children), [children, events]);
-  const packetRows = useMemo(() => getPracticePacketRows(visibleEvents), [visibleEvents]);
   const selectedDayEntries = useMemo(() => {
     if (!selectedDay) return [];
     return calendarEntries.filter((event) =>
@@ -1507,7 +1508,7 @@ export function Schedule({ auth }: { auth: AuthState }) {
               rows={packetRows}
               visibleCount={visibleListCount}
               pageSize={listPageSize}
-              canShowMore={canLoadMorePastHistory || visibleListCount < packetRows.length}
+              canShowMore={canLoadMorePacketRows}
               loadingMore={filter === 'past-all' && loadingPastHistory}
               onShowMore={handleShowMorePackets}
             />
