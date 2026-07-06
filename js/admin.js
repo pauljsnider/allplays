@@ -42,6 +42,7 @@ import { buildAdminTeamOfficialsSummary } from './admin-team-officials.js?v=1';
 import {
     hasAdminGlobalSearchTerm,
     normalizeAdminSearchTerm,
+    selectAdminItemById,
     selectAdminSearchCollection
 } from './admin-search.js?v=1';
 import {
@@ -120,6 +121,15 @@ function getDashboardTeams() {
 
 function getDashboardUsers() {
     return dashboardUsers.length ? dashboardUsers : allUsers;
+}
+
+function getAdminTeamById(teamId) {
+    return selectAdminItemById({
+        id: teamId,
+        pageItems: allTeams,
+        globalItems: globalSearchTeams,
+        fallbackItems: dashboardTeams
+    });
 }
 
 function applyCurrentTeamPage() {
@@ -1258,7 +1268,7 @@ function getOfficialsAdminDraft() {
 }
 
 window.openOfficialsAdmin = async function (teamId) {
-    activeOfficialsTeam = allTeams.find((team) => team.id === teamId) || null;
+    activeOfficialsTeam = getAdminTeamById(teamId);
     if (!activeOfficialsTeam) return;
 
     document.getElementById('officials-admin-team-name').textContent = activeOfficialsTeam.name || 'Team';
@@ -1395,7 +1405,7 @@ function renderUsers(users) {
 }
 
 window.deleteTeamAdmin = async function (teamId, teamName) {
-    const team = allTeams.find((entry) => entry.id === teamId) || null;
+    const team = getAdminTeamById(teamId);
     if (!canCurrentUserDeactivateTeam(team)) {
         alert('Team deactivation is only available to the team owner in the dashboard workflow.');
         return;
@@ -1414,7 +1424,7 @@ window.deleteTeamAdmin = async function (teamId, teamName) {
 };
 
 window.openRegistrationFormsAdmin = async function (teamId) {
-    activeRegistrationTeam = allTeams.find(team => team.id === teamId) || null;
+    activeRegistrationTeam = getAdminTeamById(teamId);
     if (!activeRegistrationTeam) return;
 
     document.getElementById('registration-team-name').textContent = activeRegistrationTeam.name || 'Team';
@@ -1702,6 +1712,10 @@ async function renderCurrentUsersView() {
     const users = await getAdminUsersForSearch(term);
     const latestTerm = normalizeAdminSearchTerm(document.getElementById('search-users')?.value || '');
     if (term !== latestTerm) return;
+
+    await loadVisibleOfficialUserLinks(users);
+    const refreshedTerm = normalizeAdminSearchTerm(document.getElementById('search-users')?.value || '');
+    if (term !== refreshedTerm) return;
 
     const filtered = users.filter((u) => {
         const officialSummary = getOfficialUserSummary(u, officialUserLookup);

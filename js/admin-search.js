@@ -9,3 +9,8 @@ export function hasAdminGlobalSearchTerm(value = '') {
 export function selectAdminSearchCollection({ searchTerm = '', pageItems = [], globalItems = [] } = {}) {
     return hasAdminGlobalSearchTerm(searchTerm) ? globalItems : pageItems;
 }
+
+export function selectAdminItemById({ id = '', pageItems = [], globalItems = [], fallbackItems = [] } = {}) {
+    const itemId = String(id || '');
+    return [...pageItems, ...globalItems, ...fallbackItems].find((item) => String(item?.id || '') === itemId) || null;
+}

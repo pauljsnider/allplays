@@ -123,4 +123,18 @@ describe('admin users official links', () => {
         expect(adminJs).toContain("await loadVisibleOfficialUserLinks(getCurrentUsersPage());");
         expect(adminJs).toContain('await ensureCurrentUsersOfficialsLoaded();');
     });
+
+    it('loads official lookups for the active user search result source before filtering and rendering badges', () => {
+        const adminJs = readSource('js/admin.js');
+        const renderUsersView = adminJs.slice(
+            adminJs.indexOf('async function renderCurrentUsersView()'),
+            adminJs.indexOf('async function loadNextTeamsPage()')
+        );
+
+        expect(renderUsersView).toContain('const users = await getAdminUsersForSearch(term);');
+        expect(renderUsersView).toContain('await loadVisibleOfficialUserLinks(users);');
+        expect(renderUsersView.indexOf('await loadVisibleOfficialUserLinks(users);')).toBeLessThan(
+            renderUsersView.indexOf('const filtered = users.filter')
+        );
+    });
 });

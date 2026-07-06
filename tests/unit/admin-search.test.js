@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
     hasAdminGlobalSearchTerm,
     normalizeAdminSearchTerm,
+    selectAdminItemById,
     selectAdminSearchCollection
 } from '../../js/admin-search.js';
 
@@ -25,5 +26,26 @@ describe('admin search collection selection', () => {
         expect(normalizeAdminSearchTerm('  Team Z  ')).toBe('team z');
         expect(hasAdminGlobalSearchTerm('  Team Z  ')).toBe(true);
         expect(hasAdminGlobalSearchTerm('\n\t')).toBe(false);
+    });
+
+    it('resolves row actions against global search results outside the current page', () => {
+        const pageItems = [{ id: 'team-1', name: 'Current page' }];
+        const globalItems = [{ id: 'team-99', name: 'Search result' }];
+        const fallbackItems = [{ id: 'team-100', name: 'Dashboard cached' }];
+
+        expect(selectAdminItemById({ id: 'team-99', pageItems, globalItems, fallbackItems })).toBe(globalItems[0]);
+        expect(selectAdminItemById({ id: 'team-100', pageItems, globalItems, fallbackItems })).toBe(fallbackItems[0]);
+        expect(selectAdminItemById({ id: 'missing', pageItems, globalItems, fallbackItems })).toBeNull();
+    });
+
+    it('documents that non-empty user searches use the global lookup source', () => {
+        const pageUsers = [{ id: 'user-1', email: 'page@example.com' }];
+        const globalUsers = [{ id: 'user-99', email: 'official@example.com' }];
+
+        expect(selectAdminSearchCollection({
+            searchTerm: 'official',
+            pageItems: pageUsers,
+            globalItems: globalUsers
+        })).toBe(globalUsers);
     });
 });
