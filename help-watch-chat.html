@@ -21,6 +21,24 @@
           <li><strong>Coach/Admin:</strong> Configure stream source and game live status.</li>
           <li><strong>Parent/Member:</strong> Consume view-only watching experience.</li>
         </ul>
+        <div class="mt-4 flex flex-wrap gap-2" aria-label="Watch navigation">
+          <a
+            class="inline-flex items-center rounded-md bg-blue-700 px-3 py-2 text-sm font-semibold text-white hover:bg-blue-800"
+            href="team.html"
+            data-help-context-link
+            data-guide-id="watch-game"
+            data-quick-link-label="Team Page"
+            data-route-template="team.html#teamId={teamId}"
+          >Team Page</a>
+          <a
+            class="inline-flex items-center rounded-md bg-blue-700 px-3 py-2 text-sm font-semibold text-white hover:bg-blue-800"
+            href="live-game.html"
+            data-help-context-link
+            data-guide-id="watch-game"
+            data-quick-link-label="Game Viewer"
+            data-route-template="live-game.html#teamId={teamId}&gameId={gameId}"
+          >Game Viewer</a>
+        </div>
       </article>
 
       <article class="bg-white rounded-xl border border-slate-200 p-5">
@@ -30,6 +48,16 @@
           <li><strong>Coach/Admin:</strong> Send operational game-day and scheduling updates.</li>
           <li><strong>Parent:</strong> Parent communication and acknowledgments.</li>
         </ul>
+        <div class="mt-4 flex flex-wrap gap-2" aria-label="Chat navigation">
+          <a
+            class="inline-flex items-center rounded-md bg-blue-700 px-3 py-2 text-sm font-semibold text-white hover:bg-blue-800"
+            href="team-chat.html"
+            data-help-context-link
+            data-guide-id="team-chat-basics"
+            data-quick-link-label="Open Team Chat"
+            data-route-template="team-chat.html#teamId={teamId}"
+          >Team Chat</a>
+        </div>
       </article>
 
       <article class="bg-white rounded-xl border border-slate-200 p-5">
@@ -42,5 +70,24 @@
       </article>
     </section>
   </main>
+  <script>
+    (() => {
+      const context = new URLSearchParams(window.location.search);
+      const values = {
+        teamId: context.get('teamId') || '',
+        gameId: context.get('gameId') || ''
+      };
+
+      const resolveRouteTemplate = (template) => template
+        .replaceAll('{teamId}', encodeURIComponent(values.teamId))
+        .replaceAll('{gameId}', encodeURIComponent(values.gameId))
+        .replace(/#teamId=$/, '')
+        .replace(/&gameId=$/, '');
+
+      document.querySelectorAll('[data-help-context-link]').forEach((link) => {
+        link.href = resolveRouteTemplate(link.dataset.routeTemplate || link.getAttribute('href'));
+      });
+    })();
+  </script>
 </body>
 </html>

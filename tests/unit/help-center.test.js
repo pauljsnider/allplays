@@ -14,6 +14,15 @@ function readRepoFile(relativePath) {
     return readFileSync(new URL(`../../${relativePath}`, import.meta.url), 'utf8');
 }
 
+function getHelpWatchChatContextLinks() {
+    const helpPage = readRepoFile('help-watch-chat.html');
+    return [...helpPage.matchAll(/<a\b[^>]*data-help-context-link[^>]*>/g)].map(([anchor]) => ({
+        guideId: anchor.match(/\bdata-guide-id="([^"]+)"/)?.[1],
+        quickLinkLabel: anchor.match(/\bdata-quick-link-label="([^"]+)"/)?.[1],
+        routeTemplate: anchor.match(/\bdata-route-template="([^"]+)"/)?.[1]
+    }));
+}
+
 describe('help center deep workflow coverage', () => {
     it('normalizes role aliases and defaults unknown to member', () => {
         expect(normalizeHelpRole('admins')).toBe('administrator');
@@ -84,5 +93,24 @@ describe('help center deep workflow coverage', () => {
         expect(helpPage).toContain('@ALL PLAYS');
         expect(helpPage).toContain('Use the recipient picker, not @ mentions');
         expect(helpPage).not.toContain('Use targeted mentions');
+    });
+
+    it('keeps Help Watch Chat CTAs aligned with watch and team-chat quick links', () => {
+        const pageLinksByGuideAndLabel = new Map(
+            getHelpWatchChatContextLinks().map((link) => [`${link.guideId}:${link.quickLinkLabel}`, link.routeTemplate])
+        );
+
+        const requiredQuickLinks = [
+            ['watch-game', 'Team Page'],
+            ['watch-game', 'Game Viewer'],
+            ['team-chat-basics', 'Open Team Chat']
+        ];
+
+        requiredQuickLinks.forEach(([guideId, label]) => {
+            const guide = getGuideById('parent', guideId);
+            const quickLink = guide.quickLinks.find((link) => link.label === label);
+
+            expect(pageLinksByGuideAndLabel.get(`${guideId}:${label}`)).toBe(quickLink.url);
+        });
     });
 });
