@@ -20,11 +20,11 @@ describe('team media page wiring', () => {
         const page = fs.readFileSync(path.join(repoRoot, 'team-media.html'), 'utf8');
         const source = fs.readFileSync(path.join(repoRoot, 'js/team-media.js'), 'utf8');
 
-        expect(page).toContain('src="js/team-media.js?v=10"');
+        expect(page).toContain('src="js/team-media.js?v=11"');
         expect(page).toContain('Add album');
         expect(page).toContain('Upload files');
         expect(page).toContain('Save video link');
-        expect(source).toContain("from './db.js?v=81'");
+        expect(source).toContain("from './db.js?v=82'");
         expect(source).toContain("import { checkAuth } from './auth.js?v=41';");
         expect(source).toContain('checkAuth(async (user) => {');
         expect(source).toContain('team.html#teamId=${encodeURIComponent(state.teamId)}');
@@ -36,6 +36,22 @@ describe('team media page wiring', () => {
         expect(source).toContain('state.actionInFlight = false;');
         expect(source).toContain('getTeamMediaItemsPage');
         expect(source).toContain('data-load-more-media');
+    });
+
+    it('keeps jsdom team media db mocks aligned with the runtime db import', () => {
+        const source = fs.readFileSync(path.join(repoRoot, 'js/team-media.js'), 'utf8');
+        const dbImportVersion = source.match(/from '\.\/db\.js\?v=(\d+)'/)?.[1];
+
+        expect(dbImportVersion).toBe('82');
+
+        for (const testFile of [
+            'tests/unit/team-media-item-rename.test.js',
+            'tests/unit/team-media-legacy-upload-forms.test.js'
+        ]) {
+            const testSource = fs.readFileSync(path.join(repoRoot, testFile), 'utf8');
+            expect(testSource).toContain(`vi.mock('../../js/db.js?v=${dbImportVersion}'`);
+            expect(testSource).not.toContain("vi.mock('../../js/db.js?v=81'");
+        }
     });
 
     it('keeps media reads member-scoped and uploads explicitly approved', () => {

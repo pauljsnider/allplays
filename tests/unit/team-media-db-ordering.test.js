@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const folderState = vi.hoisted(() => ({ nextMediaOrder: 0 }));
 const addDocState = vi.hoisted(() => ({ nextId: 1 }));
+const batchState = vi.hoisted(() => ({ batches: [] }));
 const firebaseMocks = vi.hoisted(() => ({
     addDoc: vi.fn(async (_collectionRef, data) => ({ id: `media-${addDocState.nextId++}`, data })),
     collection: vi.fn((_db, path) => ({ path })),
@@ -110,6 +111,18 @@ describe('team media db ordering', () => {
         vi.clearAllMocks();
         folderState.nextMediaOrder = 0;
         addDocState.nextId = 1;
+        batchState.batches = [];
+        firebaseMocks.writeBatch.mockImplementation(() => {
+            const batch = {
+                deletes: [],
+                updates: [],
+                delete: vi.fn((docRef) => batch.deletes.push(docRef)),
+                update: vi.fn((docRef, payload) => batch.updates.push({ docRef, payload })),
+                commit: vi.fn(async () => undefined)
+            };
+            batchState.batches.push(batch);
+            return batch;
+        });
         uploadTaskQueue.length = 0;
         global.fetch = vi.fn(async () => ({
             ok: true,
@@ -268,6 +281,7 @@ describe('team media db ordering', () => {
     });
 
     it('drops persisted storage urls when fresh authorization cannot be resolved', async () => {
+        const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
         firebaseMocks.getDocs.mockResolvedValueOnce({
             docs: [{
                 id: 'media-stale',
@@ -285,25 +299,76 @@ describe('team media db ordering', () => {
         firebaseMocks.getDownloadURL.mockRejectedValueOnce(new Error('storage/unauthorized'));
 
         const { getTeamMediaItems } = await import('../../js/db.js');
-        const items = await getTeamMediaItems('team-1', 'folder-1');
+        let items;
+        try {
+            items = await getTeamMediaItems('team-1', 'folder-1');
 
-        expect(firebaseMocks.updateDoc).toHaveBeenCalledWith(
-            { path: 'teams/team-1/mediaItems/media-stale' },
-            {
-                url: 'DELETE_FIELD',
-                src: 'DELETE_FIELD',
-                updatedAt: 'server-ts'
-            }
-        );
-        expect(items).toEqual([
-            expect.objectContaining({
-                id: 'media-stale',
-                storagePath: 'team-media/team-1/folder-1/user-1/stale.jpg'
+            expect(firebaseMocks.updateDoc).toHaveBeenCalledWith(
+                { path: 'teams/team-1/mediaItems/media-stale' },
+                {
+                    url: 'DELETE_FIELD',
+                    src: 'DELETE_FIELD',
+                    updatedAt: 'server-ts'
+                }
+            );
+            expect(warnSpy).toHaveBeenCalledWith(
+                'Unable to resolve authorized team media download URL:',
+                expect.any(Error)
+            );
+            expect(items).toEqual([
+                expect.objectContaining({
+                    id: 'media-stale',
+                    storagePath: 'team-media/team-1/folder-1/user-1/stale.jpg'
+                })
+            ]);
+            expect(items[0]).not.toHaveProperty('url');
+            expect(items[0]).not.toHaveProperty('src');
+            expect(items[0]).not.toHaveProperty('downloadUrl');
+        } finally {
+            warnSpy.mockRestore();
+        }
+    });
+
+    it('soft-deletes large albums in multiple metadata-only batches without resolving storage URLs', async () => {
+        const docs = Array.from({ length: 501 }, (_, index) => ({
+            id: `media-${index + 1}`,
+            data: () => ({
+                folderId: 'folder-large',
+                type: index % 2 === 0 ? 'photo' : 'file',
+                storagePath: `team-media/team-1/folder-large/user-1/media-${index + 1}`,
+                order: index,
+                deleted: false
             })
+        }));
+        firebaseMocks.getDocs.mockResolvedValueOnce({ docs });
+
+        const { deleteTeamMediaFolder } = await import('../../js/db.js');
+        await deleteTeamMediaFolder('team-1', 'folder-large');
+
+        expect(firebaseMocks.getDocs).toHaveBeenCalledTimes(1);
+        expect(firebaseMocks.where).toHaveBeenCalledWith('folderId', '==', 'folder-large');
+        expect(firebaseMocks.getDownloadURL).not.toHaveBeenCalled();
+        expect(firebaseMocks.writeBatch).toHaveBeenCalledTimes(2);
+        expect(batchState.batches.map((batch) => batch.commit)).toEqual([
+            expect.any(Function),
+            expect.any(Function)
         ]);
-        expect(items[0]).not.toHaveProperty('url');
-        expect(items[0]).not.toHaveProperty('src');
-        expect(items[0]).not.toHaveProperty('downloadUrl');
+        expect(batchState.batches[0].commit).toHaveBeenCalledTimes(1);
+        expect(batchState.batches[1].commit).toHaveBeenCalledTimes(1);
+        expect(batchState.batches[0].deletes).toEqual([]);
+        expect(batchState.batches[1].deletes).toEqual([{ path: 'teams/team-1/mediaFolders/folder-large' }]);
+        const updates = batchState.batches.flatMap((batch) => batch.updates);
+        expect(updates).toHaveLength(501);
+        expect(batchState.batches[0].updates).toHaveLength(450);
+        expect(batchState.batches[1].updates).toHaveLength(51);
+        expect(updates.map((entry) => entry.docRef.path)).toEqual(
+            docs.map((itemDoc) => `teams/team-1/mediaItems/${itemDoc.id}`)
+        );
+        expect(updates[0].payload).toEqual({
+            deleted: true,
+            deletedAt: 'server-ts',
+            updatedAt: 'server-ts'
+        });
     });
 
     it('returns bounded media item pages with stable folder order and cursor metadata', async () => {
