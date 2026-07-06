@@ -562,6 +562,46 @@ describe('calendar day modal RSVP refresh', () => {
         expect(elements.get('calendar-content').innerHTML).toContain(`${updatedSummary.going} going · ${updatedSummary.maybe} maybe · ${updatedSummary.notGoing} can't go · ${updatedSummary.notResponded} no response`);
     });
 
+    it('ignores stale in-flight RSVP hydration after a detailed RSVP save', async () => {
+        const eventDate = new Date();
+        let resolveMyRsvp;
+        const pendingMyRsvp = new Promise((resolve) => {
+            resolveMyRsvp = resolve;
+        });
+        const { elements, submitRecorder, window } = await bootCalendar({
+            eventDate,
+            games: [
+                {
+                    id: 'game-1',
+                    type: 'game',
+                    opponent: 'Lions',
+                    date: eventDate.toISOString(),
+                    location: 'North Field',
+                    status: 'scheduled',
+                    rsvpSummary: { going: 1, maybe: 0, notGoing: 0, notResponded: 1, total: 2 }
+                }
+            ],
+            myRsvp: pendingMyRsvp
+        });
+
+        await window.submitCalendarRsvp('team-1', 'game-1', 'maybe');
+        expect(submitRecorder.calls).toHaveLength(1);
+        expect(elements.get('calendar-content').innerHTML).toContain('bg-yellow-500 text-white border-yellow-500');
+
+        resolveMyRsvp({
+            id: 'user-1__player-1',
+            userId: 'user-1',
+            playerId: 'player-1',
+            response: 'going'
+        });
+        await flushCalendarHydration();
+        await flushCalendarHydration();
+        window.setTimeRange('all');
+
+        expect(elements.get('calendar-content').innerHTML).toContain('bg-yellow-500 text-white border-yellow-500');
+        expect(elements.get('calendar-content').innerHTML).not.toContain('bg-green-600 text-white border-green-600');
+    });
+
     it('hydrates day-detail RSVP state from linked player RSVP docs only for the selected day', async () => {
         const selectedDate = new Date('2026-03-15T18:00:00.000Z');
         const offscreenDate = new Date('2026-04-20T18:00:00.000Z');

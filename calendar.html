@@ -294,12 +294,18 @@
                     cached.rsvps = getRsvps(eventForPrefs.teamId, eventForPrefs.id);
                 }
 
+                const myRsvpPromise = cached.myRsvp;
+                const summaryCachePromise = cached.summary;
+                const summaryPromise = summaryCachePromise || Promise.resolve(null);
+                const rsvpsPromise = includeNotes && eventForPrefs.notesVisible ? (cached.rsvps || Promise.resolve([])) : Promise.resolve([]);
+
                 try {
                     const [myRsvp, summary, rsvps] = await Promise.all([
-                        cached.myRsvp,
-                        cached.summary || Promise.resolve(null),
-                        includeNotes && eventForPrefs.notesVisible ? (cached.rsvps || Promise.resolve([])) : Promise.resolve([])
+                        myRsvpPromise,
+                        summaryPromise,
+                        rsvpsPromise
                     ]);
+                    if (cached.myRsvp !== myRsvpPromise || cached.summary !== summaryCachePromise) return;
                     applyRsvpHydration(allEvents, eventForPrefs.teamId, eventForPrefs.id, {
                         myRsvp,
                         summary
