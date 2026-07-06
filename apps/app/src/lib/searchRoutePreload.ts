@@ -5,7 +5,6 @@ const routePreloaders: Array<{ pattern: RegExp; load: () => Promise<unknown> }> 
   { pattern: /^\/messages(?:\/[^/]+)?$/, load: () => import('../pages/Messages') },
   { pattern: /^\/teams\/browse$/, load: () => import('../pages/PublicTeamsBrowse') },
   { pattern: /^\/teams$/, load: () => import('../pages/Teams') },
-  { pattern: /^\/teams\/browse$/, load: () => import('../pages/PublicTeamsBrowse') },
   { pattern: /^\/teams\/[^/]+$/, load: () => import('../pages/TeamDetail') },
   { pattern: /^\/teams\/[^/]+\/edit$/, load: () => import('../pages/TeamSettings') },
   { pattern: /^\/teams\/[^/]+\/fees(?:\/[^/]+)?$/, load: () => import('../pages/TeamFees') },
@@ -27,7 +26,8 @@ const routePreloaders: Array<{ pattern: RegExp; load: () => Promise<unknown> }> 
 ];
 
 export function resolveSearchRoutePreloader(route: string) {
-  return routePreloaders.find(({ pattern }) => pattern.test(route))?.load ?? null;
+  const pathname = route.split(/[?#]/, 1)[0];
+  return routePreloaders.find(({ pattern }) => pattern.test(pathname))?.load ?? null;
 }
 
 export async function preloadSearchRoute(route: string) {

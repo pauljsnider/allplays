@@ -137,6 +137,13 @@ async function clickButton(container, text) {
     await flush();
 }
 
+async function hoverButton(container, text) {
+    await act(async () => {
+        buttonByText(container, text).dispatchEvent(new MouseEvent('mouseover', { bubbles: true, cancelable: true }));
+    });
+    await flush();
+}
+
 async function pressDialogKey(container, key) {
     const dialog = container.querySelector('[role="dialog"]');
     if (!dialog) throw new Error('Search dialog not found');
@@ -591,6 +598,18 @@ describe('React app shell search', () => {
         expect(routePreloadMocks.preloadSearchRoute).toHaveBeenCalledTimes(1);
     });
 
+    it('preloads query-string app action routes on hover', async () => {
+        const { container } = await renderShell();
+
+        await clickButton(container, 'Search');
+        await fillSearch(container, 'feed');
+        expect(container.textContent).toContain('Social Feed');
+
+        await hoverButton(container, 'Social Feed');
+
+        expect(routePreloadMocks.preloadSearchRoute).toHaveBeenCalledWith('/home?section=feed');
+    });
+
     it('opens the add workflow launcher with native and website actions', async () => {
         const { container } = await renderShell();
 
@@ -662,6 +681,7 @@ describe('React app shell search', () => {
         expect(homeMocks.loadParentHomeSummary).not.toHaveBeenCalled();
 
         await clickButton(container, 'Get Started');
+        expect(routePreloadMocks.preloadSearchRoute).toHaveBeenCalledWith('/auth?mode=signup');
         expect(container.querySelector('[data-testid="route"]').textContent).toBe('/auth?mode=signup');
     });
 
