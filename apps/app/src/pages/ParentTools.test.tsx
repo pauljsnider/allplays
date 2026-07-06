@@ -5,7 +5,7 @@ import { MemoryRouter, Route, Routes, useNavigate } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ParentTools, type ParentToolId } from './ParentTools';
 import type { AuthState } from '../lib/types';
-import { openPublicUrl } from '../lib/publicActions';
+import { openPublicUrl, sharePublicUrl } from '../lib/publicActions';
 
 const parentToolsServiceMocks = vi.hoisted(() => ({
     buildParentScheduleIcs: vi.fn(),
@@ -226,6 +226,7 @@ describe('ParentTools access', () => {
     afterEach(() => {
         delete globalThis.__ALLPLAYS_PARENT_TOOLS_RENDER_TRACKER__;
         delete globalThis.__ALLPLAYS_PARENT_TOOLS_PANEL_LOAD_TRACKER__;
+        Reflect.deleteProperty(navigator, 'clipboard');
         cleanup();
     });
 
@@ -658,6 +659,61 @@ describe('ParentTools access', () => {
         expect(screen.getByText('Grandma')).toBeTruthy();
         expect(screen.getByText('https://allplays.ai/family.html?token=token-1')).toBeTruthy();
         expect(screen.getByRole('button', { name: 'Copy' })).toBeTruthy();
+    });
+
+    it('shows a created family link when clipboard copy and refresh recovery miss it', async () => {
+        Object.defineProperty(navigator, 'clipboard', {
+            configurable: true,
+            value: {
+                writeText: vi.fn().mockRejectedValue(new Error('Clipboard unavailable.'))
+            }
+        });
+        parentToolsServiceMocks.loadFamilyShareModel.mockResolvedValue({
+            children: [
+                {
+                    teamId: 'team-1',
+                    playerId: 'player-1',
+                    playerName: 'Sam Player'
+                }
+            ],
+            tokens: [
+                {
+                    id: 'token-1',
+                    label: 'Grandma',
+                    url: 'https://allplays.ai/family.html?token=token-1',
+                    childCount: 1,
+                    extraCalendarUrls: []
+                }
+            ]
+        });
+        parentToolsServiceMocks.createParentFamilyShare.mockResolvedValue({
+            tokenId: 'token-2',
+            url: 'https://allplays.ai/family.html?token=token-2'
+        });
+
+        renderParentTools(['/parent-tools/share'], false, linkedAuth);
+
+        expect(await screen.findByText('Grandma')).toBeTruthy();
+        fireEvent.change(screen.getByPlaceholderText('Label, like Grandma or babysitter'), { target: { value: 'Aunt Chris' } });
+        fireEvent.change(screen.getByPlaceholderText('Optional external calendar feed URLs, one per line'), { target: { value: 'https://calendar.example.test/feed.ics' } });
+        fireEvent.click(screen.getByRole('button', { name: 'Create share link' }));
+
+        expect(await screen.findByText('https://allplays.ai/family.html?token=token-2')).toBeTruthy();
+        expect(screen.getByText('Copy is not available in this browser.')).toBeTruthy();
+        expect(parentToolsServiceMocks.createParentFamilyShare).toHaveBeenCalledWith(linkedAuth.user, 'Aunt Chris', ['https://calendar.example.test/feed.ics']);
+        expect(parentToolsServiceMocks.loadFamilyShareModel).toHaveBeenCalledTimes(2);
+        expect(screen.getByText('Aunt Chris')).toBeTruthy();
+        expect((screen.getByPlaceholderText('Label, like Grandma or babysitter') as HTMLInputElement).value).toBe('');
+        expect((screen.getByPlaceholderText('Optional external calendar feed URLs, one per line') as HTMLTextAreaElement).value).toBe('');
+
+        fireEvent.click(screen.getByRole('button', { name: 'Share newly created family link' }));
+        await waitFor(() => {
+            expect(sharePublicUrl).toHaveBeenCalledWith({
+                title: 'ALL PLAYS family page',
+                text: 'Aunt Chris',
+                url: 'https://allplays.ai/family.html?token=token-2'
+            });
+        });
     });
 
     it('opens reusable team fee checkout links when legacy fee payloads omit paymentAction', async () => {

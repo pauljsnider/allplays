@@ -187,6 +187,7 @@ async function mockParentToolsModules(page) {
         window.__playerLoads = [];
         window.__downloads = [];
         window.__familyCreates = [];
+        window.__clipboardShouldFail = false;
         window.__mediaUploads = [];
         window.__mediaLinks = [];
         window.__mediaDeletes = [];
@@ -194,6 +195,7 @@ async function mockParentToolsModules(page) {
             configurable: true,
             value: {
                 writeText: async (value) => {
+                    if (window.__clipboardShouldFail) throw new Error('Clipboard unavailable.');
                     window.__copiedText = String(value);
                 }
             }
@@ -518,8 +520,15 @@ test('parent tools hub completes access, fees, calendars, share, registration, a
     await page.getByRole('button', { name: 'Share' }).first().click();
     await expect(page.getByText('Family share')).toBeVisible();
     await page.getByPlaceholder(/Label/).fill('Grandpa');
+    await page.evaluate(() => {
+        window.__clipboardShouldFail = true;
+    });
     await page.getByRole('button', { name: /Create share link/ }).click();
     await expect.poll(() => page.evaluate(() => window.__familyCreates.at(-1))).toEqual({ label: 'Grandpa', urls: [] });
+    await expect(page.getByText('https://allplays.ai/family.html?token=token-2')).toBeVisible();
+    await page.getByRole('button', { name: 'Share newly created family link' }).click();
+    await expect.poll(() => page.evaluate(() => window.__sharedUrls.at(-1)?.url)).toBe('https://allplays.ai/family.html?token=token-2');
+    await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1)).toBe(true);
 
     await page.getByRole('button', { name: 'Register' }).click();
     await expect(page.getByText('Summer Camp')).toBeVisible();
