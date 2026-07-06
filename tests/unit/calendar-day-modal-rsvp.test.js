@@ -515,6 +515,38 @@ describe('calendar day modal RSVP refresh', () => {
         expect(elements.get('calendar-content').innerHTML).toContain('bg-green-600 text-white border-green-600');
     });
 
+    it('hydrates visible detailed availability notes without opening the day modal', async () => {
+        const eventDate = new Date();
+        const { elements, getRsvpsCalls } = await bootCalendar({
+            eventDate,
+            notesVisible: true,
+            rsvps: [
+                {
+                    displayName: 'Avery',
+                    note: 'Running late'
+                }
+            ],
+            games: [
+                {
+                    id: 'game-1',
+                    type: 'game',
+                    opponent: 'Lions',
+                    date: eventDate.toISOString(),
+                    location: 'North Field',
+                    status: 'scheduled',
+                    rsvpSummary: { going: 1, maybe: 0, notGoing: 0, notResponded: 1, total: 2 }
+                }
+            ]
+        });
+
+        await flushCalendarHydration();
+
+        expect(getRsvpsCalls).toEqual([{ teamId: 'team-1', gameId: 'game-1' }]);
+        expect(elements.get('calendar-content').innerHTML).toContain('Avery:');
+        expect(elements.get('calendar-content').innerHTML).toContain('Running late');
+        expect(elements.get('day-modal').classList.contains('hidden')).toBe(true);
+    });
+
     it('keeps detailed RSVP saves from being overwritten by cached hydration', async () => {
         const eventDate = new Date();
         const { elements, getMyRsvpCalls, submitRecorder, updatedSummary, window } = await bootCalendar({

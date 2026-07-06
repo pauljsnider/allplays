@@ -328,7 +328,7 @@
             if (currentView !== 'detailed' && currentView !== 'compact') return;
             const token = ++renderedRsvpHydrationToken;
             const view = currentView;
-            await hydrateRsvpEvents(filteredEvents, { includeMissingSummary: true });
+            await hydrateRsvpEvents(filteredEvents, { includeMissingSummary: true, includeNotes: view === 'detailed' });
             if (token !== renderedRsvpHydrationToken || currentView !== view) return;
             if (view === 'detailed') renderDetailed();
             else renderCompact();
