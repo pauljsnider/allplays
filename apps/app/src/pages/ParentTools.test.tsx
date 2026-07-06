@@ -716,6 +716,59 @@ describe('ParentTools access', () => {
         });
     });
 
+    it('clears the created family link panel after revoking that token', async () => {
+        const children = [
+            {
+                teamId: 'team-1',
+                playerId: 'player-1',
+                playerName: 'Sam Player'
+            }
+        ];
+        const createdToken = {
+            id: 'token-2',
+            label: 'Aunt Chris',
+            url: 'https://allplays.ai/family.html?token=token-2',
+            childCount: 1,
+            extraCalendarUrls: []
+        };
+        parentToolsServiceMocks.loadFamilyShareModel
+            .mockResolvedValueOnce({
+                children,
+                tokens: []
+            })
+            .mockResolvedValueOnce({
+                children,
+                tokens: [createdToken]
+            })
+            .mockResolvedValueOnce({
+                children,
+                tokens: []
+            });
+        parentToolsServiceMocks.createParentFamilyShare.mockResolvedValue({
+            tokenId: 'token-2',
+            url: createdToken.url
+        });
+        parentToolsServiceMocks.revokeParentFamilyShare.mockResolvedValue(undefined);
+
+        renderParentTools(['/parent-tools/share'], false, linkedAuth);
+
+        await screen.findByText('No family links');
+        fireEvent.change(screen.getByPlaceholderText('Label, like Grandma or babysitter'), { target: { value: 'Aunt Chris' } });
+        fireEvent.click(screen.getByRole('button', { name: 'Create share link' }));
+
+        expect(await screen.findByText('New family link')).toBeTruthy();
+        expect(await screen.findByRole('button', { name: 'Revoke' })).toBeTruthy();
+        fireEvent.click(screen.getByRole('button', { name: 'Revoke' }));
+        fireEvent.click(await screen.findByRole('button', { name: 'Revoke link' }));
+
+        await waitFor(() => {
+            expect(parentToolsServiceMocks.revokeParentFamilyShare).toHaveBeenCalledWith('token-2');
+            expect(screen.queryByText('New family link')).toBeNull();
+            expect(screen.queryByRole('button', { name: 'Copy newly created family link' })).toBeNull();
+            expect(screen.queryByRole('button', { name: 'Share newly created family link' })).toBeNull();
+        });
+    });
+
     it('opens reusable team fee checkout links when legacy fee payloads omit paymentAction', async () => {
         parentToolsServiceMocks.loadParentFeesForApp.mockResolvedValue([
             {

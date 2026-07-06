@@ -83,6 +83,7 @@ export function FamilyShareTool({ auth, refreshVersion }: { auth: AuthState; ref
             'Unable to revoke family share link.',
             {
                 onSuccess: async () => {
+                    setCreatedLink((current) => current?.tokenId === tokenId ? null : current);
                     setMessage('Family link revoked.');
                     await refresh();
                 },
