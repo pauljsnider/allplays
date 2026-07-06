@@ -2664,11 +2664,11 @@
                                 class="inline-flex items-center gap-1.5 text-xs font-semibold text-primary-700 bg-primary-50 px-3 py-1.5 rounded-lg hover:bg-primary-100 transition border border-primary-200">
                                 Athlete Profile
                             </a>
-                            <button onclick="openInviteCoParentModal('${escapeAttr(child.teamId)}', '${escapeAttr(child.playerId)}', '${escapeAttr(child.playerName)}')"
+                            <button onclick="openInviteCoParentModal(${escapeJsArgAttr(child.teamId)}, ${escapeJsArgAttr(child.playerId)}, ${escapeJsArgAttr(child.playerName)})"
                                 class="inline-flex items-center gap-1.5 text-xs font-semibold text-indigo-700 bg-indigo-50 px-3 py-1.5 rounded-lg hover:bg-indigo-100 transition border border-indigo-200">
                                 👨‍👩‍👧‍👦 Invite Co-Parent
                             </button>
-                            <button onclick="openIncentivesPanel('${escapeAttr(child.playerId)}', '${escapeAttr(child.playerName)}', '${escapeAttr(child.teamId)}')"
+                            <button onclick="openIncentivesPanel(${escapeJsArgAttr(child.playerId)}, ${escapeJsArgAttr(child.playerName)}, ${escapeJsArgAttr(child.teamId)})"
                                 class="inline-flex items-center gap-1.5 text-xs font-semibold text-amber-700 bg-amber-50 px-3 py-1.5 rounded-lg hover:bg-amber-100 transition border border-amber-200">
                                 💰 Incentives
                             </button>
@@ -2819,7 +2819,7 @@
                             const earnedCents = incentivesEarningsCache.get(cacheKey);
                             if (game.type === 'game' && game.isDbGame && !game.isCancelled && earnedCents !== undefined && earnedCents !== 0) {
                                 const isPositive = earnedCents >= 0;
-                                return `<button onclick="openIncentivesPanel('${escapeAttr(game.childId)}', '${escapeAttr(game.childName || '')}', '${escapeAttr(game.teamId)}')"
+                                return `<button onclick="openIncentivesPanel(${escapeJsArgAttr(game.childId)}, ${escapeJsArgAttr(game.childName || '')}, ${escapeJsArgAttr(game.teamId)})"
                                     class="inline-flex items-center gap-1 text-xs font-semibold ${isPositive ? 'text-green-700 bg-green-50 border-green-200' : 'text-red-600 bg-red-50 border-red-200'} px-2 py-0.5 rounded-full mt-1 mr-1 border hover:opacity-80 transition">
                                     💰 ${isPositive ? '+' : ''}${formatCents(earnedCents, { sign: false })} earned →
                                 </button>`;
