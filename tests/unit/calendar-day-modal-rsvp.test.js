@@ -99,8 +99,8 @@ const URL = deps.URL;
 const Blob = deps.Blob;
 ` + match[1]
         .replace(
-            /import \{ getUserTeamsWithAccess, getParentTeams, getGames, getTeam, getTrackedCalendarEventUids, getUserProfile, submitRsvp, submitRsvpForPlayer, getMyRsvp, getRsvps \} from '\.\/js\/db\.js\?v=\d+';/,
-            'const { getUserTeamsWithAccess, getParentTeams, getGames, getTeam, getTrackedCalendarEventUids, getUserProfile, submitRsvp, submitRsvpForPlayer, getMyRsvp, getRsvps } = deps.db;'
+            /import \{ getUserTeamsWithAccess, getParentTeams, getGames, getTeam, getTrackedCalendarEventUids, getUserProfile, submitRsvp, submitRsvpForPlayer, getMyRsvp, getRsvpSummaries, getRsvps \} from '\.\/js\/db\.js\?v=\d+';/,
+            'const { getUserTeamsWithAccess, getParentTeams, getGames, getTeam, getTrackedCalendarEventUids, getUserProfile, submitRsvp, submitRsvpForPlayer, getMyRsvp, getRsvpSummaries, getRsvps } = deps.db;'
         )
         .replace(
             /import \{ renderHeader, renderFooter, escapeHtml, formatDate, formatTime, fetchAndParseCalendar, expandRecurrence, buildGlobalCalendarIcsEvent, isTrackedCalendarEvent \} from '\.\/js\/utils\.js\?v=\d+';/,
@@ -214,6 +214,7 @@ function createEnvironment() {
 
 function createDeps(submitRecorder, overrides = {}) {
     const getMyRsvpCalls = [];
+    const getRsvpSummariesCalls = [];
     const getRsvpsCalls = [];
     const eventDate = overrides.eventDate || new Date('2026-03-15T18:00:00.000Z');
     const initialSummary = overrides.initialSummary || { going: 1, maybe: 0, notGoing: 0, notResponded: 1, total: 2 };
@@ -278,6 +279,10 @@ function createDeps(submitRecorder, overrides = {}) {
             async getMyRsvp(teamId, gameId, userId, playerIds) {
                 getMyRsvpCalls.push({ teamId, gameId, userId, playerIds });
                 return overrides.myRsvp || null;
+            },
+            async getRsvpSummaries(teamId, gameIds) {
+                getRsvpSummariesCalls.push({ teamId, gameIds });
+                return overrides.rsvpSummaries || new Map([['game-1', initialSummary]]);
             },
             async getRsvps(teamId, gameId) {
                 getRsvpsCalls.push({ teamId, gameId });
@@ -427,6 +432,7 @@ function createDeps(submitRecorder, overrides = {}) {
         initialSummary,
         updatedSummary,
         getMyRsvpCalls,
+        getRsvpSummariesCalls,
         getRsvpsCalls
     };
 }
@@ -446,6 +452,10 @@ async function bootCalendar(overrides = {}) {
     });
 
     return { ...env, ...deps, submitRecorder };
+}
+
+async function flushCalendarHydration() {
+    await new Promise((resolve) => setTimeout(resolve, 0));
 }
 
 describe('calendar day modal RSVP refresh', () => {
@@ -469,6 +479,40 @@ describe('calendar day modal RSVP refresh', () => {
 
         expect(elements.get('calendar-content').innerHTML).toContain('0 going · 0 maybe · 0 can\'t go · 1 no response');
         expect(elements.get('calendar-content').innerHTML).toContain('24 going · 0 maybe · 0 can\'t go · 1 no response');
+    });
+
+    it('hydrates visible detailed RSVP controls from saved RSVP docs', async () => {
+        const eventDate = new Date();
+        const { elements, getMyRsvpCalls } = await bootCalendar({
+            eventDate,
+            games: [
+                {
+                    id: 'game-1',
+                    type: 'game',
+                    opponent: 'Lions',
+                    date: eventDate.toISOString(),
+                    location: 'North Field',
+                    status: 'scheduled',
+                    rsvpSummary: { going: 1, maybe: 0, notGoing: 0, notResponded: 1, total: 2 }
+                }
+            ],
+            myRsvp: {
+                id: 'user-1__player-1',
+                userId: 'user-1',
+                playerId: 'player-1',
+                response: 'going'
+            }
+        });
+
+        await flushCalendarHydration();
+
+        expect(getMyRsvpCalls).toEqual([{
+            teamId: 'team-1',
+            gameId: 'game-1',
+            userId: 'user-1',
+            playerIds: ['player-1']
+        }]);
+        expect(elements.get('calendar-content').innerHTML).toContain('bg-green-600 text-white border-green-600');
     });
 
     it('hydrates day-detail RSVP state from linked player RSVP docs only for the selected day', async () => {
@@ -520,6 +564,36 @@ describe('calendar day modal RSVP refresh', () => {
 
         expect(elements.get('day-modal-content').innerHTML).toContain('bg-green-600 text-white border-green-600');
         expect(elements.get('day-modal-content').innerHTML).not.toContain('Bears');
+    });
+
+    it('loads missing RSVP summaries for selected day events', async () => {
+        const selectedDate = new Date('2026-03-15T18:00:00.000Z');
+        const fallbackSummary = { going: 2, maybe: 1, notGoing: 0, notResponded: 3, total: 6 };
+        const { elements, getRsvpSummariesCalls, window } = await bootCalendar({
+            eventDate: selectedDate,
+            games: [
+                {
+                    id: 'game-1',
+                    type: 'practice',
+                    title: 'Practice',
+                    date: selectedDate.toISOString(),
+                    location: 'North Field',
+                    status: 'scheduled',
+                    rsvpSummary: null
+                }
+            ],
+            icsEvents: [],
+            rsvpSummaries: new Map([['game-1', fallbackSummary]])
+        });
+
+        await window.openDayDetail(selectedDate.getUTCFullYear(), selectedDate.getUTCMonth(), selectedDate.getUTCDate());
+
+        expect(getRsvpSummariesCalls).toContainEqual({
+            teamId: 'team-1',
+            gameIds: ['game-1']
+        });
+        expect(elements.get('day-modal-content').innerHTML).toContain('2 going · 1 maybe · 0 can\'t go · 3 no response');
+        expect(elements.get('day-modal-content').innerHTML).not.toContain('No RSVPs yet.');
     });
 
     it('uses the day-detail RSVP hydration cache when reopening the same day', async () => {
