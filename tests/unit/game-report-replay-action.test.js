@@ -11,7 +11,9 @@ describe('game report replay action', () => {
         const html = readRepoFile('game.html');
 
         expect(html).toContain('resolveReplayVideoOptions');
-        expect(html).toContain('renderReplayReportAction({ teamId, gameId, game })');
+        expect(html).toContain('renderReplayReportAction({ teamId, gameId, game, team })');
+        expect(html).toMatch(/resolveReplayVideoOptions\(\{\s*team,\s*game,\s*isReplay: true\s*\}\)/);
+        expect(html).toContain('renderReplayReportAction({ teamId, gameId, game, team: resolvedTeam })');
         expect(html).toContain('if (replayOptions.hasVideo)');
         expect(html).not.toContain("${game.liveStatus === 'completed' ? `");
     });
@@ -56,5 +58,25 @@ describe('game report replay action', () => {
         expect(unavailable.replayState?.status).toBe('unavailable');
         expect(ready.hasVideo).toBe(true);
         expect(ready.replayState).toBeNull();
+    });
+
+    it('allows completed reports to link replay viewing when the loaded team has a usable stream embed', () => {
+        const youtube = resolveReplayVideoOptions({
+            team: { youtubeVideoId: 'abcdefghijk' },
+            game: { liveStatus: 'completed' },
+            isReplay: true
+        });
+        const twitch = resolveReplayVideoOptions({
+            team: { twitchChannel: 'allplays' },
+            game: { status: 'completed' },
+            isReplay: true
+        });
+
+        expect(youtube.hasVideo).toBe(true);
+        expect(youtube.mode).toBe('embed');
+        expect(youtube.sourceUrl).toContain('youtube.com/embed/abcdefghijk');
+        expect(twitch.hasVideo).toBe(true);
+        expect(twitch.mode).toBe('embed');
+        expect(twitch.sourceUrl).toContain('player.twitch.tv');
     });
 });

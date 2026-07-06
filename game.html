@@ -436,11 +436,12 @@
             setTimeout(() => toast.remove(), 2000);
         }
 
-        function renderReplayReportAction({ teamId, gameId, game }) {
+        function renderReplayReportAction({ teamId, gameId, game, team }) {
             const gameCompleted = game?.status === 'completed' || game?.liveStatus === 'completed';
             if (!gameCompleted) return '';
 
             const replayOptions = resolveReplayVideoOptions({
+                team,
                 game,
                 isReplay: true
             });
@@ -1420,7 +1421,7 @@ Write the match report now:`;
                 // Render Header
                 const scoreView = resolveGameReportScoreView(game);
                 const { teamScore, opponentScore, isWin, isLoss, isTie } = scoreView;
-                const replayReportAction = renderReplayReportAction({ teamId, gameId, game });
+                const replayReportAction = renderReplayReportAction({ teamId, gameId, game, team: resolvedTeam });
 
                 document.getElementById('game-header').innerHTML = `
                     <div class="inline-flex items-center gap-2 mb-4">
