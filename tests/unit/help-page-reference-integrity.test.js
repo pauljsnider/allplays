@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { existsSync, readFileSync, readdirSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
+import { existsSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -25,6 +26,15 @@ function listTrackedShippedPages() {
         .filter((file) => !file.startsWith('workflow-'))
         .filter((file) => !file.startsWith('help-'))
         .sort();
+}
+
+function extractGeneratedHelpKnowledgeIndex() {
+    const source = readRepoFile('apps/app/src/lib/helpKnowledgeIndex.ts');
+    const match = source.match(/export const helpKnowledgeIndex: HelpKnowledgeIndexDoc\[] = ([\s\S]*);\n$/);
+
+    expect(match, 'generated help knowledge index export should be parseable').not.toBeNull();
+
+    return JSON.parse(match[1]);
 }
 
 describe('help page reference integrity', () => {
@@ -59,6 +69,43 @@ describe('help page reference integrity', () => {
             features: 'Offline fee batch management, invoices, and payment tracking',
             roles: 'Coach, Admin'
         });
+    });
+
+    it('keeps the generated app help index fresh with the page reference matrix', () => {
+        const referenceHtml = readRepoFile('help-page-reference.html');
+        const referenceRows = extractReferenceRows(referenceHtml);
+        const index = extractGeneratedHelpKnowledgeIndex();
+        const referenceDoc = index.find((doc) => doc.file === 'help-page-reference.html');
+
+        expect(referenceDoc, 'help-page-reference.html should be indexed for app help search').toBeDefined();
+
+        referenceRows.forEach((row) => {
+            expect(referenceDoc.text, `${row.file} filename should be searchable in app help`).toContain(row.file);
+            expect(referenceDoc.text, `${row.file} feature summary should be searchable in app help`).toContain(row.features);
+            expect(referenceDoc.text, `${row.file} role text should be searchable in app help`).toContain(row.roles);
+        });
+    });
+
+    it('fails when the generated app help knowledge index is stale', () => {
+        const indexPath = resolve(REPO_ROOT, 'apps/app/src/lib/helpKnowledgeIndex.ts');
+        const before = readFileSync(indexPath, 'utf8');
+        let after = before;
+
+        try {
+            execFileSync('npm', ['run', 'app:build-help-index'], {
+                cwd: REPO_ROOT,
+                encoding: 'utf8',
+                stdio: 'pipe'
+            });
+
+            after = readFileSync(indexPath, 'utf8');
+        } finally {
+            if (after !== before) {
+                writeFileSync(indexPath, before);
+            }
+        }
+
+        expect(after).toBe(before);
     });
 
     it('keeps the schedule workflow steps in one continuous ordered list', () => {
