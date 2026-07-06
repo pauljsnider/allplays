@@ -2486,7 +2486,8 @@ describe('native parent schedule Firestore mapping', () => {
 
     const result = await loadParentSchedule({ uid: 'parent-1', email: 'parent@example.com', roles: [] } as any, {
       hydrateDetails: false,
-      expandStaffPlayers: false
+      expandStaffPlayers: false,
+      includePastGames: true
     });
 
     expect(result.events).toHaveLength(1);
@@ -2497,6 +2498,140 @@ describe('native parent schedule Firestore mapping', () => {
       isDbGame: true
     });
     expect(fetchAndParseCalendar).toHaveBeenCalledWith('https://calendar.example.com/team-1.ics');
+  });
+
+  it('queries native game fallback by date range instead of listing the full games collection', async () => {
+    const startDate = new Date('2026-06-01T00:00:00.000Z');
+    const endDate = new Date('2026-06-30T23:59:59.000Z');
+    vi.mocked(globalThis.fetch).mockImplementation(async (input: any, init?: RequestInit) => {
+      const requestUrl = String(input);
+      expect(requestUrl).toContain('/documents/teams/team-1:runQuery');
+      expect(requestUrl).not.toContain('/documents/teams/team-1/games');
+      expect(init?.method).toBe('POST');
+      return {
+        ok: true,
+        json: async () => ([
+          {
+            document: {
+              name: 'projects/allplays-test/databases/(default)/documents/teams/team-1/games/game-in-range',
+              fields: {
+                date: { timestampValue: '2026-06-20T18:00:00.000Z' },
+                opponent: { stringValue: 'Tigers' },
+                location: { stringValue: 'Main Gym' }
+              }
+            }
+          }
+        ])
+      } as any;
+    });
+
+    const result = await loadParentSchedule({ uid: 'parent-1', email: 'parent@example.com', roles: [] } as any, {
+      hydrateDetails: false,
+      expandStaffPlayers: false,
+      scheduleRangeByTeam: {
+        'team-1': { startDate, endDate }
+      }
+    });
+
+    expect(result.events.map((event) => event.id)).toEqual(['game-in-range']);
+    expect(globalThis.fetch).toHaveBeenCalledTimes(1);
+    const [, requestInit] = vi.mocked(globalThis.fetch).mock.calls[0] as [string, RequestInit];
+    const body = JSON.parse(String(requestInit.body));
+    expect(body).toMatchObject({
+      structuredQuery: {
+        from: [{ collectionId: 'games' }],
+        where: {
+          compositeFilter: {
+            op: 'AND',
+            filters: [
+              {
+                fieldFilter: {
+                  field: { fieldPath: 'date' },
+                  op: 'GREATER_THAN_OR_EQUAL',
+                  value: { timestampValue: startDate.toISOString() }
+                }
+              },
+              {
+                fieldFilter: {
+                  field: { fieldPath: 'date' },
+                  op: 'LESS_THAN_OR_EQUAL',
+                  value: { timestampValue: endDate.toISOString() }
+                }
+              }
+            ]
+          }
+        },
+        orderBy: [{ field: { fieldPath: 'date' }, direction: 'ASCENDING' }]
+      }
+    });
+  });
+
+  it('wraps native game fallback start-only filters in a composite filter', async () => {
+    const startDate = new Date('2026-06-01T00:00:00.000Z');
+    vi.mocked(globalThis.fetch).mockResolvedValue({
+      ok: true,
+      json: async () => ([])
+    } as any);
+
+    await loadParentSchedule({ uid: 'parent-1', email: 'parent@example.com', roles: [] } as any, {
+      hydrateDetails: false,
+      expandStaffPlayers: false,
+      scheduleRangeByTeam: {
+        'team-1': { startDate }
+      }
+    });
+
+    expect(globalThis.fetch).toHaveBeenCalledTimes(1);
+    const [, requestInit] = vi.mocked(globalThis.fetch).mock.calls[0] as [string, RequestInit];
+    const body = JSON.parse(String(requestInit.body));
+    expect(body.structuredQuery.where).toEqual({
+      compositeFilter: {
+        op: 'AND',
+        filters: [
+          {
+            fieldFilter: {
+              field: { fieldPath: 'date' },
+              op: 'GREATER_THAN_OR_EQUAL',
+              value: { timestampValue: startDate.toISOString() }
+            }
+          }
+        ]
+      }
+    });
+  });
+
+  it('wraps native game fallback end-only filters in a composite filter', async () => {
+    const endDate = new Date('2026-06-30T23:59:59.000Z');
+    vi.mocked(globalThis.fetch).mockResolvedValue({
+      ok: true,
+      json: async () => ([])
+    } as any);
+
+    await loadParentSchedule({ uid: 'parent-1', email: 'parent@example.com', roles: [] } as any, {
+      hydrateDetails: false,
+      expandStaffPlayers: false,
+      scheduleRangeByTeam: {
+        'team-1': { endDate }
+      }
+    });
+
+    expect(globalThis.fetch).toHaveBeenCalledTimes(1);
+    const [, requestInit] = vi.mocked(globalThis.fetch).mock.calls[0] as [string, RequestInit];
+    const body = JSON.parse(String(requestInit.body));
+    expect(body.structuredQuery.where).toEqual({
+      compositeFilter: {
+        op: 'AND',
+        filters: [
+          {
+            fieldFilter: {
+              field: { fieldPath: 'date' },
+              op: 'LESS_THAN_OR_EQUAL',
+              value: { timestampValue: endDate.toISOString() }
+            }
+          }
+        ]
+      }
+    });
   });
 
   it('drops malformed Firestore schedule event records at the mapper boundary', async () => {
