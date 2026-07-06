@@ -31,6 +31,17 @@ const scheduleMocks = vi.hoisted(() => ({
         const activePeriod = String(game?.liveClockPeriod || game?.period || '').trim();
         return activePeriod ? [activePeriod] : ['H1', 'H2'];
     }),
+    LINEUP_FORMATIONS: {
+        'basketball-5v5': {
+            id: 'basketball-5v5',
+            name: 'Basketball 5v5',
+            numPeriods: 4,
+            positions: [
+                { id: 'pg', name: 'Point Guard' },
+                { id: 'sg', name: 'Shooting Guard' }
+            ]
+        }
+    },
     createStaffRsvpAvailabilityLoader: vi.fn(() => ({
         loadBreakdown: vi.fn().mockResolvedValue({
             grouped: {
@@ -79,10 +90,31 @@ const scheduleMocks = vi.hoisted(() => ({
         isFull: false
     })),
     publishLiveScoreUpdateEvent: vi.fn(),
+    recordPlayerGameStat: vi.fn(),
     recordPlayerScoringStat: vi.fn(),
     resolveCachedParentScheduleEvents: vi.fn(() => []),
     saveScheduledGameLineupDraftForApp: vi.fn(),
+    saveGameDaySubstitutionForApp: vi.fn(),
     saveStaffPracticePacket: vi.fn(),
+    completeGameWrapupForApp: vi.fn(),
+    getLineupPublishStatus: vi.fn((gamePlan) => {
+        const lineups = gamePlan?.lineups && typeof gamePlan.lineups === 'object' ? gamePlan.lineups : {};
+        const publishedLineups = gamePlan?.publishedLineups && typeof gamePlan.publishedLineups === 'object' ? gamePlan.publishedLineups : {};
+        const lineupKeys = Object.keys(lineups).filter((key) => String(lineups[key] || '').trim());
+        const publishedVersion = Number.parseInt(gamePlan?.publishedVersion, 10) || 0;
+        if (!lineupKeys.length) return 'No lineup draft is available yet.';
+        if (!publishedVersion) return 'Draft lineup has not been published.';
+        const changedAssignments = Array.from(new Set([...lineupKeys, ...Object.keys(publishedLineups)])).filter((key) => (
+            String(lineups[key] || '').trim() !== String(publishedLineups[key] || '').trim()
+        )).length;
+        if (changedAssignments > 0) {
+            return `Published v${publishedVersion}. ${changedAssignments} draft assignment${changedAssignments === 1 ? '' : 's'} unpublished.`;
+        }
+        return `Published v${publishedVersion}. Current draft matches the published lineup.`;
+    }),
+    hasLineupDraft: vi.fn((gamePlan) => Boolean(gamePlan?.lineups && Object.values(gamePlan.lineups).some((value) => String(value || '').trim()))),
+    undoRecordedPlayerGameStat: vi.fn(),
+    updateLiveGameClockState: vi.fn(),
     updateGameScore: vi.fn(),
     updateScheduledGameForApp: vi.fn(),
     updateParentScheduleRideRequestStatus: vi.fn()
@@ -115,7 +147,7 @@ vi.mock('../../apps/app/src/lib/scheduleService.ts', () => scheduleMocks);
 vi.mock('../../apps/app/src/lib/gameReportService.ts', () => reportMocks);
 vi.mock('../../apps/app/src/lib/publicActions.ts', () => publicActionMocks);
 
-import { ScheduleEventDetail, getAvailabilityNoteSaveState, parseEventDetailSection } from '../../apps/app/src/pages/ScheduleEventDetail.tsx';
+import { ScheduleEventDetail, getAvailabilityNoteSaveState, parseEventDetailSection, setScheduleGameDayServiceImporterForTest } from '../../apps/app/src/pages/ScheduleEventDetail.tsx';
 
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -264,6 +296,7 @@ async function clickButton(container, text) {
 
 beforeEach(() => {
     vi.clearAllMocks();
+    setScheduleGameDayServiceImporterForTest(() => Promise.resolve(scheduleMocks));
     scheduleMocks.resolveCachedParentScheduleEvents.mockReturnValue([]);
     scheduleMocks.loadParentSchedule.mockResolvedValue({ events: [] });
     scheduleMocks.loadParentScheduleEventDetail.mockImplementation(async () => scheduleMocks.loadParentSchedule());
@@ -363,6 +396,7 @@ afterEach(async () => {
         });
         mounted.container.remove();
     }
+    setScheduleGameDayServiceImporterForTest();
     vi.useRealTimers();
     document.body.innerHTML = '';
 });
