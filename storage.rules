@@ -103,6 +103,13 @@ service firebase.storage {
         contentType.matches('video/.*');
     }
 
+    function isAllowedChatAttachmentUpload(contentType, size) {
+      return size > 0 &&
+        size <= 5 * 1024 * 1024 &&
+        (contentType.matches('image/.*') ||
+         contentType.matches('video/.*'));
+    }
+
     function canReadAthleteProfileMedia(userId, profileId) {
       let profilePath = /databases/(default)/documents/athleteProfiles/$(profileId);
       return (isSignedIn() && request.auth.uid == userId) ||
@@ -138,8 +145,7 @@ service firebase.storage {
       allow list: if false;
       allow create: if canAccessChatAttachment(teamId, conversationId) &&
         request.auth.uid == userId &&
-        request.resource.size > 0 &&
-        request.resource.size <= 20 * 1024 * 1024;
+        isAllowedChatAttachmentUpload(request.resource.contentType, request.resource.size);
       allow delete: if isTeamOwnerOrAdmin(teamId) || request.auth.uid == userId;
       allow update: if false;
     }
