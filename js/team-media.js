@@ -213,12 +213,27 @@ function getVisibilityLabel(folder) {
 
 function renderFolderOptions() {
     const hasFolders = state.folders.length > 0;
+    const folderIds = new Set(state.folders.map((folder) => folder.id));
+    const preservedFormFolderIds = new Map([
+        [els.linkFolder, els.linkFolder?.value || ''],
+        [els.photoFolder, els.photoFolder?.value || ''],
+        [els.fileFolder, els.fileFolder?.value || '']
+    ]);
     const options = state.folders.map((folder) => `<option value="${escapeHtml(folder.id)}">${escapeHtml(folder.name || 'Untitled album')}</option>`).join('');
     const placeholder = `<option value="">${hasFolders ? 'Choose album' : 'Create an album first'}</option>`;
     els.linkFolder.innerHTML = placeholder + options;
     els.photoFolder.innerHTML = placeholder + options;
     els.fileFolder.innerHTML = placeholder + options;
     els.moveFolder.innerHTML = placeholder + options;
+    const selectedFolderId = hasFolders && state.selectedFolderId ? state.selectedFolderId : '';
+    [els.linkFolder, els.photoFolder, els.fileFolder].forEach((element) => {
+        if (!element) return;
+        const preservedFolderId = preservedFormFolderIds.get(element);
+        element.value = folderIds.has(preservedFolderId) ? preservedFolderId : selectedFolderId;
+    });
+    [els.moveFolder].forEach((element) => {
+        if (element && selectedFolderId) element.value = selectedFolderId;
+    });
     [els.linkFolder, els.linkTitle, els.linkUrl, els.linkSubmit, els.photoFolder, els.photoFiles, els.fileFolder, els.mediaFiles].forEach((element) => {
         if (!element) return;
         element.disabled = !hasFolders;

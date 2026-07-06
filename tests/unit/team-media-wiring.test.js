@@ -20,7 +20,7 @@ describe('team media page wiring', () => {
         const page = fs.readFileSync(path.join(repoRoot, 'team-media.html'), 'utf8');
         const source = fs.readFileSync(path.join(repoRoot, 'js/team-media.js'), 'utf8');
 
-        expect(page).toContain('src="js/team-media.js?v=9"');
+        expect(page).toContain('src="js/team-media.js?v=10"');
         expect(page).toContain('Add album');
         expect(page).toContain('Upload files');
         expect(page).toContain('Save video link');
