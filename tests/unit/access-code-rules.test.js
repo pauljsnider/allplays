@@ -5,6 +5,8 @@ import { resolve } from 'node:path';
 const rules = readFileSync(resolve(process.cwd(), 'firestore.rules'), 'utf8');
 const accessCodeMatch = rules.match(/match \/accessCodes\/\{codeId\} \{[\s\S]*?\n\s*\}/);
 const accessCodeRules = accessCodeMatch?.[0] || '';
+const parentInviteRedemptionMatch = rules.match(/function isParentInviteRedemptionUpdate\(\) \{[\s\S]*?\n    \}/);
+const parentInviteRedemptionRule = parentInviteRedemptionMatch?.[0] || '';
 
 describe('access code Firestore rules', () => {
     it('removes the public accessCodes read loophole and scopes raw access to authorized users', () => {
@@ -73,6 +75,32 @@ describe('access code Firestore rules', () => {
         expect(accessCodeRules).toContain("resource.data.get('type', null) != 'parent_invite'");
         expect(accessCodeRules).toContain("resource.data.get('type', null) != 'household_invite'");
         expect(accessCodeRules).not.toContain("resource.data.type != 'parent_invite'");
+    });
+
+    it('requires parent_invite redemption to use an active invite owned by the signed-in email', () => {
+        expect(parentInviteRedemptionRule).toContain('resource.data.used == false');
+        expect(parentInviteRedemptionRule).toContain("resource.data.get('revoked', false) != true");
+        expect(parentInviteRedemptionRule).toContain("resource.data.get('active', true) != false");
+        expect(parentInviteRedemptionRule).toContain("resource.data.get('status', 'active') != 'removed'");
+        expect(parentInviteRedemptionRule).toContain("resource.data.get('status', 'active') != 'cancelled'");
+        expect(parentInviteRedemptionRule).toContain("resource.data.get('status', 'active') != 'revoked'");
+        expect(parentInviteRedemptionRule).toContain("resource.data.get('expiresAt', null) == null");
+        expect(parentInviteRedemptionRule).toContain('resource.data.expiresAt > request.time');
+        expect(parentInviteRedemptionRule).toContain("!('email' in resource.data)");
+        expect(parentInviteRedemptionRule).toContain('request.auth.token.email is string');
+        expect(parentInviteRedemptionRule).toContain('request.auth.token.email.lower() == resource.data.email.lower()');
+    });
+
+    it('does not let parent_invite redemption rely only on writable key narrowing', () => {
+        const affectedKeysIndex = parentInviteRedemptionRule.indexOf("affectedKeys().hasOnly(['used', 'usedBy', 'usedAt'])");
+        expect(affectedKeysIndex).toBeGreaterThanOrEqual(0);
+
+        const authorizationGuards = parentInviteRedemptionRule.slice(affectedKeysIndex);
+        expect(authorizationGuards).toContain('resource.data.used == false');
+        expect(authorizationGuards).toContain("resource.data.get('revoked', false) != true");
+        expect(authorizationGuards).toContain("resource.data.get('active', true) != false");
+        expect(authorizationGuards).toContain("resource.data.get('status', 'active') != 'revoked'");
+        expect(authorizationGuards).toContain('request.auth.token.email.lower() == resource.data.email.lower()');
     });
 
     it('requires household_invite creation to match an organizer-owned family membership and linked parent scope', () => {
