@@ -136,6 +136,8 @@ if (admin.apps.length === 0) {
 const firestore = admin.firestore();
 const TEAM_MEDIA_NOTIFICATION_BATCH_WINDOW_MS = 60 * 60 * 1000;
 const TEAM_MEDIA_NOTIFICATION_DISPATCH_LIMIT = 50;
+const FIRESTORE_BATCH_SAFE_WRITE_LIMIT = 450;
+const NOTIFICATION_RECIPIENT_DEVICE_SYNC_CONCURRENCY = 5;
 const checkStripeWebhookRateLimit = createInMemoryRateLimiter({
   windowMs: 60_000,
   maxRequests: 120,
@@ -4256,6 +4258,64 @@ function normalizeNotificationDeviceRecord(deviceId, raw) {
   };
 }
 
+function createBoundedFirestoreBatchWriter(limit = FIRESTORE_BATCH_SAFE_WRITE_LIMIT) {
+  const safeLimit = Number.isInteger(limit) && limit > 0 && limit <= 500 ? limit : FIRESTORE_BATCH_SAFE_WRITE_LIMIT;
+  let batch = firestore.batch();
+  let operationCount = 0;
+  const commits = [];
+
+  const commitCurrentBatch = () => {
+    if (operationCount <= 0) return;
+    const batchToCommit = batch;
+    commits.push(() => batchToCommit.commit());
+    batch = firestore.batch();
+    operationCount = 0;
+  };
+
+  const addOperation = (operation) => {
+    if (operationCount >= safeLimit) {
+      commitCurrentBatch();
+    }
+    operation(batch);
+    operationCount += 1;
+  };
+
+  return {
+    set(ref, value, options) {
+      addOperation((currentBatch) => currentBatch.set(ref, value, options));
+    },
+    delete(ref) {
+      addOperation((currentBatch) => currentBatch.delete(ref));
+    },
+    update(ref, value) {
+      addOperation((currentBatch) => currentBatch.update(ref, value));
+    },
+    async commit() {
+      commitCurrentBatch();
+      for (const commit of commits) {
+        await commit();
+      }
+    }
+  };
+}
+
+async function runWithConcurrencyLimit(items, limit, worker) {
+  const values = Array.from(items || []);
+  const concurrency = Math.max(1, Math.min(Number.isInteger(limit) ? limit : 1, values.length || 1));
+  let nextIndex = 0;
+  const results = new Array(values.length);
+
+  await Promise.all(Array.from({ length: concurrency }, async () => {
+    while (nextIndex < values.length) {
+      const currentIndex = nextIndex;
+      nextIndex += 1;
+      results[currentIndex] = await worker(values[currentIndex], currentIndex);
+    }
+  }));
+
+  return results;
+}
+
 async function getNotificationTargetTeamAccessMap(uid, teamIds) {
   const uniqueTeamIds = Array.from(new Set((Array.isArray(teamIds) ? teamIds : []).map((teamId) => String(teamId || '').trim()).filter(Boolean)));
   if (!uid || !uniqueTeamIds.length) return new Map();
@@ -4285,7 +4345,7 @@ async function syncNotificationTargetsForPreference(uid, teamId, preferences) {
   if (devicesSnap.empty) return;
 
   const teamAccessMap = await getNotificationTargetTeamAccessMap(uid, [teamId]);
-  const batch = firestore.batch();
+  const batch = createBoundedFirestoreBatchWriter();
   devicesSnap.docs.forEach((deviceSnap) => {
     const device = normalizeNotificationDeviceRecord(deviceSnap.id, deviceSnap.data());
     const indexRefs = buildTeamNotificationIndexRefs(teamId, uid, deviceSnap.id);
@@ -4318,7 +4378,7 @@ async function syncNotificationTargetsForDevice(uid, deviceId, rawDevice) {
   if (prefsSnap.empty) return;
 
   const teamAccessMap = await getNotificationTargetTeamAccessMap(uid, prefsSnap.docs.map((prefSnap) => prefSnap.id));
-  const batch = firestore.batch();
+  const batch = createBoundedFirestoreBatchWriter();
   prefsSnap.docs.forEach((prefSnap) => {
     const indexRefs = buildTeamNotificationIndexRefs(prefSnap.id, uid, deviceId);
     const preferences = normalizeNotificationPreferences(prefSnap.data());
@@ -4566,7 +4626,11 @@ exports.syncTeamNotificationRecipientsOnDeviceWrite = functions.firestore
     const userSnap = await firestore.doc(`users/${context.params.uid}`).get();
     const user = userSnap.exists ? (userSnap.data() || {}) : null;
     const teamIds = await getNotificationRecipientTeamIdsForUser(user, context.params.uid);
-    await Promise.all(teamIds.map((teamId) => syncNotificationRecipientForTeamUser(teamId, context.params.uid, { userData: user })));
+    await runWithConcurrencyLimit(
+      teamIds,
+      NOTIFICATION_RECIPIENT_DEVICE_SYNC_CONCURRENCY,
+      (teamId) => syncNotificationRecipientForTeamUser(teamId, context.params.uid, { userData: user })
+    );
     return null;
   });
 
@@ -7027,6 +7091,10 @@ exports._internal = {
   isFeeDueReminderCandidateEligible,
   buildFeeReminderNotificationBody,
   resolveEligibleFeeReminderRecipient,
+  FIRESTORE_BATCH_SAFE_WRITE_LIMIT,
+  NOTIFICATION_RECIPIENT_DEVICE_SYNC_CONCURRENCY,
+  createBoundedFirestoreBatchWriter,
+  runWithConcurrencyLimit,
   syncNotificationRecipientForTeamUser,
   syncNotificationRecipientsForUserChange,
   syncNotificationRecipientsForTeamChange

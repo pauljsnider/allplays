@@ -98,9 +98,14 @@ function loadNotificationRecipientIndexEnv({
     preferenceDocs = {},
     deviceDocs = {},
     authUsersByEmail = {},
-    initialRecipientDocs = {}
+    initialRecipientDocs = {},
+    maxBatchCommitOps = 450,
+    teamDocGetDelayMs = 0
 } = {}) {
     const deletedPaths = [];
+    const batchCommitSizes = [];
+    let activeTeamDocGets = 0;
+    let maxActiveTeamDocGets = 0;
     const docStore = new Map();
 
     for (const [path, value] of Object.entries(initialRecipientDocs)) {
@@ -123,6 +128,10 @@ function loadNotificationRecipientIndexEnv({
         return (deviceDocs[uid] || []).find((entry) => String(entry.id || '').trim() === String(deviceId || '').trim()) || null;
     }
 
+    function delay(ms) {
+        return new Promise((resolve) => setTimeout(resolve, ms));
+    }
+
     function doc(path) {
         return {
             path,
@@ -134,6 +143,12 @@ function loadNotificationRecipientIndexEnv({
 
                 const teamMatch = path.match(/^teams\/([^/]+)$/);
                 if (teamMatch) {
+                    activeTeamDocGets += 1;
+                    maxActiveTeamDocGets = Math.max(maxActiveTeamDocGets, activeTeamDocGets);
+                    if (teamDocGetDelayMs > 0) {
+                        await delay(teamDocGetDelayMs);
+                    }
+                    activeTeamDocGets -= 1;
                     const team = teamDocs[teamMatch[1]];
                     return makeDocSnapshot(this, team, team !== undefined);
                 }
@@ -360,6 +375,11 @@ function loadNotificationRecipientIndexEnv({
                     ops.push(() => ref.update(value));
                 },
                 async commit() {
+                    batchCommitSizes.push(ops.length);
+                    assert.ok(
+                        ops.length <= maxBatchCommitOps,
+                        `Firestore batch exceeded safe test limit: ${ops.length} > ${maxBatchCommitOps}`
+                    );
                     for (const op of ops) {
                         await op();
                     }
@@ -425,6 +445,10 @@ function loadNotificationRecipientIndexEnv({
         moduleExports,
         internals: moduleExports._internal,
         deletedPaths,
+        batchCommitSizes,
+        getMaxActiveTeamDocGets() {
+            return maxActiveTeamDocGets;
+        },
         getDoc(path) {
             return clone(docStore.get(path));
         },
@@ -581,6 +605,99 @@ test('device writes refresh token lists for every team the user belongs to', asy
         assert.equal(env.getDoc('teams/team-1/notificationRecipients/parent-1')?.tokens?.length, 2);
         assert.deepEqual(env.getDoc('teams/team-2/notificationRecipients/parent-1')?.roles, ['staff']);
         assert.deepEqual(env.getDoc('teams/team-2/notificationRecipients/parent-1')?.tokens?.map((entry) => entry.token).sort(), ['token-a', 'token-b']);
+    } finally {
+        env.cleanup();
+    }
+});
+
+test('device target sync chunks writes below the Firestore batch limit', async () => {
+    const teamCount = 501;
+    const teamDocs = {};
+    const preferenceDocs = {};
+    const parentTeamIds = [];
+
+    for (let index = 0; index < teamCount; index += 1) {
+        const teamId = `team-${index}`;
+        teamDocs[teamId] = { ownerId: `coach-${index}`, adminEmails: [] };
+        preferenceDocs[`users/parent-1/notificationPreferences/${teamId}`] = { schedule: true };
+        parentTeamIds.push(teamId);
+    }
+
+    const env = loadNotificationRecipientIndexEnv({
+        teamDocs,
+        userDocs: {
+            'parent-1': { email: 'parent@example.com', parentTeamIds }
+        },
+        preferenceDocs,
+        deviceDocs: {
+            'parent-1': [
+                { id: 'device-a', token: 'token-a', platform: 'ios' }
+            ]
+        }
+    });
+
+    try {
+        await env.moduleExports.syncTeamNotificationTargetsOnDeviceWrite(
+            makeChange(
+                { id: 'device-a', path: 'users/parent-1/notificationDevices/device-a' },
+                null,
+                { token: 'token-a', platform: 'ios' }
+            ),
+            { params: { uid: 'parent-1', deviceId: 'device-a' } }
+        );
+
+        assert.equal(env.batchCommitSizes.length, 2);
+        assert.deepEqual(env.batchCommitSizes, [450, 51]);
+        assert.equal(env.getDoc('teams/team-0/notificationTargets/parent-1__device-a')?.token, 'token-a');
+        assert.equal(env.getDoc('teams/team-500/notificationTargets/parent-1__device-a')?.token, 'token-a');
+    } finally {
+        env.cleanup();
+    }
+});
+
+test('device recipient sync refreshes many teams with bounded concurrency', async () => {
+    const teamCount = 25;
+    const teamDocs = {};
+    const parentTeamIds = [];
+
+    for (let index = 0; index < teamCount; index += 1) {
+        const teamId = `team-${index}`;
+        teamDocs[teamId] = { ownerId: `coach-${index}`, adminEmails: [] };
+        parentTeamIds.push(teamId);
+    }
+
+    const env = loadNotificationRecipientIndexEnv({
+        teamDocs,
+        userDocs: {
+            'parent-1': { email: 'parent@example.com', parentTeamIds }
+        },
+        preferenceDocs: Object.fromEntries(parentTeamIds.map((teamId) => [
+            `users/parent-1/notificationPreferences/${teamId}`,
+            { schedule: true }
+        ])),
+        deviceDocs: {
+            'parent-1': [
+                { id: 'device-a', token: 'token-a', platform: 'ios' },
+                { id: 'device-b', token: 'token-b', platform: 'android' }
+            ]
+        },
+        teamDocGetDelayMs: 5
+    });
+
+    try {
+        await env.moduleExports.syncTeamNotificationRecipientsOnDeviceWrite(
+            makeChange(
+                { id: 'device-b', path: 'users/parent-1/notificationDevices/device-b' },
+                null,
+                { token: 'token-b', platform: 'android' }
+            ),
+            { params: { uid: 'parent-1', deviceId: 'device-b' } }
+        );
+
+        assert.equal(env.getMaxActiveTeamDocGets(), env.internals.NOTIFICATION_RECIPIENT_DEVICE_SYNC_CONCURRENCY);
+        for (const teamId of parentTeamIds) {
+            assert.deepEqual(env.getDoc(`teams/${teamId}/notificationRecipients/parent-1`)?.tokens?.map((entry) => entry.token).sort(), ['token-a', 'token-b']);
+        }
     } finally {
         env.cleanup();
     }
