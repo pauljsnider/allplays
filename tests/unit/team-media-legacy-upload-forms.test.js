@@ -48,7 +48,7 @@ function loadTeamMediaHtml() {
 
 async function loadTeamMediaModule() {
     await import(path.resolve(repoRoot, 'js/team-media.js'));
-    await vi.waitUntil(() => document.getElementById('photo-folder').options.length === 2);
+    await vi.waitUntil(() => document.getElementById('photo-folder').options.length === 3);
 }
 
 function setSelectedFiles(input, files) {
@@ -84,7 +84,8 @@ describe('legacy team media upload forms', () => {
             adminEmails: []
         });
         mocks.getTeamMediaFolders.mockResolvedValue([
-            { id: 'folderA', name: 'Album A', visibility: 'team' }
+            { id: 'folderA', name: 'Album A', visibility: 'team' },
+            { id: 'folderB', name: 'Album B', visibility: 'team' }
         ]);
         mocks.getTeamMediaItemsPage.mockResolvedValue({
             items: [],
@@ -166,5 +167,41 @@ describe('legacy team media upload forms', () => {
         expect(document.getElementById('team-media-alert').className).toContain('bg-red-50');
         expect(document.getElementById('file-folder').value).toBe('folderA');
         expect(fileInput.value).toBe('');
+    });
+
+    it('preserves chosen upload albums when album detail filters re-render the page before submit', async () => {
+        await loadTeamMediaModule();
+
+        const photoInput = document.getElementById('photo-files');
+        const fileInput = document.getElementById('media-files');
+        const photo = new File(['photo'], 'team-photo.jpg', { type: 'image/jpeg' });
+        const pdfFile = new File(['pdf'], 'playbook.pdf', { type: 'application/pdf' });
+        document.getElementById('photo-folder').value = 'folderB';
+        document.getElementById('file-folder').value = 'folderB';
+        setSelectedFiles(photoInput, [photo]);
+        setSelectedFiles(fileInput, [pdfFile]);
+
+        document.querySelector('[data-media-type-filter="photos"]').click();
+
+        expect(document.getElementById('photo-folder').value).toBe('folderB');
+        expect(document.getElementById('file-folder').value).toBe('folderB');
+
+        submitForm(document.getElementById('photo-upload-form'));
+        await vi.waitUntil(() => mocks.uploadTeamMediaPhoto.mock.calls.length === 1);
+        expect(mocks.uploadTeamMediaPhoto).toHaveBeenCalledWith(
+            'team123',
+            'folderB',
+            photo,
+            expect.objectContaining({ onProgress: expect.any(Function) })
+        );
+
+        submitForm(document.getElementById('file-upload-form'));
+        await vi.waitUntil(() => mocks.uploadTeamMediaFile.mock.calls.length === 1);
+        expect(mocks.uploadTeamMediaFile).toHaveBeenCalledWith(
+            'team123',
+            'folderB',
+            pdfFile,
+            expect.objectContaining({ onProgress: expect.any(Function) })
+        );
     });
 });
