@@ -51,13 +51,13 @@ describe('admin invite signup cache busting', () => {
 
     it('bumps auth module consumers after signup flow changes', () => {
         const authConsumers = {
-            'login.html': 'auth.js?v=41',
-            'accept-invite.html': 'auth.js?v=41',
-            'edit-team.html': 'auth.js?v=41',
-            'js/admin.js': 'auth.js?v=41',
-            'js/live-game.js': 'auth.js?v=41',
-            'js/live-tracker.js': 'auth.js?v=41',
-            'js/track-basketball.js': 'auth.js?v=41'
+            'login.html': 'auth.js?v=42',
+            'accept-invite.html': 'auth.js?v=42',
+            'edit-team.html': 'auth.js?v=42',
+            'js/admin.js': 'auth.js?v=42',
+            'js/live-game.js': 'auth.js?v=42',
+            'js/live-tracker.js': 'auth.js?v=42',
+            'js/track-basketball.js': 'auth.js?v=42'
         };
 
         for (const [relativePath, expectedVersion] of Object.entries(authConsumers)) {
@@ -66,8 +66,8 @@ describe('admin invite signup cache busting', () => {
         }
 
         const editTeamSource = readFileSync(resolve(process.cwd(), 'edit-team.html'), 'utf8');
-        expect(editTeamSource).toContain("import { checkAuth, sendInviteEmail } from './js/auth.js?v=41';");
-        expect(editTeamSource).not.toContain("import { checkAuth, sendInviteEmail } from './js/auth.js?v=38';");
+        expect(editTeamSource).toContain("import { checkAuth, sendInviteEmail } from './js/auth.js?v=42';");
+        expect(editTeamSource).not.toContain("import { checkAuth, sendInviteEmail } from './js/auth.js?v=39';");
     });
 
     it('bumps the shared header logout import with auth.js consumers', () => {
@@ -75,8 +75,8 @@ describe('admin invite signup cache busting', () => {
         const logoutImportMatches = utilsSource.match(/const \{ logout \} = await import\('\.\/auth\.js\?v=40'\);/g) || [];
 
         expect(logoutImportMatches).toHaveLength(1);
-        expect(utilsSource).not.toContain("const { logout } = await import('./auth.js?v=23');");
-        expect(utilsSource).not.toContain("const { logout } = await import('./auth.js?v=39');");
+        expect(utilsSource).not.toContain("const { logout } = await import('./auth.js?v=24');");
+        expect(utilsSource).not.toContain("const { logout } = await import('./auth.js?v=40');");
     });
 
     it('does not leave deployed source consumers pinned to stale auth or db wrappers', () => {
