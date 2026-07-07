@@ -1170,6 +1170,20 @@ service cloud.firestore {
              !data.keys().hasAny(['email', 'phone', 'parentOf', 'parentTeamIds', 'parentPlayerKeys']);
     }
 
+    function isOwnerPublicUserProfilePresentationCreateValid(userId) {
+      return isOwner(userId) &&
+             request.resource.data.keys().hasOnly(['displayName', 'fullName', 'photoUrl', 'updatedAt']) &&
+             isPublicUserProfilePayloadValid(userId, request.resource.data);
+    }
+
+    function isOwnerPublicUserProfilePresentationUpdateValid(userId) {
+      return isOwner(userId) &&
+             request.resource.data.diff(resource.data).affectedKeys().hasOnly(['displayName', 'fullName', 'photoUrl', 'updatedAt']) &&
+             isPublicUserProfilePayloadValid(userId, request.resource.data) &&
+             request.resource.data.get('discoveryTeamIds', resource.data.get('discoveryTeamIds', [])) == resource.data.get('discoveryTeamIds', []) &&
+             request.resource.data.get('emailHash', resource.data.get('emailHash', null)) == resource.data.get('emailHash', null);
+    }
+
     function userMembershipFields() {
       return ['parentOf', 'parentTeamIds', 'parentPlayerKeys', 'playerKeys'];
     }
@@ -1602,8 +1616,10 @@ service cloud.firestore {
 
     match /publicUserProfiles/{userId} {
       allow read: if canReadPublicUserProfile(userId, resource.data);
-      allow create, update: if (isGlobalAdmin() || isOwner(userId)) &&
-                              isPublicUserProfilePayloadValid(userId, request.resource.data);
+      allow create: if (isGlobalAdmin() && isPublicUserProfilePayloadValid(userId, request.resource.data)) ||
+                    isOwnerPublicUserProfilePresentationCreateValid(userId);
+      allow update: if (isGlobalAdmin() && isPublicUserProfilePayloadValid(userId, request.resource.data)) ||
+                    isOwnerPublicUserProfilePresentationUpdateValid(userId);
       allow delete: if isGlobalAdmin() || isOwner(userId);
     }
 

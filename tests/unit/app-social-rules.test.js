@@ -37,6 +37,13 @@ const moderatorSocialPostFields = [
     'updatedAt'
 ];
 
+const ownerPublicProfilePresentationFields = [
+    'displayName',
+    'fullName',
+    'photoUrl',
+    'updatedAt'
+];
+
 function hasOnly(values, allowed) {
     return values.every((value) => allowed.includes(value));
 }
@@ -63,6 +70,11 @@ function isModeratorSocialPostUpdateValid({ canModerate, affectedKeys }) {
     return canModerate &&
         !hasAny(affectedKeys, immutableSocialPostScopeFields) &&
         hasOnly(affectedKeys, moderatorSocialPostFields);
+}
+
+function isOwnerPublicProfilePresentationWriteValid({ affectedKeys, create = false }) {
+    return hasOnly(affectedKeys, ownerPublicProfilePresentationFields) &&
+        (create ? !hasAny(affectedKeys, ['discoveryTeamIds', 'emailHash']) : true);
 }
 
 describe('React app social Firestore rules', () => {
@@ -101,6 +113,35 @@ describe('React app social Firestore rules', () => {
         expect(source).toContain("(isOwner(userId) && isOwnerUserUpdatePayloadValid())");
         expect(source).toContain('allow read: if isGlobalAdmin() || isOwner(userId);');
         expect(source).not.toContain('allow read: if true;  // Public profiles');
+    });
+
+    it('prevents profile owners from forging public discovery team ids or email hashes', () => {
+        const source = rulesSource();
+
+        expect(source).toContain('function isOwnerPublicUserProfilePresentationCreateValid(userId)');
+        expect(source).toContain('function isOwnerPublicUserProfilePresentationUpdateValid(userId)');
+        expect(source).toContain("request.resource.data.keys().hasOnly(['displayName', 'fullName', 'photoUrl', 'updatedAt'])");
+        expect(source).toContain("request.resource.data.diff(resource.data).affectedKeys().hasOnly(['displayName', 'fullName', 'photoUrl', 'updatedAt'])");
+        expect(source).toContain("request.resource.data.get('discoveryTeamIds', resource.data.get('discoveryTeamIds', [])) == resource.data.get('discoveryTeamIds', [])");
+        expect(source).toContain("request.resource.data.get('emailHash', resource.data.get('emailHash', null)) == resource.data.get('emailHash', null)");
+        expect(source).toContain('allow create: if (isGlobalAdmin() && isPublicUserProfilePayloadValid(userId, request.resource.data)) ||');
+        expect(source).toContain('allow update: if (isGlobalAdmin() && isPublicUserProfilePayloadValid(userId, request.resource.data)) ||');
+        expect(source).not.toContain('allow create, update: if (isGlobalAdmin() || isOwner(userId))');
+
+        expect(isOwnerPublicProfilePresentationWriteValid({
+            create: true,
+            affectedKeys: ['displayName', 'fullName', 'photoUrl', 'updatedAt']
+        })).toBe(true);
+        expect(isOwnerPublicProfilePresentationWriteValid({
+            create: true,
+            affectedKeys: ['displayName', 'discoveryTeamIds', 'updatedAt']
+        })).toBe(false);
+        expect(isOwnerPublicProfilePresentationWriteValid({
+            affectedKeys: ['emailHash', 'updatedAt']
+        })).toBe(false);
+        expect(isOwnerPublicProfilePresentationWriteValid({
+            affectedKeys: ['discoveryTeamIds', 'updatedAt']
+        })).toBe(false);
     });
 
     it('locks author social post updates to content fields without changing original visibility scope', () => {

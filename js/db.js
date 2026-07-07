@@ -1751,7 +1751,7 @@ async function hashPublicProfileEmail(email) {
         .join('');
 }
 
-async function buildPublicUserProfilePayload(userData = {}) {
+async function buildTrustedPublicUserProfileProjectionPayload(userData = {}) {
     const fullName = compactPublicProfileString(userData.fullName || userData.displayName || userData.name);
     const displayName = compactPublicProfileString(userData.displayName || userData.fullName || userData.name);
     const payload = {
@@ -1765,9 +1765,20 @@ async function buildPublicUserProfilePayload(userData = {}) {
     return payload;
 }
 
+async function buildPublicUserProfilePresentationPayload(userData = {}) {
+    const fullName = compactPublicProfileString(userData.fullName || userData.displayName || userData.name);
+    const displayName = compactPublicProfileString(userData.displayName || userData.fullName || userData.name);
+    return {
+        displayName: displayName || null,
+        fullName: fullName || null,
+        photoUrl: compactPublicProfileString(userData.photoUrl) || null,
+        updatedAt: Timestamp.now()
+    };
+}
+
 async function syncPublicUserProfile(userId, userData = null) {
     const nextUserData = userData || await getUserProfile(userId) || {};
-    const payload = await buildPublicUserProfilePayload(nextUserData);
+    const payload = await buildPublicUserProfilePresentationPayload(nextUserData);
     await setDoc(doc(db, 'publicUserProfiles', userId), payload, { merge: true });
 }
 

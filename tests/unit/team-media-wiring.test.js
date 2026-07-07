@@ -24,7 +24,7 @@ describe('team media page wiring', () => {
         expect(page).toContain('Add album');
         expect(page).toContain('Upload files');
         expect(page).toContain('Save video link');
-        expect(source).toContain("from './db.js?v=82'");
+        expect(source).toContain("from './db.js?v=83'");
         expect(source).toContain("import { checkAuth } from './auth.js?v=41';");
         expect(source).toContain('checkAuth(async (user) => {');
         expect(source).toContain('team.html#teamId=${encodeURIComponent(state.teamId)}');
@@ -42,7 +42,7 @@ describe('team media page wiring', () => {
         const source = fs.readFileSync(path.join(repoRoot, 'js/team-media.js'), 'utf8');
         const dbImportVersion = source.match(/from '\.\/db\.js\?v=(\d+)'/)?.[1];
 
-        expect(dbImportVersion).toBe('82');
+        expect(dbImportVersion).toBe('83');
 
         for (const testFile of [
             'tests/unit/team-media-item-rename.test.js',
@@ -50,7 +50,7 @@ describe('team media page wiring', () => {
         ]) {
             const testSource = fs.readFileSync(path.join(repoRoot, testFile), 'utf8');
             expect(testSource).toContain(`vi.mock('../../js/db.js?v=${dbImportVersion}'`);
-            expect(testSource).not.toContain("vi.mock('../../js/db.js?v=81'");
+            expect(testSource).not.toContain("vi.mock('../../js/db.js?v=82'");
         }
     });
 
