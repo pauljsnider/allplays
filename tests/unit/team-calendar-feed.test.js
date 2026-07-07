@@ -144,19 +144,25 @@ describe('team calendar subscription feed', () => {
         expect(functionsSource).toContain('buildTeamCalendarIcs({ teamId, team, events })');
     });
 
-    it('builds private feeds from game documents without per-game RSVP fan-out', () => {
+    it('hydrates missing private feed summaries from RSVP rows without exposing attendee rows', () => {
         const feedStart = functionsSource.indexOf('exports.teamCalendarFeed = functions.https.onRequest');
         const feedEnd = functionsSource.indexOf('exports.resolveFamilyShareTokenChildren', feedStart);
         const teamCalendarFeedSource = functionsSource.slice(feedStart, feedEnd);
+        const summaryHelperStart = functionsSource.indexOf('async function loadMissingTeamCalendarRsvpSummaries');
+        const summaryHelperEnd = functionsSource.indexOf('function calendarTokenHasTeamAccess', summaryHelperStart);
+        const summaryHelperSource = functionsSource.slice(summaryHelperStart, summaryHelperEnd);
 
         expect(teamCalendarFeedSource).toContain("firestore.collection(`teams/${teamId}/games`).orderBy('date').get()");
-        expect(teamCalendarFeedSource).toContain('const game = { id: docSnap.id, ...(docSnap.data() || {}) }');
+        expect(teamCalendarFeedSource).toContain('const rawEvents = eventsSnap.docs.map');
+        expect(teamCalendarFeedSource).toContain("filter((game) => !game.rsvpSummary || typeof game.rsvpSummary !== 'object')");
+        expect(teamCalendarFeedSource).toContain('loadMissingTeamCalendarRsvpSummaries(teamId, missingSummaryGameIds)');
+        expect(teamCalendarFeedSource).toContain('game.rsvpSummary = liveRsvpSummary');
         expect(teamCalendarFeedSource).toContain('buildTeamCalendarIcs({ teamId, team, events })');
-        expect(teamCalendarFeedSource).not.toContain('loadTeamCalendarRsvpSummaries');
-        expect(teamCalendarFeedSource).not.toContain('collection(`teams/${teamId}/players`)');
-        expect(teamCalendarFeedSource).not.toContain('collection(`teams/${teamId}/games/${gameId}/rsvps`)');
-        expect(teamCalendarFeedSource).not.toContain('.collection(\'rsvps\')');
         expect(teamCalendarFeedSource).not.toContain('game.rsvps');
-        expect(functionsSource).not.toContain('async function loadTeamCalendarRsvpSummaries');
+        expect(summaryHelperSource).toContain('if (!uniqueGameIds.length) return new Map()');
+        expect(summaryHelperSource).toContain('firestore.collection(`teams/${teamId}/players`).get()');
+        expect(summaryHelperSource).toContain('firestore.collection(`teams/${teamId}/games/${gameId}/rsvps`).get()');
+        expect(summaryHelperSource).toContain('responsesByPlayerId');
+        expect(summaryHelperSource).not.toContain('displayName');
     });
 });
