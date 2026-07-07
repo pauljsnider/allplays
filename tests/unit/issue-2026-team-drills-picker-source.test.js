@@ -22,7 +22,7 @@ describe('issue 2026 team drills picker source contract', () => {
     it('keeps drill service pagination and AI practice-coach prompt inputs available', () => {
         expect(teamDrillsServiceSource).toContain('const drillLibraryPageSize = 12;');
         expect(teamDrillsServiceSource).toContain('export function filterDrillSummaries');
-        expect(teamDrillsServiceSource).toContain("export { buildPracticeAiCoachPrompt } from './practiceAiCoachService';");
+        expect(teamDrillsServiceSource).not.toContain("export { buildPracticeAiCoachPrompt } from './practiceAiCoachService';");
         expect(practiceAiCoachServiceSource).toContain('export function buildPracticeAiCoachPrompt');
         expect(practiceAiCoachServiceSource).toContain('drillLibraryCatalog');
         expect(teamDrillsServiceSource).toContain('export async function loadTeamDrillLibraryPage');
