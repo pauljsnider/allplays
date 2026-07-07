@@ -1,4 +1,4 @@
-import { lazy, memo, Suspense, useCallback, useEffect, useRef, useState, type ComponentType, type LazyExoticComponent, type ReactNode } from 'react';
+import { lazy, memo, Suspense, useCallback, useEffect, useMemo, useRef, useState, type ComponentType, type LazyExoticComponent, type ReactNode } from 'react';
 import { Award, CalendarDays, ChevronLeft, DollarSign, Loader2, Share2, Shield, Ticket, Users, type LucideIcon } from 'lucide-react';
 import { Link, Navigate, useLocation, useNavigate, useParams } from 'react-router-dom';
 import type { AuthState } from '../lib/types';
@@ -49,6 +49,27 @@ function hasParentToolLinks(auth: AuthState) {
     );
 }
 
+function getParentUserFingerprint(auth: AuthState) {
+    const user = auth.user;
+    if (!user) return 'signed-out';
+    return stableFingerprintValue({
+        uid: user.uid,
+        parentOf: Array.isArray(user.parentOf) ? user.parentOf : [],
+        parentPlayerKeys: Array.isArray(user.parentPlayerKeys) ? user.parentPlayerKeys : [],
+        parentTeamIds: Array.isArray(user.parentTeamIds) ? user.parentTeamIds : []
+    });
+}
+
+function stableFingerprintValue(value: unknown): string {
+    if (Array.isArray(value)) {
+        return `[${value.map(stableFingerprintValue).sort().join(',')}]`;
+    }
+    if (value && typeof value === 'object') {
+        return `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${stableFingerprintValue((value as Record<string, unknown>)[key])}`).join(',')}}`;
+    }
+    return JSON.stringify(value);
+}
+
 const ParentToolPanel = memo(function ParentToolPanel({ toolId, auth, refreshVersion, onAccessChanged }: { toolId: ParentToolId } & ParentToolPanelProps) {
     trackParentToolRender(toolId);
     const Panel = lazyToolPanels[toolId];
@@ -61,6 +82,8 @@ export function ParentTools({ auth }: { auth: AuthState }) {
     const location = useLocation();
     const activeTool = validToolIds.has(toolId as ParentToolId) ? toolId as ParentToolId : null;
     const hasLinkedPlayers = hasParentToolLinks(auth);
+    const parentUserFingerprint = getParentUserFingerprint(auth);
+    const panelAuth = useMemo(() => auth, [parentUserFingerprint]);
     const visibleTools = hasLinkedPlayers ? tools : tools.filter((tool) => tool.id === 'access');
     const visibleToolIds = new Set(visibleTools.map((tool) => tool.id));
     const isLockedDeepLink = Boolean(activeTool && !visibleToolIds.has(activeTool));
@@ -173,7 +196,7 @@ export function ParentTools({ auth }: { auth: AuthState }) {
                     <Suspense fallback={<ParentToolPanelFallback />}>
                         <ParentToolPanel
                             toolId={tool.id}
-                            auth={auth}
+                            auth={panelAuth}
                             refreshVersion={toolRefreshVersions[tool.id]}
                             onAccessChanged={handleAccessChanged}
                         />
