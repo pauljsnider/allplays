@@ -50,6 +50,7 @@ async function mockAppModules(page, { user = null, emailLink = false } = {}) {
             notificationSaves: [],
             notificationLoads: [],
             push: 0,
+            pushModuleLoads: 0,
             accessCodes: [],
             openPushSettings: 0
         };
@@ -357,6 +358,8 @@ async function mockAppModules(page, { user = null, emailLink = false } = {}) {
             status: 200,
             contentType: 'application/javascript',
             body: `
+                window.__appProfileCalls.pushModuleLoads += 1;
+
                 export async function addPushNotificationOpenListener() {
                     return async () => {};
                 }
@@ -643,6 +646,7 @@ test('profile exposes account, notification, invite, verification, password, upl
     await page.goto(appUrl(baseURL, '/profile'), { waitUntil: 'domcontentloaded' });
 
     await expect(page.getByRole('heading', { name: 'Your Account' })).toBeVisible();
+    await expect.poll(async () => page.evaluate(() => window.__appProfileCalls.pushModuleLoads)).toBe(0);
     await page.locator('input[type="file"]').setInputFiles({
         name: 'avatar.png',
         mimeType: 'image/png',
@@ -658,6 +662,7 @@ test('profile exposes account, notification, invite, verification, password, upl
     const alertsTab = page.getByRole('button', { name: 'Alerts', exact: true });
     await alertsTab.click();
     await expect(alertsTab).toHaveAttribute('aria-pressed', 'true');
+    await expect.poll(async () => page.evaluate(() => window.__appProfileCalls.pushModuleLoads)).toBe(1);
     await expect(page.getByText('Per-team alerts for live chat, score updates, and schedule changes.')).toBeVisible();
     await expect(page.getByLabel('Team')).toHaveValue('team-1');
     const gameDayAlertsButton = page.getByRole('button', { name: 'Turn on game-day alerts' });

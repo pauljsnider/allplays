@@ -36,14 +36,6 @@ import {
   saveNotificationPreferences,
   saveProfileDocument
 } from '../lib/profileService';
-import {
-  enablePushNotificationsForUser,
-  getPushNotificationPermissionStatus,
-  openPushNotificationSettings,
-  runPushNotificationPrimer,
-  type PushNotificationPrimerContext,
-  type PushNotificationPermissionStatus
-} from '../lib/pushService';
 import { buildAppAcceptInviteUrl } from '../lib/inviteUrls';
 import { createLogger } from '../lib/logger';
 import { sharePublicUrl } from '../lib/publicActions';
@@ -53,6 +45,7 @@ import { useViewLoadTimer } from '../lib/viewLoadTiming';
 import { NOTIFICATION_PREFERENCE_GROUPS } from '../lib/adapters/legacyProfile';
 import type { AccessCodeRecord, NotificationCategory, NotificationPreferences, NotificationTeam, ProfileDocument } from '../lib/profileService';
 import type { ProfilePhotoSource } from '../lib/profilePhotoService';
+import type { PushNotificationPrimerContext, PushNotificationPermissionStatus } from '../lib/pushService';
 import type { AuthState } from '../lib/types';
 
 type Tone = 'neutral' | 'success' | 'error';
@@ -83,6 +76,15 @@ const profileSections: Array<{ id: ProfileSectionId; label: string }> = [
   { id: 'invites', label: 'Invites' },
   { id: 'security', label: 'Security' }
 ];
+type PushServiceModule = typeof import('../lib/pushService');
+let pushServiceRequest: Promise<PushServiceModule> | null = null;
+
+function loadPushService() {
+  if (!pushServiceRequest) {
+    pushServiceRequest = import('../lib/pushService');
+  }
+  return pushServiceRequest;
+}
 
 function getProfileSectionRoute(section: ProfileSectionId) {
   return section === 'account' ? '/profile' : `/profile?section=${section}`;
@@ -251,7 +253,8 @@ export function Profile({ auth }: { auth: AuthState }) {
     }
 
     try {
-      const nextStatus = await getPushNotificationPermissionStatus();
+      const pushService = await loadPushService();
+      const nextStatus = await pushService.getPushNotificationPermissionStatus();
       setPushPermissionStatus(nextStatus);
       return nextStatus;
     } catch (error) {
@@ -930,7 +933,8 @@ export function Profile({ auth }: { auth: AuthState }) {
     setNotificationStatus(null);
 
     try {
-      const currentPermissionStatus = pushPermissionStatus || await getPushNotificationPermissionStatus();
+      const pushService = await loadPushService();
+      const currentPermissionStatus = pushPermissionStatus || await pushService.getPushNotificationPermissionStatus();
 
       setPushPermissionStatus(currentPermissionStatus);
 
@@ -952,7 +956,7 @@ export function Profile({ auth }: { auth: AuthState }) {
         return;
       }
 
-      await enablePushNotificationsForUser(user.uid);
+      await pushService.enablePushNotificationsForUser(user.uid);
       await refreshPushPermissionStatus({ silent: true });
       setNotificationStatus({ message: 'Push is enabled on this device.', tone: 'success' });
     } catch (error: any) {
@@ -965,7 +969,8 @@ export function Profile({ auth }: { auth: AuthState }) {
 
   const openDeviceSettingsForPush = async (statusMessage = 'Open device settings, allow notifications, then return here. We will refresh this screen when you come back.') => {
     setNotificationStatus({ message: statusMessage, tone: 'neutral' });
-    await openPushNotificationSettings();
+    const pushService = await loadPushService();
+    await pushService.openPushNotificationSettings();
   };
 
   const confirmPushPrimer = async (context: PushNotificationPrimerContext, permissionStatus: PushNotificationPermissionStatus | null) => {
@@ -973,7 +978,8 @@ export function Profile({ auth }: { auth: AuthState }) {
       return true;
     }
 
-    const accepted = await runPushNotificationPrimer(context);
+    const pushService = await loadPushService();
+    const accepted = await pushService.runPushNotificationPrimer(context);
     if (!accepted) {
       setNotificationStatus({ message: 'Push setup was skipped. You can turn notifications on later from Alerts.', tone: 'neutral' });
     }
@@ -996,7 +1002,8 @@ export function Profile({ auth }: { auth: AuthState }) {
     setNotificationStatus(null);
 
     try {
-      const currentPermissionStatus = pushPermissionStatus || await getPushNotificationPermissionStatus();
+      const pushService = await loadPushService();
+      const currentPermissionStatus = pushPermissionStatus || await pushService.getPushNotificationPermissionStatus();
 
       setPushPermissionStatus(currentPermissionStatus);
 
@@ -1027,7 +1034,7 @@ export function Profile({ auth }: { auth: AuthState }) {
         ...gameDayDefaultPreferences
       });
 
-      await enablePushNotificationsForUser(user.uid);
+      await pushService.enablePushNotificationsForUser(user.uid);
       await refreshPushPermissionStatus({ silent: true });
       const saved = await saveNotificationPreferences(user.uid, teamId, nextPreferences);
       setNotificationPreferences(saved);
