@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { buildPracticeAiCoachPrompt, filterDrillSummaries, loadFavoriteDrills, loadTeamDrillLibraryPage, setTeamDrillFavorite } from './teamDrillsService';
+import { buildPracticeAiCoachPrompt } from './practiceAiCoachService';
+import { filterDrillSummaries, loadFavoriteDrills, loadTeamDrillLibraryPage, setTeamDrillFavorite } from './teamDrillsService';
 
 const dbMocks = vi.hoisted(() => ({
   addDrillFavorite: vi.fn(),

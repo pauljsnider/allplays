@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState, type FormEvent } from 'react';
 import { Link, Navigate, useParams, useSearchParams } from 'react-router-dom';
 import { ChevronLeft, ExternalLink, Heart, Loader2, Save, Search, Shield, Sparkles } from 'lucide-react';
 import { DRILL_LEVELS, DRILL_TYPES, DRILL_TYPE_COLORS } from '../lib/adapters/legacyDrills';
-import { generatePracticeAiCoachPlan, type PracticeAiCoachPlanResult } from '../lib/practiceAiCoachService';
+import type { PracticeAiCoachPlanResult } from '../lib/practiceAiCoachService';
 import { getPracticeTimelineTotalMinutes, loadPracticeTimelineModel, savePracticeTimelineForApp, type PracticeTimelineBlock, type PracticeTimelineModel } from '../lib/practiceTimelineService';
 import { isRetryableAppServiceError, toAppServiceError } from '../lib/appErrors';
 import { openPublicUrl } from '../lib/publicActions';
@@ -14,6 +14,10 @@ type DrillTab = 'community' | 'favorites';
 
 const drillTypeOptions = DRILL_TYPES as string[];
 const drillLevelOptions = DRILL_LEVELS as string[];
+
+function loadPracticeAiCoachService() {
+  return import('../lib/practiceAiCoachService');
+}
 
 function mergeUniqueDrills(drills: TeamDrillSummary[]) {
   return Array.from(new Map(drills.map((drill) => [drill.id, drill])).values());
@@ -241,6 +245,7 @@ export function TeamDrills({ auth }: { auth: AuthState }) {
     setCoachProposal(null);
     try {
       const favoriteContextDrills = (favoriteDrills || communityDrills.filter((drill) => favoriteIds.includes(drill.id))).slice(0, 10);
+      const { generatePracticeAiCoachPlan } = await loadPracticeAiCoachService();
       const result = await generatePracticeAiCoachPlan({
         teamName: practiceModel.teamName || teamName,
         sport: practiceModel.teamSport || teamSport,
