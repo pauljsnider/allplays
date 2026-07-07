@@ -310,7 +310,8 @@ describe('React app auth/profile capability parity', () => {
         expect(handlerStart).toBeGreaterThanOrEqual(0);
         expectContains(enablePushOnDevice, [
             "setBusy('push-device')",
-            'await enablePushNotificationsForUser(user.uid);',
+            'const pushService = await loadPushService();',
+            'await pushService.enablePushNotificationsForUser(user.uid);',
             'Push is enabled on this device.',
             'Failed to enable push on this device.'
         ]);
@@ -333,7 +334,8 @@ describe('React app auth/profile capability parity', () => {
         expect(turnOnGameDayAlerts).toContain('? notificationPreferences');
         expect(turnOnGameDayAlerts).toContain(': await loadNotificationPreferencesOnce(user.uid, teamId));');
         expect(turnOnGameDayAlerts).toContain('...currentPreferences,');
-        expect(turnOnGameDayAlerts.indexOf('await enablePushNotificationsForUser(user.uid);')).toBeLessThan(
+        expect(turnOnGameDayAlerts).toContain('const pushService = await loadPushService();');
+        expect(turnOnGameDayAlerts.indexOf('await pushService.enablePushNotificationsForUser(user.uid);')).toBeLessThan(
             turnOnGameDayAlerts.indexOf('saveNotificationPreferences(user.uid, teamId, nextPreferences)')
         );
         expect(turnOnGameDayAlerts).toContain('setNotificationPreferencesByTeamId((current) => ({ ...current, [teamId]: saved }));');
