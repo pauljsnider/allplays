@@ -351,6 +351,40 @@ export async function setTeamMediaAlbumCover() {}
 export async function updateTeamMediaItem() {}
 `;
 
+const MEDIA_DB_RECORDING_STUB = `
+window.__TEAM_MEDIA_CALLS__ = [];
+export async function getTeam(teamId) {
+    return { id: teamId, name: 'Media Test Team', ownerId: 'owner-1', adminEmails: [] };
+}
+export async function getTeamMediaFolders() {
+    return [{ id: 'folder-1', name: 'Highlights', order: 0 }];
+}
+export async function getTeamMediaItemsPage() {
+    return { items: [], hasMore: false, nextCursor: null };
+}
+export async function createTeamMediaFolder() {}
+export async function updateTeamMediaFolder() {}
+export async function deleteTeamMediaFolder() {}
+export async function createTeamMediaLink(teamId, folderId, payload) {
+    window.__TEAM_MEDIA_CALLS__.push({ type: 'link', teamId, folderId, title: payload.title, url: payload.url });
+}
+export async function uploadTeamMediaPhoto(teamId, folderId, file, options = {}) {
+    window.__TEAM_MEDIA_CALLS__.push({ type: 'photo', teamId, folderId, fileName: file.name });
+    options.onProgress?.({ percent: 100 });
+}
+export async function uploadTeamMediaFile(teamId, folderId, file, options = {}) {
+    window.__TEAM_MEDIA_CALLS__.push({ type: 'file', teamId, folderId, fileName: file.name });
+    options.onProgress?.({ percent: 100 });
+}
+export async function deleteTeamMediaItem() {}
+export async function reorderTeamMediaFolders() {}
+export async function reorderTeamMediaItems() {}
+export async function moveTeamMediaItems() {}
+export async function bulkDeleteTeamMediaItems() {}
+export async function setTeamMediaAlbumCover() {}
+export async function updateTeamMediaItem() {}
+`;
+
 const MEDIA_UTILS_STUB = `
 export function canManageTeamMedia() {
     return false;
@@ -428,6 +462,11 @@ export function sortByMediaOrder(items = []) {
     return items;
 }
 `;
+
+const MEDIA_UTILS_MIXED_DOCUMENT_STUB = MEDIA_UTILS_ADMIN_STUB.replace(
+    'export function isSupportedTeamMediaDocument() {\n    return true;\n}',
+    "export function isSupportedTeamMediaDocument(file = {}) {\n    return String(file.name || '').toLowerCase().endsWith('.pdf');\n}"
+);
 
 const LIVE_GAME_UTILS_STUB = `
 export function renderHeader() {}
@@ -837,6 +876,80 @@ test('team media renders visible save actions for staff', async ({ page, baseURL
     }));
     expect(colors.folderBackground).not.toBe('rgba(0, 0, 0, 0)');
     expect(colors.linkBackground).not.toBe('rgba(0, 0, 0, 0)');
+    expect(pageErrors).toEqual([]);
+});
+
+test('team media staff uploads photos and files and saves video links to the selected album', async ({ page, baseURL }) => {
+    const pageErrors = await collectPageErrors(page);
+    await page.route(/\/js\/auth\.js(?:\?v=\d+)?$/, (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: AUTH_STUB }));
+    await page.route(/\/js\/db\.js(?:\?v=\d+)?$/, (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: MEDIA_DB_RECORDING_STUB }));
+    await page.route(/\/js\/team-media-utils\.js(?:\?v=\d+)?$/, (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: MEDIA_UTILS_ADMIN_STUB }));
+
+    await page.goto(`${baseURL}/team-media.html?teamId=team-1`, { waitUntil: 'domcontentloaded' });
+    await expect(page.locator('#link-folder')).toContainText('Highlights');
+
+    await page.locator('#photo-folder').selectOption('folder-1');
+    await page.locator('#photo-files').setInputFiles({
+        name: 'photo.jpg',
+        mimeType: 'image/jpeg',
+        buffer: Buffer.from('photo')
+    });
+    await page.locator('#photo-upload-form button').click();
+    await expect(page.locator('#team-media-alert')).toContainText('1 photo uploaded.');
+
+    await page.locator('#file-folder').selectOption('folder-1');
+    await page.locator('#media-files').setInputFiles({
+        name: 'packet.pdf',
+        mimeType: 'application/pdf',
+        buffer: Buffer.from('packet')
+    });
+    await page.locator('#file-upload-form button').click();
+    await expect(page.locator('#team-media-alert')).toContainText('1 file uploaded.');
+
+    await page.locator('#link-folder').selectOption('folder-1');
+    await page.locator('#link-title').fill('Replay');
+    await page.locator('#link-url').fill('https://example.test/replay');
+    await page.locator('#link-submit').click();
+    await expect(page.locator('#team-media-alert')).toContainText('Video link saved.');
+
+    await expect.poll(() => page.evaluate(() => window.__TEAM_MEDIA_CALLS__)).toEqual([
+        { type: 'photo', teamId: 'team-1', folderId: 'folder-1', fileName: 'photo.jpg' },
+        { type: 'file', teamId: 'team-1', folderId: 'folder-1', fileName: 'packet.pdf' },
+        { type: 'link', teamId: 'team-1', folderId: 'folder-1', title: 'Replay', url: 'https://example.test/replay' }
+    ]);
+    expect(pageErrors).toEqual([]);
+});
+
+test('team media staff file upload reports unsupported files while uploading valid files', async ({ page, baseURL }) => {
+    const pageErrors = await collectPageErrors(page);
+    await page.route(/\/js\/auth\.js(?:\?v=\d+)?$/, (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: AUTH_STUB }));
+    await page.route(/\/js\/db\.js(?:\?v=\d+)?$/, (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: MEDIA_DB_RECORDING_STUB }));
+    await page.route(/\/js\/team-media-utils\.js(?:\?v=\d+)?$/, (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: MEDIA_UTILS_MIXED_DOCUMENT_STUB }));
+
+    await page.goto(`${baseURL}/team-media.html?teamId=team-1`, { waitUntil: 'domcontentloaded' });
+    await page.locator('#file-folder').selectOption('folder-1');
+    await page.locator('#media-files').setInputFiles([
+        {
+            name: 'packet.pdf',
+            mimeType: 'application/pdf',
+            buffer: Buffer.from('packet')
+        },
+        {
+            name: 'installer.exe',
+            mimeType: 'application/x-msdownload',
+            buffer: Buffer.from('unsupported')
+        }
+    ]);
+
+    await page.locator('#file-upload-form button').click();
+
+    await expect(page.locator('#file-upload-progress')).toContainText('packet.pdf');
+    await expect(page.locator('#file-upload-progress')).toContainText('installer.exe');
+    await expect(page.locator('#file-upload-progress')).toContainText('Choose a supported document file that is 10 MB or smaller.');
+    await expect(page.locator('#team-media-alert')).toContainText('1 file uploaded, 1 failed.');
+    await expect.poll(() => page.evaluate(() => window.__TEAM_MEDIA_CALLS__)).toEqual([
+        { type: 'file', teamId: 'team-1', folderId: 'folder-1', fileName: 'packet.pdf' }
+    ]);
     expect(pageErrors).toEqual([]);
 });
 
