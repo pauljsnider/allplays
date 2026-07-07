@@ -21,4 +21,17 @@ describe('React app email signup invite redemption dependencies', () => {
     expect(adapterSource).toContain('redeemCoParentInvite: (...args: any[]) => Promise<unknown>;');
     expect(adapterSource).toContain('redeemAdminInviteAtomically: (...args: any[]) => Promise<unknown>;');
   });
+
+  it('passes the co-parent invite redeemer into signed-in app invite redemption', () => {
+    const authServiceSource = readFileSync(resolve(process.cwd(), 'apps/app/src/lib/authService.ts'), 'utf8');
+
+    const redeemStart = authServiceSource.indexOf('export async function redeemInviteForUser');
+    const redeemEnd = authServiceSource.indexOf('export function rememberPendingInvite', redeemStart);
+    const redeemSource = authServiceSource.slice(redeemStart, redeemEnd);
+
+    expect(redeemSource).toContain('redeemParentInvite: dbModule.redeemParentInvite');
+    expect(redeemSource).toContain('redeemHouseholdInvite: dbModule.redeemHouseholdInvite');
+    expect(redeemSource).toContain('redeemCoParentInvite: dbModule.redeemCoParentInvite');
+    expect(redeemSource).toContain('redeemAdminInviteAtomically');
+  });
 });
