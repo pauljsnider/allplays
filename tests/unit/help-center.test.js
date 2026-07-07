@@ -133,4 +133,26 @@ describe('help center deep workflow coverage', () => {
         expect(document.querySelector('[data-quick-link-label="Game Viewer"]')?.getAttribute('href')).toBe('live-game.html');
         expect(document.querySelector('[data-quick-link-label="Open Team Chat"]')?.getAttribute('href')).toBe('team-chat.html');
     });
+
+    it('keeps team context when Help Watch Chat links have no game context', () => {
+        const document = renderHelpWatchChat('https://allplays.test/help-watch-chat.html?context=team&teamId=team-123&role=parent');
+
+        expect(document.querySelector('[data-quick-link-label="Team Page"]')?.getAttribute('href')).toBe('team.html#teamId=team-123');
+        expect(document.querySelector('[data-quick-link-label="Game Viewer"]')?.getAttribute('href')).toBe('live-game.html#teamId=team-123');
+        expect(document.querySelector('[data-quick-link-label="Open Team Chat"]')?.getAttribute('href')).toBe('team-chat.html#teamId=team-123');
+    });
+
+    it('encodes Help Watch Chat CTA context values through the page script', () => {
+        const teamId = 'Team 123 & #1';
+        const gameId = 'Game 456 & #2';
+        const document = renderHelpWatchChat(
+            `https://allplays.test/help-watch-chat.html?context=team&teamId=${encodeURIComponent(teamId)}&gameId=${encodeURIComponent(gameId)}&role=parent`
+        );
+        const encodedTeamId = encodeURIComponent(teamId);
+        const encodedGameId = encodeURIComponent(gameId);
+
+        expect(document.querySelector('[data-quick-link-label="Team Page"]')?.getAttribute('href')).toBe(`team.html#teamId=${encodedTeamId}`);
+        expect(document.querySelector('[data-quick-link-label="Game Viewer"]')?.getAttribute('href')).toBe(`live-game.html#teamId=${encodedTeamId}&gameId=${encodedGameId}`);
+        expect(document.querySelector('[data-quick-link-label="Open Team Chat"]')?.getAttribute('href')).toBe(`team-chat.html#teamId=${encodedTeamId}`);
+    });
 });
