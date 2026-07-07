@@ -562,6 +562,7 @@
             "workflowTests": [
                 "tests/smoke/track-statsheet-apply.spec.js",
                 "tests/smoke/live-tracker-foul-workflow.spec.js",
+                "tests/smoke/game-day-live-substitution.spec.js",
                 "tests/smoke/game-day-delegated-scorekeeper.spec.js"
             ],
             "knownGaps": [
