@@ -81,7 +81,10 @@ let pushServiceRequest: Promise<PushServiceModule> | null = null;
 
 function loadPushService() {
   if (!pushServiceRequest) {
-    pushServiceRequest = import('../lib/pushService');
+    pushServiceRequest = import('../lib/pushService').catch((error) => {
+      pushServiceRequest = null;
+      throw error;
+    });
   }
   return pushServiceRequest;
 }

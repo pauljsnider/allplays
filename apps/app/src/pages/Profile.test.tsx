@@ -177,6 +177,8 @@ describe('Profile', () => {
 
     expect(source).toContain("import type { PushNotificationPrimerContext, PushNotificationPermissionStatus } from '../lib/pushService';");
     expect(source).toContain("import('../lib/pushService')");
+    expect(source).toContain("pushServiceRequest = import('../lib/pushService').catch((error) => {");
+    expect(source).toContain('pushServiceRequest = null;');
     expect(pushStaticImports).toEqual([
       "import type { PushNotificationPrimerContext, PushNotificationPermissionStatus } from '../lib/pushService';"
     ]);
