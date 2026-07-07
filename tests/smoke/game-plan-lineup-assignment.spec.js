@@ -3,6 +3,11 @@ import { test, expect } from '@playwright/test';
 import { buildUrl } from './helpers/boot-path.js';
 
 const STORE_KEY = '__gamePlanLineupSmokeStore';
+const FUTURE_GAME_OFFSET_MS = 7 * 24 * 60 * 60 * 1000;
+
+function createSelectableGameDate() {
+    return new Date(Date.now() + FUTURE_GAME_OFFSET_MS).toISOString();
+}
 
 function createScenario(overrides = {}) {
     return {
@@ -15,7 +20,7 @@ function createScenario(overrides = {}) {
         game: {
             id: 'game-1',
             opponent: 'Rockets',
-            date: '2026-08-01T15:00:00.000Z',
+            date: createSelectableGameDate(),
             status: 'scheduled',
             gamePlan: {
                 formationId: 'basketball-5v5',
