@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+import { readFileSync } from 'node:fs';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter, Route, Routes, useNavigate } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -166,6 +167,35 @@ describe('Profile', () => {
 
   afterEach(() => {
     cleanup();
+  });
+
+  it('keeps push service value APIs behind the Alerts dynamic import boundary', () => {
+    const source = readFileSync('src/pages/Profile.tsx', 'utf8');
+    const pushStaticImports = source
+      .match(/import[\s\S]*?from ['"][^'"]+['"];?/g)
+      ?.filter((statement) => statement.includes("from '../lib/pushService'")) || [];
+
+    expect(source).toContain("import type { PushNotificationPrimerContext, PushNotificationPermissionStatus } from '../lib/pushService';");
+    expect(source).toContain("import('../lib/pushService')");
+    expect(source).toContain("pushServiceRequest = import('../lib/pushService').catch((error) => {");
+    expect(source).toContain('pushServiceRequest = null;');
+    expect(pushStaticImports).toEqual([
+      "import type { PushNotificationPrimerContext, PushNotificationPermissionStatus } from '../lib/pushService';"
+    ]);
+  });
+
+  it('does not check push permission status until Alerts is opened', async () => {
+    renderProfile();
+
+    expect(await screen.findByRole('heading', { name: 'Your Account' })).toBeTruthy();
+    expect(pushServiceMocks.getPushNotificationPermissionStatus).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole('button', { name: /^Alerts$/ }));
+
+    expect(await screen.findByText('Notification preferences')).toBeTruthy();
+    await waitFor(() => {
+      expect(pushServiceMocks.getPushNotificationPermissionStatus).toHaveBeenCalledTimes(1);
+    });
   });
 
   it('keeps mobile profile section buttons in a two-column grid so Alerts stays reachable', async () => {
