@@ -47,7 +47,7 @@ vi.mock('../../js/signup-flow.js?v=6', () => ({
     executeEmailPasswordSignup: vi.fn()
 }));
 
-vi.mock('../../js/admin-invite.js?v=5', () => ({
+vi.mock('../../js/admin-invite.js?v=6', () => ({
     redeemAdminInviteAcceptance: vi.fn()
 }));
 

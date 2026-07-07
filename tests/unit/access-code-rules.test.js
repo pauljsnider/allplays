@@ -74,7 +74,18 @@ describe('access code Firestore rules', () => {
         expect(rules).toContain("request.resource.data.diff(resource.data).affectedKeys().hasOnly(['revoked', 'revokedAt', 'updatedAt'])");
         expect(accessCodeRules).toContain("resource.data.get('type', null) != 'parent_invite'");
         expect(accessCodeRules).toContain("resource.data.get('type', null) != 'household_invite'");
+        expect(accessCodeRules).toContain("resource.data.get('type', null) != 'admin_invite'");
         expect(accessCodeRules).not.toContain("resource.data.type != 'parent_invite'");
+    });
+
+    it('excludes admin_invite documents from generic used-field redemption updates', () => {
+        const genericUsedUpdateIndex = accessCodeRules.indexOf("request.resource.data.diff(resource.data).affectedKeys().hasOnly(['used', 'usedBy', 'usedAt'])");
+        expect(genericUsedUpdateIndex).toBeGreaterThanOrEqual(0);
+
+        const genericUsedUpdateBranch = accessCodeRules.slice(genericUsedUpdateIndex - 280, genericUsedUpdateIndex + 220);
+        expect(genericUsedUpdateBranch).toContain("resource.data.get('type', null) != 'admin_invite'");
+        expect(genericUsedUpdateBranch).toContain("resource.data.get('type', null) != 'parent_invite'");
+        expect(genericUsedUpdateBranch).toContain("resource.data.get('type', null) != 'household_invite'");
     });
 
     it('requires parent_invite redemption to use an active invite owned by the signed-in email', () => {

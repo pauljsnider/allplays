@@ -31,6 +31,7 @@ export type LegacyAuthDbModule = {
 
 export type LegacyAdminInviteModule = {
   redeemAdminInviteAcceptance: (...args: any[]) => Promise<unknown>;
+  redeemAdminInviteAtomically: (...args: any[]) => Promise<unknown>;
 };
 
 export type LegacyInviteRedemptionResult = {

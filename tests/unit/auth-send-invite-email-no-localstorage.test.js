@@ -36,7 +36,7 @@ vi.mock('../../js/db.js?v=81', () => ({
     listMyParentMembershipRequests: vi.fn()
 }));
 
-vi.mock('../../js/admin-invite.js?v=5', () => ({
+vi.mock('../../js/admin-invite.js?v=6', () => ({
     redeemAdminInviteAcceptance: vi.fn()
 }));
 

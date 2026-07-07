@@ -3,7 +3,8 @@ import { readFileSync } from 'node:fs';
 import { createInviteProcessor, getInviteDashboardUrl, isInviteAlreadyRedeemedError } from '../../js/accept-invite-flow.js';
 
 const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
-const ACCEPT_INVITE_DB_IMPORT = "import { validateAccessCode, redeemParentInvite, redeemHouseholdInvite, redeemCoParentInvite, redeemAdminInviteAtomically, updateUserProfile, updateTeam, getTeam, getUserProfile, markAccessCodeAsUsed } from './js/db.js?v=81';";
+const ACCEPT_INVITE_DB_IMPORT = "import { validateAccessCode, redeemParentInvite, redeemHouseholdInvite, redeemCoParentInvite, updateUserProfile, updateTeam, getTeam, getUserProfile, markAccessCodeAsUsed } from './js/db.js?v=81';";
+const ACCEPT_INVITE_ADMIN_IMPORT = "import { redeemAdminInviteAtomically } from './js/admin-invite.js?v=6';";
 
 class MockClassList {
     constructor(initial = []) {
@@ -104,12 +105,16 @@ const URLSearchParams = deps.URLSearchParams;
 const setTimeout = deps.setTimeout;
 ` + match[1]
         .replace(
-            "import { isEmailSignInLink, completeEmailLinkSignIn, checkAuth, getRedirectUrl } from './js/auth.js?v=41';",
+            "import { isEmailSignInLink, completeEmailLinkSignIn, checkAuth, getRedirectUrl } from './js/auth.js?v=42';",
             'const { isEmailSignInLink, completeEmailLinkSignIn, checkAuth, getRedirectUrl } = deps.auth;'
         )
         .replace(
             ACCEPT_INVITE_DB_IMPORT,
-            'const { validateAccessCode, redeemParentInvite, redeemHouseholdInvite, redeemCoParentInvite, redeemAdminInviteAtomically, updateUserProfile, updateTeam, getTeam, getUserProfile, markAccessCodeAsUsed } = deps.db;'
+            'const { validateAccessCode, redeemParentInvite, redeemHouseholdInvite, redeemCoParentInvite, updateUserProfile, updateTeam, getTeam, getUserProfile, markAccessCodeAsUsed } = deps.db;'
+        )
+        .replace(
+            ACCEPT_INVITE_ADMIN_IMPORT,
+            'const { redeemAdminInviteAtomically } = deps.db;'
         )
         .replace(
             "import { createInviteProcessor, getInviteDashboardUrl, isInviteAlreadyRedeemedError } from './js/accept-invite-flow.js?v=8';",

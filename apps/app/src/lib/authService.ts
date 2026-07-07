@@ -1291,16 +1291,18 @@ export async function redeemInviteForUser(userId: string, code: string, authEmai
 
   const [
     dbModule,
+    { redeemAdminInviteAtomically },
     { createInviteProcessor }
   ] = await Promise.all([
     loadLegacyAuthDb(),
+    loadLegacyAdminInvite(),
     loadLegacyInviteFlow()
   ]);
   const processInvite = createInviteProcessor({
     validateAccessCode: dbModule.validateAccessCode,
     redeemParentInvite: dbModule.redeemParentInvite,
     redeemHouseholdInvite: dbModule.redeemHouseholdInvite,
-    redeemAdminInviteAtomically: dbModule.redeemAdminInviteAtomically,
+    redeemAdminInviteAtomically,
     updateUserProfile: dbModule.updateUserProfile,
     updateTeam: dbModule.updateTeam,
     getTeam: dbModule.getTeam,
