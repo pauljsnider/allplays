@@ -12,5 +12,7 @@ describe('helpKnowledgeIndex', () => {
     expect(communicationEntry?.text).not.toContain('@mention autocomplete');
     expect(communicationEntry?.text).not.toContain('Use @ in the composer to open mention autocomplete');
     expect(communicationEntry?.text).not.toContain('Choose a suggested recipient');
+    expect(communicationEntry?.text).not.toContain('Mention notification did not arrive');
+    expect(communicationEntry?.text).not.toContain('mentioned user');
   });
 });

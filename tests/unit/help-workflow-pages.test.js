@@ -156,7 +156,9 @@ describe('help and workflow page inventory', () => {
         const staleMentionPhrases = [
             '@mention autocomplete',
             'Choose a suggested recipient',
-            'Use @ in the composer to open mention autocomplete'
+            'Use @ in the composer to open mention autocomplete',
+            'Mention notification did not arrive',
+            'mentioned user'
         ];
 
         expect(helpWatchChat).toContain('@ALL PLAYS');
