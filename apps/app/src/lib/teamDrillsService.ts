@@ -1,9 +1,6 @@
 import { addDrillFavorite, DRILL_LEVELS, DRILL_TYPES, getDrill, getDrillFavorites, getDrills, getPublishedDrills, getTeam, hasFullTeamAccess, removeDrillFavorite } from './adapters/legacyTeamDrills';
 import type { AuthUser } from './types';
 
-export { buildPracticeAiCoachPrompt } from './practiceAiCoachService';
-export type { PracticeAiCoachPrompt, PracticeAiCoachPromptInput } from './practiceAiCoachService';
-
 const drillLibraryPageSize = 12;
 
 export type TeamDrillSummary = {

@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+import { readFileSync } from 'node:fs';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -24,7 +25,8 @@ const teamDrillsServiceMocks = vi.hoisted(() => ({
 }));
 
 const practiceAiCoachServiceMocks = vi.hoisted(() => ({
-  generatePracticeAiCoachPlan: vi.fn()
+  generatePracticeAiCoachPlan: vi.fn(),
+  moduleLoadCount: 0
 }));
 
 const practiceTimelineServiceMocks = vi.hoisted(() => ({
@@ -38,7 +40,10 @@ const publicActionsMocks = vi.hoisted(() => ({
 }));
 
 vi.mock('../lib/teamDrillsService', () => teamDrillsServiceMocks);
-vi.mock('../lib/practiceAiCoachService', () => practiceAiCoachServiceMocks);
+vi.mock('../lib/practiceAiCoachService', () => {
+  practiceAiCoachServiceMocks.moduleLoadCount += 1;
+  return practiceAiCoachServiceMocks;
+});
 vi.mock('../lib/practiceTimelineService', () => practiceTimelineServiceMocks);
 vi.mock('../lib/publicActions', () => publicActionsMocks);
 
@@ -105,6 +110,7 @@ function renderTeamDrills() {
 describe('TeamDrills', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    practiceAiCoachServiceMocks.moduleLoadCount = 0;
     teamDrillsServiceMocks.loadTeamDrillLibraryPage.mockResolvedValue(createPage({
       drills: [
         createDrill(),
@@ -170,6 +176,13 @@ describe('TeamDrills', () => {
     vi.restoreAllMocks();
   });
 
+  it('keeps the AI coach service behind a dynamic import on the route', () => {
+    const source = readFileSync('src/pages/TeamDrills.tsx', 'utf8');
+
+    expect(source).not.toMatch(/import\s*\{[^}]*generatePracticeAiCoachPlan[^}]*\}\s*from\s*['"]\.\.\/lib\/practiceAiCoachService['"]/);
+    expect(source).toContain("import('../lib/practiceAiCoachService')");
+  });
+
   it('passes search and filter selections into the bounded community drill query', async () => {
     renderTeamDrills();
 
@@ -217,16 +230,21 @@ describe('TeamDrills', () => {
     renderTeamDrills();
 
     expect(await screen.findByRole('heading', { name: 'Bears drills' })).toBeTruthy();
+    expect(practiceAiCoachServiceMocks.moduleLoadCount).toBe(0);
+    expect(practiceAiCoachServiceMocks.generatePracticeAiCoachPlan).not.toHaveBeenCalled();
+
     fireEvent.change(screen.getByLabelText('Practice event ID'), { target: { value: 'practice-1' } });
     fireEvent.click(screen.getByRole('button', { name: 'Load practice' }));
 
     await waitFor(() => expect(practiceTimelineServiceMocks.loadPracticeTimelineModel).toHaveBeenCalledWith('team-1', 'practice-1', auth.user));
     expect(await screen.findByText('Current timeline: 1 block · 10 min')).toBeTruthy();
+    expect(practiceAiCoachServiceMocks.moduleLoadCount).toBe(0);
 
     fireEvent.change(screen.getByLabelText('Practice focus'), { target: { value: '60 minute shooting plan' } });
     fireEvent.change(screen.getByLabelText('Coach skill level'), { target: { value: 'Intermediate' } });
     fireEvent.click(screen.getByRole('button', { name: 'Generate proposal' }));
 
+    await waitFor(() => expect(practiceAiCoachServiceMocks.moduleLoadCount).toBe(1));
     await waitFor(() => expect(practiceAiCoachServiceMocks.generatePracticeAiCoachPlan).toHaveBeenCalledWith(expect.objectContaining({
       teamName: 'Bears',
       sport: 'Soccer',
