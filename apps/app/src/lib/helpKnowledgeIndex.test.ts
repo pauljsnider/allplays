@@ -15,4 +15,14 @@ describe('helpKnowledgeIndex', () => {
     expect(communicationEntry?.text).not.toContain('Mention notification did not arrive');
     expect(communicationEntry?.text).not.toContain('mentioned user');
   });
+
+  it('indexes targeted conversation notification troubleshooting', () => {
+    const communicationEntry = helpKnowledgeIndex.find((entry) => entry.id === 'communication');
+
+    expect(communicationEntry).toBeDefined();
+    expect(communicationEntry?.text).toContain('Conversation notification did not arrive');
+    expect(communicationEntry?.text).toContain('participant in the conversation');
+    expect(communicationEntry?.text).toContain('message was not muted');
+    expect(communicationEntry?.text).toContain('relevant push category enabled');
+  });
 });
