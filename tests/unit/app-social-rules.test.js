@@ -77,6 +77,11 @@ function isOwnerPublicProfilePresentationWriteValid({ affectedKeys, create = fal
         (create ? !hasAny(affectedKeys, ['discoveryTeamIds', 'emailHash']) : true);
 }
 
+function isOwnerUserEmailUpdateValid({ affectedKeys, nextEmail, authEmail }) {
+    return !hasAny(affectedKeys, ['email']) ||
+        String(nextEmail || '').toLowerCase() === String(authEmail || '').toLowerCase();
+}
+
 describe('React app social Firestore rules', () => {
     it('adds least-privilege collections for social posts, reactions, comments, reports, and friendships', () => {
         const source = rulesSource();
@@ -111,8 +116,27 @@ describe('React app social Firestore rules', () => {
         expect(source).toContain("return ['parentOf', 'parentTeamIds', 'parentPlayerKeys', 'playerKeys'];");
         expect(source).toContain("(isOwner(userId) && isOwnerUserCreatePayloadValid(request.resource.data))");
         expect(source).toContain("(isOwner(userId) && isOwnerUserUpdatePayloadValid())");
+        expect(source).toContain('function isOwnerUserEmailAuthBound(data)');
+        expect(source).toContain("data.email.lower() == request.auth.token.email.lower()");
+        expect(source).toContain("(!request.resource.data.diff(resource.data).affectedKeys().hasAny(['email']) ||");
         expect(source).toContain('allow read: if isGlobalAdmin() || isOwner(userId);');
         expect(source).not.toContain('allow read: if true;  // Public profiles');
+
+        expect(isOwnerUserEmailUpdateValid({
+            affectedKeys: ['displayName', 'updatedAt'],
+            nextEmail: 'forged@example.com',
+            authEmail: 'owner@example.com'
+        })).toBe(true);
+        expect(isOwnerUserEmailUpdateValid({
+            affectedKeys: ['email', 'updatedAt'],
+            nextEmail: 'Owner@Example.com',
+            authEmail: 'owner@example.com'
+        })).toBe(true);
+        expect(isOwnerUserEmailUpdateValid({
+            affectedKeys: ['email', 'updatedAt'],
+            nextEmail: 'forged@example.com',
+            authEmail: 'owner@example.com'
+        })).toBe(false);
     });
 
     it('prevents profile owners from forging public discovery team ids or email hashes', () => {

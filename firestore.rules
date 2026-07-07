@@ -1195,13 +1195,23 @@ service cloud.firestore {
     function isOwnerUserCreatePayloadValid(data) {
       return data.get('isAdmin', false) != true &&
              !data.keys().hasAny(userMembershipFields()) &&
-             !data.keys().hasAny(teamMediaUploadGrantFields());
+             !data.keys().hasAny(teamMediaUploadGrantFields()) &&
+             isOwnerUserEmailAuthBound(data);
     }
 
     function isOwnerUserUpdatePayloadValid() {
       return !request.resource.data.diff(resource.data).affectedKeys().hasAny(['isAdmin']) &&
              !request.resource.data.diff(resource.data).affectedKeys().hasAny(userMembershipFields()) &&
-             !request.resource.data.diff(resource.data).affectedKeys().hasAny(teamMediaUploadGrantFields());
+             !request.resource.data.diff(resource.data).affectedKeys().hasAny(teamMediaUploadGrantFields()) &&
+             (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['email']) ||
+              isOwnerUserEmailAuthBound(request.resource.data));
+    }
+
+    function isOwnerUserEmailAuthBound(data) {
+      return !data.keys().hasAny(['email']) ||
+             (request.auth.token.email is string &&
+              data.email is string &&
+              data.email.lower() == request.auth.token.email.lower());
     }
 
     function isFriendshipCreatePayloadValid(data) {

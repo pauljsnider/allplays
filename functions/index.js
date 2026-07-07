@@ -1894,15 +1894,16 @@ function hashPublicProfileEmail(email) {
   return normalized ? crypto.createHash('sha256').update(normalized).digest('hex') : null;
 }
 
-function buildTrustedPublicUserProfileProjectionPayload(userData = {}) {
+function buildTrustedPublicUserProfileProjectionPayload(userData = {}, options = {}) {
   const fullName = compactPublicProfileString(userData.fullName || userData.displayName || userData.name);
   const displayName = compactPublicProfileString(userData.displayName || userData.fullName || userData.name);
+  const trustedEmail = options.trustedEmail ?? userData.email;
   return {
     displayName: displayName || null,
     fullName: fullName || null,
     photoUrl: compactPublicProfileString(userData.photoUrl) || null,
     discoveryTeamIds: derivePublicProfileTeamIds(userData),
-    emailHash: hashPublicProfileEmail(userData.email),
+    emailHash: hashPublicProfileEmail(trustedEmail),
     updatedAt: admin.firestore.FieldValue.serverTimestamp()
   };
 }
@@ -2034,7 +2035,9 @@ exports.syncPublicUserProfileProjection = functions.https.onCall(async (data, co
   }
 
   await firestore.doc(`publicUserProfiles/${userId}`).set(
-    buildTrustedPublicUserProfileProjectionPayload(userSnap.data() || {}),
+    buildTrustedPublicUserProfileProjectionPayload(userSnap.data() || {}, {
+      trustedEmail: context.auth.token?.email || null
+    }),
     { merge: true }
   );
 
@@ -9436,6 +9439,17 @@ exports.syncApprovedParentMembershipRequestUserLink = functions.firestore
     const teamRef = firestore.doc(`teams/${teamId}`);
     const playerRef = firestore.doc(`teams/${teamId}/players/${playerId}`);
     const userRef = firestore.doc(`users/${requesterUserId}`);
+    const publicProfileRef = firestore.doc(`publicUserProfiles/${requesterUserId}`);
+    let requesterAuthEmail = null;
+    try {
+      const requesterAuthRecord = await admin.auth().getUser(requesterUserId);
+      requesterAuthEmail = requesterAuthRecord.email || null;
+    } catch (error) {
+      console.warn('Could not load requester auth email for public profile projection', {
+        requesterUserId,
+        message: error?.message || String(error)
+      });
+    }
 
     await firestore.runTransaction(async (transaction) => {
       const [teamSnap, playerSnap, userSnap] = await Promise.all([
@@ -9456,11 +9470,19 @@ exports.syncApprovedParentMembershipRequestUserLink = functions.firestore
         team,
         player
       });
+      const nextUserData = { ...userData, ...userUpdate };
 
       transaction.set(userRef, {
         ...userUpdate,
         updatedAt: admin.firestore.FieldValue.serverTimestamp()
       }, { merge: true });
+      transaction.set(
+        publicProfileRef,
+        buildTrustedPublicUserProfileProjectionPayload(nextUserData, {
+          trustedEmail: requesterAuthEmail
+        }),
+        { merge: true }
+      );
     });
 
     return null;

@@ -35,8 +35,17 @@ describe('public user profile sync', () => {
         expect(functionsSource).toContain('exports.syncPublicUserProfileProjection = functions.https.onCall');
         expect(functionsSource).toContain("const userId = normalizeFirestoreId(data?.userId || context.auth.uid, 'userId');");
         expect(functionsSource).toContain("if (userId !== context.auth.uid)");
-        expect(functionsSource).toContain('buildTrustedPublicUserProfileProjectionPayload(userSnap.data() || {})');
+        expect(functionsSource).toContain('trustedEmail: context.auth.token?.email || null');
         expect(functionsSource).toContain('discoveryTeamIds: derivePublicProfileTeamIds(userData)');
-        expect(functionsSource).toContain('emailHash: hashPublicProfileEmail(userData.email)');
+        expect(functionsSource).toContain('emailHash: hashPublicProfileEmail(trustedEmail)');
+    });
+
+    it('refreshes server-owned public projection when a parent membership request is approved', () => {
+        expect(functionsSource).toContain('const publicProfileRef = firestore.doc(`publicUserProfiles/${requesterUserId}`);');
+        expect(functionsSource).toContain('const requesterAuthRecord = await admin.auth().getUser(requesterUserId);');
+        expect(functionsSource).toContain('requesterAuthEmail = requesterAuthRecord.email || null;');
+        expect(functionsSource).toContain('const nextUserData = { ...userData, ...userUpdate };');
+        expect(functionsSource).toContain('transaction.set(\n        publicProfileRef,\n        buildTrustedPublicUserProfileProjectionPayload(nextUserData, {');
+        expect(functionsSource).toContain('trustedEmail: requesterAuthEmail');
     });
 });
