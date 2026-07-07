@@ -1822,21 +1822,11 @@ async function loadChatRecipientProfiles(players: any): Promise<Map<string, Reco
   let nextParentIndex = 0;
 
   async function hydrateChatRecipientProfile<T>(lookupPromise: Promise<T>, fallbackLookup: () => Promise<T>): Promise<T> {
-    let lookupSettled = false;
-    const trackedLookup = lookupPromise.finally(() => {
-      lookupSettled = true;
-    });
-    try {
-      return await withTimeout(trackedLookup, 'Chat recipient profile load', 2500)
-        .catch(async (error) => {
-          if (!isNativeRuntime()) throw error;
-          return fallbackLookup();
-        });
-    } finally {
-      if (!lookupSettled) {
-        await trackedLookup.catch(() => undefined);
-      }
-    }
+    return withTimeout(lookupPromise, 'Chat recipient profile load', 2500)
+      .catch(async (error) => {
+        if (!isNativeRuntime()) throw error;
+        return fallbackLookup();
+      });
   }
 
   async function hydrateNextParent() {

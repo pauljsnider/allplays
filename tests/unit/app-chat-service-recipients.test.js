@@ -324,7 +324,7 @@ describe('React app chat recipient service', () => {
         ]));
     });
 
-    it('keeps timed-out profile lookups occupying worker slots until the backend request settles', async () => {
+    it('returns fallback recipient options when profile lookups never settle', async () => {
         vi.useFakeTimers();
         const missingLabelParents = Array.from({ length: 9 }, (_, index) => ({
             id: `player-${index}`,
@@ -333,18 +333,7 @@ describe('React app chat recipient service', () => {
         }));
         dbMocks.getPlayers.mockResolvedValue(missingLabelParents);
 
-        const pendingLookups = [];
-        dbMocks.getUserProfile.mockImplementation((userId) => {
-            let resolveLookup;
-            const promise = new Promise((resolve) => {
-                resolveLookup = resolve;
-            });
-            pendingLookups.push({
-                userId,
-                resolve: resolveLookup
-            });
-            return promise;
-        });
+        dbMocks.getUserProfile.mockImplementation(() => new Promise(() => {}));
 
         const {
             CHAT_RECIPIENT_PROFILE_LOOKUP_CONCURRENCY,
@@ -357,29 +346,21 @@ describe('React app chat recipient service', () => {
         });
 
         await vi.advanceTimersByTimeAsync(2500);
-        await Promise.resolve();
-
-        expect(dbMocks.getUserProfile).toHaveBeenCalledTimes(CHAT_RECIPIENT_PROFILE_LOOKUP_CONCURRENCY);
-
-        pendingLookups[0].resolve({ fullName: 'Hydrated parent-0', email: 'parent-0@example.com' });
         await vi.waitFor(() => {
             expect(dbMocks.getUserProfile).toHaveBeenCalledTimes(CHAT_RECIPIENT_PROFILE_LOOKUP_CONCURRENCY + 1);
         });
 
-        pendingLookups.slice(1).forEach((lookup, index) => {
-            lookup.resolve({
-                fullName: `Hydrated parent-${index + 1}`,
-                email: `parent-${index + 1}@example.com`
-            });
-        });
+        await vi.advanceTimersByTimeAsync(2500);
 
         const options = await optionsPromise;
 
+        expect(dbMocks.getUserProfile).toHaveBeenCalledTimes(9);
+        expect(options).toHaveLength(18);
         expect(options).toEqual(expect.arrayContaining([
             expect.objectContaining({
                 id: 'user:parent-8',
-                name: 'Hydrated parent-8',
-                email: 'parent-8@example.com'
+                name: 'Guardian',
+                detail: 'Guardian for Player 8'
             })
         ]));
     });
