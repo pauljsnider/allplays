@@ -1776,10 +1776,30 @@ async function buildPublicUserProfilePresentationPayload(userData = {}) {
     };
 }
 
+async function syncTrustedPublicUserProfileProjection(userId, userData = null) {
+    const nextUserData = userData || await getUserProfile(userId) || {};
+    const payload = await buildTrustedPublicUserProfileProjectionPayload(nextUserData);
+    await setDoc(doc(db, 'publicUserProfiles', userId), payload, { merge: true });
+}
+
+async function requestTrustedPublicUserProfileProjectionSync(userId) {
+    const syncProjection = httpsCallable(functions, 'syncPublicUserProfileProjection');
+    await syncProjection({ userId });
+}
+
 async function syncPublicUserProfile(userId, userData = null) {
     const nextUserData = userData || await getUserProfile(userId) || {};
     const payload = await buildPublicUserProfilePresentationPayload(nextUserData);
     await setDoc(doc(db, 'publicUserProfiles', userId), payload, { merge: true });
+    try {
+        await syncTrustedPublicUserProfileProjection(userId, nextUserData);
+    } catch (error) {
+        if (auth.currentUser?.uid !== userId) {
+            console.warn('[public-user-profile] Trusted projection sync skipped for non-owner profile:', error);
+            return;
+        }
+        await requestTrustedPublicUserProfileProjectionSync(userId);
+    }
 }
 
 export async function updateUserProfile(userId, profile) {

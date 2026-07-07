@@ -1875,6 +1875,38 @@ function uniqueNonEmptyStrings(values = []) {
     .filter(Boolean))];
 }
 
+function compactPublicProfileString(value) {
+  return String(value || '').trim();
+}
+
+function derivePublicProfileTeamIds(userData = {}) {
+  const parentOfTeamIds = Array.isArray(userData.parentOf)
+    ? userData.parentOf.map((link) => link?.teamId)
+    : [];
+  const parentTeamIds = Array.isArray(userData.parentTeamIds)
+    ? userData.parentTeamIds
+    : [];
+  return uniqueNonEmptyStrings([...parentOfTeamIds, ...parentTeamIds]);
+}
+
+function hashPublicProfileEmail(email) {
+  const normalized = compactPublicProfileString(email).toLowerCase();
+  return normalized ? crypto.createHash('sha256').update(normalized).digest('hex') : null;
+}
+
+function buildTrustedPublicUserProfileProjectionPayload(userData = {}) {
+  const fullName = compactPublicProfileString(userData.fullName || userData.displayName || userData.name);
+  const displayName = compactPublicProfileString(userData.displayName || userData.fullName || userData.name);
+  return {
+    displayName: displayName || null,
+    fullName: fullName || null,
+    photoUrl: compactPublicProfileString(userData.photoUrl) || null,
+    discoveryTeamIds: derivePublicProfileTeamIds(userData),
+    emailHash: hashPublicProfileEmail(userData.email),
+    updatedAt: admin.firestore.FieldValue.serverTimestamp()
+  };
+}
+
 function buildApprovedParentMembershipUserUpdate({ userData = {}, requestData = {}, team = {}, player = {} }) {
   const parentLink = {
     teamId: String(team.id || requestData.teamId || '').trim(),
@@ -1985,6 +2017,29 @@ async function mergeNotificationPreferenceDocs({ sourceUid, destinationUid, team
   }));
   return affected;
 }
+
+exports.syncPublicUserProfileProjection = functions.https.onCall(async (data, context) => {
+  if (!context.auth?.uid) {
+    throw new functions.https.HttpsError('unauthenticated', 'Sign in before syncing a public profile.');
+  }
+
+  const userId = normalizeFirestoreId(data?.userId || context.auth.uid, 'userId');
+  if (userId !== context.auth.uid) {
+    throw new functions.https.HttpsError('permission-denied', 'You can only sync your own public profile.');
+  }
+
+  const userSnap = await firestore.doc(`users/${userId}`).get();
+  if (!userSnap.exists) {
+    throw new functions.https.HttpsError('not-found', 'User profile not found.');
+  }
+
+  await firestore.doc(`publicUserProfiles/${userId}`).set(
+    buildTrustedPublicUserProfileProjectionPayload(userSnap.data() || {}),
+    { merge: true }
+  );
+
+  return { success: true };
+});
 
 exports.confirmParentAccountMerge = functions.https.onCall(async (data, context) => {
   if (!context.auth?.uid) {
