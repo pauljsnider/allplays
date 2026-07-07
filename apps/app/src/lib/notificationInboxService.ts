@@ -63,35 +63,6 @@ function mapNotificationInboxSnapshot(snapshot: QuerySnapshot<DocumentData>): No
     });
 }
 
-function getCreatedAtTime(value: unknown): number {
-    if (value instanceof Date) {
-        const time = value.getTime();
-        return Number.isFinite(time) ? time : 0;
-    }
-    if (value && typeof value === 'object') {
-        const timestamp = value as { toDate?: () => Date; seconds?: number; nanoseconds?: number };
-        if (typeof timestamp.toDate === 'function') {
-            const time = timestamp.toDate().getTime();
-            return Number.isFinite(time) ? time : 0;
-        }
-        if (typeof timestamp.seconds === 'number') {
-            return (timestamp.seconds * 1000) + (typeof timestamp.nanoseconds === 'number' ? timestamp.nanoseconds / 1000000 : 0);
-        }
-    }
-    if (typeof value === 'number') {
-        return Number.isFinite(value) ? value : 0;
-    }
-    if (typeof value === 'string') {
-        const time = Date.parse(value);
-        return Number.isFinite(time) ? time : 0;
-    }
-    return 0;
-}
-
-function sortNotificationInboxItems(items: NotificationInboxItem[]): NotificationInboxItem[] {
-    return [...items].sort((left, right) => getCreatedAtTime(right.createdAt) - getCreatedAtTime(left.createdAt));
-}
-
 /**
  * Subscribe to the unread notification count only.
  * Returns an unsubscribe function.
@@ -141,34 +112,22 @@ export function subscribeToNotificationInbox(
         limit(notificationInboxLimit)
     );
 
-    let fallbackUnsubscribe: (() => void) | null = null;
     const primaryUnsubscribe = onSnapshot(
         q,
         (snapshot: QuerySnapshot<DocumentData>) => {
             callback(mapNotificationInboxSnapshot(snapshot));
         },
         (error: unknown) => {
-            logger.warn('Inbox ordered query failed; falling back to unordered inbox snapshot.', { error });
-            if (fallbackUnsubscribe) return;
-            fallbackUnsubscribe = onSnapshot(
-                inboxRef,
-                (snapshot: QuerySnapshot<DocumentData>) => {
-                    callback(sortNotificationInboxItems(mapNotificationInboxSnapshot(snapshot)).slice(0, notificationInboxLimit));
-                },
-                (fallbackError: unknown) => {
-                    if (onError) {
-                        onError(fallbackError);
-                    } else {
-                        logger.error('Failed to subscribe to notification inbox.', { error: fallbackError });
-                    }
-                }
-            );
+            if (onError) {
+                onError(error);
+            } else {
+                logger.error('Failed to subscribe to notification inbox.', { error });
+            }
         }
     );
 
     return () => {
         primaryUnsubscribe();
-        fallbackUnsubscribe?.();
     };
 }
 

@@ -343,6 +343,29 @@ describe('AppShell', () => {
       expect(subscribeToNotificationInboxMock).toHaveBeenCalledTimes(1);
     });
 
+    const onItems = subscribeToNotificationInboxMock.mock.calls[0]?.[1] as ((items: NotificationInboxItem[]) => void) | undefined;
+    act(() => {
+      onItems?.([
+        {
+          id: 'cached-notification',
+          category: 'team_message',
+          type: 'team_message',
+          title: 'Team update',
+          body: '',
+          text: 'Cached notification',
+          appRoute: '/messages',
+          conversationId: '',
+          createdAt: null,
+          readAt: null,
+        },
+      ]);
+    });
+
+    await waitFor(() => {
+      expect(screen.getByTestId('notification-inbox-sheet-state').textContent).toBe('ready');
+    });
+    expect(screen.getByText('Cached notification')).toBeTruthy();
+
     const onError = subscribeToNotificationInboxMock.mock.calls[0]?.[2] as ((error: unknown) => void) | undefined;
     act(() => {
       onError?.(new Error('offline'));
@@ -351,6 +374,7 @@ describe('AppShell', () => {
     await waitFor(() => {
       expect(screen.getByTestId('notification-inbox-sheet-state').textContent).toBe('error');
     });
+    expect(screen.getByText('Cached notification')).toBeTruthy();
 
     fireEvent.click(screen.getByRole('button', { name: 'Retry notifications' }));
 
