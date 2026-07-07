@@ -18,6 +18,7 @@ function appUrl(baseURL, hashPath) {
 
 const parentHouseholdServiceMock = `
     export async function loadParentHouseholdInviteModel() {
+        window.__parentToolLoadCounts.household += 1;
         return {
             linkedPlayers: [{ teamId: 'team-1', teamName: 'Bears', playerId: 'player-1', playerName: 'Pat Star', playerNumber: '9' }],
             members: []
@@ -30,6 +31,7 @@ const parentHouseholdServiceMock = `
 
 const parentFeesServiceMock = `
     export async function loadParentFeesForApp() {
+        window.__parentToolLoadCounts.fees += 1;
         return [{
             id: 'fee-1',
             title: 'Team dues',
@@ -55,6 +57,7 @@ const parentFeesServiceMock = `
 
 const parentCalendarServiceMock = `
     export async function loadParentCalendarTools() {
+        window.__parentToolLoadCounts.calendar += 1;
         return {
             events: [{ teamId: 'team-1', teamName: 'Bears', title: 'Practice', opponent: '', date: new Date('2100-06-01T18:00:00Z') }],
             teams: [{ teamId: 'team-1', teamName: 'Bears', eventCount: 1 }]
@@ -79,6 +82,7 @@ const parentCalendarServiceMock = `
 
 const parentFamilyShareServiceMock = `
     export async function loadFamilyShareModel() {
+        window.__parentToolLoadCounts.share += 1;
         return {
             children: [{ teamId: 'team-1', playerId: 'player-1', playerName: 'Pat Star' }],
             tokens: [{ id: 'token-1', label: 'Grandma', url: 'https://allplays.ai/family.html?token=token-1', childCount: 1, extraCalendarUrls: [] }]
@@ -94,6 +98,7 @@ const parentFamilyShareServiceMock = `
 
 const parentRegistrationsServiceMock = `
     export async function loadParentRegistrations() {
+        window.__parentToolLoadCounts.registrations += 1;
         return [{
             id: 'form-1',
             teamId: 'team-1',
@@ -170,6 +175,7 @@ const parentRegistrationsServiceMock = `
 
 const parentCertificatesServiceMock = `
     export async function loadParentCertificates() {
+        window.__parentToolLoadCounts.certificates += 1;
         return [{
             id: 'cert-1',
             teamId: 'team-1',
@@ -193,6 +199,14 @@ async function mockParentToolsModules(page) {
         window.__downloads = [];
         window.__familyCreates = [];
         window.__clipboardShouldFail = false;
+        window.__parentToolLoadCounts = {
+            fees: 0,
+            calendar: 0,
+            household: 0,
+            share: 0,
+            registrations: 0,
+            certificates: 0
+        };
         window.__mediaUploads = [];
         window.__mediaLinks = [];
         window.__mediaDeletes = [];
@@ -213,6 +227,9 @@ async function mockParentToolsModules(page) {
             contentType: 'application/javascript',
             body: `
                 export function useAuth() {
+                    window.__triggerSameUserRehydrate = () => {
+                        window.location.hash = '/parent-tools/calendar?rehydrate=' + Date.now();
+                    };
                     const user = {
                         uid: 'user-1',
                         email: 'parent@example.com',
@@ -359,6 +376,7 @@ async function mockParentToolsModules(page) {
                     return { success: true };
                 }
                 export async function loadParentHouseholdInviteModel() {
+                    window.__parentToolLoadCounts.household += 1;
                     return {
                         linkedPlayers: [{ teamId: 'team-1', teamName: 'Bears', playerId: 'player-1', playerName: 'Pat Star', playerNumber: '9' }],
                         members: []
@@ -368,6 +386,7 @@ async function mockParentToolsModules(page) {
                     return { code: 'HOUSE123', inviteUrl: 'https://allplays.ai/accept-invite.html?code=HOUSE123' };
                 }
                 export async function loadParentFeesForApp() {
+                    window.__parentToolLoadCounts.fees += 1;
                     return [{
                         id: 'fee-1',
                         title: 'Team dues',
@@ -390,6 +409,7 @@ async function mockParentToolsModules(page) {
                     return { success: true, checkoutUrl: 'https://pay.example.test/created-fee' };
                 }
                 export async function loadParentCalendarTools() {
+                    window.__parentToolLoadCounts.calendar += 1;
                     return {
                         events: [{ teamId: 'team-1', teamName: 'Bears', title: 'Practice', opponent: '', date: new Date('2100-06-01T18:00:00Z') }],
                         teams: [{ teamId: 'team-1', teamName: 'Bears', eventCount: 1 }]
@@ -414,6 +434,7 @@ async function mockParentToolsModules(page) {
                     return 'https://calendar.google.com/calendar/render?cid=' + encodeURIComponent(url);
                 }
                 export async function loadFamilyShareModel() {
+                    window.__parentToolLoadCounts.share += 1;
                     return {
                         children: [{ teamId: 'team-1', playerId: 'player-1', playerName: 'Pat Star' }],
                         tokens: [{ id: 'token-1', label: 'Grandma', url: 'https://allplays.ai/family.html?token=token-1', childCount: 1, extraCalendarUrls: [] }]
@@ -426,6 +447,7 @@ async function mockParentToolsModules(page) {
                 export async function revokeParentFamilyShare() {}
                 export async function updateParentFamilyShareCalendars() {}
                 export async function loadParentCertificates() {
+                    window.__parentToolLoadCounts.certificates += 1;
                     return [{
                         id: 'cert-1',
                         teamId: 'team-1',
@@ -550,6 +572,25 @@ test('parent tools hub completes access, fees, calendars, share, registration, a
     await page.getByRole('button', { name: 'Share' }).last().click();
     await expect.poll(() => page.evaluate(() => window.__sharedUrls.at(-1)?.url)).toBe('https://allplays.ai/certificates.html#teamId=team-1&certificateId=cert-1');
     await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1)).toBe(true);
+});
+
+test('same-user parent auth rehydrate does not reload visited hidden panels', async ({ page, baseURL }) => {
+    await mockParentToolsModules(page);
+    await page.goto(appUrl(baseURL, '/parent-tools/access'), { waitUntil: 'domcontentloaded' });
+
+    await expect(page.getByText('Request player access')).toBeVisible({ timeout: 15000 });
+    await page.getByRole('button', { name: 'Fees' }).click();
+    await expect(page.getByText('Team dues')).toBeVisible();
+    await page.getByRole('button', { name: 'Calendar' }).click();
+    await expect(page.getByText('Calendar tools')).toBeVisible();
+
+    const countsBeforeRehydrate = await page.evaluate(() => ({ ...window.__parentToolLoadCounts }));
+    expect(countsBeforeRehydrate.fees).toBeGreaterThan(0);
+    expect(countsBeforeRehydrate.calendar).toBeGreaterThan(0);
+
+    await page.evaluate(() => window.__triggerSameUserRehydrate());
+    await expect(page.getByText('Calendar tools')).toBeVisible();
+    await expect.poll(() => page.evaluate(() => ({ ...window.__parentToolLoadCounts }))).toEqual(countsBeforeRehydrate);
 });
 
 test('awards deep links surface the requested certificate first on mobile', async ({ page, baseURL }) => {

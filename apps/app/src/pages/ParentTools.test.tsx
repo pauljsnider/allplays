@@ -1059,6 +1059,139 @@ describe('ParentTools access', () => {
         expect(renderCounts.access).toBe(1);
     });
 
+    it('does not refetch visited panels for cloned same-user auth state', async () => {
+        parentToolsServiceMocks.loadParentFeesForApp.mockResolvedValue([]);
+        parentToolsServiceMocks.loadParentRegistrations.mockResolvedValue([]);
+        parentToolsServiceMocks.loadParentCertificates.mockResolvedValue([]);
+        const renderCounts: Record<string, number> = {};
+        globalThis.__ALLPLAYS_PARENT_TOOLS_RENDER_TRACKER__ = (toolId) => {
+            renderCounts[toolId] = (renderCounts[toolId] || 0) + 1;
+        };
+
+        const view = renderParentTools(['/parent-tools/access'], false, linkedAuth);
+
+        await screen.findByText('Request player access');
+        fireEvent.click(screen.getByRole('button', { name: 'Fees' }));
+        await screen.findByText('No fees in this view');
+        fireEvent.click(screen.getByRole('button', { name: 'Calendar' }));
+        await screen.findByText('No team schedules');
+        fireEvent.click(screen.getByRole('button', { name: 'Household' }));
+        await screen.findByText('No pending household invites');
+        fireEvent.click(screen.getByRole('button', { name: 'Share' }));
+        await screen.findByText('No family links');
+        fireEvent.click(screen.getByRole('button', { name: 'Register' }));
+        await screen.findByText('No open registrations');
+        fireEvent.click(screen.getByRole('button', { name: 'Awards' }));
+        await screen.findByText('No published awards');
+
+        const serviceCountsBeforeRehydrate = {
+            fees: parentToolsServiceMocks.loadParentFeesForApp.mock.calls.length,
+            calendar: parentToolsServiceMocks.loadParentCalendarTools.mock.calls.length,
+            household: parentToolsServiceMocks.loadParentHouseholdInviteModel.mock.calls.length,
+            share: parentToolsServiceMocks.loadFamilyShareModel.mock.calls.length,
+            registrations: parentToolsServiceMocks.loadParentRegistrations.mock.calls.length,
+            certificates: parentToolsServiceMocks.loadParentCertificates.mock.calls.length
+        };
+        expect(serviceCountsBeforeRehydrate).toEqual({
+            fees: 1,
+            calendar: 1,
+            household: 1,
+            share: 1,
+            registrations: 1,
+            certificates: 1
+        });
+        expect(renderCounts).toMatchObject({
+            access: 1,
+            fees: 1,
+            calendar: 1,
+            household: 1,
+            share: 1,
+            registrations: 1,
+            certificates: 1
+        });
+
+        const clonedLinkedAuth: AuthState = {
+            ...linkedAuth,
+            user: linkedAuth.user ? {
+                ...linkedAuth.user,
+                parentOf: linkedAuth.user.parentOf?.map((link) => ({ ...link }))
+            } : null
+        };
+        view.rerender(
+            <MemoryRouter initialEntries={['/parent-tools/access']}>
+                <Routes>
+                    <Route path="/parent-tools/:toolId" element={<ParentToolsRoute authState={clonedLinkedAuth} />} />
+                </Routes>
+            </MemoryRouter>
+        );
+
+        await waitFor(() => expect(screen.getByText('No published awards')).toBeTruthy());
+        expect(parentToolsServiceMocks.loadParentFeesForApp).toHaveBeenCalledTimes(serviceCountsBeforeRehydrate.fees);
+        expect(parentToolsServiceMocks.loadParentCalendarTools).toHaveBeenCalledTimes(serviceCountsBeforeRehydrate.calendar);
+        expect(parentToolsServiceMocks.loadParentHouseholdInviteModel).toHaveBeenCalledTimes(serviceCountsBeforeRehydrate.household);
+        expect(parentToolsServiceMocks.loadFamilyShareModel).toHaveBeenCalledTimes(serviceCountsBeforeRehydrate.share);
+        expect(parentToolsServiceMocks.loadParentRegistrations).toHaveBeenCalledTimes(serviceCountsBeforeRehydrate.registrations);
+        expect(parentToolsServiceMocks.loadParentCertificates).toHaveBeenCalledTimes(serviceCountsBeforeRehydrate.certificates);
+        expect(renderCounts).toMatchObject({
+            access: 1,
+            fees: 1,
+            calendar: 1,
+            household: 1,
+            share: 1,
+            registrations: 1,
+            certificates: 1
+        });
+
+        const changedParentLinksAuth: AuthState = {
+            ...linkedAuth,
+            user: linkedAuth.user ? {
+                ...linkedAuth.user,
+                parentOf: [
+                    ...(linkedAuth.user.parentOf || []),
+                    { teamId: 'team-2', playerId: 'player-2' }
+                ]
+            } : null
+        };
+        view.rerender(
+            <MemoryRouter initialEntries={['/parent-tools/access']}>
+                <Routes>
+                    <Route path="/parent-tools/:toolId" element={<ParentToolsRoute authState={changedParentLinksAuth} />} />
+                </Routes>
+            </MemoryRouter>
+        );
+
+        await waitFor(() => expect(parentToolsServiceMocks.loadParentCertificates).toHaveBeenCalledTimes(serviceCountsBeforeRehydrate.certificates + 1));
+        expect(parentToolsServiceMocks.loadParentFeesForApp).toHaveBeenCalledTimes(serviceCountsBeforeRehydrate.fees + 1);
+        expect(parentToolsServiceMocks.loadParentCalendarTools).toHaveBeenCalledTimes(serviceCountsBeforeRehydrate.calendar + 1);
+        expect(parentToolsServiceMocks.loadParentHouseholdInviteModel).toHaveBeenCalledTimes(serviceCountsBeforeRehydrate.household + 1);
+        expect(parentToolsServiceMocks.loadFamilyShareModel).toHaveBeenCalledTimes(serviceCountsBeforeRehydrate.share + 1);
+        expect(parentToolsServiceMocks.loadParentRegistrations).toHaveBeenCalledTimes(serviceCountsBeforeRehydrate.registrations + 1);
+
+        const registrationManagerAuth: AuthState = {
+            ...changedParentLinksAuth,
+            roles: ['parent', 'coach'],
+            isCoach: true,
+            user: changedParentLinksAuth.user ? {
+                ...changedParentLinksAuth.user,
+                roles: ['parent', 'coach'],
+                coachOf: ['team-3']
+            } : null
+        };
+        view.rerender(
+            <MemoryRouter initialEntries={['/parent-tools/access']}>
+                <Routes>
+                    <Route path="/parent-tools/:toolId" element={<ParentToolsRoute authState={registrationManagerAuth} />} />
+                </Routes>
+            </MemoryRouter>
+        );
+
+        await waitFor(() => expect(parentToolsServiceMocks.loadParentRegistrations).toHaveBeenCalledTimes(serviceCountsBeforeRehydrate.registrations + 2));
+        expect(parentToolsServiceMocks.loadParentRegistrations).toHaveBeenLastCalledWith(expect.objectContaining({
+            coachOf: ['team-3'],
+            roles: ['parent', 'coach']
+        }));
+    });
+
     it('defers hidden fees refresh after access changes until fees is reopened', async () => {
         parentToolsServiceMocks.loadParentFeesForApp
             .mockResolvedValueOnce([])
