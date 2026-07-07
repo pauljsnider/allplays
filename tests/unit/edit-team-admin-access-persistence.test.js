@@ -357,8 +357,8 @@ function extractEditTeamModule() {
 
     return match[1]
         .replace(
-            /import\s+\{\s*createTeam,\s*updateTeam,\s*getTeam,\s*getUserProfile,\s*getUserTeamsWithAccess,\s*getPlayers,\s*copySelectedPlayersForTeamRollover,\s*uploadTeamPhoto,\s*addConfig,\s*getUnreadChatCount,\s*inviteAdmin,\s*addTeamAdminEmail,\s*getTeamAccessCodes(?:,\s*getConfigs,\s*getGames,\s*updateGame)?(?:,\s*getRegistrationSources)?(?:,\s*syncRegistrationProvider)?\s*\}\s+from\s+'\.\/js\/db\.js\?v=\d+';/,
-            'const { createTeam, updateTeam, getTeam, getUserProfile, getUserTeamsWithAccess, getPlayers, copySelectedPlayersForTeamRollover, uploadTeamPhoto, addConfig, getUnreadChatCount, inviteAdmin, addTeamAdminEmail, getAllUsers, getTeamAccessCodes, getConfigs, getGames, updateGame, getRegistrationSources, syncRegistrationProvider } = deps.db;'
+            /import\s+\{\s*createTeam,\s*updateTeam,\s*getTeam,\s*getUserProfile,\s*getUserTeamsWithAccess,\s*getPlayers,\s*getPlayerPrivateProfile,\s*copySelectedPlayersForTeamRollover,\s*uploadTeamPhoto,\s*addConfig,\s*getUnreadChatCount,\s*inviteAdmin,\s*addTeamAdminEmail,\s*getTeamAccessCodes(?:,\s*getConfigs,\s*getGames,\s*updateGame)?(?:,\s*getRegistrationSources)?(?:,\s*syncRegistrationProvider)?\s*\}\s+from\s+'\.\/js\/db\.js\?v=\d+';/,
+            'const { createTeam, updateTeam, getTeam, getUserProfile, getUserTeamsWithAccess, getPlayers, getPlayerPrivateProfile, copySelectedPlayersForTeamRollover, uploadTeamPhoto, addConfig, getUnreadChatCount, inviteAdmin, addTeamAdminEmail, getAllUsers, getTeamAccessCodes, getConfigs, getGames, updateGame, getRegistrationSources, syncRegistrationProvider } = deps.db;'
         )
         .replace(
             "import { getDefaultStatConfigForSport } from './js/stat-config-presets.js?v=1';",
@@ -452,6 +452,9 @@ async function bootEditTeam(initialState, overrides = {}, dependencyOverrides = 
             },
             async getPlayers() {
                 return deepClone(env.state.players || []);
+            },
+            async getPlayerPrivateProfile(teamId, playerId) {
+                return deepClone(env.state.privateProfiles?.[`${teamId}/${playerId}`] || env.state.privateProfiles?.[playerId] || null);
             },
             async copySelectedPlayersForTeamRollover() {
                 return { copiedCount: 0 };
@@ -819,6 +822,71 @@ describe('edit team admin access persistence', () => {
             expect(env.elements.get('scorekeeping-member-list').textContent).toContain('Casey Guardian');
             expect(env.elements.get('scorekeeping-member-list').innerHTML.match(/value="parent-1"/g)).toHaveLength(1);
             expect(env.elements.get('scorekeeping-member-list').innerHTML).toContain('value="parent-1" checked');
+        } finally {
+            env.cleanup();
+        }
+    });
+
+    it('loads selected permission members from private-profile parent links when public roster parents are redacted', async () => {
+        const initialState = {
+            currentUser: { uid: 'owner-1', email: 'owner@example.com' },
+            team: {
+                id: 'team-1',
+                ownerId: 'owner-1',
+                name: 'Legacy Sharks',
+                description: 'Travel team',
+                sport: 'Basketball',
+                notificationEmail: '',
+                leagueUrl: '',
+                standingsConfig: { enabled: false, rankingMode: 'points', tiebreakers: [] },
+                zip: '66209',
+                isPublic: true,
+                adminEmails: [],
+                teamPermissions: {
+                    scorekeeping: { mode: 'selected', memberIds: ['parent-private'] },
+                    streaming: { mode: 'selected', memberIds: [] },
+                    videography: { mode: 'selected', memberIds: [] }
+                }
+            },
+            players: [
+                {
+                    id: 'player-private',
+                    name: 'Avery',
+                    parents: []
+                },
+                {
+                    id: 'player-public',
+                    name: 'Blake',
+                    parents: [
+                        { userId: 'parent-public', name: 'Public Parent', email: 'public@example.com' }
+                    ]
+                }
+            ],
+            privateProfiles: {
+                'team-1/player-private': {
+                    parents: [
+                        { userId: 'parent-private', name: 'Private Parent', email: 'private@example.com' }
+                    ]
+                }
+            },
+            updateCalls: []
+        };
+        const privateProfileCalls = [];
+        const env = await bootEditTeam(initialState, undefined, {
+            db: {
+                async getPlayerPrivateProfile(teamId, playerId) {
+                    privateProfileCalls.push({ teamId, playerId });
+                    return deepClone(initialState.privateProfiles[`${teamId}/${playerId}`] || null);
+                }
+            }
+        });
+        try {
+            expect(privateProfileCalls).toEqual([{ teamId: 'team-1', playerId: 'player-private' }]);
+            expect(env.elements.get('team-permissions-empty').classList.contains('hidden')).toBe(true);
+            expect(env.elements.get('scorekeeping-member-list').textContent).toContain('Private Parent');
+            expect(env.elements.get('scorekeeping-member-list').textContent).toContain('private@example.com');
+            expect(env.elements.get('scorekeeping-member-list').textContent).toContain('Public Parent');
+            expect(env.elements.get('scorekeeping-member-list').innerHTML).toContain('value="parent-private" checked');
         } finally {
             env.cleanup();
         }
