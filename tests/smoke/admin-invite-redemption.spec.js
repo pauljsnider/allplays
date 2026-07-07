@@ -238,6 +238,18 @@ export async function markAccessCodeAsUsed() {
 }
 `;
 
+const ACCEPT_INVITE_ADMIN_INVITE_STUB = `
+export async function redeemAdminInviteAtomically(codeId, userId, authEmail) {
+    console.log('redeemAdminInviteAtomically called with:', { codeId, userId, authEmail });
+    window.__acceptInviteCalls.push({ type: 'redeem', codeId, userId, authEmail });
+    return {
+        success: true,
+        teamId: 'team-1',
+        teamName: 'Tigers'
+    };
+}
+`;
+
 const ACCEPT_INVITE_AUTH_STUB = `
 export function isEmailSignInLink() {
     return false;
@@ -306,6 +318,7 @@ async function mockAcceptInviteDependencies(page) {
     await page.addInitScript(() => { window.__acceptInviteCalls = []; console.log('__acceptInviteCalls initialized on window'); });
     await page.route(/\/js\/db\.js(?:\?v=\d+)?$/, (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: ACCEPT_INVITE_DB_STUB }));
     await page.route(/\/js\/auth\.js(?:\?v=\d+)?$/, (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: ACCEPT_INVITE_AUTH_STUB }));
+    await page.route(/\/js\/admin-invite\.js(?:\?v=\d+)?$/, (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: ACCEPT_INVITE_ADMIN_INVITE_STUB }));
     await page.route('**/js/utils.js?v=8', (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: SHARED_UTILS_STUB }));
 }
 
