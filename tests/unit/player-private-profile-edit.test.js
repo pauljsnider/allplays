@@ -9,6 +9,20 @@ function readDbSource() {
     return readFileSync(new URL('../../js/db.js', import.meta.url), 'utf8');
 }
 
+function readFunctionsSource() {
+    return readFileSync(new URL('../../functions/index.js', import.meta.url), 'utf8');
+}
+
+function extractExportBlock(source, startMarker, endMarker) {
+    const start = source.indexOf(startMarker);
+    expect(start, `Expected export marker to exist: ${startMarker}`).toBeGreaterThanOrEqual(0);
+
+    const end = source.indexOf(endMarker, start + startMarker.length);
+    expect(end, `Expected export marker to exist: ${endMarker}`).toBeGreaterThanOrEqual(0);
+
+    return source.slice(start, end);
+}
+
 function extractFunction(source, signature) {
     const start = source.indexOf(signature);
     expect(start, `Expected function signature to exist: ${signature}`).toBeGreaterThanOrEqual(0);
@@ -249,27 +263,37 @@ describe('player profile private doc writes', () => {
     });
 
     it('stores parent invite contact details on the private player profile document', () => {
-        const source = readDbSource();
-        const parentInviteSource = extractFunction(source, 'export async function redeemParentInvite(');
-        const householdInviteSource = extractFunction(source, 'export async function redeemHouseholdInvite(');
+        const dbSource = readDbSource();
+        const functionsSource = readFunctionsSource();
+        const parentInviteClientSource = extractFunction(dbSource, 'export async function redeemParentInvite(');
+        const parentInviteCallableSource = extractExportBlock(functionsSource, 'exports.redeemParentInvite', 'exports.redeemHouseholdInvite');
+        const householdInviteCallableSource = extractExportBlock(functionsSource, 'exports.redeemHouseholdInvite', 'exports.redeemCoParentInvite');
 
-        expect(parentInviteSource).toContain('teams/${codeData.teamId}/players/${codeData.playerId}/private/profile');
-        expect(parentInviteSource).toContain('await setDoc(privateProfileRef, {');
-        expect(parentInviteSource).not.toContain('await updateDoc(playerRef, {\n                parents: arrayUnion({');
+        expect(parentInviteClientSource).toContain("httpsCallable(functions, 'redeemParentInvite')");
+        expect(parentInviteClientSource).not.toContain('await updateDoc(playerRef, {\n                parents: arrayUnion({');
 
-        expect(householdInviteSource).toContain('teams/${codeData.teamId}/players/${codeData.playerId}/private/profile');
-        expect(householdInviteSource).toContain('await setDoc(privateProfileRef, {');
+        expect(parentInviteCallableSource).toContain('const privateProfileRef = firestore.doc(`teams/${teamId}/players/${playerId}/private/profile`);');
+        expect(parentInviteCallableSource).toContain('transaction.set(privateProfileRef, {');
+        expect(parentInviteCallableSource).toContain('email: codeData.email || signedInEmail ||');
+
+        expect(householdInviteCallableSource).toContain('const privateProfileRef = firestore.doc(`teams/${teamId}/players/${playerId}/private/profile`);');
+        expect(householdInviteCallableSource).toContain('transaction.set(privateProfileRef, {');
+        expect(householdInviteCallableSource).toContain("status: 'accepted'");
     });
 
     it('keeps resolved parent invite team and player in scope for the success return', () => {
-        const source = readDbSource();
-        const parentInviteSource = extractFunction(source, 'export async function redeemParentInvite(');
+        const dbSource = readDbSource();
+        const functionsSource = readFunctionsSource();
+        const parentInviteClientSource = extractFunction(dbSource, 'export async function redeemParentInvite(');
+        const parentInviteCallableSource = extractExportBlock(functionsSource, 'exports.redeemParentInvite', 'exports.redeemHouseholdInvite');
 
-        expect(parentInviteSource).toContain('let team = null;');
-        expect(parentInviteSource).toContain('let player = null;');
-        expect(parentInviteSource).toContain('[team, player] = await Promise.all([');
-        expect(parentInviteSource).toContain("teamName: team?.name || null");
-        expect(parentInviteSource).toContain("playerName: player?.name || null");
+        expect(parentInviteCallableSource).toContain('const team = { id: teamSnap.id, ...(teamSnap.data() || {}) };');
+        expect(parentInviteCallableSource).toContain('const player = { id: playerSnap.id, ...(playerSnap.data() || {}) };');
+        expect(parentInviteCallableSource).toContain('teamName: parentLink.teamName');
+        expect(parentInviteCallableSource).toContain('playerName: parentLink.playerName');
+
+        expect(parentInviteClientSource).toContain('teamName: payload.teamName || null');
+        expect(parentInviteClientSource).toContain('playerName: payload.playerName || null');
     });
 
     it('hydrates RSVP roster players with private-profile parent contacts when public docs are redacted', async () => {

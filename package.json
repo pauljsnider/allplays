@@ -33,6 +33,7 @@
   },
   "devDependencies": {
     "@capacitor/cli": "^8.4.1",
+    "@firebase/rules-unit-testing": "^5.0.1",
     "@playwright/test": "^1.61.1",
     "@sentry/browser": "^10.63.0",
     "@testing-library/react": "^16.3.2",
