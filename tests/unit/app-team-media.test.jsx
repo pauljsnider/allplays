@@ -451,6 +451,47 @@ describe('React app TeamMedia upload flow', () => {
 
     await act(async () => root.unmount());
   });
+
+  it('clears the photo picker after failed uploads so the same image can be retried', async () => {
+    parentToolsServiceMocks.uploadParentTeamMediaPhoto
+      .mockRejectedValueOnce(new Error('storage/retry'))
+      .mockResolvedValueOnce({
+        id: 'uploaded-photo-retry',
+        title: 'tipoff.jpg',
+        type: 'photo',
+        url: 'https://example.test/tipoff.jpg',
+      });
+
+    const { container, root } = await renderTeamMedia(uploadableModel());
+    const photoInput = container.querySelector('input[accept="image/*"]');
+    const file = new File(['first'], 'tipoff.jpg', { type: 'image/jpeg' });
+
+    Object.defineProperty(photoInput, 'value', {
+      configurable: true,
+      writable: true,
+      value: 'C\\fakepath\\tipoff.jpg',
+    });
+    changeFiles(photoInput, [file]);
+    await act(async () => {});
+
+    expect(parentToolsServiceMocks.uploadParentTeamMediaPhoto).toHaveBeenCalledTimes(1);
+    expect(parentToolsServiceMocks.uploadParentTeamMediaPhoto).toHaveBeenNthCalledWith(1, 'team-1', 'folder-1', file);
+    expect(photoInput.value).toBe('');
+    expect(container.textContent).toContain('No photos uploaded. Choose image files that are 10 MB or smaller.');
+
+    photoInput.value = 'C\\fakepath\\tipoff.jpg';
+    changeFiles(photoInput, [file]);
+    await act(async () => {});
+
+    expect(parentToolsServiceMocks.uploadParentTeamMediaPhoto).toHaveBeenCalledTimes(2);
+    expect(parentToolsServiceMocks.uploadParentTeamMediaPhoto).toHaveBeenNthCalledWith(2, 'team-1', 'folder-1', file);
+    expect(container.textContent).toContain('tipoff.jpg');
+    expect((container.textContent.match(/Uploaded/g) || []).length).toBe(1);
+    expect((container.textContent.match(/Upload failed\./g) || []).length).toBe(1);
+    expect(container.textContent).toContain('1 photo uploaded.');
+
+    await act(async () => root.unmount());
+  });
 });
 
 describe('React app TeamMedia team chat posting', () => {
