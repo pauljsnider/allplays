@@ -1,3 +1,10 @@
+function normalizeDelimitedStrings(value) {
+    const values = Array.isArray(value) ? value : String(value || '').split(',');
+    return Array.from(new Set(values
+        .map((item) => String(item || '').trim())
+        .filter(Boolean)));
+}
+
 export function normalizeOfficialsDirectory(officials = []) {
     if (!Array.isArray(officials)) return [];
     return officials
@@ -8,7 +15,10 @@ export function normalizeOfficialsDirectory(officials = []) {
             return {
                 id,
                 name,
-                email: String(official?.email || '').trim()
+                email: String(official?.email || '').trim(),
+                phone: String(official?.phone || '').trim(),
+                roles: normalizeDelimitedStrings(official?.roles),
+                tags: normalizeDelimitedStrings(official?.tags)
             };
         })
         .filter(Boolean)
