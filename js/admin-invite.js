@@ -1,4 +1,26 @@
-import { redeemAdminInviteAtomicPersistence } from './db.js?v=81';
+import { functions, httpsCallable } from './firebase.js?v=20';
+
+export async function redeemAdminInviteCallablePersistence({
+    userId,
+    userEmail,
+    codeId
+}) {
+    const callable = httpsCallable(functions, 'redeemAdminInvite');
+    const result = await callable({
+        userId,
+        userEmail,
+        codeId
+    });
+    return result?.data || result;
+}
+
+export async function redeemAdminInviteAtomically(codeId, userId, fallbackEmail = null) {
+    return redeemAdminInviteCallablePersistence({
+        userId,
+        userEmail: fallbackEmail,
+        codeId
+    });
+}
 
 export async function redeemAdminInviteAcceptance({
     userId,
@@ -6,7 +28,7 @@ export async function redeemAdminInviteAcceptance({
     codeId = null,
     getTeam,
     getUserProfile,
-    redeemAdminInviteAtomicPersistence: redeemAdminInviteAtomicPersistenceOverride = redeemAdminInviteAtomicPersistence
+    redeemAdminInviteAtomicPersistence: redeemAdminInviteAtomicPersistenceOverride = redeemAdminInviteCallablePersistence
 }) {
     if (!userId) throw new Error('Missing userId');
     if (!codeId) throw new Error('Missing codeId');

@@ -2336,6 +2336,89 @@ exports.redeemCoParentInvite = functions.https.onCall(async (data, context) => {
   return responsePayload;
 });
 
+exports.redeemAdminInvite = functions.https.onCall(async (data, context) => {
+  if (!context.auth?.uid) {
+    throw new functions.https.HttpsError('unauthenticated', 'Sign in before accepting an admin invite.');
+  }
+
+  const userId = normalizeFirestoreId(data?.userId || context.auth.uid, 'userId');
+  if (userId !== context.auth.uid) {
+    throw new functions.https.HttpsError('permission-denied', 'You can only accept an invite for your own account.');
+  }
+
+  const codeId = normalizeFirestoreId(data?.codeId, 'codeId');
+  const codeRef = firestore.doc(`accessCodes/${codeId}`);
+  let responsePayload = null;
+
+  await firestore.runTransaction(async (transaction) => {
+    const codeSnap = await transaction.get(codeRef);
+    if (!codeSnap.exists) {
+      throw new functions.https.HttpsError('not-found', 'Admin invite could not be found.');
+    }
+
+    const codeData = codeSnap.data() || {};
+    if (codeData.type !== 'admin_invite') {
+      throw new functions.https.HttpsError('failed-precondition', 'Not an admin invite code.');
+    }
+    if (codeData.used || codeData.revoked === true || codeData.active === false || ['removed', 'cancelled', 'revoked'].includes(codeData.status)) {
+      throw new functions.https.HttpsError('failed-precondition', 'Admin invite is no longer available.');
+    }
+    if (isParentInviteExpired(codeData.expiresAt)) {
+      throw new functions.https.HttpsError('failed-precondition', 'Admin invite has expired.');
+    }
+
+    const invitedEmail = normalizeParentInviteEmail(codeData.email);
+    if (!invitedEmail) {
+      throw new functions.https.HttpsError('failed-precondition', 'Admin invite is missing an invited email.');
+    }
+
+    const teamId = normalizeFirestoreId(codeData.teamId, 'teamId');
+    const teamRef = firestore.doc(`teams/${teamId}`);
+    const userRef = firestore.doc(`users/${userId}`);
+    const [teamSnap, userSnap] = await Promise.all([
+      transaction.get(teamRef),
+      transaction.get(userRef)
+    ]);
+
+    if (!teamSnap.exists) {
+      throw new functions.https.HttpsError('not-found', 'Team not found.');
+    }
+
+    const teamData = teamSnap.data() || {};
+    const userData = userSnap.exists ? userSnap.data() || {} : {};
+    const signedInEmail = normalizeParentInviteEmail(context.auth.token?.email || userData.email);
+    if (!signedInEmail || invitedEmail !== signedInEmail) {
+      throw new functions.https.HttpsError('permission-denied', `This invite was sent to ${invitedEmail}. Sign in with that email to accept it.`);
+    }
+
+    const now = admin.firestore.Timestamp.now();
+
+    transaction.set(teamRef, {
+      adminEmails: appendUniqueValue(teamData.adminEmails, invitedEmail),
+      updatedAt: now
+    }, { merge: true });
+    transaction.set(userRef, {
+      coachOf: appendUniqueValue(userData.coachOf, teamId),
+      roles: appendUniqueValue(userData.roles, 'coach'),
+      updatedAt: now
+    }, { merge: true });
+    transaction.update(codeRef, {
+      used: true,
+      usedBy: userId,
+      usedAt: now
+    });
+
+    responsePayload = {
+      success: true,
+      codeId,
+      teamId,
+      teamName: teamData.name || codeData.teamName || null
+    };
+  });
+
+  return responsePayload;
+});
+
 exports.validateAccessCodeForAcceptance = functions.https.onCall(async (data, context) => {
   const code = String(data?.code || '').trim().toUpperCase();
   if (!code) {

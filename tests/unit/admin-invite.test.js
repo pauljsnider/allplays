@@ -1,18 +1,44 @@
 import { describe, it, expect, vi } from 'vitest';
 
-const dbMocks = vi.hoisted(() => ({
-    redeemAdminInviteAtomicPersistence: vi.fn()
+const firebaseMocks = vi.hoisted(() => ({
+    functions: {},
+    httpsCallable: vi.fn()
 }));
 
-vi.mock('../../js/db.js?v=81', () => dbMocks);
+vi.mock('../../js/firebase.js?v=20', () => firebaseMocks);
 
-const { redeemAdminInviteAcceptance } = await import('../../js/admin-invite.js');
+const { redeemAdminInviteAcceptance, redeemAdminInviteAtomically } = await import('../../js/admin-invite.js');
 
 describe('admin invite acceptance', () => {
+    it('routes direct admin invite redemption through the server callable', async () => {
+        const callable = vi.fn().mockResolvedValue({
+            data: {
+                success: true,
+                teamId: 'team-1',
+                teamName: 'Sharks'
+            }
+        });
+        firebaseMocks.httpsCallable.mockReturnValue(callable);
+
+        const result = await redeemAdminInviteAtomically('code-1', 'user-1', 'Admin@Example.com');
+
+        expect(firebaseMocks.httpsCallable).toHaveBeenCalledWith(firebaseMocks.functions, 'redeemAdminInvite');
+        expect(callable).toHaveBeenCalledWith({
+            userId: 'user-1',
+            userEmail: 'Admin@Example.com',
+            codeId: 'code-1'
+        });
+        expect(result).toEqual({
+            success: true,
+            teamId: 'team-1',
+            teamName: 'Sharks'
+        });
+    });
+
     it('delegates signup admin redemption to atomic persistence', async () => {
         const getTeam = vi.fn().mockResolvedValue({ id: 'team-1', name: 'Sharks' });
         const getUserProfile = vi.fn().mockResolvedValue({ coachOf: ['team-0'], roles: ['parent'] });
-        const redeemAdminInviteAtomicPersistence = dbMocks.redeemAdminInviteAtomicPersistence.mockResolvedValue({
+        const redeemAdminInviteAtomicPersistence = vi.fn().mockResolvedValue({
             success: true,
             teamId: 'team-1'
         });

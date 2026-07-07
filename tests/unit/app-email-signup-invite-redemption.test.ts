@@ -19,5 +19,6 @@ describe('React app email signup invite redemption dependencies', () => {
     const adapterSource = readFileSync(resolve(process.cwd(), 'apps/app/src/lib/adapters/legacyAuth.ts'), 'utf8');
 
     expect(adapterSource).toContain('redeemCoParentInvite: (...args: any[]) => Promise<unknown>;');
+    expect(adapterSource).toContain('redeemAdminInviteAtomically: (...args: any[]) => Promise<unknown>;');
   });
 });

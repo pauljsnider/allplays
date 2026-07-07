@@ -1676,11 +1676,13 @@ service cloud.firestore {
                         isHouseholdInviteRedemptionUpdate() ||
                         isHouseholdInviteRevocationUpdate() ||
                         // Allow marking as used only if setting these specific fields
-                        (resource.data.get('type', null) != 'parent_invite' &&
+                        (resource.data.get('type', null) != 'admin_invite' &&
+                         resource.data.get('type', null) != 'parent_invite' &&
                          resource.data.get('type', null) != 'household_invite' &&
                          request.resource.data.diff(resource.data).affectedKeys().hasOnly(['used', 'usedBy', 'usedAt']) &&
                          request.resource.data.usedBy == request.auth.uid) ||
-                        (resource.data.get('type', null) != 'parent_invite' &&
+                        (resource.data.get('type', null) != 'admin_invite' &&
+                         resource.data.get('type', null) != 'parent_invite' &&
                          resource.data.get('type', null) != 'household_invite' &&
                          resource.data.generatedBy == request.auth.uid &&
                          request.resource.data.diff(resource.data).affectedKeys().hasOnly(['revoked', 'revokedAt', 'used', 'updatedAt'])));
