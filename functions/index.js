@@ -4423,48 +4423,6 @@ async function getCalendarTokenHolderUser(tokenData) {
   return { uid, ...(userSnap.data() || {}) };
 }
 
-async function loadMissingTeamCalendarRsvpSummaries(teamId, gameIds = []) {
-  const uniqueGameIds = [...new Set(gameIds.map((value) => String(value || '').trim()).filter(Boolean))];
-  if (!uniqueGameIds.length) return new Map();
-
-  const playersSnap = await firestore.collection(`teams/${teamId}/players`).get();
-  const activePlayerIds = new Set();
-  playersSnap.forEach((docSnap) => {
-    const player = docSnap.data() || {};
-    if (player.active !== false) activePlayerIds.add(docSnap.id);
-  });
-
-  const summaries = new Map();
-  await Promise.all(uniqueGameIds.map(async (gameId) => {
-    const rsvpsSnap = await firestore.collection(`teams/${teamId}/games/${gameId}/rsvps`).get();
-    const responsesByPlayerId = new Map();
-    rsvpsSnap.forEach((docSnap) => {
-      const rsvp = docSnap.data() || {};
-      const response = normalizePublicRsvpResponse(rsvp.response);
-      if (!response) return;
-      const playerIds = getPublicRsvpPlayerIds(rsvp).filter((playerId) => activePlayerIds.has(playerId));
-      const respondedAtMs = getPublicRsvpResponseSortMs(rsvp, docSnap);
-      playerIds.forEach((playerId) => {
-        const existing = responsesByPlayerId.get(playerId);
-        if (!existing || respondedAtMs >= existing.respondedAtMs) {
-          responsesByPlayerId.set(playerId, { response, respondedAtMs });
-        }
-      });
-    });
-
-    const summary = { going: 0, maybe: 0, notGoing: 0, notResponded: 0 };
-    responsesByPlayerId.forEach(({ response }) => {
-      if (response === 'going') summary.going += 1;
-      if (response === 'maybe') summary.maybe += 1;
-      if (response === 'not_going') summary.notGoing += 1;
-    });
-    summary.notResponded = Math.max(activePlayerIds.size - responsesByPlayerId.size, 0);
-    summaries.set(gameId, summary);
-  }));
-
-  return summaries;
-}
-
 function calendarTokenHasTeamAccess({ team, user, tokenData }) {
   if (!team || !tokenData) return false;
   const uid = user?.uid || tokenData.uid || tokenData.userId || tokenData.createdBy || null;
@@ -4519,14 +4477,8 @@ exports.teamCalendarFeed = functions.https.onRequest(async (req, res) => {
     }
 
     const eventsSnap = await firestore.collection(`teams/${teamId}/games`).orderBy('date').get();
-    const rawEvents = eventsSnap.docs.map((docSnap) => ({ id: docSnap.id, ...(docSnap.data() || {}) }));
-    const missingSummaryGameIds = rawEvents
-      .filter((game) => !game.rsvpSummary || typeof game.rsvpSummary !== 'object')
-      .map((game) => game.id);
-    const rsvpSummaryByGameId = await loadMissingTeamCalendarRsvpSummaries(teamId, missingSummaryGameIds);
-    const events = rawEvents.map((game) => {
-      const liveRsvpSummary = rsvpSummaryByGameId.get(game.id);
-      if (liveRsvpSummary) game.rsvpSummary = liveRsvpSummary;
+    const events = eventsSnap.docs.map((docSnap) => {
+      const game = { id: docSnap.id, ...(docSnap.data() || {}) };
       game.officiating = Array.isArray(game.officiating) ? game.officiating : (Array.isArray(game.officials) ? game.officials : []);
       return game;
     });
