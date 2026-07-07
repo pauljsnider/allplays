@@ -202,7 +202,8 @@
                 "notifyInviteRedeemed",
                 "notifyParentMembershipRequestCreated",
                 "notifyParentMembershipRequestUpdated",
-                "syncApprovedParentMembershipRequestUserLink"
+                "syncApprovedParentMembershipRequestUserLink",
+                "syncPublicUserProfileProjection"
             ],
             "unitTests": [
                 "tests/unit/app-home-logic.test.js",
@@ -214,6 +215,7 @@
                 "tests/unit/edit-roster-bulk-ai-reactivate.test.js",
                 "tests/unit/edit-roster-registration-import.test.js",
                 "tests/unit/edit-team-registration-sync.test.js",
+                "tests/unit/public-user-profile-sync.test.js",
                 "tests/unit/teams-public-visibility.test.js"
             ],
             "integrationTests": [
