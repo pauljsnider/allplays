@@ -24,8 +24,8 @@ describe('team media page wiring', () => {
         expect(page).toContain('Add album');
         expect(page).toContain('Upload files');
         expect(page).toContain('Save video link');
-        expect(source).toContain("from './db.js?v=83'");
-        expect(source).toContain("import { checkAuth } from './auth.js?v=41';");
+        expect(source).toContain("from './db.js?v=84'");
+        expect(source).toContain("import { checkAuth } from './auth.js?v=42';");
         expect(source).toContain('checkAuth(async (user) => {');
         expect(source).toContain('team.html#teamId=${encodeURIComponent(state.teamId)}');
         expect(source).toContain('Team media permissions are not enabled');
@@ -50,7 +50,7 @@ describe('team media page wiring', () => {
         ]) {
             const testSource = fs.readFileSync(path.join(repoRoot, testFile), 'utf8');
             expect(testSource).toContain(`vi.mock('../../js/db.js?v=${dbImportVersion}'`);
-            expect(testSource).not.toContain("vi.mock('../../js/db.js?v=82'");
+            expect(testSource).not.toContain("vi.mock('../../js/db.js?v=83'");
         }
     });
 

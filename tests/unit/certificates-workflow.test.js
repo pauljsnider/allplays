@@ -173,7 +173,7 @@ describe('awards and certificates workflow wiring', () => {
         expect(studio).toContain("from './templates.js?v=2'");
         expect(studio).toContain("from './renderer.js?v=2'");
         expect(studio).toContain("from './aiDescriptions.js?v=4'");
-        expect(studio).toContain("from '../db.js?v=83'");
+        expect(studio).toContain("from '../db.js?v=84'");
 
         expect(studio).toContain('Create drafts for selected players');
         expect(studio).toContain('Saved work');
