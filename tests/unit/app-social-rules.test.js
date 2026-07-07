@@ -1,5 +1,11 @@
 import { readFileSync } from 'node:fs';
-import { describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import {
+    assertFails,
+    assertSucceeds,
+    initializeTestEnvironment
+} from '@firebase/rules-unit-testing';
+import { doc, serverTimestamp, setDoc } from 'firebase/firestore';
 
 function rulesSource() {
     return readFileSync(new URL('../../firestore.rules', import.meta.url), 'utf8');
@@ -166,6 +172,100 @@ describe('React app social Firestore rules', () => {
         expect(isOwnerPublicProfilePresentationWriteValid({
             affectedKeys: ['discoveryTeamIds', 'updatedAt']
         })).toBe(false);
+    });
+
+    describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('public profile rules engine coverage', () => {
+        let testEnv;
+
+        beforeAll(async () => {
+            testEnv = await initializeTestEnvironment({
+                projectId: `allplays-public-profile-rules-${Date.now()}`,
+                firestore: {
+                    rules: rulesSource()
+                }
+            });
+        });
+
+        beforeEach(async () => {
+            await testEnv.clearFirestore();
+        });
+
+        afterAll(async () => {
+            await testEnv?.cleanup();
+        });
+
+        function profileRef(uid, context = testEnv.authenticatedContext(uid, { email: `${uid}@example.com` })) {
+            return doc(context.firestore(), 'publicUserProfiles', uid);
+        }
+
+        async function seedPublicProfile(uid, data = {}) {
+            await testEnv.withSecurityRulesDisabled(async (context) => {
+                await setDoc(doc(context.firestore(), 'publicUserProfiles', uid), {
+                    displayName: 'Owner',
+                    fullName: 'Profile Owner',
+                    photoUrl: null,
+                    discoveryTeamIds: ['team-1'],
+                    emailHash: 'trusted-hash',
+                    updatedAt: serverTimestamp(),
+                    ...data
+                });
+            });
+        }
+
+        it('allows owner presentation-only creates and merge updates', async () => {
+            const owner = testEnv.authenticatedContext('owner-1', { email: 'owner-1@example.com' });
+
+            await assertSucceeds(setDoc(profileRef('owner-1', owner), {
+                displayName: 'Owner',
+                fullName: 'Owner One',
+                photoUrl: null,
+                updatedAt: serverTimestamp()
+            }));
+
+            await assertSucceeds(setDoc(profileRef('owner-1', owner), {
+                displayName: 'Owner Updated',
+                updatedAt: serverTimestamp()
+            }, { merge: true }));
+        });
+
+        it('denies owner creates and merge updates that write trusted discovery fields', async () => {
+            const owner = testEnv.authenticatedContext('owner-2', { email: 'owner-2@example.com' });
+
+            await assertFails(setDoc(profileRef('owner-2', owner), {
+                displayName: 'Owner',
+                fullName: 'Owner Two',
+                discoveryTeamIds: ['forged-team'],
+                updatedAt: serverTimestamp()
+            }));
+
+            await assertFails(setDoc(profileRef('owner-2', owner), {
+                displayName: 'Owner',
+                fullName: 'Owner Two',
+                emailHash: 'forged-hash',
+                updatedAt: serverTimestamp()
+            }));
+
+            await seedPublicProfile('owner-2');
+            await assertFails(setDoc(profileRef('owner-2', owner), {
+                discoveryTeamIds: ['forged-team'],
+                updatedAt: serverTimestamp()
+            }, { merge: true }));
+
+            await assertFails(setDoc(profileRef('owner-2', owner), {
+                emailHash: 'forged-hash',
+                updatedAt: serverTimestamp()
+            }, { merge: true }));
+        });
+
+        it('denies non-owner public profile updates', async () => {
+            await seedPublicProfile('owner-3');
+            const otherUser = testEnv.authenticatedContext('other-user', { email: 'other-user@example.com' });
+
+            await assertFails(setDoc(profileRef('owner-3', otherUser), {
+                displayName: 'Other User Edit',
+                updatedAt: serverTimestamp()
+            }, { merge: true }));
+        });
     });
 
     it('locks author social post updates to content fields without changing original visibility scope', () => {
