@@ -72,7 +72,7 @@ describe('admin invite signup cache busting', () => {
 
     it('bumps the shared header logout import with auth.js consumers', () => {
         const utilsSource = readFileSync(resolve(process.cwd(), 'js/utils.js'), 'utf8');
-        const logoutImportMatches = utilsSource.match(/const \{ logout \} = await import\('\.\/auth\.js\?v=40'\);/g) || [];
+        const logoutImportMatches = utilsSource.match(/const \{ logout \} = await import\('\.\/auth\.js\?v=42'\);/g) || [];
 
         expect(logoutImportMatches).toHaveLength(1);
         expect(utilsSource).not.toContain("const { logout } = await import('./auth.js?v=24');");
