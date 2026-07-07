@@ -11,7 +11,7 @@ const starterDrillsTestSource = readFileSync(new URL('./practice-starter-drills.
 
 describe('issue 1986 drills AI coach source contract', () => {
     it('keeps the practice AI coach prompt grounded in team context and favorite drills', () => {
-        expect(teamDrillsServiceSource).toContain("export { buildPracticeAiCoachPrompt } from './practiceAiCoachService';");
+        expect(teamDrillsServiceSource).not.toContain("export { buildPracticeAiCoachPrompt } from './practiceAiCoachService';");
         expect(practiceAiCoachServiceSource).toContain('export type PracticeAiCoachPromptInput');
         expect(practiceAiCoachServiceSource).toContain('export function buildPracticeAiCoachPrompt');
         expect(practiceAiCoachServiceSource).toContain('You are ALL PLAYS AI coach');
