@@ -15,7 +15,7 @@ describe('access code atomic redemption guard', () => {
         expect(afterFunction).toContain('runTransaction(db, async (transaction) =>');
     });
 
-    it('claims parent invite codes atomically before side effects', () => {
+    it('routes parent invite membership grants through a callable instead of browser membership writes', () => {
         const dbSourcePath = resolve(process.cwd(), 'js/db.js');
         const source = readFileSync(dbSourcePath, 'utf8');
 
@@ -23,12 +23,32 @@ describe('access code atomic redemption guard', () => {
         const fnIndex = source.indexOf(fnAnchor);
         expect(fnIndex).toBeGreaterThanOrEqual(0);
 
-        const afterFunction = source.slice(fnIndex, fnIndex + 5000);
-        expect(afterFunction).toContain('runTransaction(db, async (transaction) =>');
-        expect(afterFunction).toContain('if (latestCodeData.used || latestCodeData.revoked === true');
-        expect(afterFunction).toContain('if (isAccessCodeExpired(latestCodeData.expiresAt))');
-        expect(afterFunction).toContain('throw new Error("Code has expired")');
-        expect(afterFunction).toContain('if (invitedEmail && (!resolvedAuthEmail || invitedEmail !== resolvedAuthEmail))');
-        expect(afterFunction).toContain('throw new Error(getInviteEmailMismatchMessage(invitedEmail))');
+        const afterFunction = source.slice(fnIndex, fnIndex + 1400);
+        expect(afterFunction).toContain("httpsCallable(functions, 'redeemParentInvite')");
+        expect(afterFunction).toContain('await syncPublicUserProfile(userId);');
+        expect(afterFunction).not.toContain('parentOf: arrayUnion');
+        expect(afterFunction).not.toContain('parentTeamIds: arrayUnion');
+        expect(afterFunction).not.toContain('parentPlayerKeys: arrayUnion');
+    });
+
+    it('claims parent invite codes and membership grants atomically in the privileged callable', () => {
+        const functionsSourcePath = resolve(process.cwd(), 'functions/index.js');
+        const source = readFileSync(functionsSourcePath, 'utf8');
+
+        const fnAnchor = 'exports.redeemParentInvite';
+        const fnIndex = source.indexOf(fnAnchor);
+        expect(fnIndex).toBeGreaterThanOrEqual(0);
+
+        const afterFunction = source.slice(fnIndex, fnIndex + 6800);
+        expect(afterFunction).toContain('firestore.runTransaction(async (transaction) =>');
+        expect(afterFunction).toContain("codeData.type !== 'parent_invite'");
+        expect(afterFunction).toContain('codeData.used || codeData.revoked === true || codeData.status ===');
+        expect(afterFunction).toContain('isParentInviteExpired(codeData.expiresAt)');
+        expect(afterFunction).toContain('invitedEmail && (!signedInEmail || invitedEmail !== signedInEmail)');
+        expect(afterFunction).toContain('parentOf: nextUserData.parentOf');
+        expect(afterFunction).toContain('parentTeamIds: nextUserData.parentTeamIds');
+        expect(afterFunction).toContain('parentPlayerKeys: nextUserData.parentPlayerKeys');
+        expect(afterFunction).toContain('admin.firestore.FieldValue.arrayUnion');
+        expect(afterFunction).toContain("status: 'accepted'");
     });
 });

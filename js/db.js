@@ -4710,182 +4710,30 @@ function normalizeInviteEmail(email) {
     return String(email || '').trim().toLowerCase();
 }
 
-function getInviteEmailMismatchMessage(invitedEmail) {
-    return `This invite was sent to ${invitedEmail}. Sign in with that email to accept it.`;
-}
-
 export async function redeemParentInvite(userId, code, authEmail = null) {
     console.log('[redeemParentInvite] start', { userId, code });
-
-    const codeDoc = await getValidatedAccessCodeDoc(code);
-    const codeRef = codeDoc.ref;
-    let codeData;
-
-    const resolvedAuthEmail = normalizeInviteEmail(
-        authEmail || auth.currentUser?.email || (await getUserProfile(userId))?.email
-    );
-
-    // 2. Atomically claim code before side effects
-    await runTransaction(db, async (transaction) => {
-        const latestCodeSnapshot = await transaction.get(codeRef);
-        if (!latestCodeSnapshot.exists()) {
-            throw new Error("Invalid or used code");
-        }
-
-        const latestCodeData = latestCodeSnapshot.data() || {};
-        if (latestCodeData.type !== 'parent_invite') {
-            throw new Error("Not a parent invite code");
-        }
-        if (latestCodeData.used || latestCodeData.revoked === true || latestCodeData.status === 'removed') {
-            throw new Error("Invalid or used code");
-        }
-        if (isAccessCodeExpired(latestCodeData.expiresAt)) {
-            throw new Error("Code has expired");
-        }
-
-        const invitedEmail = normalizeInviteEmail(latestCodeData.email);
-        if (invitedEmail && (!resolvedAuthEmail || invitedEmail !== resolvedAuthEmail)) {
-            throw new Error(getInviteEmailMismatchMessage(invitedEmail));
-        }
-
-        transaction.update(codeRef, {
-            used: true,
-            usedBy: userId,
-            usedAt: Timestamp.now()
-        });
-
-        codeData = latestCodeData;
-    });
-
-    console.log('[redeemParentInvite] code loaded', {
-        codeId: codeDoc.id,
-        type: codeData.type,
-        teamId: codeData.teamId,
-        playerId: codeData.playerId,
-        generatedBy: codeData.generatedBy
-    });
-    let team = null;
-    let player = null;
-    try {
-        // 3. Get Team & Player details for caching
-        console.log('[redeemParentInvite] fetching team & player', {
-            teamId: codeData.teamId,
-            playerId: codeData.playerId
-        });
-        [team, player] = await Promise.all([
-            getTeam(codeData.teamId),
-            getPlayers(codeData.teamId).then(ps => ps.find(p => p.id === codeData.playerId))
-        ]);
-
-        if (!team || !player) {
-            console.error('[redeemParentInvite] missing team or player', { teamExists: !!team, playerExists: !!player });
-            throw new Error("Team or Player not found");
-        }
-        console.log('[redeemParentInvite] team & player resolved', {
-            teamName: team.name,
-            playerName: player.name,
-            playerNumber: player.number
-        });
-
-        // 4. Update User Profile (parentOf + parentTeamIds for Firestore rules)
-        try {
-            const userRef = doc(db, "users", userId);
-            await setDoc(userRef, {
-                parentOf: arrayUnion({
-                    teamId: codeData.teamId,
-                    playerId: codeData.playerId,
-                    teamName: team.name,
-                    playerName: player.name,
-                    playerNumber: player.number,
-                    playerPhotoUrl: player.photoUrl || null,
-                    relation: codeData.relation || null
-                }),
-                // Denormalized array for fast Firestore rules lookup
-                parentTeamIds: arrayUnion(codeData.teamId),
-                parentPlayerKeys: arrayUnion(`${codeData.teamId}::${codeData.playerId}`),
-                roles: arrayUnion('parent')
-            }, { merge: true });
-            await syncPublicUserProfile(userId);
-            console.log('[redeemParentInvite] user profile updated');
-        } catch (err) {
-            console.error('redeemParentInvite: error updating user profile', err);
-            throw new Error('Unable to link parent (profile). ' + (err?.message || ''));
-        }
-
-        // 5. Update private player profile (household contact list)
-        try {
-            const privateProfileRef = doc(db, `teams/${codeData.teamId}/players/${codeData.playerId}/private/profile`);
-
-            // Log current private parents state for debugging
-            try {
-                const snap = await getDoc(privateProfileRef);
-                if (snap.exists()) {
-                    const data = snap.data() || {};
-                    console.log('[redeemParentInvite] current private player parents before update', {
-                        teamId: codeData.teamId,
-                        playerId: codeData.playerId,
-                        parents: data.parents || []
-                    });
-                } else {
-                    console.log('[redeemParentInvite] private player profile not found before parents update', {
-                        teamId: codeData.teamId,
-                        playerId: codeData.playerId
-                    });
-                }
-            } catch (innerErr) {
-                console.warn('[redeemParentInvite] failed to read private player profile before update (non-fatal)', innerErr);
-            }
-
-            await setDoc(privateProfileRef, {
-                parents: arrayUnion({
-                    userId,
-                    email: codeData.email || 'pending', // Will be updated if email not provided in invite
-                    relation: codeData.relation,
-                    addedAt: Timestamp.now()
-                })
-            }, { merge: true });
-            console.log('[redeemParentInvite] private player parents updated');
-        } catch (err) {
-            // If this fails (e.g., due to stricter live rules), we still
-            // consider the parent linked via their user profile. Coaches
-            // simply won't see the connection until rules are updated.
-            console.error('redeemParentInvite: error updating private player parents (non-fatal)', {
-                message: err?.message,
-                code: err?.code,
-                name: err?.name
-            });
-        }
-    } catch (err) {
-        try {
-            await runTransaction(db, async (transaction) => {
-                const latestCodeSnapshot = await transaction.get(codeRef);
-                if (!latestCodeSnapshot.exists()) {
-                    return;
-                }
-
-                const latestCodeData = latestCodeSnapshot.data() || {};
-                if (latestCodeData.used === true && latestCodeData.usedBy === userId) {
-                    transaction.update(codeRef, {
-                        used: false,
-                        usedBy: null,
-                        usedAt: null
-                    });
-                }
-            });
-        } catch (rollbackErr) {
-            console.error('redeemParentInvite: failed to rollback code claim', rollbackErr);
-        }
-        throw err;
+    if (!userId) {
+        throw new Error('You must be signed in to accept a parent invite');
     }
 
-    console.log('[redeemParentInvite] access code marked used', { codeId: codeDoc.id });
+    const redeemParentInviteCallable = httpsCallable(functions, 'redeemParentInvite');
+    const result = await redeemParentInviteCallable({
+        userId,
+        code: String(code || '').trim().toUpperCase(),
+        authEmail: normalizeInviteEmail(authEmail || auth.currentUser?.email || '')
+    });
+    const payload = result?.data || result || {};
+
+    await syncPublicUserProfile(userId);
+
+    console.log('[redeemParentInvite] completed', { codeId: payload.codeId });
     return {
-        success: true,
-        teamId: codeData.teamId,
-        teamName: team?.name || null,
-        playerId: codeData.playerId || null,
-        playerName: player?.name || null,
-        playerNum: player?.number ?? codeData.playerNum ?? null
+        success: payload.success === true,
+        teamId: payload.teamId || null,
+        teamName: payload.teamName || null,
+        playerId: payload.playerId || null,
+        playerName: payload.playerName || null,
+        playerNum: payload.playerNum ?? null
     };
 }
 
@@ -4921,239 +4769,31 @@ function normalizeHouseholdInviteEmail(email) {
     return String(email || '').trim().toLowerCase();
 }
 
-function assertHouseholdInviteEmailMatches(codeData) {
-    const invitedEmail = normalizeHouseholdInviteEmail(codeData?.email);
-    if (!invitedEmail) {
-        return;
-    }
-
-    const signedInEmail = normalizeHouseholdInviteEmail(auth.currentUser?.email);
-    if (signedInEmail !== invitedEmail) {
-        throw new Error(`This invite was sent to ${invitedEmail}. Sign in with that email to accept it.`);
-    }
-}
-
-export function doesHouseholdInviteFamilyMembershipMatch(codeData = {}, membershipData = {}) {
-    const organizerUserId = String(codeData?.organizerUserId || '').trim();
-    const familyMembershipId = String(codeData?.familyMembershipId || '').trim();
-    if (!organizerUserId || !familyMembershipId) {
-        return false;
-    }
-
-    const membershipOrganizerUserId = String(membershipData?.organizerUserId || '').trim();
-    const membershipStatus = String(membershipData?.status || '').trim().toLowerCase();
-    return membershipOrganizerUserId === organizerUserId
-        && ['pending', 'active'].includes(membershipStatus)
-        && normalizeHouseholdInviteEmail(membershipData?.email) === normalizeHouseholdInviteEmail(codeData?.email)
-        && String(membershipData?.teamId || '').trim() === String(codeData?.teamId || '').trim()
-        && String(membershipData?.playerId || '').trim() === String(codeData?.playerId || '').trim();
-}
-
-async function resetHouseholdInviteCodeClaim(codeRef, userId) {
-    await runTransaction(db, async (transaction) => {
-        const latestCodeSnapshot = await transaction.get(codeRef);
-        if (!latestCodeSnapshot.exists()) return;
-
-        const latestCodeData = latestCodeSnapshot.data() || {};
-        if (latestCodeData.used === true && latestCodeData.usedBy === userId) {
-            transaction.update(codeRef, {
-                used: false,
-                usedBy: null,
-                usedAt: null
-            });
-        }
-    });
-}
-
-async function rollbackHouseholdInviteSideEffects(userId, codeData, codeRef, rollbackState = {}) {
-    const teamId = codeData?.teamId || null;
-    const playerId = codeData?.playerId || null;
-    const { userWasUpdated = false, playerWasUpdated = false, priorMembershipSnapshot = null, membershipWasUpdated = false } = rollbackState;
-
-    if (userWasUpdated && teamId && playerId) {
-        try {
-            const userRef = doc(db, "users", userId);
-            const userSnap = await getDoc(userRef);
-            if (userSnap.exists()) {
-                const userData = userSnap.data() || {};
-                const parentOf = Array.isArray(userData.parentOf) ? userData.parentOf : [];
-                const filteredParentOf = parentOf.filter(link =>
-                    !(link?.teamId === teamId && link?.playerId === playerId)
-                );
-                const filteredParentTeamIds = [...new Set(
-                    filteredParentOf.map(link => link?.teamId).filter(Boolean)
-                )];
-                const filteredParentPlayerKeys = [...new Set(
-                    filteredParentOf
-                        .map(link => (link?.teamId && link?.playerId ? `${link.teamId}::${link.playerId}` : null))
-                        .filter(Boolean)
-                )];
-                const existingRoles = Array.isArray(userData.roles) ? userData.roles : [];
-                const filteredRoles = filteredParentOf.length === 0
-                    ? existingRoles.filter(role => role !== 'parent')
-                    : existingRoles;
-
-                await setDoc(userRef, {
-                    parentOf: filteredParentOf,
-                    parentTeamIds: filteredParentTeamIds,
-                    parentPlayerKeys: filteredParentPlayerKeys,
-                    roles: filteredRoles
-                }, { merge: true });
-                await syncPublicUserProfile(userId);
-            }
-        } catch (rollbackErr) {
-            console.error('redeemHouseholdInvite: failed to rollback user profile updates', rollbackErr);
-        }
-    }
-
-    if (playerWasUpdated && teamId && playerId) {
-        try {
-            const privateProfileRef = doc(db, `teams/${teamId}/players/${playerId}/private/profile`);
-            const playerSnap = await getDoc(privateProfileRef);
-            if (playerSnap.exists()) {
-                const playerData = playerSnap.data() || {};
-                const parents = Array.isArray(playerData.parents) ? playerData.parents : [];
-                const filteredParents = parents.filter(parent => parent?.userId !== userId);
-                await setDoc(privateProfileRef, { parents: filteredParents }, { merge: true });
-            }
-        } catch (rollbackErr) {
-            console.error('redeemHouseholdInvite: failed to rollback player parent updates', rollbackErr);
-        }
-    }
-
-    if (membershipWasUpdated && codeData?.organizerUserId && codeData?.familyMembershipId) {
-        try {
-            const membershipRef = doc(db, 'users', codeData.organizerUserId, 'familyMemberships', codeData.familyMembershipId);
-            if (priorMembershipSnapshot?.exists()) {
-                await setDoc(membershipRef, priorMembershipSnapshot.data() || {});
-            } else {
-                await deleteDoc(membershipRef);
-            }
-        } catch (rollbackErr) {
-            console.error('redeemHouseholdInvite: failed to rollback family membership updates', rollbackErr);
-        }
-    }
-
-    try {
-        await resetHouseholdInviteCodeClaim(codeRef, userId);
-    } catch (rollbackErr) {
-        console.error('redeemHouseholdInvite: failed to rollback code claim', rollbackErr);
-    }
-}
-
 export async function redeemHouseholdInvite(userId, code) {
     console.log('[redeemHouseholdInvite] start', { userId, code });
-
-    const codeDoc = await getValidatedAccessCodeDoc(code);
-    const codeRef = codeDoc.ref;
-    let codeData;
-
-    await runTransaction(db, async (transaction) => {
-        const latestCodeSnapshot = await transaction.get(codeRef);
-        if (!latestCodeSnapshot.exists()) {
-            throw new Error("Invalid or used code");
-        }
-
-        const latestCodeData = latestCodeSnapshot.data() || {};
-        if (latestCodeData.type !== 'household_invite') {
-            throw new Error("Not a household invite code");
-        }
-        if (latestCodeData.used) {
-            throw new Error("Invalid or used code");
-        }
-        if (latestCodeData.revoked) {
-            throw new Error("Invite has been revoked");
-        }
-        if (isAccessCodeExpired(latestCodeData.expiresAt)) {
-            throw new Error("Code has expired");
-        }
-
-        assertHouseholdInviteEmailMatches(latestCodeData);
-
-        transaction.update(codeRef, {
-            used: true,
-            usedBy: userId,
-            usedAt: Timestamp.now()
-        });
-
-        codeData = latestCodeData;
-    });
-
-    const rollbackState = {
-        userWasUpdated: false,
-        playerWasUpdated: false,
-        priorMembershipSnapshot: null,
-        membershipWasUpdated: false
-    };
-
-    try {
-        assertHouseholdInviteEmailMatches(codeData);
-
-        if (codeData.organizerUserId && codeData.familyMembershipId) {
-            const membershipRef = doc(db, 'users', codeData.organizerUserId, 'familyMemberships', codeData.familyMembershipId);
-            rollbackState.priorMembershipSnapshot = await getDoc(membershipRef);
-            if (!rollbackState.priorMembershipSnapshot.exists() || !doesHouseholdInviteFamilyMembershipMatch(codeData, rollbackState.priorMembershipSnapshot.data() || {})) {
-                throw new Error('This household invite is no longer valid for that player and email. Ask the organizer to send a new invite.');
-            }
-        }
-
-        const [team, player] = await Promise.all([
-            getTeam(codeData.teamId),
-            getPlayers(codeData.teamId).then(ps => ps.find(p => p.id === codeData.playerId))
-        ]);
-
-        if (!team || !player) {
-            throw new Error("Team or Player not found");
-        }
-
-        const userRef = doc(db, "users", userId);
-        await setDoc(userRef, {
-            parentOf: arrayUnion({
-                teamId: codeData.teamId,
-                playerId: codeData.playerId,
-                teamName: team.name,
-                playerName: player.name,
-                playerNumber: player.number,
-                playerPhotoUrl: player.photoUrl || null,
-                relation: codeData.relation || 'Household contact'
-            }),
-            parentTeamIds: arrayUnion(codeData.teamId),
-            parentPlayerKeys: arrayUnion(`${codeData.teamId}::${codeData.playerId}`),
-            roles: arrayUnion('parent')
-        }, { merge: true });
-        await syncPublicUserProfile(userId);
-        rollbackState.userWasUpdated = true;
-
-        const privateProfileRef = doc(db, `teams/${codeData.teamId}/players/${codeData.playerId}/private/profile`);
-        await setDoc(privateProfileRef, {
-            parents: arrayUnion({
-                userId,
-                email: codeData.email || 'pending',
-                relation: codeData.relation || 'Household contact',
-                status: 'accepted',
-                acceptedAt: Timestamp.now(),
-                addedAt: Timestamp.now()
-            })
-        }, { merge: true });
-        rollbackState.playerWasUpdated = true;
-
-        if (codeData.organizerUserId && codeData.familyMembershipId) {
-            const membershipRef = doc(db, 'users', codeData.organizerUserId, 'familyMemberships', codeData.familyMembershipId);
-            await updateDoc(membershipRef, {
-                status: 'active',
-                userId,
-                acceptedAt: Timestamp.now(),
-                updatedAt: Timestamp.now()
-            });
-            rollbackState.membershipWasUpdated = true;
-        }
-    } catch (err) {
-        await rollbackHouseholdInviteSideEffects(userId, codeData, codeRef, rollbackState);
-        throw err;
+    if (!userId) {
+        throw new Error('You must be signed in to accept a household invite');
     }
 
-    console.log('[redeemHouseholdInvite] completed', { codeId: codeDoc.id });
-    return { success: true, teamId: codeData.teamId, playerId: codeData.playerId };
+    const redeemHouseholdInviteCallable = httpsCallable(functions, 'redeemHouseholdInvite');
+    const result = await redeemHouseholdInviteCallable({
+        userId,
+        code: String(code || '').trim().toUpperCase(),
+        authEmail: normalizeHouseholdInviteEmail(auth.currentUser?.email || '')
+    });
+    const payload = result?.data || result || {};
+
+    await syncPublicUserProfile(userId);
+
+    console.log('[redeemHouseholdInvite] completed', { codeId: payload.codeId });
+    return {
+        success: payload.success === true,
+        teamId: payload.teamId || null,
+        teamName: payload.teamName || null,
+        playerId: payload.playerId || null,
+        playerName: payload.playerName || null,
+        playerNum: payload.playerNum ?? null
+    };
 }
 
 export async function rollbackParentInviteRedemption(userId, code) {

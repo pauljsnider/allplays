@@ -5,7 +5,7 @@ import {
     assertSucceeds,
     initializeTestEnvironment
 } from '@firebase/rules-unit-testing';
-import { doc, serverTimestamp, setDoc } from 'firebase/firestore';
+import { doc, serverTimestamp, setDoc, updateDoc } from 'firebase/firestore';
 
 function rulesSource() {
     return readFileSync(new URL('../../firestore.rules', import.meta.url), 'utf8');
@@ -88,6 +88,10 @@ function isOwnerUserEmailUpdateValid({ affectedKeys, nextEmail, authEmail }) {
         String(nextEmail || '').toLowerCase() === String(authEmail || '').toLowerCase();
 }
 
+function isOwnerUserMembershipUpdateValid({ affectedKeys }) {
+    return !hasAny(affectedKeys, ['parentOf', 'parentTeamIds', 'parentPlayerKeys', 'playerKeys']);
+}
+
 describe('React app social Firestore rules', () => {
     it('adds least-privilege collections for social posts, reactions, comments, reports, and friendships', () => {
         const source = rulesSource();
@@ -142,6 +146,15 @@ describe('React app social Firestore rules', () => {
             affectedKeys: ['email', 'updatedAt'],
             nextEmail: 'forged@example.com',
             authEmail: 'owner@example.com'
+        })).toBe(false);
+        expect(isOwnerUserMembershipUpdateValid({
+            affectedKeys: ['displayName', 'updatedAt']
+        })).toBe(true);
+        expect(isOwnerUserMembershipUpdateValid({
+            affectedKeys: ['parentOf']
+        })).toBe(false);
+        expect(isOwnerUserMembershipUpdateValid({
+            affectedKeys: ['parentTeamIds', 'parentPlayerKeys']
         })).toBe(false);
     });
 
@@ -265,6 +278,31 @@ describe('React app social Firestore rules', () => {
                 displayName: 'Other User Edit',
                 updatedAt: serverTimestamp()
             }, { merge: true }));
+        });
+
+        it('denies owner writes to membership fields while allowing presentation profile updates', async () => {
+            await testEnv.withSecurityRulesDisabled(async (context) => {
+                await setDoc(doc(context.firestore(), 'users', 'owner-membership'), {
+                    email: 'owner-membership@example.com',
+                    displayName: 'Owner',
+                    parentOf: [],
+                    parentTeamIds: [],
+                    parentPlayerKeys: []
+                });
+            });
+            const owner = testEnv.authenticatedContext('owner-membership', { email: 'owner-membership@example.com' });
+            const userRef = doc(owner.firestore(), 'users', 'owner-membership');
+
+            await assertSucceeds(updateDoc(userRef, {
+                displayName: 'Owner Updated'
+            }));
+            await assertFails(updateDoc(userRef, {
+                parentOf: [{ teamId: 'team-1', playerId: 'player-1' }]
+            }));
+            await assertFails(updateDoc(userRef, {
+                parentTeamIds: ['team-1'],
+                parentPlayerKeys: ['team-1::player-1']
+            }));
         });
     });
 
