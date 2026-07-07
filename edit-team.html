@@ -573,7 +573,7 @@
     <div id="footer-container"></div>
 
     <script type="module">
-        import { createTeam, updateTeam, getTeam, getUserProfile, getUserTeamsWithAccess, getPlayers, copySelectedPlayersForTeamRollover, uploadTeamPhoto, addConfig, getUnreadChatCount, inviteAdmin, addTeamAdminEmail, getAllUsers, getTeamAccessCodes, getConfigs, getGames, updateGame, getRegistrationSources, syncRegistrationProvider } from './js/db.js?v=84';
+        import { createTeam, updateTeam, getTeam, getUserProfile, getUserTeamsWithAccess, getPlayers, getPlayerPrivateProfile, copySelectedPlayersForTeamRollover, uploadTeamPhoto, addConfig, getUnreadChatCount, inviteAdmin, addTeamAdminEmail, getTeamAccessCodes, getConfigs, getGames, updateGame, getRegistrationSources, syncRegistrationProvider } from './js/db.js?v=84';
         import { getDefaultStatConfigForSport } from './js/stat-config-presets.js?v=1';
         import { buildTeamSportConfigMigrationPlan } from './js/team-stat-config-migration.js?v=1';
         import { renderHeader, renderFooter, getUrlParams, escapeHtml } from './js/utils.js?v=8';
@@ -1436,15 +1436,36 @@
             }
 
             try {
-                const users = await getAllUsers();
-                confirmedTeamMembers = (users || [])
-                    .filter((user) => (user.parentOf || []).some((link) => link.teamId === teamId))
-                    .map((user) => ({
-                        id: user.id,
-                        name: user.fullName || user.displayName || user.email || 'Member',
-                        email: user.email || 'No email on file'
-                    }))
-                    .filter((member) => member.id)
+                const players = await getPlayers(teamId);
+                const membersById = new Map();
+                const addParentMember = (parent) => {
+                    const id = String(parent?.userId || parent?.uid || '').trim();
+                    if (!id || membersById.has(id)) return;
+                    const email = String(parent?.email || '').trim();
+                    const name = String(parent?.name || parent?.fullName || parent?.displayName || email || 'Member').trim();
+                    membersById.set(id, {
+                        id,
+                        name: name || 'Member',
+                        email: email || 'No email on file'
+                    });
+                };
+
+                await Promise.all((players || []).map(async (player) => {
+                    const rosterParents = Array.isArray(player.parents) ? player.parents : [];
+                    const privateProfileParents = Array.isArray(player.privateProfileParents) ? player.privateProfileParents : [];
+                    rosterParents.forEach(addParentMember);
+                    privateProfileParents.forEach(addParentMember);
+                    if (rosterParents.length > 0 || privateProfileParents.length > 0 || !player?.id) return;
+                    try {
+                        const privateProfile = await getPlayerPrivateProfile(teamId, player.id);
+                        (Array.isArray(privateProfile?.parents) ? privateProfile.parents : []).forEach(addParentMember);
+                    } catch (error) {
+                        if (error?.code !== 'permission-denied') {
+                            throw error;
+                        }
+                    }
+                }));
+                confirmedTeamMembers = Array.from(membersById.values())
                     .sort((a, b) => a.name.localeCompare(b.name));
             } catch (error) {
                 console.warn('Failed to load confirmed team members for permissions:', error);

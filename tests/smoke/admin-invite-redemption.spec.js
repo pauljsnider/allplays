@@ -38,6 +38,10 @@ export async function getPlayers() {
     return [];
 }
 
+export async function getPlayerPrivateProfile() {
+    return {};
+}
+
 export async function copySelectedPlayersForTeamRollover() {
     return { copiedCount: 0 };
 }
