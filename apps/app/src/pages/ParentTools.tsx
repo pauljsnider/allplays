@@ -54,9 +54,16 @@ function getParentUserFingerprint(auth: AuthState) {
     if (!user) return 'signed-out';
     return stableFingerprintValue({
         uid: user.uid,
+        roles: Array.isArray(user.roles) ? user.roles : [],
         parentOf: Array.isArray(user.parentOf) ? user.parentOf : [],
         parentPlayerKeys: Array.isArray(user.parentPlayerKeys) ? user.parentPlayerKeys : [],
-        parentTeamIds: Array.isArray(user.parentTeamIds) ? user.parentTeamIds : []
+        parentTeamIds: Array.isArray(user.parentTeamIds) ? user.parentTeamIds : [],
+        coachOf: Array.isArray(user.coachOf) ? user.coachOf : [],
+        isAdmin: user.isAdmin === true,
+        isPlatformAdmin: user.isPlatformAdmin === true,
+        authRoles: Array.isArray(auth.roles) ? auth.roles : [],
+        authIsAdmin: auth.isAdmin === true,
+        authIsPlatformAdmin: auth.isPlatformAdmin === true
     });
 }
 

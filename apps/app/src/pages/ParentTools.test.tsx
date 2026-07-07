@@ -1166,6 +1166,30 @@ describe('ParentTools access', () => {
         expect(parentToolsServiceMocks.loadParentHouseholdInviteModel).toHaveBeenCalledTimes(serviceCountsBeforeRehydrate.household + 1);
         expect(parentToolsServiceMocks.loadFamilyShareModel).toHaveBeenCalledTimes(serviceCountsBeforeRehydrate.share + 1);
         expect(parentToolsServiceMocks.loadParentRegistrations).toHaveBeenCalledTimes(serviceCountsBeforeRehydrate.registrations + 1);
+
+        const registrationManagerAuth: AuthState = {
+            ...changedParentLinksAuth,
+            roles: ['parent', 'coach'],
+            isCoach: true,
+            user: changedParentLinksAuth.user ? {
+                ...changedParentLinksAuth.user,
+                roles: ['parent', 'coach'],
+                coachOf: ['team-3']
+            } : null
+        };
+        view.rerender(
+            <MemoryRouter initialEntries={['/parent-tools/access']}>
+                <Routes>
+                    <Route path="/parent-tools/:toolId" element={<ParentToolsRoute authState={registrationManagerAuth} />} />
+                </Routes>
+            </MemoryRouter>
+        );
+
+        await waitFor(() => expect(parentToolsServiceMocks.loadParentRegistrations).toHaveBeenCalledTimes(serviceCountsBeforeRehydrate.registrations + 2));
+        expect(parentToolsServiceMocks.loadParentRegistrations).toHaveBeenLastCalledWith(expect.objectContaining({
+            coachOf: ['team-3'],
+            roles: ['parent', 'coach']
+        }));
     });
 
     it('defers hidden fees refresh after access changes until fees is reopened', async () => {
