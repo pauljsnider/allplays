@@ -28,6 +28,10 @@ function extractHelpManifest(html) {
     return JSON.parse(manifestText || '[]');
 }
 
+function extractAppHelpIndexEntry(appHelpIndex, id) {
+    return appHelpIndex.match(new RegExp(`\\{\\n    "id": "${id}"[\\s\\S]*?\\n  \\}`))?.[0] || '';
+}
+
 describe('help and workflow page inventory', () => {
     it('keeps every workflow page structured for direct navigation and generated TOCs', () => {
         const workflowPages = listRootPages('workflow-');
@@ -65,10 +69,12 @@ describe('help and workflow page inventory', () => {
 
     it('keeps the help portal manifest aligned with generated workflow and topic pages', () => {
         const helpHtml = readRepoFile('help.html');
+        const workflowManifest = JSON.parse(readRepoFile('workflow-manifest.json'));
         const manifest = extractHelpManifest(helpHtml);
         const manifestFiles = manifest.map((item) => item.file).sort();
 
         expect(manifest.length).toBeGreaterThan(15);
+        expect(manifest).toEqual(workflowManifest);
         expect(manifestFiles).toEqual([
             'help-team-operations.html',
             'workflow-admin-ops.html',
@@ -123,7 +129,7 @@ describe('help and workflow page inventory', () => {
     it('keeps Game Day broadcast workflow copy aligned with setup-only support', () => {
         const html = readRepoFile('workflow-game-day.html');
         const appHelpIndex = readRepoFile('apps/app/src/lib/helpKnowledgeIndex.ts');
-        const gameDayHelpEntry = appHelpIndex.match(/\{\n    "id": "game-day"[\s\S]*?\n  \}/)?.[0] || '';
+        const gameDayHelpEntry = extractAppHelpIndexEntry(appHelpIndex, 'game-day');
 
         expect(html).toContain('Open broadcast setup');
         expect(html).toContain('Current streaming support uses external provider/setup tools');
@@ -137,5 +143,40 @@ describe('help and workflow page inventory', () => {
         expect(gameDayHelpEntry).not.toContain('Begin Streaming button');
         expect(gameDayHelpEntry).not.toContain('native camera capture');
         expect(gameDayHelpEntry).not.toContain('Confirm camera/microphone permission is granted');
+    });
+
+    it('keeps communication workflow mention guidance aligned with Watch and Chat help', () => {
+        const helpWatchChat = readRepoFile('help-watch-chat.html');
+        const workflowCommunication = readRepoFile('workflow-communication.html');
+        const workflowManifest = JSON.parse(readRepoFile('workflow-manifest.json'));
+        const appHelpIndex = readRepoFile('apps/app/src/lib/helpKnowledgeIndex.ts');
+        const communicationManifest = workflowManifest.find((item) => item.id === 'communication');
+        const communicationHelpEntry = extractAppHelpIndexEntry(appHelpIndex, 'communication');
+        const indexedText = [communicationManifest?.searchText || '', communicationHelpEntry].join(' ');
+        const staleMentionPhrases = [
+            '@mention autocomplete',
+            'Choose a suggested recipient',
+            'Use @ in the composer to open mention autocomplete',
+            'Mention notification did not arrive',
+            'mentioned user'
+        ];
+
+        expect(helpWatchChat).toContain('@ALL PLAYS');
+        expect(helpWatchChat).toContain('Use the recipient picker, not @ mentions');
+
+        expect(workflowCommunication).toContain('@ALL PLAYS');
+        expect(workflowCommunication).toContain('recipient picker');
+        expect(workflowCommunication).toContain('Conversations');
+        expect(workflowCommunication).toContain('person and group @ mentions are not supported');
+
+        expect(indexedText).toContain('@ALL PLAYS');
+        expect(indexedText).toContain('recipient picker');
+        expect(indexedText).toContain('Conversations');
+        expect(indexedText).toContain('person and group @ mentions are not supported');
+
+        staleMentionPhrases.forEach((phrase) => {
+            expect(workflowCommunication).not.toContain(phrase);
+            expect(indexedText).not.toContain(phrase);
+        });
     });
 });
