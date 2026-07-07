@@ -43,6 +43,30 @@ describe('officiating slots', () => {
         ]);
     });
 
+    it('preserves structured official directory fields for phone-only reload edits', () => {
+        const officials = normalizeOfficialsDirectory([
+            {
+                id: 'pat-ref',
+                name: ' Pat Ref ',
+                phone: ' 555-123-4567 ',
+                roles: [' Referee ', 'Referee', 'Umpire'],
+                tags: ' Varsity, Playoffs, Varsity ',
+                email: ''
+            }
+        ]);
+
+        expect(officials).toEqual([
+            {
+                id: 'pat-ref',
+                name: 'Pat Ref',
+                email: '',
+                phone: '555-123-4567',
+                roles: ['Referee', 'Umpire'],
+                tags: ['Varsity', 'Playoffs']
+            }
+        ]);
+    });
+
     it('reports unstaffed, partially staffed, and fully staffed states', () => {
         expect(getOfficiatingCoverageState([])).toBe('unstaffed');
         expect(getOfficiatingCoverageState([{ position: 'Umpire' }])).toBe('unstaffed');
