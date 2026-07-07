@@ -29,6 +29,8 @@ function extractFunction(source, signature) {
 function createCertificateStudioHarness() {
     const studio = readRepoFile('js/certificates/studio.js');
     const snippets = [
+        'function getSelectedDrafts',
+        'function getDraftsForSaveStatus',
         'function buildCertificatePayload',
         'function createDraftFromSavedCertificate',
         'function getPublishBlockedDrafts',
@@ -37,7 +39,9 @@ function createCertificateStudioHarness() {
         'function saveDraftsToLocalHistory',
         'async function openSavedBatch',
         'async function openSavedCertificate',
-        'function startCustomCertificate'
+        'function startCustomCertificate',
+        'async function waitForActiveRegeneration',
+        'async function saveDrafts'
     ].map((signature) => extractFunction(studio, signature)).join('\n\n');
 
     const deps = {
@@ -95,8 +99,23 @@ function createCertificateStudioHarness() {
         renderReview: vi.fn(),
         renderReviewGrid: vi.fn(),
         showAlert: vi.fn(),
+        renderSidebar: vi.fn(),
         getCertificateBatch: vi.fn(),
         getCertificate: vi.fn(),
+        createCertificateBatch: vi.fn(async () => 'batch-1'),
+        createCertificate: vi.fn(async (_teamId, payload) => `created-${payload.playerId || payload.recipientName}`),
+        updateCertificate: vi.fn(async () => undefined),
+        updateCertificateBatch: vi.fn(async () => undefined),
+        setCertificateDefaults: vi.fn(async () => undefined),
+        listCertificates: vi.fn(async () => []),
+        listCertificateBatches: vi.fn(async () => []),
+        loadOptionalCertificateResource: async (_label, loader, fallback) => {
+            try {
+                return await loader();
+            } catch {
+                return fallback;
+            }
+        },
         isPermissionError: () => false
     };
 
@@ -115,9 +134,18 @@ function createCertificateStudioHarness() {
         const renderReview = deps.renderReview;
         const renderReviewGrid = deps.renderReviewGrid;
         const showAlert = deps.showAlert;
+        const renderSidebar = deps.renderSidebar;
         const loadCertificatesForSavedBatch = deps.loadCertificatesForSavedBatch;
         const getCertificateBatch = deps.getCertificateBatch;
         const getCertificate = deps.getCertificate;
+        const createCertificateBatch = deps.createCertificateBatch;
+        const createCertificate = deps.createCertificate;
+        const updateCertificate = deps.updateCertificate;
+        const updateCertificateBatch = deps.updateCertificateBatch;
+        const setCertificateDefaults = deps.setCertificateDefaults;
+        const listCertificates = deps.listCertificates;
+        const listCertificateBatches = deps.listCertificateBatches;
+        const loadOptionalCertificateResource = deps.loadOptionalCertificateResource;
         const isPermissionError = deps.isPermissionError;
         const upsertSavedCertificate = (certificate) => {
             if (!certificate?.id) return;
@@ -144,9 +172,13 @@ function createCertificateStudioHarness() {
             formatPublishBlockedDraftNames,
             guardPublishableDraftDescriptions,
             saveDraftsToLocalHistory,
+            saveDrafts,
             openSavedBatch,
             openSavedCertificate,
-            startCustomCertificate
+            startCustomCertificate,
+            createCertificate,
+            updateCertificate,
+            updateCertificateBatch
         };
     `)(deps);
 }
@@ -169,7 +201,7 @@ describe('awards and certificates workflow wiring', () => {
         expect(html).toContain('Start new run');
         expect(html).toContain('View saved work');
         expect(html).toContain('Create one-off certificate');
-        expect(html).toContain('./js/certificates/studio.js?v=10');
+        expect(html).toContain('./js/certificates/studio.js?v=11');
         expect(studio).toContain("from './templates.js?v=2'");
         expect(studio).toContain("from './renderer.js?v=2'");
         expect(studio).toContain("from './aiDescriptions.js?v=4'");
@@ -273,7 +305,7 @@ describe('awards and certificates workflow wiring', () => {
         expect(reviewGridBody).toContain('${publishDisabledAttrs}>Publish certificates</button>');
     });
 
-    it('blocks website certificate publishing until every description is ready', () => {
+    it('blocks website certificate publishing until every selected description is ready', () => {
         const harness = createCertificateStudioHarness();
         harness.state.drafts = [
             {
@@ -296,14 +328,75 @@ describe('awards and certificates workflow wiring', () => {
             }
         ];
 
-        expect(harness.getPublishBlockedDrafts().map((draft) => draft.recipientName)).toEqual(['Sam Star', 'Lee Star']);
+        expect(harness.getPublishBlockedDrafts().map((draft) => draft.recipientName)).toEqual(['Sam Star']);
         expect(harness.guardPublishableDraftDescriptions('draft')).toBe(true);
         expect(harness.guardPublishableDraftDescriptions('published')).toBe(false);
         expect(harness.showAlert).toHaveBeenCalledWith(
-            'Review or fix certificates marked Needs review or Error before publishing: Sam Star, Lee Star.',
+            'Review or fix certificates marked Needs review or Error before publishing: Sam Star.',
             'error'
         );
         expect(harness.renderReviewGrid).toHaveBeenCalled();
+    });
+
+    it('publishes only selected legacy certificate drafts while preserving batch metadata', async () => {
+        const harness = createCertificateStudioHarness();
+        harness.state.drafts = [
+            {
+                id: 'draft-1',
+                batchId: 'batch-1',
+                certificateId: 'cert-1',
+                playerId: 'player-1',
+                recipientName: 'Pat Star',
+                descriptionStatus: 'ready',
+                description: 'Pat brought energy to every match.',
+                includeInExport: true,
+                status: 'draft'
+            },
+            {
+                id: 'draft-2',
+                batchId: 'batch-1',
+                certificateId: 'cert-2',
+                playerId: 'player-2',
+                recipientName: 'Sam Star',
+                descriptionStatus: 'ready',
+                description: 'Sam led the group with effort.',
+                includeInExport: false,
+                status: 'draft'
+            },
+            {
+                id: 'draft-3',
+                batchId: 'batch-1',
+                certificateId: null,
+                playerId: 'player-3',
+                recipientName: 'Lee Star',
+                descriptionStatus: 'ready',
+                description: 'Lee made steady progress.',
+                includeInExport: true,
+                status: 'draft'
+            }
+        ];
+
+        await harness.saveDrafts('published');
+
+        expect(harness.updateCertificate).toHaveBeenCalledTimes(1);
+        expect(harness.updateCertificate).toHaveBeenCalledWith(
+            'team-1',
+            'cert-1',
+            expect.objectContaining({ recipientName: 'Pat Star', status: 'published' }),
+            { action: 'published' }
+        );
+        expect(harness.createCertificate).toHaveBeenCalledTimes(1);
+        expect(harness.createCertificate).toHaveBeenCalledWith(
+            'team-1',
+            expect.objectContaining({ recipientName: 'Lee Star', status: 'published' })
+        );
+        expect(harness.state.drafts[0].status).toBe('published');
+        expect(harness.state.drafts[1]).toMatchObject({ certificateId: 'cert-2', status: 'draft' });
+        expect(harness.state.drafts[2]).toMatchObject({ certificateId: 'created-player-3', status: 'published' });
+        expect(harness.updateCertificateBatch).toHaveBeenCalledWith('team-1', 'batch-1', expect.objectContaining({
+            generatedCertificateIds: ['cert-1', 'cert-2', 'created-player-3'],
+            status: 'published'
+        }));
     });
 
     it('persists one-off certificate drafts with stable ids and restores export selection on reopen', async () => {
