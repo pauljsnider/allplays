@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { clearAppDataCache } from '../../apps/app/src/lib/appDataCache.ts';
 
 const dbMocks = vi.hoisted(() => ({
@@ -82,6 +82,10 @@ beforeEach(() => {
     dbMocks.getChatMessages.mockResolvedValue([]);
     dbMocks.sendTeamEmail.mockResolvedValue({ recipientCount: 8, status: 'queued' });
     dbMocks.getSentTeamEmails.mockResolvedValue([]);
+});
+
+afterEach(() => {
+    vi.useRealTimers();
 });
 
 describe('React app chat recipient service', () => {
@@ -221,6 +225,142 @@ describe('React app chat recipient service', () => {
             expect.objectContaining({
                 id: 'email:named@example.com',
                 name: 'Named Guardian'
+            })
+        ]));
+    });
+
+    it('bounds missing-label parent profile hydration and preserves fallback options', async () => {
+        const missingLabelParents = Array.from({ length: 50 }, (_, index) => {
+            const parent = index < 25
+                ? { userId: `parent-${index}`, email: `parent-${index}@example.com` }
+                : { email: `guardian-${index}@example.com` };
+            return {
+                id: `player-${index}`,
+                name: `Player ${index}`,
+                parents: [parent]
+            };
+        });
+        dbMocks.getPlayers.mockResolvedValue(missingLabelParents);
+
+        const pendingLookups = [];
+        let inFlight = 0;
+        let maxInFlight = 0;
+        const trackLookup = (key, profile) => {
+            inFlight += 1;
+            maxInFlight = Math.max(maxInFlight, inFlight);
+            let resolveLookup;
+            let rejectLookup;
+            const promise = new Promise((resolve, reject) => {
+                resolveLookup = resolve;
+                rejectLookup = reject;
+            }).finally(() => {
+                inFlight -= 1;
+            });
+            pendingLookups.push({
+                key,
+                profile,
+                resolve: resolveLookup,
+                reject: rejectLookup
+            });
+            return promise;
+        };
+        dbMocks.getUserProfile.mockImplementation((userId) => trackLookup(userId, {
+            fullName: `Hydrated ${userId}`,
+            email: `${userId}@profile.example.com`
+        }));
+        dbMocks.getUserByEmail.mockImplementation((email) => trackLookup(email, {
+            fullName: `Hydrated ${email}`,
+            email
+        }));
+
+        const {
+            CHAT_RECIPIENT_PROFILE_LOOKUP_CONCURRENCY,
+            loadChatRecipientOptions
+        } = await import('../../apps/app/src/lib/chatService.ts');
+        const optionsPromise = loadChatRecipientOptions('team-1');
+
+        await vi.waitFor(() => {
+            expect(pendingLookups).toHaveLength(CHAT_RECIPIENT_PROFILE_LOOKUP_CONCURRENCY);
+        });
+        expect(maxInFlight).toBe(CHAT_RECIPIENT_PROFILE_LOOKUP_CONCURRENCY);
+
+        for (let index = 0; index < missingLabelParents.length; index += 1) {
+            await vi.waitFor(() => {
+                expect(pendingLookups.length).toBeGreaterThan(0);
+            });
+            const lookup = pendingLookups.shift();
+            if (lookup.key === 'guardian-37@example.com') {
+                lookup.reject(new Error('profile lookup failed'));
+            } else {
+                lookup.resolve(lookup.profile);
+            }
+            await Promise.resolve();
+            await Promise.resolve();
+            expect(maxInFlight).toBeLessThanOrEqual(CHAT_RECIPIENT_PROFILE_LOOKUP_CONCURRENCY);
+        }
+
+        const options = await optionsPromise;
+
+        expect(dbMocks.getUserProfile).toHaveBeenCalledTimes(25);
+        expect(dbMocks.getUserByEmail).toHaveBeenCalledTimes(25);
+        expect(maxInFlight).toBeLessThanOrEqual(CHAT_RECIPIENT_PROFILE_LOOKUP_CONCURRENCY);
+        expect(options).toHaveLength(100);
+        expect(options).toEqual(expect.arrayContaining([
+            expect.objectContaining({
+                id: 'user:parent-0',
+                name: 'Hydrated parent-0',
+                email: 'parent-0@example.com'
+            }),
+            expect.objectContaining({
+                id: 'email:guardian-25@example.com',
+                name: 'Hydrated guardian-25@example.com',
+                email: 'guardian-25@example.com'
+            }),
+            expect.objectContaining({
+                id: 'email:guardian-37@example.com',
+                name: 'guardian-37@example.com',
+                email: 'guardian-37@example.com'
+            })
+        ]));
+    });
+
+    it('returns fallback recipient options when profile lookups never settle', async () => {
+        vi.useFakeTimers();
+        const missingLabelParents = Array.from({ length: 9 }, (_, index) => ({
+            id: `player-${index}`,
+            name: `Player ${index}`,
+            parents: [{ userId: `parent-${index}` }]
+        }));
+        dbMocks.getPlayers.mockResolvedValue(missingLabelParents);
+
+        dbMocks.getUserProfile.mockImplementation(() => new Promise(() => {}));
+
+        const {
+            CHAT_RECIPIENT_PROFILE_LOOKUP_CONCURRENCY,
+            loadChatRecipientOptions
+        } = await import('../../apps/app/src/lib/chatService.ts');
+        const optionsPromise = loadChatRecipientOptions('team-1');
+
+        await vi.waitFor(() => {
+            expect(dbMocks.getUserProfile).toHaveBeenCalledTimes(CHAT_RECIPIENT_PROFILE_LOOKUP_CONCURRENCY);
+        });
+
+        await vi.advanceTimersByTimeAsync(2500);
+        await vi.waitFor(() => {
+            expect(dbMocks.getUserProfile).toHaveBeenCalledTimes(CHAT_RECIPIENT_PROFILE_LOOKUP_CONCURRENCY + 1);
+        });
+
+        await vi.advanceTimersByTimeAsync(2500);
+
+        const options = await optionsPromise;
+
+        expect(dbMocks.getUserProfile).toHaveBeenCalledTimes(9);
+        expect(options).toHaveLength(18);
+        expect(options).toEqual(expect.arrayContaining([
+            expect.objectContaining({
+                id: 'user:parent-8',
+                name: 'Guardian',
+                detail: 'Guardian for Player 8'
             })
         ]));
     });

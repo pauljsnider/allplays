@@ -72,6 +72,7 @@ const chatUploadTimeoutMs = 25000;
 const chatAttachmentUploadConcurrency = 3;
 const chatPreviewCacheTtlMs = 20 * 1000;
 const deferredInboxPreviewConcurrency = 3;
+export const CHAT_RECIPIENT_PROFILE_LOOKUP_CONCURRENCY = 8;
 const imageUploadSessionKey = 'allplays-chat-image-upload-session';
 const logger = createLogger('chat-service');
 
@@ -1816,31 +1817,51 @@ async function loadChatRecipientProfiles(players: any): Promise<Map<string, Reco
     return new Map();
   }
 
-  const entries = await Promise.all([...uniqueParents.entries()].map(async ([recipientId, parent]) => {
-    const userId = compactString(parent?.userId);
-    const email = compactString(parent?.email).toLowerCase();
-    try {
-      if (userId) {
-        const profile = await withTimeout(Promise.resolve(getUserProfile(userId)), 'Chat recipient profile load', 2500)
-          .catch(async (error) => {
-            if (!isNativeRuntime()) throw error;
-            return nativeGetDocument(`users/${encodeURIComponent(userId)}`);
-          });
-        return [recipientId, profile || {}] as const;
+  const parentEntries = [...uniqueParents.entries()];
+  const entries: (readonly [string, Record<string, any>])[] = new Array(parentEntries.length);
+  let nextParentIndex = 0;
+
+  async function hydrateChatRecipientProfile<T>(lookupPromise: Promise<T>, fallbackLookup: () => Promise<T>): Promise<T> {
+    return withTimeout(lookupPromise, 'Chat recipient profile load', 2500)
+      .catch(async (error) => {
+        if (!isNativeRuntime()) throw error;
+        return fallbackLookup();
+      });
+  }
+
+  async function hydrateNextParent() {
+    while (nextParentIndex < parentEntries.length) {
+      const entryIndex = nextParentIndex;
+      nextParentIndex += 1;
+      const [recipientId, parent] = parentEntries[entryIndex];
+      const userId = compactString(parent?.userId);
+      const email = compactString(parent?.email).toLowerCase();
+      try {
+        if (userId) {
+          const profile = await hydrateChatRecipientProfile(
+            Promise.resolve(getUserProfile(userId)),
+            () => nativeGetDocument(`users/${encodeURIComponent(userId)}`)
+          );
+          entries[entryIndex] = [recipientId, profile || {}] as const;
+          continue;
+        }
+        if (email) {
+          const profile = await hydrateChatRecipientProfile(
+            Promise.resolve(getUserByEmail(email)),
+            () => nativeGetUserByEmail(email)
+          );
+          entries[entryIndex] = [recipientId, profile || {}] as const;
+          continue;
+        }
+      } catch (error) {
+        logger.warn('Failed to hydrate chat recipient profile.', { error });
       }
-      if (email) {
-        const profile = await withTimeout(Promise.resolve(getUserByEmail(email)), 'Chat recipient profile load', 2500)
-          .catch(async (error) => {
-            if (!isNativeRuntime()) throw error;
-            return nativeGetUserByEmail(email);
-          });
-        return [recipientId, profile || {}] as const;
-      }
-    } catch (error) {
-      logger.warn('Failed to hydrate chat recipient profile.', { error });
+      entries[entryIndex] = [recipientId, {}] as const;
     }
-    return [recipientId, {}] as const;
-  }));
+  }
+
+  const workerCount = Math.min(CHAT_RECIPIENT_PROFILE_LOOKUP_CONCURRENCY, parentEntries.length);
+  await Promise.all(Array.from({ length: workerCount }, () => hydrateNextParent()));
 
   return new Map(entries);
 }
