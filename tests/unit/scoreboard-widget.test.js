@@ -118,7 +118,7 @@ describe('scoreboard widget embed', () => {
         const games = [
             { id: 'old-final', opponent: 'Old Final', date: '2026-06-29T12:00:00Z', liveStatus: 'completed' },
             { id: 'practice', opponent: 'Practice', type: 'practice', date: '2026-07-07T13:00:00Z' },
-            { id: 'cancelled', opponent: 'Cancelled', status: 'cancelled', date: '2026-07-07T14:00:00Z' },
+            { id: 'cancelled', opponent: 'Cancelled', status: 'canceled', date: '2026-07-07T14:00:00Z' },
             { id: 'upcoming-late', opponent: 'Late Upcoming', date: '2026-07-08T18:00:00Z' },
             { id: 'recent-final-newer', opponent: 'Newer Final', date: '2026-07-06T18:00:00Z', liveStatus: 'completed' },
             { id: 'live-game', opponent: 'Live Opponent', date: '2026-07-07T11:00:00Z', liveStatus: 'live' },
