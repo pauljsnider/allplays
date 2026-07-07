@@ -83,45 +83,39 @@ describe('notificationInboxService', () => {
         expect(primaryUnsubscribe).toHaveBeenCalledTimes(1);
     });
 
-    it('falls back to the full inbox snapshot when the ordered inbox query fails', () => {
+    it('subscribes to the ordered limited inbox snapshot', () => {
         const callback = vi.fn();
         const primaryUnsubscribe = vi.fn();
-        const fallbackUnsubscribe = vi.fn();
         const inboxCollection = { kind: 'inboxCollection' };
         const primaryQuery = { kind: 'primaryInboxQuery' };
         vi.mocked(collection).mockReturnValueOnce(inboxCollection as never);
         vi.mocked(query).mockReturnValueOnce(primaryQuery as never);
-        vi.mocked(onSnapshot)
-            .mockImplementationOnce((_query, _onNext, onError) => {
-                onError?.(new Error('The query requires an index.'));
-                return primaryUnsubscribe;
-            })
-            .mockImplementationOnce((_query, onNext) => {
-                onNext({
-                    docs: [
-                        {
-                            id: 'older',
-                            data: () => ({
-                                category: 'schedule',
-                                title: 'Older update',
-                                body: 'Earlier item',
-                                createdAt: { seconds: 10 },
-                                readAt: null
-                            })
-                        },
-                        {
-                            id: 'newer',
-                            data: () => ({
-                                type: 'team_message',
-                                text: 'Fresh message',
-                                createdAt: { toDate: () => new Date('2026-06-26T12:00:00Z') },
-                                readAt: null
-                            })
-                        }
-                    ]
-                } as never);
-                return fallbackUnsubscribe;
-            });
+        vi.mocked(onSnapshot).mockImplementationOnce((_query, onNext) => {
+            onNext({
+                docs: [
+                    {
+                        id: 'newest',
+                        data: () => ({
+                            category: 'schedule',
+                            title: 'Newest update',
+                            body: 'Latest item',
+                            createdAt: { seconds: 20 },
+                            readAt: null
+                        })
+                    },
+                    {
+                        id: 'older',
+                        data: () => ({
+                            type: 'team_message',
+                            text: 'Earlier message',
+                            createdAt: { seconds: 10 },
+                            readAt: null
+                        })
+                    }
+                ]
+            } as never);
+            return primaryUnsubscribe;
+        });
 
         const unsubscribe = subscribeToNotificationInbox('user-123', callback);
 
@@ -129,15 +123,74 @@ describe('notificationInboxService', () => {
         expect(orderBy).toHaveBeenCalledWith('createdAt', 'desc');
         expect(limit).toHaveBeenCalledWith(50);
         expect(query).toHaveBeenCalledWith(inboxCollection, { kind: 'orderBy' }, { kind: 'limit' });
-        expect(onSnapshot).toHaveBeenNthCalledWith(1, primaryQuery, expect.any(Function), expect.any(Function));
-        expect(onSnapshot).toHaveBeenNthCalledWith(2, inboxCollection, expect.any(Function), expect.any(Function));
+        expect(onSnapshot).toHaveBeenCalledTimes(1);
+        expect(onSnapshot).toHaveBeenCalledWith(primaryQuery, expect.any(Function), expect.any(Function));
         expect(callback).toHaveBeenCalledWith([
-            expect.objectContaining({ id: 'newer', text: 'Fresh message' }),
-            expect.objectContaining({ id: 'older', text: 'Older update: Earlier item' })
+            expect.objectContaining({ id: 'newest', text: 'Newest update: Latest item' }),
+            expect.objectContaining({ id: 'older', text: 'Earlier message' })
         ]);
 
         unsubscribe();
         expect(primaryUnsubscribe).toHaveBeenCalledTimes(1);
-        expect(fallbackUnsubscribe).toHaveBeenCalledTimes(1);
+    });
+
+    it('reports ordered inbox query errors without attaching a raw full-inbox fallback', () => {
+        const callback = vi.fn();
+        const onError = vi.fn();
+        const primaryUnsubscribe = vi.fn();
+        const inboxCollection = { kind: 'inboxCollection' };
+        const primaryQuery = { kind: 'primaryInboxQuery' };
+        const orderedQueryError = new Error('The query requires an index.');
+        vi.mocked(collection).mockReturnValueOnce(inboxCollection as never);
+        vi.mocked(query).mockReturnValueOnce(primaryQuery as never);
+        vi.mocked(onSnapshot).mockImplementationOnce((_query, _onNext, onSnapshotError) => {
+            onSnapshotError?.(orderedQueryError);
+            return primaryUnsubscribe;
+        });
+
+        const unsubscribe = subscribeToNotificationInbox('user-123', callback, onError);
+
+        expect(orderBy).toHaveBeenCalledWith('createdAt', 'desc');
+        expect(limit).toHaveBeenCalledWith(50);
+        expect(query).toHaveBeenCalledWith(inboxCollection, { kind: 'orderBy' }, { kind: 'limit' });
+        expect(onSnapshot).toHaveBeenCalledTimes(1);
+        expect(onSnapshot).toHaveBeenCalledWith(primaryQuery, expect.any(Function), expect.any(Function));
+        expect(callback).not.toHaveBeenCalled();
+        expect(onError).toHaveBeenCalledWith(orderedQueryError);
+
+        unsubscribe();
+        expect(primaryUnsubscribe).toHaveBeenCalledTimes(1);
+    });
+
+    it('does not map a large raw fallback snapshot after an ordered inbox query error', () => {
+        const callback = vi.fn();
+        const onError = vi.fn();
+        const primaryUnsubscribe = vi.fn();
+        const largeRawFallbackSnapshot = {
+            docs: Array.from({ length: 1000 }, (_, index) => ({
+                id: `notification-${index}`,
+                data: vi.fn(() => ({
+                    category: 'team_message',
+                    text: `Notification ${index}`,
+                    createdAt: { seconds: index },
+                    readAt: null
+                }))
+            }))
+        };
+        vi.mocked(collection).mockReturnValueOnce({ kind: 'inboxCollection' } as never);
+        vi.mocked(query).mockReturnValueOnce({ kind: 'primaryInboxQuery' } as never);
+        vi.mocked(onSnapshot).mockImplementationOnce((_query, _onNext, onSnapshotError) => {
+            onSnapshotError?.(new Error('permission denied'));
+            return primaryUnsubscribe;
+        });
+
+        subscribeToNotificationInbox('user-123', callback, onError);
+
+        expect(onSnapshot).toHaveBeenCalledTimes(1);
+        for (const docSnap of largeRawFallbackSnapshot.docs) {
+            expect(docSnap.data).not.toHaveBeenCalled();
+        }
+        expect(callback).not.toHaveBeenCalled();
+        expect(onError).toHaveBeenCalledTimes(1);
     });
 });

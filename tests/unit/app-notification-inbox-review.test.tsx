@@ -169,7 +169,7 @@ describe('Notification inbox review regressions', () => {
         });
     });
 
-    it('falls back before logging Firestore subscription errors when no error callback is provided', () => {
+    it('logs Firestore subscription errors without attaching an unbounded fallback when no error callback is provided', () => {
         const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
         const consoleWarnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
         const subscriptionError = new Error('subscription failed');
@@ -179,18 +179,11 @@ describe('Notification inbox review regressions', () => {
         const errorHandler = firebaseMocks.onSnapshot.mock.calls[0][2] as (error: unknown) => void;
         errorHandler(subscriptionError);
 
-        expect(consoleWarnSpy).toHaveBeenCalledWith(
-            '[notification-inbox-service] Inbox ordered query failed; falling back to unordered inbox snapshot.',
-            { error: { name: 'Error', message: 'subscription failed' } }
-        );
-
-        const fallbackError = new Error('fallback failed');
-        const fallbackErrorHandler = firebaseMocks.onSnapshot.mock.calls[1][2] as (error: unknown) => void;
-        fallbackErrorHandler(fallbackError);
-
+        expect(firebaseMocks.onSnapshot).toHaveBeenCalledTimes(1);
+        expect(consoleWarnSpy).not.toHaveBeenCalled();
         expect(consoleErrorSpy).toHaveBeenCalledWith(
             '[notification-inbox-service] Failed to subscribe to notification inbox.',
-            { error: { name: 'Error', message: 'fallback failed' } }
+            { error: { name: 'Error', message: 'subscription failed' } }
         );
     });
 
