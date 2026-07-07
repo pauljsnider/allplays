@@ -1070,6 +1070,60 @@ service cloud.firestore {
              );
     }
 
+    function socialPostImmutableScopeFields() {
+      return [
+        'authorId',
+        'teamId',
+        'teamIds',
+        'visibility',
+        'visibleUserIds',
+        'createdAt',
+        'snapshot'
+      ];
+    }
+
+    function isSocialPostScopeImmutable() {
+      return !request.resource.data.diff(resource.data).affectedKeys().hasAny(socialPostImmutableScopeFields());
+    }
+
+    function isSocialPostAuthorContentUpdateValid() {
+      return resource.data.get('authorId', '') == request.auth.uid &&
+             isSocialPostScopeImmutable() &&
+             request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+               'title',
+               'detail',
+               'caption',
+               'media',
+               'updatedAt'
+             ]) &&
+             request.resource.data.get('title', '') is string &&
+             request.resource.data.get('title', '').size() > 0 &&
+             request.resource.data.get('detail', '') is string &&
+             request.resource.data.get('caption', '') is string &&
+             request.resource.data.get('media', []) is list &&
+             request.resource.data.get('updatedAt', resource.data.get('updatedAt', null)) is timestamp;
+    }
+
+    function isSocialPostModeratorUpdateValid() {
+      return canModerateSocialPost(resource.data) &&
+             isSocialPostScopeImmutable() &&
+             request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+               'hidden',
+               'hiddenBy',
+               'hiddenAt',
+               'reportCount',
+               'lastReportedBy',
+               'lastReportedAt',
+               'moderationStatus',
+               'moderationReason',
+               'moderatedBy',
+               'moderatedAt',
+               'updatedAt'
+             ]) &&
+             request.resource.data.get('hidden', resource.data.get('hidden', false)) is bool &&
+             request.resource.data.get('updatedAt', resource.data.get('updatedAt', null)) is timestamp;
+    }
+
     function canAccessFriendship(data) {
       return isSignedIn() &&
              data.get('memberIds', []) is list &&
@@ -1486,8 +1540,10 @@ service cloud.firestore {
       allow read: if canReadSocialPost(resource.data);
       allow create: if isSocialPostCreatePayloadValid(request.resource.data);
       allow update: if isSignedIn() &&
-                    request.resource.data.get('authorId', resource.data.get('authorId', '')) == resource.data.get('authorId', '') &&
-                    (resource.data.get('authorId', '') == request.auth.uid || canModerateSocialPost(resource.data));
+                    (
+                      isSocialPostAuthorContentUpdateValid() ||
+                      isSocialPostModeratorUpdateValid()
+                    );
       allow delete: if isSignedIn() &&
                     (resource.data.get('authorId', '') == request.auth.uid || canModerateSocialPost(resource.data));
 

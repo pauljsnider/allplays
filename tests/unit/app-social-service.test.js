@@ -274,4 +274,24 @@ describe('React app social service', () => {
             thumbnailUrl: null
         });
     });
+
+    it('hides social posts with moderation fields only', async () => {
+        const { hideSocialPost } = await import('../../apps/app/src/lib/socialService.ts');
+
+        await hideSocialPost('post-1', user);
+
+        expect(firebaseMocks.updateDoc).toHaveBeenCalledWith(
+            expect.objectContaining({ path: ['socialPosts', 'post-1'] }),
+            {
+                hidden: true,
+                hiddenBy: 'user-1',
+                hiddenAt: { __serverTimestamp: true },
+                updatedAt: { __serverTimestamp: true }
+            }
+        );
+        expect(firebaseMocks.updateDoc.mock.calls[0][1]).not.toHaveProperty('teamId');
+        expect(firebaseMocks.updateDoc.mock.calls[0][1]).not.toHaveProperty('teamIds');
+        expect(firebaseMocks.updateDoc.mock.calls[0][1]).not.toHaveProperty('visibility');
+        expect(firebaseMocks.updateDoc.mock.calls[0][1]).not.toHaveProperty('visibleUserIds');
+    });
 });
