@@ -282,6 +282,10 @@ function getSelectedDrafts() {
     return state.drafts.filter((draft) => draft.includeInExport !== false);
 }
 
+function getDraftsForSaveStatus(status) {
+    return status === 'published' ? getSelectedDrafts() : state.drafts;
+}
+
 function getSelectedDraft() {
     return state.drafts.find((draft) => draft.id === state.selectedDraftId) || state.drafts[0] || createPreviewDraft(state.roster, state.shared);
 }
@@ -1471,18 +1475,21 @@ function saveDraftsToLocalHistory(status) {
     const prefix = state.demoMode ? 'demo' : 'local';
     const existingBatchId = state.drafts.find((draft) => draft.batchId)?.batchId;
     const batchId = existingBatchId || `${prefix}-batch-${Date.now()}`;
+    const draftsToSave = getDraftsForSaveStatus(status);
     const ids = [];
 
-    state.drafts.forEach((draft) => {
+    draftsToSave.forEach((draft) => {
         draft.status = status;
         draft.batchId = draft.batchId || batchId;
         draft.certificateId = draft.certificateId || `${prefix}-cert-${batchId}-${draft.id}`;
-        ids.push(draft.certificateId);
         upsertSavedCertificate({
             id: draft.certificateId,
             ...buildCertificatePayload(draft, status),
             updatedAt: new Date().toISOString()
         });
+    });
+    state.drafts.forEach((draft) => {
+        if (draft.certificateId) ids.push(draft.certificateId);
     });
 
     upsertSavedBatch({
@@ -1642,7 +1649,7 @@ function renderDescriptionProgress() {
 }
 
 function getPublishBlockedDrafts() {
-    return state.drafts.filter((draft) => draft.descriptionStatus !== 'ready');
+    return getSelectedDrafts().filter((draft) => draft.descriptionStatus !== 'ready');
 }
 
 function formatPublishBlockedDraftNames(drafts) {
@@ -1651,6 +1658,11 @@ function formatPublishBlockedDraftNames(drafts) {
 
 function guardPublishableDraftDescriptions(status) {
     if (status !== 'published') return true;
+    if (!getSelectedDrafts().length) {
+        showAlert('Select at least one certificate before publishing.', 'warning');
+        renderReviewGrid();
+        return false;
+    }
     const blockedDrafts = getPublishBlockedDrafts();
     if (!blockedDrafts.length) return true;
     showAlert(`Review or fix certificates marked Needs review or Error before publishing: ${formatPublishBlockedDraftNames(blockedDrafts)}.`, 'error');
@@ -1896,6 +1908,7 @@ async function saveDrafts(status) {
     }
 
     try {
+        const draftsToSave = getDraftsForSaveStatus(status);
         let batchId = state.drafts.find((draft) => draft.batchId)?.batchId || null;
         if (!batchId) {
             batchId = await createCertificateBatch(state.teamId, {
@@ -1910,7 +1923,7 @@ async function saveDrafts(status) {
         }
 
         const ids = [];
-        for (const draft of state.drafts) {
+        for (const draft of draftsToSave) {
             draft.status = status;
             const payload = buildCertificatePayload(draft, status);
             if (draft.certificateId) {
@@ -1918,8 +1931,10 @@ async function saveDrafts(status) {
             } else {
                 draft.certificateId = await createCertificate(state.teamId, payload);
             }
-            ids.push(draft.certificateId);
         }
+        state.drafts.forEach((draft) => {
+            if (draft.certificateId) ids.push(draft.certificateId);
+        });
         if (batchId) {
             await updateCertificateBatch(state.teamId, batchId, {
                 generatedCertificateIds: ids,
