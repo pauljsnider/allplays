@@ -214,7 +214,7 @@ async function installModuleMocks(page) {
         }
     `;
 
-    await page.route('https://cdn.tailwindcss.com/**', (route) => route.fulfill({
+    await page.route(/^https:\/\/cdn\.tailwindcss\.com(?:\/.*)?$/, (route) => route.fulfill({
         status: 200,
         contentType: 'application/javascript',
         body: 'window.tailwind = window.tailwind || {};'
@@ -314,6 +314,7 @@ test('applies a live Game Day substitution through the browser controls', async 
 
     const store = await getStore(page);
     const rotationCall = store.updateCalls.find((call) => call.patch?.rotationActual);
+    expect(rotationCall).toBeDefined();
     expect(rotationCall).toMatchObject({
         teamId: 'team-1',
         gameId: 'game-1',
@@ -341,6 +342,7 @@ test('applies a live Game Day substitution through the browser controls', async 
     expect(substitutionRows[0].appliedAt).toEqual(expect.any(String));
 
     const coachingCall = store.updateCalls.find((call) => call.patch?.coachingNotes);
+    expect(coachingCall).toBeDefined();
     expect(coachingCall.patch.coachingNotes.at(-1)).toMatchObject({
         text: 'Sub: Blake Stone → Casey Vale',
         type: 'substitution',
