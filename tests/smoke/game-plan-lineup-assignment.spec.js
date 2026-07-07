@@ -223,7 +223,13 @@ async function dragAndDrop(page, sourceSelector, targetSelector) {
 }
 
 async function getStore(page) {
-    return page.evaluate((storeKey) => JSON.parse(localStorage.getItem(storeKey) || '{}'), STORE_KEY);
+    return page.evaluate((storeKey) => {
+        try {
+            return JSON.parse(localStorage.getItem(storeKey) || '{}');
+        } catch (error) {
+            return {};
+        }
+    }, STORE_KEY);
 }
 
 test.beforeEach(async ({ page }) => {
@@ -258,7 +264,7 @@ test('assigns a player, updates bench and summary, and blocks duplicate same-int
 
     const savedState = await getStore(page);
     expect(savedState.alerts).toContain('That player is already in this column. Use another player or clear first.');
-    expect(savedState.updateCalls.at(-1).gamePlan.lineups).toEqual({ '1-4-pg': 'p1' });
+    expect(savedState.updateCalls?.at(-1)?.gamePlan?.lineups).toEqual({ '1-4-pg': 'p1' });
 });
 
 test('moves an assigned chip within the same interval without duplicating the player', async ({ page, baseURL }) => {
