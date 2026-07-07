@@ -69,10 +69,12 @@ describe('help and workflow page inventory', () => {
 
     it('keeps the help portal manifest aligned with generated workflow and topic pages', () => {
         const helpHtml = readRepoFile('help.html');
+        const workflowManifest = JSON.parse(readRepoFile('workflow-manifest.json'));
         const manifest = extractHelpManifest(helpHtml);
         const manifestFiles = manifest.map((item) => item.file).sort();
 
         expect(manifest.length).toBeGreaterThan(15);
+        expect(manifest).toEqual(workflowManifest);
         expect(manifestFiles).toEqual([
             'help-team-operations.html',
             'workflow-admin-ops.html',
