@@ -1821,6 +1821,24 @@ async function loadChatRecipientProfiles(players: any): Promise<Map<string, Reco
   const entries: (readonly [string, Record<string, any>])[] = new Array(parentEntries.length);
   let nextParentIndex = 0;
 
+  async function hydrateChatRecipientProfile<T>(lookupPromise: Promise<T>, fallbackLookup: () => Promise<T>): Promise<T> {
+    let lookupSettled = false;
+    const trackedLookup = lookupPromise.finally(() => {
+      lookupSettled = true;
+    });
+    try {
+      return await withTimeout(trackedLookup, 'Chat recipient profile load', 2500)
+        .catch(async (error) => {
+          if (!isNativeRuntime()) throw error;
+          return fallbackLookup();
+        });
+    } finally {
+      if (!lookupSettled) {
+        await trackedLookup.catch(() => undefined);
+      }
+    }
+  }
+
   async function hydrateNextParent() {
     while (nextParentIndex < parentEntries.length) {
       const entryIndex = nextParentIndex;
@@ -1830,20 +1848,18 @@ async function loadChatRecipientProfiles(players: any): Promise<Map<string, Reco
       const email = compactString(parent?.email).toLowerCase();
       try {
         if (userId) {
-          const profile = await withTimeout(Promise.resolve(getUserProfile(userId)), 'Chat recipient profile load', 2500)
-            .catch(async (error) => {
-              if (!isNativeRuntime()) throw error;
-              return nativeGetDocument(`users/${encodeURIComponent(userId)}`);
-            });
+          const profile = await hydrateChatRecipientProfile(
+            Promise.resolve(getUserProfile(userId)),
+            () => nativeGetDocument(`users/${encodeURIComponent(userId)}`)
+          );
           entries[entryIndex] = [recipientId, profile || {}] as const;
           continue;
         }
         if (email) {
-          const profile = await withTimeout(Promise.resolve(getUserByEmail(email)), 'Chat recipient profile load', 2500)
-            .catch(async (error) => {
-              if (!isNativeRuntime()) throw error;
-              return nativeGetUserByEmail(email);
-            });
+          const profile = await hydrateChatRecipientProfile(
+            Promise.resolve(getUserByEmail(email)),
+            () => nativeGetUserByEmail(email)
+          );
           entries[entryIndex] = [recipientId, profile || {}] as const;
           continue;
         }

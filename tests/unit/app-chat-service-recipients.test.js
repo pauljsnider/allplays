@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { clearAppDataCache } from '../../apps/app/src/lib/appDataCache.ts';
 
 const dbMocks = vi.hoisted(() => ({
@@ -82,6 +82,10 @@ beforeEach(() => {
     dbMocks.getChatMessages.mockResolvedValue([]);
     dbMocks.sendTeamEmail.mockResolvedValue({ recipientCount: 8, status: 'queued' });
     dbMocks.getSentTeamEmails.mockResolvedValue([]);
+});
+
+afterEach(() => {
+    vi.useRealTimers();
 });
 
 describe('React app chat recipient service', () => {
@@ -316,6 +320,66 @@ describe('React app chat recipient service', () => {
                 id: 'email:guardian-37@example.com',
                 name: 'guardian-37@example.com',
                 email: 'guardian-37@example.com'
+            })
+        ]));
+    });
+
+    it('keeps timed-out profile lookups occupying worker slots until the backend request settles', async () => {
+        vi.useFakeTimers();
+        const missingLabelParents = Array.from({ length: 9 }, (_, index) => ({
+            id: `player-${index}`,
+            name: `Player ${index}`,
+            parents: [{ userId: `parent-${index}` }]
+        }));
+        dbMocks.getPlayers.mockResolvedValue(missingLabelParents);
+
+        const pendingLookups = [];
+        dbMocks.getUserProfile.mockImplementation((userId) => {
+            let resolveLookup;
+            const promise = new Promise((resolve) => {
+                resolveLookup = resolve;
+            });
+            pendingLookups.push({
+                userId,
+                resolve: resolveLookup
+            });
+            return promise;
+        });
+
+        const {
+            CHAT_RECIPIENT_PROFILE_LOOKUP_CONCURRENCY,
+            loadChatRecipientOptions
+        } = await import('../../apps/app/src/lib/chatService.ts');
+        const optionsPromise = loadChatRecipientOptions('team-1');
+
+        await vi.waitFor(() => {
+            expect(dbMocks.getUserProfile).toHaveBeenCalledTimes(CHAT_RECIPIENT_PROFILE_LOOKUP_CONCURRENCY);
+        });
+
+        await vi.advanceTimersByTimeAsync(2500);
+        await Promise.resolve();
+
+        expect(dbMocks.getUserProfile).toHaveBeenCalledTimes(CHAT_RECIPIENT_PROFILE_LOOKUP_CONCURRENCY);
+
+        pendingLookups[0].resolve({ fullName: 'Hydrated parent-0', email: 'parent-0@example.com' });
+        await vi.waitFor(() => {
+            expect(dbMocks.getUserProfile).toHaveBeenCalledTimes(CHAT_RECIPIENT_PROFILE_LOOKUP_CONCURRENCY + 1);
+        });
+
+        pendingLookups.slice(1).forEach((lookup, index) => {
+            lookup.resolve({
+                fullName: `Hydrated parent-${index + 1}`,
+                email: `parent-${index + 1}@example.com`
+            });
+        });
+
+        const options = await optionsPromise;
+
+        expect(options).toEqual(expect.arrayContaining([
+            expect.objectContaining({
+                id: 'user:parent-8',
+                name: 'Hydrated parent-8',
+                email: 'parent-8@example.com'
             })
         ]));
     });
