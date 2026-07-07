@@ -881,9 +881,12 @@ function getFileUploadMessage(uploaded: number, failed: number) {
   return `${uploadedLabel}.`;
 }
 
+let uploadQueueSequence = 0;
+
 function createUploadQueueItem(file: File, kind: 'photo' | 'file', index: number): UploadQueueItem {
+  uploadQueueSequence += 1;
   return {
-    id: `${kind}-${file.name || 'upload'}-${file.size || 0}-${index}`,
+    id: `${kind}-${file.name || 'upload'}-${file.size || 0}-${index}-${uploadQueueSequence}`,
     kind,
     name: file.name || `Untitled ${kind}`,
     status: 'uploading',
