@@ -51,6 +51,14 @@ function isAuthorSocialPostContentUpdateValid({ actorId, authorId, affectedKeys 
         hasOnly(affectedKeys, authorSocialPostContentFields);
 }
 
+function isAuthorSocialPostHideUpdateValid({ actorId, authorId, affectedKeys, hidden, hiddenBy }) {
+    return actorId === authorId &&
+        !hasAny(affectedKeys, immutableSocialPostScopeFields) &&
+        hasOnly(affectedKeys, ['hidden', 'hiddenBy', 'hiddenAt', 'updatedAt']) &&
+        hidden === true &&
+        hiddenBy === actorId;
+}
+
 function isModeratorSocialPostUpdateValid({ canModerate, affectedKeys }) {
     return canModerate &&
         !hasAny(affectedKeys, immutableSocialPostScopeFields) &&
@@ -66,6 +74,7 @@ describe('React app social Firestore rules', () => {
         expect(source).toContain('function canModerateSocialPost(data)');
         expect(source).toContain('function socialPostImmutableScopeFields()');
         expect(source).toContain('function isSocialPostAuthorContentUpdateValid()');
+        expect(source).toContain('function isSocialPostAuthorHideUpdateValid()');
         expect(source).toContain('function isSocialPostModeratorUpdateValid()');
         expect(source).toContain('match /socialPosts/{postId}');
         expect(source).toContain('match /comments/{commentId}');
@@ -122,6 +131,49 @@ describe('React app social Firestore rules', () => {
             actorId: 'author-1',
             authorId: 'author-1',
             affectedKeys: ['visibleUserIds', 'visibility', 'updatedAt']
+        })).toBe(false);
+    });
+
+    it('allows authors to hide their own social posts without moderator permissions', () => {
+        const source = rulesSource();
+
+        expect(source).toContain('isSocialPostAuthorHideUpdateValid() ||');
+        expect(source).toContain("request.resource.data.get('hidden', false) == true");
+        expect(source).toContain("request.resource.data.get('hiddenBy', '') == request.auth.uid");
+        expect(isAuthorSocialPostHideUpdateValid({
+            actorId: 'author-1',
+            authorId: 'author-1',
+            affectedKeys: ['hidden', 'hiddenBy', 'hiddenAt', 'updatedAt'],
+            hidden: true,
+            hiddenBy: 'author-1'
+        })).toBe(true);
+        expect(isAuthorSocialPostHideUpdateValid({
+            actorId: 'author-1',
+            authorId: 'author-1',
+            affectedKeys: ['hidden', 'hiddenBy', 'hiddenAt', 'updatedAt'],
+            hidden: true,
+            hiddenBy: 'other-user'
+        })).toBe(false);
+        expect(isAuthorSocialPostHideUpdateValid({
+            actorId: 'author-1',
+            authorId: 'author-1',
+            affectedKeys: ['hidden', 'hiddenBy', 'hiddenAt', 'updatedAt'],
+            hidden: false,
+            hiddenBy: 'author-1'
+        })).toBe(false);
+        expect(isAuthorSocialPostHideUpdateValid({
+            actorId: 'author-1',
+            authorId: 'author-1',
+            affectedKeys: ['hidden', 'hiddenBy', 'hiddenAt', 'teamIds', 'updatedAt'],
+            hidden: true,
+            hiddenBy: 'author-1'
+        })).toBe(false);
+        expect(isAuthorSocialPostHideUpdateValid({
+            actorId: 'author-1',
+            authorId: 'other-author',
+            affectedKeys: ['hidden', 'hiddenBy', 'hiddenAt', 'updatedAt'],
+            hidden: true,
+            hiddenBy: 'author-1'
         })).toBe(false);
     });
 

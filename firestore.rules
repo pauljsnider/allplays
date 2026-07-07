@@ -1104,6 +1104,21 @@ service cloud.firestore {
              request.resource.data.get('updatedAt', resource.data.get('updatedAt', null)) is timestamp;
     }
 
+    function isSocialPostAuthorHideUpdateValid() {
+      return resource.data.get('authorId', '') == request.auth.uid &&
+             isSocialPostScopeImmutable() &&
+             request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+               'hidden',
+               'hiddenBy',
+               'hiddenAt',
+               'updatedAt'
+             ]) &&
+             request.resource.data.get('hidden', false) == true &&
+             request.resource.data.get('hiddenBy', '') == request.auth.uid &&
+             request.resource.data.get('hiddenAt', resource.data.get('hiddenAt', null)) is timestamp &&
+             request.resource.data.get('updatedAt', resource.data.get('updatedAt', null)) is timestamp;
+    }
+
     function isSocialPostModeratorUpdateValid() {
       return canModerateSocialPost(resource.data) &&
              isSocialPostScopeImmutable() &&
@@ -1542,6 +1557,7 @@ service cloud.firestore {
       allow update: if isSignedIn() &&
                     (
                       isSocialPostAuthorContentUpdateValid() ||
+                      isSocialPostAuthorHideUpdateValid() ||
                       isSocialPostModeratorUpdateValid()
                     );
       allow delete: if isSignedIn() &&
