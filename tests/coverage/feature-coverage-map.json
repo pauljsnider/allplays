@@ -135,6 +135,8 @@
                 "previewAccountMerge",
                 "redeemAdminInvite",
                 "redeemCoParentInvite",
+                "redeemHouseholdInvite",
+                "redeemParentInvite",
                 "validateAccessCodeForAcceptance"
             ],
             "unitTests": [
