@@ -154,6 +154,7 @@ describe('help and workflow page inventory', () => {
         const communicationHelpEntry = extractAppHelpIndexEntry(appHelpIndex, 'communication');
         const indexedText = [communicationManifest?.searchText || '', communicationHelpEntry].join(' ');
         const staleMentionPhrases = [
+            '@mention autocomplete',
             'Choose a suggested recipient',
             'Use @ in the composer to open mention autocomplete'
         ];
