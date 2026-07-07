@@ -188,7 +188,20 @@
                 // Fetch unread chat counts for all teams
                 const allTeams = [...fullAccessTeams, ...parentOnlyTeams];
                 const teamIds = allTeams.map(t => t.id);
-                const unreadCounts = teamIds.length > 0 ? await getUnreadChatCounts(user.uid, teamIds) : {};
+                const unreadLookupUser = {
+                    ...user,
+                    uid: user.uid,
+                    email: user.email || user.profileEmail || profile?.email || null
+                };
+                const conversationLookupByTeam = allTeams.reduce((acc, team) => {
+                    acc[team.id] = {
+                        user: unreadLookupUser,
+                        team,
+                        canModerate: team._access === 'full'
+                    };
+                    return acc;
+                }, {});
+                const unreadCounts = teamIds.length > 0 ? await getUnreadChatCounts(user.uid, teamIds, { conversationLookupByTeam }) : {};
 
                 function renderTeamCard(team) {
                     const hasFullAccess = team._access === 'full';

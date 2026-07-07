@@ -1562,7 +1562,24 @@
                 // Get unique team IDs and fetch unread counts
                 const teamIds = [...new Set(data.children.map(c => c.teamId).filter(Boolean))];
                 await ensureParentTeamAccess(user.uid, teamIds);
-                const unreadCounts = await getUnreadChatCounts(user.uid, teamIds);
+                const unreadLookupUser = {
+                    ...user,
+                    uid: user.uid,
+                    email: user.email || null
+                };
+                const conversationLookupByTeam = teamIds.reduce((acc, teamId) => {
+                    const child = data.children.find(c => c.teamId === teamId) || {};
+                    acc[teamId] = {
+                        user: unreadLookupUser,
+                        team: {
+                            id: teamId,
+                            name: child.teamName || child.team?.name || 'Team'
+                        },
+                        canModerate: false
+                    };
+                    return acc;
+                }, {});
+                const unreadCounts = await getUnreadChatCounts(user.uid, teamIds, { conversationLookupByTeam });
                 renderTeamChats(data.children, unreadCounts);
                 await renderFamilyPlanSection(document.getElementById('family-plan-card'), user, { playerLinks: data.children || [] });
                 await loadParentTeamFees(user.uid, data.children);
