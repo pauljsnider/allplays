@@ -1302,6 +1302,7 @@ export async function redeemInviteForUser(userId: string, code: string, authEmai
     validateAccessCode: dbModule.validateAccessCode,
     redeemParentInvite: dbModule.redeemParentInvite,
     redeemHouseholdInvite: dbModule.redeemHouseholdInvite,
+    redeemCoParentInvite: dbModule.redeemCoParentInvite,
     redeemAdminInviteAtomically,
     updateUserProfile: dbModule.updateUserProfile,
     updateTeam: dbModule.updateTeam,
