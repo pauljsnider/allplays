@@ -131,13 +131,19 @@ export async function ensureAndroidNotificationChannels(): Promise<void> {
     return androidNotificationChannelsPromise;
   }
 
+  let setupFailed = false;
   androidNotificationChannelsPromise = Promise.all(androidNotificationChannels.map(async (channel) => {
     try {
       await FirebaseMessaging.createChannel({ ...channel });
     } catch (error) {
+      setupFailed = true;
       logger.warn('Unable to create Android notification channel.', { channelId: channel.id, error });
     }
-  })).then(() => undefined);
+  })).then(() => {
+    if (setupFailed) {
+      androidNotificationChannelsPromise = null;
+    }
+  });
 
   return androidNotificationChannelsPromise;
 }
