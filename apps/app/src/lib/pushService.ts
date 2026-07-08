@@ -89,6 +89,8 @@ export const androidNotificationChannels = [
   }
 ] as const satisfies readonly CreateChannelOptions[];
 
+let androidNotificationChannelsPromise: Promise<void> | null = null;
+
 export class PushPermissionError extends Error {
   code: 'push-permission-blocked' | 'push-unsupported';
   permissionStatus: PushNotificationPermissionStatus;
@@ -125,13 +127,19 @@ export async function ensureAndroidNotificationChannels(): Promise<void> {
     return;
   }
 
-  await Promise.all(androidNotificationChannels.map(async (channel) => {
+  if (androidNotificationChannelsPromise) {
+    return androidNotificationChannelsPromise;
+  }
+
+  androidNotificationChannelsPromise = Promise.all(androidNotificationChannels.map(async (channel) => {
     try {
       await FirebaseMessaging.createChannel({ ...channel });
     } catch (error) {
       logger.warn('Unable to create Android notification channel.', { channelId: channel.id, error });
     }
-  }));
+  })).then(() => undefined);
+
+  return androidNotificationChannelsPromise;
 }
 
 export async function enablePushNotificationsForUser(userId: string): Promise<PushRegistrationResult> {

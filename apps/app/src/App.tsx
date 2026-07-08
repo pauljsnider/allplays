@@ -55,6 +55,7 @@ const protectedRouteBootstrapGraceMs = 750;
 export default function App() {
   const auth = useAuth();
   const location = useLocation();
+  const signedInUserId = auth.user?.uid ?? null;
   const signedInDefaultRoute = getRouteForUser(auth.user);
   const navigate = useNavigate();
   const authUserRef = useRef(auth.user);
@@ -152,7 +153,7 @@ export default function App() {
   }, [navigate]);
 
   useEffect(() => {
-    if (!auth.user) {
+    if (!signedInUserId) {
       return;
     }
 
@@ -185,7 +186,7 @@ export default function App() {
       active = false;
       removeListener();
     };
-  }, [auth.user, navigate]);
+  }, [signedInUserId, navigate]);
 
   useEffect(() => {
     if (auth.loading || !auth.user) {
