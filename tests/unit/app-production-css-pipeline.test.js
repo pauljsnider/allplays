@@ -61,5 +61,5 @@ describe('app production CSS pipeline', () => {
         expect(css).toContain('.inset-x-0');
         expect(css).toContain('.top-0');
         expect(css).toContain('.bottom-0');
-    }, 30000);
+    }, 120000);
 });

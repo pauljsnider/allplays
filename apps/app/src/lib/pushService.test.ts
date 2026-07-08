@@ -378,10 +378,11 @@ describe('pushService permission states', () => {
         );
     });
 
-    it('creates category Android channels on Android startup', async () => {
+    it('creates category Android channels at most once per Android native module session', async () => {
         capacitorState.getPlatform.mockReturnValue('android');
         const { ensureAndroidNotificationChannels } = await loadPushService();
 
+        await ensureAndroidNotificationChannels();
         await ensureAndroidNotificationChannels();
 
         expect(firebaseMessagingMocks.createChannel).toHaveBeenCalledTimes(5);
@@ -412,11 +413,32 @@ describe('pushService permission states', () => {
         }));
     });
 
+    it('retries Android channel setup after a channel creation failure', async () => {
+        capacitorState.getPlatform.mockReturnValue('android');
+        firebaseMessagingMocks.createChannel
+            .mockRejectedValueOnce(new Error('channel setup failed'))
+            .mockResolvedValue(undefined);
+        const { ensureAndroidNotificationChannels } = await loadPushService();
+
+        await ensureAndroidNotificationChannels();
+        await ensureAndroidNotificationChannels();
+
+        expect(firebaseMessagingMocks.createChannel).toHaveBeenCalledTimes(10);
+    });
+
     it('skips Android channel creation outside Android native shells', async () => {
         capacitorState.getPlatform.mockReturnValue('ios');
         const { ensureAndroidNotificationChannels } = await loadPushService();
 
         await ensureAndroidNotificationChannels();
+        expect(firebaseMessagingMocks.createChannel).not.toHaveBeenCalled();
+
+        vi.resetModules();
+        capacitorState.isNativePlatform.mockReturnValue(false);
+        capacitorState.getPlatform.mockReturnValue('android');
+        const webService = await loadPushService();
+
+        await webService.ensureAndroidNotificationChannels();
 
         expect(firebaseMessagingMocks.createChannel).not.toHaveBeenCalled();
     });

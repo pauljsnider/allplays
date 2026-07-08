@@ -59,13 +59,16 @@ const pushRoutingMock = vi.hoisted(() => ({
 }));
 const pushServiceMock = vi.hoisted(() => {
   const state = {
-    lastListener: null as ((route: string) => void) | null
+    lastListener: null as ((route: string) => void) | null,
+    removers: [] as ReturnType<typeof vi.fn>[]
   };
   return {
     ...state,
     addPushNotificationOpenListener: vi.fn(async (listener: (route: string) => void) => {
       state.lastListener = listener;
-      return () => {};
+      const remove = vi.fn();
+      state.removers.push(remove);
+      return remove;
     }),
     ensureAndroidNotificationChannels: vi.fn(async () => {})
   };
@@ -198,6 +201,7 @@ describe('App protected route loading', () => {
     pushServiceMock.addPushNotificationOpenListener.mockClear();
     pushServiceMock.ensureAndroidNotificationChannels.mockClear();
     pushServiceMock.lastListener = null;
+    pushServiceMock.removers.length = 0;
     consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
   });
 
@@ -389,6 +393,70 @@ describe('App protected route loading', () => {
     expect(await screen.findByText('Officials assignments page')).toBeTruthy();
     await waitFor(() => expect(pushServiceMock.ensureAndroidNotificationChannels).toHaveBeenCalledTimes(1));
     expect(pushServiceMock.addPushNotificationOpenListener).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not repeat native push setup when auth refresh replaces the same uid object', async () => {
+    const { rerender } = render(
+      <MemoryRouter initialEntries={['/officials']}>
+        <App />
+      </MemoryRouter>
+    );
+
+    expect(await screen.findByText('Officials assignments page')).toBeTruthy();
+    await waitFor(() => expect(pushServiceMock.ensureAndroidNotificationChannels).toHaveBeenCalledTimes(1));
+    expect(pushServiceMock.addPushNotificationOpenListener).toHaveBeenCalledTimes(1);
+
+    authMock.state = {
+      ...authMock.signedInAuth,
+      user: { ...authMock.signedInAuth.user! },
+      refresh: vi.fn(),
+      signOut: vi.fn()
+    };
+    rerender(
+      <MemoryRouter initialEntries={['/officials']}>
+        <App />
+      </MemoryRouter>
+    );
+
+    await waitFor(() => expect(pushServiceMock.addPushNotificationOpenListener).toHaveBeenCalledTimes(1));
+    expect(pushServiceMock.ensureAndroidNotificationChannels).toHaveBeenCalledTimes(1);
+    expect(pushServiceMock.removers[0]).not.toHaveBeenCalled();
+  });
+
+  it('replaces the native push listener when the signed-in uid changes and cleans up on unmount', async () => {
+    const { rerender, unmount } = render(
+      <MemoryRouter initialEntries={['/officials']}>
+        <App />
+      </MemoryRouter>
+    );
+
+    expect(await screen.findByText('Officials assignments page')).toBeTruthy();
+    await waitFor(() => expect(pushServiceMock.addPushNotificationOpenListener).toHaveBeenCalledTimes(1));
+    const firstRemove = pushServiceMock.removers[0];
+
+    authMock.state = {
+      ...authMock.signedInAuth,
+      user: { uid: 'user-2', email: 'coach@example.com', displayName: 'Casey Coach', roles: ['coach'] },
+      roles: ['coach'],
+      isParent: false,
+      isCoach: true,
+      refresh: vi.fn(),
+      signOut: vi.fn()
+    };
+    rerender(
+      <MemoryRouter initialEntries={['/officials']}>
+        <App />
+      </MemoryRouter>
+    );
+
+    await waitFor(() => expect(pushServiceMock.addPushNotificationOpenListener).toHaveBeenCalledTimes(2));
+    expect(pushServiceMock.ensureAndroidNotificationChannels).toHaveBeenCalledTimes(2);
+    expect(firstRemove).toHaveBeenCalledTimes(1);
+
+    const secondRemove = pushServiceMock.removers[1];
+    unmount();
+
+    expect(secondRemove).toHaveBeenCalledTimes(1);
   });
 
   it('preserves pending push routing after auth resolves in a native session', async () => {
