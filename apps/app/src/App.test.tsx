@@ -408,7 +408,7 @@ describe('App protected route loading', () => {
 
     authMock.state = {
       ...authMock.signedInAuth,
-      user: { ...authMock.signedInAuth.user },
+      user: { ...authMock.signedInAuth.user! },
       refresh: vi.fn(),
       signOut: vi.fn()
     };
