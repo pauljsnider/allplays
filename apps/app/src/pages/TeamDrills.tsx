@@ -60,7 +60,11 @@ export function TeamDrills({ auth }: { auth: AuthState }) {
   const [coachSaving, setCoachSaving] = useState(false);
   const [coachStatus, setCoachStatus] = useState('');
   const { error: loadError, clearError: clearLoadError, run: runLoadOperation } = useAppAsyncOperation();
-  const authUserId = auth.user?.uid || '';
+  const authAccessKey = [
+    auth.user?.uid || '',
+    String(auth.user?.email || '').trim().toLowerCase(),
+    auth.user?.isAdmin === true ? 'admin' : 'user'
+  ].join('|');
 
   useEffect(() => {
     let cancelled = false;
@@ -106,7 +110,7 @@ export function TeamDrills({ auth }: { auth: AuthState }) {
     return () => {
       cancelled = true;
     };
-  }, [authUserId, levelFilter, searchText, teamId, typeFilter]);
+  }, [authAccessKey, levelFilter, searchText, teamId, typeFilter]);
 
   useEffect(() => {
     let cancelled = false;
@@ -132,7 +136,7 @@ export function TeamDrills({ auth }: { auth: AuthState }) {
     return () => {
       cancelled = true;
     };
-  }, [authUserId, canManageDrills, favoriteDrills, selectedTab, teamId]);
+  }, [authAccessKey, canManageDrills, favoriteDrills, selectedTab, teamId]);
 
   useEffect(() => {
     if (eventIdFromUrl) {

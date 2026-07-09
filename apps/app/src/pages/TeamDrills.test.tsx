@@ -244,6 +244,42 @@ describe('TeamDrills', () => {
     });
   });
 
+  it('reloads the community library when the current user email changes access for the same uid', async () => {
+    const initialAuth: AuthState = { ...auth, user: { ...auth.user!, email: 'coach@example.com' } as AuthState['user'] };
+    const nextAuth: AuthState = { ...auth, user: { ...auth.user!, email: 'team-admin@example.com' } as AuthState['user'] };
+    const view = renderTeamDrills(initialAuth);
+
+    expect(await screen.findByRole('heading', { name: 'Bears drills' })).toBeTruthy();
+    expect(teamDrillsServiceMocks.loadTeamDrillLibraryPage).toHaveBeenCalledTimes(1);
+
+    rerenderTeamDrills(view, nextAuth);
+
+    await waitFor(() => expect(teamDrillsServiceMocks.loadTeamDrillLibraryPage).toHaveBeenCalledTimes(2));
+    expect(teamDrillsServiceMocks.loadTeamDrillLibraryPage).toHaveBeenLastCalledWith('team-1', nextAuth.user, {
+      searchText: '',
+      type: '',
+      level: ''
+    });
+  });
+
+  it('reloads the community library when the current user gains platform admin access for the same uid', async () => {
+    const initialAuth: AuthState = { ...auth, user: { ...auth.user!, isAdmin: false } as AuthState['user'] };
+    const nextAuth: AuthState = { ...auth, user: { ...auth.user!, isAdmin: true } as AuthState['user'] };
+    const view = renderTeamDrills(initialAuth);
+
+    expect(await screen.findByRole('heading', { name: 'Bears drills' })).toBeTruthy();
+    expect(teamDrillsServiceMocks.loadTeamDrillLibraryPage).toHaveBeenCalledTimes(1);
+
+    rerenderTeamDrills(view, nextAuth);
+
+    await waitFor(() => expect(teamDrillsServiceMocks.loadTeamDrillLibraryPage).toHaveBeenCalledTimes(2));
+    expect(teamDrillsServiceMocks.loadTeamDrillLibraryPage).toHaveBeenLastCalledWith('team-1', nextAuth.user, {
+      searchText: '',
+      type: '',
+      level: ''
+    });
+  });
+
   it('opens drill detail and toggles a team favorite that syncs with the website store', async () => {
     renderTeamDrills();
 
