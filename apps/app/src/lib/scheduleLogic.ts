@@ -1277,9 +1277,10 @@ export function getCalendarScheduleEntries(events: ParentScheduleEvent[]): Calen
   return [...byKey.values()].sort((a, b) => a.date.getTime() - b.date.getTime());
 }
 
-export function getWindowedCalendarScheduleEntries(events: ParentScheduleEvent[], limit: number): WindowedCalendarScheduleEntries {
+export function getWindowedCalendarScheduleEntries(events: ParentScheduleEvent[], limit: number, now = new Date()): WindowedCalendarScheduleEntries {
   const normalizedLimit = normalizeWindowLimit(limit);
   const sourceEvents = Array.isArray(events) ? events : [];
+  const packetCutoff = new Date(now.getTime() - 3 * 60 * 60 * 1000);
   const byKey = new Map<string, { key: string; event: ParentScheduleEvent; index: number }>();
 
   sourceEvents.forEach((event) => {
@@ -1299,7 +1300,11 @@ export function getWindowedCalendarScheduleEntries(events: ParentScheduleEvent[]
   let nextEvent: CalendarScheduleEntry | null = null;
   let gameCount = 0;
   let practiceCount = 0;
-  let packetsReady = 0;
+  const packetsReady = sourceEvents.reduce((count, event) => (
+    event.type === 'practice' && event.practiceHomePacketSummary && buildPracticePacketRow(event, packetCutoff).needsAction
+      ? count + 1
+      : count
+  ), 0);
   let openAssignments = 0;
   let rideRequests = 0;
 
@@ -1314,7 +1319,6 @@ export function getWindowedCalendarScheduleEntries(events: ParentScheduleEvent[]
         childRsvps: []
       };
     }
-    if (group.event.type === 'practice' && group.event.practiceHomePacketSummary) packetsReady += 1;
     openAssignments += getEventOpenAssignmentCount(group.event);
     rideRequests += group.event.rideshareSummary?.requests || 0;
     if (windowKeys.has(group.key)) {

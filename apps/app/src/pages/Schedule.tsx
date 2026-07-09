@@ -542,6 +542,9 @@ export function Schedule({ auth }: { auth: AuthState }) {
   const calendarEntries = useMemo(() => (
     view === 'calendar' ? getCalendarScheduleEntries(visibleEvents) : []
   ), [visibleEvents, view]);
+  const packetWindow = useMemo(() => (
+    getWindowedPracticePacketRows(visibleEvents, view === 'packets' ? listWindowLimit : 0)
+  ), [listWindowLimit, visibleEvents, view]);
   const windowedListEntries = useMemo(() => (
     view === 'calendar'
       ? {
@@ -551,18 +554,13 @@ export function Schedule({ auth }: { auth: AuthState }) {
           practiceCount: calendarEntries.filter((event) => event.type === 'practice').length,
           hasMore: false,
           nextEvent: calendarEntries.find((event) => !event.isCancelled) || null,
-          packetsReady: calendarEntries.filter((event) => event.type === 'practice' && event.practiceHomePacketSummary).length,
+          packetsReady: packetWindow.readyCount,
           openAssignments: calendarEntries.reduce((total, event) => total + getEventOpenAssignmentCount(event), 0),
           rideRequests: calendarEntries.reduce((total, event) => total + (event.rideshareSummary?.requests || 0), 0)
         }
       : getWindowedCalendarScheduleEntries(visibleEvents, listWindowLimit)
-  ), [calendarEntries, listWindowLimit, visibleEvents, view]);
+  ), [calendarEntries, listWindowLimit, packetWindow.readyCount, visibleEvents, view]);
   const listEntries = windowedListEntries.entries;
-  const packetWindow = useMemo(() => (
-    view === 'packets'
-      ? getWindowedPracticePacketRows(visibleEvents, listWindowLimit)
-      : { rows: [], totalCount: 0, readyCount: 0, hasMore: false }
-  ), [listWindowLimit, visibleEvents, view]);
   const packetRows = packetWindow.rows;
   const canLoadMorePastHistory = filter === 'past-all' && (pastHistoryHasMore || visibleListCount < windowedListEntries.totalCount);
   const canLoadMorePacketRows = (filter === 'past-all' && pastHistoryHasMore) || visibleListCount < packetWindow.totalCount;
@@ -609,8 +607,8 @@ export function Schedule({ auth }: { auth: AuthState }) {
     games: windowedListEntries.gameCount,
     practices: windowedListEntries.practiceCount,
     rsvpNeeded: visibleEvents.filter((event) => parentLinkedPlayerIds.has(event.childId) && event.isDbGame && !event.isCancelled && normalizeRsvpResponse(event.myRsvp) === 'not_responded').length,
-    packetsReady: view === 'packets' ? packetWindow.readyCount : windowedListEntries.packetsReady
-  }), [packetWindow.readyCount, parentLinkedPlayerIds, view, visibleEvents, windowedListEntries.gameCount, windowedListEntries.packetsReady, windowedListEntries.practiceCount, windowedListEntries.totalCount]);
+    packetsReady: packetWindow.readyCount
+  }), [packetWindow.readyCount, parentLinkedPlayerIds, visibleEvents, windowedListEntries.gameCount, windowedListEntries.practiceCount, windowedListEntries.totalCount]);
   const webInsights = useMemo(() => ({
     nextEvent: windowedListEntries.nextEvent,
     rsvpNeeded: counts.rsvpNeeded,
@@ -1500,7 +1498,7 @@ export function Schedule({ auth }: { auth: AuthState }) {
                 setTimeRange('all');
               }}
             />
-            <ScheduleActionQueue events={listEntries} />
+            <ScheduleActionQueue events={visibleEvents} />
           </aside>
         ) : null}
 

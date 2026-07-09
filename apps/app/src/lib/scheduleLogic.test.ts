@@ -108,6 +108,40 @@ describe('windowed schedule derivation', () => {
     expect(result.entries[0]?.childIds).toEqual(['player-1', 'player-2']);
   });
 
+  it('counts only actionable practice packets across the full filtered source', () => {
+    const now = new Date('2100-06-10T12:00:00.000Z');
+    const result = getWindowedCalendarScheduleEntries([
+      buildParentScheduleEvent({
+        eventKey: 'team-1::completed::player-1::2100-06-11T18:00:00.000Z::practice',
+        id: 'completed',
+        type: 'practice',
+        date: new Date('2100-06-11T18:00:00.000Z'),
+        title: 'Completed packet',
+        practiceHomePacketSummary: '2 drills',
+        practicePacketCompletions: [{ childId: 'player-1', status: 'completed' }]
+      }),
+      buildParentScheduleEvent({
+        eventKey: 'team-1::past::player-1::2100-06-09T06:00:00.000Z::practice',
+        id: 'past',
+        type: 'practice',
+        date: new Date('2100-06-09T06:00:00.000Z'),
+        title: 'Past packet',
+        practiceHomePacketSummary: '1 drill'
+      }),
+      buildParentScheduleEvent({
+        eventKey: 'team-1::ready-hidden::player-1::2100-06-12T18:00:00.000Z::practice',
+        id: 'ready-hidden',
+        type: 'practice',
+        date: new Date('2100-06-12T18:00:00.000Z'),
+        title: 'Ready packet',
+        practiceHomePacketSummary: '3 drills'
+      })
+    ], 1, now);
+
+    expect(result.entries.map((event) => event.id)).toEqual(['past']);
+    expect(result.packetsReady).toBe(1);
+  });
+
   it('orders windowed practice packet rows and reports total, ready, and hasMore metadata', () => {
     const now = new Date('2100-06-10T12:00:00.000Z');
     const ready = buildParentScheduleEvent({
