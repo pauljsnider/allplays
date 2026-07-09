@@ -69,7 +69,6 @@ describe('feature coverage map', () => {
 
         expect(report.tierGaps).toEqual([
             { feature: 'registration.provider-sync-checkout', tier: 'workflow' },
-            { feature: 'fees.payments-team-pass', tier: 'workflow' },
             { feature: 'officials.org-tournaments-drills', tier: 'workflow' }
         ]);
         expect(formatted).toContain('Known follow-up gaps:');
