@@ -7,6 +7,8 @@ const accessCodeMatch = rules.match(/match \/accessCodes\/\{codeId\} \{[\s\S]*?\
 const accessCodeRules = accessCodeMatch?.[0] || '';
 const parentInviteRedemptionMatch = rules.match(/function isParentInviteRedemptionUpdate\(\) \{[\s\S]*?\n    \}/);
 const parentInviteRedemptionRule = parentInviteRedemptionMatch?.[0] || '';
+const standardCodeRedemptionMatch = rules.match(/function isStandardAccessCodeRedemptionUpdate\(\) \{[\s\S]*?\n    \}/);
+const standardCodeRedemptionRule = standardCodeRedemptionMatch?.[0] || '';
 
 describe('access code Firestore rules', () => {
     it('removes the public accessCodes read loophole and scopes raw access to authorized users', () => {
@@ -32,9 +34,10 @@ describe('access code Firestore rules', () => {
 
     it('preserves standard profile access-code creation without reopening typed invite paths', () => {
         expect(rules).toContain('function isStandardAccessCodePayloadValid(data)');
-        expect(rules).toContain("'code', 'generatedBy', 'email', 'phone', 'createdAt', 'used', 'usedBy', 'usedAt'");
-        expect(rules).toContain("!data.keys().hasAny(['type'])");
-        expect(accessCodeRules).toContain("!request.resource.data.keys().hasAny(['type'])");
+        expect(rules).toContain("'code', 'type', 'generatedBy', 'email', 'phone', 'createdAt', 'used', 'usedBy', 'usedAt'");
+        expect(rules).toContain("(!data.keys().hasAny(['type']) || data.type == 'standard')");
+        expect(accessCodeRules).toContain("!request.resource.data.keys().hasAny(['type']) ||");
+        expect(accessCodeRules).toContain("request.resource.data.type == 'standard'");
         expect(accessCodeRules).toContain('isStandardAccessCodePayloadValid(request.resource.data)');
         expect(accessCodeRules).toContain('request.resource.data.code == codeId');
     });
@@ -79,13 +82,31 @@ describe('access code Firestore rules', () => {
     });
 
     it('excludes admin_invite documents from generic used-field redemption updates', () => {
-        const genericUsedUpdateIndex = accessCodeRules.indexOf("request.resource.data.diff(resource.data).affectedKeys().hasOnly(['used', 'usedBy', 'usedAt'])");
-        expect(genericUsedUpdateIndex).toBeGreaterThanOrEqual(0);
+        expect(accessCodeRules).toContain('isStandardAccessCodeRedemptionUpdate()');
+        expect(standardCodeRedemptionRule).toContain("let codeType = resource.data.get('type', null);");
+        expect(standardCodeRedemptionRule).toContain('let isLegacyStandardCode = codeType == null');
+        expect(standardCodeRedemptionRule).toContain("!resource.data.keys().hasAny([");
+        expect(standardCodeRedemptionRule).toContain("'teamId', 'playerId', 'familyMembershipId'");
+        expect(standardCodeRedemptionRule).toContain("(codeType == 'standard' || isLegacyStandardCode)");
+        expect(standardCodeRedemptionRule).toContain("request.resource.data.diff(resource.data).affectedKeys().hasOnly(['used', 'usedBy', 'usedAt'])");
+        expect(standardCodeRedemptionRule).toContain('resource.data.used == false');
+        expect(standardCodeRedemptionRule).toContain("resource.data.get('status', 'active') != 'revoked'");
+        expect(standardCodeRedemptionRule).toContain('request.resource.data.usedBy == request.auth.uid');
+        expect(standardCodeRedemptionRule).not.toContain('admin_invite');
+        expect(standardCodeRedemptionRule).not.toContain('parent_invite');
+        expect(standardCodeRedemptionRule).not.toContain('household_invite');
+        expect(standardCodeRedemptionRule).not.toContain('coparent_invite');
+    });
 
-        const genericUsedUpdateBranch = accessCodeRules.slice(genericUsedUpdateIndex - 280, genericUsedUpdateIndex + 220);
-        expect(genericUsedUpdateBranch).toContain("resource.data.get('type', null) != 'admin_invite'");
-        expect(genericUsedUpdateBranch).toContain("resource.data.get('type', null) != 'parent_invite'");
-        expect(genericUsedUpdateBranch).toContain("resource.data.get('type', null) != 'household_invite'");
+    it('keeps typed invite records out of owner-only generic revocation updates', () => {
+        const revocationIndex = accessCodeRules.indexOf("request.resource.data.diff(resource.data).affectedKeys().hasOnly(['revoked', 'revokedAt', 'used', 'updatedAt'])");
+        expect(revocationIndex).toBeGreaterThanOrEqual(0);
+
+        const revocationBranch = accessCodeRules.slice(revocationIndex - 520, revocationIndex + 180);
+        expect(revocationBranch).toContain("resource.data.get('type', null) != 'admin_invite'");
+        expect(revocationBranch).toContain("resource.data.get('type', null) != 'parent_invite'");
+        expect(revocationBranch).toContain("resource.data.get('type', null) != 'household_invite'");
+        expect(revocationBranch).toContain("resource.data.get('type', null) != 'coparent_invite'");
     });
 
     it('requires parent_invite redemption to use an active invite owned by the signed-in email', () => {
