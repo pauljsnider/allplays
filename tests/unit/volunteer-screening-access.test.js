@@ -102,19 +102,57 @@ describe('volunteer screening access guard', () => {
             { id: 'reg-1', formId: 'form-1', programName: 'Spring Volunteers', refPath: 'teams/team-1/registrationForms/form-1/registrations/reg-1' },
             { id: 'reg-2', formId: 'form-2', programName: 'Summer Staff', refPath: 'teams/team-1/registrationForms/form-2/registrations/reg-2', email: 'helper@example.com' }
         ]);
+        expect(() => assertVolunteerScreeningCleared([
+            {
+                ...registrations[0],
+                userId: 'user-1',
+                requiresScreening: true,
+                screeningStatus: 'pending'
+            },
+            {
+                ...registrations[0],
+                userId: 'user-1',
+                requiresScreening: true,
+                screeningStatus: 'pending'
+            }
+        ], { userId: 'user-1' })).toThrow(`${VOLUNTEER_SCREENING_BLOCK_MESSAGE} Related registration: Spring Volunteers.`);
     });
 
-    it('wires role grant actions through the screening guard', () => {
+    it('wires role grant actions through bounded target-specific screening lookups', () => {
         const dbSource = fs.readFileSync('js/db.js', 'utf8');
 
-        expect(dbSource).toContain("import { assertVolunteerScreeningCleared } from './volunteer-screening-access.js?v=2';");
+        expect(dbSource).toContain('assertVolunteerScreeningCleared,');
+        expect(dbSource).toContain('loadVolunteerScreeningTargetRegistrations');
         expect(dbSource).toContain('await assertVolunteerScreeningClearedForTeamGrant(teamId, { userId: normalizedUserId });');
         expect(dbSource).toContain('await assertVolunteerScreeningClearedForTeamGrant(teamId, { email: normalizedEmail });');
         expect(dbSource).toContain('function assertVolunteerScreeningClearedForTeamGrant');
-        expect(dbSource).toContain('async function listVolunteerScreeningRegistrationsForTeam(teamId)');
-        expect(dbSource).toContain('const forms = await listTeamRegistrationForms(normalizedTeamId);');
-        expect(dbSource).toContain('getDocs(collection(db, `teams/${normalizedTeamId}/registrationForms/${formId}/registrations`))');
-        expect(dbSource).toContain('const registrations = await listVolunteerScreeningRegistrationsForTeam(teamId);');
+        expect(dbSource).toContain('async function listVolunteerScreeningRegistrationsForTeamGrantTarget(teamId, target = {})');
+        expect(dbSource).toContain('return loadVolunteerScreeningTargetRegistrations(target, async ({ fieldPath, value }) => {');
+        expect(dbSource).toContain('const forms = await loadForms();');
+        expect(dbSource).toContain("where(fieldPath, '==', value)");
+        expect(dbSource).toContain('getDocs(query(registrationsRef, where(fieldPath, \'==\', value)))');
+        expect(dbSource).toContain('const registrations = await listVolunteerScreeningRegistrationsForTeamGrantTarget(teamId, normalizedTarget);');
+        expect(dbSource).not.toContain('async function listVolunteerScreeningRegistrationsForTeam(teamId)');
+        expect(dbSource).not.toContain('getDocs(collection(db, `teams/${normalizedTeamId}/registrationForms/${formId}/registrations`))');
         expect(dbSource).toContain("console.error('Failed to access registration records for volunteer screening:', error);");
+    });
+
+    it('keeps every staff grant path behind the target-filtered registration query contract', () => {
+        const dbSource = fs.readFileSync('js/db.js', 'utf8');
+        const guardCall = 'await assertVolunteerScreeningClearedForTeamGrant(teamId,';
+
+        ['grantScorekeeperAccess', 'grantVideographerAccess', 'grantStreamScoreAccess', 'addTeamAdminEmail'].forEach((functionName) => {
+            const start = dbSource.indexOf(`export async function ${functionName}`);
+            expect(start, `${functionName} should be exported`).toBeGreaterThan(-1);
+            const nextExport = dbSource.indexOf('\nexport async function ', start + 1);
+            const functionSource = dbSource.slice(start, nextExport === -1 ? undefined : nextExport);
+            expect(functionSource).toContain(guardCall);
+        });
+
+        const screeningLoaderStart = dbSource.indexOf('async function listVolunteerScreeningRegistrationsForTeamGrantTarget');
+        const screeningLoaderEnd = dbSource.indexOf('\n\nasync function assertVolunteerScreeningClearedForTeamGrant', screeningLoaderStart);
+        const screeningLoaderSource = dbSource.slice(screeningLoaderStart, screeningLoaderEnd);
+        expect(screeningLoaderSource).toContain('getDocs(query(registrationsRef, where(fieldPath, \'==\', value)))');
+        expect(screeningLoaderSource).not.toContain('getDocs(collection(db, `teams/${normalizedTeamId}/registrationForms/${formId}/registrations`))');
     });
 });
