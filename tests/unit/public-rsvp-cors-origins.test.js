@@ -9,8 +9,9 @@ function extractAllowedOrigins(functionsSource) {
     expect(start, 'Expected writePublicRsvpCors to exist in functions/index.js').toBeGreaterThanOrEqual(0);
 
     const setStart = functionsSource.indexOf('new Set([', start);
-    const setEnd = functionsSource.indexOf('])', setStart);
     expect(setStart, 'Expected an allowedOrigins Set literal in writePublicRsvpCors').toBeGreaterThan(start);
+    const setEnd = functionsSource.indexOf('])', setStart);
+    expect(setEnd, 'Expected closing ]) for the allowedOrigins Set literal').toBeGreaterThan(setStart);
 
     const literal = functionsSource.slice(setStart + 'new Set(['.length, setEnd);
     return literal
@@ -24,6 +25,7 @@ describe('public RSVP CORS origins', () => {
 
     it('allows the production domain and Firebase Hosting default domains', () => {
         expect(origins).toContain('https://allplays.ai');
+        expect(origins).toContain('https://www.allplays.ai');
         expect(origins).toContain('https://game-flow-c6311.web.app');
         expect(origins).toContain('https://game-flow-c6311.firebaseapp.com');
     });
