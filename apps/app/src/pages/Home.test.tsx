@@ -301,6 +301,16 @@ const signedOutAuth: AuthState = {
   isParent: false
 };
 
+const secondSignedInAuth: AuthState = {
+  ...signedInAuth,
+  user: {
+    ...signedInAuth.user!,
+    uid: 'parent-2',
+    email: 'second-parent@example.com',
+    displayName: 'Second Parent'
+  } as AuthState['user']
+};
+
 function renderHome(auth: AuthState, initialEntry = '/home') {
   return render(
     <MemoryRouter initialEntries={[initialEntry]}>
@@ -365,6 +375,15 @@ describe('Home', () => {
     expect(homeServiceMocks.loadParentHomeSummaryBootstrap).not.toHaveBeenCalled();
   });
 
+  it('renders signed-out Today without waiting for parent or officials hydration', async () => {
+    renderHome(signedOutAuth);
+
+    expect(await screen.findByRole('heading', { name: 'Get linked to your player' })).toBeTruthy();
+    expect(screen.queryByText('Loading Home')).toBeNull();
+    expect(homeServiceMocks.loadParentHomeSummaryBootstrap).not.toHaveBeenCalled();
+    expect(scheduleServiceMocks.loadOfficialAssignmentsAccess).not.toHaveBeenCalled();
+  });
+
   it('resets to Today when navigation removes the Home section query param', async () => {
     render(
       <MemoryRouter initialEntries={['/home?section=feed']}>
@@ -426,17 +445,72 @@ describe('Home', () => {
     expect(screen.queryByText('Practice packets')).toBeNull();
   });
 
-  it('keeps officials access visible for first-run users with no linked players or teams', async () => {
+  it('defers the parent first-run card while secondary Home data is still pending', async () => {
+    homeServiceMocks.loadParentHomeSummaryBootstrap.mockResolvedValueOnce({ home: emptyHome, schedule: [] });
+    homeServiceMocks.loadParentHomeWithSecondaryData.mockImplementationOnce(() => new Promise(() => {}));
+
+    renderHome(signedInAuth);
+
+    await waitFor(() => {
+      expect(homeServiceMocks.loadParentHomeWithSecondaryData).toHaveBeenCalledTimes(1);
+    });
+    expect(screen.getByText('Loading Home')).toBeTruthy();
+    expect(screen.queryByRole('heading', { name: 'Get linked to your player' })).toBeNull();
+    expect(screen.queryByRole('link', { name: /Accept invite/i })).toBeNull();
+    expect(screen.queryByRole('link', { name: /Request player access/i })).toBeNull();
+  });
+
+  it('makes officials access primary for first-run users with no linked players or teams', async () => {
     homeServiceMocks.loadParentHomeSummaryBootstrap.mockResolvedValueOnce({ home: emptyHome, schedule: [] });
     homeServiceMocks.loadParentHomeWithSecondaryData.mockResolvedValueOnce(emptyHome);
     scheduleServiceMocks.loadOfficialAssignmentsAccess.mockResolvedValueOnce({ hasAccess: true, teamCount: 1 });
 
     renderHome(signedInAuth);
 
-    expect(await screen.findByRole('heading', { name: 'Get linked to your player' })).toBeTruthy();
     expect(await screen.findByRole('heading', { name: 'Manage assignments' })).toBeTruthy();
     expect(screen.getByRole('link', { name: /Officials Manage assignments/i }).getAttribute('href')).toBe('/officials');
     expect(screen.getByText('1 linked team')).toBeTruthy();
+    expect(screen.queryByRole('heading', { name: 'Get linked to your player' })).toBeNull();
+    expect(screen.getByText('Need to link a player?')).toBeTruthy();
+    expect(screen.getByRole('link', { name: /Accept invite/i }).getAttribute('href')).toBe('/accept-invite');
+    expect(screen.getByRole('link', { name: /Request player access/i }).getAttribute('href')).toBe('/parent-tools/access');
+  });
+
+  it('clears officials access while a new signed-in user is being checked', async () => {
+    homeServiceMocks.loadParentHomeSummaryBootstrap.mockResolvedValue({ home: emptyHome, schedule: [] });
+    homeServiceMocks.loadParentHomeWithSecondaryData.mockResolvedValue(emptyHome);
+    scheduleServiceMocks.loadOfficialAssignmentsAccess
+      .mockResolvedValueOnce({ hasAccess: true, teamCount: 1 })
+      .mockImplementationOnce(() => new Promise(() => {}));
+
+    const { rerender } = render(
+      <MemoryRouter initialEntries={['/home']}>
+        <Routes>
+          <Route path="/home" element={<Home auth={signedInAuth} />} />
+          <Route path="/officials" element={<div>Officials route</div>} />
+        </Routes>
+      </MemoryRouter>
+    );
+
+    expect(await screen.findByRole('heading', { name: 'Manage assignments' })).toBeTruthy();
+
+    rerender(
+      <MemoryRouter initialEntries={['/home']}>
+        <Routes>
+          <Route path="/home" element={<Home auth={secondSignedInAuth} />} />
+          <Route path="/officials" element={<div>Officials route</div>} />
+        </Routes>
+      </MemoryRouter>
+    );
+
+    await waitFor(() => {
+      expect(scheduleServiceMocks.loadOfficialAssignmentsAccess).toHaveBeenCalledTimes(2);
+    });
+    await waitFor(() => {
+      expect(screen.getByText('Loading Home')).toBeTruthy();
+    });
+    expect(screen.queryByRole('heading', { name: 'Manage assignments' })).toBeNull();
+    expect(screen.queryByRole('link', { name: /Officials Manage assignments/i })).toBeNull();
   });
 
   it('keeps the normal Today dashboard when at least one player or team is linked', async () => {
