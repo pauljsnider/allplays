@@ -1,8 +1,11 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
   preloadSearchRoute,
   resolveSearchRoutePreloader
 } from './searchRoutePreload';
+
+vi.mock('../pages/Home', () => ({}));
+vi.mock('../pages/RegistrationDetail', () => ({}));
 
 describe('searchRoutePreload', () => {
   it('matches query-string search routes by pathname while preserving navigation routes', async () => {
@@ -19,6 +22,21 @@ describe('searchRoutePreload', () => {
     expect(resolveSearchRoutePreloader('/teams/browse')).toBeTypeOf('function');
     expect(resolveSearchRoutePreloader('/players/team-1/player-1')).toBeTypeOf('function');
     expect(resolveSearchRoutePreloader('/help/parent-fees')).toBeTypeOf('function');
+  });
+
+  it('preloads protected parent registration details with the registration detail loader', async () => {
+    const registrationDetailPreloader = resolveSearchRoutePreloader('/registration');
+    const parentToolsPreloader = resolveSearchRoutePreloader('/parent-tools');
+
+    expect(resolveSearchRoutePreloader('/parent-tools/registrations/team-1/form-1')).toBe(registrationDetailPreloader);
+    expect(resolveSearchRoutePreloader('/parent-tools/registrations/team-1/form-1')).not.toBe(parentToolsPreloader);
+    await expect(preloadSearchRoute('/parent-tools/registrations/team-1/form-1?source=search')).resolves.toBe(true);
+  });
+
+  it('keeps parent registrations tab routes on the parent tools preloader', () => {
+    const parentToolsPreloader = resolveSearchRoutePreloader('/parent-tools');
+
+    expect(resolveSearchRoutePreloader('/parent-tools/registrations')).toBe(parentToolsPreloader);
   });
 
   it('does not match unknown routes after normalization', async () => {

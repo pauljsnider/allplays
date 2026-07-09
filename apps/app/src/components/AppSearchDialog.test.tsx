@@ -420,6 +420,38 @@ describe('AppSearchDialog', () => {
     expect(navigateMock).toHaveBeenCalledWith('/teams/team-2');
   });
 
+  it('preloads a parent registration detail search result before navigation', async () => {
+    const onClose = vi.fn();
+    searchAppPlayersMock.mockResolvedValueOnce([{
+      id: 'registration:team-1:form-1',
+      kind: 'player',
+      title: 'Spring registration',
+      subtitle: 'Rockets',
+      route: '/parent-tools/registrations/team-1/form-1',
+      teamId: 'team-1',
+      playerId: 'form-1',
+    }]);
+
+    render(
+      <MemoryRouter initialEntries={['/home']}>
+        <Routes>
+          <Route path="*" element={<AppSearchDialog auth={auth} open={true} onClose={onClose} />} />
+        </Routes>
+      </MemoryRouter>
+    );
+
+    fireEvent.change(screen.getByLabelText('Search teams, players, actions, help'), { target: { value: 'spring' } });
+    const registrationResult = await screen.findByRole('button', { name: /Spring registration/i });
+    fireEvent.click(registrationResult);
+
+    await waitFor(() => {
+      expect(preloadSearchRouteMock).toHaveBeenCalledWith('/parent-tools/registrations/team-1/form-1');
+    });
+    expect(preloadSearchRouteMock).toHaveBeenCalledTimes(1);
+    expect(navigateMock).toHaveBeenCalledWith('/parent-tools/registrations/team-1/form-1');
+    expect(preloadSearchRouteMock.mock.invocationCallOrder[0]).toBeLessThan(navigateMock.mock.invocationCallOrder[0]);
+  });
+
   it('starts loading accessible teams on open and reuses that warm load for the first query', async () => {
     const onClose = vi.fn();
 
