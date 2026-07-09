@@ -10,6 +10,13 @@ function canReadTeamMediaObject({ authUid, isTeamAdmin = false, isTeamParent = f
     return isTeamParent && folderExists && folderVisibility === 'team';
 }
 
+function canDeleteTeamMediaObject({ authUid, pathUserId, isTeamAdmin = false, isTeamParent = false, folderExists = true, folderVisibility = 'team' }) {
+    return authUid !== null &&
+        (isTeamAdmin ||
+            (authUid === pathUserId &&
+                canReadTeamMediaObject({ authUid, isTeamParent, folderExists, folderVisibility })));
+}
+
 describe('team media page wiring', () => {
     it('links the dashboard to the team media library', () => {
         const dashboard = fs.readFileSync(path.join(repoRoot, 'dashboard.html'), 'utf8');
@@ -86,14 +93,20 @@ describe('team media page wiring', () => {
         expect(storageRules).toContain('canUploadTeamMediaFolder(teamId, folderId)');
         expect(storageRules).toContain('isAllowedTeamMediaUploadType(request.resource.contentType)');
         expect(storageRules).toContain('application/pdf');
-        expect(storageRules).toContain('allow delete: if isTeamOwnerOrAdmin(teamId) || request.auth.uid == userId;');
+        expect(storageRules).toContain('function canDeleteOwnTeamMediaObject(teamId, folderId, userId)');
+        expect(storageRules).toContain('allow delete: if isTeamOwnerOrAdmin(teamId) ||\n        canDeleteOwnTeamMediaObject(teamId, folderId, userId);');
+        expect(storageRules).not.toContain('allow delete: if isTeamOwnerOrAdmin(teamId) || request.auth.uid == userId;');
     });
 
-    it('denies parent reads for private team-media objects while preserving admin access', () => {
+    it('denies revoked or private-folder uploader deletes while preserving current uploader and admin cleanup', () => {
         expect(canReadTeamMediaObject({ authUid: 'parent-1', isTeamParent: true, folderVisibility: 'team' })).toBe(true);
         expect(canReadTeamMediaObject({ authUid: 'parent-1', isTeamParent: true, folderVisibility: 'private' })).toBe(false);
         expect(canReadTeamMediaObject({ authUid: 'parent-1', isTeamParent: true, folderExists: false })).toBe(false);
         expect(canReadTeamMediaObject({ authUid: 'admin-1', isTeamAdmin: true, folderVisibility: 'private' })).toBe(true);
+        expect(canDeleteTeamMediaObject({ authUid: 'parent-1', pathUserId: 'parent-1', isTeamParent: true })).toBe(true);
+        expect(canDeleteTeamMediaObject({ authUid: 'parent-1', pathUserId: 'parent-1', isTeamParent: false })).toBe(false);
+        expect(canDeleteTeamMediaObject({ authUid: 'parent-1', pathUserId: 'parent-1', isTeamParent: true, folderVisibility: 'private' })).toBe(false);
+        expect(canDeleteTeamMediaObject({ authUid: 'admin-1', pathUserId: 'parent-1', isTeamAdmin: true, folderVisibility: 'private' })).toBe(true);
     });
 
     it('models moved media as inaccessible to parents once the old team-visible object is gone', () => {

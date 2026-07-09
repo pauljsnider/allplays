@@ -45,8 +45,17 @@ function canCreateScopedFallback({ authUid, pathUserId, conversationId = 'team',
     return canAccessChatAttachment({ authUid, conversationId, isTeamAdmin, isTeamParent, isParticipant }) && authUid === pathUserId;
 }
 
-function canDeleteScopedFallback({ authUid, pathUserId, isTeamAdmin = false }) {
-    return authUid !== null && (isTeamAdmin || authUid === pathUserId);
+function canDeleteChatFallback({ authUid, pathUserId, conversationId = 'team', isTeamAdmin = false, isTeamParent = false, isParticipant = false }) {
+    return authUid !== null &&
+        (isTeamAdmin ||
+            (authUid === pathUserId &&
+                canAccessChatAttachment({ authUid, conversationId, isTeamParent, isParticipant })));
+}
+
+function canDeleteTeamScopedFallback({ authUid, pathUserId, isTeamAdmin = false, isTeamParent = false }) {
+    return authUid !== null &&
+        (isTeamAdmin ||
+            (authUid === pathUserId && canAccessTeamMedia({ authUid, isTeamParent })));
 }
 
 function canAccessLegacyGameClipFallback({ authUid }) {
@@ -71,15 +80,18 @@ describe('fallback media paths and Storage rules', () => {
         expect(dbSource).toContain('buildGameClipFallbackPath(teamId, gameId, userId, file.name, ts)');
     });
 
-    it('limits fallback chat media access to the same team audience and uploader/admin delete rights', () => {
+    it('limits fallback chat media access to the same team audience and current uploader/admin delete rights', () => {
         expect(chatFallbackRules).toContain('allow get: if canAccessChatAttachment(teamId, conversationId);');
         expect(rules).toContain("('user:' + request.auth.uid) in participantIds");
         expect(rules).toContain("('email:' + request.auth.token.email.lower()) in participantIds");
         expect(chatFallbackRules).toContain('request.auth.uid == userId');
         expect(chatFallbackRules).toContain('isAllowedChatAttachmentUpload(request.resource.contentType, request.resource.size);');
-        expect(chatFallbackRules).toContain('allow delete: if isTeamOwnerOrAdmin(teamId) || request.auth.uid == userId;');
+        expect(rules).toContain('function canDeleteOwnChatAttachment(teamId, conversationId, userId)');
+        expect(chatFallbackRules).toContain('allow delete: if isTeamOwnerOrAdmin(teamId) ||\n        canDeleteOwnChatAttachment(teamId, conversationId, userId);');
+        expect(chatFallbackRules).not.toContain('allow delete: if isTeamOwnerOrAdmin(teamId) || request.auth.uid == userId;');
         expect(legacyChatFallbackRules).toContain('allow get: if isTeamOwnerOrAdmin(teamId) || request.auth.uid == userId;');
         expect(legacyChatFallbackRules).toContain('allow create: if false;');
+        expect(legacyChatFallbackRules).toContain('allow delete: if isTeamOwnerOrAdmin(teamId) ||\n        canDeleteOwnTeamScopedUpload(teamId, userId);');
 
         expect(canAccessTeamMedia({ authUid: 'coach-1', isTeamAdmin: true })).toBe(true);
         expect(canAccessTeamMedia({ authUid: 'parent-1', isTeamParent: true })).toBe(true);
@@ -91,8 +103,12 @@ describe('fallback media paths and Storage rules', () => {
         expect(canCreateScopedFallback({ authUid: 'parent-1', pathUserId: 'parent-1', conversationId: 'direct-1', isTeamParent: true, isParticipant: true })).toBe(true);
         expect(canCreateScopedFallback({ authUid: 'parent-1', pathUserId: 'parent-1', conversationId: 'direct-1', isTeamParent: true })).toBe(false);
         expect(canCreateScopedFallback({ authUid: 'parent-2', pathUserId: 'parent-1', isTeamParent: true })).toBe(false);
-        expect(canDeleteScopedFallback({ authUid: 'coach-1', pathUserId: 'parent-1', isTeamAdmin: true })).toBe(true);
-        expect(canDeleteScopedFallback({ authUid: 'parent-2', pathUserId: 'parent-1' })).toBe(false);
+        expect(canDeleteChatFallback({ authUid: 'coach-1', pathUserId: 'parent-1', isTeamAdmin: true })).toBe(true);
+        expect(canDeleteChatFallback({ authUid: 'parent-1', pathUserId: 'parent-1', isTeamParent: true })).toBe(true);
+        expect(canDeleteChatFallback({ authUid: 'parent-1', pathUserId: 'parent-1', isTeamParent: false })).toBe(false);
+        expect(canDeleteChatFallback({ authUid: 'parent-1', pathUserId: 'parent-1', conversationId: 'direct-1', isTeamParent: true })).toBe(false);
+        expect(canDeleteChatFallback({ authUid: 'parent-1', pathUserId: 'parent-1', conversationId: 'direct-1', isTeamParent: true, isParticipant: true })).toBe(true);
+        expect(canDeleteChatFallback({ authUid: 'parent-2', pathUserId: 'parent-1', isTeamParent: true })).toBe(false);
     });
 
     it('restricts fallback chat creates to image/video uploads no larger than 5 MB', () => {
@@ -140,28 +156,36 @@ describe('fallback media paths and Storage rules', () => {
     it('denies unrelated signed-in users from scoped game clip reads and deletes', () => {
         expect(clipFallbackRules).toContain('allow get: if canAccessTeamMedia(teamId);');
         expect(clipFallbackRules).toContain("request.resource.contentType.matches('video/.*')");
-        expect(clipFallbackRules).toContain('allow delete: if isTeamOwnerOrAdmin(teamId) || request.auth.uid == userId;');
+        expect(clipFallbackRules).toContain('allow delete: if isTeamOwnerOrAdmin(teamId) ||\n        canDeleteOwnTeamScopedUpload(teamId, userId);');
+        expect(clipFallbackRules).not.toContain('allow delete: if isTeamOwnerOrAdmin(teamId) || request.auth.uid == userId;');
 
         expect(canAccessTeamMedia({ authUid: 'coach-1', isTeamAdmin: true })).toBe(true);
         expect(canAccessTeamMedia({ authUid: 'outsider-1' })).toBe(false);
-        expect(canDeleteScopedFallback({ authUid: 'uploader-1', pathUserId: 'uploader-1' })).toBe(true);
-        expect(canDeleteScopedFallback({ authUid: 'outsider-1', pathUserId: 'uploader-1' })).toBe(false);
+        expect(canDeleteTeamScopedFallback({ authUid: 'uploader-1', pathUserId: 'uploader-1', isTeamParent: true })).toBe(true);
+        expect(canDeleteTeamScopedFallback({ authUid: 'uploader-1', pathUserId: 'uploader-1', isTeamParent: false })).toBe(false);
+        expect(canDeleteTeamScopedFallback({ authUid: 'outsider-1', pathUserId: 'uploader-1', isTeamParent: true })).toBe(false);
     });
 
-    it('limits stat sheet and drill fallback access to team-scoped readers and uploader/admin writes', () => {
+    it('limits stat sheet and drill fallback access to team-scoped readers and current uploader/admin writes', () => {
         expect(statSheetFallbackRules).toContain('allow get: if canAccessTeamMedia(teamId);');
         expect(statSheetFallbackRules).toContain('request.auth.uid == userId');
-        expect(statSheetFallbackRules).toContain('allow delete: if isTeamOwnerOrAdmin(teamId) || request.auth.uid == userId;');
+        expect(rules).toContain('function canDeleteOwnTeamScopedUpload(teamId, userId)');
+        expect(statSheetFallbackRules).toContain('allow delete: if isTeamOwnerOrAdmin(teamId) ||\n        canDeleteOwnTeamScopedUpload(teamId, userId);');
+        expect(statSheetFallbackRules).not.toContain('allow delete: if isTeamOwnerOrAdmin(teamId) || request.auth.uid == userId;');
 
         expect(drillFallbackRules).toContain('allow get: if canAccessTeamMedia(teamId);');
         expect(drillFallbackRules).toContain('drillId.size() > 0');
         expect(drillFallbackRules).toContain('request.auth.uid == userId');
-        expect(drillFallbackRules).toContain('allow delete: if isTeamOwnerOrAdmin(teamId) || request.auth.uid == userId;');
+        expect(drillFallbackRules).toContain('allow delete: if isTeamOwnerOrAdmin(teamId) ||\n        canDeleteOwnTeamScopedUpload(teamId, userId);');
+        expect(drillFallbackRules).not.toContain('allow delete: if isTeamOwnerOrAdmin(teamId) || request.auth.uid == userId;');
 
         expect(canAccessTeamMedia({ authUid: 'coach-1', isTeamAdmin: true })).toBe(true);
         expect(canAccessTeamMedia({ authUid: 'outsider-1' })).toBe(false);
         expect(canCreateScopedFallback({ authUid: 'scorekeeper-1', pathUserId: 'scorekeeper-1', isTeamParent: true })).toBe(true);
         expect(canCreateScopedFallback({ authUid: 'outsider-1', pathUserId: 'scorekeeper-1' })).toBe(false);
+        expect(canDeleteTeamScopedFallback({ authUid: 'scorekeeper-1', pathUserId: 'scorekeeper-1', isTeamParent: true })).toBe(true);
+        expect(canDeleteTeamScopedFallback({ authUid: 'scorekeeper-1', pathUserId: 'scorekeeper-1', isTeamParent: false })).toBe(false);
+        expect(canDeleteTeamScopedFallback({ authUid: 'coach-1', pathUserId: 'scorekeeper-1', isTeamAdmin: true })).toBe(true);
     });
 
     it('hard-denies legacy flat stat sheet and game clip access', () => {
