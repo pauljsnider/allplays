@@ -29,7 +29,9 @@ describe('registration review helpers', () => {
                     jerseyNumber: '12',
                     customFields: {
                         waiver: true,
-                        medicalInfo: 'do not copy'
+                        medicalInfo: 'do not copy',
+                        contacts: [{ email: 'private@example.com' }],
+                        contactPhone: '555-1111'
                     }
                 },
                 guardians: [
