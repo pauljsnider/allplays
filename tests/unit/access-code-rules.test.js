@@ -83,7 +83,8 @@ describe('access code Firestore rules', () => {
     it('excludes admin_invite documents from generic used-field redemption updates', () => {
         expect(accessCodeRules).toContain('isStandardAccessCodeRedemptionUpdate()');
         expect(standardCodeRedemptionRule).toContain("let codeType = resource.data.get('type', 'standard');");
-        expect(standardCodeRedemptionRule).toContain("(codeType == 'standard' || codeType == null)");
+        expect(standardCodeRedemptionRule).toContain("return codeType == 'standard' &&");
+        expect(standardCodeRedemptionRule).not.toContain('codeType == null');
         expect(standardCodeRedemptionRule).toContain("request.resource.data.diff(resource.data).affectedKeys().hasOnly(['used', 'usedBy', 'usedAt'])");
         expect(standardCodeRedemptionRule).toContain('resource.data.used == false');
         expect(standardCodeRedemptionRule).toContain("resource.data.get('status', 'active') != 'revoked'");

@@ -57,6 +57,7 @@ const dbMocks = vi.hoisted(() => ({
     listMyParentMembershipRequests: vi.fn(),
     markAccessCodeAsUsed: vi.fn(),
     redeemAdminInviteAtomically: vi.fn(),
+    redeemCoParentInvite: vi.fn(),
     redeemHouseholdInvite: vi.fn(),
     redeemParentInvite: vi.fn(),
     updateTeam: vi.fn(),
@@ -318,5 +319,27 @@ describe('React app native Google auth', () => {
             nativeAuthToken: 'firebase-id-token'
         });
         expect(dbMocks.markAccessCodeAsUsed).toHaveBeenCalledWith('native-code', 'native-google-user');
+    });
+
+    it('redeems co-parent invites during React app Google signup instead of generic code consumption', async () => {
+        mockFirebaseAuthRest({ isNewUser: true });
+        dbMocks.validateAccessCode.mockResolvedValue({
+            valid: true,
+            codeId: 'coparent-code',
+            type: 'coparent_invite',
+            data: { code: 'COPO1234' }
+        });
+        dbMocks.redeemCoParentInvite.mockResolvedValue({ success: true });
+        dbMocks.updateUserProfile.mockResolvedValue(undefined);
+        const { signInWithGoogleAccount } = await loadAuthService();
+
+        await signInWithGoogleAccount('copo1234');
+
+        expect(dbMocks.redeemCoParentInvite).toHaveBeenCalledWith(
+            'native-google-user',
+            'COPO1234',
+            'parent@example.com'
+        );
+        expect(dbMocks.markAccessCodeAsUsed).not.toHaveBeenCalled();
     });
 });

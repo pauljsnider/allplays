@@ -156,7 +156,7 @@ service cloud.firestore {
 
     function isStandardAccessCodeRedemptionUpdate() {
       let codeType = resource.data.get('type', 'standard');
-      return (codeType == 'standard' || codeType == null) &&
+      return codeType == 'standard' &&
              request.resource.data.diff(resource.data).affectedKeys().hasOnly(['used', 'usedBy', 'usedAt']) &&
              resource.data.used == false &&
              resource.data.get('revoked', false) != true &&
