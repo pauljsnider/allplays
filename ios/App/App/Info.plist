@@ -36,13 +36,13 @@
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
 	<key>NSCameraUsageDescription</key>
-	<string>ALL PLAYS uses the camera when you choose to take a new profile photo.</string>
+	<string>ALL PLAYS uses the camera to capture profile photos and game-day stat sheet photos.</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>ALL PLAYS uses the microphone when you choose to dictate a message.</string>
 	<key>NSPhotoLibraryAddUsageDescription</key>
 	<string>ALL PLAYS saves selected photos only when you ask it to.</string>
 	<key>NSPhotoLibraryUsageDescription</key>
-	<string>ALL PLAYS needs photo library access so you can choose a profile image.</string>
+	<string>ALL PLAYS uses photo library access to choose profile images and game-day stat sheet photos.</string>
 	<key>NSSpeechRecognitionUsageDescription</key>
 	<string>ALL PLAYS uses speech recognition when you choose to dictate a message.</string>
 	<key>UILaunchStoryboardName</key>
