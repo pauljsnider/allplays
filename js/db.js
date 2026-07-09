@@ -196,7 +196,7 @@ import {
     matchesRegistrationReviewStatus,
     normalizeRegistrationStatus,
     summarizeRegistration
-} from './registration-review.js?v=3';
+} from './registration-review.js?v=6';
 import {
     assertVolunteerScreeningCleared,
     loadVolunteerScreeningTargetRegistrations

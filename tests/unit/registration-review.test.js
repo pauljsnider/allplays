@@ -266,6 +266,19 @@ describe('registration review helpers', () => {
         expect(editRosterPage).toContain('Mark accepted');
     });
 
+    it('busts the registration approval import chain when sensitive contact aliases change', () => {
+        const editRosterPage = fs.readFileSync('edit-roster.html', 'utf8');
+        const dbSource = fs.readFileSync('js/db.js', 'utf8');
+
+        const editRosterDbImport = editRosterPage.match(/approveTeamRegistration[\s\S]*from '\.\/js\/db\.js\?v=(\d+)'/);
+        const dbRegistrationReviewImport = dbSource.match(/from '\.\/registration-review\.js\?v=(\d+)'/);
+
+        expect(editRosterDbImport, 'edit-roster approveTeamRegistration db.js import').toBeTruthy();
+        expect(Number(editRosterDbImport[1])).toBeGreaterThanOrEqual(85);
+        expect(dbRegistrationReviewImport, 'db.js registration-review import').toBeTruthy();
+        expect(Number(dbRegistrationReviewImport[1])).toBeGreaterThanOrEqual(6);
+    });
+
     it('flattens registration reviews for CSV export', () => {
         const submittedAt = new Date('2026-05-23T12:00:00.000Z');
         const row = flattenRegistrationReviewForCsv({
