@@ -1,8 +1,11 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
   preloadSearchRoute,
   resolveSearchRoutePreloader
 } from './searchRoutePreload';
+
+vi.mock('../pages/Home', () => ({}));
+vi.mock('../pages/RegistrationDetail', () => ({}));
 
 describe('searchRoutePreload', () => {
   it('matches query-string search routes by pathname while preserving navigation routes', async () => {
