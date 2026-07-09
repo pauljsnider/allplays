@@ -22,6 +22,8 @@ const teamsCacheTtlMs = 10 * 60 * 1000;
 const playerSearchQueryLimit = playerSearchResultLimit;
 const playerSearchTeamLimit = 8;
 const teamSearchQueryLimit = 20;
+const playerSearchCacheMaxEntries = 40;
+const publicTeamSearchCacheMaxEntries = 40;
 
 let cachedTeams: AppSearchTeam[] | null = null;
 let cachedTeamsLoadedAt = 0;
@@ -30,6 +32,10 @@ let cachedTeamsPromise: Promise<AppSearchTeam[]> | null = null;
 let cachedTeamsPromiseUserKey = '';
 const playerSearchCache = new Map<string, PlayerSearchCacheEntry>();
 const publicTeamSearchCache = new Map<string, PublicTeamSearchCacheEntry>();
+
+type BoundedSearchCacheEntry = {
+  promise?: Promise<unknown>;
+};
 
 type PlayerSearchCacheEntry = {
   scopeKey: string;
@@ -411,7 +417,10 @@ export async function searchAppPlayers(queryText: string, teamsById: Map<string,
   const cacheKey = `${scopeKey}::${normalizedQuery}`;
   const cachedEntry = playerSearchCache.get(cacheKey);
 
-  if (cachedEntry?.players) return cachedEntry.players;
+  if (cachedEntry?.players) {
+    markSearchCacheEntryRecentlyUsed(playerSearchCache, cacheKey, cachedEntry);
+    return cachedEntry.players;
+  }
   if (cachedEntry?.promise) return cachedEntry.promise;
 
   if (!isNumeric) {
@@ -424,14 +433,14 @@ export async function searchAppPlayers(queryText: string, teamsById: Map<string,
   const playerSearchPromise = loadPlayerSearchDocs(rawQuery, prefixes, isNumeric, teamsById)
     .then(({ docs, exhaustiveForNarrowerQueries }) => {
       const players = buildAppSearchPlayersFromDocs(docs, teamsById, user, tokens);
-      playerSearchCache.set(cacheKey, {
+      setBoundedCompletedSearchCacheEntry(playerSearchCache, cacheKey, {
         scopeKey,
         normalizedQuery,
         isNumeric,
         players,
         sourceDocs: docs,
         exhaustiveForNarrowerQueries
-      });
+      }, playerSearchCacheMaxEntries);
       return players;
     })
     .catch((error) => {
@@ -461,21 +470,24 @@ export function getCachedAppPlayerSearchResults(queryText: string, teamsById: Ma
   const scopeKey = getPlayerSearchScopeKey(teamsById, user);
   const cacheKey = `${scopeKey}::${normalizedQuery}`;
   const cachedEntry = playerSearchCache.get(cacheKey);
-  if (cachedEntry?.players) return cachedEntry.players;
+  if (cachedEntry?.players) {
+    markSearchCacheEntryRecentlyUsed(playerSearchCache, cacheKey, cachedEntry);
+    return cachedEntry.players;
+  }
 
   const cachedPrefixEntry = findReusablePlayerSearchCacheEntry(scopeKey, normalizedQuery);
   if (!cachedPrefixEntry?.sourceDocs) return null;
 
   const tokens = splitSearchTokens(rawQuery);
   const players = buildAppSearchPlayersFromDocs(cachedPrefixEntry.sourceDocs, teamsById, user, tokens);
-  playerSearchCache.set(cacheKey, {
+  setBoundedCompletedSearchCacheEntry(playerSearchCache, cacheKey, {
     scopeKey,
     normalizedQuery,
     isNumeric: false,
     players,
     sourceDocs: cachedPrefixEntry.sourceDocs,
     exhaustiveForNarrowerQueries: true
-  });
+  }, playerSearchCacheMaxEntries);
   return players;
 }
 
@@ -587,13 +599,16 @@ async function getCachedPublicTeamSearchResults(queryText: string, user: AuthUse
   const cacheKey = `${getAppSearchUserCacheKey(user)}::${normalizedQuery}`;
   const cachedEntry = publicTeamSearchCache.get(cacheKey);
 
-  if (cachedEntry?.teams) return cachedEntry.teams;
+  if (cachedEntry?.teams) {
+    markSearchCacheEntryRecentlyUsed(publicTeamSearchCache, cacheKey, cachedEntry);
+    return cachedEntry.teams;
+  }
   if (cachedEntry?.promise) return cachedEntry.promise;
 
   const promise = getPublicTeamsPage({ searchText: queryText, pageSize: teamSearchQueryLimit })
     .then((result) => {
       const teams = normalizePublicTeamSearchResults(result?.teams || []);
-      publicTeamSearchCache.set(cacheKey, { teams });
+      setBoundedCompletedSearchCacheEntry(publicTeamSearchCache, cacheKey, { teams }, publicTeamSearchCacheMaxEntries);
       return teams;
     })
     .catch((error) => {
@@ -603,6 +618,34 @@ async function getCachedPublicTeamSearchResults(queryText: string, user: AuthUse
 
   publicTeamSearchCache.set(cacheKey, { promise });
   return promise;
+}
+
+function markSearchCacheEntryRecentlyUsed<T extends BoundedSearchCacheEntry>(cache: Map<string, T>, key: string, entry: T) {
+  if (entry.promise) return;
+  cache.delete(key);
+  cache.set(key, entry);
+}
+
+function setBoundedCompletedSearchCacheEntry<T extends BoundedSearchCacheEntry>(cache: Map<string, T>, key: string, entry: T, maxCompletedEntries: number) {
+  cache.set(key, entry);
+  evictOldestCompletedSearchCacheEntries(cache, maxCompletedEntries);
+}
+
+function evictOldestCompletedSearchCacheEntries<T extends BoundedSearchCacheEntry>(cache: Map<string, T>, maxCompletedEntries: number) {
+  let completedEntries = 0;
+
+  for (const entry of cache.values()) {
+    if (!entry.promise) completedEntries += 1;
+  }
+
+  if (completedEntries <= maxCompletedEntries) return;
+
+  for (const [key, entry] of cache.entries()) {
+    if (entry.promise) continue;
+    cache.delete(key);
+    completedEntries -= 1;
+    if (completedEntries <= maxCompletedEntries) return;
+  }
 }
 
 async function mergeParentHomeSearchTeams(teamsById: Map<string, AppSearchTeam>, homeTeams: any[], user: AuthUser | null) {
