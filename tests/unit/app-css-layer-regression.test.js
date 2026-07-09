@@ -7,6 +7,8 @@ const indexCss = readFileSync(
     'utf8'
 );
 
+const cssWithoutComments = indexCss.replace(/\/\*[\s\S]*?\*\//g, '');
+
 // Tailwind v4 emits utilities inside a real `@layer utilities`. Any unlayered
 // element-level rule in app CSS outranks every utility regardless of
 // specificity — an unlayered `button { font: inherit }` silently disabled all
@@ -15,7 +17,6 @@ describe('app CSS cascade layers', () => {
     it('keeps element-level resets inside @layer base', () => {
         expect(indexCss).toContain('@layer base');
 
-        const cssWithoutComments = indexCss.replace(/\/\*[\s\S]*?\*\//g, '');
         const unlayeredTopLevelElementRules = [];
         let depth = 0;
         let buffer = '';
@@ -38,6 +39,22 @@ describe('app CSS cascade layers', () => {
         }
 
         expect(unlayeredTopLevelElementRules).toEqual([]);
+    });
+
+    it('keeps the mobile form-control anti-zoom rule above base-layer resets', () => {
+        const baseLayerIndex = cssWithoutComments.indexOf('@layer base');
+        const utilitiesLayerIndex = cssWithoutComments.indexOf('@layer utilities');
+        if (baseLayerIndex === -1 || utilitiesLayerIndex === -1) {
+            throw new Error('Expected app CSS to define base and utilities layers.');
+        }
+
+        expect(utilitiesLayerIndex).toBeGreaterThan(baseLayerIndex);
+
+        const baseLayerCss = cssWithoutComments.slice(baseLayerIndex, utilitiesLayerIndex);
+        const utilitiesLayerCss = cssWithoutComments.slice(utilitiesLayerIndex);
+        const mobileFormControlRule = /@media\s*\(max-width:\s*767px\)\s*\{\s*input\s*,\s*select\s*,\s*textarea\s*\{\s*font-size:\s*16px\s*;/;
+        expect(baseLayerCss).not.toMatch(mobileFormControlRule);
+        expect(utilitiesLayerCss).toMatch(mobileFormControlRule);
     });
 
     it('scopes compact team-row icon sizing to the quick-link class', () => {

@@ -34,17 +34,19 @@
     background: linear-gradient(135deg, #f9fafb 0%, #f3f4f6 100%);
   }
 
+  a {
+    color: inherit;
+    text-decoration: none;
+  }
+}
+
+@layer utilities {
   @media (max-width: 767px) {
     input,
     select,
     textarea {
       font-size: 16px;
     }
-  }
-
-  a {
-    color: inherit;
-    text-decoration: none;
   }
 }
 
