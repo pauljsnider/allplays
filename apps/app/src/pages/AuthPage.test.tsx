@@ -12,9 +12,6 @@ const authServiceMocks = vi.hoisted(() => ({
     if (!user) {
       return '/auth';
     }
-    if (user.isAdmin || user.roles.includes('coach') || user.roles.includes('admin') || user.roles.includes('platformAdmin')) {
-      return '/teams';
-    }
     return '/home';
   }),
   hydrateFirebaseUser: vi.fn(),
@@ -80,7 +77,7 @@ describe('AuthPage native post-login routing', () => {
     cleanup();
   });
 
-  it('reloads native email sign-in to the coach/admin teams dashboard', async () => {
+  it('reloads native email sign-in to the home page', async () => {
     authServiceMocks.signInWithEmail.mockResolvedValue({
       user: { uid: 'coach-1', email: 'coach@example.com' },
       nativeRest: true
@@ -97,11 +94,11 @@ describe('AuthPage native post-login routing', () => {
     fireEvent.click(screen.getAllByRole('button', { name: 'Sign in' })[1]);
 
     await waitFor(() => expect(authServiceMocks.signInWithEmail).toHaveBeenCalledWith('coach@example.com', 'password123'));
-    await waitFor(() => expect(window.location.hash).toBe('#/teams'));
+    await waitFor(() => expect(window.location.hash).toBe('#/home'));
     expect(window.location.reload).toHaveBeenCalledTimes(1);
   });
 
-  it('reloads native Google sign-in to the coach/admin teams dashboard', async () => {
+  it('reloads native Google sign-in to the home page', async () => {
     authServiceMocks.signInWithGoogleAccount.mockResolvedValue({
       user: { uid: 'admin-1', email: 'admin@example.com' },
       nativeRest: true
@@ -116,7 +113,7 @@ describe('AuthPage native post-login routing', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Continue with Google' }));
 
     await waitFor(() => expect(authServiceMocks.signInWithGoogleAccount).toHaveBeenCalledWith(null));
-    await waitFor(() => expect(window.location.hash).toBe('#/teams'));
+    await waitFor(() => expect(window.location.hash).toBe('#/home'));
     expect(window.location.reload).toHaveBeenCalledTimes(1);
   });
 });
