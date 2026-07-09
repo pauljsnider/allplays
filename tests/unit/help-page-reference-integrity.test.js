@@ -75,6 +75,10 @@ describe('help page reference integrity', () => {
             features: 'Publish games and practices, refresh linked registration schedules, and launch game-day tools',
             roles: 'Coach, Admin'
         });
+        expect(referenceRows.find((row) => row.file === 'workflow-track-game.html')).toMatchObject({
+            features: 'Track a game from mode selection through finish and publish an accurate game report',
+            roles: 'Coach, Admin, Scorekeeper'
+        });
     });
 
     it('keeps the generated app help index fresh with the page reference matrix', () => {
