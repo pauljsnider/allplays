@@ -80,7 +80,7 @@ vi.mock('./logger', () => ({
   })
 }));
 
-import { hydrateFirebaseUser, observeFirebaseUser, signInWithEmail, signOut } from './authService';
+import { getRouteForUser, hydrateFirebaseUser, observeFirebaseUser, signInWithEmail, signOut } from './authService';
 
 describe('hydrateFirebaseUser', () => {
   beforeEach(() => {
@@ -235,6 +235,19 @@ describe('observeFirebaseUser', () => {
     emit({ uid: 'user-a' });
     emit({ uid: 'user-a' });
     expect(appDataCacheMocks.clearAppDataCache).not.toHaveBeenCalled();
+  });
+});
+
+describe('getRouteForUser', () => {
+  it('routes signed-out users to auth', () => {
+    expect(getRouteForUser(null)).toBe('/auth');
+  });
+
+  it('routes every signed-in user to home, including coaches and admins', () => {
+    const baseUser = { uid: 'user-1', email: 'user@example.com', displayName: 'User', emailVerified: true };
+    expect(getRouteForUser({ ...baseUser, isAdmin: false, roles: [] } as never)).toBe('/home');
+    expect(getRouteForUser({ ...baseUser, isAdmin: false, roles: ['coach'] } as never)).toBe('/home');
+    expect(getRouteForUser({ ...baseUser, isAdmin: true, roles: ['admin', 'platformAdmin'] } as never)).toBe('/home');
   });
 });
 

@@ -517,7 +517,7 @@ export function TeamDetail({ auth }: { auth: AuthState }) {
                   <Icon className="h-5 w-5" aria-hidden="true" />
                   {badge > 0 ? <span className={`absolute -right-2 -top-1 min-w-4 rounded-full px-1 text-center text-[9px] leading-4 ${selected ? 'bg-white text-primary-700' : 'bg-primary-600 text-white'}`}>{badge > 9 ? '9+' : badge}</span> : null}
                 </span>
-                <span className="truncate">{tab.label}</span>
+                <span className="max-w-full truncate">{tab.label}</span>
               </button>
             );
           })}

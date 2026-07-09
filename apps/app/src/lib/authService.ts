@@ -1340,10 +1340,6 @@ export function getRouteForUser(user: AuthUser | null) {
     return '/auth';
   }
 
-  if (user.isAdmin || user.roles.includes('coach') || user.roles.includes('admin') || user.roles.includes('platformAdmin')) {
-    return '/teams';
-  }
-
   return '/home';
 }
 
