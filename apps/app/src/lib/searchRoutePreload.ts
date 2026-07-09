@@ -1,3 +1,6 @@
+const parentToolsPreloader = () => import('../pages/ParentTools');
+const registrationDetailPreloader = () => import('../pages/RegistrationDetail');
+
 const routePreloaders: Array<{ pattern: RegExp; load: () => Promise<unknown> }> = [
   { pattern: /^\/home$/, load: () => import('../pages/Home') },
   { pattern: /^\/schedule$/, load: () => import('../pages/Schedule') },
@@ -9,7 +12,8 @@ const routePreloaders: Array<{ pattern: RegExp; load: () => Promise<unknown> }> 
   { pattern: /^\/teams\/[^/]+\/edit$/, load: () => import('../pages/TeamSettings') },
   { pattern: /^\/teams\/[^/]+\/fees(?:\/[^/]+)?$/, load: () => import('../pages/TeamFees') },
   { pattern: /^\/teams\/[^/]+\/media$/, load: () => import('../pages/TeamMedia') },
-  { pattern: /^\/parent-tools(?:\/[^/]+(?:\/[^/]+\/[^/]+)?)?$/, load: () => import('../pages/ParentTools') },
+  { pattern: /^\/parent-tools\/registrations\/[^/]+\/[^/]+$/, load: registrationDetailPreloader },
+  { pattern: /^\/parent-tools(?:\/[^/]+)?$/, load: parentToolsPreloader },
   { pattern: /^\/players(?:\/[^/]+){1,2}$/, load: () => import('../pages/PlayerDetail') },
   { pattern: /^\/games\/[^/]+$/, load: () => import('../pages/GameDetail') },
   { pattern: /^\/help(?:\/[^/]+)?$/, load: async () => {
@@ -18,7 +22,7 @@ const routePreloaders: Array<{ pattern: RegExp; load: () => Promise<unknown> }> 
   { pattern: /^\/profile$/, load: () => import('../pages/Profile') },
   { pattern: /^\/ai$/, load: () => import('../pages/PrivateAiChat') },
   { pattern: /^\/capabilities\/[^/]+$/, load: () => import('../pages/CapabilityPage') },
-  { pattern: /^\/registration$/, load: () => import('../pages/RegistrationDetail') },
+  { pattern: /^\/registration$/, load: registrationDetailPreloader },
   { pattern: /^\/accept-invite$/, load: () => import('../pages/AcceptInvite') },
   { pattern: /^\/verify-pending$/, load: () => import('../pages/VerifyPending') },
   { pattern: /^\/reset-password$/, load: () => import('../pages/ResetPassword') },

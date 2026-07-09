@@ -21,6 +21,21 @@ describe('searchRoutePreload', () => {
     expect(resolveSearchRoutePreloader('/help/parent-fees')).toBeTypeOf('function');
   });
 
+  it('preloads protected parent registration details with the registration detail loader', async () => {
+    const registrationDetailPreloader = resolveSearchRoutePreloader('/registration');
+    const parentToolsPreloader = resolveSearchRoutePreloader('/parent-tools');
+
+    expect(resolveSearchRoutePreloader('/parent-tools/registrations/team-1/form-1')).toBe(registrationDetailPreloader);
+    expect(resolveSearchRoutePreloader('/parent-tools/registrations/team-1/form-1')).not.toBe(parentToolsPreloader);
+    await expect(preloadSearchRoute('/parent-tools/registrations/team-1/form-1?source=search')).resolves.toBe(true);
+  });
+
+  it('keeps parent registrations tab routes on the parent tools preloader', () => {
+    const parentToolsPreloader = resolveSearchRoutePreloader('/parent-tools');
+
+    expect(resolveSearchRoutePreloader('/parent-tools/registrations')).toBe(parentToolsPreloader);
+  });
+
   it('does not match unknown routes after normalization', async () => {
     expect(resolveSearchRoutePreloader('/unknown?section=feed')).toBeNull();
     await expect(preloadSearchRoute('/unknown?section=feed')).resolves.toBe(false);
