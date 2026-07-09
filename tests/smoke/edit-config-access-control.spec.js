@@ -141,6 +141,11 @@ async function mockDependencies(page, { user, team }) {
         contentType: 'text/html',
         body: '<!doctype html><html><body><h1>Dashboard</h1></body></html>'
     }));
+    await page.route('**/index.html', (route) => route.fulfill({
+        status: 200,
+        contentType: 'text/html',
+        body: '<!doctype html><html><body><h1>Home</h1></body></html>'
+    }));
     await page.route(/\/js\/db\.js(?:\?v=\d+)?$/, (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: buildDbStub(team) }));
     await page.route('**/js/utils.js?v=8', (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: UTILS_STUB }));
     await page.route('**/js/auth.js?v=*', (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: buildAuthStub(user) }));
@@ -155,6 +160,30 @@ test('team coach with case-different auth email can open stat config editor with
             uid: 'coach-1',
             email: 'Coach@Example.com',
             displayName: 'Coach Casey'
+        },
+        team: {
+            id: 'team-a',
+            name: 'Team A',
+            ownerId: 'owner-1',
+            adminEmails: ['coach@example.com']
+        }
+    });
+
+    await page.goto(`${baseURL}/edit-config.html#teamId=team-a`, { waitUntil: 'domcontentloaded' });
+
+    await expect(page).toHaveURL(/edit-config\.html#teamId=team-a$/);
+    await expect(page.locator('#team-name-display')).toHaveText('Team A');
+    await expect(page.locator('#config-list')).toContainText('Existing Config');
+    await expect(page.locator('#add-config-form')).toBeVisible();
+});
+
+test('platform admin outside owner and adminEmails can open stat config editor with real access checks', async ({ page, baseURL }) => {
+    await mockDependencies(page, {
+        user: {
+            uid: 'platform-admin-1',
+            email: 'admin@example.com',
+            isAdmin: true,
+            displayName: 'Platform Admin'
         },
         team: {
             id: 'team-a',
@@ -197,5 +226,33 @@ test('legacy-normalized coach is denied and redirected by real stat config acces
 
     await expect(page).toHaveURL(/dashboard\.html$/);
     await expect(page.locator('h1')).toHaveText('Dashboard');
+    expect(dialogs).toEqual(['Team not found or access denied.']);
+});
+
+test('non-owner non-admin user absent from adminEmails is denied by real stat config access checks', async ({ page, baseURL }) => {
+    await mockDependencies(page, {
+        user: {
+            uid: 'viewer-1',
+            email: 'viewer@example.com',
+            displayName: 'Viewer Val'
+        },
+        team: {
+            id: 'team-a',
+            name: 'Team A',
+            ownerId: 'owner-1',
+            adminEmails: ['coach@example.com']
+        }
+    });
+
+    const dialogs = [];
+    page.on('dialog', async (dialog) => {
+        dialogs.push(dialog.message());
+        await dialog.accept();
+    });
+
+    await page.goto(`${baseURL}/edit-config.html#teamId=team-a`, { waitUntil: 'domcontentloaded' });
+
+    await expect(page).toHaveURL(/index\.html$/);
+    await expect(page.locator('h1')).toHaveText('Home');
     expect(dialogs).toEqual(['Team not found or access denied.']);
 });
