@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { AlertCircle, CheckCircle2, RefreshCw } from 'lucide-react';
-import { loadGameReportSections, type GameReportData } from '../../lib/gameReportService';
+import { loadGameReportPlays, loadGameReportSections, type GameReportData } from '../../lib/gameReportService';
 import type { ParentScheduleEvent } from '../../lib/scheduleLogic';
 import { GameReportSectionContent, getRecordedTeamStatKeys, type GameReportSectionId } from './GameReportSectionContent';
 
@@ -40,6 +40,16 @@ export function GameReportSections({ event }: { event: ParentScheduleEvent }) {
     }
   }, [event.id, event.teamId]);
 
+  const refreshLivePlays = useCallback(async () => {
+    setReportError(null);
+    try {
+      const plays = await loadGameReportPlays(event.teamId, event.id);
+      setReport((currentReport) => currentReport ? { ...currentReport, plays } : currentReport);
+    } catch (error: any) {
+      setReportError(error?.message || 'Unable to refresh play-by-play.');
+    }
+  }, [event.id, event.teamId]);
+
   useEffect(() => {
     setReport(null);
     setActiveReportSection('summary');
@@ -49,19 +59,19 @@ export function GameReportSections({ event }: { event: ParentScheduleEvent }) {
   useEffect(() => {
     if (!isLivePlaysRefreshEnabled) return undefined;
     const intervalId = window.setInterval(() => {
-      void refreshReport(false);
+      void refreshLivePlays();
     }, liveReportPollIntervalMs);
     return () => window.clearInterval(intervalId);
-  }, [isLivePlaysRefreshEnabled, refreshReport]);
+  }, [isLivePlaysRefreshEnabled, refreshLivePlays]);
 
   useEffect(() => {
     if (!isLivePlaysRefreshEnabled) return undefined;
     const handleFocus = () => {
-      void refreshReport(false);
+      void refreshLivePlays();
     };
     window.addEventListener('focus', handleFocus);
     return () => window.removeEventListener('focus', handleFocus);
-  }, [isLivePlaysRefreshEnabled, refreshReport]);
+  }, [isLivePlaysRefreshEnabled, refreshLivePlays]);
 
   useEffect(() => {
     if (visibleReportSections.some((section) => section.id === activeReportSection)) return;

@@ -172,6 +172,17 @@ function normalizePlay(entry: GameReportEventFirestoreRecord): GameReportPlay {
   };
 }
 
+export async function loadGameReportPlays(teamId: string, gameId: string): Promise<GameReportPlay[]> {
+  if (!teamId || !gameId) {
+    throw new Error('Team and game are required.');
+  }
+
+  const rawEvents = await getGameEvents(teamId, gameId, { limit: 100 });
+  return mapGameReportEventRecords(rawEvents)
+    .sort((a, b) => (normalizeDate(a.timestamp)?.getTime() || 0) - (normalizeDate(b.timestamp)?.getTime() || 0))
+    .map(normalizePlay);
+}
+
 function normalizeOpponentRows(opponentStats: GameReportGameFirestoreRecord['opponentStats'] = {}): GameReportOpponentRow[] {
   return Object.entries(opponentStats || {}).map(([id, rawStats]) => {
     const { name, number, notes, playerId, photoUrl, ...stats } = rawStats || {};
