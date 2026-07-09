@@ -298,7 +298,9 @@ export function Home({ auth }: { auth: AuthState }) {
       setOfficialsAccess(null);
       return;
     }
-    loadOfficialAssignmentsAccess(auth.user)
+    setOfficialsAccess(null);
+    const user = auth.user;
+    loadOfficialAssignmentsAccess(user)
       .then((result) => {
         if (!cancelled) {
           setOfficialsAccess({ hasAccess: result.hasAccess, teamCount: result.teamCount });
