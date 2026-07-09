@@ -498,6 +498,41 @@ describe('Schedule', () => {
     expect(queueLinks).toContain('/schedule/team-1/event-2?childId=player-1&section=rideshare');
   });
 
+  it('keeps the desktop parent queue backed by actions beyond the current list window', async () => {
+    shellLayoutMocks.isDesktopWeb = true;
+    scheduleServiceMocks.loadParentSchedule.mockResolvedValueOnce({
+      children: [
+        { playerId: 'player-1', playerName: 'Pat', teamId: 'team-1', teamName: 'Bears' }
+      ],
+      events: Array.from({ length: 22 }, (_, index) => buildScheduleEvent(index + 1, {
+        myRsvp: 'going',
+        assignments: index === 21 ? [{ role: 'Snack bar', value: '', claimable: true }] : []
+      }))
+    });
+
+    renderSchedule();
+
+    expect(await screen.findByText('Showing 20 of 22 events')).toBeTruthy();
+    expect(screen.getByText('1 open assignment')).toBeTruthy();
+  });
+
+  it('counts only actionable packets in non-packet schedule summaries', async () => {
+    scheduleServiceMocks.loadParentSchedule.mockResolvedValueOnce({
+      children: [
+        { playerId: 'player-1', playerName: 'Pat', teamId: 'team-1', teamName: 'Bears' }
+      ],
+      events: [
+        buildPracticePacketEvent(1, {
+          practicePacketCompletions: [{ childId: 'player-1', status: 'completed' }]
+        })
+      ]
+    });
+
+    renderSchedule();
+
+    expect(await screen.findByText('1 event · 0 RSVP · 0 packets')).toBeTruthy();
+  });
+
   it('reuses cached open assignment counts across schedule summaries and view changes', async () => {
     shellLayoutMocks.isDesktopWeb = true;
     const assignments = [
@@ -574,13 +609,22 @@ describe('Schedule', () => {
       children: [
         { playerId: 'player-1', playerName: 'Pat', teamId: 'team-1', teamName: 'Bears' }
       ],
-      events: Array.from({ length: 21 }, (_, index) => buildScheduleEvent(index + 1))
+      events: Array.from({ length: 21 }, (_, index) => buildScheduleEvent(index + 1, {
+        opponent: `Rivals ${index + 1}`
+      }))
     });
 
     renderSchedule();
 
     expect(await screen.findByText('Showing 20 of 21 events')).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Show 1 more' })).toBeTruthy();
+    expect(screen.getAllByText('vs. Rivals 20').length).toBeGreaterThan(0);
+    expect(screen.queryAllByText('vs. Rivals 21')).toHaveLength(0);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Show 1 more' }));
+
+    expect((await screen.findAllByText('vs. Rivals 21')).length).toBeGreaterThan(0);
+    expect(screen.queryByRole('button', { name: 'Show 1 more' })).toBeNull();
   });
 
   it('paginates practice packet rows while keeping the all-packet summary count', async () => {
@@ -1015,8 +1059,8 @@ describe('Schedule', () => {
   it('keeps list pagination props in sync with the parent schedule view', () => {
     const source = readFileSync(resolveAppSourcePath('src/pages/Schedule.tsx'), 'utf8');
 
-    expect(source).toContain('function ScheduleList({ events, visibleCount, pageSize, canShowMore, loadingMore, preferGameHubForStaff, onShowMore }');
-    expect(source).toContain('function CompactScheduleList({ events, visibleCount, pageSize, canShowMore, loadingMore, preferGameHubForStaff, onShowMore }');
+    expect(source).toContain('function ScheduleList({ events, totalCount, visibleCount, pageSize, canShowMore, loadingMore, preferGameHubForStaff, onShowMore }');
+    expect(source).toContain('function CompactScheduleList({ events, totalCount, visibleCount, pageSize, canShowMore, loadingMore, preferGameHubForStaff, onShowMore }');
     expect(source).toContain("{loadingMore ? 'Loading more…' : `Show ${Math.min(pageSize, remainingCount || pageSize)} more`}");
   });
 
