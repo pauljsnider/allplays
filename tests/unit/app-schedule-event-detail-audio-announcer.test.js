@@ -22,11 +22,15 @@ describe('React app schedule event detail audio announcer wiring', () => {
         const source = readSource('apps/app/src/components/schedule/GameReportSections.tsx');
 
         expect(source).toContain('const liveReportPollIntervalMs = 15000;');
-        expect(source).toContain("const liveReportStatus = String(report?.game?.liveStatus || report?.game?.status || event.liveStatus || event.status || '').trim().toLowerCase();");
-        expect(source).toContain("const isLivePlaysRefreshEnabled = activeReportSection === 'plays' && liveReportStatuses.has(liveReportStatus);");
+        expect(source).toContain('const currentReportStatuses = (report');
+        expect(source).toContain('!currentReportStatuses.some((status) => completedReportStatuses.has(status))');
+        expect(source).toContain('currentReportStatuses.some((status) => liveReportStatuses.has(status))');
+        expect(source).toContain('const refreshedStatuses = [refresh.game?.liveStatus, refresh.game?.status]');
+        expect(source).toContain('refreshedStatuses.some((status) => completedReportStatuses.has(status))');
+        expect(source).toContain('await refreshReport(false);');
         expect(source).toContain('if (!isLivePlaysRefreshEnabled) return undefined;');
         expect(source).toContain('const intervalId = window.setInterval(() => {');
-        expect(source).toContain('void refreshReport(false);');
+        expect(source).toContain('void refreshLivePlays();');
         expect(source).toContain("window.addEventListener('focus', handleFocus);");
         expect(source).toContain('}, liveReportPollIntervalMs);');
     });

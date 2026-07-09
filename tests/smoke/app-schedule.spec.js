@@ -1017,10 +1017,31 @@ async function mockScheduleModules(page, options = {}) {
     });
 
     await page.route(/\/src\/lib\/gameReportService\.ts(\?.*)?$/, async (route) => {
+        const mockReportPlays = `
+            [
+                { id: 'play-1', text: 'Pat scored in transition', period: 'Q1', clock: '8:12', timestamp: new Date('2026-05-21T18:05:00Z') },
+                { id: 'play-2', text: 'Sam grabbed a rebound', period: 'Q2', clock: '4:30', timestamp: new Date('2026-05-21T18:22:00Z') }
+            ]
+        `;
         await route.fulfill({
             status: 200,
             contentType: 'application/javascript',
             body: `
+                export async function loadGameReportPlays(teamId, gameId) {
+                    window.__scheduleCalls.gameReportPlays = { teamId, gameId };
+                    return {
+                        game: {
+                            id: gameId,
+                            opponent: 'Falcons',
+                            status: 'completed',
+                            liveStatus: 'completed',
+                            homeScore: 4,
+                            awayScore: 2
+                        },
+                        plays: ${mockReportPlays}
+                    };
+                }
+
                 export async function loadGameReportSections(teamId, gameId) {
                     window.__scheduleCalls.gameReport = { teamId, gameId };
                     return {
@@ -1054,10 +1075,7 @@ async function mockScheduleModules(page, options = {}) {
                         highlightClips: [
                             { title: 'Fast break', description: 'Pat scores in transition', period: 'Q1', gameTime: '8:12', startMs: 1000, endMs: 5000, url: 'https://allplays.ai/live-game.html?teamId=team-1&gameId=game-1&replay=true&clipStart=1000&clipEnd=5000' }
                         ],
-                        plays: [
-                            { id: 'play-1', text: 'Pat scored in transition', period: 'Q1', clock: '8:12', timestamp: new Date('2026-05-21T18:05:00Z') },
-                            { id: 'play-2', text: 'Sam grabbed a rebound', period: 'Q2', clock: '4:30', timestamp: new Date('2026-05-21T18:22:00Z') }
-                        ],
+                        plays: ${mockReportPlays},
                         teamInsights: [
                             { title: 'Offensive catalyst', body: 'Pat led the scoring with 12 points.', tone: 'positive' }
                         ],

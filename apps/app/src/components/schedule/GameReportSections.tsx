@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { AlertCircle, CheckCircle2, RefreshCw } from 'lucide-react';
-import { loadGameReportSections, type GameReportData } from '../../lib/gameReportService';
+import { loadGameReportPlays, loadGameReportSections, type GameReportData } from '../../lib/gameReportService';
 import type { ParentScheduleEvent } from '../../lib/scheduleLogic';
 import { GameReportSectionContent, getRecordedTeamStatKeys, type GameReportSectionId } from './GameReportSectionContent';
 
@@ -23,9 +23,14 @@ export function GameReportSections({ event }: { event: ParentScheduleEvent }) {
   const [loadingReport, setLoadingReport] = useState(true);
   const [reportError, setReportError] = useState<string | null>(null);
   const visibleReportSections = useMemo(() => getVisibleGameReportSections(report), [report]);
-  const liveReportStatus = String(report?.game?.liveStatus || report?.game?.status || event.liveStatus || event.status || '').trim().toLowerCase();
+  const currentReportStatuses = (report
+    ? [report.game?.liveStatus, report.game?.status]
+    : [event.liveStatus, event.status]
+  ).map((status) => String(status || '').trim().toLowerCase());
   const eventReportLoadStatus = normalizeGameReportLoadStatus(event.liveStatus || event.status);
-  const isLivePlaysRefreshEnabled = activeReportSection === 'plays' && liveReportStatuses.has(liveReportStatus);
+  const isLivePlaysRefreshEnabled = activeReportSection === 'plays'
+    && !currentReportStatuses.some((status) => completedReportStatuses.has(status))
+    && currentReportStatuses.some((status) => liveReportStatuses.has(status));
 
   const refreshReport = useCallback(async (showLoading = true) => {
     if (showLoading) setLoadingReport(true);
@@ -40,6 +45,25 @@ export function GameReportSections({ event }: { event: ParentScheduleEvent }) {
     }
   }, [event.id, event.teamId]);
 
+  const refreshLivePlays = useCallback(async () => {
+    setReportError(null);
+    try {
+      const refresh = await loadGameReportPlays(event.teamId, event.id);
+      setReport((currentReport) => currentReport ? {
+        ...currentReport,
+        game: { ...currentReport.game, ...refresh.game },
+        plays: refresh.playsFresh !== false ? refresh.plays : currentReport.plays
+      } : currentReport);
+      const refreshedStatuses = [refresh.game?.liveStatus, refresh.game?.status]
+        .map((status) => String(status || '').trim().toLowerCase());
+      if (refreshedStatuses.some((status) => completedReportStatuses.has(status))) {
+        await refreshReport(false);
+      }
+    } catch (error: any) {
+      setReportError(error?.message || 'Unable to refresh play-by-play.');
+    }
+  }, [event.id, event.teamId, refreshReport]);
+
   useEffect(() => {
     setReport(null);
     setActiveReportSection('summary');
@@ -49,19 +73,19 @@ export function GameReportSections({ event }: { event: ParentScheduleEvent }) {
   useEffect(() => {
     if (!isLivePlaysRefreshEnabled) return undefined;
     const intervalId = window.setInterval(() => {
-      void refreshReport(false);
+      void refreshLivePlays();
     }, liveReportPollIntervalMs);
     return () => window.clearInterval(intervalId);
-  }, [isLivePlaysRefreshEnabled, refreshReport]);
+  }, [isLivePlaysRefreshEnabled, refreshLivePlays]);
 
   useEffect(() => {
     if (!isLivePlaysRefreshEnabled) return undefined;
     const handleFocus = () => {
-      void refreshReport(false);
+      void refreshLivePlays();
     };
     window.addEventListener('focus', handleFocus);
     return () => window.removeEventListener('focus', handleFocus);
-  }, [isLivePlaysRefreshEnabled, refreshReport]);
+  }, [isLivePlaysRefreshEnabled, refreshLivePlays]);
 
   useEffect(() => {
     if (visibleReportSections.some((section) => section.id === activeReportSection)) return;

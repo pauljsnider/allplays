@@ -69,6 +69,12 @@ export type GameReportPlay = {
   timestamp: Date | null;
 };
 
+export type GameReportPlaysRefresh = {
+  game: GameReportGameFirestoreRecord;
+  plays: GameReportPlay[];
+  playsFresh: boolean;
+};
+
 export type GameReportHighlightClip = {
   title: string;
   description: string;
@@ -169,6 +175,26 @@ function normalizePlay(entry: GameReportEventFirestoreRecord): GameReportPlay {
     period: String(entry?.period || 'Q1'),
     clock: String(entry?.clock || ''),
     timestamp: normalizeDate(entry?.timestamp)
+  };
+}
+
+export async function loadGameReportPlays(teamId: string, gameId: string): Promise<GameReportPlaysRefresh> {
+  if (!teamId || !gameId) {
+    throw new Error('Team and game are required.');
+  }
+
+  const [rawGame, eventsRefresh] = await Promise.all([
+    getGame(teamId, gameId),
+    getGameEvents(teamId, gameId, { limit: 100 })
+      .then((rawEvents) => ({ rawEvents, playsFresh: true }))
+      .catch(() => ({ rawEvents: [], playsFresh: false }))
+  ]);
+  return {
+    game: mapGameReportGameRecord(rawGame, gameId),
+    plays: mapGameReportEventRecords(eventsRefresh.rawEvents)
+      .sort((a, b) => (normalizeDate(a.timestamp)?.getTime() || 0) - (normalizeDate(b.timestamp)?.getTime() || 0))
+      .map(normalizePlay),
+    playsFresh: eventsRefresh.playsFresh
   };
 }
 

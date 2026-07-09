@@ -1,10 +1,11 @@
 // @vitest-environment jsdom
 
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { GameReportSections } from './GameReportSections';
 
 const gameReportServiceMocks = vi.hoisted(() => ({
+  loadGameReportPlays: vi.fn(),
   loadGameReportSections: vi.fn()
 }));
 
@@ -12,6 +13,7 @@ vi.mock('../../lib/gameReportService', () => gameReportServiceMocks);
 
 afterEach(() => {
   cleanup();
+  vi.useRealTimers();
   vi.clearAllMocks();
 });
 
@@ -27,10 +29,10 @@ function buildEvent(overrides: Record<string, unknown> = {}) {
   } as any;
 }
 
-function buildReport(summary: string, gameOverrides: Record<string, unknown> = {}) {
+function buildReport(summary: string, gameOverrides: Record<string, unknown> = {}, plays: any[] = []) {
   return {
     game: { id: 'game-1', liveStatus: 'live', status: 'live', homeScore: 41, awayScore: 38, ...gameOverrides },
-    plays: [],
+    plays,
     summary,
     opponentRows: [],
     opponentStatKeys: [],
@@ -130,5 +132,176 @@ describe('GameReportSections', () => {
       expect(screen.getByText('Second report.')).toBeTruthy();
     });
     expect(screen.getByRole('button', { name: 'Summary' }).className).toContain('bg-primary-600');
+  });
+
+  it('polls live plays with the lightweight loader and merges them into the current report', async () => {
+    gameReportServiceMocks.loadGameReportSections.mockResolvedValue(buildReport('First report.', {}, [
+      { id: 'event-early', text: 'Opening tip', period: 'Q1', clock: '8:00', timestamp: new Date(1717200000 * 1000) }
+    ]));
+    gameReportServiceMocks.loadGameReportPlays.mockResolvedValue({
+      game: { id: 'game-1', liveStatus: 'live', status: 'live', homeScore: 41, awayScore: 38 },
+      playsFresh: true,
+      plays: [
+        { id: 'event-early', text: 'Opening tip', period: 'Q1', clock: '8:00', timestamp: new Date(1717200000 * 1000) },
+        { id: 'event-late', text: 'Late bucket', period: 'Q1', clock: '0:12', timestamp: new Date(1717200060 * 1000) }
+      ]
+    });
+
+    render(<GameReportSections event={buildEvent()} />);
+
+    await waitFor(() => {
+      expect(screen.getByText('First report.')).toBeTruthy();
+    });
+
+    vi.useFakeTimers();
+    fireEvent.click(screen.getByRole('button', { name: 'Plays' }));
+    expect(screen.getByText('Opening tip')).toBeTruthy();
+
+    await act(async () => {
+      vi.advanceTimersByTime(15000);
+      await Promise.resolve();
+    });
+
+    expect(gameReportServiceMocks.loadGameReportPlays).toHaveBeenCalledTimes(1);
+    expect(gameReportServiceMocks.loadGameReportPlays).toHaveBeenCalledWith('team-1', 'game-1');
+    expect(screen.getByText('Late bucket')).toBeTruthy();
+    expect(gameReportServiceMocks.loadGameReportSections).toHaveBeenCalledTimes(1);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Summary' }));
+    expect(screen.getByText('First report.')).toBeTruthy();
+    expect(screen.getByText('2')).toBeTruthy();
+  });
+
+  it('preserves the displayed plays when the optional event refresh is unavailable', async () => {
+    gameReportServiceMocks.loadGameReportSections.mockResolvedValue(buildReport('First report.', {}, [
+      { id: 'event-early', text: 'Opening tip', period: 'Q1', clock: '8:00', timestamp: new Date(1717200000 * 1000) }
+    ]));
+    gameReportServiceMocks.loadGameReportPlays.mockResolvedValue({
+      game: { id: 'game-1', liveStatus: 'live', status: 'live', homeScore: 42, awayScore: 40 },
+      plays: [],
+      playsFresh: false
+    });
+
+    render(<GameReportSections event={buildEvent()} />);
+
+    await waitFor(() => {
+      expect(screen.getByText('First report.')).toBeTruthy();
+    });
+
+    vi.useFakeTimers();
+    fireEvent.click(screen.getByRole('button', { name: 'Plays' }));
+    await act(async () => {
+      vi.advanceTimersByTime(15000);
+      await Promise.resolve();
+    });
+
+    expect(gameReportServiceMocks.loadGameReportPlays).toHaveBeenCalledTimes(1);
+    expect(screen.getByText('Opening tip')).toBeTruthy();
+    expect(screen.queryByText('Unable to refresh play-by-play.')).toBeNull();
+  });
+
+  it('uses lightweight focus refreshes only when the Plays tab is active and live', async () => {
+    gameReportServiceMocks.loadGameReportSections
+      .mockResolvedValueOnce(buildReport('First report.', {}, [
+        { id: 'event-early', text: 'Opening tip', period: 'Q1', clock: '8:00', timestamp: new Date(1717200000 * 1000) }
+      ]))
+      .mockResolvedValueOnce(buildReport('Completed report.', { liveStatus: 'completed', status: 'completed' }, [
+        { id: 'event-early', text: 'Opening tip', period: 'Q1', clock: '8:00', timestamp: new Date(1717200000 * 1000) },
+        { id: 'event-late', text: 'Late bucket', period: 'Q1', clock: '0:12', timestamp: new Date(1717200060 * 1000) }
+      ]));
+    gameReportServiceMocks.loadGameReportPlays.mockResolvedValue({
+      game: { id: 'game-1', liveStatus: 'live', status: 'live', homeScore: 41, awayScore: 38 },
+      playsFresh: true,
+      plays: [
+        { id: 'event-early', text: 'Opening tip', period: 'Q1', clock: '8:00', timestamp: new Date(1717200000 * 1000) },
+        { id: 'event-late', text: 'Late bucket', period: 'Q1', clock: '0:12', timestamp: new Date(1717200060 * 1000) }
+      ]
+    });
+
+    const { rerender } = render(<GameReportSections event={buildEvent()} />);
+
+    await waitFor(() => {
+      expect(screen.getByText('First report.')).toBeTruthy();
+    });
+
+    await act(async () => {
+      window.dispatchEvent(new Event('focus'));
+      await Promise.resolve();
+    });
+    expect(gameReportServiceMocks.loadGameReportPlays).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Plays' }));
+    await act(async () => {
+      window.dispatchEvent(new Event('focus'));
+    });
+
+    await waitFor(() => {
+      expect(gameReportServiceMocks.loadGameReportPlays).toHaveBeenCalledTimes(1);
+      expect(screen.getByText('Late bucket')).toBeTruthy();
+    });
+    expect(gameReportServiceMocks.loadGameReportSections).toHaveBeenCalledTimes(1);
+
+    rerender(<GameReportSections event={buildEvent({ liveStatus: 'completed', status: 'completed' })} />);
+
+    await waitFor(() => {
+      expect(gameReportServiceMocks.loadGameReportSections).toHaveBeenCalledTimes(2);
+    });
+    await act(async () => {
+      window.dispatchEvent(new Event('focus'));
+      await Promise.resolve();
+    });
+
+    expect(gameReportServiceMocks.loadGameReportPlays).toHaveBeenCalledTimes(1);
+  });
+
+  it('refreshes live status during lightweight play polling and stops polling after completion', async () => {
+    gameReportServiceMocks.loadGameReportSections
+      .mockResolvedValueOnce(buildReport('Live report.', {}, [
+        { id: 'event-early', text: 'Opening tip', period: 'Q1', clock: '8:00', timestamp: new Date(1717200000 * 1000) }
+      ]))
+      .mockResolvedValueOnce(buildReport('Completed report.', { liveStatus: 'completed', status: 'completed', homeScore: 43, awayScore: 40 }, [
+        { id: 'event-early', text: 'Opening tip', period: 'Q1', clock: '8:00', timestamp: new Date(1717200000 * 1000) },
+        { id: 'event-final', text: 'Final horn', period: 'Q4', clock: '0:00', timestamp: new Date(1717200120 * 1000) }
+      ]));
+    gameReportServiceMocks.loadGameReportPlays.mockResolvedValue({
+      game: { id: 'game-1', liveStatus: 'live', status: 'completed', homeScore: 43, awayScore: 40 },
+      playsFresh: true,
+      plays: [
+        { id: 'event-early', text: 'Opening tip', period: 'Q1', clock: '8:00', timestamp: new Date(1717200000 * 1000) },
+        { id: 'event-final', text: 'Final horn', period: 'Q4', clock: '0:00', timestamp: new Date(1717200120 * 1000) }
+      ]
+    });
+
+    render(<GameReportSections event={buildEvent()} />);
+
+    await waitFor(() => {
+      expect(screen.getByText('Live report.')).toBeTruthy();
+    });
+
+    vi.useFakeTimers();
+    fireEvent.click(screen.getByRole('button', { name: 'Plays' }));
+
+    await act(async () => {
+      vi.advanceTimersByTime(15000);
+      await Promise.resolve();
+    });
+
+    expect(screen.getByText('Final horn')).toBeTruthy();
+    expect(gameReportServiceMocks.loadGameReportSections).toHaveBeenCalledTimes(2);
+    fireEvent.click(screen.getByRole('button', { name: 'Summary' }));
+    expect(screen.getByText('Completed report.')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Plays' }));
+
+    await act(async () => {
+      vi.advanceTimersByTime(15000);
+      await Promise.resolve();
+    });
+    await act(async () => {
+      window.dispatchEvent(new Event('focus'));
+      await Promise.resolve();
+    });
+
+    expect(gameReportServiceMocks.loadGameReportPlays).toHaveBeenCalledTimes(1);
+    expect(gameReportServiceMocks.loadGameReportSections).toHaveBeenCalledTimes(2);
   });
 });
