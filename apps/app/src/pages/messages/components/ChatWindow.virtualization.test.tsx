@@ -20,6 +20,10 @@ import {
 const mockRouter = vi.hoisted(() => ({
   navigate: vi.fn()
 }));
+const teamEmailSheetMocks = vi.hoisted(() => ({
+  importModule: vi.fn(),
+  render: vi.fn()
+}));
 const normalizeChatReactionsSpy = vi.fn();
 const getMessageAttachmentsSpy = vi.fn();
 const mockShellLayoutState = { isDesktopWeb: false };
@@ -182,6 +186,17 @@ vi.mock('../../../lib/chatService', () => ({
   toggleTeamChatReaction: vi.fn()
 }));
 
+vi.mock('./TeamEmailSheet', async () => {
+  const React = await import('react');
+  teamEmailSheetMocks.importModule();
+  return {
+    default: (props: { open: boolean }) => {
+      teamEmailSheetMocks.render(props.open);
+      return props.open ? React.createElement('div', { role: 'dialog', 'aria-label': 'Team Email' }, 'Lazy Team Email Mock') : null;
+    }
+  };
+});
+
 vi.mock('../hooks/useChatSheets', async () => {
   const React = await import('react');
   const closeIfActive = (setActiveSheet: React.Dispatch<React.SetStateAction<MockActiveChatSheet>>, sheet: MockActiveChatSheet) => {
@@ -271,7 +286,14 @@ vi.mock('../hooks/useChatMessages', async () => {
 });
 
 vi.mock('./ChatComposer', () => ({
-  Composer: () => <div className="chat-composer">Composer</div>
+  Composer: ({ canSendTeamEmail, onTeamEmail }: { canSendTeamEmail: boolean; onTeamEmail: () => void }) => (
+    <div className="chat-composer">
+      Composer
+      {canSendTeamEmail ? (
+        <button type="button" onClick={onTeamEmail} aria-label="Open Team Email">Team Email</button>
+      ) : null}
+    </div>
+  )
 }));
 
 const auth: AuthState = {
@@ -326,10 +348,80 @@ beforeEach(() => {
   mockChatTeamState.switchConversation.mockReset();
   mockChatTeamState.switchConversation.mockReturnValue(true);
   vi.mocked(ensureStaffChatConversation).mockReset();
+  teamEmailSheetMocks.importModule.mockClear();
+  teamEmailSheetMocks.render.mockClear();
 });
 
 afterEach(() => {
   cleanup();
+});
+
+describe('ChatWindow lazy Team Email loading', () => {
+  beforeEach(() => {
+    vi.stubGlobal('ResizeObserver', MockResizeObserver as any);
+    vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => window.setTimeout(() => callback(performance.now()), 0));
+    vi.stubGlobal('cancelAnimationFrame', (id: number) => window.clearTimeout(id));
+    Object.defineProperty(window.HTMLElement.prototype, 'scrollIntoView', {
+      configurable: true,
+      value: vi.fn()
+    });
+    Object.defineProperty(window.HTMLElement.prototype, 'clientHeight', {
+      configurable: true,
+      get() {
+        return this.classList.contains('chat-messages-scroll') ? 480 : 0;
+      }
+    });
+    Object.defineProperty(window.HTMLElement.prototype, 'scrollHeight', {
+      configurable: true,
+      get() {
+        if (this.classList.contains('chat-messages-scroll')) return scrollHeightValue;
+        if (this.classList.contains('chat-messages-content')) return contentScrollHeightValue;
+        return 0;
+      }
+    });
+    Object.defineProperty(window.HTMLElement.prototype, 'offsetHeight', {
+      configurable: true,
+      get() {
+        return 104;
+      }
+    });
+  });
+
+  it('does not render Team Email controls or import the lazy sheet for parents', () => {
+    mockChatTeamState.canModerate = false;
+    useStatefulChatSheets = true;
+
+    render(
+      <MemoryRouter>
+        <ChatWindow auth={auth} teamId="team-1" />
+      </MemoryRouter>
+    );
+
+    expect(screen.queryByRole('button', { name: 'Open Team Email' })).not.toBeInTheDocument();
+    expect(teamEmailSheetMocks.importModule).not.toHaveBeenCalled();
+    expect(teamEmailSheetMocks.render).not.toHaveBeenCalled();
+  });
+
+  it('imports and renders the lazy Team Email sheet only after a coach opens it', async () => {
+    mockChatTeamState.canModerate = true;
+    useStatefulChatSheets = true;
+
+    render(
+      <MemoryRouter>
+        <ChatWindow auth={auth} teamId="team-1" />
+      </MemoryRouter>
+    );
+
+    expect(screen.getByRole('button', { name: 'Open Team Email' })).toBeInTheDocument();
+    expect(teamEmailSheetMocks.importModule).not.toHaveBeenCalled();
+    expect(teamEmailSheetMocks.render).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Open Team Email' }));
+
+    await waitFor(() => expect(teamEmailSheetMocks.importModule).toHaveBeenCalledTimes(1));
+    expect(screen.getByText('Lazy Team Email Mock')).toBeInTheDocument();
+    expect(teamEmailSheetMocks.render).toHaveBeenCalledWith(true);
+  });
 });
 
 describe('ChatWindow virtualization', () => {

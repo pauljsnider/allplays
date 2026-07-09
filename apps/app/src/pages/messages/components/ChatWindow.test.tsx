@@ -87,6 +87,21 @@ describe('Messages ALL PLAYS lazy loading', () => {
     expect(legacyChatServiceSource).not.toContain('firebase-ai');
   });
 
+  it('keeps Team Email reducer and service calls out of the eager ChatWindow imports', () => {
+    const sourcePath = resolveAppSourcePath('src/pages/messages/components/ChatWindow.tsx');
+    const source = readFileSync(sourcePath, 'utf8');
+    const chatServiceImport = source.match(/import \{[\s\S]*?\} from '..\/..\/..\/lib\/chatService';/)?.[0] || '';
+
+    expect(source).toContain("lazy(() => import('./TeamEmailSheet'))");
+    expect(source).not.toContain("from '../state/emailReducer'");
+    expect(chatServiceImport).not.toContain('loadTeamEmailDrafts');
+    expect(chatServiceImport).not.toContain('loadTeamEmailTemplates');
+    expect(chatServiceImport).not.toContain('loadSentTeamEmails');
+    expect(chatServiceImport).not.toContain('saveTeamEmailDraft');
+    expect(chatServiceImport).not.toContain('saveTeamEmailTemplate');
+    expect(chatServiceImport).not.toContain('sendTeamEmailMessage');
+  });
+
   it('loads and calls the AI module only through the lazy answer helper', async () => {
     const input = {
       teamId: 'team-1',
