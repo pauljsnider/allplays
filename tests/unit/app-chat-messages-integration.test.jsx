@@ -1435,7 +1435,7 @@ describe('React app messages integration', () => {
         expect(scroller.scrollTop).toBe(0);
     });
 
-    it('renders the moderator thread before lazy recipient options finish loading', async () => {
+    it('renders the moderator thread before lazy Team Email resources finish loading', async () => {
         const deferredRecipients = createDeferred();
         chatMocks.loadChatRecipientOptions.mockImplementationOnce(() => deferredRecipients.promise);
 
@@ -1447,7 +1447,9 @@ describe('React app messages integration', () => {
         await click(container, 'Team Email');
 
         expect(chatMocks.loadChatRecipientOptions).toHaveBeenCalledTimes(1);
-        expect(container.textContent).toContain('Loading recipient options...');
+        await flush();
+        await flush();
+        expect(container.textContent).toContain('Loading Team Email...');
         expect(container.textContent).toContain('Bring both jerseys.');
 
         await act(async () => {

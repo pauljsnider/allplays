@@ -28,13 +28,16 @@ describe('Messages decomposition contract', () => {
     it('keeps email composer transitions in the reducer instead of separate page state', () => {
         const messages = readRepoFile('apps/app/src/pages/Messages.tsx');
         const chatWindow = readRepoFile('apps/app/src/pages/messages/components/ChatWindow.tsx');
+        const teamEmailSheet = readRepoFile('apps/app/src/pages/messages/components/TeamEmailSheet.tsx');
         const reducer = readRepoFile('apps/app/src/pages/messages/state/emailReducer.ts');
 
-        expect(chatWindow).toContain("from '../state/emailReducer';");
-        expect(chatWindow).toContain('emailComposerActions');
-        expect(chatWindow).toContain('emailReducer');
-        expect(chatWindow).toContain('initialEmailComposerState');
-        expect(chatWindow).toMatch(/const\s+\[emailState,\s*emailDispatch\]\s*=\s*useReducer\(emailReducer,\s*initialEmailComposerState\);/);
+        expect(chatWindow).toContain("const LazyTeamEmailSheet = lazy(() => import('./TeamEmailSheet'));");
+        expect(chatWindow).not.toContain("from '../state/emailReducer';");
+        expect(teamEmailSheet).toContain("from '../state/emailReducer';");
+        expect(teamEmailSheet).toContain('emailComposerActions');
+        expect(teamEmailSheet).toContain('emailReducer');
+        expect(teamEmailSheet).toContain('initialEmailComposerState');
+        expect(teamEmailSheet).toMatch(/const\s+\[emailState,\s*emailDispatch\]\s*=\s*useReducer\(emailReducer,\s*initialEmailComposerState\);/);
         expect(messages).not.toMatch(/const\s+\[emailSubject\b/);
         expect(messages).not.toMatch(/const\s+\[emailBody\b/);
         expect(messages).not.toMatch(/const\s+\[emailDrafts\b/);

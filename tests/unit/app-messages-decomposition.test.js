@@ -10,16 +10,18 @@ function readRepoFile(path) {
 
 describe('Messages page decomposition', () => {
     it('keeps chat data loading and email composer state in focused modules', () => {
-        const source = [
-            readRepoFile('apps/app/src/pages/Messages.tsx'),
-            readRepoFile('apps/app/src/pages/messages/components/ChatWindow.tsx')
-        ].join('\n');
+        const messagesSource = readRepoFile('apps/app/src/pages/Messages.tsx');
+        const chatWindowSource = readRepoFile('apps/app/src/pages/messages/components/ChatWindow.tsx');
+        const teamEmailSheetSource = readRepoFile('apps/app/src/pages/messages/components/TeamEmailSheet.tsx');
+        const source = [messagesSource, chatWindowSource, teamEmailSheetSource].join('\n');
 
         expect(source).toContain("from '../hooks/useChatSheets'");
         expect(source).toContain("from '../hooks/useChatTeam'");
         expect(source).toContain("from '../hooks/useChatMessages'");
-        expect(source).toContain("from '../state/emailReducer'");
-        expect(source).toContain('useReducer(emailReducer, initialEmailComposerState)');
+        expect(chatWindowSource).toContain("lazy(() => import('./TeamEmailSheet'))");
+        expect(chatWindowSource).not.toContain("from '../state/emailReducer'");
+        expect(teamEmailSheetSource).toContain("from '../state/emailReducer'");
+        expect(teamEmailSheetSource).toContain('useReducer(emailReducer, initialEmailComposerState)');
     });
 
     it('keeps split Messages modules covered by focused unit tests', () => {

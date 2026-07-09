@@ -209,8 +209,8 @@ describe('direct thread mount telemetry', () => {
     expect(source).not.toContain('mergeInboxPreview');
   });
 
-  it('keeps Messages email composer dispatches on the shared action creators', () => {
-    const source = readFileSync(resolveAppSourcePath('src/pages/messages/components/ChatWindow.tsx'), 'utf8');
+  it('keeps Team Email composer dispatches on the shared action creators', () => {
+    const source = readFileSync(resolveAppSourcePath('src/pages/messages/components/TeamEmailSheet.tsx'), 'utf8');
 
     expect(source).toContain("import { emailComposerActions, emailReducer, initialEmailComposerState } from '../state/emailReducer';");
     expect(source).toContain("emailDispatch(emailComposerActions.setTemplates(await loadTeamEmailTemplates(teamId)));");
