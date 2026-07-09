@@ -2424,6 +2424,7 @@ function assertNoSensitivePlayerFields(playerData) {
     const forbidden = [
         'medicalInfo', 'medical_info', 'medicalNotes', 'medical_notes',
         'emergencyContact', 'emergency_contact', 'emergencyContactName', 'emergencyContactPhone',
+        'contacts', 'contact', 'contactInfo', 'contact_info', 'contactEmail', 'contactPhone', 'contactRelation',
         'parents', 'parent', 'parentEmail', 'parentPhone', 'parentRelation',
         'guardian', 'guardians', 'guardianEmail', 'guardianPhone', 'guardianRelation',
         'householdContact', 'householdContacts', 'householdEmail', 'householdPhone', 'householdRelation'
