@@ -3768,6 +3768,42 @@ describe('ScheduleEventDetail statsheet import', () => {
     cleanup();
   });
 
+  it.each([
+    {
+      button: 'Take photo',
+      source: 'camera',
+      message: 'Camera permission was denied. Allow camera access to capture a statsheet.'
+    },
+    {
+      button: 'Choose from library',
+      source: 'photos',
+      message: 'Photo permission was denied. Allow photo library access to choose a statsheet.'
+    }
+  ])('keeps $button permission recovery copy specific to statsheet import', async ({ button, source, message }) => {
+    scheduleServiceMocks.loadParentScheduleEventDetail.mockResolvedValue({
+      events: [buildEvent({ isTeamStaff: true, canUpdateScore: true })],
+      children: []
+    });
+    statsheetImportServiceMocks.acquireTrackStatsheetPhoto.mockRejectedValue({
+      code: 'permission-denied',
+      message: 'Permission denied'
+    });
+
+    renderScheduleEventDetail();
+
+    await waitFor(() => {
+      expect(screen.getAllByRole('button', { name: 'Game' }).length).toBeGreaterThan(0);
+    });
+    fireEvent.click(screen.getAllByRole('button', { name: 'Game' })[0]);
+    fireEvent.click(screen.getByRole('button', { name: 'Statsheet import' }));
+    fireEvent.click(await screen.findByRole('button', { name: button }));
+
+    await waitFor(() => {
+      expect(statsheetImportServiceMocks.acquireTrackStatsheetPhoto).toHaveBeenCalledWith(source);
+    });
+    expect(await screen.findByText(message)).toBeTruthy();
+  });
+
   it('lets coaches correct home row fouls before applying a statsheet photo', async () => {
     scheduleServiceMocks.loadParentScheduleEventDetail.mockResolvedValue({
       events: [buildEvent({ isTeamStaff: true, canUpdateScore: true })],

@@ -5,6 +5,11 @@ function readProjectFile(path) {
     return readFileSync(path, 'utf8');
 }
 
+function readPlistStringValue(plist, key) {
+    const pattern = new RegExp(`<key>${key}</key>\\s*<string>([^<]+)</string>`);
+    return plist.match(pattern)?.[1] || '';
+}
+
 describe('Capacitor native config', () => {
     it('declares splash screen and status bar plugins in app and native manifests', () => {
         const config = JSON.parse(readProjectFile('capacitor.config.json'));
@@ -119,5 +124,18 @@ describe('Capacitor native config', () => {
         expect(extractionRules).toContain('<exclude domain="root" />');
         expect(extractionRules).toContain('<exclude domain="database" />');
         expect(extractionRules).toContain('<exclude domain="sharedpref" />');
+    });
+
+    it('describes shared iOS camera and photo access for profile images and statsheet capture', () => {
+        const iosInfo = readProjectFile('ios/App/App/Info.plist');
+        const cameraDescription = readPlistStringValue(iosInfo, 'NSCameraUsageDescription').toLowerCase();
+        const photoDescription = readPlistStringValue(iosInfo, 'NSPhotoLibraryUsageDescription').toLowerCase();
+
+        expect(cameraDescription).toContain('profile');
+        expect(cameraDescription).toContain('stat sheet');
+        expect(cameraDescription).toContain('game-day');
+        expect(photoDescription).toContain('profile');
+        expect(photoDescription).toContain('stat sheet');
+        expect(photoDescription).toContain('game-day');
     });
 });
