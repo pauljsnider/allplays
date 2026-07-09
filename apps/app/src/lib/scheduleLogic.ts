@@ -267,6 +267,25 @@ export type PracticePacketScheduleRow = {
   status: 'ready' | 'completed' | 'past';
 };
 
+export type WindowedCalendarScheduleEntries = {
+  entries: CalendarScheduleEntry[];
+  totalCount: number;
+  gameCount: number;
+  practiceCount: number;
+  hasMore: boolean;
+  nextEvent: CalendarScheduleEntry | null;
+  packetsReady: number;
+  openAssignments: number;
+  rideRequests: number;
+};
+
+export type WindowedPracticePacketRows = {
+  rows: PracticePacketScheduleRow[];
+  totalCount: number;
+  readyCount: number;
+  hasMore: boolean;
+};
+
 export type ParentScheduleFilterOptions = {
   filter: ParentScheduleFilter;
   playerId?: string;
@@ -1166,10 +1185,68 @@ export function getPracticePacketRows(events: ParentScheduleEvent[], now = new D
     });
 }
 
+function normalizeWindowLimit(limit: number) {
+  if (!Number.isFinite(limit)) return 0;
+  return Math.max(0, Math.floor(limit));
+}
+
+function getScheduleEventGroupingKey(event: ParentScheduleEvent) {
+  return `${event.teamId}::${event.id}::${event.date.toISOString()}::${event.type}`;
+}
+
+function buildPracticePacketRow(event: ParentScheduleEvent, cutoff: Date): PracticePacketScheduleRow {
+  const completedChildIds = (Array.isArray(event.practicePacketCompletions) ? event.practicePacketCompletions : [])
+    .filter((completion) => completion.status === 'completed')
+    .map((completion) => String(completion.childId || '').trim())
+    .filter(Boolean);
+  const isCompletedForChild = completedChildIds.includes(event.childId);
+  const status: PracticePacketScheduleRow['status'] = isCompletedForChild ? 'completed' : event.date < cutoff ? 'past' : 'ready';
+  return {
+    event,
+    completedChildIds,
+    isCompletedForChild,
+    needsAction: status === 'ready',
+    status
+  };
+}
+
+export function getWindowedPracticePacketRows(events: ParentScheduleEvent[], limit: number, now = new Date()): WindowedPracticePacketRows {
+  const normalizedLimit = normalizeWindowLimit(limit);
+  const cutoff = new Date(now.getTime() - 3 * 60 * 60 * 1000);
+  const packets = (Array.isArray(events) ? events : [])
+    .reduce<Array<{ event: ParentScheduleEvent; status: PracticePacketScheduleRow['status']; index: number }>>((packetList, event) => {
+      if (event.type !== 'practice' || !event.practiceHomePacketSummary) return packetList;
+      const completedChildIds = (Array.isArray(event.practicePacketCompletions) ? event.practicePacketCompletions : [])
+        .filter((completion) => completion.status === 'completed')
+        .map((completion) => String(completion.childId || '').trim())
+        .filter(Boolean);
+      const status: PracticePacketScheduleRow['status'] = completedChildIds.includes(event.childId) ? 'completed' : event.date < cutoff ? 'past' : 'ready';
+      packetList.push({ event, status, index: packetList.length });
+      return packetList;
+    }, [])
+    .sort((a, b) => {
+      const statusOrder: Record<PracticePacketScheduleRow['status'], number> = { ready: 0, completed: 1, past: 2 };
+      const statusDelta = statusOrder[a.status] - statusOrder[b.status];
+      if (statusDelta !== 0) return statusDelta;
+      const dateDelta = a.event.date.getTime() - b.event.date.getTime();
+      return dateDelta !== 0 ? dateDelta : a.index - b.index;
+    });
+
+  const totalCount = packets.length;
+  const readyCount = packets.reduce((count, packet) => count + (packet.status === 'ready' ? 1 : 0), 0);
+
+  return {
+    rows: packets.slice(0, normalizedLimit).map((packet) => buildPracticePacketRow(packet.event, cutoff)),
+    totalCount,
+    readyCount,
+    hasMore: totalCount > normalizedLimit
+  };
+}
+
 export function getCalendarScheduleEntries(events: ParentScheduleEvent[]): CalendarScheduleEntry[] {
   const byKey = new Map<string, CalendarScheduleEntry>();
   events.forEach((event) => {
-    const key = `${event.teamId}::${event.id}::${event.date.toISOString()}::${event.type}`;
+    const key = getScheduleEventGroupingKey(event);
     if (!byKey.has(key)) {
       byKey.set(key, {
         ...event,
@@ -1198,6 +1275,88 @@ export function getCalendarScheduleEntries(events: ParentScheduleEvent[]): Calen
   });
 
   return [...byKey.values()].sort((a, b) => a.date.getTime() - b.date.getTime());
+}
+
+export function getWindowedCalendarScheduleEntries(events: ParentScheduleEvent[], limit: number): WindowedCalendarScheduleEntries {
+  const normalizedLimit = normalizeWindowLimit(limit);
+  const sourceEvents = Array.isArray(events) ? events : [];
+  const byKey = new Map<string, { key: string; event: ParentScheduleEvent; index: number }>();
+
+  sourceEvents.forEach((event) => {
+    const key = getScheduleEventGroupingKey(event);
+    if (!byKey.has(key)) {
+      byKey.set(key, { key, event, index: byKey.size });
+    }
+  });
+
+  const sortedGroups = [...byKey.values()].sort((a, b) => {
+    const dateDelta = a.event.date.getTime() - b.event.date.getTime();
+    return dateDelta !== 0 ? dateDelta : a.index - b.index;
+  });
+  const totalCount = sortedGroups.length;
+  const windowKeys = new Set(sortedGroups.slice(0, normalizedLimit).map((group) => group.key));
+  const windowEntries = new Map<string, CalendarScheduleEntry>();
+  let nextEvent: CalendarScheduleEntry | null = null;
+  let gameCount = 0;
+  let practiceCount = 0;
+  let packetsReady = 0;
+  let openAssignments = 0;
+  let rideRequests = 0;
+
+  sortedGroups.forEach((group) => {
+    if (group.event.type === 'game') gameCount += 1;
+    if (group.event.type === 'practice') practiceCount += 1;
+    if (!nextEvent && !group.event.isCancelled) {
+      nextEvent = {
+        ...group.event,
+        childIds: [],
+        childNames: [],
+        childRsvps: []
+      };
+    }
+    if (group.event.type === 'practice' && group.event.practiceHomePacketSummary) packetsReady += 1;
+    openAssignments += getEventOpenAssignmentCount(group.event);
+    rideRequests += group.event.rideshareSummary?.requests || 0;
+    if (windowKeys.has(group.key)) {
+      windowEntries.set(group.key, {
+        ...group.event,
+        childIds: [],
+        childNames: [],
+        childRsvps: []
+      });
+    }
+  });
+
+  sourceEvents.forEach((event) => {
+    const entry = windowEntries.get(getScheduleEventGroupingKey(event));
+    if (!entry) return;
+    if (event.childId && !entry.childIds.includes(event.childId)) {
+      entry.childIds.push(event.childId);
+    }
+    if (event.childName && !entry.childNames.includes(event.childName)) {
+      entry.childNames.push(event.childName);
+    }
+    if (event.childId && !entry.childRsvps.some((child) => child.childId === event.childId)) {
+      entry.childRsvps.push({
+        childId: event.childId,
+        childName: event.childName,
+        myRsvp: normalizeRsvpResponse(event.myRsvp)
+      });
+    }
+    entry.openAssignmentCount = getEventOpenAssignmentCount(entry);
+  });
+
+  return {
+    entries: sortedGroups.slice(0, normalizedLimit).map((group) => windowEntries.get(group.key)).filter((entry): entry is CalendarScheduleEntry => Boolean(entry)),
+    totalCount,
+    gameCount,
+    practiceCount,
+    hasMore: totalCount > normalizedLimit,
+    nextEvent,
+    packetsReady,
+    openAssignments,
+    rideRequests
+  };
 }
 
 function formatIcsDate(date: Date) {

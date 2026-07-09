@@ -574,13 +574,22 @@ describe('Schedule', () => {
       children: [
         { playerId: 'player-1', playerName: 'Pat', teamId: 'team-1', teamName: 'Bears' }
       ],
-      events: Array.from({ length: 21 }, (_, index) => buildScheduleEvent(index + 1))
+      events: Array.from({ length: 21 }, (_, index) => buildScheduleEvent(index + 1, {
+        opponent: `Rivals ${index + 1}`
+      }))
     });
 
     renderSchedule();
 
     expect(await screen.findByText('Showing 20 of 21 events')).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Show 1 more' })).toBeTruthy();
+    expect(screen.getAllByText('vs. Rivals 20').length).toBeGreaterThan(0);
+    expect(screen.queryAllByText('vs. Rivals 21')).toHaveLength(0);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Show 1 more' }));
+
+    expect((await screen.findAllByText('vs. Rivals 21')).length).toBeGreaterThan(0);
+    expect(screen.queryByRole('button', { name: 'Show 1 more' })).toBeNull();
   });
 
   it('paginates practice packet rows while keeping the all-packet summary count', async () => {
@@ -1015,8 +1024,8 @@ describe('Schedule', () => {
   it('keeps list pagination props in sync with the parent schedule view', () => {
     const source = readFileSync(resolveAppSourcePath('src/pages/Schedule.tsx'), 'utf8');
 
-    expect(source).toContain('function ScheduleList({ events, visibleCount, pageSize, canShowMore, loadingMore, preferGameHubForStaff, onShowMore }');
-    expect(source).toContain('function CompactScheduleList({ events, visibleCount, pageSize, canShowMore, loadingMore, preferGameHubForStaff, onShowMore }');
+    expect(source).toContain('function ScheduleList({ events, totalCount, visibleCount, pageSize, canShowMore, loadingMore, preferGameHubForStaff, onShowMore }');
+    expect(source).toContain('function CompactScheduleList({ events, totalCount, visibleCount, pageSize, canShowMore, loadingMore, preferGameHubForStaff, onShowMore }');
     expect(source).toContain("{loadingMore ? 'Loading more…' : `Show ${Math.min(pageSize, remainingCount || pageSize)} more`}");
   });
 

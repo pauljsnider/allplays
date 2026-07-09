@@ -26,7 +26,8 @@ import {
   getGenericEventDetailPath,
   getParentScheduleTeamOptions,
   getScheduleEventDetailPath,
-  getPracticePacketRows,
+  getWindowedCalendarScheduleEntries,
+  getWindowedPracticePacketRows,
   getScheduleTitle,
   getScheduleTournamentInfo,
   getScheduleMapHref,
@@ -537,15 +538,38 @@ export function Schedule({ auth }: { auth: AuthState }) {
     setVisibleListCount(filter === 'past-all' ? pastListPageSize : upcomingListPageSize);
   }, [filter, selectedPlayerId, selectedTeamId, timeRange, view]);
 
-  const calendarEntries = useMemo(() => getCalendarScheduleEntries(visibleEvents), [visibleEvents]);
-  const listEntries = calendarEntries;
-  const packetRows = useMemo(() => getPracticePacketRows(visibleEvents), [visibleEvents]);
-  const canLoadMorePastHistory = filter === 'past-all' && (pastHistoryHasMore || visibleListCount < listEntries.length);
-  const canLoadMorePacketRows = (filter === 'past-all' && pastHistoryHasMore) || visibleListCount < packetRows.length;
+  const listWindowLimit = visibleListCount + 1;
+  const calendarEntries = useMemo(() => (
+    view === 'calendar' ? getCalendarScheduleEntries(visibleEvents) : []
+  ), [visibleEvents, view]);
+  const windowedListEntries = useMemo(() => (
+    view === 'calendar'
+      ? {
+          entries: calendarEntries,
+          totalCount: calendarEntries.length,
+          gameCount: calendarEntries.filter((event) => event.type === 'game').length,
+          practiceCount: calendarEntries.filter((event) => event.type === 'practice').length,
+          hasMore: false,
+          nextEvent: calendarEntries.find((event) => !event.isCancelled) || null,
+          packetsReady: calendarEntries.filter((event) => event.type === 'practice' && event.practiceHomePacketSummary).length,
+          openAssignments: calendarEntries.reduce((total, event) => total + getEventOpenAssignmentCount(event), 0),
+          rideRequests: calendarEntries.reduce((total, event) => total + (event.rideshareSummary?.requests || 0), 0)
+        }
+      : getWindowedCalendarScheduleEntries(visibleEvents, listWindowLimit)
+  ), [calendarEntries, listWindowLimit, visibleEvents, view]);
+  const listEntries = windowedListEntries.entries;
+  const packetWindow = useMemo(() => (
+    view === 'packets'
+      ? getWindowedPracticePacketRows(visibleEvents, listWindowLimit)
+      : { rows: [], totalCount: 0, readyCount: 0, hasMore: false }
+  ), [listWindowLimit, visibleEvents, view]);
+  const packetRows = packetWindow.rows;
+  const canLoadMorePastHistory = filter === 'past-all' && (pastHistoryHasMore || visibleListCount < windowedListEntries.totalCount);
+  const canLoadMorePacketRows = (filter === 'past-all' && pastHistoryHasMore) || visibleListCount < packetWindow.totalCount;
 
   const handleShowMore = async () => {
-    if (visibleListCount < listEntries.length) {
-      setVisibleListCount((current) => Math.min(current + listPageSize, listEntries.length));
+    if (visibleListCount < windowedListEntries.totalCount) {
+      setVisibleListCount((current) => Math.min(current + listPageSize, windowedListEntries.totalCount));
       return;
     }
     if (filter !== 'past-all' || !pastHistoryHasMore || loadingPastHistory) {
@@ -557,8 +581,8 @@ export function Schedule({ auth }: { auth: AuthState }) {
     }
   };
   const handleShowMorePackets = async () => {
-    if (visibleListCount < packetRows.length) {
-      setVisibleListCount((current) => Math.min(current + listPageSize, packetRows.length));
+    if (visibleListCount < packetWindow.totalCount) {
+      setVisibleListCount((current) => Math.min(current + listPageSize, packetWindow.totalCount));
       return;
     }
     if (filter !== 'past-all' || !pastHistoryHasMore || loadingPastHistory) {
@@ -581,13 +605,19 @@ export function Schedule({ auth }: { auth: AuthState }) {
   }, [calendarEntries, selectedDay]);
 
   const counts = useMemo(() => ({
-    total: listEntries.length,
-    games: listEntries.filter((event) => event.type === 'game').length,
-    practices: listEntries.filter((event) => event.type === 'practice').length,
+    total: windowedListEntries.totalCount,
+    games: windowedListEntries.gameCount,
+    practices: windowedListEntries.practiceCount,
     rsvpNeeded: visibleEvents.filter((event) => parentLinkedPlayerIds.has(event.childId) && event.isDbGame && !event.isCancelled && normalizeRsvpResponse(event.myRsvp) === 'not_responded').length,
-    packetsReady: packetRows.filter((row) => row.needsAction).length
-  }), [listEntries, packetRows, parentLinkedPlayerIds, visibleEvents]);
-  const webInsights = useMemo(() => buildScheduleWebInsights(listEntries), [listEntries]);
+    packetsReady: view === 'packets' ? packetWindow.readyCount : windowedListEntries.packetsReady
+  }), [packetWindow.readyCount, parentLinkedPlayerIds, view, visibleEvents, windowedListEntries.gameCount, windowedListEntries.packetsReady, windowedListEntries.practiceCount, windowedListEntries.totalCount]);
+  const webInsights = useMemo(() => ({
+    nextEvent: windowedListEntries.nextEvent,
+    rsvpNeeded: counts.rsvpNeeded,
+    packetsReady: counts.packetsReady,
+    openAssignments: windowedListEntries.openAssignments,
+    rideRequests: windowedListEntries.rideRequests
+  }), [counts.packetsReady, counts.rsvpNeeded, windowedListEntries.nextEvent, windowedListEntries.openAssignments, windowedListEntries.rideRequests]);
   const manageableTeamOptions = useMemo(() => (
     teamOptions.filter((team) => events.some((event) => event.teamId === team.teamId && event.isTeamStaff === true))
   ), [events, teamOptions]);
@@ -1506,6 +1536,8 @@ export function Schedule({ auth }: { auth: AuthState }) {
           ) : view === 'packets' ? (
             <PracticePacketsPanel
               rows={packetRows}
+              totalCount={packetWindow.totalCount}
+              readyCount={packetWindow.readyCount}
               visibleCount={visibleListCount}
               pageSize={listPageSize}
               canShowMore={canLoadMorePacketRows}
@@ -1515,9 +1547,10 @@ export function Schedule({ auth }: { auth: AuthState }) {
           ) : view === 'compact' ? (
             <CompactScheduleList
               events={listEntries}
+              totalCount={windowedListEntries.totalCount}
               visibleCount={visibleListCount}
               pageSize={listPageSize}
-              canShowMore={canLoadMorePastHistory || visibleListCount < listEntries.length}
+              canShowMore={canLoadMorePastHistory || visibleListCount < windowedListEntries.totalCount}
               loadingMore={filter === 'past-all' && loadingPastHistory}
               preferGameHubForStaff={!isDesktopWeb}
               onShowMore={handleShowMore}
@@ -1525,9 +1558,10 @@ export function Schedule({ auth }: { auth: AuthState }) {
           ) : (
             <ScheduleList
               events={listEntries}
+              totalCount={windowedListEntries.totalCount}
               visibleCount={visibleListCount}
               pageSize={listPageSize}
-              canShowMore={canLoadMorePastHistory || visibleListCount < listEntries.length}
+              canShowMore={canLoadMorePastHistory || visibleListCount < windowedListEntries.totalCount}
               loadingMore={filter === 'past-all' && loadingPastHistory}
               preferGameHubForStaff={!isDesktopWeb}
               onShowMore={handleShowMore}
@@ -2304,23 +2338,6 @@ type ScheduleWebInsights = {
   rideRequests: number;
 };
 
-function buildScheduleWebInsights(events: Array<ParentScheduleEvent | CalendarScheduleEntry>): ScheduleWebInsights {
-  return events.reduce<ScheduleWebInsights>((insights, event) => {
-    if (!insights.nextEvent && !event.isCancelled) insights.nextEvent = event;
-    if (event.isDbGame && !event.isCancelled && normalizeRsvpResponse(event.myRsvp) === 'not_responded') insights.rsvpNeeded += 1;
-    if (event.type === 'practice' && event.practiceHomePacketSummary) insights.packetsReady += 1;
-    insights.openAssignments += getEventOpenAssignmentCount(event);
-    insights.rideRequests += event.rideshareSummary?.requests || 0;
-    return insights;
-  }, {
-    nextEvent: null,
-    rsvpNeeded: 0,
-    packetsReady: 0,
-    openAssignments: 0,
-    rideRequests: 0
-  });
-}
-
 function ScheduleNextUpCard({ event, preferGameHubForStaff }: { event: ParentScheduleEvent | null; preferGameHubForStaff: boolean }) {
   if (!event) {
     return (
@@ -2603,8 +2620,9 @@ function LoadingSchedule() {
   return <SchedulePageSkeleton />;
 }
 
-function ScheduleList({ events, visibleCount, pageSize, canShowMore, loadingMore, preferGameHubForStaff, onShowMore }: {
+function ScheduleList({ events, totalCount, visibleCount, pageSize, canShowMore, loadingMore, preferGameHubForStaff, onShowMore }: {
   events: CalendarScheduleEntry[];
+  totalCount: number;
   visibleCount: number;
   pageSize: number;
   canShowMore: boolean;
@@ -2612,7 +2630,7 @@ function ScheduleList({ events, visibleCount, pageSize, canShowMore, loadingMore
   preferGameHubForStaff: boolean;
   onShowMore: () => void;
 }) {
-  if (!events.length) {
+  if (!totalCount) {
     return (
       <div className="app-card p-8 text-center">
         <CalendarDays className="mx-auto h-10 w-10 text-gray-300" aria-hidden="true" />
@@ -2623,7 +2641,7 @@ function ScheduleList({ events, visibleCount, pageSize, canShowMore, loadingMore
   }
 
   const renderedEvents = events.slice(0, visibleCount);
-  const remainingCount = Math.max(events.length - renderedEvents.length, 0);
+  const remainingCount = Math.max(totalCount - renderedEvents.length, 0);
 
   return (
     <div className="space-y-3">
@@ -2635,7 +2653,7 @@ function ScheduleList({ events, visibleCount, pageSize, canShowMore, loadingMore
       {canShowMore ? (
         <div className="rounded-xl border border-gray-200 bg-white p-3 text-center shadow-sm">
           <div className="text-xs font-bold text-gray-500">
-            Showing {renderedEvents.length} of {events.length} events
+            Showing {renderedEvents.length} of {totalCount} events
           </div>
           <button type="button" className="secondary-button mt-2 min-h-9 px-3 py-2 text-xs" onClick={onShowMore} disabled={loadingMore}>
             {loadingMore ? 'Loading more…' : `Show ${Math.min(pageSize, remainingCount || pageSize)} more`}
@@ -2646,8 +2664,9 @@ function ScheduleList({ events, visibleCount, pageSize, canShowMore, loadingMore
   );
 }
 
-function CompactScheduleList({ events, visibleCount, pageSize, canShowMore, loadingMore, preferGameHubForStaff, onShowMore }: {
+function CompactScheduleList({ events, totalCount, visibleCount, pageSize, canShowMore, loadingMore, preferGameHubForStaff, onShowMore }: {
   events: CalendarScheduleEntry[];
+  totalCount: number;
   visibleCount: number;
   pageSize: number;
   canShowMore: boolean;
@@ -2655,7 +2674,7 @@ function CompactScheduleList({ events, visibleCount, pageSize, canShowMore, load
   preferGameHubForStaff: boolean;
   onShowMore: () => void;
 }) {
-  if (!events.length) {
+  if (!totalCount) {
     return (
       <div className="app-card p-8 text-center">
         <CalendarDays className="mx-auto h-10 w-10 text-gray-300" aria-hidden="true" />
@@ -2666,7 +2685,7 @@ function CompactScheduleList({ events, visibleCount, pageSize, canShowMore, load
   }
 
   const renderedEvents = events.slice(0, visibleCount);
-  const remainingCount = Math.max(events.length - renderedEvents.length, 0);
+  const remainingCount = Math.max(totalCount - renderedEvents.length, 0);
 
   return (
     <section className="space-y-3">
@@ -2702,7 +2721,7 @@ function CompactScheduleList({ events, visibleCount, pageSize, canShowMore, load
       {canShowMore ? (
         <div className="rounded-xl border border-gray-200 bg-white p-3 text-center shadow-sm">
           <div className="text-xs font-bold text-gray-500">
-            Showing {renderedEvents.length} of {events.length} events
+            Showing {renderedEvents.length} of {totalCount} events
           </div>
           <button type="button" className="secondary-button mt-2 min-h-9 px-3 py-2 text-xs" onClick={onShowMore} disabled={loadingMore}>
             {loadingMore ? 'Loading more…' : `Show ${Math.min(pageSize, remainingCount || pageSize)} more`}
@@ -2713,15 +2732,17 @@ function CompactScheduleList({ events, visibleCount, pageSize, canShowMore, load
   );
 }
 
-function PracticePacketsPanel({ rows, visibleCount, pageSize, canShowMore, loadingMore, onShowMore }: {
+function PracticePacketsPanel({ rows, totalCount, readyCount, visibleCount, pageSize, canShowMore, loadingMore, onShowMore }: {
   rows: PracticePacketScheduleRow[];
+  totalCount: number;
+  readyCount: number;
   visibleCount: number;
   pageSize: number;
   canShowMore: boolean;
   loadingMore: boolean;
   onShowMore: () => void;
 }) {
-  if (!rows.length) {
+  if (!totalCount) {
     return (
       <div className="app-card p-8 text-center">
         <ClipboardCheck className="mx-auto h-10 w-10 text-gray-300" aria-hidden="true" />
@@ -2731,9 +2752,8 @@ function PracticePacketsPanel({ rows, visibleCount, pageSize, canShowMore, loadi
     );
   }
 
-  const readyCount = rows.filter((row) => row.needsAction).length;
   const renderedRows = rows.slice(0, visibleCount);
-  const remainingCount = Math.max(rows.length - renderedRows.length, 0);
+  const remainingCount = Math.max(totalCount - renderedRows.length, 0);
 
   return (
     <section className="space-y-3">
@@ -2771,7 +2791,7 @@ function PracticePacketsPanel({ rows, visibleCount, pageSize, canShowMore, loadi
       {canShowMore ? (
         <div className="rounded-xl border border-gray-200 bg-white p-3 text-center shadow-sm">
           <div className="text-xs font-bold text-gray-500">
-            Showing {renderedRows.length} of {rows.length} packets
+            Showing {renderedRows.length} of {totalCount} packets
           </div>
           <button type="button" className="secondary-button mt-2 min-h-9 px-3 py-2 text-xs" onClick={onShowMore} disabled={loadingMore}>
             {loadingMore ? 'Loading more…' : `Show ${Math.min(pageSize, remainingCount || pageSize)} more`}
