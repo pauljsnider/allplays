@@ -225,9 +225,14 @@ describe('GameReportSections', () => {
   });
 
   it('refreshes live status during lightweight play polling and stops polling after completion', async () => {
-    gameReportServiceMocks.loadGameReportSections.mockResolvedValue(buildReport('Live report.', {}, [
-      { id: 'event-early', text: 'Opening tip', period: 'Q1', clock: '8:00', timestamp: new Date(1717200000 * 1000) }
-    ]));
+    gameReportServiceMocks.loadGameReportSections
+      .mockResolvedValueOnce(buildReport('Live report.', {}, [
+        { id: 'event-early', text: 'Opening tip', period: 'Q1', clock: '8:00', timestamp: new Date(1717200000 * 1000) }
+      ]))
+      .mockResolvedValueOnce(buildReport('Completed report.', { liveStatus: 'completed', status: 'completed', homeScore: 43, awayScore: 40 }, [
+        { id: 'event-early', text: 'Opening tip', period: 'Q1', clock: '8:00', timestamp: new Date(1717200000 * 1000) },
+        { id: 'event-final', text: 'Final horn', period: 'Q4', clock: '0:00', timestamp: new Date(1717200120 * 1000) }
+      ]));
     gameReportServiceMocks.loadGameReportPlays.mockResolvedValue({
       game: { id: 'game-1', liveStatus: 'completed', status: 'completed', homeScore: 43, awayScore: 40 },
       plays: [
@@ -251,6 +256,10 @@ describe('GameReportSections', () => {
     });
 
     expect(screen.getByText('Final horn')).toBeTruthy();
+    expect(gameReportServiceMocks.loadGameReportSections).toHaveBeenCalledTimes(2);
+    fireEvent.click(screen.getByRole('button', { name: 'Summary' }));
+    expect(screen.getByText('Completed report.')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Plays' }));
 
     await act(async () => {
       vi.advanceTimersByTime(15000);
@@ -262,5 +271,6 @@ describe('GameReportSections', () => {
     });
 
     expect(gameReportServiceMocks.loadGameReportPlays).toHaveBeenCalledTimes(1);
+    expect(gameReportServiceMocks.loadGameReportSections).toHaveBeenCalledTimes(2);
   });
 });

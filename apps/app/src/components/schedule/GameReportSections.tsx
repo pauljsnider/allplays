@@ -49,10 +49,14 @@ export function GameReportSections({ event }: { event: ParentScheduleEvent }) {
         game: { ...currentReport.game, ...refresh.game },
         plays: refresh.plays
       } : currentReport);
+      const refreshedStatus = String(refresh.game?.liveStatus || refresh.game?.status || '').trim().toLowerCase();
+      if (completedReportStatuses.has(refreshedStatus)) {
+        await refreshReport(false);
+      }
     } catch (error: any) {
       setReportError(error?.message || 'Unable to refresh play-by-play.');
     }
-  }, [event.id, event.teamId]);
+  }, [event.id, event.teamId, refreshReport]);
 
   useEffect(() => {
     setReport(null);
