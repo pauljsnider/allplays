@@ -2362,6 +2362,33 @@ service cloud.firestore {
                  playerId.size() > 0 &&
                  rsvpId == request.auth.uid + "__" + playerId;
         }
+        function rsvpPayloadHasNoDirectPlayerId(data) {
+          return (!('playerId' in data) || data.playerId == null || data.playerId == '') &&
+                 (!('childId' in data) || data.childId == null || data.childId == '');
+        }
+        function isParentForRsvpPlayerAt(teamId, playerIds, index) {
+          return playerIds.size() <= index ||
+                 (playerIds[index] is string &&
+                  playerIds[index].size() > 0 &&
+                  isParentForPlayer(teamId, playerIds[index]));
+        }
+        function canUseGroupedLinkedPlayerRsvp(teamId, data) {
+          let playerIds = data.get('playerIds', []);
+          return playerIds is list &&
+                 playerIds.size() > 0 &&
+                 playerIds.size() <= 10 &&
+                 rsvpPayloadHasNoDirectPlayerId(data) &&
+                 isParentForRsvpPlayerAt(teamId, playerIds, 0) &&
+                 isParentForRsvpPlayerAt(teamId, playerIds, 1) &&
+                 isParentForRsvpPlayerAt(teamId, playerIds, 2) &&
+                 isParentForRsvpPlayerAt(teamId, playerIds, 3) &&
+                 isParentForRsvpPlayerAt(teamId, playerIds, 4) &&
+                 isParentForRsvpPlayerAt(teamId, playerIds, 5) &&
+                 isParentForRsvpPlayerAt(teamId, playerIds, 6) &&
+                 isParentForRsvpPlayerAt(teamId, playerIds, 7) &&
+                 isParentForRsvpPlayerAt(teamId, playerIds, 8) &&
+                 isParentForRsvpPlayerAt(teamId, playerIds, 9);
+        }
         function hasRsvpPlayerScope(data) {
           return (data.get('playerId', '') is string && data.get('playerId', '').size() > 0) ||
                  (data.get('childId', '') is string && data.get('childId', '').size() > 0) ||
@@ -2383,7 +2410,9 @@ service cloud.firestore {
           function canWriteOwnParentRsvp(data) {
             return (isOwnBaseRsvpDoc() &&
                     isParentForTeam(teamId) &&
-                    (!hasRsvpPlayerScope(data) || canUseLinkedPlayerRsvp(teamId, data))) ||
+                    (!hasRsvpPlayerScope(data) ||
+                     canUseLinkedPlayerRsvp(teamId, data) ||
+                     canUseGroupedLinkedPlayerRsvp(teamId, data))) ||
                    (isOwnLinkedPlayerRsvpDoc() &&
                     canUseLinkedPlayerRsvp(teamId, data) &&
                     isOwnLinkedPlayerRsvpId(rsvpId, data));
@@ -2437,7 +2466,9 @@ service cloud.firestore {
           function canWriteOwnParentRsvpNote(teamId, rsvpId, data) {
             return ((isOwnBaseRsvpNoteId() &&
                      isParentForTeam(teamId) &&
-                     (!hasRsvpPlayerScope(data) || canUseLinkedPlayerRsvp(teamId, data))) ||
+                     (!hasRsvpPlayerScope(data) ||
+                      canUseLinkedPlayerRsvp(teamId, data) ||
+                      canUseGroupedLinkedPlayerRsvp(teamId, data))) ||
                     (isOwnLinkedPlayerRsvpNoteId() &&
                      canUseLinkedPlayerRsvp(teamId, data) &&
                      isOwnLinkedPlayerRsvpId(rsvpId, data))) &&

@@ -44,13 +44,15 @@ describe('RSVP note privacy Firestore rules', () => {
     expect(gamesBlock).toContain('function getRsvpPayloadPlayerId(data)');
     expect(gamesBlock).toContain('function rsvpPayloadMatchesSinglePlayer(data, playerId)');
     expect(gamesBlock).toContain('function canUseLinkedPlayerRsvp(teamId, data)');
+    expect(gamesBlock).toContain('function canUseGroupedLinkedPlayerRsvp(teamId, data)');
     expect(gamesBlock).toContain('function isOwnLinkedPlayerRsvpId(rsvpId, data)');
     expect(gamesBlock).toContain('function hasRsvpPlayerScope(data)');
     expect(gamesBlock).toContain('isParentForPlayer(teamId, playerId)');
+    expect(gamesBlock).toContain('isParentForRsvpPlayerAt(teamId, playerIds, 9)');
     expect(gamesBlock).toContain('rsvpId == request.auth.uid + "__" + playerId');
     expect(rsvpBlock).toContain('canUseLinkedPlayerRsvp(teamId, resource.data)');
     expect(rsvpBlock).toContain('isOwnLinkedPlayerRsvpId(rsvpId, resource.data)');
-    expect(parentWriteFunction).toContain('isOwnBaseRsvpDoc() &&\n                    isParentForTeam(teamId) &&\n                    (!hasRsvpPlayerScope(data) || canUseLinkedPlayerRsvp(teamId, data))');
+    expect(parentWriteFunction).toContain('isOwnBaseRsvpDoc() &&\n                    isParentForTeam(teamId) &&\n                    (!hasRsvpPlayerScope(data) ||\n                     canUseLinkedPlayerRsvp(teamId, data) ||\n                     canUseGroupedLinkedPlayerRsvp(teamId, data))');
     expect(parentWriteFunction).toContain('isOwnLinkedPlayerRsvpDoc() &&\n                    canUseLinkedPlayerRsvp(teamId, data) &&\n                    isOwnLinkedPlayerRsvpId(rsvpId, data)');
     expect(rsvpBlock).not.toContain('isParentForTeam(teamId) ||\n                                    (canUseLinkedPlayerRsvp');
     expect(rsvpBlock).not.toContain('isParentForTeam(teamId) ||\n                            (canUseLinkedPlayerRsvp');
@@ -93,8 +95,9 @@ describe('RSVP note privacy Firestore rules', () => {
     expect(noteBlock).toContain("data.visibility in ['admins', 'team']");
     expect(noteBlock).toContain("(data.visibility == 'admins' || teamAllowsTeamVisibleRsvpNotes(teamId))");
     expect(noteBlock).toContain('canUseLinkedPlayerRsvp(teamId, data)');
+    expect(noteBlock).toContain('canUseGroupedLinkedPlayerRsvp(teamId, data)');
     expect(noteBlock).toContain('isOwnLinkedPlayerRsvpId(rsvpId, data)');
-    expect(parentNoteWriteFunction).toContain('isOwnBaseRsvpNoteId() &&\n                     isParentForTeam(teamId) &&\n                     (!hasRsvpPlayerScope(data) || canUseLinkedPlayerRsvp(teamId, data))');
+    expect(parentNoteWriteFunction).toContain('isOwnBaseRsvpNoteId() &&\n                     isParentForTeam(teamId) &&\n                     (!hasRsvpPlayerScope(data) ||\n                      canUseLinkedPlayerRsvp(teamId, data) ||\n                      canUseGroupedLinkedPlayerRsvp(teamId, data))');
     expect(parentNoteWriteFunction).toContain('isOwnLinkedPlayerRsvpNoteId() &&\n                     canUseLinkedPlayerRsvp(teamId, data) &&\n                     isOwnLinkedPlayerRsvpId(rsvpId, data)');
     expect(parentNoteWriteFunction).toContain('data.userId == request.auth.uid &&\n                   isOwnRsvpNoteId()');
     expect(noteBlock).not.toContain('data.userId == request.auth.uid &&\n                     isOwnRsvpNoteDoc(data)');
@@ -148,7 +151,7 @@ describe('RSVP note privacy Firestore rules', () => {
           email: 'parent@example.com',
           isAdmin: false,
           parentTeamIds: ['team-1'],
-          parentPlayerKeys: ['team-1::player-a']
+          parentPlayerKeys: ['team-1::player-a', 'team-1::player-c']
         });
         await setDoc(doc(firestore, 'users/owner-1'), {
           email: 'owner@example.com',
@@ -193,6 +196,18 @@ describe('RSVP note privacy Firestore rules', () => {
       };
     }
 
+    function groupedRsvpPayload(playerIds, uid = 'parent-1') {
+      return {
+        userId: uid,
+        displayName: 'Parent One',
+        playerIds,
+        playerId: null,
+        childId: null,
+        response: 'going',
+        respondedAt: now
+      };
+    }
+
     function notePayload(playerId, uid = 'parent-1') {
       return {
         userId: uid,
@@ -200,6 +215,21 @@ describe('RSVP note privacy Firestore rules', () => {
         playerIds: [playerId],
         playerId,
         childId: playerId,
+        response: 'going',
+        note: 'Available',
+        visibility: 'admins',
+        updatedAt: now,
+        respondedAt: now
+      };
+    }
+
+    function groupedNotePayload(playerIds, uid = 'parent-1') {
+      return {
+        userId: uid,
+        displayName: 'Parent One',
+        playerIds,
+        playerId: null,
+        childId: null,
         response: 'going',
         note: 'Available',
         visibility: 'admins',
@@ -234,6 +264,17 @@ describe('RSVP note privacy Firestore rules', () => {
       await assertSucceeds(updateDoc(playerARef, { response: 'maybe' }));
       await assertSucceeds(deleteDoc(playerARef));
       await assertSucceeds(setDoc(baseRsvpRef(parentDb), rsvpPayload('player-a')));
+    });
+
+    it('allows grouped base RSVP and note writes only when every player is linked to the parent', async () => {
+      const parentDb = authedFirestore('parent-1', 'parent@example.com');
+      const linkedPlayers = ['player-a', 'player-c'];
+      const mixedPlayers = ['player-a', 'player-b'];
+
+      await assertSucceeds(setDoc(baseRsvpRef(parentDb), groupedRsvpPayload(linkedPlayers)));
+      await assertSucceeds(setDoc(baseNoteRef(parentDb), groupedNotePayload(linkedPlayers)));
+      await assertFails(setDoc(baseRsvpRef(parentDb), groupedRsvpPayload(mixedPlayers)));
+      await assertFails(setDoc(baseNoteRef(parentDb), groupedNotePayload(mixedPlayers)));
     });
 
     it('denies same-team different-player parent RSVP note create, update, and delete', async () => {
