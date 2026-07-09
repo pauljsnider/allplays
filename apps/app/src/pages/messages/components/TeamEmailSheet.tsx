@@ -84,6 +84,7 @@ export default function TeamEmailSheet({
   const [emailHistoryStatus, setEmailHistoryStatus] = useState<ChatStatus | null>(null);
   const [sentEmails, setSentEmails] = useState<SentTeamEmail[]>([]);
   const loadedForTeamRef = useRef<string | null>(null);
+  const openForTeamRef = useRef<string | null>(null);
 
   const emailAudienceMetadata = useMemo(() => buildEmailAudienceMetadata({
     selectedConversation,
@@ -144,11 +145,17 @@ export default function TeamEmailSheet({
   };
 
   useEffect(() => {
-    if (!open) return;
-    emailDispatch(emailComposerActions.updateTemplateName(''));
-    emailDispatch(emailComposerActions.clearSelectedDraft());
-    setEmailStatus(null);
-    setEmailHistoryStatus(null);
+    if (!open) {
+      openForTeamRef.current = null;
+      return;
+    }
+    if (openForTeamRef.current !== teamId) {
+      openForTeamRef.current = teamId;
+      emailDispatch(emailComposerActions.updateTemplateName(''));
+      emailDispatch(emailComposerActions.clearSelectedDraft());
+      setEmailStatus(null);
+      setEmailHistoryStatus(null);
+    }
     void ensureRecipientOptionsLoaded().catch(() => undefined);
     if (loadedForTeamRef.current === teamId) return;
     loadedForTeamRef.current = teamId;

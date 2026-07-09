@@ -215,6 +215,41 @@ describe('Messages team email templates', () => {
     expect(screen.getAllByText(/Audience: Blake Parent/).length).toBeGreaterThan(0);
   });
 
+  it('keeps the restored draft selected when recipient options finish loading', async () => {
+    let resolveRecipientOptions: (options: Array<{ id: string; name: string; detail: string; email: string }>) => void = () => undefined;
+    chatServiceMocks.loadChatRecipientOptions.mockReturnValueOnce(new Promise((resolve) => {
+      resolveRecipientOptions = resolve;
+    }));
+
+    renderMessages();
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Open Team Email' }));
+    expect(await screen.findByRole('dialog', { name: 'Team Email' })).toBeTruthy();
+    fireEvent.click(await screen.findByRole('button', { name: /Bus update/i }));
+
+    expect(screen.getByDisplayValue('Bus update')).toBeTruthy();
+    expect(screen.getByText(/Restored draft/)).toBeTruthy();
+
+    resolveRecipientOptions([
+      { id: 'email:avery.parent@example.com', name: 'Avery Parent', detail: 'Guardian for Avery Smith', email: 'avery.parent@example.com' },
+      { id: 'email:blake.parent@example.com', name: 'Blake Parent', detail: 'Guardian for Blake Jones', email: 'blake.parent@example.com' }
+    ]);
+
+    const saveDraftButton = screen.getByRole('button', { name: 'Save draft' });
+    await waitFor(() => {
+      expect((saveDraftButton as HTMLButtonElement).disabled).toBe(false);
+    });
+    fireEvent.click(saveDraftButton);
+
+    await waitFor(() => {
+      expect(chatServiceMocks.saveTeamEmailDraft).toHaveBeenCalledWith(expect.objectContaining({
+        teamId: 'team-1',
+        draftId: 'draft-1',
+        recipientIds: ['email:blake.parent@example.com']
+      }));
+    });
+  });
+
   it('saves a draft and updates the rendered draft list without touching sent history', async () => {
     chatServiceMocks.loadTeamEmailDrafts
       .mockResolvedValueOnce([])
