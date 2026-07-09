@@ -72,6 +72,7 @@ export type GameReportPlay = {
 export type GameReportPlaysRefresh = {
   game: GameReportGameFirestoreRecord;
   plays: GameReportPlay[];
+  playsFresh: boolean;
 };
 
 export type GameReportHighlightClip = {
@@ -182,15 +183,18 @@ export async function loadGameReportPlays(teamId: string, gameId: string): Promi
     throw new Error('Team and game are required.');
   }
 
-  const [rawGame, rawEvents] = await Promise.all([
+  const [rawGame, eventsRefresh] = await Promise.all([
     getGame(teamId, gameId),
-    getGameEvents(teamId, gameId, { limit: 100 }).catch(() => [])
+    getGameEvents(teamId, gameId, { limit: 100 })
+      .then((rawEvents) => ({ rawEvents, playsFresh: true }))
+      .catch(() => ({ rawEvents: [], playsFresh: false }))
   ]);
   return {
     game: mapGameReportGameRecord(rawGame, gameId),
-    plays: mapGameReportEventRecords(rawEvents)
+    plays: mapGameReportEventRecords(eventsRefresh.rawEvents)
       .sort((a, b) => (normalizeDate(a.timestamp)?.getTime() || 0) - (normalizeDate(b.timestamp)?.getTime() || 0))
-      .map(normalizePlay)
+      .map(normalizePlay),
+    playsFresh: eventsRefresh.playsFresh
   };
 }
 

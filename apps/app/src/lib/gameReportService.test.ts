@@ -211,7 +211,8 @@ describe('gameReportService', () => {
           clock: '0:12',
           timestamp: new Date(1717200060 * 1000)
         }
-      ]
+      ],
+      playsFresh: true
     });
   });
 
@@ -230,7 +231,8 @@ describe('gameReportService', () => {
         homeScore: 43,
         awayScore: 40
       }),
-      plays: []
+      plays: [],
+      playsFresh: false
     });
   });
 });

@@ -52,7 +52,7 @@ export function GameReportSections({ event }: { event: ParentScheduleEvent }) {
       setReport((currentReport) => currentReport ? {
         ...currentReport,
         game: { ...currentReport.game, ...refresh.game },
-        plays: refresh.plays
+        plays: refresh.playsFresh ? refresh.plays : currentReport.plays
       } : currentReport);
       const refreshedStatuses = [refresh.game?.liveStatus, refresh.game?.status]
         .map((status) => String(status || '').trim().toLowerCase());
