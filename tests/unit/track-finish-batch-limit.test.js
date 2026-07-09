@@ -1,5 +1,6 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
+import { runInNewContext } from 'node:vm';
 import { commitStandardTrackerFinishData } from '../../js/track-finish.js';
 import { hasPlayerProfileParticipation } from '../../js/player-profile-stats.js';
 
@@ -96,6 +97,98 @@ async function runFinishSave({ eventCount, rosterCount }) {
     });
 
     return { harness, result };
+}
+
+function extractBlockBody(source, marker) {
+    const markerIndex = source.indexOf(marker);
+    expect(markerIndex).toBeGreaterThan(-1);
+    const bodyStart = source.indexOf('{', markerIndex);
+    expect(bodyStart).toBeGreaterThan(markerIndex);
+
+    let depth = 0;
+    let quote = null;
+    let inLineComment = false;
+    let inBlockComment = false;
+    let escaped = false;
+
+    for (let index = bodyStart; index < source.length; index += 1) {
+        const char = source[index];
+        const nextChar = source[index + 1];
+
+        if (inLineComment) {
+            if (char === '\n') {
+                inLineComment = false;
+            }
+            continue;
+        }
+
+        if (inBlockComment) {
+            if (char === '*' && nextChar === '/') {
+                inBlockComment = false;
+                index += 1;
+            }
+            continue;
+        }
+
+        if (quote) {
+            if (escaped) {
+                escaped = false;
+            } else if (char === '\\') {
+                escaped = true;
+            } else if (char === quote) {
+                quote = null;
+            }
+            continue;
+        }
+
+        if (char === '/' && nextChar === '/') {
+            inLineComment = true;
+            index += 1;
+            continue;
+        }
+
+        if (char === '/' && nextChar === '*') {
+            inBlockComment = true;
+            index += 1;
+            continue;
+        }
+
+        if (char === '"' || char === "'" || char === '`') {
+            quote = char;
+            continue;
+        }
+
+        if (char === '{') {
+            depth += 1;
+        } else if (char === '}') {
+            depth -= 1;
+            if (depth === 0) {
+                return source.slice(bodyStart + 1, index);
+            }
+        }
+    }
+
+    throw new Error(`Could not extract block body for marker: ${marker}`);
+}
+
+async function runBodyWithContext(body, context) {
+    const runtime = {
+        Array,
+        Boolean,
+        Date,
+        Error,
+        JSON,
+        Math,
+        Number,
+        Object,
+        Promise,
+        String,
+        isNaN,
+        parseFloat,
+        parseInt,
+        ...context
+    };
+    return runInNewContext(`(async () => { ${body} })()`, runtime);
 }
 
 describe('standard tracker finish batch limits', () => {
@@ -529,5 +622,134 @@ describe('standard tracker finish batch limits', () => {
         expect(finishingFlagIndex).toBeLessThan(catchIndex);
         expect(mailtoRedirectIndex).toBeLessThan(catchIndex);
         expect(gameRedirectIndex).toBeLessThan(catchIndex);
+    });
+
+    it('keeps the production tracker on-page when the finish commit rejects', async () => {
+        const source = readFileSync(new URL('../../track.html', import.meta.url), 'utf8');
+        const body = extractBlockBody(source, "finishForm.addEventListener('submit', async (e) => {");
+        const finishError = new Error('Firestore rejected finalization');
+        const commitStandardTrackerFinishDataMock = vi.fn().mockRejectedValue(finishError);
+        const alertMock = vi.fn();
+        const setTimeoutMock = vi.fn();
+        const preventDefault = vi.fn();
+        const elements = {
+            finalHomeScore: { value: '21' },
+            finalAwayScore: { value: '18' },
+            gameSummary: { value: 'Tough finish.' },
+            sendEmailCheckbox: { checked: true }
+        };
+        const context = {
+            alert: alertMock,
+            collection: vi.fn(),
+            commitStandardTrackerFinishData: commitStandardTrackerFinishDataMock,
+            console: { error: vi.fn(), log: vi.fn() },
+            currentConfig: { columns: ['PTS'] },
+            currentGame: { opponent: 'Wildcats', status: 'scheduled' },
+            currentGameId: 'game-1',
+            currentTeam: { name: 'Tigers', notificationEmail: 'coach@example.com' },
+            currentTeamId: 'team-1',
+            currentUser: { uid: 'coach-1', email: 'coach@example.com' },
+            db: {},
+            doc: vi.fn(),
+            document: {
+                getElementById: vi.fn((id) => elements[id])
+            },
+            e: { preventDefault },
+            gameState: {
+                gameLog: [{ text: 'Final whistle' }],
+                opponentStats: {},
+                playerParticipationByPlayerId: {},
+                playerStats: {}
+            },
+            generateEmailBody: vi.fn(() => 'Email body'),
+            getGame: vi.fn().mockResolvedValue({ status: 'scheduled' }),
+            isCancelledGame: vi.fn(() => false),
+            isFinishing: false,
+            parseInt,
+            players: [{ id: 'p1', name: 'Ava', number: '3' }],
+            resolveSummaryRecipient: vi.fn(() => 'coach@example.com'),
+            setTimeout: setTimeoutMock,
+            window: { location: { href: 'track.html#teamId=team-1&gameId=game-1' } },
+            writeBatch: vi.fn()
+        };
+
+        await runBodyWithContext(body, context);
+
+        expect(preventDefault).toHaveBeenCalledTimes(1);
+        expect(commitStandardTrackerFinishDataMock).toHaveBeenCalled();
+        expect(alertMock).toHaveBeenCalledWith('Error finishing game: Firestore rejected finalization');
+        expect(context.isFinishing).toBe(false);
+        expect(context.window.location.href).toBe('track.html#teamId=team-1&gameId=game-1');
+        expect(setTimeoutMock).not.toHaveBeenCalled();
+        expect(context.generateEmailBody).not.toHaveBeenCalled();
+        expect(context.resolveSummaryRecipient).not.toHaveBeenCalled();
+    });
+
+    it('keeps the beta basketball tracker on-page when the finish commit rejects', async () => {
+        const source = readFileSync(new URL('../../js/track-basketball.js', import.meta.url), 'utf8');
+        const body = extractBlockBody(source, 'async function saveAndComplete()');
+        const finishError = new Error('Firestore rejected finalization');
+        const commitStandardTrackerFinishDataMock = vi.fn().mockRejectedValue(finishError);
+        const alertMock = vi.fn();
+        const setTimeoutMock = vi.fn();
+        const context = {
+            addLog: vi.fn(),
+            alert: alertMock,
+            collection: vi.fn(),
+            commitStandardTrackerFinishData: commitStandardTrackerFinishDataMock,
+            console: { error: vi.fn(), log: vi.fn() },
+            currentConfig: { columns: ['PTS', 'AST'] },
+            currentGame: { opponent: 'Wildcats', status: 'scheduled' },
+            currentGameId: 'game-1',
+            currentTeam: { name: 'Tigers', notificationEmail: 'coach@example.com' },
+            currentTeamId: 'team-1',
+            currentUser: { uid: 'coach-1', email: 'coach@example.com' },
+            db: {},
+            doc: vi.fn(),
+            els: {
+                homeFinal: { value: '42' },
+                awayFinal: { value: '39' },
+                notesFinal: { value: 'Closed strong.' },
+                finishSendEmail: { checked: true }
+            },
+            generateEmailBody: vi.fn(() => 'Email body'),
+            getGame: vi.fn().mockResolvedValue({ status: 'scheduled' }),
+            isCancelledGame: vi.fn(() => false),
+            isFinishing: false,
+            parseInt,
+            resolveFinalScoreForCompletion: vi.fn(({ requestedHome, requestedAway }) => ({
+                home: requestedHome,
+                away: requestedAway,
+                reconciled: false,
+                mismatch: false
+            })),
+            resolveSummaryRecipient: vi.fn(() => 'coach@example.com'),
+            roster: [{ id: 'p1', name: 'Ava', num: '3' }],
+            setTimeout: setTimeoutMock,
+            state: {
+                away: 39,
+                home: 42,
+                log: [{ text: 'Ava made a basket', clock: '00:15', period: 'Q4' }],
+                opp: [{ id: 'opp-1', name: 'Opponent', number: '5', stats: { pts: 4, fouls: 1 } }],
+                scoreLogIsComplete: true,
+                stats: { p1: { pts: 12, ast: 3, time: 90000 } }
+            },
+            window: { location: { href: 'track-basketball.html#teamId=team-1&gameId=game-1' } },
+            writeBatch: vi.fn()
+        };
+
+        await runBodyWithContext(body, context);
+
+        expect(commitStandardTrackerFinishDataMock).toHaveBeenCalledWith(expect.objectContaining({
+            includeTimeMs: true,
+            finalHome: 42,
+            finalAway: 39
+        }));
+        expect(alertMock).toHaveBeenCalledWith('Error finishing game: Firestore rejected finalization');
+        expect(context.isFinishing).toBe(false);
+        expect(context.window.location.href).toBe('track-basketball.html#teamId=team-1&gameId=game-1');
+        expect(setTimeoutMock).not.toHaveBeenCalled();
+        expect(context.generateEmailBody).not.toHaveBeenCalled();
+        expect(context.resolveSummaryRecipient).not.toHaveBeenCalled();
     });
 });
