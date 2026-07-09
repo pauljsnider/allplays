@@ -2,7 +2,40 @@ import { test, expect } from '@playwright/test';
 
 const STORE_KEY = '__playerGameContextStore';
 
-function createScenario({ requestedGameHasStats = true } = {}) {
+function createScenario({ requestedGameHasStats = true, playerHasParticipatedGames = true } = {}) {
+    const olderPlayerStats = playerHasParticipatedGames && requestedGameHasStats
+        ? {
+            playerName: 'Ava Cole',
+            playerNumber: '3',
+            stats: { pts: 12, reb: 4, ast: 3 },
+            timeMs: 720000,
+            participated: true
+        }
+        : {
+            playerName: 'Ava Cole',
+            playerNumber: '3',
+            stats: { pts: 0, reb: 0, ast: 0 },
+            timeMs: 0,
+            didNotPlay: true,
+            participated: false
+        };
+    const newerPlayerStats = playerHasParticipatedGames
+        ? {
+            playerName: 'Ava Cole',
+            playerNumber: '3',
+            stats: { pts: 24, reb: 6, ast: 5 },
+            timeMs: 900000,
+            participated: true
+        }
+        : {
+            playerName: 'Ava Cole',
+            playerNumber: '3',
+            stats: { pts: 0, reb: 0, ast: 0 },
+            timeMs: 0,
+            didNotPlay: true,
+            participated: false
+        };
+
     return {
         team: {
             id: 'team-1',
@@ -47,22 +80,7 @@ function createScenario({ requestedGameHasStats = true } = {}) {
         ],
         aggregatedStatsByGame: {
             'older-game': {
-                p1: requestedGameHasStats
-                    ? {
-                        playerName: 'Ava Cole',
-                        playerNumber: '3',
-                        stats: { pts: 12, reb: 4, ast: 3 },
-                        timeMs: 720000,
-                        participated: true
-                    }
-                    : {
-                        playerName: 'Ava Cole',
-                        playerNumber: '3',
-                        stats: { pts: 0, reb: 0, ast: 0 },
-                        timeMs: 0,
-                        didNotPlay: true,
-                        participated: false
-                    },
+                p1: olderPlayerStats,
                 p2: {
                     playerName: 'Mia Diaz',
                     playerNumber: '5',
@@ -72,13 +90,7 @@ function createScenario({ requestedGameHasStats = true } = {}) {
                 }
             },
             'newer-game': {
-                p1: {
-                    playerName: 'Ava Cole',
-                    playerNumber: '3',
-                    stats: { pts: 24, reb: 6, ast: 5 },
-                    timeMs: 900000,
-                    participated: true
-                },
+                p1: newerPlayerStats,
                 p2: {
                     playerName: 'Mia Diaz',
                     playerNumber: '5',
@@ -89,7 +101,7 @@ function createScenario({ requestedGameHasStats = true } = {}) {
             }
         },
         eventsByGame: {
-            'older-game': requestedGameHasStats
+            'older-game': playerHasParticipatedGames && requestedGameHasStats
                 ? [
                     {
                         playerId: 'p1',
@@ -103,7 +115,7 @@ function createScenario({ requestedGameHasStats = true } = {}) {
                     }
                 ]
                 : [],
-            'newer-game': [
+            'newer-game': playerHasParticipatedGames ? [
                 {
                     playerId: 'p1',
                     statKey: 'pts',
@@ -114,7 +126,7 @@ function createScenario({ requestedGameHasStats = true } = {}) {
                     text: 'Ava Cole made 3-pointer',
                     timestamp: { seconds: 1773000001 }
                 }
-            ]
+            ] : []
         }
     };
 }
@@ -374,4 +386,15 @@ test('game-context player page honors requested DNP game over newer stats', asyn
     const newerGameCard = page.locator('#game-stats .group', { hasText: 'vs. Rockets' });
     await expect(requestedGameCard).toContainText('Current');
     await expect(newerGameCard).not.toContainText('Current');
+});
+
+test('normal player page does not synthesize a current game card without participated games', async ({ page, baseURL }) => {
+    await installMocks(page, createScenario({ playerHasParticipatedGames: false }));
+    await page.goto(`${baseURL}/player.html#teamId=team-1&playerId=p1`, { waitUntil: 'domcontentloaded' });
+
+    await expect(page.locator('#player-header')).toContainText('Ava Cole');
+    await expect(page.locator('#player-game-insights-section')).toBeHidden();
+    await expect(page.locator('#game-stats')).toContainText('No statistics available');
+    await expect(page.locator('#game-stats')).not.toContainText('vs. Owls');
+    await expect(page.locator('#game-stats')).not.toContainText('Current');
 });

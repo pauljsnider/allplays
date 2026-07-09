@@ -706,7 +706,7 @@
                 }
 
                 const gameStatsForDisplay = [...perGameStats];
-                if (selectedGame && selectedGameId && !gameStatsForDisplay.some((entry) => entry.gameId === selectedGameId)) {
+                if (requestedGame && selectedGame && selectedGameId && !gameStatsForDisplay.some((entry) => entry.gameId === selectedGameId)) {
                     const selectedStatsByPlayerId = gameLoadResults.find((entry) => entry.gameId === selectedGameId)?.statsByPlayerId || {};
                     gameStatsForDisplay.push({
                         gameId: selectedGameId,
