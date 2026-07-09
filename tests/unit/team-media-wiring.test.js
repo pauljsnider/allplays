@@ -10,11 +10,12 @@ function canReadTeamMediaObject({ authUid, isTeamAdmin = false, isTeamParent = f
     return isTeamParent && folderExists && folderVisibility === 'team';
 }
 
-function canDeleteTeamMediaObject({ authUid, pathUserId, isTeamAdmin = false, isTeamParent = false, folderExists = true, folderVisibility = 'team' }) {
+function canDeleteTeamMediaObject({ authUid, pathUserId, isTeamAdmin = false, isTeamParent = false, hasUploadGrant = false, folderExists = true, folderVisibility = 'team' }) {
     return authUid !== null &&
         (isTeamAdmin ||
             (authUid === pathUserId &&
-                canReadTeamMediaObject({ authUid, isTeamParent, folderExists, folderVisibility })));
+                (canReadTeamMediaObject({ authUid, isTeamParent, folderExists, folderVisibility }) ||
+                    (hasUploadGrant && folderExists && folderVisibility === 'team'))));
 }
 
 describe('team media page wiring', () => {
@@ -94,6 +95,7 @@ describe('team media page wiring', () => {
         expect(storageRules).toContain('isAllowedTeamMediaUploadType(request.resource.contentType)');
         expect(storageRules).toContain('application/pdf');
         expect(storageRules).toContain('function canDeleteOwnTeamMediaObject(teamId, folderId, userId)');
+        expect(storageRules).toContain('(hasTeamMediaUploadGrant(teamId) && canUploadTeamMediaFolder(teamId, folderId))');
         expect(storageRules).toContain('allow delete: if isTeamOwnerOrAdmin(teamId) ||\n        canDeleteOwnTeamMediaObject(teamId, folderId, userId);');
         expect(storageRules).not.toContain('allow delete: if isTeamOwnerOrAdmin(teamId) || request.auth.uid == userId;');
     });
@@ -105,7 +107,10 @@ describe('team media page wiring', () => {
         expect(canReadTeamMediaObject({ authUid: 'admin-1', isTeamAdmin: true, folderVisibility: 'private' })).toBe(true);
         expect(canDeleteTeamMediaObject({ authUid: 'parent-1', pathUserId: 'parent-1', isTeamParent: true })).toBe(true);
         expect(canDeleteTeamMediaObject({ authUid: 'parent-1', pathUserId: 'parent-1', isTeamParent: false })).toBe(false);
+        expect(canDeleteTeamMediaObject({ authUid: 'contributor-1', pathUserId: 'contributor-1', hasUploadGrant: true })).toBe(true);
+        expect(canDeleteTeamMediaObject({ authUid: 'contributor-1', pathUserId: 'contributor-1', hasUploadGrant: false })).toBe(false);
         expect(canDeleteTeamMediaObject({ authUid: 'parent-1', pathUserId: 'parent-1', isTeamParent: true, folderVisibility: 'private' })).toBe(false);
+        expect(canDeleteTeamMediaObject({ authUid: 'contributor-1', pathUserId: 'contributor-1', hasUploadGrant: true, folderVisibility: 'private' })).toBe(false);
         expect(canDeleteTeamMediaObject({ authUid: 'admin-1', pathUserId: 'parent-1', isTeamAdmin: true, folderVisibility: 'private' })).toBe(true);
     });
 

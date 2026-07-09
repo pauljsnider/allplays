@@ -121,6 +121,7 @@ export function validateFirebaseRulesCi() {
     assertIncludes(storageRules, 'function canDeleteOwnTeamMediaObject(teamId, folderId, userId)', 'Team media scoped Storage delete helper');
     assertIncludes(storageRules, 'function canDeleteOwnChatAttachment(teamId, conversationId, userId)', 'Chat fallback scoped Storage delete helper');
     assertIncludes(storageRules, 'function canDeleteOwnTeamScopedUpload(teamId, userId)', 'Team scoped Storage delete helper');
+    assertIncludes(storageRules, '(hasTeamMediaUploadGrant(teamId) && canUploadTeamMediaFolder(teamId, folderId))', 'Team media current upload grant delete scope');
     assertIncludes(teamMediaRules, 'allow delete: if isTeamOwnerOrAdmin(teamId) ||\n        canDeleteOwnTeamMediaObject(teamId, folderId, userId);', 'Team media scoped Storage delete rules');
     assertIncludes(chatFallbackRules, 'allow delete: if isTeamOwnerOrAdmin(teamId) ||\n        canDeleteOwnChatAttachment(teamId, conversationId, userId);', 'Chat fallback scoped Storage delete rules');
     for (const [label, block] of [

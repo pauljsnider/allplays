@@ -86,7 +86,8 @@ service firebase.storage {
     function canDeleteOwnTeamMediaObject(teamId, folderId, userId) {
       return isSignedIn() &&
         request.auth.uid == userId &&
-        canReadTeamMediaObject(teamId, folderId);
+        (canReadTeamMediaObject(teamId, folderId) ||
+         (hasTeamMediaUploadGrant(teamId) && canUploadTeamMediaFolder(teamId, folderId)));
     }
 
     function canDeleteOwnChatAttachment(teamId, conversationId, userId) {
