@@ -171,6 +171,9 @@ describe('searchService app search caches', () => {
     await expect(secondPendingResult).resolves.toEqual([
       expect.objectContaining({ route: '/players/team-1/player-pending' })
     ]);
+
+    await searchAppPlayers('pending', teamsById, null);
+    expect(legacySearchDbMocks.executeBoundedPlayerSearch.mock.calls.filter(([options]) => options.rawQuery === 'pending')).toHaveLength(1);
   });
 
   it('bounds completed public team cache entries and dedupes concurrent identical requests', async () => {

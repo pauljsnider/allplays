@@ -627,6 +627,7 @@ function markSearchCacheEntryRecentlyUsed<T extends BoundedSearchCacheEntry>(cac
 }
 
 function setBoundedCompletedSearchCacheEntry<T extends BoundedSearchCacheEntry>(cache: Map<string, T>, key: string, entry: T, maxCompletedEntries: number) {
+  cache.delete(key);
   cache.set(key, entry);
   evictOldestCompletedSearchCacheEntries(cache, maxCompletedEntries);
 }
