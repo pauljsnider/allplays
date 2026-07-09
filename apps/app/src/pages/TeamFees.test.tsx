@@ -72,6 +72,36 @@ function renderTeamFees(initialEntry = '/teams/team-1/fees/batch-1') {
   );
 }
 
+function getRecipientCard(name: string) {
+  const card = screen.getByText(name).closest('section');
+  if (!card) throw new Error(`Recipient card not found for ${name}`);
+  return card;
+}
+
+function openRecipientDetails(name: string) {
+  const card = getRecipientCard(name);
+  fireEvent.click(within(card).getByRole('button', { name: 'Open details' }));
+  return card;
+}
+
+function buildRecipient(index: number, overrides: Record<string, any> = {}) {
+  return {
+    id: `recipient-${index}`,
+    playerName: `Player ${index}`,
+    parentName: `Parent ${index}`,
+    parentEmail: `parent${index}@example.com`,
+    status: 'unpaid',
+    collectionMode: 'online_stripe',
+    checkoutUrl: '',
+    checkoutStatus: '',
+    amountDueCents: 10000,
+    amountPaidCents: 0,
+    remainingBalanceCents: 10000,
+    paymentLedger: [],
+    ...overrides
+  };
+}
+
 describe('TeamFees recipient queue', () => {
   afterEach(() => {
     cleanup();
@@ -149,21 +179,64 @@ describe('TeamFees recipient queue', () => {
     });
   });
 
-  it('shows only unpaid and partial recipients in the default payment queue', async () => {
+  it('shows compact unpaid and partial recipient rows without mounting editors by default', async () => {
     renderTeamFees();
 
-    const queue = await screen.findByLabelText('Actionable recipients');
+    await screen.findByText('Unpaid Player');
+    const queue = screen.getByLabelText('Actionable recipient list');
     expect(within(queue).getByText('Unpaid Player')).toBeTruthy();
     expect(within(queue).getByText('Partial Player')).toBeTruthy();
     expect(within(queue).queryByText('Paid Player')).toBeNull();
-    expect(within(queue).getAllByRole('button', { name: 'Record payment' })).toHaveLength(2);
-    expect(within(queue).getAllByRole('button', { name: 'Save adjustment' })).toHaveLength(2);
-    expect(within(queue).getByRole('button', { name: 'Record refund' })).toBeTruthy();
-    expect(screen.getByDisplayValue('100.00')).toBeTruthy();
-    expect(screen.getByDisplayValue('75.00')).toBeTruthy();
-    expect(screen.getAllByText('Positive credits reduce what is owed. Negative charges increase it.')).toHaveLength(3);
-    expect(within(queue).getByRole('button', { name: 'Generate & share link' })).toBeTruthy();
-    expect(within(queue).getByText('This fee is marked for offline collection only, so no Stripe checkout link can be generated from the app.')).toBeTruthy();
+    expect(within(queue).getAllByRole('button', { name: 'Open details' })).toHaveLength(2);
+    expect(within(queue).queryByRole('button', { name: 'Record payment' })).toBeNull();
+    expect(within(queue).queryByRole('button', { name: 'Save adjustment' })).toBeNull();
+    expect(within(queue).queryByRole('button', { name: 'Record refund' })).toBeNull();
+    expect(screen.queryByDisplayValue('100.00')).toBeNull();
+    expect(screen.queryByDisplayValue('75.00')).toBeNull();
+
+    const unpaidCard = openRecipientDetails('Unpaid Player');
+    expect(within(unpaidCard).getByRole('button', { name: 'Record payment' })).toBeTruthy();
+    expect(within(unpaidCard).getByRole('button', { name: 'Save adjustment' })).toBeTruthy();
+    expect(within(unpaidCard).getByRole('button', { name: 'Generate & share link' })).toBeTruthy();
+    expect(screen.getAllByRole('button', { name: 'Record payment' })).toHaveLength(1);
+  });
+
+  it('renders a large batch as summary rows without mounting every editor', async () => {
+    teamFeesServiceMocks.loadTeamFeeManagementModel.mockResolvedValue({
+      team: { id: 'team-1', name: 'Bears' },
+      batches: [{ id: 'batch-1', title: 'Spring dues', dueDate: '2026-06-01', amountCents: 10000, status: 'open' }],
+      selectedBatch: { id: 'batch-1', title: 'Spring dues', dueDate: '2026-06-01', amountCents: 10000, status: 'open' },
+      canManageFees: true,
+      rosterPlayers: [],
+      recipients: Array.from({ length: 50 }, (_, index) => buildRecipient(index + 1))
+    });
+
+    renderTeamFees();
+
+    expect(await screen.findByText('Player 1')).toBeTruthy();
+    expect(screen.getByText('Player 50')).toBeTruthy();
+    expect(screen.getAllByRole('button', { name: 'Open details' })).toHaveLength(50);
+    expect(screen.queryByRole('button', { name: 'Record payment' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Save adjustment' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Generate & share link' })).toBeNull();
+  });
+
+  it('unmounts inactive recipient editors while preserving typed drafts', async () => {
+    renderTeamFees();
+
+    await screen.findByText('Unpaid Player');
+    const unpaidCard = openRecipientDetails('Unpaid Player');
+    fireEvent.change(within(unpaidCard).getByDisplayValue('100.00'), { target: { value: '42.25' } });
+    fireEvent.change(within(unpaidCard).getByPlaceholderText('25.00 or -10.00'), { target: { value: '5.00' } });
+
+    const partialCard = openRecipientDetails('Partial Player');
+    expect(within(partialCard).getByRole('button', { name: 'Record payment' })).toBeTruthy();
+    expect(within(unpaidCard).queryByRole('button', { name: 'Record payment' })).toBeNull();
+    expect(screen.getAllByRole('button', { name: 'Record payment' })).toHaveLength(1);
+
+    fireEvent.click(within(unpaidCard).getByRole('button', { name: 'Open details' }));
+    expect(within(unpaidCard).getByDisplayValue('42.25')).toBeTruthy();
+    expect(within(unpaidCard).getByDisplayValue('5.00')).toBeTruthy();
   });
 
   it('generates and shares a staff checkout link with the public URL only', async () => {
@@ -213,7 +286,9 @@ describe('TeamFees recipient queue', () => {
 
     renderTeamFees();
 
-    fireEvent.click(await screen.findByRole('button', { name: 'Generate & share link' }));
+    await screen.findByText('Pat Star');
+    const recipientCard = openRecipientDetails('Pat Star');
+    fireEvent.click(within(recipientCard).getByRole('button', { name: 'Generate & share link' }));
 
     expect(await screen.findByText('Shared checkout link for Pat Star.')).toBeTruthy();
     expect(teamFeesServiceMocks.initiateStaffTeamFeeCheckout).toHaveBeenCalledWith({
@@ -306,7 +381,7 @@ describe('TeamFees recipient queue', () => {
     }));
   });
 
-  it('renders paid recipients in a secondary review area with adjustment-only controls', async () => {
+  it('keeps paid recipient controls unmounted until the paid section and recipient are opened', async () => {
     renderTeamFees();
 
     const paidSection = await screen.findByText('Paid recipients (1)');
@@ -314,7 +389,16 @@ describe('TeamFees recipient queue', () => {
     expect(reviewCard).not.toBeNull();
     if (!reviewCard) throw new Error('Paid recipients details not found');
 
+    expect(within(reviewCard).queryByText('Paid Player')).toBeNull();
+    expect(within(reviewCard).queryByRole('button', { name: 'Save adjustment' })).toBeNull();
+    expect(within(reviewCard).queryByRole('button', { name: 'Record refund' })).toBeNull();
+
+    fireEvent.click(paidSection);
     expect(within(reviewCard).getByText('Paid Player')).toBeTruthy();
+    expect(within(reviewCard).queryByRole('button', { name: 'Save adjustment' })).toBeNull();
+    expect(within(reviewCard).queryByRole('button', { name: 'Record refund' })).toBeNull();
+
+    fireEvent.click(within(reviewCard).getByRole('button', { name: 'Open details' }));
     expect(within(reviewCard).queryByRole('button', { name: 'Record payment' })).toBeNull();
     expect(within(reviewCard).queryByText('Record offline payment')).toBeNull();
     expect(within(reviewCard).getByRole('button', { name: 'Save adjustment' })).toBeTruthy();
@@ -361,8 +445,10 @@ describe('TeamFees recipient queue', () => {
 
     renderTeamFees();
 
-    const refundTrigger = await screen.findByRole('button', { name: 'Record refund' });
-    fireEvent.click(refundTrigger);
+    await screen.findByText('Paid recipients (1)');
+    fireEvent.click(screen.getByText('Paid recipients (1)'));
+    const recipientCard = openRecipientDetails('Pat Star');
+    fireEvent.click(within(recipientCard).getByRole('button', { name: 'Record refund' }));
     fireEvent.change(screen.getByDisplayValue('Full refund'), { target: { value: 'partial' } });
     fireEvent.change(screen.getByPlaceholderText('100.00'), { target: { value: '25.00' } });
     fireEvent.change(screen.getByDisplayValue('Select method'), { target: { value: 'cash' } });
@@ -386,8 +472,8 @@ describe('TeamFees recipient queue', () => {
 
     renderTeamFees();
 
-    const recipientCard = (await screen.findByText('Partial Player')).closest('section');
-    if (!recipientCard) throw new Error('Recipient card not found');
+    await screen.findByText('Partial Player');
+    const recipientCard = openRecipientDetails('Partial Player');
 
     fireEvent.click(within(recipientCard).getByRole('button', { name: 'Record refund' }));
     fireEvent.change(within(recipientCard).getByPlaceholderText('Why this was refunded and how it was handled'), { target: { value: 'Need to fix overcollection' } });
@@ -436,8 +522,8 @@ describe('TeamFees recipient queue', () => {
 
     renderTeamFees();
 
-    const recipientCard = (await screen.findByText('Pat Star')).closest('section');
-    if (!recipientCard) throw new Error('Recipient card not found');
+    await screen.findByText('Pat Star');
+    const recipientCard = openRecipientDetails('Pat Star');
     fireEvent.change(within(recipientCard).getByPlaceholderText('25.00 or -10.00'), { target: { value: '25.00' } });
     fireEvent.change(within(recipientCard).getByPlaceholderText('Scholarship credit, late fee, correction...'), { target: { value: 'Scholarship credit' } });
     fireEvent.click(within(recipientCard).getByRole('button', { name: 'Save adjustment' }));
@@ -462,8 +548,8 @@ describe('TeamFees recipient queue', () => {
 
     renderTeamFees();
 
-    const recipientCard = (await screen.findByText('Unpaid Player')).closest('section');
-    if (!recipientCard) throw new Error('Recipient card not found');
+    await screen.findByText('Unpaid Player');
+    const recipientCard = openRecipientDetails('Unpaid Player');
 
     fireEvent.click(within(recipientCard).getByRole('button', { name: 'Record payment' }));
 

@@ -64,6 +64,8 @@ export function TeamFees({ auth }: { auth: AuthState }) {
   const [selectedRecipientIds, setSelectedRecipientIds] = useState<string[]>([]);
   const [createError, setCreateError] = useState('');
   const [formByRecipient, setFormByRecipient] = useState<Record<string, RecipientFormState>>({});
+  const [activeRecipientId, setActiveRecipientId] = useState('');
+  const [paidRecipientsOpen, setPaidRecipientsOpen] = useState(false);
   const { error: loadError, clearError: clearLoadError, run: runLoadOperation } = useAppAsyncOperation();
   const { run: runMutationOperation } = useAppAsyncOperation();
 
@@ -78,7 +80,7 @@ export function TeamFees({ auth }: { auth: AuthState }) {
         fallbackMessage: 'Unable to load team fees.',
         onSuccess: (nextModel) => {
           setModel(nextModel);
-          setFormByRecipient((current) => seedRecipientForms(current, nextModel.recipients));
+          setFormByRecipient((current) => pruneRecipientForms(current, nextModel.recipients));
           if (nextModel.selectedBatch?.id && nextModel.selectedBatch.id !== batchId) {
             navigate(`/teams/${encodeURIComponent(teamId)}/fees/${encodeURIComponent(nextModel.selectedBatch.id)}`, { replace: true });
           }
@@ -152,10 +154,11 @@ export function TeamFees({ auth }: { auth: AuthState }) {
   if (!teamId) return <Navigate to="/teams" replace />;
 
   const updateForm = (recipientId: string, patch: Partial<RecipientFormState>) => {
+    const recipient = recipients.find((nextRecipient) => nextRecipient.id === recipientId);
     setFormByRecipient((current) => ({
       ...current,
       [recipientId]: {
-        ...(current[recipientId] || buildRecipientFormState()),
+        ...(current[recipientId] || buildRecipientFormState(recipient)),
         ...patch
       }
     }));
@@ -170,6 +173,10 @@ export function TeamFees({ auth }: { auth: AuthState }) {
   const updateCreateDueDate = (nextDueDate: string) => {
     setCreateDueDate(nextDueDate);
     setCreateInstallmentFirstDueDate((current) => current && current !== createDueDate ? current : nextDueDate);
+  };
+
+  const toggleActiveRecipient = (recipientId: string) => {
+    setActiveRecipientId((current) => current === recipientId ? '' : recipientId);
   };
 
   const submitCreateBatch = async (event: FormEvent<HTMLFormElement>) => {
@@ -535,75 +542,28 @@ export function TeamFees({ auth }: { auth: AuthState }) {
           <h2 id="actionable-recipients-heading" className="text-sm font-black uppercase tracking-[0.06em] text-gray-500">Actionable recipients</h2>
           <p className="mt-1 text-xs font-semibold text-gray-500">Only recipients with an outstanding balance appear in the payment queue.</p>
         </div>
-        <div className="grid gap-3 lg:grid-cols-2">
+        <div className="grid gap-3 lg:grid-cols-2" aria-label="Actionable recipient list">
           {actionableRecipients.length ? actionableRecipients.map((recipient) => {
             const form = formByRecipient[recipient.id] || buildRecipientFormState(recipient);
             const recipientSubmitting = isRecipientSubmitting(recipient.id);
+            const expanded = activeRecipientId === recipient.id;
             return (
               <section key={recipient.id} className="app-card p-4">
-                <div className="flex items-start justify-between gap-3">
-                  <div>
-                    <h3 className="text-lg font-black text-gray-950">{recipient.playerName}</h3>
-                    <p className="mt-1 text-xs font-semibold text-gray-500">{[recipient.parentName, recipient.parentEmail].filter(Boolean).join(' · ') || 'Fee recipient'}</p>
-                  </div>
-                  <span className="rounded-full bg-gray-100 px-2.5 py-1 text-xs font-black uppercase text-gray-700">{recipient.status}</span>
-                </div>
-
-                <div className="mt-3 grid grid-cols-2 gap-2 text-center sm:grid-cols-4">
-                  <Metric label="Status" value={recipient.status} />
-                  <Metric label="Amount due" value={formatMoney(recipient.amountDueCents)} />
-                  <Metric label="Paid" value={formatMoney(recipient.amountPaidCents)} />
-                  <Metric label="Outstanding" value={formatMoney(recipient.remainingBalanceCents)} urgent={recipient.remainingBalanceCents > 0} />
-                </div>
-
-                <CheckoutLinkSection
-                  recipient={recipient}
-                  form={form}
-                  recipientSubmitting={recipientSubmitting}
-                  onShare={() => shareCheckoutLink(recipient)}
-                  onCopy={() => copyCheckoutLink(recipient)}
-                />
-
-                <form className="mt-4 space-y-3" onSubmit={(event) => submitPayment(event, recipient)}>
-                  <div className="text-xs font-black uppercase tracking-[0.06em] text-gray-500">Record offline payment</div>
-                  <div className="grid gap-3 sm:grid-cols-2">
-                    <label className="text-xs font-black uppercase tracking-[0.06em] text-gray-500">Payment amount
-                      <input className="mt-1 w-full rounded-2xl border border-gray-200 px-3 py-3 text-sm font-bold text-gray-900" inputMode="decimal" value={form.paymentAmount} onChange={(event) => updateForm(recipient.id, { paymentAmount: event.target.value })} disabled={recipientSubmitting} />
-                    </label>
-                    <label className="text-xs font-black uppercase tracking-[0.06em] text-gray-500">Payment date
-                      <input className="mt-1 w-full rounded-2xl border border-gray-200 px-3 py-3 text-sm font-bold text-gray-900" type="date" value={form.paymentDate} onChange={(event) => updateForm(recipient.id, { paymentDate: event.target.value })} disabled={recipientSubmitting} />
-                    </label>
-                  </div>
-                  <label className="block text-xs font-black uppercase tracking-[0.06em] text-gray-500">Payment note
-                    <input className="mt-1 w-full rounded-2xl border border-gray-200 px-3 py-3 text-sm font-bold text-gray-900" placeholder="Cash, check #, Venmo note..." value={form.paymentNote} onChange={(event) => updateForm(recipient.id, { paymentNote: event.target.value })} disabled={recipientSubmitting} />
-                  </label>
-                  {form.paymentError ? <div className="rounded-xl border border-rose-200 bg-rose-50 p-2 text-xs font-bold text-rose-700">{form.paymentError}</div> : null}
-                  <button type="submit" className="primary-button w-full" disabled={recipientSubmitting}>{submittingId === `payment:${recipient.id}` ? 'Recording...' : 'Record payment'}</button>
-                </form>
-
-                <form className="mt-4 space-y-3 rounded-2xl border border-gray-200 bg-gray-50 p-3" onSubmit={(event) => submitAdjustment(event, recipient)}>
-                  <div>
-                    <div className="text-xs font-black uppercase tracking-[0.06em] text-gray-500">Adjust balance</div>
-                    <p className="mt-1 text-xs font-semibold text-gray-500">Positive credits reduce what is owed. Negative charges increase it.</p>
-                  </div>
-                  <label className="block text-xs font-black uppercase tracking-[0.06em] text-gray-500">Signed amount
-                    <input className="mt-1 w-full rounded-2xl border border-gray-200 bg-white px-3 py-3 text-sm font-bold text-gray-900" inputMode="decimal" placeholder="25.00 or -10.00" value={form.adjustmentAmount} onChange={(event) => updateForm(recipient.id, { adjustmentAmount: event.target.value })} disabled={recipientSubmitting} />
-                  </label>
-                  <label className="block text-xs font-black uppercase tracking-[0.06em] text-gray-500">Reason
-                    <input className="mt-1 w-full rounded-2xl border border-gray-200 bg-white px-3 py-3 text-sm font-bold text-gray-900" placeholder="Scholarship credit, late fee, correction..." value={form.adjustmentReason} onChange={(event) => updateForm(recipient.id, { adjustmentReason: event.target.value })} disabled={recipientSubmitting} />
-                  </label>
-                  {form.adjustmentError ? <div className="rounded-xl border border-rose-200 bg-rose-50 p-2 text-xs font-bold text-rose-700">{form.adjustmentError}</div> : null}
-                  <button type="submit" className="secondary-button w-full justify-center" disabled={recipientSubmitting}>{submittingId === `adjustment:${recipient.id}` ? 'Saving...' : 'Save adjustment'}</button>
-                </form>
-
-                <RefundSection
-                  recipient={recipient}
-                  form={form}
-                  submittingId={submittingId}
-                  recipientSubmitting={recipientSubmitting}
-                  updateForm={updateForm}
-                  submitRefund={submitRefund}
-                />
+                <RecipientSummary recipient={recipient} expanded={expanded} onToggle={() => toggleActiveRecipient(recipient.id)} />
+                {expanded ? (
+                  <RecipientEditor
+                    recipient={recipient}
+                    form={form}
+                    submittingId={submittingId}
+                    recipientSubmitting={recipientSubmitting}
+                    updateForm={updateForm}
+                    submitPayment={submitPayment}
+                    submitAdjustment={submitAdjustment}
+                    submitRefund={submitRefund}
+                    shareCheckoutLink={shareCheckoutLink}
+                    copyCheckoutLink={copyCheckoutLink}
+                  />
+                ) : null}
               </section>
             );
           }) : recipients.length ? (
@@ -618,59 +578,39 @@ export function TeamFees({ auth }: { auth: AuthState }) {
 
       {paidRecipients.length ? (
         <details className="app-card p-4">
-          <summary className="cursor-pointer list-none text-sm font-black text-gray-950">
+          <summary className="cursor-pointer list-none text-sm font-black text-gray-950" onClick={() => setPaidRecipientsOpen((current) => !current)}>
             Paid recipients ({paidRecipients.length})
           </summary>
           <p className="mt-2 text-xs font-semibold text-gray-500">Fully paid recipients stay available for review without editable payment controls.</p>
-          <div className="mt-4 grid gap-3 lg:grid-cols-2">
-            {paidRecipients.map((recipient) => {
+          {paidRecipientsOpen ? (
+            <div className="mt-4 grid gap-3 lg:grid-cols-2">
+              {paidRecipients.map((recipient) => {
               const form = formByRecipient[recipient.id] || buildRecipientFormState(recipient);
               const recipientSubmitting = isRecipientSubmitting(recipient.id);
+              const expanded = activeRecipientId === recipient.id;
               return (
               <section key={recipient.id} className="rounded-2xl border border-gray-200 bg-gray-50 p-4">
-                <div className="flex items-start justify-between gap-3">
-                  <div>
-                    <h3 className="text-lg font-black text-gray-950">{recipient.playerName}</h3>
-                    <p className="mt-1 text-xs font-semibold text-gray-500">{[recipient.parentName, recipient.parentEmail].filter(Boolean).join(' · ') || 'Fee recipient'}</p>
-                  </div>
-                  <span className="rounded-full bg-emerald-100 px-2.5 py-1 text-xs font-black uppercase text-emerald-700">{recipient.status}</span>
-                </div>
-
-                <div className="mt-3 grid grid-cols-2 gap-2 text-center sm:grid-cols-4">
-                  <Metric label="Status" value={recipient.status} />
-                  <Metric label="Amount due" value={formatMoney(recipient.amountDueCents)} />
-                  <Metric label="Paid" value={formatMoney(recipient.amountPaidCents)} />
-                  <Metric label="Outstanding" value={formatMoney(recipient.remainingBalanceCents)} />
-                </div>
-
-                <form className="mt-4 space-y-3 rounded-2xl border border-gray-200 bg-white p-3" onSubmit={(event) => submitAdjustment(event, recipient)}>
-                  <div>
-                    <div className="text-xs font-black uppercase tracking-[0.06em] text-gray-500">Adjust balance</div>
-                    <p className="mt-1 text-xs font-semibold text-gray-500">Positive credits reduce what is owed. Negative charges increase it.</p>
-                  </div>
-                  <label className="block text-xs font-black uppercase tracking-[0.06em] text-gray-500">Signed amount
-                    <input className="mt-1 w-full rounded-2xl border border-gray-200 bg-white px-3 py-3 text-sm font-bold text-gray-900" inputMode="decimal" placeholder="25.00 or -10.00" value={form.adjustmentAmount} onChange={(event) => updateForm(recipient.id, { adjustmentAmount: event.target.value })} disabled={recipientSubmitting} />
-                  </label>
-                  <label className="block text-xs font-black uppercase tracking-[0.06em] text-gray-500">Reason
-                    <input className="mt-1 w-full rounded-2xl border border-gray-200 bg-white px-3 py-3 text-sm font-bold text-gray-900" placeholder="Scholarship credit, late fee, correction..." value={form.adjustmentReason} onChange={(event) => updateForm(recipient.id, { adjustmentReason: event.target.value })} disabled={recipientSubmitting} />
-                  </label>
-                  {form.adjustmentError ? <div className="rounded-xl border border-rose-200 bg-rose-50 p-2 text-xs font-bold text-rose-700">{form.adjustmentError}</div> : null}
-                  <button type="submit" className="secondary-button w-full justify-center" disabled={recipientSubmitting}>{submittingId === `adjustment:${recipient.id}` ? 'Saving...' : 'Save adjustment'}</button>
-                </form>
-
-                <RefundSection
-                  recipient={recipient}
-                  form={form}
-                  submittingId={submittingId}
-                  recipientSubmitting={recipientSubmitting}
-                  updateForm={updateForm}
-                  submitRefund={submitRefund}
-                  className="mt-4"
-                />
+                <RecipientSummary recipient={recipient} expanded={expanded} onToggle={() => toggleActiveRecipient(recipient.id)} />
+                {expanded ? (
+                  <RecipientEditor
+                    recipient={recipient}
+                    form={form}
+                    submittingId={submittingId}
+                    recipientSubmitting={recipientSubmitting}
+                    updateForm={updateForm}
+                    submitPayment={submitPayment}
+                    submitAdjustment={submitAdjustment}
+                    submitRefund={submitRefund}
+                    shareCheckoutLink={shareCheckoutLink}
+                    copyCheckoutLink={copyCheckoutLink}
+                    hidePayment
+                  />
+                ) : null}
               </section>
               );
-            })}
-          </div>
+              })}
+            </div>
+          ) : null}
         </details>
       ) : null}
 
@@ -704,9 +644,10 @@ function buildRecipientFormState(recipient?: TeamFeeRecipientSummary): Recipient
   };
 }
 
-function seedRecipientForms(current: Record<string, RecipientFormState>, recipients: TeamFeeRecipientSummary[]) {
+function pruneRecipientForms(current: Record<string, RecipientFormState>, recipients: TeamFeeRecipientSummary[]) {
+  const recipientIds = new Set(recipients.map((recipient) => recipient.id));
   return recipients.reduce<Record<string, RecipientFormState>>((next, recipient) => {
-    next[recipient.id] = current[recipient.id] || buildRecipientFormState(recipient);
+    if (recipientIds.has(recipient.id) && current[recipient.id]) next[recipient.id] = current[recipient.id];
     return next;
   }, {});
 }
@@ -762,6 +703,124 @@ function StatusCard({ title, message, backTo, onRetry }: { title: string; messag
         </div>
       </div>
     </section>
+  );
+}
+
+function RecipientSummary({
+  recipient,
+  expanded,
+  onToggle
+}: {
+  recipient: TeamFeeRecipientSummary;
+  expanded: boolean;
+  onToggle: () => void;
+}) {
+  const paid = recipient.remainingBalanceCents <= 0;
+
+  return (
+    <>
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <h3 className="text-lg font-black text-gray-950">{recipient.playerName}</h3>
+          <p className="mt-1 text-xs font-semibold text-gray-500">{[recipient.parentName, recipient.parentEmail].filter(Boolean).join(' · ') || 'Fee recipient'}</p>
+        </div>
+        <span className={`rounded-full px-2.5 py-1 text-xs font-black uppercase ${paid ? 'bg-emerald-100 text-emerald-700' : 'bg-gray-100 text-gray-700'}`}>{recipient.status}</span>
+      </div>
+
+      <div className="mt-3 grid grid-cols-2 gap-2 text-center sm:grid-cols-4">
+        <Metric label="Status" value={recipient.status} />
+        <Metric label="Amount due" value={formatMoney(recipient.amountDueCents)} />
+        <Metric label="Paid" value={formatMoney(recipient.amountPaidCents)} />
+        <Metric label="Outstanding" value={formatMoney(recipient.remainingBalanceCents)} urgent={recipient.remainingBalanceCents > 0} />
+      </div>
+
+      <button type="button" className="secondary-button mt-3 w-full justify-center" aria-expanded={expanded} onClick={onToggle}>
+        {expanded ? 'Close details' : 'Open details'}
+      </button>
+    </>
+  );
+}
+
+function RecipientEditor({
+  recipient,
+  form,
+  submittingId,
+  recipientSubmitting,
+  updateForm,
+  submitPayment,
+  submitAdjustment,
+  submitRefund,
+  shareCheckoutLink,
+  copyCheckoutLink,
+  hidePayment = false
+}: {
+  recipient: TeamFeeRecipientSummary;
+  form: RecipientFormState;
+  submittingId: string;
+  recipientSubmitting: boolean;
+  updateForm: (recipientId: string, patch: Partial<RecipientFormState>) => void;
+  submitPayment: (event: FormEvent<HTMLFormElement>, recipient: TeamFeeRecipientSummary) => Promise<void>;
+  submitAdjustment: (event: FormEvent<HTMLFormElement>, recipient: TeamFeeRecipientSummary) => Promise<void>;
+  submitRefund: (event: FormEvent<HTMLFormElement>, recipient: TeamFeeRecipientSummary) => Promise<void>;
+  shareCheckoutLink: (recipient: TeamFeeRecipientSummary) => Promise<void>;
+  copyCheckoutLink: (recipient: TeamFeeRecipientSummary) => Promise<void>;
+  hidePayment?: boolean;
+}) {
+  return (
+    <>
+      {!hidePayment ? (
+        <>
+          <CheckoutLinkSection
+            recipient={recipient}
+            form={form}
+            recipientSubmitting={recipientSubmitting}
+            onShare={() => shareCheckoutLink(recipient)}
+            onCopy={() => copyCheckoutLink(recipient)}
+          />
+
+          <form className="mt-4 space-y-3" onSubmit={(event) => submitPayment(event, recipient)}>
+            <div className="text-xs font-black uppercase tracking-[0.06em] text-gray-500">Record offline payment</div>
+            <div className="grid gap-3 sm:grid-cols-2">
+              <label className="text-xs font-black uppercase tracking-[0.06em] text-gray-500">Payment amount
+                <input className="mt-1 w-full rounded-2xl border border-gray-200 px-3 py-3 text-sm font-bold text-gray-900" inputMode="decimal" value={form.paymentAmount} onChange={(event) => updateForm(recipient.id, { paymentAmount: event.target.value })} disabled={recipientSubmitting} />
+              </label>
+              <label className="text-xs font-black uppercase tracking-[0.06em] text-gray-500">Payment date
+                <input className="mt-1 w-full rounded-2xl border border-gray-200 px-3 py-3 text-sm font-bold text-gray-900" type="date" value={form.paymentDate} onChange={(event) => updateForm(recipient.id, { paymentDate: event.target.value })} disabled={recipientSubmitting} />
+              </label>
+            </div>
+            <label className="block text-xs font-black uppercase tracking-[0.06em] text-gray-500">Payment note
+              <input className="mt-1 w-full rounded-2xl border border-gray-200 px-3 py-3 text-sm font-bold text-gray-900" placeholder="Cash, check #, Venmo note..." value={form.paymentNote} onChange={(event) => updateForm(recipient.id, { paymentNote: event.target.value })} disabled={recipientSubmitting} />
+            </label>
+            {form.paymentError ? <div className="rounded-xl border border-rose-200 bg-rose-50 p-2 text-xs font-bold text-rose-700">{form.paymentError}</div> : null}
+            <button type="submit" className="primary-button w-full" disabled={recipientSubmitting}>{submittingId === `payment:${recipient.id}` ? 'Recording...' : 'Record payment'}</button>
+          </form>
+        </>
+      ) : null}
+
+      <form className="mt-4 space-y-3 rounded-2xl border border-gray-200 bg-gray-50 p-3" onSubmit={(event) => submitAdjustment(event, recipient)}>
+        <div>
+          <div className="text-xs font-black uppercase tracking-[0.06em] text-gray-500">Adjust balance</div>
+          <p className="mt-1 text-xs font-semibold text-gray-500">Positive credits reduce what is owed. Negative charges increase it.</p>
+        </div>
+        <label className="block text-xs font-black uppercase tracking-[0.06em] text-gray-500">Signed amount
+          <input className="mt-1 w-full rounded-2xl border border-gray-200 bg-white px-3 py-3 text-sm font-bold text-gray-900" inputMode="decimal" placeholder="25.00 or -10.00" value={form.adjustmentAmount} onChange={(event) => updateForm(recipient.id, { adjustmentAmount: event.target.value })} disabled={recipientSubmitting} />
+        </label>
+        <label className="block text-xs font-black uppercase tracking-[0.06em] text-gray-500">Reason
+          <input className="mt-1 w-full rounded-2xl border border-gray-200 bg-white px-3 py-3 text-sm font-bold text-gray-900" placeholder="Scholarship credit, late fee, correction..." value={form.adjustmentReason} onChange={(event) => updateForm(recipient.id, { adjustmentReason: event.target.value })} disabled={recipientSubmitting} />
+        </label>
+        {form.adjustmentError ? <div className="rounded-xl border border-rose-200 bg-rose-50 p-2 text-xs font-bold text-rose-700">{form.adjustmentError}</div> : null}
+        <button type="submit" className="secondary-button w-full justify-center" disabled={recipientSubmitting}>{submittingId === `adjustment:${recipient.id}` ? 'Saving...' : 'Save adjustment'}</button>
+      </form>
+
+      <RefundSection
+        recipient={recipient}
+        form={form}
+        submittingId={submittingId}
+        recipientSubmitting={recipientSubmitting}
+        updateForm={updateForm}
+        submitRefund={submitRefund}
+      />
+    </>
   );
 }
 
