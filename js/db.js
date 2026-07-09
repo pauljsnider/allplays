@@ -230,6 +230,7 @@ export { collection, getDocs, deleteDoc, query };
 const limitQuery = limit;
 const startAfterQuery = startAfter;
 const DEFAULT_PUBLIC_TEAM_DISCOVERY_PAGE_SIZE = 24;
+export const DEFAULT_CHAT_CONVERSATION_PAGE_SIZE = 25;
 const CHAT_REACTIONS = [
     { key: 'thumbs_up', emoji: '👍' },
     { key: 'heart', emoji: '❤️' },
@@ -6187,18 +6188,41 @@ function getDefaultTeamChatMessageConstraints(conversationId = DEFAULT_TEAM_CONV
  * Get conversations for a team. The default team-wide channel is virtual and keeps
  * using teams/{teamId}/chatMessages for backwards compatibility.
  */
-export async function getChatConversations(teamId, user = null, { team = null, canModerate = false } = {}) {
+function normalizeChatConversationPageSize(pageSize = DEFAULT_CHAT_CONVERSATION_PAGE_SIZE) {
+    const numericPageSize = Number(pageSize);
+    if (!Number.isFinite(numericPageSize) || numericPageSize <= 0) {
+        return DEFAULT_CHAT_CONVERSATION_PAGE_SIZE;
+    }
+    return Math.min(Math.max(Math.floor(numericPageSize), 1), 100);
+}
+
+function normalizeRequestedChatConversationId(conversationId) {
+    const normalized = String(conversationId || '').trim();
+    if (!normalized || isDefaultTeamConversation(normalized) || normalized.includes('/')) {
+        return '';
+    }
+    return normalized;
+}
+
+export async function getChatConversations(teamId, user = null, {
+    team = null,
+    canModerate = false,
+    pageSize = DEFAULT_CHAT_CONVERSATION_PAGE_SIZE,
+    includeConversationId = '',
+    activeConversationId = ''
+} = {}) {
     const conversationsRef = collection(db, 'teams', teamId, 'chatConversations');
     const normalizedEmail = user?.email ? String(user.email).trim().toLowerCase() : '';
+    const conversationPageSize = normalizeChatConversationPageSize(pageSize);
     const participantQueries = canModerate
-        ? [query(conversationsRef, orderBy('updatedAt', 'desc'))]
+        ? [query(conversationsRef, orderBy('updatedAt', 'desc'), limitQuery(conversationPageSize))]
         : [
             ...(user?.uid ? [
-                query(conversationsRef, where('participantIds', 'array-contains', user.uid), orderBy('updatedAt', 'desc')),
-                query(conversationsRef, where('participantIds', 'array-contains', `user:${user.uid}`), orderBy('updatedAt', 'desc'))
+                query(conversationsRef, where('participantIds', 'array-contains', user.uid), orderBy('updatedAt', 'desc'), limitQuery(conversationPageSize)),
+                query(conversationsRef, where('participantIds', 'array-contains', `user:${user.uid}`), orderBy('updatedAt', 'desc'), limitQuery(conversationPageSize))
             ] : []),
             ...(normalizedEmail ? [
-                query(conversationsRef, where('participantIds', 'array-contains', `email:${normalizedEmail}`), orderBy('updatedAt', 'desc'))
+                query(conversationsRef, where('participantIds', 'array-contains', `email:${normalizedEmail}`), orderBy('updatedAt', 'desc'), limitQuery(conversationPageSize))
             ] : [])
         ];
     const snapshots = participantQueries.length > 0
@@ -6218,7 +6242,19 @@ export async function getChatConversations(teamId, user = null, { team = null, c
         return bTime - aTime;
     });
 
-    return [buildDefaultTeamConversation(team), ...stored];
+    const boundedStored = stored.slice(0, conversationPageSize);
+    const requestedConversationId = normalizeRequestedChatConversationId(includeConversationId || activeConversationId);
+    if (requestedConversationId && !boundedStored.some((conversation) => conversation.id === requestedConversationId)) {
+        const requestedConversationSnap = await getDoc(doc(db, 'teams', teamId, 'chatConversations', requestedConversationId));
+        if (requestedConversationSnap.exists()) {
+            const requestedConversation = { id: requestedConversationSnap.id, ...requestedConversationSnap.data() };
+            if (!user || isUserInConversation(requestedConversation, user, { canModerate })) {
+                boundedStored.push(requestedConversation);
+            }
+        }
+    }
+
+    return [buildDefaultTeamConversation(team), ...boundedStored];
 }
 
 /**

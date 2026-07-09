@@ -166,6 +166,10 @@ export type ChatInboxLoadOptions = {
   onPreview?: (update: ChatInboxPreviewUpdate) => void;
 };
 
+export type ChatConversationLoadOptions = {
+  activeConversationId?: string | null;
+};
+
 export type ChatSubscribeResult = {
   unsubscribe: () => void;
 };
@@ -985,9 +989,19 @@ export async function loadChatTeamContext(teamId: string, user: AuthUser | null)
   };
 }
 
-export async function loadChatConversations(teamId: string, user: AuthUser, team: Record<string, any>, canModerate: boolean): Promise<ChatConversation[]> {
+export async function loadChatConversations(
+  teamId: string,
+  user: AuthUser,
+  team: Record<string, any>,
+  canModerate: boolean,
+  options: ChatConversationLoadOptions = {}
+): Promise<ChatConversation[]> {
   try {
-    const conversations = await withTimeout(Promise.resolve(getChatConversations(teamId, user, { team, canModerate })), 'Chat conversations load') as ChatConversation[];
+    const conversations = await withTimeout(Promise.resolve(getChatConversations(teamId, user, {
+      team,
+      canModerate,
+      includeConversationId: options.activeConversationId || undefined
+    })), 'Chat conversations load') as ChatConversation[];
     return mapChatConversationRecords(conversations);
   } catch (error) {
     logger.warn('Falling back to default chat conversation.', { error });

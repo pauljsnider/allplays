@@ -60,7 +60,9 @@ describe('useChatTeam', () => {
         expect(screen.getByTestId('can-moderate').textContent).toBe('true');
         expect(screen.getByTestId('selected-conversation').textContent).toBe('staff');
         expect(screen.getByTestId('conversation-count').textContent).toBe('2');
-        expect(loadChatConversations).toHaveBeenCalledWith('team-1', user, { id: 'team-1', name: 'Bears' }, true);
+        expect(loadChatConversations).toHaveBeenCalledWith('team-1', user, { id: 'team-1', name: 'Bears' }, true, {
+            activeConversationId: 'staff'
+        });
     });
 
     it('reloads context when switching teams and falls back to the default conversation', async () => {

@@ -49,7 +49,9 @@ export function useChatTeam({ teamId, user, inboxTeam, preferredConversationId =
         }
 
         try {
-          const loadedConversations = await loadChatConversations(teamId, user, context.team, context.canModerate);
+          const loadedConversations = await loadChatConversations(teamId, user, context.team, context.canModerate, {
+            activeConversationId: nextConversationId
+          });
           if (cancelled) return;
           setConversations(loadedConversations);
           setSelectedConversationId((current: string) => {
@@ -84,10 +86,12 @@ export function useChatTeam({ teamId, user, inboxTeam, preferredConversationId =
 
   const reloadConversations = useCallback(async () => {
     if (!user || !team) return undefined;
-    const loadedConversations = await loadChatConversations(teamId, user, team, canModerate);
+    const loadedConversations = await loadChatConversations(teamId, user, team, canModerate, {
+      activeConversationId: selectedConversationId
+    });
     setConversations(loadedConversations);
     return loadedConversations;
-  }, [canModerate, team, teamId, user]);
+  }, [canModerate, selectedConversationId, team, teamId, user]);
 
   const switchConversation = useCallback((conversationId: string) => {
     if (!conversationId || selectedConversationId === conversationId) return false;

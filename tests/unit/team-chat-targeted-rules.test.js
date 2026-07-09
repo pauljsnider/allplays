@@ -102,6 +102,17 @@ describe('targeted team chat Firestore rules', () => {
         expect(dbSource).toContain('const unreadConstraints = getDefaultTeamChatMessageConstraints(conversationId);');
     });
 
+    it('bounds chat conversation discovery while preserving default and requested conversations', () => {
+        expect(dbSource).toContain('export const DEFAULT_CHAT_CONVERSATION_PAGE_SIZE = 25;');
+        expect(dbSource).toContain("query(conversationsRef, orderBy('updatedAt', 'desc'), limitQuery(conversationPageSize))");
+        expect(dbSource).toContain("query(conversationsRef, where('participantIds', 'array-contains', user.uid), orderBy('updatedAt', 'desc'), limitQuery(conversationPageSize))");
+        expect(dbSource).toContain("query(conversationsRef, where('participantIds', 'array-contains', `user:${user.uid}`), orderBy('updatedAt', 'desc'), limitQuery(conversationPageSize))");
+        expect(dbSource).toContain("query(conversationsRef, where('participantIds', 'array-contains', `email:${normalizedEmail}`), orderBy('updatedAt', 'desc'), limitQuery(conversationPageSize))");
+        expect(dbSource).toContain('const boundedStored = stored.slice(0, conversationPageSize);');
+        expect(dbSource).toContain("const requestedConversationSnap = await getDoc(doc(db, 'teams', teamId, 'chatConversations', requestedConversationId));");
+        expect(dbSource).toContain('return [buildDefaultTeamConversation(team), ...boundedStored];');
+    });
+
     it('includes a backfill for fieldless legacy full-team messages before constrained reads ship', () => {
         expect(legacyChatBackfillSource).toContain('function getLegacyFullTeamBackfill(data = {})');
         expect(legacyChatBackfillSource).toContain("String(data.targetType || 'full_team').trim() || 'full_team'");

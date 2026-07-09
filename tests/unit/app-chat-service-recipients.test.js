@@ -978,6 +978,42 @@ describe('React app chat recipient service', () => {
         ]);
     });
 
+    it('requests and returns an active deep-linked conversation when the recent page omits it', async () => {
+        dbMocks.getChatConversations.mockImplementation(async (_teamId, _user, options = {}) => {
+            const recentPage = [
+                { id: 'team', type: 'team', name: 'Bears Team Chat', participantIds: [], participantRoles: ['team'] },
+                { id: 'recent-family', type: 'group', name: 'Recent family', participantIds: ['user-1'], updatedAt: new Date('2026-06-19T20:00:00.000Z') }
+            ];
+            if (options.includeConversationId === 'older-deep-link') {
+                return [
+                    ...recentPage,
+                    { id: 'older-deep-link', type: 'direct', name: 'Older direct', participantIds: ['user-1', 'coach-1'], updatedAt: new Date('2026-04-01T12:00:00.000Z') }
+                ];
+            }
+            return recentPage;
+        });
+
+        const { loadChatConversations } = await import('../../apps/app/src/lib/chatService.ts');
+        const conversations = await loadChatConversations(
+            'team-1',
+            { uid: 'user-1', email: 'parent@example.com', roles: [] },
+            { id: 'team-1', name: 'Bears' },
+            false,
+            { activeConversationId: 'older-deep-link' }
+        );
+
+        expect(dbMocks.getChatConversations).toHaveBeenCalledWith('team-1', expect.objectContaining({ uid: 'user-1' }), {
+            team: { id: 'team-1', name: 'Bears' },
+            canModerate: false,
+            includeConversationId: 'older-deep-link'
+        });
+        expect(conversations.map((conversation) => conversation.id)).toEqual([
+            'team',
+            'recent-family',
+            'older-deep-link'
+        ]);
+    });
+
     it('routes selected-member messages into a non-default conversation before posting', async () => {
         const photo = new File(['photo'], 'arrival.jpg', { type: 'image/jpeg' });
         const video = new File(['clip'], 'warmups.mp4', { type: 'video/mp4' });

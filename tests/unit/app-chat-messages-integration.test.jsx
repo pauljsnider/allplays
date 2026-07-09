@@ -497,6 +497,54 @@ describe('React app messages integration', () => {
         expect(container.textContent).toContain('Bring both jerseys.');
     });
 
+    it('renders only the bounded conversation set while selecting an older deep-linked thread', async () => {
+        const recentConversations = Array.from({ length: 24 }, (_, index) => ({
+            id: `recent-${index + 1}`,
+            type: 'group',
+            name: `Recent ${index + 1}`,
+            participantIds: ['user-1'],
+            participantRoles: []
+        }));
+        chatMocks.loadChatConversations.mockResolvedValueOnce([
+            { id: 'team', type: 'team', name: 'Bears Team Chat', participantIds: [], participantRoles: ['team'] },
+            ...recentConversations,
+            { id: 'older-deep-link', type: 'direct', name: 'Older direct', participantIds: ['user-1', 'coach-1'], participantRoles: [] }
+        ]);
+        chatMocks.subscribeToTeamChatMessages.mockImplementationOnce((teamId, conversationId, onMessages) => {
+            onMessages([
+                chatMessage({
+                    id: 'older-msg',
+                    text: 'Older thread loaded.',
+                    conversationId,
+                    senderId: 'coach-1',
+                    senderName: 'Coach Jamie'
+                })
+            ], { id: `cursor-${teamId}-${conversationId}` });
+            return { unsubscribe: vi.fn() };
+        });
+
+        const { container } = await renderMessages('/messages/team-1?conversationId=older-deep-link');
+
+        expect(chatMocks.loadChatConversations).toHaveBeenCalledWith(
+            'team-1',
+            auth.user,
+            { id: 'team-1', name: 'Bears', sport: 'Basketball' },
+            true,
+            { activeConversationId: 'older-deep-link' }
+        );
+        expect(chatMocks.subscribeToTeamChatMessages).toHaveBeenLastCalledWith(
+            'team-1',
+            'older-deep-link',
+            expect.any(Function),
+            expect.any(Function)
+        );
+        expect(container.textContent).toContain('Older direct');
+        expect(container.textContent).toContain('Older thread loaded.');
+        await click(container, 'Older direct');
+        expect(container.textContent).toContain('Recent 24');
+        expect(container.textContent).not.toContain('Recent 25');
+    });
+
     it('falls back to the default team conversation when the requested conversation is unavailable', async () => {
         chatMocks.loadChatConversations.mockResolvedValueOnce([
             { id: 'team', type: 'team', name: 'Bears Team Chat', participantIds: [], participantRoles: ['team'] }
