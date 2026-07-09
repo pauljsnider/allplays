@@ -10,6 +10,9 @@ const collectionGroupPlayerRules = collectionGroupPlayersMatch?.[0] || '';
 
 describe('player Firestore privacy rules', () => {
     it('classifies parent and household contact fields as restricted player data', () => {
+        expect(rules).toContain("'contacts'");
+        expect(rules).toContain("'contactEmail'");
+        expect(rules).toContain("'contactPhone'");
         expect(rules).toContain("'parents'");
         expect(rules).toContain("'guardianEmail'");
         expect(rules).toContain("'householdContacts'");

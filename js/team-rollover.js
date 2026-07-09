@@ -12,6 +12,7 @@ const ROLLOVER_OMITTED_PLAYER_FIELDS = new Set([
 const ROLLOVER_SENSITIVE_PLAYER_FIELDS = new Set([
     'medicalInfo', 'medical_info', 'medicalNotes', 'medical_notes',
     'emergencyContact', 'emergency_contact', 'emergencyContactName', 'emergencyContactPhone',
+    'contacts', 'contact', 'contactInfo', 'contact_info', 'contactEmail', 'contactPhone', 'contactRelation',
     'parents', 'parent', 'parentEmail', 'parentPhone', 'parentRelation',
     'guardian', 'guardians', 'guardianEmail', 'guardianPhone', 'guardianRelation',
     'householdContact', 'householdContacts', 'householdEmail', 'householdPhone', 'householdRelation'

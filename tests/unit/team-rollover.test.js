@@ -87,6 +87,12 @@ function buildRolloverDbHarness({ players = [] } = {}) {
 }
 
 describe('team rollover player copy', () => {
+    it('loads the rollover sanitizer through a cache-busted db import', () => {
+        const source = readDbSource();
+
+        expect(source).toContain("from './team-rollover.js?v=2'");
+    });
+
     it('preserves supported public player fields with source audit metadata', () => {
         const rolledOverAt = { marker: 'now' };
         const copy = buildRolloverPlayerCopy({
@@ -147,6 +153,8 @@ describe('team rollover player copy', () => {
             name: 'Sam Player',
             medicalInfo,
             emergencyContact,
+            contacts: [{ name: 'Dana Reed', email: 'dana@example.com', phone: '555-3000', relation: 'Emergency Contact' }],
+            contactInfo: { email: 'household@example.com', phone: '555-2222' },
             parents: [{ userId: 'parent-1', email: 'parent@example.com', relation: 'Mom' }],
             guardianEmail: 'guardian@example.com',
             householdContact: { name: 'Family Contact' },
@@ -158,6 +166,8 @@ describe('team rollover player copy', () => {
 
         expect(copy).not.toHaveProperty('medicalInfo');
         expect(copy).not.toHaveProperty('emergencyContact');
+        expect(copy).not.toHaveProperty('contacts');
+        expect(copy).not.toHaveProperty('contactInfo');
         expect(copy).not.toHaveProperty('parents');
         expect(copy).not.toHaveProperty('guardianEmail');
         expect(copy).not.toHaveProperty('householdContact');
@@ -175,10 +185,12 @@ describe('team rollover player copy', () => {
                     active: true,
                     number: '12',
                     parents: [{ userId: 'parent-1', email: 'parent@example.com' }],
+                    contacts: [{ name: 'Dana Reed', email: 'dana@example.com', phone: '555-3000', relation: 'Emergency Contact' }],
                     emergencyContact: { name: 'Jane Doe', phone: '555-1234' },
                     medicalInfo: { allergies: 'peanuts' },
                     rosterFieldValues: {
                         school: 'Central',
+                        contacts: [{ name: 'Roster Contact', phone: '555-2222' }],
                         guardianPhone: '555-9999'
                     },
                     profile: {
@@ -196,10 +208,12 @@ describe('team rollover player copy', () => {
                     id: 'player-2',
                     name: 'Taylor Player',
                     active: true,
+                    contactPhone: '555-4444',
                     parentEmail: 'parent2@example.com',
                     householdContact: { name: 'Household Contact' },
                     customFields: {
                         jerseySize: 'M',
+                        contactEmail: 'generic-contact@example.com',
                         emergencyContactName: 'Alex'
                     }
                 }
@@ -235,13 +249,17 @@ describe('team rollover player copy', () => {
             sourcePlayerId: 'player-2'
         });
         expect(harness.batch.setCalls[0].payload).not.toHaveProperty('parents');
+        expect(harness.batch.setCalls[0].payload).not.toHaveProperty('contacts');
         expect(harness.batch.setCalls[0].payload).not.toHaveProperty('emergencyContact');
         expect(harness.batch.setCalls[0].payload).not.toHaveProperty('medicalInfo');
+        expect(harness.batch.setCalls[0].payload.rosterFieldValues).not.toHaveProperty('contacts');
         expect(harness.batch.setCalls[0].payload.rosterFieldValues).not.toHaveProperty('guardianPhone');
         expect(harness.batch.setCalls[0].payload.profile.rosterFields).not.toHaveProperty('emergencyContactPhone');
         expect(harness.batch.setCalls[0].payload.profile.customFields).not.toHaveProperty('householdEmail');
+        expect(harness.batch.setCalls[1].payload).not.toHaveProperty('contactPhone');
         expect(harness.batch.setCalls[1].payload).not.toHaveProperty('parentEmail');
         expect(harness.batch.setCalls[1].payload).not.toHaveProperty('householdContact');
+        expect(harness.batch.setCalls[1].payload.customFields).not.toHaveProperty('contactEmail');
         expect(harness.batch.setCalls[1].payload.customFields).not.toHaveProperty('emergencyContactName');
     });
 

@@ -6,7 +6,29 @@ const SENSITIVE_PLAYER_KEYS = new Set([
     'emergencyContact',
     'emergency_contact',
     'emergencyContactName',
-    'emergencyContactPhone'
+    'emergencyContactPhone',
+    'contacts',
+    'contact',
+    'contactInfo',
+    'contact_info',
+    'contactEmail',
+    'contactPhone',
+    'contactRelation',
+    'parents',
+    'parent',
+    'parentEmail',
+    'parentPhone',
+    'parentRelation',
+    'guardian',
+    'guardians',
+    'guardianEmail',
+    'guardianPhone',
+    'guardianRelation',
+    'householdContact',
+    'householdContacts',
+    'householdEmail',
+    'householdPhone',
+    'householdRelation'
 ]);
 
 function asObject(value) {

@@ -29,7 +29,9 @@ describe('registration review helpers', () => {
                     jerseyNumber: '12',
                     customFields: {
                         waiver: true,
-                        medicalInfo: 'do not copy'
+                        medicalInfo: 'do not copy',
+                        contacts: [{ email: 'private@example.com' }],
+                        contactPhone: '555-1111'
                     }
                 },
                 guardians: [
@@ -55,6 +57,37 @@ describe('registration review helpers', () => {
             playerName: 'Avery Lee',
             playerNumber: '12',
             guardianLabel: 'pat@example.com'
+        });
+    });
+
+    it('strips contact aliases from registration roster drafts before public player writes', () => {
+        const registration = {
+            submittedData: {
+                athlete: {
+                    firstName: 'Avery',
+                    lastName: 'Lee',
+                    customFields: {
+                        waiver: true,
+                        contacts: [{ name: 'Pat Lee', email: 'pat@example.com' }],
+                        contactEmail: 'pat@example.com',
+                        parentPhone: '555-1212',
+                        guardianEmail: 'guardian@example.com',
+                        householdContact: { name: 'Family Contact' }
+                    }
+                },
+                rosterFieldValues: {
+                    position: 'Guard',
+                    contactPhone: '555-3434',
+                    householdEmail: 'family@example.com'
+                }
+            }
+        };
+
+        expect(getRegistrationPlayerDraft(registration)).toEqual({
+            name: 'Avery Lee',
+            number: '',
+            active: true,
+            rosterFieldValues: { waiver: true, position: 'Guard' }
         });
     });
 
@@ -231,6 +264,19 @@ describe('registration review helpers', () => {
         expect(editRosterPage).toContain('acceptTeamRegistrationOffer');
         expect(editRosterPage).toContain('accept-offer-registration-btn');
         expect(editRosterPage).toContain('Mark accepted');
+    });
+
+    it('busts the registration approval import chain when sensitive contact aliases change', () => {
+        const editRosterPage = fs.readFileSync('edit-roster.html', 'utf8');
+        const dbSource = fs.readFileSync('js/db.js', 'utf8');
+
+        const editRosterDbImport = editRosterPage.match(/approveTeamRegistration[\s\S]*from '\.\/js\/db\.js\?v=(\d+)'/);
+        const dbRegistrationReviewImport = dbSource.match(/from '\.\/registration-review\.js\?v=(\d+)'/);
+
+        expect(editRosterDbImport, 'edit-roster approveTeamRegistration db.js import').toBeTruthy();
+        expect(Number(editRosterDbImport[1])).toBeGreaterThanOrEqual(85);
+        expect(dbRegistrationReviewImport, 'db.js registration-review import').toBeTruthy();
+        expect(Number(dbRegistrationReviewImport[1])).toBeGreaterThanOrEqual(6);
     });
 
     it('flattens registration reviews for CSV export', () => {

@@ -186,7 +186,7 @@ export async function normalizeParentScopeLinks(parentLinks = []) {
 }
 import { normalizeStatTrackerConfig, splitPlayerStatsByVisibility } from './stat-leaderboards.js?v=2';
 import { buildPublishedBracketView } from './bracket-management.js?v=1';
-import { buildRolloverPlayerCopy } from './team-rollover.js?v=1';
+import { buildRolloverPlayerCopy } from './team-rollover.js?v=2';
 import { isPublicTrackingItem, normalizeTrackingItem, normalizeTrackingStatus } from './player-tracking-summary.js?v=1';
 import {
     buildRegistrationRosterDecision,
@@ -196,7 +196,7 @@ import {
     matchesRegistrationReviewStatus,
     normalizeRegistrationStatus,
     summarizeRegistration
-} from './registration-review.js?v=2';
+} from './registration-review.js?v=6';
 import {
     assertVolunteerScreeningCleared,
     loadVolunteerScreeningTargetRegistrations
@@ -2424,6 +2424,7 @@ function assertNoSensitivePlayerFields(playerData) {
     const forbidden = [
         'medicalInfo', 'medical_info', 'medicalNotes', 'medical_notes',
         'emergencyContact', 'emergency_contact', 'emergencyContactName', 'emergencyContactPhone',
+        'contacts', 'contact', 'contactInfo', 'contact_info', 'contactEmail', 'contactPhone', 'contactRelation',
         'parents', 'parent', 'parentEmail', 'parentPhone', 'parentRelation',
         'guardian', 'guardians', 'guardianEmail', 'guardianPhone', 'guardianRelation',
         'householdContact', 'householdContacts', 'householdEmail', 'householdPhone', 'householdRelation'
