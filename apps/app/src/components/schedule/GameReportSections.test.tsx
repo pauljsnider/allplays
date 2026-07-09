@@ -234,7 +234,7 @@ describe('GameReportSections', () => {
         { id: 'event-final', text: 'Final horn', period: 'Q4', clock: '0:00', timestamp: new Date(1717200120 * 1000) }
       ]));
     gameReportServiceMocks.loadGameReportPlays.mockResolvedValue({
-      game: { id: 'game-1', liveStatus: 'completed', status: 'completed', homeScore: 43, awayScore: 40 },
+      game: { id: 'game-1', liveStatus: 'live', status: 'completed', homeScore: 43, awayScore: 40 },
       plays: [
         { id: 'event-early', text: 'Opening tip', period: 'Q1', clock: '8:00', timestamp: new Date(1717200000 * 1000) },
         { id: 'event-final', text: 'Final horn', period: 'Q4', clock: '0:00', timestamp: new Date(1717200120 * 1000) }

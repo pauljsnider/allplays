@@ -23,9 +23,14 @@ export function GameReportSections({ event }: { event: ParentScheduleEvent }) {
   const [loadingReport, setLoadingReport] = useState(true);
   const [reportError, setReportError] = useState<string | null>(null);
   const visibleReportSections = useMemo(() => getVisibleGameReportSections(report), [report]);
-  const liveReportStatus = String(report?.game?.liveStatus || report?.game?.status || event.liveStatus || event.status || '').trim().toLowerCase();
+  const currentReportStatuses = (report
+    ? [report.game?.liveStatus, report.game?.status]
+    : [event.liveStatus, event.status]
+  ).map((status) => String(status || '').trim().toLowerCase());
   const eventReportLoadStatus = normalizeGameReportLoadStatus(event.liveStatus || event.status);
-  const isLivePlaysRefreshEnabled = activeReportSection === 'plays' && liveReportStatuses.has(liveReportStatus);
+  const isLivePlaysRefreshEnabled = activeReportSection === 'plays'
+    && !currentReportStatuses.some((status) => completedReportStatuses.has(status))
+    && currentReportStatuses.some((status) => liveReportStatuses.has(status));
 
   const refreshReport = useCallback(async (showLoading = true) => {
     if (showLoading) setLoadingReport(true);
@@ -49,8 +54,9 @@ export function GameReportSections({ event }: { event: ParentScheduleEvent }) {
         game: { ...currentReport.game, ...refresh.game },
         plays: refresh.plays
       } : currentReport);
-      const refreshedStatus = String(refresh.game?.liveStatus || refresh.game?.status || '').trim().toLowerCase();
-      if (completedReportStatuses.has(refreshedStatus)) {
+      const refreshedStatuses = [refresh.game?.liveStatus, refresh.game?.status]
+        .map((status) => String(status || '').trim().toLowerCase());
+      if (refreshedStatuses.some((status) => completedReportStatuses.has(status))) {
         await refreshReport(false);
       }
     } catch (error: any) {
