@@ -256,6 +256,27 @@ describe('AppShell', () => {
     });
   });
 
+  it('renders 99+ and syncs the bounded native badge count when the unread cap is reached', async () => {
+    subscribeToUnreadNotificationCountMock.mockImplementation((_uid, onCount) => {
+      onCount(100);
+      return vi.fn();
+    });
+
+    render(
+      <MemoryRouter initialEntries={['/home']}>
+        <Routes>
+          <Route path="/home" element={<AppShell auth={signedInAuth}><div>Home</div></AppShell>} />
+        </Routes>
+      </MemoryRouter>
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId('notification-unread-badge').textContent).toBe('99+');
+      expect(updateAppIconBadgeMock).toHaveBeenCalledWith(100);
+    });
+    expect(subscribeToNotificationInboxMock).not.toHaveBeenCalled();
+  });
+
   it('does not clear the native app badge while auth is still bootstrapping', async () => {
     render(
       <MemoryRouter initialEntries={['/home']}>

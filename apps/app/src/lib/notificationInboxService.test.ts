@@ -39,7 +39,7 @@ describe('notificationInboxService', () => {
         vi.mocked(onSnapshot).mockReturnValue(vi.fn());
     });
 
-    it('subscribes to unread notifications without hydrating inbox items', () => {
+    it('subscribes to unread notifications with a hard count cap without hydrating inbox items', () => {
         const callback = vi.fn();
         vi.mocked(onSnapshot).mockImplementation((_query, onNext) => {
             onNext({ size: 3 } as never);
@@ -50,8 +50,22 @@ describe('notificationInboxService', () => {
 
         expect(collection).toHaveBeenCalledWith(db, 'users/user-123/notificationInbox');
         expect(where).toHaveBeenCalledWith('readAt', '==', null);
-        expect(query).toHaveBeenCalledWith({ kind: 'collection' }, { kind: 'where' });
+        expect(limit).toHaveBeenCalledWith(100);
+        expect(query).toHaveBeenCalledWith({ kind: 'collection' }, { kind: 'where' }, { kind: 'limit' });
         expect(callback).toHaveBeenCalledWith(3);
+    });
+
+    it('reports the capped unread snapshot size so the shell can render 99+', () => {
+        const callback = vi.fn();
+        vi.mocked(onSnapshot).mockImplementation((_query, onNext) => {
+            onNext({ size: 100 } as never);
+            return vi.fn();
+        });
+
+        subscribeToUnreadNotificationCount('user-123', callback);
+
+        expect(limit).toHaveBeenCalledWith(100);
+        expect(callback).toHaveBeenCalledWith(100);
     });
 
     it('does not attach a full inbox fallback when the unread query fails', () => {
@@ -70,12 +84,12 @@ describe('notificationInboxService', () => {
 
         const unsubscribe = subscribeToUnreadNotificationCount('user-123', callback, onError);
 
-        expect(query).toHaveBeenCalledWith(primaryCollection, { kind: 'where' });
+        expect(query).toHaveBeenCalledWith(primaryCollection, { kind: 'where' }, { kind: 'limit' });
         expect(onSnapshot).toHaveBeenCalledTimes(1);
         expect(onSnapshot).toHaveBeenNthCalledWith(1, primaryQuery, expect.any(Function), expect.any(Function));
         expect(collection).toHaveBeenCalledTimes(1);
         expect(orderBy).not.toHaveBeenCalled();
-        expect(limit).not.toHaveBeenCalled();
+        expect(limit).toHaveBeenCalledWith(100);
         expect(callback).not.toHaveBeenCalled();
         expect(onError).toHaveBeenCalledWith(unreadError);
 
