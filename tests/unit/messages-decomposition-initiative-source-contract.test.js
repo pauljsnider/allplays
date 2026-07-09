@@ -7,6 +7,7 @@ function readSource(path) {
 
 const messagesSource = readSource('apps/app/src/pages/Messages.tsx');
 const chatWindowSource = readSource('apps/app/src/pages/messages/components/ChatWindow.tsx');
+const teamEmailSheetSource = readSource('apps/app/src/pages/messages/components/TeamEmailSheet.tsx');
 const chatMessagesHookSource = readSource('apps/app/src/pages/messages/hooks/useChatMessages.ts');
 const chatTeamHookSource = readSource('apps/app/src/pages/messages/hooks/useChatTeam.ts');
 const chatSheetsHookSource = readSource('apps/app/src/pages/messages/hooks/useChatSheets.ts');
@@ -70,11 +71,12 @@ describe('Messages decomposition initiative source contract', () => {
     });
 
     it('keeps team email composer transitions in the reducer with dedicated reducer tests', () => {
-        expect(chatWindowSource).toContain("from '../state/emailReducer';");
-        expect(chatWindowSource).toContain('emailComposerActions');
-        expect(chatWindowSource).toContain('emailReducer');
-        expect(chatWindowSource).toContain('initialEmailComposerState');
-        expect(chatWindowSource).toMatch(/useReducer\(emailReducer,\s*initialEmailComposerState\)/);
+        expect(chatWindowSource).toContain("const LazyTeamEmailSheet = lazy(() => import('./TeamEmailSheet'));");
+        expect(teamEmailSheetSource).toContain("from '../state/emailReducer';");
+        expect(teamEmailSheetSource).toContain('emailComposerActions');
+        expect(teamEmailSheetSource).toContain('emailReducer');
+        expect(teamEmailSheetSource).toContain('initialEmailComposerState');
+        expect(teamEmailSheetSource).toMatch(/useReducer\(emailReducer,\s*initialEmailComposerState\)/);
         expect(messagesSource).not.toMatch(/const\s+\[emailSubject\b/);
         expect(messagesSource).not.toMatch(/const\s+\[emailBody\b/);
         expect(messagesSource).not.toMatch(/const\s+\[selectedEmailDraftId\b/);
@@ -99,7 +101,7 @@ describe('Messages decomposition initiative source contract', () => {
         expect(useStateCount).toBeLessThan(10);
         expect(messagesSource.split('\n').length).toBeLessThan(1600);
         expect(chatWindowSource).toContain('const visibleMessages = useMemo(');
-        expect(chatWindowSource).toContain('const emailAudienceMetadata = useMemo(() => buildEmailAudienceMetadata({');
+        expect(teamEmailSheetSource).toContain('const emailAudienceMetadata = useMemo(() => buildEmailAudienceMetadata({');
         expect(chatWindowSource).toContain('const mediaEntries = useMemo(() => collectThreadMedia(visibleMessages), [visibleMessages]);');
     });
 });
