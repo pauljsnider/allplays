@@ -26,7 +26,7 @@ describe('React app schedule event detail audio announcer wiring', () => {
         expect(source).toContain("const isLivePlaysRefreshEnabled = activeReportSection === 'plays' && liveReportStatuses.has(liveReportStatus);");
         expect(source).toContain('if (!isLivePlaysRefreshEnabled) return undefined;');
         expect(source).toContain('const intervalId = window.setInterval(() => {');
-        expect(source).toContain('void refreshReport(false);');
+        expect(source).toContain('void refreshLivePlays();');
         expect(source).toContain("window.addEventListener('focus', handleFocus);");
         expect(source).toContain('}, liveReportPollIntervalMs);');
     });

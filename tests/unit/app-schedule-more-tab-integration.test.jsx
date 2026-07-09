@@ -121,6 +121,7 @@ const scheduleMocks = vi.hoisted(() => ({
 }));
 
 const reportMocks = vi.hoisted(() => ({
+    loadGameReportPlays: vi.fn(),
     loadGameReportSections: vi.fn()
 }));
 
@@ -786,13 +787,18 @@ describe('React app ScheduleEventDetail More tab integration', () => {
         expect(reportMocks.loadGameReportSections).toHaveBeenCalledTimes(1);
     });
 
-    it('refreshes live game reports on Plays focus and interval only', async () => {
+    it('refreshes live game report plays on Plays focus and interval only', async () => {
         scheduleMocks.loadParentSchedule.mockResolvedValue({
             events: [event({ liveStatus: 'live', homeScore: 4, awayScore: 2 })]
         });
         reportMocks.loadGameReportSections.mockResolvedValue(report({
-            game: { id: 'game-1', status: 'live', liveStatus: 'live', homeScore: 4, awayScore: 2 }
+            game: { id: 'game-1', status: 'live', liveStatus: 'live', homeScore: 4, awayScore: 2 },
+            plays: [{ id: 'play-1', period: 'Q1', clock: '05:12', text: 'Opening bucket' }]
         }));
+        reportMocks.loadGameReportPlays.mockResolvedValue([
+            { id: 'play-1', period: 'Q1', clock: '05:12', text: 'Opening bucket' },
+            { id: 'play-2', period: 'Q1', clock: '04:58', text: 'Second bucket' }
+        ]);
 
         const { container } = await renderDetail('/schedule/team-1/game-1?childId=player-1');
         await waitForText(container, 'vs. Falcons');
@@ -809,13 +815,17 @@ describe('React app ScheduleEventDetail More tab integration', () => {
         await act(async () => {
             await vi.advanceTimersByTimeAsync(15000);
         });
-        expect(reportMocks.loadGameReportSections).toHaveBeenCalledTimes(2);
+        expect(reportMocks.loadGameReportSections).toHaveBeenCalledTimes(1);
+        expect(reportMocks.loadGameReportPlays).toHaveBeenCalledTimes(1);
+        expect(reportMocks.loadGameReportPlays).toHaveBeenCalledWith('team-1', 'game-1');
+        await waitForText(container, 'Second bucket');
 
         await act(async () => {
             window.dispatchEvent(new Event('focus'));
             await Promise.resolve();
         });
-        expect(reportMocks.loadGameReportSections).toHaveBeenCalledTimes(3);
+        expect(reportMocks.loadGameReportSections).toHaveBeenCalledTimes(1);
+        expect(reportMocks.loadGameReportPlays).toHaveBeenCalledTimes(2);
 
         await clickButton(container, 'Summary');
         await act(async () => {
@@ -823,7 +833,8 @@ describe('React app ScheduleEventDetail More tab integration', () => {
             window.dispatchEvent(new Event('focus'));
             await Promise.resolve();
         });
-        expect(reportMocks.loadGameReportSections).toHaveBeenCalledTimes(3);
+        expect(reportMocks.loadGameReportSections).toHaveBeenCalledTimes(1);
+        expect(reportMocks.loadGameReportPlays).toHaveBeenCalledTimes(2);
     });
 
     it('renders the live period and clock chip beside the score for live games', async () => {
