@@ -29,9 +29,15 @@ export function PublicTeamSearch({ autoBrowseOnMount = false, showBackLink = fal
   const [nextCursor, setNextCursor] = useState<unknown | null>(null);
   const autoBrowseTriggeredRef = useRef(false);
   const latestRequestIdRef = useRef(0);
+  const pendingRequestKeyRef = useRef<string | null>(null);
 
   const fetchPublicTeams = useCallback(async ({ searchText, cursor = null, append = false }: { searchText?: string; cursor?: unknown | null; append?: boolean } = {}) => {
     const submittedSearchText = searchText?.trim() || undefined;
+    const requestKey = publicTeamRequestKey(submittedSearchText);
+    if (!append && pendingRequestKeyRef.current === requestKey) {
+      return;
+    }
+
     const requestId = latestRequestIdRef.current + 1;
     latestRequestIdRef.current = requestId;
 
@@ -40,7 +46,8 @@ export function PublicTeamSearch({ autoBrowseOnMount = false, showBackLink = fal
       setError('');
       setPendingSearchQuery(submittedSearchText || null);
       setPendingMode(submittedSearchText ? 'search' : 'browse');
-      setPendingRequestKey(publicTeamRequestKey(submittedSearchText));
+      pendingRequestKeyRef.current = requestKey;
+      setPendingRequestKey(requestKey);
     }
     setHasSearched(true);
     try {
@@ -65,6 +72,7 @@ export function PublicTeamSearch({ autoBrowseOnMount = false, showBackLink = fal
         setLoading(false);
         setPendingSearchQuery(null);
         setPendingMode(null);
+        pendingRequestKeyRef.current = null;
         setPendingRequestKey(null);
       }
     }
@@ -99,6 +107,7 @@ export function PublicTeamSearch({ autoBrowseOnMount = false, showBackLink = fal
     setActiveSearchQuery(null);
     setPendingSearchQuery(null);
     setPendingMode(null);
+    pendingRequestKeyRef.current = null;
     setPendingRequestKey(null);
     setHasSearched(false);
     setLoading(false);
@@ -250,8 +259,27 @@ export function PublicTeamSearch({ autoBrowseOnMount = false, showBackLink = fal
           ) : null}
         </div>
       ) : (
-        <div className="rounded-xl border border-gray-200 bg-gray-50 p-4 text-sm font-semibold text-gray-500 text-center">
-          No public teams found {activeSearchQuery ? `for "${activeSearchQuery}"` : ''}. Try a different search or browse all public teams.
+        <div className="rounded-xl border border-gray-200 bg-gray-50 p-4 text-center">
+          <div className="text-sm font-semibold text-gray-500">
+            No public teams found {activeSearchQuery ? `for "${activeSearchQuery}"` : ''}. Try a different search or browse all public teams.
+          </div>
+          <div className="mt-4 flex flex-col gap-2 sm:flex-row sm:justify-center">
+            <button
+              type="button"
+              className="primary-button w-full justify-center !min-h-10 !px-4 text-sm sm:w-auto"
+              onClick={handleBrowseAll}
+              disabled={loading && pendingRequestKey === publicTeamRequestKey(undefined)}
+            >
+              Browse all public teams
+            </button>
+            <button
+              type="button"
+              className="ghost-button w-full justify-center !min-h-10 !px-4 text-sm sm:w-auto"
+              onClick={handleClear}
+            >
+              Clear search
+            </button>
+          </div>
         </div>
       )}
     </section>
