@@ -49,6 +49,8 @@ function createScenario(overrides = {}) {
         },
         aggregatedStats: {},
         events: {},
+        liveEvents: {},
+        privatePlayerStats: {},
         deleteCalls: [],
         batchOps: [],
         commitCalls: 0,
@@ -143,6 +145,14 @@ async function installModuleMocks(page) {
                 return createSnapshot(Object.entries(store.aggregatedStats || {}).map(([id, data]) => [id, data, createCollectionPath(store.team.id, store.game.id, 'aggregatedStats', id)]));
             }
 
+            if (path.endsWith('/liveEvents')) {
+                return createSnapshot(Object.entries(store.liveEvents || {}).map(([id, data]) => [id, data, createCollectionPath(store.team.id, store.game.id, 'liveEvents', id)]));
+            }
+
+            if (path.endsWith('/privatePlayerStats')) {
+                return createSnapshot(Object.entries(store.privatePlayerStats || {}).map(([id, data]) => [id, data, createCollectionPath(store.team.id, store.game.id, 'privatePlayerStats', id)]));
+            }
+
             if (path.endsWith('/statTrackerConfigs')) {
                 const config = store.config ? [[store.config.id, store.config, 'teams/' + store.team.id + '/statTrackerConfigs/' + store.config.id]] : [];
                 return createSnapshot(config);
@@ -215,6 +225,12 @@ async function installModuleMocks(page) {
             }
             if (collectionName === 'aggregatedStats') {
                 delete (store.aggregatedStats || {})[docId];
+            }
+            if (collectionName === 'liveEvents') {
+                delete (store.liveEvents || {})[docId];
+            }
+            if (collectionName === 'privatePlayerStats') {
+                delete (store.privatePlayerStats || {})[docId];
             }
 
             saveStore(store);
@@ -303,6 +319,14 @@ async function installModuleMocks(page) {
 
             if (path.endsWith('/aggregatedStats')) {
                 return createSnapshot(Object.entries(store.aggregatedStats || {}).map(([id, data]) => [id, data, createCollectionPath(store.team.id, store.game.id, 'aggregatedStats', id)]));
+            }
+
+            if (path.endsWith('/liveEvents')) {
+                return createSnapshot(Object.entries(store.liveEvents || {}).map(([id, data]) => [id, data, createCollectionPath(store.team.id, store.game.id, 'liveEvents', id)]));
+            }
+
+            if (path.endsWith('/privatePlayerStats')) {
+                return createSnapshot(Object.entries(store.privatePlayerStats || {}).map(([id, data]) => [id, data, createCollectionPath(store.team.id, store.game.id, 'privatePlayerStats', id)]));
             }
 
             if (path.endsWith('/statTrackerConfigs')) {
@@ -798,6 +822,12 @@ test('respects overwrite confirmation and renders rewritten stats on the game re
         events: {
             oldEvent: { type: 'score', timestamp: 1 }
         },
+        liveEvents: {
+            oldLiveEvent: { type: 'assist', timestamp: 2 }
+        },
+        privatePlayerStats: {
+            oldPrivateStat: { playerId: 'p1', notes: 'private stale data' }
+        },
         confirmResponses: [false, true]
     }));
 
@@ -815,6 +845,9 @@ test('respects overwrite confirmation and renders rewritten stats on the game re
     expect(store.deleteCalls).toEqual([]);
     expect(store.commitCalls).toBe(0);
     expect(store.aggregatedStats.legacyPlayer.stats.pts).toBe(99);
+    expect(store.events.oldEvent.type).toBe('score');
+    expect(store.liveEvents.oldLiveEvent.type).toBe('assist');
+    expect(store.privatePlayerStats.oldPrivateStat.notes).toBe('private stale data');
     await expect(page.locator('#apply-status')).toHaveText('Cancelled.');
 
     await page.locator('#apply-btn').click();
@@ -824,10 +857,34 @@ test('respects overwrite confirmation and renders rewritten stats on the game re
     expect(store.confirmResults).toEqual([false, true]);
     expect(store.deleteCalls).toEqual([
         'teams/team-1/games/game-1/events/oldEvent',
-        'teams/team-1/games/game-1/aggregatedStats/legacyPlayer'
+        'teams/team-1/games/game-1/aggregatedStats/legacyPlayer',
+        'teams/team-1/games/game-1/liveEvents/oldLiveEvent',
+        'teams/team-1/games/game-1/privatePlayerStats/oldPrivateStat'
     ]);
     expect(store.commitCalls).toBe(1);
+    expect(store.events).toEqual({});
+    expect(store.liveEvents).toEqual({});
+    expect(store.privatePlayerStats).toEqual({});
     expect(Object.keys(store.aggregatedStats)).toEqual(['p1', 'p2']);
+    expect(store.batchOps).toEqual(expect.arrayContaining([
+        expect.objectContaining({
+            type: 'set',
+            path: 'teams/team-1/games/game-1/aggregatedStats/p1'
+        }),
+        expect.objectContaining({
+            type: 'set',
+            path: 'teams/team-1/games/game-1/aggregatedStats/p2'
+        }),
+        expect.objectContaining({
+            type: 'update',
+            path: 'teams/team-1/games/game-1',
+            data: expect.objectContaining({
+                status: 'completed',
+                homeScore: 19,
+                awayScore: 24
+            })
+        })
+    ]));
 
     await page.goto(buildUrl(baseURL, '/game.html#teamId=team-1&gameId=game-1'), {
         waitUntil: 'domcontentloaded'
