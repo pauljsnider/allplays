@@ -6245,12 +6245,16 @@ export async function getChatConversations(teamId, user = null, {
     const boundedStored = stored.slice(0, conversationPageSize);
     const requestedConversationId = normalizeRequestedChatConversationId(includeConversationId || activeConversationId);
     if (requestedConversationId && !boundedStored.some((conversation) => conversation.id === requestedConversationId)) {
-        const requestedConversationSnap = await getDoc(doc(db, 'teams', teamId, 'chatConversations', requestedConversationId));
-        if (requestedConversationSnap.exists()) {
-            const requestedConversation = { id: requestedConversationSnap.id, ...requestedConversationSnap.data() };
-            if (!user || isUserInConversation(requestedConversation, user, { canModerate })) {
-                boundedStored.push(requestedConversation);
+        try {
+            const requestedConversationSnap = await getDoc(doc(db, 'teams', teamId, 'chatConversations', requestedConversationId));
+            if (requestedConversationSnap.exists()) {
+                const requestedConversation = { id: requestedConversationSnap.id, ...requestedConversationSnap.data() };
+                if (!user || isUserInConversation(requestedConversation, user, { canModerate })) {
+                    boundedStored.push(requestedConversation);
+                }
             }
+        } catch (error) {
+            console.warn('Ignoring unavailable requested chat conversation.', { teamId, requestedConversationId, error });
         }
     }
 

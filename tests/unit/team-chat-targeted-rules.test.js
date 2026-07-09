@@ -110,6 +110,8 @@ describe('targeted team chat Firestore rules', () => {
         expect(dbSource).toContain("query(conversationsRef, where('participantIds', 'array-contains', `email:${normalizedEmail}`), orderBy('updatedAt', 'desc'), limitQuery(conversationPageSize))");
         expect(dbSource).toContain('const boundedStored = stored.slice(0, conversationPageSize);');
         expect(dbSource).toContain("const requestedConversationSnap = await getDoc(doc(db, 'teams', teamId, 'chatConversations', requestedConversationId));");
+        expect(dbSource).toContain('} catch (error) {');
+        expect(dbSource).toContain("console.warn('Ignoring unavailable requested chat conversation.', { teamId, requestedConversationId, error });");
         expect(dbSource).toContain('return [buildDefaultTeamConversation(team), ...boundedStored];');
     });
 
