@@ -172,8 +172,24 @@ function extractBlockBody(source, marker) {
 
 async function runBodyWithContext(body, context) {
     const AsyncFunction = Object.getPrototypeOf(async function noop() {}).constructor;
-    const runner = new AsyncFunction('context', `with (context) { ${body} }`);
-    return runner(context);
+    const runtime = {
+        Array,
+        Boolean,
+        Date,
+        Error,
+        JSON,
+        Math,
+        Number,
+        Object,
+        Promise,
+        String,
+        isNaN,
+        parseFloat,
+        parseInt,
+        ...context
+    };
+    const runner = new AsyncFunction(...Object.keys(runtime), body);
+    return runner(...Object.values(runtime));
 }
 
 describe('standard tracker finish batch limits', () => {
