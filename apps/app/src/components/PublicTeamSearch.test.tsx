@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 
+import { readFileSync } from 'node:fs';
 import type { ComponentProps } from 'react';
 import { describe, it, expect, vi, beforeEach, afterEach, type MockInstance } from 'vitest';
 import { render, screen, fireEvent, waitFor, cleanup, within } from '@testing-library/react';
@@ -87,6 +88,13 @@ describe('PublicTeamSearch', () => {
         expect(screen.queryByRole('button', { name: 'Clear public team search' })).toBeNull();
         expect(screen.queryByText('Atlanta United')).toBeNull();
         expect(getPublicTeamsPage).not.toHaveBeenCalled();
+    });
+
+    it('keeps the public browse route decoupled from the private Teams page module', () => {
+        const source = readFileSync('src/components/PublicTeamSearch.tsx', 'utf8');
+
+        expect(source).not.toContain('../pages/Teams');
+        expect(source).toContain('./TeamSummaryPrimitives');
     });
 
     it('does not browse all teams when the search button is clicked with an empty or whitespace-only query', async () => {

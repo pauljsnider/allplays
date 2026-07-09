@@ -2,7 +2,7 @@ import { useState, useMemo, useCallback, useEffect, useRef } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { Search, XCircle, Loader2, Users } from 'lucide-react';
 import { type ParentHomeTeam } from '../lib/homeLogic';
-import { TeamAvatar, TeamLauncherChip, Status } from '../pages/Teams';
+import { TeamAvatar, TeamLauncherChip, Status } from './TeamSummaryPrimitives';
 import { getPublicTeamsPage } from '../lib/publicTeamsService';
 import { openPublicUrl } from '../lib/publicActions';
 import { getTeamWebsiteHashHref } from '../lib/teamNavigation';
@@ -293,5 +293,3 @@ function PublicTeamCard({ team, onOpenTeam }: { team: ParentHomeTeam; onOpenTeam
     </article>
   );
 }
-
-// Remove duplicated Status component as it's now imported from './Teams'
