@@ -23,7 +23,6 @@ function listTrackedShippedPages() {
     return readdirSync(REPO_ROOT)
         .filter((file) => file.endsWith('.html'))
         .filter((file) => !file.startsWith('test-'))
-        .filter((file) => !file.startsWith('workflow-'))
         .filter((file) => !file.startsWith('help-'))
         .sort();
 }
@@ -56,6 +55,9 @@ describe('help page reference integrity', () => {
         expect(referencedFiles).toContain('edit-schedule.html');
         expect(referencedFiles).toContain('live-game.html');
         expect(referencedFiles).toContain('help-page-reference.html');
+        expect(referencedFiles).toContain('workflow-admin-ops.html');
+        expect(referencedFiles).toContain('workflow-schedule.html');
+        expect(referencedFiles).toContain('workflow-track-game.html');
 
         referencedFiles.forEach((file) => {
             expect(existsSync(resolve(REPO_ROOT, file)), `${file} should exist in the repo`).toBe(true);
@@ -68,6 +70,14 @@ describe('help page reference integrity', () => {
         expect(referenceRows.find((row) => row.file === 'team-fees.html')).toMatchObject({
             features: 'Offline fee batch management, invoices, and payment tracking',
             roles: 'Coach, Admin'
+        });
+        expect(referenceRows.find((row) => row.file === 'workflow-schedule.html')).toMatchObject({
+            features: 'Publish games and practices, refresh linked registration schedules, and launch game-day tools',
+            roles: 'Coach, Admin'
+        });
+        expect(referenceRows.find((row) => row.file === 'workflow-track-game.html')).toMatchObject({
+            features: 'Track a game from mode selection through finish and publish an accurate game report',
+            roles: 'Coach, Admin, Scorekeeper'
         });
     });
 

@@ -208,7 +208,8 @@
     "title": "Track Live Game Stats by Mode",
     "roles": [
       "Coach",
-      "Admin"
+      "Admin",
+      "Scorekeeper"
     ],
     "file": "workflow-track-game.html",
     "summary": "Use this workflow to track a game from start to finish and publish an accurate game report.",

@@ -28,7 +28,7 @@ async function readPageReferenceFiles(page) {
 
 async function expectReferenceRow(page, file, roles) {
     const row = page.locator('tbody tr').filter({
-        has: page.locator('td.font-mono', { hasText: file })
+        has: page.getByRole('cell', { name: file, exact: true })
     });
 
     await expect(row, `${file} row should be visible`).toBeVisible();
