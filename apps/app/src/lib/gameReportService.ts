@@ -69,6 +69,11 @@ export type GameReportPlay = {
   timestamp: Date | null;
 };
 
+export type GameReportPlaysRefresh = {
+  game: GameReportGameFirestoreRecord;
+  plays: GameReportPlay[];
+};
+
 export type GameReportHighlightClip = {
   title: string;
   description: string;
@@ -172,15 +177,21 @@ function normalizePlay(entry: GameReportEventFirestoreRecord): GameReportPlay {
   };
 }
 
-export async function loadGameReportPlays(teamId: string, gameId: string): Promise<GameReportPlay[]> {
+export async function loadGameReportPlays(teamId: string, gameId: string): Promise<GameReportPlaysRefresh> {
   if (!teamId || !gameId) {
     throw new Error('Team and game are required.');
   }
 
-  const rawEvents = await getGameEvents(teamId, gameId, { limit: 100 });
-  return mapGameReportEventRecords(rawEvents)
-    .sort((a, b) => (normalizeDate(a.timestamp)?.getTime() || 0) - (normalizeDate(b.timestamp)?.getTime() || 0))
-    .map(normalizePlay);
+  const [rawGame, rawEvents] = await Promise.all([
+    getGame(teamId, gameId),
+    getGameEvents(teamId, gameId, { limit: 100 })
+  ]);
+  return {
+    game: mapGameReportGameRecord(rawGame, gameId),
+    plays: mapGameReportEventRecords(rawEvents)
+      .sort((a, b) => (normalizeDate(a.timestamp)?.getTime() || 0) - (normalizeDate(b.timestamp)?.getTime() || 0))
+      .map(normalizePlay)
+  };
 }
 
 function normalizeOpponentRows(opponentStats: GameReportGameFirestoreRecord['opponentStats'] = {}): GameReportOpponentRow[] {

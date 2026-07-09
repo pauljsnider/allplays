@@ -138,10 +138,13 @@ describe('GameReportSections', () => {
     gameReportServiceMocks.loadGameReportSections.mockResolvedValue(buildReport('First report.', {}, [
       { id: 'event-early', text: 'Opening tip', period: 'Q1', clock: '8:00', timestamp: new Date(1717200000 * 1000) }
     ]));
-    gameReportServiceMocks.loadGameReportPlays.mockResolvedValue([
-      { id: 'event-early', text: 'Opening tip', period: 'Q1', clock: '8:00', timestamp: new Date(1717200000 * 1000) },
-      { id: 'event-late', text: 'Late bucket', period: 'Q1', clock: '0:12', timestamp: new Date(1717200060 * 1000) }
-    ]);
+    gameReportServiceMocks.loadGameReportPlays.mockResolvedValue({
+      game: { id: 'game-1', liveStatus: 'live', status: 'live', homeScore: 41, awayScore: 38 },
+      plays: [
+        { id: 'event-early', text: 'Opening tip', period: 'Q1', clock: '8:00', timestamp: new Date(1717200000 * 1000) },
+        { id: 'event-late', text: 'Late bucket', period: 'Q1', clock: '0:12', timestamp: new Date(1717200060 * 1000) }
+      ]
+    });
 
     render(<GameReportSections event={buildEvent()} />);
 
@@ -177,10 +180,13 @@ describe('GameReportSections', () => {
         { id: 'event-early', text: 'Opening tip', period: 'Q1', clock: '8:00', timestamp: new Date(1717200000 * 1000) },
         { id: 'event-late', text: 'Late bucket', period: 'Q1', clock: '0:12', timestamp: new Date(1717200060 * 1000) }
       ]));
-    gameReportServiceMocks.loadGameReportPlays.mockResolvedValue([
-      { id: 'event-early', text: 'Opening tip', period: 'Q1', clock: '8:00', timestamp: new Date(1717200000 * 1000) },
-      { id: 'event-late', text: 'Late bucket', period: 'Q1', clock: '0:12', timestamp: new Date(1717200060 * 1000) }
-    ]);
+    gameReportServiceMocks.loadGameReportPlays.mockResolvedValue({
+      game: { id: 'game-1', liveStatus: 'live', status: 'live', homeScore: 41, awayScore: 38 },
+      plays: [
+        { id: 'event-early', text: 'Opening tip', period: 'Q1', clock: '8:00', timestamp: new Date(1717200000 * 1000) },
+        { id: 'event-late', text: 'Late bucket', period: 'Q1', clock: '0:12', timestamp: new Date(1717200060 * 1000) }
+      ]
+    });
 
     const { rerender } = render(<GameReportSections event={buildEvent()} />);
 
@@ -209,6 +215,46 @@ describe('GameReportSections', () => {
 
     await waitFor(() => {
       expect(gameReportServiceMocks.loadGameReportSections).toHaveBeenCalledTimes(2);
+    });
+    await act(async () => {
+      window.dispatchEvent(new Event('focus'));
+      await Promise.resolve();
+    });
+
+    expect(gameReportServiceMocks.loadGameReportPlays).toHaveBeenCalledTimes(1);
+  });
+
+  it('refreshes live status during lightweight play polling and stops polling after completion', async () => {
+    gameReportServiceMocks.loadGameReportSections.mockResolvedValue(buildReport('Live report.', {}, [
+      { id: 'event-early', text: 'Opening tip', period: 'Q1', clock: '8:00', timestamp: new Date(1717200000 * 1000) }
+    ]));
+    gameReportServiceMocks.loadGameReportPlays.mockResolvedValue({
+      game: { id: 'game-1', liveStatus: 'completed', status: 'completed', homeScore: 43, awayScore: 40 },
+      plays: [
+        { id: 'event-early', text: 'Opening tip', period: 'Q1', clock: '8:00', timestamp: new Date(1717200000 * 1000) },
+        { id: 'event-final', text: 'Final horn', period: 'Q4', clock: '0:00', timestamp: new Date(1717200120 * 1000) }
+      ]
+    });
+
+    render(<GameReportSections event={buildEvent()} />);
+
+    await waitFor(() => {
+      expect(screen.getByText('Live report.')).toBeTruthy();
+    });
+
+    vi.useFakeTimers();
+    fireEvent.click(screen.getByRole('button', { name: 'Plays' }));
+
+    await act(async () => {
+      vi.advanceTimersByTime(15000);
+      await Promise.resolve();
+    });
+
+    expect(screen.getByText('Final horn')).toBeTruthy();
+
+    await act(async () => {
+      vi.advanceTimersByTime(15000);
+      await Promise.resolve();
     });
     await act(async () => {
       window.dispatchEvent(new Event('focus'));

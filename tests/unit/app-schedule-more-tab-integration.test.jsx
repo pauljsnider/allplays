@@ -795,10 +795,13 @@ describe('React app ScheduleEventDetail More tab integration', () => {
             game: { id: 'game-1', status: 'live', liveStatus: 'live', homeScore: 4, awayScore: 2 },
             plays: [{ id: 'play-1', period: 'Q1', clock: '05:12', text: 'Opening bucket' }]
         }));
-        reportMocks.loadGameReportPlays.mockResolvedValue([
-            { id: 'play-1', period: 'Q1', clock: '05:12', text: 'Opening bucket' },
-            { id: 'play-2', period: 'Q1', clock: '04:58', text: 'Second bucket' }
-        ]);
+        reportMocks.loadGameReportPlays.mockResolvedValue({
+            game: { id: 'game-1', status: 'live', liveStatus: 'live', homeScore: 4, awayScore: 2 },
+            plays: [
+                { id: 'play-1', period: 'Q1', clock: '05:12', text: 'Opening bucket' },
+                { id: 'play-2', period: 'Q1', clock: '04:58', text: 'Second bucket' }
+            ]
+        });
 
         const { container } = await renderDetail('/schedule/team-1/game-1?childId=player-1');
         await waitForText(container, 'vs. Falcons');

@@ -43,8 +43,12 @@ export function GameReportSections({ event }: { event: ParentScheduleEvent }) {
   const refreshLivePlays = useCallback(async () => {
     setReportError(null);
     try {
-      const plays = await loadGameReportPlays(event.teamId, event.id);
-      setReport((currentReport) => currentReport ? { ...currentReport, plays } : currentReport);
+      const refresh = await loadGameReportPlays(event.teamId, event.id);
+      setReport((currentReport) => currentReport ? {
+        ...currentReport,
+        game: { ...currentReport.game, ...refresh.game },
+        plays: refresh.plays
+      } : currentReport);
     } catch (error: any) {
       setReportError(error?.message || 'Unable to refresh play-by-play.');
     }

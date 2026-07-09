@@ -1029,7 +1029,17 @@ async function mockScheduleModules(page, options = {}) {
             body: `
                 export async function loadGameReportPlays(teamId, gameId) {
                     window.__scheduleCalls.gameReportPlays = { teamId, gameId };
-                    return ${mockReportPlays};
+                    return {
+                        game: {
+                            id: gameId,
+                            opponent: 'Falcons',
+                            status: 'completed',
+                            liveStatus: 'completed',
+                            homeScore: 4,
+                            awayScore: 2
+                        },
+                        plays: ${mockReportPlays}
+                    };
                 }
 
                 export async function loadGameReportSections(teamId, gameId) {

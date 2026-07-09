@@ -170,7 +170,8 @@ describe('gameReportService', () => {
     ]);
   });
 
-  it('loads only bounded game events for play-by-play refreshes', async () => {
+  it('loads only bounded game events and game status for play-by-play refreshes', async () => {
+    dbMocks.getGame.mockResolvedValue({ id: 'game-1', status: 'completed', liveStatus: 'completed', homeScore: 43, awayScore: 40 });
     dbMocks.getGameEvents.mockResolvedValue([
       { id: 'event-late', message: 'Late bucket', period: '', gameTime: '0:12', timestamp: { seconds: 1717200060 } },
       { id: 'event-early', text: 'Opening tip', period: 'Q1', clock: '8:00', timestamp: 1717200000000 },
@@ -181,27 +182,36 @@ describe('gameReportService', () => {
     const plays = await loadGameReportPlays('team-1', 'game-1');
 
     expect(dbMocks.getGameEvents).toHaveBeenCalledWith('team-1', 'game-1', { limit: 100 });
+    expect(dbMocks.getGame).toHaveBeenCalledWith('team-1', 'game-1');
     expect(dbMocks.getTeam).not.toHaveBeenCalled();
-    expect(dbMocks.getGame).not.toHaveBeenCalled();
     expect(dbMocks.getPlayers).not.toHaveBeenCalled();
     expect(dbMocks.getConfigs).not.toHaveBeenCalled();
     expect(firebaseMocks.getDocs).not.toHaveBeenCalled();
     expect(dbMocks.getTeamStatsForGame).not.toHaveBeenCalled();
-    expect(plays).toEqual([
-      {
-        id: 'event-early',
-        text: 'Opening tip',
-        period: 'Q1',
-        clock: '8:00',
-        timestamp: new Date(1717200000 * 1000)
-      },
-      {
-        id: 'event-late',
-        text: 'Late bucket',
-        period: 'Q1',
-        clock: '0:12',
-        timestamp: new Date(1717200060 * 1000)
-      }
-    ]);
+    expect(plays).toEqual({
+      game: expect.objectContaining({
+        id: 'game-1',
+        status: 'completed',
+        liveStatus: 'completed',
+        homeScore: 43,
+        awayScore: 40
+      }),
+      plays: [
+        {
+          id: 'event-early',
+          text: 'Opening tip',
+          period: 'Q1',
+          clock: '8:00',
+          timestamp: new Date(1717200000 * 1000)
+        },
+        {
+          id: 'event-late',
+          text: 'Late bucket',
+          period: 'Q1',
+          clock: '0:12',
+          timestamp: new Date(1717200060 * 1000)
+        }
+      ]
+    });
   });
 });
