@@ -52,7 +52,7 @@ Added `actionCodeSettings` to configure the reset flow:
 export function resetPassword(email) {
     const actionCodeSettings = {
         // URL to redirect back to after password reset
-        url: 'https://pauljsnider.github.io/allplays/reset-password.html',
+        url: 'https://allplays.ai/reset-password.html',
         handleCodeInApp: true
     };
 
@@ -129,7 +129,7 @@ These manual steps must be completed in Firebase Console:
    - **From name**: "ALL PLAYS"
    - **Reply-to email**: Your support email
    - **Subject**: "Reset Your ALL PLAYS Password"
-   - **Action URL**: `https://pauljsnider.github.io/allplays/__/auth/action`
+   - **Action URL**: `https://allplays.ai/__/auth/action`
 4. Save changes
 
 ### B. Add Authorized Domains
@@ -138,8 +138,8 @@ These manual steps must be completed in Firebase Console:
 2. Ensure these are added:
    - `localhost` (for development)
    - `127.0.0.1` (for development)
-   - `pauljsnider.github.io` (production)
-   - Any custom domain you use
+   - `allplays.ai` (production)
+   - `game-flow-c6311.web.app` / `game-flow-c6311.firebaseapp.com` (Firebase Hosting defaults)
 
 ### C. Verify Authentication Provider
 
