@@ -23,7 +23,7 @@ function extractAllowedOrigins(functionsSource) {
 describe('public RSVP CORS origins', () => {
     const origins = extractAllowedOrigins(source);
 
-    it('allows the production domain and Firebase Hosting default domains', () => {
+    it('allows the production domains and Firebase Hosting default domains', () => {
         expect(origins).toContain('https://allplays.ai');
         expect(origins).toContain('https://www.allplays.ai');
         expect(origins).toContain('https://game-flow-c6311.web.app');
