@@ -2,6 +2,7 @@ import { test, expect } from '@playwright/test';
 
 const STORE_KEY = '__liveTrackerSmokeStore';
 const LOCAL_STATE_KEY = 'liveTrackerState:team-1:game-1';
+const PENDING_QUEUE_KEY = 'liveTrackerPendingQueue:team-1:game-1';
 
 function buildUrl(baseURL, path) {
     const url = new URL(path, `${baseURL}/`);
@@ -81,6 +82,22 @@ async function installModuleMocks(page) {
             store.confirmResults.push(next);
             saveStore(store);
             return next;
+        };
+
+        let online = loadStore().smokeOnline !== false;
+        Object.defineProperty(window.navigator, 'onLine', {
+            configurable: true,
+            get() {
+                return online;
+            }
+        });
+
+        window.__setSmokeOnline = (nextOnline) => {
+            online = Boolean(nextOnline);
+            const store = loadStore();
+            store.smokeOnline = online;
+            saveStore(store);
+            window.dispatchEvent(new Event(online ? 'online' : 'offline'));
         };
     }, { storeKey: STORE_KEY });
 
@@ -202,6 +219,9 @@ async function installModuleMocks(page) {
         }
 
         export async function broadcastLiveEvent(_teamId, _gameId, event) {
+            if (navigator.onLine === false) {
+                throw new Error('Smoke mock offline');
+            }
             const store = loadStore();
             const eventId = event?.eventId || 'live-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8);
             store.liveEvents = store.liveEvents || {};
@@ -391,6 +411,16 @@ async function readStore(page) {
     return page.evaluate((storeKey) => JSON.parse(localStorage.getItem(storeKey) || '{}'), STORE_KEY);
 }
 
+async function setSmokeOnline(page, online) {
+    await page.evaluate((nextOnline) => {
+        window.__setSmokeOnline(nextOnline);
+    }, online);
+}
+
+async function readPendingQueue(page) {
+    return page.evaluate((queueKey) => JSON.parse(localStorage.getItem(queueKey) || '[]'), PENDING_QUEUE_KEY);
+}
+
 async function setConfirmResponses(page, responses) {
     await page.evaluate(({ storeKey, responses: nextResponses }) => {
         const store = JSON.parse(localStorage.getItem(storeKey) || '{}');
@@ -439,6 +469,63 @@ test('adds a home foul through the live tracker and removes it from the log with
         const store = await readStore(page);
         return store.aggregatedStats?.p1?.stats?.fouls;
     }).toBe(4);
+});
+
+test('persists offline live scoring events and drains restored queue after reconnect', async ({ page, baseURL }) => {
+    await seedScenario(page, baseURL, createScenario());
+    await setSmokeOnline(page, false);
+    await loadTracker(page, baseURL);
+
+    await page.locator('#start-stop').click();
+    await page.locator('#live-players button[data-player="p1"][data-stat="pts"][data-delta="2"]').click();
+
+    await expect(page.locator('#live-sync-banner')).toBeVisible();
+    await expect(page.locator('#live-sync-status-label')).toContainText('Offline tracking');
+    await expect(page.locator('#live-sync-pending-pill')).toContainText(/pending/);
+
+    await expect.poll(async () => {
+        const queue = await readPendingQueue(page);
+        return queue.some((event) => event.playerId === 'p1' && event.statKey === 'pts' && Number(event.value) === 2);
+    }).toBe(true);
+
+    const seededEvent = {
+        eventId: 'live-seeded-pending-1',
+        type: 'stat',
+        playerId: 'p1',
+        statKey: 'pts',
+        value: 2,
+        isOpponent: false,
+        period: 'Q1',
+        gameClockMs: 0,
+        homeScore: 2,
+        awayScore: 0,
+        description: '#3 PTS +2',
+        createdAt: Date.now()
+    };
+
+    await seedScenario(page, baseURL, createScenario());
+    await setSmokeOnline(page, false);
+    await page.evaluate(({ queueKey, stateKey, event }) => {
+        localStorage.removeItem(stateKey);
+        localStorage.setItem(queueKey, JSON.stringify([event]));
+    }, { queueKey: PENDING_QUEUE_KEY, stateKey: LOCAL_STATE_KEY, event: seededEvent });
+
+    await loadTracker(page, baseURL);
+
+    await expect(page.locator('#live-sync-banner')).toBeVisible();
+    await expect(page.locator('#live-sync-status-label')).toContainText('Offline tracking');
+    await expect(page.locator('#live-sync-pending-pill')).toContainText('1 pending');
+
+    await setSmokeOnline(page, true);
+
+    await expect.poll(async () => {
+        return await readPendingQueue(page);
+    }).toEqual([]);
+
+    await expect.poll(async () => {
+        const store = await readStore(page);
+        return Object.values(store.liveEvents || {}).some((event) => event.eventId === seededEvent.eventId);
+    }).toBe(true);
 });
 
 test('persists an opponent foul across refresh and removes it cleanly after resume', async ({ page, baseURL }) => {
