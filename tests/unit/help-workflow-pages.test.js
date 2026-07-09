@@ -126,6 +126,16 @@ describe('help and workflow page inventory', () => {
         expect(appHelpIndex).not.toContain('"summary": "Workflow Guide"');
     });
 
+    it('keeps scorekeeper tracking access aligned across manifest and app help index', () => {
+        const manifest = JSON.parse(readRepoFile('workflow-manifest.json'));
+        const workflow = manifest.find((item) => item.file === 'workflow-track-game.html');
+        const appHelpIndex = readRepoFile('apps/app/src/lib/helpKnowledgeIndex.ts');
+
+        expect(workflow?.roles).toEqual(['Coach', 'Admin', 'Scorekeeper']);
+        expect(appHelpIndex).toContain('"file": "workflow-track-game.html"');
+        expect(extractAppHelpIndexEntry(appHelpIndex, 'track-game')).toContain('"scorekeeper"');
+    });
+
     it('keeps Game Day broadcast workflow copy aligned with setup-only support', () => {
         const html = readRepoFile('workflow-game-day.html');
         const appHelpIndex = readRepoFile('apps/app/src/lib/helpKnowledgeIndex.ts');
