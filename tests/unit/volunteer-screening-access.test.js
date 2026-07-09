@@ -123,14 +123,18 @@ describe('volunteer screening access guard', () => {
 
         expect(dbSource).toContain('assertVolunteerScreeningCleared,');
         expect(dbSource).toContain('loadVolunteerScreeningTargetRegistrations');
+        expect(dbSource).toContain('registrationMatchesVolunteerTarget');
         expect(dbSource).toContain('await assertVolunteerScreeningClearedForTeamGrant(teamId, { userId: normalizedUserId });');
         expect(dbSource).toContain('await assertVolunteerScreeningClearedForTeamGrant(teamId, { email: normalizedEmail });');
         expect(dbSource).toContain('function assertVolunteerScreeningClearedForTeamGrant');
         expect(dbSource).toContain('async function listVolunteerScreeningRegistrationsForTeamGrantTarget(teamId, target = {})');
-        expect(dbSource).toContain('return loadVolunteerScreeningTargetRegistrations(target, async ({ fieldPath, value }) => {');
+        expect(dbSource).toContain('const registrations = await loadVolunteerScreeningTargetRegistrations(target, async ({ fieldPath, value }) => {');
         expect(dbSource).toContain('const forms = await loadForms();');
         expect(dbSource).toContain("where(fieldPath, '==', value)");
         expect(dbSource).toContain('getDocs(query(registrationsRef, where(fieldPath, \'==\', value)))');
+        expect(dbSource).toContain('const normalizedEmail = String(target.email || \'\').trim().toLowerCase();');
+        expect(dbSource).toContain('const snapshot = await getDocs(registrationsRef);');
+        expect(dbSource).toContain('registrationMatchesVolunteerTarget(registration, { email: normalizedEmail })');
         expect(dbSource).toContain('const registrations = await listVolunteerScreeningRegistrationsForTeamGrantTarget(teamId, normalizedTarget);');
         expect(dbSource).not.toContain('async function listVolunteerScreeningRegistrationsForTeam(teamId)');
         expect(dbSource).not.toContain('getDocs(collection(db, `teams/${normalizedTeamId}/registrationForms/${formId}/registrations`))');
@@ -153,6 +157,7 @@ describe('volunteer screening access guard', () => {
         const screeningLoaderEnd = dbSource.indexOf('\n\nasync function assertVolunteerScreeningClearedForTeamGrant', screeningLoaderStart);
         const screeningLoaderSource = dbSource.slice(screeningLoaderStart, screeningLoaderEnd);
         expect(screeningLoaderSource).toContain('getDocs(query(registrationsRef, where(fieldPath, \'==\', value)))');
+        expect(screeningLoaderSource).toContain('registrationMatchesVolunteerTarget(registration, { email: normalizedEmail })');
         expect(screeningLoaderSource).not.toContain('getDocs(collection(db, `teams/${normalizedTeamId}/registrationForms/${formId}/registrations`))');
     });
 });

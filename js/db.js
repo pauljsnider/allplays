@@ -199,7 +199,8 @@ import {
 } from './registration-review.js?v=2';
 import {
     assertVolunteerScreeningCleared,
-    loadVolunteerScreeningTargetRegistrations
+    loadVolunteerScreeningTargetRegistrations,
+    registrationMatchesVolunteerTarget
 } from './volunteer-screening-access.js?v=2';
 import { buildTournamentPoolOverrideKey } from './tournament-standings.js?v=1';
 import { buildBulkDeleteUpdates, buildMoveUpdates, buildReorderUpdates, isSafeTeamMediaUrl, isSupportedTeamMediaDocument, isSupportedTeamMediaImage, normalizeTeamMediaFolderDraft, normalizeAlbumVisibility, sortByMediaOrder } from './team-media-utils.js?v=4';
@@ -2157,7 +2158,15 @@ async function listVolunteerScreeningRegistrationsForTeamGrantTarget(teamId, tar
         return formsPromise;
     };
 
-    return loadVolunteerScreeningTargetRegistrations(target, async ({ fieldPath, value }) => {
+    const mapRegistrationDoc = (registrationDoc, formId) => ({
+        id: registrationDoc.id,
+        formId,
+        teamId: normalizedTeamId,
+        refPath: registrationDoc.ref?.path || '',
+        ...(registrationDoc.data() || {})
+    });
+
+    const registrations = await loadVolunteerScreeningTargetRegistrations(target, async ({ fieldPath, value }) => {
         const forms = await loadForms();
         if (forms.length === 0) return [];
 
@@ -2167,17 +2176,38 @@ async function listVolunteerScreeningRegistrationsForTeamGrantTarget(teamId, tar
 
             const registrationsRef = collection(db, `teams/${normalizedTeamId}/registrationForms/${formId}/registrations`);
             const snapshot = await getDocs(query(registrationsRef, where(fieldPath, '==', value)));
-            return snapshot.docs.map((registrationDoc) => ({
-                id: registrationDoc.id,
-                formId,
-                teamId: normalizedTeamId,
-                refPath: registrationDoc.ref?.path || '',
-                ...(registrationDoc.data() || {})
-            }));
+            return snapshot.docs.map((registrationDoc) => mapRegistrationDoc(registrationDoc, formId));
         }));
 
         return registrationSnapshots.flat();
     });
+
+    const normalizedEmail = String(target.email || '').trim().toLowerCase();
+    if (!normalizedEmail) return registrations;
+
+    const existingKeys = new Set(registrations.map((registration) => String(registration.refPath || `${registration.formId || ''}::${registration.id || ''}`).trim()).filter(Boolean));
+    const forms = await loadForms();
+    if (forms.length === 0) return registrations;
+
+    const caseInsensitiveEmailMatches = await Promise.all(forms.map(async (form) => {
+        const formId = String(form?.id || '').trim();
+        if (!formId) return [];
+
+        const registrationsRef = collection(db, `teams/${normalizedTeamId}/registrationForms/${formId}/registrations`);
+        const snapshot = await getDocs(registrationsRef);
+        return snapshot.docs
+            .map((registrationDoc) => mapRegistrationDoc(registrationDoc, formId))
+            .filter((registration) => registrationMatchesVolunteerTarget(registration, { email: normalizedEmail }));
+    }));
+
+    caseInsensitiveEmailMatches.flat().forEach((registration) => {
+        const key = String(registration.refPath || `${registration.formId || ''}::${registration.id || ''}`).trim();
+        if (!key || existingKeys.has(key)) return;
+        existingKeys.add(key);
+        registrations.push(registration);
+    });
+
+    return registrations;
 }
 
 async function assertVolunteerScreeningClearedForTeamGrant(teamId, target = {}) {
