@@ -96,11 +96,22 @@ function createPage(overrides: Record<string, any> = {}) {
   };
 }
 
-function renderTeamDrills() {
+function renderTeamDrills(authState: AuthState = auth) {
   return render(
     <MemoryRouter initialEntries={['/teams/team-1/drills']}>
       <Routes>
-        <Route path="/teams/:teamId/drills" element={<TeamDrills auth={auth} />} />
+        <Route path="/teams/:teamId/drills" element={<TeamDrills auth={authState} />} />
+        <Route path="/teams/:teamId" element={<div>Team detail</div>} />
+      </Routes>
+    </MemoryRouter>
+  );
+}
+
+function rerenderTeamDrills(view: ReturnType<typeof render>, authState: AuthState) {
+  view.rerender(
+    <MemoryRouter initialEntries={['/teams/team-1/drills']}>
+      <Routes>
+        <Route path="/teams/:teamId/drills" element={<TeamDrills auth={authState} />} />
         <Route path="/teams/:teamId" element={<div>Team detail</div>} />
       </Routes>
     </MemoryRouter>
@@ -187,6 +198,7 @@ describe('TeamDrills', () => {
     renderTeamDrills();
 
     expect(await screen.findByRole('heading', { name: 'Bears drills' })).toBeTruthy();
+    expect(teamDrillsServiceMocks.loadTeamDrillLibraryPage).toHaveBeenCalledTimes(1);
     fireEvent.change(screen.getByLabelText('Search drills'), { target: { value: 'finish' } });
     fireEvent.change(screen.getByLabelText('Category'), { target: { value: 'Technical' } });
     fireEvent.change(screen.getByLabelText(/^Skill level$/i), { target: { value: 'Advanced' } });
@@ -197,6 +209,39 @@ describe('TeamDrills', () => {
       type: 'Technical',
       level: 'Advanced'
     }));
+    expect(teamDrillsServiceMocks.loadTeamDrillLibraryPage).toHaveBeenCalledTimes(2);
+  });
+
+  it('does not reload the community library when auth object identity changes but the signed-in user does not', async () => {
+    const initialAuth: AuthState = { ...auth, user: { ...auth.user! } as AuthState['user'] };
+    const nextAuth: AuthState = { ...auth, user: { ...auth.user! } as AuthState['user'] };
+    const view = renderTeamDrills(initialAuth);
+
+    expect(await screen.findByRole('heading', { name: 'Bears drills' })).toBeTruthy();
+    expect(teamDrillsServiceMocks.loadTeamDrillLibraryPage).toHaveBeenCalledTimes(1);
+
+    rerenderTeamDrills(view, nextAuth);
+
+    expect(await screen.findByRole('heading', { name: 'Bears drills' })).toBeTruthy();
+    expect(teamDrillsServiceMocks.loadTeamDrillLibraryPage).toHaveBeenCalledTimes(1);
+  });
+
+  it('reloads the community library when the signed-in user changes', async () => {
+    const initialAuth: AuthState = { ...auth, user: { ...auth.user! } as AuthState['user'] };
+    const nextAuth: AuthState = { ...auth, user: { ...auth.user!, uid: 'coach-2' } as AuthState['user'] };
+    const view = renderTeamDrills(initialAuth);
+
+    expect(await screen.findByRole('heading', { name: 'Bears drills' })).toBeTruthy();
+    expect(teamDrillsServiceMocks.loadTeamDrillLibraryPage).toHaveBeenCalledTimes(1);
+
+    rerenderTeamDrills(view, nextAuth);
+
+    await waitFor(() => expect(teamDrillsServiceMocks.loadTeamDrillLibraryPage).toHaveBeenCalledTimes(2));
+    expect(teamDrillsServiceMocks.loadTeamDrillLibraryPage).toHaveBeenLastCalledWith('team-1', nextAuth.user, {
+      searchText: '',
+      type: '',
+      level: ''
+    });
   });
 
   it('opens drill detail and toggles a team favorite that syncs with the website store', async () => {
@@ -224,6 +269,24 @@ describe('TeamDrills', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Apply' }));
 
     expect(await screen.findByText('No team favorites match the current search and filter combination.')).toBeTruthy();
+  });
+
+  it('does not reload favorites when auth object identity changes but the signed-in user does not', async () => {
+    const initialAuth: AuthState = { ...auth, user: { ...auth.user! } as AuthState['user'] };
+    const nextAuth: AuthState = { ...auth, user: { ...auth.user! } as AuthState['user'] };
+    const view = renderTeamDrills(initialAuth);
+
+    expect(await screen.findByText('Rondo 4v2')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Favorites (1)' }));
+
+    await waitFor(() => expect(teamDrillsServiceMocks.loadFavoriteDrills).toHaveBeenCalledTimes(1));
+    expect(await screen.findByText('Finishing ladder')).toBeTruthy();
+
+    rerenderTeamDrills(view, nextAuth);
+
+    expect(await screen.findByText('Finishing ladder')).toBeTruthy();
+    expect(teamDrillsServiceMocks.loadFavoriteDrills).toHaveBeenCalledTimes(1);
+    expect(teamDrillsServiceMocks.loadTeamDrillLibraryPage).toHaveBeenCalledTimes(1);
   });
 
   it('generates an editable AI coach proposal and waits for acceptance before saving the timeline', async () => {
