@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
+import { runInNewContext } from 'node:vm';
 import { commitStandardTrackerFinishData } from '../../js/track-finish.js';
 import { hasPlayerProfileParticipation } from '../../js/player-profile-stats.js';
 
@@ -171,7 +172,6 @@ function extractBlockBody(source, marker) {
 }
 
 async function runBodyWithContext(body, context) {
-    const AsyncFunction = Object.getPrototypeOf(async function noop() {}).constructor;
     const runtime = {
         Array,
         Boolean,
@@ -188,8 +188,7 @@ async function runBodyWithContext(body, context) {
         parseInt,
         ...context
     };
-    const runner = new AsyncFunction(...Object.keys(runtime), body);
-    return runner(...Object.values(runtime));
+    return runInNewContext(`(async () => { ${body} })()`, runtime);
 }
 
 describe('standard tracker finish batch limits', () => {
