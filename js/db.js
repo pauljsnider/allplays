@@ -4149,6 +4149,7 @@ async function createUniqueAccessCode(accessCodeData, preferredCode) {
 
 export async function createAccessCode(userId, email, phone, code) {
     const accessCodeData = {
+        type: 'standard',
         generatedBy: userId,
         email: email || null,
         phone: phone || null,
@@ -4250,27 +4251,23 @@ async function getValidatedAccessCodeDoc(code) {
 
 export async function markAccessCodeAsUsed(codeId, userId) {
     const codeRef = doc(db, "accessCodes", codeId);
-    await runTransaction(db, async (transaction) => {
-        const codeSnapshot = await transaction.get(codeRef);
-        if (!codeSnapshot.exists()) {
-            throw new Error("Invalid access code");
-        }
-
-        const codeData = codeSnapshot.data() || {};
-        if (codeData.used) {
-            throw new Error("Code already used");
-        }
-
-        if (isAccessCodeExpired(codeData.expiresAt)) {
-            throw new Error("Code has expired");
-        }
-
-        transaction.update(codeRef, {
-            used: true,
-            usedBy: userId,
-            usedAt: Timestamp.now()
+    try {
+        await runTransaction(db, async (transaction) => {
+            transaction.update(codeRef, {
+                used: true,
+                usedBy: userId,
+                usedAt: serverTimestamp()
+            });
         });
-    });
+    } catch (error) {
+        const message = String(error?.message || '').toLowerCase();
+        if (error?.code === 'permission-denied' ||
+            error?.code === 'not-found' ||
+            message.includes('no document')) {
+            throw new Error('Activation code is invalid, expired, or already used.');
+        }
+        throw error;
+    }
 }
 
 export async function redeemAdminInviteAtomicPersistence({

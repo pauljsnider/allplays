@@ -123,6 +123,17 @@ async function mockAppModules(page, { user = null, emailLink = false } = {}) {
                     return error?.message || 'Authentication failed.';
                 }
 
+                export function normalizeAuthEmail(email) {
+                    return String(email || '').trim().toLowerCase();
+                }
+
+                export function isValidAuthEmail(email) {
+                    const normalizedEmail = normalizeAuthEmail(email);
+                    const parts = normalizedEmail.split('@');
+                    return parts.length === 2 &&
+                        Boolean(parts[0] && parts[1]?.includes('.') && /^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/.test(normalizedEmail));
+                }
+
                 export function getRouteForUser(user) {
                     if (!user) return '/auth';
                     return user.roles?.includes('coach') || user.roles?.includes('admin') ? '/teams' : '/home';

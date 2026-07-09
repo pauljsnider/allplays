@@ -15,6 +15,12 @@ const authServiceMocks = vi.hoisted(() => ({
     return '/home';
   }),
   hydrateFirebaseUser: vi.fn(),
+  isValidAuthEmail: (value: string | null | undefined) => {
+    const normalized = String(value || '').trim().toLowerCase();
+    const parts = normalized.split('@');
+    return parts.length === 2 && Boolean(parts[0] && parts[1]?.includes('.') && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalized));
+  },
+  normalizeAuthEmail: (value: string | null | undefined) => String(value || '').trim().toLowerCase(),
   rememberPendingInvite: vi.fn(),
   sendResetEmail: vi.fn(),
   signInWithEmail: vi.fn(),
@@ -109,5 +115,46 @@ describe('AuthPage native post-login routing', () => {
     await waitFor(() => expect(authServiceMocks.signInWithGoogleAccount).toHaveBeenCalledWith(null));
     await waitFor(() => expect(window.location.hash).toBe('#/home'));
     expect(window.location.reload).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('AuthPage signup validation', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    auth.refresh = vi.fn();
+    auth.signOut = vi.fn();
+    authServiceMocks.signUpWithEmail.mockReset();
+  });
+
+  afterEach(() => {
+    cleanup();
+  });
+
+  it('stops signup before Firebase when the email is invalid for Firebase Auth', async () => {
+    renderAuthPage('/auth?mode=signup&code=6WSSSW9V&type=parent');
+
+    fireEvent.change(screen.getByLabelText('Email'), { target: { value: 'p@paulsnider' } });
+    fireEvent.change(screen.getByLabelText('Password'), { target: { value: 'secret1' } });
+    fireEvent.change(screen.getByLabelText('Confirm password'), { target: { value: 'secret1' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Create account' }));
+
+    expect(await screen.findByText('Enter a valid email address.')).toBeTruthy();
+    expect(authServiceMocks.signUpWithEmail).not.toHaveBeenCalled();
+  });
+
+  it('normalizes a valid signup email before calling the auth service', async () => {
+    authServiceMocks.signUpWithEmail.mockResolvedValue({
+      user: { uid: 'new-user', email: 'coach@example.com' }
+    });
+
+    renderAuthPage('/auth?mode=signup&code=6WSSSW9V&type=parent');
+
+    fireEvent.change(screen.getByLabelText('Email'), { target: { value: ' Coach@Example.COM ' } });
+    fireEvent.change(screen.getByLabelText('Password'), { target: { value: 'secret1' } });
+    fireEvent.change(screen.getByLabelText('Confirm password'), { target: { value: 'secret1' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Create account' }));
+
+    await waitFor(() => expect(authServiceMocks.signUpWithEmail).toHaveBeenCalledWith('coach@example.com', 'secret1', '6WSSSW9V'));
+    expect(auth.refresh).toHaveBeenCalledTimes(1);
   });
 });
