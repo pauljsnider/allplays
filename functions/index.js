@@ -10234,7 +10234,9 @@ exports.notifyPracticePacketAssigned = functions.firestore
 function writePublicRsvpCors(req, res) {
   const allowedOrigins = new Set([
     'https://allplays.ai',
-    'https://pauljsnider.github.io',
+    'https://www.allplays.ai',
+    'https://game-flow-c6311.web.app',
+    'https://game-flow-c6311.firebaseapp.com',
     'http://localhost:8000',
     'http://127.0.0.1:8000',
     'http://localhost:8004',

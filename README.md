@@ -24,7 +24,7 @@ A static HTML + JavaScript sports team management and stat tracking application,
 
 - **Frontend**: Pure HTML, JavaScript (ES Modules), Tailwind CSS (CDN).
 - **Backend**: Firebase (Auth, Firestore, Storage).
-- **Hosting**: GitHub Pages (or any static host).
+- **Hosting**: Firebase Hosting (or any static host).
 
 ## Setup & Deployment
 
@@ -40,7 +40,7 @@ A static HTML + JavaScript sports team management and stat tracking application,
    - On Firebase Hosting, primary config can also come from `/__/firebase/init.json`.
 
 Notes:
-- Auth domains must include your GitHub Pages host and local dev (e.g., `localhost`, `127.0.0.1`, `pauljsnider.github.io`, custom domain).
+- Auth domains must include your hosting domains and local dev (e.g., `localhost`, `127.0.0.1`, `allplays.ai`, `game-flow-c6311.web.app`).
 - Email summaries are mailto-only; there is no backend email send.
 - AI match summary in `track.html` requires Firebase AI enabled/billing; hide it if disabled.
 
@@ -68,12 +68,20 @@ Stripe should send checkout events to:
 
 Only verified `checkout.session.completed` events with paid status create or update team entitlements at `teams/{teamId}/entitlements/{seasonId}_team-pass`.
 
-### 2. GitHub Pages Deployment
+### 2. Deployment
 
-1. Push this repository to GitHub.
-2. Go to **Settings > Pages**.
-3. Select the **Source** as `main` branch (or `gh-pages`) and folder `/` (root).
-4. Save. Your site will be live at `https://<username>.github.io/<repo-name>/`.
+Production deploys run automatically from `.github/workflows/deploy-prod.yml` on every push to `master`: the workflow stages the site bundle (legacy root plus the React app under `/app/`) and deploys Firebase Hosting, Firestore rules/indexes, and Functions to the `game-flow-c6311` project.
+
+To deploy manually:
+
+```bash
+npm run app:build
+node scripts/stage-pages-bundle.mjs /tmp/allplays-site
+node scripts/write-firebase-hosting-config.mjs /tmp/allplays-site /tmp/firebase-prod.json
+npx firebase-tools deploy --only hosting --project game-flow-c6311 --config /tmp/firebase-prod.json
+```
+
+See `FIREBASE-HOSTING-MIGRATION.md` for the GitHub Pages → Firebase Hosting cutover runbook.
 
 ### 3. Local Development
 
