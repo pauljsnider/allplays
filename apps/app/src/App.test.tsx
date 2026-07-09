@@ -289,7 +289,8 @@ describe('App protected route loading', () => {
     expect(screen.queryByText('Loading ALL PLAYS')).toBeNull();
   });
 
-  it('routes signed-in coach users from the root route to Teams', async () => {
+  it('routes signed-in coach users from the root route to Home', async () => {
+    homeRenderMode = 'render';
     authMock.state = {
       ...authMock.signedInAuth,
       user: { ...authMock.signedInAuth.user!, email: 'coach@example.com', roles: ['coach'] },
@@ -304,11 +305,12 @@ describe('App protected route loading', () => {
       </MemoryRouter>
     );
 
-    expect(await screen.findByText('Teams page')).toBeTruthy();
+    expect(await screen.findByText('Home page')).toBeTruthy();
     expect(screen.queryByText('Loading ALL PLAYS')).toBeNull();
   });
 
-  it('routes signed-in coach users from unknown routes to Teams', async () => {
+  it('routes signed-in coach users from unknown routes to Home', async () => {
+    homeRenderMode = 'render';
     authMock.state = {
       ...authMock.signedInAuth,
       user: { ...authMock.signedInAuth.user!, email: 'coach@example.com', roles: ['coach'] },
@@ -323,7 +325,7 @@ describe('App protected route loading', () => {
       </MemoryRouter>
     );
 
-    expect(await screen.findByText('Teams page')).toBeTruthy();
+    expect(await screen.findByText('Home page')).toBeTruthy();
     expect(screen.queryByText('Loading ALL PLAYS')).toBeNull();
   });
 
