@@ -184,7 +184,7 @@ export async function loadGameReportPlays(teamId: string, gameId: string): Promi
 
   const [rawGame, rawEvents] = await Promise.all([
     getGame(teamId, gameId),
-    getGameEvents(teamId, gameId, { limit: 100 })
+    getGameEvents(teamId, gameId, { limit: 100 }).catch(() => [])
   ]);
   return {
     game: mapGameReportGameRecord(rawGame, gameId),

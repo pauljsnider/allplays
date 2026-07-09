@@ -214,4 +214,23 @@ describe('gameReportService', () => {
       ]
     });
   });
+
+  it('keeps game status refreshes available when the optional event read fails', async () => {
+    dbMocks.getGame.mockResolvedValue({ id: 'game-1', status: 'completed', liveStatus: 'live', homeScore: 43, awayScore: 40 });
+    dbMocks.getGameEvents.mockRejectedValue(new Error('temporary event read failure'));
+
+    const refresh = await loadGameReportPlays('team-1', 'game-1');
+
+    expect(dbMocks.getGameEvents).toHaveBeenCalledWith('team-1', 'game-1', { limit: 100 });
+    expect(refresh).toEqual({
+      game: expect.objectContaining({
+        id: 'game-1',
+        status: 'completed',
+        liveStatus: 'live',
+        homeScore: 43,
+        awayScore: 40
+      }),
+      plays: []
+    });
+  });
 });
