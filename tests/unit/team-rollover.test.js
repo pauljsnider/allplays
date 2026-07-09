@@ -87,6 +87,12 @@ function buildRolloverDbHarness({ players = [] } = {}) {
 }
 
 describe('team rollover player copy', () => {
+    it('loads the rollover sanitizer through a cache-busted db import', () => {
+        const source = readDbSource();
+
+        expect(source).toContain("from './team-rollover.js?v=2'");
+    });
+
     it('preserves supported public player fields with source audit metadata', () => {
         const rolledOverAt = { marker: 'now' };
         const copy = buildRolloverPlayerCopy({

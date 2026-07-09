@@ -58,6 +58,37 @@ describe('registration review helpers', () => {
         });
     });
 
+    it('strips contact aliases from registration roster drafts before public player writes', () => {
+        const registration = {
+            submittedData: {
+                athlete: {
+                    firstName: 'Avery',
+                    lastName: 'Lee',
+                    customFields: {
+                        waiver: true,
+                        contacts: [{ name: 'Pat Lee', email: 'pat@example.com' }],
+                        contactEmail: 'pat@example.com',
+                        parentPhone: '555-1212',
+                        guardianEmail: 'guardian@example.com',
+                        householdContact: { name: 'Family Contact' }
+                    }
+                },
+                rosterFieldValues: {
+                    position: 'Guard',
+                    contactPhone: '555-3434',
+                    householdEmail: 'family@example.com'
+                }
+            }
+        };
+
+        expect(getRegistrationPlayerDraft(registration)).toEqual({
+            name: 'Avery Lee',
+            number: '',
+            active: true,
+            rosterFieldValues: { waiver: true, position: 'Guard' }
+        });
+    });
+
     it('matches registration review status filters', () => {
         expect(matchesRegistrationReviewStatus({ status: 'pending' }, 'pending')).toBe(true);
         expect(matchesRegistrationReviewStatus({ status: 'rejected' }, 'rejected')).toBe(true);
