@@ -146,7 +146,9 @@ describe('Messages team email templates', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Open Team Email' }));
 
     expect(await screen.findByRole('dialog', { name: 'Team Email' })).toBeTruthy();
-    expect(chatServiceMocks.loadTeamEmailTemplates).toHaveBeenCalledWith('team-1');
+    await waitFor(() => {
+      expect(chatServiceMocks.loadTeamEmailTemplates).toHaveBeenCalledWith('team-1');
+    });
 
     fireEvent.change(screen.getByLabelText('Saved template'), { target: { value: 'template-1' } });
     fireEvent.click(screen.getByRole('button', { name: 'Apply template' }));
