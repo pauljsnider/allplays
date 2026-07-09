@@ -705,6 +705,18 @@
                     renderPlayerGameInsights(null, []);
                 }
 
+                const gameStatsForDisplay = [...perGameStats];
+                if (selectedGame && selectedGameId && !gameStatsForDisplay.some((entry) => entry.gameId === selectedGameId)) {
+                    const selectedStatsByPlayerId = gameLoadResults.find((entry) => entry.gameId === selectedGameId)?.statsByPlayerId || {};
+                    gameStatsForDisplay.push({
+                        gameId: selectedGameId,
+                        date: selectedGame.date?.toDate ? selectedGame.date.toDate() : new Date(selectedGame.date),
+                        opponent: selectedGame.opponent || 'Opponent',
+                        stats: selectedStatsByPlayerId[playerId] || {},
+                        timeMs: 0
+                    });
+                }
+
                 const analyticsConfig = selectAnalyticsConfig(configs, team?.sport || team?.baseType || '');
                 const leaderboardSnapshot = analyticsConfig
                     ? buildPlayerLeaderboardSnapshot({
@@ -945,8 +957,8 @@
 
                 // Render per-game stats
                 const gameStatsDiv = document.getElementById('game-stats');
-                if (perGameStats.length > 0) {
-                    const sortedGames = perGameStats.sort((a, b) => b.date - a.date);
+                if (gameStatsForDisplay.length > 0) {
+                    const sortedGames = gameStatsForDisplay.sort((a, b) => b.date - a.date);
                     gameStatsDiv.innerHTML = sortedGames.map(g => `
                         <div class="group bg-gradient-to-br from-gray-50 to-white rounded-xl p-6 border border-gray-200 hover:border-primary-300 hover:shadow-md transition">
                             <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-4 gap-2">
