@@ -17,6 +17,7 @@ import { createLogger } from './logger';
 
 const logger = createLogger('notification-inbox-service');
 const notificationInboxLimit = 50;
+const unreadNotificationCountLimit = 100;
 
 export type NotificationInboxItem = {
     id: string;
@@ -74,7 +75,8 @@ export function subscribeToUnreadNotificationCount(
 ): () => void {
     const q = query(
         collection(db, `users/${uid}/notificationInbox`),
-        where('readAt', '==', null)
+        where('readAt', '==', null),
+        limit(unreadNotificationCountLimit)
     );
 
     const primaryUnsubscribe = onSnapshot(
