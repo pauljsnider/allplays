@@ -328,6 +328,8 @@ export function Home({ auth }: { auth: AuthState }) {
   const selectedComposerType = (searchParams.get('type') || 'manual_post') as SocialPostType;
   const homeSectionRoute = getHomeSectionRoute(activeSection);
   const homeSectionReady = isHomeSectionReady(activeSection, { loading, socialLoading, hasLoadedHomeDetails, showBlockingErrorState });
+  const canRenderFirstRunHome = !authUserId || hasLoadedHomeDetails;
+  const resolvedOfficialsAccess = authUserId ? officialsAccess : { hasAccess: false, teamCount: 0 };
 
   useViewLoadTimer({
     viewName: `home ${activeSection}`,
@@ -484,9 +486,9 @@ export function Home({ auth }: { auth: AuthState }) {
           home={home}
           social={social}
           socialLoading={socialLoading}
-          hasLoadedHomeDetails={hasLoadedHomeDetails}
+          hasLoadedHomeDetails={canRenderFirstRunHome}
           onOpenComposer={openComposer}
-          officialsAccess={officialsAccess}
+          officialsAccess={resolvedOfficialsAccess}
         />
       ) : null}
       {!loading && !showBlockingErrorState && activeSection === 'feed' ? (

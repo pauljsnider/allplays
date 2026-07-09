@@ -365,6 +365,15 @@ describe('Home', () => {
     expect(homeServiceMocks.loadParentHomeSummaryBootstrap).not.toHaveBeenCalled();
   });
 
+  it('renders signed-out Today without waiting for parent or officials hydration', async () => {
+    renderHome(signedOutAuth);
+
+    expect(await screen.findByRole('heading', { name: 'Get linked to your player' })).toBeTruthy();
+    expect(screen.queryByText('Loading Home')).toBeNull();
+    expect(homeServiceMocks.loadParentHomeSummaryBootstrap).not.toHaveBeenCalled();
+    expect(scheduleServiceMocks.loadOfficialAssignmentsAccess).not.toHaveBeenCalled();
+  });
+
   it('resets to Today when navigation removes the Home section query param', async () => {
     render(
       <MemoryRouter initialEntries={['/home?section=feed']}>
