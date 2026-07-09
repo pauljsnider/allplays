@@ -1115,6 +1115,10 @@ async function processGoogleResult(result: UserCredential | null, activationCode
   try {
     if (validation.type === 'parent_invite') {
       await dbModule.redeemParentInvite(result.user.uid, validation.data?.code || code, result.user.email);
+    } else if (validation.type === 'household_invite') {
+      await dbModule.redeemHouseholdInvite(result.user.uid, validation.data?.code || code);
+    } else if (validation.type === 'coparent_invite') {
+      await dbModule.redeemCoParentInvite(result.user.uid, validation.data?.code || code, result.user.email);
     } else if (validation.type === 'admin_invite') {
       const { redeemAdminInviteAcceptance } = await loadLegacyAdminInvite();
       await redeemAdminInviteAcceptance({
@@ -1124,10 +1128,6 @@ async function processGoogleResult(result: UserCredential | null, activationCode
         getTeam: dbModule.getTeam,
         getUserProfile: dbModule.getUserProfile
       });
-    } else if (validation.type === 'household_invite') {
-      await dbModule.redeemHouseholdInvite(result.user.uid, validation.data?.code || code);
-    } else if (validation.type === 'coparent_invite') {
-      await dbModule.redeemCoParentInvite(result.user.uid, validation.data?.code || code, result.user.email);
     } else {
       await dbModule.markAccessCodeAsUsed(validation.codeId, result.user.uid);
     }

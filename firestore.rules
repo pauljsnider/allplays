@@ -57,12 +57,12 @@ service cloud.firestore {
 
     function isStandardAccessCodePayloadValid(data) {
       return data.keys().hasOnly([
-               'code', 'generatedBy', 'email', 'phone', 'createdAt', 'used', 'usedBy', 'usedAt'
+               'code', 'type', 'generatedBy', 'email', 'phone', 'createdAt', 'used', 'usedBy', 'usedAt'
              ]) &&
              data.keys().hasAll([
                'code', 'generatedBy', 'createdAt', 'used', 'usedBy', 'usedAt'
              ]) &&
-             !data.keys().hasAny(['type']) &&
+             (!data.keys().hasAny(['type']) || data.type == 'standard') &&
              data.code is string &&
              data.code.size() > 0 &&
              data.generatedBy == request.auth.uid &&
@@ -155,8 +155,13 @@ service cloud.firestore {
     }
 
     function isStandardAccessCodeRedemptionUpdate() {
-      let codeType = resource.data.get('type', 'standard');
-      return codeType == 'standard' &&
+      let codeType = resource.data.get('type', null);
+      let isLegacyStandardCode = codeType == null &&
+             !resource.data.keys().hasAny([
+               'teamId', 'playerId', 'familyMembershipId',
+               'teamName', 'playerName', 'playerNum', 'relation'
+             ]);
+      return (codeType == 'standard' || isLegacyStandardCode) &&
              request.resource.data.diff(resource.data).affectedKeys().hasOnly(['used', 'usedBy', 'usedAt']) &&
              resource.data.used == false &&
              resource.data.get('revoked', false) != true &&
@@ -1762,7 +1767,8 @@ service cloud.firestore {
       allow create: if isSignedIn() &&
                        request.resource.data.generatedBy == request.auth.uid &&
                        (
-                         (!request.resource.data.keys().hasAny(['type']) &&
+                         ((!request.resource.data.keys().hasAny(['type']) ||
+                           request.resource.data.type == 'standard') &&
                           isStandardAccessCodePayloadValid(request.resource.data) &&
                           request.resource.data.code == codeId) ||
                          (request.resource.data.get('type', null) == 'admin_invite' &&

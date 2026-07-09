@@ -399,6 +399,7 @@ async function nativeCreateAccessCode(userId: string, email: string, phone: stri
     body: JSON.stringify({
       fields: {
         code: encodeFirestoreValue(code),
+        type: encodeFirestoreValue('standard'),
         generatedBy: encodeFirestoreValue(userId),
         email: encodeFirestoreValue(email || null),
         phone: encodeFirestoreValue(phone || null),

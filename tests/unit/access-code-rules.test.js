@@ -34,9 +34,10 @@ describe('access code Firestore rules', () => {
 
     it('preserves standard profile access-code creation without reopening typed invite paths', () => {
         expect(rules).toContain('function isStandardAccessCodePayloadValid(data)');
-        expect(rules).toContain("'code', 'generatedBy', 'email', 'phone', 'createdAt', 'used', 'usedBy', 'usedAt'");
-        expect(rules).toContain("!data.keys().hasAny(['type'])");
-        expect(accessCodeRules).toContain("!request.resource.data.keys().hasAny(['type'])");
+        expect(rules).toContain("'code', 'type', 'generatedBy', 'email', 'phone', 'createdAt', 'used', 'usedBy', 'usedAt'");
+        expect(rules).toContain("(!data.keys().hasAny(['type']) || data.type == 'standard')");
+        expect(accessCodeRules).toContain("!request.resource.data.keys().hasAny(['type']) ||");
+        expect(accessCodeRules).toContain("request.resource.data.type == 'standard'");
         expect(accessCodeRules).toContain('isStandardAccessCodePayloadValid(request.resource.data)');
         expect(accessCodeRules).toContain('request.resource.data.code == codeId');
     });
@@ -82,9 +83,11 @@ describe('access code Firestore rules', () => {
 
     it('excludes admin_invite documents from generic used-field redemption updates', () => {
         expect(accessCodeRules).toContain('isStandardAccessCodeRedemptionUpdate()');
-        expect(standardCodeRedemptionRule).toContain("let codeType = resource.data.get('type', 'standard');");
-        expect(standardCodeRedemptionRule).toContain("return codeType == 'standard' &&");
-        expect(standardCodeRedemptionRule).not.toContain('codeType == null');
+        expect(standardCodeRedemptionRule).toContain("let codeType = resource.data.get('type', null);");
+        expect(standardCodeRedemptionRule).toContain('let isLegacyStandardCode = codeType == null');
+        expect(standardCodeRedemptionRule).toContain("!resource.data.keys().hasAny([");
+        expect(standardCodeRedemptionRule).toContain("'teamId', 'playerId', 'familyMembershipId'");
+        expect(standardCodeRedemptionRule).toContain("(codeType == 'standard' || isLegacyStandardCode)");
         expect(standardCodeRedemptionRule).toContain("request.resource.data.diff(resource.data).affectedKeys().hasOnly(['used', 'usedBy', 'usedAt'])");
         expect(standardCodeRedemptionRule).toContain('resource.data.used == false');
         expect(standardCodeRedemptionRule).toContain("resource.data.get('status', 'active') != 'revoked'");

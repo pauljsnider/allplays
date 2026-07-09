@@ -4149,6 +4149,7 @@ async function createUniqueAccessCode(accessCodeData, preferredCode) {
 
 export async function createAccessCode(userId, email, phone, code) {
     const accessCodeData = {
+        type: 'standard',
         generatedBy: userId,
         email: email || null,
         phone: phone || null,

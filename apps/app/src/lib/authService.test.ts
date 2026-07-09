@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const authState = vi.hoisted(() => ({
   currentUser: null,
@@ -95,11 +95,17 @@ vi.mock('./logger', () => ({
 }));
 
 import {
+  signInWithPopup,
+  signInWithRedirect
+} from './firebaseAuthRuntime';
+import { Capacitor } from '@capacitor/core';
+import {
   describeAuthError,
   hydrateFirebaseUser,
   isValidAuthEmail,
   observeFirebaseUser,
   signInWithEmail,
+  signInWithGoogleAccount,
   signOut,
   signUpWithEmail
 } from './authService';
@@ -188,6 +194,77 @@ describe('signUpWithEmail', () => {
   it('stops invalid signup emails before loading Firebase signup work', async () => {
     await expect(signUpWithEmail('p@paulsnider', 'secret1', '85nsbz7k')).rejects.toThrow('Enter a valid email address.');
     expect(legacySignupFlowMocks.executeEmailPasswordSignup).not.toHaveBeenCalled();
+  });
+});
+
+describe('signInWithGoogleAccount invite redemption', () => {
+  const signInWithPopupMock = vi.mocked(signInWithPopup);
+  const signInWithRedirectMock = vi.mocked(signInWithRedirect);
+  const isNativePlatformMock = vi.mocked(Capacitor.isNativePlatform);
+
+  beforeEach(() => {
+    isNativePlatformMock.mockReturnValue(false);
+    signInWithPopupMock.mockReset();
+    signInWithRedirectMock.mockReset();
+    legacyAuthMocks.validateAccessCode.mockReset();
+    legacyAuthMocks.redeemHouseholdInvite.mockReset();
+    legacyAuthMocks.redeemCoParentInvite.mockReset();
+    legacyAuthMocks.markAccessCodeAsUsed.mockReset();
+    legacyAuthMocks.updateUserProfile.mockReset();
+    legacyAuthMocks.updateUserProfile.mockResolvedValue(undefined);
+  });
+
+  afterEach(() => {
+    isNativePlatformMock.mockReturnValue(true);
+    window.sessionStorage.clear();
+  });
+
+  function mockNewGoogleUser(email: string) {
+    signInWithPopupMock.mockResolvedValue({
+      user: {
+        uid: 'google-user',
+        email,
+        displayName: 'Google User',
+        photoURL: 'https://example.com/photo.png',
+        metadata: {
+          creationTime: '2026-03-01T11:00:00.000Z',
+          lastSignInTime: '2026-03-01T11:00:00.000Z'
+        },
+        delete: vi.fn()
+      }
+    } as any);
+  }
+
+  it('redeems household invites instead of claiming them as standard activation codes', async () => {
+    mockNewGoogleUser('household@example.com');
+    legacyAuthMocks.validateAccessCode.mockResolvedValue({
+      valid: true,
+      type: 'household_invite',
+      codeId: 'household-code-id',
+      data: { code: 'HOME1234' }
+    });
+    legacyAuthMocks.redeemHouseholdInvite.mockResolvedValue({ success: true });
+
+    await signInWithGoogleAccount('home1234');
+
+    expect(legacyAuthMocks.redeemHouseholdInvite).toHaveBeenCalledWith('google-user', 'HOME1234');
+    expect(legacyAuthMocks.markAccessCodeAsUsed).not.toHaveBeenCalled();
+  });
+
+  it('redeems co-parent invites with the Google account email', async () => {
+    mockNewGoogleUser('coparent@example.com');
+    legacyAuthMocks.validateAccessCode.mockResolvedValue({
+      valid: true,
+      type: 'coparent_invite',
+      codeId: 'coparent-code-id',
+      data: { code: 'COPO1234' }
+    });
+    legacyAuthMocks.redeemCoParentInvite.mockResolvedValue({ success: true });
+
+    await signInWithGoogleAccount('copo1234');
+
+    expect(legacyAuthMocks.redeemCoParentInvite).toHaveBeenCalledWith('google-user', 'COPO1234', 'coparent@example.com');
+    expect(legacyAuthMocks.markAccessCodeAsUsed).not.toHaveBeenCalled();
   });
 });
 
