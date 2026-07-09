@@ -280,7 +280,28 @@ describe('PublicTeamSearch', () => {
             const message = screen.getByText(/No public teams found/i);
             expect(message.textContent).toContain('for "boston"');
         });
+        expect(screen.getByRole('button', { name: /Browse all public teams/i })).toBeTruthy();
+        expect(screen.getByRole('button', { name: 'Clear search' })).toBeTruthy();
         expect(screen.queryByText('Atlanta United')).toBeNull();
+    });
+
+    it('recovers from an empty filtered search by browsing all public teams', async () => {
+        (getPublicTeamsPage as import('vitest').Mock)
+            .mockResolvedValueOnce({ teams: [], nextCursor: null })
+            .mockResolvedValueOnce({ teams: mockTeams, nextCursor: null });
+        renderSearch();
+
+        const searchInput = screen.getByPlaceholderText('Search by team, city, state, or zip') as HTMLInputElement;
+        fireEvent.change(searchInput, { target: { value: 'not-a-team' } });
+        fireEvent.click(screen.getByRole('button', { name: 'Search public teams' }));
+
+        await waitFor(() => expect(screen.getByText(/No public teams found/i)).toBeTruthy());
+        fireEvent.click(screen.getByRole('button', { name: /Browse all public teams/i }));
+
+        await waitFor(() => expect(getPublicTeamsPage).toHaveBeenNthCalledWith(2, { searchText: undefined, cursor: null }));
+        expect(screen.getByText('Atlanta United')).toBeTruthy();
+        expect(screen.getByText('New York Knicks')).toBeTruthy();
+        expect(screen.queryByText(/No public teams found/i)).toBeNull();
     });
 
     it('groups teams into separate location sections after browsing all', async () => {
