@@ -142,8 +142,32 @@ type NativePluginSignInResult = {
   } | null;
 };
 
-function normalizeEmail(email: string) {
+export function normalizeAuthEmail(email: string | null | undefined) {
   return String(email || '').trim().toLowerCase();
+}
+
+export function isValidAuthEmail(email: string | null | undefined) {
+  const normalizedEmail = normalizeAuthEmail(email);
+  const parts = normalizedEmail.split('@');
+  if (parts.length !== 2) {
+    return false;
+  }
+
+  const [localPart, domain] = parts;
+  return Boolean(
+    localPart &&
+    domain &&
+    domain.includes('.') &&
+    /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizedEmail)
+  );
+}
+
+function requireValidAuthEmail(email: string | null | undefined) {
+  const normalizedEmail = normalizeAuthEmail(email);
+  if (!isValidAuthEmail(normalizedEmail)) {
+    throw new Error('Enter a valid email address.');
+  }
+  return normalizedEmail;
 }
 
 function normalizeCode(code: string | null | undefined) {
@@ -197,6 +221,10 @@ export function describeAuthError(error: any) {
 
   if (code === 'auth/invalid-credential' || code === 'auth/wrong-password') {
     return 'Email or password is incorrect.';
+  }
+
+  if (code === 'auth/invalid-email' || message.includes('auth/invalid-email') || message.includes('INVALID_EMAIL')) {
+    return 'Enter a valid email address.';
   }
 
   if (code === 'auth/user-not-found') {
@@ -962,7 +990,7 @@ export function getCurrentFirebaseUser(): FirebaseUser | null {
 }
 
 export async function signInWithEmail(email: string, password: string) {
-  const normalizedEmail = normalizeEmail(email);
+  const normalizedEmail = requireValidAuthEmail(email);
   const { updateUserProfile } = await loadLegacyAuthDb();
 
   if (isNativeRuntime()) {
@@ -991,6 +1019,7 @@ export async function signInWithEmail(email: string, password: string) {
 }
 
 export async function signUpWithEmail(email: string, password: string, activationCode: string) {
+  const normalizedEmail = requireValidAuthEmail(email);
   const [
     dbModule,
     { redeemAdminInviteAcceptance },
@@ -1002,7 +1031,7 @@ export async function signUpWithEmail(email: string, password: string, activatio
   ]);
 
   return executeEmailPasswordSignup({
-    email: email.trim(),
+    email: normalizedEmail,
     password,
     activationCode: normalizeCode(activationCode),
     auth,
@@ -1159,7 +1188,7 @@ export async function completeGoogleRedirect() {
 }
 
 export async function sendResetEmail(email: string) {
-  await sendPasswordResetEmail(auth, email.trim(), {
+  await sendPasswordResetEmail(auth, requireValidAuthEmail(email), {
     url: 'https://allplays.ai/reset-password.html',
     handleCodeInApp: true
   });
@@ -1239,10 +1268,11 @@ export function isEmailLink(url: string) {
 }
 
 export async function completeEmailLink(email: string, url: string) {
-  const result = await signInWithEmailLink(auth, email.trim(), url) as UserCredential;
+  const normalizedEmail = requireValidAuthEmail(email);
+  const result = await signInWithEmailLink(auth, normalizedEmail, url) as UserCredential;
   const { updateUserProfile } = await loadLegacyAuthDb();
   await updateUserProfile(result.user.uid, {
-    email: email.trim(),
+    email: normalizedEmail,
     lastLogin: new Date(),
     signInMethod: 'emailLink'
   });

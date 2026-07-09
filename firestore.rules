@@ -154,6 +154,23 @@ service cloud.firestore {
              request.resource.data.usedAt is timestamp;
     }
 
+    function isStandardAccessCodeRedemptionUpdate() {
+      let codeType = resource.data.get('type', 'standard');
+      return (codeType == 'standard' || codeType == null) &&
+             request.resource.data.diff(resource.data).affectedKeys().hasOnly(['used', 'usedBy', 'usedAt']) &&
+             resource.data.used == false &&
+             resource.data.get('revoked', false) != true &&
+             resource.data.get('active', true) != false &&
+             resource.data.get('status', 'active') != 'removed' &&
+             resource.data.get('status', 'active') != 'cancelled' &&
+             resource.data.get('status', 'active') != 'revoked' &&
+             (resource.data.get('expiresAt', null) == null ||
+              (resource.data.expiresAt is timestamp && resource.data.expiresAt > request.time)) &&
+             request.resource.data.used == true &&
+             request.resource.data.usedBy == request.auth.uid &&
+             request.resource.data.usedAt is timestamp;
+    }
+
     function isParentInviteRevocationUpdate() {
       return resource.data.get('type', null) == 'parent_invite' &&
              resource.data.generatedBy == request.auth.uid &&
@@ -1773,15 +1790,12 @@ service cloud.firestore {
                         isParentInviteRevocationUpdate() ||
                         isHouseholdInviteRedemptionUpdate() ||
                         isHouseholdInviteRevocationUpdate() ||
-                        // Allow marking as used only if setting these specific fields
+                        // Allow standard activation-code redemption without raw document reads.
+                        isStandardAccessCodeRedemptionUpdate() ||
                         (resource.data.get('type', null) != 'admin_invite' &&
                          resource.data.get('type', null) != 'parent_invite' &&
                          resource.data.get('type', null) != 'household_invite' &&
-                         request.resource.data.diff(resource.data).affectedKeys().hasOnly(['used', 'usedBy', 'usedAt']) &&
-                         request.resource.data.usedBy == request.auth.uid) ||
-                        (resource.data.get('type', null) != 'admin_invite' &&
-                         resource.data.get('type', null) != 'parent_invite' &&
-                         resource.data.get('type', null) != 'household_invite' &&
+                         resource.data.get('type', null) != 'coparent_invite' &&
                          resource.data.generatedBy == request.auth.uid &&
                          request.resource.data.diff(resource.data).affectedKeys().hasOnly(['revoked', 'revokedAt', 'used', 'updatedAt'])));
 	      allow delete: if isSignedIn() && resource.data.generatedBy == request.auth.uid;

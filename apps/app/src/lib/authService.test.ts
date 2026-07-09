@@ -15,7 +15,21 @@ const legacyAuthMocks = vi.hoisted(() => ({
   getUserProfile: vi.fn(),
   listMyParentMembershipRequests: vi.fn(),
   updateUserProfile: vi.fn(),
-  getUserTeams: vi.fn()
+  getUserTeams: vi.fn(),
+  validateAccessCode: vi.fn(),
+  redeemParentInvite: vi.fn(),
+  redeemHouseholdInvite: vi.fn(),
+  redeemCoParentInvite: vi.fn(),
+  markAccessCodeAsUsed: vi.fn(),
+  getTeam: vi.fn()
+}));
+
+const legacyAdminInviteMocks = vi.hoisted(() => ({
+  redeemAdminInviteAcceptance: vi.fn()
+}));
+
+const legacySignupFlowMocks = vi.hoisted(() => ({
+  executeEmailPasswordSignup: vi.fn()
 }));
 
 const parentMembershipMocks = vi.hoisted(() => ({
@@ -61,11 +75,11 @@ vi.mock('./firebaseAuthRuntime', () => ({
 }));
 
 vi.mock('./adapters/legacyAuth', () => ({
-  loadLegacyAdminInvite: vi.fn(),
+  loadLegacyAdminInvite: vi.fn(async () => legacyAdminInviteMocks),
   loadLegacyAuthDb: vi.fn(async () => legacyAuthMocks),
   loadLegacyInviteFlow: vi.fn(),
   loadLegacyParentMembershipUtils: vi.fn(async () => parentMembershipMocks),
-  loadLegacySignupFlow: vi.fn()
+  loadLegacySignupFlow: vi.fn(async () => legacySignupFlowMocks)
 }));
 
 vi.mock('./appDataCache', () => ({
@@ -80,7 +94,29 @@ vi.mock('./logger', () => ({
   })
 }));
 
-import { hydrateFirebaseUser, observeFirebaseUser, signInWithEmail, signOut } from './authService';
+import {
+  describeAuthError,
+  hydrateFirebaseUser,
+  isValidAuthEmail,
+  observeFirebaseUser,
+  signInWithEmail,
+  signOut,
+  signUpWithEmail
+} from './authService';
+
+describe('auth email validation', () => {
+  it('rejects Firebase-invalid emails before they reach the auth SDK', () => {
+    expect(isValidAuthEmail('p@paulsnider')).toBe(false);
+    expect(isValidAuthEmail('player@example.com')).toBe(true);
+  });
+
+  it('maps Firebase invalid-email errors to app copy', () => {
+    expect(describeAuthError({
+      code: 'auth/invalid-email',
+      message: 'Firebase: Error (auth/invalid-email).'
+    })).toBe('Enter a valid email address.');
+  });
+});
 
 describe('hydrateFirebaseUser', () => {
   beforeEach(() => {
@@ -124,6 +160,34 @@ describe('signOut', () => {
   it('clears persisted app-data cache so the next user cannot read cached data', async () => {
     await signOut();
     expect(appDataCacheMocks.clearAppDataCache).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('signUpWithEmail', () => {
+  beforeEach(() => {
+    legacySignupFlowMocks.executeEmailPasswordSignup.mockReset();
+    legacySignupFlowMocks.executeEmailPasswordSignup.mockResolvedValue({
+      user: { uid: 'new-user', email: 'player@example.com' }
+    });
+  });
+
+  it('normalizes signup input and delegates to the shared access-code redemption flow', async () => {
+    await signUpWithEmail(' Player@Example.COM ', 'secret1', ' 85nsbz7k ');
+
+    expect(legacySignupFlowMocks.executeEmailPasswordSignup).toHaveBeenCalledWith(expect.objectContaining({
+      email: 'player@example.com',
+      password: 'secret1',
+      activationCode: '85NSBZ7K',
+      dependencies: expect.objectContaining({
+        markAccessCodeAsUsed: legacyAuthMocks.markAccessCodeAsUsed,
+        validateAccessCode: legacyAuthMocks.validateAccessCode
+      })
+    }));
+  });
+
+  it('stops invalid signup emails before loading Firebase signup work', async () => {
+    await expect(signUpWithEmail('p@paulsnider', 'secret1', '85nsbz7k')).rejects.toThrow('Enter a valid email address.');
+    expect(legacySignupFlowMocks.executeEmailPasswordSignup).not.toHaveBeenCalled();
   });
 });
 

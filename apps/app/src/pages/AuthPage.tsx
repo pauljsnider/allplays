@@ -8,6 +8,8 @@ import {
   describeAuthError,
   getRouteForUser,
   hydrateFirebaseUser,
+  isValidAuthEmail,
+  normalizeAuthEmail,
   rememberPendingInvite,
   sendResetEmail,
   signInWithEmail,
@@ -89,6 +91,11 @@ export function AuthPage({ auth }: { auth: AuthState }) {
     setBusy(true);
 
     try {
+      const normalizedEmail = normalizeAuthEmail(email);
+      if (!isValidAuthEmail(normalizedEmail)) {
+        throw new Error('Enter a valid email address.');
+      }
+
       if (mode === 'signup') {
         const code = activationCode.trim().toUpperCase();
         if (!code) {
@@ -98,13 +105,13 @@ export function AuthPage({ auth }: { auth: AuthState }) {
           throw new Error('Passwords do not match.');
         }
 
-        await signUpWithEmail(email, password, code);
+        await signUpWithEmail(normalizedEmail, password, code);
         await auth.refresh();
         navigate('/verify-pending', { replace: true });
         return;
       }
 
-      const credential = await signInWithEmail(email, password);
+      const credential = await signInWithEmail(normalizedEmail, password);
       if (inviteCode) {
         rememberPendingInvite(inviteCode, inviteType);
       }
@@ -168,7 +175,11 @@ export function AuthPage({ auth }: { auth: AuthState }) {
     setBusy(true);
 
     try {
-      await sendResetEmail(resetEmail || email);
+      const normalizedEmail = normalizeAuthEmail(resetEmail || email);
+      if (!isValidAuthEmail(normalizedEmail)) {
+        throw new Error('Enter a valid email address.');
+      }
+      await sendResetEmail(normalizedEmail);
       setMessage('Password reset email sent. Check your inbox and spam folder.');
       setShowReset(false);
     } catch (resetError: any) {
