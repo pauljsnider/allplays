@@ -861,7 +861,7 @@ describe('ParentTools access', () => {
         expect(parentToolsServiceMocks.initiateParentTeamFeeCheckout).not.toHaveBeenCalled();
     });
 
-    it('keeps online fee payment primary and shows invoice details by default', async () => {
+    it('keeps online fee payment primary and reveals invoice details on demand', async () => {
         parentToolsServiceMocks.loadParentFeesForApp.mockResolvedValue([
             {
                 id: 'fee-detailed',
@@ -889,23 +889,24 @@ describe('ParentTools access', () => {
 
         await screen.findByText('Tournament dues');
         expect(screen.getByRole('button', { name: 'Pay fee' })).toBeVisible();
+        expect(screen.queryByText('Line items')).toBeNull();
+        expect(screen.queryByText('Installments')).toBeNull();
+        expect(screen.queryByText('Payments and adjustments')).toBeNull();
+        expect(screen.queryByText('Uniform fitting is included.')).toBeNull();
+
+        const disclosure = screen.getByRole('button', { name: 'View details' });
+        expect(disclosure).toHaveAttribute('aria-expanded', 'false');
+        fireEvent.click(disclosure);
+
         expect(screen.getByRole('button', { name: 'Hide details' })).toHaveAttribute('aria-expanded', 'true');
         expect(screen.getByText('Line items')).toBeVisible();
         expect(screen.getByText('Installments')).toBeVisible();
         expect(screen.getByText('Payments and adjustments')).toBeVisible();
         expect(screen.getByText('Notes')).toBeVisible();
         expect(screen.getByText('Uniform fitting is included.')).toBeVisible();
-
-        fireEvent.click(screen.getByRole('button', { name: 'Hide details' }));
-
-        expect(screen.getByRole('button', { name: 'View details' })).toHaveAttribute('aria-expanded', 'false');
-        expect(screen.queryByText('Line items')).toBeNull();
-        expect(screen.queryByText('Installments')).toBeNull();
-        expect(screen.queryByText('Payments and adjustments')).toBeNull();
-        expect(screen.queryByText('Uniform fitting is included.')).toBeNull();
     });
 
-    it('keeps offline payment instructions visible while invoice details start expanded', async () => {
+    it('keeps offline payment instructions visible while invoice details stay collapsed', async () => {
         parentToolsServiceMocks.loadParentFeesForApp.mockResolvedValue([
             {
                 id: 'fee-offline',
@@ -935,9 +936,9 @@ describe('ParentTools access', () => {
         expect(screen.getByText('Offline payment')).toBeVisible();
         expect(screen.getByText('Bring cash or a check to practice.')).toBeVisible();
         expect(screen.queryByRole('button', { name: 'Pay fee' })).toBeNull();
-        expect(screen.getByRole('button', { name: 'Hide details' })).toHaveAttribute('aria-expanded', 'true');
-        expect(screen.getByText('Line items')).toBeVisible();
-        expect(screen.getByText('Ask the team manager for a receipt.')).toBeVisible();
+        expect(screen.queryByText('Line items')).toBeNull();
+        expect(screen.queryByText('Ask the team manager for a receipt.')).toBeNull();
+        expect(screen.getByRole('button', { name: 'View details' })).toHaveAttribute('aria-expanded', 'false');
     });
 
     it('shows safe Fees copy instead of raw Firestore index errors', async () => {

@@ -154,7 +154,7 @@ function FeeMessageBlock({ title, message }: { title: string; message: string })
 }
 
 function FeeCard({ fee, onPay, paying, payBlocked, error }: { fee: ParentFeeAppRecord; onPay: (fee: ParentFeeAppRecord) => void | Promise<void>; paying: boolean; payBlocked: boolean; error: string }) {
-    const [detailsOpen, setDetailsOpen] = useState(true);
+    const [detailsOpen, setDetailsOpen] = useState(false);
     const detailsId = useId();
     const notes = getFeeMessage(fee.notes, fee.feeNotes);
     const offlinePaymentInstructions = getFeeMessage(fee.offlinePaymentInstructions, fee.paymentInstructions);
