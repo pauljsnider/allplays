@@ -270,9 +270,9 @@ describe('React app Teams page', () => {
         expect(linkByAriaLabel(container, 'Select Bears').getAttribute('href')).toBe('/teams?selectedTeamId=team-1');
         expect(container.textContent.indexOf('Choose a team')).toBeLessThan(container.textContent.indexOf('Team navigation'));
         const hrefs = getHrefs(container);
-        expect(hrefs).toContain('/messages/team-1');
-        expect(hrefs).toContain('/teams/team-1');
-        expect(hrefs).toContain('/schedule?teamId=team-1');
+        expect(hrefs.filter((href) => href === '/teams/team-1')).toHaveLength(1);
+        expect(hrefs).not.toContain('/messages/team-1');
+        expect(hrefs).not.toContain('/schedule?teamId=team-1');
         expect(container.textContent).toContain('Pat Star');
         expect(window.scrollTo).not.toHaveBeenCalled();
     });
