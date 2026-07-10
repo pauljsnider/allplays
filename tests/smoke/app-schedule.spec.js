@@ -1491,7 +1491,7 @@ test('app schedule event detail exposes parent actions and RSVP', async ({ page,
     await expect(eventSummaryCard.getByRole('heading', { name: 'vs. Falcons' })).toBeVisible({ timeout: 15000 });
     await expect(page.getByText('Pat · Bears')).toBeVisible();
     await expect(page.getByText('Availability needed')).toBeVisible();
-    await expect(page.getByText('Is Pat going?')).toBeVisible();
+    await expect(page.getByText('Are Pat and Sam going?')).toBeVisible();
     await expect(page.getByText('Needs attention', { exact: true })).toBeVisible();
     await expect(page.getByText('Review assignments')).toBeVisible();
     await expect(page.getByRole('heading', { name: 'Availability' })).toBeVisible();
@@ -1598,9 +1598,10 @@ test('app schedule event detail exposes parent actions and RSVP', async ({ page,
     await availabilitySection.getByLabel('Availability note').fill('Arriving after school pickup.');
     await availabilitySection.getByRole('button', { name: 'Going' }).click();
     expect(await page.evaluate(() => window.__scheduleCalls.rsvps)).toEqual([
-        { eventKey: 'game-1-player-1', childId: 'player-1', userId: 'user-1', response: 'going', note: 'Arriving after school pickup.' }
+        { eventKey: 'game-1-player-1', childId: 'player-1', userId: 'user-1', response: 'going', note: 'Arriving after school pickup.' },
+        { eventKey: 'game-1-player-2', childId: 'player-2', userId: 'user-1', response: 'going', note: 'Arriving after school pickup.' }
     ]);
-    await expect(page.getByText('Pat marked going.')).toBeVisible();
+    await expect(page.getByText('2 children marked going.')).toBeVisible();
 });
 
 test('app schedule saves edited availability notes without re-tapping RSVP', async ({ page, baseURL }) => {
@@ -1613,6 +1614,7 @@ test('app schedule saves edited availability notes without re-tapping RSVP', asy
 
     const availabilitySection = page.locator('section').filter({ has: page.getByRole('heading', { name: 'Availability' }) });
     await waitForScheduleRoute(page, availabilitySection.getByRole('heading', { name: 'Availability' }));
+    await availabilitySection.getByRole('button', { name: 'Set individually' }).click();
     await expect(availabilitySection.getByText('Availability saved')).toBeVisible();
 
     const noteInput = availabilitySection.getByLabel('Availability note');
