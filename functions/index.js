@@ -56,6 +56,7 @@ const {
   normalizeEmail,
   normalizeAccountMergePreviewInput,
   hashAccountMergeVerificationToken,
+  requireAccountMergeVerificationToken,
   validateAccountMergeVerificationRecord,
   assertNotSelfMerge,
   buildAccountMergePreview,
@@ -2795,51 +2796,28 @@ async function writeAccountMergePreviewAudit(payload) {
   });
 }
 
-async function findAccountMergeSourceByEmail(sourceEmail) {
-  const [emailSnap, profileEmailSnap] = await Promise.all([
-    firestore.collection('users')
-      .where('email', '==', sourceEmail)
-      .limit(1)
-      .get(),
-    firestore.collection('users')
-      .where('profileEmail', '==', sourceEmail)
-      .limit(1)
-      .get()
-  ]);
-  return emailSnap.empty ? (profileEmailSnap.empty ? null : profileEmailSnap.docs[0]) : emailSnap.docs[0];
-}
-
 async function resolveAccountMergeSource(input, destinationUid) {
-  let sourceUid = input.sourceUid;
-  let verification = null;
-
-  if (input.verificationToken) {
-    const tokenHash = hashAccountMergeVerificationToken(input.verificationToken);
-    const tokenSnap = await firestore.doc(`accountMergeVerificationTokens/${tokenHash}`).get();
-    if (!tokenSnap.exists) {
-      throw new functions.https.HttpsError('failed-precondition', 'Account merge verification token is invalid.');
-    }
-    verification = {
-      ...(tokenSnap.data() || {}),
-      id: tokenSnap.id
-    };
-    try {
-      sourceUid = validateAccountMergeVerificationRecord({
-        record: verification,
-        destinationUid,
-        sourceUid: input.sourceUid
-      });
-    } catch (error) {
-      throw new functions.https.HttpsError('failed-precondition', error.message || 'Account merge verification token is invalid.');
-    }
+  const tokenHash = hashAccountMergeVerificationToken(input.verificationToken);
+  const tokenSnap = await firestore.doc(`accountMergeVerificationTokens/${tokenHash}`).get();
+  if (!tokenSnap.exists) {
+    throw new functions.https.HttpsError('failed-precondition', 'Account merge verification token is invalid.');
+  }
+  const verification = {
+    ...(tokenSnap.data() || {}),
+    id: tokenSnap.id
+  };
+  let sourceUid;
+  try {
+    sourceUid = validateAccountMergeVerificationRecord({
+      record: verification,
+      destinationUid,
+      sourceUid: input.sourceUid
+    });
+  } catch (error) {
+    throw new functions.https.HttpsError('failed-precondition', error.message || 'Account merge verification token is invalid.');
   }
 
-  if (sourceUid) {
-    const sourceSnap = await firestore.doc(`users/${sourceUid}`).get();
-    return { sourceSnap, verification };
-  }
-
-  const sourceSnap = await findAccountMergeSourceByEmail(input.sourceEmail);
+  const sourceSnap = await firestore.doc(`users/${sourceUid}`).get();
   return { sourceSnap, verification };
 }
 
@@ -2868,6 +2846,22 @@ exports.previewAccountMerge = functions.https.onCall(async (data, context) => {
       errorMessage: error.message || 'Invalid account merge preview request.'
     });
     throw new functions.https.HttpsError('invalid-argument', error.message || 'Invalid account merge preview request.');
+  }
+
+  try {
+    requireAccountMergeVerificationToken(input);
+  } catch (error) {
+    const message = error.message || 'Verify ownership of the source account before previewing an account merge.';
+    await writeAccountMergePreviewAudit({
+      destinationUid,
+      destinationEmail,
+      sourceUid: input.sourceUid || '',
+      sourceEmail: input.sourceEmail || '',
+      status: 'rejected',
+      errorCode: 'failed-precondition',
+      errorMessage: message
+    });
+    throw new functions.https.HttpsError('failed-precondition', message);
   }
 
   try {
