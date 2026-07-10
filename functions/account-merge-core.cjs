@@ -37,6 +37,13 @@ function hashAccountMergeVerificationToken(token) {
     return crypto.createHash('sha256').update(rawToken).digest('hex');
 }
 
+function requireAccountMergeVerificationToken(input = {}) {
+    if (!String(input.verificationToken || '').trim()) {
+        throw new Error('Verify ownership of the source account before previewing an account merge.');
+    }
+    return input.verificationToken;
+}
+
 function toMillis(value) {
     if (!value) return 0;
     if (typeof value.toMillis === 'function') return value.toMillis();
@@ -49,7 +56,7 @@ function validateAccountMergeVerificationRecord({ record = {}, destinationUid, s
     if (record.status !== 'verified') {
         throw new Error('Account merge verification token is not verified.');
     }
-    if (record.destinationUid && record.destinationUid !== destinationUid) {
+    if (!record.destinationUid || record.destinationUid !== destinationUid) {
         throw new Error('Account merge verification token is for a different destination account.');
     }
     if (sourceUid && record.sourceUid && record.sourceUid !== sourceUid) {
@@ -280,6 +287,7 @@ module.exports = {
     mergePreferenceObjects,
     normalizeAccountMergePreviewInput,
     normalizeEmail,
+    requireAccountMergeVerificationToken,
     uniqueValues,
     validateAccountMergeVerificationRecord
 };

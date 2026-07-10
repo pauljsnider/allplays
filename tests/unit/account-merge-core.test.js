@@ -5,6 +5,7 @@ const require = createRequire(import.meta.url);
 const {
     normalizeAccountMergePreviewInput,
     hashAccountMergeVerificationToken,
+    requireAccountMergeVerificationToken,
     validateAccountMergeVerificationRecord,
     assertNotSelfMerge,
     buildAccountMergePreview
@@ -13,6 +14,19 @@ const {
 describe('account merge preview helpers', () => {
     it('rejects a preview request with no source account identifier or token', () => {
         expect(() => normalizeAccountMergePreviewInput({})).toThrow('source account identifier or verification token');
+    });
+
+    it('requires verified ownership before accepting raw source identifiers for preview', () => {
+        expect(() => requireAccountMergeVerificationToken(normalizeAccountMergePreviewInput({
+            sourceEmail: 'source@example.com'
+        }))).toThrow('Verify ownership');
+        expect(() => requireAccountMergeVerificationToken(normalizeAccountMergePreviewInput({
+            sourceUid: 'source-1'
+        }))).toThrow('Verify ownership');
+        expect(requireAccountMergeVerificationToken(normalizeAccountMergePreviewInput({
+            sourceEmail: 'source@example.com',
+            verificationToken: 'verified-token'
+        }))).toBe('verified-token');
     });
 
     it('rejects self-merge attempts by uid or email', () => {
@@ -55,6 +69,13 @@ describe('account merge preview helpers', () => {
                 status: 'verified',
                 sourceUid: 'source-1',
                 destinationUid: 'dest-1'
+            }
+        })).toThrow('different destination');
+        expect(() => validateAccountMergeVerificationRecord({
+            destinationUid: 'dest-1',
+            record: {
+                status: 'verified',
+                sourceUid: 'source-1'
             }
         })).toThrow('different destination');
     });

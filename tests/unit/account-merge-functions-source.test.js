@@ -21,10 +21,15 @@ describe('account merge preview callable source contract', () => {
         expect(functionsSource).toContain("HttpsError('not-found', 'Source account could not be found.')");
     });
 
-    it('looks up source accounts by email and profileEmail', () => {
-        expect(functionsSource).toContain('findAccountMergeSourceByEmail');
-        expect(functionsSource).toContain(".where('email', '==', sourceEmail)");
-        expect(functionsSource).toContain(".where('profileEmail', '==', sourceEmail)");
+    it('requires a verification token before resolving source account data', () => {
+        const callableStart = functionsSource.indexOf('exports.previewAccountMerge = functions.https.onCall');
+        const callableSource = functionsSource.slice(callableStart, functionsSource.indexOf('async function logRsvpTokenRedemptionAttempt', callableStart));
+
+        expect(callableSource).toContain('requireAccountMergeVerificationToken(input)');
+        expect(callableSource).toContain("errorCode: 'failed-precondition'");
+        expect(callableSource).not.toContain('findAccountMergeSourceByEmail');
+        expect(functionsSource).not.toContain(".where('email', '==', sourceEmail)");
+        expect(functionsSource).not.toContain(".where('profileEmail', '==', sourceEmail)");
     });
 
     it('persists the accepted verification token document id in audits', () => {
