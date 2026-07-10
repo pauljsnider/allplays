@@ -1093,7 +1093,7 @@ describe('React app chat recipient service', () => {
             attachments: [uploadedPhoto, uploadedVideo],
             conversationId: 'group-player-coach',
             targetType: 'individuals',
-            recipientIds: ['player:player-1', 'user:coach-1'],
+            recipientIds: ['user-1', 'email:guardian@example.com', 'user:coach-1', 'user:parent-2'],
             targetRole: null
         }));
         expect(result).toEqual({

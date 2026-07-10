@@ -2603,18 +2603,19 @@
             try {
                 const needs = await inferDataNeeds(question);
                 const responseText = await askAllPlays(question, needs);
+                const isTargetedConversation = !isDefaultTeamConversation(selectedConversationId);
                 await postChatMessage(teamId, {
-                    text: responseText,
+                    text: isTargetedConversation ? `ALL PLAYS\n\n${responseText}` : responseText,
                     senderId: currentUser.uid,
-                    senderName: null,
-                    senderEmail: null,
-                    senderPhotoUrl: null,
-                    ai: true,
-                    aiName: 'ALL PLAYS',
-                    aiQuestion: question,
+                    senderName: isTargetedConversation ? (currentUserProfile?.fullName || currentUser.displayName || currentUser.email || null) : null,
+                    senderEmail: isTargetedConversation ? (currentUser.email || null) : null,
+                    senderPhotoUrl: isTargetedConversation ? (currentUserProfile?.photoUrl || currentUser.photoURL || null) : null,
+                    ai: !isTargetedConversation,
+                    aiName: isTargetedConversation ? null : 'ALL PLAYS',
+                    aiQuestion: isTargetedConversation ? null : question,
                     conversationId: selectedConversationId,
                     ...buildRecipientTargetMetadata(),
-                    aiMeta: {
+                    aiMeta: isTargetedConversation ? null : {
                         statsGameLimit: AI_STATS_GAMES_LIMIT,
                         gamesContextLimit: AI_GAMES_CONTEXT_LIMIT,
                         statsRequested: needs.fetchStats,
@@ -2944,7 +2945,7 @@
 
             let mediaPayloads = [];
             try {
-                const targetMetadata = buildRecipientTargetMetadata();
+                let targetMetadata = buildRecipientTargetMetadata();
                 let conversationId = selectedConversationId;
                 if (isDefaultTeamConversation(conversationId) && targetMetadata.targetType !== 'full_team') {
                     const participantIds = targetMetadata.targetType === 'staff'
@@ -2959,6 +2960,13 @@
                         name: getTargetedConversationName(targetMetadata)
                     });
                     conversationId = conversation.id;
+                    if (targetMetadata.targetType === 'individuals') {
+                        targetMetadata = {
+                            targetType: 'individuals',
+                            recipientIds: Array.isArray(conversation.participantIds) ? conversation.participantIds : participantIds,
+                            targetRole: null
+                        };
+                    }
                     selectedConversationId = conversationId;
                     await loadConversations();
                 }

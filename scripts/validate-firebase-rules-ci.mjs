@@ -114,6 +114,13 @@ export function validateFirebaseRulesCi() {
     assertIncludes(firestoreRules, 'match /rsvpNotes/{rsvpId}', 'Firestore restricted RSVP note rules');
     assertIncludes(firestoreRules, 'function isRsvpStatusPayloadSafe(data)', 'Firestore RSVP status note exclusion helper');
     assertIncludes(firestoreRules, 'allow read: if canReadRsvpNote(teamId, resource.data);', 'Firestore restricted RSVP note read rules');
+    assertIncludes(firestoreRules, 'function isNestedChatMessageCreateValid(teamId, conversationId, conversationData, data)', 'Nested chat message payload validator');
+    assertIncludes(firestoreRules, 'function isNestedChatMessageTargetValid(teamId, conversationId, conversationData, data)', 'Nested chat message target validator');
+    assertIncludes(firestoreRules, 'function hasValidNestedChatAttachments(teamId, conversationId, data)', 'Nested chat attachment validator');
+    assertIncludes(firestoreRules, 'data.createdAt == request.time', 'Nested chat server timestamp binding');
+    assertIncludes(firestoreRules, 'data.senderEmail.lower() == request.auth.token.email.lower()', 'Nested chat sender email binding');
+    assertIncludes(firestoreRules, "data.recipientIds == conversationData.get('participantIds', [])", 'Nested chat conversation participant binding');
+    assertIncludes(firestoreRules, 'isNestedChatMessageCreateValid(', 'Nested chat create rules');
 
     assertIncludes(deployProd, 'firestore:rules', 'Production deploy');
     assertIncludes(deployProd, 'firestore:indexes', 'Production deploy');

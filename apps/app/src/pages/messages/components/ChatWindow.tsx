@@ -1021,7 +1021,7 @@ export function ChatWindow({
               team: request.team,
               user: request.user,
               question,
-              selectedConversation: request.selectedConversation,
+              selectedConversation: result.createdConversation || request.selectedConversation,
               selectedConversationId: normalizeConversationId(result.conversationId),
               selectedRecipientTarget: request.selectedRecipientTarget,
               selectedRecipientIds: request.selectedRecipientIds
