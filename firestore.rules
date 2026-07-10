@@ -1491,12 +1491,32 @@ service cloud.firestore {
               value.matches('https://storage[.]googleapis[.]com/.*'));
     }
 
+    function isSafeNestedChatRegexSegment(value) {
+      return value is string &&
+             value.size() > 0 &&
+             value.size() <= 256 &&
+             value.matches('[A-Za-z0-9_%:-]+');
+    }
+
+    function isScopedNestedChatFallbackMediaPath(teamId, conversationId, value) {
+      let pathSegments = value.split('/');
+      return pathSegments.size() == 6 &&
+             pathSegments[0] == 'stat-sheets' &&
+             pathSegments[1] == 'team-chat' &&
+             pathSegments[2] == teamId &&
+             pathSegments[3] == conversationId &&
+             pathSegments[4] == request.auth.uid &&
+             pathSegments[5].size() > 0;
+    }
+
     function isScopedNestedChatMediaPath(teamId, conversationId, value) {
       return value is string &&
              value.size() > 0 &&
              value.size() <= 1024 &&
-             (value.matches('team-(photos|videos)/[0-9]+_chat_' + teamId + '_[^/]+_' + request.auth.uid + '_[^/]+') ||
-              value.matches('stat-sheets/team-chat/' + teamId + '/' + conversationId + '/' + request.auth.uid + '/[^/]+'));
+             ((isSafeNestedChatRegexSegment(teamId) &&
+               isSafeNestedChatRegexSegment(request.auth.uid) &&
+               value.matches('team-(photos|videos)/[0-9]+_chat_' + teamId + '_[^/]+_' + request.auth.uid + '_[^/]+')) ||
+              isScopedNestedChatFallbackMediaPath(teamId, conversationId, value));
     }
 
     function isValidNestedChatAttachment(teamId, conversationId, attachment) {
@@ -1627,6 +1647,7 @@ service cloud.firestore {
              isNullableBoundedChatString(data.get('clientMessageId', null), 120) &&
              data.text is string &&
              data.text.size() <= 10000 &&
+             hasValidNestedChatAttachments(teamId, conversationId, data) &&
              (data.text.size() > 0 || data.attachments.size() > 0) &&
              data.senderId == request.auth.uid &&
              isNullableBoundedChatString(data.get('senderName', null), 120) &&
@@ -1637,7 +1658,6 @@ service cloud.firestore {
                data.senderEmail.lower() == request.auth.token.email.lower())) &&
              isNullableBoundedChatString(data.get('senderPhotoUrl', null), 2048) &&
              (data.get('senderPhotoUrl', null) == null || data.senderPhotoUrl.matches('https://.*')) &&
-             hasValidNestedChatAttachments(teamId, conversationId, data) &&
              data.get('imageUrl', null) == null &&
              data.get('imagePath', null) == null &&
              data.get('imageName', null) == null &&

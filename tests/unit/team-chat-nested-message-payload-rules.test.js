@@ -26,9 +26,21 @@ describe('nested team chat message payload contracts', () => {
         expect(rules).toContain("data.get('ai', false) == false");
         expect(rules).toContain("data.get('aiMeta', null) == null");
         expect(rules).toContain('function hasValidNestedChatAttachments(teamId, conversationId, data)');
+        expect(rules).toContain('function isSafeNestedChatRegexSegment(value)');
+        expect(rules).toContain('function isScopedNestedChatFallbackMediaPath(teamId, conversationId, value)');
+        expect(rules).toContain("let pathSegments = value.split('/');");
+        expect(rules).toContain('pathSegments[3] == conversationId');
+        expect(rules).toContain("value.matches('[A-Za-z0-9_%:-]+')");
         expect(rules).toContain('data.attachments.size() <= 10');
         expect(rules).toContain('attachment.size <= 5 * 1024 * 1024');
         expect(rules).toContain("value.matches('https://firebasestorage[.]googleapis[.]com/.*')");
+        const createValidator = rules.slice(
+            rules.indexOf('function isNestedChatMessageCreateValid'),
+            rules.indexOf('function isNestedChatMessageEditValid')
+        );
+        expect(createValidator.indexOf('hasValidNestedChatAttachments(teamId, conversationId, data)')).toBeLessThan(
+            createValidator.indexOf('(data.text.size() > 0 || data.attachments.size() > 0)')
+        );
         expect(rules).toContain('function isNestedChatMessageTargetValid(teamId, conversationId, conversationData, data)');
         expect(rules).toContain("conversationData.get('type', '') in ['direct', 'group']");
         expect(rules).toContain("data.recipientIds == conversationData.get('participantIds', [])");
@@ -200,6 +212,7 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('nested team chat message 
     it('denies spoofed, privileged, stale, extra-field, and mismatched creates', async () => {
         const parentDb = authedFirestore('parent-1', 'parent@example.com');
         const invalidPayloads = [
+            directPayload({ text: '', attachments: [] }),
             directPayload({ senderId: 'user-2' }),
             directPayload({ senderEmail: 'spoofed@example.com' }),
             directPayload({ createdAt: Timestamp.fromMillis(1700000000000) }),
@@ -238,6 +251,66 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('nested team chat message 
                 attachments: [attachment]
             })));
         }
+    });
+
+    it('denies attachment-only messages when the conversation id is not safe to interpolate into path regexes', async () => {
+        const unsafeConversationId = 'direct_parent-1__user-2.*';
+        await testEnv.withSecurityRulesDisabled(async (context) => {
+            await setDoc(doc(context.firestore(), `teams/team-1/chatConversations/${unsafeConversationId}`), {
+                type: 'direct',
+                participantIds: ['parent-1', 'user-2'],
+                participantRoles: [],
+                mutedBy: []
+            });
+        });
+
+        const parentDb = authedFirestore('parent-1', 'parent@example.com');
+        const attachment = {
+            type: 'image',
+            url: 'https://firebasestorage.googleapis.com/v0/b/allplays-images/o/team-photo.jpg?alt=media',
+            path: 'stat-sheets/team-chat/team-1/direct_parent-1__user-2x/parent-1/photo.jpg',
+            thumbnailUrl: null,
+            name: 'photo.jpg',
+            mimeType: 'image/jpeg',
+            size: 1024,
+            uploadedAt: Timestamp.now()
+        };
+
+        await assertFails(setDoc(messageRef(parentDb, unsafeConversationId, 'unsafe-conversation-media'), directPayload({
+            text: '',
+            attachments: [attachment],
+            conversationId: unsafeConversationId
+        })));
+    });
+
+    it('allows exact-segment fallback paths for dotted email-derived conversation ids', async () => {
+        const emailConversationId = 'direct_email%3Aparent.name%40example.com__user-2';
+        await testEnv.withSecurityRulesDisabled(async (context) => {
+            await setDoc(doc(context.firestore(), `teams/team-1/chatConversations/${emailConversationId}`), {
+                type: 'direct',
+                participantIds: ['parent-1', 'user-2'],
+                participantRoles: [],
+                mutedBy: []
+            });
+        });
+
+        const parentDb = authedFirestore('parent-1', 'parent@example.com');
+        const attachment = {
+            type: 'image',
+            url: 'https://firebasestorage.googleapis.com/v0/b/allplays-images/o/team-photo.jpg?alt=media',
+            path: `stat-sheets/team-chat/team-1/${emailConversationId}/parent-1/photo.jpg`,
+            thumbnailUrl: null,
+            name: 'photo.jpg',
+            mimeType: 'image/jpeg',
+            size: 1024,
+            uploadedAt: Timestamp.now()
+        };
+
+        await assertSucceeds(setDoc(messageRef(parentDb, emailConversationId, 'valid-dotted-conversation-media'), directPayload({
+            text: '',
+            attachments: [attachment],
+            conversationId: emailConversationId
+        })));
     });
 
     it('allows bounded server-timestamp edits and rejects forged or oversized edits', async () => {
