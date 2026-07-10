@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 const signInWithPopupMock = vi.fn();
 const signInWithRedirectMock = vi.fn();
+const getRedirectResultMock = vi.fn();
 
 vi.mock('../../js/firebase.js?v=20', () => ({
     auth: { currentUser: null },
@@ -12,7 +13,7 @@ vi.mock('../../js/firebase.js?v=20', () => ({
     GoogleAuthProvider: class MockGoogleAuthProvider {},
     signInWithPopup: signInWithPopupMock,
     signInWithRedirect: signInWithRedirectMock,
-    getRedirectResult: vi.fn(),
+    getRedirectResult: getRedirectResultMock,
     sendPasswordResetEmail: vi.fn(),
     sendEmailVerification: vi.fn(),
     sendSignInLinkToEmail: vi.fn(),
@@ -114,6 +115,50 @@ describe('loginWithGoogle popup fallback handling', () => {
         });
 
         expect(signInWithRedirectMock).not.toHaveBeenCalled();
+        expect(sessionStorageMock.removeItem).toHaveBeenCalledWith('pendingActivationCode');
+    });
+
+    it('clears an invite code after successful popup sign-in for an existing user', async () => {
+        signInWithPopupMock.mockResolvedValue({
+            user: {
+                uid: 'existing-user',
+                email: 'existing@example.com',
+                metadata: {
+                    creationTime: '2026-01-01T00:00:00.000Z',
+                    lastSignInTime: '2026-07-09T20:00:00.000Z'
+                }
+            }
+        });
+
+        const { loginWithGoogle } = await import('../../js/auth.js');
+
+        await expect(loginWithGoogle('INVITE123')).resolves.toMatchObject({
+            user: { uid: 'existing-user' }
+        });
+
+        expect(sessionStorageMock.setItem).toHaveBeenCalledWith('pendingActivationCode', 'INVITE123');
+        expect(sessionStorageMock.removeItem).toHaveBeenCalledWith('pendingActivationCode');
+    });
+
+    it('clears a stored invite code after successful redirect sign-in for an existing user', async () => {
+        sessionStorageMock.getItem.mockReturnValue('STALE123');
+        getRedirectResultMock.mockResolvedValue({
+            user: {
+                uid: 'existing-redirect-user',
+                email: 'redirect@example.com',
+                metadata: {
+                    creationTime: '2026-01-01T00:00:00.000Z',
+                    lastSignInTime: '2026-07-09T20:00:00.000Z'
+                }
+            }
+        });
+
+        const { handleGoogleRedirectResult } = await import('../../js/auth.js');
+
+        await expect(handleGoogleRedirectResult()).resolves.toMatchObject({
+            user: { uid: 'existing-redirect-user' }
+        });
+
         expect(sessionStorageMock.removeItem).toHaveBeenCalledWith('pendingActivationCode');
     });
 });

@@ -51,7 +51,7 @@ describe('admin invite signup cache busting', () => {
 
     it('bumps auth module consumers after signup flow changes', () => {
         const authConsumers = {
-            'login.html': 'auth.js?v=44',
+            'login.html': 'auth.js?v=45',
             'accept-invite.html': 'auth.js?v=44',
             'edit-team.html': 'auth.js?v=44',
             'js/admin.js': 'auth.js?v=44',
