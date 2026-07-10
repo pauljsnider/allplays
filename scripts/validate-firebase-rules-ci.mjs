@@ -112,6 +112,10 @@ export function validateFirebaseRulesCi() {
     assertMatches(deployProd, /needs:\s*\[\s*unit-tests\s*,\s*regression-guards\s*\]/, 'Production deploy gate');
 
     assertMatches(deployPreview, /needs:\s*\[\s*unit-tests\s*,\s*regression-guards\s*\]/, 'Preview deploy gate');
+    if (/hosting:channel:deploy[^\n]*--site/.test(deployPreview)) {
+        throw new Error('Preview deploy must not pass --site to hosting:channel:deploy; firebase-tools 15 rejects that option.');
+    }
+    assertMatches(deployPreview, /hosting:channel:deploy "\$CURRENT_CHANNEL" --project game-flow-c6311 --config "\$FIREBASE_PREVIEW_CONFIG"/, 'Preview deploy Firebase project/config arguments');
 
     assertIncludes(storageRules, 'match /game-clips/{teamId}/{gameId}/{userId}/{fileName}', 'Scoped Storage game clip rules');
     assertIncludes(storageRules, 'allow get: if canAccessTeamMedia(teamId);', 'Scoped Storage game clip read rules');
