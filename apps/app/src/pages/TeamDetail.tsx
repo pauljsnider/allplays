@@ -364,7 +364,7 @@ export function TeamDetail({ auth }: { auth: AuthState }) {
     } else {
       scroll();
     }
-  }, [teamId]);
+  }, [teamId, activeTab]);
 
   async function refreshTeamDetail() {
     if (!teamId) return;
