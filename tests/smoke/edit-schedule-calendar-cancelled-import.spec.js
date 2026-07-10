@@ -255,6 +255,11 @@ export function buildTournamentPoolStandings() {
 export function buildTournamentPoolOverrideKey(poolName = '') {
     return String(poolName || '').trim().toLowerCase().replace(/[^a-z0-9]+/g, '-') || 'pool';
 }
+
+export function buildTournamentGroupOverrideKey(groupKey = '') {
+    const normalized = String(groupKey || '').trim();
+    return normalized ? 'group-' + normalized : null;
+}
 `;
 
 const SCHEDULE_NOTIFICATIONS_STUB = `
