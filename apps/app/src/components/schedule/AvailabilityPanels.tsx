@@ -1,3 +1,4 @@
+import { useEffect, useState } from 'react';
 import { type ParentScheduleEvent, type RsvpResponse } from '../../lib/scheduleLogic';
 import { rsvpBadgeClasses, rsvpLabels } from './AvailabilityNotesList';
 import { PlayerInitials } from './PlayerInitials';
@@ -35,7 +36,14 @@ export function QuickAvailabilityPanel({ event, rsvp, canSubmitRsvp, submitting,
 }) {
   const needsResponse = rsvp === 'not_responded';
   const noteSaveState = getAvailabilityNoteSaveState(rsvp, availabilityNote, event.myRsvpNote || '');
+  const hasSavedNote = Boolean(String(event.myRsvpNote || '').trim());
+  const [isNoteEditorOpen, setIsNoteEditorOpen] = useState(() => hasSavedNote || noteSaveState.isDirty);
   const showDirtyState = rsvp !== 'not_responded' && noteSaveState.isDirty;
+
+  useEffect(() => {
+    setIsNoteEditorOpen(hasSavedNote || noteSaveState.isDirty);
+  }, [event.childId, event.eventKey, hasSavedNote, noteSaveState.isDirty]);
+
   return (
     <div className={`border-b px-3 py-2.5 sm:px-4 sm:py-3 ${needsResponse ? 'border-amber-200 bg-amber-50' : 'border-gray-200 bg-white'}`}>
       <div className="flex items-center gap-2.5 sm:items-start sm:gap-3">
@@ -60,22 +68,36 @@ export function QuickAvailabilityPanel({ event, rsvp, canSubmitRsvp, submitting,
               </button>
             ))}
           </div>
-          <label className="mt-2 block">
-            <span className="sr-only">Availability note</span>
-            <textarea
-              aria-label="Availability note"
-              className="auth-input min-h-16 resize-none !px-3 !py-2 text-xs font-semibold"
-              value={availabilityNote}
-              onChange={(changeEvent) => onAvailabilityNoteChange(changeEvent.target.value)}
-              disabled={!canSubmitRsvp}
-              placeholder="Optional note for coaches, rides, or arrival details"
-              rows={2}
-              maxLength={280}
-            />
-          </label>
-          <div className="mt-1 text-[11px] font-semibold text-gray-500">
-            {event.availabilityNotesVisible ? 'Team note sharing is on for this team.' : 'Notes are visible to team staff unless sharing is enabled.'}
-          </div>
+          <button
+            type="button"
+            className="mt-2 min-h-8 rounded-full border border-gray-200 bg-white px-3 text-xs font-black text-gray-700 transition hover:border-primary-200 hover:bg-primary-50 hover:text-primary-700 disabled:cursor-not-allowed disabled:opacity-60"
+            aria-expanded={isNoteEditorOpen}
+            aria-controls={`availability-note-${event.eventKey}-${event.childId}`}
+            disabled={!canSubmitRsvp || (isNoteEditorOpen && noteSaveState.isDirty)}
+            onClick={() => setIsNoteEditorOpen((current) => !current)}
+          >
+            {isNoteEditorOpen ? 'Hide note' : hasSavedNote ? 'Edit note' : 'Add note'}
+          </button>
+          {isNoteEditorOpen ? (
+            <div id={`availability-note-${event.eventKey}-${event.childId}`}>
+              <label className="mt-2 block">
+                <span className="sr-only">Availability note</span>
+                <textarea
+                  aria-label="Availability note"
+                  className="auth-input min-h-16 resize-none !px-3 !py-2 text-xs font-semibold"
+                  value={availabilityNote}
+                  onChange={(changeEvent) => onAvailabilityNoteChange(changeEvent.target.value)}
+                  disabled={!canSubmitRsvp}
+                  placeholder="Optional note for coaches, rides, or arrival details"
+                  rows={2}
+                  maxLength={280}
+                />
+              </label>
+              <div className="mt-1 text-[11px] font-semibold text-gray-500">
+                {event.availabilityNotesVisible ? 'Team note sharing is on for this team.' : 'Notes are visible to team staff unless sharing is enabled.'}
+              </div>
+            </div>
+          ) : null}
           {noteSaveState.canSaveNote ? (
             <div className="mt-2 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2">
               <div className="text-xs font-black text-amber-900">Note edited but not saved yet.</div>
