@@ -8,15 +8,16 @@ import type { AuthState } from '../../lib/types';
 const parentCertificatesServiceMocks = vi.hoisted(() => ({
     loadParentCertificates: vi.fn()
 }));
+const publicActionMocks = vi.hoisted(() => ({
+    openPublicUrl: vi.fn(),
+    sharePublicUrl: vi.fn()
+}));
 
 vi.mock('../../lib/parentCertificatesService', () => ({
     loadParentCertificates: parentCertificatesServiceMocks.loadParentCertificates
 }));
 
-vi.mock('../../lib/publicActions', () => ({
-    openPublicUrl: vi.fn(),
-    sharePublicUrl: vi.fn()
-}));
+vi.mock('../../lib/publicActions', () => publicActionMocks);
 
 vi.mock('lucide-react', () => {
     const Icon = () => null;
@@ -93,7 +94,13 @@ describe('CertificatesTool deep links', () => {
         expect(screen.queryByText('Leadership Award')).toBeNull();
         expect(screen.getByText('Opened from a notification')).toBeTruthy();
         expect(screen.getByRole('button', { name: 'Show all awards' })).toBeTruthy();
-        expect(screen.getByRole('button', { name: 'Open' })).toBeTruthy();
+        const requestedCard = screen.getByText('Hustle Award').closest('section') as HTMLElement;
+        const viewAward = within(requestedCard).getByRole('button', { name: 'View award' });
+        const requestedShare = within(requestedCard).getByRole('button', { name: 'Share' });
+        expect(viewAward.className).toContain('primary-button');
+        expect(requestedShare.className).toContain('secondary-button');
+        fireEvent.click(viewAward);
+        expect(publicActionMocks.openPublicUrl).toHaveBeenCalledWith('https://allplays.ai/certificates.html#teamId=team-1&certificateId=cert-1');
         expect(parentCertificatesServiceMocks.loadParentCertificates).toHaveBeenCalledWith(auth.user, {
             requestedTeamId: 'team-1',
             requestedCertificateId: 'cert-1'
@@ -102,6 +109,11 @@ describe('CertificatesTool deep links', () => {
         fireEvent.click(screen.getByRole('button', { name: 'Show all awards' }));
 
         expect(await screen.findByText('Leadership Award')).toBeTruthy();
+        expect(within(requestedCard).getByRole('button', { name: 'View award' })).toBeTruthy();
+        expect(within(requestedCard).getByRole('button', { name: 'Share' })).toBeTruthy();
+        const leadershipCard = screen.getByText('Leadership Award').closest('section') as HTMLElement;
+        expect(within(leadershipCard).getByRole('button', { name: 'Open' })).toBeTruthy();
+        expect(within(leadershipCard).getByRole('button', { name: 'Share' })).toBeTruthy();
     });
 
     it('falls back to the full list with an inline explanation when the requested certificate is missing', async () => {
@@ -143,5 +155,7 @@ describe('CertificatesTool deep links', () => {
         expect(currentRender.getByText('Leadership Award')).toBeTruthy();
         expect(currentRender.getByText('Sam Player - Bears')).toBeTruthy();
         expect(currentRender.getByText('Jordan Star - Bears')).toBeTruthy();
+        expect(currentRender.getAllByRole('button', { name: 'Open' })).toHaveLength(2);
+        expect(currentRender.queryByRole('button', { name: 'View award' })).toBeNull();
     });
 });

@@ -786,13 +786,22 @@ test('awards deep links surface the requested certificate first on mobile', asyn
     await expect(page.getByText('Opened from a notification')).toBeVisible({ timeout: 15000 });
     await expect(page.getByText('Hustle Award', { exact: true })).toBeVisible();
     await expect(page.getByText('Leadership Award', { exact: true })).toHaveCount(0);
-    const openButton = page.getByRole('button', { name: 'Open' }).first();
-    await expect(openButton).toBeVisible();
-    const box = await openButton.boundingBox();
+    const requestedAwardCard = page.locator('section.app-card', { hasText: 'Hustle Award' });
+    const viewAwardButton = requestedAwardCard.getByRole('button', { name: 'View award' });
+    await expect(viewAwardButton).toBeVisible();
+    const box = await viewAwardButton.boundingBox();
     expect(box && box.y + box.height).toBeLessThanOrEqual(844);
+    await expect(requestedAwardCard.getByRole('button', { name: 'Share' })).toBeVisible();
+    await viewAwardButton.click();
+    await expect.poll(() => page.evaluate(() => window.__openedPublicUrls.at(-1))).toBe('https://allplays.ai/certificates.html#teamId=team-1&certificateId=cert-1');
 
     await page.getByRole('button', { name: 'Show all awards' }).click();
     await expect(page.getByText('Leadership Award')).toBeVisible();
+    await expect(requestedAwardCard.getByRole('button', { name: 'View award' })).toBeVisible();
+    await expect(requestedAwardCard.getByRole('button', { name: 'Share' })).toBeVisible();
+    const leadershipAwardCard = page.locator('section.app-card', { hasText: 'Leadership Award' });
+    await expect(leadershipAwardCard.getByRole('button', { name: 'Open' })).toBeVisible();
+    await expect(leadershipAwardCard.getByRole('button', { name: 'Share' })).toBeVisible();
 });
 
 test('team media route supports photo upload, file upload, link add, and media open', async ({ page, baseURL }) => {

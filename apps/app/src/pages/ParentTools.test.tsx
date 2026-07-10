@@ -989,7 +989,9 @@ describe('ParentTools access', () => {
         expect(await screen.findByText('Hustle Award')).toBeTruthy();
         expect(screen.queryByText('Leadership Award')).toBeNull();
         expect(screen.getByText('Opened from a notification')).toBeTruthy();
-        expect(screen.getByRole('button', { name: 'Open' })).toBeTruthy();
+        const requestedAwardCard = screen.getByText('Hustle Award').closest('section') as HTMLElement;
+        expect(within(requestedAwardCard).getByRole('button', { name: 'View award' })).toBeTruthy();
+        expect(within(requestedAwardCard).getByRole('button', { name: 'Share' })).toBeTruthy();
     });
 
     it('redirects invalid tabs without triggering a hook order violation', async () => {
