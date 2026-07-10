@@ -265,6 +265,18 @@ async function setFieldValue(field, value) {
     await flush();
 }
 
+async function waitForTeamEmailDialog(container) {
+    for (let attempt = 0; attempt < 10; attempt += 1) {
+        await flush();
+        const dialog = container.querySelector('[role="dialog"][aria-label="Team Email"]');
+        if (dialog?.querySelector('input[placeholder="Team update"]')) {
+            return dialog;
+        }
+    }
+
+    throw new Error('Team Email dialog did not finish loading.');
+}
+
 beforeEach(() => {
     vi.clearAllMocks();
     uxTimingMocks.interactionEnds.length = 0;
@@ -1650,6 +1662,7 @@ describe('React app messages integration', () => {
         await flush();
         await click(container, 'Done');
         await click(container, 'Team Email');
+        const emailDialog = await waitForTeamEmailDialog(container);
 
         expect(chatMocks.loadSentTeamEmails).toHaveBeenCalledWith('team-1', { limit: 25 });
         expect(container.textContent).toContain('Sends one backend roster email job');
@@ -1657,7 +1670,6 @@ describe('React app messages integration', () => {
         expect(container.textContent).toContain('Practice plan');
         expect(container.textContent).not.toContain('coach@example.com');
 
-        const emailDialog = container.querySelector('[role="dialog"][aria-label="Team Email"]');
         const subjectInput = emailDialog.querySelector('input[placeholder="Team update"]');
         const bodyInput = emailDialog.querySelector('textarea[placeholder="Write the email body..."]');
         await setFieldValue(subjectInput, 'Tournament update');
@@ -1689,7 +1701,7 @@ describe('React app messages integration', () => {
 
         await click(container, 'Team Email');
         chatMocks.loadSentTeamEmails.mockRejectedValueOnce(new Error('History refresh down'));
-        const emailDialog = container.querySelector('[role="dialog"][aria-label="Team Email"]');
+        const emailDialog = await waitForTeamEmailDialog(container);
         const subjectInput = emailDialog.querySelector('input[placeholder="Team update"]');
         const bodyInput = emailDialog.querySelector('textarea[placeholder="Write the email body..."]');
         await setFieldValue(subjectInput, 'Schedule');
@@ -1723,7 +1735,7 @@ describe('React app messages integration', () => {
         const { container } = await renderMessages('/messages/team-1');
 
         await click(container, 'Team Email');
-        const emailDialog = container.querySelector('[role="dialog"][aria-label="Team Email"]');
+        const emailDialog = await waitForTeamEmailDialog(container);
         const subjectInput = emailDialog.querySelector('input[placeholder="Team update"]');
         const bodyInput = emailDialog.querySelector('textarea[placeholder="Write the email body..."]');
         await setFieldValue(subjectInput, 'Schedule');
@@ -1749,7 +1761,7 @@ describe('React app messages integration', () => {
         const { container } = await renderMessages('/messages/team-1');
 
         await click(container, 'Team Email');
-        const emailDialog = container.querySelector('[role="dialog"][aria-label="Team Email"]');
+        const emailDialog = await waitForTeamEmailDialog(container);
         const subjectInput = emailDialog.querySelector('input[placeholder="Team update"]');
         const bodyInput = emailDialog.querySelector('textarea[placeholder="Write the email body..."]');
         await setFieldValue(subjectInput, 'Schedule');
@@ -1793,7 +1805,7 @@ describe('React app messages integration', () => {
         await click(container, 'Done');
         await click(container, 'Team Email');
 
-        let emailDialog = container.querySelector('[role="dialog"][aria-label="Team Email"]');
+        let emailDialog = await waitForTeamEmailDialog(container);
         let subjectInput = emailDialog.querySelector('input[placeholder="Team update"]');
         let bodyInput = emailDialog.querySelector('textarea[placeholder="Write the email body..."]');
         await setFieldValue(subjectInput, 'Roster update');
@@ -1811,7 +1823,7 @@ describe('React app messages integration', () => {
         await click(container, 'Full team');
         await click(container, 'Team Email');
 
-        emailDialog = container.querySelector('[role="dialog"][aria-label="Team Email"]');
+        emailDialog = await waitForTeamEmailDialog(container);
         subjectInput = emailDialog.querySelector('input[placeholder="Team update"]');
         bodyInput = emailDialog.querySelector('textarea[placeholder="Write the email body..."]');
         await setFieldValue(subjectInput, 'Schedule');
@@ -1827,7 +1839,7 @@ describe('React app messages integration', () => {
 
         await click(staffView.container, 'Team Email');
 
-        emailDialog = staffView.container.querySelector('[role="dialog"][aria-label="Team Email"]');
+        emailDialog = await waitForTeamEmailDialog(staffView.container);
         subjectInput = emailDialog.querySelector('input[placeholder="Team update"]');
         bodyInput = emailDialog.querySelector('textarea[placeholder="Write the email body..."]');
         await setFieldValue(subjectInput, 'Staff schedule');
