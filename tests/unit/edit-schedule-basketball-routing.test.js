@@ -56,11 +56,27 @@ function buildTrackChoiceDomHarness({ allConfigs, currentTeam, gamesCache, curre
     const dom = new JSDOM(`
         <div id="basketball-tracker-modal" class="hidden">
             <p id="tracker-choice-description"></p>
-            <button id="basketball-tracker-standard"></button>
-            <button id="basketball-tracker-beta"></button>
-            <button id="basketball-tracker-live"></button>
-            <button id="basketball-tracker-live-simple" class="hidden"></button>
-            <button id="basketball-tracker-photo"></button>
+            <div id="tracker-recommended-action">
+                <button id="basketball-tracker-standard" data-tracker-label="Standard Tracker">
+                    <span data-tracker-label-text>Standard Tracker</span>
+                </button>
+            </div>
+            <details id="tracker-advanced-options" open>
+                <div id="tracker-advanced-actions">
+                    <button id="basketball-tracker-beta" data-tracker-label="Basketball Beta">
+                        <span data-tracker-label-text>Basketball Beta</span>
+                    </button>
+                    <button id="basketball-tracker-live" data-tracker-label="Live Broadcast Tracker">
+                        <span data-tracker-label-text>Live Broadcast Tracker</span>
+                    </button>
+                    <button id="basketball-tracker-live-simple" data-tracker-label="Simple Live Tracker" class="hidden">
+                        <span data-tracker-label-text>Simple Live Tracker</span>
+                    </button>
+                    <button id="basketball-tracker-photo" data-tracker-label="Photo Score Sheet">
+                        <span data-tracker-label-text>Photo Score Sheet</span>
+                    </button>
+                </div>
+            </details>
             <button id="basketball-tracker-cancel"></button>
         </div>
     `);
@@ -76,6 +92,11 @@ function buildTrackChoiceDomHarness({ allConfigs, currentTeam, gamesCache, curre
             alert,
             getHref: () => window.location.href,
             getDescription: () => document.getElementById('tracker-choice-description').textContent,
+            getRecommendedId: () => document.querySelector('#tracker-recommended-action > button')?.id,
+            getTrackerLabel: (id) => document.querySelector('#' + id + ' [data-tracker-label-text]')?.textContent,
+            getTrackerParentId: (id) => document.getElementById(id)?.parentElement?.id,
+            getRecommendedCount: () => document.querySelectorAll('[data-recommended="true"]').length,
+            isAdvancedOpen: () => document.getElementById('tracker-advanced-options').open,
             isHidden: (id) => document.getElementById(id).classList.contains('hidden'),
             click: (id) => document.getElementById(id).click()
         };
@@ -132,8 +153,11 @@ describe('edit schedule basketball tracker routing', () => {
         const source = readEditSchedule();
 
         expect(source).toContain('id="basketball-tracker-live-simple"');
-        expect(source).toContain('Live Broadcast Simple');
+        expect(source).toContain('Simple Live Tracker');
         expect(source).toContain("import { getGoalSportProfile } from './js/live-sport-config.js?v=3';");
+        expect(source).toContain('id="tracker-recommended-action"');
+        expect(source).toContain('id="tracker-advanced-options"');
+        expect(source).toContain('More tracker options');
         expect(source).toContain("const simpleBtn = document.getElementById('basketball-tracker-live-simple');");
         expect(source).toContain("if (simpleBtn) simpleBtn.classList.toggle('hidden', !supportsSimpleLive);");
         expect(source).toContain('openTrackerChoiceModal(gameId, isBasketballForGame(game), isGoalSportForGame(game));');
@@ -162,6 +186,11 @@ describe('edit schedule basketball tracker routing', () => {
             expect(harness.isHidden('basketball-tracker-beta')).toBe(false);
             expect(harness.isHidden('basketball-tracker-photo')).toBe(false);
             expect(harness.getDescription()).toContain('Basketball stat config');
+            expect(harness.getRecommendedId()).toBe('basketball-tracker-live');
+            expect(harness.getTrackerLabel('basketball-tracker-live')).toBe('Start Live Tracker');
+            expect(harness.getRecommendedCount()).toBe(1);
+            expect(harness.isAdvancedOpen()).toBe(false);
+            expect(harness.getTrackerParentId('basketball-tracker-standard')).toBe('tracker-advanced-actions');
             harness.click(buttonId);
             expect(harness.getHref()).toBe(expectedHref);
         }
@@ -182,8 +211,34 @@ describe('edit schedule basketball tracker routing', () => {
         expect(harness.isHidden('basketball-tracker-beta')).toBe(true);
         expect(harness.isHidden('basketball-tracker-photo')).toBe(true);
         expect(harness.isHidden('basketball-tracker-live-simple')).toBe(false);
+        expect(harness.getRecommendedId()).toBe('basketball-tracker-live-simple');
+        expect(harness.getTrackerLabel('basketball-tracker-live-simple')).toBe('Start Simple Live Tracker');
+        expect(harness.getRecommendedCount()).toBe(1);
+        expect(harness.getTrackerParentId('basketball-tracker-live')).toBe('tracker-advanced-actions');
         harness.click('basketball-tracker-live');
         expect(harness.getHref()).toBe('track-live.html?v=2#teamId=team-123&gameId=game-789');
+    });
+
+    it('recommends the standard tracker for a generic sport while keeping live advanced', () => {
+        const harness = buildTrackChoiceDomHarness({
+            allConfigs: [{ id: 'baseball-config', baseType: 'Baseball' }],
+            currentTeam: { sport: 'Baseball' },
+            gamesCache: {
+                'game-generic': { id: 'game-generic', statTrackerConfigId: 'baseball-config' }
+            }
+        });
+
+        harness.handleTrackClick('game-generic');
+
+        expect(harness.getRecommendedId()).toBe('basketball-tracker-standard');
+        expect(harness.getTrackerLabel('basketball-tracker-standard')).toBe('Start Standard Tracker');
+        expect(harness.getRecommendedCount()).toBe(1);
+        expect(harness.isHidden('basketball-tracker-beta')).toBe(true);
+        expect(harness.isHidden('basketball-tracker-live-simple')).toBe(true);
+        expect(harness.isHidden('basketball-tracker-photo')).toBe(true);
+        expect(harness.getTrackerParentId('basketball-tracker-live')).toBe('tracker-advanced-actions');
+        harness.click('basketball-tracker-standard');
+        expect(harness.getHref()).toBe('track.html#teamId=team-123&gameId=game-generic');
     });
 
     it('renders completed schedule games with Report instead of Track', () => {
