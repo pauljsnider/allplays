@@ -1003,9 +1003,9 @@ describe('React app parent tools integration', () => {
 
         const inputs = Array.from(container.querySelectorAll('input.auth-input'));
         await changeValue(inputs.find((input) => input.placeholder.includes('title')), 'Replay');
-        await changeValue(inputs.find((input) => input.placeholder.includes('https://')), 'https://video.example.test/replay');
+        await changeValue(inputs.find((input) => input.placeholder.includes('https://')), 'https://youtu.be/replay123');
         await submitForm(container, 'Add link');
-        expect(serviceMocks.addParentTeamMediaLink).toHaveBeenCalledWith('team-1', 'folder-1', 'Replay', 'https://video.example.test/replay');
+        expect(serviceMocks.addParentTeamMediaLink).toHaveBeenCalledWith('team-1', 'folder-1', 'Replay', 'https://youtu.be/replay123');
 
         expect(container.textContent).toContain('Tipoff');
         expect(container.textContent).toContain('Open');

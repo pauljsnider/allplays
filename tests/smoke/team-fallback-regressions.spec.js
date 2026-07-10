@@ -514,6 +514,21 @@ export function isTeamMediaDocument() {
 export function isSafeTeamMediaUrl() {
     return true;
 }
+export function normalizeTeamMediaVideoDraft(draft = {}) {
+    const title = String(draft.title || '').trim();
+    if (!title) throw new Error('Video title is required.');
+    let url;
+    try {
+        url = new URL(String(draft.url || '').trim());
+    } catch {
+        throw new Error('Enter a valid YouTube or Vimeo URL.');
+    }
+    const host = url.hostname.toLowerCase();
+    if (!['youtube.com', 'youtu.be', 'vimeo.com'].some((allowed) => host === allowed || host.endsWith('.' + allowed))) {
+        throw new Error('Enter a valid YouTube or Vimeo URL.');
+    }
+    return { title, url: url.toString(), type: 'video_link' };
+}
 export function isSupportedTeamMediaImage() {
     return true;
 }
@@ -552,6 +567,21 @@ export function isTeamMediaDocument() {
 }
 export function isSafeTeamMediaUrl() {
     return true;
+}
+export function normalizeTeamMediaVideoDraft(draft = {}) {
+    const title = String(draft.title || '').trim();
+    if (!title) throw new Error('Video title is required.');
+    let url;
+    try {
+        url = new URL(String(draft.url || '').trim());
+    } catch {
+        throw new Error('Enter a valid YouTube or Vimeo URL.');
+    }
+    const host = url.hostname.toLowerCase();
+    if (!['youtube.com', 'youtu.be', 'vimeo.com'].some((allowed) => host === allowed || host.endsWith('.' + allowed))) {
+        throw new Error('Enter a valid YouTube or Vimeo URL.');
+    }
+    return { title, url: url.toString(), type: 'video_link' };
 }
 export function isSupportedTeamMediaImage() {
     return true;
@@ -1076,14 +1106,24 @@ test('team media staff uploads photos and files and saves video links to the sel
 
     await page.locator('#link-folder').selectOption('folder-1');
     await page.locator('#link-title').fill('Replay');
-    await page.locator('#link-url').fill('https://example.test/replay');
+    await page.locator('#link-url').fill('https://example.com/not-a-video');
+    await page.locator('#link-submit').click();
+    await expect(page.locator('#team-media-alert')).toContainText('Enter a valid YouTube or Vimeo URL.');
+    await expect(page.locator('#link-title')).toHaveValue('Replay');
+    await expect(page.locator('#link-url')).toHaveValue('https://example.com/not-a-video');
+    await expect.poll(() => page.evaluate(() => window.__TEAM_MEDIA_CALLS__)).toEqual([
+        { type: 'photo', teamId: 'team-1', folderId: 'folder-1', fileName: 'photo.jpg' },
+        { type: 'file', teamId: 'team-1', folderId: 'folder-1', fileName: 'packet.pdf' }
+    ]);
+
+    await page.locator('#link-url').fill('https://youtu.be/replay123');
     await page.locator('#link-submit').click();
     await expect(page.locator('#team-media-alert')).toContainText('Video link saved.');
 
     await expect.poll(() => page.evaluate(() => window.__TEAM_MEDIA_CALLS__)).toEqual([
         { type: 'photo', teamId: 'team-1', folderId: 'folder-1', fileName: 'photo.jpg' },
         { type: 'file', teamId: 'team-1', folderId: 'folder-1', fileName: 'packet.pdf' },
-        { type: 'link', teamId: 'team-1', folderId: 'folder-1', title: 'Replay', url: 'https://example.test/replay' }
+        { type: 'link', teamId: 'team-1', folderId: 'folder-1', title: 'Replay', url: 'https://youtu.be/replay123' }
     ]);
     expect(pageErrors).toEqual([]);
 });

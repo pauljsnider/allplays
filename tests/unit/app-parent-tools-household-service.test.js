@@ -68,6 +68,7 @@ vi.mock('../../js/team-media-utils.js', () => ({
     canReadTeamMediaAlbum: vi.fn(() => true),
     getTeamMediaItemUrl: vi.fn(() => ''),
     isSafeTeamMediaUrl: vi.fn(() => true),
+    normalizeTeamMediaVideoDraft: vi.fn((draft) => draft),
     sortByMediaOrder: vi.fn((items) => items)
 }));
 vi.mock('../../apps/app/src/lib/authService.ts', () => ({

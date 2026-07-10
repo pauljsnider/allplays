@@ -44,6 +44,21 @@ const teamMediaUtilsMocks = vi.hoisted(() => ({
         name: String(draft.name || '').trim(),
         visibility: String(draft.visibility || 'team').trim() || 'team'
     })),
+    normalizeTeamMediaVideoDraft: vi.fn((draft = {}) => {
+        const title = String(draft.title || '').trim();
+        if (!title) throw new Error('Video title is required.');
+        let url;
+        try {
+            url = new URL(String(draft.url || '').trim());
+        } catch {
+            throw new Error('Enter a valid YouTube or Vimeo URL.');
+        }
+        const host = url.hostname.toLowerCase();
+        if (!['youtube.com', 'youtu.be', 'vimeo.com'].some((allowed) => host === allowed || host.endsWith(`.${allowed}`))) {
+            throw new Error('Enter a valid YouTube or Vimeo URL.');
+        }
+        return { title, url: url.toString(), type: 'video_link' };
+    }),
     normalizeAlbumVisibility: vi.fn((value) => value),
     sortByMediaOrder: vi.fn((items) => items)
 }));
@@ -170,7 +185,7 @@ describe('team media db ordering', () => {
 
         const linkId = await createTeamMediaLink('team-1', 'folder-1', {
             title: 'Replay',
-            url: 'https://video.example.test/replay'
+            url: 'https://youtu.be/replay123'
         });
         const filePromise = uploadTeamMediaFile('team-1', 'folder-1', file);
         uploadTaskQueue.splice(0).forEach((complete) => complete());
@@ -191,6 +206,18 @@ describe('team media db ordering', () => {
         }));
         expect(firebaseMocks.addDoc.mock.calls[1][1]).not.toHaveProperty('downloadUrl');
         expect(firebaseMocks.getDownloadURL).not.toHaveBeenCalled();
+    });
+
+    it('rejects unsupported video-link hosts before reserving order or writing an item', async () => {
+        const { createTeamMediaLink } = await import('../../js/db.js');
+
+        await expect(createTeamMediaLink('team-1', 'folder-1', {
+            title: 'Not a video',
+            url: 'https://example.com/not-a-video'
+        })).rejects.toThrow('Enter a valid YouTube or Vimeo URL.');
+
+        expect(firebaseMocks.runTransaction).not.toHaveBeenCalled();
+        expect(firebaseMocks.addDoc).not.toHaveBeenCalled();
     });
 
     it('returns the created media item for app callers that opt into the richer upload payload', async () => {

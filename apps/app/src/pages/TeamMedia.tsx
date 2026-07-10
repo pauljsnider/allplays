@@ -691,7 +691,7 @@ export function TeamMedia({ auth }: { auth: AuthState }) {
           <div className="flex items-start justify-between gap-3">
             <div>
               <div className="text-sm font-black text-gray-950">Add to {activeFolder.name || 'album'}</div>
-              <div className="mt-0.5 text-xs font-semibold text-gray-500">Photos upload directly. Video and website links can be added by URL.</div>
+              <div className="mt-0.5 text-xs font-semibold text-gray-500">Photos upload directly. Video links require a public YouTube or Vimeo URL.</div>
             </div>
             {uploading ? <Loader2 className="h-5 w-5 animate-spin text-primary-600" aria-hidden="true" /> : <Upload className="h-5 w-5 text-primary-600" aria-hidden="true" />}
           </div>
@@ -729,7 +729,7 @@ export function TeamMedia({ auth }: { auth: AuthState }) {
             </div>
           ) : null}
           <form className="mt-3 grid gap-2 sm:grid-cols-[1fr_1fr_auto]" onSubmit={addLink}>
-            <input className="auth-input" value={linkTitle} onChange={(event) => setLinkTitle(event.target.value)} placeholder="Video or link title" />
+            <input className="auth-input" value={linkTitle} onChange={(event) => setLinkTitle(event.target.value)} placeholder="Video title" />
             <input className="auth-input" value={linkUrl} onChange={(event) => setLinkUrl(event.target.value)} placeholder="https://..." inputMode="url" />
             <button type="submit" className="primary-button justify-center" disabled={Boolean(uploading) || creatingAlbum || !linkTitle.trim() || !linkUrl.trim()}>
               {uploading === 'link' ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <Plus className="h-4 w-4" aria-hidden="true" />}
