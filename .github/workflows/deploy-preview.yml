@@ -210,7 +210,7 @@ jobs:
 
           deploy_preview_channel() {
             : > "$log_file"
-            ./node_modules/.bin/firebase hosting:channel:deploy "$CURRENT_CHANNEL" --project game-flow-c6311 --config "$FIREBASE_PREVIEW_CONFIG" --expires 7d --non-interactive 2>&1 | tee "$log_file"
+            ./node_modules/.bin/firebase hosting:channel:deploy "$CURRENT_CHANNEL" --site game-flow-c6311 --project game-flow-c6311 --config "$FIREBASE_PREVIEW_CONFIG" --expires 7d --non-interactive 2>&1 | tee "$log_file"
           }
 
           skip_preview() {
