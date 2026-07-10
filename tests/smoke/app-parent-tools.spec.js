@@ -536,10 +536,10 @@ test('parent tools hub completes access, fees, calendars, share, registration, a
 
     await page.getByRole('button', { name: 'Fees' }).click();
     await expect(page.getByText('Team dues')).toBeVisible();
-    await expect(page.getByText('Line items')).toHaveCount(0);
-    await expect(page.getByRole('button', { name: /Pay fee/ })).toBeVisible();
-    await page.getByRole('button', { name: 'View details' }).click();
     await expect(page.getByText('Line items')).toBeVisible();
+    await expect(page.getByRole('button', { name: /Pay fee/ })).toBeVisible();
+    await page.getByRole('button', { name: 'Hide details' }).click();
+    await expect(page.getByText('Line items')).toHaveCount(0);
     await page.getByRole('button', { name: /Pay fee/ }).click();
     await expect.poll(() => page.evaluate(() => window.__openedPublicUrls.at(-1))).toBe('https://pay.example.test/fee');
 
