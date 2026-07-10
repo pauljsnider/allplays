@@ -55,7 +55,7 @@ const webCreatedFixture = {
     { id: 'guardian_1', label: 'Guardian email', type: 'email', required: true }
   ],
   registrationOptions: [
-    { id: 'travel', label: 'Travel', capacityLimit: 12, active: true, waitlistEnabled: true, sortOrder: 0 }
+    { id: 'travel', label: 'Travel', description: 'Tryout team.', capacityLimit: 12, active: true, waitlistEnabled: true, sortOrder: 0 }
   ],
   paymentSettings: { offlinePaymentEnabled: true, onlineCheckoutEnabled: true },
   installmentPlan: { enabled: true, title: 'Two payments', installmentCount: 2, firstDueDate: '2026-06-01', intervalDays: 14 },
@@ -101,7 +101,7 @@ describe('registrationFormAdminService', () => {
       paymentSettings: { offlinePaymentEnabled: true, onlineCheckoutEnabled: true }
     });
     expect(draft.registrationOptions).toEqual([
-      { id: 'travel', label: 'Travel', description: '', capacityLimit: '12', active: true, waitlistEnabled: true }
+      { id: 'travel', label: 'Travel', description: 'Tryout team.', capacityLimit: '12', active: true, waitlistEnabled: true }
     ]);
     expect(draft.discountRules).toEqual([
       { id: 'discount_1', type: 'quantity', label: 'Sibling discount', amountType: 'fixed', amountValue: 25, earlyBirdDeadline: '', minimumQuantity: 2, active: true }
@@ -137,7 +137,7 @@ describe('registrationFormAdminService', () => {
         participantFieldsText: 'Player name',
         guardianFieldsText: 'Guardian email',
         registrationOptions: [
-          { id: 'full-day', label: 'Full day', capacityLimit: '20', active: true, waitlistEnabled: true }
+          { id: 'full-day', label: 'Full day', description: 'Lunch included.', capacityLimit: '20', active: true, waitlistEnabled: true }
         ],
         paymentSettings: { offlinePaymentEnabled: true, onlineCheckoutEnabled: false },
         installmentPlan: { enabled: true, installmentCount: 4, firstDueDate: '2026-06-01', intervalDays: 14 },
@@ -165,7 +165,7 @@ describe('registrationFormAdminService', () => {
       })
     );
     expect((firebaseMocks.setDoc.mock.calls[0][1] as any).registrationOptions).toEqual([
-      { id: 'full-day', label: 'Full day', capacityLimit: 20, active: true, waitlistEnabled: true, sortOrder: 0 }
+      { id: 'full-day', label: 'Full day', description: 'Lunch included.', capacityLimit: 20, active: true, waitlistEnabled: true, sortOrder: 0 }
     ]);
     expect((firebaseMocks.setDoc.mock.calls[0][1] as any).installmentPlan).toEqual({
       enabled: true,

@@ -24,7 +24,7 @@ describe('registrationFormAdmin', () => {
         { id: 'guardian_2', label: 'Guardian email', type: 'email', required: true }
       ],
       registrationOptions: [
-        { id: 'travel', title: 'Travel Team', capacityLimit: 12, waitlistEnabled: true },
+        { id: 'travel', title: 'Travel Team', description: 'Tryout team.', capacityLimit: 12, waitlistEnabled: true },
         { id: 'academy', title: 'Academy', capacityLimit: null, active: false }
       ],
       paymentSettings: { offlinePaymentEnabled: true, onlineCheckoutEnabled: false },
@@ -66,7 +66,7 @@ describe('registrationFormAdmin', () => {
       status: 'published'
     });
     expect(draft.registrationOptions).toEqual([
-      { id: 'travel', label: 'Travel Team', description: '', capacityLimit: '12', active: true, waitlistEnabled: true },
+      { id: 'travel', label: 'Travel Team', description: 'Tryout team.', capacityLimit: '12', active: true, waitlistEnabled: true },
       { id: 'academy', label: 'Academy', description: '', capacityLimit: '', active: false, waitlistEnabled: false }
     ]);
     expect(draft.discountRules).toEqual([
@@ -84,7 +84,7 @@ describe('registrationFormAdmin', () => {
       participantFieldsText: 'Player name\nBirthdate',
       guardianFieldsText: 'Guardian name\nGuardian email\nGuardian phone',
       registrationOptions: [
-        { id: 'full-day', label: 'Full day', capacityLimit: '20', active: true, waitlistEnabled: true },
+        { id: 'full-day', label: 'Full day', description: 'Lunch included.', capacityLimit: '20', active: true, waitlistEnabled: true },
         { id: 'half-day', label: 'Half day', capacityLimit: '', active: false, waitlistEnabled: false }
       ],
       paymentSettings: { offlinePaymentEnabled: true, onlineCheckoutEnabled: true },
@@ -110,8 +110,8 @@ describe('registrationFormAdmin', () => {
       published: true
     });
     expect(result.payload.registrationOptions).toEqual([
-      { id: 'full-day', label: 'Full day', capacityLimit: 20, active: true, waitlistEnabled: true, sortOrder: 0 },
-      { id: 'half-day', label: 'Half day', capacityLimit: null, active: false, waitlistEnabled: false, sortOrder: 1 }
+      { id: 'full-day', label: 'Full day', description: 'Lunch included.', capacityLimit: 20, active: true, waitlistEnabled: true, sortOrder: 0 },
+      { id: 'half-day', label: 'Half day', description: '', capacityLimit: null, active: false, waitlistEnabled: false, sortOrder: 1 }
     ]);
     expect(result.payload.discountRules).toEqual([
       { id: 'discount_1', type: 'quantity', label: 'Sibling discount', amountType: 'fixed', amountValue: 2500, earlyBirdDeadline: '', minimumQuantity: 2, active: true, sortOrder: 0 }
@@ -120,6 +120,7 @@ describe('registrationFormAdmin', () => {
       id: 'full-day',
       title: 'Full day',
       capacityLimit: 20,
+      description: 'Lunch included.',
       waitlistEnabled: true,
       active: true
     });
@@ -145,7 +146,7 @@ describe('registrationFormAdmin', () => {
       participantFields: [{ id: 'participant_1', label: 'Player name', type: 'text', required: true }],
       guardianFields: [{ id: 'guardian_1', label: 'Guardian email', type: 'email', required: true }],
       registrationOptions: [
-        { id: 'travel', label: 'Travel', capacityLimit: 12, active: true, waitlistEnabled: true, sortOrder: 0 }
+        { id: 'travel', label: 'Travel', description: 'Regional tournament track.', capacityLimit: 12, active: true, waitlistEnabled: true, sortOrder: 0 }
       ],
       paymentSettings: { offlinePaymentEnabled: true, onlineCheckoutEnabled: false },
       installmentPlan: { enabled: true, title: 'Two payments', installmentCount: 2, firstDueDate: '2026-07-01', intervalDays: 30 },
@@ -171,7 +172,7 @@ describe('registrationFormAdmin', () => {
       waiverText: 'Closed form waiver.'
     });
     expect(result.payload.registrationOptions).toEqual([
-      { id: 'travel', label: 'Travel', capacityLimit: 12, active: true, waitlistEnabled: true, sortOrder: 0 }
+      { id: 'travel', label: 'Travel', description: 'Regional tournament track.', capacityLimit: 12, active: true, waitlistEnabled: true, sortOrder: 0 }
     ]);
     expect(result.publishState).toEqual({
       status: 'closed',
