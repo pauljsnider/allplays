@@ -29,4 +29,23 @@ describe('RSVP precedence cache delivery', () => {
         expect(dbSource).toContain("from './game-day-rsvp-breakdown.js?v=2';");
         expect(breakdownSource).toContain("from './rsvp-summary.js?v=2';");
     });
+
+    it('versions every deployed auth consumer after auth adopts the fresh db key', () => {
+        const authConsumers = [
+            'accept-invite.html',
+            'dashboard.html',
+            'edit-team.html',
+            'login.html',
+            'parent-dashboard.html',
+            'js/admin.js',
+            'js/live-game.js',
+            'js/live-tracker.js',
+            'js/team-media.js',
+            'js/utils.js'
+        ].map(readRepoFile);
+
+        authConsumers.forEach((source) => {
+            expect(source).toContain('auth.js?v=46');
+        });
+    });
 });
