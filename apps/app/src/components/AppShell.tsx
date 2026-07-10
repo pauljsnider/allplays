@@ -269,6 +269,10 @@ export function AppShell({ auth, children }: AppShellProps) {
 
   const handleAddWorkflow = async (workflow: AddWorkflow) => {
     closeAddWorkflowModal();
+    if (workflow.id === 'request-access' && !auth.user) {
+      await openPublicUrl(legacyUrl('teams.html'));
+      return;
+    }
     if (workflow.kind === 'website') {
       await openPublicUrl(workflow.href);
       return;
