@@ -14,8 +14,8 @@ rather than assumed.
 
 | Metric | What it measures | How to capture |
 | --- | --- | --- |
-| Cold-start TTI (Home) | App launch → Home schedule cards interactive | `first meaningful render` span (web + device), Lighthouse TTI for web |
-| Warm resume time | Foreground after backgrounding → fresh data on screen | Manual stopwatch + `app startup` span on resume |
+| Cold-start TTI (Home) | App launch → Home schedule cards interactive | `app start to home first meaningful render` span (web + device), Lighthouse TTI for web |
+| Warm resume time | Foreground after backgrounding → fresh data on screen | `warm resume to interactive` span + manual stopwatch |
 | Firestore reads / Home mount | Read/REST count on a Home cold mount | Dev read-count instrumentation (see below) |
 | Firestore reads / Schedule mount | Read/REST count to render the schedule | Dev read-count instrumentation |
 | Firestore reads / Messages mount | Read/REST count to render the inbox | Dev read-count instrumentation |
@@ -31,9 +31,16 @@ The app records these spans through `recordUxTiming` /
 `apps/app/src/lib/uxTiming.ts` (`UX_TIMING`):
 
 - `app startup` — emitted in `main.tsx` at initial React render.
+- `app start to home first meaningful render` — emitted once when Home's
+  initial primary and secondary loads settle. Its start point is navigation
+  start, so use this label for the cold-start Home TTI row above.
 - `first meaningful render` — `recordFirstMeaningfulRender(route)`, fired once
   per page load when Home/Schedule leave their loading state. Baseline is
   navigation start, so this is the true cold-start cost.
+- `warm resume to interactive` — emitted by `useRefreshOnResume` after the
+  stale foreground refresh settles on web (`visibilitychange`) or native
+  (`appStateChange`). Use this label for warm-resume measurements; `app startup`
+  is only the initial render and is not a resume span.
 - `rsvp tap latency` — `startInteractionTimer(UX_TIMING.rsvpTap)` around the
   parent RSVP submit in `scheduleService.ts`. RSVP timing validation uses the
   lab action "open a Schedule event and tap Going" and the `app_ux_timing`
