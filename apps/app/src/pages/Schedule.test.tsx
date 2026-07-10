@@ -793,7 +793,7 @@ describe('Schedule', () => {
     expect(screen.getByRole('button', { name: /create tournament/i })).toBeTruthy();
   });
 
-  it('keeps tournament creation to one game row and validates required fields before saving', async () => {
+  it('adds and removes tournament game rows while preserving the remaining row', async () => {
     scheduleServiceMocks.loadParentSchedule.mockResolvedValueOnce(buildStaffScheduleResult());
 
     renderSchedule();
@@ -804,8 +804,17 @@ describe('Schedule', () => {
 
     expect(screen.getByText('Game 1')).toBeTruthy();
     expect(screen.queryByText('Game 2')).toBeNull();
-    expect(screen.queryByRole('button', { name: /add another game/i })).toBeNull();
+    expect(screen.getByRole('button', { name: /add another game/i })).toBeTruthy();
     expect(screen.queryByRole('button', { name: /remove/i })).toBeNull();
+
+    fireEvent.click(screen.getByRole('button', { name: /add another game/i }));
+    expect(screen.getByText('Game 2')).toBeTruthy();
+    fireEvent.change(screen.getByLabelText('Game 2 opponent'), { target: { value: 'Lions' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Remove game 1' }));
+
+    expect(screen.queryByText('Game 2')).toBeNull();
+    expect((screen.getByLabelText('Game 1 opponent') as HTMLInputElement).value).toBe('Lions');
+    expect(screen.queryByRole('button', { name: /remove game/i })).toBeNull();
 
     fireEvent.click(screen.getByRole('button', { name: /^create tournament$/i }));
 
@@ -863,11 +872,27 @@ describe('Schedule', () => {
     });
   });
 
-  it('submits tournament blocks with metadata and one child game from schedule tools', async () => {
+  it('validates, submits, and reloads every game in a multi-game tournament block', async () => {
     scheduleServiceMocks.loadParentSchedule
       .mockResolvedValueOnce(buildStaffScheduleResult())
-      .mockResolvedValueOnce(buildStaffScheduleResult());
-    scheduleServiceMocks.createScheduledTournamentBlockForApp.mockResolvedValueOnce(['game-1']);
+      .mockResolvedValueOnce({
+        children: buildStaffScheduleResult().children,
+        events: [
+          buildScheduleEvent(2, {
+            isTeamStaff: true,
+            opponent: 'Tigers',
+            competitionType: 'tournament',
+            tournament: { divisionName: '10U Gold', bracketName: 'Gold Bracket', roundName: 'Semifinal', poolName: 'Pool A' }
+          }),
+          buildScheduleEvent(3, {
+            isTeamStaff: true,
+            opponent: 'Lions',
+            competitionType: 'tournament',
+            tournament: { divisionName: '10U Gold', bracketName: 'Gold Bracket', roundName: 'Semifinal', poolName: 'Pool A' }
+          })
+        ]
+      });
+    scheduleServiceMocks.createScheduledTournamentBlockForApp.mockResolvedValueOnce(['game-1', 'game-2']);
 
     renderSchedule();
 
@@ -883,6 +908,17 @@ describe('Schedule', () => {
     fireEvent.change(screen.getByLabelText('Game 1 location'), { target: { value: 'Main Gym' } });
     fireEvent.change(screen.getByLabelText('Game 1 starts'), { target: { value: '2026-06-24T18:30' } });
     fireEvent.change(screen.getByLabelText('Game 1 ends'), { target: { value: '2026-06-24T20:00' } });
+    fireEvent.click(screen.getByRole('button', { name: /add another game/i }));
+
+    fireEvent.click(screen.getByRole('button', { name: /^create tournament$/i }));
+    expect((await screen.findAllByText('Game opponent is required.')).length).toBeGreaterThan(0);
+    expect(scheduleServiceMocks.createScheduledTournamentBlockForApp).not.toHaveBeenCalled();
+    expect((screen.getByLabelText('Game 1 opponent') as HTMLInputElement).value).toBe('Tigers');
+
+    fireEvent.change(screen.getByLabelText('Game 2 opponent'), { target: { value: 'Lions' } });
+    fireEvent.change(screen.getByLabelText('Game 2 location'), { target: { value: 'Field 2' } });
+    fireEvent.change(screen.getByLabelText('Game 2 starts'), { target: { value: '2026-06-25T18:30' } });
+    fireEvent.change(screen.getByLabelText('Game 2 ends'), { target: { value: '2026-06-25T20:00' } });
 
     fireEvent.click(screen.getByRole('button', { name: /^create tournament$/i }));
 
@@ -893,12 +929,16 @@ describe('Schedule', () => {
         bracketName: 'Gold Bracket',
         roundName: 'Semifinal',
         poolName: 'Pool A',
-        games: [expect.objectContaining({
-          opponent: 'Tigers',
-          location: 'Main Gym'
-        })]
+        games: [
+          expect.objectContaining({ opponent: 'Tigers', location: 'Main Gym' }),
+          expect.objectContaining({ opponent: 'Lions', location: 'Field 2' })
+        ]
       }), auth.user);
     });
+    expect(await screen.findByText('Tournament created and schedule refreshed.')).toBeTruthy();
+    expect((await screen.findAllByText('vs. Tigers')).length).toBeGreaterThan(0);
+    expect((await screen.findAllByText('vs. Lions')).length).toBeGreaterThan(0);
+    expect(screen.queryByRole('heading', { name: 'Add tournament for Bears' })).toBeNull();
   });
 
   it('hides Manage schedule from non-staff schedule users', async () => {

@@ -1346,6 +1346,46 @@ test('iOS-sized staff schedule keeps tools collapsed below the event list', asyn
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth + 1)).toBe(true);
 });
 
+test('iOS-sized staff schedule submits every row in a multi-game tournament block', async ({ page, baseURL }) => {
+    await page.setViewportSize({ width: 390, height: 844 });
+    await mockScheduleModules(page, { isCoach: true, staffManageable: true });
+    await page.goto(appUrl(baseURL, '/schedule'), { waitUntil: 'domcontentloaded' });
+
+    await expect(mobileScheduleFilter(page)).toBeVisible({ timeout: 15000 });
+    await page.getByRole('button', { name: /Manage schedule/ }).click();
+    await page.getByRole('button', { name: 'New tournament block' }).click();
+
+    await expect(page.getByRole('heading', { name: 'Add tournament for Bears' })).toBeVisible();
+    await page.getByLabel('Tournament division').fill('10U Gold');
+    await page.getByLabel('Tournament bracket').fill('Gold Bracket');
+    await page.getByLabel('Tournament round').fill('Semifinal');
+    await page.getByLabel('Tournament pool').fill('Pool A');
+    await page.getByLabel('Game 1 opponent').fill('Tigers');
+    await page.getByLabel('Game 1 location').fill('Main Gym');
+
+    await page.getByRole('button', { name: 'Add another game' }).click();
+    await expect(page.getByText('Game 2')).toBeVisible();
+    await page.getByLabel('Game 2 opponent').fill('Lions');
+    await page.getByLabel('Game 2 location').fill('Field 2');
+    await page.getByRole('button', { name: 'Create tournament', exact: true }).click();
+
+    await expect.poll(async () => page.evaluate(() => {
+        const call = window.__scheduleCalls?.tournamentCreates?.[0];
+        return call ? {
+            teamId: call.teamId,
+            opponents: call.form.games.map((game) => game.opponent),
+            locations: call.form.games.map((game) => game.location)
+        } : null;
+    })).toEqual({
+        teamId: 'team-1',
+        opponents: ['Tigers', 'Lions'],
+        locations: ['Main Gym', 'Field 2']
+    });
+    await expect(page.getByText('Tournament created and schedule refreshed.')).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Add tournament for Bears' })).toHaveCount(0);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth + 1)).toBe(true);
+});
+
 test('Android-sized schedule smoke covers practice packet and More workflow without overflow', async ({ page, baseURL }) => {
     await page.setViewportSize({ width: 412, height: 915 });
     await mockScheduleModules(page);

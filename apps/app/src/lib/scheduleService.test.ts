@@ -186,7 +186,7 @@ import { expandRecurrence, fetchAndParseCalendar, isTeamActive, mergeAssignments
 import { getCachedAppData, loadCachedAppData } from './appDataCache';
 import { mapScheduleEventRecord } from './firestore/mappers';
 import { loadProfileDocument } from './profileService';
-import { adjustGameScore, buildPlayerScoringLiveEvent, buildSingleGameTournamentLegacySchedulePayload, claimOfficialAssignmentItem, createScheduledGameForApp, createScheduledPracticeForApp, createScheduledTournamentBlockForApp, createStaffRsvpAvailabilityLoader, flushPendingLivePublishOperations, hydrateParentScheduleDetails, loadOfficialAssignments, loadParentSchedule, loadParentScheduleChildren, loadParentScheduleEventDetail, loadScheduledPracticeSeriesForEdit, loadStaffPracticeAttendance, loadStaffScheduleRsvpBreakdown, publishLiveScoreUpdateEvent, recordPlayerGameStat, recordPlayerScoringStat, releaseParentScheduleAssignmentClaim, resolveCachedParentScheduleEvents, resolveLiveGameClockSnapshot, resolveParentGameRoute, respondToOfficialAssignmentItem, revertScheduledPracticeOccurrenceForApp, saveScheduledGameLineupDraftForApp, saveStaffPracticeAttendance, submitStaffScheduleRsvpOverride, undoRecordedPlayerGameStat, updateLiveGameClockState, updateScheduledPracticeForApp } from './scheduleService';
+import { adjustGameScore, buildPlayerScoringLiveEvent, buildSingleGameTournamentLegacySchedulePayload, claimOfficialAssignmentItem, createScheduledGameForApp, createScheduledPracticeForApp, createScheduledTournamentBlockForApp, createStaffRsvpAvailabilityLoader, flushPendingLivePublishOperations, hydrateParentScheduleDetails, loadOfficialAssignments, loadParentSchedule, loadParentScheduleChildren, loadParentScheduleEventDetail, loadScheduledPracticeSeriesForEdit, loadStaffPracticeAttendance, loadStaffScheduleRsvpBreakdown, publishLiveScoreUpdateEvent, recordPlayerGameStat, recordPlayerScoringStat, releaseParentScheduleAssignmentClaim, resolveCachedParentScheduleEvents, resolveLiveGameClockSnapshot, resolveParentGameRoute, respondToOfficialAssignmentItem, revertScheduledPracticeOccurrenceForApp, saveScheduledGameLineupDraftForApp, saveStaffPracticeAttendance, submitStaffScheduleRsvpOverride, TournamentBlockPartialSaveError, undoRecordedPlayerGameStat, updateLiveGameClockState, updateScheduledPracticeForApp } from './scheduleService';
 
 function playerSnapshot(id: string, data: Record<string, unknown> | null) {
   return {
@@ -441,7 +441,7 @@ describe('scheduled tournament writes', () => {
     expect(addGame).not.toHaveBeenCalled();
   });
 
-  it('rejects multi-row tournament blocks before building partial tournament documents', async () => {
+  it('prevalidates every tournament row before building or writing documents', async () => {
     await expect(createScheduledTournamentBlockForApp('team-1', {
       divisionName: '10U Gold',
       bracketName: 'Gold Bracket',
@@ -458,7 +458,7 @@ describe('scheduled tournament writes', () => {
           notes: 'Bring dark jerseys'
         },
         {
-          opponent: 'Lions',
+          opponent: '',
           startDate: new Date('2026-06-25T18:30:00.000Z'),
           endDate: new Date('2026-06-25T20:00:00.000Z'),
           location: 'Field 2',
@@ -467,7 +467,7 @@ describe('scheduled tournament writes', () => {
           notes: ''
         }
       ]
-    }, coachUser)).rejects.toThrow('Tournament blocks currently support exactly one completed game.');
+    }, coachUser)).rejects.toThrow('Games require an opponent.');
 
     expect(buildSingleLegacyTournamentGameDocument).not.toHaveBeenCalled();
     expect(buildLegacyTournamentGameDocuments).not.toHaveBeenCalled();
@@ -525,8 +525,12 @@ describe('scheduled tournament writes', () => {
     }));
   });
 
-  it('does not let unsupported tournament row counts reach the legacy tournament mapper', async () => {
-    await expect(createScheduledTournamentBlockForApp('team-1', {
+  it('builds and persists every row in a multi-game tournament block', async () => {
+    vi.mocked(addGame)
+      .mockResolvedValueOnce('game-1' as any)
+      .mockResolvedValueOnce('game-2' as any);
+
+    const createdIds = await createScheduledTournamentBlockForApp('team-1', {
       divisionName: '10U Gold',
       bracketName: 'Gold Bracket',
       roundName: 'Semifinal',
@@ -551,11 +555,65 @@ describe('scheduled tournament writes', () => {
           notes: ''
         }
       ]
-    }, coachUser)).rejects.toThrow('Tournament blocks currently support exactly one completed game.');
+    }, coachUser);
 
+    expect(createdIds).toEqual(['game-1', 'game-2']);
     expect(buildSingleLegacyTournamentGameDocument).not.toHaveBeenCalled();
-    expect(buildLegacyTournamentGameDocuments).not.toHaveBeenCalled();
-    expect(addGame).not.toHaveBeenCalled();
+    expect(buildLegacyTournamentGameDocuments).toHaveBeenCalledTimes(1);
+    expect(buildLegacyTournamentGameDocuments).toHaveBeenCalledWith([
+      expect.objectContaining({ opponent: 'Tigers', competitionType: 'tournament', createdBy: 'coach-1' }),
+      expect.objectContaining({ opponent: 'Lions', competitionType: 'tournament', createdBy: 'coach-1' })
+    ], {
+      divisionName: '10U Gold',
+      bracketName: 'Gold Bracket',
+      roundName: 'Semifinal',
+      poolName: 'Pool A'
+    });
+    expect(addGame).toHaveBeenCalledTimes(2);
+    expect(addGame).toHaveBeenNthCalledWith(1, 'team-1', expect.objectContaining({
+      opponent: 'Tigers',
+      tournament: expect.objectContaining({ bracketName: 'Gold Bracket' })
+    }));
+    expect(addGame).toHaveBeenNthCalledWith(2, 'team-1', expect.objectContaining({
+      opponent: 'Lions',
+      tournament: expect.objectContaining({ bracketName: 'Gold Bracket' })
+    }));
+  });
+
+  it('reports created ids and a safe retry action when a multi-game save is partial', async () => {
+    const writeError = new Error('Firestore unavailable');
+    vi.mocked(addGame)
+      .mockResolvedValueOnce('game-1' as any)
+      .mockRejectedValueOnce(writeError);
+
+    const save = createScheduledTournamentBlockForApp('team-1', {
+      divisionName: '10U Gold',
+      bracketName: 'Gold Bracket',
+      roundName: 'Semifinal',
+      poolName: 'Pool A',
+      games: [
+        {
+          opponent: 'Tigers',
+          startDate: new Date('2026-06-24T18:30:00.000Z'),
+          endDate: new Date('2026-06-24T20:00:00.000Z')
+        },
+        {
+          opponent: 'Lions',
+          startDate: new Date('2026-06-25T18:30:00.000Z'),
+          endDate: new Date('2026-06-25T20:00:00.000Z')
+        }
+      ]
+    }, coachUser);
+
+    await expect(save).rejects.toMatchObject({
+      name: 'TournamentBlockPartialSaveError',
+      createdIds: ['game-1'],
+      totalGames: 2,
+      failedGameNumber: 2,
+      cause: writeError,
+      message: 'Tournament block was only partially created: 1 of 2 games were saved. Refresh Schedule before retrying to avoid duplicate games.'
+    } satisfies Partial<TournamentBlockPartialSaveError>);
+    expect(addGame).toHaveBeenCalledTimes(2);
   });
 
   it('throws an explicit error when a single-game tournament save returns no id', async () => {
