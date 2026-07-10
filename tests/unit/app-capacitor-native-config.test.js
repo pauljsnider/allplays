@@ -74,6 +74,31 @@ describe('Capacitor native config', () => {
         expect(appPnpmLock).toContain(`'@vitejs/plugin-react@${pluginReactVersion}(vite@8.1.3`);
     });
 
+    it('keeps shared Camera and Firebase maintenance versions aligned across manifests and lockfiles', () => {
+        const rootPackage = JSON.parse(readProjectFile('package.json'));
+        const appPackage = JSON.parse(readProjectFile('apps/app/package.json'));
+        const rootPackageLock = JSON.parse(readProjectFile('package-lock.json'));
+        const appPackageLock = JSON.parse(readProjectFile('apps/app/package-lock.json'));
+        const appPnpmLock = readProjectFile('apps/app/pnpm-lock.yaml');
+        const expectedDependencies = {
+            '@capacitor/camera': { specifier: '^8.2.1', version: '8.2.1' },
+            firebase: { specifier: '12.16.0', version: '12.16.0' }
+        };
+
+        Object.entries(expectedDependencies).forEach(([dependency, expected]) => {
+            expect(rootPackage.dependencies[dependency]).toBe(expected.specifier);
+            expect(appPackage.dependencies[dependency]).toBe(expected.specifier);
+            expect(rootPackageLock.packages[''].dependencies[dependency]).toBe(expected.specifier);
+            expect(appPackageLock.packages[''].dependencies[dependency]).toBe(expected.specifier);
+            expect(rootPackageLock.packages[`node_modules/${dependency}`].version).toBe(expected.version);
+            expect(appPackageLock.packages[`node_modules/${dependency}`].version).toBe(expected.version);
+        });
+
+        expect(appPnpmLock).toContain("'@capacitor/camera@8.2.1':");
+        expect(appPnpmLock).toContain('firebase@12.16.0:');
+        expect(appPnpmLock).not.toContain('firebase@12.15.0:');
+    });
+
     it('wires first paint splash hiding and status bar setup into the app bootstrap', () => {
         const main = readProjectFile('apps/app/src/main.tsx');
         const nativeAppearance = readProjectFile('apps/app/src/lib/nativeAppearance.ts');
