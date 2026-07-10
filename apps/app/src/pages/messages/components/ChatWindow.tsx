@@ -1585,7 +1585,6 @@ export function ChatWindow({
             auth={auth}
             teamId={teamId}
             profile={profile}
-            isDesktopWeb={isDesktopWeb}
             selectedConversation={selectedConversation}
             selectedConversationId={effectiveConversationId}
             selectedRecipientTarget={selectedRecipientTarget}

@@ -39,7 +39,6 @@ type TeamEmailSheetProps = {
   auth: AuthState;
   teamId: string;
   profile: Record<string, any>;
-  isDesktopWeb: boolean;
   selectedConversation: ChatConversation | null;
   selectedConversationId: string;
   selectedRecipientTarget: ChatTargetType;
@@ -59,7 +58,6 @@ export default function TeamEmailSheet({
   auth,
   teamId,
   profile,
-  isDesktopWeb,
   selectedConversation,
   selectedConversationId,
   selectedRecipientTarget,
@@ -97,6 +95,8 @@ export default function TeamEmailSheet({
     () => getAudienceSummaryText(emailAudienceMetadata, recipientOptions),
     [emailAudienceMetadata, recipientOptions]
   );
+  const selectedMemberAudience = emailAudienceMetadata.targetType === 'individuals'
+    || (isDefaultTeamConversation(selectedConversationId) && selectedRecipientTarget === 'individuals');
 
   const reloadSentEmailHistory = async ({ suppressErrorStatus = false } = {}) => {
     setEmailLoadingHistory(true);
@@ -242,7 +242,7 @@ export default function TeamEmailSheet({
       setEmailStatus({ tone: 'error', message: 'Subject and message are required.' });
       return;
     }
-    if (emailAudienceMetadata.targetType === 'individuals' && emailAudienceMetadata.recipientIds.length === 0) {
+    if (selectedMemberAudience && emailAudienceMetadata.recipientIds.length === 0) {
       setEmailStatus({ tone: 'error', message: 'Choose at least one selected member before sending.' });
       return;
     }
@@ -271,7 +271,6 @@ export default function TeamEmailSheet({
 
   return (
     <TeamEmailSheetView
-      isDesktopWeb={isDesktopWeb}
       subject={emailState.subject}
       body={emailState.body}
       drafts={emailState.drafts}
@@ -291,6 +290,7 @@ export default function TeamEmailSheet({
       sentEmails={sentEmails}
       audienceSummary={audienceSummary}
       audienceMetadata={emailAudienceMetadata}
+      selectedMemberAudience={selectedMemberAudience}
       onSubjectChange={(subject) => emailDispatch(emailComposerActions.updateSubject(subject))}
       onBodyChange={(body) => emailDispatch(emailComposerActions.updateBody(body))}
       onTemplateNameChange={(templateName) => emailDispatch(emailComposerActions.updateTemplateName(templateName))}
@@ -313,7 +313,6 @@ export default function TeamEmailSheet({
 }
 
 function TeamEmailSheetView({
-  isDesktopWeb,
   subject,
   body,
   drafts,
@@ -333,6 +332,7 @@ function TeamEmailSheetView({
   sentEmails,
   audienceSummary,
   audienceMetadata,
+  selectedMemberAudience,
   onSubjectChange,
   onBodyChange,
   onTemplateNameChange,
@@ -349,7 +349,6 @@ function TeamEmailSheetView({
   onHistoryStatusClose,
   onClose
 }: {
-  isDesktopWeb: boolean;
   subject: string;
   body: string;
   drafts: TeamEmailDraft[];
@@ -369,6 +368,7 @@ function TeamEmailSheetView({
   sentEmails: SentTeamEmail[];
   audienceSummary: string;
   audienceMetadata: ChatAudienceMetadata;
+  selectedMemberAudience: boolean;
   onSubjectChange: (value: string) => void;
   onBodyChange: (value: string) => void;
   onTemplateNameChange: (value: string) => void;
@@ -386,8 +386,8 @@ function TeamEmailSheetView({
   onClose: () => void;
 }) {
   const [selectedTemplateId, setSelectedTemplateId] = useState('');
-  const draftAudienceSupported = audienceMetadata.targetType === 'individuals';
-  const missingSelectedRecipients = audienceMetadata.targetType === 'individuals' && audienceMetadata.recipientIds.length === 0;
+  const draftAudienceSupported = selectedMemberAudience;
+  const missingSelectedRecipients = selectedMemberAudience && audienceMetadata.recipientIds.length === 0;
   const canSendEmail = Boolean(subject.trim() && body.trim()) && !missingSelectedRecipients && !sending;
   const canSaveDraft = draftAudienceSupported
     && !recipientOptionsLoading
@@ -454,10 +454,6 @@ function TeamEmailSheetView({
       {!draftAudienceSupported ? (
         <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-sm font-bold text-amber-800">
           Draft saving is available only for Selected members.
-        </div>
-      ) : missingSelectedRecipients ? (
-        <div className="rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-sm font-bold text-rose-700">
-          Choose at least one selected member before saving or sending email.
         </div>
       ) : null}
     </div>
@@ -540,8 +536,11 @@ function TeamEmailSheetView({
             </button>
           </div>
         ) : null}
-        {isDesktopWeb ? savedDraftsSection : null}
-        {isDesktopWeb ? reusableTemplatesSection : null}
+        {missingSelectedRecipients ? (
+          <div className="rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-sm font-bold text-rose-700">
+            Choose at least one selected member before saving or sending email.
+          </div>
+        ) : null}
         <label className="block">
           <span className="app-label">Subject</span>
           <input
@@ -569,8 +568,8 @@ function TeamEmailSheetView({
           Send email
         </button>
         {status ? <StatusBanner status={status} onClose={onStatusClose} /> : null}
-        {!isDesktopWeb ? savedDraftsSection : null}
-        {!isDesktopWeb ? reusableTemplatesSection : null}
+        {savedDraftsSection}
+        {reusableTemplatesSection}
       </form>
 
       <div className="mt-5 border-t border-gray-100 pt-4">
