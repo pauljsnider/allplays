@@ -394,13 +394,8 @@
                 "apps/app/src/pages/TeamFees.test.tsx"
             ],
             "workflowTests": [
+                "tests/smoke/app-parent-tools.spec.js",
                 "tests/smoke/team-fees-manage.spec.js"
-            ],
-            "knownGaps": [
-                {
-                    "tier": "workflow",
-                    "description": "Parent fee checkout states still need workflow coverage."
-                }
             ]
         },
         {

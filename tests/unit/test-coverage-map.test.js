@@ -73,7 +73,7 @@ describe('feature coverage map', () => {
         ]);
         expect(formatted).toContain('Known follow-up gaps:');
         expect(formatted).toContain('registration.provider-sync-checkout [workflow]');
-        expect(formatted).toContain('fees.payments-team-pass [workflow]');
         expect(formatted).toContain('officials.org-tournaments-drills [workflow]');
+        expect(formatted).not.toContain('fees.payments-team-pass [workflow]');
     });
 });

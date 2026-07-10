@@ -574,6 +574,162 @@ test('parent tools hub completes access, fees, calendars, share, registration, a
     await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1)).toBe(true);
 });
 
+test('parent fees workflow renders payment states and blocks overlapping checkout', async ({ page, baseURL }) => {
+    await mockParentToolsModules(page);
+    await page.addInitScript(() => {
+        window.__teamFeeCheckoutCalls = [];
+        window.__resolveTeamFeeCheckout = null;
+    });
+    await page.unroute(/\/src\/lib\/parentFeesService\.ts(\?.*)?$/);
+    await page.route(/\/src\/lib\/parentFeesService\.ts(\?.*)?$/, async (route) => {
+        await route.fulfill({
+            status: 200,
+            contentType: 'application/javascript',
+            body: `
+                export async function loadParentFeesForApp() {
+                    window.__parentToolLoadCounts.fees += 1;
+                    return [{
+                        id: 'fee-online',
+                        title: 'Online registration',
+                        teamId: 'team-1',
+                        batchId: 'batch-online',
+                        recipientId: 'recipient-online',
+                        teamName: 'Bears',
+                        playerName: 'Pat Star',
+                        status: 'unpaid',
+                        amountLabel: '$125',
+                        dueLabel: 'Jul 1',
+                        statusLabel: 'Open',
+                        balanceDueCents: 12500,
+                        checkoutUrl: '',
+                        canPay: true,
+                        checkoutInitiatable: true,
+                        paymentAction: 'createCheckout',
+                        lineItems: [],
+                        installments: [],
+                        ledgerEntries: []
+                    }, {
+                        id: 'fee-second-online',
+                        title: 'Tournament fee',
+                        teamId: 'team-1',
+                        batchId: 'batch-second',
+                        recipientId: 'recipient-second',
+                        teamName: 'Bears',
+                        playerName: 'Pat Star',
+                        status: 'unpaid',
+                        amountLabel: '$80',
+                        dueLabel: 'Jul 8',
+                        statusLabel: 'Open',
+                        balanceDueCents: 8000,
+                        checkoutUrl: '',
+                        canPay: true,
+                        checkoutInitiatable: true,
+                        paymentAction: 'createCheckout',
+                        lineItems: [],
+                        installments: [],
+                        ledgerEntries: []
+                    }, {
+                        id: 'fee-offline',
+                        title: 'Cash registration',
+                        teamId: 'team-1',
+                        batchId: 'batch-offline',
+                        recipientId: 'recipient-offline',
+                        teamName: 'Bears',
+                        playerName: 'Pat Star',
+                        status: 'unpaid',
+                        amountLabel: '$65',
+                        dueLabel: 'Jul 15',
+                        statusLabel: 'Open',
+                        balanceDueCents: 6500,
+                        checkoutUrl: '',
+                        canPay: false,
+                        checkoutInitiatable: false,
+                        paymentAction: '',
+                        offlinePaymentInstructions: 'Bring cash or check to practice.',
+                        lineItems: [],
+                        installments: [],
+                        ledgerEntries: []
+                    }, {
+                        id: 'fee-paid',
+                        title: 'Paid registration',
+                        teamId: 'team-1',
+                        batchId: 'batch-paid',
+                        recipientId: 'recipient-paid',
+                        teamName: 'Bears',
+                        playerName: 'Pat Star',
+                        status: 'paid',
+                        amountLabel: '$125',
+                        dueLabel: 'Paid',
+                        statusLabel: 'Paid',
+                        balanceDueCents: 0,
+                        canPay: false,
+                        checkoutInitiatable: false,
+                        paymentAction: '',
+                        lineItems: [],
+                        installments: [],
+                        ledgerEntries: [{ label: 'Paid by card', amountCents: 12500 }]
+                    }, {
+                        id: 'fee-canceled',
+                        title: 'Canceled registration',
+                        teamId: 'team-1',
+                        batchId: 'batch-canceled',
+                        recipientId: 'recipient-canceled',
+                        teamName: 'Bears',
+                        playerName: 'Pat Star',
+                        status: 'canceled',
+                        amountLabel: '$65',
+                        dueLabel: 'Canceled',
+                        statusLabel: 'Canceled',
+                        balanceDueCents: 0,
+                        canPay: false,
+                        checkoutInitiatable: false,
+                        paymentAction: '',
+                        lineItems: [],
+                        installments: [],
+                        ledgerEntries: []
+                    }];
+                }
+                export async function initiateParentTeamFeeCheckout(teamId, batchId, recipientId) {
+                    window.__teamFeeCheckoutCalls.push({ teamId, batchId, recipientId });
+                    return new Promise((resolve) => {
+                        window.__resolveTeamFeeCheckout = () => resolve({ success: true, checkoutUrl: 'https://pay.example.test/online-registration' });
+                    });
+                }
+            `
+        });
+    });
+
+    await page.goto(appUrl(baseURL, '/parent-tools/fees'), { waitUntil: 'domcontentloaded' });
+    await expect(page.getByText('Online registration')).toBeVisible({ timeout: 15000 });
+    await expect(page.getByText('Cash registration')).toBeVisible();
+    await expect(page.getByText('Bring cash or check to practice.')).toBeVisible();
+    await expect(page.getByText('Paid registration')).toBeHidden();
+    await expect(page.getByText('Canceled registration')).toBeHidden();
+
+    const onlineCard = page.locator('section.app-card', { hasText: 'Online registration' });
+    const secondOnlineCard = page.locator('section.app-card', { hasText: 'Tournament fee' });
+    const offlineCard = page.locator('section.app-card', { hasText: 'Cash registration' });
+    await expect(onlineCard.getByRole('button', { name: /Pay fee/ })).toBeVisible();
+    await expect(secondOnlineCard.getByRole('button', { name: /Pay fee/ })).toBeVisible();
+    await expect(offlineCard.getByRole('button', { name: /Pay fee/ })).toHaveCount(0);
+
+    await onlineCard.getByRole('button', { name: /Pay fee/ }).click();
+    await expect(onlineCard.getByRole('button', { name: /Opening checkout/ })).toBeVisible();
+    await expect(secondOnlineCard.getByRole('button', { name: /Pay fee/ })).toBeDisabled();
+    await expect.poll(() => page.evaluate(() => window.__teamFeeCheckoutCalls)).toEqual([{
+        teamId: 'team-1',
+        batchId: 'batch-online',
+        recipientId: 'recipient-online'
+    }]);
+
+    await page.evaluate(() => window.__resolveTeamFeeCheckout());
+    await expect.poll(() => page.evaluate(() => window.__openedPublicUrls.at(-1))).toBe('https://pay.example.test/online-registration');
+
+    await page.getByRole('button', { name: 'All' }).click();
+    await expect(page.getByText('Paid registration')).toBeVisible();
+    await expect(page.getByText('Canceled registration')).toBeVisible();
+});
+
 test('same-user parent auth rehydrate does not reload visited hidden panels', async ({ page, baseURL }) => {
     await mockParentToolsModules(page);
     await page.goto(appUrl(baseURL, '/parent-tools/access'), { waitUntil: 'domcontentloaded' });
