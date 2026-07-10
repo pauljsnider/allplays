@@ -225,6 +225,15 @@ async function flush() {
     });
 }
 
+async function waitForMatch(getMatch, description, attempts = 50) {
+    for (let attempt = 0; attempt < attempts; attempt += 1) {
+        const match = getMatch();
+        if (match) return match;
+        await flush();
+    }
+    throw new Error(`Timed out waiting for ${description}.`);
+}
+
 function createDeferred() {
     let resolve;
     let reject;
@@ -266,7 +275,6 @@ function buttonByText(container, text) {
 
 async function click(container, text) {
     let button = null;
-    const recipientLoadCallCount = chatMocks.loadChatRecipientOptions.mock.calls.length;
     try {
         button = buttonByText(container, text);
     } catch (error) {
@@ -277,23 +285,20 @@ async function click(container, text) {
         await act(async () => {
             staffActionsButton.dispatchEvent(new MouseEvent('click', { bubbles: true }));
         });
-        await flush();
-        button = buttonByText(container, text);
+        button = await waitForMatch(
+            () => staffActionButtonByText(container, text),
+            `${text} staff action`
+        );
     }
     await act(async () => {
         button.dispatchEvent(new MouseEvent('click', { bubbles: true }));
     });
     await flush();
     if (text === 'Team Email') {
-        for (let attempt = 0; attempt < 10; attempt += 1) {
-            if (
-                container.querySelector('[role="dialog"][aria-label="Team Email"]')
-                || chatMocks.loadChatRecipientOptions.mock.calls.length > recipientLoadCallCount
-            ) {
-                break;
-            }
-            await flush();
-        }
+        await waitForMatch(
+            () => container.querySelector('[role="dialog"][aria-label="Team Email"]'),
+            'Team Email dialog'
+        );
     }
 }
 
@@ -1489,7 +1494,7 @@ describe('React app messages integration', () => {
         expect(scroller.scrollTop).toBe(0);
     });
 
-    it('renders the moderator thread before lazy Team Email resources finish loading', async () => {
+    it('keeps the moderator thread visible while Team Email recipients load', async () => {
         const deferredRecipients = createDeferred();
         chatMocks.loadChatRecipientOptions.mockImplementationOnce(() => deferredRecipients.promise);
 
@@ -1501,9 +1506,7 @@ describe('React app messages integration', () => {
         await click(container, 'Team Email');
 
         expect(chatMocks.loadChatRecipientOptions).toHaveBeenCalledTimes(1);
-        await flush();
-        await flush();
-        expect(container.textContent).toContain('Loading Team Email...');
+        expect(container.querySelector('[role="dialog"][aria-label="Team Email"]')).toBeTruthy();
         expect(container.textContent).toContain('Bring both jerseys.');
 
         await act(async () => {
