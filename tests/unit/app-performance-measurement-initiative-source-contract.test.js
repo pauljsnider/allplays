@@ -41,7 +41,7 @@ describe('app performance measurement initiative source contract', () => {
     });
 
     it('keeps app preview and bundle budget commands available for baseline captures', () => {
-        expect(packageSource).toContain('"app:build": "npm --prefix apps/app run build"');
+        expect(packageSource).toContain('"app:build": "npm --prefix apps/app run build && node scripts/verify-app-bundle-visualizer.mjs"');
         expect(packageSource).toContain('"app:preview": "npm --prefix apps/app run preview"');
         expect(packageSource).toContain('"app:check-bundle-size": "node scripts/check-app-bundle-size.mjs"');
         expect(appPackageSource).toContain('"preview": "vite preview --host 0.0.0.0"');

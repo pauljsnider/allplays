@@ -20,7 +20,7 @@
     "app:check-bundle-size": "node scripts/check-app-bundle-size.mjs",
     "serve:firebase": "firebase emulators:start --only hosting --project demo-allplays",
     "app:dev": "npm --prefix apps/app run dev",
-    "app:build": "npm --prefix apps/app run build",
+    "app:build": "npm --prefix apps/app run build && node scripts/verify-app-bundle-visualizer.mjs",
     "app:preview": "npm --prefix apps/app run preview",
     "mobile:serve": "npm run app:dev",
     "mobile:sync": "npm run app:build && npx cap sync",
