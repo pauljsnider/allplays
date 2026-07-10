@@ -51,13 +51,8 @@ function getForwardedIp(req = {}) {
     return '';
   }
 
-  for (let index = trustedHopIndex - 1; index >= 0; index -= 1) {
-    if (!isPrivateIpAddress(forwardedCandidates[index])) {
-      return forwardedCandidates[index];
-    }
-  }
-
-  return '';
+  const clientCandidate = forwardedCandidates[trustedHopIndex - 1];
+  return !isPrivateIpAddress(clientCandidate) ? clientCandidate : '';
 }
 
 function getRequestIp(req = {}) {

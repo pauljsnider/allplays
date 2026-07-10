@@ -28,3 +28,15 @@ test('ignores forwarded values when the chain has no trusted proxy hop', () => {
 
     assert.equal(getRequestIp(request), '10.0.0.5');
 });
+
+test('does not skip a private intermediate hop to reach an untrusted prefix', () => {
+    const request = {
+        ip: '10.0.0.5',
+        headers: {
+            'x-forwarded-for': '198.51.100.99, 10.0.0.6, 10.0.0.5'
+        },
+        socket: { remoteAddress: '10.0.0.5' }
+    };
+
+    assert.equal(getRequestIp(request), '10.0.0.5');
+});
