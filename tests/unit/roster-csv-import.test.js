@@ -404,6 +404,28 @@ describe('roster CSV import planning', () => {
         });
     });
 
+    it('preserves private parent contacts when public parents already exist', () => {
+        const plan = planRosterCsvImport({
+            fields,
+            existingPlayers: [{
+                id: 'p1',
+                name: 'Avery Lee',
+                parents: [{ name: 'Pat Lee', email: 'pat@example.com', relation: 'Parent', source: 'roster-csv' }],
+                privateProfileParents: [{ name: 'Robin Lee', email: 'robin@example.com', relation: 'Guardian', source: 'roster-csv' }]
+            }],
+            csvText: 'Name,Number\nAvery Lee,8'
+        });
+
+        expect(plan.errors).toEqual([]);
+        expect(plan.operations).toHaveLength(1);
+        expect(plan.operations[0].privateFamilyContacts).toEqual({
+            parents: [
+                { name: 'Pat Lee', email: 'pat@example.com', phone: '', relation: 'Parent', source: 'roster-csv' },
+                { name: 'Robin Lee', email: 'robin@example.com', phone: '', relation: 'Guardian', source: 'roster-csv' }
+            ]
+        });
+    });
+
     it('returns actionable row validation errors without producing operations', () => {
         const plan = planRosterCsvImport({
             fields,
@@ -457,6 +479,19 @@ describe('roster CSV import planning', () => {
         expect(template).toContain('Guardian 2 Name,Guardian 2 Relation,Guardian 2 Email,Guardian 2 Phone');
         expect(template).toContain('Grade,Throws Right,Birth Date,Medical Note');
         expect(template).toContain('Avery Lee,4,Forward,2014-02-03');
+    });
+
+    it('omits configured roster field headers that collide with built-in template columns', () => {
+        const template = buildFullRosterCsvTemplate([
+            { key: 'position', label: 'Position', type: 'text', visibility: 'public', active: true },
+            { key: 'gender', label: 'Gender', type: 'text', visibility: 'public', active: true },
+            { key: 'grade', label: 'Grade', type: 'text', visibility: 'public', active: true }
+        ]);
+        const headers = template.trim().split('\n')[0].split(',');
+
+        expect(headers.filter((header) => header === 'Position')).toHaveLength(1);
+        expect(headers.filter((header) => header === 'Gender')).toHaveLength(1);
+        expect(headers).toContain('Grade');
     });
 
     it('summarizes imported contact invitation outcomes for retry UX', () => {

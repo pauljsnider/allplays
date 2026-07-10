@@ -477,6 +477,12 @@ function mergeImportedContacts(existingContacts = [], importedContacts = []) {
     return merged;
 }
 
+function collectExistingRosterContacts(existing = {}, primaryKeys = [], fallbackKey = '') {
+    const contacts = primaryKeys.flatMap((key) => Array.isArray(existing?.[key]) ? existing[key] : []);
+    if (contacts.length > 0 || !fallbackKey || !Array.isArray(existing?.[fallbackKey])) return contacts;
+    return existing[fallbackKey];
+}
+
 function buildRosterCsvContactPlan(contactValues = new Map(), rowNumber = 0) {
     const guardians = [];
     const contacts = [];
@@ -566,13 +572,18 @@ function escapeRosterCsvCell(value) {
 }
 
 export function buildFullRosterCsvTemplate(fields = []) {
-    const customHeaders = normalizeRosterFieldDefinitions(fields)
-        .map((field) => field.label)
-        .filter(Boolean);
-    const headers = [
+    const builtInHeaders = [
         'Name', 'Number', 'Position', 'DOB', 'Gender', 'Address', 'City', 'State', 'Zip', 'Roster Status',
         'Parent Name', 'Parent Relation', 'Parent Email', 'Parent Phone',
-        'Guardian 2 Name', 'Guardian 2 Relation', 'Guardian 2 Email', 'Guardian 2 Phone',
+        'Guardian 2 Name', 'Guardian 2 Relation', 'Guardian 2 Email', 'Guardian 2 Phone'
+    ];
+    const builtInHeaderKeys = new Set(builtInHeaders.map(normalizeHeaderKey));
+    const customHeaders = normalizeRosterFieldDefinitions(fields)
+        .map((field) => field.label)
+        .filter((label) => !builtInHeaderKeys.has(normalizeHeaderKey(label)))
+        .filter(Boolean);
+    const headers = [
+        ...builtInHeaders,
         ...customHeaders
     ];
     const sample = [
@@ -751,8 +762,10 @@ export function planRosterCsvImport({ csvText = '', fields = [], existingPlayers
         const payload = { name, profile };
         if (hasNumberColumn) payload.number = number;
         if (Object.prototype.hasOwnProperty.call(profileValues, 'position')) payload.position = profileValues.position;
-        const mergedGuardians = mergeImportedContacts(existing?.guardians || existing?.parents || existing?.privateProfileParents || existing?.familyContacts || [], contactPlan.guardians);
-        const mergedContacts = mergeImportedContacts(existing?.contacts || existing?.privateProfileContacts || [], contactPlan.contacts);
+        const existingGuardianContacts = collectExistingRosterContacts(existing, ['guardians', 'parents', 'privateProfileParents'], 'familyContacts');
+        const existingFamilyContacts = collectExistingRosterContacts(existing, ['contacts', 'privateProfileContacts']);
+        const mergedGuardians = mergeImportedContacts(existingGuardianContacts, contactPlan.guardians);
+        const mergedContacts = mergeImportedContacts(existingFamilyContacts, contactPlan.contacts);
         const privateRosterFields = Object.keys(privateValues).length > 0 ? privateValues : null;
         const privateFamilyContacts = mergedGuardians.length > 0 || mergedContacts.length > 0
             ? {
