@@ -68,6 +68,22 @@ describe('team chat recipient targets', () => {
         expect(sendMessage).toContain('if (!validateChatAudienceSelection()) return;');
     });
 
+    it('keeps follow-up messages in staff-only conversations targeted to staff', () => {
+        const html = readRepoFile('team-chat.html');
+        const buildTargetMetadata = html.slice(
+            html.indexOf('function buildRecipientTargetMetadata()'),
+            html.indexOf('function getConversationEmailRecipientIds')
+        );
+
+        expect(buildTargetMetadata).toContain('activeConversation.participantRoles');
+        expect(buildTargetMetadata).toContain("participantRoles.includes('staff')");
+        expect(buildTargetMetadata).toContain("targetType: 'staff'");
+        expect(buildTargetMetadata).toContain('recipientIds: []');
+        expect(buildTargetMetadata).toContain("targetRole: 'staff'");
+        expect(buildTargetMetadata.indexOf("participantRoles.includes('staff')"))
+            .toBeLessThan(buildTargetMetadata.indexOf("targetType: activeConversation.type === 'direct' ? 'individuals' : 'individuals'"));
+    });
+
     it('persists normalized target metadata from postChatMessage', () => {
         const db = readRepoFile('js/db.js');
 

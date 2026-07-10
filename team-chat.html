@@ -1625,6 +1625,16 @@
         function buildRecipientTargetMetadata() {
             const activeConversation = getSelectedConversation();
             if (activeConversation && !isDefaultTeamConversation(selectedConversationId)) {
+                const participantRoles = Array.isArray(activeConversation.participantRoles)
+                    ? activeConversation.participantRoles.map((role) => String(role || '').trim().toLowerCase())
+                    : [];
+                if (participantRoles.includes('staff')) {
+                    return {
+                        targetType: 'staff',
+                        recipientIds: [],
+                        targetRole: 'staff'
+                    };
+                }
                 return {
                     targetType: activeConversation.type === 'direct' ? 'individuals' : 'individuals',
                     recipientIds: Array.isArray(activeConversation.participantIds) ? activeConversation.participantIds : [],
