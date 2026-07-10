@@ -1,5 +1,5 @@
 import { readFileSync } from 'node:fs';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 function readFamilyPageSource() {
     return readFileSync(new URL('../../family.html', import.meta.url), 'utf8');
@@ -42,7 +42,123 @@ return { getScheduleEventDedupKey, getCalendarEntries, buildIcs };
 `)();
 }
 
+function createCombinedScheduleHarness({ calendarsByUrl = {}, failures = [] } = {}) {
+    const source = readFamilyPageSource();
+    const buildCombinedScheduleSource = extractFunction(source, 'buildCombinedSchedule');
+
+    return new Function('deps', `
+const {
+    getTeam,
+    getGames,
+    getTrackedCalendarEventUids,
+    fetchAndParseCalendar,
+    recordExternalCalendarFailure
+} = deps;
+const expandRecurrence = () => [];
+const isTrackedCalendarEvent = () => false;
+const isPracticeEvent = summary => /practice/i.test(String(summary || ''));
+const extractOpponent = summary => String(summary || '').replace(/^vs\\.?\\s*/i, '') || 'TBD';
+const getCalendarEventTrackingId = event => event.uid || null;
+const getCalendarFailureLabel = url => new URL(url).hostname;
+async ${buildCombinedScheduleSource}
+return buildCombinedSchedule;
+`)({
+        getTeam: async () => ({ name: 'Falcons', calendarUrls: [] }),
+        getGames: async () => [{
+            id: 'db-game-1',
+            date: new Date('2026-06-15T17:00:00Z'),
+            opponent: 'Lions',
+            location: 'Home Field',
+            status: 'scheduled'
+        }],
+        getTrackedCalendarEventUids: async () => [],
+        fetchAndParseCalendar: async url => {
+            const result = calendarsByUrl[url];
+            if (result instanceof Error) throw result;
+            return result || [];
+        },
+        recordExternalCalendarFailure: failure => failures.push(failure)
+    });
+}
+
 describe('family page extra calendar deduplication', () => {
+    it('loads share-token calendar events without losing each source URL across async fetches', async () => {
+        const firstUrl = 'https://calendar.example.com/one.ics';
+        const secondUrl = 'https://calendar.example.com/two.ics';
+        const buildCombinedSchedule = createCombinedScheduleHarness({
+            calendarsByUrl: {
+                [firstUrl]: [{
+                    uid: 'extra-1',
+                    dtstart: new Date('2026-06-16T18:00:00Z'),
+                    summary: 'vs. Tigers',
+                    location: 'North Field'
+                }],
+                [secondUrl]: [{
+                    uid: 'extra-2',
+                    dtstart: new Date('2026-06-17T18:00:00Z'),
+                    summary: 'Summer Practice',
+                    location: 'South Field'
+                }]
+            }
+        });
+
+        const events = await buildCombinedSchedule([{
+            teamId: 'team-1',
+            teamName: 'Falcons',
+            playerId: 'player-1',
+            playerName: 'Avery'
+        }], [firstUrl, secondUrl]);
+
+        expect(events).toHaveLength(3);
+        expect(events.find(event => event.id === 'db-game-1')).toMatchObject({
+            opponent: 'Lions',
+            isDbGame: true
+        });
+        expect(events.find(event => event.id === 'extra-1')).toMatchObject({
+            sourceCalendarUrl: firstUrl,
+            isShareExtraCalendar: true,
+            childName: 'Avery'
+        });
+        expect(events.find(event => event.id === 'extra-2')).toMatchObject({
+            sourceCalendarUrl: secondUrl,
+            isShareExtraCalendar: true,
+            type: 'practice'
+        });
+    });
+
+    it('keeps valid family schedule events when one share-token calendar fails', async () => {
+        const failedUrl = 'https://calendar.example.com/broken.ics';
+        const failures = [];
+        const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+        const buildCombinedSchedule = createCombinedScheduleHarness({
+            calendarsByUrl: { [failedUrl]: new Error('calendar unavailable') },
+            failures
+        });
+
+        try {
+            const events = await buildCombinedSchedule([{
+                teamId: 'team-1',
+                teamName: 'Falcons',
+                playerId: 'player-1',
+                playerName: 'Avery'
+            }], [failedUrl]);
+
+            expect(events).toHaveLength(1);
+            expect(events[0]).toMatchObject({ id: 'db-game-1', isDbGame: true });
+            expect(failures).toEqual([{
+                url: failedUrl,
+                label: 'calendar.example.com'
+            }]);
+            expect(warnSpy).toHaveBeenCalledWith(
+                '[family] Error fetching extra calendar:',
+                failedUrl,
+                expect.any(Error)
+            );
+        } finally {
+            warnSpy.mockRestore();
+        }
+    });
+
     it('collapses share-token extra calendar events across shared children on different teams', () => {
         const { getCalendarEntries } = createFamilyHooks();
         const sharedDate = new Date('2026-06-15T18:00:00Z');

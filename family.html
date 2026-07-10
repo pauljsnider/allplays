@@ -593,18 +593,18 @@
         const extraResults = await Promise.all(extraCalendarUrls.map(async (calUrl) => {
           try {
             const calendarEvents = await fetchAndParseCalendar(calUrl);
-            return calendarEvents;
+            return { calUrl, calendarEvents };
           } catch (err) {
             console.warn('[family] Error fetching extra calendar:', calUrl, err);
             recordExternalCalendarFailure({
               url: calUrl,
               label: getCalendarFailureLabel(calUrl)
             });
-            return [];
+            return { calUrl, calendarEvents: [] };
           }
         }));
 
-        extraResults.forEach(calendarEvents => {
+        extraResults.forEach(({ calUrl, calendarEvents }) => {
           calendarEvents.forEach(event => {
             const isCancelled = event.status?.toUpperCase() === 'CANCELLED' || event.summary?.includes('[CANCELED]');
             const eventDate = event.dtstart;
