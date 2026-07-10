@@ -19,6 +19,12 @@ describe('authoritative household access revocation', () => {
         expect(handler).toContain('transaction.get(membershipRef)');
         expect(handler).toContain(".where('familyMembershipId', '==', membershipId)");
         expect(handler).toContain('buildHouseholdAccessRevocationPlan');
+        expect(handler).toContain("const membershipTeamId = String(membership.teamId || '').trim();");
+        expect(handler).toContain("const teamId = membershipTeamId ? normalizeFirestoreId(membershipTeamId, 'teamId') : '';");
+        expect(handler).toContain("const membershipPlayerId = String(membership.playerId || '').trim();");
+        expect(handler).toContain("const playerId = membershipPlayerId ? normalizeFirestoreId(membershipPlayerId, 'playerId') : '';");
+        expect(handler).toContain('const privateProfileRef = invitedUserId && teamId && playerId');
+        expect(handler).not.toContain("throw new functions.https.HttpsError('failed-precondition', 'Household membership is missing its delegated player link.');");
         expect(handler).toContain('transaction.set(membershipRef, plan.membershipUpdate, { merge: true });');
         expect(handler).toContain('transaction.set(userRef, {');
         expect(handler).toContain('buildTrustedPublicUserProfileProjectionPayload(nextUserData');

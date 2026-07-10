@@ -74,16 +74,15 @@ function buildHouseholdAccessRevocationPlan({
     throw new Error('Household membership is not in a revocable state.');
   }
 
-  const teamId = compactString(membership.teamId);
-  const playerId = compactString(membership.playerId);
-  if (!teamId || !playerId) {
-    throw new Error('Household membership is missing its delegated player link.');
-  }
-
   const matchingCodes = (Array.isArray(accessCodes) ? accessCodes : [])
     .filter((code) => isMatchingHouseholdAccessCode(code, organizerId, memberId));
   const invitedUserId = compactString(membership.userId) ||
     compactString(matchingCodes.find((code) => compactString(code.usedBy))?.usedBy);
+  const teamId = compactString(membership.teamId);
+  const playerId = compactString(membership.playerId);
+  if ((!teamId || !playerId) && invitedUserId) {
+    throw new Error('Household membership is missing its delegated player link.');
+  }
   const auditTimestamp = timestamp || new Date().toISOString();
 
   const plan = {

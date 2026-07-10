@@ -110,6 +110,47 @@ test('pending and previously shell-revoked memberships remain safely cleanable',
   assert.deepEqual(legacyRemovedPlan.privateProfileUpdate.parents, []);
 });
 
+test('shell-only pending household memberships can be revoked without delegated player cleanup', () => {
+  const pendingPlan = buildHouseholdAccessRevocationPlan({
+    organizerUserId: 'organizer-1',
+    membershipId: 'membership-1',
+    membership: {
+      organizerUserId: 'organizer-1',
+      email: 'pending@example.com',
+      status: 'pending'
+    },
+    accessCodes: [{ id: 'code-1', type: 'household_invite', organizerUserId: 'organizer-1', familyMembershipId: 'membership-1' }],
+    timestamp: 'now'
+  });
+
+  assert.equal(pendingPlan.teamId, '');
+  assert.equal(pendingPlan.playerId, '');
+  assert.equal(pendingPlan.invitedUserId, '');
+  assert.equal(pendingPlan.userUpdate, undefined);
+  assert.equal(pendingPlan.privateProfileUpdate, undefined);
+  assert.deepEqual(pendingPlan.membershipUpdate, {
+    status: 'removed',
+    accessStatus: 'revoked',
+    removedAt: 'now',
+    revokedAt: 'now',
+    revokedBy: 'organizer-1',
+    updatedAt: 'now'
+  });
+  assert.equal(pendingPlan.accessCodeUpdates[0].update.revoked, true);
+});
+
+test('accepted household memberships still require a delegated player link for cleanup', () => {
+  assert.throws(() => buildHouseholdAccessRevocationPlan({
+    organizerUserId: 'organizer-1',
+    membershipId: 'membership-1',
+    membership: {
+      organizerUserId: 'organizer-1',
+      status: 'active',
+      userId: 'contact-1'
+    }
+  }), /missing its delegated player link/);
+});
+
 test('revocation refuses a membership owned by another organizer', () => {
   assert.throws(() => buildHouseholdAccessRevocationPlan({
     organizerUserId: 'organizer-1',

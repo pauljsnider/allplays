@@ -2638,20 +2638,16 @@ exports.revokeHouseholdMemberAccess = functions.https.onCall(async (data, contex
       String(codeData.organizerUserId || '').trim() === organizerUserId &&
       String(codeData.familyMembershipId || '').trim() === membershipId
     ));
-    let teamId;
-    let playerId;
-    try {
-      teamId = normalizeFirestoreId(membership.teamId, 'teamId');
-      playerId = normalizeFirestoreId(membership.playerId, 'playerId');
-    } catch (_error) {
-      throw new functions.https.HttpsError('failed-precondition', 'Household membership is missing its delegated player link.');
-    }
+    const membershipTeamId = String(membership.teamId || '').trim();
+    const membershipPlayerId = String(membership.playerId || '').trim();
+    const teamId = membershipTeamId ? normalizeFirestoreId(membershipTeamId, 'teamId') : '';
+    const playerId = membershipPlayerId ? normalizeFirestoreId(membershipPlayerId, 'playerId') : '';
     const invitedUserIdValue = membership.userId || matchingCode?.usedBy || '';
     const invitedUserId = invitedUserIdValue
       ? normalizeFirestoreId(invitedUserIdValue, 'invitedUserId')
       : '';
     const userRef = invitedUserId ? firestore.doc(`users/${invitedUserId}`) : null;
-    const privateProfileRef = invitedUserId
+    const privateProfileRef = invitedUserId && teamId && playerId
       ? firestore.doc(`teams/${teamId}/players/${playerId}/private/profile`)
       : null;
 
