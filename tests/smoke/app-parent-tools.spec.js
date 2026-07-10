@@ -133,7 +133,7 @@ const parentRegistrationsServiceMock = `
                 description: 'Skills week',
                 season: 'Summer',
                 currency: 'USD',
-                participantFields: [],
+                participantFields: [{ id: 'name', label: 'Player name', type: 'text', required: false }],
                 guardianFields: [],
                 waiverText: '',
                 registrationOptionCounts: {}
@@ -563,6 +563,14 @@ test('parent tools hub completes access, fees, calendars, share, registration, a
     await page.getByRole('button', { name: /Legacy form/ }).click();
     await expect.poll(() => page.evaluate(() => window.__openedPublicUrls.at(-1))).toBe('https://allplays.ai/registration.html?teamId=team-1&formId=form-1');
     await page.getByRole('link', { name: /Review/ }).click();
+    const registrationDescription = page.getByLabel('Registration description');
+    await expect(registrationDescription).toHaveText('Skills week');
+    await expect(page.getByRole('heading', { name: 'Participant information' })).toBeVisible();
+    expect(await page.evaluate(() => {
+        const description = document.querySelector('[aria-label="Registration description"]');
+        const participantHeading = Array.from(document.querySelectorAll('h2')).find((heading) => heading.textContent?.trim() === 'Participant information');
+        return Boolean(description && participantHeading && (description.compareDocumentPosition(participantHeading) & Node.DOCUMENT_POSITION_FOLLOWING));
+    })).toBe(true);
     await expect(page.getByRole('button', { name: 'Pay registration with Stripe' })).toBeVisible();
     await page.getByRole('button', { name: 'Pay registration with Stripe' }).click();
     await expect.poll(() => page.evaluate(() => window.__openedPublicUrls.at(-1))).toBe('https://pay.example.test/registration-checkout');
