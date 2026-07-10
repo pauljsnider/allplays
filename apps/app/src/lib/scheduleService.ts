@@ -2572,7 +2572,7 @@ async function loadTournamentScheduleStandingsGames(
   scheduleGames.forEach((game) => {
     const group = getTournamentScheduleGroupQuery(game);
     if (!group || compactString(game.competitionType).toLowerCase() !== 'tournament') return;
-    groups.set(`${group.divisionName}\u0000${group.poolName}`, group);
+    groups.set(JSON.stringify([group.divisionName, group.poolName]), group);
   });
   if (!groups.size) return scheduleGames;
 
