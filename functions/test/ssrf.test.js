@@ -23,6 +23,12 @@ test('isPrivateIpAddress correctly identifies private IPs', () => {
   assert.strictEqual(isPrivateIpAddress('127.0.0.1'), true, '127.0.0.1 should be private');
   assert.strictEqual(isPrivateIpAddress('0.0.0.0'), true, '0.0.0.0 should be private');
   assert.strictEqual(isPrivateIpAddress('169.254.1.1'), true, '169.254.1.1 should be private');
+  assert.strictEqual(isPrivateIpAddress('100.63.255.255'), false, 'address below RFC 6598 shared space should be public');
+  assert.strictEqual(isPrivateIpAddress('100.64.0.0'), true, 'RFC 6598 lower boundary should be blocked');
+  assert.strictEqual(isPrivateIpAddress('100.64.0.1'), true, 'RFC 6598 shared address should be blocked');
+  assert.strictEqual(isPrivateIpAddress('100.127.255.254'), true, 'RFC 6598 shared address should be blocked');
+  assert.strictEqual(isPrivateIpAddress('100.127.255.255'), true, 'RFC 6598 upper boundary should be blocked');
+  assert.strictEqual(isPrivateIpAddress('100.128.0.1'), false, 'address above RFC 6598 shared space should be public');
   assert.strictEqual(isPrivateIpAddress('8.8.8.8'), false, '8.8.8.8 should be public');
   assert.strictEqual(isPrivateIpAddress('203.0.113.1'), false, '203.0.113.1 should be public');
 
@@ -41,6 +47,9 @@ test('isPrivateIpAddress correctly identifies private IPs', () => {
   assert.strictEqual(isPrivateIpAddress('::ffff:10.0.0.1'), true, 'IPv4-mapped IPv6 RFC1918 should be private');
   assert.strictEqual(isPrivateIpAddress('::ffff:192.168.1.1'), true, 'IPv4-mapped IPv6 RFC1918 should be private');
   assert.strictEqual(isPrivateIpAddress('::ffff:169.254.169.254'), true, 'IPv4-mapped IPv6 link-local should be private');
+  assert.strictEqual(isPrivateIpAddress('::ffff:100.64.0.1'), true, 'IPv4-mapped RFC 6598 address should be blocked');
+  assert.strictEqual(isPrivateIpAddress('0000:0000:0000:0000:0000:ffff:6440:0001'), true, 'zero-padded IPv4-mapped RFC 6598 address should be blocked');
+  assert.strictEqual(isPrivateIpAddress('::ffff:100.128.0.1'), false, 'IPv4-mapped address above RFC 6598 shared space should be public');
   assert.strictEqual(isPrivateIpAddress('0000:0000:0000:0000:0000:ffff:7f00:0001'), true, 'zero-padded IPv4-mapped IPv6 loopback should be private');
   assert.strictEqual(isPrivateIpAddress('0000:0000:0000:0000:0000:ffff:0a00:0001'), true, 'zero-padded IPv4-mapped IPv6 RFC1918 should be private');
   assert.strictEqual(isPrivateIpAddress('::ffff:8.8.8.8'), false, 'IPv4-mapped IPv6 public address should be public');
@@ -51,6 +60,7 @@ test('assertPublicHost prevents blocked hosts and private IPs', async () => {
   await assert.rejects(assertPublicHost('localhost'), { message: 'Blocked host' }, 'localhost should be blocked');
   await assert.rejects(assertPublicHost('127.0.0.1'), { message: 'Blocked host' }, '127.0.0.1 should be blocked');
   await assert.rejects(assertPublicHost('192.168.1.1'), { message: 'Blocked host address' }, 'private IP should be blocked');
+  await assert.rejects(assertPublicHost('100.64.0.1'), { message: 'Blocked host address' }, 'RFC 6598 shared IP should be blocked');
   await assert.rejects(assertPublicHost('evil.local'), { message: 'Blocked host' }, '.local should be blocked');
 
   await assert.rejects(assertPublicHost('::ffff:127.0.0.1'), { message: 'Blocked host address' }, 'IPv4-mapped IPv6 loopback should be blocked');
@@ -61,6 +71,28 @@ test('assertPublicHost prevents blocked hosts and private IPs', async () => {
 
   const publicIp = await assertPublicHost('8.8.8.8');
   assert.deepStrictEqual(publicIp, ['8.8.8.8'], 'public IP should be allowed');
+  const publicBoundaryIp = await assertPublicHost('100.128.0.1');
+  assert.deepStrictEqual(publicBoundaryIp, ['100.128.0.1'], 'address above RFC 6598 shared space should be allowed');
+});
+
+test('normalizeTargetUrl rejects calendar hosts resolving to RFC 6598 shared space', async () => {
+  const originalDnsLookup = dns.lookup;
+  try {
+    dns.lookup = async (hostname, options) => {
+      if (hostname === 'calendar.attacker.test') {
+        return [{ address: '100.64.0.1', family: 4 }];
+      }
+      return originalDnsLookup(hostname, options);
+    };
+
+    await assert.rejects(
+      normalizeTargetUrl('https://calendar.attacker.test/team.ics'),
+      { message: 'Blocked host address' },
+      'calendar proxy normalization must reject DNS answers in RFC 6598 shared space'
+    );
+  } finally {
+    dns.lookup = originalDnsLookup;
+  }
 });
 
 test('fetchWithTimeout uses validated IPs and falls back across failures', async () => {
