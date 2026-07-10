@@ -2,6 +2,12 @@ import { applyPracticeRecurrenceFields } from './edit-schedule-practice-payload.
 
 const MAX_OVERNIGHT_PRACTICE_MS = 12 * 60 * 60 * 1000;
 
+function isSameLocalDate(firstDate, secondDate) {
+    return firstDate.getFullYear() === secondDate.getFullYear()
+        && firstDate.getMonth() === secondDate.getMonth()
+        && firstDate.getDate() === secondDate.getDate();
+}
+
 export function validatePracticeDateRange(startDate, endDate) {
     const startTime = startDate instanceof Date ? startDate.getTime() : Number.NaN;
     const endTime = endDate instanceof Date ? endDate.getTime() : Number.NaN;
@@ -10,6 +16,9 @@ export function validatePracticeDateRange(startDate, endDate) {
         throw new Error('Practice start and end times must be valid dates');
     }
     if (endTime <= startTime) {
+        if (!isSameLocalDate(startDate, endDate)) {
+            throw new Error('End time must be after the start time');
+        }
         const overnightEndDate = new Date(endTime);
         overnightEndDate.setDate(overnightEndDate.getDate() + 1);
         const overnightDuration = overnightEndDate.getTime() - startTime;

@@ -19,6 +19,8 @@ describe('edit schedule practice save flow', () => {
             .toThrow('End time must be after the start time');
         expect(() => validatePracticeDateRange(startDate, createLocalDate(2026, 7, 10, 19, 0)))
             .toThrow('End time must be after the start time');
+        expect(() => validatePracticeDateRange(startDate, createLocalDate(2026, 7, 9, 23, 0)))
+            .toThrow('End time must be after the start time');
         expect(() => validatePracticeDateRange(startDate, new Date('not-a-date')))
             .toThrow('Practice start and end times must be valid dates');
         expect(() => validatePracticeDateRange(startDate, createLocalDate(2026, 7, 11, 1, 0)))
