@@ -77,6 +77,20 @@ function renderMessages() {
   );
 }
 
+async function openStaffActions() {
+  fireEvent.click(await screen.findByRole('button', { name: 'Open staff actions' }));
+}
+
+async function openAudienceSheet() {
+  await openStaffActions();
+  fireEvent.click(screen.getByRole('menuitem', { name: /Message audience/i }));
+}
+
+async function openTeamEmailSheet() {
+  await openStaffActions();
+  fireEvent.click(screen.getByRole('menuitem', { name: 'Team Email' }));
+}
+
 describe('Messages team email templates', () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -138,12 +152,12 @@ describe('Messages team email templates', () => {
   it('loads templates, applies one, and keeps selected recipients when sending', async () => {
     renderMessages();
 
-    fireEvent.click(await screen.findByRole('button', { name: /audience:/i }));
+    await openAudienceSheet();
     fireEvent.click(screen.getByRole('button', { name: /selected members/i }));
     fireEvent.click((await screen.findAllByRole('checkbox'))[0]);
     fireEvent.click(screen.getByRole('button', { name: 'Done' }));
 
-    fireEvent.click(screen.getByRole('button', { name: 'Open Team Email' }));
+    await openTeamEmailSheet();
 
     expect(await screen.findByRole('dialog', { name: 'Team Email' })).toBeTruthy();
     await waitFor(() => {
@@ -173,11 +187,11 @@ describe('Messages team email templates', () => {
   it('shows the mobile team email composer before drafts and templates', async () => {
     renderMessages();
 
-    fireEvent.click(await screen.findByRole('button', { name: /audience:/i }));
+    await openAudienceSheet();
     fireEvent.click(screen.getByRole('button', { name: /selected members/i }));
     fireEvent.click((await screen.findAllByRole('checkbox'))[0]);
     fireEvent.click(screen.getByRole('button', { name: 'Done' }));
-    fireEvent.click(screen.getByRole('button', { name: 'Open Team Email' }));
+    await openTeamEmailSheet();
 
     const dialog = await screen.findByRole('dialog', { name: 'Team Email' });
     const subjectField = within(dialog).getByLabelText('Subject');
@@ -196,11 +210,11 @@ describe('Messages team email templates', () => {
   it('loads saved drafts and restores one into the team email composer', async () => {
     renderMessages();
 
-    fireEvent.click(await screen.findByRole('button', { name: /audience:/i }));
+    await openAudienceSheet();
     fireEvent.click(screen.getByRole('button', { name: /selected members/i }));
     fireEvent.click((await screen.findAllByRole('checkbox'))[0]);
     fireEvent.click(screen.getByRole('button', { name: 'Done' }));
-    fireEvent.click(screen.getByRole('button', { name: 'Open Team Email' }));
+    await openTeamEmailSheet();
 
     expect(await screen.findByRole('dialog', { name: 'Team Email' })).toBeTruthy();
     expect(chatServiceMocks.loadTeamEmailDrafts).toHaveBeenCalledWith('team-1');
@@ -223,7 +237,7 @@ describe('Messages team email templates', () => {
 
     renderMessages();
 
-    fireEvent.click(await screen.findByRole('button', { name: 'Open Team Email' }));
+    await openTeamEmailSheet();
     expect(await screen.findByRole('dialog', { name: 'Team Email' })).toBeTruthy();
     fireEvent.click(await screen.findByRole('button', { name: /Bus update/i }));
 
@@ -266,11 +280,11 @@ describe('Messages team email templates', () => {
 
     renderMessages();
 
-    fireEvent.click(await screen.findByRole('button', { name: /audience:/i }));
+    await openAudienceSheet();
     fireEvent.click(screen.getByRole('button', { name: /selected members/i }));
     fireEvent.click((await screen.findAllByRole('checkbox'))[0]);
     fireEvent.click(screen.getByRole('button', { name: 'Done' }));
-    fireEvent.click(screen.getByRole('button', { name: 'Open Team Email' }));
+    await openTeamEmailSheet();
     await screen.findByRole('dialog', { name: 'Team Email' });
 
     fireEvent.change(screen.getByLabelText('Subject'), { target: { value: 'Game tomorrow' } });
@@ -311,7 +325,7 @@ describe('Messages team email templates', () => {
 
     renderMessages();
 
-    fireEvent.click(await screen.findByRole('button', { name: 'Open Team Email' }));
+    await openTeamEmailSheet();
     await screen.findByRole('dialog', { name: 'Team Email' });
 
     fireEvent.change(screen.getByLabelText('Subject'), { target: { value: 'Game tomorrow' } });
