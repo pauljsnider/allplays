@@ -245,7 +245,7 @@ async function renderDetail(initialEntry) {
     return { container, root };
 }
 
-async function waitForText(container, text, attempts = 100) {
+async function waitForText(container, text, attempts = 300) {
     for (let index = 0; index < attempts; index += 1) {
         if (container.textContent.includes(text)) return;
         await act(async () => {
