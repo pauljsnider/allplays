@@ -2882,6 +2882,28 @@ describe('web-created tournament standings hydration (#1967)', () => {
       { rank: '3', teamName: 'Lions', record: '0-1', points: 0 }
     ]);
   });
+
+  it('does not load a standings pool for direct tournament details without standings config', async () => {
+    vi.mocked(getTeam).mockResolvedValue({
+      id: 'team-1',
+      name: 'Tigers'
+    } as any);
+    vi.mocked(getGame).mockResolvedValue(tournamentGames[0] as any);
+
+    const result = await loadParentScheduleEventDetail(parentUser, {
+      teamId: 'team-1',
+      eventId: 'pool-a-1',
+      hydrateDetails: false,
+      expandStaffPlayers: false
+    });
+
+    expect(getGame).toHaveBeenCalledWith('team-1', 'pool-a-1');
+    expect(getGames).not.toHaveBeenCalled();
+    expect(getScheduleTournamentInfo(result.events[0] as any).standings?.rows).toEqual([
+      { rank: '1', teamName: 'Tigers', record: '1-0', points: 3 },
+      { rank: '2', teamName: 'Lions', record: '0-1', points: 0 }
+    ]);
+  });
 });
 
 describe('team schedule game windowing (#2034)', () => {
