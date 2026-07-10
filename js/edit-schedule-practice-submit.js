@@ -1,5 +1,7 @@
 import { applyPracticeRecurrenceFields } from './edit-schedule-practice-payload.js';
 
+const MAX_OVERNIGHT_PRACTICE_MS = 12 * 60 * 60 * 1000;
+
 export function validatePracticeDateRange(startDate, endDate) {
     const startTime = startDate instanceof Date ? startDate.getTime() : Number.NaN;
     const endTime = endDate instanceof Date ? endDate.getTime() : Number.NaN;
@@ -8,8 +10,22 @@ export function validatePracticeDateRange(startDate, endDate) {
         throw new Error('Practice start and end times must be valid dates');
     }
     if (endTime <= startTime) {
+        const overnightEndDate = new Date(endTime);
+        overnightEndDate.setDate(overnightEndDate.getDate() + 1);
+        const overnightDuration = overnightEndDate.getTime() - startTime;
+        if (overnightDuration > 0 && overnightDuration <= MAX_OVERNIGHT_PRACTICE_MS) {
+            return {
+                startDate,
+                endDate: overnightEndDate
+            };
+        }
         throw new Error('End time must be after the start time');
     }
+
+    return {
+        startDate,
+        endDate
+    };
 }
 
 export async function savePracticeForm({
@@ -27,12 +43,12 @@ export async function savePracticeForm({
     if (!teamId || !formState || !Timestamp || !deleteField || !generateSeriesId || !addPractice || !updateEvent) {
         throw new Error('savePracticeForm requires team, form state, firestore helpers, and persistence functions');
     }
-    validatePracticeDateRange(formState.startDate, formState.endDate);
+    const { startDate, endDate } = validatePracticeDateRange(formState.startDate, formState.endDate);
 
     const practiceData = {
         title: formState.title,
-        date: Timestamp.fromDate(formState.startDate),
-        end: Timestamp.fromDate(formState.endDate),
+        date: Timestamp.fromDate(startDate),
+        end: Timestamp.fromDate(endDate),
         location: formState.location,
         notes: formState.notes,
         scheduleNotifications: formState.scheduleNotifications
@@ -51,8 +67,8 @@ export async function savePracticeForm({
             untilValue: recurrenceState.untilValue,
             countValue: recurrenceState.countValue
         },
-        startDate: formState.startDate,
-        endDate: formState.endDate,
+        startDate,
+        endDate,
         Timestamp,
         deleteField,
         generateSeriesId

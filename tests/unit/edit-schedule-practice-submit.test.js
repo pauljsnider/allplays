@@ -13,6 +13,7 @@ function createLocalDate(year, monthIndex, day, hours, minutes) {
 describe('edit schedule practice save flow', () => {
     it('requires a valid end time after the practice start time', () => {
         const startDate = createLocalDate(2026, 7, 10, 20, 0);
+        const overnightEndDate = createLocalDate(2026, 7, 10, 1, 0);
 
         expect(() => validatePracticeDateRange(startDate, createLocalDate(2026, 7, 10, 20, 0)))
             .toThrow('End time must be after the start time');
@@ -22,6 +23,8 @@ describe('edit schedule practice save flow', () => {
             .toThrow('Practice start and end times must be valid dates');
         expect(() => validatePracticeDateRange(startDate, createLocalDate(2026, 7, 11, 1, 0)))
             .not.toThrow();
+        expect(validatePracticeDateRange(startDate, overnightEndDate).endDate)
+            .toEqual(createLocalDate(2026, 7, 11, 1, 0));
     });
 
     it.each([false, true])('rejects an invalid duration before persisting when recurring is %s', async (isRecurring) => {
@@ -50,6 +53,53 @@ describe('edit schedule practice save flow', () => {
 
         expect(addPractice).not.toHaveBeenCalled();
         expect(updateEvent).not.toHaveBeenCalled();
+    });
+
+    it('rolls overnight practice end times to the next day before persisting', async () => {
+        const addPractice = vi.fn().mockResolvedValue('practice-overnight');
+        const updateEvent = vi.fn();
+        const startDate = createLocalDate(2026, 7, 10, 23, 0);
+        const endDate = createLocalDate(2026, 7, 10, 1, 0);
+        const expectedEndDate = createLocalDate(2026, 7, 11, 1, 0);
+        const Timestamp = {
+            fromDate: (value) => ({
+                iso: value.toISOString()
+            })
+        };
+
+        await savePracticeForm({
+            teamId: 'team-1',
+            formState: {
+                title: 'Late Practice',
+                startDate,
+                endDate,
+                location: 'Main Gym',
+                notes: '',
+                scheduleNotifications: { enabled: false }
+            },
+            recurrenceState: {
+                isRecurring: true,
+                freq: 'weekly',
+                interval: 1,
+                byDays: ['FR'],
+                endType: 'count',
+                countValue: '4'
+            },
+            Timestamp,
+            deleteField: () => Symbol('deleteField'),
+            generateSeriesId: () => 'series-overnight',
+            addPractice,
+            updateEvent
+        });
+
+        expect(updateEvent).not.toHaveBeenCalled();
+        expect(addPractice).toHaveBeenCalledWith('team-1', expect.objectContaining({
+            date: { iso: startDate.toISOString() },
+            end: { iso: expectedEndDate.toISOString() },
+            startTime: '23:00',
+            endTime: '01:00',
+            endDayOffset: 1
+        }));
     });
 
     it('persists recurring practice creation through addPractice with a series payload', async () => {
