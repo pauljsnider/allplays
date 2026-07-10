@@ -82,6 +82,7 @@ vi.mock('./adapters/legacyScheduleDb', () => ({
   closeRideOffer: vi.fn(),
   cancelRideRequest: vi.fn(),
   releaseAssignmentClaim: vi.fn(),
+  submitRsvp: vi.fn(),
   submitRsvpForPlayer: vi.fn(),
   broadcastLiveEvent: vi.fn(),
   updateGame: vi.fn(),
@@ -185,14 +186,14 @@ vi.mock('./appDataCache', () => ({
   getParentScheduleSummaryCacheKey: (userId: string) => `app-schedule-summary:${userId}`
 }));
 
-import { addGame, addPractice, broadcastLiveEvent, buildSingleLegacyTournamentGameDocument, buildLegacyTournamentGameDocument, buildLegacyTournamentGameDocuments, claimOpenOfficiatingSlot, clearOccurrenceOverride, releaseAssignmentClaim, respondToOfficiatingAssignment, updateEvent, updateGame, updateOccurrence, getAssignmentClaims, getGame, getGames, getPlayers, getPracticeSession, getPracticeSessions, getRsvpBreakdownByPlayer, getRsvpSummaries, getRsvps, getTeam, getTeams, listRideOffersForEvent, submitRsvpForPlayer, updatePracticeAttendance, getDoc, getDocs } from './adapters/legacyScheduleDb';
+import { addGame, addPractice, broadcastLiveEvent, buildSingleLegacyTournamentGameDocument, buildLegacyTournamentGameDocument, buildLegacyTournamentGameDocuments, claimOpenOfficiatingSlot, clearOccurrenceOverride, releaseAssignmentClaim, respondToOfficiatingAssignment, updateEvent, updateGame, updateOccurrence, getAssignmentClaims, getGame, getGames, getPlayers, getPracticeSession, getPracticeSessions, getRsvpBreakdownByPlayer, getRsvpSummaries, getRsvps, getTeam, getTeams, listRideOffersForEvent, submitRsvp, submitRsvpForPlayer, updatePracticeAttendance, getDoc, getDocs } from './adapters/legacyScheduleDb';
 import { getNativeAuthIdToken } from './authService';
 import { expandRecurrence, fetchAndParseCalendar, isTeamActive, mergeAssignmentsWithClaims } from './adapters/legacyScheduleHelpers';
 import { getCachedAppData, loadCachedAppData } from './appDataCache';
 import { mapScheduleEventRecord } from './firestore/mappers';
 import { loadProfileDocument } from './profileService';
 import { getScheduleTournamentInfo } from './scheduleLogic';
-import { adjustGameScore, buildPlayerScoringLiveEvent, buildSingleGameTournamentLegacySchedulePayload, claimOfficialAssignmentItem, createScheduledGameForApp, createScheduledPracticeForApp, createScheduledTournamentBlockForApp, createStaffRsvpAvailabilityLoader, flushPendingLivePublishOperations, hydrateParentScheduleDetails, loadOfficialAssignments, loadParentSchedule, loadParentScheduleChildren, loadParentScheduleEventDetail, loadScheduledPracticeSeriesForEdit, loadStaffPracticeAttendance, loadStaffScheduleRsvpBreakdown, publishLiveScoreUpdateEvent, recordPlayerGameStat, recordPlayerScoringStat, releaseParentScheduleAssignmentClaim, resolveCachedParentScheduleEvents, resolveLiveGameClockSnapshot, resolveParentGameRoute, respondToOfficialAssignmentItem, revertScheduledPracticeOccurrenceForApp, saveScheduledGameLineupDraftForApp, saveStaffPracticeAttendance, submitStaffScheduleRsvpOverride, TournamentBlockPartialSaveError, undoRecordedPlayerGameStat, updateLiveGameClockState, updateScheduledPracticeForApp } from './scheduleService';
+import { adjustGameScore, buildPlayerScoringLiveEvent, buildSingleGameTournamentLegacySchedulePayload, claimOfficialAssignmentItem, createScheduledGameForApp, createScheduledPracticeForApp, createScheduledTournamentBlockForApp, createStaffRsvpAvailabilityLoader, flushPendingLivePublishOperations, hydrateParentScheduleDetails, loadOfficialAssignments, loadParentSchedule, loadParentScheduleChildren, loadParentScheduleEventDetail, loadScheduledPracticeSeriesForEdit, loadStaffPracticeAttendance, loadStaffScheduleRsvpBreakdown, publishLiveScoreUpdateEvent, recordPlayerGameStat, recordPlayerScoringStat, releaseParentScheduleAssignmentClaim, resolveCachedParentScheduleEvents, resolveLiveGameClockSnapshot, resolveParentGameRoute, respondToOfficialAssignmentItem, revertScheduledPracticeOccurrenceForApp, saveScheduledGameLineupDraftForApp, saveStaffPracticeAttendance, submitParentScheduleRsvpForChildren, submitStaffScheduleRsvpOverride, TournamentBlockPartialSaveError, undoRecordedPlayerGameStat, updateLiveGameClockState, updateScheduledPracticeForApp } from './scheduleService';
 
 function playerSnapshot(id: string, data: Record<string, unknown> | null) {
   return {
@@ -2191,6 +2192,50 @@ describe('mobile lineup draft creation', () => {
 
     vi.mocked(getRsvps).mockResolvedValue([{ playerId: 'p1', response: 'maybe' }] as any);
     await expect(saveScheduledGameLineupDraftForApp(event, user, 'basketball-5v5')).rejects.toThrow('No Going players');
+  });
+});
+
+describe('parent family RSVP submission', () => {
+  const user = { uid: 'parent-1', displayName: 'Parent One', email: 'parent@example.com', roles: [] };
+  const baseEvent = {
+    id: 'game-1',
+    teamId: 'team-1',
+    childId: 'player-1',
+    isDbGame: true,
+    isCancelled: false,
+    availabilityLocked: false,
+    availabilityNoteVisibility: 'admins'
+  } as any;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('submits both child ids in one grouped RSVP write', async () => {
+    const summary = { going: 2, maybe: 0, notGoing: 0, notResponded: 0, total: 2 };
+    vi.mocked(submitRsvp).mockResolvedValue(summary as any);
+
+    await expect(submitParentScheduleRsvpForChildren([
+      baseEvent,
+      { ...baseEvent, childId: 'player-2' }
+    ], user as any, 'going', 'Both need a ride')).resolves.toEqual(summary);
+
+    expect(submitRsvp).toHaveBeenCalledWith('team-1', 'game-1', 'parent-1', {
+      displayName: 'Parent One',
+      playerIds: ['player-1', 'player-2'],
+      response: 'going',
+      note: 'Both need a ride'
+    });
+    expect(submitRsvpForPlayer).not.toHaveBeenCalled();
+  });
+
+  it('rejects mixed event scopes before writing a family response', async () => {
+    await expect(submitParentScheduleRsvpForChildren([
+      baseEvent,
+      { ...baseEvent, id: 'game-2', childId: 'player-2' }
+    ], user as any, 'maybe')).rejects.toThrow('same event');
+
+    expect(submitRsvp).not.toHaveBeenCalled();
   });
 });
 

@@ -100,7 +100,7 @@ export function TeamRsvpToolsDisclosure({ summary, children }: {
   );
 }
 
-export function QuickAvailabilityPanel({ event, rsvp, canSubmitRsvp, submitting, availabilityNote, onAvailabilityNoteChange, onSubmit }: {
+export function QuickAvailabilityPanel({ event, rsvp, canSubmitRsvp, submitting, availabilityNote, onAvailabilityNoteChange, onSubmit, question }: {
   event: ParentScheduleEvent;
   rsvp: RsvpResponse;
   canSubmitRsvp: boolean;
@@ -108,6 +108,7 @@ export function QuickAvailabilityPanel({ event, rsvp, canSubmitRsvp, submitting,
   availabilityNote: string;
   onAvailabilityNoteChange: (note: string) => void;
   onSubmit: (response: Exclude<RsvpResponse, 'not_responded'>) => Promise<void>;
+  question?: string;
 }) {
   const needsResponse = rsvp === 'not_responded';
   const noteSaveState = getAvailabilityNoteSaveState(rsvp, availabilityNote, event.myRsvpNote || '');
@@ -127,7 +128,7 @@ export function QuickAvailabilityPanel({ event, rsvp, canSubmitRsvp, submitting,
           <div className={`text-[11px] font-black uppercase tracking-[0.06em] ${needsResponse ? 'text-amber-800' : showDirtyState ? 'text-amber-800' : 'text-gray-500'}`}>
             {needsResponse ? 'Availability needed' : showDirtyState ? 'Unsaved note changes' : 'Availability saved'}
           </div>
-          <div className="mt-0.5 text-sm font-black leading-tight text-gray-950 sm:mt-1 sm:text-base">Is {event.childName} going?</div>
+          <div className="mt-0.5 text-sm font-black leading-tight text-gray-950 sm:mt-1 sm:text-base">{question || `Is ${event.childName} going?`}</div>
           <div className="mt-2 grid grid-cols-3 gap-1.5">
             {(['going', 'maybe', 'not_going'] as const).map((response) => (
               <button

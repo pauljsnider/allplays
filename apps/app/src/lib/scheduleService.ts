@@ -26,6 +26,7 @@ import {
   closeRideOffer,
   cancelRideRequest,
   releaseAssignmentClaim,
+  submitRsvp,
   submitRsvpForPlayer,
   broadcastLiveEvent,
   getLiveEvents,
@@ -3960,6 +3961,32 @@ async function nativeSubmitRsvpForPlayer(teamId: string, gameId: string, user: A
   return null;
 }
 
+async function nativeSubmitRsvpForChildren(teamId: string, gameId: string, user: AuthUser, childIds: string[], response: RsvpResponse, note = '', visibility: 'admins' | 'team' = 'admins') {
+  const respondedAt = new Date();
+  await nativePatchDocument(`teams/${encodeURIComponent(teamId)}/games/${encodeURIComponent(gameId)}/rsvps/${encodeURIComponent(user.uid)}`, {
+    userId: user.uid,
+    displayName: user.displayName || user.email || null,
+    playerIds: childIds,
+    playerId: null,
+    childId: null,
+    response,
+    respondedAt
+  });
+  await nativePatchDocument(`teams/${encodeURIComponent(teamId)}/games/${encodeURIComponent(gameId)}/rsvpNotes/${encodeURIComponent(user.uid)}`, {
+    userId: user.uid,
+    displayName: user.displayName || user.email || null,
+    playerIds: childIds,
+    playerId: null,
+    childId: null,
+    response,
+    respondedAt,
+    note: compactString(note) || null,
+    visibility,
+    updatedAt: new Date()
+  });
+  return null;
+}
+
 function assertStaffRsvpManagementEvent(event: ParentScheduleEvent, user: AuthUser | null) {
   if (!event.isDbGame) {
     throw new Error('Availability opens after this event is tracked in the schedule.');
@@ -4091,6 +4118,47 @@ export async function submitParentScheduleRsvp(event: ParentScheduleEvent, user:
     }
     logScheduleWarning('Falling back to REST RSVP submit.', 'parent-rsvp-submit', error, { fallback: 'rest', teamId: event.teamId, gameId: event.id, childId: event.childId });
     return nativeSubmitRsvpForPlayer(event.teamId, event.id, user, event.childId, response, note, event.availabilityNoteVisibility === 'team' ? 'team' : 'admins');
+  }
+}
+
+export async function submitParentScheduleRsvpForChildren(events: ParentScheduleEvent[], user: AuthUser, response: Exclude<RsvpResponse, 'not_responded'>, note = '') {
+  const firstEvent = events[0];
+  if (!firstEvent) {
+    throw new Error('Select at least one child before submitting RSVP.');
+  }
+
+  const childIds = uniqueNonEmptyStrings(events.map((event) => (
+    event.teamId === firstEvent.teamId && event.id === firstEvent.id ? event.childId : ''
+  )));
+  if (childIds.length !== events.length) {
+    throw new Error('Family availability can only update children on the same event.');
+  }
+  if (events.some((event) => !event.isDbGame)) {
+    throw new Error('Availability opens after this event is tracked in the schedule.');
+  }
+  if (events.some((event) => event.isCancelled)) {
+    throw new Error('Cancelled events cannot be updated.');
+  }
+  if (events.some((event) => event.availabilityLocked)) {
+    throw new Error('Availability is locked for this event.');
+  }
+  if (childIds.length === 1) {
+    return submitParentScheduleRsvp(firstEvent, user, response, note);
+  }
+
+  try {
+    return await withTimeout(Promise.resolve(submitRsvp(firstEvent.teamId, firstEvent.id, user.uid, {
+      displayName: user.displayName || user.email,
+      playerIds: childIds,
+      response,
+      note: compactString(note) || null
+    })), 'Family RSVP submit');
+  } catch (error) {
+    if (!isNativeRuntime()) {
+      throw error;
+    }
+    logScheduleWarning('Falling back to REST family RSVP submit.', 'parent-family-rsvp-submit', error, { fallback: 'rest', teamId: firstEvent.teamId, gameId: firstEvent.id, childIds });
+    return nativeSubmitRsvpForChildren(firstEvent.teamId, firstEvent.id, user, childIds, response, note, firstEvent.availabilityNoteVisibility === 'team' ? 'team' : 'admins');
   }
 }
 

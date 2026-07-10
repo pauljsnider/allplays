@@ -31,6 +31,7 @@ vi.mock('@legacy/db.js', () => ({
     releaseAssignmentClaim: vi.fn(),
     requestRideSpot: vi.fn(),
     respondToOfficiatingAssignment: vi.fn(),
+    submitRsvp: vi.fn(),
     submitRsvpForPlayer: vi.fn(),
     updateEvent: vi.fn(),
     updateGame: vi.fn(),
