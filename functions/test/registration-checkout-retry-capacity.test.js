@@ -390,6 +390,48 @@ test('retry checkout does not grant an early-bird discount added after submissio
     assert.equal(registration.checkoutAmountCents, 10000);
 });
 
+test('legacy retry checkout ignores stored applied discount amounts without captured rules', async () => {
+    const seed = buildSeedState({
+        registrationCapacityReleased: false,
+        submittedAt: 'not-a-valid-date',
+        feeAmountCents: 10000,
+        feeSnapshot: {
+            currency: 'USD',
+            quantity: 1,
+            originalFeeAmountCents: 10000,
+            subtotalAmountCents: 10000,
+            appliedDiscounts: [
+                { id: 'inflated', type: 'early_bird', amountType: 'fixed', amountCents: 9000 }
+            ],
+            finalAmountDueCents: 1000
+        }
+    });
+    Object.assign(seed['teams/team-1/registrationForms/form-1'], {
+        feeAmountCents: 10000,
+        discountRules: [
+            { id: 'expired', type: 'early_bird', amountType: 'fixed', amountValue: 2500, earlyBirdDeadline: '2000-01-02', active: true }
+        ]
+    });
+    let stripeCreateArgs = null;
+    const { firestore, createStripeRegistrationCheckout } = loadCheckoutHandler({
+        seed,
+        stripeCreateImpl: async (args) => {
+            stripeCreateArgs = args;
+            return {
+                id: 'cs_legacy_applied_discount_retry',
+                url: 'https://checkout.stripe.com/c/legacy_applied_discount_retry',
+                payment_status: 'unpaid'
+            };
+        }
+    });
+
+    await createStripeRegistrationCheckout(checkoutInput);
+
+    assert.equal(stripeCreateArgs.line_items[0].price_data.unit_amount, 10000);
+    const registration = firestore.snapshot('teams/team-1/registrationForms/form-1/registrations/reg-1');
+    assert.equal(registration.checkoutAmountCents, 10000);
+});
+
 test('rolls back reserved capacity when Stripe checkout creation fails', async () => {
     const { firestore, createStripeRegistrationCheckout } = loadCheckoutHandler({
         seed: buildSeedState(),

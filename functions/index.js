@@ -959,20 +959,7 @@ function getRegistrationCapturedDiscountRules(registration = {}) {
   if (Array.isArray(registration.feeSnapshot?.discountRules)) {
     return registration.feeSnapshot.discountRules;
   }
-  if (Array.isArray(registration.feeSnapshot?.appliedDiscounts)) {
-    const submittedAt = getRegistrationSubmittedAtDate(registration);
-    const submittedAtDeadline = submittedAt.toISOString().slice(0, 10);
-    return registration.feeSnapshot.appliedDiscounts.map((discount, index) => ({
-      id: discount?.id || `captured_discount_${index + 1}`,
-      type: discount?.type,
-      amountType: discount?.amountType || 'fixed',
-      amountValue: discount?.amountValue ?? discount?.amountCents,
-      earlyBirdDeadline: discount?.earlyBirdDeadline || submittedAtDeadline,
-      minimumQuantity: discount?.minimumQuantity || 1,
-      active: discount?.active !== false
-    }));
-  }
-  return registration.feeSnapshot ? [] : null;
+  return null;
 }
 
 function buildRegistrationInstallmentPaymentState(registration = {}, form = null, nextPaidInstallmentCount = getRegistrationPaymentPlanPaidInstallmentCount(registration)) {
