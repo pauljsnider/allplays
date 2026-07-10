@@ -2842,16 +2842,22 @@ describe('web-created tournament standings hydration (#1967)', () => {
       standingsConfig: { rankingMode: 'points', points: { win: 3, tie: 1, loss: 0 } }
     } as any);
     vi.mocked(getTeams).mockResolvedValue([] as any);
-    vi.mocked(getGames).mockResolvedValue(tournamentGames as any);
+    vi.mocked(getGames).mockImplementation(async (_teamId, options: any = {}) => (
+      options.tournamentGroup ? tournamentGames : [tournamentGames[0]]
+    ) as any);
     vi.mocked(getPracticeSessions).mockResolvedValue([] as any);
     vi.mocked(getDoc).mockResolvedValue(playerSnapshot('p1', { id: 'p1', name: 'Kid One', active: true }) as any);
   });
 
-  it('computes standings from the bounded schedule game load without a full-history reread', async () => {
+  it('computes windowed schedule standings from the complete bounded tournament pool', async () => {
     const result = await loadParentSchedule(parentUser, { hydrateDetails: false, expandStaffPlayers: false });
 
-    expect(getGames).toHaveBeenCalledTimes(1);
+    expect(getGames).toHaveBeenCalledTimes(2);
     expect(vi.mocked(getGames).mock.calls[0][1]).toMatchObject({ startDate: expect.any(Date) });
+    expect(vi.mocked(getGames).mock.calls[1][1]).toEqual({
+      tournamentGroup: { poolName: 'Pool A', divisionName: '' }
+    });
+    expect(result.events).toHaveLength(1);
     expect(getScheduleTournamentInfo(result.events[0] as any).standings).toMatchObject({
       groupName: 'Pool A',
       rows: [

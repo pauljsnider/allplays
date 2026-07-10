@@ -2549,6 +2549,39 @@ function mergeLoadedGameWithStandingsPool(loadedGame: ScheduleEventFirestoreReco
   ];
 }
 
+function mergeScheduleStandingsGames(
+  scheduleGames: ScheduleEventFirestoreRecord[],
+  standingsGroups: ScheduleEventFirestoreRecord[][]
+) {
+  const merged = [...scheduleGames];
+  const seenIds = new Set(scheduleGames.map((game) => compactString(game.id || game.gameId)).filter(Boolean));
+  standingsGroups.flat().forEach((game) => {
+    const gameId = compactString(game?.id || game?.gameId);
+    if (gameId && seenIds.has(gameId)) return;
+    if (gameId) seenIds.add(gameId);
+    merged.push(game);
+  });
+  return merged;
+}
+
+async function loadTournamentScheduleStandingsGames(
+  teamId: string,
+  scheduleGames: ScheduleEventFirestoreRecord[]
+) {
+  const groups = new Map<string, TournamentScheduleGroupQuery>();
+  scheduleGames.forEach((game) => {
+    const group = getTournamentScheduleGroupQuery(game);
+    if (!group || compactString(game.competitionType).toLowerCase() !== 'tournament') return;
+    groups.set(`${group.divisionName}\u0000${group.poolName}`, group);
+  });
+  if (!groups.size) return scheduleGames;
+
+  const standingsGroups = await Promise.all(
+    [...groups.values()].map((tournamentGroup) => loadGames(teamId, { tournamentGroup }).catch(() => []))
+  );
+  return mergeScheduleStandingsGames(scheduleGames, standingsGroups);
+}
+
 async function loadRawTeam(teamId: string) {
   return readWithNativeFallback(
     `team ${teamId}`,
@@ -2980,7 +3013,11 @@ async function buildTeamSchedule(teamId: string, teamChildren: ParentScheduleChi
     loadPracticeSessions(teamId, gamesRange)
   ]);
   if (!team) return events;
-  const scheduleGames = enrichTournamentScheduleStandings(dbGames || [], team);
+  const loadedScheduleGames = dbGames || [];
+  const standingsGames = (gamesRange.startDate || gamesRange.endDate) && hasTournamentScheduleGames(loadedScheduleGames)
+    ? await loadTournamentScheduleStandingsGames(teamId, loadedScheduleGames)
+    : loadedScheduleGames;
+  const scheduleGames = enrichTournamentScheduleStandings(loadedScheduleGames, team, standingsGames);
   const trackedUids = getTrackedCalendarEventUidsFromLoadedGames(scheduleGames);
 
   const teamName = compactString(team.name) || teamId;
