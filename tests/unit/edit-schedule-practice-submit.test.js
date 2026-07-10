@@ -13,7 +13,9 @@ function createLocalDate(year, monthIndex, day, hours, minutes) {
 describe('edit schedule practice save flow', () => {
     it('requires a valid end time after the practice start time', () => {
         const startDate = createLocalDate(2026, 7, 10, 20, 0);
-        const overnightEndDate = createLocalDate(2026, 7, 10, 1, 0);
+        const overnightStartDate = createLocalDate(2026, 7, 10, 23, 0);
+        const sameDateOvernightEnd = createLocalDate(2026, 7, 10, 1, 0);
+        const explicitNextDateEnd = createLocalDate(2026, 7, 11, 1, 0);
 
         expect(() => validatePracticeDateRange(startDate, createLocalDate(2026, 7, 10, 20, 0)))
             .toThrow('End time must be after the start time');
@@ -23,17 +25,19 @@ describe('edit schedule practice save flow', () => {
             .toThrow('End time must be after the start time');
         expect(() => validatePracticeDateRange(startDate, new Date('not-a-date')))
             .toThrow('Practice start and end times must be valid dates');
-        expect(() => validatePracticeDateRange(startDate, createLocalDate(2026, 7, 11, 1, 0)))
+        expect(() => validatePracticeDateRange(overnightStartDate, sameDateOvernightEnd))
+            .toThrow('End time must be after the start time');
+        expect(() => validatePracticeDateRange(overnightStartDate, explicitNextDateEnd))
             .not.toThrow();
-        expect(validatePracticeDateRange(startDate, overnightEndDate).endDate)
-            .toEqual(createLocalDate(2026, 7, 11, 1, 0));
+        expect(validatePracticeDateRange(overnightStartDate, explicitNextDateEnd).endDate)
+            .toBe(explicitNextDateEnd);
     });
 
     it.each([false, true])('rejects an invalid duration before persisting when recurring is %s', async (isRecurring) => {
         const addPractice = vi.fn();
         const updateEvent = vi.fn();
-        const startDate = createLocalDate(2026, 7, 10, 20, 0);
-        const endDate = createLocalDate(2026, 7, 10, 19, 0);
+        const startDate = createLocalDate(2026, 7, 10, 23, 0);
+        const endDate = createLocalDate(2026, 7, 10, 1, 0);
 
         await expect(savePracticeForm({
             teamId: 'team-1',
@@ -57,12 +61,11 @@ describe('edit schedule practice save flow', () => {
         expect(updateEvent).not.toHaveBeenCalled();
     });
 
-    it('rolls overnight practice end times to the next day before persisting', async () => {
+    it('persists an overnight practice only when the next end date is explicit', async () => {
         const addPractice = vi.fn().mockResolvedValue('practice-overnight');
         const updateEvent = vi.fn();
         const startDate = createLocalDate(2026, 7, 10, 23, 0);
-        const endDate = createLocalDate(2026, 7, 10, 1, 0);
-        const expectedEndDate = createLocalDate(2026, 7, 11, 1, 0);
+        const endDate = createLocalDate(2026, 7, 11, 1, 0);
         const Timestamp = {
             fromDate: (value) => ({
                 iso: value.toISOString()
@@ -97,7 +100,7 @@ describe('edit schedule practice save flow', () => {
         expect(updateEvent).not.toHaveBeenCalled();
         expect(addPractice).toHaveBeenCalledWith('team-1', expect.objectContaining({
             date: { iso: startDate.toISOString() },
-            end: { iso: expectedEndDate.toISOString() },
+            end: { iso: endDate.toISOString() },
             startTime: '23:00',
             endTime: '01:00',
             endDayOffset: 1
