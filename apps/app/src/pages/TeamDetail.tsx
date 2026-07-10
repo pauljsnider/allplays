@@ -1508,6 +1508,7 @@ function MoreTab({ model, auth, staffPermissionsLoading, staffPermissionsError, 
           {model.canManageTeam ? <InternalAction icon={Shield} label="Edit team" detail="Update name, sport, photo, ZIP, and visibility in the app." to={`/teams/${encodeURIComponent(model.team.id)}/edit`} /> : null}
           {model.canManageTeam ? <InternalAction icon={Award} label="Awards studio" detail="Create drafts, review AI narratives, publish, and export." to={`/teams/${encodeURIComponent(model.team.id)}/certificates`} /> : null}
           {model.canManageTeam ? <InternalAction icon={Dumbbell} label="Drill library" detail="Browse community drills and manage favorites." to={`/teams/${encodeURIComponent(model.team.id)}/drills`} /> : null}
+          {model.canManageTeam ? <InternalAction icon={Ticket} label="Registration forms" detail="Create, edit, publish, or close registration forms." to={`/teams/${encodeURIComponent(model.team.id)}/registration-forms`} /> : null}
           <InternalAction icon={ImageIcon} label="Media albums" detail="Photos, video links, albums, and files." to={`/teams/${encodeURIComponent(model.team.id)}/media`} />
           <InternalAction icon={DollarSign} label="My fees" detail="Balances, checkout links, installments, and history." to="/parent-tools/fees" />
           <InternalAction icon={Ticket} label="Registrations" detail="Open published team registration forms." to="/parent-tools/registrations" />

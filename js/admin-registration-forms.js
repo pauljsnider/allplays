@@ -153,6 +153,7 @@ export function normalizeRegistrationOptions(options = []) {
             return {
                 id: String(option?.id || '').trim(),
                 label,
+                description: String(option?.description || '').trim(),
                 capacityLimit,
                 active: option?.active !== false,
                 waitlistEnabled: option?.waitlistEnabled === true

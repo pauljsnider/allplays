@@ -325,6 +325,7 @@
             ],
             "appPages": [
                 "apps/app/src/pages/RegistrationDetail.tsx",
+                "apps/app/src/pages/TeamRegistrationForms.tsx",
                 "apps/app/src/pages/TeamRegistrationReview.tsx"
             ],
             "cloudFunctions": [
@@ -348,6 +349,7 @@
             ],
             "integrationTests": [
                 "apps/app/src/pages/RegistrationDetail.test.tsx",
+                "apps/app/src/pages/TeamRegistrationForms.test.tsx",
                 "tests/unit/app-registration-detail.test.jsx"
             ],
             "workflowTests": [],

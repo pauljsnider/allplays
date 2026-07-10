@@ -35,7 +35,7 @@ describe('admin registration form setup', () => {
             participantFieldsText: 'Player name\nBirthdate',
             guardianFieldsText: 'Guardian name, Guardian email, Guardian phone',
             registrationOptions: [
-                { id: 'division-a', label: 'Division A', capacityLimit: '12', active: true, waitlistEnabled: true },
+                { id: 'division-a', label: 'Division A', description: 'Tryout required.', capacityLimit: '12', active: true, waitlistEnabled: true },
                 { label: 'Division B', capacityLimit: '', active: false, waitlistEnabled: false }
             ],
             paymentSettings: { offlinePaymentEnabled: true, onlineCheckoutEnabled: true },
@@ -83,8 +83,8 @@ describe('admin registration form setup', () => {
         ]);
         expect(payload.guardianFields[1]).toMatchObject({ label: 'Guardian email', type: 'email', required: true });
         expect(payload.registrationOptions).toEqual([
-            { id: 'division-a', label: 'Division A', capacityLimit: 12, active: true, waitlistEnabled: true, sortOrder: 0 },
-            { id: 'option_2', label: 'Division B', capacityLimit: null, active: false, waitlistEnabled: false, sortOrder: 1 }
+            { id: 'division-a', label: 'Division A', description: 'Tryout required.', capacityLimit: 12, active: true, waitlistEnabled: true, sortOrder: 0 },
+            { id: 'option_2', label: 'Division B', description: '', capacityLimit: null, active: false, waitlistEnabled: false, sortOrder: 1 }
         ]);
         expect(payload.discountRules).toEqual([
             { id: 'early', type: 'early_bird', label: 'Early bird', amountType: 'fixed', amountValue: 2500, earlyBirdDeadline: '2026-03-01', minimumQuantity: 1, active: true, sortOrder: 0 },
@@ -206,11 +206,11 @@ describe('admin registration form setup', () => {
         expect(normalizeRegistrationOptions()).toEqual([]);
         expect(normalizeRegistrationOptions([
             { label: '  ' },
-            { id: 'early', label: 'Early bird', capacityLimit: '25.9', waitlistEnabled: true },
+            { id: 'early', label: 'Early bird', description: '  Discounted setup window.  ', capacityLimit: '25.9', waitlistEnabled: true },
             { label: 'Open registration', capacityLimit: '-1', active: false }
         ])).toEqual([
-            { id: 'early', label: 'Early bird', capacityLimit: 25, active: true, waitlistEnabled: true, sortOrder: 0 },
-            { id: 'option_2', label: 'Open registration', capacityLimit: 0, active: false, waitlistEnabled: false, sortOrder: 1 }
+            { id: 'early', label: 'Early bird', description: 'Discounted setup window.', capacityLimit: 25, active: true, waitlistEnabled: true, sortOrder: 0 },
+            { id: 'option_2', label: 'Open registration', description: '', capacityLimit: 0, active: false, waitlistEnabled: false, sortOrder: 1 }
         ]);
     });
 

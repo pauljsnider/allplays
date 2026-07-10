@@ -9,6 +9,8 @@ const legacyAdminSource = readFileSync(new URL('../../js/admin-registration-form
 const legacyAdminTestSource = readFileSync(new URL('./admin-registration-forms.test.js', import.meta.url), 'utf8');
 const capabilitySource = readFileSync(new URL('../../apps/app/src/data/capabilities.ts', import.meta.url), 'utf8');
 const workflowRegistrationTestSource = readFileSync(new URL('./workflow-registration.test.js', import.meta.url), 'utf8');
+const appRoutesSource = readFileSync(new URL('../../apps/app/src/App.tsx', import.meta.url), 'utf8');
+const appEditorSource = readFileSync(new URL('../../apps/app/src/pages/TeamRegistrationForms.tsx', import.meta.url), 'utf8');
 
 describe('issue 1995 registration form admin source contract', () => {
     it('keeps app registration setup drafts mapped to legacy form payloads', () => {
@@ -59,7 +61,15 @@ describe('issue 1995 registration form admin source contract', () => {
         expect(legacyAdminTestSource).toContain('emits the option, waiver, fee, and payment-plan shape consumed by app and legacy registration flows');
         expect(legacyAdminTestSource).toContain('preserves closed forms as unavailable and normalizes open status aliases');
         expect(legacyAdminTestSource).toContain('creates a shareable public registration URL for published forms');
-        expect(capabilitySource).toContain('legacy still owns setup');
+        expect(capabilitySource).toContain('Native app supports registration setup');
+        expect(appRoutesSource).toContain('/teams/:teamId/registration-forms');
+        expect(appEditorSource).toContain('listRegistrationFormEditorsForApp');
+        expect(appEditorSource).toContain('saveRegistrationFormEditorForApp');
+        expect(appEditorSource).toContain('Registration options');
+        expect(appEditorSource).toContain('Enable waitlist');
+        expect(appEditorSource).toContain('Offer payment plan');
+        expect(appEditorSource).toContain('Waiver text');
+        expect(appEditorSource).toContain('Save and publish');
         expect(workflowRegistrationTestSource).toContain('manual provider pulls');
     });
 });

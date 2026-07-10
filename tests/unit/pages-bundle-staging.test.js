@@ -83,6 +83,7 @@ describe('pages bundle staging', () => {
         const resolvedOutputFile = writeFirebaseHostingConfig(publicDir, outputFile, { rootDir });
         const config = JSON.parse(fs.readFileSync(resolvedOutputFile, 'utf8'));
 
+        expect(config.hosting.site).toBe('game-flow-c6311');
         expect(config.hosting.public).toBe(path.resolve(publicDir));
         expect(config.hosting.rewrites).toEqual([{ source: '**', destination: '/index.html' }]);
         expect(config.firestore.rules).toBe('firestore.rules');

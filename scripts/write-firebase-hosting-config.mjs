@@ -4,6 +4,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const defaultRootDir = path.resolve(scriptDir, '..');
+const firebaseHostingSite = 'game-flow-c6311';
 const appAssetsCacheHeader = {
     key: 'Cache-Control',
     value: 'public, max-age=31536000, immutable'
@@ -52,6 +53,7 @@ export function writeFirebaseHostingConfig(publicDir, outputFile, { rootDir = de
 
     config.hosting = {
         ...config.hosting,
+        site: config.hosting?.site ?? firebaseHostingSite,
         public: path.resolve(publicDir),
         headers: [
             ...(config.hosting?.headers ?? []),
