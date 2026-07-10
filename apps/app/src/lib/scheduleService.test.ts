@@ -1,5 +1,10 @@
 import { readFileSync } from 'node:fs';
+import { dirname, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+
+const testDir = dirname(fileURLToPath(import.meta.url));
+const readAppSource = (relativePath: string) => readFileSync(resolve(testDir, '..', relativePath), 'utf8');
 
 const mocks = vi.hoisted(() => {
   const transactionSet = vi.fn();
@@ -198,8 +203,8 @@ function playerSnapshot(id: string, data: Record<string, unknown> | null) {
 }
 
 it('keeps schedule workflows behind typed legacy adapters', () => {
-  const scheduleServiceSource = readFileSync('src/lib/scheduleService.ts', 'utf8');
-  const scheduleEventDetailSource = readFileSync('src/pages/ScheduleEventDetail.tsx', 'utf8');
+  const scheduleServiceSource = readAppSource('lib/scheduleService.ts');
+  const scheduleEventDetailSource = readAppSource('pages/ScheduleEventDetail.tsx');
 
   expect(scheduleServiceSource).not.toContain("../../../../js/");
   expect(scheduleServiceSource).toContain("./adapters/legacyScheduleDb");
@@ -476,7 +481,7 @@ describe('scheduled tournament writes', () => {
   });
 
   it('routes a single-game tournament block through the scheduled game save flow with one legacy document', async () => {
-    const scheduleServiceSource = readFileSync('src/lib/scheduleService.ts', 'utf8');
+    const scheduleServiceSource = readAppSource('lib/scheduleService.ts');
     vi.mocked(addGame).mockResolvedValueOnce('game-1' as any);
 
     const createdIds = await createScheduledTournamentBlockForApp('team-1', {
