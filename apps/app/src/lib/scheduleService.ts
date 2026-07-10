@@ -15,6 +15,7 @@ import {
   getTeams,
   addGame,
   addPractice,
+  buildLegacyTournamentGameDocuments,
   buildSingleLegacyTournamentGameDocument,
   createRideOffer,
   claimAssignmentSlot,
@@ -1427,6 +1428,22 @@ export type ScheduleTournamentCreateFormInput = {
 
 export type ScheduleTournamentMetadataInput = Pick<ScheduleTournamentCreateFormInput, 'divisionName' | 'bracketName' | 'roundName' | 'poolName'>;
 
+export class TournamentBlockPartialSaveError extends Error {
+  readonly createdIds: string[];
+  readonly totalGames: number;
+  readonly failedGameNumber: number;
+  readonly cause: unknown;
+
+  constructor(createdIds: string[], totalGames: number, failedGameNumber: number, cause: unknown) {
+    super(`Tournament block was only partially created: ${createdIds.length} of ${totalGames} games were saved. Refresh Schedule before retrying to avoid duplicate games.`);
+    this.name = 'TournamentBlockPartialSaveError';
+    this.createdIds = [...createdIds];
+    this.totalGames = totalGames;
+    this.failedGameNumber = failedGameNumber;
+    this.cause = cause;
+  }
+}
+
 export type ScheduleStatTrackerConfigOption = {
   id: string;
   name: string;
@@ -1747,7 +1764,29 @@ export async function createScheduledTournamentBlockForApp(teamId: string, input
     return [createdId];
   }
 
-  throw new Error('Tournament blocks currently support exactly one completed game.');
+  // Normalize and validate every row before the first write. This prevents a
+  // malformed later row from leaving a partially-created tournament block.
+  const legacyPayloads = buildLegacyTournamentGameDocuments(games.map((game) => buildScheduledGamePayload({
+    ...game,
+    competitionType: 'tournament'
+  }, user as AuthUser)), tournament);
+  const createdIds: string[] = [];
+
+  for (let index = 0; index < games.length; index += 1) {
+    try {
+      const createdId = await createScheduledGameForApp(normalizedTeamId, games[index], user, {
+        legacyPayload: legacyPayloads[index],
+        requireCreatedId: true,
+        timeoutLabel: `Scheduled tournament game ${index + 1} create`
+      });
+      createdIds.push(createdId);
+    } catch (error) {
+      if (!createdIds.length) throw error;
+      throw new TournamentBlockPartialSaveError(createdIds, games.length, index + 1, error);
+    }
+  }
+
+  return createdIds;
 }
 
 export async function updateScheduledGameForApp(teamId: string, gameId: string, input: ScheduleGameFormInput, user: AuthUser | null) {
