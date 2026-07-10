@@ -470,6 +470,132 @@ describe('tournament standings helpers', () => {
     });
   });
 
+  it('merges configured division names into the matching division-only game group', () => {
+    const pools = computeTournamentPoolStandings([
+      {
+        competitionType: 'tournament',
+        status: 'completed',
+        opponent: 'Lions',
+        isHome: true,
+        homeScore: 2,
+        awayScore: 1,
+        tournament: { divisionName: '10U Gold' }
+      }
+    ], {
+      teamName: 'Tigers',
+      tournamentDivisions: ['10U Gold'],
+      poolOverrides: {
+        [buildTournamentPoolOverrideKey('10U Gold')]: {
+          poolName: '10U Gold',
+          teamOrder: ['Lions', 'Tigers']
+        }
+      }
+    });
+
+    expect(pools).toHaveLength(1);
+    expect(pools[0]).toMatchObject({
+      groupKey: standingsKey('10U Gold', ''),
+      groupName: '10U Gold',
+      scheduledGameCount: 1,
+      gameCount: 1,
+      isOverridden: true
+    });
+    expect(pools[0].rows.map((row) => row.teamName)).toEqual(['Lions', 'Tigers']);
+  });
+
+  it('merges configured pool names into the matching pool-only game group', () => {
+    const pools = computeTournamentPoolStandings([
+      {
+        competitionType: 'tournament',
+        status: 'completed',
+        opponent: 'Lions',
+        isHome: true,
+        homeScore: 2,
+        awayScore: 1,
+        tournament: { poolName: 'Pool A' }
+      }
+    ], {
+      teamName: 'Tigers',
+      poolNames: ['Pool A'],
+      poolOverrides: {
+        [buildTournamentPoolOverrideKey('Pool A')]: {
+          poolName: 'Pool A',
+          teamOrder: ['Lions', 'Tigers']
+        }
+      }
+    });
+
+    expect(pools).toHaveLength(1);
+    expect(pools[0]).toMatchObject({
+      groupKey: standingsKey('', 'Pool A'),
+      groupName: 'Pool A',
+      scheduledGameCount: 1,
+      gameCount: 1,
+      isOverridden: true
+    });
+    expect(pools[0].rows.map((row) => row.teamName)).toEqual(['Lions', 'Tigers']);
+  });
+
+  it('merges configured division-pool objects and applies their legacy override once', () => {
+    const groupName = '10U Gold • Pool A';
+    const pools = computeTournamentPoolStandings([
+      {
+        competitionType: 'tournament',
+        status: 'completed',
+        opponent: 'Lions',
+        isHome: true,
+        homeScore: 2,
+        awayScore: 1,
+        tournament: { divisionName: '10U Gold', poolName: 'Pool A' }
+      }
+    ], {
+      teamName: 'Tigers',
+      tournamentPools: [{ divisionName: '10U Gold', poolName: 'Pool A' }],
+      poolOverrides: {
+        [buildTournamentPoolOverrideKey(groupName)]: {
+          poolName: groupName,
+          teamOrder: ['Lions', 'Tigers']
+        }
+      }
+    });
+
+    expect(pools).toHaveLength(1);
+    expect(pools[0]).toMatchObject({
+      groupKey: standingsKey('10U Gold', 'Pool A'),
+      groupName,
+      scheduledGameCount: 1,
+      gameCount: 1,
+      isOverridden: true
+    });
+    expect(pools[0].rows.map((row) => row.teamName)).toEqual(['Lions', 'Tigers']);
+  });
+
+  it('reconciles a display-only configured group when its matching game group is unambiguous', () => {
+    const groupName = '10U Gold • Pool A';
+    const pools = computeTournamentPoolStandings([
+      {
+        competitionType: 'tournament',
+        status: 'completed',
+        opponent: 'Lions',
+        isHome: true,
+        homeScore: 2,
+        awayScore: 1,
+        tournament: { divisionName: '10U Gold', poolName: 'Pool A' }
+      }
+    ], {
+      teamName: 'Tigers',
+      groupNames: [groupName]
+    });
+
+    expect(pools).toHaveLength(1);
+    expect(pools[0]).toMatchObject({
+      groupKey: standingsKey('10U Gold', 'Pool A'),
+      groupName,
+      scheduledGameCount: 1,
+      gameCount: 1
+    });
+  });
+
   it('computes division-scoped standings when tournament games use division names', () => {
     const pools = computeTournamentPoolStandings([
       {
