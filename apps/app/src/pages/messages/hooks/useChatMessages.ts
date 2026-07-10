@@ -42,11 +42,12 @@ export function useChatMessages({
   const [retryVersion, setRetryVersion] = useState(0);
   const initialSnapshotLoadedRef = useRef(false);
   const conversationId = normalizeConversationId(selectedConversationId);
+  const canSubscribe = Boolean(team && user);
 
   const messages = useMemo(() => mergeChatMessageLists(olderMessages, liveMessages), [liveMessages, olderMessages]);
 
   useEffect(() => {
-    if (!team || !user) return undefined;
+    if (!canSubscribe) return undefined;
 
     setLoadingMessages(true);
     setError(null);
@@ -80,7 +81,7 @@ export function useChatMessages({
     return () => {
       subscription.unsubscribe();
     };
-  }, [conversationId, onBeforeLiveUpdate, onLiveUpdateState, onMarkRead, onMessagesReset, retryVersion, team?.id, teamId, user?.uid]);
+  }, [canSubscribe, conversationId, onBeforeLiveUpdate, onLiveUpdateState, onMarkRead, onMessagesReset, retryVersion, teamId]);
 
   const retryMessages = useCallback(() => {
     if (!team || !user) return;
