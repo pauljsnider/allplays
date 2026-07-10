@@ -554,13 +554,13 @@ test.describe('mobile My Teams', () => {
         await expect(page.getByText('Choose a team')).toBeVisible();
         await expect(page.getByPlaceholder('Search teams or players')).toBeVisible();
         await page.getByPlaceholder('Search teams or players').fill('Riley');
-        await expect(page.getByRole('link', { name: 'Open Rockets' }).first()).toBeVisible();
-        await expect(page.getByRole('link', { name: 'Open Staff Wolves' })).toHaveCount(0);
-        await expect(page.getByRole('link', { name: 'Open Bears' })).toHaveCount(0);
+        await expect(page.getByRole('link', { name: 'Select Rockets' }).first()).toBeVisible();
+        await expect(page.getByRole('link', { name: 'Select Staff Wolves' })).toHaveCount(0);
+        await expect(page.getByRole('link', { name: 'Select Bears' })).toHaveCount(0);
         await page.getByPlaceholder('Search teams or players').fill('zzz');
         await expect(page.getByText('No teams match that search.')).toBeVisible();
         await page.getByPlaceholder('Search teams or players').fill('Staff Wolves');
-        await expect(page.getByRole('link', { name: 'Open Staff Wolves' }).first()).toHaveAttribute('aria-current', 'page');
+        await expect(page.getByRole('link', { name: 'Select Staff Wolves' }).first()).toHaveAttribute('aria-current', 'page');
         await expect(page.locator('a[aria-label="Staff Wolves messages"]')).toBeVisible();
         await expect(page.locator('a[aria-label="Staff Wolves schedule"]')).toHaveCount(0);
         await expect(page.getByText('No player is linked to this account for the team, but team chat is available.')).toBeVisible();
@@ -575,10 +575,13 @@ test.describe('mobile My Teams', () => {
         await expect.poll(() => page.evaluate(() => window.__openedPublicUrls.at(-1))).toBe('https://allplays.ai/team.html#teamId=team-staff');
         await expect(page).toHaveURL(/#\/teams/);
 
-        await page.goto(appUrl(baseURL, '/teams?selectedTeamId=team-1&from=home'), { waitUntil: 'domcontentloaded' });
-        await waitForTeamsRoute(page, teamsReadyHeading);
         await page.getByPlaceholder('Search teams or players').fill('');
-        await expect(page.getByRole('link', { name: 'Open Bears' }).first()).toHaveAttribute('aria-current', 'page');
+        const bearsSelector = page.getByRole('link', { name: 'Select Bears' }).first();
+        await expect(bearsSelector).toHaveAttribute('href', '#/teams?selectedTeamId=team-1');
+        await bearsSelector.click();
+        await expect(page).toHaveURL(/#\/teams\?selectedTeamId=team-1$/);
+        await expect(page.getByRole('heading', { name: 'Bears' })).toBeVisible();
+        await expect(bearsSelector).toHaveAttribute('aria-current', 'page');
         await expect(page.getByText('Pat Star, Sam Wing')).toBeVisible();
         await expect(page.getByText('Coach/admin tools')).toHaveCount(0);
         await expect(page.getByRole('link', { name: /Team drills/ })).toHaveCount(0);
@@ -588,7 +591,7 @@ test.describe('mobile My Teams', () => {
         await expect(page.getByRole('link', { name: /Players/ })).toHaveAttribute('href', 'https://allplays.ai/team.html#teamId=team-1');
         await expect(page.locator('a[href="#/players/team-1/player-1"]')).toBeVisible();
         await expect(page.locator('a[href="#/players/team-1/player-2"]')).toBeVisible();
-        await page.getByRole('link', { name: 'Open Bears' }).first().click();
+        await page.getByRole('link', { name: 'Bears team hub' }).click();
         await waitForTeamDetailRoute(page, 'Bears');
         await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1)).toBe(true);
     });
@@ -743,7 +746,7 @@ test.describe('mobile My Teams', () => {
 
         const teamsReadyHeading = page.getByRole('heading', { name: '3 teams ready' });
         await waitForTeamsRoute(page, teamsReadyHeading);
-        await page.getByRole('link', { name: 'Open Bears' }).first().click();
+        await page.getByRole('link', { name: 'Bears team hub' }).click();
 
         await waitForTeamDetailRoute(page, 'Bears');
         await page.getByRole('button', { name: /Roster/ }).click();
@@ -805,8 +808,8 @@ test.describe('desktop My Teams', () => {
             return Math.round((panel?.x || 0) - (rail?.x || 0));
         }).toBeGreaterThan(360);
         await page.getByPlaceholder('Search teams or players').fill('Rockets');
-        await expect(page.getByRole('link', { name: 'Open Rockets' })).toBeVisible();
-        await expect(page.getByRole('link', { name: 'Open Bears' })).toHaveCount(0);
+        await expect(page.getByRole('link', { name: 'Select Rockets' })).toBeVisible();
+        await expect(page.getByRole('link', { name: 'Select Bears' })).toHaveCount(0);
         await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1)).toBe(true);
     });
 

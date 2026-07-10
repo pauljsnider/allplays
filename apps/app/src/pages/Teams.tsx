@@ -354,7 +354,7 @@ function TeamLauncher({ teams, selectedTeamId, variant = 'grid' }: {
       <div className="flex items-center justify-between gap-3 px-1">
         <div className="min-w-0">
           <div className="text-sm font-black text-gray-950">{isRail ? 'Teams' : 'Choose a team'}</div>
-          <div className="mt-0.5 text-xs font-semibold text-gray-500">{isRail ? 'Select a team, or jump straight to chat and schedule.' : 'Open the team hub, or jump straight to chat, schedule, or the full team page.'}</div>
+          <div className="mt-0.5 text-xs font-semibold text-gray-500">{isRail ? 'Select a team, or jump straight to chat and schedule.' : 'Select a team, or use the quick links for chat, schedule, and the full team hub.'}</div>
         </div>
         <span className="inline-flex h-7 flex-none items-center rounded-full bg-gray-100 px-2.5 text-[11px] font-black text-gray-700">
           {teams.length} team{teams.length === 1 ? '' : 's'}
@@ -386,7 +386,7 @@ function TeamLauncherRow({ team, selected, compact = false }: { team: ParentHome
 
   return (
     <article className={`team-launcher-row flex min-w-0 items-center gap-2 rounded-2xl border bg-white p-2 shadow-sm transition ${compact ? 'team-launcher-row-compact' : ''} ${selected ? 'border-primary-300 bg-primary-50/50 ring-2 ring-primary-100' : 'border-gray-200 hover:border-primary-200 hover:bg-primary-50/25'}`}>
-      <Link to={`/teams/${encodeURIComponent(team.teamId)}`} className="flex min-w-0 flex-1 items-center gap-3 rounded-xl p-1 text-left" aria-current={selected ? 'page' : undefined} aria-label={`Open ${team.teamName}`}>
+      <Link to={`/teams?selectedTeamId=${encodeURIComponent(team.teamId)}`} className="flex min-w-0 flex-1 items-center gap-3 rounded-xl p-1 text-left" aria-current={selected ? 'page' : undefined} aria-label={`Select ${team.teamName}`}>
         <TeamAvatar name={team.teamName} photoUrl={team.photoUrl} />
         <span className="min-w-0 flex-1">
           <span className="flex min-w-0 items-center gap-2">
