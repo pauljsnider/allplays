@@ -13,7 +13,7 @@ describe('staff RSVP panel decomposition contract', () => {
         expect(detailSource).toContain('onOverride={staffRsvp.submitOverride}');
         expect(detailSource).toContain('const staffRsvpLoader = useMemo(() => createStaffRsvpAvailabilityLoader(), [event.teamId, event.id]);');
         expect(detailSource).toContain('const staffRsvp = useStaffRsvpBreakdown(staffRsvpLoader);');
-        expect(detailSource).toContain('const rsvpWorkflow = useScheduleEventRsvp({ availabilityNote });');
+        expect(detailSource).toContain('const rsvpWorkflow = useScheduleEventRsvp({ availabilityNote, applyToAllChildren: useFamilyRsvp });');
     });
 
     it('keeps staff override rows in the reusable schedule component', () => {

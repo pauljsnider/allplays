@@ -36,7 +36,8 @@ const ridesHookTestSource = readSource('apps/app/src/hooks/schedule/useScheduleR
 
 describe('ScheduleEventDetail decomposition initiative source contract', () => {
     it('keeps shared event detail state in the extracted provider context', () => {
-        expect(detailSource).toContain("import { ScheduleEventDetailProvider } from './schedule/ScheduleEventDetailContext';");
+        expect(detailSource).toContain("ScheduleEventDetailProvider");
+        expect(detailSource).toContain("from './schedule/ScheduleEventDetailContext';");
         expect(detailSource).toContain('<ScheduleEventDetailProvider value={{');
         [
             'auth',
@@ -57,15 +58,18 @@ describe('ScheduleEventDetail decomposition initiative source contract', () => {
 
     it('keeps parent RSVP mutation, optimistic update, and rollback logic in useScheduleEventRsvp', () => {
         expect(detailSource).toContain("import { useScheduleEventRsvp } from '../hooks/schedule/useScheduleEventRsvp';");
-        expect(detailSource).toContain('const rsvpWorkflow = useScheduleEventRsvp({ availabilityNote });');
+        expect(detailSource).toContain('const rsvpWorkflow = useScheduleEventRsvp({ availabilityNote, applyToAllChildren: useFamilyRsvp });');
         expect(detailSource).not.toMatch(/const\s+\[rsvpSubmitting\b/);
         expect(detailSource).not.toMatch(/submitParentScheduleRsvp\(/);
 
-        expect(rsvpHookSource).toContain('const { auth, event, updateEvents } = useScheduleEventDetailContext();');
+        expect(rsvpHookSource).toContain('const { auth, event, childEvents, updateEvents } = useScheduleEventDetailContext();');
         expect(rsvpHookSource).toContain('const [submitting, setSubmitting] = useState<RsvpResponse | null>(null);');
-        expect(rsvpHookSource).toContain('const optimisticSummary = buildOptimisticRsvpSummary(event.rsvpSummary, previousRsvp, response);');
-        expect(rsvpHookSource).toContain('const summary = await submitParentScheduleRsvp(event, currentUser, response, note);');
-        expect(rsvpHookSource).toContain('myRsvp: previousRsvp,');
+        expect(rsvpHookSource).toContain('const matchingChildEvents = childEvents.filter((childEvent) => (');
+        expect(rsvpHookSource).toContain('const targetEvents = applyToAllChildren ? matchingChildEvents : [event];');
+        expect(rsvpHookSource).toContain('const optimisticSummary = targetEvents.reduce(');
+        expect(rsvpHookSource).toContain('await submitParentScheduleRsvp(event, currentUser, response, note);');
+        expect(rsvpHookSource).toContain('await submitParentScheduleRsvpForChildren(targetEvents, currentUser, response, note)');
+        expect(rsvpHookSource).toContain('myRsvp: previousState.rsvp,');
         expect(rsvpHookTestSource).toContain("describe('useScheduleEventRsvp'");
     });
 

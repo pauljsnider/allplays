@@ -86,12 +86,13 @@ describe('ScheduleEventDetail decomposition contract', () => {
         const ridesHook = readRepoFile('apps/app/src/hooks/schedule/useScheduleRideOffers.ts');
         const context = readRepoFile('apps/app/src/pages/schedule/ScheduleEventDetailContext.tsx');
 
-        expect(page).toContain("import { ScheduleEventDetailProvider } from './schedule/ScheduleEventDetailContext';");
+        expect(page).toContain("ScheduleEventDetailProvider");
+        expect(page).toContain("from './schedule/ScheduleEventDetailContext';");
         expect(page).toContain("import { useScheduleEventRsvp } from '../hooks/schedule/useScheduleEventRsvp';");
         expect(page).toContain("import { useStaffRsvpBreakdown } from '../hooks/schedule/useStaffRsvpBreakdown';");
         expect(page).toContain("import { RideshareSection } from '../components/schedule/RideshareSection';");
         expect(page).toContain('<ScheduleEventDetailProvider value={{');
-        expect(page).toContain('const rsvpWorkflow = useScheduleEventRsvp({ availabilityNote });');
+        expect(page).toContain('const rsvpWorkflow = useScheduleEventRsvp({ availabilityNote, applyToAllChildren: useFamilyRsvp });');
         expect(page).toContain('const staffRsvpLoader = useMemo(() => createStaffRsvpAvailabilityLoader(), [event.teamId, event.id]);');
         expect(page).toContain('const staffRsvp = useStaffRsvpBreakdown(staffRsvpLoader);');
         expect(page).toContain('<RideshareSection />');
