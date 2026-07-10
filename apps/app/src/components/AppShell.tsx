@@ -5,6 +5,7 @@ import {
   Bell,
   CalendarDays,
   CalendarPlus,
+  ChevronDown,
   ClipboardList,
   CreditCard,
   Dumbbell,
@@ -59,6 +60,9 @@ type AddWorkflow = {
   badge?: string;
 };
 
+const addWorkflowSections: AddWorkflow['section'][] = ['Team', 'Player', 'Schedule', 'Social', 'Team Ops'];
+const commonAddWorkflowIds = ['join-code', 'request-access', 'create-team'];
+
 interface AppShellProps {
   auth: AuthState;
   children: ReactNode;
@@ -67,6 +71,7 @@ interface AppShellProps {
 export function AppShell({ auth, children }: AppShellProps) {
   const [searchOpen, setSearchOpen] = useState(false);
   const [addTeamOpen, setAddTeamOpen] = useState(false);
+  const [moreAddWorkflowsOpen, setMoreAddWorkflowsOpen] = useState(false);
   const [inboxOpen, setInboxOpen] = useState(false);
   const [inboxItems, setInboxItems] = useState<NotificationInboxItem[]>([]);
   const [inboxState, setInboxState] = useState<'idle' | 'loading' | 'ready' | 'error'>('idle');
@@ -131,6 +136,7 @@ export function AppShell({ auth, children }: AppShellProps) {
       }
       if (addTeamOpen) {
         setAddTeamOpen(false);
+        setMoreAddWorkflowsOpen(false);
         event.preventDefault();
       }
       if (inboxOpen) {
@@ -246,14 +252,51 @@ export function AppShell({ auth, children }: AppShellProps) {
   };
 
   const addWorkflows = buildAddWorkflows();
+  const commonAddWorkflows = commonAddWorkflowIds
+    .map((id) => addWorkflows.find((workflow) => workflow.id === id))
+    .filter((workflow): workflow is AddWorkflow => workflow !== undefined);
+  const advancedAddWorkflows = addWorkflows.filter((workflow) => !commonAddWorkflowIds.includes(workflow.id));
+
+  const openAddWorkflowModal = () => {
+    setMoreAddWorkflowsOpen(false);
+    setAddTeamOpen(true);
+  };
+
+  const closeAddWorkflowModal = () => {
+    setAddTeamOpen(false);
+    setMoreAddWorkflowsOpen(false);
+  };
 
   const handleAddWorkflow = async (workflow: AddWorkflow) => {
-    setAddTeamOpen(false);
+    closeAddWorkflowModal();
     if (workflow.kind === 'website') {
       await openPublicUrl(workflow.href);
       return;
     }
     navigate(workflow.href);
+  };
+
+  const renderAddWorkflow = (workflow: AddWorkflow) => {
+    const Icon = workflow.icon;
+    return (
+      <button
+        key={workflow.id}
+        type="button"
+        className="add-workflow-card"
+        onClick={() => void handleAddWorkflow(workflow)}
+      >
+        <span className="add-workflow-icon">
+          <Icon className="h-4 w-4" aria-hidden="true" />
+        </span>
+        <span className="min-w-0 flex-1">
+          <span className="add-workflow-label">{workflow.label}</span>
+          <span className="add-workflow-detail">{workflow.detail}</span>
+        </span>
+        <span className={`add-workflow-badge ${workflow.kind === 'website' ? 'add-workflow-badge-website' : ''}`}>
+          {workflow.badge || (workflow.kind === 'website' ? 'Site' : 'App')}
+        </span>
+      </button>
+    );
   };
 
   const renderNotificationTrigger = (className: string, iconOnly = false) => (
@@ -328,7 +371,7 @@ export function AppShell({ auth, children }: AppShellProps) {
                 <button
                   type="button"
                   className="primary-button !h-10 !min-h-10"
-                  onClick={() => setAddTeamOpen(true)}
+                  onClick={openAddWorkflowModal}
                 >
                   <Plus className="h-5 w-5" aria-hidden="true" />
                   Add
@@ -430,7 +473,7 @@ export function AppShell({ auth, children }: AppShellProps) {
                 <button
                   type="button"
                   className="primary-button !h-10 !min-h-10 !w-10 !p-0 sm:!w-auto sm:!px-3"
-                  onClick={() => setAddTeamOpen(true)}
+                  onClick={openAddWorkflowModal}
                   aria-label="Add"
                   title="Add"
                 >
@@ -497,7 +540,7 @@ export function AppShell({ auth, children }: AppShellProps) {
       ) : null}
 
       {addTeamOpen ? (
-        <Modal overlayClassName="z-50 flex items-end bg-gray-950/40 p-3 backdrop-blur-sm sm:items-center sm:justify-center" ariaLabel="Add workflow" onClose={() => setAddTeamOpen(false)}>
+        <Modal overlayClassName="z-50 flex items-end bg-gray-950/40 p-3 backdrop-blur-sm sm:items-center sm:justify-center" ariaLabel="Add workflow" onClose={closeAddWorkflowModal}>
           <div className="add-workflow-panel w-full max-w-3xl rounded-2xl bg-white shadow-app-lg">
             <div className="flex items-center justify-between border-b border-gray-200 p-4">
               <div>
@@ -508,51 +551,57 @@ export function AppShell({ auth, children }: AppShellProps) {
               <button
                 type="button"
                 className="ghost-button !h-10 !min-h-10 !w-10 !p-0"
-                onClick={() => setAddTeamOpen(false)}
+                onClick={closeAddWorkflowModal}
                 aria-label="Close add workflow"
               >
                 <X className="h-5 w-5" aria-hidden="true" />
               </button>
             </div>
             <div className="add-workflow-content p-4">
-              <div className="add-workflow-feature rounded-xl border border-primary-100 bg-primary-50 p-3">
-                <div className="flex items-center gap-2 text-sm font-black text-primary-800">
-                  <Shield className="h-4 w-4" aria-hidden="true" />
-                  Uses existing app and website workflows
+              <section aria-labelledby="common-add-workflows-title">
+                <div id="common-add-workflows-title" className="add-workflow-section-title">Common actions</div>
+                <div className="add-workflow-grid">
+                  {commonAddWorkflows.map(renderAddWorkflow)}
                 </div>
-                <p className="mt-1 text-sm font-semibold leading-6 text-primary-900/80">
-                  Native routes open in the app. Full coach/admin workflows open the current ALL PLAYS website until those screens are migrated.
-                </p>
-              </div>
-              {(['Team', 'Player', 'Schedule', 'Social', 'Team Ops'] as AddWorkflow['section'][]).map((section) => (
-                <section key={section} className="add-workflow-section">
-                  <div className="add-workflow-section-title">{section}</div>
-                  <div className="add-workflow-grid">
-                    {addWorkflows.filter((workflow) => workflow.section === section).map((workflow) => {
-                      const Icon = workflow.icon;
-                      return (
-                        <button
-                          key={workflow.id}
-                          type="button"
-                          className="add-workflow-card"
-                          onClick={() => void handleAddWorkflow(workflow)}
-                        >
-                          <span className="add-workflow-icon">
-                            <Icon className="h-4 w-4" aria-hidden="true" />
-                          </span>
-                          <span className="min-w-0 flex-1">
-                            <span className="add-workflow-label">{workflow.label}</span>
-                            <span className="add-workflow-detail">{workflow.detail}</span>
-                          </span>
-                          <span className={`add-workflow-badge ${workflow.kind === 'website' ? 'add-workflow-badge-website' : ''}`}>
-                            {workflow.badge || (workflow.kind === 'website' ? 'Site' : 'App')}
-                          </span>
-                        </button>
-                      );
-                    })}
+              </section>
+              <button
+                type="button"
+                className="ghost-button mt-3 w-full justify-between !px-3"
+                aria-expanded={moreAddWorkflowsOpen}
+                aria-controls="advanced-add-workflows"
+                onClick={() => setMoreAddWorkflowsOpen((open) => !open)}
+              >
+                <span className="text-left">
+                  <span className="block text-sm font-black">More workflows</span>
+                  <span className="block text-xs font-semibold text-gray-500">Schedule, social, player, and team operations</span>
+                </span>
+                <ChevronDown className={`h-5 w-5 transition-transform ${moreAddWorkflowsOpen ? 'rotate-180' : ''}`} aria-hidden="true" />
+              </button>
+              {moreAddWorkflowsOpen ? (
+                <div id="advanced-add-workflows">
+                  <div className="add-workflow-feature mt-3 rounded-xl border border-primary-100 bg-primary-50 p-3">
+                    <div className="flex items-center gap-2 text-sm font-black text-primary-800">
+                      <Shield className="h-4 w-4" aria-hidden="true" />
+                      Uses existing app and website workflows
+                    </div>
+                    <p className="mt-1 text-sm font-semibold leading-6 text-primary-900/80">
+                      Native routes open in the app. Full coach/admin workflows open the current ALL PLAYS website until those screens are migrated.
+                    </p>
                   </div>
-                </section>
-              ))}
+                  {addWorkflowSections.map((section) => {
+                    const sectionWorkflows = advancedAddWorkflows.filter((workflow) => workflow.section === section);
+                    if (!sectionWorkflows.length) return null;
+                    return (
+                      <section key={section} className="add-workflow-section">
+                        <div className="add-workflow-section-title">{section}</div>
+                        <div className="add-workflow-grid">
+                          {sectionWorkflows.map(renderAddWorkflow)}
+                        </div>
+                      </section>
+                    );
+                  })}
+                </div>
+              ) : null}
               <div className="mt-3 flex flex-wrap gap-2">
                 {auth.roles.map((role) => <RoleBadge key={role} role={role} />)}
               </div>
