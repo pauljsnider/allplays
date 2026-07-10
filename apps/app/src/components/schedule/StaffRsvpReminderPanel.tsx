@@ -15,6 +15,7 @@ export function StaffRsvpReminderPanel({ refreshToken = 0, staffRsvpLoader }: { 
   const [status, setStatus] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [hasSentReminder, setHasSentReminder] = useState(false);
+  const [showPlayersWithoutEmail, setShowPlayersWithoutEmail] = useState(false);
 
   const canLoad = Boolean(auth.user && event.isTeamRsvpReminderManager && event.isDbGame && !event.isCancelled);
 
@@ -35,6 +36,7 @@ export function StaffRsvpReminderPanel({ refreshToken = 0, staffRsvpLoader }: { 
   useEffect(() => {
     setStatus(null);
     setHasSentReminder(false);
+    setShowPlayersWithoutEmail(false);
     if (canLoad) {
       refreshPreview();
     } else {
@@ -49,9 +51,21 @@ export function StaffRsvpReminderPanel({ refreshToken = 0, staffRsvpLoader }: { 
   }
   if (!preview || preview.missingPlayerCount <= 0) return null;
 
+  const playersWithoutEmail = preview.players.filter((player) => (
+    player.hasEligibleParentEmail === false
+    || !Array.isArray(player.parentEmails)
+    || player.parentEmails.length === 0
+  ));
+  const uncoveredPlayerCount = playersWithoutEmail.length;
+  const deliveryConfirmation = preview.eligibleEmailCount === 0
+    ? 'No parent/guardian emails will be sent. The reminder will post to team chat only.'
+    : uncoveredPlayerCount > 0
+      ? `${preview.eligibleEmailCount} eligible parent/guardian ${preview.eligibleEmailCount === 1 ? 'email' : 'emails'} will be targeted. ${uncoveredPlayerCount} no-response ${uncoveredPlayerCount === 1 ? 'player has' : 'players have'} no eligible parent/guardian email. The reminder will also post to team chat.`
+      : `${preview.eligibleEmailCount} eligible parent/guardian ${preview.eligibleEmailCount === 1 ? 'email' : 'emails'} will be targeted.`;
+
   const sendReminder = async () => {
     if (!auth.user || sending) return;
-    const confirmed = window.confirm(`Send an RSVP reminder to ${preview.missingPlayerCount} no-response ${preview.missingPlayerCount === 1 ? 'player' : 'players'}? ${preview.eligibleEmailCount} eligible parent/guardian ${preview.eligibleEmailCount === 1 ? 'email' : 'emails'} will be targeted.`);
+    const confirmed = window.confirm(`Send an RSVP reminder to ${preview.missingPlayerCount} no-response ${preview.missingPlayerCount === 1 ? 'player' : 'players'}? ${deliveryConfirmation}`);
     if (!confirmed) return;
     setSending(true);
     setError(null);
@@ -60,7 +74,9 @@ export function StaffRsvpReminderPanel({ refreshToken = 0, staffRsvpLoader }: { 
       const result: StaffRsvpReminderSendResult = await sendStaffRsvpReminder(event, auth.user, auth.profile || {});
       setPreview(result);
       setHasSentReminder(true);
-      setStatus(`RSVP reminder sent to team chat and ${result.emailSentCount} parent/guardian ${result.emailSentCount === 1 ? 'email' : 'emails'}.`);
+      setStatus(result.emailSentCount > 0
+        ? `RSVP reminder sent to team chat and ${result.emailSentCount} parent/guardian ${result.emailSentCount === 1 ? 'email' : 'emails'}.`
+        : 'RSVP reminder sent to team chat. No parent/guardian emails were sent.');
     } catch (sendError: any) {
       setError(sendError?.message || 'Unable to send RSVP reminder.');
     } finally {
@@ -100,6 +116,28 @@ export function StaffRsvpReminderPanel({ refreshToken = 0, staffRsvpLoader }: { 
           </button>
         )}
       </div>
+      {uncoveredPlayerCount > 0 ? (
+        <div className="mt-2 rounded-lg border border-amber-200 bg-amber-50 p-2 text-xs font-semibold leading-5 text-amber-900">
+          <div>
+            {preview.eligibleEmailCount === 0
+              ? `No eligible parent/guardian emails for ${uncoveredPlayerCount} no-response ${uncoveredPlayerCount === 1 ? 'player' : 'players'}. Reminder will post to team chat only.`
+              : `${uncoveredPlayerCount} no-response ${uncoveredPlayerCount === 1 ? 'player has' : 'players have'} no eligible parent/guardian email. Reminder still posts to team chat; emails only reach eligible guardians.`}
+          </div>
+          <button
+            type="button"
+            className="mt-1 font-black text-amber-900 underline underline-offset-2"
+            aria-expanded={showPlayersWithoutEmail}
+            onClick={() => setShowPlayersWithoutEmail((current) => !current)}
+          >
+            {showPlayersWithoutEmail ? 'Hide players without email' : 'Review players without email'}
+          </button>
+          {showPlayersWithoutEmail ? (
+            <ul className="mt-1 list-disc pl-5" aria-label="Players without eligible parent or guardian email">
+              {playersWithoutEmail.map((player) => <li key={player.playerId}>{player.playerName}</li>)}
+            </ul>
+          ) : null}
+        </div>
+      ) : null}
       {status ? <div className="mt-2 text-xs font-bold text-emerald-700">{status}</div> : null}
       {error ? <div className="mt-2 text-xs font-bold text-rose-700">{error}</div> : null}
     </div>
