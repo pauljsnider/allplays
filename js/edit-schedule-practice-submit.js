@@ -1,5 +1,17 @@
 import { applyPracticeRecurrenceFields } from './edit-schedule-practice-payload.js';
 
+export function validatePracticeDateRange(startDate, endDate) {
+    const startTime = startDate instanceof Date ? startDate.getTime() : Number.NaN;
+    const endTime = endDate instanceof Date ? endDate.getTime() : Number.NaN;
+
+    if (!Number.isFinite(startTime) || !Number.isFinite(endTime)) {
+        throw new Error('Practice start and end times must be valid dates');
+    }
+    if (endTime <= startTime) {
+        throw new Error('End time must be after the start time');
+    }
+}
+
 export async function savePracticeForm({
     teamId,
     editingPracticeId = null,
@@ -15,6 +27,7 @@ export async function savePracticeForm({
     if (!teamId || !formState || !Timestamp || !deleteField || !generateSeriesId || !addPractice || !updateEvent) {
         throw new Error('savePracticeForm requires team, form state, firestore helpers, and persistence functions');
     }
+    validatePracticeDateRange(formState.startDate, formState.endDate);
 
     const practiceData = {
         title: formState.title,
