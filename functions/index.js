@@ -573,8 +573,9 @@ function calculatePublicRegistrationFeeSnapshot(form = {}, options = {}) {
   const subtotalAmountCents = originalFeeAmountCents * quantity;
   let finalAmountDueCents = subtotalAmountCents;
   const appliedDiscounts = [];
+  const discountRules = normalizePublicRegistrationDiscountRules(form.discountRules || []);
 
-  normalizePublicRegistrationDiscountRules(form.discountRules || []).forEach((rule) => {
+  discountRules.forEach((rule) => {
     if (!rule.active || !isPublicRegistrationDiscountEligible(rule, { quantity, now: submittedAt })) return;
     const discountAmountCents = rule.amountType === 'percent'
       ? Math.round(finalAmountDueCents * (rule.amountValue / 100))
@@ -588,6 +589,8 @@ function calculatePublicRegistrationFeeSnapshot(form = {}, options = {}) {
       label: rule.label,
       amountType: rule.amountType,
       amountValue: rule.amountValue,
+      earlyBirdDeadline: rule.earlyBirdDeadline,
+      minimumQuantity: rule.minimumQuantity,
       amountCents: appliedAmountCents
     });
   });
@@ -597,6 +600,7 @@ function calculatePublicRegistrationFeeSnapshot(form = {}, options = {}) {
     quantity,
     originalFeeAmountCents,
     subtotalAmountCents,
+    discountRules,
     appliedDiscounts,
     finalAmountDueCents
   };
@@ -891,7 +895,8 @@ function computeRegistrationFeeAmountCentsFromForm(form, now = new Date(), optio
   const originalFeeAmountCents = Math.max(0, Math.round(Number(form.feeAmountCents || 0)));
   const quantity = Math.max(1, Math.floor(Number(options.quantity || 1)));
   let remainingAmountCents = originalFeeAmountCents * quantity;
-  normalizeServerRegistrationDiscountRules(form.discountRules || []).forEach((rule) => {
+  const discountRulesSource = Array.isArray(options.discountRules) ? options.discountRules : form.discountRules || [];
+  normalizeServerRegistrationDiscountRules(discountRulesSource).forEach((rule) => {
     if (!rule.active || !isServerDiscountRuleEligible(rule, { quantity, now })) return;
     let discountAmountCents;
     if (rule.amountType === 'percent') {
@@ -950,6 +955,26 @@ function getRegistrationSubmittedAtDate(registration = {}, fallback = new Date()
   return resolved instanceof Date && Number.isFinite(resolved.getTime()) ? resolved : fallback;
 }
 
+function getRegistrationCapturedDiscountRules(registration = {}) {
+  if (Array.isArray(registration.feeSnapshot?.discountRules)) {
+    return registration.feeSnapshot.discountRules;
+  }
+  if (Array.isArray(registration.feeSnapshot?.appliedDiscounts)) {
+    const submittedAt = getRegistrationSubmittedAtDate(registration);
+    const submittedAtDeadline = submittedAt.toISOString().slice(0, 10);
+    return registration.feeSnapshot.appliedDiscounts.map((discount, index) => ({
+      id: discount?.id || `captured_discount_${index + 1}`,
+      type: discount?.type,
+      amountType: discount?.amountType || 'fixed',
+      amountValue: discount?.amountValue ?? discount?.amountCents,
+      earlyBirdDeadline: discount?.earlyBirdDeadline || submittedAtDeadline,
+      minimumQuantity: discount?.minimumQuantity || 1,
+      active: discount?.active !== false
+    }));
+  }
+  return registration.feeSnapshot ? [] : null;
+}
+
 function buildRegistrationInstallmentPaymentState(registration = {}, form = null, nextPaidInstallmentCount = getRegistrationPaymentPlanPaidInstallmentCount(registration)) {
   const storedSchedule = getStoredRegistrationInstallmentSchedule(registration);
   const authoritativeTotalBalanceDueCents = storedSchedule.length
@@ -998,11 +1023,12 @@ function getRegistrationCheckoutAmountCents(registration = {}, form = null) {
   }
   if (form) {
     // Recompute from the authoritative form pricing rules using the quantity
-    // and submission time captured by the server-created registration. Using
-    // submittedAt preserves time-sensitive discounts on later checkout retries
-    // without trusting a client-provided feeSnapshot amount.
+    // plus the discount rules and submission time captured by the
+    // server-created registration. Using the captured rule scope preserves
+    // retry discounts without granting rules added after submission.
     return computeRegistrationFeeAmountCentsFromForm(form, getRegistrationSubmittedAtDate(registration), {
-      quantity: registration.feeSnapshot?.quantity || 1
+      quantity: registration.feeSnapshot?.quantity || 1,
+      discountRules: getRegistrationCapturedDiscountRules(registration)
     });
   }
   if (registration.paymentPlan?.id === 'installments') {
