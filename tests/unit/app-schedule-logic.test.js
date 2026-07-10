@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
     buildScheduleIcs,
     buildScheduleAgendaText,
+    canSubmitScheduleEventRsvp,
     canRequestScheduleRide,
     findScheduleRideRequestForChild,
     filterParentScheduleEvents,
@@ -48,6 +49,13 @@ function event(overrides = {}) {
 
 describe('React app parent schedule logic', () => {
 
+    it('treats only active tracked events before the cutoff as RSVP-actionable', () => {
+        expect(canSubmitScheduleEventRsvp(event())).toBe(true);
+        expect(canSubmitScheduleEventRsvp(event({ isDbGame: false }))).toBe(false);
+        expect(canSubmitScheduleEventRsvp(event({ isCancelled: true }))).toBe(false);
+        expect(canSubmitScheduleEventRsvp(event({ availabilityLocked: true }))).toBe(false);
+    });
+
     it('validates external calendar .ics URLs like legacy schedule import', () => {
         expect(validateExternalCalendarUrl('')).toMatchObject({ valid: false, error: 'Enter a calendar .ics URL.' });
         expect(validateExternalCalendarUrl('https://example.com/calendar')).toMatchObject({ valid: false, error: 'Calendar URL must be an .ics link.' });
@@ -85,6 +93,11 @@ describe('React app parent schedule logic', () => {
             myRsvp: 'going',
             rideshareSummary: { offerCount: 1, seatsLeft: 1, requests: 0, pending: 0, confirmed: 0, isFull: false }
         });
+        const lockedRsvp = event({
+            id: 'game-locked',
+            myRsvp: 'not_responded',
+            availabilityLocked: true
+        });
 
         expect(getScheduleTaskDetailSection(generic)).toBe('');
         expect(getScheduleEventDetailPath(generic, getScheduleTaskDetailSection(generic))).toBe('/schedule/team%2Fwith%20slash/game%201?childId=player+1');
@@ -95,6 +108,8 @@ describe('React app parent schedule logic', () => {
         expect(getScheduleEventDetailPath(packet, getScheduleTaskDetailSection(packet))).toBe('/schedule/team-1/practice-1?childId=player-1&section=game');
         expect(getScheduleEventDetailPath(assignment, getScheduleTaskDetailSection(assignment))).toBe('/schedule/team-1/game-1?childId=player-1&section=assignments');
         expect(getScheduleEventDetailPath(ride, getScheduleTaskDetailSection(ride))).toBe('/schedule/team-1/game-1?childId=player-1&section=rideshare');
+        expect(getScheduleTaskDetailSection(lockedRsvp)).toBe('');
+        expect(getScheduleEventDetailPath(lockedRsvp, getScheduleTaskDetailSection(lockedRsvp))).toBe('/schedule/team-1/game-locked?childId=player-1');
     });
 
     it('matches parent-dashboard upcoming and past filter behavior with a three-hour cutoff', () => {

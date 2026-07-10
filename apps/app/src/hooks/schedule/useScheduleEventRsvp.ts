@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { toAppServiceError } from '../../lib/appErrors';
 import { submitParentScheduleRsvp } from '../../lib/scheduleService';
 import { useAsyncOperation } from '../../lib/useAsyncOperation';
-import { normalizeRsvpResponse, type ParentScheduleEvent, type RsvpResponse } from '../../lib/scheduleLogic';
+import { canSubmitScheduleEventRsvp, normalizeRsvpResponse, type ParentScheduleEvent, type RsvpResponse } from '../../lib/scheduleLogic';
 import { UX_TIMING, startInteractionTimer } from '../../lib/uxTiming';
 import { useScheduleEventDetailContext } from '../../pages/schedule/ScheduleEventDetailContext';
 
@@ -53,7 +53,7 @@ export function useScheduleEventRsvp({ availabilityNote }: { availabilityNote: s
   const [message, setMessage] = useState<string | null>(null);
   const { error, run } = useAsyncOperation();
 
-  const canSubmit = Boolean(event.isDbGame && !event.isCancelled && !event.availabilityLocked);
+  const canSubmit = canSubmitScheduleEventRsvp(event);
 
   const submit = async (response: Exclude<RsvpResponse, 'not_responded'>) => {
     const currentUser = auth.user;

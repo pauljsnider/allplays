@@ -8,6 +8,7 @@ import {
   AttentionPanel,
   AvailabilityNotesList,
   QuickAvailabilityPanel,
+  ReadOnlyAvailabilityPanel,
   getAvailabilityNoteSaveState,
   type AttentionItem
 } from '../../apps/app/src/components/schedule/AvailabilityPanels';
@@ -37,6 +38,47 @@ function buildEvent(overrides: Partial<ParentScheduleEvent> = {}): ParentSchedul
 }
 
 describe('availability schedule panels', () => {
+  it.each([
+    [
+      'cancelled',
+      { isDbGame: true, isCancelled: true },
+      'This event was cancelled, so availability can no longer be changed.'
+    ],
+    [
+      'untracked',
+      { isDbGame: false, isCancelled: false },
+      'This event is not tracked in the team schedule, so availability is unavailable.'
+    ],
+    [
+      'locked',
+      { isDbGame: true, availabilityLocked: true, availabilityCutoffLabel: '2 hours before the event' },
+      'The team availability cutoff (2 hours before the event) has passed, so responses can no longer be changed.'
+    ]
+  ])('renders %s availability as saved read-only context without form controls', (_state, overrides, explanation) => {
+    render(
+      <ReadOnlyAvailabilityPanel
+        event={buildEvent({ ...overrides, myRsvpNote: 'Arriving after halftime' })}
+        rsvp="maybe"
+      />
+    );
+
+    expect(screen.getByText('Availability unavailable')).toBeTruthy();
+    expect(screen.getByText(explanation)).toBeTruthy();
+    expect(screen.getByText('Current response for Avery Smith')).toBeTruthy();
+    expect(screen.getByText('Maybe')).toBeTruthy();
+    expect(screen.getByText('Saved note')).toBeTruthy();
+    expect(screen.getByText('Arriving after halftime')).toBeTruthy();
+    expect(screen.queryByRole('button')).toBeNull();
+    expect(screen.queryByRole('textbox')).toBeNull();
+  });
+
+  it('labels a closed event with no saved RSVP as no response instead of requesting action', () => {
+    render(<ReadOnlyAvailabilityPanel event={buildEvent()} rsvp="not_responded" />);
+
+    expect(screen.getByText('No response recorded')).toBeTruthy();
+    expect(screen.queryByText('RSVP needed')).toBeNull();
+  });
+
   it('tracks trimmed availability note save state', () => {
     expect(getAvailabilityNoteSaveState('going', '  carpool after practice  ', 'carpool after practice')).toEqual({
       isDirty: false,

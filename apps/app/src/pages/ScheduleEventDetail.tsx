@@ -61,6 +61,7 @@ import { AttentionPanel, type AttentionItem, type ScheduleEventDetailSectionId }
 import { AvailabilityNotesList } from '../components/schedule/AvailabilityNotesList';
 import {
   QuickAvailabilityPanel,
+  ReadOnlyAvailabilityPanel,
   formatRsvpSummary,
   getAvailabilityNoteSaveState,
   rsvpBadgeClasses,
@@ -71,6 +72,7 @@ import {
   formatEventTimeLabel,
   getScheduleMapHref,
   getScheduleForecastHref,
+  canSubmitScheduleEventRsvp,
   isScheduleAssignmentOpen,
   getScheduleTitle,
   getLiveClockViewModel,
@@ -243,7 +245,10 @@ function getDefaultEventDetailSection(event?: ParentScheduleEvent | null) {
   if (isActiveTrackedScheduleEvent(event) && event?.canUpdateScore) {
     return 'game';
   }
-  return 'availability';
+  if (event && canSubmitScheduleEventRsvp(event)) {
+    return 'availability';
+  }
+  return 'game';
 }
 
 function hasRideshareActivity(event?: ParentScheduleEvent | null) {
@@ -1015,6 +1020,7 @@ function AvailabilitySection({ event, rsvp, availabilityNote, onAvailabilityNote
   const rsvpWorkflow = useScheduleEventRsvp({ availabilityNote });
   const staffRsvpLoader = useMemo(() => createStaffRsvpAvailabilityLoader(), [event.teamId, event.id]);
   const staffRsvp = useStaffRsvpBreakdown(staffRsvpLoader);
+  const responseLabel = !rsvpWorkflow.canSubmit && rsvp === 'not_responded' ? 'No response' : rsvpLabels[rsvp];
 
   return (
     <section className="app-card overflow-hidden p-0">
@@ -1024,18 +1030,22 @@ function AvailabilitySection({ event, rsvp, availabilityNote, onAvailabilityNote
           <div className="mt-0.5 text-xs font-semibold text-gray-500">{formatRsvpSummary(event.rsvpSummary)}</div>
         </div>
         <span className={`mt-0.5 inline-flex min-h-6 flex-none items-center rounded-full border px-2 text-[11px] font-extrabold uppercase tracking-[0.04em] ${rsvpBadgeClasses[rsvp]}`}>
-          {rsvpLabels[rsvp]}
+          {responseLabel}
         </span>
       </div>
-      <QuickAvailabilityPanel
-        event={event}
-        rsvp={rsvp}
-        canSubmitRsvp={rsvpWorkflow.canSubmit}
-        submitting={rsvpWorkflow.submitting}
-        availabilityNote={availabilityNote}
-        onAvailabilityNoteChange={onAvailabilityNoteChange}
-        onSubmit={rsvpWorkflow.submit}
-      />
+      {rsvpWorkflow.canSubmit ? (
+        <QuickAvailabilityPanel
+          event={event}
+          rsvp={rsvp}
+          canSubmitRsvp
+          submitting={rsvpWorkflow.submitting}
+          availabilityNote={availabilityNote}
+          onAvailabilityNoteChange={onAvailabilityNoteChange}
+          onSubmit={rsvpWorkflow.submit}
+        />
+      ) : (
+        <ReadOnlyAvailabilityPanel event={event} rsvp={rsvp} />
+      )}
       <div className="px-3 pb-3 sm:px-4">
         {rsvpWorkflow.message ? <Status tone="success" message={rsvpWorkflow.message} /> : null}
         {rsvpWorkflow.error ? <div className="mt-2"><Status tone="error" message={rsvpWorkflow.error} /></div> : null}
@@ -1052,8 +1062,6 @@ function AvailabilitySection({ event, rsvp, availabilityNote, onAvailabilityNote
         />
         <StaffRsvpReminderPanel refreshToken={staffRsvp.refreshToken} staffRsvpLoader={staffRsvpLoader} />
         <AvailabilityNotesList event={event} />
-        {!event.isDbGame ? <div className="mt-2 text-xs font-semibold text-gray-500">Availability opens after this event is tracked in the schedule.</div> : null}
-        {event.availabilityLocked ? <div className="mt-2 text-xs font-semibold text-amber-700">Availability locked {String(event.availabilityCutoffLabel || '').toLowerCase()}.</div> : null}
       </div>
     </section>
   );
@@ -4308,7 +4316,7 @@ function formatAssignment(assignment?: { role?: string; value?: string; claim?: 
 function getAttentionItems(event: ParentScheduleEvent, rsvp: RsvpResponse): AttentionItem[] {
   const items: AttentionItem[] = [];
 
-  if (event.isDbGame && !event.isCancelled && !event.availabilityLocked && rsvp === 'not_responded') {
+  if (canSubmitScheduleEventRsvp(event) && rsvp === 'not_responded') {
     items.push({
       title: 'Set availability',
       detail: `${event.childName} still needs an RSVP for this ${event.type}.`,

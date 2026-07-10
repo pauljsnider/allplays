@@ -25,6 +25,52 @@ export function formatRsvpSummary(summary?: { going?: number; maybe?: number; no
   return `${summary.going || 0} going · ${summary.maybe || 0} maybe · ${summary.notGoing || 0} out · ${summary.notResponded || 0} missing`;
 }
 
+function getReadOnlyAvailabilityMessage(event: ParentScheduleEvent) {
+  if (event.isCancelled) {
+    return 'This event was cancelled, so availability can no longer be changed.';
+  }
+  if (!event.isDbGame) {
+    return 'This event is not tracked in the team schedule, so availability is unavailable.';
+  }
+  if (event.availabilityLocked) {
+    const cutoffLabel = String(event.availabilityCutoffLabel || '').trim().toLowerCase();
+    return cutoffLabel
+      ? `The team availability cutoff (${cutoffLabel}) has passed, so responses can no longer be changed.`
+      : 'The team availability cutoff has passed, so responses can no longer be changed.';
+  }
+  return 'Availability is closed for this event.';
+}
+
+export function ReadOnlyAvailabilityPanel({ event, rsvp }: {
+  event: ParentScheduleEvent;
+  rsvp: RsvpResponse;
+}) {
+  const savedNote = String(event.myRsvpNote || '').trim();
+  const responseLabel = rsvp === 'not_responded' ? 'No response recorded' : rsvpLabels[rsvp];
+
+  return (
+    <div className="border-b border-gray-200 bg-gray-50 px-3 py-3 sm:px-4">
+      <div className="flex items-start gap-2.5 sm:gap-3">
+        <PlayerInitials name={event.childName} />
+        <div className="min-w-0 flex-1">
+          <div className="text-[11px] font-black uppercase tracking-[0.06em] text-gray-500">Availability unavailable</div>
+          <div className="mt-1 text-sm font-semibold leading-5 text-gray-700">{getReadOnlyAvailabilityMessage(event)}</div>
+          <div className="mt-3 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-gray-200 bg-white px-3 py-2">
+            <span className="text-xs font-bold text-gray-600">Current response for {event.childName}</span>
+            <span className={`rounded-full border px-2.5 py-1 text-[11px] font-extrabold ${rsvpBadgeClasses[rsvp]}`}>{responseLabel}</span>
+          </div>
+          {savedNote ? (
+            <div className="mt-2 rounded-xl border border-gray-200 bg-white px-3 py-2">
+              <div className="text-[11px] font-extrabold uppercase tracking-[0.04em] text-gray-500">Saved note</div>
+              <div className="mt-1 text-sm font-semibold leading-5 text-gray-700">{savedNote}</div>
+            </div>
+          ) : null}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export function QuickAvailabilityPanel({ event, rsvp, canSubmitRsvp, submitting, availabilityNote, onAvailabilityNoteChange, onSubmit }: {
   event: ParentScheduleEvent;
   rsvp: RsvpResponse;

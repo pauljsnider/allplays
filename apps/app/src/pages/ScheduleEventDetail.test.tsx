@@ -942,11 +942,11 @@ describe('ScheduleEventDetail nav visibility', () => {
     cleanup();
   });
 
-  it('hides rideshare and assignments tabs for inactive events with no related data', async () => {
+  it('defaults inactive events to the Game hub and hides empty rideshare and assignments tabs', async () => {
     scheduleServiceMocks.loadParentScheduleEventDetail.mockResolvedValue({
       events: [buildEvent({
         isDbGame: false,
-        isCancelled: true,
+        isCancelled: false,
         rideshareSummary: { offerCount: 0, seatsLeft: 0, requests: 0, pending: 0, confirmed: 0, isFull: false },
         assignments: []
       })],
@@ -956,16 +956,17 @@ describe('ScheduleEventDetail nav visibility', () => {
     renderScheduleEventDetailWithLocation();
 
     await waitFor(() => {
-      expect(screen.getByRole('heading', { name: 'Availability' })).toBeTruthy();
+      expect(screen.getByRole('heading', { name: 'Game hub' })).toBeTruthy();
     });
 
+    expect(screen.queryByRole('heading', { name: 'Availability' })).toBeNull();
     expect(screen.queryByRole('button', { name: 'Rideshare' })).toBeNull();
     expect(screen.queryByRole('button', { name: 'Assignments' })).toBeNull();
     expect(screen.getAllByRole('button', { name: 'Availability' }).length).toBeGreaterThan(0);
     expect(screen.getAllByRole('button', { name: 'Game' }).length).toBeGreaterThan(0);
   });
 
-  it('keeps rideshare and assignments tabs when inactive events still have related data', async () => {
+  it('keeps related tabs but still defaults inactive events to the read-only Game hub', async () => {
     scheduleServiceMocks.loadParentScheduleEventDetail.mockResolvedValue({
       events: [buildEvent({
         isDbGame: false,
@@ -979,11 +980,53 @@ describe('ScheduleEventDetail nav visibility', () => {
     renderScheduleEventDetail();
 
     await waitFor(() => {
-      expect(screen.getByRole('heading', { name: 'Availability' })).toBeTruthy();
+      expect(screen.getByRole('heading', { name: 'Game hub' })).toBeTruthy();
     });
 
     expect(screen.getAllByRole('button', { name: 'Rideshare' }).length).toBeGreaterThan(0);
     expect(screen.getAllByRole('button', { name: 'Assignments' }).length).toBeGreaterThan(0);
+  });
+
+  it('renders an explicitly requested closed Availability section as read-only saved context', async () => {
+    scheduleServiceMocks.loadParentScheduleEventDetail.mockResolvedValue({
+      events: [buildEvent({
+        isCancelled: true,
+        myRsvp: 'maybe',
+        myRsvpNote: 'Arriving after halftime'
+      })],
+      children: []
+    });
+
+    renderScheduleEventDetailWithLocation('/schedule/team-1/game-1?childId=player-1&section=availability');
+
+    await waitFor(() => {
+      expect(screen.getByText('Availability unavailable')).toBeTruthy();
+    });
+
+    expect(screen.getByText('This event was cancelled, so availability can no longer be changed.')).toBeTruthy();
+    expect(screen.getByText('Current response for Avery Smith')).toBeTruthy();
+    expect(screen.getByText('Arriving after halftime')).toBeTruthy();
+    expect(screen.queryByText('Is Avery Smith going?')).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Going' })).toBeNull();
+    expect(screen.queryByLabelText('Availability note')).toBeNull();
+    expect(screen.getByTestId('event-route').textContent).toBe('/schedule/team-1/game-1?childId=player-1&section=availability');
+  });
+
+  it.each([
+    ['cancelled', { isCancelled: true }],
+    ['availability-locked', { availabilityLocked: true, availabilityCutoffLabel: '2 hours before the event' }]
+  ])('defaults %s events away from Availability', async (_state, eventOverrides) => {
+    scheduleServiceMocks.loadParentScheduleEventDetail.mockResolvedValue({
+      events: [buildEvent(eventOverrides)],
+      children: []
+    });
+
+    renderScheduleEventDetailWithLocation();
+
+    await waitFor(() => {
+      expect(screen.getByRole('heading', { name: 'Game hub' })).toBeTruthy();
+    });
+    expect(screen.queryByRole('heading', { name: 'Availability' })).toBeNull();
   });
 
   it('defaults score-capable tracked games to the Game tab when the route omits section', async () => {
