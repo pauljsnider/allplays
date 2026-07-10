@@ -106,14 +106,19 @@
             return 'Upcoming';
         }
 
+        function isSharedScheduleMirror(game) {
+            return !!String(game?.sharedScheduleSourceTeamId || '').trim();
+        }
+
         function renderGame(game) {
             const url = getGameUrl(game);
             const statusLabel = getStatusLabel(game);
             const liveClass = isLive(game) ? 'bg-red-100 text-red-700' : isCompleted(game) ? 'bg-gray-100 text-gray-700' : 'bg-emerald-100 text-emerald-700';
             const homeScore = Number.isFinite(Number(game.homeScore)) ? Number(game.homeScore) : 0;
             const awayScore = Number.isFinite(Number(game.awayScore)) ? Number(game.awayScore) : 0;
-            const teamScore = game.isHome === false ? awayScore : homeScore;
-            const opponentScore = game.isHome === false ? homeScore : awayScore;
+            const useStoredScoreOrder = isSharedScheduleMirror(game) || game.isHome !== false;
+            const teamScore = useStoredScoreOrder ? homeScore : awayScore;
+            const opponentScore = useStoredScoreOrder ? awayScore : homeScore;
             const scoreLabel = typeof game.isHome === 'boolean' ? 'team - opponent' : 'home - away';
             const showScore = isLive(game) || isCompleted(game);
             return `

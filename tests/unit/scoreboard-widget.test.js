@@ -83,8 +83,11 @@ describe('scoreboard widget embed', () => {
         expect(source).toContain('.filter((game) => game._date && (isLive(game) || game._date >= now || (isCompleted(game) && game._date >= recentCutoff)))');
         expect(source).not.toContain('|| !isCompleted(game) || isLive(game)');
         expect(source).toContain('function renderGame(game)');
-        expect(source).toContain('const teamScore = game.isHome === false ? awayScore : homeScore;');
-        expect(source).toContain('const opponentScore = game.isHome === false ? homeScore : awayScore;');
+        expect(source).toContain('function isSharedScheduleMirror(game)');
+        expect(source).toContain("return !!String(game?.sharedScheduleSourceTeamId || '').trim();");
+        expect(source).toContain('const useStoredScoreOrder = isSharedScheduleMirror(game) || game.isHome !== false;');
+        expect(source).toContain('const teamScore = useStoredScoreOrder ? homeScore : awayScore;');
+        expect(source).toContain('const opponentScore = useStoredScoreOrder ? awayScore : homeScore;');
         expect(source).toContain("const scoreLabel = typeof game.isHome === 'boolean' ? 'team - opponent' : 'home - away';");
         expect(source).toContain('${teamScore} - ${opponentScore}');
         expect(source).toContain('${scoreLabel}');
@@ -192,6 +195,41 @@ describe('scoreboard widget embed', () => {
         expect(articles[1].textContent).toContain('68 - 71');
         expect(articles[1].textContent).toContain('team - opponent');
         expect(articles[1].textContent).not.toContain('71 - 68');
+    });
+
+    it('preserves mirrored shared schedule scores as team-oriented results', async () => {
+        vi.useFakeTimers();
+        vi.setSystemTime(new Date('2026-07-07T12:00:00Z'));
+        createWidgetDom('https://example.test/widget-scoreboard.html?teamId=team-bravo');
+
+        const harness = extractWidgetHarness({
+            getTeam: vi.fn().mockResolvedValue({ name: 'Bravo FC' }),
+            getGames: vi.fn().mockResolvedValue([
+                {
+                    id: 'mirrored-final',
+                    opponent: 'Alpha FC',
+                    date: '2026-07-06T18:00:00Z',
+                    liveStatus: 'completed',
+                    isHome: false,
+                    homeScore: 5,
+                    awayScore: 10,
+                    sharedScheduleId: 'shared_team-alpha_game-123',
+                    sharedScheduleSourceTeamId: 'team-alpha',
+                    sharedScheduleOpponentTeamId: 'team-alpha',
+                    sharedScheduleOpponentGameId: 'game-123'
+                }
+            ]),
+            getUrlParams: () => ({ teamId: 'team-bravo' })
+        });
+
+        harness.init();
+        await Promise.resolve();
+        await Promise.resolve();
+
+        const article = document.querySelector('#widget-games article');
+        expect(article.textContent).toContain('5 - 10');
+        expect(article.textContent).toContain('team - opponent');
+        expect(article.textContent).not.toContain('10 - 5');
     });
 
     it('shows the empty state when no games qualify', async () => {
