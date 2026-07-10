@@ -25,9 +25,7 @@ service firebase.storage {
       return isSignedIn() &&
         firestore.exists(userPath) &&
         firestore.exists(teamPath) &&
-        teamId in firestore.get(userPath).data.get('coachOf', []) &&
-        request.auth.token.email != null &&
-        request.auth.token.email.lower() in firestore.get(teamPath).data.get('adminEmails', []);
+        teamId in firestore.get(userPath).data.get('coachOf', []);
     }
 
     function canManageTeamMedia(teamId) {

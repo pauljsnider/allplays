@@ -31,11 +31,11 @@ function hasTeamMediaUploadGrant(profile, teamId) {
         (profile.mediaUploadTeamIds ?? []).includes(teamId);
 }
 
-function isTeamMediaCoachWouldBeAllowed({ authEmail, profile = {}, team = {} }, teamId) {
+function isTeamMediaCoachWouldBeAllowed({ signedIn = true, profile = {}, teamExists = true }, teamId) {
     return Boolean(
-        authEmail &&
-        (profile.coachOf ?? []).includes(teamId) &&
-        (team.adminEmails ?? []).includes(authEmail.trim().toLowerCase())
+        signedIn &&
+        teamExists &&
+        (profile.coachOf ?? []).includes(teamId)
     );
 }
 
@@ -73,25 +73,24 @@ describe('team media Firestore rules', () => {
         expect(hasTeamMediaUploadGrant({ uid: 'legacy-contributor', mediaUploadTeamIds: ['team-a'] }, 'team-a')).toBe(true);
     });
 
-    it('requires active admin email for linked coach management while preserving visible member reads and approved uploads', () => {
+    it('allows linked non-admin coaches to manage media while preserving visible member reads and approved uploads', () => {
         const mediaRulesStart = rules.indexOf('match /mediaFolders/{folderId}');
         const mediaRulesEnd = rules.indexOf('// Chat messages subcollection', mediaRulesStart);
         const mediaRules = rules.slice(mediaRulesStart, mediaRulesEnd);
 
         expect(rules).toContain('function isTeamMediaCoach(teamId) {');
         expect(rules).toContain("teamId in get(userPath).data.get('coachOf', [])");
-        expect(rules).toContain("request.auth.token.email.lower() in get(teamPath).data.get('adminEmails', [])");
+        expect(rules).not.toContain("request.auth.token.email.lower() in get(teamPath).data.get('adminEmails', [])");
+        expect(storageRules).toContain('function isTeamMediaCoach(teamId) {');
+        expect(storageRules).toContain("teamId in firestore.get(userPath).data.get('coachOf', [])");
+        expect(storageRules).not.toContain("request.auth.token.email.lower() in firestore.get(teamPath).data.get('adminEmails', [])");
         expect(rules).toContain('function canManageTeamMedia(teamId) {');
         expect(rules).toContain('return isTeamOwnerOrAdmin(teamId) || isTeamMediaCoach(teamId);');
         expect(isTeamMediaCoachWouldBeAllowed({
-            authEmail: 'coach@example.com',
-            profile: { coachOf: ['team-a'] },
-            team: { adminEmails: ['coach@example.com'] }
+            profile: { coachOf: ['team-a'] }
         }, 'team-a')).toBe(true);
         expect(isTeamMediaCoachWouldBeAllowed({
-            authEmail: 'coach@example.com',
-            profile: { coachOf: ['team-a'] },
-            team: { adminEmails: [] }
+            profile: { coachOf: [] }
         }, 'team-a')).toBe(false);
         expect(mediaRules).toContain('allow read: if canReadTeamMediaFolder(teamId, resource.data);');
         expect(mediaRules).toContain('allow create, delete: if canManageTeamMedia(teamId);');
@@ -133,7 +132,7 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST || !process.env.FIREBASE_ST
             await Promise.all([
                 setDoc(doc(context.firestore(), 'teams', 'team-1'), {
                     ownerId: 'owner-1',
-                    adminEmails: ['coach@example.com']
+                    adminEmails: []
                 }),
                 setDoc(doc(context.firestore(), 'users', 'coach-1'), {
                     email: 'coach@example.com',
@@ -189,11 +188,12 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST || !process.env.FIREBASE_ST
         }));
     });
 
-    it('denies stale coachOf media management after adminEmails revocation', async () => {
+    it('denies media management after coach link revocation', async () => {
         await testEnv.withSecurityRulesDisabled(async (context) => {
-            await setDoc(doc(context.firestore(), 'teams', 'team-1'), {
-                ownerId: 'owner-1',
-                adminEmails: []
+            await setDoc(doc(context.firestore(), 'users', 'coach-1'), {
+                email: 'coach@example.com',
+                isAdmin: false,
+                coachOf: []
             });
         });
 
