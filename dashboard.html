@@ -203,12 +203,8 @@
                 }, {});
                 const unreadCounts = teamIds.length > 0 ? await getUnreadChatCounts(user.uid, teamIds, { conversationLookupByTeam }) : {};
 
-                function renderTeamCard(team) {
-                    const hasFullAccess = team._access === 'full';
-                    const unread = unreadCounts[team.id] || 0;
-
-                if (fullAccessTeams.length === 0 && parentOnlyTeams.length === 0) {
-                    container.innerHTML = `
+                function renderNoTeamsState() {
+                    return `
                         <div class="text-center py-16 bg-white rounded-2xl shadow-md border border-gray-200">
                             <svg class="w-20 h-20 text-gray-300 mx-auto mb-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z"></path>
@@ -223,9 +219,11 @@
                             </a>
                         </div>
                     `;
-                    return;
                 }
 
+                function renderTeamCard(team) {
+                    const hasFullAccess = team._access === 'full';
+                    const unread = unreadCounts[team.id] || 0;
                     const unreadBadge = unread > 0
                         ? `<span class="absolute -top-1 -right-1 inline-flex items-center justify-center w-5 h-5 text-xs font-bold text-white bg-red-500 rounded-full">${unread > 99 ? '99+' : unread}</span>`
                         : '';
@@ -395,7 +393,9 @@
                     });
                 }
 
-                if (fullAccessTeams.length === 0 && parentOnlyTeams.length > 0) {
+                if (fullAccessTeams.length === 0 && parentOnlyTeams.length === 0) {
+                    container.innerHTML = renderNoTeamsState();
+                } else if (fullAccessTeams.length === 0 && parentOnlyTeams.length > 0) {
                     container.innerHTML = `
                         <div id="parent-only-notice" class="rounded-xl bg-amber-50 border border-amber-200 p-4 mb-6">
                             <p class="text-sm font-semibold text-amber-800">Parent view only — you are linked as a parent on these teams. Visit the <a href="parent-dashboard.html" class="underline hover:text-amber-900">Parent Dashboard</a> for family-focused tools.</p>
