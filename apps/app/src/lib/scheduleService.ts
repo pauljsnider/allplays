@@ -2514,6 +2514,15 @@ function mergeLoadedGameWithStandingsPool(loadedGame: ScheduleEventFirestoreReco
   ];
 }
 
+function hasTournamentTeamStandingsConfig(team: any) {
+  const config = team?.standingsConfig && typeof team.standingsConfig === 'object' ? team.standingsConfig : null;
+  const overrides = team?.tournamentPoolOverrides && typeof team.tournamentPoolOverrides === 'object' ? team.tournamentPoolOverrides : null;
+  return Boolean(
+    (config && config.enabled !== false && Object.keys(config).some((key) => key !== 'enabled')) ||
+    (overrides && Object.keys(overrides).length)
+  );
+}
+
 async function loadRawTeam(teamId: string) {
   return readWithNativeFallback(
     `team ${teamId}`,
@@ -3191,7 +3200,7 @@ async function buildTargetedTeamScheduleEvent(teamId: string, eventId: string, t
     : null);
   if (!loadedGame) return [];
 
-  const standingsGames = hasTournamentScheduleGames([loadedGame])
+  const standingsGames = hasTournamentTeamStandingsConfig(team) && hasTournamentScheduleGames([loadedGame])
     ? mergeLoadedGameWithStandingsPool(loadedGame, await loadGames(teamId, getTournamentDetailStandingsRange(loadedGame)).catch(() => []))
     : [loadedGame];
   const game = enrichTournamentScheduleStandings([loadedGame], team, standingsGames)[0];
