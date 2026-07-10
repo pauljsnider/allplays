@@ -1095,8 +1095,8 @@ function renderLog() {
   els.log.innerHTML = state.log.slice(0, 40).map((ev, idx) => `
     <div class="flex justify-between items-center border rounded-lg p-2 ${ev.undoData?.isOpponent ? 'border-red-200 bg-red-50/40' : 'border-slate/10 bg-white'}">
       <div class="flex-1">
-        <p class="text-xs font-semibold ${ev.undoData?.isOpponent ? 'text-red-700' : 'text-slate-800'}">${ev.text}</p>
-        <p class="text-[10px] text-slate-500">${ev.period} · ${ev.clock}</p>
+        <p class="text-xs font-semibold ${ev.undoData?.isOpponent ? 'text-red-700' : 'text-slate-800'}">${escapeHtml(ev.text)}</p>
+        <p class="text-[10px] text-slate-500">${escapeHtml(ev.period)} · ${escapeHtml(ev.clock)}</p>
       </div>
       <div class="flex items-center gap-2">
         <span class="text-[10px] text-slate-400">${new Date(ev.ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
