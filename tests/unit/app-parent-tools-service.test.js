@@ -222,7 +222,7 @@ import {
     loadTeamRegistrationQueuePage,
     loadFamilyShareModel,
     loadParentAccessModel,
-    loadParentAccessTeams,
+    discoverParentAccessTeams,
     loadParentAccessPlayers,
     loadParentCalendarTools,
     loadParentCertificates,
@@ -297,11 +297,11 @@ describe('React app parent tools service', () => {
         expect(getGoogleCalendarFeedUrl(privateFeedUrl)).toBe(`https://calendar.google.com/calendar/render?cid=${encodeURIComponent(privateFeedUrl)}`);
     });
 
-    it('loads access requests first, then lazy-loads public teams and players', async () => {
+    it('loads access requests first, then searches paginated public teams and players', async () => {
         dbMocks.discoverPublicTeams.mockResolvedValue({
             teams: [
                 { id: 'team-b', name: 'Wolves', isPublic: false },
-                { id: 'team-a', name: 'Bears', sport: 'Basketball', zip: '66210', isPublic: true }
+                { id: 'team-a', name: 'Bears', sport: 'Basketball', city: 'Overland Park', state: 'KS', zip: '66210', isPublic: true }
             ],
             nextCursor: 'cursor-1'
         });
@@ -319,15 +319,18 @@ describe('React app parent tools service', () => {
             teams: [],
             requests: [{ id: 'request-1', playerName: 'Pat Star', status: 'pending' }]
         });
-        await expect(loadParentAccessTeams()).resolves.toEqual([
-            { id: 'team-a', name: 'Bears', sport: 'Basketball', zip: '66210' }
-        ]);
+        await expect(discoverParentAccessTeams({ searchText: '  Bears  ', cursor: 'cursor-0', pageSize: 12 })).resolves.toEqual({
+            teams: [
+                { id: 'team-a', name: 'Bears', sport: 'Basketball', city: 'Overland Park', state: 'KS', zip: '66210' }
+            ],
+            nextCursor: 'cursor-1'
+        });
         await expect(loadParentAccessPlayers('team-a')).resolves.toEqual([
             { id: 'player-1', name: 'Pat Star', number: '9', photoUrl: null },
             { id: 'player-2', name: 'Sam Wing', number: '12', photoUrl: 'https://img.example.test/sam.png' }
         ]);
         expect(dbMocks.listMyParentMembershipRequests).toHaveBeenCalledWith('user-1');
-        expect(dbMocks.discoverPublicTeams).toHaveBeenCalledWith({ pageSize: 100 });
+        expect(dbMocks.discoverPublicTeams).toHaveBeenCalledWith({ searchText: 'Bears', cursor: 'cursor-0', pageSize: 12 });
         await submitParentAccessRequest('team-a', 'player-1', 'Guardian');
         expect(dbMocks.createParentMembershipRequest).toHaveBeenCalledWith('team-a', 'player-1', 'Guardian');
     });

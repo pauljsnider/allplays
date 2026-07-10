@@ -37,7 +37,7 @@ const publicActionMocks = vi.hoisted(() => ({
 
 const accessServiceMocks = vi.hoisted(() => ({
     loadParentAccessModel: vi.fn(),
-    loadParentAccessTeams: vi.fn(),
+    discoverParentAccessTeams: vi.fn(),
     loadParentAccessPlayers: vi.fn(),
     submitParentAccessRequest: vi.fn()
 }));
@@ -193,6 +193,7 @@ async function changeSelectValue(element, value) {
 
 async function openManualAccessRequest(container) {
     await clickButton(container, 'Request access without a code');
+    await clickButton(container, 'Browse');
     await waitForText(container, 'Choose a team');
     const teamSelect = Array.from(container.querySelectorAll('select')).find((candidate) => candidate.previousElementSibling?.textContent === 'Team');
     await changeSelectValue(teamSelect, 'team-1');
@@ -219,7 +220,10 @@ beforeEach(() => {
     accessServiceMocks.loadParentAccessModel.mockResolvedValue({
         requests: [{ id: 'request-1', teamId: 'team-1', teamName: 'Bears', playerId: 'player-1', playerName: 'Pat Star', relation: 'Parent', status: 'pending' }]
     });
-    accessServiceMocks.loadParentAccessTeams.mockResolvedValue([{ id: 'team-1', name: 'Bears', sport: 'Basketball', zip: '66210' }]);
+    accessServiceMocks.discoverParentAccessTeams.mockResolvedValue({
+        teams: [{ id: 'team-1', name: 'Bears', sport: 'Basketball', zip: '66210' }],
+        nextCursor: null
+    });
     accessServiceMocks.loadParentAccessPlayers.mockResolvedValue([{ id: 'player-1', name: 'Pat Star', number: '9', photoUrl: null }]);
     accessServiceMocks.submitParentAccessRequest.mockResolvedValue({ success: true });
     inviteRedemptionMocks.redeemSignedInInvite.mockResolvedValue({
@@ -388,7 +392,7 @@ describe('React app parent tools integration', () => {
         const { container } = await renderParentTools('/parent-tools/access');
         await waitForText(container, 'Request player access');
         expect(accessServiceMocks.loadParentAccessModel).toHaveBeenCalledTimes(1);
-        expect(accessServiceMocks.loadParentAccessTeams).toHaveBeenCalledTimes(0);
+        expect(accessServiceMocks.discoverParentAccessTeams).toHaveBeenCalledTimes(0);
         expect(accessServiceMocks.loadParentAccessPlayers).toHaveBeenCalledTimes(0);
 
         await clickButton(container, 'Fees');
@@ -398,7 +402,7 @@ describe('React app parent tools integration', () => {
         await clickButton(container, 'Access');
         await waitForText(container, 'Request player access');
         expect(accessServiceMocks.loadParentAccessModel).toHaveBeenCalledTimes(1);
-        expect(accessServiceMocks.loadParentAccessTeams).toHaveBeenCalledTimes(0);
+        expect(accessServiceMocks.discoverParentAccessTeams).toHaveBeenCalledTimes(0);
         expect(accessServiceMocks.loadParentAccessPlayers).toHaveBeenCalledTimes(0);
 
         await clickButton(container, 'Register');
@@ -505,12 +509,14 @@ describe('React app parent tools integration', () => {
         await waitForText(container, 'Request player access');
         expect(container.textContent).toContain('Access requests');
         expect(container.textContent).toContain('Pat Star');
-        expect(accessServiceMocks.loadParentAccessTeams).toHaveBeenCalledTimes(0);
+        expect(accessServiceMocks.discoverParentAccessTeams).toHaveBeenCalledTimes(0);
         expect(accessServiceMocks.loadParentAccessPlayers).toHaveBeenCalledTimes(0);
 
         await clickButton(container, 'Request access without a code');
+        await waitForText(container, 'Search or browse teams');
+        await clickButton(container, 'Browse');
         await waitForText(container, 'Choose a team');
-        expect(accessServiceMocks.loadParentAccessTeams).toHaveBeenCalledTimes(1);
+        expect(accessServiceMocks.discoverParentAccessTeams).toHaveBeenCalledTimes(1);
         expect(accessServiceMocks.loadParentAccessPlayers).toHaveBeenCalledTimes(0);
 
         const teamSelect = Array.from(container.querySelectorAll('select')).find((candidate) => candidate.previousElementSibling?.textContent === 'Team');

@@ -1,12 +1,12 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
-import { AlertCircle, CheckCircle2, KeyRound, Loader2, RefreshCw, Shield, Users } from 'lucide-react';
+import { AlertCircle, CheckCircle2, KeyRound, Loader2, RefreshCw, Search, Shield, Users } from 'lucide-react';
 import { redeemSignedInInvite } from '../../lib/inviteRedemption';
 import { toAppServiceError, type AppServiceError } from '../../lib/appErrors';
 import {
     loadParentAccessModel,
     loadParentAccessPlayers,
-    loadParentAccessTeams,
+    discoverParentAccessTeams,
     submitParentAccessRequest,
     type ParentAccessPlayer,
     type ParentAccessRequest,
@@ -19,10 +19,12 @@ export function AccessTool({ auth, onAccessChanged }: { auth: AuthState; onAcces
     const [searchParams] = useSearchParams();
     const deepLinkedTeamId = searchParams.get('teamId')?.trim() || '';
     const [teams, setTeams] = useState<ParentAccessTeam[]>([]);
+    const [teamSearchText, setTeamSearchText] = useState('');
+    const [teamNextCursor, setTeamNextCursor] = useState<unknown | null>(null);
+    const [teamDiscoveryStarted, setTeamDiscoveryStarted] = useState(false);
     const [requests, setRequests] = useState<ParentAccessRequest[]>([]);
     const [players, setPlayers] = useState<ParentAccessPlayer[]>([]);
     const [manualRequestOpen, setManualRequestOpen] = useState(false);
-    const [manualTeamsRequested, setManualTeamsRequested] = useState(false);
     const [selectedTeamId, setSelectedTeamId] = useState('');
     const [selectedPlayerId, setSelectedPlayerId] = useState('');
     const [relation, setRelation] = useState('Parent');
@@ -30,6 +32,7 @@ export function AccessTool({ auth, onAccessChanged }: { auth: AuthState; onAcces
     // teamId opened while already mounted) is applied, while team-list refreshes
     // for the same deep link don't clobber a later manual selection.
     const appliedDeepLinkRef = useRef('');
+    const teamSearchRequestRef = useRef(0);
     const [redeemCode, setRedeemCode] = useState('');
     const [message, setMessage] = useState('');
     const accessLoadOperation = useParentToolAsyncOperation();
@@ -65,27 +68,64 @@ export function AccessTool({ auth, onAccessChanged }: { auth: AuthState; onAcces
     const normalizedRedeemCode = redeemCode.trim().toUpperCase();
     const redeemCodeReady = normalizedRedeemCode.length === 8;
 
-    const loadTeams = useCallback(async () => {
+    const loadTeams = useCallback(async ({ cursor = null, append = false, searchText = teamSearchText }: { cursor?: unknown | null; append?: boolean; searchText?: string } = {}) => {
+        const requestId = teamSearchRequestRef.current + 1;
+        teamSearchRequestRef.current = requestId;
+        const normalizedSearchText = String(searchText || '').trim();
         clearTeamLoadError();
         clearPlayerLoadError();
         clearSubmitError();
         clearRedeemError();
+        setTeamDiscoveryStarted(true);
         return runTeamLoad(
-            () => loadParentAccessTeams(),
+            () => discoverParentAccessTeams({ searchText: normalizedSearchText, cursor, pageSize: 20 }),
             'Unable to load public teams.',
             {
-                onSuccess: (rows) => {
-                    setTeams(rows);
-                    setSelectedTeamId((current) => rows.some((team) => team.id === current) ? current : '');
+                onSuccess: (page) => {
+                    if (requestId !== teamSearchRequestRef.current) return;
+                    setTeamNextCursor(page.nextCursor);
+                    setTeams((currentRows) => {
+                        const nextRows = append ? [...currentRows, ...page.teams] : page.teams;
+                        const seen = new Set<string>();
+                        return nextRows.filter((team) => {
+                            if (seen.has(team.id)) return false;
+                            seen.add(team.id);
+                            return true;
+                        });
+                    });
+                    setSelectedTeamId((current) => {
+                        if (append) return current;
+                        return page.teams.some((team) => team.id === current) ? current : '';
+                    });
                 }
             }
         );
-    }, [clearPlayerLoadError, clearRedeemError, clearSubmitError, clearTeamLoadError, runTeamLoad]);
+    }, [clearPlayerLoadError, clearRedeemError, clearSubmitError, clearTeamLoadError, runTeamLoad, teamSearchText]);
 
     const openManualRequest = useCallback(() => {
         setManualRequestOpen(true);
-        setManualTeamsRequested(false);
     }, []);
+
+    const searchTeams = useCallback(async (event?: FormEvent) => {
+        event?.preventDefault();
+        setSelectedTeamId('');
+        setSelectedPlayerId('');
+        setPlayers([]);
+        await loadTeams({ searchText: teamSearchText, cursor: null, append: false });
+    }, [loadTeams, teamSearchText]);
+
+    const browseTeams = useCallback(async () => {
+        setTeamSearchText('');
+        setSelectedTeamId('');
+        setSelectedPlayerId('');
+        setPlayers([]);
+        await loadTeams({ searchText: '', cursor: null, append: false });
+    }, [loadTeams]);
+
+    const loadMoreTeams = useCallback(async () => {
+        if (!teamNextCursor) return;
+        await loadTeams({ searchText: teamSearchText, cursor: teamNextCursor, append: true });
+    }, [loadTeams, teamNextCursor, teamSearchText]);
 
     const refresh = useCallback(async () => {
         clearAccessLoadError();
@@ -111,8 +151,10 @@ export function AccessTool({ auth, onAccessChanged }: { auth: AuthState; onAcces
 
     useEffect(() => {
         setManualRequestOpen(false);
-        setManualTeamsRequested(false);
         setTeams([]);
+        setTeamSearchText('');
+        setTeamNextCursor(null);
+        setTeamDiscoveryStarted(false);
         setPlayers([]);
         setSelectedTeamId('');
         setSelectedPlayerId('');
@@ -121,12 +163,12 @@ export function AccessTool({ auth, onAccessChanged }: { auth: AuthState; onAcces
     useEffect(() => {
         if (!deepLinkedTeamId) return;
         setManualRequestOpen(true);
-        setManualTeamsRequested(true);
+        setTeamDiscoveryStarted(true);
     }, [deepLinkedTeamId]);
 
     useEffect(() => {
         if (!deepLinkedTeamId || teams.length || loadingTeams) return;
-        void loadTeams();
+        void loadTeams({ searchText: '', cursor: null, append: false });
     }, [deepLinkedTeamId, loadTeams, loadingTeams, teams.length]);
 
     useEffect(() => {
@@ -151,12 +193,6 @@ export function AccessTool({ auth, onAccessChanged }: { auth: AuthState; onAcces
             setSelectedTeamId('');
         }
     }, [deepLinkedTeamId, teams, loadingTeams]);
-
-    useEffect(() => {
-        if (!manualRequestOpen || manualTeamsRequested || teams.length || loadingTeams) return;
-        setManualTeamsRequested(true);
-        void loadTeams();
-    }, [loadTeams, loadingTeams, manualRequestOpen, manualTeamsRequested, teams.length]);
 
     const loadPlayersForTeam = useCallback(async (teamId: string) => {
         const rows = await runPlayerLoad(
@@ -287,18 +323,51 @@ export function AccessTool({ auth, onAccessChanged }: { auth: AuthState; onAcces
                         </form>
                         {manualRequestOpen ? (
                             <form className="mt-3 grid gap-3 lg:grid-cols-[1fr_1fr_auto]" onSubmit={submit}>
-                                {manualLookupError ? <div className="lg:col-span-3"><RetryableStatus error={manualLookupError} fallbackMessage="Unable to load public teams." onRetry={playerLoadError && selectedTeamId ? () => { void loadPlayersForTeam(selectedTeamId); } : loadTeams} retrying={loadingTeams || loadingPlayers} /></div> : null}
+                                {manualLookupError ? <div className="lg:col-span-3"><RetryableStatus error={manualLookupError} fallbackMessage="Unable to load public teams." onRetry={playerLoadError && selectedTeamId ? () => { void loadPlayersForTeam(selectedTeamId); } : () => { void loadTeams({ searchText: teamSearchText, cursor: null, append: false }); }} retrying={loadingTeams || loadingPlayers} /></div> : null}
+                                <div className="min-w-0 lg:col-span-3">
+                                    <label className="app-label" htmlFor="parent-access-team-search">Search public teams</label>
+                                    <div className="mt-1 flex flex-col gap-2 sm:flex-row">
+                                        <input
+                                            id="parent-access-team-search"
+                                            className="auth-input min-w-0 flex-1"
+                                            value={teamSearchText}
+                                            onChange={(event) => {
+                                                setTeamSearchText(event.target.value);
+                                                setSelectedTeamId('');
+                                                setSelectedPlayerId('');
+                                                setPlayers([]);
+                                                setTeams([]);
+                                                setTeamNextCursor(null);
+                                                setTeamDiscoveryStarted(false);
+                                            }}
+                                            onKeyDown={(event) => {
+                                                if (event.key !== 'Enter') return;
+                                                event.preventDefault();
+                                                void searchTeams();
+                                            }}
+                                            placeholder="Team name, city, state, or zip"
+                                            disabled={saving || redeeming}
+                                        />
+                                        <button type="button" className="secondary-button sm:min-w-[8rem]" onClick={() => { void searchTeams(); }} disabled={saving || redeeming}>
+                                            {loadingTeams ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <Search className="h-4 w-4" aria-hidden="true" />}
+                                            Search
+                                        </button>
+                                        <button type="button" className="ghost-button !min-h-10 text-xs sm:min-w-[7rem]" onClick={browseTeams} disabled={saving || redeeming}>
+                                            Browse
+                                        </button>
+                                    </div>
+                                </div>
                                 <div className="min-w-0">
                                     <label className="app-label" htmlFor="parent-access-team">Team</label>
                                     <select id="parent-access-team" aria-label="Team" className="auth-input mt-1" value={selectedTeamId} onChange={(event) => setSelectedTeamId(event.target.value)} disabled={loadingTeams || !teams.length}>
-                                        <option value="">{loadingTeams ? 'Loading public teams...' : teams.length ? 'Choose a team' : 'No public teams'}</option>
+                                        <option value="">{loadingTeams ? 'Loading public teams...' : teams.length ? 'Choose a team' : teamDiscoveryStarted ? 'No public teams found' : 'Search or browse teams'}</option>
                                         {teams.map((team) => (
-                                            <option key={team.id} value={team.id}>{team.name}{team.sport ? ` - ${team.sport}` : ''}</option>
+                                            <option key={team.id} value={team.id}>{formatTeamOption(team)}</option>
                                         ))}
                                     </select>
-                                    {!loadingTeams && !teams.length ? (
-                                        <button type="button" className="ghost-button mt-2 !min-h-9 text-xs" onClick={loadTeams} disabled={redeeming || saving}>
-                                            Retry loading public teams
+                                    {teamNextCursor ? (
+                                        <button type="button" className="ghost-button mt-2 !min-h-9 text-xs" onClick={loadMoreTeams} disabled={loadingTeams || redeeming || saving}>
+                                            {loadingTeams ? 'Loading...' : 'Load more teams'}
                                         </button>
                                     ) : null}
                                 </div>
@@ -349,6 +418,11 @@ export function AccessTool({ auth, onAccessChanged }: { auth: AuthState; onAcces
             </section>
         </div>
     );
+}
+
+function formatTeamOption(team: ParentAccessTeam) {
+    const details = [team.sport, [team.city, team.state].filter(Boolean).join(', '), team.zip].filter(Boolean);
+    return details.length ? `${team.name} - ${details.join(' - ')}` : team.name;
 }
 
 function AccessRequestCard({ request }: { request: ParentAccessRequest }) {

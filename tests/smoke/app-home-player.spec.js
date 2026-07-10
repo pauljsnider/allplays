@@ -771,8 +771,8 @@ async function mockHomePlayerModules(page) {
                     };
                 }
 
-                export async function loadParentAccessTeams() {
-                    return [{ id: 'team-1', name: 'Bears', sport: 'Basketball', zip: '66210' }];
+                export async function discoverParentAccessTeams() {
+                    return { teams: [{ id: 'team-1', name: 'Bears', sport: 'Basketball', zip: '66210' }], nextCursor: null };
                 }
 
                 export async function loadParentAccessPlayers() {
