@@ -486,6 +486,12 @@ test('messages inbox and team chat exercise real migrated chat UX', async ({ pag
     await expect(page.getByRole('dialog', { name: 'Notifications' })).toBeHidden();
     await expect(page).toHaveURL(/#\/messages\/team-1$/);
     await expect(page.getByRole('button', { name: /Audience: Full team/ })).toBeVisible();
+    const quickSwitcher = page.getByTestId('mobile-conversation-chips');
+    await expect(quickSwitcher).toBeVisible();
+    await expect(quickSwitcher.getByRole('button', { name: /Switch to .*Team Chat/i })).toBeVisible();
+    await expect(quickSwitcher.getByRole('button', { name: 'Switch to Staff only' })).toBeVisible();
+    await expect(page.getByRole('dialog', { name: 'Conversations' })).toHaveCount(0);
+    await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1)).toBe(true);
 
     await page.getByRole('button', { name: 'Add attachment' }).click();
     await expect(page.getByRole('dialog', { name: 'Add to message' })).toBeVisible();
@@ -524,8 +530,9 @@ test('messages inbox and team chat exercise real migrated chat UX', async ({ pag
     await page.getByPlaceholder('Message Bears').fill('');
 
     await page.getByRole('button', { name: /Audience: Full team/ }).click();
-    await expect(page.getByRole('button', { name: 'Staff only' })).toBeHidden();
-    await page.getByRole('button', { name: 'Close Message audience' }).click();
+    const audienceDialog = page.getByRole('dialog', { name: 'Message audience' });
+    await expect(audienceDialog.getByRole('button', { name: 'Staff only' })).toHaveCount(0);
+    await audienceDialog.getByRole('button', { name: 'Close Message audience' }).click();
 
     await page.getByPlaceholder('Message Bears').fill('See you at practice');
     await page.getByRole('button', { name: 'Send message' }).click();
@@ -538,10 +545,9 @@ test('messages inbox and team chat exercise real migrated chat UX', async ({ pag
     });
     await expect.poll(() => page.evaluate(() => window.__chatCalls.chatAiModuleRequests)).toEqual([]);
 
-    await page.getByRole('button', { name: 'Team chat' }).click();
-    const conversationsDialog = page.getByRole('dialog', { name: 'Conversations' });
-    await expect(conversationsDialog).toBeVisible();
-    await conversationsDialog.getByRole('button', { name: 'Staff only Group conversation' }).click();
+    await quickSwitcher.getByRole('button', { name: 'Switch to Staff only' }).click();
+    await expect(page.getByRole('dialog', { name: 'Conversations' })).toHaveCount(0);
+    await expect(quickSwitcher.getByRole('button', { name: 'Switch to Staff only' })).toHaveAttribute('aria-pressed', 'true');
 
     await page.getByPlaceholder('Message Bears').fill('@ALL PLAYS who needs RSVP help?');
     await page.getByRole('button', { name: 'Send message' }).click();

@@ -1366,6 +1366,16 @@
   border-radius: 0 0 16px 16px;
 }
 
+.chat-mobile-conversation-chips {
+  overscroll-behavior-x: contain;
+  scrollbar-width: none;
+  -webkit-overflow-scrolling: touch;
+}
+
+.chat-mobile-conversation-chips::-webkit-scrollbar {
+  display: none;
+}
+
 .desktop-app-page .chat-topbar {
   position: sticky;
   top: 84px;
