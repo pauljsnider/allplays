@@ -1,5 +1,19 @@
-import { describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
+import {
+    assertFails,
+    assertSucceeds,
+    initializeTestEnvironment
+} from '@firebase/rules-unit-testing';
+import {
+    collection,
+    getDocs,
+    limit,
+    query,
+    setDoc,
+    where,
+    doc
+} from 'firebase/firestore';
 
 const rules = readFileSync(new URL('../../firestore.rules', import.meta.url), 'utf8');
 
@@ -79,5 +93,79 @@ describe('firestore.rules architecture fixes', () => {
 
         expect(statTrackerConfigRules).toContain('allow read: if true;');
         expect(statTrackerConfigRules).toContain('allow write: if isTeamOwnerOrAdmin(teamId);');
+    });
+
+    describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('rules engine coverage for bounded admin lists and team discovery', () => {
+        let testEnv;
+
+        beforeAll(async () => {
+            testEnv = await initializeTestEnvironment({
+                projectId: `allplays-rules-architecture-${Date.now()}`,
+                firestore: {
+                    rules
+                }
+            });
+        }, 30000);
+
+        beforeEach(async () => {
+            await testEnv.clearFirestore();
+            await testEnv.withSecurityRulesDisabled(async (context) => {
+                const adminDb = context.firestore();
+                await setDoc(doc(adminDb, 'users/admin-1'), {
+                    email: 'admin@example.com',
+                    isAdmin: true
+                });
+                await setDoc(doc(adminDb, 'users/parent-1'), {
+                    email: 'parent@example.com',
+                    isAdmin: false
+                });
+                await setDoc(doc(adminDb, 'teams/public-team'), {
+                    name: 'Public Team',
+                    ownerId: 'owner-1',
+                    adminEmails: [],
+                    isPublic: true
+                });
+                await setDoc(doc(adminDb, 'teams/private-team'), {
+                    name: 'Private Team',
+                    ownerId: 'owner-2',
+                    adminEmails: [],
+                    isPublic: false
+                });
+            });
+        });
+
+        afterAll(async () => {
+            await testEnv?.cleanup();
+        });
+
+        function adminFirestore() {
+            return testEnv.authenticatedContext('admin-1', { email: 'admin@example.com' }).firestore();
+        }
+
+        it('allows platform admins to list users and teams only with a positive limit of at most 100', async () => {
+            const adminDb = adminFirestore();
+
+            await assertSucceeds(getDocs(query(collection(adminDb, 'users'), limit(100))));
+            await assertSucceeds(getDocs(query(collection(adminDb, 'teams'), limit(100))));
+
+            await assertFails(getDocs(collection(adminDb, 'users')));
+            await assertFails(getDocs(query(collection(adminDb, 'users'), limit(101))));
+            await assertFails(getDocs(collection(adminDb, 'teams')));
+            await assertFails(getDocs(query(collection(adminDb, 'teams'), limit(101))));
+        });
+
+        it('allows public team browsing while denying private team list leakage', async () => {
+            const publicDb = testEnv.unauthenticatedContext().firestore();
+
+            await assertSucceeds(getDocs(query(
+                collection(publicDb, 'teams'),
+                where('isPublic', '==', true)
+            )));
+            await assertFails(getDocs(collection(publicDb, 'teams')));
+            await assertFails(getDocs(query(
+                collection(publicDb, 'teams'),
+                where('isPublic', '==', false)
+            )));
+        });
     });
 });
