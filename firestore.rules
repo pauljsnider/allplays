@@ -1393,6 +1393,17 @@ service cloud.firestore {
              data.recipientIds == conversationData.get('participantIds', []);
     }
 
+    function hasValidLegacyNestedChatRecipientIds(conversationData, data) {
+      let participantIds = conversationData.get('participantIds', []);
+      return data.recipientIds is list &&
+             data.recipientIds.size() > 0 &&
+             data.recipientIds.size() <= 50 &&
+             participantIds is list &&
+             data.recipientIds.hasOnly(participantIds) &&
+             data.senderId in participantIds &&
+             !(data.senderId in data.recipientIds);
+    }
+
     function isValidChatMessageTarget(teamId, data) {
       return isFullTeamChatMessage(data) ||
              isStaffChatMessage(data) ||
@@ -1639,6 +1650,19 @@ service cloud.firestore {
                  data.get('targetRole', null) == null &&
                  data.recipientIds == conversationData.get('participantIds', [])
                )
+             );
+    }
+
+    function isNestedChatMessageEditTargetValid(teamId, conversationId, conversationData, data) {
+      return isNestedChatMessageTargetValid(teamId, conversationId, conversationData, data) ||
+             (
+               data.conversationId == conversationId &&
+               !isCanonicalStaffChatConversation(conversationId) &&
+               !isStaffRoleChatConversation(conversationData) &&
+               conversationData.get('type', '') in ['direct', 'group'] &&
+               data.get('targetType', 'full_team') == 'individuals' &&
+               hasValidLegacyNestedChatRecipientIds(conversationData, data) &&
+               data.get('targetRole', null) == null
              );
     }
 
@@ -3076,7 +3100,7 @@ service cloud.firestore {
                                .hasAll(['text', 'editedAt']) &&
                            request.resource.data.diff(resource.data).affectedKeys()
                                .hasOnly(['text', 'editedAt']) &&
-                           isNestedChatMessageTargetValid(
+                           isNestedChatMessageEditTargetValid(
                              teamId,
                              conversationId,
                              get(/databases/$(database)/documents/teams/$(teamId)/chatConversations/$(conversationId)).data,

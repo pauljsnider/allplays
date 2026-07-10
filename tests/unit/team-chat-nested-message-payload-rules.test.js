@@ -48,11 +48,37 @@ describe('nested team chat message payload contracts', () => {
         expect(rules).toContain('hasValidNestedChatRecipientIds(conversationData, data)');
         expect(rules).toContain("data.recipientIds == conversationData.get('participantIds', [])");
 
-        const nestedTargetValidator = rules.slice(
-            rules.indexOf('function isNestedChatMessageTargetValid'),
+        const editTargetValidator = rules.slice(
+            rules.indexOf('function isNestedChatMessageEditTargetValid'),
             rules.indexOf('function isNestedChatMessageCreateValid')
         );
+        expect(editTargetValidator).toContain('isNestedChatMessageTargetValid(teamId, conversationId, conversationData, data)');
+        expect(editTargetValidator).toContain('hasValidLegacyNestedChatRecipientIds(conversationData, data)');
+        expect(editTargetValidator).toContain('data.conversationId == conversationId');
+        expect(rules).toContain('data.recipientIds.hasOnly(participantIds)');
+        expect(rules).toContain('data.senderId in participantIds');
+        expect(rules).toContain('!(data.senderId in data.recipientIds)');
+
+        const nestedTargetValidator = rules.slice(
+            rules.indexOf('function isNestedChatMessageTargetValid'),
+            rules.indexOf('function isNestedChatMessageEditTargetValid')
+        );
         expect(nestedTargetValidator).not.toContain('isIndividualChatMessage(teamId, data)');
+
+        const createTargetValidator = rules.slice(
+            rules.indexOf('function isNestedChatMessageCreateValid'),
+            rules.indexOf('function isNestedChatMessageEditValid')
+        );
+        expect(createTargetValidator).toContain('isNestedChatMessageTargetValid(teamId, conversationId, conversationData, data)');
+        expect(createTargetValidator).not.toContain('isNestedChatMessageEditTargetValid');
+
+        const nestedMessageRules = rules.slice(
+            rules.indexOf('match /chatConversations/{conversationId} {'),
+            rules.indexOf('// Server-only dedup log')
+        );
+        expect(nestedMessageRules).toContain('request.resource.data.diff(resource.data).affectedKeys()\n                               .hasOnly([\'text\', \'editedAt\'])');
+        expect(nestedMessageRules).toContain('resource.data.senderId == request.auth.uid');
+        expect(nestedMessageRules).toContain('isNestedChatMessageEditTargetValid(');
     });
 
     it('keeps the legacy full-team message rules independent from the nested validator', () => {
@@ -228,6 +254,7 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('nested team chat message 
             directPayload({ ai: true, aiName: 'ALL PLAYS' }),
             directPayload({ reactions: { heart: ['parent-1'] } }),
             directPayload({ recipientIds: ['parent-1'] }),
+            directPayload({ recipientIds: ['user-2'] }),
             directPayload({ conversationId: 'another-conversation' })
         ];
 
@@ -336,6 +363,58 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('nested team chat message 
         }));
         await assertFails(updateDoc(ref, {
             text: 'x'.repeat(10001),
+            editedAt: serverTimestamp()
+        }));
+    });
+
+    it('allows text-only edits of legitimate legacy targets that omitted the sender', async () => {
+        const parentDb = authedFirestore('parent-1', 'parent@example.com');
+        const legacyRef = messageRef(parentDb, directConversationId, 'legacy-editable');
+        await testEnv.withSecurityRulesDisabled(async (context) => {
+            await setDoc(messageRef(context.firestore(), directConversationId, 'legacy-editable'), directPayload({
+                recipientIds: ['user-2'],
+                createdAt: Timestamp.now()
+            }));
+        });
+
+        await assertSucceeds(updateDoc(legacyRef, {
+            text: 'Edited legacy update',
+            editedAt: serverTimestamp()
+        }));
+    });
+
+    it('keeps legacy edit compatibility scoped to the sender, conversation, and immutable target fields', async () => {
+        const parentDb = authedFirestore('parent-1', 'parent@example.com');
+        const otherParticipantDb = authedFirestore('user-2', 'user2@example.com');
+        const legacyRef = messageRef(parentDb, directConversationId, 'legacy-protected');
+        const unsafeLegacyRef = messageRef(parentDb, directConversationId, 'legacy-unsafe-target');
+        await testEnv.withSecurityRulesDisabled(async (context) => {
+            await setDoc(messageRef(context.firestore(), directConversationId, 'legacy-protected'), directPayload({
+                recipientIds: ['user-2'],
+                createdAt: Timestamp.now()
+            }));
+            await setDoc(messageRef(context.firestore(), directConversationId, 'legacy-unsafe-target'), directPayload({
+                recipientIds: ['outsider-1'],
+                createdAt: Timestamp.now()
+            }));
+        });
+
+        await assertFails(updateDoc(messageRef(otherParticipantDb, directConversationId, 'legacy-protected'), {
+            text: 'Edited by another participant',
+            editedAt: serverTimestamp()
+        }));
+        await assertFails(updateDoc(legacyRef, {
+            text: 'Mutated recipients',
+            editedAt: serverTimestamp(),
+            recipientIds: ['parent-1', 'user-2']
+        }));
+        await assertFails(updateDoc(legacyRef, {
+            text: 'Mutated conversation',
+            editedAt: serverTimestamp(),
+            conversationId: 'another-conversation'
+        }));
+        await assertFails(updateDoc(unsafeLegacyRef, {
+            text: 'Unsafe legacy target',
             editedAt: serverTimestamp()
         }));
     });
