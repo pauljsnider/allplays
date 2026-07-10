@@ -1252,9 +1252,12 @@ service cloud.firestore {
     function isTeamMediaCoach(teamId) {
       let userPath = /databases/$(database)/documents/users/$(request.auth.uid);
       let teamPath = /databases/$(database)/documents/teams/$(teamId);
+      let team = get(teamPath).data;
       return isSignedIn() &&
              exists(userPath) &&
              exists(teamPath) &&
+             request.auth.token.email != null &&
+             request.auth.token.email.lower() in team.get('adminEmails', []) &&
              teamId in get(userPath).data.get('coachOf', []);
     }
 

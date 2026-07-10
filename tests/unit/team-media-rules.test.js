@@ -31,10 +31,12 @@ function hasTeamMediaUploadGrant(profile, teamId) {
         (profile.mediaUploadTeamIds ?? []).includes(teamId);
 }
 
-function isTeamMediaCoachWouldBeAllowed({ signedIn = true, profile = {}, teamExists = true }, teamId) {
+function isTeamMediaCoachWouldBeAllowed({ signedIn = true, profile = {}, teamExists = true, email = '', adminEmails = [] }, teamId) {
     return Boolean(
         signedIn &&
         teamExists &&
+        email &&
+        adminEmails.includes(email.toLowerCase()) &&
         (profile.coachOf ?? []).includes(teamId)
     );
 }
@@ -73,24 +75,33 @@ describe('team media Firestore rules', () => {
         expect(hasTeamMediaUploadGrant({ uid: 'legacy-contributor', mediaUploadTeamIds: ['team-a'] }, 'team-a')).toBe(true);
     });
 
-    it('allows linked non-admin coaches to manage media while preserving visible member reads and approved uploads', () => {
+    it('requires admin-email provenance before linked coaches can manage media', () => {
         const mediaRulesStart = rules.indexOf('match /mediaFolders/{folderId}');
         const mediaRulesEnd = rules.indexOf('// Chat messages subcollection', mediaRulesStart);
         const mediaRules = rules.slice(mediaRulesStart, mediaRulesEnd);
 
         expect(rules).toContain('function isTeamMediaCoach(teamId) {');
         expect(rules).toContain("teamId in get(userPath).data.get('coachOf', [])");
-        expect(rules).not.toContain("request.auth.token.email.lower() in get(teamPath).data.get('adminEmails', [])");
+        expect(rules).toContain("request.auth.token.email.lower() in team.get('adminEmails', [])");
         expect(storageRules).toContain('function isTeamMediaCoach(teamId) {');
         expect(storageRules).toContain("teamId in firestore.get(userPath).data.get('coachOf', [])");
-        expect(storageRules).not.toContain("request.auth.token.email.lower() in firestore.get(teamPath).data.get('adminEmails', [])");
+        expect(storageRules).toContain("request.auth.token.email.lower() in team.get('adminEmails', [])");
         expect(rules).toContain('function canManageTeamMedia(teamId) {');
         expect(rules).toContain('return isTeamOwnerOrAdmin(teamId) || isTeamMediaCoach(teamId);');
         expect(isTeamMediaCoachWouldBeAllowed({
-            profile: { coachOf: ['team-a'] }
+            profile: { coachOf: ['team-a'] },
+            email: 'coach@example.com',
+            adminEmails: ['coach@example.com']
         }, 'team-a')).toBe(true);
         expect(isTeamMediaCoachWouldBeAllowed({
-            profile: { coachOf: [] }
+            profile: { coachOf: ['team-a'] },
+            email: 'forged@example.com',
+            adminEmails: []
+        }, 'team-a')).toBe(false);
+        expect(isTeamMediaCoachWouldBeAllowed({
+            profile: { coachOf: [] },
+            email: 'coach@example.com',
+            adminEmails: ['coach@example.com']
         }, 'team-a')).toBe(false);
         expect(mediaRules).toContain('allow read: if canReadTeamMediaFolder(teamId, resource.data);');
         expect(mediaRules).toContain('allow create, delete: if canManageTeamMedia(teamId);');
@@ -132,7 +143,7 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST || !process.env.FIREBASE_ST
             await Promise.all([
                 setDoc(doc(context.firestore(), 'teams', 'team-1'), {
                     ownerId: 'owner-1',
-                    adminEmails: []
+                    adminEmails: ['coach@example.com']
                 }),
                 setDoc(doc(context.firestore(), 'users', 'coach-1'), {
                     email: 'coach@example.com',
@@ -142,6 +153,11 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST || !process.env.FIREBASE_ST
                 setDoc(doc(context.firestore(), 'users', 'outsider-1'), {
                     email: 'outsider@example.com',
                     isAdmin: false
+                }),
+                setDoc(doc(context.firestore(), 'users', 'forged-coach-1'), {
+                    email: 'forged@example.com',
+                    isAdmin: false,
+                    coachOf: ['team-1']
                 })
             ]);
         });
@@ -184,6 +200,15 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST || !process.env.FIREBASE_ST
         }));
         await assertFails(setDoc(doc(outsider.firestore(), 'teams', 'team-1', 'mediaFolders', 'forged-folder'), {
             name: 'Forged album',
+            visibility: 'private'
+        }));
+    });
+
+    it('denies historically forged coach links without team admin-email provenance', async () => {
+        const forgedCoach = testEnv.authenticatedContext('forged-coach-1', { email: 'forged@example.com' });
+
+        await assertFails(setDoc(doc(forgedCoach.firestore(), 'teams', 'team-1', 'mediaFolders', 'forged-coach-folder'), {
+            name: 'Forged coach album',
             visibility: 'private'
         }));
     });

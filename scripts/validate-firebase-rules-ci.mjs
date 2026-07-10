@@ -83,6 +83,7 @@ export function validateFirebaseRulesCi() {
     assertIncludes(firestoreRules, 'function canReadTeamMediaItem(teamId, itemData)', 'Firestore media item visibility rules');
     assertIncludes(firestoreRules, 'function isTeamMediaCoach(teamId)', 'Firestore linked coach media rules');
     assertIncludes(firestoreRules, "teamId in get(userPath).data.get('coachOf', [])", 'Firestore linked coach media membership');
+    assertIncludes(firestoreRules, "request.auth.token.email.lower() in team.get('adminEmails', [])", 'Firestore linked coach admin email provenance');
     assertIncludes(firestoreRules, 'function canManageTeamMedia(teamId)', 'Firestore media manager rules');
     assertIncludes(firestoreRules, 'allow read: if canReadTeamMediaFolder(teamId, resource.data);', 'Firestore media folder read rules');
     assertIncludes(firestoreRules, 'allow read: if canReadTeamMediaItem(teamId, resource.data);', 'Firestore media item read rules');
@@ -133,6 +134,7 @@ export function validateFirebaseRulesCi() {
     assertIncludes(storageRules, 'function canDeleteOwnTeamMediaObject(teamId, folderId, userId)', 'Team media scoped Storage delete helper');
     assertIncludes(storageRules, 'function isTeamMediaCoach(teamId)', 'Team media linked coach Storage helper');
     assertIncludes(storageRules, "teamId in firestore.get(userPath).data.get('coachOf', [])", 'Team media linked coach Storage membership');
+    assertIncludes(storageRules, "request.auth.token.email.lower() in team.get('adminEmails', [])", 'Team media linked coach Storage admin email provenance');
     assertIncludes(storageRules, 'function canDeleteOwnChatAttachment(teamId, conversationId, userId)', 'Chat fallback scoped Storage delete helper');
     assertIncludes(storageRules, 'function canDeleteOwnTeamScopedUpload(teamId, userId)', 'Team scoped Storage delete helper');
     assertIncludes(storageRules, '(hasTeamMediaUploadGrant(teamId) && canUploadTeamMediaFolder(teamId, folderId))', 'Team media current upload grant delete scope');

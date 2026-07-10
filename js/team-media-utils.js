@@ -70,7 +70,11 @@ export function canManageTeamMedia(user, team) {
     if (hasFullTeamAccess(user, team)) return true;
 
     const teamId = String(team.id || '').trim();
-    if (!teamId) return false;
+    const email = String(user.email || '').trim().toLowerCase();
+    const adminEmails = Array.isArray(team.adminEmails) ? team.adminEmails : [];
+    const hasTeamAdminProvenance = Boolean(email) &&
+        adminEmails.some((adminEmail) => String(adminEmail || '').trim().toLowerCase() === email);
+    if (!teamId || !hasTeamAdminProvenance) return false;
 
     return (Array.isArray(user.coachOf) ? user.coachOf : [])
         .map((id) => String(id || '').trim())

@@ -33,7 +33,11 @@ describe('team media management permissions', () => {
         expect(canManageTeamMedia({ uid: 'owner-1', email: 'owner@example.com' }, team)).toBe(true);
         expect(canManageTeamMedia({ uid: 'parent-1', email: 'admin@example.com' }, team)).toBe(true);
         expect(canManageTeamMedia({ uid: 'global-1', email: 'other@example.com', isAdmin: true }, team)).toBe(true);
-        expect(canManageTeamMedia({ uid: 'coach-1', email: 'coach@example.com', coachOf: ['team-1'] }, team)).toBe(true);
+        expect(canManageTeamMedia({ uid: 'coach-1', email: 'coach@example.com', coachOf: ['team-1'] }, team)).toBe(false);
+        expect(canManageTeamMedia({ uid: 'coach-1', email: 'coach@example.com', coachOf: ['team-1'] }, {
+            ...team,
+            adminEmails: ['coach@example.com']
+        })).toBe(true);
         expect(canManageTeamMedia({ uid: 'other-coach', coachOf: ['team-2'] }, team)).toBe(false);
         expect(canManageTeamMedia({ uid: 'parent-1', email: 'parent@example.com' }, team)).toBe(false);
         expect(canManageTeamMedia(null, team)).toBe(false);
@@ -43,7 +47,11 @@ describe('team media management permissions', () => {
         const team = { id: 'team-1', ownerId: 'coach-1', adminEmails: ['admin@example.com'] };
 
         expect(canContributeTeamMedia({ uid: 'coach-1', email: 'coach@example.com' }, team)).toBe(true);
-        expect(canContributeTeamMedia({ uid: 'assistant-1', email: 'assistant@example.com', coachOf: ['team-1'] }, team)).toBe(true);
+        expect(canContributeTeamMedia({ uid: 'assistant-1', email: 'assistant@example.com', coachOf: ['team-1'] }, team)).toBe(false);
+        expect(canContributeTeamMedia({ uid: 'assistant-1', email: 'assistant@example.com', coachOf: ['team-1'] }, {
+            ...team,
+            adminEmails: ['assistant@example.com']
+        })).toBe(true);
         expect(canContributeTeamMedia({ uid: 'parent-1', parentTeamIds: ['team-1'] }, team)).toBe(false);
         expect(canContributeTeamMedia({ uid: 'parent-2', parentOf: [{ teamId: 'team-1' }] }, team)).toBe(false);
         expect(canContributeTeamMedia({ uid: 'parent-3', teamMediaUploadTeamIds: ['team-1'] }, team)).toBe(true);

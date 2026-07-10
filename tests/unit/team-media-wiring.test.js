@@ -68,6 +68,7 @@ describe('team media page wiring', () => {
         expect(rules).toContain('allow read: if canReadTeamMediaFolder(teamId, resource.data);');
         expect(rules).toContain('function isTeamMediaCoach(teamId)');
         expect(rules).toContain("teamId in get(userPath).data.get('coachOf', [])");
+        expect(rules).toContain("request.auth.token.email.lower() in team.get('adminEmails', [])");
         expect(rules).toContain('function canManageTeamMedia(teamId)');
         expect(rules).toContain('return isTeamOwnerOrAdmin(teamId) || isTeamMediaCoach(teamId);');
         expect(rules).toContain("request.auth.token.email.lower() in team.get('adminEmails', [])");
@@ -94,6 +95,7 @@ describe('team media page wiring', () => {
         expect(storageRules).toContain('function canReadTeamMediaObject(teamId, folderId)');
         expect(storageRules).toContain('function isTeamMediaCoach(teamId)');
         expect(storageRules).toContain("teamId in firestore.get(userPath).data.get('coachOf', [])");
+        expect(storageRules).toContain("request.auth.token.email.lower() in team.get('adminEmails', [])");
         expect(storageRules).toContain('function canManageTeamMedia(teamId)');
         expect(storageRules).toContain('return isTeamOwnerOrAdmin(teamId) || isTeamMediaCoach(teamId);');
         expect(storageRules).toContain("request.auth.token.email.lower() in team.get('adminEmails', [])");

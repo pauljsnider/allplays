@@ -22,9 +22,12 @@ service firebase.storage {
     function isTeamMediaCoach(teamId) {
       let userPath = /databases/(default)/documents/users/$(request.auth.uid);
       let teamPath = /databases/(default)/documents/teams/$(teamId);
+      let team = firestore.get(teamPath).data;
       return isSignedIn() &&
         firestore.exists(userPath) &&
         firestore.exists(teamPath) &&
+        request.auth.token.email != null &&
+        request.auth.token.email.lower() in team.get('adminEmails', []) &&
         teamId in firestore.get(userPath).data.get('coachOf', []);
     }
 
