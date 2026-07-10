@@ -139,6 +139,29 @@ describe('AccessTool deep-link reconciliation (#3088)', () => {
         await waitFor(() => expect(accessServiceMocks.loadParentAccessPlayers).toHaveBeenCalledWith('team-b'));
     });
 
+    it('does not invalidate discovery started for a newly added deep-link intent', async () => {
+        let resolveDiscovery: (value: unknown) => void = () => {};
+        accessServiceMocks.discoverParentAccessTeams.mockReturnValue(new Promise((resolve) => {
+            resolveDiscovery = resolve;
+        }));
+
+        const view = renderTool('');
+        await act(async () => {
+            navigate('/parent-tools/access?teamId=team-b');
+        });
+        await waitFor(() => expect(accessServiceMocks.discoverParentAccessTeams).toHaveBeenCalledTimes(1));
+
+        await act(async () => {
+            resolveDiscovery({ teams: [{ id: 'team-b', name: 'Team B' }], nextCursor: null });
+        });
+
+        await waitFor(() => {
+            expect((view.getByLabelText('Team') as HTMLSelectElement).value).toBe('team-b');
+        });
+        expect(accessServiceMocks.loadParentAccessTeam).not.toHaveBeenCalledWith('team-b');
+        expect(accessServiceMocks.loadParentAccessPlayers).toHaveBeenCalledWith('team-b');
+    });
+
     it('clears the stale selection when the new deep-linked team is inaccessible', async () => {
         const view = renderTool('team-a');
         await waitFor(() => expect(accessServiceMocks.loadParentAccessPlayers).toHaveBeenCalledWith('team-a'));

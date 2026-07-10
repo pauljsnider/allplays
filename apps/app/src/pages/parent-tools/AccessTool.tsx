@@ -216,17 +216,6 @@ export function AccessTool({ auth, onAccessChanged }: { auth: AuthState; onAcces
     }, [deepLinkedTeamId]);
 
     useEffect(() => {
-        if (!deepLinkedTeamId || teams.length || loadingTeams) return;
-        if (initialDeepLinkDiscoveryAttemptRef.current === deepLinkedTeamId) return;
-        initialDeepLinkDiscoveryAttemptRef.current = deepLinkedTeamId;
-        void loadTeams({ searchText: '', cursor: null, append: false }).finally(() => {
-            if (initialDeepLinkDiscoveryAttemptRef.current !== deepLinkedTeamId) return;
-            initialDeepLinkDiscoveryCompleteRef.current = deepLinkedTeamId;
-            setDeepLinkReconcileVersion((current) => current + 1);
-        });
-    }, [deepLinkedTeamId, deepLinkReconcileVersion, loadTeams, loadingTeams, teams.length]);
-
-    useEffect(() => {
         if (deepLinkIntentRef.current !== deepLinkedTeamId) {
             deepLinkIntentRef.current = deepLinkedTeamId;
             teamSearchRequestRef.current += 1;
@@ -238,6 +227,17 @@ export function AccessTool({ auth, onAccessChanged }: { auth: AuthState; onAcces
         initialDeepLinkDiscoveryCompleteRef.current = '';
         deepLinkLookupAttemptRef.current = '';
     }, [deepLinkedTeamId, invalidateTeamLoad]);
+
+    useEffect(() => {
+        if (!deepLinkedTeamId || teams.length || loadingTeams) return;
+        if (initialDeepLinkDiscoveryAttemptRef.current === deepLinkedTeamId) return;
+        initialDeepLinkDiscoveryAttemptRef.current = deepLinkedTeamId;
+        void loadTeams({ searchText: '', cursor: null, append: false }).finally(() => {
+            if (initialDeepLinkDiscoveryAttemptRef.current !== deepLinkedTeamId) return;
+            initialDeepLinkDiscoveryCompleteRef.current = deepLinkedTeamId;
+            setDeepLinkReconcileVersion((current) => current + 1);
+        });
+    }, [deepLinkedTeamId, deepLinkReconcileVersion, loadTeams, loadingTeams, teams.length]);
 
     useEffect(() => {
         // Wait until teams have loaded so we can tell whether the deep-linked team
