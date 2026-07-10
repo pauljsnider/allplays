@@ -126,3 +126,18 @@ describe('Messages ALL PLAYS lazy loading', () => {
     }));
   });
 });
+
+describe('Chat composer audience lifecycle', () => {
+  it('keeps full team as the default and resets the audience before enqueueing each send', () => {
+    const sourcePath = resolveAppSourcePath('src/pages/messages/components/ChatWindow.tsx');
+    const source = readFileSync(sourcePath, 'utf8');
+    const handleSendStart = source.indexOf('const handleSend = async');
+    const handleSendEnd = source.indexOf('const openEmailSheet =', handleSendStart);
+    const handleSendSource = source.slice(handleSendStart, handleSendEnd);
+
+    expect(source).toContain("useState<ChatTargetType>('full_team')");
+    expect(handleSendSource).toContain("setSelectedRecipientTarget('full_team');");
+    expect(handleSendSource.indexOf("setSelectedRecipientTarget('full_team');"))
+      .toBeLessThan(handleSendSource.indexOf('enqueueChatSend(request);'));
+  });
+});

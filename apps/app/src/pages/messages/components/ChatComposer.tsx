@@ -1,5 +1,5 @@
 import { FormEvent, useEffect, useMemo, useRef, useState } from 'react';
-import { Bot, Loader2, Mail, Mic, Paperclip, Send, Users, X } from 'lucide-react';
+import { Bot, Loader2, Mail, Mic, MoreHorizontal, Paperclip, Send, Users, X } from 'lucide-react';
 import { getChatMentionInsertion, hasAllPlaysMention, type ChatMentionSuggestion } from '../../../lib/chatLogic';
 
 type FilePreview = {
@@ -63,7 +63,9 @@ export function Composer({
     const textareaRef = useRef<HTMLTextAreaElement | null>(null);
     const pendingCursorPositionRef = useRef<number | null>(null);
     const [activeSuggestionIndex, setActiveSuggestionIndex] = useState(0);
+    const [showStaffActions, setShowStaffActions] = useState(false);
     const canSend = Boolean(text.trim() || filePreviews.length) && !aiThinking && !disabled;
+    const hasStaffActions = canModerate || canSendTeamEmail;
     const cursorPosition = textareaRef.current?.selectionStart ?? text.length;
     const beforeCursor = useMemo(() => text.slice(0, cursorPosition), [cursorPosition, text]);
     const showMentionQuickAction = /(^|\s)@\w*$/i.test(beforeCursor) && !hasAllPlaysMention(text);
@@ -93,6 +95,10 @@ export function Composer({
     }, [onCursorChange, text]);
 
     useEffect(() => {
+        if (disabled || !hasStaffActions) setShowStaffActions(false);
+    }, [disabled, hasStaffActions]);
+
+    useEffect(() => {
         const textarea = textareaRef.current;
         if (!textarea) return;
 
@@ -114,6 +120,11 @@ export function Composer({
         pendingCursorPositionRef.current = getChatMentionInsertion(text, mentionLabel, nextCursorPosition).cursorPosition;
         onRecipientMention(mentionLabel, nextCursorPosition);
         setActiveSuggestionIndex(0);
+    };
+
+    const runStaffAction = (action: () => void) => {
+        setShowStaffActions(false);
+        action();
     };
 
     return (
@@ -255,19 +266,41 @@ export function Composer({
                         <Mic className="h-4 w-4" aria-hidden="true" />
                     </button>
                 ) : null}
-                {canModerate ? (
-                    <button type="button" className="chat-audience-pill" onClick={onAudience} disabled={disabled}>
-                        <Users className="h-4 w-4 flex-none" aria-hidden="true" />
-                        <span className="truncate">Audience: {audienceSummary}</span>
-                    </button>
-                ) : null}
-                {canSendTeamEmail ? (
-                    <button type="button" className="chat-audience-pill" onClick={onTeamEmail} aria-label="Open Team Email" disabled={disabled}>
-                        <Mail className="h-4 w-4 flex-none" aria-hidden="true" />
-                        <span className="truncate">Team Email</span>
+                {hasStaffActions ? (
+                    <button
+                        type="button"
+                        className="chat-tool-button"
+                        onClick={() => setShowStaffActions((current) => !current)}
+                        aria-label="Open staff actions"
+                        aria-expanded={showStaffActions}
+                        aria-controls="chat-staff-actions"
+                        disabled={disabled}
+                    >
+                        <MoreHorizontal className="h-4 w-4" aria-hidden="true" />
                     </button>
                 ) : null}
             </div>
+
+            {showStaffActions && !disabled ? (
+                <div id="chat-staff-actions" className="chat-staff-actions-menu" role="menu" aria-label="Staff actions">
+                    <div className="chat-staff-actions-heading">Staff actions</div>
+                    {canModerate ? (
+                        <button type="button" className="chat-staff-action-button" role="menuitem" onClick={() => runStaffAction(onAudience)}>
+                            <Users className="h-4 w-4 flex-none" aria-hidden="true" />
+                            <span className="min-w-0 text-left">
+                                <span className="block text-sm font-black text-gray-950">Message audience</span>
+                                <span className="block truncate text-xs font-bold text-gray-500">Current: {audienceSummary}</span>
+                            </span>
+                        </button>
+                    ) : null}
+                    {canSendTeamEmail ? (
+                        <button type="button" className="chat-staff-action-button" role="menuitem" onClick={() => runStaffAction(onTeamEmail)}>
+                            <Mail className="h-4 w-4 flex-none" aria-hidden="true" />
+                            <span className="text-sm font-black text-gray-950">Team Email</span>
+                        </button>
+                    ) : null}
+                </div>
+            ) : null}
         </form>
     );
 }
