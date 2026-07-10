@@ -935,6 +935,21 @@ function shouldKeepRegistrationCapacityReserved(registration = {}) {
   return registration.paymentPlan?.id === 'installments' && getRegistrationPaymentPlanPaidInstallmentCount(registration) > 0;
 }
 
+function getRegistrationSubmittedAtDate(registration = {}, fallback = new Date()) {
+  const submittedAt = registration.submittedAt;
+  let resolved = null;
+  if (submittedAt instanceof Date) {
+    resolved = submittedAt;
+  } else if (submittedAt && typeof submittedAt.toDate === 'function') {
+    resolved = submittedAt.toDate();
+  } else if (submittedAt && typeof submittedAt.toMillis === 'function') {
+    resolved = new Date(submittedAt.toMillis());
+  } else if (submittedAt !== null && submittedAt !== undefined && submittedAt !== '') {
+    resolved = new Date(submittedAt);
+  }
+  return resolved instanceof Date && Number.isFinite(resolved.getTime()) ? resolved : fallback;
+}
+
 function buildRegistrationInstallmentPaymentState(registration = {}, form = null, nextPaidInstallmentCount = getRegistrationPaymentPlanPaidInstallmentCount(registration)) {
   const storedSchedule = getStoredRegistrationInstallmentSchedule(registration);
   const authoritativeTotalBalanceDueCents = storedSchedule.length
@@ -983,8 +998,10 @@ function getRegistrationCheckoutAmountCents(registration = {}, form = null) {
   }
   if (form) {
     // Recompute from the authoritative form pricing rules using the quantity
-    // captured on the server-created registration snapshot for this submission.
-    return computeRegistrationFeeAmountCentsFromForm(form, new Date(), {
+    // and submission time captured by the server-created registration. Using
+    // submittedAt preserves time-sensitive discounts on later checkout retries
+    // without trusting a client-provided feeSnapshot amount.
+    return computeRegistrationFeeAmountCentsFromForm(form, getRegistrationSubmittedAtDate(registration), {
       quantity: registration.feeSnapshot?.quantity || 1
     });
   }
@@ -3528,8 +3545,9 @@ exports.createStripeRegistrationCheckout = functions.https.onCall(async (data) =
     throw new functions.https.HttpsError('failed-precondition', 'This registration has already been paid.');
   }
 
-  // Always recompute the expected amount from the authoritative form document.
-  // This prevents a tampered feeSnapshot on the stored registration from lowering the charge.
+  // Recompute from the authoritative form at the server-captured submission
+  // time. This prevents a tampered feeSnapshot from lowering the charge while
+  // preserving time-sensitive discounts when checkout is retried later.
   const expectedAmountCents = getRegistrationCheckoutAmountCents(registration, form);
   const amountCents = expectedAmountCents;
   if (!Number.isFinite(amountCents) || amountCents <= 0) {
