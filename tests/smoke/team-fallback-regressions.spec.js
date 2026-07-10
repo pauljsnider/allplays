@@ -300,6 +300,83 @@ const CHAT_DB_REMINDER_STUB = CHAT_DB_STUB
     .replace("senderId: 'coach-2'", "senderId: 'scheduled-reminder'")
     .replace("senderName: 'Coach Lee'", "senderName: 'ALL PLAYS'");
 
+const CHAT_DB_CONVERSATION_SWITCH_STUB = CHAT_DB_STUB
+    .replace(
+        'const createdAt = {',
+        "window.__CHAT_CALLS__ = { subscriptions: [], lastReads: [], sends: [], reactions: [] };\nconst createdAt = {"
+    )
+    .replace(
+        `export async function getChatConversations() {
+    throw permissionDenied();
+}`,
+        `export async function getChatConversations() {
+    return [
+        { id: 'team', type: 'team', name: 'Chat Test Team Team Chat', participantIds: [], participantRoles: ['team'] },
+        { id: 'staff-conversation', type: 'group', name: 'Staff only', participantIds: ['user-1', 'coach-2'], participantRoles: ['staff'] }
+    ];
+}`
+    )
+    .replace(
+        'export async function postChatMessage() {}',
+        `export async function postChatMessage(teamId, payload) {
+    window.__CHAT_CALLS__.sends.push({ teamId, conversationId: payload.conversationId, text: payload.text });
+}`
+    )
+    .replace(
+        `export function canModerateChat() {
+    return false;
+}`,
+        `export function canModerateChat() {
+    return true;
+}`
+    )
+    .replace(
+        'export async function updateChatLastRead() {}',
+        `export async function updateChatLastRead(userId, teamId, conversationId) {
+    window.__CHAT_CALLS__.lastReads.push({ userId, teamId, conversationId });
+}`
+    )
+    .replace(
+        `export function subscribeToChatMessages(teamId, options, onMessages) {
+    setTimeout(() => {
+        onMessages([
+            {
+                id: 'message-1',
+                text: 'Hello team',
+                senderId: 'coach-2',
+                senderName: 'Coach Lee',
+                createdAt,
+                reactions: {}
+            }
+        ], { id: 'oldest-doc' });
+    }, 0);
+    return () => {};
+}`,
+        `export function subscribeToChatMessages(teamId, options, onMessages) {
+    const conversationId = options.conversationId;
+    window.__CHAT_CALLS__.subscriptions.push({ teamId, conversationId });
+    setTimeout(() => {
+        onMessages([
+            {
+                id: conversationId === 'staff-conversation' ? 'staff-message' : 'team-message',
+                text: conversationId === 'staff-conversation' ? 'Staff-only note' : 'Team-wide note',
+                senderId: 'coach-2',
+                senderName: 'Coach Lee',
+                createdAt,
+                reactions: conversationId === 'staff-conversation' ? { thumbs_up: ['coach-2'] } : {}
+            }
+        ], { id: 'oldest-' + conversationId });
+    }, 0);
+    return () => {};
+}`
+    )
+    .replace(
+        'export async function toggleChatReaction() {}',
+        `export async function toggleChatReaction(teamId, messageId, reactionKey, userId, options) {
+    window.__CHAT_CALLS__.reactions.push({ teamId, messageId, reactionKey, userId, conversationId: options.conversationId });
+}`
+    );
+
 const MEDIA_DB_STUB = `
 ${PERMISSION_ERROR}
 export async function getTeam(teamId) {
@@ -808,6 +885,48 @@ test('team chat falls back to the team-wide channel when conversation listing is
     await expect(page.locator('#messages-container')).toContainText('Hello team');
     await expect(page.locator('#messages-container')).not.toContainText('Loading messages');
     await expect(page.locator('#send-error')).toBeHidden();
+    expect(pageErrors).toEqual([]);
+});
+
+test('team chat scopes subscription, last-read, send, and reaction operations to the selected conversation', async ({ page, baseURL }) => {
+    const pageErrors = await collectPageErrors(page);
+    await routeCommonPageStubs(page);
+    await page.route(/\/js\/db\.js(?:\?v=\d+)?$/, (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: CHAT_DB_CONVERSATION_SWITCH_STUB }));
+
+    await page.goto(`${baseURL}/team-chat.html?teamId=team-1`, { waitUntil: 'domcontentloaded' });
+
+    await expect(page.locator('#messages-container')).toContainText('Team-wide note');
+    await page.locator('[data-conversation-id="staff-conversation"]').click();
+
+    await expect(page.locator('#active-conversation-label')).toHaveText('Staff only conversation');
+    await expect(page.locator('#messages-container')).toContainText('Staff-only note');
+    await expect(page.locator('#messages-container')).not.toContainText('Team-wide note');
+    await expect.poll(() => page.evaluate(() => window.__CHAT_CALLS__.subscriptions.at(-1))).toEqual({
+        teamId: 'team-1',
+        conversationId: 'staff-conversation'
+    });
+    await expect.poll(() => page.evaluate(() => window.__CHAT_CALLS__.lastReads.at(-1))).toEqual({
+        userId: 'user-1',
+        teamId: 'team-1',
+        conversationId: 'staff-conversation'
+    });
+
+    await page.locator('#message-input').fill('Staff follow-up');
+    await page.locator('#send-btn').click();
+    await expect.poll(() => page.evaluate(() => window.__CHAT_CALLS__.sends.at(-1))).toEqual({
+        teamId: 'team-1',
+        conversationId: 'staff-conversation',
+        text: 'Staff follow-up'
+    });
+
+    await page.locator('#messages-container button').filter({ hasText: '👍' }).click();
+    await expect.poll(() => page.evaluate(() => window.__CHAT_CALLS__.reactions.at(-1))).toEqual({
+        teamId: 'team-1',
+        messageId: 'staff-message',
+        reactionKey: 'thumbs_up',
+        userId: 'user-1',
+        conversationId: 'staff-conversation'
+    });
     expect(pageErrors).toEqual([]);
 });
 
