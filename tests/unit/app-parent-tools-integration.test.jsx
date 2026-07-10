@@ -37,6 +37,7 @@ const publicActionMocks = vi.hoisted(() => ({
 
 const accessServiceMocks = vi.hoisted(() => ({
     loadParentAccessModel: vi.fn(),
+    loadParentAccessTeam: vi.fn(),
     discoverParentAccessTeams: vi.fn(),
     loadParentAccessPlayers: vi.fn(),
     submitParentAccessRequest: vi.fn()
@@ -224,6 +225,9 @@ beforeEach(() => {
         teams: [{ id: 'team-1', name: 'Bears', sport: 'Basketball', zip: '66210' }],
         nextCursor: null
     });
+    accessServiceMocks.loadParentAccessTeam.mockImplementation(async (teamId) => (
+        teamId === 'team-1' ? { id: 'team-1', name: 'Bears', sport: 'Basketball', zip: '66210' } : null
+    ));
     accessServiceMocks.loadParentAccessPlayers.mockResolvedValue([{ id: 'player-1', name: 'Pat Star', number: '9', photoUrl: null }]);
     accessServiceMocks.submitParentAccessRequest.mockResolvedValue({ success: true });
     inviteRedemptionMocks.redeemSignedInInvite.mockResolvedValue({

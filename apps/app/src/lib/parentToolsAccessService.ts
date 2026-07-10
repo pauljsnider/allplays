@@ -1,4 +1,4 @@
-import { createParentMembershipRequest, discoverPublicTeams, getPlayers, listMyParentMembershipRequests } from './adapters/legacyParentTools';
+import { createParentMembershipRequest, discoverPublicTeams, getPlayers, getTeam, listMyParentMembershipRequests } from './adapters/legacyParentTools';
 import type { AuthUser } from './types';
 
 export type ParentAccessTeam = {
@@ -72,6 +72,12 @@ export async function loadParentAccessPlayers(teamId: string): Promise<ParentAcc
         }))
         .filter((player: ParentAccessPlayer) => player.id)
         .sort((a: ParentAccessPlayer, b: ParentAccessPlayer) => a.name.localeCompare(b.name));
+}
+
+export async function loadParentAccessTeam(teamId: string): Promise<ParentAccessTeam | null> {
+    if (!teamId) return null;
+    const team = await Promise.resolve(getTeam(teamId));
+    return normalizeAccessTeams(team ? [team] : [])[0] || null;
 }
 
 export async function submitParentAccessRequest(teamId: string, playerId: string, relation: string) {

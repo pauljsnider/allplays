@@ -8,6 +8,7 @@ import type { AuthState } from '../../lib/types';
 
 const accessServiceMocks = vi.hoisted(() => ({
     loadParentAccessModel: vi.fn(),
+    loadParentAccessTeam: vi.fn(),
     discoverParentAccessTeams: vi.fn(),
     loadParentAccessPlayers: vi.fn(),
     submitParentAccessRequest: vi.fn()
@@ -60,6 +61,11 @@ describe('AccessTool deep-link reconciliation (#3088)', () => {
                 { id: 'team-b', name: 'Team B' }
             ],
             nextCursor: null
+        });
+        accessServiceMocks.loadParentAccessTeam.mockImplementation(async (teamId: string) => {
+            if (teamId === 'team-a') return { id: 'team-a', name: 'Team A' };
+            if (teamId === 'team-b') return { id: 'team-b', name: 'Team B' };
+            return null;
         });
         accessServiceMocks.loadParentAccessPlayers.mockResolvedValue([]);
     });
@@ -117,6 +123,20 @@ describe('AccessTool deep-link reconciliation (#3088)', () => {
         expect(accessServiceMocks.loadParentAccessPlayers).not.toHaveBeenCalledWith('team-z');
     });
 
+    it('resolves a deep-linked team that is beyond the first discovery page', async () => {
+        accessServiceMocks.discoverParentAccessTeams.mockResolvedValue({
+            teams: [{ id: 'team-a', name: 'Team A' }],
+            nextCursor: 'cursor-2'
+        });
+        accessServiceMocks.loadParentAccessTeam.mockResolvedValue({ id: 'team-z', name: 'Team Z' });
+
+        renderTool('team-z');
+
+        await waitFor(() => expect(accessServiceMocks.discoverParentAccessTeams).toHaveBeenCalledTimes(1));
+        await waitFor(() => expect(accessServiceMocks.loadParentAccessTeam).toHaveBeenCalledWith('team-z'));
+        await waitFor(() => expect(accessServiceMocks.loadParentAccessPlayers).toHaveBeenCalledWith('team-z'));
+    });
+
     it('reapplies the same deep link after the param is cleared', async () => {
         const view = renderTool('team-a');
         await waitFor(() => expect(accessServiceMocks.loadParentAccessPlayers).toHaveBeenCalledWith('team-a'));
@@ -149,6 +169,7 @@ describe('AccessTool manual public team discovery', () => {
             teams: [{ id: 'team-a', name: 'Team A', sport: 'Soccer' }],
             nextCursor: null
         });
+        accessServiceMocks.loadParentAccessTeam.mockResolvedValue(null);
         accessServiceMocks.loadParentAccessPlayers.mockResolvedValue([
             { id: 'player-a', name: 'Player A', number: '7' }
         ]);
@@ -238,5 +259,26 @@ describe('AccessTool manual public team discovery', () => {
 
         expect(view.queryByRole('option', { name: 'Bears' })).toBeNull();
         expect(view.getByRole('option', { name: 'Lions' })).toBeTruthy();
+    });
+
+    it('ignores a pending team search when the query text changes before it resolves', async () => {
+        let resolveSearch: (value: unknown) => void = () => {};
+        accessServiceMocks.discoverParentAccessTeams.mockReturnValue(new Promise((resolve) => {
+            resolveSearch = resolve;
+        }));
+
+        const view = renderTool('');
+
+        fireEvent.click(await view.findByRole('button', { name: 'Request access without a code' }));
+        fireEvent.change(view.getByPlaceholderText('Team name, city, state, or zip'), { target: { value: 'Bears' } });
+        fireEvent.click(view.getByRole('button', { name: 'Search' }));
+        fireEvent.change(view.getByPlaceholderText('Team name, city, state, or zip'), { target: { value: 'Lions' } });
+
+        await act(async () => {
+            resolveSearch({ teams: [{ id: 'team-bears', name: 'Bears' }], nextCursor: null });
+        });
+
+        expect(view.queryByRole('option', { name: 'Bears' })).toBeNull();
+        expect(view.getByRole('option', { name: 'Search or browse teams' })).toBeTruthy();
     });
 });

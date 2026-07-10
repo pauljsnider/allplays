@@ -5,6 +5,7 @@ import { redeemSignedInInvite } from '../../lib/inviteRedemption';
 import { toAppServiceError, type AppServiceError } from '../../lib/appErrors';
 import {
     loadParentAccessModel,
+    loadParentAccessTeam,
     loadParentAccessPlayers,
     discoverParentAccessTeams,
     submitParentAccessRequest,
@@ -102,6 +103,36 @@ export function AccessTool({ auth, onAccessChanged }: { auth: AuthState; onAcces
         );
     }, [clearPlayerLoadError, clearRedeemError, clearSubmitError, clearTeamLoadError, runTeamLoad, teamSearchText]);
 
+    const loadDeepLinkedTeam = useCallback(async (teamId: string) => {
+        const requestId = teamSearchRequestRef.current + 1;
+        teamSearchRequestRef.current = requestId;
+        clearTeamLoadError();
+        clearPlayerLoadError();
+        clearSubmitError();
+        clearRedeemError();
+        setTeamDiscoveryStarted(true);
+        return runTeamLoad(
+            () => loadParentAccessTeam(teamId),
+            'Unable to load public teams.',
+            {
+                onSuccess: (team) => {
+                    if (requestId !== teamSearchRequestRef.current) return;
+                    appliedDeepLinkRef.current = teamId;
+                    setManualRequestOpen(true);
+                    if (!team) {
+                        setSelectedTeamId('');
+                        return;
+                    }
+                    setTeams((currentRows) => {
+                        if (currentRows.some((row) => row.id === team.id)) return currentRows;
+                        return [...currentRows, team];
+                    });
+                    setSelectedTeamId(teamId);
+                }
+            }
+        );
+    }, [clearPlayerLoadError, clearRedeemError, clearSubmitError, clearTeamLoadError, runTeamLoad]);
+
     const openManualRequest = useCallback(() => {
         setManualRequestOpen(true);
     }, []);
@@ -181,18 +212,16 @@ export function AccessTool({ auth, onAccessChanged }: { auth: AuthState; onAcces
         // is accessible before reconciling the selection.
         if (!deepLinkedTeamId || appliedDeepLinkRef.current === deepLinkedTeamId) return;
         if (loadingTeams || !teams.length) return;
-        appliedDeepLinkRef.current = deepLinkedTeamId;
         setManualRequestOpen(true);
         if (teams.some((team) => team.id === deepLinkedTeamId)) {
             // A new deep link is an explicit navigation intent: switch to it even
             // if a previous team was already selected.
+            appliedDeepLinkRef.current = deepLinkedTeamId;
             setSelectedTeamId(deepLinkedTeamId);
         } else {
-            // The newly deep-linked team isn't accessible — clear the stale
-            // selection so the form can't submit against the previous roster.
-            setSelectedTeamId('');
+            void loadDeepLinkedTeam(deepLinkedTeamId);
         }
-    }, [deepLinkedTeamId, teams, loadingTeams]);
+    }, [deepLinkedTeamId, teams, loadingTeams, loadDeepLinkedTeam]);
 
     const loadPlayersForTeam = useCallback(async (teamId: string) => {
         const rows = await runPlayerLoad(
@@ -332,6 +361,7 @@ export function AccessTool({ auth, onAccessChanged }: { auth: AuthState; onAcces
                                             className="auth-input min-w-0 flex-1"
                                             value={teamSearchText}
                                             onChange={(event) => {
+                                                teamSearchRequestRef.current += 1;
                                                 setTeamSearchText(event.target.value);
                                                 setSelectedTeamId('');
                                                 setSelectedPlayerId('');

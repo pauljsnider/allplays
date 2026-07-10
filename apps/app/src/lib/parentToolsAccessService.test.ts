@@ -3,13 +3,14 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const legacyMocks = vi.hoisted(() => ({
     createParentMembershipRequest: vi.fn(),
     discoverPublicTeams: vi.fn(),
+    getTeam: vi.fn(),
     getPlayers: vi.fn(),
     listMyParentMembershipRequests: vi.fn()
 }));
 
 vi.mock('./adapters/legacyParentTools', () => legacyMocks);
 
-import { discoverParentAccessTeams } from './parentToolsAccessService';
+import { discoverParentAccessTeams, loadParentAccessTeam } from './parentToolsAccessService';
 
 describe('parentToolsAccessService', () => {
     beforeEach(() => {
@@ -41,5 +42,35 @@ describe('parentToolsAccessService', () => {
             cursor: { id: 'previous' },
             pageSize: 12
         });
+    });
+
+    it('loads one public active team by id for deep-linked access requests', async () => {
+        legacyMocks.getTeam.mockResolvedValue({
+            id: 'team-late',
+            name: 'Late Team',
+            sport: 'Soccer',
+            isPublic: true
+        });
+
+        await expect(loadParentAccessTeam('team-late')).resolves.toEqual({
+            id: 'team-late',
+            name: 'Late Team',
+            sport: 'Soccer',
+            city: '',
+            state: '',
+            zip: ''
+        });
+
+        expect(legacyMocks.getTeam).toHaveBeenCalledWith('team-late');
+    });
+
+    it('does not expose a private deep-linked team', async () => {
+        legacyMocks.getTeam.mockResolvedValue({
+            id: 'team-private',
+            name: 'Private Team',
+            isPublic: false
+        });
+
+        await expect(loadParentAccessTeam('team-private')).resolves.toBeNull();
     });
 });

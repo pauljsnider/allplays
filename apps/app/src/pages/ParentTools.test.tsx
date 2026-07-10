@@ -29,6 +29,7 @@ const parentToolsServiceMocks = vi.hoisted(() => ({
 
 const parentToolsAccessServiceMocks = vi.hoisted(() => ({
     loadParentAccessModel: vi.fn(),
+    loadParentAccessTeam: vi.fn(),
     discoverParentAccessTeams: vi.fn(),
     loadParentAccessPlayers: vi.fn(),
     submitParentAccessRequest: vi.fn()
@@ -194,6 +195,9 @@ describe('ParentTools access', () => {
             teams: [{ id: 'team-1', name: 'Bears', sport: 'Soccer' }],
             nextCursor: null
         });
+        parentToolsAccessServiceMocks.loadParentAccessTeam.mockImplementation(async (teamId: string) => (
+            teamId === 'team-1' ? { id: 'team-1', name: 'Bears', sport: 'Soccer' } : null
+        ));
         parentToolsAccessServiceMocks.loadParentAccessPlayers.mockResolvedValue([
             { id: 'player-1', name: 'Sam Player', number: '12' }
         ]);
