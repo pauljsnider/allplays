@@ -266,6 +266,7 @@ function buttonByText(container, text) {
 
 async function click(container, text) {
     let button = null;
+    const recipientLoadCallCount = chatMocks.loadChatRecipientOptions.mock.calls.length;
     try {
         button = buttonByText(container, text);
     } catch (error) {
@@ -283,6 +284,17 @@ async function click(container, text) {
         button.dispatchEvent(new MouseEvent('click', { bubbles: true }));
     });
     await flush();
+    if (text === 'Team Email') {
+        for (let attempt = 0; attempt < 10; attempt += 1) {
+            if (
+                container.querySelector('[role="dialog"][aria-label="Team Email"]')
+                || chatMocks.loadChatRecipientOptions.mock.calls.length > recipientLoadCallCount
+            ) {
+                break;
+            }
+            await flush();
+        }
+    }
 }
 
 async function setFieldValue(field, value) {
