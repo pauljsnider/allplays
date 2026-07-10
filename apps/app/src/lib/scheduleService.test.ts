@@ -2855,7 +2855,7 @@ describe('web-created tournament standings hydration (#1967)', () => {
     });
   });
 
-  it('hydrates a direct tournament detail route without a full-history standings reread', async () => {
+  it('hydrates a direct tournament detail route from the bounded tournament pool', async () => {
     vi.mocked(getGame).mockResolvedValue(tournamentGames[0] as any);
 
     const result = await loadParentScheduleEventDetail(parentUser, {
@@ -2866,10 +2866,15 @@ describe('web-created tournament standings hydration (#1967)', () => {
     });
 
     expect(getGame).toHaveBeenCalledWith('team-1', 'pool-a-1');
-    expect(getGames).not.toHaveBeenCalled();
+    expect(getGames).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(getGames).mock.calls[0][1]).toMatchObject({
+      startDate: expect.any(Date),
+      endDate: expect.any(Date)
+    });
     expect(getScheduleTournamentInfo(result.events[0] as any).standings?.rows).toEqual([
-      { rank: '1', teamName: 'Tigers', record: '1-0', points: 3 },
-      { rank: '2', teamName: 'Lions', record: '0-1', points: 0 }
+      { rank: '1', teamName: 'Bears', record: '1-0', points: 3 },
+      { rank: '2', teamName: 'Tigers', record: '1-1', points: 3 },
+      { rank: '3', teamName: 'Lions', record: '0-1', points: 0 }
     ]);
   });
 });

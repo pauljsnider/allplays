@@ -82,7 +82,7 @@ import {
 } from './adapters/legacyScheduleHelpers';
 import { buildAvailabilityNoteRows, canViewAvailabilityNotes, formatAvailabilityCutoff, isAvailabilityLocked, normalizeAvailabilityPreferences } from './adapters/legacyAvailability';
 import { buildTrackerEventDocument } from './statTrackingEvent';
-import { enrichTournamentScheduleStandings } from './tournamentScheduleStandings';
+import { enrichTournamentScheduleStandings, hasTournamentScheduleGames } from './tournamentScheduleStandings';
 import { loadProfileDocument, saveProfileDocument } from './profileService';
 import { firebaseAuth, getNativeAuthIdToken } from './authService';
 import { startUxTimer } from './uxTiming';
@@ -144,6 +144,7 @@ const parentHomeHydrationLookBehindMs = 12 * 60 * 60 * 1000;
 // previous season so the "Past Events" filter still shows recent history before
 // an explicit full-history load. Tune here if season length assumptions change.
 const defaultScheduleHistoryWindowMs = 400 * 24 * 60 * 60 * 1000;
+const tournamentDetailStandingsWindowMs = 14 * 24 * 60 * 60 * 1000;
 const logger = createLogger('schedule-service');
 type GameDayLineupPublishModule = typeof import('./gameDayLineupPublish');
 
@@ -2491,6 +2492,28 @@ function getTrackedCalendarEventUidsFromLoadedGames(games: any[] = []) {
     .filter(Boolean);
 }
 
+function getTournamentDetailStandingsRange(game: any): ScheduleDateRange {
+  const date = normalizeScheduleDate(game?.date);
+  if (!date) {
+    return { startDate: new Date(Date.now() - defaultScheduleHistoryWindowMs) };
+  }
+  return {
+    startDate: new Date(date.getTime() - tournamentDetailStandingsWindowMs),
+    endDate: new Date(date.getTime() + tournamentDetailStandingsWindowMs)
+  };
+}
+
+function mergeLoadedGameWithStandingsPool(loadedGame: ScheduleEventFirestoreRecord, standingsGames: ScheduleEventFirestoreRecord[]) {
+  const loadedGameId = compactString(loadedGame.id || loadedGame.gameId);
+  return [
+    loadedGame,
+    ...(Array.isArray(standingsGames) ? standingsGames : []).filter((game) => {
+      const gameId = compactString(game?.id || game?.gameId);
+      return !loadedGameId || gameId !== loadedGameId;
+    })
+  ];
+}
+
 async function loadRawTeam(teamId: string) {
   return readWithNativeFallback(
     `team ${teamId}`,
@@ -3168,7 +3191,10 @@ async function buildTargetedTeamScheduleEvent(teamId: string, eventId: string, t
     : null);
   if (!loadedGame) return [];
 
-  const game = enrichTournamentScheduleStandings([loadedGame], team)[0];
+  const standingsGames = hasTournamentScheduleGames([loadedGame])
+    ? mergeLoadedGameWithStandingsPool(loadedGame, await loadGames(teamId, getTournamentDetailStandingsRange(loadedGame)).catch(() => []))
+    : [loadedGame];
+  const game = enrichTournamentScheduleStandings([loadedGame], team, standingsGames)[0];
 
   const teamName = compactString(team.name) || teamId;
   const teamWithId = { ...team, id: team.id || teamId };
