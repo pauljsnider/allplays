@@ -6576,9 +6576,10 @@ export async function postChatMessage(teamId, {
             .map((id) => String(id || '').trim())
             .filter(Boolean)))
         : [];
-    const effectiveTargetType = normalizedTargetType === 'individuals' && normalizedRecipientIds.length === 0
-        ? 'full_team'
-        : normalizedTargetType;
+    if (normalizedTargetType === 'individuals' && normalizedRecipientIds.length === 0) {
+        throw new Error('Selected-member chat messages require at least one recipient.');
+    }
+    const effectiveTargetType = normalizedTargetType;
     if (isDefaultTeamConversation(conversationId) && effectiveTargetType !== 'full_team') {
         throw new Error('Targeted team chat messages must use a non-default conversation.');
     }

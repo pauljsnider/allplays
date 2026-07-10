@@ -389,6 +389,18 @@ const CHAT_DB_CONVERSATION_SWITCH_STUB = CHAT_DB_STUB
 }`
     );
 
+const CHAT_DB_TARGETING_STUB = CHAT_DB_STUB
+    .replace('export async function postChatMessage() {}', `
+export async function postChatMessage() {
+    window.__chatPostCalls = (window.__chatPostCalls || 0) + 1;
+}
+`)
+    .replace(`export function canModerateChat() {
+    return false;
+}`, `export function canModerateChat() {
+    return true;
+}`);
+
 const MEDIA_DB_STUB = `
 ${PERMISSION_ERROR}
 export async function getTeam(teamId) {
@@ -939,6 +951,31 @@ test('team chat scopes subscription, last-read, send, and reaction operations to
         userId: 'user-1',
         conversationId: 'staff-conversation'
     });
+    expect(pageErrors).toEqual([]);
+});
+
+test('team chat keeps selected-member drafts unsent when no recipient is selected', async ({ page, baseURL }) => {
+    const pageErrors = await collectPageErrors(page);
+    await page.addInitScript(() => {
+        window.__chatPostCalls = 0;
+    });
+    await routeCommonPageStubs(page);
+    await page.route(/\/js\/db\.js(?:\?v=\d+)?$/, (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: CHAT_DB_TARGETING_STUB }));
+
+    await page.goto(`${baseURL}/team-chat.html?teamId=team-1`, { waitUntil: 'domcontentloaded' });
+
+    await expect(page.locator('#recipient-picker')).toBeVisible();
+    await page.locator('#recipient-target').selectOption('individuals');
+    await expect(page.locator('#recipient-summary')).toHaveText('Audience: Select at least one member');
+    await page.locator('#message-input').fill('Private player follow-up');
+    await page.locator('#send-btn').click();
+
+    await expect(page.locator('#send-error')).toHaveText('Select at least one recipient before sending.');
+    await expect(page.locator('#send-error')).toBeVisible();
+    await expect(page.locator('#recipient-target')).toHaveAttribute('aria-invalid', 'true');
+    await expect(page.locator('#recipient-target')).toBeFocused();
+    await expect(page.locator('#message-input')).toHaveValue('Private player follow-up');
+    expect(await page.evaluate(() => window.__chatPostCalls)).toBe(0);
     expect(pageErrors).toEqual([]);
 });
 

@@ -344,7 +344,7 @@
     <script type="module">
         import { renderHeader, renderFooter, escapeHtml } from './js/utils.js?v=8';
         import { checkAuth } from './js/auth.js?v=42';
-        import { getTeam, getUserProfile, getPlayers, getGames, getGameEvents, getAggregatedStatsForGames, getChatConversations, upsertChatConversation, getChatMessages, postChatMessage, editChatMessage, deleteChatMessage, getTeamEmailDrafts, saveTeamEmailDraft, getTeamEmailTemplates, saveTeamEmailTemplate, deleteTeamEmailTemplate, canAccessTeamChat, canModerateChat, updateChatLastRead, subscribeToChatMessages, sendTeamEmail, getSentTeamEmails, uploadChatImage, deleteUploadedChatAttachments, toggleChatReaction } from './js/db.js?v=88';
+        import { getTeam, getUserProfile, getPlayers, getGames, getGameEvents, getAggregatedStatsForGames, getChatConversations, upsertChatConversation, getChatMessages, postChatMessage, editChatMessage, deleteChatMessage, getTeamEmailDrafts, saveTeamEmailDraft, getTeamEmailTemplates, saveTeamEmailTemplate, deleteTeamEmailTemplate, canAccessTeamChat, canModerateChat, updateChatLastRead, subscribeToChatMessages, sendTeamEmail, getSentTeamEmails, uploadChatImage, deleteUploadedChatAttachments, toggleChatReaction } from './js/db.js?v=89';
         import { DEFAULT_TEAM_CONVERSATION_ID, buildDefaultTeamConversation, getConversationDisplayName, isDefaultTeamConversation } from './js/team-chat-conversations.js?v=2';
         import { shouldUpdateChatLastRead, shouldRetryChatLastReadOnViewReturn } from './js/team-chat-last-read.js?v=3';
         import {
@@ -1625,6 +1625,16 @@
         function buildRecipientTargetMetadata() {
             const activeConversation = getSelectedConversation();
             if (activeConversation && !isDefaultTeamConversation(selectedConversationId)) {
+                const participantRoles = Array.isArray(activeConversation.participantRoles)
+                    ? activeConversation.participantRoles.map((role) => String(role || '').trim().toLowerCase())
+                    : [];
+                if (participantRoles.includes('staff')) {
+                    return {
+                        targetType: 'staff',
+                        recipientIds: [],
+                        targetRole: 'staff'
+                    };
+                }
                 return {
                     targetType: activeConversation.type === 'direct' ? 'individuals' : 'individuals',
                     recipientIds: Array.isArray(activeConversation.participantIds) ? activeConversation.participantIds : [],
@@ -1638,7 +1648,7 @@
                     targetRole: 'staff'
                 };
             }
-            if (selectedRecipientTarget === 'individuals' && selectedRecipientIds.size > 0) {
+            if (selectedRecipientTarget === 'individuals') {
                 const selectedOptionsById = new Map(recipientOptions.map((option) => [option.id, option]));
                 const recipientIds = Array.from(new Set(Array.from(selectedRecipientIds).flatMap((id) => {
                     const option = selectedOptionsById.get(id);
@@ -1705,7 +1715,7 @@
             if (target.targetType === 'individuals') {
                 const selected = recipientOptions.filter((option) => selectedRecipientIds.has(option.id));
                 if (selected.length === 0) {
-                    return 'Audience: Full team (no selected members yet)';
+                    return 'Audience: Select at least one member';
                 }
                 if (selected.length <= 3) {
                     return `Audience: ${selected.map(getRecipientOptionLabel).join(', ')}`;
@@ -1869,6 +1879,21 @@
             const input = document.getElementById('message-input');
             const sendBtn = document.getElementById('send-btn');
             sendBtn.disabled = !input.value.trim() && pendingImageFiles.length === 0;
+        }
+
+        function isMissingSelectedChatRecipients() {
+            return isDefaultTeamConversation(selectedConversationId) &&
+                selectedRecipientTarget === 'individuals' &&
+                selectedRecipientIds.size === 0;
+        }
+
+        function validateChatAudienceSelection() {
+            if (!isMissingSelectedChatRecipients()) return true;
+            const targetSelect = document.getElementById('recipient-target');
+            targetSelect?.setAttribute('aria-invalid', 'true');
+            targetSelect?.focus();
+            showError('Select at least one recipient before sending.');
+            return false;
         }
 
         function setVoiceButtonState(isListening) {
@@ -2749,6 +2774,8 @@
                 if (selectedRecipientTarget !== 'individuals') {
                     selectedRecipientIds = new Set();
                 }
+                event.target.removeAttribute('aria-invalid');
+                document.getElementById('send-error').classList.add('hidden');
                 renderRecipientPicker();
             });
             document.getElementById('recipient-list').addEventListener('change', (event) => {
@@ -2759,6 +2786,8 @@
                 } else {
                     selectedRecipientIds.delete(recipientId);
                 }
+                document.getElementById('recipient-target').removeAttribute('aria-invalid');
+                document.getElementById('send-error').classList.add('hidden');
                 renderRecipientPicker();
             });
 
@@ -2883,6 +2912,8 @@
         function triggerSend() {
             const input = document.getElementById('message-input');
             const text = input.value.trim();
+            if (!text && pendingImageFiles.length === 0) return;
+            if (!validateChatAudienceSelection()) return;
             if (/@all\s*plays/i.test(text)) {
                 aiUiPending = true;
                 renderMessages();
@@ -2903,6 +2934,7 @@
             const originalConversationId = selectedConversationId;
 
             if (!text && imageFiles.length === 0) return;
+            if (!validateChatAudienceSelection()) return;
 
             sendBtn.disabled = true;
             sendBtn.textContent = imageFiles.length > 0 ? 'Uploading...' : 'Sending...';
