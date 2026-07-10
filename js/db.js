@@ -2331,9 +2331,11 @@ function collectTournamentPoolOverrideKeys(poolOverrides = {}, poolName, groupKe
     const structuredKey = buildTournamentGroupOverrideKey(groupKey);
     const keys = new Set(structuredKey ? [structuredKey] : [buildTournamentPoolOverrideKey(normalizedPoolName)]);
     Object.entries(poolOverrides || {}).forEach(([key, override]) => {
+        const matchesLegacyPool = !override?.groupKey
+            && normalizeTournamentPoolOverrideName(override?.poolName) === normalizedPoolName;
         const matchesGroup = groupKey
-            ? normalizeTournamentPoolOverrideName(override?.groupKey) === groupKey
-            : !override?.groupKey && normalizeTournamentPoolOverrideName(override?.poolName) === normalizedPoolName;
+            ? normalizeTournamentPoolOverrideName(override?.groupKey) === groupKey || matchesLegacyPool
+            : matchesLegacyPool;
         if (matchesGroup) {
             keys.add(key);
         }

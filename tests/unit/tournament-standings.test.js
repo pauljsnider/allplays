@@ -596,6 +596,71 @@ describe('tournament standings helpers', () => {
     });
   });
 
+  it('does not synthesize a phantom group when a display-only label is structurally ambiguous', () => {
+    const groupName = 'A • B • C';
+    const firstGroupKey = standingsKey('A • B', 'C');
+    const secondGroupKey = standingsKey('A', 'B • C');
+    const pools = computeTournamentPoolStandings([
+      {
+        competitionType: 'tournament',
+        status: 'completed',
+        opponent: 'Lions',
+        isHome: true,
+        homeScore: 2,
+        awayScore: 1,
+        tournament: { divisionName: 'A • B', poolName: 'C' }
+      },
+      {
+        competitionType: 'tournament',
+        status: 'completed',
+        opponent: 'Hawks',
+        isHome: true,
+        homeScore: 3,
+        awayScore: 1,
+        tournament: { divisionName: 'A', poolName: 'B • C' }
+      }
+    ], {
+      teamName: 'Tigers',
+      groupNames: [groupName]
+    });
+
+    expect(pools).toHaveLength(2);
+    expect(pools.map((pool) => pool.groupKey)).toEqual([firstGroupKey, secondGroupKey]);
+    expect(pools.every((pool) => pool.groupName === groupName && pool.gameCount === 1)).toBe(true);
+    expect(pools.find((pool) => pool.groupKey === standingsKey('', groupName))).toBeUndefined();
+  });
+
+  it('uses name and label aliases as source-aware structured descriptor components', () => {
+    const groupKey = standingsKey('10U Gold', 'Pool A');
+    const pools = computeTournamentPoolStandings([{
+      competitionType: 'tournament',
+      status: 'completed',
+      opponent: 'Lions',
+      isHome: true,
+      homeScore: 2,
+      awayScore: 1,
+      tournament: { divisionName: '10U Gold', poolName: 'Pool A' }
+    }], {
+      teamName: 'Tigers',
+      tournamentPools: [
+        { divisionName: '10U Gold', name: 'Pool A' },
+        { divisionName: '10U Gold', poolName: 'Pool A', name: 'Ignored pool alias' }
+      ],
+      tournamentDivisions: [
+        { poolName: 'Pool A', label: '10U Gold' },
+        { divisionName: '10U Gold', poolName: 'Pool A', label: 'Ignored division alias' }
+      ]
+    });
+
+    expect(pools).toHaveLength(1);
+    expect(pools[0]).toMatchObject({
+      groupKey,
+      groupName: '10U Gold • Pool A',
+      scheduledGameCount: 1,
+      gameCount: 1
+    });
+  });
+
   it('computes division-scoped standings when tournament games use division names', () => {
     const pools = computeTournamentPoolStandings([
       {

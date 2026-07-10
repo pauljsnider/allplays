@@ -116,8 +116,11 @@ function normalizeConfiguredTournamentGroup(value, sourceType = 'display') {
         return { groupKey: null, groupName: name, displayOnly: true };
     }
     if (!value || typeof value !== 'object') return null;
-    const divisionName = normalizeString(value.divisionName) || normalizeString(value.division);
-    const poolName = normalizeString(value.poolName);
+    const configuredName = normalizeString(value.name) || normalizeString(value.label);
+    let divisionName = normalizeString(value.divisionName) || normalizeString(value.division);
+    let poolName = normalizeString(value.poolName);
+    if (sourceType === 'division' && !divisionName) divisionName = configuredName;
+    if (sourceType === 'pool' && !poolName) poolName = configuredName;
     if (divisionName || poolName) {
         return {
             groupKey: JSON.stringify([divisionName || '', poolName || '']),
@@ -125,7 +128,7 @@ function normalizeConfiguredTournamentGroup(value, sourceType = 'display') {
             displayOnly: false
         };
     }
-    const groupName = normalizeString(value.name) || normalizeString(value.label);
+    const groupName = configuredName;
     if (!groupName) return null;
     if (sourceType === 'division') {
         return { groupKey: JSON.stringify([groupName, '']), groupName, displayOnly: false };
@@ -393,7 +396,7 @@ export function computeTournamentPoolStandings(gamesInput, options = {}) {
         .forEach((group) => {
             const matchingGroups = Array.from(groupGames.values())
                 .filter((candidate) => candidate.groupName === group.groupName);
-            if (matchingGroups.length === 1) return;
+            if (matchingGroups.length > 0) return;
             ensureGroup(JSON.stringify(['', group.groupName]), group.groupName);
         });
 
