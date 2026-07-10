@@ -1,10 +1,16 @@
 import { describe, expect, it } from 'vitest';
 import {
   applyTournamentStandingsOverride,
+  buildTournamentGroupOverrideKey,
   buildTournamentPoolOverrideKey,
   buildTournamentPoolStandings,
-  computeTournamentPoolStandings
+  computeTournamentPoolStandings,
+  getTournamentStandingsGroupKey
 } from '../../js/tournament-standings.js';
+
+function standingsKey(divisionName = '', poolName = '') {
+  return getTournamentStandingsGroupKey({ tournament: { divisionName, poolName } });
+}
 
 describe('tournament standings helpers', () => {
   it('builds unique override keys for distinct pool names that share the same slug', () => {
@@ -55,10 +61,11 @@ describe('tournament standings helpers', () => {
       }
     ]);
 
-    expect(standings['Pool A'].computedRows.map((row) => row.teamName)).toEqual(['Lions', 'Tigers', 'Bears']);
-    expect(standings['Pool A'].rows.map((row) => row.rank)).toEqual([1, 2, 3]);
-    expect(standings['Pool A'].gameCount).toBe(3);
-    expect(standings['Pool A'].isOverridden).toBe(false);
+    const pool = standings[standingsKey('', 'Pool A')];
+    expect(pool.computedRows.map((row) => row.teamName)).toEqual(['Lions', 'Tigers', 'Bears']);
+    expect(pool.rows.map((row) => row.rank)).toEqual([1, 2, 3]);
+    expect(pool.gameCount).toBe(3);
+    expect(pool.isOverridden).toBe(false);
   });
 
   it('applies a saved final ranking override with audit metadata', () => {
@@ -115,11 +122,12 @@ describe('tournament standings helpers', () => {
       }
     });
 
-    expect(standings['Pool A'].computedRows.map((row) => row.teamName)).toEqual(['Lions', 'Tigers', 'Bears']);
-    expect(standings['Pool A'].rows.map((row) => row.teamName)).toEqual(['Lions', 'Bears', 'Tigers']);
-    expect(standings['Pool A'].rows.map((row) => row.rank)).toEqual([1, 2, 3]);
-    expect(standings['Pool A'].isOverridden).toBe(true);
-    expect(standings['Pool A'].override).toEqual(override);
+    const pool = standings[standingsKey('', 'Pool A')];
+    expect(pool.computedRows.map((row) => row.teamName)).toEqual(['Lions', 'Tigers', 'Bears']);
+    expect(pool.rows.map((row) => row.teamName)).toEqual(['Lions', 'Bears', 'Tigers']);
+    expect(pool.rows.map((row) => row.rank)).toEqual([1, 2, 3]);
+    expect(pool.isOverridden).toBe(true);
+    expect(pool.override).toEqual(override);
   });
 
   it('keeps overrides isolated for pools whose names normalize to the same legacy slug', () => {
@@ -166,8 +174,8 @@ describe('tournament standings helpers', () => {
       }
     });
 
-    expect(standings['Pool A'].rows.map((row) => row.teamName)).toEqual(['Lions', 'Tigers']);
-    expect(standings['Pool-A'].rows.map((row) => row.teamName)).toEqual(['Bears', 'Hawks']);
+    expect(standings[standingsKey('', 'Pool A')].rows.map((row) => row.teamName)).toEqual(['Lions', 'Tigers']);
+    expect(standings[standingsKey('', 'Pool-A')].rows.map((row) => row.teamName)).toEqual(['Bears', 'Hawks']);
   });
 
   it('keeps admin standings scoped by division and pool names', () => {
@@ -202,9 +210,58 @@ describe('tournament standings helpers', () => {
       }
     ]);
 
-    expect(Object.keys(standings)).toEqual(['10U Gold • Pool A', '12U Silver • Pool A']);
-    expect(standings['10U Gold • Pool A'].rows.map((row) => row.teamName)).toEqual(['Tigers', 'Lions']);
-    expect(standings['12U Silver • Pool A'].rows.map((row) => row.teamName)).toEqual(['Bears', 'Hawks']);
+    expect(Object.keys(standings)).toEqual([
+      standingsKey('10U Gold', 'Pool A'),
+      standingsKey('12U Silver', 'Pool A')
+    ]);
+    expect(standings[standingsKey('10U Gold', 'Pool A')].rows.map((row) => row.teamName)).toEqual(['Tigers', 'Lions']);
+    expect(standings[standingsKey('12U Silver', 'Pool A')].rows.map((row) => row.teamName)).toEqual(['Bears', 'Hawks']);
+  });
+
+  it('keeps groups distinct when their display labels collide', () => {
+    const standings = buildTournamentPoolStandings([
+      {
+        competitionType: 'tournament', status: 'completed', homeScore: 2, awayScore: 1,
+        tournament: {
+          divisionName: '10U Gold', poolName: 'Pool A',
+          slotAssignments: {
+            home: { sourceType: 'team', teamName: 'Tigers' },
+            away: { sourceType: 'team', teamName: 'Lions' }
+          }
+        }
+      },
+      {
+        competitionType: 'tournament', status: 'completed', homeScore: 3, awayScore: 0,
+        tournament: {
+          poolName: '10U Gold • Pool A',
+          slotAssignments: {
+            home: { sourceType: 'team', teamName: 'Bears' },
+            away: { sourceType: 'team', teamName: 'Hawks' }
+          }
+        }
+      }
+    ], {
+      poolOverrides: {
+        [buildTournamentPoolOverrideKey('10U Gold • Pool A')]: {
+          poolName: '10U Gold • Pool A',
+          teamOrder: ['Hawks', 'Lions']
+        },
+        [buildTournamentGroupOverrideKey(standingsKey('10U Gold', 'Pool A'))]: {
+          groupKey: standingsKey('10U Gold', 'Pool A'),
+          poolName: '10U Gold • Pool A',
+          teamOrder: ['Lions', 'Tigers']
+        }
+      }
+    });
+
+    expect(Object.keys(standings)).toEqual([
+      standingsKey('', '10U Gold • Pool A'),
+      standingsKey('10U Gold', 'Pool A')
+    ]);
+    expect(standings[standingsKey('10U Gold', 'Pool A')].rows.map((row) => row.teamName)).toEqual(['Lions', 'Tigers']);
+    expect(standings[standingsKey('', '10U Gold • Pool A')].rows.map((row) => row.teamName)).toEqual(['Bears', 'Hawks']);
+    expect(standings[standingsKey('10U Gold', 'Pool A')].isOverridden).toBe(true);
+    expect(standings[standingsKey('', '10U Gold • Pool A')].isOverridden).toBe(false);
   });
 
   it('falls back to exact pool-name matches when reading legacy override entries', () => {
@@ -233,8 +290,8 @@ describe('tournament standings helpers', () => {
       }
     });
 
-    expect(standings['Pool A'].rows.map((row) => row.teamName)).toEqual(['Lions', 'Tigers']);
-    expect(standings['Pool A'].override).toEqual(legacyOverride);
+    expect(standings[standingsKey('', 'Pool A')].rows.map((row) => row.teamName)).toEqual(['Lions', 'Tigers']);
+    expect(standings[standingsKey('', 'Pool A')].override).toEqual(legacyOverride);
   });
 
   it('builds division-scoped admin standings and applies final ranking overrides', () => {
@@ -263,10 +320,10 @@ describe('tournament standings helpers', () => {
       }
     });
 
-    expect(Object.keys(standings)).toEqual(['10U Gold']);
-    expect(standings['10U Gold'].computedRows.map((row) => row.teamName)).toEqual(['Tigers', 'Lions']);
-    expect(standings['10U Gold'].rows.map((row) => row.teamName)).toEqual(['Lions', 'Tigers']);
-    expect(standings['10U Gold'].isOverridden).toBe(true);
+    expect(Object.keys(standings)).toEqual([standingsKey('10U Gold', '')]);
+    expect(standings[standingsKey('10U Gold', '')].computedRows.map((row) => row.teamName)).toEqual(['Tigers', 'Lions']);
+    expect(standings[standingsKey('10U Gold', '')].rows.map((row) => row.teamName)).toEqual(['Lions', 'Tigers']);
+    expect(standings[standingsKey('10U Gold', '')].isOverridden).toBe(true);
   });
 
   it('falls back to computed ranks when an override is cleared', () => {

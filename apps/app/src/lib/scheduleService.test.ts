@@ -2843,7 +2843,7 @@ describe('web-created tournament standings hydration (#1967)', () => {
     } as any);
     vi.mocked(getTeams).mockResolvedValue([] as any);
     vi.mocked(getGames).mockImplementation(async (_teamId, options: any = {}) => (
-      options.tournamentGroup ? tournamentGames : [tournamentGames[0]]
+      options.tournamentGroups?.length ? tournamentGames : [tournamentGames[0]]
     ) as any);
     vi.mocked(getPracticeSessions).mockResolvedValue([] as any);
     vi.mocked(getDoc).mockResolvedValue(playerSnapshot('p1', { id: 'p1', name: 'Kid One', active: true }) as any);
@@ -2855,7 +2855,7 @@ describe('web-created tournament standings hydration (#1967)', () => {
     expect(getGames).toHaveBeenCalledTimes(2);
     expect(vi.mocked(getGames).mock.calls[0][1]).toMatchObject({ startDate: expect.any(Date) });
     expect(vi.mocked(getGames).mock.calls[1][1]).toEqual({
-      tournamentGroup: { poolName: 'Pool A', divisionName: '' }
+      tournamentGroups: [{ poolName: 'Pool A', divisionName: '' }]
     });
     expect(result.events).toHaveLength(1);
     expect(getScheduleTournamentInfo(result.events[0] as any).standings).toMatchObject({
@@ -2881,7 +2881,7 @@ describe('web-created tournament standings hydration (#1967)', () => {
     expect(getGame).toHaveBeenCalledWith('team-1', 'pool-a-1');
     expect(getGames).toHaveBeenCalledTimes(1);
     expect(vi.mocked(getGames).mock.calls[0][1]).toEqual({
-      tournamentGroup: { poolName: 'Pool A', divisionName: '' }
+      tournamentGroups: [{ poolName: 'Pool A', divisionName: '' }]
     });
     expect(getScheduleTournamentInfo(result.events[0] as any).standings?.rows).toEqual([
       { rank: '1', teamName: 'Bears', record: '1-0', points: 3 },
@@ -2890,24 +2890,124 @@ describe('web-created tournament standings hydration (#1967)', () => {
     ]);
   });
 
-  it('uses a pool-equality native fallback instead of listing full game history', async () => {
-    (globalThis as any).window = { location: { protocol: 'capacitor:' }, setTimeout, clearTimeout } as any;
-    vi.mocked(getGame).mockResolvedValue(tournamentGames[0] as any);
-    vi.mocked(getGames).mockRejectedValueOnce(new Error('legacy SDK unavailable'));
-    vi.mocked(globalThis.fetch).mockResolvedValue({
-      ok: true,
-      json: async () => []
-    } as any);
+  it('omits derived list standings when the complete group read fails', async () => {
+    vi.mocked(getGames)
+      .mockResolvedValueOnce([tournamentGames[0]] as any)
+      .mockRejectedValueOnce(new Error('pool query unavailable'));
 
-    await loadParentScheduleEventDetail(parentUser, {
+    const result = await loadParentSchedule(parentUser, { hydrateDetails: false, expandStaffPlayers: false });
+
+    expect(getGames).toHaveBeenCalledTimes(2);
+    expect(getScheduleTournamentInfo(result.events[0] as any).standings).toBeNull();
+    expect((result.events[0].tournament as Record<string, unknown>)?.computedStandings).toBeUndefined();
+  });
+
+  it('preserves inline detail standings when the complete group read fails', async () => {
+    const inlineStandings = {
+      poolName: 'Published Pool A',
+      rows: [{ rank: 1, teamName: 'Published Tigers', wins: 4, losses: 0, points: 12 }],
+      isOverridden: true
+    };
+    vi.mocked(getGame).mockResolvedValue({
+      ...tournamentGames[0],
+      tournament: { ...tournamentGames[0].tournament, standings: inlineStandings }
+    } as any);
+    vi.mocked(getGames).mockRejectedValueOnce(new Error('pool query unavailable'));
+
+    const result = await loadParentScheduleEventDetail(parentUser, {
       teamId: 'team-1',
       eventId: 'pool-a-1',
       hydrateDetails: false,
       expandStaffPlayers: false
     });
 
-    expect(globalThis.fetch).toHaveBeenCalledTimes(1);
-    const [requestUrl, requestInit] = vi.mocked(globalThis.fetch).mock.calls[0] as [string, RequestInit];
+    expect(getGames).toHaveBeenCalledTimes(1);
+    expect((result.events[0].tournament as Record<string, unknown>)?.computedStandings).toBeUndefined();
+    expect(getScheduleTournamentInfo(result.events[0] as any).standings).toMatchObject({
+      groupName: 'Published Pool A',
+      rows: [{ rank: '1', teamName: 'Published Tigers', record: '4-0', points: 12 }]
+    });
+  });
+
+  it('loads every visible tournament group through one de-duplicated standings call', async () => {
+    const poolBGame = {
+      ...tournamentGames[0],
+      id: 'pool-b-1',
+      tournament: { ...tournamentGames[0].tournament, poolName: 'Pool B' }
+    };
+    vi.mocked(getGames).mockImplementation(async (_teamId, options: any = {}) => (
+      options.tournamentGroups?.length ? [tournamentGames[0], poolBGame] : [tournamentGames[0], poolBGame]
+    ) as any);
+
+    await loadParentSchedule(parentUser, { hydrateDetails: false, expandStaffPlayers: false });
+
+    expect(getGames).toHaveBeenCalledTimes(2);
+    expect(vi.mocked(getGames).mock.calls[1][1]).toEqual({
+      tournamentGroups: [
+        { poolName: 'Pool A', divisionName: '' },
+        { poolName: 'Pool B', divisionName: '' }
+      ]
+    });
+  });
+
+  it('uses bounded native queries and includes shared tournament games in standings', async () => {
+    (globalThis as any).window = { location: { protocol: 'capacitor:' }, setTimeout, clearTimeout } as any;
+    vi.mocked(getGame).mockResolvedValue(tournamentGames[0] as any);
+    vi.mocked(getGames).mockRejectedValueOnce(new Error('legacy SDK unavailable'));
+    vi.mocked(getNativeAuthIdToken).mockResolvedValue('native-token' as any);
+    vi.mocked(globalThis.fetch).mockImplementation(async (_url, init) => {
+      const body = JSON.parse(String(init?.body));
+      const from = body.structuredQuery.from[0];
+      const fieldPath = body.structuredQuery.where.fieldFilter.field.fieldPath;
+      const sharedGameDocument = {
+        name: 'projects/allplays-test/databases/(default)/documents/tournaments/t-1/sharedGames/shared-1',
+        fields: {
+          type: { stringValue: 'game' },
+          date: { timestampValue: '2026-07-21T18:00:00.000Z' },
+          competitionType: { stringValue: 'tournament' },
+          status: { stringValue: 'completed' },
+          homeScore: { integerValue: '2' },
+          awayScore: { integerValue: '0' },
+          homeTeamId: { stringValue: 'team-1' },
+          awayTeamId: { stringValue: 'team-2' },
+          tournament: {
+            mapValue: {
+              fields: {
+                poolName: { stringValue: 'Pool A' },
+                slotAssignments: {
+                  mapValue: {
+                    fields: {
+                      home: { mapValue: { fields: { sourceType: { stringValue: 'team' }, teamName: { stringValue: 'Bears' } } } },
+                      away: { mapValue: { fields: { sourceType: { stringValue: 'team' }, teamName: { stringValue: 'Tigers' } } } }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      };
+      return {
+        ok: true,
+        json: async () => from.collectionId === 'sharedGames' && fieldPath === 'homeTeamId'
+          ? [{ document: sharedGameDocument }]
+          : []
+      } as any;
+    });
+
+    const result = await loadParentScheduleEventDetail(parentUser, {
+      teamId: 'team-1',
+      eventId: 'pool-a-1',
+      hydrateDetails: false,
+      expandStaffPlayers: false
+    });
+
+    expect(globalThis.fetch).toHaveBeenCalledTimes(4);
+    const gameQueryCall = vi.mocked(globalThis.fetch).mock.calls.find(([, init]) => {
+      const body = JSON.parse(String(init?.body));
+      return body.structuredQuery.from[0].collectionId === 'games';
+    }) as [string, RequestInit];
+    const [requestUrl, requestInit] = gameQueryCall;
     expect(requestUrl).toContain('/documents/teams/team-1:runQuery');
     expect(requestUrl).not.toContain('/documents/teams/team-1/games');
     const body = JSON.parse(String(requestInit.body));
@@ -2921,6 +3021,19 @@ describe('web-created tournament standings hydration (#1967)', () => {
         }
       }
     });
+    const sharedQueryBodies = vi.mocked(globalThis.fetch).mock.calls
+      .map(([, init]) => JSON.parse(String(init?.body)))
+      .filter((body) => body.structuredQuery.from[0].collectionId === 'sharedGames');
+    expect(sharedQueryBodies).toHaveLength(3);
+    expect(sharedQueryBodies.map((body) => body.structuredQuery.where.fieldFilter.field.fieldPath).sort()).toEqual([
+      'awayTeamId', 'homeTeamId', 'teamIds'
+    ]);
+    expect(sharedQueryBodies.every((body) => body.structuredQuery.from[0].allDescendants === true)).toBe(true);
+    expect(getScheduleTournamentInfo(result.events[0] as any).standings?.rows).toEqual([
+      { rank: '1', teamName: 'Bears', record: '1-0', points: 3 },
+      { rank: '2', teamName: 'Tigers', record: '1-1', points: 3 },
+      { rank: '3', teamName: 'Lions', record: '0-1', points: 0 }
+    ]);
   });
 
   it('loads the complete pool with default standings rules when the team has no custom config', async () => {
@@ -2940,7 +3053,7 @@ describe('web-created tournament standings hydration (#1967)', () => {
     expect(getGame).toHaveBeenCalledWith('team-1', 'pool-a-1');
     expect(getGames).toHaveBeenCalledTimes(1);
     expect(vi.mocked(getGames).mock.calls[0][1]).toEqual({
-      tournamentGroup: { poolName: 'Pool A', divisionName: '' }
+      tournamentGroups: [{ poolName: 'Pool A', divisionName: '' }]
     });
     expect(getScheduleTournamentInfo(result.events[0] as any).standings?.rows).toEqual([
       { rank: '1', teamName: 'Bears', record: '1-0', points: 3 },
@@ -2969,7 +3082,7 @@ describe('web-created tournament standings hydration (#1967)', () => {
     });
 
     expect(vi.mocked(getGames).mock.calls[0][1]).toEqual({
-      tournamentGroup: { poolName: '', divisionName: '10U Gold' }
+      tournamentGroups: [{ poolName: '', divisionName: '10U Gold' }]
     });
     expect(getScheduleTournamentInfo(result.events[0] as any).standings?.rows).toEqual([
       { rank: '1', teamName: 'Bears', record: '1-0', points: 3 },

@@ -88,6 +88,7 @@ export type GamesQueryOptions = {
     startDate?: Date | null;
     endDate?: Date | null;
     tournamentGroup?: { poolName: string; divisionName: string } | null;
+    tournamentGroups?: Array<{ poolName: string; divisionName: string }> | null;
 };
 
 export async function getGames(teamId: string, options: GamesQueryOptions = {}) {

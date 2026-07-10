@@ -30,6 +30,14 @@ export function buildTournamentPoolOverrideKey(poolName) {
     return `${buildLegacyTournamentPoolOverrideKey(normalized)}-${hashTournamentPoolName(normalized)}`;
 }
 
+export function buildTournamentGroupOverrideKey(groupKey) {
+    const normalized = normalizeString(groupKey);
+    if (!normalized) return null;
+    return `group-${Array.from(normalized)
+        .map((character) => character.codePointAt(0).toString(16))
+        .join('-')}`;
+}
+
 function getSlotTeamName(slot = {}) {
     if (String(slot?.sourceType || '').toLowerCase() !== 'team') return null;
     return normalizeString(slot?.teamName);
@@ -60,11 +68,34 @@ function getTournamentDivisionName(game = {}) {
         || normalizeString(game?.tournament?.division);
 }
 
+export function getTournamentStandingsGroupIdentity(game = {}) {
+    return {
+        divisionName: getTournamentDivisionName(game) || '',
+        poolName: getTournamentPoolName(game) || ''
+    };
+}
+
+export function getTournamentStandingsGroupKey(game = {}) {
+    const group = getTournamentStandingsGroupIdentity(game);
+    return group.divisionName || group.poolName
+        ? JSON.stringify([group.divisionName, group.poolName])
+        : null;
+}
+
 export function getTournamentStandingsGroupName(game = {}) {
-    const divisionName = getTournamentDivisionName(game);
-    const poolName = getTournamentPoolName(game);
+    const { divisionName, poolName } = getTournamentStandingsGroupIdentity(game);
     if (divisionName && poolName) return `${divisionName} • ${poolName}`;
-    return poolName || divisionName;
+    return poolName || divisionName || null;
+}
+
+export function matchesTournamentStandingsGroup(game = {}, group = {}) {
+    if (!isTournamentGame(game)) return false;
+    const actual = getTournamentStandingsGroupIdentity(game);
+    const expected = {
+        divisionName: normalizeString(group?.divisionName || group?.division) || '',
+        poolName: normalizeString(group?.poolName) || ''
+    };
+    return actual.divisionName === expected.divisionName && actual.poolName === expected.poolName;
 }
 
 function normalizeTournamentGroupOption(value) {
@@ -182,10 +213,17 @@ export function applyTournamentStandingsOverride(rowsInput = [], override = null
     };
 }
 
-function getPoolOverride(poolOverrides = {}, poolName) {
+function getPoolOverride(poolOverrides = {}, poolName, groupKey = null, allowLegacyLookup = true) {
     if (!poolOverrides || typeof poolOverrides !== 'object') return null;
     const normalizedPoolName = normalizeString(poolName);
     if (!normalizedPoolName) return null;
+
+    const structuredKey = buildTournamentGroupOverrideKey(groupKey);
+    const structuredOverride = structuredKey ? poolOverrides[structuredKey] : null;
+    if (structuredOverride && normalizeString(structuredOverride?.groupKey) === groupKey) {
+        return structuredOverride;
+    }
+    if (!allowLegacyLookup) return null;
 
     const directOverride = poolOverrides[buildTournamentPoolOverrideKey(normalizedPoolName)] || null;
     if (directOverride) return directOverride;
@@ -207,9 +245,11 @@ export function buildTournamentPoolStandings(gamesInput = [], options = {}) {
 
     games.forEach((game) => {
         if (!isCompletedTournamentPoolGame(game)) return;
-        const poolName = getTournamentStandingsGroupName(game);
+        const groupKey = getTournamentStandingsGroupKey(game);
+        const groupName = getTournamentStandingsGroupName(game);
+        const groupIdentity = getTournamentStandingsGroupIdentity(game);
         const { homeTeam, awayTeam, homeScore, awayScore } = getTournamentGameTeams(game, currentTeamName);
-        if (!poolName || !homeTeam || !awayTeam) return;
+        if (!groupKey || !groupName || !homeTeam || !awayTeam) return;
         if (homeTeam === awayTeam) return;
 
         const normalizedGame = {
@@ -219,22 +259,44 @@ export function buildTournamentPoolStandings(gamesInput = [], options = {}) {
             awayScore: Number(awayScore ?? game.awayScore),
             status: 'completed'
         };
-        const existing = poolGames.get(poolName) || [];
-        existing.push(normalizedGame);
-        poolGames.set(poolName, existing);
+        const existing = poolGames.get(groupKey) || {
+            groupKey,
+            groupName,
+            divisionName: groupIdentity.divisionName,
+            poolName: groupIdentity.poolName,
+            games: []
+        };
+        existing.games.push(normalizedGame);
+        poolGames.set(groupKey, existing);
     });
 
+    const groupNameCounts = Array.from(poolGames.values()).reduce((counts, group) => {
+        counts.set(group.groupName, (counts.get(group.groupName) || 0) + 1);
+        return counts;
+    }, new Map());
+
     return Array.from(poolGames.entries())
-        .sort((a, b) => a[0].localeCompare(b[0]))
-        .reduce((acc, [poolName, poolGameList]) => {
+        .sort((a, b) => a[1].groupName.localeCompare(b[1].groupName) || a[0].localeCompare(b[0]))
+        .reduce((acc, [groupKey, group]) => {
+            const poolGameList = group.games;
             const computedRows = computeNativeStandings(poolGameList, standingsConfig).map((row) => ({
                 ...row,
                 teamName: row.team
             }));
-            const override = getPoolOverride(poolOverrides, poolName);
+            // Legacy overrides are display-label keyed. Do not apply an
+            // ambiguous override to multiple distinct structured groups.
+            const override = getPoolOverride(
+                poolOverrides,
+                group.groupName,
+                groupKey,
+                groupNameCounts.get(group.groupName) === 1
+            );
             const applied = applyTournamentStandingsOverride(computedRows, override);
-            acc[poolName] = {
-                poolName,
+            acc[groupKey] = {
+                groupKey,
+                groupName: group.groupName,
+                divisionName: group.divisionName,
+                poolName: group.groupName,
                 gameCount: poolGameList.length,
                 computedRows,
                 rows: applied.rows,
@@ -251,25 +313,31 @@ export function computeTournamentPoolStandings(gamesInput, options = {}) {
     if (!currentTeamName) return [];
 
     const groupGames = new Map();
-    const ensureGroup = (groupName) => {
+    const ensureGroup = (groupKey, groupName) => {
+        const normalizedGroupKey = normalizeString(groupKey);
         const normalizedGroupName = normalizeString(groupName);
-        if (!normalizedGroupName) return null;
-        if (!groupGames.has(normalizedGroupName)) {
-            groupGames.set(normalizedGroupName, {
+        if (!normalizedGroupKey || !normalizedGroupName) return null;
+        if (!groupGames.has(normalizedGroupKey)) {
+            groupGames.set(normalizedGroupKey, {
+                groupKey: normalizedGroupKey,
+                groupName: normalizedGroupName,
                 games: [],
                 scheduledGameCount: 0,
                 noScoreGameCount: 0
             });
         }
-        return groupGames.get(normalizedGroupName);
+        return groupGames.get(normalizedGroupKey);
     };
 
-    getConfiguredTournamentGroupNames(options).forEach(ensureGroup);
+    getConfiguredTournamentGroupNames(options).forEach((groupName) => {
+        ensureGroup(JSON.stringify(['', groupName]), groupName);
+    });
 
     games.forEach((game) => {
         if (!isTournamentGame(game)) return;
-        const poolName = getTournamentStandingsGroupName(game);
-        const group = ensureGroup(poolName);
+        const groupKey = getTournamentStandingsGroupKey(game);
+        const groupName = getTournamentStandingsGroupName(game);
+        const group = ensureGroup(groupKey, groupName);
         if (!group) return;
 
         group.scheduledGameCount += 1;
@@ -280,7 +348,7 @@ export function computeTournamentPoolStandings(gamesInput, options = {}) {
         }
 
         const { homeTeam, awayTeam, homeScore, awayScore } = getTournamentGameTeams(game, currentTeamName);
-        if (!poolName || !homeTeam || !awayTeam) return;
+        if (!groupName || !homeTeam || !awayTeam) return;
         if (homeTeam === awayTeam) return;
 
         const normalizedGame = {
@@ -294,8 +362,9 @@ export function computeTournamentPoolStandings(gamesInput, options = {}) {
     });
 
     return Array.from(groupGames.entries())
-        .sort((a, b) => a[0].localeCompare(b[0]))
-        .map(([poolName, pool]) => {
+        .sort((a, b) => a[1].groupName.localeCompare(b[1].groupName) || a[0].localeCompare(b[0]))
+        .map(([groupKey, pool]) => {
+            const poolName = pool.groupName;
             const poolGameList = pool.games;
             const rows = computeNativeStandingsDetailed(poolGameList, options?.standingsConfig || {}).map((row) => ({
                 ...row,
@@ -304,6 +373,7 @@ export function computeTournamentPoolStandings(gamesInput, options = {}) {
             const override = getPoolOverride(options?.poolOverrides || {}, poolName);
             const applied = applyTournamentStandingsOverride(rows, override);
             return {
+                groupKey,
                 poolName,
                 groupName: poolName,
                 gameCount: poolGameList.length,

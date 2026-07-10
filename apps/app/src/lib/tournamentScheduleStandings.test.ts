@@ -84,6 +84,29 @@ describe('tournament schedule standings enrichment', () => {
     expect(matchesTournamentScheduleGroup(game, group!)).toBe(true);
   });
 
+  it('keeps colliding display labels isolated through enrichment lookup', () => {
+    const divisionPoolGame = buildWebTournamentGames()[0];
+    const displayCollisionGame = {
+      ...buildWebTournamentGames()[1],
+      id: 'display-collision',
+      tournament: {
+        poolName: '10U Gold • Pool A',
+        slotAssignments: {
+          home: { sourceType: 'team', teamName: 'Bears' },
+          away: { sourceType: 'team', teamName: 'Hawks' }
+        }
+      }
+    };
+
+    const enriched = enrichTournamentScheduleStandings(
+      [divisionPoolGame, displayCollisionGame],
+      { name: 'Tigers' }
+    );
+
+    expect(getScheduleTournamentInfo(enriched[0] as any).standings?.rows.map((row) => row.teamName)).toEqual(['Tigers', 'Lions']);
+    expect(getScheduleTournamentInfo(enriched[1] as any).standings?.rows.map((row) => row.teamName)).toEqual(['Bears', 'Hawks']);
+  });
+
   it('derives legacy standings for ordinary web-created game docs with no inline rows', () => {
     const webGames = buildWebTournamentGames();
     const enriched = enrichTournamentScheduleStandings(webGames, {

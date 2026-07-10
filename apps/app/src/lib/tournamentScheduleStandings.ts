@@ -1,4 +1,7 @@
-import { buildTournamentPoolStandings, getTournamentStandingsGroupName } from './adapters/legacyTournamentStandings';
+import {
+  buildTournamentPoolStandings,
+  getTournamentStandingsGroupKey
+} from './adapters/legacyTournamentStandings';
 
 export type ScheduleTournamentGameLike = {
   competitionType?: unknown;
@@ -29,11 +32,10 @@ export function getTournamentScheduleGroupQuery(game: ScheduleTournamentGameLike
 }
 
 export function matchesTournamentScheduleGroup(game: ScheduleTournamentGameLike, group: TournamentScheduleGroupQuery) {
-  const expectedGroupName = group.divisionName && group.poolName
-    ? `${group.divisionName} • ${group.poolName}`
-    : group.poolName || group.divisionName;
+  const actualGroup = getTournamentScheduleGroupQuery(game);
   return compactString(game?.competitionType).toLowerCase() === 'tournament' &&
-    getTournamentStandingsGroupName(game as Record<string, unknown>) === expectedGroupName;
+    actualGroup?.divisionName === compactString(group.divisionName) &&
+    actualGroup.poolName === compactString(group.poolName);
 }
 
 export function hasTournamentScheduleGames(gamesInput: readonly ScheduleTournamentGameLike[]) {
@@ -67,8 +69,8 @@ export function enrichTournamentScheduleStandings<T extends ScheduleTournamentGa
 
   return games.map((game) => {
     if (compactString(game?.competitionType).toLowerCase() !== 'tournament') return game;
-    const groupName = getTournamentStandingsGroupName(game);
-    const computedStandings = groupName ? standingsByGroup[groupName] : null;
+    const groupKey = getTournamentStandingsGroupKey(game as Record<string, unknown>);
+    const computedStandings = groupKey ? standingsByGroup[groupKey] : null;
     const tournament = game?.tournament && typeof game.tournament === 'object' ? game.tournament : null;
     if (!computedStandings || !tournament) return game;
 

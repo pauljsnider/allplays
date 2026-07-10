@@ -33,8 +33,19 @@ describe('schedule date range source contracts', () => {
         expect(getGamesSource).toContain('where("tournament.division", "==", tournamentGroup.divisionName)');
         expect(getGamesSource).toContain('if (hasTournamentGroup) throw error;');
         expect(targetedSource).toContain('getTournamentScheduleGroupQuery(loadedGame)');
-        expect(targetedSource).toContain('loadGames(teamId, { tournamentGroup })');
+        expect(targetedSource).toContain('loadGames(teamId, { tournamentGroups: [tournamentGroup] })');
         expect(targetedSource).not.toContain('getTournamentDetailStandingsRange');
         expect(targetedSource).not.toContain('hasTournamentTeamStandingsConfig');
+    });
+
+    it('loads all visible tournament groups together and fetches shared history once', () => {
+        const getGamesSource = extractSource(dbSource, 'export async function getGames', 'export async function getAggregatedStatsForGames');
+        const groupedLoadSource = extractSource(appSource, 'async function loadTournamentScheduleStandingsGames', 'async function loadRawTeam');
+
+        expect(groupedLoadSource).toContain('loadGames(teamId, { tournamentGroups: [...groups.values()] })');
+        expect(groupedLoadSource).not.toContain('.map((tournamentGroup) => loadGames');
+        expect((getGamesSource.match(/getSharedGamesForTeam\(teamId/g) || [])).toHaveLength(1);
+        expect(getGamesSource).toContain('getSharedGamesForTeam(teamId, { requireComplete: hasTournamentGroup })');
+        expect(getGamesSource).toContain('if (hasTournamentGroup) throw error;');
     });
 });

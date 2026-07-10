@@ -23,7 +23,7 @@ describe('issue 1967 schedule tournament tools source contract', () => {
         expect(dbSource).toContain('export async function saveTournamentPoolOverride');
         expect(dbSource).toContain('export async function clearTournamentPoolOverride');
         expect(tournamentStandingsTestSource).toContain('builds division-scoped admin standings and applies final ranking overrides');
-        expect(dbTournamentOverridesTestSource).toContain('cleans up matching override entries by exact pool name when saving or clearing');
+        expect(dbTournamentOverridesTestSource).toContain('cleans up matching structured group overrides when saving or clearing');
     });
 
     it('keeps bracket source resolution and pool advancement helpers wired for schedule games', () => {
