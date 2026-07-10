@@ -337,8 +337,11 @@ describe('Teams launcher navigation', () => {
 
     const fastFalcons = await screen.findByRole('link', { name: 'Open Fast Falcons' });
     expect(fastFalcons).toHaveAttribute('href', '/teams/team-fast');
-    expect(screen.getAllByRole('link', { name: 'Messages' }).map((link) => link.getAttribute('href'))).toContain('/messages/team-slow');
-    expect(screen.getAllByRole('link', { name: 'Schedule' }).map((link) => link.getAttribute('href'))).toContain('/schedule?teamId=team-slow');
+    expect(screen.getByRole('link', { name: 'Fast Falcons messages' })).toHaveAttribute('href', '/messages/team-fast');
+    expect(screen.getByRole('link', { name: 'Fast Falcons schedule' })).toHaveAttribute('href', '/schedule?teamId=team-fast');
+    expect(screen.getByRole('link', { name: 'Fast Falcons team hub' })).toHaveAttribute('href', '/teams/team-fast');
+    expect(screen.getByRole('link', { name: 'Slow Sharks messages' })).toHaveAttribute('href', '/messages/team-slow');
+    expect(screen.queryByRole('link', { name: 'Slow Sharks schedule' })).not.toBeInTheDocument();
 
     expect(screen.getByRole('link', { name: 'Chat' })).toHaveAttribute('href', '/messages/team-fast');
     expect(screen.getAllByRole('link', { name: /^Schedule/ }).map((link) => link.getAttribute('href'))).toContain('/schedule?teamId=team-fast');

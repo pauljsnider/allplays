@@ -37,6 +37,7 @@ import { useShellLayout } from '../lib/useShellLayout';
 import { completeParentCoreWorkflowTimer } from '../lib/parentWorkflowTiming';
 import {
   buildTeamNavigation,
+  getTeamSchedulePath,
   isTeamManagementRole,
   type TeamNavigationItem,
   type TeamNavigationSection
@@ -353,7 +354,7 @@ function TeamLauncher({ teams, selectedTeamId, variant = 'grid' }: {
       <div className="flex items-center justify-between gap-3 px-1">
         <div className="min-w-0">
           <div className="text-sm font-black text-gray-950">{isRail ? 'Teams' : 'Choose a team'}</div>
-          <div className="mt-0.5 text-xs font-semibold text-gray-500">Select a team to open its hub and tools.</div>
+          <div className="mt-0.5 text-xs font-semibold text-gray-500">{isRail ? 'Select a team, or jump straight to chat and schedule.' : 'Open the team hub, or jump straight to chat, schedule, or the full team page.'}</div>
         </div>
         <span className="inline-flex h-7 flex-none items-center rounded-full bg-gray-100 px-2.5 text-[11px] font-black text-gray-700">
           {teams.length} team{teams.length === 1 ? '' : 's'}
@@ -380,6 +381,7 @@ function TeamLauncher({ teams, selectedTeamId, variant = 'grid' }: {
 }
 
 function TeamLauncherRow({ team, selected, compact = false }: { team: ParentHomeTeam; selected: boolean; compact?: boolean }) {
+  const hasSchedule = team.eventCount > 0 || team.players.length > 0;
   const nextEventSummary = getTeamNextEventSummary(team);
 
   return (
@@ -401,25 +403,34 @@ function TeamLauncherRow({ team, selected, compact = false }: { team: ParentHome
           {nextEventSummary && !compact ? <span className="mt-1 block truncate text-[11px] font-bold text-gray-500">{nextEventSummary}</span> : null}
         </span>
       </Link>
-      {!selected ? (
-        <div className="flex flex-none items-center gap-1" aria-label={`${team.teamName} quick links`}>
-          <Link
-            to={`/messages/${encodeURIComponent(team.teamId)}`}
-            className="team-quick-link inline-flex items-center justify-center rounded-xl border border-gray-200 bg-white text-gray-600 shadow-sm transition hover:border-primary-200 hover:bg-primary-50 hover:text-primary-700"
-            aria-label="Messages"
-          >
-            <MessageCircle className="h-4 w-4" aria-hidden="true" />
-          </Link>
-          <Link
-            to={`/schedule?teamId=${encodeURIComponent(team.teamId)}`}
-            className="team-quick-link inline-flex items-center justify-center rounded-xl border border-gray-200 bg-white text-gray-600 shadow-sm transition hover:border-primary-200 hover:bg-primary-50 hover:text-primary-700"
-            aria-label="Schedule"
-          >
-            <CalendarDays className="h-4 w-4" aria-hidden="true" />
-          </Link>
-        </div>
-      ) : null}
+      <div className="flex flex-none items-center gap-1">
+        <TeamQuickLink to={`/messages/${encodeURIComponent(team.teamId)}`} label={`${team.teamName} messages`} icon={MessageCircle} badge={team.unreadCount} />
+        {hasSchedule ? <TeamQuickLink to={getTeamSchedulePath(team.teamId)} label={`${team.teamName} schedule`} icon={CalendarDays} badge={team.openActions} /> : null}
+        <TeamHubQuickLink team={team} />
+      </div>
     </article>
+  );
+}
+
+function TeamQuickLink({ to, label, icon: Icon, badge = 0 }: { to: string; label: string; icon: typeof Users; badge?: number }) {
+  return (
+    <Link to={to} className="team-quick-link relative inline-flex h-10 w-10 items-center justify-center rounded-xl border border-gray-200 bg-gray-50 text-gray-700 transition hover:border-primary-200 hover:bg-primary-50 hover:text-primary-700" aria-label={label} title={label}>
+      <Icon className="h-4 w-4" aria-hidden="true" />
+      {badge > 0 ? <span className="absolute -right-1 -top-1 min-w-4 rounded-full bg-primary-600 px-1 text-center text-[9px] font-black leading-4 text-white">{badge > 9 ? '9+' : badge}</span> : null}
+    </Link>
+  );
+}
+
+function TeamHubQuickLink({ team }: { team: ParentHomeTeam }) {
+  return (
+    <Link
+      to={`/teams/${encodeURIComponent(team.teamId)}`}
+      className="team-quick-link inline-flex h-10 w-10 items-center justify-center rounded-xl border border-gray-200 bg-gray-50 text-gray-700 transition hover:border-primary-200 hover:bg-primary-50 hover:text-primary-700"
+      aria-label={`${team.teamName} team hub`}
+      title={`${team.teamName} team hub`}
+    >
+      <ChevronRight className="h-4 w-4" aria-hidden="true" />
+    </Link>
   );
 }
 
