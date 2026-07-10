@@ -235,7 +235,23 @@ function createDeferred() {
     return { promise, resolve, reject };
 }
 
+function staffActionButtonByText(container, text) {
+    if (text === 'Team Email') {
+        return Array.from(container.querySelectorAll('button[role="menuitem"]')).find((candidate) => candidate.textContent.trim() === 'Team Email');
+    }
+    if (text.startsWith('Audience: ')) {
+        const currentAudience = text.replace(/^Audience:\s*/, 'Current: ');
+        return Array.from(container.querySelectorAll('button[role="menuitem"]')).find((candidate) => {
+            const label = candidate.textContent.trim();
+            return label.includes('Message audience') && label.includes(currentAudience);
+        });
+    }
+    return null;
+}
+
 function buttonByText(container, text) {
+    const staffActionButton = staffActionButtonByText(container, text);
+    if (staffActionButton) return staffActionButton;
     const button = Array.from(container.querySelectorAll('button')).find((candidate) => candidate.textContent.trim() === text || candidate.getAttribute('aria-label') === text);
     if (!button) {
         const partial = Array.from(container.querySelectorAll('button')).find((candidate) => candidate.textContent.trim().includes(text) || String(candidate.getAttribute('aria-label') || '').includes(text));
@@ -249,8 +265,22 @@ function buttonByText(container, text) {
 }
 
 async function click(container, text) {
+    let button = null;
+    try {
+        button = buttonByText(container, text);
+    } catch (error) {
+        const staffActionsButton = buttonByText(container, 'Open staff actions');
+        if (!(text === 'Team Email' || text.startsWith('Audience: ')) || !staffActionsButton) {
+            throw error;
+        }
+        await act(async () => {
+            staffActionsButton.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+        });
+        await flush();
+        button = buttonByText(container, text);
+    }
     await act(async () => {
-        buttonByText(container, text).dispatchEvent(new MouseEvent('click', { bubbles: true }));
+        button.dispatchEvent(new MouseEvent('click', { bubbles: true }));
     });
     await flush();
 }
@@ -1494,7 +1524,7 @@ describe('React app messages integration', () => {
         expect(chatMocks.loadChatRecipientOptions).toHaveBeenCalledTimes(1);
         expect(container.textContent).toContain('Coach Jamie');
 
-        await click(container, 'Done');
+        await click(container, 'Full team');
         await click(container, 'Team Email');
         expect(chatMocks.loadChatRecipientOptions).toHaveBeenCalledTimes(1);
     });
@@ -1635,7 +1665,9 @@ describe('React app messages integration', () => {
         });
         await flush();
         await click(container, 'Done');
-        expect(container.textContent).toContain('Audience: Coach Jamie (Staff)');
+        await click(container, 'Open staff actions');
+        expect(container.textContent).toContain('Current: Coach Jamie (Staff)');
+        await click(container, 'Open staff actions');
 
         const textarea = container.querySelector('textarea');
         await setFieldValue(textarea, 'Could you confirm arrival time?');
@@ -2381,7 +2413,7 @@ describe('React app messages integration', () => {
         const { container } = await renderMessages('/messages/team-1');
 
         expect(container.querySelector('button[aria-label="Voice to text"]')).toBeTruthy();
-        expect(buttonByText(container, 'Audience: Full team')).toBeTruthy();
+        expect(buttonByText(container, 'Open staff actions')).toBeTruthy();
 
         await click(container, 'Voice to text');
         expect(recognitionInstance.lang).toBe('es-MX');
