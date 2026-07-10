@@ -4,6 +4,28 @@ import { readFileSync } from 'node:fs';
 const rules = readFileSync(new URL('../../firestore.rules', import.meta.url), 'utf8');
 
 describe('firestore.rules architecture fixes', () => {
+    it('requires platform-admin team and user list reads to carry a limit of at most 100', () => {
+        const helperStart = rules.indexOf('function isBoundedGlobalAdminListQuery()');
+        const helperEnd = rules.indexOf('\n    }', helperStart) + '\n    }'.length;
+        const helperRules = rules.slice(helperStart, helperEnd);
+        const usersStart = rules.indexOf('match /users/{userId}');
+        const usersEnd = rules.indexOf('\n    }', usersStart) + '\n    }'.length;
+        const userRules = rules.slice(usersStart, usersEnd);
+        const teamsStart = rules.indexOf('match /teams/{teamId}');
+        const teamsEnd = rules.indexOf('\n    }', teamsStart) + '\n    }'.length;
+        const teamRules = rules.slice(teamsStart, teamsEnd);
+
+        expect(helperRules).toContain('request.query.limit != null');
+        expect(helperRules).toContain('request.query.limit > 0');
+        expect(helperRules).toContain('request.query.limit <= 100');
+        expect(userRules).toContain('allow get: if isGlobalAdmin() || isOwner(userId);');
+        expect(userRules).toContain('allow list: if isBoundedGlobalAdminListQuery() || isOwner(userId);');
+        expect(teamRules).toContain('allow get: if canReadTeamDocument(resource.data);');
+        expect(teamRules).toContain('allow list: if isBoundedGlobalAdminListQuery() ||');
+        expect(userRules).not.toContain('allow read: if isGlobalAdmin()');
+        expect(teamRules).not.toContain('allow read: if canReadTeamDocument(resource.data);');
+    });
+
     // Duplicate-block regression coverage lives in tests/unit/team-fee-recipient-rules.test.js.
     it('keeps feeRecipients access scoped to the fee recipient or team owner/admin', () => {
         const start = rules.indexOf('match /{path=**}/feeRecipients/{recipientId}');

@@ -886,7 +886,7 @@ export async function getTeams(options = {}) {
     const teamsRef = collection(db, "teams");
     let teams = [];
     if (includePrivate) {
-        teams = (await getDocs(query(teamsRef, orderBy("name")))).docs.map(doc => ({ id: doc.id, ...doc.data() }));
+        teams = (await getDocs(query(teamsRef, orderBy("name"), limitQuery(100)))).docs.map(doc => ({ id: doc.id, ...doc.data() }));
     } else if (publicOnly) {
         teams = (await getDocs(query(teamsRef, where("isPublic", "==", true)))).docs
             .map(doc => ({ id: doc.id, ...doc.data() }))
@@ -2015,7 +2015,7 @@ export async function getAdminUsersPage(options = {}) {
 }
 
 export async function getAllUsers() {
-    const q = query(collection(db, "users"), orderBy("email"));
+    const q = query(collection(db, "users"), orderBy("email"), limitQuery(100));
     const snapshot = await getDocs(q);
     return snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
 }

@@ -129,7 +129,8 @@ describe('React app social Firestore rules', () => {
         expect(source).toContain('function isOwnerUserEmailAuthBound(data)');
         expect(source).toContain("data.email.lower() == request.auth.token.email.lower()");
         expect(source).toContain("(!request.resource.data.diff(resource.data).affectedKeys().hasAny(['email']) ||");
-        expect(source).toContain('allow read: if isGlobalAdmin() || isOwner(userId);');
+        expect(source).toContain('allow get: if isGlobalAdmin() || isOwner(userId);');
+        expect(source).toContain('allow list: if isBoundedGlobalAdminListQuery() || isOwner(userId);');
         expect(source).not.toContain('allow read: if true;  // Public profiles');
 
         expect(isOwnerUserEmailUpdateValid({

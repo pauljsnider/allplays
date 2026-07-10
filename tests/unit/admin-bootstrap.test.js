@@ -1,11 +1,24 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
     DEFAULT_ADMIN_PAGE_SIZE,
+    buildBoundedAdminDashboardScope,
     loadAdminCollectionPage,
     loadInitialAdminBootstrap
 } from '../../js/admin-bootstrap.js';
 
 describe('admin bootstrap paging helpers', () => {
+    it('caps dashboard scope independently of the supplied platform collection sizes', () => {
+        const teams = Array.from({ length: 250 }, (_, index) => ({ id: `team-${index + 1}` }));
+        const users = Array.from({ length: 400 }, (_, index) => ({ id: `user-${index + 1}` }));
+
+        const scope = buildBoundedAdminDashboardScope({ teams, users });
+
+        expect(scope.teams).toHaveLength(DEFAULT_ADMIN_PAGE_SIZE);
+        expect(scope.users).toHaveLength(DEFAULT_ADMIN_PAGE_SIZE);
+        expect(scope.teams.at(-1)?.id).toBe(`team-${DEFAULT_ADMIN_PAGE_SIZE}`);
+        expect(scope.users.at(-1)?.id).toBe(`user-${DEFAULT_ADMIN_PAGE_SIZE}`);
+    });
+
     it('uses a fixed first-page size and reuses returned cursors for follow-up loads', async () => {
         const firstCursor = { id: 'cursor-1' };
         const fetchPage = vi.fn()

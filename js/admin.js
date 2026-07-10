@@ -1,8 +1,6 @@
 import {
     getAdminTeamsPage,
     getAdminUsersPage,
-    getTeams,
-    getAllUsers,
     getGames,
     getOfficials,
     getOfficialsForUsers,
@@ -17,10 +15,10 @@ import {
     getTelemetryEventDaily,
     getTelemetrySessions
 } from './db.js?v=91';
-import { db, collection, getDocs, doc, setDoc, updateDoc, serverTimestamp, getCountFromServer, query, where } from './firebase.js?v=20';
+import { db, collection, getDocs, doc, setDoc, updateDoc, serverTimestamp, query } from './firebase.js?v=20';
 import { renderHeader, renderFooter, escapeHtml } from './utils.js?v=15';
 import { checkAuth } from './auth.js?v=46';
-import { DEFAULT_ADMIN_PAGE_SIZE, loadAdminCollectionPage, loadInitialAdminBootstrap } from './admin-bootstrap.js?v=1';
+import { DEFAULT_ADMIN_PAGE_SIZE, buildBoundedAdminDashboardScope, loadAdminCollectionPage, loadInitialAdminBootstrap } from './admin-bootstrap.js?v=2';
 import {
     adminRegistrationDefaults,
     buildAdminRegistrationFormPayload,
@@ -152,9 +150,9 @@ function resetGlobalAdminSearchCollections() {
 async function ensureGlobalAdminTeamsForSearch() {
     if (globalSearchTeamsLoaded) return globalSearchTeams;
     if (!globalSearchTeamsPromise) {
-        globalSearchTeamsPromise = getTeams({ includeInactive: true })
-            .then((teams) => {
-                globalSearchTeams = Array.isArray(teams) ? teams : [];
+        globalSearchTeamsPromise = getAdminTeamsPage({ pageSize: 100 })
+            .then((page) => {
+                globalSearchTeams = Array.isArray(page?.teams) ? page.teams : [];
                 globalSearchTeamsLoaded = true;
                 return globalSearchTeams;
             })
@@ -168,9 +166,9 @@ async function ensureGlobalAdminTeamsForSearch() {
 async function ensureGlobalAdminUsersForSearch() {
     if (globalSearchUsersLoaded) return globalSearchUsers;
     if (!globalSearchUsersPromise) {
-        globalSearchUsersPromise = getAllUsers()
-            .then((users) => {
-                globalSearchUsers = Array.isArray(users) ? users : [];
+        globalSearchUsersPromise = getAdminUsersPage({ pageSize: 100 })
+            .then((page) => {
+                globalSearchUsers = Array.isArray(page?.users) ? page.users : [];
                 globalSearchUsersLoaded = true;
                 return globalSearchUsers;
             })
@@ -326,7 +324,6 @@ async function loadData() {
         loadedUsersOfficialsKey = '';
         allGames = [];
         dashboardGames = [];
-        dashboardGameStatsByTeamId = new Map();
         dashboardTeams = [];
         dashboardUsers = [];
         resetGlobalAdminSearchCollections();
@@ -342,10 +339,10 @@ async function loadData() {
         setTeamsPage(teamsPage.teams, teamsPage.nextCursor);
         setUsersPage(usersPage.users, usersPage.nextCursor);
 
-        await Promise.all([
-            ensureCurrentTeamGamesLoaded(),
-            loadDashboardData()
-        ]);
+        await loadDashboardData({
+            teams: teamsPage.teams,
+            users: usersPage.users
+        });
         telemetryPromise.then(() => {
             if (activeTab === 'telemetry') {
                 updateTelemetryDashboard();
@@ -364,10 +361,11 @@ async function loadData() {
 
 let allGames = [];
 let dashboardGames = [];
-let dashboardGameStatsByTeamId = new Map();
 
 const DASHBOARD_GAME_LOOKBACK_DAYS = 30;
 const DASHBOARD_GAME_LOOKAHEAD_DAYS = 30;
+const DASHBOARD_SUMMARY_TEAM_LIMIT = DEFAULT_ADMIN_PAGE_SIZE;
+const DASHBOARD_SUMMARY_USER_LIMIT = DEFAULT_ADMIN_PAGE_SIZE;
 
 function buildDashboardGameQueryWindow(referenceDate = new Date()) {
     const startDate = new Date(referenceDate.getTime() - DASHBOARD_GAME_LOOKBACK_DAYS * 24 * 60 * 60 * 1000);
@@ -428,29 +426,6 @@ async function loadVisibleOfficialUserLinks(users = allUsers) {
     loadedUsersOfficialsKey = usersKey;
 }
 
-async function loadDashboardAllTimeGameStats(teams = []) {
-    const statsEntries = await Promise.all(teams.map(async (team) => {
-        try {
-            const gamesRef = collection(db, 'teams', team.id, 'games');
-            const [totalSnapshot, completedSnapshot, scheduledSnapshot] = await Promise.all([
-                getCountFromServer(gamesRef),
-                getCountFromServer(query(gamesRef, where('status', '==', 'completed'))),
-                getCountFromServer(query(gamesRef, where('status', '==', 'scheduled')))
-            ]);
-            const total = totalSnapshot.data().count || 0;
-            return [team.id, {
-                total,
-                completed: completedSnapshot.data().count || 0,
-                scheduled: scheduledSnapshot.data().count || 0
-            }];
-        } catch (error) {
-            console.warn('Failed to load all-time game stats for admin dashboard:', team.id, error);
-            return [team.id, { total: 0, completed: 0, scheduled: 0 }];
-        }
-    }));
-    dashboardGameStatsByTeamId = new Map(statsEntries);
-}
-
 async function loadGameStatsForTeams(teams = allTeams, { scope = 'page' } = {}) {
     const teamsKey = getTeamsKey(teams);
     if (scope === 'page' && teamsKey && loadedGamesPageKey === teamsKey) {
@@ -478,7 +453,6 @@ async function loadGameStatsForTeams(teams = allTeams, { scope = 'page' } = {}) 
 
     if (scope === 'dashboard') {
         dashboardGames = nextGames;
-        await loadDashboardAllTimeGameStats(teams);
         loadedDashboardGamesKey = teamsKey;
         return;
     }
@@ -487,13 +461,13 @@ async function loadGameStatsForTeams(teams = allTeams, { scope = 'page' } = {}) 
     loadedGamesPageKey = teamsKey;
 }
 
-async function loadDashboardData() {
-    dashboardTeams = await getTeams({ includeInactive: true });
-    dashboardUsers = await getAllUsers();
-    globalSearchTeams = dashboardTeams;
-    globalSearchUsers = dashboardUsers;
-    globalSearchTeamsLoaded = true;
-    globalSearchUsersLoaded = true;
+async function loadDashboardData({ teams = getCurrentTeamPage(), users = getCurrentUsersPage() } = {}) {
+    const scope = buildBoundedAdminDashboardScope({ teams, users }, {
+        teamLimit: DASHBOARD_SUMMARY_TEAM_LIMIT,
+        userLimit: DASHBOARD_SUMMARY_USER_LIMIT
+    });
+    dashboardTeams = scope.teams;
+    dashboardUsers = scope.users;
     await loadGameStatsForTeams(dashboardTeams, { scope: 'dashboard' });
 }
 
@@ -576,14 +550,6 @@ function updateDashboard() {
     const visibleTeams = showInactiveTeams ? sourceTeams : sourceTeams.filter(isTeamActive);
     const visibleTeamIds = new Set(visibleTeams.map(team => team.id));
     const visibleRecentGames = dashboardGames.filter(game => visibleTeamIds.has(game.teamId));
-    const visibleAllTimeGameStats = visibleTeams.reduce((totals, team) => {
-        const stats = dashboardGameStatsByTeamId.get(team.id) || { total: 0, completed: 0, scheduled: 0 };
-        totals.total += stats.total;
-        totals.completed += stats.completed;
-        totals.scheduled += stats.scheduled;
-        if (stats.total > 0) totals.teamsWithGames += 1;
-        return totals;
-    }, { total: 0, completed: 0, scheduled: 0, teamsWithGames: 0 });
     const now = new Date();
     const sevenDaysAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
     const thirtyDaysAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
@@ -591,18 +557,18 @@ function updateDashboard() {
     // Total teams with growth
     const newTeamsLast30 = visibleTeams.filter(t => t.createdAt && t.createdAt.toDate() > thirtyDaysAgo).length;
     document.getElementById('stat-total-teams').textContent = visibleTeams.length;
-    document.getElementById('stat-teams-growth').textContent = `+${newTeamsLast30} this month`;
+    document.getElementById('stat-teams-growth').textContent = `Loaded page · +${newTeamsLast30} this month`;
 
     // Total users with growth
     const newUsersLast30 = sourceUsers.filter(u => u.createdAt && u.createdAt.toDate() > thirtyDaysAgo).length;
     document.getElementById('stat-total-users').textContent = sourceUsers.length;
-    document.getElementById('stat-users-growth').textContent = `+${newUsersLast30} this month`;
+    document.getElementById('stat-users-growth').textContent = `Loaded page · +${newUsersLast30} this month`;
 
-    // Total games
-    const completedGames = visibleAllTimeGameStats.completed;
-    const scheduledGames = visibleAllTimeGameStats.scheduled;
-    document.getElementById('stat-total-games').textContent = visibleAllTimeGameStats.total;
-    document.getElementById('stat-games-breakdown').textContent = `${completedGames} played, ${scheduledGames} scheduled`;
+    // Recent games from the bounded dashboard window.
+    const completedGames = visibleRecentGames.filter(game => game.status === 'completed').length;
+    const scheduledGames = visibleRecentGames.filter(game => game.status === 'scheduled').length;
+    document.getElementById('stat-total-games').textContent = visibleRecentGames.length;
+    document.getElementById('stat-games-breakdown').textContent = `±30 days · ${completedGames} played, ${scheduledGames} scheduled`;
     renderRecentGameResults(visibleRecentGames);
 
     // Activity (teams with games in last 7 days)
@@ -631,7 +597,7 @@ function updateDashboard() {
     // Team details
     const publicTeams = visibleTeams.filter(t => t.isPublic !== false).length;
     const privateTeams = visibleTeams.length - publicTeams;
-    const teamsWithGames = visibleAllTimeGameStats.teamsWithGames;
+    const teamsWithGames = new Set(visibleRecentGames.map(game => game.teamId)).size;
     document.getElementById('stat-team-details').innerHTML = `
         <div class="flex justify-between items-center">
             <span class="text-gray-700">Public</span>
@@ -642,7 +608,7 @@ function updateDashboard() {
             <span class="font-semibold text-gray-900">${privateTeams}</span>
         </div>
         <div class="flex justify-between items-center">
-            <span class="text-gray-700">With Games</span>
+            <span class="text-gray-700">With Recent Games</span>
             <span class="font-semibold text-gray-900">${teamsWithGames}</span>
         </div>
     `;
@@ -1771,11 +1737,14 @@ async function loadNextTeamsPage() {
             return;
         }
         if (activeTab === 'dashboard') {
-            await ensureCurrentTeamGamesLoaded();
+            await loadDashboardData();
             updateDashboard();
         }
         if (activeTab === 'teams') {
-            await ensureCurrentTeamOfficialsLoaded();
+            await Promise.all([
+                ensureCurrentTeamGamesLoaded(),
+                ensureCurrentTeamOfficialsLoaded()
+            ]);
         }
         if (activeTab === 'users') {
             await ensureCurrentUsersOfficialsLoaded();
@@ -1798,11 +1767,14 @@ async function loadPreviousTeamsPage() {
         const previousIndex = teamPageState.currentIndex - 1;
         setTeamsPage(teamPageState.pages[previousIndex] || [], teamPageState.nextCursor, previousIndex);
         if (activeTab === 'dashboard') {
-            await ensureCurrentTeamGamesLoaded();
+            await loadDashboardData();
             updateDashboard();
         }
         if (activeTab === 'teams') {
-            await ensureCurrentTeamOfficialsLoaded();
+            await Promise.all([
+                ensureCurrentTeamGamesLoaded(),
+                ensureCurrentTeamOfficialsLoaded()
+            ]);
         }
         if (activeTab === 'users') {
             await ensureCurrentUsersOfficialsLoaded();
@@ -1836,6 +1808,7 @@ async function loadNextUsersPage() {
         await ensureCurrentUsersOfficialsLoaded();
         renderCurrentUsersView();
         if (activeTab === 'dashboard') {
+            await loadDashboardData();
             updateDashboard();
         }
     } finally {
@@ -1854,6 +1827,7 @@ async function loadPreviousUsersPage() {
         await ensureCurrentUsersOfficialsLoaded();
         renderCurrentUsersView();
         if (activeTab === 'dashboard') {
+            await loadDashboardData();
             updateDashboard();
         }
     } finally {
@@ -1865,12 +1839,15 @@ async function loadPreviousUsersPage() {
 async function handleTabChange(tab) {
     activeTab = tab;
     if (tab === 'dashboard') {
-        await ensureCurrentTeamGamesLoaded();
+        await loadDashboardData();
         updateDashboard();
         return;
     }
     if (tab === 'teams') {
-        await ensureCurrentTeamOfficialsLoaded();
+        await Promise.all([
+            ensureCurrentTeamGamesLoaded(),
+            ensureCurrentTeamOfficialsLoaded()
+        ]);
         renderCurrentTeamsView();
         return;
     }

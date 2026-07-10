@@ -79,7 +79,9 @@ describe('public teams visibility', () => {
 
         expect(rules).toContain('function canReadTeamDocument(data)');
         expect(rules).toContain('return (data.isPublic is bool && data.isPublic == true) ||');
-        expect(rules).toContain('allow read: if canReadTeamDocument(resource.data);');
+        expect(rules).toContain('allow get: if canReadTeamDocument(resource.data);');
+        expect(rules).toContain('allow list: if isBoundedGlobalAdminListQuery() ||');
+        expect(rules).toContain('(!isGlobalAdmin() && canReadTeamDocument(resource.data));');
         expect(rules).not.toContain('allow read: if true;  // Public teams for browsing');
     });
 });

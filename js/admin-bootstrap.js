@@ -6,6 +6,15 @@ export function normalizeAdminPageSize(rawPageSize) {
     return Math.min(Math.max(Math.floor(pageSize), 1), 100);
 }
 
+export function buildBoundedAdminDashboardScope({ teams = [], users = [] } = {}, options = {}) {
+    const teamLimit = normalizeAdminPageSize(options.teamLimit);
+    const userLimit = normalizeAdminPageSize(options.userLimit);
+    return {
+        teams: (Array.isArray(teams) ? teams : []).slice(0, teamLimit),
+        users: (Array.isArray(users) ? users : []).slice(0, userLimit)
+    };
+}
+
 export async function loadAdminCollectionPage({ fetchPage, cursor = null, pageSize = DEFAULT_ADMIN_PAGE_SIZE }) {
     if (typeof fetchPage !== 'function') {
         throw new Error('fetchPage is required');
