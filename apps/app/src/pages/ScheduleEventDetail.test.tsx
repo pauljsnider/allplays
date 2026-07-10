@@ -237,6 +237,7 @@ import {
   loadPracticeTimelineServiceModule,
   loadScheduleGameDayService,
   loadStatsheetImportServiceModule,
+  parseGameHubPanel,
   setScheduleGameDayServiceImporterForTest,
   shouldAutosaveGeneratedLineupDraft,
   shouldAutosaveLineupDraft,
@@ -704,6 +705,10 @@ describe('ScheduleEventDetail route state', () => {
       value: vi.fn(),
       writable: true
     });
+    Object.defineProperty(Element.prototype, 'scrollIntoView', {
+      configurable: true,
+      value: vi.fn()
+    });
     scheduleServiceMocks.loadParentScheduleRideOffers.mockResolvedValue([]);
     scheduleServiceMocks.loadParentScheduleAssignments.mockResolvedValue([]);
     scheduleServiceMocks.loadParentScheduleEventDetail.mockResolvedValue({
@@ -754,6 +759,104 @@ describe('ScheduleEventDetail route state', () => {
     expect(within(switcher).getByRole('button', { name: 'Sam Lee' }).getAttribute('aria-pressed')).toBe('true');
     expect(screen.getAllByRole('button', { name: 'Assignments' })[0].className).toContain('bg-primary-600');
     expect(screen.getByTestId('event-route').textContent).toBe('/schedule/team-1/game-1?childId=player-2&section=assignments');
+  });
+
+  it.each([
+    ['chat', 'chat'],
+    [' ReAcTiOnS ', 'reactions'],
+    ['wrapup', 'wrapup'],
+    ['statsheet', 'statsheet'],
+    ['lineup', 'lineup'],
+    ['substitutions', 'substitutions'],
+    ['report', 'report'],
+    ['unknown', null],
+    ['', null],
+    [null, null]
+  ])('guards the Game hub panel route value %s', (input, expected) => {
+    expect(parseGameHubPanel(input)).toBe(expected);
+  });
+
+  it('opens and subscribes to route-requested Live chat without an accordion tap', async () => {
+    renderScheduleEventDetailWithLocation('/schedule/team-1/game-1?childId=player-1&section=game&panel=chat');
+
+    await waitFor(() => {
+      expect(screen.getByTestId('live-game-chat-panel')).toBeTruthy();
+      expect(liveGameChatServiceMocks.subscribeToLiveGameChat).toHaveBeenCalledTimes(1);
+    });
+
+    expect(screen.getByRole('button', { name: 'Live chat' }).getAttribute('aria-expanded')).toBe('true');
+    expect(Element.prototype.scrollIntoView).toHaveBeenCalled();
+    expect(screen.getByTestId('event-route').textContent).toBe('/schedule/team-1/game-1?childId=player-1&section=game&panel=chat');
+  });
+
+  it('keeps child context while focusing tools and removes panel state outside Game', async () => {
+    scheduleServiceMocks.loadParentScheduleEventDetail.mockResolvedValue({
+      events: [
+        buildEvent({ childId: 'player-1', childName: 'Avery Smith', canUpdateScore: true, isTeamStaff: true }),
+        buildEvent({
+          eventKey: 'team-1::game-1::player-2::2026-06-04T18:00:00.000Z::game',
+          childId: 'player-2',
+          childName: 'Sam Lee',
+          canUpdateScore: true,
+          isTeamStaff: true
+        })
+      ],
+      children: []
+    });
+    scheduleServiceMocks.loadHomeScoringPlayers.mockResolvedValue([]);
+    statsheetImportServiceMocks.loadTrackStatsheetContextForApp.mockResolvedValue({ roster: [], config: { columns: [] } });
+
+    renderScheduleEventDetailWithLocation('/schedule/team-1/game-1?childId=player-1&section=game');
+
+    await waitFor(() => {
+      expect(screen.getByTestId('game-hub-mobile-tools')).toBeTruthy();
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Open Live substitutions tool' }));
+
+    await waitFor(() => {
+      expect(screen.getByTestId('event-route').textContent).toBe('/schedule/team-1/game-1?childId=player-1&section=game&panel=substitutions');
+      expect(screen.getByTestId('game-day-substitution-panel')).toBeTruthy();
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Open Statsheet import tool' }));
+    await waitFor(() => {
+      expect(screen.getByTestId('event-route').textContent).toBe('/schedule/team-1/game-1?childId=player-1&section=game&panel=statsheet');
+      expect(screen.getByTestId('statsheet-import-panel')).toBeTruthy();
+    });
+
+    fireEvent.click(within(screen.getByTestId('event-player-switcher')).getByRole('button', { name: 'Sam Lee' }));
+    await waitFor(() => {
+      expect(screen.getByTestId('event-route').textContent).toBe('/schedule/team-1/game-1?childId=player-2&section=game&panel=statsheet');
+    });
+
+    fireEvent.click(screen.getAllByRole('button', { name: 'Availability' })[0]);
+    await waitFor(() => {
+      expect(screen.getByTestId('event-route').textContent).toBe('/schedule/team-1/game-1?childId=player-2&section=availability');
+    });
+  });
+
+  it.each([
+    ['invalid', { isTeamStaff: true }],
+    ['lineup', { isTeamStaff: false }]
+  ])('ignores invalid or unavailable panel value %s', async (panel, eventOverrides) => {
+    scheduleServiceMocks.loadParentScheduleEventDetail.mockResolvedValue({
+      events: [buildEvent(eventOverrides)],
+      children: []
+    });
+
+    renderScheduleEventDetailWithLocation(`/schedule/team-1/game-1?childId=player-1&section=game&panel=${panel}`);
+
+    await waitFor(() => {
+      expect(screen.getByRole('heading', { name: 'Game hub' })).toBeTruthy();
+    });
+    if (panel === 'lineup') {
+      expect(screen.queryByRole('button', { name: 'Lineup builder' })).toBeNull();
+    } else {
+      expect(screen.queryByTestId('live-game-chat-panel')).toBeNull();
+      expect(screen.queryByTestId('live-game-reactions-panel')).toBeNull();
+      expect(screen.queryByTestId('statsheet-import-panel')).toBeNull();
+    }
+    expect(liveGameChatServiceMocks.subscribeToLiveGameChat).not.toHaveBeenCalled();
   });
 
 });
