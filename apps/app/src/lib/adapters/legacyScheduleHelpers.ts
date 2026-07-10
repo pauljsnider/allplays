@@ -222,10 +222,11 @@ export function resolveMyRsvpByChildForGame(events: unknown[], teamId: string, g
     return normalizeRecord(legacyResolveMyRsvpByChildForGame(normalizeArray(events), teamId, gameId, normalizeArray(rsvps), userId));
 }
 
-export function buildGameDayRsvpBreakdown(input: { players: unknown[]; rsvps: unknown[] }): LegacyGameDayRsvpBreakdown {
+export function buildGameDayRsvpBreakdown(input: { players: unknown[]; rsvps: unknown[]; fallbackByUser?: Map<string, string[]> }): LegacyGameDayRsvpBreakdown {
     const breakdown = normalizeRecord<LegacyGameDayRsvpBreakdown>(legacyBuildGameDayRsvpBreakdown({
         players: normalizeArray(input.players),
-        rsvps: normalizeArray(input.rsvps)
+        rsvps: normalizeArray(input.rsvps),
+        fallbackByUser: input.fallbackByUser || new Map()
     }));
     return {
         grouped: {

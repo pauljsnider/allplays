@@ -97,4 +97,22 @@ describe('parent dashboard RSVP hydration scope', () => {
       'child-a': 'not_going'
     });
   });
+
+  it('lets a surviving child override beat the same parent family response despite an older client timestamp', () => {
+    const result = resolveMyRsvpByChildForGame(
+      allScheduleEvents,
+      'team-1',
+      'game-1',
+      [
+        { id: 'parent-1', userId: 'parent-1', playerIds: ['child-a', 'child-b'], response: 'going', respondedAt: '2026-03-01T10:05:00Z' },
+        { id: 'parent-1__child-a', userId: 'parent-1', playerIds: ['child-a'], response: 'not_going', respondedAt: '2026-03-01T10:00:00Z' }
+      ],
+      'parent-1'
+    );
+
+    expect(result).toEqual({
+      'child-a': 'not_going',
+      'child-b': 'going'
+    });
+  });
 });

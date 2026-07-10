@@ -44,8 +44,8 @@ import {
     mergeApprovedParentMembershipRequests
 } from './parent-membership-utils.js?v=2';
 import { buildCoachOverrideRsvpDocId, shouldDeleteLegacyRsvpForOverride } from './rsvp-doc-ids.js';
-import { computeEffectiveRsvpSummary } from './rsvp-summary.js?v=1';
-import { buildGameDayRsvpBreakdown } from './game-day-rsvp-breakdown.js?v=1';
+import { computeEffectiveRsvpSummary } from './rsvp-summary.js?v=2';
+import { buildGameDayRsvpBreakdown } from './game-day-rsvp-breakdown.js?v=2';
 import { isAvailabilityLocked, normalizeAvailabilityPreferences } from './availability-preferences.js?v=1';
 import {
     collectOfficialLookupQueryTargets,

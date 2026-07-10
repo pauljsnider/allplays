@@ -17,6 +17,8 @@ describe('public RSVP function safeguards', () => {
 
     it('aggregates public RSVP summaries by active player', () => {
         expect(source).toContain('const responsesByPlayerId = new Map();');
+        expect(source.indexOf('const updateTime = coercePublicRsvpDate(docSnap?.updateTime);'))
+            .toBeLessThan(source.indexOf("const respondedAt = coercePublicRsvpDate(rsvp?.respondedAt || rsvp?.updatedAt || rsvp?.createdAt);"));
         expect(source).toContain('responsesByPlayerId.set(playerId, { response, respondedAtMs });');
         expect(source).toContain('summary.notResponded = Math.max(activePlayerIds.size - responsesByPlayerId.size, 0);');
         expect(source).not.toContain('summary.going += increment');

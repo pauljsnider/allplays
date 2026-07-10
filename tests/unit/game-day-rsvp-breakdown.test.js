@@ -110,4 +110,37 @@ describe('game day RSVP breakdown', () => {
             total: 2
         });
     });
+
+    it('shows a later-committed child correction despite its older client timestamp', () => {
+        const breakdown = buildGameDayRsvpBreakdown({
+            players: [
+                { id: 'p1', name: 'Avery', number: '7' },
+                { id: 'p2', name: 'Blake', number: '12' }
+            ],
+            rsvps: [
+                {
+                    id: 'parent-1',
+                    userId: 'parent-1',
+                    playerIds: ['p1', 'p2'],
+                    response: 'going',
+                    respondedAt: '2026-03-29T02:05:00.000Z'
+                },
+                {
+                    id: 'parent-1__p1',
+                    userId: 'parent-1',
+                    playerIds: ['p1'],
+                    response: 'not_going',
+                    respondedAt: '2026-03-29T02:00:00.000Z'
+                }
+            ],
+            fallbackByUser: new Map()
+        });
+
+        expect(breakdown.grouped.going).toEqual([
+            expect.objectContaining({ playerId: 'p2', response: 'going' })
+        ]);
+        expect(breakdown.grouped.not_going).toEqual([
+            expect.objectContaining({ playerId: 'p1', response: 'not_going' })
+        ]);
+    });
 });

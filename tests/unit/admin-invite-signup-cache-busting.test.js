@@ -32,14 +32,14 @@ describe('admin invite signup cache busting', () => {
 
         expect(authSource).toContain("import { executeEmailPasswordSignup } from './signup-flow.js?v=6';");
         expect(authSource).toContain("import { redeemAdminInviteAcceptance } from './admin-invite.js?v=6';");
-        expect(authSource).toContain("from './db.js?v=85';");
+        expect(authSource).toContain("from './db.js?v=91';");
     });
 
     it('pins fresh invite acceptance module versions for admin invite redemption', () => {
         const acceptInviteSource = readFileSync(resolve(process.cwd(), 'accept-invite.html'), 'utf8');
 
         expect(acceptInviteSource).toContain(
-            "import { validateAccessCode, redeemParentInvite, redeemHouseholdInvite, redeemCoParentInvite, updateUserProfile, updateTeam, getTeam, getUserProfile, markAccessCodeAsUsed } from './js/db.js?v=85';"
+            "import { validateAccessCode, redeemParentInvite, redeemHouseholdInvite, redeemCoParentInvite, updateUserProfile, updateTeam, getTeam, getUserProfile, markAccessCodeAsUsed } from './js/db.js?v=91';"
         );
         expect(acceptInviteSource).toContain(
             "import { redeemAdminInviteAtomically } from './js/admin-invite.js?v=6';"

@@ -10422,10 +10422,10 @@ async function sendRsvpReminderPushNotifications({ teamId, gameId, event = {}, r
 }
 
 function getPublicRsvpResponseSortMs(rsvp, docSnap) {
-  const respondedAt = coercePublicRsvpDate(rsvp?.respondedAt || rsvp?.updatedAt || rsvp?.createdAt);
-  if (respondedAt) return respondedAt.getTime();
   const updateTime = coercePublicRsvpDate(docSnap?.updateTime);
-  return updateTime ? updateTime.getTime() : 0;
+  if (updateTime) return updateTime.getTime();
+  const respondedAt = coercePublicRsvpDate(rsvp?.respondedAt || rsvp?.updatedAt || rsvp?.createdAt);
+  return respondedAt ? respondedAt.getTime() : 0;
 }
 
 async function loadPublicRsvpEvent(teamId, gameId) {

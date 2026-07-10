@@ -476,7 +476,6 @@ export type LineupDraftPreviewResult = {
 };
 
 function getGoingPlayerIdsFromRsvps(players: any[], rsvps: any[]) {
-  const ids = new Set<string>();
   const playerIdsByParentUserId = new Map<string, string[]>();
   (Array.isArray(players) ? players : [])
     .filter(isActiveRosterPlayer)
@@ -488,13 +487,14 @@ function getGoingPlayerIdsFromRsvps(players: any[], rsvps: any[]) {
       });
     });
 
-  (Array.isArray(rsvps) ? rsvps : []).forEach((rsvp) => {
-    if (normalizeRsvpResponse(rsvp?.response) !== 'going') return;
-    const explicitPlayerIds = getRsvpPlayerIds(rsvp);
-    const fallbackPlayerIds = explicitPlayerIds.length ? [] : (playerIdsByParentUserId.get(compactString(rsvp?.userId)) || []);
-    [...explicitPlayerIds, ...fallbackPlayerIds].forEach((playerId) => ids.add(playerId));
+  const breakdown = buildGameDayRsvpBreakdown({
+    players,
+    rsvps,
+    fallbackByUser: playerIdsByParentUserId
   });
-  return ids;
+  return new Set<string>((breakdown.grouped.going || [])
+    .map((row) => compactString(row?.playerId))
+    .filter(Boolean));
 }
 
 function getGoingLineupPlayers(players: any[], rsvps: any[]): AutoFilledLineupPlayer[] {
@@ -3512,13 +3512,19 @@ function rsvpTimestampMillis(rsvp: any) {
   return date?.getTime() || 0;
 }
 
+function isPlayerSpecificRsvpOverride(rsvp: any, playerId: string) {
+  const responderUserId = compactString(rsvp?.userId);
+  const documentId = compactString(rsvp?.id);
+  return Boolean(responderUserId && documentId === `${responderUserId}__${playerId}`);
+}
+
 function resolveMyRsvpNotesByChildForGame(allScheduleEvents: ParentScheduleEvent[], teamId: string, gameId: string, rsvps: any[], userId: string) {
   const scopedPlayerIds = [...new Set((Array.isArray(allScheduleEvents) ? allScheduleEvents : [])
     .filter((event) => event.teamId === teamId && event.id === gameId)
     .map((event) => event.childId)
     .filter(Boolean))];
   const scopedSet = new Set(scopedPlayerIds);
-  const byChild = new Map<string, { note: string; respondedAtMillis: number }>();
+  const byChild = new Map<string, { note: string; respondedAtMillis: number; playerSpecific: boolean }>();
 
   (Array.isArray(rsvps) ? rsvps : []).forEach((rsvp) => {
     if (String(rsvp?.userId || '') !== userId) return;
@@ -3530,8 +3536,11 @@ function resolveMyRsvpNotesByChildForGame(allScheduleEvents: ParentScheduleEvent
     scopedPlayerIdsForRsvp.forEach((playerId) => {
       if (!scopedSet.has(playerId)) return;
       const existing = byChild.get(playerId);
-      if (!existing || respondedAtMillis >= existing.respondedAtMillis) {
-        byChild.set(playerId, { note, respondedAtMillis });
+      const playerSpecific = isPlayerSpecificRsvpOverride(rsvp, playerId);
+      if (!existing
+        || (playerSpecific && !existing.playerSpecific)
+        || (playerSpecific === existing.playerSpecific && respondedAtMillis >= existing.respondedAtMillis)) {
+        byChild.set(playerId, { note, respondedAtMillis, playerSpecific });
       }
     });
   });

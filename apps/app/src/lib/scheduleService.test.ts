@@ -123,7 +123,32 @@ vi.mock('./adapters/legacyScheduleHelpers', () => ({
       return acc;
     }, {})
   )),
-  buildGameDayRsvpBreakdown: vi.fn(),
+  buildGameDayRsvpBreakdown: vi.fn(({ players, rsvps, fallbackByUser }: any) => {
+    const byPlayer = new Map<string, any>();
+    (Array.isArray(rsvps) ? rsvps : []).forEach((rsvp: any, sequence: number) => {
+      const directIds = [...(Array.isArray(rsvp?.playerIds) ? rsvp.playerIds : []), rsvp?.playerId, rsvp?.childId]
+        .map((value) => String(value || '').trim())
+        .filter(Boolean);
+      const playerIds = directIds.length ? [...new Set(directIds)] : (fallbackByUser.get(String(rsvp?.userId || '')) || []);
+      playerIds.forEach((playerId: string) => {
+        const userId = String(rsvp?.userId || '').trim();
+        const playerSpecific = String(rsvp?.id || '') === `${userId}__${playerId}`;
+        const respondedAtMillis = new Date(rsvp?.respondedAt || 0).getTime() || 0;
+        const existing = byPlayer.get(playerId);
+        if (existing?.userId === userId && existing.playerSpecific !== playerSpecific && existing.playerSpecific) return;
+        if (existing?.userId === userId && existing.playerSpecific !== playerSpecific && playerSpecific
+          || !existing
+          || respondedAtMillis > existing.respondedAtMillis
+          || respondedAtMillis === existing.respondedAtMillis && sequence >= existing.sequence) {
+          byPlayer.set(playerId, { response: rsvp?.response, userId, playerSpecific, respondedAtMillis, sequence });
+        }
+      });
+    });
+    const going = (Array.isArray(players) ? players : [])
+      .filter((player: any) => byPlayer.get(player.id)?.response === 'going')
+      .map((player: any) => ({ playerId: player.id }));
+    return { grouped: { going, maybe: [], not_going: [], not_responded: [] }, counts: {} };
+  }),
   getPeriodsForFormation: vi.fn(() => []),
   getEventRideshareSummary: vi.fn(),
   mergeAssignmentsWithClaims: vi.fn(),
@@ -1203,6 +1228,53 @@ describe('parent schedule detail hydration', () => {
     expect(futureEvent.myRsvp).toBe('not_responded');
   });
 
+  it('hydrates a surviving child RSVP and note ahead of a newer-clock family document', async () => {
+    vi.mocked(getRsvps).mockResolvedValue([
+      {
+        id: 'parent-1',
+        userId: 'parent-1',
+        playerIds: ['player-1', 'player-2'],
+        playerId: null,
+        response: 'going',
+        respondedAt: '2026-03-01T10:05:00Z'
+      },
+      {
+        id: 'parent-1__player-1',
+        userId: 'parent-1',
+        playerIds: ['player-1'],
+        playerId: 'player-1',
+        response: 'not_going',
+        respondedAt: '2026-03-01T10:00:00Z'
+      }
+    ] as any);
+    vi.mocked(getDoc).mockImplementation(async (ref: any) => {
+      const path = String(ref?.path || '');
+      if (path.endsWith('/rsvpNotes/parent-1')) {
+        return playerSnapshot('parent-1', {
+          userId: 'parent-1',
+          playerIds: ['player-1', 'player-2'],
+          note: 'Family note',
+          respondedAt: '2026-03-01T10:05:00Z'
+        }) as any;
+      }
+      if (path.endsWith('/rsvpNotes/parent-1__player-1')) {
+        return playerSnapshot('parent-1__player-1', {
+          userId: 'parent-1',
+          playerIds: ['player-1'],
+          note: 'Child correction',
+          respondedAt: '2026-03-01T10:00:00Z'
+        }) as any;
+      }
+      return playerSnapshot('', null) as any;
+    });
+    const nearEvent = buildHydrationEvent('near-game', new Date(Date.now() + 24 * 60 * 60 * 1000));
+
+    await hydrateParentScheduleDetails({ children: [], events: [nearEvent] }, user);
+
+    expect(nearEvent.myRsvp).toBe('not_going');
+    expect(nearEvent.myRsvpNote).toBe('Child correction');
+  });
+
   it('refreshes cached open assignment counts after assignment claim hydration', async () => {
     const nearEvent = buildHydrationEvent('near-game', new Date(Date.now() + 24 * 60 * 60 * 1000));
     nearEvent.assignments = [{ role: 'Scoreboard', claimable: true, value: '' }];
@@ -2120,6 +2192,23 @@ describe('mobile lineup draft creation', () => {
     expect(result.gamePlan?.lineups).toEqual({
       'Q1-pg': 'p1',
       'Q1-sg': 'p2'
+    });
+  });
+
+  it('excludes a surviving child correction from Going lineup players despite its older client timestamp', async () => {
+    vi.mocked(getPlayers).mockResolvedValue([
+      { id: 'p1', name: 'Avery', number: '1', parentUserId: 'parent-1' },
+      { id: 'p2', name: 'Blake', number: '2', parentUserId: 'parent-1' }
+    ] as any);
+    vi.mocked(getRsvps).mockResolvedValue([
+      { id: 'parent-1', userId: 'parent-1', playerIds: ['p1', 'p2'], response: 'going', respondedAt: '2026-03-01T10:05:00Z' },
+      { id: 'parent-1__p1', userId: 'parent-1', playerIds: ['p1'], response: 'not_going', respondedAt: '2026-03-01T10:00:00Z' }
+    ] as any);
+
+    const result = await saveScheduledGameLineupDraftForApp(event, user, 'basketball-5v5');
+
+    expect(result.gamePlan?.lineups).toEqual({
+      'Q1-pg': 'p2'
     });
   });
 

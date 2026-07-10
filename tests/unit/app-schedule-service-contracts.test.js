@@ -453,6 +453,8 @@ describe('React app schedule service contract integration', () => {
         expect(detailSource).toContain('let events = await buildTargetedTeamScheduleEvent(requestedTeamId, requestedEventId, teamChildren, user);');
         expect(detailSource).toContain('const teamEvents = await buildTeamSchedule(requestedTeamId, teamChildren, user, { includePastGames: true });');
         expect(detailSource).toContain('events = teamEvents.filter((event) => event.id === requestedEventId);');
+        expect(scheduleServiceSource).toContain('const breakdown = buildGameDayRsvpBreakdown({');
+        expect(scheduleServiceSource).toContain('(breakdown.grouped.going || [])');
     });
 
     it('loads parent schedule data through existing site contracts without duplicating schemas', async () => {

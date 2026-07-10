@@ -1,4 +1,4 @@
-import { selectLatestRsvpByPlayer } from './rsvp-summary.js';
+import { selectLatestRsvpByPlayer } from './rsvp-summary.js?v=2';
 
 function normalizeRsvpResponse(response) {
     if (response === 'going' || response === 'maybe' || response === 'not_going') {

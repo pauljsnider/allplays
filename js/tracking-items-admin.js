@@ -204,7 +204,7 @@ async function initTrackingItemsAdminPage() {
     renderFooter(document.getElementById('footer-container'));
 
     const [dbModule, authModule, firebaseModule] = await Promise.all([
-        import('./db.js?v=84'),
+        import('./db.js?v=91'),
         import('./auth.js?v=42'),
         import('./firebase.js?v=20')
     ]);
