@@ -36,12 +36,13 @@ async function waitForTeamDetailRoute(page, teamName) {
     }).toPass({ timeout: 45000 });
 }
 
-async function mockTeamsModules(page, { scenario = '' } = {}) {
-    await page.addInitScript(({ scenarioName }) => {
+async function mockTeamsModules(page, { scenario = '', managedTeam = false } = {}) {
+    await page.addInitScript(({ scenarioName, shouldManageTeam }) => {
         window.__openedPublicUrls = [];
         window.__homeLoads = 0;
         window.__teamsScenario = scenarioName;
-    }, { scenarioName: scenario });
+        window.__managedTeam = shouldManageTeam;
+    }, { scenarioName: scenario, shouldManageTeam: managedTeam });
 
     await page.route(/\/src\/lib\/useAuth\.ts(\?.*)?$/, async (route) => {
         await route.fulfill({
@@ -445,8 +446,8 @@ async function mockTeamsModules(page, { scenario = '' } = {}) {
                         ] }],
                         sponsors: [{ id: 'sponsor-1', name: 'Pizza Place', description: 'After the game', imageUrl: 'https://img.example.test/pizza.png', websiteUrl: 'https://pizza.example.test' }],
                         statTrackerConfigs: [],
-                        canManageTeam: false,
-                        canManageAdmins: false,
+                        canManageTeam: window.__managedTeam,
+                        canManageAdmins: window.__managedTeam,
                         staffPermissions: null,
                         counts: { games: 8, practices: 3, completedGames: 6 }
                     };
@@ -648,6 +649,46 @@ test.describe('mobile My Teams', () => {
         await expect(page.getByText('No teams available')).toHaveCount(0);
     });
 
+    test('keeps team detail tabs reachable while managing a long mobile roster', async ({ page, baseURL }) => {
+        await mockTeamsModules(page, { managedTeam: true });
+        await page.goto(appUrl(baseURL, '/teams/team-1?tab=roster'), { waitUntil: 'domcontentloaded' });
+
+        await waitForTeamDetailRoute(page, 'Bears');
+        const tabNav = page.getByTestId('team-detail-tab-nav');
+        await expect(tabNav).toBeVisible();
+        await expect(page.getByText('Add player').first()).toBeVisible();
+        await expect(tabNav.getByRole('button', { name: /Roster/ })).toHaveAttribute('aria-pressed', 'true');
+        expect(await tabNav.evaluate((node) => window.getComputedStyle(node).position)).toBe('sticky');
+
+        await page.evaluate(() => window.scrollTo({ top: document.documentElement.scrollHeight, behavior: 'instant' }));
+        await expect.poll(() => page.evaluate(() => window.scrollY)).toBeGreaterThan(200);
+        await expect(tabNav).toBeVisible();
+
+        const shellHeader = page.locator('.app-page > header');
+        const bottomNav = page.getByRole('navigation', { name: 'Primary navigation' });
+        await expect.poll(async () => {
+            const headerBox = await shellHeader.boundingBox();
+            const tabsBox = await tabNav.boundingBox();
+            const bottomBox = await bottomNav.boundingBox();
+            if (!headerBox || !tabsBox || !bottomBox) return false;
+            return tabsBox.y >= headerBox.y + headerBox.height - 1
+                && tabsBox.y + tabsBox.height <= bottomBox.y + 1;
+        }).toBe(true);
+
+        await tabNav.getByRole('button', { name: /More/ }).click();
+        await expect(page).toHaveURL(/#\/teams\/team-1\?tab=more$/);
+        const statConfigs = page.getByText('Stat tracker configs', { exact: true });
+        await expect(statConfigs).toBeAttached();
+        await statConfigs.evaluate((node) => node.scrollIntoView({ block: 'center' }));
+        await expect(statConfigs).toBeVisible();
+        await expect(tabNav).toBeVisible();
+
+        await tabNav.getByRole('button', { name: /Overview/ }).click();
+        await expect(page).toHaveURL(/#\/teams\/team-1$/);
+        await expect(tabNav.getByRole('button', { name: /Overview/ })).toHaveAttribute('aria-pressed', 'true');
+        await expect(page.getByText('Parent actions')).toBeAttached();
+    });
+
     test('team detail tabs expose parent-facing team page features', async ({ page, baseURL }) => {
         await mockTeamsModules(page);
         await page.goto(appUrl(baseURL, '/teams/team-1'), { waitUntil: 'domcontentloaded' });
@@ -767,5 +808,17 @@ test.describe('desktop My Teams', () => {
         await expect(page.getByRole('link', { name: 'Open Rockets' })).toBeVisible();
         await expect(page.getByRole('link', { name: 'Open Bears' })).toHaveCount(0);
         await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1)).toBe(true);
+    });
+
+    test('keeps the team detail tab navigation static on desktop', async ({ page, baseURL }) => {
+        await mockTeamsModules(page, { managedTeam: true });
+        await page.goto(appUrl(baseURL, '/teams/team-1?tab=roster'), { waitUntil: 'domcontentloaded' });
+
+        await waitForTeamDetailRoute(page, 'Bears');
+        const tabNav = page.getByTestId('team-detail-tab-nav');
+        await expect(tabNav).toBeVisible();
+        await expect(tabNav).toHaveCount(1);
+        expect(await tabNav.evaluate((node) => window.getComputedStyle(node).position)).toBe('static');
+        await expect(tabNav.getByRole('button', { name: /Roster/ })).toHaveAttribute('aria-pressed', 'true');
     });
 });

@@ -364,7 +364,7 @@ export function TeamDetail({ auth }: { auth: AuthState }) {
     } else {
       scroll();
     }
-  }, [teamId]);
+  }, [teamId, activeTab]);
 
   async function refreshTeamDetail() {
     if (!teamId) return;
@@ -499,8 +499,12 @@ export function TeamDetail({ auth }: { auth: AuthState }) {
     <div className="team-detail-page space-y-4">
       <TeamHero model={model} />
 
-      <section className="app-card p-2">
-        <div className="grid grid-cols-5 gap-1">
+      <nav
+        className="team-detail-tab-nav sticky top-24 z-30 -mx-1 bg-gray-50/95 py-2 backdrop-blur"
+        aria-label="Team detail sections"
+        data-testid="team-detail-tab-nav"
+      >
+        <div className="app-card grid grid-cols-5 gap-1 p-2">
           {tabs.map((tab) => {
             const Icon = tab.icon;
             const selected = activeTab === tab.id;
@@ -522,7 +526,7 @@ export function TeamDetail({ auth }: { auth: AuthState }) {
             );
           })}
         </div>
-      </section>
+      </nav>
 
       {activeTab === 'overview' ? <OverviewTab model={model} /> : null}
       {activeTab === 'schedule' ? (
