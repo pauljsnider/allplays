@@ -485,6 +485,11 @@ async function mockParentToolsModules(page) {
                     return 'file-1';
                 }
                 export async function addParentTeamMediaLink(teamId, folderId, title, url) {
+                    const parsed = new URL(String(url || '').trim());
+                    const host = parsed.hostname.toLowerCase();
+                    if (!['youtube.com', 'youtu.be', 'vimeo.com'].some((allowed) => host === allowed || host.endsWith('.' + allowed))) {
+                        throw new Error('Enter a valid YouTube or Vimeo URL.');
+                    }
                     window.__mediaLinks.push({ teamId, folderId, title, url });
                     return 'link-1';
                 }
@@ -834,10 +839,17 @@ test('team media route supports photo upload, file upload, link add, and media o
     });
     await expect.poll(() => page.evaluate(() => window.__mediaUploads.at(-1))).toEqual({ type: 'file', teamId: 'team-1', folderId: 'folder-1', name: 'packet.pdf' });
 
-    await page.getByPlaceholder('Video or link title').fill('Replay');
-    await page.getByPlaceholder('https://...').fill('https://video.example.test/replay');
+    await page.getByPlaceholder('Video title').fill('Replay');
+    await page.getByPlaceholder('https://...').fill('https://example.com/not-a-video');
     await page.getByRole('button', { name: /Add link/ }).click();
-    await expect.poll(() => page.evaluate(() => window.__mediaLinks.at(-1))).toEqual({ teamId: 'team-1', folderId: 'folder-1', title: 'Replay', url: 'https://video.example.test/replay' });
+    await expect(page.getByText('Enter a valid YouTube or Vimeo URL.')).toBeVisible();
+    await expect(page.getByPlaceholder('Video title')).toHaveValue('Replay');
+    await expect(page.getByPlaceholder('https://...')).toHaveValue('https://example.com/not-a-video');
+    expect(await page.evaluate(() => window.__mediaLinks)).toEqual([]);
+
+    await page.getByPlaceholder('https://...').fill('https://youtu.be/replay123');
+    await page.getByRole('button', { name: /Add link/ }).click();
+    await expect.poll(() => page.evaluate(() => window.__mediaLinks.at(-1))).toEqual({ teamId: 'team-1', folderId: 'folder-1', title: 'Replay', url: 'https://youtu.be/replay123' });
 
     await page.getByRole('button', { name: 'Open Tipoff' }).click();
     await expect.poll(() => page.evaluate(() => window.__openedPublicUrls.at(-1))).toBe('https://img.example.test/tipoff.jpg');

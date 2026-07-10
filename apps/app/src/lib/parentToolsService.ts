@@ -47,6 +47,7 @@ import {
   listTeamRegistrationReviews,
   listTeamRegistrationReviewsPage,
   moveTeamMediaItems,
+  normalizeTeamMediaVideoDraft,
   normalizeParentFeeRecord,
   normalizeRegistrationForm,
   normalizeRegistrationStatus,
@@ -905,7 +906,11 @@ export async function createTeamMediaAlbumForApp(teamId: string, draft: { name: 
 }
 
 export async function addParentTeamMediaLink(teamId: string, folderId: string, title: string, url: string) {
-  return createTeamMediaLink(teamId, folderId, { title, url });
+  const normalized = normalizeTeamMediaVideoDraft({ title, url });
+  return createTeamMediaLink(teamId, folderId, {
+    title: normalized.title,
+    url: normalized.url
+  });
 }
 
 function normalizeAccessTeams(teams: any[]): ParentAccessTeam[] {

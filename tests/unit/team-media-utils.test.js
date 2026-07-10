@@ -94,6 +94,14 @@ describe('team media video albums', () => {
             url: 'https://youtu.be/abc123',
             type: 'video_link'
         });
+        expect(() => normalizeTeamMediaVideoDraft({
+            title: 'Unsupported',
+            url: 'https://example.com/not-a-video'
+        })).toThrow('Enter a valid YouTube or Vimeo URL.');
+        expect(() => normalizeTeamMediaVideoDraft({
+            title: '   ',
+            url: 'https://youtu.be/abc123'
+        })).toThrow('Video title is required.');
     });
 
     it('hides private albums from parents', () => {

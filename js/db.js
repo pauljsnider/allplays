@@ -202,7 +202,7 @@ import {
     loadVolunteerScreeningTargetRegistrations
 } from './volunteer-screening-access.js?v=2';
 import { buildTournamentPoolOverrideKey } from './tournament-standings.js?v=1';
-import { buildBulkDeleteUpdates, buildMoveUpdates, buildReorderUpdates, isSafeTeamMediaUrl, isSupportedTeamMediaDocument, isSupportedTeamMediaImage, normalizeTeamMediaFolderDraft, normalizeAlbumVisibility, sortByMediaOrder } from './team-media-utils.js?v=4';
+import { buildBulkDeleteUpdates, buildMoveUpdates, buildReorderUpdates, isSafeTeamMediaUrl, isSupportedTeamMediaDocument, isSupportedTeamMediaImage, normalizeTeamMediaFolderDraft, normalizeTeamMediaVideoDraft, normalizeAlbumVisibility, sortByMediaOrder } from './team-media-utils.js?v=4';
 import { getApp } from './vendor/firebase-app.js';
 import {
     computeOfficiatingCoverageStatus,
@@ -1305,16 +1305,13 @@ export async function deleteTeamMediaFolder(teamId, folderId) {
 
 export async function createTeamMediaLink(teamId, folderId, media = {}) {
     const cleanFolderId = String(folderId || '').trim();
-    const title = String(media.title || '').trim();
-    const url = String(media.url || '').trim();
     if (!teamId || !cleanFolderId) throw new Error('Choose a folder for this media link.');
-    if (!title || !url) throw new Error('Media title and URL are required.');
-    if (!isSafeTeamMediaUrl(url)) throw new Error('Use a valid http or https media link.');
+    const normalized = normalizeTeamMediaVideoDraft(media);
     const order = await reserveNextTeamMediaOrder(teamId, cleanFolderId);
     const docRef = await addDoc(getTeamMediaItemsRef(teamId), {
         folderId: cleanFolderId,
-        title,
-        url,
+        title: normalized.title,
+        url: normalized.url,
         type: 'video-link',
         order,
         deleted: false,

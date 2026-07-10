@@ -144,6 +144,21 @@ const mediaMocks = vi.hoisted(() => ({
     canReadTeamMediaAlbum: vi.fn((folder) => folder.visibility !== 'private'),
     getTeamMediaItemUrl: vi.fn((item) => item.url || item.downloadUrl || ''),
     isSafeTeamMediaUrl: vi.fn((url) => String(url).startsWith('https://')),
+    normalizeTeamMediaVideoDraft: vi.fn((draft = {}) => {
+        const title = String(draft.title || '').trim();
+        if (!title) throw new Error('Video title is required.');
+        let url;
+        try {
+            url = new URL(String(draft.url || '').trim());
+        } catch {
+            throw new Error('Enter a valid YouTube or Vimeo URL.');
+        }
+        const host = url.hostname.toLowerCase();
+        if (!['youtube.com', 'youtu.be', 'vimeo.com'].some((allowed) => host === allowed || host.endsWith(`.${allowed}`))) {
+            throw new Error('Enter a valid YouTube or Vimeo URL.');
+        }
+        return { title, url: url.toString(), type: 'video_link' };
+    }),
     sortByMediaOrder: vi.fn((items) => [...items].sort((a, b) => Number(a.order || 0) - Number(b.order || 0)))
 }));
 
@@ -1021,12 +1036,23 @@ describe('React app parent tools service', () => {
         await expect(createTeamMediaAlbumForApp('team-1', { name: '  Spring photos  ', visibility: 'private' })).resolves.toBe('folder-new');
         await uploadParentTeamMediaPhoto('team-1', 'folder-1', photoFile);
         await uploadParentTeamMediaFile('team-1', 'folder-1', docFile);
-        await addParentTeamMediaLink('team-1', 'folder-1', 'Replay', 'https://video.example.test/replay');
+        await addParentTeamMediaLink('team-1', 'folder-1', '  Replay  ', ' https://youtu.be/replay123 ');
         expect(dbMocks.canAccessTeamChat).toHaveBeenCalledWith(expect.objectContaining({ uid: 'user-1' }), { id: 'team-1', name: 'Bears' });
         expect(dbMocks.createTeamMediaFolder).toHaveBeenCalledWith('team-1', { name: 'Spring photos', visibility: 'private' });
         expect(dbMocks.uploadTeamMediaPhoto).toHaveBeenCalledWith('team-1', 'folder-1', photoFile, { returnItem: true });
         expect(dbMocks.uploadTeamMediaFile).toHaveBeenCalledWith('team-1', 'folder-1', docFile, { returnItem: true });
-        expect(dbMocks.createTeamMediaLink).toHaveBeenCalledWith('team-1', 'folder-1', { title: 'Replay', url: 'https://video.example.test/replay' });
+        expect(dbMocks.createTeamMediaLink).toHaveBeenCalledWith('team-1', 'folder-1', { title: 'Replay', url: 'https://youtu.be/replay123' });
+    });
+
+    it('rejects unsupported team media link hosts before calling the database helper', async () => {
+        await expect(addParentTeamMediaLink(
+            'team-1',
+            'folder-1',
+            'Not a video',
+            'https://example.com/not-a-video'
+        )).rejects.toThrow('Enter a valid YouTube or Vimeo URL.');
+
+        expect(dbMocks.createTeamMediaLink).not.toHaveBeenCalled();
     });
 
     it('returns normalized team media upload items so the app can merge them without rereading the album', async () => {

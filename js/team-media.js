@@ -16,7 +16,7 @@ import {
     bulkDeleteTeamMediaItems,
     setTeamMediaAlbumCover,
     updateTeamMediaItem
-} from './db.js?v=84';
+} from './db.js?v=85';
 import {
     canContributeTeamMedia,
     canDeleteTeamMediaItem,
@@ -29,6 +29,7 @@ import {
     isSupportedTeamMediaDocument,
     isSupportedTeamMediaImage,
     isTeamMediaDocument,
+    normalizeTeamMediaVideoDraft,
     sortByMediaOrder
 } from './team-media-utils.js?v=4';
 
@@ -701,9 +702,13 @@ els.folderForm.addEventListener('submit', (event) => {
 els.linkForm.addEventListener('submit', (event) => {
     event.preventDefault();
     persistAndReload(async () => {
-        await createTeamMediaLink(state.teamId, els.linkFolder.value, {
+        const normalized = normalizeTeamMediaVideoDraft({
             title: els.linkTitle.value,
             url: els.linkUrl.value
+        });
+        await createTeamMediaLink(state.teamId, els.linkFolder.value, {
+            title: normalized.title,
+            url: normalized.url
         });
         state.selectedFolderId = els.linkFolder.value;
         els.linkTitle.value = '';

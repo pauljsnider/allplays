@@ -7,7 +7,7 @@ import { formatParentFeeAmount as legacy_formatParentFeeAmount, formatParentFeeD
 import * as legacyStripeService from '@legacy/stripe-service.js';
 import { buildPendingRegistrationRecord as legacy_buildPendingRegistrationRecord, calculateRegistrationFeeSnapshot as legacy_calculateRegistrationFeeSnapshot, decideRegistrationPlacement as legacy_decideRegistrationPlacement, getActiveRegistrationOptions as legacy_getActiveRegistrationOptions, getPaymentPlanChoices as legacy_getPaymentPlanChoices, getRegistrationPaymentNotice as legacy_getRegistrationPaymentNotice, hasOnlineRegistrationCheckout as legacy_hasOnlineRegistrationCheckout, normalizeRegistrationForm as legacy_normalizeRegistrationForm, requiresRegistrationOption as legacy_requiresRegistrationOption } from '@legacy/registration-flow.js';
 import { getRegistrationGuardianDrafts as legacy_getRegistrationGuardianDrafts, getRegistrationPlayerDraft as legacy_getRegistrationPlayerDraft, getRegistrationSubmittedData as legacy_getRegistrationSubmittedData, normalizeRegistrationStatus as legacy_normalizeRegistrationStatus } from '@legacy/registration-review.js';
-import { canContributeTeamMedia as legacy_canContributeTeamMedia, canManageTeamMedia as legacy_canManageTeamMedia, canReadTeamMediaAlbum as legacy_canReadTeamMediaAlbum, getTeamMediaItemUrl as legacy_getTeamMediaItemUrl, isSafeTeamMediaUrl as legacy_isSafeTeamMediaUrl, sortByMediaOrder as legacy_sortByMediaOrder } from '@legacy/team-media-utils.js';
+import { canContributeTeamMedia as legacy_canContributeTeamMedia, canManageTeamMedia as legacy_canManageTeamMedia, canReadTeamMediaAlbum as legacy_canReadTeamMediaAlbum, getTeamMediaItemUrl as legacy_getTeamMediaItemUrl, isSafeTeamMediaUrl as legacy_isSafeTeamMediaUrl, normalizeTeamMediaVideoDraft as legacy_normalizeTeamMediaVideoDraft, sortByMediaOrder as legacy_sortByMediaOrder } from '@legacy/team-media-utils.js';
 
 function callLegacyDb(name: string, args: any[]) {
   const fn = (legacyDb as Record<string, any>)[name];
@@ -64,6 +64,7 @@ export const uploadTeamMediaFile = (...args: any[]) => callLegacyDb('uploadTeamM
 export const uploadTeamMediaPhoto = (...args: any[]) => callLegacyDb('uploadTeamMediaPhoto', args);
 export const deleteTeamMediaItem = (...args: any[]) => callLegacyDb('deleteTeamMediaItem', args);
 export const updateTeamMediaItem = (...args: any[]) => callLegacyDb('updateTeamMediaItem', args);
+export const normalizeTeamMediaVideoDraft = legacy_normalizeTeamMediaVideoDraft as (...args: any[]) => any;
 export const moveTeamMediaItems = (...args: any[]) => callLegacyDb('moveTeamMediaItems', args);
 export const setTeamMediaAlbumCover = (...args: any[]) => callLegacyDb('setTeamMediaAlbumCover', args);
 export const addPendingFamilyMember = legacy_addPendingFamilyMember as (...args: any[]) => any;
