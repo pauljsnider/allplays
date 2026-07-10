@@ -33,23 +33,23 @@ service firebase.storage {
         expect(legacyGameClipRules).not.toContain('match /game-clips/{teamId}/{gameId}/{userId}/{fileName}');
     });
 
-    it('guards Firebase preview deploy command compatibility with firebase-tools 15', () => {
+    it('guards Firebase preview deploy command compatibility with the pinned Firebase CLI', () => {
         const validPreviewDeployStep = `
       - name: Deploy preview channel
-        run: firebase hosting:channel:deploy "$CURRENT_CHANNEL" --project game-flow-c6311 --config "$FIREBASE_PREVIEW_CONFIG"
+        run: npx --yes firebase-tools@15.22.1 hosting:channel:deploy "$CURRENT_CHANNEL" --project game-flow-c6311 --config "$FIREBASE_PREVIEW_CONFIG"
 `;
 
         expect(() => validatePreviewDeployCommand(validPreviewDeployStep)).not.toThrow();
 
         expect(() => validatePreviewDeployCommand(`
       - name: Deploy preview channel
-        run: firebase hosting:channel:deploy "$CURRENT_CHANNEL" --site allplays-preview --project game-flow-c6311 --config "$FIREBASE_PREVIEW_CONFIG"
+        run: npx --yes firebase-tools@15.22.1 hosting:channel:deploy "$CURRENT_CHANNEL" --site allplays-preview --project game-flow-c6311 --config "$FIREBASE_PREVIEW_CONFIG"
 `)).toThrow('Preview deploy must not pass --site');
 
         expect(() => validatePreviewDeployCommand(`
       - name: Deploy preview channel
-        run: firebase hosting:channel:deploy "$CURRENT_CHANNEL"
-`)).toThrow('Preview deploy Firebase project/config arguments');
+        run: firebase hosting:channel:deploy "$CURRENT_CHANNEL" --project game-flow-c6311 --config "$FIREBASE_PREVIEW_CONFIG"
+`)).toThrow('Preview deploy pinned Firebase CLI project/config arguments');
     });
 
     it('guards Firebase preview release target skip handling', () => {
