@@ -85,7 +85,8 @@ async function mockScheduleModules(page, options = {}) {
             rsvps: [],
             rideshare: [],
             assignments: [],
-            packets: []
+            packets: [],
+            chatSubscriptions: []
         };
         window.__trackerCalls = {
             recordEvents: [],
@@ -1088,6 +1089,32 @@ async function mockScheduleModules(page, options = {}) {
             `
         });
     });
+
+    await page.route(/\/src\/lib\/liveGameChatService\.ts(\?.*)?$/, async (route) => {
+        await route.fulfill({
+            status: 200,
+            contentType: 'application/javascript',
+            body: `
+                export function canUseLiveGameChat() {
+                    return true;
+                }
+
+                export function getLiveGameChatNotice() {
+                    return null;
+                }
+
+                export function subscribeToLiveGameChat(teamId, gameId, onMessages) {
+                    window.__scheduleCalls.chatSubscriptions.push({ teamId, gameId });
+                    queueMicrotask(() => onMessages([]));
+                    return () => {};
+                }
+
+                export async function sendLiveGameChatMessage() {
+                    return { id: 'smoke-chat-message' };
+                }
+            `
+        });
+    });
 }
 
 test('app schedule loads agenda filters, player select, calendar, export, and game detail link', async ({ page, baseURL }) => {
@@ -1277,6 +1304,29 @@ test('iOS-sized schedule smoke covers list, event nav, and rideshare without ove
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth + 1)).toBe(true);
 });
 
+test('iOS-sized Game hub deep link opens and positions Live chat without an accordion tap', async ({ page, baseURL }) => {
+    await page.setViewportSize({ width: 390, height: 844 });
+    await mockScheduleModules(page);
+    await page.goto(appUrl(baseURL, '/schedule/team-1/game-1?childId=player-1&section=game&panel=chat'), { waitUntil: 'domcontentloaded' });
+
+    const chatPanel = page.getByTestId('live-game-chat-panel');
+    await waitForScheduleRoute(page, chatPanel);
+    await expect(page.getByRole('button', { name: 'Live chat', exact: true })).toHaveAttribute('aria-expanded', 'true');
+    await expect(page.getByRole('button', { name: 'Open Live chat tool' })).toHaveAttribute('aria-pressed', 'true');
+    await expect.poll(() => page.evaluate(() => window.__scheduleCalls.chatSubscriptions)).toEqual([
+        { teamId: 'team-1', gameId: 'game-1' }
+    ]);
+    await expect(page).toHaveURL(/#\/schedule\/team-1\/game-1\?childId=player-1&section=game&panel=chat$/);
+
+    await expect.poll(async () => {
+        const navBox = await page.locator('.event-nav-mobile').boundingBox();
+        const panelBox = await page.locator('#game-hub-chat-panel').boundingBox();
+        if (!navBox || !panelBox) return false;
+        return panelBox.y >= navBox.y + navBox.height - 1 && panelBox.y < 844 - 80;
+    }).toBe(true);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth + 1)).toBe(true);
+});
+
 test('iOS-sized staff schedule keeps tools collapsed below the event list', async ({ page, baseURL }) => {
     await page.setViewportSize({ width: 390, height: 844 });
     await mockScheduleModules(page, { isCoach: true, staffManageable: true });
@@ -1391,10 +1441,11 @@ test('app schedule event detail exposes parent actions and RSVP', async ({ page,
 
     await page.getByRole('button', { name: 'Game', exact: true }).click();
     await expect(page.getByRole('heading', { name: 'Game hub' })).toBeVisible();
-    await expect(page.getByText('Report sections')).toBeVisible();
-    await page.getByRole('button', { name: 'Report sections' }).click();
+    const reportPanelToggle = page.getByRole('button', { name: 'Report sections', exact: true });
+    await expect(reportPanelToggle).toBeVisible();
+    await reportPanelToggle.click();
     await expect(page.getByText('Pat helped set the tone early and the team finished strong.')).toBeVisible();
-    const reportSections = page.locator('.app-card').filter({ has: page.getByText('Report sections') });
+    const reportSections = page.locator('#game-hub-report-panel');
     await expect(reportSections.locator('strong').filter({ hasText: 'Strong start' })).toBeVisible();
     await expect(reportSections.getByText('**Strong start**')).toHaveCount(0);
     await expect(reportSections.locator('li').filter({ hasText: 'Shared the ball well' })).toBeVisible();
@@ -1404,7 +1455,7 @@ test('app schedule event detail exposes parent actions and RSVP', async ({ page,
     await page.getByRole('button', { name: 'Share replay' }).click();
     expect(await page.evaluate(() => window.__sharedPayloads[0]?.url)).toBe('https://allplays.ai/live-game.html?teamId=team-1&gameId=game-1&replay=true');
     expect(await page.evaluate(() => window.__sharedPayloads[0]?.text)).toContain('https://allplays.ai/live-game.html?teamId=team-1&gameId=game-1&replay=true');
-    await expect(page.getByRole('button', { name: 'Open report' })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Open report', exact: true })).toBeVisible();
     await page.getByRole('button', { name: 'Share match report' }).click();
     expect(await page.evaluate(() => window.__sharedPayloads[1]?.url)).toBe('https://allplays.ai/game.html#teamId=team-1&gameId=game-1');
     expect(await page.evaluate(() => window.__sharedPayloads[1]?.text)).toContain('https://allplays.ai/game.html#teamId=team-1&gameId=game-1');

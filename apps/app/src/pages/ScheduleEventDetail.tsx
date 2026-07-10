@@ -190,9 +190,21 @@ import { useStaffRsvpBreakdown } from '../hooks/schedule/useStaffRsvpBreakdown';
 export { getAvailabilityNoteSaveState } from '../components/schedule/AvailabilityPanels';
 
 type EventDetailSectionId = ScheduleEventDetailSectionId;
+export type GameHubPanelId = 'chat' | 'reactions' | 'wrapup' | 'statsheet' | 'lineup' | 'substitutions' | 'report';
 type HomeScoringPlayersUpdater = (players: ScheduleHomeScoringPlayer[]) => ScheduleHomeScoringPlayer[];
 
 const eventDetailSectionIds = new Set<EventDetailSectionId>(['availability', 'rideshare', 'assignments', 'game']);
+const gameHubPanelIds = new Set<GameHubPanelId>(['chat', 'reactions', 'wrapup', 'statsheet', 'lineup', 'substitutions', 'report']);
+
+const gameHubPanelDetails: Record<GameHubPanelId, { label: string; elementId: string }> = {
+  chat: { label: 'Live chat', elementId: 'game-hub-chat-panel' },
+  reactions: { label: 'Live reactions', elementId: 'game-hub-reactions-panel' },
+  wrapup: { label: 'Post-game wrap-up', elementId: 'game-hub-wrapup-panel' },
+  statsheet: { label: 'Statsheet import', elementId: 'game-hub-statsheet-panel' },
+  lineup: { label: 'Lineup builder', elementId: 'game-hub-lineup-panel' },
+  substitutions: { label: 'Live substitutions', elementId: 'game-hub-substitutions-panel' },
+  report: { label: 'Report sections', elementId: 'game-hub-report-panel' }
+};
 
 function parseRequestedEventDetailSection(section: string | null | undefined): EventDetailSectionId | null {
   const normalized = String(section || '').trim().toLowerCase();
@@ -204,6 +216,14 @@ function parseRequestedEventDetailSection(section: string | null | undefined): E
 
 export function parseEventDetailSection(section: string | null | undefined): EventDetailSectionId {
   return parseRequestedEventDetailSection(section) || 'availability';
+}
+
+export function parseGameHubPanel(panel: string | null | undefined): GameHubPanelId | null {
+  const normalized = String(panel || '').trim().toLowerCase();
+  if (normalized && gameHubPanelIds.has(normalized as GameHubPanelId)) {
+    return normalized as GameHubPanelId;
+  }
+  return null;
 }
 
 const hubIconComponents: Record<ScheduleHubIcon, LucideIcon> = {
@@ -307,15 +327,25 @@ export function ScheduleEventDetail({ auth }: { auth: AuthState }) {
   const decodedTeamId = decodeURIComponent(teamId);
   const decodedEventId = decodeURIComponent(eventId);
 
-  const replaceEventRouteParams = (updates: { section?: EventDetailSectionId; childId?: string }) => {
+  const replaceEventRouteParams = (updates: { section?: EventDetailSectionId; childId?: string; panel?: GameHubPanelId | null }) => {
     const nextParams = new URLSearchParams(searchParams);
-    if (updates.section) nextParams.set('section', updates.section);
+    if (updates.section) {
+      nextParams.set('section', updates.section);
+      if (updates.section !== 'game') nextParams.delete('panel');
+    }
     if (Object.prototype.hasOwnProperty.call(updates, 'childId')) {
       const nextChildId = String(updates.childId || '').trim();
       if (nextChildId) {
         nextParams.set('childId', nextChildId);
       } else {
         nextParams.delete('childId');
+      }
+    }
+    if (Object.prototype.hasOwnProperty.call(updates, 'panel')) {
+      if (updates.panel) {
+        nextParams.set('panel', updates.panel);
+      } else {
+        nextParams.delete('panel');
       }
     }
     setSearchParams(nextParams, { replace: true });
@@ -332,6 +362,11 @@ export function ScheduleEventDetail({ auth }: { auth: AuthState }) {
   const selectChild = (childId: string) => {
     setSelectedChildId(childId);
     replaceEventRouteParams({ childId });
+  };
+
+  const selectGameHubPanel = (panel: GameHubPanelId | null) => {
+    setActiveSection('game');
+    replaceEventRouteParams({ section: 'game', panel });
   };
 
   const loadEvent = useCallback(async () => {
@@ -540,6 +575,9 @@ export function ScheduleEventDetail({ auth }: { auth: AuthState }) {
     : sectionIds.has(defaultSection)
       ? defaultSection
       : sections[0]?.id || 'availability';
+  const requestedGameHubPanel = resolvedActiveSection === 'game'
+    ? parseGameHubPanel(searchParams.get('panel'))
+    : null;
 
   const addEventToCalendar = async () => {
     const icsTitle = `${title} | ${selectedEvent.teamName}`;
@@ -656,7 +694,23 @@ export function ScheduleEventDetail({ auth }: { auth: AuthState }) {
         ) : null}
         {resolvedActiveSection === 'rideshare' ? <RideshareSection /> : null}
         {resolvedActiveSection === 'assignments' ? <AssignmentsSection /> : null}
-        {resolvedActiveSection === 'game' ? <GameHubSection key={selectedEvent.eventKey} auth={auth} event={selectedEvent} childEvents={events} onScoreUpdated={handleScoreUpdated} onLiveClockUpdated={handleLiveClockUpdated} onWrapupCompleted={handleWrapupCompleted} onStatsheetImported={handleStatsheetImported} onGameCancelled={handleGameCancelled} onPracticeOccurrenceCancelled={handlePracticeOccurrenceCancelled} onGamePlanPublished={handleGamePlanPublished} /> : null}
+        {resolvedActiveSection === 'game' ? (
+          <GameHubSection
+            key={selectedEvent.eventKey}
+            auth={auth}
+            event={selectedEvent}
+            childEvents={events}
+            requestedPanel={requestedGameHubPanel}
+            onPanelChange={selectGameHubPanel}
+            onScoreUpdated={handleScoreUpdated}
+            onLiveClockUpdated={handleLiveClockUpdated}
+            onWrapupCompleted={handleWrapupCompleted}
+            onStatsheetImported={handleStatsheetImported}
+            onGameCancelled={handleGameCancelled}
+            onPracticeOccurrenceCancelled={handlePracticeOccurrenceCancelled}
+            onGamePlanPublished={handleGamePlanPublished}
+          />
+        ) : null}
       </div>
       </div>
     </ScheduleEventDetailProvider>
@@ -1365,7 +1419,7 @@ function LazyGameHubPanel({
         </div>
         <ChevronDown className={`h-4 w-4 flex-none text-gray-500 transition ${open ? 'rotate-180' : ''}`} aria-hidden="true" />
       </button>
-      {open ? <div id={panelId}>{children}</div> : null}
+      {open ? <div id={panelId} className="scroll-mt-40">{children}</div> : null}
     </div>
   );
 }
@@ -1402,7 +1456,20 @@ function GameHubLiveClockBadge({ event }: { event: ParentScheduleEvent }) {
   );
 }
 
-function GameHubSection({ auth, event, childEvents, onScoreUpdated, onLiveClockUpdated, onWrapupCompleted, onStatsheetImported, onGameCancelled, onPracticeOccurrenceCancelled, onGamePlanPublished }: { auth: AuthState; event: ParentScheduleEvent; childEvents: ParentScheduleEvent[]; onScoreUpdated: (homeScore: number, awayScore: number) => void; onLiveClockUpdated: (payload: Partial<ParentScheduleEvent> & { period?: string | null }) => void; onWrapupCompleted: (payload: { homeScore: number; awayScore: number; postGameNotes: string; summary: string; practiceFeedItems: PracticeFeedItem[] }) => void; onStatsheetImported: (payload: { homeScore: number; awayScore: number; statSheetPhotoUrl?: string | null }) => void; onGameCancelled: () => void; onPracticeOccurrenceCancelled: () => void; onGamePlanPublished: (gamePlan: Record<string, any>) => void }) {
+function GameHubSection({ auth, event, childEvents, requestedPanel, onPanelChange, onScoreUpdated, onLiveClockUpdated, onWrapupCompleted, onStatsheetImported, onGameCancelled, onPracticeOccurrenceCancelled, onGamePlanPublished }: {
+  auth: AuthState;
+  event: ParentScheduleEvent;
+  childEvents: ParentScheduleEvent[];
+  requestedPanel: GameHubPanelId | null;
+  onPanelChange: (panel: GameHubPanelId | null) => void;
+  onScoreUpdated: (homeScore: number, awayScore: number) => void;
+  onLiveClockUpdated: (payload: Partial<ParentScheduleEvent> & { period?: string | null }) => void;
+  onWrapupCompleted: (payload: { homeScore: number; awayScore: number; postGameNotes: string; summary: string; practiceFeedItems: PracticeFeedItem[] }) => void;
+  onStatsheetImported: (payload: { homeScore: number; awayScore: number; statSheetPhotoUrl?: string | null }) => void;
+  onGameCancelled: () => void;
+  onPracticeOccurrenceCancelled: () => void;
+  onGamePlanPublished: (gamePlan: Record<string, any>) => void;
+}) {
   const [shareStatus, setShareStatus] = useState<string | null>(null);
   const [cancelStatus, setCancelStatus] = useState<{ tone: 'success' | 'error'; message: string } | null>(null);
   const [cancelling, setCancelling] = useState(false);
@@ -1423,10 +1490,42 @@ function GameHubSection({ auth, event, childEvents, onScoreUpdated, onLiveClockU
   const notifiesCounterpartTeam = Boolean(event.opponentTeamId || event.sharedScheduleOpponentTeamId);
   const hubDestinations = isPractice ? buildPracticeHubDestinations(event) : buildGameHubDestinations(event);
   const standardTrackerHref = `/schedule/${encodeURIComponent(event.teamId)}/${encodeURIComponent(event.id)}/track`;
+  const availablePanelIds = useMemo(() => {
+    const panels: GameHubPanelId[] = [];
+    if (!isPractice) panels.push('reactions', 'chat');
+    if (canWrapup) panels.push('wrapup', 'statsheet');
+    if (canPublishLineup) panels.push('lineup', 'substitutions');
+    if (!isPractice) panels.push('report');
+    return panels;
+  }, [canPublishLineup, canWrapup, isPractice]);
+  const requestedPanelAvailable = requestedPanel && availablePanelIds.includes(requestedPanel)
+    ? requestedPanel
+    : null;
+  const requestedPanelOpen = requestedPanelAvailable
+    ? Boolean(openPanels[requestedPanelAvailable])
+    : false;
 
   useEffect(() => {
     setOpenPanels({});
   }, [event.eventKey]);
+
+  useEffect(() => {
+    if (!requestedPanelAvailable) return undefined;
+
+    setOpenPanels((current) => current[requestedPanelAvailable]
+      ? current
+      : { ...current, [requestedPanelAvailable]: true });
+
+    return undefined;
+  }, [requestedPanelAvailable]);
+
+  useLayoutEffect(() => {
+    if (!requestedPanelAvailable || !requestedPanelOpen) return;
+    const panel = document.getElementById(gameHubPanelDetails[requestedPanelAvailable].elementId);
+    if (panel && typeof panel.scrollIntoView === 'function') {
+      panel.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+  }, [requestedPanelAvailable, requestedPanelOpen]);
 
   useEffect(() => {
     let cancelled = false;
@@ -1457,12 +1556,16 @@ function GameHubSection({ auth, event, childEvents, onScoreUpdated, onLiveClockU
     setHomeScoringPlayers(updater);
   }, []);
 
-  const togglePanel = useCallback((panelId: string) => {
-    setOpenPanels((current) => ({
-      ...current,
-      [panelId]: !current[panelId]
-    }));
-  }, []);
+  const openPanel = useCallback((panelId: GameHubPanelId) => {
+    setOpenPanels((current) => current[panelId] ? current : { ...current, [panelId]: true });
+    onPanelChange(panelId);
+  }, [onPanelChange]);
+
+  const togglePanel = useCallback((panelId: GameHubPanelId) => {
+    const nextOpen = !openPanels[panelId];
+    setOpenPanels((current) => ({ ...current, [panelId]: nextOpen }));
+    onPanelChange(nextOpen ? panelId : requestedPanel === panelId ? null : requestedPanel);
+  }, [onPanelChange, openPanels, requestedPanel]);
 
   const cancelGame = async () => {
     if (!auth.user) return;
@@ -1541,6 +1644,26 @@ function GameHubSection({ auth, event, childEvents, onScoreUpdated, onLiveClockU
               {statusLabel}
             </span>
           </div>
+          {!isPractice && availablePanelIds.length ? (
+            <div
+              className="-mx-1 mt-3 flex gap-2 overflow-x-auto px-1 pb-1 sm:hidden"
+              aria-label="Game hub tools"
+              data-testid="game-hub-mobile-tools"
+            >
+              {availablePanelIds.map((panelId) => (
+                <button
+                  key={panelId}
+                  type="button"
+                  className={`min-h-9 flex-none rounded-full border px-3 text-xs font-black transition ${requestedPanelAvailable === panelId ? 'border-primary-600 bg-primary-600 text-white' : 'border-gray-200 bg-white text-gray-700 hover:border-primary-200 hover:text-primary-700'}`}
+                  onClick={() => openPanel(panelId)}
+                  aria-label={`Open ${gameHubPanelDetails[panelId].label} tool`}
+                  aria-pressed={requestedPanelAvailable === panelId}
+                >
+                  {gameHubPanelDetails[panelId].label}
+                </button>
+              ))}
+            </div>
+          ) : null}
         </div>
 
         <div className="px-3 py-3 sm:px-4">
