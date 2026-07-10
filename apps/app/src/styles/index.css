@@ -83,31 +83,24 @@
 }
 
 .mobile-live-score-tray {
-  display: none;
+  position: fixed;
+  z-index: 39;
+  right: 0;
+  bottom: calc(var(--app-bottom-nav-height) + 8px);
+  left: 0;
+  padding-right: max(12px, env(safe-area-inset-right));
+  padding-left: max(12px, env(safe-area-inset-left));
+  pointer-events: none;
 }
 
-@media (max-width: 639px) {
-  .mobile-live-score-tray {
-    position: fixed;
-    z-index: 39;
-    right: 0;
-    bottom: calc(var(--app-bottom-nav-height) + 8px);
-    left: 0;
-    display: block;
-    padding-right: max(12px, env(safe-area-inset-right));
-    padding-left: max(12px, env(safe-area-inset-left));
-    pointer-events: none;
-  }
+.mobile-live-score-tray__surface {
+  max-width: 40rem;
+  margin: 0 auto;
+  pointer-events: auto;
+}
 
-  .mobile-live-score-tray__surface {
-    max-width: 40rem;
-    margin: 0 auto;
-    pointer-events: auto;
-  }
-
-  .mobile-live-score-tray-offset {
-    padding-bottom: 200px;
-  }
+.mobile-live-score-tray-offset {
+  padding-bottom: 200px;
 }
 
 .app-page-ai {

@@ -43,6 +43,7 @@ import {
 } from '../lib/scheduleHub';
 import { type AppServiceError, toAppServiceError } from '../lib/appErrors';
 import { useAsyncOperation } from '../lib/useAsyncOperation';
+import { useShellLayout } from '../lib/useShellLayout';
 import { EventDetailPageSkeleton } from '../components/PageSkeletons';
 import { AssignmentsSection } from '../components/schedule/AssignmentsSection';
 import { CompactMeta } from '../components/schedule/CompactMeta';
@@ -1490,6 +1491,7 @@ function GameHubSection({ auth, event, childEvents, requestedPanel, onPanelChang
   onPracticeOccurrenceCancelled: () => void;
   onGamePlanPublished: (gamePlan: Record<string, any>) => void;
 }) {
+  const { isDesktopWeb } = useShellLayout();
   const [shareStatus, setShareStatus] = useState<string | null>(null);
   const [cancelStatus, setCancelStatus] = useState<{ tone: 'success' | 'error'; message: string } | null>(null);
   const [cancelling, setCancelling] = useState(false);
@@ -1646,7 +1648,7 @@ function GameHubSection({ auth, event, childEvents, requestedPanel, onPanelChang
   };
 
   return (
-    <section className={`space-y-3 ${canUpdateScore ? 'mobile-live-score-tray-offset' : ''}`}>
+    <section className={`space-y-3 ${canUpdateScore && !isDesktopWeb ? 'mobile-live-score-tray-offset' : ''}`}>
       {showNonAdminPracticePacketFirst ? <PracticePacketSection auth={auth} event={event} childEvents={childEvents} /> : null}
       {showAdminPracticeTimeline ? <PracticeTimelineSection auth={auth} event={event} /> : null}
       {!isPractice && event.isTeamAdmin && event.isDbGame && !event.isCancelled ? <GameScheduleEditPanel auth={auth} event={event} /> : null}
@@ -1716,6 +1718,7 @@ function GameHubSection({ auth, event, childEvents, requestedPanel, onPanelChang
               event={event}
               homePlayers={homeScoringPlayers}
               loadingHomePlayers={loadingHomeScoringPlayers}
+              showStickyControls={!isDesktopWeb}
               onHomePlayersUpdated={updateHomeScoringPlayers}
               onScoreUpdated={onScoreUpdated}
             />
@@ -3196,7 +3199,7 @@ function getBonusState(teamFouls: number) {
   };
 }
 
-function LiveScoreEditor({ auth, event, homePlayers, loadingHomePlayers, onHomePlayersUpdated, onScoreUpdated }: { auth: AuthState; event: ParentScheduleEvent; homePlayers: ScheduleHomeScoringPlayer[]; loadingHomePlayers: boolean; onHomePlayersUpdated: (updater: HomeScoringPlayersUpdater) => void; onScoreUpdated: (homeScore: number, awayScore: number) => void }) {
+function LiveScoreEditor({ auth, event, homePlayers, loadingHomePlayers, showStickyControls, onHomePlayersUpdated, onScoreUpdated }: { auth: AuthState; event: ParentScheduleEvent; homePlayers: ScheduleHomeScoringPlayer[]; loadingHomePlayers: boolean; showStickyControls: boolean; onHomePlayersUpdated: (updater: HomeScoringPlayersUpdater) => void; onScoreUpdated: (homeScore: number, awayScore: number) => void }) {
   const autosaveDelayMs = 700;
   const savedHomeScore = Math.max(0, Number(event.homeScore ?? 0));
   const savedAwayScore = Math.max(0, Number(event.awayScore ?? 0));
@@ -3441,7 +3444,7 @@ function LiveScoreEditor({ auth, event, homePlayers, loadingHomePlayers, onHomeP
           {status ? <span className={`text-xs font-bold ${status.tone === 'error' ? 'text-rose-700' : 'text-emerald-700'}`}>{status.message}</span> : null}
         </div>
       </div>
-      <div className="mobile-live-score-tray" data-testid="mobile-live-score-tray" role="region" aria-label="Mobile live score controls">
+      {showStickyControls ? <div className="mobile-live-score-tray" data-testid="mobile-live-score-tray" role="region" aria-label="Mobile live score controls">
         <div className={`mobile-live-score-tray__surface rounded-2xl border p-2 shadow-xl ${dirty ? 'border-amber-200 bg-amber-50' : 'border-gray-200 bg-white'}`}>
           <div className="flex items-center justify-between gap-2 px-1 pb-1.5">
             <div className="text-xs font-black uppercase tracking-[0.04em] text-gray-600">Live score</div>
@@ -3466,7 +3469,7 @@ function LiveScoreEditor({ auth, event, homePlayers, loadingHomePlayers, onHomeP
             </button>
           </div>
         </div>
-      </div>
+      </div> : null}
     </>
   );
 }

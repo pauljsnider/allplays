@@ -1367,6 +1367,32 @@ test('mobile game-day score tray stays above the bottom nav while deeper panels 
     expect(await page.evaluate(() => window.__scheduleCalls.liveScoreEvents)).toHaveLength(1);
 });
 
+test('landscape mobile shell keeps the game-day score tray fixed above navigation', async ({ page, baseURL }) => {
+    await page.setViewportSize({ width: 844, height: 390 });
+    await mockScheduleModules(page, {
+        isCoach: true,
+        staffManageable: true,
+        gameStatus: 'live',
+        gameLiveStatus: 'live',
+        gameHomeScore: 4,
+        gameAwayScore: 2
+    });
+    await page.goto(appUrl(baseURL, '/schedule/team-1/game-1?childId=player-1&section=game'), { waitUntil: 'domcontentloaded' });
+
+    const tray = page.getByRole('region', { name: 'Mobile live score controls' });
+    await waitForScheduleRoute(page, tray);
+    await expect(tray).toBeVisible();
+
+    const bottomNav = page.locator('nav[aria-label="Primary navigation"]').last();
+    const [trayBox, navBox] = await Promise.all([tray.boundingBox(), bottomNav.boundingBox()]);
+    expect(trayBox?.bottom || 0).toBeLessThanOrEqual((navBox?.y || 0) + 1);
+    expect(await tray.evaluate((node) => window.getComputedStyle(node).position)).toBe('fixed');
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth + 1)).toBe(true);
+
+    await page.setViewportSize({ width: 1280, height: 800 });
+    await expect(tray).toHaveCount(0);
+});
+
 test('iOS-sized staff schedule keeps tools collapsed below the event list', async ({ page, baseURL }) => {
     await page.setViewportSize({ width: 390, height: 844 });
     await mockScheduleModules(page, { isCoach: true, staffManageable: true });
