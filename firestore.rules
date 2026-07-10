@@ -532,14 +532,6 @@ service cloud.firestore {
              data.status in ['pending', 'active', 'removed'];
     }
 
-    function isFamilyMembershipRemoval(data, userId) {
-      return data.keys().hasAll(['email', 'status', 'organizerUserId', 'accessStatus']) &&
-             data.organizerUserId == userId &&
-             data.email is string &&
-             data.status == 'removed' &&
-             data.accessStatus == 'revoked';
-    }
-
     function isAccountMergeRequestPayloadValid(data, userId) {
       return data.keys().hasOnly(['requestedBy', 'primaryEmail', 'secondaryEmail', 'status', 'createdAt', 'updatedAt']) &&
              data.keys().hasAll(['requestedBy', 'primaryEmail', 'secondaryEmail', 'status', 'createdAt', 'updatedAt']) &&
@@ -1978,10 +1970,7 @@ service cloud.firestore {
         allow read: if isOwner(userId) || isGlobalAdmin() ||
                        (isSignedIn() && resource.data.email is string && request.auth.token.email is string && resource.data.email == request.auth.token.email.lower());
         allow create: if isOwner(userId) && isFamilyMembershipPayloadValid(request.resource.data, userId);
-        allow update: if (isOwner(userId) &&
-                         isFamilyMembershipRemoval(request.resource.data, userId) &&
-                         request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'accessStatus', 'updatedAt', 'removedAt'])) ||
-                      isFamilyMembershipInviteMetadataUpdate(request.resource.data, userId) ||
+        allow update: if isFamilyMembershipInviteMetadataUpdate(request.resource.data, userId) ||
                       isFamilyMembershipAcceptance(request.resource.data);
         allow delete: if false;
       }

@@ -40,6 +40,9 @@ const {
   resolveFamilyShareChildrenFromOwnerProfile
 } = require('./family-share-core.cjs');
 const {
+  buildHouseholdAccessRevocationPlan
+} = require('./household-access-core.cjs');
+const {
   hashRsvpToken,
   createRawRsvpToken,
   normalizeRsvpTokenCreateInput,
@@ -2593,6 +2596,130 @@ exports.redeemHouseholdInvite = functions.https.onCall(async (data, context) => 
     };
   });
 
+  return responsePayload;
+});
+
+exports.revokeHouseholdMemberAccess = functions.https.onCall(async (data, context) => {
+  if (!context.auth?.uid) {
+    throw new functions.https.HttpsError('unauthenticated', 'Sign in before revoking household access.');
+  }
+
+  let membershipId;
+  try {
+    membershipId = normalizeFirestoreId(data?.membershipId, 'membershipId');
+  } catch (_error) {
+    throw new functions.https.HttpsError('invalid-argument', 'Household membership is required.');
+  }
+
+  const organizerUserId = context.auth.uid;
+  const membershipRef = firestore.doc(`users/${organizerUserId}/familyMemberships/${membershipId}`);
+  const codeQuery = firestore.collection('accessCodes')
+    .where('familyMembershipId', '==', membershipId);
+  let responsePayload = null;
+
+  await firestore.runTransaction(async (transaction) => {
+    const membershipSnap = await transaction.get(membershipRef);
+    if (!membershipSnap.exists) {
+      throw new functions.https.HttpsError('not-found', 'Household membership could not be found.');
+    }
+
+    const membership = membershipSnap.data() || {};
+    if (String(membership.organizerUserId || '').trim() !== organizerUserId) {
+      throw new functions.https.HttpsError('permission-denied', 'Only the household organizer can revoke this access.');
+    }
+
+    const codeQuerySnap = await transaction.get(codeQuery);
+    const accessCodes = codeQuerySnap.docs.map((codeSnap) => ({
+      id: codeSnap.id,
+      ...(codeSnap.data() || {})
+    }));
+    const matchingCode = accessCodes.find((codeData) => (
+      codeData.type === 'household_invite' &&
+      String(codeData.organizerUserId || '').trim() === organizerUserId &&
+      String(codeData.familyMembershipId || '').trim() === membershipId
+    ));
+    let teamId;
+    let playerId;
+    try {
+      teamId = normalizeFirestoreId(membership.teamId, 'teamId');
+      playerId = normalizeFirestoreId(membership.playerId, 'playerId');
+    } catch (_error) {
+      throw new functions.https.HttpsError('failed-precondition', 'Household membership is missing its delegated player link.');
+    }
+    const invitedUserIdValue = membership.userId || matchingCode?.usedBy || '';
+    const invitedUserId = invitedUserIdValue
+      ? normalizeFirestoreId(invitedUserIdValue, 'invitedUserId')
+      : '';
+    const userRef = invitedUserId ? firestore.doc(`users/${invitedUserId}`) : null;
+    const privateProfileRef = invitedUserId
+      ? firestore.doc(`teams/${teamId}/players/${playerId}/private/profile`)
+      : null;
+
+    const [userSnap, privateProfileSnap] = await Promise.all([
+      userRef ? transaction.get(userRef) : Promise.resolve(null),
+      privateProfileRef ? transaction.get(privateProfileRef) : Promise.resolve(null)
+    ]);
+    const userData = userSnap?.exists ? userSnap.data() || {} : {};
+    const privateProfile = privateProfileSnap?.exists ? privateProfileSnap.data() || {} : {};
+    const now = admin.firestore.Timestamp.now();
+    let plan;
+    try {
+      plan = buildHouseholdAccessRevocationPlan({
+        organizerUserId,
+        membershipId,
+        membership,
+        accessCodes,
+        userData,
+        privateProfile,
+        timestamp: now
+      });
+    } catch (error) {
+      throw new functions.https.HttpsError('failed-precondition', error?.message || 'Household membership cannot be revoked.');
+    }
+
+    transaction.set(membershipRef, plan.membershipUpdate, { merge: true });
+    plan.accessCodeUpdates.forEach(({ id, update }) => {
+      transaction.set(firestore.doc(`accessCodes/${id}`), update, { merge: true });
+    });
+
+    if (plan.invitedUserId && userRef && userSnap?.exists && plan.userUpdate) {
+      const nextUserData = { ...userData, ...plan.userUpdate };
+      transaction.set(userRef, {
+        ...plan.userUpdate,
+        updatedAt: now
+      }, { merge: true });
+      transaction.set(
+        firestore.doc(`publicUserProfiles/${plan.invitedUserId}`),
+        buildTrustedPublicUserProfileProjectionPayload(nextUserData, {
+          trustedEmail: userData.email || null
+        }),
+        { merge: true }
+      );
+    }
+
+    if (plan.invitedUserId && privateProfileRef && privateProfileSnap?.exists && plan.privateProfileUpdate) {
+      transaction.set(privateProfileRef, {
+        ...plan.privateProfileUpdate,
+        updatedAt: now
+      }, { merge: true });
+    }
+
+    responsePayload = {
+      success: true,
+      membershipId,
+      teamId: plan.teamId,
+      playerId: plan.playerId,
+      revokedUserId: plan.invitedUserId || null
+    };
+  });
+
+  functions.logger.info('Revoked household member access', {
+    organizerUserId,
+    membershipId,
+    teamId: responsePayload?.teamId,
+    playerId: responsePayload?.playerId,
+    revokedUserId: responsePayload?.revokedUserId
+  });
   return responsePayload;
 });
 

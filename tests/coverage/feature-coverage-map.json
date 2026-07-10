@@ -607,16 +607,20 @@
                 "notifyRideClaimUpdated",
                 "notifyRideOfferCancelled",
                 "notifyRideOfferCreated",
+                "revokeHouseholdMemberAccess",
                 "resolveFamilyShareTokenChildren",
                 "sendPracticePacketDueTomorrowReminders"
             ],
             "unitTests": [
                 "functions/test/family-share-core.test.cjs",
+                "functions/test/household-access-core.test.cjs",
                 "tests/unit/app-parent-tools-household-service.test.js",
                 "tests/unit/app-parent-tools-service.test.js",
                 "tests/unit/app-parent-tools-single-event-ics.test.ts",
                 "tests/unit/family-calendar-failures.test.js",
                 "tests/unit/family-plan.test.js",
+                "tests/unit/household-access-revocation-rules.test.js",
+                "tests/unit/household-access-revocation.test.js",
                 "tests/unit/family-share-legacy-token.test.js",
                 "tests/unit/family-share-token-rules.test.js"
             ],
