@@ -4,7 +4,11 @@ import path from 'node:path';
 import { JSDOM } from 'jsdom';
 import { describe, expect, it, vi } from 'vitest';
 
-import { fixBundleVisualizerTooltip, patchBundleVisualizerTooltipFile } from '../../apps/app/build/fixBundleVisualizerTooltip.js';
+import {
+    assertBundleVisualizerTooltipPatched,
+    fixBundleVisualizerTooltip,
+    patchBundleVisualizerTooltipFile
+} from '../../apps/app/build/fixBundleVisualizerTooltip.js';
 
 const brokenTooltipHandler = `          const handleMouseOut = () => {
               setShowTooltip(false);
@@ -182,5 +186,26 @@ ${brokenTooltipHandler}
         const artifactFixtureHtml = readArtifactFixtureHtml();
 
         expect(fixBundleVisualizerTooltip(artifactFixtureHtml)).toBe(artifactFixtureHtml);
+    });
+
+    it('fails loudly when upstream visualizer output no longer contains the expected patch anchors', () => {
+        expect(() => assertBundleVisualizerTooltipPatched('<html><body>new template</body></html>'))
+            .toThrow(/rollup-plugin-visualizer template may have changed/);
+    });
+
+    it('runs the real generated-artifact interaction verifier after every app build', () => {
+        const packageSource = readFileSync(new URL('../../package.json', import.meta.url), 'utf8');
+        const verifierSource = readFileSync(
+            new URL('../../scripts/verify-app-bundle-visualizer.mjs', import.meta.url),
+            'utf8'
+        );
+
+        expect(packageSource).toContain('npm --prefix apps/app run build && node scripts/verify-app-bundle-visualizer.mjs');
+        expect(verifierSource).toContain("path.join(repoRoot, 'apps/app/bundle-visualizer.html')");
+        expect(verifierSource).toContain("document.querySelector('.node')");
+        expect(verifierSource).toContain("document.querySelector('.tooltip')");
+        expect(verifierSource).toContain("document.querySelector('#module-filter-include')");
+        expect(verifierSource).toContain("includeInput.value = '**/react-dom/**';");
+        expect(verifierSource).toContain("document.querySelector('svg')?.textContent.includes('react-dom')");
     });
 });

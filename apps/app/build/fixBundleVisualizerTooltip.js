@@ -68,6 +68,23 @@ export function fixBundleVisualizerTooltip(html) {
     return patchedHtml;
 }
 
+export function assertBundleVisualizerTooltipPatched(html) {
+    const missingGuards = [];
+    if (!html.includes(FIXED_TOOLTIP_HANDLER)) {
+        missingGuards.push('guarded tooltip hover handler');
+    }
+    if (!html.includes(FIXED_FILTER_THROTTLE)) {
+        missingGuards.push('trailing filter throttle callback');
+    }
+
+    if (missingGuards.length > 0) {
+        throw new Error(
+            `Bundle visualizer output is missing the ${missingGuards.join(' and ')}. ` +
+            'The rollup-plugin-visualizer template may have changed; update the patch before shipping this artifact.'
+        );
+    }
+}
+
 export function patchBundleVisualizerTooltipFile(filePath) {
     const html = readFileSync(filePath, 'utf8');
     const patchedHtml = fixBundleVisualizerTooltip(html);
@@ -75,6 +92,8 @@ export function patchBundleVisualizerTooltipFile(filePath) {
     if (patchedHtml !== html) {
         writeFileSync(filePath, patchedHtml);
     }
+
+    assertBundleVisualizerTooltipPatched(patchedHtml);
 
     return patchedHtml !== html;
 }
