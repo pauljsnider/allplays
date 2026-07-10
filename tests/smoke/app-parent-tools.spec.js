@@ -541,10 +541,10 @@ test('parent tools hub completes access, fees, calendars, share, registration, a
     await expect.poll(() => page.evaluate(() => window.__publicTeamLoads)).toBe(0);
     await page.getByRole('button', { name: 'Browse' }).click();
     await expect.poll(() => page.evaluate(() => window.__publicTeamLoads)).toBe(1);
-    await expect(page.getByLabel('Team')).toBeVisible();
+    await expect(page.getByLabel('Team', { exact: true })).toBeVisible();
     await page.getByRole('button', { name: 'Load more teams' }).click();
     await expect.poll(() => page.evaluate(() => window.__publicTeamLoads)).toBe(2);
-    await page.getByLabel('Team').selectOption('team-2');
+    await page.getByLabel('Team', { exact: true }).selectOption('team-2');
     await expect.poll(() => page.evaluate(() => window.__playerLoads)).toEqual(['team-2']);
     await page.getByLabel('Player').selectOption('player-2');
     await page.getByRole('button', { name: /Send request/ }).click();
