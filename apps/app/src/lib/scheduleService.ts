@@ -82,6 +82,7 @@ import {
 } from './adapters/legacyScheduleHelpers';
 import { buildAvailabilityNoteRows, canViewAvailabilityNotes, formatAvailabilityCutoff, isAvailabilityLocked, normalizeAvailabilityPreferences } from './adapters/legacyAvailability';
 import { buildTrackerEventDocument } from './statTrackingEvent';
+import { enrichTournamentScheduleStandings, hasTournamentScheduleGames } from './tournamentScheduleStandings';
 import { loadProfileDocument, saveProfileDocument } from './profileService';
 import { firebaseAuth, getNativeAuthIdToken } from './authService';
 import { startUxTimer } from './uxTiming';
@@ -2531,6 +2532,20 @@ async function loadGames(teamId: string, range: ScheduleDateRange = {}): Promise
   );
 }
 
+async function loadTournamentStandingsSourceGames(
+  teamId: string,
+  loadedGames: ScheduleEventFirestoreRecord[],
+  needsFullHistory: boolean
+) {
+  if (!needsFullHistory || !hasTournamentScheduleGames(loadedGames)) return loadedGames;
+  try {
+    return await loadGames(teamId);
+  } catch (error) {
+    logScheduleWarning('Unable to load full tournament standings history; using loaded schedule games.', 'tournament-standings-history-load', error, { teamId });
+    return loadedGames;
+  }
+}
+
 async function loadGameById(teamId: string, gameId: string): Promise<ScheduleEventFirestoreRecord | null> {
   return readWithNativeFallback(
     `game ${teamId}/${gameId}`,
@@ -2916,7 +2931,13 @@ async function buildTeamSchedule(teamId: string, teamChildren: ParentScheduleChi
     loadPracticeSessions(teamId, gamesRange)
   ]);
   if (!team) return events;
-  const trackedUids = getTrackedCalendarEventUidsFromLoadedGames(dbGames || []);
+  const standingsSourceGames = await loadTournamentStandingsSourceGames(
+    teamId,
+    dbGames || [],
+    Boolean(gamesRange.startDate || gamesRange.endDate)
+  );
+  const scheduleGames = enrichTournamentScheduleStandings(dbGames || [], team, standingsSourceGames);
+  const trackedUids = getTrackedCalendarEventUidsFromLoadedGames(scheduleGames);
 
   const teamName = compactString(team.name) || teamId;
   const teamWithId = { ...team, id: team.id || teamId };
@@ -2927,7 +2948,7 @@ async function buildTeamSchedule(teamId: string, teamChildren: ParentScheduleChi
     child.teamName = child.teamName || teamName;
   });
   const availabilityPreferences = normalizeAvailabilityPreferences(team.availabilityPreferences);
-  const visibleSessions = filterVisiblePracticeSessions(practiceSessions || [], dbGames || []);
+  const visibleSessions = filterVisiblePracticeSessions(practiceSessions || [], scheduleGames);
   const sessionsByEventId = new Map<string, any>();
   const sessions: any[] = [];
   const matchedSessionIds = new Set<string>();
@@ -2937,7 +2958,7 @@ async function buildTeamSchedule(teamId: string, teamChildren: ParentScheduleChi
     sessions.push({ ...session, _parsedDate: normalizeScheduleDate(session.date) });
   });
 
-  for (const game of Array.isArray(dbGames) ? dbGames : []) {
+  for (const game of scheduleGames) {
     const isPractice = game.type === 'practice';
     const type = isPractice ? 'practice' : 'game';
     const isCancelled = game.status === 'cancelled';
@@ -3078,7 +3099,7 @@ async function buildTeamSchedule(teamId: string, teamChildren: ParentScheduleChi
       if (isTrackedCalendarEvent(calendarEvent, trackedUids)) return;
       const date = normalizeScheduleDate(calendarEvent.dtstart);
       if (!date) return;
-      const hasConflict = (dbGames || []).some((dbGame: any) => Math.abs(toEventDate(dbGame.date).getTime() - date.getTime()) < 60000);
+      const hasConflict = scheduleGames.some((dbGame: any) => Math.abs(toEventDate(dbGame.date).getTime() - date.getTime()) < 60000);
       if (hasConflict) return;
       const isPractice = isPracticeEvent(calendarEvent.summary);
       const type = isPractice ? 'practice' : 'game';
@@ -3161,10 +3182,13 @@ async function buildTargetedTeamScheduleEvent(teamId: string, eventId: string, t
   ]);
   if (!team) return [];
 
-  const game = initialGame || (occurrenceMatch?.[1]
+  const loadedGame = initialGame || (occurrenceMatch?.[1]
     ? await loadGameById(teamId, occurrenceMatch[1]).catch(() => null)
     : null);
-  if (!game) return [];
+  if (!loadedGame) return [];
+
+  const standingsSourceGames = await loadTournamentStandingsSourceGames(teamId, [loadedGame], true);
+  const game = enrichTournamentScheduleStandings([loadedGame], team, standingsSourceGames)[0];
 
   const teamName = compactString(team.name) || teamId;
   const teamWithId = { ...team, id: team.id || teamId };

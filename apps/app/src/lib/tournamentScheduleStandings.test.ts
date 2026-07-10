@@ -1,0 +1,131 @@
+import { describe, expect, it } from 'vitest';
+import { buildTournamentPoolOverrideKey } from '../../../../js/tournament-standings.js';
+import { getScheduleTournamentInfo } from './scheduleLogic';
+import { enrichTournamentScheduleStandings } from './tournamentScheduleStandings';
+
+function buildWebTournamentGames() {
+  return [
+    {
+      id: 'pool-a-1',
+      competitionType: 'tournament',
+      status: 'completed',
+      homeScore: 3,
+      awayScore: 1,
+      tournament: {
+        divisionName: '10U Gold',
+        poolName: 'Pool A',
+        slotAssignments: {
+          home: { sourceType: 'team', teamName: 'Tigers' },
+          away: { sourceType: 'team', teamName: 'Lions' }
+        }
+      }
+    },
+    {
+      id: 'pool-a-2',
+      competitionType: 'tournament',
+      status: 'completed',
+      homeScore: 2,
+      awayScore: 0,
+      tournament: {
+        divisionName: '10U Gold',
+        poolName: 'Pool A',
+        slotAssignments: {
+          home: { sourceType: 'team', teamName: 'Bears' },
+          away: { sourceType: 'team', teamName: 'Tigers' }
+        }
+      }
+    },
+    {
+      id: 'pool-a-3',
+      competitionType: 'tournament',
+      status: 'completed',
+      homeScore: 4,
+      awayScore: 1,
+      tournament: {
+        divisionName: '10U Gold',
+        poolName: 'Pool A',
+        slotAssignments: {
+          home: { sourceType: 'team', teamName: 'Lions' },
+          away: { sourceType: 'team', teamName: 'Bears' }
+        }
+      }
+    }
+  ];
+}
+
+describe('tournament schedule standings enrichment', () => {
+  it('derives legacy standings for ordinary web-created game docs with no inline rows', () => {
+    const webGames = buildWebTournamentGames();
+    const enriched = enrichTournamentScheduleStandings(webGames, {
+      name: 'Tigers',
+      standingsConfig: {
+        rankingMode: 'points',
+        points: { win: 3, tie: 1, loss: 0 }
+      }
+    });
+
+    expect(webGames[0].tournament).not.toHaveProperty('computedStandings');
+    expect(enriched[0]).not.toBe(webGames[0]);
+    expect(getScheduleTournamentInfo(enriched[0] as any).standings).toEqual({
+      groupName: '10U Gold • Pool A',
+      isOverridden: false,
+      note: '',
+      rows: [
+        { rank: '1', teamName: 'Lions', record: '1-1', points: 3 },
+        { rank: '2', teamName: 'Tigers', record: '1-1', points: 3 },
+        { rank: '3', teamName: 'Bears', record: '1-1', points: 3 }
+      ]
+    });
+  });
+
+  it('applies team tournamentPoolOverrides through the same legacy ranking contract', () => {
+    const groupName = '10U Gold • Pool A';
+    const enriched = enrichTournamentScheduleStandings(buildWebTournamentGames(), {
+      name: 'Tigers',
+      standingsConfig: {
+        rankingMode: 'points',
+        points: { win: 3, tie: 1, loss: 0 }
+      },
+      tournamentPoolOverrides: {
+        [buildTournamentPoolOverrideKey(groupName)]: {
+          poolName: groupName,
+          teamOrder: ['Bears', 'Tigers', 'Lions']
+        }
+      }
+    });
+
+    expect(getScheduleTournamentInfo(enriched[1] as any).standings).toMatchObject({
+      groupName,
+      isOverridden: true,
+      note: 'Final ranking',
+      rows: [
+        { rank: '1', teamName: 'Bears' },
+        { rank: '2', teamName: 'Tigers' },
+        { rank: '3', teamName: 'Lions' }
+      ]
+    });
+  });
+
+  it('keeps an existing inline standings payload ahead of derived standings', () => {
+    const webGames = buildWebTournamentGames();
+    const inlineStandings = {
+      poolName: 'Published Pool A',
+      rows: [{ rank: 7, teamName: 'Published Tigers', wins: 9, losses: 0, points: 27 }],
+      isOverridden: true
+    };
+    webGames[0].tournament = {
+      ...webGames[0].tournament,
+      standings: inlineStandings
+    } as typeof webGames[0]['tournament'];
+
+    const enriched = enrichTournamentScheduleStandings(webGames, { name: 'Tigers' });
+
+    expect((enriched[0].tournament as Record<string, unknown>)?.standings).toBe(inlineStandings);
+    expect(getScheduleTournamentInfo(enriched[0] as any).standings).toEqual({
+      groupName: 'Published Pool A',
+      isOverridden: true,
+      note: 'Final ranking',
+      rows: [{ rank: '7', teamName: 'Published Tigers', record: '9-0', points: 27 }]
+    });
+  });
+});

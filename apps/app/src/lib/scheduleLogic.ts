@@ -610,7 +610,8 @@ function getScheduleTournamentStandingInfo(event: Record<string, any>, tournamen
     tournament.standingsRows,
     event.tournamentStandings,
     event.poolStandings,
-    event.standings
+    event.standings,
+    tournament.computedStandings
   ];
 
   for (const source of sources) {

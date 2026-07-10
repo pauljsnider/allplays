@@ -186,6 +186,7 @@ import { expandRecurrence, fetchAndParseCalendar, isTeamActive, mergeAssignments
 import { getCachedAppData, loadCachedAppData } from './appDataCache';
 import { mapScheduleEventRecord } from './firestore/mappers';
 import { loadProfileDocument } from './profileService';
+import { getScheduleTournamentInfo } from './scheduleLogic';
 import { adjustGameScore, buildPlayerScoringLiveEvent, buildSingleGameTournamentLegacySchedulePayload, claimOfficialAssignmentItem, createScheduledGameForApp, createScheduledPracticeForApp, createScheduledTournamentBlockForApp, createStaffRsvpAvailabilityLoader, flushPendingLivePublishOperations, hydrateParentScheduleDetails, loadOfficialAssignments, loadParentSchedule, loadParentScheduleChildren, loadParentScheduleEventDetail, loadScheduledPracticeSeriesForEdit, loadStaffPracticeAttendance, loadStaffScheduleRsvpBreakdown, publishLiveScoreUpdateEvent, recordPlayerGameStat, recordPlayerScoringStat, releaseParentScheduleAssignmentClaim, resolveCachedParentScheduleEvents, resolveLiveGameClockSnapshot, resolveParentGameRoute, respondToOfficialAssignmentItem, revertScheduledPracticeOccurrenceForApp, saveScheduledGameLineupDraftForApp, saveStaffPracticeAttendance, submitStaffScheduleRsvpOverride, TournamentBlockPartialSaveError, undoRecordedPlayerGameStat, updateLiveGameClockState, updateScheduledPracticeForApp } from './scheduleService';
 
 function playerSnapshot(id: string, data: Record<string, unknown> | null) {
@@ -2781,6 +2782,98 @@ describe('partial parent schedule team failures (#3021)', () => {
     });
   });
 
+});
+
+describe('web-created tournament standings hydration (#1967)', () => {
+  const parentUser = {
+    uid: 'parent-1',
+    email: 'parent@example.com',
+    parentOf: [{ teamId: 'team-1', playerId: 'p1', playerName: 'Kid One' }]
+  } as any;
+  const tournamentGames = [
+    {
+      id: 'pool-a-1',
+      type: 'game',
+      date: new Date('2026-06-20T18:00:00.000Z'),
+      competitionType: 'tournament',
+      status: 'completed',
+      homeScore: 3,
+      awayScore: 1,
+      tournament: {
+        poolName: 'Pool A',
+        slotAssignments: {
+          home: { sourceType: 'team', teamName: 'Tigers' },
+          away: { sourceType: 'team', teamName: 'Lions' }
+        }
+      }
+    },
+    {
+      id: 'pool-a-2',
+      type: 'game',
+      date: new Date('2026-06-21T18:00:00.000Z'),
+      competitionType: 'tournament',
+      status: 'completed',
+      homeScore: 2,
+      awayScore: 0,
+      tournament: {
+        poolName: 'Pool A',
+        slotAssignments: {
+          home: { sourceType: 'team', teamName: 'Bears' },
+          away: { sourceType: 'team', teamName: 'Tigers' }
+        }
+      }
+    }
+  ];
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    (globalThis as any).window = { location: { protocol: 'https:' }, setTimeout, clearTimeout } as any;
+    vi.mocked(loadProfileDocument).mockResolvedValue({ parentOf: parentUser.parentOf } as any);
+    vi.mocked(getTeam).mockResolvedValue({
+      id: 'team-1',
+      name: 'Tigers',
+      standingsConfig: { rankingMode: 'points', points: { win: 3, tie: 1, loss: 0 } }
+    } as any);
+    vi.mocked(getTeams).mockResolvedValue([] as any);
+    vi.mocked(getGames).mockResolvedValue(tournamentGames as any);
+    vi.mocked(getPracticeSessions).mockResolvedValue([] as any);
+    vi.mocked(getDoc).mockResolvedValue(playerSnapshot('p1', { id: 'p1', name: 'Kid One', active: true }) as any);
+  });
+
+  it('computes from the complete game set and exposes the result on schedule rows', async () => {
+    const result = await loadParentSchedule(parentUser, { hydrateDetails: false, expandStaffPlayers: false });
+
+    expect(getGames).toHaveBeenCalledTimes(2);
+    expect(vi.mocked(getGames).mock.calls[0][1]).toMatchObject({ startDate: expect.any(Date) });
+    expect(vi.mocked(getGames).mock.calls[1][1]).toEqual({});
+    expect(getScheduleTournamentInfo(result.events[0] as any).standings).toMatchObject({
+      groupName: 'Pool A',
+      rows: [
+        { rank: '1', teamName: 'Bears', record: '1-0', points: 3 },
+        { rank: '2', teamName: 'Tigers', record: '1-1', points: 3 },
+        { rank: '3', teamName: 'Lions', record: '0-1', points: 0 }
+      ]
+    });
+  });
+
+  it('hydrates a direct tournament detail route from the same complete game set', async () => {
+    vi.mocked(getGame).mockResolvedValue(tournamentGames[0] as any);
+
+    const result = await loadParentScheduleEventDetail(parentUser, {
+      teamId: 'team-1',
+      eventId: 'pool-a-1',
+      hydrateDetails: false,
+      expandStaffPlayers: false
+    });
+
+    expect(getGame).toHaveBeenCalledWith('team-1', 'pool-a-1');
+    expect(getGames).toHaveBeenCalledWith('team-1', {});
+    expect(getScheduleTournamentInfo(result.events[0] as any).standings?.rows).toEqual([
+      { rank: '1', teamName: 'Bears', record: '1-0', points: 3 },
+      { rank: '2', teamName: 'Tigers', record: '1-1', points: 3 },
+      { rank: '3', teamName: 'Lions', record: '0-1', points: 0 }
+    ]);
+  });
 });
 
 describe('team schedule game windowing (#2034)', () => {
