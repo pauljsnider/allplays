@@ -93,6 +93,40 @@ describe('AccessTool deep-link reconciliation (#3088)', () => {
         });
     });
 
+    it('does not repeat initial discovery when a deep link returns an empty team page', async () => {
+        accessServiceMocks.discoverParentAccessTeams.mockResolvedValue({ teams: [], nextCursor: null });
+        accessServiceMocks.loadParentAccessTeam.mockResolvedValue(null);
+
+        renderTool('team-z');
+
+        await waitFor(() => expect(accessServiceMocks.discoverParentAccessTeams).toHaveBeenCalledTimes(1));
+        await waitFor(() => expect(accessServiceMocks.loadParentAccessTeam).toHaveBeenCalledWith('team-z'));
+        await act(async () => {
+            await Promise.resolve();
+            await Promise.resolve();
+        });
+
+        expect(accessServiceMocks.discoverParentAccessTeams).toHaveBeenCalledTimes(1);
+        expect(accessServiceMocks.loadParentAccessTeam).toHaveBeenCalledTimes(1);
+    });
+
+    it('does not repeat initial discovery when a deep-link browse rejects', async () => {
+        accessServiceMocks.discoverParentAccessTeams.mockRejectedValue(new Error('Discovery unavailable'));
+        accessServiceMocks.loadParentAccessTeam.mockResolvedValue(null);
+
+        renderTool('team-z');
+
+        await waitFor(() => expect(accessServiceMocks.discoverParentAccessTeams).toHaveBeenCalledTimes(1));
+        await waitFor(() => expect(accessServiceMocks.loadParentAccessTeam).toHaveBeenCalledWith('team-z'));
+        await act(async () => {
+            await Promise.resolve();
+            await Promise.resolve();
+        });
+
+        expect(accessServiceMocks.discoverParentAccessTeams).toHaveBeenCalledTimes(1);
+        expect(accessServiceMocks.loadParentAccessTeam).toHaveBeenCalledTimes(1);
+    });
+
     it('switches to a newly deep-linked team while already mounted', async () => {
         renderTool('team-a');
         await waitFor(() => expect(accessServiceMocks.loadParentAccessPlayers).toHaveBeenCalledWith('team-a'));
@@ -121,6 +155,46 @@ describe('AccessTool deep-link reconciliation (#3088)', () => {
             expect(select?.value).toBe('');
         });
         expect(accessServiceMocks.loadParentAccessPlayers).not.toHaveBeenCalledWith('team-z');
+    });
+
+    it('clears the prior team and player when an unmatched deep-link lookup rejects', async () => {
+        let rejectTargetLookup: (reason?: unknown) => void = () => {};
+        accessServiceMocks.loadParentAccessPlayers.mockResolvedValue([
+            { id: 'player-a', name: 'Player A', number: '7' }
+        ]);
+        accessServiceMocks.loadParentAccessTeam.mockImplementation((teamId: string) => {
+            if (teamId !== 'team-z') return Promise.resolve(null);
+            return new Promise((_resolve, reject) => {
+                rejectTargetLookup = reject;
+            });
+        });
+        const view = renderTool('team-a');
+        await waitFor(() => expect(accessServiceMocks.loadParentAccessPlayers).toHaveBeenCalledWith('team-a'));
+        expect(await view.findByRole('option', { name: '#7 Player A' })).toBeTruthy();
+        expect((view.getByLabelText('Team') as HTMLSelectElement).value).toBe('team-a');
+        expect((view.getByLabelText('Player') as HTMLSelectElement).value).toBe('player-a');
+        expect(view.getByRole('button', { name: 'Send request' })).not.toBeDisabled();
+
+        await act(async () => {
+            navigate('/parent-tools/access?teamId=team-z');
+        });
+
+        await waitFor(() => expect(accessServiceMocks.loadParentAccessTeam).toHaveBeenCalledWith('team-z'));
+        await waitFor(() => {
+            expect((view.getByLabelText('Team') as HTMLSelectElement).value).toBe('');
+            expect((view.getByLabelText('Player') as HTMLSelectElement).value).toBe('');
+            expect(view.getByRole('button', { name: 'Send request' })).toBeDisabled();
+        });
+
+        await act(async () => {
+            rejectTargetLookup(new Error('Target lookup failed'));
+        });
+
+        expect(await view.findByText('Target lookup failed')).toBeTruthy();
+        expect((view.getByLabelText('Team') as HTMLSelectElement).value).toBe('');
+        expect((view.getByLabelText('Player') as HTMLSelectElement).value).toBe('');
+        expect(view.getByRole('button', { name: 'Send request' })).toBeDisabled();
+        expect(accessServiceMocks.submitParentAccessRequest).not.toHaveBeenCalled();
     });
 
     it('resolves a deep-linked team that is beyond the first discovery page', async () => {

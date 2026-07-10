@@ -33,7 +33,11 @@ export function AccessTool({ auth, onAccessChanged }: { auth: AuthState; onAcces
     // teamId opened while already mounted) is applied, while team-list refreshes
     // for the same deep link don't clobber a later manual selection.
     const appliedDeepLinkRef = useRef('');
+    const initialDeepLinkDiscoveryAttemptRef = useRef('');
+    const initialDeepLinkDiscoveryCompleteRef = useRef('');
+    const deepLinkLookupAttemptRef = useRef('');
     const teamSearchRequestRef = useRef(0);
+    const [deepLinkReconcileVersion, setDeepLinkReconcileVersion] = useState(0);
     const [redeemCode, setRedeemCode] = useState('');
     const [message, setMessage] = useState('');
     const accessLoadOperation = useParentToolAsyncOperation();
@@ -181,6 +185,10 @@ export function AccessTool({ auth, onAccessChanged }: { auth: AuthState; onAcces
     }, [auth.user?.uid, refresh]);
 
     useEffect(() => {
+        appliedDeepLinkRef.current = '';
+        initialDeepLinkDiscoveryAttemptRef.current = '';
+        initialDeepLinkDiscoveryCompleteRef.current = '';
+        deepLinkLookupAttemptRef.current = '';
         setManualRequestOpen(false);
         setTeams([]);
         setTeamSearchText('');
@@ -199,19 +207,28 @@ export function AccessTool({ auth, onAccessChanged }: { auth: AuthState; onAcces
 
     useEffect(() => {
         if (!deepLinkedTeamId || teams.length || loadingTeams) return;
-        void loadTeams({ searchText: '', cursor: null, append: false });
-    }, [deepLinkedTeamId, loadTeams, loadingTeams, teams.length]);
+        if (initialDeepLinkDiscoveryAttemptRef.current === deepLinkedTeamId) return;
+        initialDeepLinkDiscoveryAttemptRef.current = deepLinkedTeamId;
+        void loadTeams({ searchText: '', cursor: null, append: false }).finally(() => {
+            if (initialDeepLinkDiscoveryAttemptRef.current !== deepLinkedTeamId) return;
+            initialDeepLinkDiscoveryCompleteRef.current = deepLinkedTeamId;
+            setDeepLinkReconcileVersion((current) => current + 1);
+        });
+    }, [deepLinkedTeamId, deepLinkReconcileVersion, loadTeams, loadingTeams, teams.length]);
 
     useEffect(() => {
         if (deepLinkedTeamId) return;
         appliedDeepLinkRef.current = '';
+        initialDeepLinkDiscoveryAttemptRef.current = '';
+        initialDeepLinkDiscoveryCompleteRef.current = '';
+        deepLinkLookupAttemptRef.current = '';
     }, [deepLinkedTeamId]);
 
     useEffect(() => {
         // Wait until teams have loaded so we can tell whether the deep-linked team
         // is accessible before reconciling the selection.
         if (!deepLinkedTeamId || appliedDeepLinkRef.current === deepLinkedTeamId) return;
-        if (loadingTeams || !teams.length) return;
+        if (loadingTeams) return;
         setManualRequestOpen(true);
         if (teams.some((team) => team.id === deepLinkedTeamId)) {
             // A new deep link is an explicit navigation intent: switch to it even
@@ -219,9 +236,18 @@ export function AccessTool({ auth, onAccessChanged }: { auth: AuthState; onAcces
             appliedDeepLinkRef.current = deepLinkedTeamId;
             setSelectedTeamId(deepLinkedTeamId);
         } else {
+            if (!teams.length && initialDeepLinkDiscoveryCompleteRef.current !== deepLinkedTeamId) return;
+            if (deepLinkLookupAttemptRef.current === deepLinkedTeamId) return;
+            deepLinkLookupAttemptRef.current = deepLinkedTeamId;
+            // A new deep link replaces the prior selection intent. Clear the old
+            // roster before looking up the target so a failed lookup cannot leave
+            // submission enabled for the previous team.
+            setSelectedTeamId('');
+            setSelectedPlayerId('');
+            setPlayers([]);
             void loadDeepLinkedTeam(deepLinkedTeamId);
         }
-    }, [deepLinkedTeamId, teams, loadingTeams, loadDeepLinkedTeam]);
+    }, [deepLinkedTeamId, deepLinkReconcileVersion, teams, loadingTeams, loadDeepLinkedTeam]);
 
     const loadPlayersForTeam = useCallback(async (teamId: string) => {
         const rows = await runPlayerLoad(
@@ -235,6 +261,22 @@ export function AccessTool({ auth, onAccessChanged }: { auth: AuthState; onAcces
             }
         );
     }, [runPlayerLoad]);
+
+    const retryManualLookup = useCallback(() => {
+        if (playerLoadError && selectedTeamId) {
+            void loadPlayersForTeam(selectedTeamId);
+            return;
+        }
+        if (deepLinkedTeamId) {
+            appliedDeepLinkRef.current = '';
+            initialDeepLinkDiscoveryAttemptRef.current = '';
+            initialDeepLinkDiscoveryCompleteRef.current = '';
+            deepLinkLookupAttemptRef.current = '';
+            setDeepLinkReconcileVersion((current) => current + 1);
+            return;
+        }
+        void loadTeams({ searchText: teamSearchText, cursor: null, append: false });
+    }, [deepLinkedTeamId, loadPlayersForTeam, loadTeams, playerLoadError, selectedTeamId, teamSearchText]);
 
     useEffect(() => {
         let cancelled = false;
@@ -352,7 +394,7 @@ export function AccessTool({ auth, onAccessChanged }: { auth: AuthState; onAcces
                         </form>
                         {manualRequestOpen ? (
                             <form className="mt-3 grid gap-3 lg:grid-cols-[1fr_1fr_auto]" onSubmit={submit}>
-                                {manualLookupError ? <div className="lg:col-span-3"><RetryableStatus error={manualLookupError} fallbackMessage="Unable to load public teams." onRetry={playerLoadError && selectedTeamId ? () => { void loadPlayersForTeam(selectedTeamId); } : () => { void loadTeams({ searchText: teamSearchText, cursor: null, append: false }); }} retrying={loadingTeams || loadingPlayers} /></div> : null}
+                                {manualLookupError ? <div className="lg:col-span-3"><RetryableStatus error={manualLookupError} fallbackMessage="Unable to load public teams." onRetry={retryManualLookup} retrying={loadingTeams || loadingPlayers} /></div> : null}
                                 <div className="min-w-0 lg:col-span-3">
                                     <label className="app-label" htmlFor="parent-access-team-search">Search public teams</label>
                                     <div className="mt-1 flex flex-col gap-2 sm:flex-row">
