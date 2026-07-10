@@ -34,7 +34,8 @@ function createScenario() {
                 { id: 'pts', label: 'PTS', scope: 'player', visibility: 'public', type: 'base' },
                 { id: 'reb', label: 'REB', scope: 'player', visibility: 'public', type: 'base' },
                 { id: 'ast', label: 'AST', scope: 'player', visibility: 'public', type: 'base' },
-                { id: 'effort', label: 'EFFORT', scope: 'player', visibility: 'private', type: 'base' }
+                { id: 'effort', label: 'EFFORT', scope: 'player', visibility: 'private', type: 'base' },
+                { id: 'turnovers', label: 'TURNOVERS', scope: 'team', visibility: 'public', type: 'base' }
             ]
         },
         aggregatedStats: {
@@ -59,12 +60,12 @@ function createScenario() {
             p1: { stats: { effort: 7 } },
             p2: { stats: { effort: 5 } }
         },
-        teamStats: {},
+        teamStats: { turnovers: 8 },
         setCompletedGamePlayerStatsCalls: []
     };
 }
 
-async function installMocks(page, scenario) {
+async function installMocks(page, scenario, { delayedAuth = false } = {}) {
     await page.addInitScript(({ storeKey, value }) => {
         localStorage.setItem(storeKey, JSON.stringify(value));
     }, { storeKey: STORE_KEY, value: scenario });
@@ -259,7 +260,15 @@ async function installMocks(page, scenario) {
         }
     `;
 
-    const authModule = `
+    const authModule = delayedAuth ? `
+        export function checkAuth(callback) {
+            window.__GAME_AUTH_EVENTS__ = ['pending'];
+            setTimeout(() => {
+                window.__GAME_AUTH_EVENTS__.push('authenticated');
+                callback({ uid: 'coach-1', email: 'coach@example.com' });
+            }, 4000);
+        }
+    ` : `
         export function checkAuth(callback) {
             callback({ uid: 'coach-1', email: 'coach@example.com' });
         }
@@ -393,4 +402,44 @@ test('completed-game stat editor saves corrections and DNP state through real co
             timeMs: 0
         }
     });
+});
+
+test('late authentication refreshes manager controls and private edit data without duplicating report rows', async ({ page, baseURL }) => {
+    await installMocks(page, createScenario(), { delayedAuth: true });
+
+    await page.goto(`${baseURL}/game.html#teamId=team-1&gameId=game-1`, { waitUntil: 'domcontentloaded' });
+
+    const publicRows = page.locator('#stats-body tr');
+    await expect(publicRows).toHaveCount(2, { timeout: 5000 });
+    await expect(publicRows.first()).toContainText('Ava Cole');
+    await expect(page.locator('#summary-admin')).toBeHidden();
+    await expect(page.locator('#stat-sheet-admin')).toBeHidden();
+    await expect(page.locator('#edit-stats-btn')).toBeHidden();
+    await expect(page.locator('#edit-team-stats-btn')).toBeHidden();
+    await expect(page.locator('#stats-header-row')).not.toContainText('EFFORT');
+
+    const publicShape = await page.evaluate(() => ({
+        playerHeaders: document.querySelectorAll('#stats-header-row th').length,
+        playerRows: document.querySelectorAll('#stats-body tr').length,
+        opponentHeaders: document.querySelectorAll('#opponent-stats-header-row th').length,
+        opponentRows: document.querySelectorAll('#opponent-stats-body tr').length
+    }));
+
+    await expect(page.locator('#summary-admin')).toBeVisible({ timeout: 6000 });
+    await expect(page.locator('#stat-sheet-admin')).toBeVisible();
+    await expect(page.locator('#edit-stats-btn')).toBeVisible();
+    await expect(page.locator('#edit-team-stats-btn')).toBeVisible();
+    await expect.poll(() => page.evaluate(() => window.__GAME_AUTH_EVENTS__)).toEqual(['pending', 'authenticated']);
+
+    await page.locator('#edit-stats-btn').click();
+    await expect(page.locator('#stats-editor-panel')).toBeVisible();
+    await expect(page.locator('[data-stat-field="effort"]')).toHaveValue('7');
+    await expect(page.locator('#stats-header-row')).not.toContainText('EFFORT');
+
+    await expect.poll(() => page.evaluate(() => ({
+        playerHeaders: document.querySelectorAll('#stats-header-row th').length,
+        playerRows: document.querySelectorAll('#stats-body tr').length,
+        opponentHeaders: document.querySelectorAll('#opponent-stats-header-row th').length,
+        opponentRows: document.querySelectorAll('#opponent-stats-body tr').length
+    }))).toEqual(publicShape);
 });
