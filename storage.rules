@@ -83,6 +83,25 @@ service firebase.storage {
          firestore.get(folderPath).data.get('visibility', 'team') == 'team');
     }
 
+    function canDeleteOwnTeamMediaObject(teamId, folderId, userId) {
+      return isSignedIn() &&
+        request.auth.uid == userId &&
+        (canReadTeamMediaObject(teamId, folderId) ||
+         (hasTeamMediaUploadGrant(teamId) && canUploadTeamMediaFolder(teamId, folderId)));
+    }
+
+    function canDeleteOwnChatAttachment(teamId, conversationId, userId) {
+      return isSignedIn() &&
+        request.auth.uid == userId &&
+        canAccessChatAttachment(teamId, conversationId);
+    }
+
+    function canDeleteOwnTeamScopedUpload(teamId, userId) {
+      return isSignedIn() &&
+        request.auth.uid == userId &&
+        canAccessTeamMedia(teamId);
+    }
+
     function isAllowedTeamMediaUploadType(contentType) {
       return contentType.matches('image/.*') ||
         contentType in [
@@ -125,7 +144,8 @@ service firebase.storage {
         request.resource.size > 0 &&
         request.resource.size <= 10 * 1024 * 1024 &&
         isAllowedTeamMediaUploadType(request.resource.contentType);
-      allow delete: if isTeamOwnerOrAdmin(teamId) || request.auth.uid == userId;
+      allow delete: if isTeamOwnerOrAdmin(teamId) ||
+        canDeleteOwnTeamMediaObject(teamId, folderId, userId);
       allow update: if false;
     }
 
@@ -146,7 +166,8 @@ service firebase.storage {
       allow create: if canAccessChatAttachment(teamId, conversationId) &&
         request.auth.uid == userId &&
         isAllowedChatAttachmentUpload(request.resource.contentType, request.resource.size);
-      allow delete: if isTeamOwnerOrAdmin(teamId) || request.auth.uid == userId;
+      allow delete: if isTeamOwnerOrAdmin(teamId) ||
+        canDeleteOwnChatAttachment(teamId, conversationId, userId);
       allow update: if false;
     }
 
@@ -154,7 +175,8 @@ service firebase.storage {
       allow get: if isTeamOwnerOrAdmin(teamId) || request.auth.uid == userId;
       allow list: if false;
       allow create: if false;
-      allow delete: if isTeamOwnerOrAdmin(teamId) || request.auth.uid == userId;
+      allow delete: if isTeamOwnerOrAdmin(teamId) ||
+        canDeleteOwnTeamScopedUpload(teamId, userId);
       allow update: if false;
     }
 
@@ -165,7 +187,8 @@ service firebase.storage {
         request.auth.uid == userId &&
         request.resource.size > 0 &&
         request.resource.size <= 20 * 1024 * 1024;
-      allow delete: if isTeamOwnerOrAdmin(teamId) || request.auth.uid == userId;
+      allow delete: if isTeamOwnerOrAdmin(teamId) ||
+        canDeleteOwnTeamScopedUpload(teamId, userId);
       allow update: if false;
     }
 
@@ -177,7 +200,8 @@ service firebase.storage {
         request.auth.uid == userId &&
         request.resource.size > 0 &&
         request.resource.size <= 20 * 1024 * 1024;
-      allow delete: if isTeamOwnerOrAdmin(teamId) || request.auth.uid == userId;
+      allow delete: if isTeamOwnerOrAdmin(teamId) ||
+        canDeleteOwnTeamScopedUpload(teamId, userId);
       allow update: if false;
     }
 
@@ -195,7 +219,8 @@ service firebase.storage {
         request.resource.size > 0 &&
         request.resource.size <= 100 * 1024 * 1024 &&
         request.resource.contentType.matches('video/.*');
-      allow delete: if isTeamOwnerOrAdmin(teamId) || request.auth.uid == userId;
+      allow delete: if isTeamOwnerOrAdmin(teamId) ||
+        canDeleteOwnTeamScopedUpload(teamId, userId);
       allow update: if false;
     }
 

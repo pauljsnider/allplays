@@ -17,6 +17,18 @@ function assertMatches(text, pattern, label) {
     }
 }
 
+function assertEquals(actual, expected, label) {
+    if (actual !== expected) {
+        throw new Error(`${label} expected ${expected} but got ${actual}`);
+    }
+}
+
+function canDeleteOwnScopedStorageUpload({ authUid, pathUserId, isTeamAdmin = false, hasCurrentScopeAccess = false }) {
+    return authUid !== null &&
+        (isTeamAdmin ||
+            (authUid === pathUserId && hasCurrentScopeAccess));
+}
+
 export function extractMatchBlock(text, startMarker) {
     const start = text.indexOf(startMarker);
     if (start === -1) {
@@ -32,7 +44,12 @@ export function validateFirebaseRulesCi() {
     const firebaseJson = JSON.parse(readText('firebase.json'));
     const firestoreRules = readText('firestore.rules');
     const storageRules = readText('storage.rules');
+    const teamMediaRules = extractMatchBlock(storageRules, 'match /team-media/{teamId}/{folderId}/{userId}/{fileName}');
     const chatFallbackRules = extractMatchBlock(storageRules, 'match /stat-sheets/team-chat/{teamId}/{conversationId}/{userId}/{fileName}');
+    const legacyChatFallbackRules = extractMatchBlock(storageRules, 'match /stat-sheets/team-chat/{teamId}/{userId}/{fileName}');
+    const statSheetFallbackRules = extractMatchBlock(storageRules, 'match /stat-sheets/team-games/{teamId}/{userId}/{fileName}');
+    const drillFallbackRules = extractMatchBlock(storageRules, 'match /stat-sheets/drills/{teamId}/{drillId}/{userId}/{fileName}');
+    const clipFallbackRules = extractMatchBlock(storageRules, 'match /game-clips/{teamId}/{gameId}/{userId}/{fileName}');
     const legacyGameClipRules = extractMatchBlock(storageRules, 'match /game-clips/{fileName} {');
     const collectionGroupGamesHelper = (firestoreRules.match(/function canReadCollectionGroupGameDocument\(teamPath, data\) \{[\s\S]*?\n\s*}/) || [''])[0];
     const gameEventsRules = (firestoreRules.match(/match \/events\/\{eventId} \{[\s\S]*?\n\s*}/) || [''])[0];
@@ -101,6 +118,52 @@ export function validateFirebaseRulesCi() {
     assertIncludes(storageRules, 'allow create: if canAccessTeamMedia(teamId) &&', 'Scoped Storage game clip create rules');
     assertIncludes(storageRules, 'request.auth.uid == userId', 'Scoped Storage uploader match rules');
     assertIncludes(storageRules, 'request.resource.contentType.matches(\'video/.*\')', 'Scoped Storage video content-type rules');
+    assertIncludes(storageRules, 'function canDeleteOwnTeamMediaObject(teamId, folderId, userId)', 'Team media scoped Storage delete helper');
+    assertIncludes(storageRules, 'function canDeleteOwnChatAttachment(teamId, conversationId, userId)', 'Chat fallback scoped Storage delete helper');
+    assertIncludes(storageRules, 'function canDeleteOwnTeamScopedUpload(teamId, userId)', 'Team scoped Storage delete helper');
+    assertIncludes(storageRules, '(hasTeamMediaUploadGrant(teamId) && canUploadTeamMediaFolder(teamId, folderId))', 'Team media current upload grant delete scope');
+    assertIncludes(teamMediaRules, 'allow delete: if isTeamOwnerOrAdmin(teamId) ||\n        canDeleteOwnTeamMediaObject(teamId, folderId, userId);', 'Team media scoped Storage delete rules');
+    assertIncludes(chatFallbackRules, 'allow delete: if isTeamOwnerOrAdmin(teamId) ||\n        canDeleteOwnChatAttachment(teamId, conversationId, userId);', 'Chat fallback scoped Storage delete rules');
+    for (const [label, block] of [
+        ['Legacy chat fallback scoped Storage delete rules', legacyChatFallbackRules],
+        ['Stat sheet scoped Storage delete rules', statSheetFallbackRules],
+        ['Drill scoped Storage delete rules', drillFallbackRules],
+        ['Game clip scoped Storage delete rules', clipFallbackRules]
+    ]) {
+        assertIncludes(block, 'allow delete: if isTeamOwnerOrAdmin(teamId) ||\n        canDeleteOwnTeamScopedUpload(teamId, userId);', label);
+    }
+    for (const [label, block] of [
+        ['Team media Storage delete rule', teamMediaRules],
+        ['Chat fallback Storage delete rule', chatFallbackRules],
+        ['Legacy chat fallback Storage delete rule', legacyChatFallbackRules],
+        ['Stat sheet Storage delete rule', statSheetFallbackRules],
+        ['Drill Storage delete rule', drillFallbackRules],
+        ['Game clip Storage delete rule', clipFallbackRules]
+    ]) {
+        if (block.includes('allow delete: if isTeamOwnerOrAdmin(teamId) || request.auth.uid == userId;')) {
+            throw new Error(`${label} must not use bare uploader UID deletes without current scope access.`);
+        }
+    }
+    assertEquals(canDeleteOwnScopedStorageUpload({
+        authUid: 'uploader-1',
+        pathUserId: 'uploader-1',
+        hasCurrentScopeAccess: true
+    }), true, 'Current uploader Storage delete case');
+    assertEquals(canDeleteOwnScopedStorageUpload({
+        authUid: 'uploader-1',
+        pathUserId: 'uploader-1',
+        hasCurrentScopeAccess: false
+    }), false, 'Revoked uploader Storage delete case');
+    assertEquals(canDeleteOwnScopedStorageUpload({
+        authUid: 'outsider-1',
+        pathUserId: 'uploader-1',
+        hasCurrentScopeAccess: true
+    }), false, 'Outsider Storage delete case');
+    assertEquals(canDeleteOwnScopedStorageUpload({
+        authUid: 'coach-1',
+        pathUserId: 'uploader-1',
+        isTeamAdmin: true
+    }), true, 'Team admin Storage delete case');
     assertIncludes(storageRules, 'match /game-clips/{fileName} {', 'Legacy Storage game clip rules');
     assertIncludes(legacyGameClipRules, 'allow get, create, delete: if false;', 'Legacy Storage deny-all rule');
     assertIncludes(storageRules, 'function isAllowedChatAttachmentUpload(contentType, size)', 'Chat fallback attachment upload helper');
