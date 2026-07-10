@@ -617,6 +617,8 @@ describe('React app shell search', () => {
 
         expect(container.textContent).toContain('Add to ALL PLAYS');
         expect(container.textContent).toContain('Create team');
+
+        await clickButton(container, 'More workflows');
         expect(container.textContent).toContain('Add player');
         expect(container.textContent).toContain('Game or practice');
         expect(container.textContent).toContain('Invite family');

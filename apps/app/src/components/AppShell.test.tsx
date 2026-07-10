@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { Link, MemoryRouter, Route, Routes, useLocation } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { AppShell } from './AppShell';
@@ -539,6 +539,40 @@ describe('AppShell', () => {
     await waitFor(() => expect(screen.getByRole('dialog', { name: 'Search teams, players, actions, and help' })).toBeTruthy());
   });
 
+  it.each([
+    { isDesktopWeb: true, layout: 'desktop web' },
+    { isDesktopWeb: false, layout: 'mobile/native' },
+  ])('shows the same common-first Add workflow state on $layout', ({ isDesktopWeb }) => {
+    useShellLayoutMock.mockReturnValue({ isDesktopWeb });
+
+    render(
+      <MemoryRouter initialEntries={['/home']}>
+        <Routes>
+          <Route path="/home" element={<AppShell auth={signedInAuth}><div>Home</div></AppShell>} />
+        </Routes>
+      </MemoryRouter>
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'Add' }));
+
+    const dialog = screen.getByRole('dialog', { name: 'Add workflow' });
+    expect(dialog.querySelectorAll('.add-workflow-card')).toHaveLength(3);
+    expect(within(dialog).getByRole('button', { name: /^Join with code/ })).toBeTruthy();
+    expect(within(dialog).getByRole('button', { name: /^Find team/ })).toBeTruthy();
+    expect(within(dialog).getByRole('button', { name: /^Create team/ })).toBeTruthy();
+    expect(within(dialog).queryByRole('button', { name: /^Game or practice/ })).toBeNull();
+    expect(within(dialog).queryByRole('button', { name: /^Fees/ })).toBeNull();
+
+    const disclosure = within(dialog).getByRole('button', { name: /^More workflows/ });
+    expect(disclosure.getAttribute('aria-expanded')).toBe('false');
+    fireEvent.click(disclosure);
+
+    expect(disclosure.getAttribute('aria-expanded')).toBe('true');
+    expect(dialog.querySelectorAll('.add-workflow-card')).toHaveLength(16);
+    expect(within(dialog).getByRole('button', { name: /^Game or practice/ })).toBeTruthy();
+    expect(within(dialog).getByRole('button', { name: /^Fees/ })).toBeTruthy();
+  });
+
   it('routes Fees through the native team picker instead of the public website handoff', async () => {
     render(
       <MemoryRouter initialEntries={['/home']}>
@@ -550,6 +584,7 @@ describe('AppShell', () => {
     );
 
     fireEvent.click(screen.getByRole('button', { name: 'Add' }));
+    fireEvent.click(screen.getByRole('button', { name: /^More workflows/ }));
     fireEvent.click(screen.getByRole('button', { name: /FeesSelect a team for fee setup, checkout, and balancesCoach\/Admin/i }));
 
     await waitFor(() => {
