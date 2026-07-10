@@ -1385,6 +1385,14 @@ service cloud.firestore {
              hasValidChatRecipientIds(teamId, data);
     }
 
+    function hasValidNestedChatRecipientIds(conversationData, data) {
+      return data.recipientIds is list &&
+             data.recipientIds.size() > 0 &&
+             data.recipientIds.size() <= 50 &&
+             conversationData.get('participantIds', []) is list &&
+             data.recipientIds == conversationData.get('participantIds', []);
+    }
+
     function isValidChatMessageTarget(teamId, data) {
       return isFullTeamChatMessage(data) ||
              isStaffChatMessage(data) ||
@@ -1626,7 +1634,8 @@ service cloud.firestore {
                  !isCanonicalStaffChatConversation(conversationId) &&
                  !isStaffRoleChatConversation(conversationData) &&
                  conversationData.get('type', '') in ['direct', 'group'] &&
-                 isIndividualChatMessage(teamId, data) &&
+                 data.get('targetType', 'full_team') == 'individuals' &&
+                 hasValidNestedChatRecipientIds(conversationData, data) &&
                  data.get('targetRole', null) == null &&
                  data.recipientIds == conversationData.get('participantIds', [])
                )

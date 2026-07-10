@@ -43,7 +43,16 @@ describe('nested team chat message payload contracts', () => {
         );
         expect(rules).toContain('function isNestedChatMessageTargetValid(teamId, conversationId, conversationData, data)');
         expect(rules).toContain("conversationData.get('type', '') in ['direct', 'group']");
+        expect(rules).toContain('function hasValidNestedChatRecipientIds(conversationData, data)');
+        expect(rules).toContain("conversationData.get('participantIds', []) is list");
+        expect(rules).toContain('hasValidNestedChatRecipientIds(conversationData, data)');
         expect(rules).toContain("data.recipientIds == conversationData.get('participantIds', [])");
+
+        const nestedTargetValidator = rules.slice(
+            rules.indexOf('function isNestedChatMessageTargetValid'),
+            rules.indexOf('function isNestedChatMessageCreateValid')
+        );
+        expect(nestedTargetValidator).not.toContain('isIndividualChatMessage(teamId, data)');
     });
 
     it('keeps the legacy full-team message rules independent from the nested validator', () => {
@@ -95,8 +104,7 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('nested team chat message 
             const firestore = context.firestore();
             await setDoc(doc(firestore, 'teams/team-1'), {
                 ownerId: 'coach-1',
-                adminEmails: ['coach@example.com'],
-                chatMemberIds: ['coach-1', 'parent-1', 'user-2']
+                adminEmails: ['coach@example.com']
             });
             await setDoc(doc(firestore, 'users/coach-1'), {
                 email: 'coach@example.com',
