@@ -935,10 +935,45 @@ describe('Schedule', () => {
         ]
       }), auth.user);
     });
+
+    await waitFor(() => {
+      expect(scheduleServiceMocks.loadParentSchedule).toHaveBeenCalledTimes(2);
+    });
+    expect((await screen.findAllByText('10U Gold / Gold Bracket / Semifinal')).length).toBeGreaterThan(0);
     expect(await screen.findByText('Tournament created and schedule refreshed.')).toBeTruthy();
     expect((await screen.findAllByText('vs. Tigers')).length).toBeGreaterThan(0);
     expect((await screen.findAllByText('vs. Lions')).length).toBeGreaterThan(0);
     expect(screen.queryByRole('heading', { name: 'Add tournament for Bears' })).toBeNull();
+  });
+
+  it('shows tournament save errors without refreshing or clearing the attempted block', async () => {
+    scheduleServiceMocks.loadParentSchedule.mockResolvedValueOnce(buildStaffScheduleResult());
+    scheduleServiceMocks.createScheduledTournamentBlockForApp.mockRejectedValueOnce(new Error('Tournament save denied.'));
+
+    renderSchedule();
+
+    fireEvent.click(await screen.findByRole('button', { name: /manage schedule/i }));
+    fireEvent.click(await screen.findByRole('button', { name: 'New tournament block' }));
+    expect(await screen.findByRole('heading', { name: 'Add tournament for Bears' })).toBeTruthy();
+
+    fireEvent.change(screen.getByLabelText('Tournament division'), { target: { value: '10U Gold' } });
+    fireEvent.change(screen.getByLabelText('Tournament bracket'), { target: { value: 'Gold Bracket' } });
+    fireEvent.change(screen.getByLabelText('Tournament round'), { target: { value: 'Semifinal' } });
+    fireEvent.change(screen.getByLabelText('Tournament pool'), { target: { value: 'Pool A' } });
+    fireEvent.change(screen.getByLabelText('Game 1 opponent'), { target: { value: 'Tigers' } });
+    fireEvent.change(screen.getByLabelText('Game 1 location'), { target: { value: 'Main Gym' } });
+    fireEvent.change(screen.getByLabelText('Game 1 starts'), { target: { value: '2026-06-24T18:30' } });
+    fireEvent.click(screen.getByRole('button', { name: /^create tournament$/i }));
+
+    expect(await screen.findByText('Tournament save denied.')).toBeTruthy();
+    expect(screen.getByDisplayValue('10U Gold')).toBeTruthy();
+    expect(screen.getByDisplayValue('Gold Bracket')).toBeTruthy();
+    expect(screen.getByDisplayValue('Semifinal')).toBeTruthy();
+    expect(screen.getByDisplayValue('Pool A')).toBeTruthy();
+    expect(screen.getByDisplayValue('Tigers')).toBeTruthy();
+    expect(screen.getByDisplayValue('Main Gym')).toBeTruthy();
+    expect(scheduleServiceMocks.createScheduledTournamentBlockForApp).toHaveBeenCalledTimes(1);
+    expect(scheduleServiceMocks.loadParentSchedule).toHaveBeenCalledTimes(1);
   });
 
   it('hides Manage schedule from non-staff schedule users', async () => {
