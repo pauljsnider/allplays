@@ -113,6 +113,10 @@
   box-shadow: 0 10px 24px rgba(16, 24, 40, 0.07);
 }
 
+.team-detail-tab-nav {
+  top: calc(52px + max(12px, env(safe-area-inset-top)));
+}
+
 .add-workflow-panel {
   max-height: calc(100dvh - max(16px, env(safe-area-inset-top)) - max(16px, env(safe-area-inset-bottom)) - 24px);
   overflow: hidden;
@@ -1659,6 +1663,17 @@
 
 .desktop-app-page .teams-grid {
   grid-template-columns: repeat(auto-fit, minmax(360px, 1fr));
+}
+
+.desktop-app-page .team-detail-tab-nav {
+  position: static;
+  top: auto;
+  z-index: auto;
+  margin-right: 0;
+  margin-left: 0;
+  background: transparent;
+  padding: 0;
+  backdrop-filter: none;
 }
 
 .desktop-app-page .teams-page-web {

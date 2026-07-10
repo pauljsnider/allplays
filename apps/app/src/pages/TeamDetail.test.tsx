@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { createMemoryRouter, MemoryRouter, Route, RouterProvider, Routes } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { TeamDetail } from './TeamDetail';
@@ -514,6 +514,8 @@ describe('TeamDetail', () => {
   });
 
   it('drives team tabs from the route search state', async () => {
+    const managedModel = { ...model, canManageTeam: true };
+    teamDetailServiceMocks.loadParentTeamDetail.mockResolvedValue(managedModel);
     const router = createMemoryRouter(
       [
         {
@@ -527,16 +529,28 @@ describe('TeamDetail', () => {
     render(<RouterProvider router={router} />);
 
     expect(await screen.findByRole('heading', { name: 'Bears' })).toBeTruthy();
-    expect(screen.getByRole('button', { name: /roster/i }).getAttribute('aria-pressed')).toBe('true');
+    const tabNav = screen.getByTestId('team-detail-tab-nav');
+    expect(tabNav.classList.contains('team-detail-tab-nav')).toBe(true);
+    expect(tabNav.classList.contains('sticky')).toBe(true);
+    expect(tabNav.classList.contains('top-24')).toBe(true);
+    expect(tabNav.querySelectorAll('button')).toHaveLength(5);
+    const tabControls = within(tabNav);
+    expect(tabControls.getByRole('button', { name: /roster/i }).getAttribute('aria-pressed')).toBe('true');
+    expect(screen.getAllByText('Add player').length).toBeGreaterThan(0);
     expect(router.state.location.search).toBe('?tab=roster');
 
-    fireEvent.click(screen.getByRole('button', { name: /more/i }));
-    await waitFor(() => expect(router.state.location.search).toBe('?tab=more'));
-    expect(screen.getByRole('button', { name: /more/i }).getAttribute('aria-pressed')).toBe('true');
+    fireEvent.click(tabControls.getByRole('button', { name: /schedule/i }));
+    await waitFor(() => expect(router.state.location.search).toBe('?tab=schedule'));
+    expect(tabControls.getByRole('button', { name: /schedule/i }).getAttribute('aria-pressed')).toBe('true');
 
-    fireEvent.click(screen.getByRole('button', { name: /overview/i }));
+    fireEvent.click(tabControls.getByRole('button', { name: /more/i }));
+    await waitFor(() => expect(router.state.location.search).toBe('?tab=more'));
+    expect(tabControls.getByRole('button', { name: /more/i }).getAttribute('aria-pressed')).toBe('true');
+    expect(await screen.findByText('Stat tracker configs')).toBeTruthy();
+
+    fireEvent.click(tabControls.getByRole('button', { name: /overview/i }));
     await waitFor(() => expect(router.state.location.search).toBe(''));
-    expect(screen.getByRole('button', { name: /overview/i }).getAttribute('aria-pressed')).toBe('true');
+    expect(tabControls.getByRole('button', { name: /overview/i }).getAttribute('aria-pressed')).toBe('true');
   });
 
   it('steps back to team overview before leaving the team hub', async () => {
