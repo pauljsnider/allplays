@@ -7,7 +7,38 @@ export async function getTeam(teamId) {
 export async function getPlayers() {
     return [];
 }
-export async function addPlayer() {}
+export async function getPlayersWithPrivateRosterContacts() {
+    return globalThis.__rosterCsvSavedPlayers || [];
+}
+export async function addPlayer(_teamId, payload) {
+    globalThis.__rosterCsvAdds = globalThis.__rosterCsvAdds || [];
+    globalThis.__rosterCsvAdds.push(payload);
+    return 'player-imported-1';
+}
+export async function applyRosterCsvImportOperations(teamId, operations) {
+    globalThis.__rosterCsvAdds = globalThis.__rosterCsvAdds || [];
+    globalThis.__rosterCsvPrivateWrites = globalThis.__rosterCsvPrivateWrites || [];
+    globalThis.__rosterCsvSavedPlayers = globalThis.__rosterCsvSavedPlayers || [];
+    return operations.map((operation, index) => {
+        const playerId = operation.playerId || 'player-imported-' + (index + 1);
+        if (operation.type === 'add') globalThis.__rosterCsvAdds.push(operation.payload);
+        if (operation.privateRosterFields || operation.privateFamilyContacts) {
+            globalThis.__rosterCsvPrivateWrites.push({
+                teamId,
+                playerId,
+                fields: operation.privateRosterFields || {},
+                contacts: operation.privateFamilyContacts || {}
+            });
+        }
+        globalThis.__rosterCsvSavedPlayers.push({
+            id: playerId,
+            ...operation.payload,
+            privateProfileParents: operation.privateFamilyContacts?.parents || [],
+            privateProfileContacts: operation.privateFamilyContacts?.contacts || []
+        });
+        return { ...operation, playerId };
+    });
+}
 export async function deactivatePlayer() {}
 export async function reactivatePlayer() {}
 export async function getGames() {
@@ -17,9 +48,14 @@ export async function uploadPlayerPhoto() {
     return 'https://example.test/photo.png';
 }
 export async function updatePlayer() {}
-export async function setPlayerPrivateRosterProfileFields() {}
-export async function inviteParent() {
-    return {};
+export async function setPlayerPrivateRosterProfileFields(teamId, playerId, fields, contacts) {
+    globalThis.__rosterCsvPrivateWrites = globalThis.__rosterCsvPrivateWrites || [];
+    globalThis.__rosterCsvPrivateWrites.push({ teamId, playerId, fields, contacts });
+}
+export async function inviteParent(teamId, playerId, number, email, relation) {
+    globalThis.__rosterCsvInvites = globalThis.__rosterCsvInvites || [];
+    globalThis.__rosterCsvInvites.push({ teamId, playerId, number, email, relation });
+    return { code: 'INVITE123', teamName: 'Test Team', playerName: 'Avery Lee', existingUser: false, autoLinked: false };
 }
 export async function removeParentFromPlayer() {}
 export async function getAllUsers() {
@@ -77,7 +113,10 @@ const AUTH_STUB = `
 export function checkAuth(callback) {
     callback({ uid: 'user-1', email: 'coach@example.com', isAdmin: false });
 }
-export async function sendInviteEmail() {}
+export async function sendInviteEmail(email, code, type, context) {
+    globalThis.__rosterCsvEmails = globalThis.__rosterCsvEmails || [];
+    globalThis.__rosterCsvEmails.push({ email, code, type, context });
+}
 `;
 
 const TEAM_ACCESS_STUB = `
@@ -258,4 +297,44 @@ test('fresh run after cancel only uses newly entered input', async ({ page, base
     expect(aiCalls[1]).toHaveLength(1);
     expect(aiCalls[1][0].type).toBe('text');
     expect(aiCalls[1][0].value).toContain('#22 Jordan Reed');
+});
+
+test('CSV roster review saves family contacts and sends imported invitations', async ({ page, baseURL }) => {
+    page.on('dialog', async (dialog) => dialog.accept());
+    await openBulkAiTab(page, baseURL);
+    await page.click('#tab-csv-import');
+    await expect(page.locator('#content-csv-import')).toBeVisible();
+
+    await page.fill('#roster-csv-input', [
+        'Name,Number,Position,DOB,Parent Name,Parent Email,Parent Relation',
+        'Avery Lee,4,Forward,2014-02-03,Pat Lee,pat@example.com,Mother'
+    ].join('\n'));
+    await page.click('#import-csv-btn');
+
+    await expect(page.locator('#csv-import-preview')).toBeVisible();
+    await expect(page.locator('#csv-import-preview')).toContainText('Review 1 planned player row');
+    await expect(page.locator('#csv-import-preview')).toContainText('Pat Lee · Mother · pat@example.com');
+    expect(await page.evaluate(() => (globalThis.__rosterCsvAdds || []).length)).toBe(0);
+
+    await page.click('#import-csv-btn');
+    await expect(page.locator('#csv-import-status')).toContainText('Imported 1 player row. Family invites: 1 emailed.');
+    await expect(page.getByText('Imported family contacts', { exact: true })).toBeVisible();
+    await expect(page.getByText('pat@example.com · Mother · Invite needed')).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Send / resend invite' })).toBeVisible();
+
+    expect(await page.evaluate(() => globalThis.__rosterCsvAdds || [])).toEqual([
+        expect.objectContaining({ name: 'Avery Lee', number: '4', position: 'Forward' })
+    ]);
+    expect(await page.evaluate(() => globalThis.__rosterCsvPrivateWrites || [])).toEqual([
+        expect.objectContaining({
+            playerId: 'player-imported-1',
+            contacts: { parents: [expect.objectContaining({ email: 'pat@example.com', relation: 'Mother' })] }
+        })
+    ]);
+    expect(await page.evaluate(() => globalThis.__rosterCsvInvites || [])).toEqual([
+        expect.objectContaining({ playerId: 'player-imported-1', email: 'pat@example.com', relation: 'Mother' })
+    ]);
+    expect(await page.evaluate(() => globalThis.__rosterCsvEmails || [])).toEqual([
+        expect.objectContaining({ email: 'pat@example.com', code: 'INVITE123', type: 'parent' })
+    ]);
 });

@@ -560,6 +560,41 @@ function mergeProfileImportValues(existingProfile = {}, profileValues = {}, addr
     return nextProfile;
 }
 
+function escapeRosterCsvCell(value) {
+    const text = String(value ?? '');
+    return /[",\r\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
+}
+
+export function buildFullRosterCsvTemplate(fields = []) {
+    const customHeaders = normalizeRosterFieldDefinitions(fields)
+        .map((field) => field.label)
+        .filter(Boolean);
+    const headers = [
+        'Name', 'Number', 'Position', 'DOB', 'Gender', 'Address', 'City', 'State', 'Zip', 'Roster Status',
+        'Parent Name', 'Parent Relation', 'Parent Email', 'Parent Phone',
+        'Guardian 2 Name', 'Guardian 2 Relation', 'Guardian 2 Email', 'Guardian 2 Phone',
+        ...customHeaders
+    ];
+    const sample = [
+        'Avery Lee', '4', 'Forward', '2014-02-03', '', '123 Main St', 'Kansas City', 'MO', '64110', 'Player',
+        'Pat Lee', 'Parent', 'pat@example.com', '555-0101',
+        '', '', '', '',
+        ...customHeaders.map(() => '')
+    ];
+    return `${headers.map(escapeRosterCsvCell).join(',')}\n${sample.map(escapeRosterCsvCell).join(',')}\n`;
+}
+
+export function summarizeRosterContactInviteResults(results = []) {
+    const summary = { sent: 0, linked: 0, codeCreated: 0, failed: 0 };
+    (Array.isArray(results) ? results : []).forEach((result) => {
+        if (result?.status === 'linked') summary.linked += 1;
+        else if (result?.status === 'sent') summary.sent += 1;
+        else if (result?.status === 'code-created') summary.codeCreated += 1;
+        else if (result?.status === 'failed') summary.failed += 1;
+    });
+    return summary;
+}
+
 export function planRosterCsvImport({ csvText = '', fields = [], existingPlayers = [] } = {}) {
     const errors = [];
     const normalizedFields = normalizeRosterFieldDefinitions(fields);
@@ -716,8 +751,8 @@ export function planRosterCsvImport({ csvText = '', fields = [], existingPlayers
         const payload = { name, profile };
         if (hasNumberColumn) payload.number = number;
         if (Object.prototype.hasOwnProperty.call(profileValues, 'position')) payload.position = profileValues.position;
-        const mergedGuardians = mergeImportedContacts(existing?.guardians || existing?.parents || existing?.familyContacts || [], contactPlan.guardians);
-        const mergedContacts = mergeImportedContacts(existing?.contacts || [], contactPlan.contacts);
+        const mergedGuardians = mergeImportedContacts(existing?.guardians || existing?.parents || existing?.privateProfileParents || existing?.familyContacts || [], contactPlan.guardians);
+        const mergedContacts = mergeImportedContacts(existing?.contacts || existing?.privateProfileContacts || [], contactPlan.contacts);
         const privateRosterFields = Object.keys(privateValues).length > 0 ? privateValues : null;
         const privateFamilyContacts = mergedGuardians.length > 0 || mergedContacts.length > 0
             ? {
