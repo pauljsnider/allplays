@@ -24,7 +24,8 @@ describe('app schedule RSVP adapter boundary', () => {
         const helperAdapterSource = readSource('apps/app/src/lib/adapters/legacyScheduleHelpers.ts');
 
         expect(scheduleServiceSource).toContain("from './adapters/legacyScheduleHelpers';");
-        expect(rsvpHookSource).toContain("import { submitParentScheduleRsvp } from '../../lib/scheduleService';");
+        expect(rsvpHookSource).toMatch(/import\s+\{[^}]*submitParentScheduleRsvp[^}]*\}\s+from ['"]\.\.\/\.\.\/lib\/scheduleService['"];/);
+        expect(rsvpHookSource).toMatch(/import\s+\{[^}]*submitParentScheduleRsvpForChildren[^}]*\}\s+from ['"]\.\.\/\.\.\/lib\/scheduleService['"];/);
         expect(helperAdapterSource).toContain("from '@legacy/parent-dashboard-rsvp.js'");
         expect(helperAdapterSource).not.toContain('../../../../../js/');
         expect(helperAdapterSource).toContain('resolveMyRsvpByChildForGame');
