@@ -296,6 +296,9 @@ async function mockParentToolsModules(page) {
                     }
                     return { teams: [{ id: 'team-1', name: 'Bears', sport: 'Basketball', zip: '66210' }], nextCursor: 'cursor-2' };
                 }
+                export async function loadParentAccessTeam(teamId) {
+                    return { id: String(teamId), name: 'Bears', sport: 'Basketball', zip: '66210' };
+                }
                 export async function loadParentAccessPlayers(teamId) {
                     window.__playerLoads.push(String(teamId));
                     if (String(teamId) === 'team-2') {
@@ -375,6 +378,9 @@ async function mockParentToolsModules(page) {
                         return { teams: [{ id: 'team-2', name: 'Comets', sport: 'Soccer', city: 'Austin', state: 'TX' }], nextCursor: null };
                     }
                     return { teams: [{ id: 'team-1', name: 'Bears', sport: 'Basketball', zip: '66210' }], nextCursor: 'cursor-2' };
+                }
+                export async function loadParentAccessTeam(teamId) {
+                    return { id: String(teamId), name: 'Bears', sport: 'Basketball', zip: '66210' };
                 }
                 export async function loadParentAccessPlayers(teamId) {
                     window.__playerLoads.push(String(teamId));
