@@ -637,11 +637,11 @@ function buildAddWorkflows(): AddWorkflow[] {
     {
       id: 'request-access',
       label: 'Find team',
-      detail: 'Browse public teams or request access',
+      detail: 'Browse and search public teams',
       section: 'Team',
       icon: Search,
-      kind: 'website',
-      href: legacyUrl('teams.html')
+      kind: 'native',
+      href: '/teams/browse'
     },
     {
       id: 'add-player',
