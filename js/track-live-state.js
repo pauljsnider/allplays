@@ -141,13 +141,21 @@ function isHydratableLogEventType(type) {
 function buildResumeUndoData(event) {
   const type = normalizeTrackLiveText(event?.type);
   if (type === 'stat' || type === 'goal') {
-    return {
+    const undoData = {
       type,
       playerId: event?.playerId || null,
       statKey: event?.statKey || null,
       value: Number(event?.value || 0),
       isOpponent: Boolean(event?.isOpponent)
     };
+
+    if (type === 'goal') {
+      undoData.teamSide = normalizeTrackLiveText(event?.teamSide) || null;
+      undoData.liveNoteId = normalizeTrackLiveText(event?.liveNoteId) || null;
+      undoData.liveNoteText = normalizeTrackLiveText(event?.liveNoteText) || null;
+    }
+
+    return undoData;
   }
 
   return null;
