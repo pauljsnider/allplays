@@ -649,7 +649,13 @@ describe('React app schedule service contract integration', () => {
 
         expect(dbMocks.getTeam).toHaveBeenCalledWith('team-1');
         expect(dbMocks.getGame).toHaveBeenCalledWith('team-1', 'game-1');
-        expect(dbMocks.getGames).not.toHaveBeenCalled();
+        expect(dbMocks.getGames).toHaveBeenCalledTimes(1);
+        expect(dbMocks.getGames).toHaveBeenCalledWith('team-1', {
+            tournamentGroup: {
+                divisionName: '10U Gold',
+                poolName: 'Pool A'
+            }
+        });
         expect(dbMocks.getPracticeSessions).not.toHaveBeenCalled();
         expect(utilsMocks.fetchAndParseCalendar).not.toHaveBeenCalled();
         expect(dbMocks.getPracticeSessionByEvent).not.toHaveBeenCalled();
