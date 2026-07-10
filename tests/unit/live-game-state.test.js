@@ -65,6 +65,26 @@ describe('live game state helpers', () => {
     })?.id).toBe('cfg-soccer');
   });
 
+  it('returns an explicitly assigned config even when it has definitions but no public columns', () => {
+    const assignedConfig = {
+      id: 'cfg-manager-only',
+      baseType: 'Basketball',
+      columns: [],
+      statDefinitions: [
+        { id: 'deflections', scope: 'team', visibility: 'private', type: 'base' }
+      ]
+    };
+
+    expect(resolveLiveStatConfig({
+      configs: [
+        { id: 'cfg-public', baseType: 'Basketball', columns: ['PTS'] },
+        assignedConfig
+      ],
+      game: { statTrackerConfigId: 'cfg-manager-only', sport: 'Basketball' },
+      team: { sport: 'Basketball' }
+    })).toBe(assignedConfig);
+  });
+
   it('returns the preferred config id for schedule defaults', () => {
     expect(resolvePreferredStatConfigId({
       configs: [

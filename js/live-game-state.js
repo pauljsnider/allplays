@@ -45,9 +45,7 @@ export function resolveLiveStatConfig({ configs = [], game = null, team = null }
 
   if (configId) {
     const configMatch = safeConfigs.find((config) => String(config?.id || '').trim() === configId);
-    if (Array.isArray(configMatch?.columns) && configMatch.columns.length) {
-      return configMatch;
-    }
+    if (configMatch) return configMatch;
   }
 
   if (desiredSport) {
