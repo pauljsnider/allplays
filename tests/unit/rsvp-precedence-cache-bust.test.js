@@ -48,4 +48,27 @@ describe('RSVP precedence cache delivery', () => {
             expect(source).toContain('auth.js?v=46');
         });
     });
+
+    it('propagates fresh keys through cached wrapper and shared utility entry modules', () => {
+        const consumerVersions = {
+            'admin.html': 'js/admin.js?v=9',
+            'certificates.html': 'js/certificates/studio.js?v=12',
+            'live-game.html': 'js/live-game.js?v=9',
+            'live-tracker.html': 'js/live-tracker.js?v=2',
+            'team-fees.html': 'js/team-fees-admin.js?v=13',
+            'team-media.html': 'js/team-media.js?v=13',
+            'track-basketball.html': 'js/track-basketball.js?v=2',
+            'tracking-items.html': 'js/tracking-items-admin.js?v=2',
+            'team.html': 'js/team-staff-permissions.js?v=3',
+            'game-day.html': 'js/team-admin-banner.js?v=5'
+        };
+
+        for (const [path, expectedVersion] of Object.entries(consumerVersions)) {
+            expect(readRepoFile(path)).toContain(expectedVersion);
+        }
+
+        expect(readRepoFile('js/utils.js')).toContain("import('./global-search.js?v=9')");
+        expect(readRepoFile('js/db.js')).toContain("from './utils.js?v=15';");
+        expect(readRepoFile('parent-dashboard.html')).toContain('js/utils.js?v=15');
+    });
 });

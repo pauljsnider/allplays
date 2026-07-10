@@ -1,4 +1,4 @@
-import { escapeHtml } from './utils.js?v=8';
+import { escapeHtml } from './utils.js?v=15';
 import { normalizeTeamPermissions } from './team-access.js';
 
 function normalizeEmail(value) {

@@ -86,7 +86,7 @@ describe('admin invite signup cache busting', () => {
     it('does not leave deployed source consumers pinned to stale auth or db wrappers', () => {
         const staleConsumers = collectVersionedSourceFiles(process.cwd()).flatMap((relativePath) => {
             const source = readFileSync(resolve(process.cwd(), relativePath), 'utf8');
-            const staleImports = source.match(/\b(?:auth\.js\?v=(?!46\b)\d+|db\.js\?v=(?:76|77|78))\b/g) || [];
+            const staleImports = source.match(/(?:(?<![\w-])auth\.js\?v=(?!46\b)\d+|(?<![\w-])utils\.js\?v=(?!15\b)\d+|db\.js\?v=(?:76|77|78))\b/g) || [];
             return staleImports.map((importPath) => `${relativePath}: ${importPath}`);
         });
 
