@@ -49,7 +49,12 @@ describe('app production CSS pipeline', () => {
         const css = buildAppCss();
 
         expect(css).toContain('.bg-primary-600');
+        expect(css).toContain('.bg-primary-50');
+        expect(css).toContain('.text-gray-950');
+        expect(css).toContain('.rounded-xl');
         expect(css).not.toContain('@tailwind');
+        expect(css).toContain('-webkit-backdrop-filter:none');
+        expect(css).toContain('backdrop-filter:none');
         expect(css).toContain('.safe-top');
         expect(css).toContain('env(safe-area-inset-top)');
         expect(css).toContain('.safe-bottom');
