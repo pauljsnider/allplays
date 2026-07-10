@@ -1251,9 +1251,13 @@ service cloud.firestore {
 
     function isTeamMediaCoach(teamId) {
       let userPath = /databases/$(database)/documents/users/$(request.auth.uid);
+      let teamPath = /databases/$(database)/documents/teams/$(teamId);
       return isSignedIn() &&
              exists(userPath) &&
-             teamId in get(userPath).data.get('coachOf', []);
+             exists(teamPath) &&
+             teamId in get(userPath).data.get('coachOf', []) &&
+             request.auth.token.email != null &&
+             request.auth.token.email.lower() in get(teamPath).data.get('adminEmails', []);
     }
 
     function canManageTeamMedia(teamId) {
