@@ -81,6 +81,9 @@ export function validateFirebaseRulesCi() {
     assertIncludes(firestoreRules, 'match /mediaItems/{itemId}', 'Firestore media item rules');
     assertIncludes(firestoreRules, 'function canReadTeamMediaFolder(teamId, folderData)', 'Firestore media folder visibility rules');
     assertIncludes(firestoreRules, 'function canReadTeamMediaItem(teamId, itemData)', 'Firestore media item visibility rules');
+    assertIncludes(firestoreRules, 'function isTeamMediaCoach(teamId)', 'Firestore linked coach media rules');
+    assertIncludes(firestoreRules, "teamId in get(userPath).data.get('coachOf', [])", 'Firestore linked coach media membership');
+    assertIncludes(firestoreRules, 'function canManageTeamMedia(teamId)', 'Firestore media manager rules');
     assertIncludes(firestoreRules, 'allow read: if canReadTeamMediaFolder(teamId, resource.data);', 'Firestore media folder read rules');
     assertIncludes(firestoreRules, 'allow read: if canReadTeamMediaItem(teamId, resource.data);', 'Firestore media item read rules');
     assertIncludes(firestoreRules, 'function canReadGameDocument(teamId, gameId, data)', 'Firestore game visibility helper');
@@ -104,10 +107,11 @@ export function validateFirebaseRulesCi() {
     if (aggregatedStatsRules.includes('allow read: if true;')) {
         throw new Error('Firestore aggregated stats read rules must not allow unconditional public reads.');
     }
-    assertIncludes(firestoreRules, 'allow create, update, delete: if isTeamOwnerOrAdmin(teamId);', 'Firestore media folder write rules');
-    assertIncludes(firestoreRules, 'allow create: if isTeamOwnerOrAdmin(teamId) || isTeamMediaUploadCreate(teamId, request.resource.data);', 'Firestore media item create rules');
-    assertIncludes(firestoreRules, 'allow update: if isTeamOwnerOrAdmin(teamId) || isOwnTeamMediaUploadSoftDelete(teamId) || isTeamMediaTitleUpdate(teamId);', 'Firestore media item update rules');
-    assertIncludes(firestoreRules, 'allow delete: if isTeamOwnerOrAdmin(teamId);', 'Firestore media item delete rules');
+    assertIncludes(firestoreRules, 'allow create, delete: if canManageTeamMedia(teamId);', 'Firestore media folder write rules');
+    assertIncludes(firestoreRules, 'allow update: if canManageTeamMedia(teamId) || isTeamMediaUploadCounterUpdate(teamId);', 'Firestore media folder update rules');
+    assertIncludes(firestoreRules, 'allow create: if canManageTeamMedia(teamId) || isTeamMediaUploadCreate(teamId, request.resource.data);', 'Firestore media item create rules');
+    assertIncludes(firestoreRules, 'allow update: if canManageTeamMedia(teamId) || isOwnTeamMediaUploadSoftDelete(teamId) || isTeamMediaTitleUpdate(teamId);', 'Firestore media item update rules');
+    assertIncludes(firestoreRules, 'allow delete: if canManageTeamMedia(teamId);', 'Firestore media item delete rules');
     assertIncludes(firestoreRules, 'match /adminBilling/{billingId}', 'Firestore team fee admin billing rules');
     assertIncludes(firestoreRules, 'allow read, create, update, delete: if isTeamOwnerOrAdmin(teamId);', 'Firestore team fee admin billing admin-only rules');
     assertIncludes(firestoreRules, 'match /rsvpNotes/{rsvpId}', 'Firestore restricted RSVP note rules');
@@ -127,10 +131,12 @@ export function validateFirebaseRulesCi() {
     assertIncludes(storageRules, 'request.auth.uid == userId', 'Scoped Storage uploader match rules');
     assertIncludes(storageRules, 'request.resource.contentType.matches(\'video/.*\')', 'Scoped Storage video content-type rules');
     assertIncludes(storageRules, 'function canDeleteOwnTeamMediaObject(teamId, folderId, userId)', 'Team media scoped Storage delete helper');
+    assertIncludes(storageRules, 'function isTeamMediaCoach(teamId)', 'Team media linked coach Storage helper');
+    assertIncludes(storageRules, "teamId in firestore.get(userPath).data.get('coachOf', [])", 'Team media linked coach Storage membership');
     assertIncludes(storageRules, 'function canDeleteOwnChatAttachment(teamId, conversationId, userId)', 'Chat fallback scoped Storage delete helper');
     assertIncludes(storageRules, 'function canDeleteOwnTeamScopedUpload(teamId, userId)', 'Team scoped Storage delete helper');
     assertIncludes(storageRules, '(hasTeamMediaUploadGrant(teamId) && canUploadTeamMediaFolder(teamId, folderId))', 'Team media current upload grant delete scope');
-    assertIncludes(teamMediaRules, 'allow delete: if isTeamOwnerOrAdmin(teamId) ||\n        canDeleteOwnTeamMediaObject(teamId, folderId, userId);', 'Team media scoped Storage delete rules');
+    assertIncludes(teamMediaRules, 'allow delete: if canManageTeamMedia(teamId) ||\n        canDeleteOwnTeamMediaObject(teamId, folderId, userId);', 'Team media scoped Storage delete rules');
     assertIncludes(chatFallbackRules, 'allow delete: if isTeamOwnerOrAdmin(teamId) ||\n        canDeleteOwnChatAttachment(teamId, conversationId, userId);', 'Chat fallback scoped Storage delete rules');
     for (const [label, block] of [
         ['Legacy chat fallback scoped Storage delete rules', legacyChatFallbackRules],

@@ -1208,7 +1208,7 @@ service cloud.firestore {
     }
 
     function userMembershipFields() {
-      return ['parentOf', 'parentTeamIds', 'parentPlayerKeys', 'playerKeys'];
+      return ['parentOf', 'parentTeamIds', 'parentPlayerKeys', 'playerKeys', 'coachOf'];
     }
 
     function teamMediaUploadGrantFields() {
@@ -1249,15 +1249,26 @@ service cloud.firestore {
     }
 
 
+    function isTeamMediaCoach(teamId) {
+      let userPath = /databases/$(database)/documents/users/$(request.auth.uid);
+      return isSignedIn() &&
+             exists(userPath) &&
+             teamId in get(userPath).data.get('coachOf', []);
+    }
+
+    function canManageTeamMedia(teamId) {
+      return isTeamOwnerOrAdmin(teamId) || isTeamMediaCoach(teamId);
+    }
+
     function canReadTeamMediaFolder(teamId, folderData) {
-      return isTeamOwnerOrAdmin(teamId) ||
+      return canManageTeamMedia(teamId) ||
              (canAccessTeamChat(teamId) && folderData.get('visibility', 'team') == 'team');
     }
 
     function canReadTeamMediaItem(teamId, itemData) {
       let folderId = itemData.get('folderId', '');
       let folderPath = /databases/$(database)/documents/teams/$(teamId)/mediaFolders/$(folderId);
-      return isTeamOwnerOrAdmin(teamId) ||
+      return canManageTeamMedia(teamId) ||
              (canAccessTeamChat(teamId) &&
               folderId is string &&
               exists(folderPath) &&
@@ -2038,15 +2049,15 @@ service cloud.firestore {
 
       match /mediaFolders/{folderId} {
         allow read: if canReadTeamMediaFolder(teamId, resource.data);
-        allow create, delete: if isTeamOwnerOrAdmin(teamId);
-        allow update: if isTeamOwnerOrAdmin(teamId) || isTeamMediaUploadCounterUpdate(teamId);
+        allow create, delete: if canManageTeamMedia(teamId);
+        allow update: if canManageTeamMedia(teamId) || isTeamMediaUploadCounterUpdate(teamId);
       }
 
       match /mediaItems/{itemId} {
         allow read: if canReadTeamMediaItem(teamId, resource.data);
-        allow create: if isTeamOwnerOrAdmin(teamId) || isTeamMediaUploadCreate(teamId, request.resource.data);
-        allow update: if isTeamOwnerOrAdmin(teamId) || isOwnTeamMediaUploadSoftDelete(teamId) || isTeamMediaTitleUpdate(teamId);
-        allow delete: if isTeamOwnerOrAdmin(teamId);
+        allow create: if canManageTeamMedia(teamId) || isTeamMediaUploadCreate(teamId, request.resource.data);
+        allow update: if canManageTeamMedia(teamId) || isOwnTeamMediaUploadSoftDelete(teamId) || isTeamMediaTitleUpdate(teamId);
+        allow delete: if canManageTeamMedia(teamId);
       }
 
       match /settings/{settingId} {

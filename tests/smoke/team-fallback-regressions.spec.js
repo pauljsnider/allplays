@@ -20,6 +20,18 @@ export function checkAuth(callback) {
 export async function sendInviteEmail() {}
 `;
 
+const AUTH_COACH_STUB = `
+export function checkAuth(callback) {
+    callback({
+        uid: 'coach-1',
+        email: 'coach@example.com',
+        isAdmin: false,
+        coachOf: ['team-1']
+    });
+}
+export async function sendInviteEmail() {}
+`;
+
 const UTILS_STUB = `
 export function renderHeader() {}
 export function renderFooter() {}
@@ -1044,6 +1056,21 @@ test('team media renders visible save actions for staff', async ({ page, baseURL
     }));
     expect(colors.folderBackground).not.toBe('rgba(0, 0, 0, 0)');
     expect(colors.linkBackground).not.toBe('rgba(0, 0, 0, 0)');
+    expect(pageErrors).toEqual([]);
+});
+
+test('team media grants linked coaches management controls without owner or admin-email access', async ({ page, baseURL }) => {
+    const pageErrors = await collectPageErrors(page);
+    await page.route(/\/js\/auth\.js(?:\?v=\d+)?$/, (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: AUTH_COACH_STUB }));
+    await page.route(/\/js\/db\.js(?:\?v=\d+)?$/, (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: MEDIA_DB_WITH_FOLDER_STUB }));
+
+    await page.goto(`${baseURL}/team-media.html?teamId=team-1`, { waitUntil: 'domcontentloaded' });
+
+    await expect(page.locator('#team-media-admin-panel')).toBeVisible();
+    await expect(page.locator('#team-media-upload-panel')).toBeVisible();
+    await expect(page.locator('#folder-submit')).toHaveText('Add album');
+    await expect(page.locator('#link-submit')).toHaveText('Save video link');
+    await expect(page.locator('#link-folder')).toContainText('Highlights');
     expect(pageErrors).toEqual([]);
 });
 

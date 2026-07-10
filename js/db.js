@@ -202,7 +202,7 @@ import {
     loadVolunteerScreeningTargetRegistrations
 } from './volunteer-screening-access.js?v=2';
 import { buildTournamentPoolOverrideKey } from './tournament-standings.js?v=1';
-import { buildBulkDeleteUpdates, buildMoveUpdates, buildReorderUpdates, isSafeTeamMediaUrl, isSupportedTeamMediaDocument, isSupportedTeamMediaImage, normalizeTeamMediaFolderDraft, normalizeAlbumVisibility, sortByMediaOrder } from './team-media-utils.js?v=4';
+import { buildBulkDeleteUpdates, buildMoveUpdates, buildReorderUpdates, isSafeTeamMediaUrl, isSupportedTeamMediaDocument, isSupportedTeamMediaImage, normalizeTeamMediaFolderDraft, normalizeAlbumVisibility, sortByMediaOrder } from './team-media-utils.js?v=5';
 import { getApp } from './vendor/firebase-app.js';
 import {
     computeOfficiatingCoverageStatus,

@@ -19,6 +19,17 @@ service firebase.storage {
          isGlobalAdmin());
     }
 
+    function isTeamMediaCoach(teamId) {
+      let userPath = /databases/(default)/documents/users/$(request.auth.uid);
+      return isSignedIn() &&
+        firestore.exists(userPath) &&
+        teamId in firestore.get(userPath).data.get('coachOf', []);
+    }
+
+    function canManageTeamMedia(teamId) {
+      return isTeamOwnerOrAdmin(teamId) || isTeamMediaCoach(teamId);
+    }
+
     function isParentForTeam(teamId) {
       let userPath = /databases/(default)/documents/users/$(request.auth.uid);
       return isSignedIn() &&
@@ -70,13 +81,13 @@ service firebase.storage {
     }
 
     function canCreateTeamMediaUpload(teamId, folderId) {
-      return isTeamOwnerOrAdmin(teamId) ||
+      return canManageTeamMedia(teamId) ||
         (hasTeamMediaUploadGrant(teamId) && canUploadTeamMediaFolder(teamId, folderId));
     }
 
     function canReadTeamMediaObject(teamId, folderId) {
       let folderPath = /databases/(default)/documents/teams/$(teamId)/mediaFolders/$(folderId);
-      return isTeamOwnerOrAdmin(teamId) ||
+      return canManageTeamMedia(teamId) ||
         (isParentForTeam(teamId) &&
          folderId.size() > 0 &&
          firestore.exists(folderPath) &&
@@ -140,11 +151,11 @@ service firebase.storage {
       allow get: if canReadTeamMediaObject(teamId, folderId);
       allow list: if false;
       allow create: if canCreateTeamMediaUpload(teamId, folderId) &&
-        (isTeamOwnerOrAdmin(teamId) || request.auth.uid == userId) &&
+        (canManageTeamMedia(teamId) || request.auth.uid == userId) &&
         request.resource.size > 0 &&
         request.resource.size <= 10 * 1024 * 1024 &&
         isAllowedTeamMediaUploadType(request.resource.contentType);
-      allow delete: if isTeamOwnerOrAdmin(teamId) ||
+      allow delete: if canManageTeamMedia(teamId) ||
         canDeleteOwnTeamMediaObject(teamId, folderId, userId);
       allow update: if false;
     }

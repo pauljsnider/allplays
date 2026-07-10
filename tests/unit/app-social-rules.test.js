@@ -89,7 +89,7 @@ function isOwnerUserEmailUpdateValid({ affectedKeys, nextEmail, authEmail }) {
 }
 
 function isOwnerUserMembershipUpdateValid({ affectedKeys }) {
-    return !hasAny(affectedKeys, ['parentOf', 'parentTeamIds', 'parentPlayerKeys', 'playerKeys']);
+    return !hasAny(affectedKeys, ['parentOf', 'parentTeamIds', 'parentPlayerKeys', 'playerKeys', 'coachOf']);
 }
 
 describe('React app social Firestore rules', () => {
@@ -123,7 +123,7 @@ describe('React app social Firestore rules', () => {
         expect(source).toContain("data.keys().hasOnly(['displayName', 'fullName', 'photoUrl', 'discoveryTeamIds', 'emailHash', 'updatedAt'])");
         expect(source).toContain("!data.keys().hasAny(['email', 'phone', 'parentOf', 'parentTeamIds', 'parentPlayerKeys'])");
         expect(source).toContain("function userMembershipFields()");
-        expect(source).toContain("return ['parentOf', 'parentTeamIds', 'parentPlayerKeys', 'playerKeys'];");
+        expect(source).toContain("return ['parentOf', 'parentTeamIds', 'parentPlayerKeys', 'playerKeys', 'coachOf'];");
         expect(source).toContain("(isOwner(userId) && isOwnerUserCreatePayloadValid(request.resource.data))");
         expect(source).toContain("(isOwner(userId) && isOwnerUserUpdatePayloadValid())");
         expect(source).toContain('function isOwnerUserEmailAuthBound(data)');
@@ -155,6 +155,9 @@ describe('React app social Firestore rules', () => {
         })).toBe(false);
         expect(isOwnerUserMembershipUpdateValid({
             affectedKeys: ['parentTeamIds', 'parentPlayerKeys']
+        })).toBe(false);
+        expect(isOwnerUserMembershipUpdateValid({
+            affectedKeys: ['coachOf']
         })).toBe(false);
     });
 
@@ -302,6 +305,9 @@ describe('React app social Firestore rules', () => {
             await assertFails(updateDoc(userRef, {
                 parentTeamIds: ['team-1'],
                 parentPlayerKeys: ['team-1::player-1']
+            }));
+            await assertFails(updateDoc(userRef, {
+                coachOf: ['team-1']
             }));
         });
     });
