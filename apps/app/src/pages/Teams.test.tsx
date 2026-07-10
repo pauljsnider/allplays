@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { StrictMode } from 'react';
 import { MemoryRouter, Route, Routes, useLocation, useParams } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -336,11 +336,27 @@ describe('Teams launcher navigation', () => {
     renderTeamsWithNav();
 
     const fastFalcons = await screen.findByRole('link', { name: 'Open Fast Falcons' });
+    const slowSharks = screen.getByRole('link', { name: 'Open Slow Sharks' });
     expect(fastFalcons).toHaveAttribute('href', '/teams/team-fast');
+    expect(slowSharks).toHaveAttribute('href', '/teams/team-slow');
+    expect(screen.getByText('Select a team to open its hub and tools.')).toBeInTheDocument();
+
+    const fastFalconsRow = fastFalcons.closest<HTMLElement>('.team-launcher-row');
+    const slowSharksRow = slowSharks.closest<HTMLElement>('.team-launcher-row');
+    expect(fastFalconsRow).not.toBeNull();
+    expect(slowSharksRow).not.toBeNull();
+    expect(within(fastFalconsRow!).getAllByRole('link')).toEqual([fastFalcons]);
+    expect(within(slowSharksRow!).getAllByRole('link')).toEqual([slowSharks]);
+    expect(screen.queryByRole('link', { name: 'Fast Falcons messages' })).toBeNull();
+    expect(screen.queryByRole('link', { name: 'Fast Falcons schedule' })).toBeNull();
+    expect(screen.queryByRole('link', { name: 'Fast Falcons team hub' })).toBeNull();
+    expect(screen.queryByRole('link', { name: 'Slow Sharks messages' })).toBeNull();
+    expect(screen.queryByRole('link', { name: 'Slow Sharks schedule' })).toBeNull();
+    expect(screen.queryByRole('link', { name: 'Slow Sharks team hub' })).toBeNull();
 
     expect(screen.getByRole('link', { name: 'Chat' })).toHaveAttribute('href', '/messages/team-fast');
-    expect(screen.getAllByRole('link', { name: /^Schedule/ }).map((link) => link.getAttribute('href'))).toContain('/schedule?teamId=team-fast');
-    expect(screen.getAllByRole('link', { name: /^Messages/ }).map((link) => link.getAttribute('href'))).toContain('/messages/team-fast');
+    expect(screen.getByRole('link', { name: /^Schedule/ })).toHaveAttribute('href', '/schedule?teamId=team-fast');
+    expect(screen.getByRole('link', { name: /^Messages/ })).toHaveAttribute('href', '/messages/team-fast');
     expect(screen.getByRole('link', { name: /^Practice packets/ })).toHaveAttribute('href', '/schedule?teamId=team-fast&view=packets');
 
     fireEvent.click(fastFalcons);
