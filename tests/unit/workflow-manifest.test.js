@@ -10,6 +10,14 @@ function repoFileExists(relativePath) {
 }
 
 describe('workflow manifest', () => {
+    it('loads as valid JSON with workflow entries', () => {
+        const manifest = JSON.parse(readRepoFile('workflow-manifest.json'));
+
+        expect(Array.isArray(manifest)).toBe(true);
+        expect(manifest.length).toBeGreaterThan(0);
+        expect(manifest.every((item) => item.id && item.file && item.title)).toBe(true);
+    });
+
     it('ships and indexes the Team Media workflow help page', () => {
         const manifest = JSON.parse(readRepoFile('workflow-manifest.json'));
         const workflow = manifest.find((item) => item.id === 'team-media');
