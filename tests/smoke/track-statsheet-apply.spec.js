@@ -637,6 +637,13 @@ async function analyzeStatsheet(page, baseURL) {
     await page.locator('#home-rows tr').nth(1).waitFor();
 }
 
+async function applyStatsheet(page, baseURL) {
+    await analyzeStatsheet(page, baseURL);
+    await page.locator('#apply-btn').click();
+    await expect(page.locator('#apply-status')).toHaveText('Stats saved! Now you can add a game summary.');
+    await expect(page.locator('#summary-section')).not.toHaveClass(/hidden/);
+}
+
 test.beforeEach(async ({ page }) => {
     await installModuleMocks(page);
 });
@@ -732,6 +739,34 @@ test('applies matched rows while unmatched home rows stay available for review',
         statsheet_2: { name: 'Kai North', number: '11', pts: 9, fouls: 2 }
     });
 
+});
+
+test('saves the post-apply game summary before opening the game report', async ({ page, baseURL }) => {
+    await seedScenario(page, baseURL, createScenario());
+    await applyStatsheet(page, baseURL);
+
+    const summary = 'Comets rallied in the fourth quarter behind disciplined defense.';
+    await page.locator('#summary-notes').fill(summary);
+    await page.locator('#save-continue-btn').click();
+
+    await expect(page.locator('#summary-status')).toHaveText('Summary saved!');
+    await expect.poll(async () => {
+        const store = await page.evaluate((storeKey) => JSON.parse(localStorage.getItem(storeKey) || '{}'), STORE_KEY);
+        return store.updateCalls || [];
+    }).toEqual([{ summary }]);
+    await expect(page).toHaveURL(/\/game\.html#teamId=team-1&gameId=game-1$/);
+});
+
+test('skips an empty post-apply summary without a second game update', async ({ page, baseURL }) => {
+    await seedScenario(page, baseURL, createScenario());
+    await applyStatsheet(page, baseURL);
+
+    await expect(page.locator('#summary-notes')).toHaveValue('');
+    await page.locator('#skip-summary-btn').click();
+
+    await expect(page).toHaveURL(/\/game\.html#teamId=team-1&gameId=game-1$/);
+    const store = await page.evaluate((storeKey) => JSON.parse(localStorage.getItem(storeKey) || '{}'), STORE_KEY);
+    expect(store.updateCalls || []).toEqual([]);
 });
 
 test('prevents apply when analysis finds no uniquely matched home rows', async ({ page, baseURL }) => {
