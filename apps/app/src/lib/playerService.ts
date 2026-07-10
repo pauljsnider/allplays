@@ -11,6 +11,8 @@ import {
   inviteCoParentToAthlete,
   listAthleteProfilesForParent,
   listCertificatesForPlayer,
+  releaseAthleteProfileMediaReservation,
+  reserveAthleteProfileMediaOwnership,
   saveAthleteProfile,
   setPlayerPrivateRosterProfileFields,
   updatePlayer,
@@ -607,10 +609,16 @@ export async function saveParentAthleteProfileDraft({
   const uploadRequests = buildHighlightClipUploadRequests(highlightClipUploads, highlightClipFile, highlightClipTitle);
   if (profilePhotoFile) validateImageFile(profilePhotoFile);
   uploadRequests.forEach((upload) => validateHighlightClipFile(upload.file));
-  if (profilePhotoFile) {
-    uploadedProfilePhoto = await uploadAthleteProfileMedia(user!.uid, workingProfileId, profilePhotoFile, { kind: 'profile-photo' });
+  const hasPendingMedia = !!profilePhotoFile || uploadRequests.length > 0;
+  let createdMediaReservation = false;
+  if (hasPendingMedia) {
+    const reservation = await reserveAthleteProfileMediaOwnership(user!.uid, workingProfileId);
+    createdMediaReservation = reservation.created === true;
   }
   try {
+    if (profilePhotoFile) {
+      uploadedProfilePhoto = await uploadAthleteProfileMedia(user!.uid, workingProfileId, profilePhotoFile, { kind: 'profile-photo' });
+    }
     for (const upload of uploadRequests) {
       const uploaded = await uploadAthleteProfileMedia(user!.uid, workingProfileId, upload.file, { kind: 'clip' });
       uploadedHighlightClips.push(buildUploadedHighlightClip(upload, uploaded));
@@ -620,6 +628,9 @@ export async function saveParentAthleteProfileDraft({
       uploadedProfilePhoto?.storagePath,
       ...uploadedHighlightClips.map((clip) => clip.storagePath)
     ]);
+    if (createdMediaReservation) {
+      await releaseAthleteProfileMediaReservation(user!.uid, workingProfileId).catch(() => undefined);
+    }
     throw error;
   }
   const profilePhoto = uploadedProfilePhoto || (resetProfilePhoto ? null : draft.profilePhoto);
@@ -638,6 +649,9 @@ export async function saveParentAthleteProfileDraft({
       uploadedProfilePhoto?.storagePath,
       ...uploadedHighlightClips.map((clip) => clip.storagePath)
     ]);
+    if (createdMediaReservation) {
+      await releaseAthleteProfileMediaReservation(user!.uid, workingProfileId).catch(() => undefined);
+    }
     throw error;
   }
   return {

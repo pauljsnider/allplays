@@ -58,6 +58,7 @@ export function validateFirebaseRulesCi() {
     const drillFallbackRules = extractMatchBlock(storageRules, 'match /stat-sheets/drills/{teamId}/{drillId}/{userId}/{fileName}');
     const clipFallbackRules = extractMatchBlock(storageRules, 'match /game-clips/{teamId}/{gameId}/{userId}/{fileName}');
     const legacyGameClipRules = extractMatchBlock(storageRules, 'match /game-clips/{fileName} {');
+    const athleteProfileMediaRules = extractMatchBlock(storageRules, 'match /athlete-profile-media/{userId}/{profileId}/{fileName}');
     const collectionGroupGamesHelper = (firestoreRules.match(/function canReadCollectionGroupGameDocument\(teamPath, data\) \{[\s\S]*?\n\s*}/) || [''])[0];
     const gameEventsRules = (firestoreRules.match(/match \/events\/\{eventId} \{[\s\S]*?\n\s*}/) || [''])[0];
     const aggregatedStatsRules = (firestoreRules.match(/match \/aggregatedStats\/\{statId} \{[\s\S]*?\n\s*}/) || [''])[0];
@@ -183,6 +184,12 @@ export function validateFirebaseRulesCi() {
     assertIncludes(storageRules, 'contentType.matches(\'image/.*\')', 'Chat fallback image content-type rules');
     assertIncludes(storageRules, 'contentType.matches(\'video/.*\')', 'Chat fallback video content-type rules');
     assertIncludes(chatFallbackRules, 'isAllowedChatAttachmentUpload(request.resource.contentType, request.resource.size);', 'Chat fallback create upload guard');
+    assertIncludes(storageRules, 'function athleteProfileMatchesPathOwner(userId, profileId)', 'Athlete profile media owner helper');
+    assertIncludes(storageRules, 'firestore.get(profilePath).data.parentUserId == userId;', 'Athlete profile media path owner match');
+    assertIncludes(storageRules, 'return athleteProfileMatchesPathOwner(userId, profileId) &&', 'Athlete profile media public read path owner guard');
+    assertIncludes(athleteProfileMediaRules, 'allow get: if canReadAthleteProfileMedia(userId, profileId);', 'Athlete profile media read guard');
+    assertIncludes(athleteProfileMediaRules, 'request.auth.uid == userId &&\n        athleteProfileMatchesPathOwner(userId, profileId) &&', 'Athlete profile media create owner guard');
+    assertIncludes(athleteProfileMediaRules, 'allow delete: if isSignedIn() &&\n        request.auth.uid == userId &&\n        athleteProfileMatchesPathOwner(userId, profileId);', 'Athlete profile media delete owner guard');
 
     assertIncludes(regressionGuards, 'npm run ci:firebase-rules', 'Regression guard workflow');
     assertIncludes(regressionGuards, 'npm run test:smoke:team-fallback', 'Regression guard workflow');

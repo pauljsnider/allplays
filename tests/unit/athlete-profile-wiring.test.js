@@ -69,6 +69,9 @@ describe('athlete profile wiring', () => {
         expect(source).toContain('getTeam(link.teamId, { includeInactive: true })');
         expect(source).toContain('uploadAthleteProfileMedia');
         expect(source).toContain('deleteAthleteProfileMediaByPath');
+        expect(source).toContain('reserveAthleteProfileMediaOwnership');
+        expect(source).toContain('mediaUploadReservation: true');
+        expect(source).toContain('mediaUploadReservation: deleteField()');
         expect(source).toContain('collectAthleteProfileMediaCleanupPaths');
     });
 });

@@ -129,10 +129,17 @@ service firebase.storage {
          contentType.matches('video/.*'));
     }
 
+    function athleteProfileMatchesPathOwner(userId, profileId) {
+      let profilePath = /databases/(default)/documents/athleteProfiles/$(profileId);
+      return profileId.size() > 0 &&
+        firestore.exists(profilePath) &&
+        firestore.get(profilePath).data.parentUserId == userId;
+    }
+
     function canReadAthleteProfileMedia(userId, profileId) {
       let profilePath = /databases/(default)/documents/athleteProfiles/$(profileId);
-      return (isSignedIn() && request.auth.uid == userId) ||
-        (firestore.exists(profilePath) &&
+      return athleteProfileMatchesPathOwner(userId, profileId) &&
+        ((isSignedIn() && request.auth.uid == userId) ||
          firestore.get(profilePath).data.get('privacy', 'private') == 'public');
     }
 
@@ -234,10 +241,13 @@ service firebase.storage {
       allow list: if false;
       allow create: if isSignedIn() &&
         request.auth.uid == userId &&
+        athleteProfileMatchesPathOwner(userId, profileId) &&
         request.resource.size > 0 &&
         request.resource.size <= 100 * 1024 * 1024 &&
         isAllowedAthleteProfileMediaUploadType(request.resource.contentType);
-      allow delete: if isSignedIn() && request.auth.uid == userId;
+      allow delete: if isSignedIn() &&
+        request.auth.uid == userId &&
+        athleteProfileMatchesPathOwner(userId, profileId);
       allow update: if false;
     }
   }

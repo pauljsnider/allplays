@@ -5691,6 +5691,55 @@ function sanitizeAthleteProfileMediaName(fileName) {
     return String(fileName || 'media').replace(/[^\w.\-]+/g, '_');
 }
 
+export async function reserveAthleteProfileMediaOwnership(userId, profileId) {
+    const normalizedUserId = String(userId || '').trim();
+    const normalizedProfileId = String(profileId || '').trim();
+    if (!normalizedUserId) {
+        throw new Error('A signed-in parent account is required to reserve athlete profile media.');
+    }
+    if (!normalizedProfileId) {
+        throw new Error('A profile id is required to reserve athlete profile media.');
+    }
+
+    const profileRef = doc(db, 'athleteProfiles', normalizedProfileId);
+    return runTransaction(db, async (transaction) => {
+        const profileSnap = await transaction.get(profileRef);
+        if (profileSnap.exists()) {
+            if (profileSnap.data()?.parentUserId !== normalizedUserId) {
+                throw new Error('You do not have permission to upload media for this athlete profile.');
+            }
+            return { id: normalizedProfileId, created: false };
+        }
+
+        transaction.set(profileRef, {
+            parentUserId: normalizedUserId,
+            privacy: 'private',
+            mediaUploadReservation: true,
+            createdAt: serverTimestamp(),
+            updatedAt: serverTimestamp()
+        });
+        return { id: normalizedProfileId, created: true };
+    });
+}
+
+export async function releaseAthleteProfileMediaReservation(userId, profileId) {
+    const normalizedUserId = String(userId || '').trim();
+    const normalizedProfileId = String(profileId || '').trim();
+    if (!normalizedUserId || !normalizedProfileId) return false;
+
+    const profileRef = doc(db, 'athleteProfiles', normalizedProfileId);
+    return runTransaction(db, async (transaction) => {
+        const profileSnap = await transaction.get(profileRef);
+        if (!profileSnap.exists()) return false;
+        const profile = profileSnap.data() || {};
+        if (profile.parentUserId !== normalizedUserId || profile.mediaUploadReservation !== true) {
+            return false;
+        }
+        transaction.delete(profileRef);
+        return true;
+    });
+}
+
 export async function uploadAthleteProfileMedia(userId, profileId, file, options = {}) {
     if (!userId) {
         throw new Error('A signed-in parent account is required to upload athlete profile media.');
@@ -5739,6 +5788,7 @@ export async function listAthleteProfilesForParent(userId) {
 
     return snapshot.docs
         .map((docSnap) => ({ id: docSnap.id, ...(docSnap.data() || {}) }))
+        .filter((profile) => profile.mediaUploadReservation !== true)
         .sort((a, b) => {
             const aTime = a.updatedAt?.toMillis ? a.updatedAt.toMillis() : 0;
             const bTime = b.updatedAt?.toMillis ? b.updatedAt.toMillis() : 0;
@@ -5825,7 +5875,10 @@ export async function saveAthleteProfile(userId, draft, options = {}) {
         payload.createdAt = serverTimestamp();
     }
 
-    await setDoc(profileRef, payload, { merge: true });
+    await setDoc(profileRef, {
+        ...payload,
+        mediaUploadReservation: deleteField()
+    }, { merge: true });
 
     const cleanupResults = await Promise.allSettled(cleanupPaths.map((path) => deleteAthleteProfileMediaByPath(path)));
     cleanupResults.forEach((result) => {
@@ -5834,11 +5887,13 @@ export async function saveAthleteProfile(userId, draft, options = {}) {
         }
     });
 
-    return {
+    const savedProfile = {
         id: profileRef.id,
         ...(existingProfile || {}),
         ...payload
     };
+    delete savedProfile.mediaUploadReservation;
+    return savedProfile;
 }
 
 // ============================================

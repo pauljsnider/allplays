@@ -12,25 +12,32 @@ function extractAthleteProfileMediaRules() {
     return rules.slice(mediaRulesStart, mediaRulesEnd === -1 ? undefined : mediaRulesEnd);
 }
 
-function canCreateAthleteProfileMedia({ authUid, userId, size, contentType }) {
+function profileMatchesPathOwner({ userId, profileParentUserId = userId, profileExists = true }) {
+    return profileExists && profileParentUserId === userId;
+}
+
+function canCreateAthleteProfileMedia({ authUid, userId, profileParentUserId = userId, profileExists = true, size, contentType }) {
     const signedIn = authUid !== null;
     const requiresPathOwner = mediaRules.includes('request.auth.uid == userId');
     const pathOwnerAllowed = !requiresPathOwner || authUid === userId;
     const hasAllowedSize = size > 0 && size <= 100 * 1024 * 1024;
     const hasAllowedContentType = contentType.startsWith('image/') || contentType.startsWith('video/');
 
-    return signedIn && pathOwnerAllowed && hasAllowedSize && hasAllowedContentType;
+    return signedIn && pathOwnerAllowed &&
+        profileMatchesPathOwner({ userId, profileParentUserId, profileExists }) &&
+        hasAllowedSize && hasAllowedContentType;
 }
 
-function canGetAthleteProfileMedia({ authUid, userId, profilePrivacy = 'private', profileExists = true }) {
+function canGetAthleteProfileMedia({ authUid, userId, profileParentUserId = userId, profilePrivacy = 'private', profileExists = true }) {
     const signedIn = authUid !== null;
     const isOwner = authUid === userId;
     const isPublicProfile = profileExists && profilePrivacy === 'public';
 
-    return (signedIn && isOwner) || isPublicProfile;
+    return profileMatchesPathOwner({ userId, profileParentUserId, profileExists }) &&
+        ((signedIn && isOwner) || isPublicProfile);
 }
 
-function canDeleteAthleteProfileMedia({ authUid, userId }) {
+function canDeleteAthleteProfileMedia({ authUid, userId, profileParentUserId = userId, profileExists = true }) {
     const signedIn = authUid !== null;
     const deleteRuleStart = mediaRules.indexOf('allow delete:');
     const deleteRuleEnd = mediaRules.indexOf(';', deleteRuleStart);
@@ -38,20 +45,24 @@ function canDeleteAthleteProfileMedia({ authUid, userId }) {
     const requiresPathOwner = deleteRule.includes('request.auth.uid == userId');
     const pathOwnerAllowed = !requiresPathOwner || authUid === userId;
 
-    return signedIn && pathOwnerAllowed;
+    return signedIn && pathOwnerAllowed &&
+        profileMatchesPathOwner({ userId, profileParentUserId, profileExists });
 }
 
 describe('athlete profile Storage rules', () => {
     it('allows profile owners to read and upload image/video media within limits', () => {
         expect(rules).toContain('function canReadAthleteProfileMedia(userId, profileId)');
+        expect(rules).toContain('return athleteProfileMatchesPathOwner(userId, profileId) &&');
         expect(mediaRules).toContain('allow get: if canReadAthleteProfileMedia(userId, profileId);');
         expect(mediaRules).toContain('allow list: if false;');
         expect(mediaRules).toContain('allow create: if isSignedIn() &&');
         expect(mediaRules).toContain('request.auth.uid == userId');
+        expect(rules).toContain('function athleteProfileMatchesPathOwner(userId, profileId)');
+        expect(mediaRules).toContain('athleteProfileMatchesPathOwner(userId, profileId)');
         expect(mediaRules).toContain('request.resource.size > 0');
         expect(mediaRules).toContain('request.resource.size <= 100 * 1024 * 1024');
         expect(mediaRules).toContain('isAllowedAthleteProfileMediaUploadType(request.resource.contentType);');
-        expect(mediaRules).toContain('allow delete: if isSignedIn() && request.auth.uid == userId;');
+        expect(mediaRules).toContain('allow delete: if isSignedIn() &&');
         expect(mediaRules).toContain('allow update: if false;');
 
         expect(canGetAthleteProfileMedia({
@@ -116,6 +127,38 @@ describe('athlete profile Storage rules', () => {
             authUid: null,
             userId: 'parent-1',
             profilePrivacy: 'private'
+        })).toBe(false);
+    });
+
+    it('denies public-profile piggyback objects when the path user does not own the profile', () => {
+        const piggybackCase = {
+            authUid: 'attacker-1',
+            userId: 'attacker-1',
+            profileParentUserId: 'parent-1',
+            profilePrivacy: 'public'
+        };
+
+        expect(canCreateAthleteProfileMedia({
+            ...piggybackCase,
+            size: 1024,
+            contentType: 'image/png'
+        })).toBe(false);
+        expect(canGetAthleteProfileMedia(piggybackCase)).toBe(false);
+        expect(canDeleteAthleteProfileMedia(piggybackCase)).toBe(false);
+    });
+
+    it('requires the owned profile document to exist before create or delete', () => {
+        expect(canCreateAthleteProfileMedia({
+            authUid: 'parent-1',
+            userId: 'parent-1',
+            profileExists: false,
+            size: 1024,
+            contentType: 'video/mp4'
+        })).toBe(false);
+        expect(canDeleteAthleteProfileMedia({
+            authUid: 'parent-1',
+            userId: 'parent-1',
+            profileExists: false
         })).toBe(false);
     });
 

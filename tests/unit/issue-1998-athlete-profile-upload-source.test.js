@@ -28,6 +28,7 @@ describe('issue 1998 athlete profile upload source contract', () => {
         expect(playerServiceSource).toContain('export async function saveParentAthleteProfileDraft');
         expect(playerServiceSource).toContain('if (profilePhotoFile) validateImageFile(profilePhotoFile);');
         expect(playerServiceSource).toContain('uploadRequests.forEach((upload) => validateHighlightClipFile(upload.file));');
+        expect(playerServiceSource).toContain('reserveAthleteProfileMediaOwnership(user!.uid, workingProfileId)');
         expect(playerServiceSource).toContain("uploadAthleteProfileMedia(user!.uid, workingProfileId, profilePhotoFile, { kind: 'profile-photo' })");
         expect(playerServiceSource).toContain("uploadAthleteProfileMedia(user!.uid, workingProfileId, upload.file, { kind: 'clip' })");
         expect(playerServiceSource).toContain("source: 'upload'");
@@ -39,7 +40,8 @@ describe('issue 1998 athlete profile upload source contract', () => {
     });
 
     it('keeps upload regression, legacy wiring, and storage-rule coverage in place', () => {
-        expect(playerServiceTestSource).toContain('uploads athlete profile headshots before saving and supports linked-photo reset');
+        expect(playerServiceTestSource).toContain('verifies athlete profile ownership before uploading headshots and supports linked-photo reset');
+        expect(playerServiceTestSource).toContain('reserves a new owned athlete profile before its first media upload');
         expect(playerServiceTestSource).toContain('uploads a manual athlete profile highlight clip and preserves existing clips');
         expect(playerServiceTestSource).toContain('saves ordered athlete profile clip links and matched uploads in the legacy draft shape');
         expect(playerServiceTestSource).toContain('validates athlete profile external clip links before saving');

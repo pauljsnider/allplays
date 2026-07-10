@@ -13,6 +13,8 @@ const dbMocks = vi.hoisted(() => ({
     inviteCoParentToAthlete: vi.fn(),
     listAthleteProfilesForParent: vi.fn(),
     listCertificatesForPlayer: vi.fn(),
+    releaseAthleteProfileMediaReservation: vi.fn(),
+    reserveAthleteProfileMediaOwnership: vi.fn(),
     saveAthleteProfile: vi.fn(),
     setPlayerPrivateRosterProfileFields: vi.fn(),
     updatePlayer: vi.fn(),
@@ -169,6 +171,8 @@ beforeEach(() => {
     }]);
     dbMocks.inviteCoParentToAthlete.mockResolvedValue({ id: 'invite-1', code: 'ABC12345', teamName: 'Bears', playerName: 'Pat Star', existingUser: false });
     dbMocks.saveAthleteProfile.mockResolvedValue({ id: 'profile-1', athlete: { name: 'Pat Star' }, privacy: 'public' });
+    dbMocks.reserveAthleteProfileMediaOwnership.mockImplementation(async (_userId, profileId) => ({ id: profileId, created: false }));
+    dbMocks.releaseAthleteProfileMediaReservation.mockResolvedValue(true);
     dbMocks.deleteAthleteProfileMediaByPath.mockResolvedValue(undefined);
     dbMocks.updatePlayerProfile.mockResolvedValue(undefined);
     dbMocks.uploadAthleteProfileMedia.mockImplementation(async (userId, profileId, file, options = {}) => {
@@ -416,7 +420,7 @@ describe('React app parent player detail service', () => {
         expect(savedProfile.shareUrl).toBe('https://allplays.ai/athlete-profile.html?profileId=profile-1');
     });
 
-    it('uploads athlete profile headshots before saving and supports linked-photo reset', async () => {
+    it('verifies athlete profile ownership before uploading headshots and supports linked-photo reset', async () => {
         const file = new File(['headshot'], 'headshot.jpg', { type: 'image/jpeg' });
 
         await saveParentAthleteProfileDraft({
@@ -434,7 +438,10 @@ describe('React app parent player detail service', () => {
             }
         });
 
+        expect(dbMocks.reserveAthleteProfileMediaOwnership).toHaveBeenCalledWith('user-1', 'profile-1');
         expect(dbMocks.uploadAthleteProfileMedia).toHaveBeenCalledWith('user-1', 'profile-1', file, { kind: 'profile-photo' });
+        expect(dbMocks.reserveAthleteProfileMediaOwnership.mock.invocationCallOrder[0])
+            .toBeLessThan(dbMocks.uploadAthleteProfileMedia.mock.invocationCallOrder[0]);
         expect(dbMocks.saveAthleteProfile).toHaveBeenLastCalledWith('user-1', expect.objectContaining({
             profilePhoto: expect.objectContaining({ url: 'https://example.test/headshot.jpg' }),
             selectedSeasonKeys: ['team-1::player-1']
@@ -459,6 +466,34 @@ describe('React app parent player detail service', () => {
             profilePhoto: null,
             selectedSeasonKeys: ['team-1::player-1']
         }), { profileId: 'profile-1' });
+    });
+
+    it('reserves a new owned athlete profile before its first media upload', async () => {
+        const file = new File(['headshot'], 'headshot.jpg', { type: 'image/jpeg' });
+        dbMocks.reserveAthleteProfileMediaOwnership.mockImplementation(async (_userId, profileId) => ({ id: profileId, created: true }));
+        dbMocks.saveAthleteProfile.mockImplementation(async (_userId, draft, options) => ({ id: options.profileId, ...draft }));
+
+        await saveParentAthleteProfileDraft({
+            user: user(),
+            teamId: 'team-1',
+            playerId: 'player-1',
+            profilePhotoFile: file,
+            draft: {
+                athlete: { name: 'Pat Star' },
+                bio: {},
+                privacy: 'public',
+                clips: []
+            }
+        });
+
+        const reservedProfileId = dbMocks.reserveAthleteProfileMediaOwnership.mock.calls[0][1];
+        expect(reservedProfileId).toMatch(/^profile_/);
+        expect(dbMocks.uploadAthleteProfileMedia).toHaveBeenCalledWith('user-1', reservedProfileId, file, { kind: 'profile-photo' });
+        expect(dbMocks.reserveAthleteProfileMediaOwnership.mock.invocationCallOrder[0])
+            .toBeLessThan(dbMocks.uploadAthleteProfileMedia.mock.invocationCallOrder[0]);
+        expect(dbMocks.uploadAthleteProfileMedia.mock.invocationCallOrder[0])
+            .toBeLessThan(dbMocks.saveAthleteProfile.mock.invocationCallOrder[0]);
+        expect(dbMocks.releaseAthleteProfileMediaReservation).not.toHaveBeenCalled();
     });
 
     it('rejects invalid athlete profile headshots before upload', async () => {
@@ -502,6 +537,30 @@ describe('React app parent player detail service', () => {
 
         expect(dbMocks.uploadAthleteProfileMedia).toHaveBeenCalledWith('user-1', 'profile-1', file, { kind: 'profile-photo' });
         expect(dbMocks.deleteAthleteProfileMediaByPath).toHaveBeenCalledWith('athlete-profile-media/user-1/profile-1/headshot.jpg');
+    });
+
+    it('cleans media before releasing a failed new-profile reservation', async () => {
+        const file = new File(['headshot'], 'headshot.jpg', { type: 'image/jpeg' });
+        dbMocks.reserveAthleteProfileMediaOwnership.mockImplementation(async (_userId, profileId) => ({ id: profileId, created: true }));
+        dbMocks.saveAthleteProfile.mockRejectedValueOnce(new Error('profile save failed'));
+
+        await expect(saveParentAthleteProfileDraft({
+            user: user(),
+            teamId: 'team-1',
+            playerId: 'player-1',
+            profilePhotoFile: file,
+            draft: {
+                athlete: { name: 'Pat Star' },
+                bio: {},
+                privacy: 'public',
+                clips: []
+            }
+        })).rejects.toThrow('profile save failed');
+
+        const reservedProfileId = dbMocks.reserveAthleteProfileMediaOwnership.mock.calls[0][1];
+        expect(dbMocks.releaseAthleteProfileMediaReservation).toHaveBeenCalledWith('user-1', reservedProfileId);
+        expect(dbMocks.deleteAthleteProfileMediaByPath.mock.invocationCallOrder[0])
+            .toBeLessThan(dbMocks.releaseAthleteProfileMediaReservation.mock.invocationCallOrder[0]);
     });
 
     it('uploads a manual athlete profile highlight clip and preserves existing clips', async () => {

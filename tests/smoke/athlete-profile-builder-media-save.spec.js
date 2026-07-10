@@ -71,6 +71,9 @@ function getState() {
     state.uploads = state.uploads || [];
     state.saveCalls = state.saveCalls || [];
     state.deletes = state.deletes || [];
+    state.reservations = state.reservations || [];
+    state.releasedReservations = state.releasedReservations || [];
+    state.events = state.events || [];
     state.shared = state.shared || [];
     window.__athleteProfileSmoke = state;
     return state;
@@ -99,6 +102,20 @@ export async function listAthleteProfilesForParent() {
     return clone(state.savedProfiles || []);
 }
 
+export async function reserveAthleteProfileMediaOwnership(userId, profileId) {
+    const state = getState();
+    state.reservations.push({ userId, profileId });
+    state.events.push('reserve:' + profileId);
+    return { id: profileId, created: true };
+}
+
+export async function releaseAthleteProfileMediaReservation(userId, profileId) {
+    const state = getState();
+    state.releasedReservations.push({ userId, profileId });
+    state.events.push('release:' + profileId);
+    return true;
+}
+
 export async function uploadAthleteProfileMedia(userId, profileId, file, options = {}) {
     const state = getState();
     const uploadNumber = state.uploads.length + 1;
@@ -116,6 +133,7 @@ export async function uploadAthleteProfileMedia(userId, profileId, file, options
         uploadedAtMs: 1800000000000 + uploadNumber
     };
     state.uploads.push({ userId, profileId, kind: options.kind, name: file.name, type: file.type, size: file.size, storagePath });
+    state.events.push('upload:' + options.kind + ':' + profileId);
     return uploaded;
 }
 
@@ -145,6 +163,7 @@ export async function saveAthleteProfile(userId, draft, options = {}) {
     };
 
     state.saveCalls.push({ userId, draft: clone(draft), options: clone(options) });
+    state.events.push('save:' + options.profileId);
     state.savedProfiles = [saved];
     state.profiles = { ...(state.profiles || {}), [saved.id]: saved };
     return clone(saved);
@@ -153,6 +172,7 @@ export async function saveAthleteProfile(userId, draft, options = {}) {
 export async function deleteAthleteProfileMediaByPath(path) {
     const state = getState();
     state.deletes.push(path);
+    state.events.push('delete:' + path);
 }
 `;
 
@@ -162,6 +182,9 @@ async function mockBuilderModules(page, scenario = {}) {
             uploads: [],
             saveCalls: [],
             deletes: [],
+            reservations: [],
+            releasedReservations: [],
+            events: [],
             shared: [],
             ...value
         };
@@ -243,9 +266,18 @@ test('standalone athlete profile builder uploads media, saves public profile, an
     await expect(page.locator('#share-profile-btn')).toBeVisible();
 
     const smokeState = await page.evaluate(() => window.__athleteProfileSmoke);
+    expect(smokeState.reservations).toHaveLength(1);
+    expect(smokeState.reservations[0]).toEqual(expect.objectContaining({ userId: 'parent-1' }));
     expect(smokeState.uploads).toEqual([
         expect.objectContaining({ userId: 'parent-1', kind: 'profile-photo', name: 'headshot.png', type: 'image/png' }),
         expect.objectContaining({ userId: 'parent-1', kind: 'clip', name: 'highlight.mp4', type: 'video/mp4' })
+    ]);
+    expect(smokeState.uploads[0].profileId).toBe(smokeState.reservations[0].profileId);
+    expect(smokeState.events.slice(0, 4)).toEqual([
+        `reserve:${smokeState.reservations[0].profileId}`,
+        `upload:profile-photo:${smokeState.reservations[0].profileId}`,
+        `upload:clip:${smokeState.reservations[0].profileId}`,
+        `save:${smokeState.reservations[0].profileId}`
     ]);
     expect(smokeState.saveCalls).toHaveLength(1);
     expect(smokeState.saveCalls[0].draft).toMatchObject({
@@ -286,6 +318,9 @@ test('standalone athlete profile builder cleans uploaded media when a later uplo
     expect(smokeState.saveCalls).toEqual([]);
     expect(smokeState.deletes).toEqual([
         expect.stringMatching(/athleteProfiles\/.+\/profile-photo\/headshot\.png$/)
+    ]);
+    expect(smokeState.releasedReservations).toEqual([
+        expect.objectContaining({ userId: 'parent-1', profileId: smokeState.reservations[0].profileId })
     ]);
     await expect(page.locator('#share-profile-btn')).toBeHidden();
     await expect(page).toHaveURL(/athlete-profile-builder\.html\?teamId=team-1&playerId=player-1&cb=\d+$/);
