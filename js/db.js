@@ -2021,7 +2021,7 @@ export async function getAllUsers() {
 }
 
 export async function getUserByEmail(email) {
-    const q = query(collection(db, "users"), where("email", "==", email));
+    const q = query(collection(db, "users"), where("email", "==", email), limitQuery(1));
     const snapshot = await getDocs(q);
     if (snapshot.empty) return null;
     return { id: snapshot.docs[0].id, ...snapshot.docs[0].data() };

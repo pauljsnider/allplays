@@ -280,8 +280,19 @@ service cloud.firestore {
               isGlobalAdmin());
     }
 
+    function canReadPublicTeamDocument(data) {
+      return data.isPublic is bool && data.isPublic == true;
+    }
+
+    function canListManagedTeamDocument(data) {
+      return isSignedIn() &&
+             (data.ownerId == request.auth.uid ||
+              (request.auth.token.email != null &&
+               request.auth.token.email.lower() in data.get('adminEmails', [])));
+    }
+
     function canReadTeamDocument(data) {
-      return (data.isPublic is bool && data.isPublic == true) ||
+      return canReadPublicTeamDocument(data) ||
              canReadManagedTeamDocument(data);
     }
 
@@ -2224,7 +2235,8 @@ service cloud.firestore {
     match /teams/{teamId} {
       allow get: if canReadTeamDocument(resource.data);
       allow list: if isBoundedGlobalAdminListQuery() ||
-                     (!isGlobalAdmin() && canReadTeamDocument(resource.data));
+                     canReadPublicTeamDocument(resource.data) ||
+                     canListManagedTeamDocument(resource.data);
       allow create: if isSignedIn() && request.resource.data.ownerId == request.auth.uid;
       allow update: if (isTeamOwnerOrGlobalAdmin(teamId) && keepsOwnerControlledTeamPrivilegeFieldsImmutable()) ||
                        (isTeamOwnerOrAdmin(teamId) && keepsTeamPrivilegeFieldsImmutable());

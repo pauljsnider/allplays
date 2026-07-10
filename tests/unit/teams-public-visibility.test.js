@@ -78,10 +78,12 @@ describe('public teams visibility', () => {
         const rules = readRepoFile('firestore.rules');
 
         expect(rules).toContain('function canReadTeamDocument(data)');
-        expect(rules).toContain('return (data.isPublic is bool && data.isPublic == true) ||');
+        expect(rules).toContain('function canReadPublicTeamDocument(data)');
+        expect(rules).toContain('return canReadPublicTeamDocument(data) ||');
         expect(rules).toContain('allow get: if canReadTeamDocument(resource.data);');
         expect(rules).toContain('allow list: if isBoundedGlobalAdminListQuery() ||');
-        expect(rules).toContain('(!isGlobalAdmin() && canReadTeamDocument(resource.data));');
+        expect(rules).toContain('canReadPublicTeamDocument(resource.data) ||');
+        expect(rules).toContain('canListManagedTeamDocument(resource.data);');
         expect(rules).not.toContain('allow read: if true;  // Public teams for browsing');
     });
 });

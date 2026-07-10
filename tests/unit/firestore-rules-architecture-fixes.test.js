@@ -26,6 +26,26 @@ describe('firestore.rules architecture fixes', () => {
         expect(teamRules).not.toContain('allow read: if canReadTeamDocument(resource.data);');
     });
 
+    it('keeps exact user email lookups bounded under global-admin user list rules', () => {
+        const dbSource = readFileSync(new URL('../../js/db.js', import.meta.url), 'utf8');
+        const getUserByEmailBody = dbSource.match(/export async function getUserByEmail\(email\) \{[\s\S]*?\n\}/)?.[0] || '';
+
+        expect(getUserByEmailBody).toContain('where("email", "==", email), limitQuery(1)');
+    });
+
+    it('preserves unbounded public team list queries while keeping broad admin lists bounded', () => {
+        const teamsStart = rules.indexOf('match /teams/{teamId}');
+        const teamsEnd = rules.indexOf('\n    }', teamsStart) + '\n    }'.length;
+        const teamRules = rules.slice(teamsStart, teamsEnd);
+
+        expect(rules).toContain('function canReadPublicTeamDocument(data)');
+        expect(rules).toContain('function canListManagedTeamDocument(data)');
+        expect(teamRules).toContain('allow list: if isBoundedGlobalAdminListQuery() ||');
+        expect(teamRules).toContain('canReadPublicTeamDocument(resource.data) ||');
+        expect(teamRules).toContain('canListManagedTeamDocument(resource.data);');
+        expect(teamRules).not.toContain('(!isGlobalAdmin() && canReadTeamDocument(resource.data));');
+    });
+
     // Duplicate-block regression coverage lives in tests/unit/team-fee-recipient-rules.test.js.
     it('keeps feeRecipients access scoped to the fee recipient or team owner/admin', () => {
         const start = rules.indexOf('match /{path=**}/feeRecipients/{recipientId}');
