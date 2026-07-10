@@ -47,7 +47,7 @@ function getForwardedIp(req = {}) {
     return trustedHops.includes(normalizedCandidate);
   });
 
-  if (trustedHopIndex <= 0) {
+  if (trustedHopIndex <= 0 || trustedHopIndex !== forwardedCandidates.length - 1) {
     return '';
   }
 

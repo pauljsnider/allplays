@@ -40,3 +40,15 @@ test('does not skip a private intermediate hop to reach an untrusted prefix', ()
 
     assert.equal(getRequestIp(request), '10.0.0.5');
 });
+
+test('rejects a trusted proxy value that is not the terminal forwarded hop', () => {
+    const request = {
+        ip: '10.0.0.5',
+        headers: {
+            'x-forwarded-for': '198.51.100.99, 10.0.0.5, 203.0.113.10'
+        },
+        socket: { remoteAddress: '10.0.0.5' }
+    };
+
+    assert.equal(getRequestIp(request), '10.0.0.5');
+});
