@@ -275,7 +275,7 @@ export function AccessTool({ auth, onAccessChanged }: { auth: AuthState; onAcces
         );
     }, [clearPlayerLoadError, runPlayerLoad]);
 
-    const retryManualLookup = useCallback(() => {
+    const retryManualLookup = () => {
         if (playerLoadError && selectedTeamId) {
             void loadPlayersForTeam(selectedTeamId);
             return;
@@ -289,7 +289,7 @@ export function AccessTool({ auth, onAccessChanged }: { auth: AuthState; onAcces
             return;
         }
         void loadTeams({ searchText: teamSearchText, cursor: null, append: false });
-    }, [deepLinkedTeamId, loadPlayersForTeam, loadTeams, playerLoadError, selectedTeamId, teamSearchText]);
+    };
 
     useEffect(() => {
         void loadPlayersForTeam(selectedTeamId);
