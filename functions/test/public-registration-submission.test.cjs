@@ -426,6 +426,64 @@ test('throttles repeated anonymous submissions before reserving more capacity', 
     assert.equal(firestore.registrationDocs().length, registrationCountBeforeThrottle);
 });
 
+test('throttles forwarded public clients behind a private proxy before reserving more capacity', async () => {
+    const { firestore, submitPublicRegistration } = loadSubmitPublicRegistration(buildSeedState());
+    const input = buildSubmission();
+    const proxiedContext = {
+        rawRequest: {
+            ip: '10.0.0.5',
+            headers: {
+                'x-forwarded-for': '203.0.113.10'
+            }
+        }
+    };
+
+    await submitPublicRegistration(input, proxiedContext);
+    await submitPublicRegistration(input, proxiedContext);
+    await submitPublicRegistration(input, proxiedContext);
+    const formBeforeThrottle = firestore.snapshot('teams/team-1/registrationForms/form-1');
+    const registrationCountBeforeThrottle = firestore.registrationDocs().length;
+
+    await assert.rejects(
+        submitPublicRegistration(input, proxiedContext),
+        (error) => {
+            assert.equal(error.code, 'resource-exhausted');
+            assert.equal(error.details.reason, 'rate-limited');
+            return true;
+        }
+    );
+
+    const formAfterThrottle = firestore.snapshot('teams/team-1/registrationForms/form-1');
+    assert.equal(formAfterThrottle.registrationOptionCounts.u10.enrolled, formBeforeThrottle.registrationOptionCounts.u10.enrolled);
+    assert.equal(firestore.registrationDocs().length, registrationCountBeforeThrottle);
+});
+
+test('isolates forwarded public clients behind the same private proxy', async () => {
+    const { firestore, submitPublicRegistration } = loadSubmitPublicRegistration(buildSeedState());
+    const input = buildSubmission();
+    const buildProxiedContext = (clientIp) => ({
+        rawRequest: {
+            ip: '10.0.0.5',
+            headers: {
+                'x-forwarded-for': clientIp
+            }
+        }
+    });
+
+    await submitPublicRegistration(input, buildProxiedContext('203.0.113.10'));
+    await submitPublicRegistration(input, buildProxiedContext('203.0.113.10'));
+    await submitPublicRegistration(input, buildProxiedContext('203.0.113.10'));
+    const formBeforeSecondClient = firestore.snapshot('teams/team-1/registrationForms/form-1');
+    const registrationCountBeforeSecondClient = firestore.registrationDocs().length;
+
+    const result = await submitPublicRegistration(input, buildProxiedContext('203.0.113.11'));
+
+    const formAfterSecondClient = firestore.snapshot('teams/team-1/registrationForms/form-1');
+    assert.equal(result.success, true);
+    assert.equal(formAfterSecondClient.registrationOptionCounts.u10.enrolled, formBeforeSecondClient.registrationOptionCounts.u10.enrolled + 1);
+    assert.equal(firestore.registrationDocs().length, registrationCountBeforeSecondClient + 1);
+});
+
 test('charges only the first scheduled installment for installment registrations', async () => {
     const { firestore, stripeState, mod } = loadFunctionsModule(buildSeedState({
         feeAmountCents: 12500,
