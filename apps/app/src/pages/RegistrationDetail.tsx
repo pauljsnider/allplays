@@ -285,6 +285,7 @@ function RegistrationDetailPage({ auth, publicAccess = false }: { auth: AuthStat
 
   if (loading) return <LoadingBlock label="Loading registration" />;
   if (!form) return <EmptyState icon={Ticket} title="Registration unavailable" detail={error || 'This registration form could not be loaded.'} actionLabel={error ? 'Retry' : ''} onAction={error ? () => setReloadKey((current) => current + 1) : undefined} />;
+  const registrationDescription = String(form.description || '').trim();
 
   return (
     <div className="space-y-3">
@@ -307,6 +308,11 @@ function RegistrationDetailPage({ auth, publicAccess = false }: { auth: AuthStat
             </button>
           ) : null}
         </div>
+        {registrationDescription ? (
+          <div className="border-t border-gray-100 bg-gray-50 px-3 py-3 sm:px-4" aria-label="Registration description">
+            <p className="whitespace-pre-line text-sm font-semibold leading-6 text-gray-700">{registrationDescription}</p>
+          </div>
+        ) : null}
       </section>
 
       {message ? <Status tone="success" message={message} /> : null}

@@ -151,6 +151,57 @@ function renderParentRegistrationWithRouteSwap() {
   );
 }
 
+describe('RegistrationDetail registration description', () => {
+  beforeEach(() => {
+    Object.values(parentRegistrationsServiceMocks).forEach((mock) => mock.mockReset());
+    openPublicUrlMock.mockReset();
+  });
+
+  afterEach(() => {
+    cleanup();
+  });
+
+  it('shows a trimmed public registration description before participant fields', async () => {
+    parentRegistrationsServiceMocks.loadPublicRegistrationDetail.mockResolvedValue(buildDetail({
+      form: {
+        description: '  Open to players ages 9–12.\nBring a water bottle.  ',
+        participantFields: [{ id: 'name', label: 'Player name', type: 'text', required: true }]
+      }
+    }));
+
+    renderPublicRegistration();
+
+    const description = await screen.findByLabelText('Registration description');
+    const participantHeading = screen.getByRole('heading', { name: 'Participant information' });
+
+    expect(description).toHaveTextContent('Open to players ages 9–12. Bring a water bottle.');
+    expect(description.compareDocumentPosition(participantHeading) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it('omits whitespace-only descriptions and preserves the parent submit flow', async () => {
+    parentRegistrationsServiceMocks.loadParentRegistrationDetail.mockResolvedValue(buildDetail({
+      form: {
+        description: '  \n\t ',
+        participantFields: [{ id: 'name', label: 'Player name', type: 'text', required: false }]
+      }
+    }));
+    parentRegistrationsServiceMocks.submitOfflineRegistration.mockResolvedValue({
+      status: 'pending',
+      registrationId: 'registration-1'
+    });
+
+    renderParentRegistration();
+
+    const submitButton = await screen.findByRole('button', { name: 'Submit registration' });
+    expect(screen.queryByLabelText('Registration description')).toBeNull();
+    expect(screen.getByRole('heading', { name: 'Participant information' })).toBeTruthy();
+
+    fireEvent.click(submitButton);
+
+    await waitFor(() => expect(parentRegistrationsServiceMocks.submitOfflineRegistration).toHaveBeenCalledTimes(1));
+  });
+});
+
 describe('RegistrationDetail payment notice', () => {
   beforeEach(() => {
     Object.values(parentRegistrationsServiceMocks).forEach((mock) => mock.mockReset());
