@@ -393,6 +393,11 @@ export function AppSearchDialog({ auth, open, onClose }: AppSearchDialogProps) {
                     type="button"
                     className="absolute right-1.5 top-1/2 inline-flex h-8 w-8 -translate-y-1/2 items-center justify-center rounded-lg text-gray-500 transition hover:bg-gray-100 hover:text-gray-800 focus:outline-none focus:ring-2 focus:ring-primary-200"
                     onClick={clearQuery}
+                    onKeyDown={(event) => {
+                      if (event.key === 'Enter') {
+                        event.stopPropagation();
+                      }
+                    }}
                     aria-label="Clear search query"
                   >
                     <X className="h-4 w-4" aria-hidden="true" />
