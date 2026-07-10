@@ -646,7 +646,7 @@ describe('ChatWindow virtualization', () => {
       </MemoryRouter>
     );
 
-    fireEvent.click(screen.getByRole('button', { name: 'Team chat', exact: true }));
+    fireEvent.click(screen.getByRole('button', { name: /^Team chat$/ }));
     expect(screen.getByRole('dialog', { name: 'Conversations' })).toBeVisible();
 
     fireEvent.click(screen.getByRole('button', { name: 'Open photos and videos' }));
