@@ -66,7 +66,15 @@ function getSafeVideoUrl(value) {
 }
 
 export function canManageTeamMedia(user, team) {
-    return hasFullTeamAccess(user, team);
+    if (!user || !team) return false;
+    if (hasFullTeamAccess(user, team)) return true;
+
+    const teamId = String(team.id || '').trim();
+    if (!teamId) return false;
+
+    return (Array.isArray(user.coachOf) ? user.coachOf : [])
+        .map((id) => String(id || '').trim())
+        .includes(teamId);
 }
 
 export function normalizeAlbumVisibility(value) {
