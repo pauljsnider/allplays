@@ -404,12 +404,15 @@ describe('scheduled tournament writes', () => {
   });
 
   it('adapts one completed tournament row into a normalized legacy game payload', () => {
+    const startDate = new Date('2026-06-24T18:30:00.000Z');
+    const endDate = new Date('2026-06-24T20:00:00.000Z');
+    const arrivalTime = new Date('2026-06-24T18:00:00.000Z');
     const payload = buildSingleGameTournamentLegacySchedulePayload({
       opponent: '  Tigers  ',
-      startDate: new Date('2026-06-24T18:30:00.000Z'),
-      endDate: new Date('2026-06-24T20:00:00.000Z'),
+      startDate,
+      endDate,
       location: '  Main Gym  ',
-      arrivalTime: new Date('2026-06-24T18:00:00.000Z'),
+      arrivalTime,
       isHome: true,
       notes: '  Bring dark jerseys  ',
       competitionType: 'league'
@@ -420,30 +423,41 @@ describe('scheduled tournament writes', () => {
       poolName: '  Pool A  '
     }, coachUser);
 
-    expect(buildSingleLegacyTournamentGameDocument).toHaveBeenCalledWith([expect.objectContaining({
+    const expectedBasePayload = {
       type: 'game',
+      date: startDate,
+      end: endDate,
       opponent: 'Tigers',
+      title: null,
       location: 'Main Gym',
+      isHome: true,
+      arrivalTime,
       notes: 'Bring dark jerseys',
+      assignments: [],
+      status: 'scheduled',
+      homeScore: 0,
+      awayScore: 0,
       competitionType: 'tournament',
+      countsTowardSeasonRecord: true,
+      statTrackerConfigId: null,
+      opponentTeamId: null,
+      opponentTeamName: null,
+      opponentTeamPhoto: null,
       createdBy: 'coach-1'
-    })], {
+    };
+    const expectedTournament = {
       divisionName: '10U Gold',
       bracketName: 'Gold Bracket',
       roundName: 'Semifinal',
       poolName: 'Pool A'
-    });
-    expect(payload).toEqual(expect.objectContaining({
-      type: 'game',
-      opponent: 'Tigers',
+    };
+
+    expect(buildSingleLegacyTournamentGameDocument).toHaveBeenCalledWith([expectedBasePayload], expectedTournament);
+    expect(payload).toStrictEqual({
+      ...expectedBasePayload,
       competitionType: 'tournament',
-      tournament: {
-        divisionName: '10U Gold',
-        bracketName: 'Gold Bracket',
-        roundName: 'Semifinal',
-        poolName: 'Pool A'
-      }
-    }));
+      tournament: expectedTournament
+    });
     expect(addGame).not.toHaveBeenCalled();
   });
 
