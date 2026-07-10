@@ -808,37 +808,47 @@
     <div id="basketball-tracker-modal" class="hidden fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
         <div class="bg-white rounded-lg p-6 max-w-sm w-full mx-4">
             <h3 class="text-xl font-bold mb-2">Choose Tracker</h3>
-            <p id="tracker-choice-description" class="text-sm text-gray-600 mb-4">Which tracker do you want?</p>
-            <div class="space-y-2">
-                <button id="basketball-tracker-standard"
-                    class="w-full px-4 py-3 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition font-semibold">
-                    Standard
-                </button>
-                <button id="basketball-tracker-beta"
-                    class="w-full px-4 py-3 bg-gray-100 text-gray-800 rounded-lg hover:bg-gray-200 transition font-semibold">
-                    Beta
-                </button>
-                <button id="basketball-tracker-live"
-                    class="w-full px-4 py-3 bg-red-600 text-white rounded-lg hover:bg-red-700 transition font-semibold flex items-center justify-center gap-2">
-                    <span class="inline-flex items-center gap-1 bg-white/20 text-white text-[10px] font-bold px-2 py-0.5 rounded-full">
-                        <span class="w-1.5 h-1.5 bg-white rounded-full animate-pulse"></span>
-                        LIVE
-                    </span>
-                    Live Broadcast Tracker
-                </button>
-                <button id="basketball-tracker-live-simple"
-                    class="hidden w-full px-4 py-3 bg-emerald-100 text-emerald-800 rounded-lg hover:bg-emerald-200 transition font-semibold flex items-center justify-center gap-2">
-                    <span class="inline-flex items-center gap-1 bg-emerald-600 text-white text-[10px] font-bold px-2 py-0.5 rounded-full">
-                        <span class="w-1.5 h-1.5 bg-white rounded-full animate-pulse"></span>
-                        LIVE
-                    </span>
-                    Live Broadcast Simple
-                </button>
-                <button id="basketball-tracker-photo"
-                    class="w-full px-4 py-3 bg-amber-100 text-amber-800 rounded-lg hover:bg-amber-200 transition font-semibold">
-                    Photo Score Sheet
-                </button>
+            <p id="tracker-choice-description" class="text-sm text-gray-600 mb-4">Start with the recommended tracker for this game.</p>
+            <div>
+                <p class="text-xs font-semibold uppercase tracking-wide text-indigo-700 mb-2">Recommended</p>
+                <div id="tracker-recommended-action">
+                    <button id="basketball-tracker-standard" data-tracker-label="Standard Tracker"
+                        class="w-full px-4 py-3 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition font-semibold">
+                        <span data-tracker-label-text>Start Standard Tracker</span>
+                    </button>
+                </div>
             </div>
+            <details id="tracker-advanced-options" class="mt-4 border border-gray-200 rounded-lg">
+                <summary class="cursor-pointer px-4 py-3 text-sm font-semibold text-gray-700 hover:bg-gray-50 rounded-lg">
+                    More tracker options
+                </summary>
+                <div id="tracker-advanced-actions" class="px-3 pb-3 space-y-2">
+                    <button id="basketball-tracker-beta" data-tracker-label="Basketball Beta"
+                        class="w-full px-4 py-3 bg-gray-100 text-gray-800 rounded-lg hover:bg-gray-200 transition font-semibold">
+                        <span data-tracker-label-text>Basketball Beta</span>
+                    </button>
+                    <button id="basketball-tracker-live" data-tracker-label="Live Broadcast Tracker"
+                        class="w-full px-4 py-3 bg-gray-100 text-gray-800 rounded-lg hover:bg-gray-200 transition font-semibold flex items-center justify-center gap-2">
+                        <span class="inline-flex items-center gap-1 bg-red-600 text-white text-[10px] font-bold px-2 py-0.5 rounded-full">
+                            <span class="w-1.5 h-1.5 bg-white rounded-full animate-pulse"></span>
+                            LIVE
+                        </span>
+                        <span data-tracker-label-text>Live Broadcast Tracker</span>
+                    </button>
+                    <button id="basketball-tracker-live-simple" data-tracker-label="Simple Live Tracker"
+                        class="hidden w-full px-4 py-3 bg-gray-100 text-gray-800 rounded-lg hover:bg-gray-200 transition font-semibold flex items-center justify-center gap-2">
+                        <span class="inline-flex items-center gap-1 bg-emerald-600 text-white text-[10px] font-bold px-2 py-0.5 rounded-full">
+                            <span class="w-1.5 h-1.5 bg-white rounded-full animate-pulse"></span>
+                            LIVE
+                        </span>
+                        <span data-tracker-label-text>Simple Live Tracker</span>
+                    </button>
+                    <button id="basketball-tracker-photo" data-tracker-label="Photo Score Sheet"
+                        class="w-full px-4 py-3 bg-gray-100 text-gray-800 rounded-lg hover:bg-gray-200 transition font-semibold">
+                        <span data-tracker-label-text>Photo Score Sheet</span>
+                    </button>
+                </div>
+            </details>
             <div class="flex justify-end mt-4">
                 <button id="basketball-tracker-cancel" class="px-4 py-2 text-gray-600 hover:text-gray-800">Cancel</button>
             </div>
@@ -2677,21 +2687,50 @@
 
         function configureTrackerChoiceModal(isBasketball, supportsSimpleLive) {
             const description = document.getElementById('tracker-choice-description');
+            const recommendedAction = document.getElementById('tracker-recommended-action');
+            const advancedActions = document.getElementById('tracker-advanced-actions');
+            const advancedOptions = document.getElementById('tracker-advanced-options');
+            const standardBtn = document.getElementById('basketball-tracker-standard');
             const betaBtn = document.getElementById('basketball-tracker-beta');
+            const liveBtn = document.getElementById('basketball-tracker-live');
             const simpleBtn = document.getElementById('basketball-tracker-live-simple');
             const photoBtn = document.getElementById('basketball-tracker-photo');
             if (description) {
                 if (isBasketball) {
-                    description.textContent = 'This game uses a Basketball stat config. Which tracker do you want?';
+                    description.textContent = 'This game uses a Basketball stat config. Live tracking is recommended.';
                 } else if (supportsSimpleLive) {
-                    description.textContent = 'Choose full stat broadcasting or simple goal broadcasting for this game.';
+                    description.textContent = 'Simple live tracking is recommended for this goal sport.';
                 } else {
-                    description.textContent = 'Choose a tracker for this game.';
+                    description.textContent = 'Standard tracking is recommended for this game.';
                 }
             }
             if (betaBtn) betaBtn.classList.toggle('hidden', !isBasketball);
             if (simpleBtn) simpleBtn.classList.toggle('hidden', !supportsSimpleLive);
             if (photoBtn) photoBtn.classList.toggle('hidden', !isBasketball);
+
+            const trackerButtons = [standardBtn, betaBtn, liveBtn, simpleBtn, photoBtn].filter(Boolean);
+            const recommendedBtn = isBasketball ? liveBtn : supportsSimpleLive ? simpleBtn : standardBtn;
+            trackerButtons.forEach((button) => {
+                const label = button.dataset.trackerLabel || 'Tracker';
+                button.dataset.recommended = 'false';
+                button.classList.remove('bg-indigo-600', 'text-white', 'hover:bg-indigo-700');
+                button.classList.add('bg-gray-100', 'text-gray-800', 'hover:bg-gray-200');
+                button.querySelector('[data-tracker-label-text]')?.replaceChildren(label);
+                advancedActions?.appendChild(button);
+            });
+            if (recommendedBtn) {
+                const label = isBasketball
+                    ? 'Start Live Tracker'
+                    : supportsSimpleLive
+                        ? 'Start Simple Live Tracker'
+                        : 'Start Standard Tracker';
+                recommendedBtn.dataset.recommended = 'true';
+                recommendedBtn.classList.remove('bg-gray-100', 'text-gray-800', 'hover:bg-gray-200');
+                recommendedBtn.classList.add('bg-indigo-600', 'text-white', 'hover:bg-indigo-700');
+                recommendedBtn.querySelector('[data-tracker-label-text]')?.replaceChildren(label);
+                recommendedAction?.appendChild(recommendedBtn);
+            }
+            if (advancedOptions) advancedOptions.open = false;
         }
 
         function openTrackerChoiceModal(gameId, isBasketball, supportsSimpleLive = false) {
