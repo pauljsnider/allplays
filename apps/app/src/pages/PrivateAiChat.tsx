@@ -92,6 +92,7 @@ export function PrivateAiChat({ auth }: { auth: AuthState }) {
   const bottomRef = useRef<HTMLDivElement | null>(null);
   const recognitionRef = useRef<SpeechRecognitionLike | null>(null);
   const stopNativeDictationRef = useRef<(() => Promise<void>) | null>(null);
+  const preserveMessagesForConversationRef = useRef<string | null>(null);
 
   const refreshConversations = async (showLoading = true, currentConversationId = activeConversationId) => {
     if (!auth.user) {
@@ -148,13 +149,18 @@ export function PrivateAiChat({ auth }: { auth: AuthState }) {
   };
 
   useEffect(() => {
+    preserveMessagesForConversationRef.current = null;
     setActiveConversationId(DEFAULT_PRIVATE_AI_CONVERSATION_ID);
     void refreshConversations();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [auth.user?.uid]);
 
   useEffect(() => {
-    refreshMessages();
+    if (preserveMessagesForConversationRef.current === activeConversationId) {
+      preserveMessagesForConversationRef.current = null;
+      return;
+    }
+    void refreshMessages();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [auth.user?.uid, activeConversationId]);
 
@@ -298,6 +304,7 @@ export function PrivateAiChat({ auth }: { auth: AuthState }) {
         result.assistantMessage
       ]);
       if (nextConversationId !== activeConversationId) {
+        preserveMessagesForConversationRef.current = nextConversationId;
         setActiveConversationId(nextConversationId);
       }
       await refreshConversations(false, nextConversationId);
@@ -340,6 +347,7 @@ export function PrivateAiChat({ auth }: { auth: AuthState }) {
     lookups: messages.reduce((total, message) => total + (message.toolNames?.length || 0), 0),
     conversations: conversations.length || (messages.length ? 1 : 0)
   }), [conversations.length, messages]);
+  const showDesktopConversationManagement = conversations.length > 0 || isDraftConversationId(activeConversationId);
 
   const refreshAiView = () => {
     void (async () => {
@@ -368,70 +376,78 @@ export function PrivateAiChat({ auth }: { auth: AuthState }) {
     return (
       <div className="messages-page messages-page-web private-ai-page">
         <PrivateAiHeader loading={loading || conversationLoading} onRefresh={refreshAiView} />
-        <section className="messages-two-pane private-ai-two-pane mt-4">
-          <aside className="messages-list-pane private-ai-rail">
-            <section className="app-card p-3">
-              <div className="flex items-center gap-3">
-                <div className="private-ai-desktop-mark flex h-10 w-10 flex-none items-center justify-center rounded-xl text-primary-700">
-                  <img src="./logo_small.png" alt="" aria-hidden="true" />
-                  <Sparkles className="private-ai-mark-spark" aria-hidden="true" />
-                </div>
-                <div className="min-w-0">
-                  <div className="text-sm font-black text-gray-950">Private AI</div>
-                  <div className="truncate text-xs font-bold text-gray-500">{auth.user?.email || 'Signed in'}</div>
-                </div>
-              </div>
-              <div className="mt-3 grid grid-cols-3 gap-2">
-                <StatPill label="Chats" value={String(stats.conversations)} />
-                <StatPill label="Messages" value={String(stats.messages)} />
-                <StatPill label="Lookups" value={String(stats.lookups)} />
-              </div>
-            </section>
-
-            <PrivateAiConversationList
-              conversations={conversations}
-              activeConversationId={activeConversationId}
-              loading={conversationLoading}
-              onSelect={selectConversation}
-              onNewConversation={startNewConversation}
-            />
-
-            <section className="app-card p-3">
-              {!messages.length ? (
-                <PromptSection
-                  title="Ask about"
-                  primaryPrompt={primaryStarterPrompt}
-                  secondaryPrompts={secondarySuggestedPrompts}
-                  onPrompt={sendSuggestion}
-                  disabled={sending}
-                />
-              ) : (
-                <>
-                  <div className="app-label">Ask about</div>
-                  <div className="mt-2 space-y-2">
-                    {suggestedPrompts.map((prompt) => (
-                      <button
-                        key={prompt}
-                        type="button"
-                        className="private-ai-prompt-button"
-                        onClick={() => sendSuggestion(prompt)}
-                        disabled={sending}
-                      >
-                        <span>{prompt}</span>
-                        <ChevronRight className="h-4 w-4 flex-none" aria-hidden="true" />
-                      </button>
-                    ))}
+        {showDesktopConversationManagement ? (
+          <section className="messages-two-pane private-ai-two-pane mt-4">
+            <aside className="messages-list-pane private-ai-rail">
+              <section className="app-card p-3">
+                <div className="flex items-center gap-3">
+                  <div className="private-ai-desktop-mark flex h-10 w-10 flex-none items-center justify-center rounded-xl text-primary-700">
+                    <img src="./logo_small.png" alt="" aria-hidden="true" />
+                    <Sparkles className="private-ai-mark-spark" aria-hidden="true" />
                   </div>
-                </>
-              )}
-            </section>
-          </aside>
-          <div className="messages-chat-pane min-w-0">
+                  <div className="min-w-0">
+                    <div className="text-sm font-black text-gray-950">Private AI</div>
+                    <div className="truncate text-xs font-bold text-gray-500">{auth.user?.email || 'Signed in'}</div>
+                  </div>
+                </div>
+                <div className="mt-3 grid grid-cols-3 gap-2">
+                  <StatPill label="Chats" value={String(stats.conversations)} />
+                  <StatPill label="Messages" value={String(stats.messages)} />
+                  <StatPill label="Lookups" value={String(stats.lookups)} />
+                </div>
+              </section>
+
+              <PrivateAiConversationList
+                conversations={conversations}
+                activeConversationId={activeConversationId}
+                loading={conversationLoading}
+                onSelect={selectConversation}
+                onNewConversation={startNewConversation}
+              />
+
+              <section className="app-card p-3">
+                {!messages.length ? (
+                  <PromptSection
+                    title="Ask about"
+                    primaryPrompt={primaryStarterPrompt}
+                    secondaryPrompts={secondarySuggestedPrompts}
+                    onPrompt={sendSuggestion}
+                    disabled={sending}
+                  />
+                ) : (
+                  <>
+                    <div className="app-label">Ask about</div>
+                    <div className="mt-2 space-y-2">
+                      {suggestedPrompts.map((prompt) => (
+                        <button
+                          key={prompt}
+                          type="button"
+                          className="private-ai-prompt-button"
+                          onClick={() => sendSuggestion(prompt)}
+                          disabled={sending}
+                        >
+                          <span>{prompt}</span>
+                          <ChevronRight className="h-4 w-4 flex-none" aria-hidden="true" />
+                        </button>
+                      ))}
+                    </div>
+                  </>
+                )}
+              </section>
+            </aside>
+            <div className="messages-chat-pane min-w-0">
+              <div className="chat-window chat-window-embedded private-ai-window">
+                {thread}
+              </div>
+            </div>
+          </section>
+        ) : (
+          <section className="private-ai-first-run mt-4">
             <div className="chat-window chat-window-embedded private-ai-window">
               {thread}
             </div>
-          </div>
-        </section>
+          </section>
+        )}
       </div>
     );
   }
