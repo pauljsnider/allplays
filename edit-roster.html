@@ -128,7 +128,10 @@
                     <!-- CSV Import Tab Content -->
                     <div id="content-csv-import" class="p-6 hidden">
                         <div class="mb-3">
-                            <h2 class="text-xl font-bold">CSV Roster Import</h2>
+                            <div class="flex flex-wrap items-center justify-between gap-3">
+                                <h2 class="text-xl font-bold">CSV Roster Import</h2>
+                                <button id="download-roster-template-btn" type="button" class="rounded-md border border-indigo-200 bg-indigo-50 px-3 py-2 text-sm font-semibold text-indigo-700 hover:bg-indigo-100">Download full roster template</button>
+                            </div>
                             <p class="text-sm text-gray-600">Upload or paste a CSV with Name, Number, profile columns such as Position, DOB, Gender, or Address, roster field label/key columns, and parent/guardian/contact columns such as Parent Email or Guardian Phone. Unknown headers and invalid field values are rejected before anything is saved.</p>
                         </div>
 
@@ -144,8 +147,13 @@
                                     class="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:border-indigo-500 focus:ring-indigo-500 text-sm font-mono"
                                     placeholder="Name,Number,Position,DOB,Parent Name,Parent Email,Grade&#10;Avery Lee,4,Forward,2014-02-03,Pat Lee,pat@example.com,6"></textarea>
                             </div>
+                            <label class="flex items-start gap-2 rounded-md border border-indigo-100 bg-indigo-50 p-3 text-sm text-indigo-900">
+                                <input id="roster-csv-send-invites" type="checkbox" class="mt-0.5 rounded border-indigo-300 text-indigo-600" checked>
+                                <span><span class="block font-semibold">Email invitations to imported family contacts</span><span class="block text-xs text-indigo-700">Contacts with email addresses receive an invite after their player row saves. Failures stay visible for retry and do not discard the roster/contact import.</span></span>
+                            </label>
+                            <div id="csv-import-preview" class="hidden space-y-2 rounded-md border border-gray-200 bg-gray-50 p-3 text-sm"></div>
                             <button id="import-csv-btn" type="button"
-                                class="w-full bg-indigo-600 text-white py-2 px-4 rounded-md hover:bg-indigo-700 transition">Import CSV</button>
+                                class="w-full bg-indigo-600 text-white py-2 px-4 rounded-md hover:bg-indigo-700 transition">Review CSV</button>
                             <div id="csv-import-status" class="hidden rounded-md border p-3 text-sm"></div>
                         </div>
                     </div>
@@ -546,8 +554,8 @@
     <div id="footer-container"></div>
 
     <script type="module">
-        import { getTeam, getPlayers, addPlayer, deactivatePlayer, reactivatePlayer, getGames, uploadPlayerPhoto, updatePlayer, setPlayerPrivateRosterProfileFields, inviteParent, removeParentFromPlayer, getAllUsers, getUnreadChatCount, listTeamParentMembershipRequests, approveParentMembershipRequest, denyParentMembershipRequest, getRosterFieldDefinitions, saveRosterFieldDefinition, disableRosterFieldDefinition, reorderRosterFieldDefinitions, listTeamRegistrationForms, listTeamRegistrationReviews, approveTeamRegistration, rejectTeamRegistration, extendTeamRegistrationOffer, acceptTeamRegistrationOffer, releaseTeamRegistrationWaitlist, listTeamTrackingItems, createTeamTrackingItem, listTeamTrackingStatuses, setTeamTrackingStatus } from './js/db.js?v=85';
-        import { buildRosterFieldDefinitionPayload, collectRosterProfileValues, getRosterProfileValues, normalizeRosterFieldDefinitions, planRosterCsvImport, renderRosterProfileFields, validateRosterProfileValues } from './js/roster-profile-fields.js?v=3';
+        import { getTeam, getPlayers, getPlayersWithPrivateRosterContacts, addPlayer, applyRosterCsvImportOperations, deactivatePlayer, reactivatePlayer, getGames, uploadPlayerPhoto, updatePlayer, setPlayerPrivateRosterProfileFields, inviteParent, removeParentFromPlayer, getAllUsers, getUnreadChatCount, listTeamParentMembershipRequests, approveParentMembershipRequest, denyParentMembershipRequest, getRosterFieldDefinitions, saveRosterFieldDefinition, disableRosterFieldDefinition, reorderRosterFieldDefinitions, listTeamRegistrationForms, listTeamRegistrationReviews, approveTeamRegistration, rejectTeamRegistration, extendTeamRegistrationOffer, acceptTeamRegistrationOffer, releaseTeamRegistrationWaitlist, listTeamTrackingItems, createTeamTrackingItem, listTeamTrackingStatuses, setTeamTrackingStatus } from './js/db.js?v=86';
+        import { buildFullRosterCsvTemplate, buildRosterFieldDefinitionPayload, collectRosterProfileValues, getRosterProfileValues, normalizeRosterFieldDefinitions, planRosterCsvImport, renderRosterProfileFields, summarizeRosterContactInviteResults, validateRosterProfileValues } from './js/roster-profile-fields.js?v=4';
         import { buildTrackingStatusPayload, mergeTrackingStatusRows, normalizeTrackingItemDraft, summarizeTrackingStatus } from './js/tracking-status-admin.js?v=2';
         import { renderHeader, renderFooter, getUrlParams, escapeHtml } from './js/utils.js?v=8';
         import { checkAuth, sendInviteEmail } from './js/auth.js?v=42';
@@ -574,6 +582,8 @@
         let latestRegistrationReviews = [];
         let selectedRegistrationExportColumns = getDefaultRegistrationReviewCsvColumnKeys();
         let registrationRosterImportPlan = null;
+        let rosterCsvImportPlan = null;
+        let rosterCsvImportSource = '';
         let trackingItems = [];
         let selectedTrackingItemId = '';
         let latestRosterPlayers = [];
@@ -1504,7 +1514,7 @@
 
             let players = [];
             try {
-                players = await getPlayers(currentTeamId, { includeInactive: true });
+                players = await getPlayersWithPrivateRosterContacts(currentTeamId, { includeInactive: true });
             } catch (err) {
                 console.error('Error loading roster players:', err);
                 tbody.innerHTML = `<tr><td colspan="3" class="px-6 py-4 text-center text-red-600">Unable to load roster players: ${escapeHtml(err?.message || 'Please try again.')}</td></tr>`;
@@ -1577,6 +1587,13 @@
                     parent?.inviterUserId ||
                     parent?.status === 'removed'
                 ));
+                const importedFamilyContacts = [
+                    ...(Array.isArray(p.parents) ? p.parents : []),
+                    ...(Array.isArray(p.contacts) ? p.contacts : []),
+                    ...(Array.isArray(p.privateProfileParents) ? p.privateProfileParents : []),
+                    ...(Array.isArray(p.privateProfileContacts) ? p.privateProfileContacts : [])
+                ].filter((contact) => contact?.source === 'roster-csv' && contact?.email);
+                const linkedParentEmails = new Set(profileParents.map((parent) => normalizeEmail(parent.email)).filter(Boolean));
                 const pendingRequests = pendingRequestsByPlayerId.get(p.id) || [];
                 const importSourceType = getPlayerImportSourceType(p);
                 const playerName = escapeHtml(p.name || 'Unnamed player');
@@ -1611,6 +1628,33 @@
                                                 </div>
                                             </div>
                                         `).join('')}
+                                    </div>
+                                </div>
+                            ` : '';
+                const importedContactBlock = importedFamilyContacts.length > 0 ? `
+                                <div class="mt-2 rounded-lg border border-indigo-200 bg-indigo-50 p-2">
+                                    <div class="text-[11px] font-bold uppercase tracking-wide text-indigo-800">Imported family contacts</div>
+                                    <div class="mt-2 space-y-1">
+                                        ${importedFamilyContacts.map((contact) => {
+                                            const linked = linkedParentEmails.has(normalizeEmail(contact.email));
+                                            return `
+                                                <div class="flex flex-wrap items-center justify-between gap-2 rounded border border-indigo-100 bg-white px-2 py-1.5 text-xs text-gray-700">
+                                                    <div>
+                                                        <div class="font-semibold text-gray-900">${escapeHtml(contact.name || contact.email)}</div>
+                                                        <div class="text-[11px] text-gray-500">${escapeHtml(contact.email)} · ${escapeHtml(contact.relation || 'Parent')} · ${linked ? 'Linked account' : 'Invite needed'}</div>
+                                                    </div>
+                                                    ${linked ? '<span class="rounded-full bg-emerald-100 px-2 py-1 text-[10px] font-bold text-emerald-800">Accepted</span>' : `
+                                                        <button type="button"
+                                                            class="invite-imported-contact-btn rounded border border-indigo-200 bg-indigo-50 px-2 py-1 text-[11px] font-semibold text-indigo-700 hover:bg-indigo-100"
+                                                            data-player-id="${escapeHtml(p.id)}"
+                                                            data-email="${escapeHtml(contact.email)}"
+                                                            data-relation="${escapeHtml(contact.relation || 'Parent')}">
+                                                            Send / resend invite
+                                                        </button>
+                                                    `}
+                                                </div>
+                                            `;
+                                        }).join('')}
                                     </div>
                                 </div>
                             ` : '';
@@ -1661,6 +1705,7 @@
                                 ${importSourceType ? `<span class="inline-flex text-[10px] bg-emerald-100 text-emerald-800 px-2 py-0.5 rounded-full font-semibold uppercase tracking-wide">Imported: ${escapeHtml(importSourceType)}</span>` : '<span class="inline-flex text-[10px] bg-gray-100 text-gray-600 px-2 py-0.5 rounded-full font-semibold uppercase tracking-wide">Local-only</span>'}
                             </div>
                             ${parentChips}
+                            ${importedContactBlock}
                             ${householdContactBlock}
                             ${pendingRequestBlock}
                         </td>
@@ -1698,6 +1743,18 @@
 
             document.querySelectorAll('.invite-btn').forEach(btn => {
                 btn.addEventListener('click', (e) => startInviteParent(players.find(p => p.id === e.target.dataset.id)));
+            });
+
+            document.querySelectorAll('.invite-imported-contact-btn').forEach(btn => {
+                btn.addEventListener('click', (event) => {
+                    const buttonEl = event.currentTarget;
+                    const player = players.find((candidate) => candidate.id === buttonEl.dataset.playerId);
+                    if (!player) return;
+                    startInviteParent(player, {
+                        email: buttonEl.dataset.email || '',
+                        relation: buttonEl.dataset.relation || 'Parent'
+                    });
+                });
             });
 
             document.querySelectorAll('.edit-btn').forEach(btn => {
@@ -1803,14 +1860,14 @@
             document.getElementById(stateName).classList.remove('hidden');
         }
 
-        function startInviteParent(player) {
+        function startInviteParent(player, contact = {}) {
             currentInvitePlayer = player;
             document.getElementById('invite-player-name').textContent = player.name;
             document.getElementById('manual-player-name').textContent = player.name;
             document.getElementById('invite-modal').classList.remove('hidden');
             showInviteState('invite-form-state');
-            document.getElementById('invite-email').value = '';
-            document.getElementById('invite-relation').value = 'Parent';
+            document.getElementById('invite-email').value = contact.email || '';
+            document.getElementById('invite-relation').value = contact.relation || 'Parent';
         }
 
         function closeInviteModal() {
@@ -1994,48 +2051,141 @@
                 : escapeHtml(String(messages || ''));
         }
 
+        function resetRosterCsvReview() {
+            rosterCsvImportPlan = null;
+            rosterCsvImportSource = '';
+            const preview = document.getElementById('csv-import-preview');
+            const button = document.getElementById('import-csv-btn');
+            preview?.classList.add('hidden');
+            if (preview) preview.innerHTML = '';
+            if (button && !button.disabled) button.textContent = 'Review CSV';
+        }
+
+        function renderRosterCsvReview(plan) {
+            const preview = document.getElementById('csv-import-preview');
+            if (!preview) return;
+            const rows = plan.operations.map((operation, index) => {
+                const contacts = Array.isArray(operation.familyContacts) ? operation.familyContacts : [];
+                const inviteCount = Array.isArray(operation.inviteRequests) ? operation.inviteRequests.length : 0;
+                return `
+                    <div class="rounded-md border border-gray-200 bg-white p-3">
+                        <div class="font-semibold text-gray-900">${escapeHtml(operation.type === 'update' ? 'Update' : 'Add')}: ${escapeHtml(operation.payload?.name || `Row ${index + 1}`)}${operation.payload?.number ? ` #${escapeHtml(operation.payload.number)}` : ''}</div>
+                        <div class="mt-1 text-xs text-gray-600">${contacts.length} family contact${contacts.length === 1 ? '' : 's'} · ${inviteCount} email invite${inviteCount === 1 ? '' : 's'}</div>
+                        ${contacts.length ? `<div class="mt-1 text-xs text-indigo-700">${contacts.map((contact) => escapeHtml([contact.name, contact.relation, contact.email].filter(Boolean).join(' · '))).join('<br>')}</div>` : ''}
+                    </div>
+                `;
+            });
+            preview.innerHTML = `
+                <div class="font-semibold text-gray-900">Review ${plan.operations.length} planned player row${plan.operations.length === 1 ? '' : 's'} before saving.</div>
+                <div class="text-xs text-gray-600">All rows passed header, value, duplicate, and contact-conflict validation. No writes have happened yet.</div>
+                ${rows.join('')}
+            `;
+            preview.classList.remove('hidden');
+        }
+
+        async function sendImportedRosterContactInvite(playerId, playerNumber, request) {
+            try {
+                const result = await inviteParent(currentTeamId, playerId, playerNumber || '', request.email, request.relation || 'Parent');
+                let emailSent = false;
+                try {
+                    await sendInviteEmail(request.email, result.code, 'parent', {
+                        teamName: result.teamName,
+                        playerName: result.playerName
+                    });
+                    emailSent = true;
+                } catch (emailError) {
+                    console.warn('Could not email imported roster contact invite:', emailError);
+                }
+                if (result.autoLinked) return { ...request, status: 'linked' };
+                return { ...request, status: emailSent ? 'sent' : 'code-created', code: result.code || '' };
+            } catch (error) {
+                console.warn('Could not create imported roster contact invite:', error);
+                return { ...request, status: 'failed', error: error?.message || 'Invite failed.' };
+            }
+        }
+
+        function formatRosterContactInviteSummary(results) {
+            const summary = summarizeRosterContactInviteResults(results);
+            const parts = [];
+            if (summary.sent) parts.push(`${summary.sent} emailed`);
+            if (summary.linked) parts.push(`${summary.linked} linked`);
+            if (summary.codeCreated) parts.push(`${summary.codeCreated} code${summary.codeCreated === 1 ? '' : 's'} created for retry`);
+            if (summary.failed) parts.push(`${summary.failed} failed and can be retried from the imported contact row`);
+            return parts.length ? ` Family invites: ${parts.join(', ')}.` : '';
+        }
+
+        function downloadFullRosterTemplate() {
+            const csv = buildFullRosterCsvTemplate(rosterFieldDefinitions);
+            const blobUrl = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }));
+            const link = document.createElement('a');
+            link.href = blobUrl;
+            link.download = `${String(currentTeam?.name || 'team').trim().toLowerCase().replace(/[^a-z0-9]+/g, '-') || 'team'}-full-roster-template.csv`;
+            document.body.appendChild(link);
+            link.click();
+            link.remove();
+            URL.revokeObjectURL(blobUrl);
+        }
+
         async function handleRosterCsvImport() {
             const csvText = document.getElementById('roster-csv-input').value;
             const button = document.getElementById('import-csv-btn');
-            const currentPlayers = await getPlayers(currentTeamId, { includeInactive: true });
-            const plan = planRosterCsvImport({
-                csvText,
-                fields: rosterFieldDefinitions,
-                existingPlayers: currentPlayers
-            });
 
-            if (plan.errors.length) {
-                renderCsvImportStatus(plan.errors, 'error');
+            if (!rosterCsvImportPlan || rosterCsvImportSource !== csvText) {
+                const currentPlayers = await getPlayersWithPrivateRosterContacts(currentTeamId, { includeInactive: true });
+                const plan = planRosterCsvImport({
+                    csvText,
+                    fields: rosterFieldDefinitions,
+                    existingPlayers: currentPlayers
+                });
+
+                if (plan.errors.length) {
+                    resetRosterCsvReview();
+                    renderCsvImportStatus(plan.errors, 'error');
+                    return;
+                }
+                if (plan.operations.length === 0) {
+                    resetRosterCsvReview();
+                    renderCsvImportStatus('No CSV rows to import.', 'info');
+                    return;
+                }
+
+                rosterCsvImportPlan = plan;
+                rosterCsvImportSource = csvText;
+                renderRosterCsvReview(plan);
+                renderCsvImportStatus('Review the planned players and family contacts below. Click Import Reviewed Rows when ready.', 'info');
+                button.textContent = 'Import Reviewed Rows';
                 return;
             }
-            if (plan.operations.length === 0) {
-                renderCsvImportStatus('No CSV rows to import.', 'info');
-                return;
-            }
-            if (!confirm(`Import ${plan.operations.length} player row${plan.operations.length === 1 ? '' : 's'}?`)) return;
 
+            const plan = rosterCsvImportPlan;
+            if (!confirm(`Import ${plan.operations.length} reviewed player row${plan.operations.length === 1 ? '' : 's'}?`)) return;
+
+            const inviteResults = [];
+            const sendInvites = document.getElementById('roster-csv-send-invites')?.checked === true;
             try {
                 button.disabled = true;
                 button.textContent = 'Importing...';
-                for (const operation of plan.operations) {
-                    let playerId = operation.playerId;
-                    if (operation.type === 'update') {
-                        await updatePlayer(currentTeamId, playerId, operation.payload);
-                    } else {
-                        playerId = await addPlayer(currentTeamId, operation.payload);
-                    }
-                    if (operation.privateRosterFields || operation.privateFamilyContacts) {
-                        await setPlayerPrivateRosterProfileFields(currentTeamId, playerId, operation.privateRosterFields || {}, operation.privateFamilyContacts || {});
+                const savedOperations = await applyRosterCsvImportOperations(currentTeamId, plan.operations);
+                for (const operation of savedOperations) {
+                    if (sendInvites) {
+                        for (const request of operation.inviteRequests || []) {
+                            inviteResults.push(await sendImportedRosterContactInvite(operation.playerId, operation.payload?.number, request));
+                        }
                     }
                 }
-                renderCsvImportStatus(`Imported ${plan.operations.length} player row${plan.operations.length === 1 ? '' : 's'}.`, 'success');
+                renderCsvImportStatus(`Imported ${plan.operations.length} player row${plan.operations.length === 1 ? '' : 's'}.${formatRosterContactInviteSummary(inviteResults)}`, inviteResults.some((result) => result.status === 'failed') ? 'info' : 'success');
+                rosterCsvImportPlan = null;
+                rosterCsvImportSource = '';
+                document.getElementById('csv-import-preview')?.classList.add('hidden');
                 await loadRoster();
             } catch (error) {
                 console.error('CSV roster import failed:', error);
-                renderCsvImportStatus(error?.message || 'CSV roster import failed.', 'error');
+                renderCsvImportStatus(`${error?.message || 'CSV roster import failed.'} Fix the failure, then review the current roster before retrying to avoid duplicate rows.`, 'error');
+                rosterCsvImportPlan = null;
+                rosterCsvImportSource = '';
             } finally {
                 button.disabled = false;
-                button.textContent = 'Import CSV';
+                button.textContent = 'Review CSV';
             }
         }
 
@@ -2203,7 +2353,10 @@
             const file = e.target.files[0];
             if (!file) return;
             document.getElementById('roster-csv-input').value = await file.text();
+            resetRosterCsvReview();
         });
+        document.getElementById('roster-csv-input').addEventListener('input', resetRosterCsvReview);
+        document.getElementById('download-roster-template-btn').addEventListener('click', downloadFullRosterTemplate);
         document.getElementById('import-csv-btn').addEventListener('click', () => handleRosterCsvImport());
 
         // Image preview handler

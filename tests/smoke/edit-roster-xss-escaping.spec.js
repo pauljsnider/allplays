@@ -31,7 +31,11 @@ export async function getTeam(teamId) {
     return { id: teamId, name: 'Test Team', ownerId: 'user-1', adminEmails: [] };
 }
 export async function getPlayers() { return []; }
+export async function getPlayersWithPrivateRosterContacts() { return []; }
 export async function addPlayer() {}
+export async function applyRosterCsvImportOperations(_teamId, operations) {
+    return operations.map((operation, index) => ({ ...operation, playerId: operation.playerId || 'player-' + (index + 1) }));
+}
 export async function deactivatePlayer() {}
 export async function reactivatePlayer() {}
 export async function getGames() { return []; }

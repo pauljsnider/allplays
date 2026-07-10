@@ -2596,6 +2596,24 @@ export async function getPlayers(teamId, options = {}) {
     }
 }
 
+export async function getPlayersWithPrivateRosterContacts(teamId, options = {}) {
+    const players = await getPlayers(teamId, options);
+    return Promise.all(players.map(async (player) => {
+        if (!player?.id) return player;
+        try {
+            const privateProfile = await getPlayerPrivateProfile(teamId, player.id);
+            return {
+                ...player,
+                privateProfileParents: Array.isArray(privateProfile?.parents) ? privateProfile.parents : [],
+                privateProfileContacts: Array.isArray(privateProfile?.contacts) ? privateProfile.contacts : []
+            };
+        } catch (error) {
+            if (error?.code === 'permission-denied') return player;
+            throw error;
+        }
+    }));
+}
+
 function playerHasRosterContactFields(player = {}) {
     return Boolean(
         (Array.isArray(player?.parents) && player.parents.length > 0) ||
@@ -2683,6 +2701,66 @@ export async function setPlayerPrivateRosterProfileFields(teamId, playerId, rost
         privateProfileUpdate.contacts = extraData.contacts;
     }
     await setDoc(doc(db, `teams/${teamId}/players/${playerId}/private/profile`), privateProfileUpdate, { merge: true });
+}
+
+export async function applyRosterCsvImportOperations(teamId, operations = []) {
+    const normalizedTeamId = String(teamId || '').trim();
+    const plannedOperations = Array.isArray(operations) ? operations : [];
+    if (!normalizedTeamId) throw new Error('Team is required for roster import.');
+    if (plannedOperations.length === 0) return [];
+    // Each row uses at most two writes (player + private profile). Keep the
+    // entire reviewed import below Firestore's 500-write batch ceiling so a
+    // service failure cannot leave half of the roster applied.
+    if (plannedOperations.length > 200) {
+        throw new Error('Import at most 200 roster rows at a time.');
+    }
+
+    const batch = writeBatch(db);
+    const savedOperations = plannedOperations.map((operation) => {
+        const type = operation?.type;
+        if (type !== 'add' && type !== 'update') {
+            throw new Error('Roster import contains an unsupported operation.');
+        }
+        const payload = { ...(operation.payload || {}) };
+        assertNoSensitivePlayerFields(payload);
+        const existingPlayerId = String(operation.playerId || '').trim();
+        if (type === 'update' && !existingPlayerId) {
+            throw new Error('Roster import update is missing a player.');
+        }
+        const playerRef = type === 'update'
+            ? doc(db, `teams/${normalizedTeamId}/players`, existingPlayerId)
+            : doc(collection(db, `teams/${normalizedTeamId}/players`));
+        if (!playerRef.id) throw new Error('Roster import player is required.');
+
+        if (type === 'update') {
+            batch.update(playerRef, { ...payload, updatedAt: Timestamp.now() });
+        } else {
+            batch.set(playerRef, {
+                ...payload,
+                active: Object.prototype.hasOwnProperty.call(payload, 'active') ? payload.active : true,
+                createdAt: Timestamp.now()
+            });
+        }
+
+        if (operation.privateRosterFields || operation.privateFamilyContacts) {
+            const privateProfileUpdate = {
+                rosterFields: operation.privateRosterFields || {},
+                updatedAt: Timestamp.now()
+            };
+            if (Array.isArray(operation.privateFamilyContacts?.parents)) {
+                privateProfileUpdate.parents = operation.privateFamilyContacts.parents;
+            }
+            if (Array.isArray(operation.privateFamilyContacts?.contacts)) {
+                privateProfileUpdate.contacts = operation.privateFamilyContacts.contacts;
+            }
+            batch.set(doc(db, `teams/${normalizedTeamId}/players/${playerRef.id}/private/profile`), privateProfileUpdate, { merge: true });
+        }
+
+        return { ...operation, playerId: playerRef.id };
+    });
+
+    await batch.commit();
+    return savedOperations;
 }
 
 export async function deletePlayer(teamId, playerId) {

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
-import { planRosterCsvImport, splitRosterProfileValuesByVisibility } from '../../js/roster-profile-fields.js';
+import { buildFullRosterCsvTemplate, planRosterCsvImport, splitRosterProfileValuesByVisibility, summarizeRosterContactInviteResults } from '../../js/roster-profile-fields.js';
 
 describe('roster CSV import planning', () => {
     const fields = [
@@ -382,6 +382,50 @@ describe('roster CSV import planning', () => {
         expect(plan.operations[0].payload).not.toHaveProperty('guardians');
     });
 
+    it('deduplicates new contacts against the private roster contact projection', () => {
+        const plan = planRosterCsvImport({
+            fields,
+            existingPlayers: [{
+                id: 'p1',
+                name: 'Avery Lee',
+                privateProfileParents: [{ name: 'Pat Lee', email: 'pat@example.com', relation: 'Parent', source: 'roster-csv' }],
+                privateProfileContacts: [{ name: 'Aunt Kim', email: 'kim@example.com', relation: 'Contact', source: 'roster-csv' }]
+            }],
+            csvText: [
+                'Name,Parent Name,Parent Email,Contact Name,Contact Email',
+                'Avery Lee,Pat Lee,pat@example.com,Aunt Kim,kim@example.com'
+            ].join('\n')
+        });
+
+        expect(plan.errors).toEqual([]);
+        expect(plan.operations[0].privateFamilyContacts).toEqual({
+            parents: [{ name: 'Pat Lee', email: 'pat@example.com', phone: '', relation: 'Parent', source: 'roster-csv' }],
+            contacts: [{ name: 'Aunt Kim', email: 'kim@example.com', phone: '', relation: 'Contact', source: 'roster-csv' }]
+        });
+    });
+
+    it('preserves private parent contacts when public parents already exist', () => {
+        const plan = planRosterCsvImport({
+            fields,
+            existingPlayers: [{
+                id: 'p1',
+                name: 'Avery Lee',
+                parents: [{ name: 'Pat Lee', email: 'pat@example.com', relation: 'Parent', source: 'roster-csv' }],
+                privateProfileParents: [{ name: 'Robin Lee', email: 'robin@example.com', relation: 'Guardian', source: 'roster-csv' }]
+            }],
+            csvText: 'Name,Number\nAvery Lee,8'
+        });
+
+        expect(plan.errors).toEqual([]);
+        expect(plan.operations).toHaveLength(1);
+        expect(plan.operations[0].privateFamilyContacts).toEqual({
+            parents: [
+                { name: 'Pat Lee', email: 'pat@example.com', phone: '', relation: 'Parent', source: 'roster-csv' },
+                { name: 'Robin Lee', email: 'robin@example.com', phone: '', relation: 'Guardian', source: 'roster-csv' }
+            ]
+        });
+    });
+
     it('returns actionable row validation errors without producing operations', () => {
         const plan = planRosterCsvImport({
             fields,
@@ -406,9 +450,57 @@ describe('roster CSV import planning', () => {
 
     it('describes parent and guardian contact columns in the roster CSV import UI', () => {
         const page = readFileSync('edit-roster.html', 'utf8');
+        const dbSource = readFileSync('js/db.js', 'utf8');
 
         expect(page).toContain('profile columns such as Position, DOB, Gender, or Address');
         expect(page).toContain('parent/guardian/contact columns such as Parent Email or Guardian Phone');
         expect(page).toContain('Name,Number,Position,DOB,Parent Name,Parent Email,Grade');
+        expect(page).toContain('download-roster-template-btn');
+        expect(page).toContain('roster-csv-send-invites');
+        expect(page).toContain('csv-import-preview');
+        expect(page).toContain('renderRosterCsvReview(plan)');
+        expect(page).toContain('sendImportedRosterContactInvite');
+        expect(page).toContain('operation.inviteRequests || []');
+        expect(page).toContain('Send / resend invite');
+        expect(page).toContain('Linked account');
+        expect(page).toContain('applyRosterCsvImportOperations(currentTeamId, plan.operations)');
+        expect(dbSource).toContain('export async function applyRosterCsvImportOperations');
+        expect(dbSource).toContain('export async function getPlayersWithPrivateRosterContacts');
+        expect(page).toContain('getPlayersWithPrivateRosterContacts(currentTeamId, { includeInactive: true })');
+        expect(dbSource).toContain("if (plannedOperations.length > 200)");
+        expect(dbSource).toContain('await batch.commit();');
+    });
+
+    it('builds a full roster template with family contacts and configured fields', () => {
+        const template = buildFullRosterCsvTemplate(fields);
+
+        expect(template).toContain('Name,Number,Position,DOB,Gender,Address,City,State,Zip,Roster Status');
+        expect(template).toContain('Parent Name,Parent Relation,Parent Email,Parent Phone');
+        expect(template).toContain('Guardian 2 Name,Guardian 2 Relation,Guardian 2 Email,Guardian 2 Phone');
+        expect(template).toContain('Grade,Throws Right,Birth Date,Medical Note');
+        expect(template).toContain('Avery Lee,4,Forward,2014-02-03');
+    });
+
+    it('omits configured roster field headers that collide with built-in template columns', () => {
+        const template = buildFullRosterCsvTemplate([
+            { key: 'position', label: 'Position', type: 'text', visibility: 'public', active: true },
+            { key: 'gender', label: 'Gender', type: 'text', visibility: 'public', active: true },
+            { key: 'grade', label: 'Grade', type: 'text', visibility: 'public', active: true }
+        ]);
+        const headers = template.trim().split('\n')[0].split(',');
+
+        expect(headers.filter((header) => header === 'Position')).toHaveLength(1);
+        expect(headers.filter((header) => header === 'Gender')).toHaveLength(1);
+        expect(headers).toContain('Grade');
+    });
+
+    it('summarizes imported contact invitation outcomes for retry UX', () => {
+        expect(summarizeRosterContactInviteResults([
+            { status: 'sent' },
+            { status: 'sent' },
+            { status: 'linked' },
+            { status: 'code-created' },
+            { status: 'failed' }
+        ])).toEqual({ sent: 2, linked: 1, codeCreated: 1, failed: 1 });
     });
 });
