@@ -67,6 +67,28 @@ describe('help and workflow page inventory', () => {
         }
     });
 
+    it('routes Getting Started users to the real sign-up and sign-in entry points', () => {
+        const html = readRepoFile('workflow-getting-started.html');
+        const workflowManifest = JSON.parse(readRepoFile('workflow-manifest.json'));
+        const helpPortalManifest = extractHelpManifest(readRepoFile('help.html'));
+        const appHelpIndex = readRepoFile('apps/app/src/lib/helpKnowledgeIndex.ts');
+        const gettingStartedHelpEntry = extractAppHelpIndexEntry(appHelpIndex, 'getting-started');
+        const workflowManifestEntry = workflowManifest.find((item) => item.id === 'getting-started');
+        const helpPortalManifestEntry = helpPortalManifest.find((item) => item.id === 'getting-started');
+
+        expect(html).toContain('href="login.html#signup"');
+        expect(html).toContain('href="login.html"');
+        expect(html).toContain('>Sign Up</a>');
+        expect(html).toContain('>Sign In</a>');
+        expect(html).not.toContain('Get Started Now');
+        expect(workflowManifestEntry?.searchText).toContain('Open Sign Up to create an account with your activation code');
+        expect(workflowManifestEntry?.searchText).not.toContain('Get Started Now');
+        expect(helpPortalManifestEntry?.searchText).toContain('Open Sign Up to create an account with your activation code');
+        expect(helpPortalManifestEntry?.searchText).not.toContain('Get Started Now');
+        expect(gettingStartedHelpEntry).toContain('Open Sign Up to create an account with your activation code');
+        expect(gettingStartedHelpEntry).not.toContain('Get Started Now');
+    });
+
     it('keeps the help portal manifest aligned with generated workflow and topic pages', () => {
         const helpHtml = readRepoFile('help.html');
         const workflowManifest = JSON.parse(readRepoFile('workflow-manifest.json'));

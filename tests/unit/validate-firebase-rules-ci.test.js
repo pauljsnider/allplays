@@ -1,5 +1,6 @@
+import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import { extractMatchBlock, validatePreviewDeployCommand } from '../../scripts/validate-firebase-rules-ci.mjs';
+import { extractMatchBlock, validateFirebaseRulesCi, validatePreviewDeployCommand } from '../../scripts/validate-firebase-rules-ci.mjs';
 
 describe('validate Firebase rules CI helpers', () => {
     it('scopes legacy game clip assertions to the flat path block', () => {
@@ -49,5 +50,18 @@ service firebase.storage {
       - name: Deploy preview channel
         run: firebase hosting:channel:deploy "$CURRENT_CHANNEL"
 `)).toThrow('Preview deploy Firebase project/config arguments');
+    });
+
+    it('guards Firebase preview release target skip handling', () => {
+        const validatorSource = readFileSync(
+            new URL('../../scripts/validate-firebase-rules-ci.mjs', import.meta.url),
+            'utf8'
+        );
+
+        expect(validatorSource).toContain("assertIncludes(deployPreview, 'preview_deploy_hit_release_target_error()'");
+        expect(validatorSource).toContain("assertIncludes(deployPreview, \"HTTP Error: 400, Can't release to .*resource doesn't exist or isn't a valid release target\"");
+        expect(validatorSource).toContain("assertIncludes(deployPreview, 'skip_preview_for_release_target'");
+        expect(validatorSource).toContain("assertIncludes(deployPreview, 'Firebase preview skipped for this run. See the deploy workflow summary for the skip reason.'");
+        expect(() => validateFirebaseRulesCi()).not.toThrow();
     });
 });

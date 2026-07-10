@@ -62,6 +62,15 @@ test.describe('help topic and workflow pages', () => {
         await expect(page.getByRole('link', { name: 'Team Chat' })).toHaveAttribute('href', 'team-chat.html#teamId=team-123');
     });
 
+    test('Getting Started exposes working account entry points instead of a nonexistent homepage CTA', async ({ page, baseURL }) => {
+        await bootWorkflowPage(page, baseURL, '/workflow-getting-started.html');
+
+        const workflowBody = page.locator('.help-workflow-body');
+        await expect(workflowBody.getByRole('link', { name: 'Sign Up' })).toHaveAttribute('href', 'login.html#signup');
+        await expect(workflowBody.getByRole('link', { name: 'Sign In' })).toHaveAttribute('href', 'login.html');
+        await expect(page.getByText('Get Started Now')).toHaveCount(0);
+    });
+
     for (const file of workflowPages) {
         test(`${file} boots with generated workflow navigation`, async ({ page, baseURL }) => {
             await assertPageBootsWithoutFatalErrors(page, {
