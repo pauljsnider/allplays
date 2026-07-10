@@ -1521,6 +1521,7 @@ test('app schedule event detail exposes parent actions and RSVP', async ({ page,
     const availabilitySection = page.locator('section').filter({ has: page.getByRole('heading', { name: 'Availability' }) });
     await expect(availabilitySection.getByRole('heading', { name: 'Availability' })).toBeVisible();
     await expect(availabilitySection.getByText('Dana Parent')).toBeVisible();
+    await availabilitySection.getByRole('button', { name: 'Add note' }).click();
     await availabilitySection.getByLabel('Availability note').fill('Arriving after school pickup.');
     await availabilitySection.getByRole('button', { name: 'Going' }).click();
     expect(await page.evaluate(() => window.__scheduleCalls.rsvps)).toEqual([
