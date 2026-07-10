@@ -47,9 +47,26 @@ describe('schedule date range source contracts', () => {
         expect(groupedLoadSource).not.toContain('.map((tournamentGroup) => loadGames');
         expect(sharedGamesSource).toContain("where('homeTeamId', '==', teamId)");
         expect(sharedGamesSource).toContain("where('awayTeamId', '==', teamId)");
-        expect(sharedGamesSource).not.toContain("where('teamIds', 'array-contains', teamId)");
+        expect(sharedGamesSource).toContain("where('teamIds', 'array-contains', teamId)");
         expect((getGamesSource.match(/getSharedGamesForTeam\(teamId/g) || [])).toHaveLength(1);
-        expect(getGamesSource).toContain('getSharedGamesForTeam(teamId, { requireComplete: hasTournamentGroup })');
+        expect(getGamesSource).toContain('getSharedGamesForTeam(teamId, { startDate, endDate, requireComplete: hasTournamentGroup })');
         expect(getGamesSource).toContain('if (hasTournamentGroup) throw error;');
+    });
+
+    it('applies the requested date window to shared-game queries and their fallback', () => {
+        const sharedGamesSource = extractSource(dbSource, 'async function getSharedGamesForTeam', 'async function hasSharedGameUsingConfig');
+        const getGamesSource = extractSource(dbSource, 'export async function getGames', 'export async function getAggregatedStatsForGames');
+
+        expect(sharedGamesSource).toContain("where('date', '>=', Timestamp.fromDate(startDate))");
+        expect(sharedGamesSource).toContain("where('date', '<=', Timestamp.fromDate(endDate))");
+        expect(sharedGamesSource).toContain("where('homeTeamId', '==', teamId)");
+        expect(sharedGamesSource).toContain("where('awayTeamId', '==', teamId)");
+        expect(sharedGamesSource).toContain("where('teamIds', 'array-contains', teamId)");
+        expect(sharedGamesSource).toContain('query(sharedGamesRef, teamConstraint, ...orderedDateConstraints)');
+        expect(sharedGamesSource).toContain("query(sharedGamesRef, teamConstraint, where('date', '==', null))");
+        expect(sharedGamesSource).toContain('getDocs(query(sharedGamesRef, ...orderedDateConstraints))');
+        expect(sharedGamesSource).toContain("getDocs(query(sharedGamesRef, where('date', '==', null)))");
+        expect(sharedGamesSource).toContain('.filter((game) => isGameWithinDateRange(game, startDate, endDate))');
+        expect(getGamesSource).toContain('getSharedGamesForTeam(teamId, { startDate, endDate, requireComplete: hasTournamentGroup })');
     });
 });

@@ -172,3 +172,47 @@ describe('discoverPublicTeams search pagination', () => {
         expect(firebaseMocks.startAfter).not.toHaveBeenCalled();
     });
 });
+
+describe('complete legacy collection helpers', () => {
+    beforeEach(() => {
+        vi.clearAllMocks();
+    });
+
+    it('returns every authorized user while keeping each Firestore query bounded to 100', async () => {
+        const firstPage = Array.from({ length: 100 }, (_, index) => createTeamDoc(`user-${index + 1}`, {
+            email: `user-${String(index + 1).padStart(3, '0')}@example.com`
+        }));
+        const secondPage = [createTeamDoc('user-101', { email: 'user-101@example.com' })];
+        firebaseMocks.getDocs
+            .mockResolvedValueOnce({ docs: firstPage })
+            .mockResolvedValueOnce({ docs: secondPage });
+
+        const { getAllUsers } = await import('../../js/db.js?v=85');
+        const users = await getAllUsers();
+
+        expect(users).toHaveLength(101);
+        expect(firebaseMocks.getDocs).toHaveBeenCalledTimes(2);
+        expect(firebaseMocks.limit).toHaveBeenNthCalledWith(1, 100);
+        expect(firebaseMocks.limit).toHaveBeenNthCalledWith(2, 100);
+        expect(firebaseMocks.startAfter).toHaveBeenCalledWith(firstPage.at(-1));
+    });
+
+    it('returns every private team page instead of silently truncating at 100', async () => {
+        const firstPage = Array.from({ length: 100 }, (_, index) => createTeamDoc(`team-${index + 1}`, {
+            name: `Team ${String(index + 1).padStart(3, '0')}`
+        }));
+        const secondPage = [createTeamDoc('team-101', { name: 'Team 101' })];
+        firebaseMocks.getDocs
+            .mockResolvedValueOnce({ docs: firstPage })
+            .mockResolvedValueOnce({ docs: secondPage });
+
+        const { getTeams } = await import('../../js/db.js?v=85');
+        const teams = await getTeams({ includePrivate: true });
+
+        expect(teams).toHaveLength(101);
+        expect(firebaseMocks.getDocs).toHaveBeenCalledTimes(2);
+        expect(firebaseMocks.limit).toHaveBeenNthCalledWith(1, 100);
+        expect(firebaseMocks.limit).toHaveBeenNthCalledWith(2, 100);
+        expect(firebaseMocks.startAfter).toHaveBeenCalledWith(firstPage.at(-1));
+    });
+});

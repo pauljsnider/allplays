@@ -19,7 +19,6 @@ describe('admin dashboard statistics scope', () => {
 
     it('uses bounded page loaders for explicit broader admin searches', () => {
         const adminJs = fs.readFileSync('js/admin.js', 'utf8');
-        const dbJs = fs.readFileSync('js/db.js', 'utf8');
 
         const adminHtml = fs.readFileSync('admin.html', 'utf8');
 
@@ -39,8 +38,21 @@ describe('admin dashboard statistics scope', () => {
         expect(adminJs).toContain('getAdminUsersPage({ pageSize: 100 })');
         expect(adminJs).not.toContain('globalSearchTeamsPromise = getTeams(');
         expect(adminJs).not.toContain('globalSearchUsersPromise = getAllUsers(');
-        expect(dbJs).toContain('query(teamsRef, orderBy("name"), limitQuery(100))');
-        expect(dbJs).toContain('query(collection(db, "users"), orderBy("email"), limitQuery(100))');
+    });
+
+    it('preserves complete shared team and user helpers through bounded internal pages', () => {
+        const dbJs = fs.readFileSync('js/db.js', 'utf8');
+        const pagingHelper = dbJs.match(/async function getAllOrderedCollectionDocuments[\s\S]*?\n\}/)?.[0] || '';
+        const getTeamsBody = dbJs.match(/export async function getTeams\(options = \{\}\)[\s\S]*?\n\}/)?.[0] || '';
+        const getAllUsersBody = dbJs.match(/export async function getAllUsers\(\)[\s\S]*?\n\}/)?.[0] || '';
+
+        expect(pagingHelper).toContain('limitQuery(COMPLETE_COLLECTION_PAGE_SIZE)');
+        expect(pagingHelper).toContain('startAfterQuery(cursor)');
+        expect(pagingHelper).toContain('} while (cursor);');
+        expect(getTeamsBody).toContain('getAllOrderedCollectionDocuments(teamsRef, "name")');
+        expect(getAllUsersBody).toContain('getAllOrderedCollectionDocuments(collection(db, "users"), "email")');
+        expect(getTeamsBody).not.toContain('limitQuery(100)');
+        expect(getAllUsersBody).not.toContain('limitQuery(100)');
     });
 
     it('bounds dashboard game reads to the loaded team page and a recent time window', () => {
