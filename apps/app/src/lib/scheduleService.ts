@@ -936,8 +936,7 @@ async function nativeQuerySharedTournamentScheduleDocuments(
 ): Promise<ScheduleEventFirestoreRecord[]> {
   const membershipQueries = [
     { fieldPath: 'homeTeamId', op: 'EQUAL' },
-    { fieldPath: 'awayTeamId', op: 'EQUAL' },
-    { fieldPath: 'teamIds', op: 'ARRAY_CONTAINS' }
+    { fieldPath: 'awayTeamId', op: 'EQUAL' }
   ] as const;
   const payloads = await Promise.all(membershipQueries.map(({ fieldPath, op }) => (
     nativeFirestoreRequest(':runQuery', {

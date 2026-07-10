@@ -40,10 +40,14 @@ describe('schedule date range source contracts', () => {
 
     it('loads all visible tournament groups together and fetches shared history once', () => {
         const getGamesSource = extractSource(dbSource, 'export async function getGames', 'export async function getAggregatedStatsForGames');
+        const sharedGamesSource = extractSource(dbSource, 'async function getSharedGamesForTeam', 'async function hasSharedGameUsingConfig');
         const groupedLoadSource = extractSource(appSource, 'async function loadTournamentScheduleStandingsGames', 'async function loadRawTeam');
 
         expect(groupedLoadSource).toContain('loadGames(teamId, { tournamentGroups: [...groups.values()] })');
         expect(groupedLoadSource).not.toContain('.map((tournamentGroup) => loadGames');
+        expect(sharedGamesSource).toContain("where('homeTeamId', '==', teamId)");
+        expect(sharedGamesSource).toContain("where('awayTeamId', '==', teamId)");
+        expect(sharedGamesSource).not.toContain("where('teamIds', 'array-contains', teamId)");
         expect((getGamesSource.match(/getSharedGamesForTeam\(teamId/g) || [])).toHaveLength(1);
         expect(getGamesSource).toContain('getSharedGamesForTeam(teamId, { requireComplete: hasTournamentGroup })');
         expect(getGamesSource).toContain('if (hasTournamentGroup) throw error;');

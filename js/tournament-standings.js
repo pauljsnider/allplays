@@ -361,6 +361,11 @@ export function computeTournamentPoolStandings(gamesInput, options = {}) {
         group.games.push(normalizedGame);
     });
 
+    const groupNameCounts = Array.from(groupGames.values()).reduce((counts, group) => {
+        counts.set(group.groupName, (counts.get(group.groupName) || 0) + 1);
+        return counts;
+    }, new Map());
+
     return Array.from(groupGames.entries())
         .sort((a, b) => a[1].groupName.localeCompare(b[1].groupName) || a[0].localeCompare(b[0]))
         .map(([groupKey, pool]) => {
@@ -370,7 +375,12 @@ export function computeTournamentPoolStandings(gamesInput, options = {}) {
                 ...row,
                 teamName: row.team
             }));
-            const override = getPoolOverride(options?.poolOverrides || {}, poolName);
+            const override = getPoolOverride(
+                options?.poolOverrides || {},
+                poolName,
+                groupKey,
+                groupNameCounts.get(poolName) === 1
+            );
             const applied = applyTournamentStandingsOverride(rows, override);
             return {
                 groupKey,

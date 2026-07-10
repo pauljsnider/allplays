@@ -309,8 +309,7 @@ async function getSharedGamesForTeam(teamId, { requireComplete = false } = {}) {
     const sharedGamesRef = collectionGroup(db, 'sharedGames');
     const queries = [
         query(sharedGamesRef, where('homeTeamId', '==', teamId)),
-        query(sharedGamesRef, where('awayTeamId', '==', teamId)),
-        query(sharedGamesRef, where('teamIds', 'array-contains', teamId))
+        query(sharedGamesRef, where('awayTeamId', '==', teamId))
     ];
 
     const snapshots = await Promise.allSettled(queries.map((q) => getDocs(q)));

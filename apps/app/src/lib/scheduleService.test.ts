@@ -2959,6 +2959,9 @@ describe('web-created tournament standings hydration (#1967)', () => {
       const body = JSON.parse(String(init?.body));
       const from = body.structuredQuery.from[0];
       const fieldPath = body.structuredQuery.where.fieldFilter.field.fieldPath;
+      if (from.collectionId === 'sharedGames' && fieldPath === 'teamIds') {
+        throw new Error('teamIds membership query is not authorized');
+      }
       const sharedGameDocument = {
         name: 'projects/allplays-test/databases/(default)/documents/tournaments/t-1/sharedGames/shared-1',
         fields: {
@@ -3002,7 +3005,7 @@ describe('web-created tournament standings hydration (#1967)', () => {
       expandStaffPlayers: false
     });
 
-    expect(globalThis.fetch).toHaveBeenCalledTimes(4);
+    expect(globalThis.fetch).toHaveBeenCalledTimes(3);
     const gameQueryCall = vi.mocked(globalThis.fetch).mock.calls.find(([, init]) => {
       const body = JSON.parse(String(init?.body));
       return body.structuredQuery.from[0].collectionId === 'games';
@@ -3024,9 +3027,9 @@ describe('web-created tournament standings hydration (#1967)', () => {
     const sharedQueryBodies = vi.mocked(globalThis.fetch).mock.calls
       .map(([, init]) => JSON.parse(String(init?.body)))
       .filter((body) => body.structuredQuery.from[0].collectionId === 'sharedGames');
-    expect(sharedQueryBodies).toHaveLength(3);
+    expect(sharedQueryBodies).toHaveLength(2);
     expect(sharedQueryBodies.map((body) => body.structuredQuery.where.fieldFilter.field.fieldPath).sort()).toEqual([
-      'awayTeamId', 'homeTeamId', 'teamIds'
+      'awayTeamId', 'homeTeamId'
     ]);
     expect(sharedQueryBodies.every((body) => body.structuredQuery.from[0].allDescendants === true)).toBe(true);
     expect(getScheduleTournamentInfo(result.events[0] as any).standings?.rows).toEqual([

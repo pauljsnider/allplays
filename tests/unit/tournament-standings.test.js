@@ -421,6 +421,55 @@ describe('tournament standings helpers', () => {
     });
   });
 
+  it('keeps structured team-page overrides from leaking across colliding display labels', () => {
+    const targetedGroupKey = standingsKey('10U Gold', 'Pool A');
+    const collidingGroupKey = standingsKey('', '10U Gold • Pool A');
+    const pools = computeTournamentPoolStandings([
+      {
+        competitionType: 'tournament',
+        status: 'completed',
+        opponent: 'Tigers',
+        isHome: true,
+        homeScore: 1,
+        awayScore: 2,
+        tournament: { divisionName: '10U Gold', poolName: 'Pool A' }
+      },
+      {
+        competitionType: 'tournament',
+        status: 'completed',
+        opponent: 'Hawks',
+        isHome: true,
+        homeScore: 0,
+        awayScore: 3,
+        tournament: { poolName: '10U Gold • Pool A' }
+      }
+    ], {
+      teamName: 'Bears',
+      poolOverrides: {
+        [buildTournamentGroupOverrideKey(targetedGroupKey)]: {
+          groupKey: targetedGroupKey,
+          poolName: '10U Gold • Pool A',
+          teamOrder: ['Bears', 'Tigers']
+        }
+      }
+    });
+
+    expect(pools.find((pool) => pool.groupKey === targetedGroupKey)).toMatchObject({
+      isOverridden: true,
+      rows: [
+        expect.objectContaining({ teamName: 'Bears' }),
+        expect.objectContaining({ teamName: 'Tigers' })
+      ]
+    });
+    expect(pools.find((pool) => pool.groupKey === collidingGroupKey)).toMatchObject({
+      isOverridden: false,
+      rows: [
+        expect.objectContaining({ teamName: 'Hawks' }),
+        expect.objectContaining({ teamName: 'Bears' })
+      ]
+    });
+  });
+
   it('computes division-scoped standings when tournament games use division names', () => {
     const pools = computeTournamentPoolStandings([
       {
