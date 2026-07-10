@@ -202,6 +202,7 @@ describe('track live state helpers', () => {
           description: 'Ava scored for the home team',
           note: 'Left-footed finish',
           liveNoteId: 'goal-note-1',
+          liveNoteText: 'Home goal: Left-footed finish',
           teamSide: 'home',
           statKey: 'goals',
           value: 1,
@@ -234,7 +235,10 @@ describe('track live state helpers', () => {
           playerId: 'p9',
           statKey: 'goals',
           value: 1,
-          isOpponent: false
+          isOpponent: false,
+          teamSide: 'home',
+          liveNoteId: 'goal-note-1',
+          liveNoteText: 'Home goal: Left-footed finish'
         }
       },
       { text: 'Note: Strong defensive stretch', period: 'Q1', time: '0:20', timestamp: 12000, undoData: null },
@@ -258,6 +262,82 @@ describe('track live state helpers', () => {
       { id: 'note-1', text: 'Strong defensive stretch', type: 'text', period: 'Q1', time: '0:20', timestamp: 12000 }
     ]);
     expect(resumed.summaryText).toBe('Strong defensive stretch\nHome goal: Left-footed finish');
+  });
+
+  it('restores away goal undo metadata after reload', () => {
+    const resumed = buildTrackLiveResumeState({
+      liveEvents: [
+        {
+          type: 'goal',
+          description: 'Away goal by #9 (H1) - Top corner',
+          note: 'Top corner',
+          liveNoteId: 'away-goal-note-1',
+          liveNoteText: 'Tigers goal: Top corner',
+          teamSide: 'away',
+          statKey: 'goals',
+          value: 1,
+          playerId: 'opp9',
+          isOpponent: true,
+          period: 'H1',
+          gameClockMs: 42000,
+          createdAt: { seconds: 20, nanoseconds: 0 }
+        }
+      ],
+      buildGoalNoteText: (event) => event.liveNoteText
+    });
+
+    expect(resumed.gameLog[0].undoData).toEqual({
+      type: 'goal',
+      playerId: 'opp9',
+      statKey: 'goals',
+      value: 1,
+      isOpponent: true,
+      teamSide: 'away',
+      liveNoteId: 'away-goal-note-1',
+      liveNoteText: 'Tigers goal: Top corner'
+    });
+    expect(resumed.liveNotes).toEqual([
+      {
+        id: 'away-goal-note-1',
+        text: 'Tigers goal: Top corner',
+        type: 'goal',
+        period: 'H1',
+        time: '0:42',
+        timestamp: 20000
+      }
+    ]);
+  });
+
+  it('uses the hydrated fallback note metadata for legacy goals', () => {
+    const resumed = buildTrackLiveResumeState({
+      liveEvents: [
+        {
+          type: 'goal',
+          description: 'Legacy away goal',
+          note: 'Legacy finish',
+          teamSide: 'away',
+          statKey: 'goals',
+          value: 1,
+          playerId: 'opp7',
+          isOpponent: true,
+          period: 'H1',
+          gameClockMs: 12000,
+          createdAt: { seconds: 21, nanoseconds: 0 }
+        }
+      ]
+    });
+
+    expect(resumed.gameLog[0].undoData).toMatchObject({
+      type: 'goal',
+      teamSide: 'away',
+      liveNoteId: 'resume-goal-note-0',
+      liveNoteText: 'Legacy finish'
+    });
+    expect(resumed.liveNotes[0]).toMatchObject({
+      id: 'resume-goal-note-0',
+      text: 'Legacy finish',
+      type: 'goal'
+    });
   });
 
   it('applies reset and undo events when rebuilding resumed tracker state', () => {
