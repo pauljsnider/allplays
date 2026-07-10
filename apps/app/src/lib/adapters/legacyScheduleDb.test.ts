@@ -182,19 +182,14 @@ describe('legacyScheduleDb game persistence', () => {
         const tournamentDocument = buildSingleLegacyTournamentGameDocument([
             buildValidLegacyGamePayload()
         ], validTournamentMetadata);
-        const expectedDocument = {
-            ...tournamentDocument,
-            tournament: {
-                ...validTournamentMetadata
-            }
-        };
+        const documentBeforeCall = structuredClone(tournamentDocument);
         vi.mocked(legacyAddGame).mockResolvedValueOnce('tournament-game-1');
 
         await expect(addGame('team-1', tournamentDocument)).resolves.toBe('tournament-game-1');
 
         expect(legacyAddGame).toHaveBeenCalledTimes(1);
-        expect(legacyAddGame).toHaveBeenCalledWith('team-1', expectedDocument);
-        expect(tournamentDocument).toStrictEqual(expectedDocument);
+        expect(legacyAddGame).toHaveBeenCalledWith('team-1', documentBeforeCall);
+        expect(tournamentDocument).toStrictEqual(documentBeforeCall);
     });
 
     it('keeps non-tournament game persistence on the same single legacy delegation', async () => {
