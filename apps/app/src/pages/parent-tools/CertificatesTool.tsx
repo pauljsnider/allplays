@@ -81,7 +81,13 @@ export function CertificatesTool({ auth, refreshVersion }: { auth: AuthState; re
             </section>
             {!error && (loading ? <LoadingBlock label="Loading awards" /> : (
                 <div className="grid gap-3 lg:grid-cols-2">
-                    {visibleCards.length ? visibleCards.map((card) => <CertificateCard key={`${card.teamId}-${card.playerId}-${card.id}`} card={card} />) : (
+                    {visibleCards.length ? visibleCards.map((card) => (
+                        <CertificateCard
+                            key={`${card.teamId}-${card.playerId}-${card.id}`}
+                            card={card}
+                            isRequested={Boolean(requestedCard && card.teamId === requestedCard.teamId && card.id === requestedCard.id)}
+                        />
+                    )) : (
                         <EmptyState icon={Award} title="No published awards" detail="Awards appear after a coach publishes certificates." />
                     )}
                 </div>
@@ -90,7 +96,7 @@ export function CertificatesTool({ auth, refreshVersion }: { auth: AuthState; re
     );
 }
 
-function CertificateCard({ card }: { card: ParentCertificateCard }) {
+function CertificateCard({ card, isRequested }: { card: ParentCertificateCard; isRequested: boolean }) {
     return (
         <section className="app-card p-4">
             <div className="flex items-start gap-3">
@@ -103,10 +109,10 @@ function CertificateCard({ card }: { card: ParentCertificateCard }) {
                     {card.narrative || card.description ? <div className="mt-2 line-clamp-2 text-sm font-semibold leading-5 text-gray-600">{card.narrative || card.description}</div> : null}
                 </div>
             </div>
-            <div className="mt-3 grid grid-cols-2 gap-2">
-                <button type="button" className="secondary-button justify-center text-xs" onClick={() => openPublicUrl(card.url)}>
+            <div className={`mt-3 grid gap-2 ${isRequested ? 'grid-cols-1' : 'grid-cols-2'}`}>
+                <button type="button" className={`${isRequested ? 'primary-button' : 'secondary-button'} justify-center text-xs`} onClick={() => openPublicUrl(card.url)}>
                     <ExternalLink className="h-4 w-4" aria-hidden="true" />
-                    Open
+                    {isRequested ? 'View award' : 'Open'}
                 </button>
                 <button type="button" className="secondary-button justify-center text-xs" onClick={() => sharePublicUrl({ title: card.title || 'ALL PLAYS award', text: `${card.playerName} award`, url: card.url })}>
                     <Share2 className="h-4 w-4" aria-hidden="true" />
