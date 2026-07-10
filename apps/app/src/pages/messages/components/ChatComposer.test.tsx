@@ -80,35 +80,35 @@ describe('Chat Composer', () => {
     it('defers moderator audience and email actions behind one staff action', () => {
         const props = renderComposer();
 
-        expect(screen.queryByText('Audience: Everyone')).not.toBeInTheDocument();
-        expect(screen.queryByRole('button', { name: 'Open Team Email' })).not.toBeInTheDocument();
-        expect(screen.queryByRole('menu', { name: 'Staff actions' })).not.toBeInTheDocument();
+        expect(screen.queryByText('Audience: Everyone')).toBeNull();
+        expect(screen.queryByRole('button', { name: 'Open Team Email' })).toBeNull();
+        expect(screen.queryByRole('menu', { name: 'Staff actions' })).toBeNull();
 
         const staffActions = screen.getByRole('button', { name: 'Open staff actions' });
-        expect(staffActions).toHaveAttribute('aria-expanded', 'false');
+        expect(staffActions.getAttribute('aria-expanded')).toBe('false');
         fireEvent.click(staffActions);
 
-        expect(staffActions).toHaveAttribute('aria-expanded', 'true');
-        expect(screen.getByRole('menu', { name: 'Staff actions' })).toBeInTheDocument();
-        expect(screen.getByRole('menuitem', { name: /Message audience.*Current: Everyone/i })).toBeInTheDocument();
-        expect(screen.getByRole('menuitem', { name: 'Team Email' })).toBeInTheDocument();
+        expect(staffActions.getAttribute('aria-expanded')).toBe('true');
+        expect(screen.getByRole('menu', { name: 'Staff actions' })).toBeTruthy();
+        expect(screen.getByRole('menuitem', { name: /Message audience.*Current: Everyone/i })).toBeTruthy();
+        expect(screen.getByRole('menuitem', { name: 'Team Email' })).toBeTruthy();
 
         fireEvent.click(screen.getByRole('menuitem', { name: /Message audience/i }));
 
         expect(props.onAudience).toHaveBeenCalledTimes(1);
-        expect(screen.queryByRole('menu', { name: 'Staff actions' })).not.toBeInTheDocument();
+        expect(screen.queryByRole('menu', { name: 'Staff actions' })).toBeNull();
 
         fireEvent.click(staffActions);
         fireEvent.click(screen.getByRole('menuitem', { name: 'Team Email' }));
 
         expect(props.onTeamEmail).toHaveBeenCalledTimes(1);
-        expect(screen.queryByRole('menu', { name: 'Staff actions' })).not.toBeInTheDocument();
+        expect(screen.queryByRole('menu', { name: 'Staff actions' })).toBeNull();
     });
 
     it('does not expose staff actions without moderator permissions', () => {
         renderComposer({ canModerate: false, canSendTeamEmail: false });
 
-        expect(screen.queryByRole('button', { name: 'Open staff actions' })).not.toBeInTheDocument();
-        expect(screen.queryByRole('menu', { name: 'Staff actions' })).not.toBeInTheDocument();
+        expect(screen.queryByRole('button', { name: 'Open staff actions' })).toBeNull();
+        expect(screen.queryByRole('menu', { name: 'Staff actions' })).toBeNull();
     });
 });
