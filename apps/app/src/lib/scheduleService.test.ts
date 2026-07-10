@@ -2226,6 +2226,8 @@ describe('parent family RSVP submission', () => {
       response: 'going',
       note: 'Both need a ride'
     });
+    expect(mocks.transactionDelete).toHaveBeenCalledWith({ path: 'teams/team-1/games/game-1/rsvps/parent-1__player-1' });
+    expect(mocks.transactionDelete).toHaveBeenCalledWith({ path: 'teams/team-1/games/game-1/rsvps/parent-1__player-2' });
     expect(submitRsvpForPlayer).not.toHaveBeenCalled();
   });
 

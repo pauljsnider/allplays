@@ -1095,6 +1095,18 @@ async function nativeDeleteDocument(path: string) {
   });
 }
 
+async function nativeDeleteDocumentIfExists(path: string) {
+  try {
+    await nativeDeleteDocument(path);
+  } catch (error: any) {
+    const message = String(error?.message || '').toLowerCase();
+    if (error?.status === 404 || message.includes('not_found') || message.includes('not found')) {
+      return;
+    }
+    throw error;
+  }
+}
+
 type NativeDocumentSnapshot = {
   exists: boolean;
   updateTime: string | null;
@@ -3984,7 +3996,20 @@ async function nativeSubmitRsvpForChildren(teamId: string, gameId: string, user:
     visibility,
     updatedAt: new Date()
   });
+  await Promise.all(childIds.map((childId) => (
+    nativeDeleteDocumentIfExists(`teams/${encodeURIComponent(teamId)}/games/${encodeURIComponent(gameId)}/rsvps/${encodeURIComponent(`${user.uid}__${childId}`)}`)
+  )));
   return null;
+}
+
+async function clearPerChildRsvpOverrides(teamId: string, gameId: string, userId: string, childIds: string[]) {
+  const normalizedChildIds = uniqueNonEmptyStrings(childIds);
+  if (!teamId || !gameId || !userId || normalizedChildIds.length === 0) return;
+  await withTimeout(runTransaction(db, async (transaction: any) => {
+    normalizedChildIds.forEach((childId) => {
+      transaction.delete(doc(db, `teams/${teamId}/games/${gameId}/rsvps`, `${userId}__${childId}`));
+    });
+  }), 'Family RSVP cleanup');
 }
 
 function assertStaffRsvpManagementEvent(event: ParentScheduleEvent, user: AuthUser | null) {
@@ -4147,12 +4172,14 @@ export async function submitParentScheduleRsvpForChildren(events: ParentSchedule
   }
 
   try {
-    return await withTimeout(Promise.resolve(submitRsvp(firstEvent.teamId, firstEvent.id, user.uid, {
+    const result = await withTimeout(Promise.resolve(submitRsvp(firstEvent.teamId, firstEvent.id, user.uid, {
       displayName: user.displayName || user.email,
       playerIds: childIds,
       response,
       note: compactString(note) || null
     })), 'Family RSVP submit');
+    await clearPerChildRsvpOverrides(firstEvent.teamId, firstEvent.id, user.uid, childIds);
+    return result;
   } catch (error) {
     if (!isNativeRuntime()) {
       throw error;
