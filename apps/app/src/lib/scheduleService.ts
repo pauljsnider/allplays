@@ -82,7 +82,13 @@ import {
 } from './adapters/legacyScheduleHelpers';
 import { buildAvailabilityNoteRows, canViewAvailabilityNotes, formatAvailabilityCutoff, isAvailabilityLocked, normalizeAvailabilityPreferences } from './adapters/legacyAvailability';
 import { buildTrackerEventDocument } from './statTrackingEvent';
-import { enrichTournamentScheduleStandings, hasTournamentScheduleGames } from './tournamentScheduleStandings';
+import {
+  enrichTournamentScheduleStandings,
+  getTournamentScheduleGroupQuery,
+  hasTournamentScheduleGames,
+  matchesTournamentScheduleGroup,
+  type TournamentScheduleGroupQuery
+} from './tournamentScheduleStandings';
 import { loadProfileDocument, saveProfileDocument } from './profileService';
 import { firebaseAuth, getNativeAuthIdToken } from './authService';
 import { startUxTimer } from './uxTiming';
@@ -144,7 +150,6 @@ const parentHomeHydrationLookBehindMs = 12 * 60 * 60 * 1000;
 // previous season so the "Past Events" filter still shows recent history before
 // an explicit full-history load. Tune here if season length assumptions change.
 const defaultScheduleHistoryWindowMs = 400 * 24 * 60 * 60 * 1000;
-const tournamentDetailStandingsWindowMs = 14 * 24 * 60 * 60 * 1000;
 const logger = createLogger('schedule-service');
 type GameDayLineupPublishModule = typeof import('./gameDayLineupPublish');
 
@@ -922,6 +927,47 @@ async function nativeQueryScheduleEventDocuments(teamId: string, range: Schedule
   return Array.isArray(payload)
     ? mapScheduleEventDocuments(payload.map((entry) => entry?.document).filter(Boolean) as NativeFirestoreDocument[])
     : [];
+}
+
+async function nativeQueryTournamentScheduleGroupDocuments(
+  teamId: string,
+  group: TournamentScheduleGroupQuery
+): Promise<ScheduleEventFirestoreRecord[]> {
+  const fieldQueries = group.poolName
+    ? [{ fieldPath: 'tournament.poolName', value: group.poolName }]
+    : [
+        { fieldPath: 'tournament.divisionName', value: group.divisionName },
+        { fieldPath: 'tournament.division', value: group.divisionName }
+      ];
+  const payloads = await Promise.all(fieldQueries.map(({ fieldPath, value }) => (
+    nativeFirestoreRequest(`/teams/${encodeURIComponent(teamId)}:runQuery`, {
+      method: 'POST',
+      body: JSON.stringify({
+        structuredQuery: {
+          from: [{ collectionId: 'games' }],
+          where: {
+            fieldFilter: {
+              field: { fieldPath },
+              op: 'EQUAL',
+              value: encodeFirestoreValue(value)
+            }
+          }
+        }
+      })
+    })
+  )));
+
+  const gamesById = new Map<string, ScheduleEventFirestoreRecord>();
+  payloads.forEach((payload) => {
+    const games = Array.isArray(payload)
+      ? mapScheduleEventDocuments(payload.map((entry) => entry?.document).filter(Boolean) as NativeFirestoreDocument[])
+      : [];
+    games.forEach((game) => {
+      const gameId = compactString(game.id || game.gameId);
+      if (gameId && !gamesById.has(gameId)) gamesById.set(gameId, game);
+    });
+  });
+  return Array.from(gamesById.values()).filter((game) => matchesTournamentScheduleGroup(game, group));
 }
 
 const nativeDeleteFieldSentinel = { __deleteField: true };
@@ -2492,17 +2538,6 @@ function getTrackedCalendarEventUidsFromLoadedGames(games: any[] = []) {
     .filter(Boolean);
 }
 
-function getTournamentDetailStandingsRange(game: any): ScheduleDateRange {
-  const date = normalizeScheduleDate(game?.date);
-  if (!date) {
-    return { startDate: new Date(Date.now() - defaultScheduleHistoryWindowMs) };
-  }
-  return {
-    startDate: new Date(date.getTime() - tournamentDetailStandingsWindowMs),
-    endDate: new Date(date.getTime() + tournamentDetailStandingsWindowMs)
-  };
-}
-
 function mergeLoadedGameWithStandingsPool(loadedGame: ScheduleEventFirestoreRecord, standingsGames: ScheduleEventFirestoreRecord[]) {
   const loadedGameId = compactString(loadedGame.id || loadedGame.gameId);
   return [
@@ -2512,15 +2547,6 @@ function mergeLoadedGameWithStandingsPool(loadedGame: ScheduleEventFirestoreReco
       return !loadedGameId || gameId !== loadedGameId;
     })
   ];
-}
-
-function hasTournamentTeamStandingsConfig(team: any) {
-  const config = team?.standingsConfig && typeof team.standingsConfig === 'object' ? team.standingsConfig : null;
-  const overrides = team?.tournamentPoolOverrides && typeof team.tournamentPoolOverrides === 'object' ? team.tournamentPoolOverrides : null;
-  return Boolean(
-    (config && config.enabled !== false && Object.keys(config).some((key) => key !== 'enabled')) ||
-    (overrides && Object.keys(overrides).length)
-  );
 }
 
 async function loadRawTeam(teamId: string) {
@@ -2537,6 +2563,7 @@ async function loadTeam(teamId: string) {
 }
 
 type ScheduleDateRange = { startDate?: Date | null; endDate?: Date | null };
+type ScheduleGamesQuery = ScheduleDateRange & { tournamentGroup?: TournamentScheduleGroupQuery | null };
 type ScheduleDateRangeByTeam = Record<string, ScheduleDateRange | undefined>;
 
 function isEventWithinRange(game: any, range: ScheduleDateRange) {
@@ -2548,17 +2575,21 @@ function isEventWithinRange(game: any, range: ScheduleDateRange) {
   return true;
 }
 
-async function loadGames(teamId: string, range: ScheduleDateRange = {}): Promise<ScheduleEventFirestoreRecord[]> {
+async function loadGames(teamId: string, range: ScheduleGamesQuery = {}): Promise<ScheduleEventFirestoreRecord[]> {
   return readWithNativeFallback(
     `games ${teamId}`,
     async () => mapScheduleEventRecords(await getGames(teamId, range)),
     async () => {
-      const docs = (range.startDate || range.endDate)
-        ? await nativeQueryScheduleEventDocuments(teamId, range)
-        : await nativeListScheduleEventDocuments(`teams/${encodeURIComponent(teamId)}/games`);
-      const windowed = (range.startDate || range.endDate)
-        ? docs.filter((doc) => isEventWithinRange(doc, range))
-        : docs;
+      const docs = range.tournamentGroup
+        ? await nativeQueryTournamentScheduleGroupDocuments(teamId, range.tournamentGroup)
+        : (range.startDate || range.endDate)
+          ? await nativeQueryScheduleEventDocuments(teamId, range)
+          : await nativeListScheduleEventDocuments(`teams/${encodeURIComponent(teamId)}/games`);
+      const windowed = range.tournamentGroup
+        ? docs.filter((doc) => matchesTournamentScheduleGroup(doc, range.tournamentGroup!))
+        : (range.startDate || range.endDate)
+          ? docs.filter((doc) => isEventWithinRange(doc, range))
+          : docs;
       return windowed.sort((a, b) => toEventDate(a.date).getTime() - toEventDate(b.date).getTime());
     }
   );
@@ -3200,8 +3231,11 @@ async function buildTargetedTeamScheduleEvent(teamId: string, eventId: string, t
     : null);
   if (!loadedGame) return [];
 
-  const standingsGames = hasTournamentTeamStandingsConfig(team) && hasTournamentScheduleGames([loadedGame])
-    ? mergeLoadedGameWithStandingsPool(loadedGame, await loadGames(teamId, getTournamentDetailStandingsRange(loadedGame)).catch(() => []))
+  const tournamentGroup = hasTournamentScheduleGames([loadedGame])
+    ? getTournamentScheduleGroupQuery(loadedGame)
+    : null;
+  const standingsGames = tournamentGroup
+    ? mergeLoadedGameWithStandingsPool(loadedGame, await loadGames(teamId, { tournamentGroup }).catch(() => []))
     : [loadedGame];
   const game = enrichTournamentScheduleStandings([loadedGame], team, standingsGames)[0];
 

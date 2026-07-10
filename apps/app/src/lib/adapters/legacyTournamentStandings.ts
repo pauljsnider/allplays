@@ -1,5 +1,8 @@
 /* Typed app boundary for the pure legacy tournament standings contract. */
-import { buildTournamentPoolStandings as legacy_buildTournamentPoolStandings } from '@legacy/tournament-standings.js';
+import {
+  buildTournamentPoolStandings as legacy_buildTournamentPoolStandings,
+  getTournamentStandingsGroupName as legacy_getTournamentStandingsGroupName
+} from '@legacy/tournament-standings.js';
 
 export type LegacyTournamentStandingRow = Record<string, unknown> & {
   rank?: number | string;
@@ -24,3 +27,7 @@ export const buildTournamentPoolStandings = legacy_buildTournamentPoolStandings 
     poolOverrides?: Record<string, unknown>;
   }
 ) => Record<string, LegacyTournamentPoolStanding>;
+
+export const getTournamentStandingsGroupName = legacy_getTournamentStandingsGroupName as (
+  game: Record<string, unknown>
+) => string | null;

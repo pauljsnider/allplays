@@ -23,4 +23,18 @@ describe('schedule date range source contracts', () => {
         expect(appLoadGamesSource).toContain('mapScheduleEventRecords(await getGames(teamId, range))');
         expect(appLoadGamesSource).not.toContain('loadRecurringPracticeMasters');
     });
+
+    it('keeps direct tournament standings reads bounded by pool identity rather than dates', () => {
+        const getGamesSource = extractSource(dbSource, 'export async function getGames', 'export async function getAggregatedStatsForGames');
+        const targetedSource = extractSource(appSource, 'async function buildTargetedTeamScheduleEvent', 'function resolveMyRsvpNotesByChildForGame');
+
+        expect(getGamesSource).toContain('where("tournament.poolName", "==", tournamentGroup.poolName)');
+        expect(getGamesSource).toContain('where("tournament.divisionName", "==", tournamentGroup.divisionName)');
+        expect(getGamesSource).toContain('where("tournament.division", "==", tournamentGroup.divisionName)');
+        expect(getGamesSource).toContain('if (hasTournamentGroup) throw error;');
+        expect(targetedSource).toContain('getTournamentScheduleGroupQuery(loadedGame)');
+        expect(targetedSource).toContain('loadGames(teamId, { tournamentGroup })');
+        expect(targetedSource).not.toContain('getTournamentDetailStandingsRange');
+        expect(targetedSource).not.toContain('hasTournamentTeamStandingsConfig');
+    });
 });

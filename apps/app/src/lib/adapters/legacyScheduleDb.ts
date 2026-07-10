@@ -84,7 +84,11 @@ export async function getGame(teamId: string, gameId: string) {
     return await Promise.resolve(legacyGetGame(teamId, gameId));
 }
 
-export type GamesQueryOptions = { startDate?: Date | null; endDate?: Date | null };
+export type GamesQueryOptions = {
+    startDate?: Date | null;
+    endDate?: Date | null;
+    tournamentGroup?: { poolName: string; divisionName: string } | null;
+};
 
 export async function getGames(teamId: string, options: GamesQueryOptions = {}) {
     return await Promise.resolve(legacyGetGames(teamId, options));

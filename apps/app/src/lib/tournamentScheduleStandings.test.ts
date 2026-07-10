@@ -1,7 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import { buildTournamentPoolOverrideKey } from '../../../../js/tournament-standings.js';
 import { getScheduleTournamentInfo } from './scheduleLogic';
-import { enrichTournamentScheduleStandings } from './tournamentScheduleStandings';
+import {
+  enrichTournamentScheduleStandings,
+  getTournamentScheduleGroupQuery,
+  matchesTournamentScheduleGroup
+} from './tournamentScheduleStandings';
 
 function buildWebTournamentGames() {
   return [
@@ -54,6 +58,32 @@ function buildWebTournamentGames() {
 }
 
 describe('tournament schedule standings enrichment', () => {
+  it('builds an exact pool query and rejects same-named pools from another division', () => {
+    const [game] = buildWebTournamentGames();
+    const group = getTournamentScheduleGroupQuery(game);
+
+    expect(group).toEqual({ poolName: 'Pool A', divisionName: '10U Gold' });
+    expect(matchesTournamentScheduleGroup(game, group!)).toBe(true);
+    expect(matchesTournamentScheduleGroup({
+      ...game,
+      tournament: { ...game.tournament, divisionName: '12U Gold' }
+    }, group!)).toBe(false);
+  });
+
+  it('preserves legacy division-only standings groups', () => {
+    const game = {
+      ...buildWebTournamentGames()[0],
+      tournament: {
+        division: '10U Gold',
+        slotAssignments: buildWebTournamentGames()[0].tournament.slotAssignments
+      }
+    };
+    const group = getTournamentScheduleGroupQuery(game);
+
+    expect(group).toEqual({ poolName: '', divisionName: '10U Gold' });
+    expect(matchesTournamentScheduleGroup(game, group!)).toBe(true);
+  });
+
   it('derives legacy standings for ordinary web-created game docs with no inline rows', () => {
     const webGames = buildWebTournamentGames();
     const enriched = enrichTournamentScheduleStandings(webGames, {

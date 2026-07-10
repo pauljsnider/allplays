@@ -1,4 +1,4 @@
-import { buildTournamentPoolStandings } from './adapters/legacyTournamentStandings';
+import { buildTournamentPoolStandings, getTournamentStandingsGroupName } from './adapters/legacyTournamentStandings';
 
 export type ScheduleTournamentGameLike = {
   competitionType?: unknown;
@@ -12,16 +12,28 @@ export type ScheduleTournamentTeamLike = {
   tournamentPoolOverrides?: Record<string, unknown> | null;
 };
 
+export type TournamentScheduleGroupQuery = {
+  poolName: string;
+  divisionName: string;
+};
+
 function compactString(value: unknown) {
   return String(value || '').trim();
 }
 
-function getTournamentStandingsGroupName(game: ScheduleTournamentGameLike) {
+export function getTournamentScheduleGroupQuery(game: ScheduleTournamentGameLike): TournamentScheduleGroupQuery | null {
   const tournament = game?.tournament && typeof game.tournament === 'object' ? game.tournament : {};
   const divisionName = compactString(tournament.divisionName || tournament.division);
   const poolName = compactString(tournament.poolName);
-  if (divisionName && poolName) return `${divisionName} • ${poolName}`;
-  return poolName || divisionName;
+  return poolName || divisionName ? { poolName, divisionName } : null;
+}
+
+export function matchesTournamentScheduleGroup(game: ScheduleTournamentGameLike, group: TournamentScheduleGroupQuery) {
+  const expectedGroupName = group.divisionName && group.poolName
+    ? `${group.divisionName} • ${group.poolName}`
+    : group.poolName || group.divisionName;
+  return compactString(game?.competitionType).toLowerCase() === 'tournament' &&
+    getTournamentStandingsGroupName(game as Record<string, unknown>) === expectedGroupName;
 }
 
 export function hasTournamentScheduleGames(gamesInput: readonly ScheduleTournamentGameLike[]) {
@@ -56,7 +68,7 @@ export function enrichTournamentScheduleStandings<T extends ScheduleTournamentGa
   return games.map((game) => {
     if (compactString(game?.competitionType).toLowerCase() !== 'tournament') return game;
     const groupName = getTournamentStandingsGroupName(game);
-    const computedStandings = standingsByGroup[groupName];
+    const computedStandings = groupName ? standingsByGroup[groupName] : null;
     const tournament = game?.tournament && typeof game.tournament === 'object' ? game.tournament : null;
     if (!computedStandings || !tournament) return game;
 

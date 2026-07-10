@@ -60,7 +60,7 @@ function getTournamentDivisionName(game = {}) {
         || normalizeString(game?.tournament?.division);
 }
 
-function getTournamentStandingsGroupName(game = {}) {
+export function getTournamentStandingsGroupName(game = {}) {
     const divisionName = getTournamentDivisionName(game);
     const poolName = getTournamentPoolName(game);
     if (divisionName && poolName) return `${divisionName} • ${poolName}`;
