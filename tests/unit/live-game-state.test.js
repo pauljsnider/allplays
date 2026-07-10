@@ -48,6 +48,23 @@ describe('live game state helpers', () => {
     })).toEqual(['GOALS']);
   });
 
+  it('uses goal columns for assigned definitions-only goal sport configs', () => {
+    expect(resolveLiveStatColumns({
+      configs: [
+        {
+          id: 'cfg-manager-only',
+          baseType: 'Soccer',
+          columns: [],
+          statDefinitions: [
+            { id: 'deflections', scope: 'team', visibility: 'private', type: 'base' }
+          ]
+        }
+      ],
+      game: { statTrackerConfigId: 'cfg-manager-only', sport: 'Soccer' },
+      team: { sport: 'Soccer' }
+    })).toEqual(['GOALS']);
+  });
+
   it('keeps basketball stat fallback for unsupported sports without a custom config', () => {
     expect(resolveLiveStatColumns({
       configs: [],

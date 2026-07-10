@@ -82,7 +82,7 @@ export function resolveLiveStatColumns({ columns = [], configs = [], game = null
   if (Array.isArray(columns) && columns.length) return directColumns;
 
   const config = resolveLiveStatConfig({ configs, game, team });
-  if (config) {
+  if (Array.isArray(config?.columns) && config.columns.length) {
     return normalizeLiveStatColumns(config.columns);
   }
 
