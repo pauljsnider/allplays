@@ -34,6 +34,11 @@ export function useAsyncOperation() {
         setError(null);
     }, []);
 
+    const invalidate = useCallback(() => {
+        latestRunIdRef.current += 1;
+        setLoading(false);
+    }, []);
+
     const run = useCallback(async function runAsyncOperation<T>(
         operation: () => Promise<T>,
         {
@@ -84,6 +89,7 @@ export function useAsyncOperation() {
         loading,
         error,
         clearError,
+        invalidate,
         setError,
         run
     };

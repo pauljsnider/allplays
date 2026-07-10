@@ -36,6 +36,7 @@ export function AccessTool({ auth, onAccessChanged }: { auth: AuthState; onAcces
     const initialDeepLinkDiscoveryAttemptRef = useRef('');
     const initialDeepLinkDiscoveryCompleteRef = useRef('');
     const deepLinkLookupAttemptRef = useRef('');
+    const deepLinkIntentRef = useRef(deepLinkedTeamId);
     const teamSearchRequestRef = useRef(0);
     const playerLoadRequestRef = useRef(0);
     const [deepLinkReconcileVersion, setDeepLinkReconcileVersion] = useState(0);
@@ -54,6 +55,8 @@ export function AccessTool({ auth, onAccessChanged }: { auth: AuthState; onAcces
     const clearAccessLoadError = accessLoadOperation.clearError;
     const clearTeamLoadError = teamLoadOperation.clearError;
     const clearPlayerLoadError = playerLoadOperation.clearError;
+    const invalidateTeamLoad = teamLoadOperation.invalidate;
+    const invalidatePlayerLoad = playerLoadOperation.invalidate;
     const clearSubmitError = submitOperation.clearError;
     const clearRedeemError = redeemOperation.clearError;
     const setSubmitError = submitOperation.setError;
@@ -188,6 +191,10 @@ export function AccessTool({ auth, onAccessChanged }: { auth: AuthState; onAcces
     }, [auth.user?.uid, refresh]);
 
     useEffect(() => {
+        teamSearchRequestRef.current += 1;
+        playerLoadRequestRef.current += 1;
+        invalidateTeamLoad();
+        invalidatePlayerLoad();
         appliedDeepLinkRef.current = '';
         initialDeepLinkDiscoveryAttemptRef.current = '';
         initialDeepLinkDiscoveryCompleteRef.current = '';
@@ -200,7 +207,7 @@ export function AccessTool({ auth, onAccessChanged }: { auth: AuthState; onAcces
         setPlayers([]);
         setSelectedTeamId('');
         setSelectedPlayerId('');
-    }, [auth.user?.uid]);
+    }, [auth.user?.uid, invalidatePlayerLoad, invalidateTeamLoad]);
 
     useEffect(() => {
         if (!deepLinkedTeamId) return;
@@ -220,12 +227,17 @@ export function AccessTool({ auth, onAccessChanged }: { auth: AuthState; onAcces
     }, [deepLinkedTeamId, deepLinkReconcileVersion, loadTeams, loadingTeams, teams.length]);
 
     useEffect(() => {
+        if (deepLinkIntentRef.current !== deepLinkedTeamId) {
+            deepLinkIntentRef.current = deepLinkedTeamId;
+            teamSearchRequestRef.current += 1;
+            invalidateTeamLoad();
+        }
         if (deepLinkedTeamId) return;
         appliedDeepLinkRef.current = '';
         initialDeepLinkDiscoveryAttemptRef.current = '';
         initialDeepLinkDiscoveryCompleteRef.current = '';
         deepLinkLookupAttemptRef.current = '';
-    }, [deepLinkedTeamId]);
+    }, [deepLinkedTeamId, invalidateTeamLoad]);
 
     useEffect(() => {
         // Wait until teams have loaded so we can tell whether the deep-linked team
@@ -255,6 +267,7 @@ export function AccessTool({ auth, onAccessChanged }: { auth: AuthState; onAcces
     const loadPlayersForTeam = useCallback(async (teamId: string) => {
         const requestId = playerLoadRequestRef.current + 1;
         playerLoadRequestRef.current = requestId;
+        invalidatePlayerLoad();
         setPlayers([]);
         setSelectedPlayerId('');
         if (!teamId) {
@@ -273,7 +286,7 @@ export function AccessTool({ auth, onAccessChanged }: { auth: AuthState; onAcces
                 }
             }
         );
-    }, [clearPlayerLoadError, runPlayerLoad]);
+    }, [clearPlayerLoadError, invalidatePlayerLoad, runPlayerLoad]);
 
     const retryManualLookup = () => {
         if (playerLoadError && selectedTeamId) {
@@ -396,6 +409,7 @@ export function AccessTool({ auth, onAccessChanged }: { auth: AuthState; onAcces
                                             value={teamSearchText}
                                             onChange={(event) => {
                                                 teamSearchRequestRef.current += 1;
+                                                invalidateTeamLoad();
                                                 setTeamSearchText(event.target.value);
                                                 setSelectedTeamId('');
                                                 setSelectedPlayerId('');

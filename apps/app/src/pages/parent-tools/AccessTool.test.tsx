@@ -367,6 +367,50 @@ describe('AccessTool manual public team discovery', () => {
         expect(view.getByRole('option', { name: 'Lions' })).toBeTruthy();
     });
 
+    it('ignores a pending search rejection after the query intent changes', async () => {
+        let rejectSearch: (reason?: unknown) => void = () => {};
+        accessServiceMocks.discoverParentAccessTeams.mockReturnValue(new Promise((_resolve, reject) => {
+            rejectSearch = reject;
+        }));
+
+        const view = renderTool('');
+
+        fireEvent.click(await view.findByRole('button', { name: 'Request access without a code' }));
+        fireEvent.change(view.getByPlaceholderText('Team name, city, state, or zip'), { target: { value: 'Bears' } });
+        fireEvent.click(view.getByRole('button', { name: 'Search' }));
+        await waitFor(() => expect(accessServiceMocks.discoverParentAccessTeams).toHaveBeenCalledTimes(1));
+
+        fireEvent.change(view.getByPlaceholderText('Team name, city, state, or zip'), { target: { value: 'Lions' } });
+        await act(async () => {
+            rejectSearch(new Error('Stale Bears failure'));
+        });
+
+        expect(view.queryByText('Stale Bears failure')).toBeNull();
+        expect(view.getByRole('option', { name: 'Search or browse teams' })).toBeTruthy();
+    });
+
+    it('ignores a direct deep-link lookup after that navigation intent is removed', async () => {
+        let resolveLookup: (value: unknown) => void = () => {};
+        accessServiceMocks.discoverParentAccessTeams.mockResolvedValue({ teams: [], nextCursor: null });
+        accessServiceMocks.loadParentAccessTeam.mockReturnValue(new Promise((resolve) => {
+            resolveLookup = resolve;
+        }));
+
+        const view = renderTool('team-z');
+        await waitFor(() => expect(accessServiceMocks.loadParentAccessTeam).toHaveBeenCalledWith('team-z'));
+
+        await act(async () => {
+            navigate('/parent-tools/access');
+        });
+        await act(async () => {
+            resolveLookup({ id: 'team-z', name: 'Team Z' });
+        });
+
+        expect((view.getByLabelText('Team') as HTMLSelectElement).value).toBe('');
+        expect(view.queryByRole('option', { name: 'Team Z' })).toBeNull();
+        expect(accessServiceMocks.loadParentAccessPlayers).not.toHaveBeenCalledWith('team-z');
+    });
+
     it('ignores a retried player load after the user switches to another team', async () => {
         let resolveTeamARetry: (value: unknown) => void = () => {};
         accessServiceMocks.discoverParentAccessTeams.mockResolvedValue({

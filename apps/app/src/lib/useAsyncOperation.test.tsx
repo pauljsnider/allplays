@@ -83,6 +83,42 @@ function StaleOperationHarness({
     );
 }
 
+function InvalidatableOperationHarness({
+    operation,
+    onSuccess,
+    onError,
+    onFinally
+}: {
+    operation: () => Promise<string>;
+    onSuccess: (value: string) => void;
+    onError: (error: unknown) => void;
+    onFinally: () => void;
+}) {
+    const { loading, error, invalidate, run } = useAsyncOperation();
+
+    return (
+        <div>
+            <div data-testid="loading">{String(loading)}</div>
+            <div data-testid="error">{error || ''}</div>
+            <button
+                type="button"
+                onClick={() => {
+                    void run(operation, {
+                        ignoreStale: true,
+                        rethrow: false,
+                        onSuccess,
+                        onError,
+                        onFinally
+                    });
+                }}
+            >
+                Run invalidatable
+            </button>
+            <button type="button" onClick={invalidate}>Invalidate</button>
+        </div>
+    );
+}
+
 function GuardedErrorHarness({
     operation,
     shouldHandleError,
@@ -191,6 +227,39 @@ describe('useAsyncOperation', () => {
             expect(screen.getByTestId('value').textContent).toBe('latest value');
         });
         expect(screen.getByTestId('error').textContent).toBe('');
+    });
+
+    it('can invalidate an in-flight run when its caller intent is removed', async () => {
+        const deferred = createDeferred<string>();
+        const onSuccess = vi.fn();
+        const onError = vi.fn();
+        const onFinally = vi.fn();
+
+        render(
+            <InvalidatableOperationHarness
+                operation={() => deferred.promise}
+                onSuccess={onSuccess}
+                onError={onError}
+                onFinally={onFinally}
+            />
+        );
+
+        fireEvent.click(screen.getByRole('button', { name: 'Run invalidatable' }));
+        await waitFor(() => {
+            expect(screen.getByTestId('loading').textContent).toBe('true');
+        });
+
+        fireEvent.click(screen.getByRole('button', { name: 'Invalidate' }));
+        expect(screen.getByTestId('loading').textContent).toBe('false');
+
+        deferred.reject(new Error('obsolete request failed'));
+        await waitFor(() => {
+            expect(screen.getByTestId('loading').textContent).toBe('false');
+        });
+        expect(screen.getByTestId('error').textContent).toBe('');
+        expect(onSuccess).not.toHaveBeenCalled();
+        expect(onError).not.toHaveBeenCalled();
+        expect(onFinally).not.toHaveBeenCalled();
     });
 
     it('can skip handling current-run errors when a caller guard rejects them', async () => {
