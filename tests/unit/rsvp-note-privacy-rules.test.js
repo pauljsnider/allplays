@@ -5,7 +5,7 @@ import {
   assertSucceeds,
   initializeTestEnvironment
 } from '@firebase/rules-unit-testing';
-import { deleteDoc, doc, setDoc, Timestamp, updateDoc } from 'firebase/firestore';
+import { deleteDoc, doc, setDoc, Timestamp, updateDoc, writeBatch } from 'firebase/firestore';
 import { extractMatchBlock } from '../../scripts/validate-firebase-rules-ci.mjs';
 
 const rules = readFileSync(new URL('../../firestore.rules', import.meta.url), 'utf8');
@@ -69,6 +69,7 @@ describe('RSVP note privacy Firestore rules', () => {
     expect(parentWriteFunction).toContain('isOwnLinkedPlayerRsvpId(rsvpId, data)');
     expect(createUpdateRule).toContain('canWriteOwnParentRsvp(request.resource.data)');
     expect(deleteRule).toContain('canWriteOwnParentRsvp(resource.data)');
+    expect(deleteRule).toContain('resource == null && isParentForTeam(teamId)');
     expect(createUpdateRule).not.toContain('isParentForTeam(teamId) ||');
     expect(deleteRule).not.toContain('isParentForTeam(teamId) ||');
   });
@@ -118,7 +119,8 @@ describe('RSVP note privacy Firestore rules', () => {
     expect(parentNoteDeleteFunction).toContain('isOwnLinkedPlayerRsvpId(rsvpId, data)');
     expect(writeFunction).toContain('canWriteOwnParentRsvpNote(teamId, rsvpId, data)');
     expect(writeFunction).not.toContain('isParentForTeam(teamId) ||');
-    expect(noteBlock).toContain('allow delete: if isTeamOwnerOrAdmin(teamId) || canDeleteOwnParentRsvpNote(teamId, rsvpId, resource.data);');
+    expect(noteBlock).toContain('resource == null && isOwnRsvpNoteId() && isParentForTeam(teamId)');
+    expect(noteBlock).toContain('canDeleteOwnParentRsvpNote(teamId, rsvpId, resource.data);');
   });
 
   describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('RSVP linked-player rules engine coverage', () => {
@@ -275,6 +277,21 @@ describe('RSVP note privacy Firestore rules', () => {
       await assertSucceeds(setDoc(baseNoteRef(parentDb), groupedNotePayload(linkedPlayers)));
       await assertFails(setDoc(baseRsvpRef(parentDb), groupedRsvpPayload(mixedPlayers)));
       await assertFails(setDoc(baseNoteRef(parentDb), groupedNotePayload(mixedPlayers)));
+    });
+
+    it('allows one atomic family write when child override documents do not exist', async () => {
+      const parentDb = authedFirestore('parent-1', 'parent@example.com');
+      const linkedPlayers = ['player-a', 'player-c'];
+      const batch = writeBatch(parentDb);
+
+      batch.set(baseRsvpRef(parentDb), groupedRsvpPayload(linkedPlayers));
+      batch.set(baseNoteRef(parentDb), groupedNotePayload(linkedPlayers));
+      linkedPlayers.forEach((playerId) => {
+        batch.delete(rsvpRef(parentDb, playerId));
+        batch.delete(noteRef(parentDb, playerId));
+      });
+
+      await assertSucceeds(batch.commit());
     });
 
     it('denies same-team different-player parent RSVP note create, update, and delete', async () => {

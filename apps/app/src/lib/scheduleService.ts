@@ -3975,7 +3975,8 @@ async function nativeSubmitRsvpForPlayer(teamId: string, gameId: string, user: A
 
 async function nativeSubmitRsvpForChildren(teamId: string, gameId: string, user: AuthUser, childIds: string[], response: RsvpResponse, note = '', visibility: 'admins' | 'team' = 'admins') {
   const respondedAt = new Date();
-  await nativePatchDocument(`teams/${encodeURIComponent(teamId)}/games/${encodeURIComponent(gameId)}/rsvps/${encodeURIComponent(user.uid)}`, {
+  const gamePath = `teams/${teamId}/games/${gameId}`;
+  const rsvpPayload = {
     userId: user.uid,
     displayName: user.displayName || user.email || null,
     playerIds: childIds,
@@ -3983,33 +3984,34 @@ async function nativeSubmitRsvpForChildren(teamId: string, gameId: string, user:
     childId: null,
     response,
     respondedAt
-  });
-  await nativePatchDocument(`teams/${encodeURIComponent(teamId)}/games/${encodeURIComponent(gameId)}/rsvpNotes/${encodeURIComponent(user.uid)}`, {
-    userId: user.uid,
-    displayName: user.displayName || user.email || null,
-    playerIds: childIds,
-    playerId: null,
-    childId: null,
-    response,
-    respondedAt,
-    note: compactString(note) || null,
-    visibility,
-    updatedAt: new Date()
-  });
-  await Promise.all(childIds.map((childId) => (
-    nativeDeleteDocumentIfExists(`teams/${encodeURIComponent(teamId)}/games/${encodeURIComponent(gameId)}/rsvps/${encodeURIComponent(`${user.uid}__${childId}`)}`)
-  )));
+  };
+  await nativeCommitWrites([
+    {
+      update: {
+        name: getFirestoreDocumentName(`${gamePath}/rsvps/${user.uid}`),
+        fields: buildFirestoreFields(rsvpPayload)
+      }
+    },
+    {
+      update: {
+        name: getFirestoreDocumentName(`${gamePath}/rsvpNotes/${user.uid}`),
+        fields: buildFirestoreFields({
+          ...rsvpPayload,
+          note: compactString(note) || null,
+          visibility,
+          updatedAt: respondedAt
+        })
+      }
+    },
+    ...childIds.flatMap((childId) => {
+      const overrideId = `${user.uid}__${childId}`;
+      return [
+        { delete: getFirestoreDocumentName(`${gamePath}/rsvps/${overrideId}`) },
+        { delete: getFirestoreDocumentName(`${gamePath}/rsvpNotes/${overrideId}`) }
+      ];
+    })
+  ]);
   return null;
-}
-
-async function clearPerChildRsvpOverrides(teamId: string, gameId: string, userId: string, childIds: string[]) {
-  const normalizedChildIds = uniqueNonEmptyStrings(childIds);
-  if (!teamId || !gameId || !userId || normalizedChildIds.length === 0) return;
-  await withTimeout(runTransaction(db, async (transaction: any) => {
-    normalizedChildIds.forEach((childId) => {
-      transaction.delete(doc(db, `teams/${teamId}/games/${gameId}/rsvps`, `${userId}__${childId}`));
-    });
-  }), 'Family RSVP cleanup');
 }
 
 function assertStaffRsvpManagementEvent(event: ParentScheduleEvent, user: AuthUser | null) {
@@ -4172,14 +4174,12 @@ export async function submitParentScheduleRsvpForChildren(events: ParentSchedule
   }
 
   try {
-    const result = await withTimeout(Promise.resolve(submitRsvp(firstEvent.teamId, firstEvent.id, user.uid, {
+    return await withTimeout(Promise.resolve(submitRsvp(firstEvent.teamId, firstEvent.id, user.uid, {
       displayName: user.displayName || user.email,
       playerIds: childIds,
       response,
       note: compactString(note) || null
     })), 'Family RSVP submit');
-    await clearPerChildRsvpOverrides(firstEvent.teamId, firstEvent.id, user.uid, childIds);
-    return result;
   } catch (error) {
     if (!isNativeRuntime()) {
       throw error;

@@ -31,6 +31,7 @@ describe('RSVP summary recompute is non-blocking', () => {
     it('submitRsvp returns immediately after the write without awaiting the summary', () => {
         const fn = getFunctionSource(dbSource, 'export async function submitRsvp(');
         expect(fn).toContain('refreshGameRsvpSummaryInBackground(teamId, gameId)');
+        expect(fn.indexOf('await commitFamilyRsvpWrite({')).toBeLessThan(fn.indexOf('refreshGameRsvpSummaryInBackground(teamId, gameId)'));
         // The blocking pattern (awaiting the summary before returning) is gone.
         expect(fn).not.toContain('await computeRsvpSummary');
         expect(fn).not.toContain('return summary;');

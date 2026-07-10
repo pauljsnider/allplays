@@ -2441,7 +2441,11 @@ service cloud.firestore {
                                    isSignedIn() && isOwnRsvpDoc() &&
                                    request.resource.data.userId == request.auth.uid &&
                                    isRsvpStatusPayloadSafe(request.resource.data);
+          // A family RSVP batch also deletes child override paths that may not
+          // exist yet. Permit that no-op only for the signed-in parent's own
+          // RSVP id; existing documents still require linked-player ownership.
           allow delete: if (isTeamOwnerOrAdmin(teamId) ||
+                            (resource == null && isParentForTeam(teamId)) ||
                             canWriteOwnParentRsvp(resource.data)) &&
                            isSignedIn() && isOwnRsvpDoc();
         }
@@ -2533,7 +2537,9 @@ service cloud.firestore {
           }
           allow read: if canReadRsvpNote(teamId, resource.data);
           allow create, update: if isSignedIn() && canWriteRsvpNote(teamId, rsvpId, request.resource.data);
-          allow delete: if isTeamOwnerOrAdmin(teamId) || canDeleteOwnParentRsvpNote(teamId, rsvpId, resource.data);
+          allow delete: if isTeamOwnerOrAdmin(teamId) ||
+                           (resource == null && isOwnRsvpNoteId() && isParentForTeam(teamId)) ||
+                           canDeleteOwnParentRsvpNote(teamId, rsvpId, resource.data);
         }
 
         // Rideshare offers for games/practices.

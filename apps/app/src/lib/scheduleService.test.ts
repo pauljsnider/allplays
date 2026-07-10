@@ -2206,9 +2206,31 @@ describe('parent family RSVP submission', () => {
     availabilityLocked: false,
     availabilityNoteVisibility: 'admins'
   } as any;
+  let previousWindow: typeof globalThis.window | undefined;
+  let previousFetch: typeof globalThis.fetch | undefined;
 
   beforeEach(() => {
     vi.clearAllMocks();
+    previousWindow = (globalThis as any).window;
+    previousFetch = globalThis.fetch;
+    (globalThis as any).window = {
+      location: { protocol: 'http:' },
+      setTimeout,
+      clearTimeout
+    } as any;
+  });
+
+  afterEach(() => {
+    if (previousWindow === undefined) {
+      delete (globalThis as any).window;
+    } else {
+      (globalThis as any).window = previousWindow;
+    }
+    if (previousFetch === undefined) {
+      delete (globalThis as any).fetch;
+    } else {
+      (globalThis as any).fetch = previousFetch;
+    }
   });
 
   it('submits both child ids in one grouped RSVP write', async () => {
@@ -2226,9 +2248,75 @@ describe('parent family RSVP submission', () => {
       response: 'going',
       note: 'Both need a ride'
     });
-    expect(mocks.transactionDelete).toHaveBeenCalledWith({ path: 'teams/team-1/games/game-1/rsvps/parent-1__player-1' });
-    expect(mocks.transactionDelete).toHaveBeenCalledWith({ path: 'teams/team-1/games/game-1/rsvps/parent-1__player-2' });
+    expect(mocks.runTransactionMock).not.toHaveBeenCalled();
     expect(submitRsvpForPlayer).not.toHaveBeenCalled();
+  });
+
+  it('propagates a failed atomic legacy family commit without running separate cleanup', async () => {
+    const commitError = new Error('atomic family commit failed');
+    vi.mocked(submitRsvp).mockRejectedValueOnce(commitError);
+
+    await expect(submitParentScheduleRsvpForChildren([
+      baseEvent,
+      { ...baseEvent, childId: 'player-2' }
+    ], user as any, 'maybe')).rejects.toBe(commitError);
+
+    expect(submitRsvp).toHaveBeenCalledTimes(1);
+    expect(mocks.runTransactionMock).not.toHaveBeenCalled();
+  });
+
+  it('uses one native Firestore commit for grouped writes and both override collections', async () => {
+    (globalThis as any).window = {
+      location: { protocol: 'capacitor:' },
+      setTimeout,
+      clearTimeout
+    } as any;
+    (globalThis as any).fetch = vi.fn().mockResolvedValue({ ok: true, json: async () => ({}) } as any);
+    vi.mocked(getNativeAuthIdToken).mockResolvedValue('native-token' as any);
+    vi.mocked(submitRsvp).mockRejectedValueOnce(new Error('native fallback'));
+
+    await expect(submitParentScheduleRsvpForChildren([
+      baseEvent,
+      { ...baseEvent, childId: 'player-2' }
+    ], user as any, 'going', 'Both need a ride')).resolves.toBeNull();
+
+    expect(globalThis.fetch).toHaveBeenCalledTimes(1);
+    const [requestUrl, requestInit] = vi.mocked(globalThis.fetch).mock.calls[0] as [string, RequestInit];
+    const payload = JSON.parse(String(requestInit.body || '{}'));
+    expect(requestUrl).toContain(':commit');
+    expect(requestInit.method).toBe('POST');
+    expect(payload.writes).toHaveLength(6);
+    expect(payload.writes[0].update.name).toBe('projects/allplays-test/databases/(default)/documents/teams/team-1/games/game-1/rsvps/parent-1');
+    expect(payload.writes[1].update.name).toBe('projects/allplays-test/databases/(default)/documents/teams/team-1/games/game-1/rsvpNotes/parent-1');
+    expect(payload.writes.slice(2)).toEqual([
+      { delete: 'projects/allplays-test/databases/(default)/documents/teams/team-1/games/game-1/rsvps/parent-1__player-1' },
+      { delete: 'projects/allplays-test/databases/(default)/documents/teams/team-1/games/game-1/rsvpNotes/parent-1__player-1' },
+      { delete: 'projects/allplays-test/databases/(default)/documents/teams/team-1/games/game-1/rsvps/parent-1__player-2' },
+      { delete: 'projects/allplays-test/databases/(default)/documents/teams/team-1/games/game-1/rsvpNotes/parent-1__player-2' }
+    ]);
+  });
+
+  it('reports a failed native family commit without issuing partial REST writes', async () => {
+    (globalThis as any).window = {
+      location: { protocol: 'capacitor:' },
+      setTimeout,
+      clearTimeout
+    } as any;
+    (globalThis as any).fetch = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 503,
+      json: async () => ({ error: { message: 'commit unavailable' } })
+    } as any);
+    vi.mocked(getNativeAuthIdToken).mockResolvedValue('native-token' as any);
+    vi.mocked(submitRsvp).mockRejectedValueOnce(new Error('native fallback'));
+
+    await expect(submitParentScheduleRsvpForChildren([
+      baseEvent,
+      { ...baseEvent, childId: 'player-2' }
+    ], user as any, 'not_going')).rejects.toThrow('commit unavailable');
+
+    expect(globalThis.fetch).toHaveBeenCalledTimes(1);
+    expect(String(vi.mocked(globalThis.fetch).mock.calls[0][0])).toContain(':commit');
   });
 
   it('rejects mixed event scopes before writing a family response', async () => {
