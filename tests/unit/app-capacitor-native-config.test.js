@@ -82,7 +82,7 @@ describe('Capacitor native config', () => {
         const appPnpmLock = readProjectFile('apps/app/pnpm-lock.yaml');
         const expectedDependencies = {
             '@capacitor/camera': { specifier: '^8.2.1', version: '8.2.1' },
-            firebase: { specifier: '^12.16.0', version: '12.16.0' }
+            firebase: { specifier: '12.15.0', version: '12.15.0' }
         };
 
         Object.entries(expectedDependencies).forEach(([dependency, expected]) => {
@@ -95,7 +95,8 @@ describe('Capacitor native config', () => {
         });
 
         expect(appPnpmLock).toContain("'@capacitor/camera@8.2.1':");
-        expect(appPnpmLock).toContain('firebase@12.16.0:');
+        expect(appPnpmLock).toContain('firebase@12.15.0:');
+        expect(appPnpmLock).not.toContain('firebase@12.16.0:');
     });
 
     it('wires first paint splash hiding and status bar setup into the app bootstrap', () => {

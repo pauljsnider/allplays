@@ -37,7 +37,7 @@
     "@capgo/capacitor-speech-recognition": "^8.1.9",
     "@sentry/browser": "^10.63.0",
     "dompurify": "^3.4.11",
-    "firebase": "^12.16.0",
+    "firebase": "12.15.0",
     "lucide-react": "^1.23.0",
     "react": "^19.2.7",
     "react-dom": "^19.2.7",
