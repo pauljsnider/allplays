@@ -1,4 +1,4 @@
-import { collection, db, doc, getDoc, serverTimestamp, setDoc, updateDoc } from './adapters/legacyRegistrationFormAdminDb';
+import { collection, db, doc, getDoc, getDocs, serverTimestamp, setDoc, updateDoc } from './adapters/legacyRegistrationFormAdminDb';
 import {
   buildAppRegistrationFormAdminPayload,
   buildRegistrationFormEditorDraft,
@@ -19,6 +19,27 @@ export type SaveRegistrationFormEditorForAppResult = RegistrationFormAdminPayloa
   formId: string;
   created: boolean;
 };
+
+export async function listRegistrationFormEditorsForApp(
+  user: AuthUser | null,
+  teamId: string
+): Promise<RegistrationFormEditorDraft[]> {
+  const normalizedTeamId = compactString(teamId);
+  assertCanManageRegistrationForms(user, normalizedTeamId);
+
+  const snapshot = await getDocs(collection(db, 'teams', normalizedTeamId, 'registrationForms'));
+  return (snapshot?.docs || [])
+    .map((formDoc: any) => buildRegistrationFormEditorDraft({
+      ...(formDoc?.data?.() || {}),
+      id: compactString(formDoc?.id)
+    }, {
+      teamId: normalizedTeamId,
+      formId: compactString(formDoc?.id)
+    }))
+    .sort((left: RegistrationFormEditorDraft, right: RegistrationFormEditorDraft) => (
+      left.title.localeCompare(right.title, undefined, { sensitivity: 'base' })
+    ));
+}
 
 export async function loadRegistrationFormEditorForApp(
   user: AuthUser | null,
@@ -98,6 +119,7 @@ export async function saveRegistrationFormEditorForApp({
 export function canManageRegistrationFormsForApp(user: AuthUser | null, teamId: string) {
   const normalizedTeamId = compactString(teamId);
   if (!normalizedTeamId || !user?.uid) return false;
+  if (user.isAdmin === true || user.isPlatformAdmin === true) return true;
   if (Array.isArray(user.roles) && user.roles.some((role) => role === 'admin' || role === 'platformAdmin')) return true;
   return Array.isArray(user.coachOf) && user.coachOf.map(compactString).includes(normalizedTeamId);
 }

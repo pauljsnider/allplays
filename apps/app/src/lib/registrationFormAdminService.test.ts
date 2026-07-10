@@ -17,6 +17,7 @@ const firebaseMocks = vi.hoisted(() => {
       return { id: formatPart(parts[parts.length - 1]), path: parts.map(formatPart).join('/') };
     }),
     getDoc: vi.fn(),
+    getDocs: vi.fn(),
     serverTimestamp: vi.fn(() => 'server-timestamp'),
     setDoc: vi.fn(),
     updateDoc: vi.fn()
@@ -27,6 +28,7 @@ vi.mock('../../../../js/firebase.js', () => firebaseMocks);
 
 import {
   canManageRegistrationFormsForApp,
+  listRegistrationFormEditorsForApp,
   loadRegistrationFormEditorForApp,
   saveRegistrationFormEditorForApp
 } from './registrationFormAdminService';
@@ -73,6 +75,7 @@ describe('registrationFormAdminService', () => {
   it('checks staff access for registration form management', () => {
     expect(canManageRegistrationFormsForApp(coachUser, 'team-1')).toBe(true);
     expect(canManageRegistrationFormsForApp({ uid: 'admin-1', roles: ['platformAdmin'] } as any, 'team-2')).toBe(true);
+    expect(canManageRegistrationFormsForApp({ uid: 'admin-2', isAdmin: true } as any, 'team-2')).toBe(true);
     expect(canManageRegistrationFormsForApp({ uid: 'parent-1', coachOf: [] } as any, 'team-1')).toBe(false);
     expect(canManageRegistrationFormsForApp(null, 'team-1')).toBe(false);
   });
@@ -102,6 +105,23 @@ describe('registrationFormAdminService', () => {
     ]);
     expect(draft.discountRules).toEqual([
       { id: 'discount_1', type: 'quantity', label: 'Sibling discount', amountType: 'fixed', amountValue: 25, earlyBirdDeadline: '', minimumQuantity: 2, active: true }
+    ]);
+  });
+
+  it('lists web and app-created forms as sorted editor drafts', async () => {
+    firebaseMocks.getDocs.mockResolvedValue({
+      docs: [
+        { id: 'form-z', data: () => ({ ...webCreatedFixture, programName: 'Winter League', title: 'Winter League' }) },
+        { id: 'form-a', data: () => ({ ...webCreatedFixture, programName: 'Autumn Camp', title: 'Autumn Camp', status: 'closed' }) }
+      ]
+    });
+
+    const drafts = await listRegistrationFormEditorsForApp(coachUser, 'team-1');
+
+    expect(firebaseMocks.getDocs).toHaveBeenCalledWith({ path: 'db/teams/team-1/registrationForms' });
+    expect(drafts.map((draft) => ({ formId: draft.formId, title: draft.title, status: draft.status }))).toEqual([
+      { formId: 'form-a', title: 'Autumn Camp', status: 'closed' },
+      { formId: 'form-z', title: 'Winter League', status: 'published' }
     ]);
   });
 
@@ -214,7 +234,7 @@ describe('registrationFormAdminService', () => {
         feeAmount: 'bad',
         status: 'published'
       }
-    })).rejects.toThrow('Title is required. Waiver text is required. Fee amount must be a valid dollar amount.');
+    })).rejects.toThrow('Title is required. Waiver text is required. At least one registration option is required. Fee amount must be a valid dollar amount.');
 
     expect(firebaseMocks.setDoc).not.toHaveBeenCalled();
     expect(firebaseMocks.updateDoc).not.toHaveBeenCalled();

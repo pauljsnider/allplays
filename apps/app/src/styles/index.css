@@ -295,6 +295,25 @@
   outline: none;
 }
 
+.form-input {
+  min-height: 44px;
+  width: 100%;
+  border: 1px solid #d0d5dd;
+  border-radius: 10px;
+  background: #ffffff;
+  padding: 10px 12px;
+  color: #101828;
+  font-size: 0.9rem;
+  font-weight: 650;
+  outline: none;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.form-input:focus {
+  border-color: #818cf8;
+  box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.14);
+}
+
 .auth-input:focus {
   border-color: #818cf8;
   box-shadow: 0 0 0 3px #e0e7ff;

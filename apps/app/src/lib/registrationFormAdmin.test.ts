@@ -192,7 +192,8 @@ describe('registrationFormAdmin', () => {
 
     expect(result.errors).toEqual([
       'Title is required.',
-      'Waiver text is required.'
+      'Waiver text is required.',
+      'At least one registration option is required.'
     ]);
     expect(result.normalizedForm.published).toBe(false);
   });
@@ -209,6 +210,7 @@ describe('registrationFormAdmin', () => {
       'Team is required.',
       'Title is required.',
       'Waiver text is required.',
+      'At least one registration option is required.',
       'Fee amount must be a valid dollar amount.',
       'Registration status is invalid.',
       'First installment due date is required when payment plans are enabled.'
@@ -219,7 +221,10 @@ describe('registrationFormAdmin', () => {
       title: 'Free clinic',
       waiverText: 'Accepted.',
       feeAmount: '-1'
-    })).toEqual(['Fee amount must be zero or greater.']);
+    })).toEqual([
+      'At least one registration option is required.',
+      'Fee amount must be zero or greater.'
+    ]);
   });
 
   it('converts registration fee inputs to cents consistently', () => {

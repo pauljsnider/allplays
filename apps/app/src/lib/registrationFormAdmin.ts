@@ -118,6 +118,9 @@ export function validateRegistrationFormEditorDraft(
 ): string[] {
   const payload = buildAdminRegistrationFormPayload(draft, { teamId: context.teamId || draft.teamId || '' });
   const errors = [...validateAdminRegistrationFormPayload(payload)];
+  if (!Array.isArray(payload.registrationOptions) || payload.registrationOptions.length === 0) {
+    errors.push('At least one registration option is required.');
+  }
   const feeError = getFeeAmountInputError(draft.feeAmount);
   if (feeError) errors.push(feeError);
 
