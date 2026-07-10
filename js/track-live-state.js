@@ -213,6 +213,8 @@ export function buildTrackLiveResumeState({
   orderedEvents.forEach(({ event, index, createdAtMs }) => {
     const type = normalizeTrackLiveText(event?.type);
     const timestamp = createdAtMs ?? now();
+    let restoredGoalNoteId = '';
+    let restoredGoalNoteText = '';
     const baseEntry = {
       period: normalizeTrackLiveText(event?.period),
       time: formatTrackGameTime(event?.gameClockMs),
@@ -254,9 +256,11 @@ export function buildTrackLiveResumeState({
     if (type === 'goal') {
       const goalNoteText = normalizeTrackLiveText(buildGoalNoteText(event));
       if (goalNoteText) {
+        restoredGoalNoteId = normalizeTrackLiveText(event?.liveNoteId) || `resume-goal-note-${index}`;
+        restoredGoalNoteText = goalNoteText;
         liveNotes.push({
           ...baseEntry,
-          id: normalizeTrackLiveText(event?.liveNoteId) || `resume-goal-note-${index}`,
+          id: restoredGoalNoteId,
           text: goalNoteText,
           type: 'goal'
         });
@@ -274,10 +278,16 @@ export function buildTrackLiveResumeState({
     const text = buildResumeLogText(event);
     if (!text) return;
 
+    const undoData = buildResumeUndoData(event);
+    if (type === 'goal' && undoData) {
+      undoData.liveNoteId = undoData.liveNoteId || restoredGoalNoteId || null;
+      undoData.liveNoteText = undoData.liveNoteText || restoredGoalNoteText || null;
+    }
+
     gameLog.push({
       ...baseEntry,
       text,
-      undoData: buildResumeUndoData(event)
+      undoData
     });
   });
 

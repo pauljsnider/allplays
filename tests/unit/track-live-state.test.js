@@ -308,6 +308,38 @@ describe('track live state helpers', () => {
     ]);
   });
 
+  it('uses the hydrated fallback note metadata for legacy goals', () => {
+    const resumed = buildTrackLiveResumeState({
+      liveEvents: [
+        {
+          type: 'goal',
+          description: 'Legacy away goal',
+          note: 'Legacy finish',
+          teamSide: 'away',
+          statKey: 'goals',
+          value: 1,
+          playerId: 'opp7',
+          isOpponent: true,
+          period: 'H1',
+          gameClockMs: 12000,
+          createdAt: { seconds: 21, nanoseconds: 0 }
+        }
+      ]
+    });
+
+    expect(resumed.gameLog[0].undoData).toMatchObject({
+      type: 'goal',
+      teamSide: 'away',
+      liveNoteId: 'resume-goal-note-0',
+      liveNoteText: 'Legacy finish'
+    });
+    expect(resumed.liveNotes[0]).toMatchObject({
+      id: 'resume-goal-note-0',
+      text: 'Legacy finish',
+      type: 'goal'
+    });
+  });
+
   it('applies reset and undo events when rebuilding resumed tracker state', () => {
     const resumed = buildTrackLiveResumeState({
       liveEvents: [
