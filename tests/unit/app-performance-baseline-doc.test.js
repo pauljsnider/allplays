@@ -48,13 +48,21 @@ describe('app performance baseline documentation', () => {
     it('ties baseline capture to stable uxTiming spans and repeatable commands', () => {
         [
             '`app startup`',
+            '`app start to home first meaningful render`',
             '`first meaningful render`',
+            '`warm resume to interactive`',
             '`rsvp tap latency`',
             '`chat send latency`',
             '`npm run app:build && npm run app:preview`'
         ].forEach((needle) => {
             expect(doc).toContain(needle);
         });
+    });
+
+    it('maps cold start and warm resume to their dedicated stable spans', () => {
+        expect(doc).toContain('| Cold-start TTI (Home) | App launch → Home schedule cards interactive | `app start to home first meaningful render` span');
+        expect(doc).toContain('| Warm resume time | Foreground after backgrounding → fresh data on screen | `warm resume to interactive` span');
+        expect(doc).toContain('`app startup`\n  is only the initial render and is not a resume span');
     });
 
     it('documents the stable RSVP telemetry event name and label for baseline validation', () => {
