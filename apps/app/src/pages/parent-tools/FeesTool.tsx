@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { DollarSign, ExternalLink, Loader2, RefreshCw } from 'lucide-react';
 import { useSearchParams } from 'react-router-dom';
 import { openPublicUrl } from '../../lib/publicActions';
@@ -11,6 +11,7 @@ export function FeesTool({ auth, refreshVersion }: { auth: AuthState; refreshVer
     const [fees, setFees] = useState<ParentFeeAppRecord[]>([]);
     const [filter, setFilter] = useState<'open' | 'all' | 'paid'>('open');
     const [payingFeeId, setPayingFeeId] = useState('');
+    const paymentInFlightRef = useRef(false);
     const [feeErrors, setFeeErrors] = useState<Record<string, string>>({});
     const { loading, error, run: runLoad } = useParentToolAsyncOperation();
     const payOperation = useParentToolAsyncOperation();
@@ -64,6 +65,9 @@ export function FeesTool({ auth, refreshVersion }: { auth: AuthState; refreshVer
     const openCount = fees.filter((fee) => !['paid', 'canceled', 'cancelled'].includes(String(fee.status || '').toLowerCase())).length;
     const balanceCents = visibleFees.reduce((sum, fee) => sum + Number(fee.balanceDueCents ?? fee.amountDueCents ?? 0), 0);
     const payFee = async (fee: ParentFeeAppRecord) => {
+        if (paymentInFlightRef.current) return;
+
+        paymentInFlightRef.current = true;
         const feeKey = getFeeCardKey(fee);
         const checkoutStatus = String(fee.checkoutStatus || '').toLowerCase();
         const reusableCheckoutUrl = Boolean(fee.checkoutUrl) && (!checkoutStatus || checkoutStatus === 'open');
@@ -92,6 +96,7 @@ export function FeesTool({ auth, refreshVersion }: { auth: AuthState; refreshVer
                     setFeeErrors((current) => ({ ...current, [feeKey]: String(payError.message || 'Unable to open checkout. Please try again.') }));
                 },
                 onFinally: () => {
+                    paymentInFlightRef.current = false;
                     setPayingFeeId('');
                 }
             }
@@ -121,7 +126,7 @@ export function FeesTool({ auth, refreshVersion }: { auth: AuthState; refreshVer
                 <div className="grid gap-3 lg:grid-cols-2">
                     {visibleFees.length ? visibleFees.map((fee) => {
                         const feeKey = getFeeCardKey(fee);
-                        return <FeeCard key={feeKey} fee={fee} onPay={payFee} paying={payingFeeId === feeKey} error={feeErrors[feeKey] || ''} />;
+                        return <FeeCard key={feeKey} fee={fee} onPay={payFee} paying={payingFeeId === feeKey} payBlocked={Boolean(payingFeeId)} error={feeErrors[feeKey] || ''} />;
                     }) : (
                         <EmptyState icon={DollarSign} title="No fees in this view" detail="Paid and canceled items are available under All." />
                     )}
@@ -148,7 +153,7 @@ function FeeMessageBlock({ title, message }: { title: string; message: string })
     );
 }
 
-function FeeCard({ fee, onPay, paying, error }: { fee: ParentFeeAppRecord; onPay: (fee: ParentFeeAppRecord) => void | Promise<void>; paying: boolean; error: string }) {
+function FeeCard({ fee, onPay, paying, payBlocked, error }: { fee: ParentFeeAppRecord; onPay: (fee: ParentFeeAppRecord) => void | Promise<void>; paying: boolean; payBlocked: boolean; error: string }) {
     const notes = getFeeMessage(fee.notes, fee.feeNotes);
     const offlinePaymentInstructions = getFeeMessage(fee.offlinePaymentInstructions, fee.paymentInstructions);
 
@@ -172,7 +177,7 @@ function FeeCard({ fee, onPay, paying, error }: { fee: ParentFeeAppRecord; onPay
             {notes ? <FeeMessageBlock title="Notes" message={notes} /> : null}
             {offlinePaymentInstructions ? <FeeMessageBlock title="Offline payment" message={offlinePaymentInstructions} /> : null}
             {fee.canPay ? (
-                <button type="button" className="primary-button mt-3 w-full" onClick={() => onPay(fee)} disabled={paying}>
+                <button type="button" className="primary-button mt-3 w-full" onClick={() => onPay(fee)} disabled={payBlocked}>
                     {paying ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <ExternalLink className="h-4 w-4" aria-hidden="true" />}
                     {paying ? 'Opening checkout' : 'Pay fee'}
                 </button>
