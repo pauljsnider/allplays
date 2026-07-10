@@ -1788,7 +1788,7 @@ test('my teams opens from Home data with selected team, player, and chat routes'
     await expect(page.getByRole('link', { name: /Media/ })).toHaveAttribute('href', '#/teams/team-1/media');
     await expect(page.locator('a[href="#/players/team-1/player-1"]').first()).toBeVisible();
     await expect(page.locator('a[href="#/players/team-1/player-1"]').filter({ hasText: 'Pat Star' })).toBeVisible();
-    await expect(page.getByRole('link', { name: 'Open Bears' }).first()).toHaveAttribute('aria-current', 'page');
+    await expect(page.getByRole('link', { name: 'Select Bears' }).first()).toHaveAttribute('aria-current', 'page');
     await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1)).toBe(true);
 
     await page.locator('a[href="#/teams/team-1"]').first().click();
