@@ -1,20 +1,69 @@
+const net = require('node:net');
+const { isPrivateIpAddress } = require('./utils/ip-address-validation.js');
+
 function parsePositiveInteger(value, fallback) {
   const parsed = Number.parseInt(value, 10);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
 }
 
+function getHeaderValue(headers = {}, name = '') {
+  const direct = headers[name] || headers[name.toLowerCase()];
+  if (direct !== undefined) {
+    return Array.isArray(direct) ? direct[0] : direct;
+  }
+
+  const matchingKey = Object.keys(headers).find((key) => key.toLowerCase() === name.toLowerCase());
+  const value = matchingKey ? headers[matchingKey] : undefined;
+  return Array.isArray(value) ? value[0] : value;
+}
+
+function normalizeIp(value) {
+  const normalized = typeof value === 'string' ? value.trim().toLowerCase() : '';
+  if (normalized.startsWith('::ffff:')) {
+    const mappedIpv4 = normalized.slice('::ffff:'.length);
+    if (net.isIP(mappedIpv4) === 4) {
+      return mappedIpv4;
+    }
+  }
+  return normalized;
+}
+
+function getForwardedIp(req = {}) {
+  const forwardedFor = getHeaderValue(req.headers, 'x-forwarded-for');
+  if (typeof forwardedFor !== 'string' || !forwardedFor.trim()) {
+    return '';
+  }
+
+  const forwardedCandidates = forwardedFor.split(',')
+    .map((value) => value.trim())
+    .filter(Boolean);
+  const trustedHops = [
+    req.ip,
+    req.socket?.remoteAddress,
+    req.connection?.remoteAddress
+  ].map(normalizeIp).filter(Boolean);
+  const trustedHopIndex = forwardedCandidates.findLastIndex((candidate) => {
+    const normalizedCandidate = normalizeIp(candidate);
+    return trustedHops.includes(normalizedCandidate);
+  });
+
+  if (trustedHopIndex <= 0 || trustedHopIndex !== forwardedCandidates.length - 1) {
+    return '';
+  }
+
+  const clientCandidate = forwardedCandidates[trustedHopIndex - 1];
+  return !isPrivateIpAddress(clientCandidate) ? clientCandidate : '';
+}
+
 function getRequestIp(req = {}) {
-  if (typeof req.ip === 'string' && req.ip.trim()) {
-    return req.ip.trim();
-  }
+  const candidates = [
+    typeof req.ip === 'string' ? req.ip.trim() : '',
+    getForwardedIp(req),
+    req.socket?.remoteAddress,
+    req.connection?.remoteAddress
+  ].filter((value) => typeof value === 'string' && value.trim()).map((value) => value.trim());
 
-  const forwardedFor = req.headers?.['x-forwarded-for'];
-  const forwardedValue = Array.isArray(forwardedFor) ? forwardedFor[0] : forwardedFor;
-  if (typeof forwardedValue === 'string' && forwardedValue.trim()) {
-    return forwardedValue.split(',')[0].trim();
-  }
-
-  return req.socket?.remoteAddress || req.connection?.remoteAddress || 'unknown';
+  return candidates.find((value) => !isPrivateIpAddress(value)) || candidates[0] || 'unknown';
 }
 
 function createInMemoryRateLimiter({ windowMs = 60_000, maxRequests = 120, maxKeys = 2_000 } = {}) {
