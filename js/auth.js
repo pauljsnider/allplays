@@ -290,6 +290,7 @@ async function processGoogleAuthResult(result, activationCode = null) {
         clearPendingActivationCode();
         console.log('[Google Auth] New user setup complete');
     } else {
+        clearPendingActivationCode();
         console.log('[Google Auth] Existing user - no setup needed');
     }
 
