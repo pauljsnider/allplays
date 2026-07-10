@@ -959,6 +959,9 @@ function getRegistrationCapturedDiscountRules(registration = {}) {
   if (Array.isArray(registration.feeSnapshot?.discountRules)) {
     return registration.feeSnapshot.discountRules;
   }
+  // Legacy snapshots did not capture the authoritative rule scope. Keep that
+  // state distinct from a captured empty list so callers can fail closed
+  // instead of applying rules that may have been added after submission.
   return null;
 }
 
@@ -1009,13 +1012,16 @@ function getRegistrationCheckoutAmountCents(registration = {}, form = null) {
     return Math.max(0, Math.round(Number(installmentState.currentInstallment?.amountCents || 0) || 0));
   }
   if (form) {
+    const capturedDiscountRules = getRegistrationCapturedDiscountRules(registration);
     // Recompute from the authoritative form pricing rules using the quantity
     // plus the discount rules and submission time captured by the
     // server-created registration. Using the captured rule scope preserves
-    // retry discounts without granting rules added after submission.
+    // retry discounts without granting rules added after submission. Legacy
+    // snapshots without a captured rule scope receive no retry discount;
+    // stored appliedDiscounts remain non-authoritative for billing.
     return computeRegistrationFeeAmountCentsFromForm(form, getRegistrationSubmittedAtDate(registration), {
       quantity: registration.feeSnapshot?.quantity || 1,
-      discountRules: getRegistrationCapturedDiscountRules(registration)
+      discountRules: capturedDiscountRules === null ? [] : capturedDiscountRules
     });
   }
   if (registration.paymentPlan?.id === 'installments') {

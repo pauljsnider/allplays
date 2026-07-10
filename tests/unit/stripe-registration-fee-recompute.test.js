@@ -44,7 +44,17 @@ describe('server-side registration fee recomputation (issue #2243)', () => {
         expect(source).toContain('function getRegistrationCheckoutAmountCents(registration = {}, form = null)');
         expect(source).toContain('return computeRegistrationFeeAmountCentsFromForm(form, getRegistrationSubmittedAtDate(registration), {');
         expect(source).toContain('quantity: registration.feeSnapshot?.quantity || 1');
-        expect(source).toContain('discountRules: getRegistrationCapturedDiscountRules(registration)');
+        expect(source).toContain('discountRules: capturedDiscountRules === null ? [] : capturedDiscountRules');
+    });
+
+    it('distinguishes legacy snapshots from captured empty and populated rule lists', () => {
+        const { getRegistrationCapturedDiscountRules } = loadServerFeeHelpers();
+        const capturedRule = { id: 'early', type: 'early_bird' };
+
+        expect(getRegistrationCapturedDiscountRules({ feeSnapshot: {} })).toBeNull();
+        expect(getRegistrationCapturedDiscountRules({ feeSnapshot: { discountRules: { id: 'invalid' } } })).toBeNull();
+        expect(getRegistrationCapturedDiscountRules({ feeSnapshot: { discountRules: [] } })).toEqual([]);
+        expect(getRegistrationCapturedDiscountRules({ feeSnapshot: { discountRules: [capturedRule] } })).toEqual([capturedRule]);
     });
 
     it('recomputes early-bird eligibility at the server-captured submission time on retry', () => {
@@ -77,6 +87,28 @@ describe('server-side registration fee recomputation (issue #2243)', () => {
                 quantity: 1,
                 finalAmountDueCents: 10000,
                 discountRules: []
+            }
+        };
+        const form = {
+            feeAmountCents: 10000,
+            discountRules: [
+                { id: 'later-early', type: 'early_bird', amountType: 'fixed', amountValue: 2500, earlyBirdDeadline: '2000-01-02', active: true }
+            ]
+        };
+
+        expect(getRegistrationCheckoutAmountCents(registration, form)).toBe(10000);
+    });
+
+    it('does not grant current form rules to a legacy snapshot with a valid historical submittedAt', () => {
+        const { getRegistrationCheckoutAmountCents } = loadServerFeeHelpers();
+        const registration = {
+            submittedAt: { toDate: () => new Date('2000-01-01T12:00:00Z') },
+            feeSnapshot: {
+                quantity: 1,
+                finalAmountDueCents: 1000,
+                appliedDiscounts: [
+                    { id: 'later-early', type: 'early_bird', amountType: 'fixed', amountCents: 9000 }
+                ]
             }
         };
         const form = {

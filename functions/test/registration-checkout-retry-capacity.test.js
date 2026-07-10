@@ -390,10 +390,10 @@ test('retry checkout does not grant an early-bird discount added after submissio
     assert.equal(registration.checkoutAmountCents, 10000);
 });
 
-test('legacy retry checkout ignores stored applied discount amounts without captured rules', async () => {
+test('legacy retry checkout ignores stored and current discounts without a captured rule scope', async () => {
     const seed = buildSeedState({
         registrationCapacityReleased: false,
-        submittedAt: 'not-a-valid-date',
+        submittedAt: '2000-01-01T12:00:00.000Z',
         feeAmountCents: 10000,
         feeSnapshot: {
             currency: 'USD',
@@ -409,7 +409,7 @@ test('legacy retry checkout ignores stored applied discount amounts without capt
     Object.assign(seed['teams/team-1/registrationForms/form-1'], {
         feeAmountCents: 10000,
         discountRules: [
-            { id: 'expired', type: 'early_bird', amountType: 'fixed', amountValue: 2500, earlyBirdDeadline: '2000-01-02', active: true }
+            { id: 'inflated', type: 'early_bird', amountType: 'fixed', amountValue: 2500, earlyBirdDeadline: '2000-01-02', active: true }
         ]
     });
     let stripeCreateArgs = null;
