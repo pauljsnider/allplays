@@ -25,6 +25,21 @@ import {
 } from '../../js/registration-flow.js';
 
 describe('admin registration form setup', () => {
+    it('builds a valid minimal form with the default participant and guardian fields', () => {
+        const payload = buildAdminRegistrationFormPayload({
+            title: 'Spring Soccer',
+            waiverText: 'I accept the waiver.',
+            status: 'draft'
+        }, { teamId: 'team-1' });
+
+        expect(payload.participantFields.map((field) => field.label)).toEqual(['Participant name', 'Birthdate']);
+        expect(payload.guardianFields.map((field) => field.label)).toEqual(['Guardian name', 'Guardian email', 'Guardian phone']);
+        expect(payload.paymentSettings).toEqual({ offlinePaymentEnabled: false, onlineCheckoutEnabled: false });
+        expect(payload.registrationOptions).toEqual([]);
+        expect(payload.installmentPlan).toBeNull();
+        expect(validateAdminRegistrationFormPayload(payload)).toEqual([]);
+    });
+
     it('builds draft and published form payloads with metadata, fields, waiver, and fee', () => {
         const payload = buildAdminRegistrationFormPayload({
             title: 'Spring Soccer',
@@ -299,6 +314,8 @@ describe('admin registration form setup', () => {
         const adminJs = fs.readFileSync('js/admin.js', 'utf8');
 
         expect(adminPage).toContain('registration-forms-modal');
+        expect(adminPage).toContain('registration-advanced-settings');
+        expect(adminPage).toContain('Advanced registration settings');
         expect(adminPage).toContain('registration-participant-fields');
         expect(adminPage).toContain('registration-guardian-fields');
         expect(adminPage).toContain('registration-options-list');
@@ -337,5 +354,26 @@ describe('admin registration form setup', () => {
         expect(adminJs).toContain('try {');
         expect(adminJs).toContain('inlineJsString');
         expect(adminJs).toContain('copyRegistrationLinkAdmin');
+    });
+
+    it('keeps first-run basics outside the advanced registration disclosure', () => {
+        const adminPage = fs.readFileSync('admin.html', 'utf8');
+        const adminJs = fs.readFileSync('js/admin.js', 'utf8');
+        const advancedStart = adminPage.indexOf('id="registration-advanced-settings"');
+        const advancedEnd = adminPage.indexOf('</details>', advancedStart);
+        const advancedTagStart = adminPage.lastIndexOf('<details', advancedStart);
+        const advancedTagEnd = adminPage.indexOf('>', advancedStart);
+
+        expect(adminPage.slice(advancedTagStart, advancedTagEnd)).not.toMatch(/\sopen(?:\s|=|>)/);
+        expect(advancedStart).toBeGreaterThan(adminPage.indexOf('id="registration-title"'));
+        expect(advancedStart).toBeGreaterThan(adminPage.indexOf('id="registration-fee"'));
+        expect(adminPage.indexOf('id="registration-description"')).toBeGreaterThan(advancedStart);
+        expect(adminPage.indexOf('id="registration-participant-fields"')).toBeGreaterThan(advancedStart);
+        expect(adminPage.indexOf('id="registration-participant-fields"')).toBeLessThan(advancedEnd);
+        expect(adminPage.indexOf('id="registration-background-check-instructions"')).toBeLessThan(advancedEnd);
+        expect(adminPage.indexOf('id="registration-waiver"')).toBeGreaterThan(advancedEnd);
+        expect(adminPage.indexOf('id="registration-status"')).toBeGreaterThan(advancedEnd);
+        expect(adminPage.slice(advancedStart, advancedEnd)).toContain('Participant name and Birthdate');
+        expect(adminJs).toContain("document.getElementById('registration-advanced-settings').open = Boolean(form.id && hasAdvancedRegistrationSettings(form));");
     });
 });

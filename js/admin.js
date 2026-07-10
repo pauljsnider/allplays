@@ -1437,6 +1437,27 @@ window.closeRegistrationFormsAdmin = function () {
     document.getElementById('registration-forms-modal').classList.add('hidden');
 };
 
+function hasAdvancedRegistrationSettings(form = {}) {
+    const participantFields = formatFieldLabels(form.participantFields, adminRegistrationDefaults.participantLabels);
+    const guardianFields = formatFieldLabels(form.guardianFields, adminRegistrationDefaults.guardianLabels);
+    const defaultParticipantFields = adminRegistrationDefaults.participantLabels.join('\n');
+    const defaultGuardianFields = adminRegistrationDefaults.guardianLabels.join('\n');
+    return Boolean(
+        form.description
+        || participantFields !== defaultParticipantFields
+        || guardianFields !== defaultGuardianFields
+        || form.paymentSettings?.offlinePaymentEnabled
+        || form.paymentSettings?.onlineCheckoutEnabled
+        || form.installmentPlan?.enabled
+        || form.registrationOptions?.length
+        || form.discountRules?.length
+        || form.backgroundCheck?.required
+        || form.backgroundCheck?.enabled
+        || form.backgroundCheck?.instructions
+        || form.backgroundCheck?.providerName
+    );
+}
+
 window.startRegistrationFormAdmin = function (formId = '') {
     const form = activeRegistrationForms.find(item => item.id === formId) || {};
     const editor = document.getElementById('registration-form-editor');
@@ -1466,6 +1487,7 @@ window.startRegistrationFormAdmin = function (formId = '') {
     document.getElementById('registration-waiver').value = form.waiverText || '';
     document.getElementById('registration-status').value = getRegistrationAdminStatus(form);
     document.getElementById('registration-form-message').textContent = '';
+    document.getElementById('registration-advanced-settings').open = Boolean(form.id && hasAdvancedRegistrationSettings(form));
     editor.classList.remove('hidden');
 };
 
