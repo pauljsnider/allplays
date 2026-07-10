@@ -2840,12 +2840,11 @@ describe('web-created tournament standings hydration (#1967)', () => {
     vi.mocked(getDoc).mockResolvedValue(playerSnapshot('p1', { id: 'p1', name: 'Kid One', active: true }) as any);
   });
 
-  it('computes from the complete game set and exposes the result on schedule rows', async () => {
+  it('computes standings from the bounded schedule game load without a full-history reread', async () => {
     const result = await loadParentSchedule(parentUser, { hydrateDetails: false, expandStaffPlayers: false });
 
-    expect(getGames).toHaveBeenCalledTimes(2);
+    expect(getGames).toHaveBeenCalledTimes(1);
     expect(vi.mocked(getGames).mock.calls[0][1]).toMatchObject({ startDate: expect.any(Date) });
-    expect(vi.mocked(getGames).mock.calls[1][1]).toEqual({});
     expect(getScheduleTournamentInfo(result.events[0] as any).standings).toMatchObject({
       groupName: 'Pool A',
       rows: [
@@ -2856,7 +2855,7 @@ describe('web-created tournament standings hydration (#1967)', () => {
     });
   });
 
-  it('hydrates a direct tournament detail route from the same complete game set', async () => {
+  it('hydrates a direct tournament detail route without a full-history standings reread', async () => {
     vi.mocked(getGame).mockResolvedValue(tournamentGames[0] as any);
 
     const result = await loadParentScheduleEventDetail(parentUser, {
@@ -2867,11 +2866,10 @@ describe('web-created tournament standings hydration (#1967)', () => {
     });
 
     expect(getGame).toHaveBeenCalledWith('team-1', 'pool-a-1');
-    expect(getGames).toHaveBeenCalledWith('team-1', {});
+    expect(getGames).not.toHaveBeenCalled();
     expect(getScheduleTournamentInfo(result.events[0] as any).standings?.rows).toEqual([
-      { rank: '1', teamName: 'Bears', record: '1-0', points: 3 },
-      { rank: '2', teamName: 'Tigers', record: '1-1', points: 3 },
-      { rank: '3', teamName: 'Lions', record: '0-1', points: 0 }
+      { rank: '1', teamName: 'Tigers', record: '1-0', points: 3 },
+      { rank: '2', teamName: 'Lions', record: '0-1', points: 0 }
     ]);
   });
 });
