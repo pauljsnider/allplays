@@ -332,42 +332,24 @@ describe('Teams launcher navigation', () => {
     cleanup();
   });
 
-  it('defaults to the first team when no selectedTeamId is present', async () => {
+  it('keeps launcher rows focused on team selection while selected-team tools remain available', async () => {
     renderTeamsWithNav();
 
-    const fastFalcons = await screen.findByRole('link', { name: 'Select Fast Falcons' });
-    expect(fastFalcons).toHaveAttribute('aria-current', 'page');
-    expect(screen.getByRole('heading', { name: 'Fast Falcons' })).toBeInTheDocument();
-    expect(screen.getByTestId('teams-location')).toHaveTextContent('/teams');
-    expect(screen.queryByTestId('team-hub')).toBeNull();
-  });
+    const fastFalcons = await screen.findByRole('link', { name: 'Open Fast Falcons' });
+    expect(fastFalcons).toHaveAttribute('href', '/teams/team-fast');
+    expect(screen.queryByRole('link', { name: 'Fast Falcons messages' })).toBeNull();
+    expect(screen.queryByRole('link', { name: 'Fast Falcons schedule' })).toBeNull();
+    expect(screen.queryByRole('link', { name: 'Fast Falcons team hub' })).toBeNull();
+    expect(screen.queryByRole('link', { name: 'Slow Sharks messages' })).toBeNull();
+    expect(screen.queryByRole('link', { name: 'Slow Sharks schedule' })).toBeNull();
+    expect(screen.queryByRole('link', { name: 'Slow Sharks team hub' })).toBeNull();
 
-  it('selects a launcher team in place and updates the selected team panel', async () => {
-    renderTeamsWithNav('/teams?selectedTeamId=team-slow');
-
-    expect(await screen.findByRole('heading', { name: 'Slow Sharks' })).toBeInTheDocument();
-    const fastFalcons = screen.getByRole('link', { name: 'Select Fast Falcons' });
-    expect(fastFalcons).toHaveAttribute('href', '/teams?selectedTeamId=team-fast');
+    expect(screen.getByRole('link', { name: 'Chat' })).toHaveAttribute('href', '/messages/team-fast');
+    expect(screen.getByRole('link', { name: /^Schedule/ })).toHaveAttribute('href', '/schedule?teamId=team-fast');
+    expect(screen.getByRole('link', { name: /^Messages/ })).toHaveAttribute('href', '/messages/team-fast');
+    expect(screen.getByRole('link', { name: /^Practice packets/ })).toHaveAttribute('href', '/schedule?teamId=team-fast&view=packets');
 
     fireEvent.click(fastFalcons);
-
-    await waitFor(() => {
-      expect(screen.getByTestId('teams-location')).toHaveTextContent('/teams?selectedTeamId=team-fast');
-      expect(screen.getByRole('heading', { name: 'Fast Falcons' })).toBeInTheDocument();
-    });
-    expect(fastFalcons).toHaveAttribute('aria-current', 'page');
-    expect(screen.queryByTestId('team-hub')).toBeNull();
-  });
-
-  it('keeps the explicit hub, messages, and schedule quick links on their existing routes', async () => {
-    renderTeamsWithNav('/teams?selectedTeamId=team-fast');
-
-    const teamHub = await screen.findByRole('link', { name: 'Fast Falcons team hub' });
-    expect(teamHub).toHaveAttribute('href', '/teams/team-fast');
-    expect(screen.getByRole('link', { name: 'Fast Falcons messages' })).toHaveAttribute('href', '/messages/team-fast');
-    expect(screen.getByRole('link', { name: 'Fast Falcons schedule' })).toHaveAttribute('href', '/schedule?teamId=team-fast');
-
-    fireEvent.click(teamHub);
 
     expect(await screen.findByTestId('team-hub')).toHaveTextContent('Team hub: team-fast');
   });
