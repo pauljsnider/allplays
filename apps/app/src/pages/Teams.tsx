@@ -401,6 +401,24 @@ function TeamLauncherRow({ team, selected, compact = false }: { team: ParentHome
           {nextEventSummary && !compact ? <span className="mt-1 block truncate text-[11px] font-bold text-gray-500">{nextEventSummary}</span> : null}
         </span>
       </Link>
+      {!selected ? (
+        <div className="flex flex-none items-center gap-1" aria-label={`${team.teamName} quick links`}>
+          <Link
+            to={`/messages/${encodeURIComponent(team.teamId)}`}
+            className="team-quick-link inline-flex items-center justify-center rounded-xl border border-gray-200 bg-white text-gray-600 shadow-sm transition hover:border-primary-200 hover:bg-primary-50 hover:text-primary-700"
+            aria-label="Messages"
+          >
+            <MessageCircle className="h-4 w-4" aria-hidden="true" />
+          </Link>
+          <Link
+            to={`/schedule?teamId=${encodeURIComponent(team.teamId)}`}
+            className="team-quick-link inline-flex items-center justify-center rounded-xl border border-gray-200 bg-white text-gray-600 shadow-sm transition hover:border-primary-200 hover:bg-primary-50 hover:text-primary-700"
+            aria-label="Schedule"
+          >
+            <CalendarDays className="h-4 w-4" aria-hidden="true" />
+          </Link>
+        </div>
+      ) : null}
     </article>
   );
 }
