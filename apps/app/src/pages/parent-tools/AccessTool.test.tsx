@@ -335,6 +335,76 @@ describe('AccessTool manual public team discovery', () => {
         expect(view.getByRole('option', { name: 'Lions' })).toBeTruthy();
     });
 
+    it('ignores a stale team search rejection after a newer search succeeds', async () => {
+        let rejectFirst: (reason?: unknown) => void = () => {};
+        let resolveSecond: (value: unknown) => void = () => {};
+        accessServiceMocks.discoverParentAccessTeams
+            .mockReturnValueOnce(new Promise((_resolve, reject) => {
+                rejectFirst = reject;
+            }))
+            .mockReturnValueOnce(new Promise((resolve) => {
+                resolveSecond = resolve;
+            }));
+
+        const view = renderTool('');
+
+        fireEvent.click(await view.findByRole('button', { name: 'Request access without a code' }));
+        fireEvent.change(view.getByPlaceholderText('Team name, city, state, or zip'), { target: { value: 'Bears' } });
+        fireEvent.click(view.getByRole('button', { name: 'Search' }));
+        fireEvent.change(view.getByPlaceholderText('Team name, city, state, or zip'), { target: { value: 'Lions' } });
+        fireEvent.click(view.getByRole('button', { name: 'Search' }));
+
+        await act(async () => {
+            resolveSecond({ teams: [{ id: 'team-lions', name: 'Lions' }], nextCursor: null });
+        });
+        expect(await view.findByRole('option', { name: 'Lions' })).toBeTruthy();
+
+        await act(async () => {
+            rejectFirst(new Error('Stale Bears failure'));
+        });
+
+        expect(view.queryByText('Stale Bears failure')).toBeNull();
+        expect(view.getByRole('option', { name: 'Lions' })).toBeTruthy();
+    });
+
+    it('ignores a retried player load after the user switches to another team', async () => {
+        let resolveTeamARetry: (value: unknown) => void = () => {};
+        accessServiceMocks.discoverParentAccessTeams.mockResolvedValue({
+            teams: [
+                { id: 'team-a', name: 'Team A' },
+                { id: 'team-b', name: 'Team B' }
+            ],
+            nextCursor: null
+        });
+        accessServiceMocks.loadParentAccessPlayers
+            .mockRejectedValueOnce(new Error('Team A players unavailable'))
+            .mockReturnValueOnce(new Promise((resolve) => {
+                resolveTeamARetry = resolve;
+            }))
+            .mockResolvedValueOnce([{ id: 'player-b', name: 'Player B', number: '8' }]);
+
+        const view = renderTool('');
+
+        fireEvent.click(await view.findByRole('button', { name: 'Request access without a code' }));
+        fireEvent.click(view.getByRole('button', { name: 'Browse' }));
+        expect(await view.findByRole('option', { name: 'Team A' })).toBeTruthy();
+        fireEvent.change(view.getByLabelText('Team'), { target: { value: 'team-a' } });
+        expect(await view.findByText('Team A players unavailable')).toBeTruthy();
+
+        fireEvent.click(view.getByRole('button', { name: 'Retry' }));
+        await waitFor(() => expect(accessServiceMocks.loadParentAccessPlayers).toHaveBeenCalledTimes(2));
+        fireEvent.change(view.getByLabelText('Team'), { target: { value: 'team-b' } });
+        expect(await view.findByRole('option', { name: '#8 Player B' })).toBeTruthy();
+
+        await act(async () => {
+            resolveTeamARetry([{ id: 'player-a', name: 'Player A', number: '7' }]);
+        });
+
+        expect((view.getByLabelText('Team') as HTMLSelectElement).value).toBe('team-b');
+        expect((view.getByLabelText('Player') as HTMLSelectElement).value).toBe('player-b');
+        expect(view.queryByRole('option', { name: '#7 Player A' })).toBeNull();
+    });
+
     it('ignores a pending team search when the query text changes before it resolves', async () => {
         let resolveSearch: (value: unknown) => void = () => {};
         accessServiceMocks.discoverParentAccessTeams.mockReturnValue(new Promise((resolve) => {

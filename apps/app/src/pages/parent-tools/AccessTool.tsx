@@ -37,6 +37,7 @@ export function AccessTool({ auth, onAccessChanged }: { auth: AuthState; onAcces
     const initialDeepLinkDiscoveryCompleteRef = useRef('');
     const deepLinkLookupAttemptRef = useRef('');
     const teamSearchRequestRef = useRef(0);
+    const playerLoadRequestRef = useRef(0);
     const [deepLinkReconcileVersion, setDeepLinkReconcileVersion] = useState(0);
     const [redeemCode, setRedeemCode] = useState('');
     const [message, setMessage] = useState('');
@@ -86,6 +87,7 @@ export function AccessTool({ auth, onAccessChanged }: { auth: AuthState; onAcces
             () => discoverParentAccessTeams({ searchText: normalizedSearchText, cursor, pageSize: 20 }),
             'Unable to load public teams.',
             {
+                ignoreStale: true,
                 onSuccess: (page) => {
                     if (requestId !== teamSearchRequestRef.current) return;
                     setTeamNextCursor(page.nextCursor);
@@ -119,6 +121,7 @@ export function AccessTool({ auth, onAccessChanged }: { auth: AuthState; onAcces
             () => loadParentAccessTeam(teamId),
             'Unable to load public teams.',
             {
+                ignoreStale: true,
                 onSuccess: (team) => {
                     if (requestId !== teamSearchRequestRef.current) return;
                     appliedDeepLinkRef.current = teamId;
@@ -250,17 +253,27 @@ export function AccessTool({ auth, onAccessChanged }: { auth: AuthState; onAcces
     }, [deepLinkedTeamId, deepLinkReconcileVersion, teams, loadingTeams, loadDeepLinkedTeam]);
 
     const loadPlayersForTeam = useCallback(async (teamId: string) => {
-        const rows = await runPlayerLoad(
+        const requestId = playerLoadRequestRef.current + 1;
+        playerLoadRequestRef.current = requestId;
+        setPlayers([]);
+        setSelectedPlayerId('');
+        if (!teamId) {
+            clearPlayerLoadError();
+            return;
+        }
+        await runPlayerLoad(
             () => loadParentAccessPlayers(teamId),
             'Unable to load players for this team.',
             {
+                ignoreStale: true,
                 onSuccess: (result) => {
+                    if (requestId !== playerLoadRequestRef.current) return;
                     setPlayers(result);
                     setSelectedPlayerId(result[0]?.id || '');
                 }
             }
         );
-    }, [runPlayerLoad]);
+    }, [clearPlayerLoadError, runPlayerLoad]);
 
     const retryManualLookup = useCallback(() => {
         if (playerLoadError && selectedTeamId) {
@@ -279,32 +292,11 @@ export function AccessTool({ auth, onAccessChanged }: { auth: AuthState; onAcces
     }, [deepLinkedTeamId, loadPlayersForTeam, loadTeams, playerLoadError, selectedTeamId, teamSearchText]);
 
     useEffect(() => {
-        let cancelled = false;
-        async function loadPlayers() {
-            setPlayers([]);
-            setSelectedPlayerId('');
-            if (!selectedTeamId) {
-                clearPlayerLoadError();
-                return;
-            }
-            const rows = await runPlayerLoad(
-                () => loadParentAccessPlayers(selectedTeamId),
-                'Unable to load players for this team.',
-                {
-                    onSuccess: (result) => {
-                        if (cancelled) return;
-                        setPlayers(result);
-                        setSelectedPlayerId(result[0]?.id || '');
-                    }
-                }
-            );
-            if (cancelled || !rows) return;
-        }
-        void loadPlayers();
+        void loadPlayersForTeam(selectedTeamId);
         return () => {
-            cancelled = true;
+            playerLoadRequestRef.current += 1;
         };
-    }, [clearPlayerLoadError, runPlayerLoad, selectedTeamId]);
+    }, [loadPlayersForTeam, selectedTeamId]);
 
     const redeem = async (event: FormEvent) => {
         event.preventDefault();

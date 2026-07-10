@@ -9,6 +9,7 @@ type ParentToolAsyncOptions<T> = {
     onError?: (error: AppServiceError) => void | Promise<void>;
     onFinally?: () => void | Promise<void>;
     clearError?: boolean;
+    ignoreStale?: boolean;
 };
 
 export function useParentToolAsyncOperation() {
@@ -32,6 +33,7 @@ export function useParentToolAsyncOperation() {
 
         return runOperation(task, {
             rethrow: false,
+            ignoreStale: options.ignoreStale,
             getErrorMessage: (taskError) => getParentToolErrorMessage(toAppServiceError(taskError, fallbackMessage), fallbackMessage),
             onSuccess: async (value) => {
                 setError(null);
