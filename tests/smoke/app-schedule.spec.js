@@ -545,6 +545,13 @@ async function mockScheduleModules(page, options = {}) {
                     return { going: 2, maybe: 0, notGoing: 0, notResponded: 0 };
                 }
 
+                export async function submitParentScheduleRsvpForChildren(events, user, response, note = '') {
+                    events.forEach((event) => {
+                        window.__scheduleCalls.rsvps.push({ eventKey: event.eventKey, childId: event.childId, userId: user.uid, response, note });
+                    });
+                    return { going: events.length, maybe: 0, notGoing: 0, notResponded: 0 };
+                }
+
                 export async function updateGameScore(teamId, gameId, score, user) {
                     const payload = {
                         homeScore: Number(score?.homeScore ?? 0),
