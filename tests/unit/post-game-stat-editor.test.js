@@ -9,6 +9,7 @@ import {
     resolvePostGameStatFields,
     resolvePostGameTeamStatFields
 } from '../../js/post-game-stat-editor.js';
+import { resolveLiveStatConfig } from '../../js/live-game-state.js';
 import { hasPlayerProfileParticipation } from '../../js/player-profile-stats.js';
 
 describe('post-game stat editor helpers', () => {
@@ -67,6 +68,32 @@ describe('post-game stat editor helpers', () => {
             { fieldName: 'effort', label: 'Coach Effort' },
             { fieldName: 'fouls', label: 'FOULS' }
         ]);
+    });
+
+    it('keeps manager-only team and player definitions from an assigned columns-free config', () => {
+        const gameHtml = readFileSync(new URL('../../game.html', import.meta.url), 'utf8');
+        const resolvedConfig = resolveLiveStatConfig({
+            configs: [{
+                id: 'cfg-manager-only',
+                baseType: 'Basketball',
+                columns: [],
+                statDefinitions: [
+                    { id: 'deflections', label: 'Deflections', visibility: 'private', scope: 'team', type: 'base' },
+                    { id: 'coachEffort', label: 'Coach Effort', visibility: 'private', scope: 'player', type: 'base' }
+                ]
+            }],
+            game: { statTrackerConfigId: 'cfg-manager-only' },
+            team: { sport: 'Basketball' }
+        });
+
+        expect(resolvePostGameTeamStatFields({ resolvedConfig, teamStats: {} })).toEqual([
+            { fieldName: 'deflections', label: 'Deflections' }
+        ]);
+        expect(resolvePostGameStatFields({ resolvedConfig, statsMap: {} })).toEqual(expect.arrayContaining([
+            { fieldName: 'coacheffort', label: 'Coach Effort' },
+            { fieldName: 'fouls', label: 'FOULS' }
+        ]));
+        expect(gameHtml).toContain("import { resolveLiveStatConfig } from './js/live-game-state.js?v=4';");
     });
 
     it('builds an absolute stat payload and zeroes the row when a player did not play', () => {
