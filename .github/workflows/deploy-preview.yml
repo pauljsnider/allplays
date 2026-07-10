@@ -232,12 +232,20 @@ jobs:
             skip_preview "Firebase Hosting preview deploy authentication was unavailable for this run. Build and regression checks completed successfully, so this deploy-only preview limitation did not fail the PR."
           }
 
+          skip_preview_for_release_target() {
+            skip_preview "Firebase Hosting preview channel release target was unavailable for this run. Build and regression checks completed successfully, so this deploy-only preview limitation did not fail the PR."
+          }
+
           preview_deploy_hit_quota() {
             grep -Eiq 'HTTP Error: 429|channel quota reached' "$log_file"
           }
 
           preview_deploy_hit_auth_error() {
             grep -Eiq 'Failed to authenticate|Command requires authentication|Unable to read the credential file specified by the GOOGLE_APPLICATION_CREDENTIALS' "$log_file"
+          }
+
+          preview_deploy_hit_release_target_error() {
+            grep -Eiq "HTTP Error: 400, Can't release to .*resource doesn't exist or isn't a valid release target" "$log_file"
           }
 
           delete_oldest_preview_channel() {
@@ -268,6 +276,9 @@ jobs:
             if preview_deploy_hit_auth_error; then
               skip_preview_for_auth
             fi
+            if preview_deploy_hit_release_target_error; then
+              skip_preview_for_release_target
+            fi
             if ! preview_deploy_hit_quota; then
               exit 1
             fi
@@ -278,6 +289,9 @@ jobs:
               fi
               if preview_deploy_hit_auth_error; then
                 skip_preview_for_auth
+              fi
+              if preview_deploy_hit_release_target_error; then
+                skip_preview_for_release_target
               fi
               exit 1
             fi
@@ -303,7 +317,7 @@ jobs:
           if [ -n "$PREVIEW_URL" ]; then
             body="$(printf '%s\n\nPreview URL: %s' "$marker" "$PREVIEW_URL")"
           else
-            body="$(printf '%s\n\nFirebase preview skipped: Firebase Hosting preview channel quota was reached for this run.' "$marker")"
+            body="$(printf '%s\n\nFirebase preview skipped for this run. See the deploy workflow summary for the skip reason.' "$marker")"
           fi
           comment_id="$(gh api --paginate repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/comments --jq "$JQ_FILTER" | head -n1)"
           if [ -n "$comment_id" ]; then
