@@ -1,4 +1,5 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useId, useState, type ReactNode } from 'react';
+import { ChevronDown } from 'lucide-react';
 import { type ParentScheduleEvent, type RsvpResponse } from '../../lib/scheduleLogic';
 import { rsvpBadgeClasses, rsvpLabels } from './AvailabilityNotesList';
 import { PlayerInitials } from './PlayerInitials';
@@ -67,6 +68,34 @@ export function ReadOnlyAvailabilityPanel({ event, rsvp }: {
           ) : null}
         </div>
       </div>
+    </div>
+  );
+}
+
+export function TeamRsvpToolsDisclosure({ summary, children }: {
+  summary?: ParentScheduleEvent['rsvpSummary'];
+  children: ReactNode;
+}) {
+  const [open, setOpen] = useState(false);
+  const contentId = useId();
+  const summaryLabel = formatRsvpSummary(summary);
+
+  return (
+    <div className="mt-3">
+      <button
+        type="button"
+        className="flex min-h-11 w-full items-center justify-between gap-3 rounded-xl border border-gray-200 bg-gray-50 px-3 py-2.5 text-left transition hover:border-primary-200 hover:bg-primary-50"
+        aria-expanded={open}
+        aria-controls={contentId}
+        onClick={() => setOpen((current) => !current)}
+      >
+        <span className="min-w-0">
+          <span className="block text-sm font-black text-gray-950">Team RSVP tools</span>
+          <span className="mt-0.5 block text-xs font-semibold text-gray-600">{summaryLabel}</span>
+        </span>
+        <ChevronDown className={`h-4 w-4 flex-none text-gray-500 transition ${open ? 'rotate-180' : ''}`} aria-hidden="true" />
+      </button>
+      {open ? <div id={contentId}>{children}</div> : null}
     </div>
   );
 }

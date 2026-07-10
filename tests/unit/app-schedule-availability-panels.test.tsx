@@ -9,6 +9,7 @@ import {
   AvailabilityNotesList,
   QuickAvailabilityPanel,
   ReadOnlyAvailabilityPanel,
+  TeamRsvpToolsDisclosure,
   getAvailabilityNoteSaveState,
   type AttentionItem
 } from '../../apps/app/src/components/schedule/AvailabilityPanels';
@@ -77,6 +78,23 @@ describe('availability schedule panels', () => {
 
     expect(screen.getByText('No response recorded')).toBeTruthy();
     expect(screen.queryByText('RSVP needed')).toBeNull();
+  });
+
+  it('keeps team RSVP tools collapsed until staff opens the disclosure', () => {
+    render(
+      <TeamRsvpToolsDisclosure summary={{ going: 3, maybe: 1, notGoing: 0, notResponded: 2, total: 6 }}>
+        <div>Staff-only RSVP action</div>
+      </TeamRsvpToolsDisclosure>
+    );
+
+    const disclosure = screen.getByRole('button', { name: /Team RSVP tools.*3 going.*2 missing/ });
+    expect(disclosure.getAttribute('aria-expanded')).toBe('false');
+    expect(screen.queryByText('Staff-only RSVP action')).toBeNull();
+
+    fireEvent.click(disclosure);
+
+    expect(disclosure.getAttribute('aria-expanded')).toBe('true');
+    expect(screen.getByText('Staff-only RSVP action')).toBeTruthy();
   });
 
   it('tracks trimmed availability note save state', () => {

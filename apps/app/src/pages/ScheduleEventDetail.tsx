@@ -62,6 +62,7 @@ import { AvailabilityNotesList } from '../components/schedule/AvailabilityNotesL
 import {
   QuickAvailabilityPanel,
   ReadOnlyAvailabilityPanel,
+  TeamRsvpToolsDisclosure,
   formatRsvpSummary,
   getAvailabilityNoteSaveState,
   rsvpBadgeClasses,
@@ -1021,6 +1022,7 @@ function AvailabilitySection({ event, rsvp, availabilityNote, onAvailabilityNote
   const staffRsvpLoader = useMemo(() => createStaffRsvpAvailabilityLoader(), [event.teamId, event.id]);
   const staffRsvp = useStaffRsvpBreakdown(staffRsvpLoader);
   const responseLabel = !rsvpWorkflow.canSubmit && rsvp === 'not_responded' ? 'No response' : rsvpLabels[rsvp];
+  const showTeamRsvpTools = event.isDbGame && Boolean(event.isTeamAdmin || event.isTeamRsvpReminderManager);
 
   return (
     <section className="app-card overflow-hidden p-0">
@@ -1052,16 +1054,22 @@ function AvailabilitySection({ event, rsvp, availabilityNote, onAvailabilityNote
         {attentionItems.length > 0 || rsvp !== 'not_responded' ? (
           <AttentionPanel items={attentionItems} onSelectSection={onSelectSection} />
         ) : null}
-        <StaffRsvpBreakdownPanel
-          breakdown={staffRsvp.breakdown}
-          loading={staffRsvp.loading}
-          error={staffRsvp.error}
-          submittingPlayerId={staffRsvp.submittingPlayerId}
-          status={staffRsvp.status}
-          onOverride={staffRsvp.submitOverride}
-        />
-        <StaffRsvpReminderPanel refreshToken={staffRsvp.refreshToken} staffRsvpLoader={staffRsvpLoader} />
-        <AvailabilityNotesList event={event} />
+        {showTeamRsvpTools ? (
+          <TeamRsvpToolsDisclosure key={event.eventKey} summary={staffRsvp.breakdown?.counts || event.rsvpSummary}>
+            <StaffRsvpBreakdownPanel
+              breakdown={staffRsvp.breakdown}
+              loading={staffRsvp.loading}
+              error={staffRsvp.error}
+              submittingPlayerId={staffRsvp.submittingPlayerId}
+              status={staffRsvp.status}
+              onOverride={staffRsvp.submitOverride}
+            />
+            <StaffRsvpReminderPanel refreshToken={staffRsvp.refreshToken} staffRsvpLoader={staffRsvpLoader} />
+            <AvailabilityNotesList event={event} />
+          </TeamRsvpToolsDisclosure>
+        ) : (
+          <AvailabilityNotesList event={event} />
+        )}
       </div>
     </section>
   );
