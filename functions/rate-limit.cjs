@@ -1,3 +1,4 @@
+const net = require('node:net');
 const { isPrivateIpAddress } = require('./utils/ip-address-validation.js');
 
 function parsePositiveInteger(value, fallback) {
@@ -16,19 +17,53 @@ function getHeaderValue(headers = {}, name = '') {
   return Array.isArray(value) ? value[0] : value;
 }
 
-function getForwardedIp(headers = {}) {
-  const forwardedFor = getHeaderValue(headers, 'x-forwarded-for');
+function normalizeIp(value) {
+  const normalized = typeof value === 'string' ? value.trim().toLowerCase() : '';
+  if (normalized.startsWith('::ffff:')) {
+    const mappedIpv4 = normalized.slice('::ffff:'.length);
+    if (net.isIP(mappedIpv4) === 4) {
+      return mappedIpv4;
+    }
+  }
+  return normalized;
+}
+
+function getForwardedIp(req = {}) {
+  const forwardedFor = getHeaderValue(req.headers, 'x-forwarded-for');
   if (typeof forwardedFor !== 'string' || !forwardedFor.trim()) {
     return '';
   }
 
-  return forwardedFor.split(',')[0].trim();
+  const forwardedCandidates = forwardedFor.split(',')
+    .map((value) => value.trim())
+    .filter(Boolean);
+  const trustedHops = [
+    req.ip,
+    req.socket?.remoteAddress,
+    req.connection?.remoteAddress
+  ].map(normalizeIp).filter(Boolean);
+  const trustedHopIndex = forwardedCandidates.findLastIndex((candidate) => {
+    const normalizedCandidate = normalizeIp(candidate);
+    return trustedHops.includes(normalizedCandidate);
+  });
+
+  if (trustedHopIndex <= 0) {
+    return '';
+  }
+
+  for (let index = trustedHopIndex - 1; index >= 0; index -= 1) {
+    if (!isPrivateIpAddress(forwardedCandidates[index])) {
+      return forwardedCandidates[index];
+    }
+  }
+
+  return '';
 }
 
 function getRequestIp(req = {}) {
   const candidates = [
     typeof req.ip === 'string' ? req.ip.trim() : '',
-    getForwardedIp(req.headers),
+    getForwardedIp(req),
     req.socket?.remoteAddress,
     req.connection?.remoteAddress
   ].filter((value) => typeof value === 'string' && value.trim()).map((value) => value.trim());

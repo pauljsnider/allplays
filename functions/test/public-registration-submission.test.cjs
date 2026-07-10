@@ -433,7 +433,7 @@ test('throttles forwarded public clients behind a private proxy before reserving
         rawRequest: {
             ip: '10.0.0.5',
             headers: {
-                'x-forwarded-for': '203.0.113.10'
+                'x-forwarded-for': '203.0.113.10, 10.0.0.5'
             }
         }
     };
@@ -465,7 +465,7 @@ test('isolates forwarded public clients behind the same private proxy', async ()
         rawRequest: {
             ip: '10.0.0.5',
             headers: {
-                'x-forwarded-for': clientIp
+                'x-forwarded-for': `${clientIp}, 10.0.0.5`
             }
         }
     });
