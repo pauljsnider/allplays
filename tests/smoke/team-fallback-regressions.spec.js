@@ -113,6 +113,9 @@ export function getGenerativeModel() {
 `;
 
 const ROSTER_PROFILE_FIELDS_STUB = `
+export function buildFullRosterCsvTemplate() {
+    return 'Name,Number\\n';
+}
 export function buildRosterFieldDefinitionPayload(field = {}, index = 0) {
     return { key: field.key || 'field-' + index, label: field.label || 'Field' };
 }
@@ -130,6 +133,9 @@ export function planRosterCsvImport() {
 }
 export function renderRosterProfileFields(container) {
     if (container) container.innerHTML = '';
+}
+export function summarizeRosterContactInviteResults() {
+    return { sent: 0, linked: 0, codeCreated: 0, failed: 0 };
 }
 export function validateRosterProfileValues() {
     return [];
@@ -165,7 +171,13 @@ export async function getPlayers() {
         { id: 'player-2', name: 'Jordan Reed', number: '22', active: true }
     ];
 }
+export async function getPlayersWithPrivateRosterContacts() {
+    return getPlayers();
+}
 export async function addPlayer() {}
+export async function applyRosterCsvImportOperations(_teamId, operations) {
+    return operations.map((operation, index) => ({ ...operation, playerId: operation.playerId || 'player-' + (index + 1) }));
+}
 export async function deactivatePlayer() {}
 export async function reactivatePlayer() {}
 export async function getGames() {
