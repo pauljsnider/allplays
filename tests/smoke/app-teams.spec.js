@@ -794,9 +794,13 @@ test.describe('desktop My Teams', () => {
 
         const readyHeading = page.getByRole('heading', { name: /\d+ teams? ready|\d+ Teams?/i });
         await waitForTeamsRoute(page, readyHeading);
-        await expect(page.getByText('Select a team, or jump straight to chat and schedule.')).toBeVisible();
+        await expect(page.getByText('Select a team to open its hub and tools.')).toBeVisible();
         await expect(page.getByPlaceholder('Search teams or players')).toBeVisible();
         await expect(page.getByText('Team navigation')).toBeVisible();
+        const launcherRows = page.locator('.teams-team-rail article.team-launcher-row');
+        await expect(launcherRows).toHaveCount(3);
+        await expect(launcherRows.locator('a')).toHaveCount(3);
+        await expect(launcherRows.locator('a[href*="/messages/"], a[href*="/schedule"]')).toHaveCount(0);
         await expect(page.locator('.teams-header')).toBeVisible();
         await expect.poll(async () => {
             const box = await page.locator('.teams-header').boundingBox();
