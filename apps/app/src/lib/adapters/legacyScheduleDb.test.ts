@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('@legacy/db.js', () => ({
     addGame: vi.fn(),
@@ -61,7 +61,8 @@ vi.mock('@legacy/firebase.js', () => ({
     where: vi.fn()
 }));
 
-import { buildLegacyTournamentGameDocument, buildLegacyTournamentGameDocuments, buildSingleLegacyTournamentGameDocument, LegacyTournamentGameAdapterValidationError } from './legacyScheduleDb';
+import { addGame as legacyAddGame } from '@legacy/db.js';
+import { addGame, buildLegacyTournamentGameDocument, buildLegacyTournamentGameDocuments, buildSingleLegacyTournamentGameDocument, LegacyTournamentGameAdapterValidationError } from './legacyScheduleDb';
 
 const buildValidLegacyGamePayload = (overrides: Record<string, unknown> = {}) => ({
     type: 'game',
@@ -88,6 +89,10 @@ const validTournamentMetadata = {
     roundName: 'Semifinal',
     poolName: 'Pool A'
 };
+
+beforeEach(() => {
+    vi.clearAllMocks();
+});
 
 describe('legacyScheduleDb tournament mapping', () => {
     it('maps the supported single-game tournament adapter entry point to one legacy-compatible game document', () => {
@@ -169,5 +174,33 @@ describe('legacyScheduleDb tournament mapping', () => {
             buildValidLegacyGamePayload({ opponent: 'Tigers' }),
             null
         ], validTournamentMetadata)).toThrow('Tournament adapter requires complete tournament game payloads.');
+    });
+});
+
+describe('legacyScheduleDb game persistence', () => {
+    it('delegates one valid tournament document to the legacy save adapter exactly once', async () => {
+        const tournamentDocument = buildSingleLegacyTournamentGameDocument([
+            buildValidLegacyGamePayload()
+        ], validTournamentMetadata);
+        const documentBeforeCall = structuredClone(tournamentDocument);
+        vi.mocked(legacyAddGame).mockResolvedValueOnce('tournament-game-1');
+
+        await expect(addGame('team-1', tournamentDocument)).resolves.toBe('tournament-game-1');
+
+        expect(legacyAddGame).toHaveBeenCalledTimes(1);
+        expect(legacyAddGame).toHaveBeenCalledWith('team-1', documentBeforeCall);
+        expect(tournamentDocument).toStrictEqual(documentBeforeCall);
+    });
+
+    it('keeps non-tournament game persistence on the same single legacy delegation', async () => {
+        const leagueDocument = buildValidLegacyGamePayload({
+            competitionType: 'league'
+        });
+        vi.mocked(legacyAddGame).mockResolvedValueOnce('league-game-1');
+
+        await expect(addGame('team-1', leagueDocument)).resolves.toBe('league-game-1');
+
+        expect(legacyAddGame).toHaveBeenCalledTimes(1);
+        expect(legacyAddGame).toHaveBeenCalledWith('team-1', leagueDocument);
     });
 });
