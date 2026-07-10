@@ -393,6 +393,10 @@ export function normalizeRsvpResponse(response: unknown): RsvpResponse {
   return 'not_responded';
 }
 
+export function canSubmitScheduleEventRsvp(event: Pick<ParentScheduleEvent, 'isDbGame' | 'isCancelled' | 'availabilityLocked'>) {
+  return Boolean(event.isDbGame && !event.isCancelled && !event.availabilityLocked);
+}
+
 function compactString(value: unknown) {
   return String(value || '').trim();
 }
@@ -800,8 +804,8 @@ export function getEventOpenAssignmentCount(event: Pick<ParentScheduleEvent, 'op
     : countOpenScheduleAssignments(event.assignments);
 }
 
-export function getScheduleTaskDetailSection(event: Pick<ParentScheduleEvent, 'type' | 'practiceHomePacketSummary' | 'assignments' | 'openAssignmentCount' | 'rideshareSummary' | 'isDbGame' | 'isCancelled' | 'myRsvp'>): ScheduleEventDetailSection | '' {
-  if (event.type === 'game' && event.isDbGame && !event.isCancelled && normalizeRsvpResponse(event.myRsvp) === 'not_responded') return 'availability';
+export function getScheduleTaskDetailSection(event: Pick<ParentScheduleEvent, 'type' | 'practiceHomePacketSummary' | 'assignments' | 'openAssignmentCount' | 'rideshareSummary' | 'isDbGame' | 'isCancelled' | 'availabilityLocked' | 'myRsvp'>): ScheduleEventDetailSection | '' {
+  if (event.type === 'game' && canSubmitScheduleEventRsvp(event) && normalizeRsvpResponse(event.myRsvp) === 'not_responded') return 'availability';
   // Practice packets render in the shared game/report tab inside ScheduleEventDetail.
   if (event.type === 'practice' && event.practiceHomePacketSummary) return PRACTICE_PACKET_DETAIL_SECTION;
   if (getEventOpenAssignmentCount(event) > 0) return 'assignments';
