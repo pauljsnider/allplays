@@ -23,7 +23,7 @@ async function openPrivateAi(page) {
     }).toPass({ timeout: 30000 });
 }
 
-async function mockPrivateAiModules(page) {
+async function mockPrivateAiModules(page, { firstRun = false } = {}) {
     await page.addInitScript(() => {
         window.__privateAiCalls = [];
     });
@@ -108,7 +108,7 @@ async function mockPrivateAiModules(page) {
                 export const DEFAULT_PRIVATE_AI_CONVERSATION_ID = 'default';
                 export const DRAFT_PRIVATE_AI_CONVERSATION_ID = '__draft__';
  
-                let conversations = [
+                let conversations = ${firstRun ? '[]' : `[
                     {
                         id: 'default',
                         title: 'Recent chat',
@@ -116,9 +116,9 @@ async function mockPrivateAiModules(page) {
                         updatedAt: new Date('2026-05-21T12:00:00Z'),
                         lastMessagePreview: 'I can look up your ALL PLAYS schedule and messages.'
                     }
-                ];
+                ]`};
 
-                let messages = [
+                let messages = ${firstRun ? '[]' : `[
                     {
                         id: 'msg-1',
                         role: 'assistant',
@@ -127,7 +127,7 @@ async function mockPrivateAiModules(page) {
                         createdAt: new Date('2026-05-21T12:00:00Z'),
                         toolNames: []
                     }
-                ];
+                ]`};
 
                 export async function loadPrivateAiConversations() {
                     return conversations;
@@ -151,25 +151,35 @@ async function mockPrivateAiModules(page) {
 
                 export async function sendPrivateAiMessage(user, text, conversationId = 'default') {
                     window.__privateAiCalls.push({ uid: user.uid, text, conversationId });
+                    const savedConversationId = conversationId === 'default' && !conversations.some((conversation) => conversation.id === conversationId)
+                        ? 'conversation-2'
+                        : conversationId;
                     const userMessage = {
                         id: 'msg-2',
                         role: 'user',
                         text,
-                        conversationId,
+                        conversationId: savedConversationId,
                         createdAt: new Date('2026-05-21T12:01:00Z')
                     };
                     const assistantMessage = {
                         id: 'msg-3',
                         role: 'assistant',
                         text: '**Bears** play Monday at 6:00 PM.',
-                        conversationId,
+                        conversationId: savedConversationId,
                         createdAt: new Date('2026-05-21T12:01:02Z'),
                         toolNames: ['get_schedule']
                     };
                     messages = [...messages, userMessage, assistantMessage];
-                    conversations = conversations.map((conversation) => conversation.id === conversationId
-                        ? { ...conversation, title: text, lastMessagePreview: assistantMessage.text, updatedAt: new Date('2026-05-21T12:01:02Z') }
-                        : conversation);
+                    const savedConversation = {
+                        id: savedConversationId,
+                        title: text,
+                        createdAt: new Date('2026-05-21T12:01:00Z'),
+                        updatedAt: new Date('2026-05-21T12:01:02Z'),
+                        lastMessagePreview: assistantMessage.text
+                    };
+                    conversations = conversations.some((conversation) => conversation.id === savedConversationId)
+                        ? conversations.map((conversation) => conversation.id === savedConversationId ? { ...conversation, ...savedConversation } : conversation)
+                        : [savedConversation, ...conversations];
                     return {
                         userMessage,
                         assistantMessage,
@@ -182,6 +192,31 @@ async function mockPrivateAiModules(page) {
 }
 
 test.describe('private AI chat', () => {
+    test('desktop first run defers history controls until the first saved conversation', async ({ page, baseURL }) => {
+        await mockPrivateAiModules(page, { firstRun: true });
+        await page.setViewportSize({ width: 1440, height: 900 });
+        await page.goto(appUrl(baseURL, '/home'), { waitUntil: 'domcontentloaded' });
+
+        await page.getByTitle('Private AI').first().click();
+        await expect(page).toHaveURL(/#\/ai$/);
+        await expect(page.getByText('What do you need from ALL PLAYS?')).toBeVisible();
+        await expect(page.locator('.private-ai-first-run')).toBeVisible();
+        await expect(page.locator('.private-ai-rail')).toHaveCount(0);
+        await expect(page.getByLabel('AI conversations')).toHaveCount(0);
+        await expect(page.getByRole('button', { name: 'New', exact: true })).toHaveCount(0);
+        await expect(page.getByText('No saved chats', { exact: true })).toHaveCount(0);
+
+        await page.getByPlaceholder('Ask ALL PLAYS...').fill('What is next?');
+        await page.getByRole('button', { name: 'Send AI message' }).click();
+
+        await expect(page.getByText('Bears play Monday at 6:00 PM.')).toBeVisible();
+        await expect(page.locator('.private-ai-rail')).toBeVisible();
+        const conversationList = page.getByLabel('AI conversations');
+        await expect(conversationList).toBeVisible();
+        await expect(conversationList.getByRole('button', { name: /What is next\?/ })).toHaveAttribute('aria-pressed', 'true');
+        await expect(page.getByText('Bears play Monday at 6:00 PM.')).toBeVisible();
+    });
+
     test('desktop top nav opens private AI and sends a message', async ({ page, baseURL }) => {
         await mockPrivateAiModules(page);
         await page.setViewportSize({ width: 1440, height: 900 });

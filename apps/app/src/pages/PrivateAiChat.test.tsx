@@ -96,27 +96,39 @@ describe('PrivateAiChat', () => {
         cleanup();
     });
 
-    it('shows one default first-run action and defers advanced prompts behind expansion', async () => {
-        renderChat();
+    it('centers the first-run prompt and defers desktop conversation management until a chat exists', async () => {
+        const { container } = renderChat();
 
-        expect(await screen.findByText('What do you need from ALL PLAYS?')).toBeTruthy();
-
-        const railCard = screen.getByText('Ask about').closest('section');
-        expect(railCard).toBeTruthy();
-        if (!railCard) {
-            throw new Error('Ask about card not found');
+        const welcomeHeading = await screen.findByText('What do you need from ALL PLAYS?');
+        const welcome = welcomeHeading.closest<HTMLElement>('.private-ai-welcome');
+        expect(welcome).toBeTruthy();
+        if (!welcome) {
+            throw new Error('Private AI welcome not found');
         }
 
-        expect(within(railCard).getByRole('button', { name: 'What do I need to handle today?' })).toBeTruthy();
-        expect(within(railCard).queryByRole('button', { name: 'Who still needs an RSVP?' })).toBeNull();
+        await waitFor(() => {
+            expect(privateAiServiceMocks.loadPrivateAiConversations).toHaveBeenCalledWith(auth.user);
+            expect(privateAiServiceMocks.loadPrivateAiMessages).toHaveBeenCalledWith(auth.user, undefined, 'default');
+        });
+        expect(container.querySelector('.private-ai-first-run')).toBeTruthy();
+        expect(container.querySelector('.private-ai-rail')).toBeNull();
+        expect(screen.queryByLabelText('AI conversations')).toBeNull();
+        expect(screen.queryByText('Chats')).toBeNull();
+        expect(screen.queryByText('Messages')).toBeNull();
+        expect(screen.queryByText('Lookups')).toBeNull();
+        expect(screen.queryByRole('button', { name: 'New' })).toBeNull();
+        expect(screen.queryByText('No saved chats')).toBeNull();
+        expect(screen.queryByText('Start a private chat and it will stay here for later.')).toBeNull();
+
+        expect(within(welcome).getByRole('button', { name: 'What do I need to handle today?' })).toBeTruthy();
+        expect(within(welcome).queryByRole('button', { name: 'Who still needs an RSVP?' })).toBeNull();
         expect(screen.queryByRole('button', { name: 'What is my next game?' })).toBeNull();
 
-        const expandButtons = screen.getAllByRole('button', { name: 'More ways to ask' });
-        fireEvent.click(expandButtons[0]!);
+        fireEvent.click(within(welcome).getByRole('button', { name: 'More ways to ask' }));
 
-        expect(await within(railCard).findByRole('button', { name: 'Who still needs an RSVP?' })).toBeTruthy();
-        expect(within(railCard).getByRole('button', { name: 'What is my next game?' })).toBeTruthy();
-        expect(within(railCard).getByRole('button', { name: 'Show unread team messages' })).toBeTruthy();
+        expect(await within(welcome).findByRole('button', { name: 'Who still needs an RSVP?' })).toBeTruthy();
+        expect(within(welcome).getByRole('button', { name: 'What is my next game?' })).toBeTruthy();
+        expect(within(welcome).getByRole('button', { name: 'Show unread team messages' })).toBeTruthy();
     });
 
     it('sends the primary first-run action through the existing send flow and preserves optimistic chat behavior', async () => {
@@ -193,7 +205,14 @@ describe('PrivateAiChat', () => {
 
         expect(await screen.findByText('Here is your summary.')).toBeTruthy();
         await waitFor(() => {
-            expect(privateAiServiceMocks.loadPrivateAiMessages).toHaveBeenCalledWith(auth.user, undefined, 'conversation-1');
+            expect(privateAiServiceMocks.loadPrivateAiConversations).toHaveBeenCalledTimes(2);
         });
+        const conversationList = screen.getByLabelText('AI conversations');
+        const savedConversation = within(conversationList).getByRole('button', { name: /What do I need to handle today\?/ });
+        expect(savedConversation.getAttribute('aria-pressed')).toBe('true');
+        fireEvent.click(savedConversation);
+
+        expect(screen.getByText('Here is your summary.')).toBeTruthy();
+        expect(privateAiServiceMocks.loadPrivateAiMessages).not.toHaveBeenCalledWith(auth.user, undefined, 'conversation-1');
     });
 });

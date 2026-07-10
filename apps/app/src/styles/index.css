@@ -974,6 +974,18 @@
   grid-template-columns: minmax(260px, 312px) minmax(0, 1fr);
 }
 
+.private-ai-first-run {
+  display: flex;
+  min-height: 0;
+  flex: 1 1 auto;
+  justify-content: center;
+}
+
+.private-ai-first-run .private-ai-window {
+  width: min(100%, 900px);
+  height: 100%;
+}
+
 .private-ai-rail {
   gap: 10px;
 }
