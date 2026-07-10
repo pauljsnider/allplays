@@ -1532,17 +1532,14 @@ service cloud.firestore {
       return value is string &&
              value.size() > 0 &&
              value.size() <= 1024 &&
-             ((isSafeNestedChatRegexSegment(teamId) &&
+             (isScopedNestedChatFallbackMediaPath(teamId, conversationId, value) ||
+              (isSafeNestedChatRegexSegment(teamId) &&
                isSafeNestedChatRegexSegment(request.auth.uid) &&
-               value.matches('team-(photos|videos)/[0-9]+_chat_' + teamId + '_[^/]+_' + request.auth.uid + '_[^/]+')) ||
-              isScopedNestedChatFallbackMediaPath(teamId, conversationId, value));
+               value.matches('team-(photos|videos)/[0-9]+_chat_' + teamId + '_[^/]+_' + request.auth.uid + '_[^/]+')));
     }
 
     function isValidNestedChatAttachment(teamId, conversationId, attachment) {
       return attachment is map &&
-             attachment.keys().hasAll([
-               'type', 'url', 'path', 'thumbnailUrl', 'name', 'mimeType', 'size', 'uploadedAt'
-             ]) &&
              attachment.keys().hasOnly([
                'type', 'url', 'path', 'thumbnailUrl', 'name', 'mimeType', 'size', 'uploadedAt'
              ]) &&

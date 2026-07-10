@@ -31,6 +31,21 @@ describe('nested team chat message payload contracts', () => {
         expect(rules).toContain("let pathSegments = value.split('/');");
         expect(rules).toContain('pathSegments[3] == conversationId');
         expect(rules).toContain("value.matches('[A-Za-z0-9_%:-]+')");
+        const scopedMediaPathValidator = rules.slice(
+            rules.indexOf('function isScopedNestedChatMediaPath'),
+            rules.indexOf('function isValidNestedChatAttachment')
+        );
+        expect(scopedMediaPathValidator.indexOf('isScopedNestedChatFallbackMediaPath')).toBeLessThan(
+            scopedMediaPathValidator.indexOf("value.matches('team-(photos|videos)")
+        );
+        const attachmentValidator = rules.slice(
+            rules.indexOf('function isValidNestedChatAttachment'),
+            rules.indexOf('function hasValidNestedChatAttachments')
+        );
+        expect(attachmentValidator).toContain("attachment.keys().hasOnly([\n               'type', 'url', 'path', 'thumbnailUrl', 'name', 'mimeType', 'size', 'uploadedAt'");
+        for (const requiredField of ['type', 'url', 'path', 'thumbnailUrl', 'name', 'mimeType', 'size', 'uploadedAt']) {
+            expect(attachmentValidator).toContain(`attachment.${requiredField}`);
+        }
         expect(rules).toContain('data.attachments.size() <= 10');
         expect(rules).toContain('attachment.size <= 5 * 1024 * 1024');
         expect(rules).toContain("value.matches('https://firebasestorage[.]googleapis[.]com/.*')");
@@ -275,10 +290,14 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('nested team chat message 
             size: 1024,
             uploadedAt: Timestamp.now()
         };
+        const missingRequiredField = { ...baseAttachment };
+        delete missingRequiredField.uploadedAt;
         const invalidAttachments = [
             { ...baseAttachment, url: 'https://attacker.example/photo.jpg' },
             { ...baseAttachment, path: 'team-photos/unscoped-photo.jpg' },
-            { ...baseAttachment, size: 5 * 1024 * 1024 + 1 }
+            { ...baseAttachment, size: 5 * 1024 * 1024 + 1 },
+            missingRequiredField,
+            { ...baseAttachment, unexpectedField: true }
         ];
 
         for (const [index, attachment] of invalidAttachments.entries()) {
