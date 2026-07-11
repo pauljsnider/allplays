@@ -1641,6 +1641,65 @@ service cloud.firestore {
              );
     }
 
+    function hasValidLegacyChatImageMetadata(teamId, data) {
+      return (
+               data.get('imageUrl', null) == null &&
+               data.get('imagePath', null) == null &&
+               data.get('imageName', null) == null &&
+               data.get('imageType', null) == null &&
+               data.get('imageSize', null) == null
+             ) ||
+             (
+               isAllowedNestedChatMediaUrl(data.get('imageUrl', null)) &&
+               isScopedNestedChatMediaPath(teamId, 'team', data.get('imagePath', null)) &&
+               isNullableBoundedChatString(data.get('imageName', null), 255) &&
+               data.get('imageType', null) is string &&
+               data.imageType.size() <= 120 &&
+               data.imageType.matches('image/.*') &&
+               data.get('imageSize', null) is int &&
+               data.imageSize > 0 &&
+               data.imageSize <= 5 * 1024 * 1024 &&
+               data.attachments.size() > 0
+             );
+    }
+
+    function isLegacyFullTeamChatMessageCreateValid(teamId, data) {
+      return data.keys().hasAll([
+               'text', 'senderId', 'attachments', 'createdAt', 'targetType', 'recipientIds'
+             ]) &&
+             data.keys().hasOnly([
+               'clientMessageId', 'text', 'senderId', 'senderName', 'senderEmail', 'senderPhotoUrl',
+               'attachments', 'imageUrl', 'imagePath', 'imageName', 'imageType', 'imageSize',
+               'createdAt', 'editedAt', 'deleted', 'ai', 'aiName', 'aiQuestion', 'aiMeta',
+               'targetType', 'recipientIds', 'targetRole', 'conversationId'
+             ]) &&
+             isNullableBoundedChatString(data.get('clientMessageId', null), 120) &&
+             data.text is string &&
+             data.text.size() <= 10000 &&
+             hasValidNestedChatAttachments(teamId, 'team', data) &&
+             hasValidLegacyChatImageMetadata(teamId, data) &&
+             (data.text.size() > 0 || data.attachments.size() > 0) &&
+             data.senderId == request.auth.uid &&
+             isNullableBoundedChatString(data.get('senderName', null), 120) &&
+             (data.get('senderEmail', null) == null ||
+              (request.auth.token.email is string &&
+               data.senderEmail is string &&
+               data.senderEmail.size() <= 320 &&
+               data.senderEmail.lower() == request.auth.token.email.lower())) &&
+             isNullableBoundedChatString(data.get('senderPhotoUrl', null), 2048) &&
+             (data.get('senderPhotoUrl', null) == null || data.senderPhotoUrl.matches('https://.*')) &&
+             data.createdAt == request.time &&
+             data.get('editedAt', null) == null &&
+             data.get('deleted', false) == false &&
+             data.get('ai', false) == false &&
+             data.get('aiName', null) == null &&
+             data.get('aiQuestion', null) == null &&
+             data.get('aiMeta', null) == null &&
+             data.get('targetRole', null) == null &&
+             data.get('conversationId', null) == null &&
+             isFullTeamChatMessage(data);
+    }
+
     function isNestedChatMessageTargetValid(teamId, conversationId, conversationData, data) {
       return data.conversationId == conversationId &&
              (
@@ -3033,8 +3092,7 @@ service cloud.firestore {
 
         // Create: any team member, but the legacy path only accepts full-team messages.
         allow create: if canAccessTeamChat(teamId) &&
-                         request.resource.data.senderId == request.auth.uid &&
-                         isFullTeamChatMessage(request.resource.data);
+                         isLegacyFullTeamChatMessageCreateValid(teamId, request.resource.data);
 
         // Update for editing: only message sender, only text and editedAt fields
         allow update: if canAccessTeamChat(teamId) &&

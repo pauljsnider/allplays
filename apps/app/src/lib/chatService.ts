@@ -1366,10 +1366,10 @@ async function nativePostChatMessage(teamId: string, input: {
     createdAt: null,
     editedAt: null,
     deleted: false,
-    ai: input.ai === true,
-    aiName: input.aiName || null,
-    aiQuestion: input.aiQuestion || null,
-    aiMeta: input.aiMeta || null,
+    ai: false,
+    aiName: null,
+    aiQuestion: null,
+    aiMeta: null,
     targetType: input.targetType,
     recipientIds: input.targetType === 'individuals' ? input.recipientIds : [],
     targetRole: input.targetType === 'staff' ? (input.targetRole || 'staff') : null,
@@ -1390,7 +1390,6 @@ export async function sendTeamChatMessage({
   selectedRecipientTarget,
   selectedRecipientIds,
   onProgress,
-  aiMeta,
   skipInteractionTiming = false
 }: {
   teamId: string;
@@ -1474,7 +1473,7 @@ export async function sendTeamChatMessage({
       senderPhotoUrl: profile.photoUrl || user.photoUrl || null,
       attachments,
       conversationId,
-      aiMeta: aiMeta || null,
+      aiMeta: null,
       ...targetMetadata
     };
 

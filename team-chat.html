@@ -2603,27 +2603,18 @@
             try {
                 const needs = await inferDataNeeds(question);
                 const responseText = await askAllPlays(question, needs);
-                const isTargetedConversation = !isDefaultTeamConversation(selectedConversationId);
                 await postChatMessage(teamId, {
-                    text: isTargetedConversation ? `ALL PLAYS\n\n${responseText}` : responseText,
+                    text: `ALL PLAYS\n\n${responseText}`,
                     senderId: currentUser.uid,
-                    senderName: isTargetedConversation ? (currentUserProfile?.fullName || currentUser.displayName || currentUser.email || null) : null,
-                    senderEmail: isTargetedConversation ? (currentUser.email || null) : null,
-                    senderPhotoUrl: isTargetedConversation ? (currentUserProfile?.photoUrl || currentUser.photoURL || null) : null,
-                    ai: !isTargetedConversation,
-                    aiName: isTargetedConversation ? null : 'ALL PLAYS',
-                    aiQuestion: isTargetedConversation ? null : question,
+                    senderName: currentUserProfile?.fullName || currentUser.displayName || currentUser.email || null,
+                    senderEmail: currentUser.email || null,
+                    senderPhotoUrl: currentUserProfile?.photoUrl || currentUser.photoURL || null,
+                    ai: false,
+                    aiName: null,
+                    aiQuestion: null,
                     conversationId: selectedConversationId,
                     ...buildRecipientTargetMetadata(),
-                    aiMeta: isTargetedConversation ? null : {
-                        statsGameLimit: AI_STATS_GAMES_LIMIT,
-                        gamesContextLimit: AI_GAMES_CONTEXT_LIMIT,
-                        statsRequested: needs.fetchStats,
-                        eventsGameLimit: AI_EVENTS_GAMES_LIMIT,
-                        eventsPerGameLimit: AI_EVENTS_PER_GAME_LIMIT,
-                        eventsRequested: needs.fetchEvents,
-                        statsRequestSource: needs.source
-                    }
+                    aiMeta: null
                 });
             } catch (error) {
                 console.error('ALL PLAYS error:', error);
