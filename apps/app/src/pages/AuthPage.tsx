@@ -264,7 +264,6 @@ export function AuthPage({ auth }: { auth: AuthState }) {
 
       <div className="mt-4 flex flex-wrap justify-center gap-3 text-xs font-bold text-gray-500">
         <Link to="/accept-invite" className="text-primary-700">Enter invite code</Link>
-        <Link to="/reset-password" className="text-primary-700">Account action</Link>
       </div>
     </AuthFrame>
   );
