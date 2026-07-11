@@ -2099,19 +2099,6 @@ service cloud.firestore {
                      resource.data.teamId is string &&
                      (isTeamFeeRecipientForCurrentParent(resource.data, resource.data.teamId) ||
                       isTeamOwnerOrAdmin(resource.data.teamId));
-      allow create: if request.resource.data.keys().hasAll(['teamId']) &&
-                       request.resource.data.teamId is string &&
-                       hasNoPrivateTeamFeeBillingFields(request.resource.data) &&
-                       isTeamOwnerOrAdmin(request.resource.data.teamId);
-      allow update: if resource.data.keys().hasAll(['teamId']) &&
-                       request.resource.data.keys().hasAll(['teamId']) &&
-                       resource.data.teamId is string &&
-                       request.resource.data.teamId == resource.data.teamId &&
-                       hasNoIntroducedPrivateTeamFeeBillingFields() &&
-                       isTeamOwnerOrAdmin(resource.data.teamId);
-      allow delete: if resource.data.keys().hasAll(['teamId']) &&
-                       resource.data.teamId is string &&
-                       isTeamOwnerOrAdmin(resource.data.teamId);
     }
 
     // Parent-managed athlete profiles with explicit public/private sharing.
@@ -2971,11 +2958,13 @@ service cloud.firestore {
                            hasNoPrivateTeamFeeBillingFields(request.resource.data);
           allow update: if isTeamOwnerOrAdmin(teamId) &&
                            resource.data.teamId == teamId &&
+                           resource.data.batchId == batchId &&
                            request.resource.data.teamId == teamId &&
                            request.resource.data.batchId == batchId &&
                            hasNoIntroducedPrivateTeamFeeBillingFields();
           allow delete: if isTeamOwnerOrAdmin(teamId) &&
-                           resource.data.teamId == teamId;
+                           resource.data.teamId == teamId &&
+                           resource.data.batchId == batchId;
 
           match /adminBilling/{billingId} {
             allow read, create, update, delete: if isTeamOwnerOrAdmin(teamId);
