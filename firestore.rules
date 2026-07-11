@@ -20,6 +20,13 @@ service cloud.firestore {
       return isSignedIn() && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.isAdmin == true;
     }
 
+    function isBoundedGlobalAdminListQuery() {
+      return isGlobalAdmin() &&
+             request.query.limit != null &&
+             request.query.limit > 0 &&
+             request.query.limit <= 100;
+    }
+
     function isTeamOwnerOrAdmin(teamId) {
       return isSignedIn() &&
              (get(/databases/$(database)/documents/teams/$(teamId)).data.ownerId == request.auth.uid ||
@@ -273,8 +280,19 @@ service cloud.firestore {
               isGlobalAdmin());
     }
 
+    function canReadPublicTeamDocument(data) {
+      return data.isPublic is bool && data.isPublic == true;
+    }
+
+    function canListManagedTeamDocument(data) {
+      return isSignedIn() &&
+             (data.ownerId == request.auth.uid ||
+              (request.auth.token.email != null &&
+               request.auth.token.email.lower() in data.get('adminEmails', [])));
+    }
+
     function canReadTeamDocument(data) {
-      return (data.isPublic is bool && data.isPublic == true) ||
+      return canReadPublicTeamDocument(data) ||
              canReadManagedTeamDocument(data);
     }
 
@@ -1893,7 +1911,8 @@ service cloud.firestore {
     // modify, or remove isAdmin. Firestore rules, not dashboard client state,
     // remain the authority for broad private-team reads.
     match /users/{userId} {
-      allow read: if isGlobalAdmin() || isOwner(userId);
+      allow get: if isGlobalAdmin() || isOwner(userId);
+      allow list: if isBoundedGlobalAdminListQuery() || isOwner(userId);
       allow create: if isGlobalAdmin() ||
                     (isOwner(userId) && isOwnerUserCreatePayloadValid(request.resource.data));
       allow update: if isGlobalAdmin() ||
@@ -2214,7 +2233,10 @@ service cloud.firestore {
 
     // Teams - only public teams are readable by anonymous browse/listing paths.
     match /teams/{teamId} {
-      allow read: if canReadTeamDocument(resource.data);
+      allow get: if canReadTeamDocument(resource.data);
+      allow list: if isBoundedGlobalAdminListQuery() ||
+                     canReadPublicTeamDocument(resource.data) ||
+                     canListManagedTeamDocument(resource.data);
       allow create: if isSignedIn() && request.resource.data.ownerId == request.auth.uid;
       allow update: if (isTeamOwnerOrGlobalAdmin(teamId) && keepsOwnerControlledTeamPrivilegeFieldsImmutable()) ||
                        (isTeamOwnerOrAdmin(teamId) && keepsTeamPrivilegeFieldsImmutable());

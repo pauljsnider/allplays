@@ -306,12 +306,30 @@ function normalizeSharedGameSnapshot(docSnap) {
     };
 }
 
-async function getSharedGamesForTeam(teamId, { requireComplete = false } = {}) {
+async function getSharedGamesForTeam(teamId, options = {}) {
     const sharedGamesRef = collectionGroup(db, 'sharedGames');
-    const queries = [
-        query(sharedGamesRef, where('homeTeamId', '==', teamId)),
-        query(sharedGamesRef, where('awayTeamId', '==', teamId))
+    const startDate = options?.startDate ?? null;
+    const endDate = options?.endDate ?? null;
+    const requireComplete = options?.requireComplete === true;
+    const dateConstraints = [];
+    if (startDate instanceof Date) dateConstraints.push(where('date', '>=', Timestamp.fromDate(startDate)));
+    if (endDate instanceof Date) dateConstraints.push(where('date', '<=', Timestamp.fromDate(endDate)));
+    const orderedDateConstraints = dateConstraints.length > 0
+        ? [...dateConstraints, orderBy('date')]
+        : [];
+    const teamConstraints = [
+        where('homeTeamId', '==', teamId),
+        where('awayTeamId', '==', teamId),
+        where('teamIds', 'array-contains', teamId)
     ];
+    const queries = teamConstraints.flatMap((teamConstraint) => (
+        dateConstraints.length > 0
+            ? [
+                query(sharedGamesRef, teamConstraint, ...orderedDateConstraints),
+                query(sharedGamesRef, teamConstraint, where('date', '==', null))
+            ]
+            : [query(sharedGamesRef, teamConstraint)]
+    ));
 
     const snapshots = await Promise.allSettled(queries.map((q) => getDocs(q)));
     if (requireComplete) {
@@ -327,7 +345,8 @@ async function getSharedGamesForTeam(teamId, { requireComplete = false } = {}) {
         });
     });
 
-    return Array.from(sharedGamesByPath.values());
+    return Array.from(sharedGamesByPath.values())
+        .filter((game) => isGameWithinDateRange(game, startDate, endDate));
 }
 
 async function hasSharedGameUsingConfig(teamId, configId) {
@@ -877,6 +896,31 @@ export async function discoverPublicTeams(options = {}) {
 }
 
 // Teams
+// Legacy callers still require complete authorized collections. Page internally
+// so every request satisfies the global-admin list rule without truncating data.
+const COMPLETE_COLLECTION_PAGE_SIZE = 100;
+
+async function getAllOrderedCollectionDocuments(collectionRef, fieldName) {
+    const documents = [];
+    let cursor = null;
+
+    do {
+        const constraints = [orderBy(fieldName)];
+        if (cursor) {
+            constraints.push(startAfterQuery(cursor));
+        }
+        constraints.push(limitQuery(COMPLETE_COLLECTION_PAGE_SIZE));
+
+        const snapshot = await getDocs(query(collectionRef, ...constraints));
+        documents.push(...snapshot.docs);
+        cursor = snapshot.docs.length === COMPLETE_COLLECTION_PAGE_SIZE
+            ? snapshot.docs[snapshot.docs.length - 1]
+            : null;
+    } while (cursor);
+
+    return documents;
+}
+
 export async function getTeams(options = {}) {
     const includeInactive = !!options.includeInactive;
     const publicOnly = options.publicOnly === true;
@@ -886,7 +930,8 @@ export async function getTeams(options = {}) {
     const teamsRef = collection(db, "teams");
     let teams = [];
     if (includePrivate) {
-        teams = (await getDocs(query(teamsRef, orderBy("name")))).docs.map(doc => ({ id: doc.id, ...doc.data() }));
+        teams = (await getAllOrderedCollectionDocuments(teamsRef, "name"))
+            .map(doc => ({ id: doc.id, ...doc.data() }));
     } else if (publicOnly) {
         teams = (await getDocs(query(teamsRef, where("isPublic", "==", true)))).docs
             .map(doc => ({ id: doc.id, ...doc.data() }))
@@ -2015,13 +2060,12 @@ export async function getAdminUsersPage(options = {}) {
 }
 
 export async function getAllUsers() {
-    const q = query(collection(db, "users"), orderBy("email"));
-    const snapshot = await getDocs(q);
-    return snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+    const userDocs = await getAllOrderedCollectionDocuments(collection(db, "users"), "email");
+    return userDocs.map(doc => ({ id: doc.id, ...doc.data() }));
 }
 
 export async function getUserByEmail(email) {
-    const q = query(collection(db, "users"), where("email", "==", email));
+    const q = query(collection(db, "users"), where("email", "==", email), limitQuery(1));
     const snapshot = await getDocs(q);
     if (snapshot.empty) return null;
     return { id: snapshot.docs[0].id, ...snapshot.docs[0].data() };
@@ -3483,7 +3527,7 @@ export async function getGames(teamId, options = {}) {
 
     let sharedGames = [];
     try {
-        sharedGames = await getSharedGamesForTeam(teamId, { requireComplete: hasTournamentGroup });
+        sharedGames = await getSharedGamesForTeam(teamId, { startDate, endDate, requireComplete: hasTournamentGroup });
     } catch (error) {
         if (hasTournamentGroup) throw error;
         console.warn('[getGames] Failed to load shared games for team', teamId, error);

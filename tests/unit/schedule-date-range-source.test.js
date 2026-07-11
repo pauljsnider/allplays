@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
 
 const dbSource = readFileSync(new URL('../../js/db.js', import.meta.url), 'utf8');
@@ -10,6 +10,31 @@ function extractSource(source, startMarker, endMarker) {
     expect(start).toBeGreaterThanOrEqual(0);
     expect(end).toBeGreaterThan(start);
     return source.slice(start, end);
+}
+
+function buildGetSharedGamesForTeam(deps) {
+    const normalizeSource = extractSource(dbSource, 'function normalizeSharedGameSnapshot', 'async function getSharedGamesForTeam');
+    const sharedGamesSource = extractSource(dbSource, 'async function getSharedGamesForTeam', 'async function hasSharedGameUsingConfig');
+    return new Function(
+        'db',
+        'collectionGroup',
+        'query',
+        'where',
+        'orderBy',
+        'Timestamp',
+        'getDocs',
+        'isGameWithinDateRange',
+        `${normalizeSource}\n${sharedGamesSource}\nreturn getSharedGamesForTeam;`
+    )(
+        deps.db,
+        deps.collectionGroup,
+        deps.query,
+        deps.where,
+        deps.orderBy,
+        deps.Timestamp,
+        deps.getDocs,
+        deps.isGameWithinDateRange
+    );
 }
 
 describe('schedule date range source contracts', () => {
@@ -47,9 +72,65 @@ describe('schedule date range source contracts', () => {
         expect(groupedLoadSource).not.toContain('.map((tournamentGroup) => loadGames');
         expect(sharedGamesSource).toContain("where('homeTeamId', '==', teamId)");
         expect(sharedGamesSource).toContain("where('awayTeamId', '==', teamId)");
-        expect(sharedGamesSource).not.toContain("where('teamIds', 'array-contains', teamId)");
+        expect(sharedGamesSource).toContain("where('teamIds', 'array-contains', teamId)");
         expect((getGamesSource.match(/getSharedGamesForTeam\(teamId/g) || [])).toHaveLength(1);
-        expect(getGamesSource).toContain('getSharedGamesForTeam(teamId, { requireComplete: hasTournamentGroup })');
+        expect(getGamesSource).toContain('getSharedGamesForTeam(teamId, { startDate, endDate, requireComplete: hasTournamentGroup })');
         expect(getGamesSource).toContain('if (hasTournamentGroup) throw error;');
+    });
+
+    it('applies the requested date window to scoped shared-game queries without unscoped fallback reads', () => {
+        const sharedGamesSource = extractSource(dbSource, 'async function getSharedGamesForTeam', 'async function hasSharedGameUsingConfig');
+        const getGamesSource = extractSource(dbSource, 'export async function getGames', 'export async function getAggregatedStatsForGames');
+
+        expect(sharedGamesSource).toContain("where('date', '>=', Timestamp.fromDate(startDate))");
+        expect(sharedGamesSource).toContain("where('date', '<=', Timestamp.fromDate(endDate))");
+        expect(sharedGamesSource).toContain("where('homeTeamId', '==', teamId)");
+        expect(sharedGamesSource).toContain("where('awayTeamId', '==', teamId)");
+        expect(sharedGamesSource).toContain("where('teamIds', 'array-contains', teamId)");
+        expect(sharedGamesSource).toContain('query(sharedGamesRef, teamConstraint, ...orderedDateConstraints)');
+        expect(sharedGamesSource).toContain("query(sharedGamesRef, teamConstraint, where('date', '==', null))");
+        expect(sharedGamesSource).not.toContain('getDocs(query(sharedGamesRef, ...orderedDateConstraints))');
+        expect(sharedGamesSource).not.toContain("getDocs(query(sharedGamesRef, where('date', '==', null)))");
+        expect(sharedGamesSource).toContain('.filter((game) => isGameWithinDateRange(game, startDate, endDate))');
+        expect(getGamesSource).toContain('getSharedGamesForTeam(teamId, { startDate, endDate, requireComplete: hasTournamentGroup })');
+    });
+
+    it('does not fall back to unscoped shared-game collection-group date scans when compound queries reject', async () => {
+        const calls = [];
+        const collectionGroup = vi.fn((_db, name) => ({ type: 'collectionGroup', name }));
+        const where = vi.fn((field, op, value) => ({ type: 'where', field, op, value }));
+        const orderBy = vi.fn((field) => ({ type: 'orderBy', field }));
+        const query = vi.fn((ref, ...constraints) => ({ ref, constraints }));
+        const getDocs = vi.fn(async (queryRef) => {
+            calls.push(queryRef);
+            throw new Error('missing compound index');
+        });
+        const getSharedGamesForTeam = buildGetSharedGamesForTeam({
+            db: {},
+            collectionGroup,
+            query,
+            where,
+            orderBy,
+            Timestamp: { fromDate: (date) => ({ date }) },
+            getDocs,
+            isGameWithinDateRange: () => true
+        });
+
+        const games = await getSharedGamesForTeam('team-123', {
+            startDate: new Date('2026-07-01T00:00:00Z'),
+            endDate: new Date('2026-07-31T23:59:59Z')
+        });
+
+        expect(games).toEqual([]);
+        expect(getDocs).toHaveBeenCalledTimes(6);
+        expect(calls.every((queryRef) => queryRef.constraints.some((constraint) => (
+            constraint.type === 'where'
+                && ['homeTeamId', 'awayTeamId', 'teamIds'].includes(constraint.field)
+                && constraint.value === 'team-123'
+        )))).toBe(true);
+        expect(calls.some((queryRef) => !queryRef.constraints.some((constraint) => (
+            constraint.type === 'where'
+                && ['homeTeamId', 'awayTeamId', 'teamIds'].includes(constraint.field)
+        )))).toBe(false);
     });
 });

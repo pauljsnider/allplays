@@ -60,6 +60,9 @@ describe('homepage shared game discovery queries', () => {
 
         expect(sharedGameIndexes).toContain('type:ASCENDING,date:ASCENDING');
         expect(sharedGameIndexes).toContain('liveStatus:ASCENDING,date:DESCENDING');
+        expect(sharedGameIndexes).toContain('homeTeamId:ASCENDING,date:ASCENDING');
+        expect(sharedGameIndexes).toContain('awayTeamId:ASCENDING,date:ASCENDING');
+        expect(sharedGameIndexes).toContain('teamIds:CONTAINS,date:ASCENDING');
         expect(dateFieldOverrides).toContainEqual({
             collectionGroup: 'games',
             indexes: ['ASCENDING:COLLECTION_GROUP', 'DESCENDING:COLLECTION_GROUP']
