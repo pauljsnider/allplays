@@ -58,6 +58,7 @@ function createCertificateStudioHarness() {
                 statsWindow: 10,
                 seasonLabel: 'Fall 2026',
                 footerUrl: 'allplays.ai',
+                framePurchaseLink: 'https://frames.example.test/team-store',
                 fonts: { heading: 'classic', recipient: 'classic', body: 'friendly' },
                 signers: [],
                 foregroundImageRef: null,
@@ -88,6 +89,7 @@ function createCertificateStudioHarness() {
             statsWindow: certificate.statsWindow || defaults.statsWindow || 10,
             seasonLabel: certificate.seasonLabel || defaults.seasonLabel || '',
             footerUrl: certificate.footerUrl || defaults.footerUrl || '',
+            framePurchaseLink: certificate.framePurchaseLink || defaults.framePurchaseLink || '',
             fonts: certificate.fonts || defaults.fonts || {},
             signers: certificate.signers || defaults.signers || [],
             foregroundImageRef: certificate.foregroundImageRef || defaults.foregroundImageRef || null,
@@ -201,7 +203,7 @@ describe('awards and certificates workflow wiring', () => {
         expect(html).toContain('Start new run');
         expect(html).toContain('View saved work');
         expect(html).toContain('Create one-off certificate');
-        expect(html).toContain('./js/certificates/studio.js?v=12');
+        expect(html).toContain('./js/certificates/studio.js?v=13');
         expect(studio).toContain("from './templates.js?v=2'");
         expect(studio).toContain("from './renderer.js?v=2'");
         expect(studio).toContain("from './aiDescriptions.js?v=4'");
@@ -283,6 +285,65 @@ describe('awards and certificates workflow wiring', () => {
         expect(saveBody).toContain('if (!guardPublishableDraftDescriptions(status)) return;');
         expect(saveBody).toContain('createCertificateBatch(state.teamId');
         expect(saveBody).toContain('createCertificate(state.teamId');
+    });
+
+    it('persists a distinct frame purchase link and renders only safe parent actions', async () => {
+        const studio = readRepoFile('js/certificates/studio.js');
+        const framePurchaseHelpers = new Function(`
+            ${extractFunction(studio, 'function escapeAttr')}
+            ${extractFunction(studio, 'function getSafeFramePurchaseUrl')}
+            ${extractFunction(studio, 'function renderFramePurchaseAction')}
+            return { getSafeFramePurchaseUrl, renderFramePurchaseAction };
+        `)();
+        const harness = createCertificateStudioHarness();
+        harness.state.drafts = [{
+            id: 'draft-1',
+            recipientName: 'Pat Star',
+            description: 'Pat brought energy to every match.',
+            descriptionStatus: 'ready'
+        }];
+
+        const payload = harness.buildCertificatePayload(harness.state.drafts[0], 'published');
+        expect(payload).toMatchObject({
+            footerUrl: 'allplays.ai',
+            framePurchaseLink: 'https://frames.example.test/team-store',
+            status: 'published'
+        });
+
+        harness.state.savedCertificates = [{
+            id: 'cert-1',
+            recipientName: 'Pat Star',
+            description: 'Pat brought energy to every match.',
+            footerUrl: 'certificate-footer.example',
+            framePurchaseLink: 'https://vendor.example.test/pat',
+            status: 'published'
+        }];
+        await harness.openSavedCertificate('cert-1');
+        expect(harness.state.shared).toMatchObject({
+            footerUrl: 'certificate-footer.example',
+            framePurchaseLink: 'https://vendor.example.test/pat'
+        });
+
+        expect(framePurchaseHelpers.getSafeFramePurchaseUrl(' https://vendor.example.test/frame?id=1 ')).toBe('https://vendor.example.test/frame?id=1');
+        expect(framePurchaseHelpers.getSafeFramePurchaseUrl('http://vendor.example.test/frame')).toBe('http://vendor.example.test/frame');
+        expect(framePurchaseHelpers.getSafeFramePurchaseUrl('javascript:alert(1)')).toBe('');
+        expect(framePurchaseHelpers.getSafeFramePurchaseUrl('data:text/html,bad')).toBe('');
+        expect(framePurchaseHelpers.getSafeFramePurchaseUrl('/relative-frame-store')).toBe('');
+        expect(framePurchaseHelpers.getSafeFramePurchaseUrl('not a url')).toBe('');
+        expect(framePurchaseHelpers.renderFramePurchaseAction('')).toBe('');
+        expect(framePurchaseHelpers.renderFramePurchaseAction('javascript:alert(1)')).toBe('');
+        expect(framePurchaseHelpers.renderFramePurchaseAction('https://vendor.example.test/frame?a=1&b=2')).toContain(
+            'href="https://vendor.example.test/frame?a=1&amp;b=2" target="_blank" rel="noopener noreferrer"'
+        );
+        expect(framePurchaseHelpers.renderFramePurchaseAction('https://vendor.example.test/frame')).toContain('>Buy a frame</a>');
+
+        expect(studio).toContain('id="cert-frame-purchase-link"');
+        expect(studio).toContain('data-shared-field="framePurchaseLink"');
+        expect(studio).toContain('id="cert-review-frame-purchase-link"');
+        expect(studio).toContain('const framePurchaseAction = renderFramePurchaseAction(certificate.framePurchaseLink);');
+        expect(studio).toContain('id="cert-parent-frame-link"');
+        expect(studio).toContain('target="_blank" rel="noopener noreferrer"');
+        expect(studio).toContain('>Buy a frame</a>');
     });
 
     it('blocks publishing while initial certificate descriptions are still generating', () => {
