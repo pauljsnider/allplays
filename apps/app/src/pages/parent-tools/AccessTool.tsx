@@ -62,6 +62,8 @@ export function AccessTool({ auth, onAccessChanged }: { auth: AuthState; onAcces
     const { error: redeemError } = redeemOperation;
     const manualLookupError = teamLoadError ?? playerLoadError;
     const actionError = submitError ?? redeemError;
+    const normalizedRedeemCode = redeemCode.trim().toUpperCase();
+    const redeemCodeReady = normalizedRedeemCode.length === 8;
 
     const loadTeams = useCallback(async () => {
         clearTeamLoadError();
@@ -199,6 +201,7 @@ export function AccessTool({ auth, onAccessChanged }: { auth: AuthState; onAcces
 
     const redeem = async (event: FormEvent) => {
         event.preventDefault();
+        if (!redeemCodeReady) return;
         const currentUser = auth.user;
         if (!currentUser?.uid) {
             setRedeemError(toAppServiceError(new Error('Sign in to redeem an invite code.'), 'Sign in to redeem an invite code.'));
@@ -211,7 +214,7 @@ export function AccessTool({ auth, onAccessChanged }: { auth: AuthState; onAcces
         await runRedeem(
             () => redeemSignedInInvite({
                 userId: currentUser.uid,
-                code: redeemCode,
+                code: normalizedRedeemCode,
                 email: currentUser.email,
                 refresh: auth.refresh
             }),
@@ -275,7 +278,7 @@ export function AccessTool({ auth, onAccessChanged }: { auth: AuthState; onAcces
                                         disabled={redeeming || saving}
                                     />
                                 </label>
-                                <button type="submit" className="primary-button sm:min-w-[10rem]" disabled={redeeming || saving}>
+                                <button type="submit" className="primary-button sm:min-w-[10rem]" disabled={redeeming || saving || !redeemCodeReady}>
                                     {redeeming ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <KeyRound className="h-4 w-4" aria-hidden="true" />}
                                     {redeeming ? 'Redeeming...' : 'Redeem code'}
                                 </button>

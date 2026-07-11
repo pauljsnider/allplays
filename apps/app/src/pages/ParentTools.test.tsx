@@ -248,6 +248,37 @@ describe('ParentTools access', () => {
         expect(screen.getByRole('button', { name: 'Redeem code' })).toBeTruthy();
     });
 
+    it('keeps invite redemption disabled until the normalized code has 8 characters', async () => {
+        renderParentTools();
+
+        await screen.findByText('Request player access');
+        const input = screen.getByPlaceholderText('XXXXXXXX') as HTMLInputElement;
+        const button = screen.getByRole('button', { name: 'Redeem code' }) as HTMLButtonElement;
+        const form = input.closest('form');
+
+        expect(button.disabled).toBe(true);
+
+        fireEvent.change(input, { target: { value: '   ' } });
+        expect(button.disabled).toBe(true);
+
+        fireEvent.change(input, { target: { value: 'abc1234' } });
+        expect(button.disabled).toBe(true);
+        expect(form).not.toBeNull();
+        fireEvent.submit(form as HTMLFormElement);
+        expect(inviteRedemptionMocks.redeemSignedInInvite).not.toHaveBeenCalled();
+
+        fireEvent.change(input, { target: { value: 'ab12cd34' } });
+        expect(button.disabled).toBe(false);
+        fireEvent.click(button);
+
+        await waitFor(() => expect(inviteRedemptionMocks.redeemSignedInInvite).toHaveBeenCalledWith({
+            userId: 'parent-1',
+            code: 'AB12CD34',
+            email: 'parent@example.com',
+            refresh: auth.refresh
+        }));
+    });
+
     it('shows inline redeem errors without breaking the request form', async () => {
         inviteRedemptionMocks.redeemSignedInInvite.mockRejectedValue(new Error('Invite code expired.'));
         renderParentTools();
