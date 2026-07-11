@@ -154,7 +154,9 @@ describe('ScheduleEventDetail decomposition initiative source contract', () => {
         expect(practiceAttendancePanelSource).toContain('export function PracticeAttendancePanel');
         expect(practiceAttendancePanelSource).toContain('data-testid={`practice-attendance-row-${player.playerId}`}');
         expect(scoreStepperSource).toContain('export function ScoreStepper');
-        expect(scoreStepperSource).toContain('aria-label={`${label} score down`}');
+        expect(scoreStepperSource).toContain('controlLabel?: string;');
+        expect(scoreStepperSource).toContain('const accessibleLabel = controlLabel || label;');
+        expect(scoreStepperSource).toContain('aria-label={`${accessibleLabel} score down`}');
         expect(scheduleStatusSource).toContain('export function Status');
         expect(availabilityPanelsSource).toContain('export function QuickAvailabilityPanel');
         expect(availabilityPanelsSource).toContain("export { AvailabilityNotesList");

@@ -71,7 +71,9 @@ describe('ScheduleEventDetail decomposition contract', () => {
         expect(scheduleEventHeader).toContain("import { EventBrief } from './EventBrief';");
         expect(scheduleEventHeader).toContain('export function ScheduleEventHeader');
         expect(scoreStepper).toContain('export function ScoreStepper');
-        expect(scoreStepper).toContain('aria-label={`${label} score up`}');
+        expect(scoreStepper).toContain('controlLabel?: string;');
+        expect(scoreStepper).toContain('const accessibleLabel = controlLabel || label;');
+        expect(scoreStepper).toContain('aria-label={`${accessibleLabel} score up`}');
         expect(scheduleStatus).toContain('export function Status');
         expect(focusedTests).toContain("describe('ScheduleEventDetail presentational components'");
     });

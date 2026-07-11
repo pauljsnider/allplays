@@ -82,6 +82,27 @@
   padding-bottom: calc(88px + env(safe-area-inset-bottom));
 }
 
+.mobile-live-score-tray {
+  position: fixed;
+  z-index: 39;
+  right: 0;
+  bottom: calc(var(--app-bottom-nav-height) + 8px);
+  left: 0;
+  padding-right: max(12px, env(safe-area-inset-right));
+  padding-left: max(12px, env(safe-area-inset-left));
+  pointer-events: none;
+}
+
+.mobile-live-score-tray__surface {
+  max-width: 40rem;
+  margin: 0 auto;
+  pointer-events: auto;
+}
+
+.mobile-live-score-tray-offset {
+  padding-bottom: 200px;
+}
+
 .app-page-ai {
   height: 100dvh;
   min-height: 0;

@@ -1327,6 +1327,72 @@ test('iOS-sized Game hub deep link opens and positions Live chat without an acco
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth + 1)).toBe(true);
 });
 
+test('mobile game-day score tray stays above the bottom nav while deeper panels scroll', async ({ page, baseURL }) => {
+    await page.setViewportSize({ width: 390, height: 844 });
+    await mockScheduleModules(page, {
+        isCoach: true,
+        staffManageable: true,
+        gameStatus: 'live',
+        gameLiveStatus: 'live',
+        gameHomeScore: 4,
+        gameAwayScore: 2
+    });
+    await page.goto(appUrl(baseURL, '/schedule/team-1/game-1?childId=player-1&section=game'), { waitUntil: 'domcontentloaded' });
+
+    const tray = page.getByRole('region', { name: 'Mobile live score controls' });
+    await waitForScheduleRoute(page, tray);
+    await expect(tray).toBeVisible();
+    await expect(tray.getByText('4-2')).toBeVisible();
+
+    const bottomNav = page.locator('nav[aria-label="Primary navigation"]').last();
+    const [trayBox, navBox] = await Promise.all([tray.boundingBox(), bottomNav.boundingBox()]);
+    expect(trayBox?.bottom || 0).toBeLessThanOrEqual((navBox?.y || 0) + 1);
+    expect(await tray.evaluate((node) => window.getComputedStyle(node).position)).toBe('fixed');
+
+    await page.getByRole('button', { name: 'Report sections', exact: true }).click();
+    await page.getByRole('button', { name: 'Live chat', exact: true }).scrollIntoViewIfNeeded();
+    await expect(tray).toBeVisible();
+
+    const homeIncrease = tray.getByRole('button', { name: 'Sticky home score up' });
+    const homeIncreaseBox = await homeIncrease.boundingBox();
+    expect(homeIncreaseBox?.height || 0).toBeGreaterThanOrEqual(44);
+    await homeIncrease.click();
+
+    await expect(tray.getByText('5-2')).toBeVisible();
+    await expect(tray.getByText('Autosaving manual score change…')).toBeVisible();
+    await expect(tray.getByText('Score autosaved and posted to live play-by-play.')).toBeVisible({ timeout: 3000 });
+    expect(await page.evaluate(() => window.__scheduleCalls.scoreUpdates)).toEqual([
+        { teamId: 'team-1', gameId: 'game-1', payload: { homeScore: 5, awayScore: 2, scoreUpdatedBy: 'user-1' } }
+    ]);
+    expect(await page.evaluate(() => window.__scheduleCalls.liveScoreEvents)).toHaveLength(1);
+});
+
+test('landscape mobile shell keeps the game-day score tray fixed above navigation', async ({ page, baseURL }) => {
+    await page.setViewportSize({ width: 844, height: 390 });
+    await mockScheduleModules(page, {
+        isCoach: true,
+        staffManageable: true,
+        gameStatus: 'live',
+        gameLiveStatus: 'live',
+        gameHomeScore: 4,
+        gameAwayScore: 2
+    });
+    await page.goto(appUrl(baseURL, '/schedule/team-1/game-1?childId=player-1&section=game'), { waitUntil: 'domcontentloaded' });
+
+    const tray = page.getByRole('region', { name: 'Mobile live score controls' });
+    await waitForScheduleRoute(page, tray);
+    await expect(tray).toBeVisible();
+
+    const bottomNav = page.locator('nav[aria-label="Primary navigation"]').last();
+    const [trayBox, navBox] = await Promise.all([tray.boundingBox(), bottomNav.boundingBox()]);
+    expect(trayBox?.bottom || 0).toBeLessThanOrEqual((navBox?.y || 0) + 1);
+    expect(await tray.evaluate((node) => window.getComputedStyle(node).position)).toBe('fixed');
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth + 1)).toBe(true);
+
+    await page.setViewportSize({ width: 1280, height: 800 });
+    await expect(tray).toHaveCount(0);
+});
+
 test('iOS-sized staff schedule keeps tools collapsed below the event list', async ({ page, baseURL }) => {
     await page.setViewportSize({ width: 390, height: 844 });
     await mockScheduleModules(page, { isCoach: true, staffManageable: true });

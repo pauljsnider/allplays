@@ -43,6 +43,7 @@ import {
 } from '../lib/scheduleHub';
 import { type AppServiceError, toAppServiceError } from '../lib/appErrors';
 import { useAsyncOperation } from '../lib/useAsyncOperation';
+import { useShellLayout } from '../lib/useShellLayout';
 import { EventDetailPageSkeleton } from '../components/PageSkeletons';
 import { AssignmentsSection } from '../components/schedule/AssignmentsSection';
 import { CompactMeta } from '../components/schedule/CompactMeta';
@@ -240,6 +241,10 @@ const hubIconComponents: Record<ScheduleHubIcon, LucideIcon> = {
 
 function isActiveTrackedScheduleEvent(event?: ParentScheduleEvent | null) {
   return Boolean(event?.isDbGame && !event?.isCancelled);
+}
+
+export function shouldShowLiveScoreControls(event?: ParentScheduleEvent | null, user?: AuthState['user'] | null) {
+  return Boolean(event && event.type !== 'practice' && event.isDbGame && !event.isCancelled && event.canUpdateScore && user);
 }
 
 function getDefaultEventDetailSection(event?: ParentScheduleEvent | null) {
@@ -1486,6 +1491,7 @@ function GameHubSection({ auth, event, childEvents, requestedPanel, onPanelChang
   onPracticeOccurrenceCancelled: () => void;
   onGamePlanPublished: (gamePlan: Record<string, any>) => void;
 }) {
+  const { isDesktopWeb } = useShellLayout();
   const [shareStatus, setShareStatus] = useState<string | null>(null);
   const [cancelStatus, setCancelStatus] = useState<{ tone: 'success' | 'error'; message: string } | null>(null);
   const [cancelling, setCancelling] = useState(false);
@@ -1497,7 +1503,7 @@ function GameHubSection({ auth, event, childEvents, requestedPanel, onPanelChang
   const isPractice = event.type === 'practice';
   const showAdminPracticeTimeline = Boolean(isPractice && event.isTeamAdmin);
   const showNonAdminPracticePacketFirst = Boolean(isPractice && !event.isTeamAdmin);
-  const canUpdateScore = Boolean(!isPractice && event.isDbGame && !event.isCancelled && event.canUpdateScore && auth.user);
+  const canUpdateScore = shouldShowLiveScoreControls(event, auth.user);
   const canWrapup = canUpdateScore;
   const canCancelGame = Boolean(!isPractice && event.isDbGame && !event.isCancelled && event.canUpdateScore && auth.user);
   const isRecurringPracticeOccurrence = Boolean(isPractice && event.id.includes('__'));
@@ -1642,7 +1648,7 @@ function GameHubSection({ auth, event, childEvents, requestedPanel, onPanelChang
   };
 
   return (
-    <section className="space-y-3">
+    <section className={`space-y-3 ${canUpdateScore && !isDesktopWeb ? 'mobile-live-score-tray-offset' : ''}`}>
       {showNonAdminPracticePacketFirst ? <PracticePacketSection auth={auth} event={event} childEvents={childEvents} /> : null}
       {showAdminPracticeTimeline ? <PracticeTimelineSection auth={auth} event={event} /> : null}
       {!isPractice && event.isTeamAdmin && event.isDbGame && !event.isCancelled ? <GameScheduleEditPanel auth={auth} event={event} /> : null}
@@ -1712,6 +1718,7 @@ function GameHubSection({ auth, event, childEvents, requestedPanel, onPanelChang
               event={event}
               homePlayers={homeScoringPlayers}
               loadingHomePlayers={loadingHomeScoringPlayers}
+              showStickyControls={!isDesktopWeb}
               onHomePlayersUpdated={updateHomeScoringPlayers}
               onScoreUpdated={onScoreUpdated}
             />
@@ -3192,7 +3199,7 @@ function getBonusState(teamFouls: number) {
   };
 }
 
-function LiveScoreEditor({ auth, event, homePlayers, loadingHomePlayers, onHomePlayersUpdated, onScoreUpdated }: { auth: AuthState; event: ParentScheduleEvent; homePlayers: ScheduleHomeScoringPlayer[]; loadingHomePlayers: boolean; onHomePlayersUpdated: (updater: HomeScoringPlayersUpdater) => void; onScoreUpdated: (homeScore: number, awayScore: number) => void }) {
+function LiveScoreEditor({ auth, event, homePlayers, loadingHomePlayers, showStickyControls, onHomePlayersUpdated, onScoreUpdated }: { auth: AuthState; event: ParentScheduleEvent; homePlayers: ScheduleHomeScoringPlayer[]; loadingHomePlayers: boolean; showStickyControls: boolean; onHomePlayersUpdated: (updater: HomeScoringPlayersUpdater) => void; onScoreUpdated: (homeScore: number, awayScore: number) => void }) {
   const autosaveDelayMs = 700;
   const savedHomeScore = Math.max(0, Number(event.homeScore ?? 0));
   const savedAwayScore = Math.max(0, Number(event.awayScore ?? 0));
@@ -3329,6 +3336,14 @@ function LiveScoreEditor({ auth, event, homePlayers, loadingHomePlayers, onHomeP
     : (saving && activeSaveModeRef.current === 'autosave')
       ? 'Saving manual score change…'
       : 'Save or undo manual score changes before recording player stats.';
+  const stickyStatusMessage = status?.message
+    || (autosaveScheduled
+      ? 'Autosaving manual score change…'
+      : saving
+        ? (activeSaveModeRef.current === 'autosave' ? 'Saving manual score change…' : 'Saving score…')
+        : dirty
+          ? 'Unsaved score changes.'
+          : 'Score saved.');
 
   const recordPlayerTwo = async (player: ScheduleHomeScoringPlayer) => {
     if (!auth.user || saving || playerScoringId || dirty) return;
@@ -3360,7 +3375,8 @@ function LiveScoreEditor({ auth, event, homePlayers, loadingHomePlayers, onHomeP
   };
 
   return (
-    <div data-testid="live-score-editor" className={`mt-3 rounded-2xl border p-3 ${dirty ? 'border-amber-200 bg-amber-50' : 'border-gray-100 bg-gray-50'}`}>
+    <>
+      <div data-testid="live-score-editor" className={`mt-3 rounded-2xl border p-3 ${dirty ? 'border-amber-200 bg-amber-50' : 'border-gray-100 bg-gray-50'}`}>
       <div className="flex items-center justify-between gap-3">
         <div>
           <div className="text-xs font-black uppercase tracking-[0.04em] text-gray-500">Live score</div>
@@ -3403,31 +3419,58 @@ function LiveScoreEditor({ auth, event, homePlayers, loadingHomePlayers, onHomeP
         ) : !loadingHomePlayers ? <div className="mt-2 text-xs font-semibold text-gray-500">No active team roster players found.</div> : null}
         {dirty ? <div className="mt-2 text-xs font-semibold text-amber-700">{helperText}</div> : null}
       </div>
-      <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
-        <div className="flex flex-wrap items-center gap-2">
-          <button
-            type="button"
-            className="primary-button min-h-11 px-4 text-sm"
-            onClick={() => void saveScore('manual')}
-            disabled={saving || Boolean(playerScoringId) || !dirty}
-          >
-            {manualScoreSaveLabel}
-          </button>
-          {previousScoreSnapshots.length ? (
+        <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             <button
               type="button"
-              className="ghost-button min-h-11 px-4 text-sm"
-              onClick={undoLastScoreChange}
-              disabled={saving || Boolean(playerScoringId) || !previousScoreSnapshots.length}
-              aria-label="Undo last score change"
+              className="primary-button min-h-11 px-4 text-sm"
+              onClick={() => void saveScore('manual')}
+              disabled={saving || Boolean(playerScoringId) || !dirty}
             >
-              Undo last score change
+              {manualScoreSaveLabel}
             </button>
-          ) : null}
+            {previousScoreSnapshots.length ? (
+              <button
+                type="button"
+                className="ghost-button min-h-11 px-4 text-sm"
+                onClick={undoLastScoreChange}
+                disabled={saving || Boolean(playerScoringId) || !previousScoreSnapshots.length}
+                aria-label="Undo last score change"
+              >
+                Undo last score change
+              </button>
+            ) : null}
+          </div>
+          {status ? <span className={`text-xs font-bold ${status.tone === 'error' ? 'text-rose-700' : 'text-emerald-700'}`}>{status.message}</span> : null}
         </div>
-        {status ? <span className={`text-xs font-bold ${status.tone === 'error' ? 'text-rose-700' : 'text-emerald-700'}`}>{status.message}</span> : null}
       </div>
-    </div>
+      {showStickyControls ? <div className="mobile-live-score-tray" data-testid="mobile-live-score-tray" role="region" aria-label="Mobile live score controls">
+        <div className={`mobile-live-score-tray__surface rounded-2xl border p-2 shadow-xl ${dirty ? 'border-amber-200 bg-amber-50' : 'border-gray-200 bg-white'}`}>
+          <div className="flex items-center justify-between gap-2 px-1 pb-1.5">
+            <div className="text-xs font-black uppercase tracking-[0.04em] text-gray-600">Live score</div>
+            <div className="rounded-full bg-gray-950 px-2.5 py-1 text-sm font-black tabular-nums text-white">{homeScore}-{awayScore}</div>
+          </div>
+          <div className="grid grid-cols-2 gap-2">
+            <ScoreStepper compact label="Home" controlLabel="Sticky home" value={homeScore} onDecrease={() => adjust('home', -1)} onIncrease={() => adjust('home', 1)} disabled={saving || Boolean(playerScoringId)} />
+            <ScoreStepper compact label="Away" controlLabel="Sticky away" value={awayScore} onDecrease={() => adjust('away', -1)} onIncrease={() => adjust('away', 1)} disabled={saving || Boolean(playerScoringId)} />
+          </div>
+          <div className="mt-2 flex min-h-11 items-center justify-between gap-2 px-1">
+            <span className={`min-w-0 text-xs font-bold ${status?.tone === 'error' ? 'text-rose-700' : dirty ? 'text-amber-700' : 'text-emerald-700'}`} aria-live="polite">
+              {stickyStatusMessage}
+            </span>
+            <button
+              type="button"
+              className="primary-button min-h-11 flex-none px-3 text-xs"
+              onClick={() => void saveScore('manual')}
+              disabled={saving || Boolean(playerScoringId) || !dirty}
+              aria-label={`${manualScoreSaveLabel} from sticky controls`}
+            >
+              {manualScoreSaveLabel}
+            </button>
+          </div>
+        </div>
+      </div> : null}
+    </>
   );
 }
 
