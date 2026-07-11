@@ -65,7 +65,7 @@ describe('ScheduleEventDetail decomposition initiative source contract', () => {
         expect(rsvpHookSource).toContain('const { auth, event, childEvents, updateEvents } = useScheduleEventDetailContext();');
         expect(rsvpHookSource).toContain('const [submitting, setSubmitting] = useState<RsvpResponse | null>(null);');
         expect(rsvpHookSource).toContain('const matchingChildEvents = childEvents.filter((childEvent) => (');
-        expect(rsvpHookSource).toContain('const targetEvents = applyToAllChildren ? matchingChildEvents : [event];');
+        expect(rsvpHookSource).toContain('const targetEvents = applyToAllChildren && event.isLinkedParentChild === true ? matchingChildEvents : [event];');
         expect(rsvpHookSource).toContain('const optimisticSummary = targetEvents.reduce(');
         expect(rsvpHookSource).toContain('await submitParentScheduleRsvp(event, currentUser, response, note);');
         expect(rsvpHookSource).toContain('await submitParentScheduleRsvpForChildren(targetEvents, currentUser, response, note)');

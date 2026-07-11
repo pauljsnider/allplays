@@ -175,6 +175,7 @@ function event(overrides = {}) {
         title: overrides.title || null,
         childId: overrides.childId || 'player-1',
         childName: overrides.childName || 'Pat',
+        isLinkedParentChild: overrides.isLinkedParentChild !== false,
         isDbGame: overrides.isDbGame !== false,
         isCancelled: overrides.isCancelled === true,
         myRsvp: overrides.myRsvp || 'not_responded',

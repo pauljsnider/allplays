@@ -483,8 +483,8 @@ describe('React app schedule service contract integration', () => {
         expect(dbMocks.getAssignmentClaims).toHaveBeenCalledWith('team-1', 'game-1');
 
         expect(result.children).toEqual([
-            { teamId: 'team-1', teamName: 'Bears', playerId: 'player-1', playerName: 'Pat' },
-            { teamId: 'team-1', teamName: 'Bears', playerId: 'player-2', playerName: 'Sam' }
+            { teamId: 'team-1', teamName: 'Bears', playerId: 'player-1', playerName: 'Pat', isLinkedParentChild: true },
+            { teamId: 'team-1', teamName: 'Bears', playerId: 'player-2', playerName: 'Sam', isLinkedParentChild: true }
         ]);
 
         const patGame = result.events.find((event) => event.id === 'game-1' && event.childId === 'player-1');
@@ -583,8 +583,8 @@ describe('React app schedule service contract integration', () => {
         expect(dbMocks.getPracticeSessions).toHaveBeenCalledTimes(1);
         expect(dbMocks.getPracticeSessions).toHaveBeenCalledWith('team-1', {});
         expect(result.children).toEqual([
-            { teamId: 'team-1', teamName: 'Bears', playerId: 'player-1', playerName: 'Pat' },
-            { teamId: 'team-1', teamName: 'Bears', playerId: 'player-2', playerName: 'Sam' }
+            { teamId: 'team-1', teamName: 'Bears', playerId: 'player-1', playerName: 'Pat', isLinkedParentChild: true },
+            { teamId: 'team-1', teamName: 'Bears', playerId: 'player-2', playerName: 'Sam', isLinkedParentChild: true }
         ]);
         expect(new Set(result.events.map((event) => event.childId))).toEqual(new Set(['player-1']));
         expect(result.events.every((event) => event.teamId === 'team-1')).toBe(true);
@@ -730,7 +730,7 @@ describe('React app schedule service contract integration', () => {
         const result = await loadParentSchedule(user());
 
         expect(result.children).toEqual([
-            { teamId: 'team-1', teamName: 'Bears', playerId: 'player-from-user', playerName: 'User fallback' }
+            { teamId: 'team-1', teamName: 'Bears', playerId: 'player-from-user', playerName: 'User fallback', isLinkedParentChild: true }
         ]);
         expect(result.events.some((event) => event.childId === 'player-from-user')).toBe(true);
         expect(result.events.some((event) => event.childId === 'player-1')).toBe(false);
