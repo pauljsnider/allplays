@@ -218,10 +218,31 @@ export function AuthPage({ auth }: { auth: AuthState }) {
 
       <form className="mt-4 space-y-3" onSubmit={handleEmailSubmit}>
         <Field icon={Mail} label="Email">
-          <input className="auth-input" type="email" value={email} onChange={(event) => setEmail(event.target.value)} required autoComplete="email" />
+          <input
+            className="auth-input"
+            type="email"
+            value={email}
+            onChange={(event) => {
+              setEmail(event.target.value);
+              clearStatus();
+            }}
+            required
+            autoComplete="email"
+          />
         </Field>
         <Field icon={KeyRound} label="Password">
-          <input className="auth-input" type="password" value={password} onChange={(event) => setPassword(event.target.value)} required minLength={6} autoComplete={mode === 'signup' ? 'new-password' : 'current-password'} />
+          <input
+            className="auth-input"
+            type="password"
+            value={password}
+            onChange={(event) => {
+              setPassword(event.target.value);
+              clearStatus();
+            }}
+            required
+            minLength={6}
+            autoComplete={mode === 'signup' ? 'new-password' : 'current-password'}
+          />
         </Field>
         {mode === 'signup' ? (
           <>

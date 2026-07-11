@@ -158,3 +158,40 @@ describe('AuthPage signup validation', () => {
     expect(auth.refresh).toHaveBeenCalledTimes(1);
   });
 });
+
+describe('AuthPage sign-in error state', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    auth.refresh = vi.fn();
+    auth.signOut = vi.fn();
+    authServiceMocks.signInWithEmail.mockReset();
+    authServiceMocks.signInWithEmail.mockRejectedValue(new Error('Email or password is incorrect.'));
+  });
+
+  afterEach(() => {
+    cleanup();
+  });
+
+  it('clears a failed sign-in error when either credential is edited', async () => {
+    renderAuthPage();
+
+    const emailInput = screen.getByLabelText('Email');
+    const passwordInput = screen.getByLabelText('Password');
+    const submitButton = screen.getAllByRole('button', { name: 'Sign in' })[1];
+
+    fireEvent.change(emailInput, { target: { value: 'coach@example.com' } });
+    fireEvent.change(passwordInput, { target: { value: 'wrong-password' } });
+    fireEvent.click(submitButton);
+
+    expect(await screen.findByText('Email or password is incorrect.')).toBeTruthy();
+
+    fireEvent.change(passwordInput, { target: { value: 'correct-password' } });
+    expect(screen.queryByText('Email or password is incorrect.')).toBeNull();
+
+    fireEvent.click(submitButton);
+    expect(await screen.findByText('Email or password is incorrect.')).toBeTruthy();
+
+    fireEvent.change(emailInput, { target: { value: 'coach-updated@example.com' } });
+    expect(screen.queryByText('Email or password is incorrect.')).toBeNull();
+  });
+});
