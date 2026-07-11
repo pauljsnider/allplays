@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs';
 import { describe, expect, it, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => ({
+    buildGameDayRsvpBreakdown: vi.fn(() => ({ grouped: {}, counts: {} })),
     expandRecurrence: vi.fn(),
     getSubstitutionOptions: vi.fn()
 }));
@@ -36,7 +37,7 @@ vi.mock('@legacy/parent-dashboard-rsvp.js', () => ({
     resolveMyRsvpByChildForGame: vi.fn(() => ({}))
 }));
 vi.mock('@legacy/game-day-rsvp-breakdown.js', () => ({
-    buildGameDayRsvpBreakdown: vi.fn(() => ({ grouped: {}, counts: {} }))
+    buildGameDayRsvpBreakdown: mocks.buildGameDayRsvpBreakdown
 }));
 vi.mock('@legacy/game-day-periods.js', () => ({
     getPeriodsForFormation: vi.fn(() => [])
@@ -64,7 +65,7 @@ vi.mock('@legacy/edit-schedule-practice-payload.js', () => ({
     applyPracticeRecurrenceFields: vi.fn((payload: Record<string, unknown>) => payload.practiceData)
 }));
 
-import { expandRecurrence, getSubstitutionOptions } from './legacyScheduleHelpers';
+import { buildGameDayRsvpBreakdown, expandRecurrence, getSubstitutionOptions } from './legacyScheduleHelpers';
 
 describe('legacyScheduleHelpers', () => {
     it('keeps normalizeArray accepting unknown values for legacy payload normalization', () => {
@@ -118,6 +119,18 @@ describe('legacyScheduleHelpers', () => {
             },
             onFieldPlayers: [],
             offFieldPlayers: []
+        });
+    });
+
+    it('forwards parent-to-player fallback scope to legacy RSVP precedence resolution', () => {
+        const fallbackByUser = new Map([['parent-1', ['player-1']]]);
+
+        buildGameDayRsvpBreakdown({ players: [], rsvps: [], fallbackByUser });
+
+        expect(mocks.buildGameDayRsvpBreakdown).toHaveBeenCalledWith({
+            players: [],
+            rsvps: [],
+            fallbackByUser
         });
     });
 });

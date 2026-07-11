@@ -11,6 +11,10 @@ function collectVersionedSourceFiles(dir, root = dir) {
         const relativePath = path.slice(root.length + 1);
         const stat = statSync(path);
 
+        if (relativePath === 'apps/app/bundle-visualizer.html') {
+            continue;
+        }
+
         if (stat.isDirectory()) {
             if (!ignoredDirs.has(entry)) {
                 files.push(...collectVersionedSourceFiles(path, root));
@@ -32,14 +36,14 @@ describe('admin invite signup cache busting', () => {
 
         expect(authSource).toContain("import { executeEmailPasswordSignup } from './signup-flow.js?v=6';");
         expect(authSource).toContain("import { redeemAdminInviteAcceptance } from './admin-invite.js?v=6';");
-        expect(authSource).toContain("from './db.js?v=85';");
+        expect(authSource).toContain("from './db.js?v=91';");
     });
 
     it('pins fresh invite acceptance module versions for admin invite redemption', () => {
         const acceptInviteSource = readFileSync(resolve(process.cwd(), 'accept-invite.html'), 'utf8');
 
         expect(acceptInviteSource).toContain(
-            "import { validateAccessCode, redeemParentInvite, redeemHouseholdInvite, redeemCoParentInvite, updateUserProfile, updateTeam, getTeam, getUserProfile, markAccessCodeAsUsed } from './js/db.js?v=85';"
+            "import { validateAccessCode, redeemParentInvite, redeemHouseholdInvite, redeemCoParentInvite, updateUserProfile, updateTeam, getTeam, getUserProfile, markAccessCodeAsUsed } from './js/db.js?v=91';"
         );
         expect(acceptInviteSource).toContain(
             "import { redeemAdminInviteAtomically } from './js/admin-invite.js?v=6';"
@@ -51,13 +55,13 @@ describe('admin invite signup cache busting', () => {
 
     it('bumps auth module consumers after signup flow changes', () => {
         const authConsumers = {
-            'login.html': 'auth.js?v=45',
-            'accept-invite.html': 'auth.js?v=44',
-            'edit-team.html': 'auth.js?v=44',
-            'js/admin.js': 'auth.js?v=44',
-            'js/live-game.js': 'auth.js?v=44',
-            'js/live-tracker.js': 'auth.js?v=44',
-            'js/track-basketball.js': 'auth.js?v=44'
+            'login.html': 'auth.js?v=46',
+            'accept-invite.html': 'auth.js?v=46',
+            'edit-team.html': 'auth.js?v=46',
+            'js/admin.js': 'auth.js?v=46',
+            'js/live-game.js': 'auth.js?v=46',
+            'js/live-tracker.js': 'auth.js?v=46',
+            'js/track-basketball.js': 'auth.js?v=46'
         };
 
         for (const [relativePath, expectedVersion] of Object.entries(authConsumers)) {
@@ -66,13 +70,13 @@ describe('admin invite signup cache busting', () => {
         }
 
         const editTeamSource = readFileSync(resolve(process.cwd(), 'edit-team.html'), 'utf8');
-        expect(editTeamSource).toContain("import { checkAuth, sendInviteEmail } from './js/auth.js?v=44';");
+        expect(editTeamSource).toContain("import { checkAuth, sendInviteEmail } from './js/auth.js?v=46';");
         expect(editTeamSource).not.toContain("import { checkAuth, sendInviteEmail } from './js/auth.js?v=40';");
     });
 
     it('bumps the shared header logout import with auth.js consumers', () => {
         const utilsSource = readFileSync(resolve(process.cwd(), 'js/utils.js'), 'utf8');
-        const logoutImportMatches = utilsSource.match(/const \{ logout \} = await import\('\.\/auth\.js\?v=44'\);/g) || [];
+        const logoutImportMatches = utilsSource.match(/const \{ logout \} = await import\('\.\/auth\.js\?v=46'\);/g) || [];
 
         expect(logoutImportMatches).toHaveLength(1);
         expect(utilsSource).not.toContain("const { logout } = await import('./auth.js?v=25');");
@@ -82,7 +86,7 @@ describe('admin invite signup cache busting', () => {
     it('does not leave deployed source consumers pinned to stale auth or db wrappers', () => {
         const staleConsumers = collectVersionedSourceFiles(process.cwd()).flatMap((relativePath) => {
             const source = readFileSync(resolve(process.cwd(), relativePath), 'utf8');
-            const staleImports = source.match(/\b(?:auth\.js\?v=(?:22|38|39)|db\.js\?v=(?:76|77|78))\b/g) || [];
+            const staleImports = source.match(/(?:(?<![\w-])auth\.js\?v=(?!46\b)\d+|(?<![\w-])utils\.js\?v=(?!15\b)\d+|db\.js\?v=(?:76|77|78))\b/g) || [];
             return staleImports.map((importPath) => `${relativePath}: ${importPath}`);
         });
 

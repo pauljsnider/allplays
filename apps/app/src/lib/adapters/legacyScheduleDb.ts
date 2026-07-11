@@ -29,6 +29,7 @@ import {
     releaseAssignmentClaim as legacyReleaseAssignmentClaim,
     requestRideSpot as legacyRequestRideSpot,
     respondToOfficiatingAssignment as legacyRespondToOfficiatingAssignment,
+    submitRsvp as legacySubmitRsvp,
     submitRsvpForPlayer as legacySubmitRsvpForPlayer,
     updateEvent as legacyUpdateEvent,
     updateGame as legacyUpdateGame,
@@ -297,6 +298,10 @@ export async function releaseAssignmentClaim(teamId: string, gameId: string, rol
 
 export async function submitRsvpForPlayer(teamId: string, gameId: string, userId: string, payload: Record<string, unknown>) {
     return await Promise.resolve(legacySubmitRsvpForPlayer(teamId, gameId, userId, payload));
+}
+
+export async function submitRsvp(teamId: string, gameId: string, userId: string, payload: Record<string, unknown>) {
+    return await Promise.resolve(legacySubmitRsvp(teamId, gameId, userId, payload));
 }
 
 export async function broadcastLiveEvent(teamId: string, gameId: string, payload: Record<string, unknown>) {

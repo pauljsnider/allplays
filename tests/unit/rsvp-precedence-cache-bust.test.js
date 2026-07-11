@@ -1,0 +1,74 @@
+import { readFileSync } from 'node:fs';
+import { describe, expect, it } from 'vitest';
+
+function readRepoFile(path) {
+    return readFileSync(new URL(`../../${path}`, import.meta.url), 'utf8');
+}
+
+describe('RSVP precedence cache delivery', () => {
+    it('uses one fresh db module key and versions the indirect staff breakdown graph', () => {
+        const dbSource = readRepoFile('js/db.js');
+        const breakdownSource = readRepoFile('js/game-day-rsvp-breakdown.js');
+        const runtimeSources = [
+            'accept-invite.html',
+            'calendar.html',
+            'edit-schedule.html',
+            'game-day.html',
+            'login.html',
+            'parent-dashboard.html',
+            'team.html',
+            'team-chat.html',
+            'js/auth.js',
+            'js/team-media.js'
+        ].map(readRepoFile);
+
+        runtimeSources.forEach((source) => {
+            expect(source).toContain('db.js?v=91');
+        });
+        expect(dbSource).toContain("from './rsvp-summary.js?v=2';");
+        expect(dbSource).toContain("from './game-day-rsvp-breakdown.js?v=2';");
+        expect(breakdownSource).toContain("from './rsvp-summary.js?v=2';");
+    });
+
+    it('versions every deployed auth consumer after auth adopts the fresh db key', () => {
+        const authConsumers = [
+            'accept-invite.html',
+            'dashboard.html',
+            'edit-team.html',
+            'login.html',
+            'parent-dashboard.html',
+            'js/admin.js',
+            'js/live-game.js',
+            'js/live-tracker.js',
+            'js/team-media.js',
+            'js/utils.js'
+        ].map(readRepoFile);
+
+        authConsumers.forEach((source) => {
+            expect(source).toContain('auth.js?v=46');
+        });
+    });
+
+    it('propagates fresh keys through cached wrapper and shared utility entry modules', () => {
+        const consumerVersions = {
+            'admin.html': 'js/admin.js?v=9',
+            'certificates.html': 'js/certificates/studio.js?v=12',
+            'live-game.html': 'js/live-game.js?v=9',
+            'live-tracker.html': 'js/live-tracker.js?v=2',
+            'team-fees.html': 'js/team-fees-admin.js?v=13',
+            'team-media.html': 'js/team-media.js?v=13',
+            'track-basketball.html': 'js/track-basketball.js?v=2',
+            'tracking-items.html': 'js/tracking-items-admin.js?v=2',
+            'team.html': 'js/team-staff-permissions.js?v=3',
+            'game-day.html': 'js/team-admin-banner.js?v=5'
+        };
+
+        for (const [path, expectedVersion] of Object.entries(consumerVersions)) {
+            expect(readRepoFile(path)).toContain(expectedVersion);
+        }
+
+        expect(readRepoFile('js/utils.js')).toContain("import('./global-search.js?v=9')");
+        expect(readRepoFile('js/db.js')).toContain("from './utils.js?v=15';");
+        expect(readRepoFile('parent-dashboard.html')).toContain('js/utils.js?v=15');
+    });
+});

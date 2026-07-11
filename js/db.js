@@ -44,8 +44,8 @@ import {
     mergeApprovedParentMembershipRequests
 } from './parent-membership-utils.js?v=2';
 import { buildCoachOverrideRsvpDocId, shouldDeleteLegacyRsvpForOverride } from './rsvp-doc-ids.js';
-import { computeEffectiveRsvpSummary } from './rsvp-summary.js?v=1';
-import { buildGameDayRsvpBreakdown } from './game-day-rsvp-breakdown.js?v=1';
+import { computeEffectiveRsvpSummary } from './rsvp-summary.js?v=2';
+import { buildGameDayRsvpBreakdown } from './game-day-rsvp-breakdown.js?v=2';
 import { isAvailabilityLocked, normalizeAvailabilityPreferences } from './availability-preferences.js?v=1';
 import {
     collectOfficialLookupQueryTargets,
@@ -73,6 +73,7 @@ import {
 import { normalizeTeamNotificationPreferences } from './notification-preferences.js?v=1';
 import { normalizeAdSpaceSponsors, normalizeLocalAttractionSponsors } from './local-attractions.js?v=2';
 import { buildRosterFieldDefinitionPayload } from './roster-profile-fields.js?v=2';
+import { commitFamilyRsvpWrite } from './rsvp-family-write.js?v=1';
 import {
     decodeSharedGameSyntheticId,
     isSharedGameSyntheticId,
@@ -624,7 +625,7 @@ export async function uploadStatSheetPhoto(teamId, file) {
     }
 }
 
-import { resolveZip } from './utils.js?v=9'; // Import resolveZip
+import { resolveZip } from './utils.js?v=15'; // Import resolveZip
 
 function normalizePublicTeamSearchValue(value, { uppercase = false } = {}) {
     const normalized = String(value || '').trim();
@@ -8467,7 +8468,7 @@ export async function submitRsvp(teamId, gameId, userId, { displayName, playerId
     const respondedAt = Timestamp.now();
     const normalizedPlayerIds = uniqueNonEmptyIds(playerIds);
     const primaryPlayerId = normalizedPlayerIds.length === 1 ? normalizedPlayerIds[0] : null;
-    await setDoc(rsvpRef, {
+    const rsvpPayload = {
         userId: effectiveUserId,
         displayName: displayName || null,
         playerIds: normalizedPlayerIds,
@@ -8475,15 +8476,37 @@ export async function submitRsvp(teamId, gameId, userId, { displayName, playerId
         childId: primaryPlayerId,
         response, // 'going' | 'maybe' | 'not_going'
         respondedAt
-    });
-    await writeRsvpNote(teamId, gameId, effectiveUserId, {
-        userId: effectiveUserId,
-        displayName,
-        playerIds,
-        response,
-        note,
-        respondedAt
-    });
+    };
+
+    if (normalizedPlayerIds.length > 1) {
+        const visibility = await loadTeamRsvpNoteVisibility(teamId);
+        await commitFamilyRsvpWrite({
+            db,
+            writeBatch,
+            doc,
+            teamId,
+            gameId,
+            userId: effectiveUserId,
+            childIds: normalizedPlayerIds,
+            rsvpPayload,
+            notePayload: {
+                ...rsvpPayload,
+                note: normalizeRsvpNoteText(note) || null,
+                visibility,
+                updatedAt: Timestamp.now()
+            }
+        });
+    } else {
+        await setDoc(rsvpRef, rsvpPayload);
+        await writeRsvpNote(teamId, gameId, effectiveUserId, {
+            userId: effectiveUserId,
+            displayName,
+            playerIds,
+            response,
+            note,
+            respondedAt
+        });
+    }
 
     // Best effort: aggregate summary if caller can read RSVPs.
     // Parent accounts may be able to write their own RSVP but still fail this read

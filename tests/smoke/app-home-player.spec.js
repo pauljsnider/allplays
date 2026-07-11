@@ -607,6 +607,7 @@ async function mockHomePlayerModules(page) {
                 export async function respondToOfficialAssignmentItem() {}
                 export async function claimOfficialAssignmentItem() {}
                 export async function submitParentScheduleRsvp() { return { response: 'going' }; }
+                export async function submitParentScheduleRsvpForChildren() { return { response: 'going' }; }
                 export async function claimParentScheduleAssignmentSlot() { return { role: 'Volunteer' }; }
                 export async function releaseParentScheduleAssignmentClaim() {}
                 export async function createParentScheduleRideOffer() { return { id: 'ride-1' }; }

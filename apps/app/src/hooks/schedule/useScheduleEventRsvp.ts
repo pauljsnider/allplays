@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { toAppServiceError } from '../../lib/appErrors';
-import { submitParentScheduleRsvp } from '../../lib/scheduleService';
+import { submitParentScheduleRsvp, submitParentScheduleRsvpForChildren } from '../../lib/scheduleService';
 import { useAsyncOperation } from '../../lib/useAsyncOperation';
 import { canSubmitScheduleEventRsvp, normalizeRsvpResponse, type ParentScheduleEvent, type RsvpResponse } from '../../lib/scheduleLogic';
 import { UX_TIMING, startInteractionTimer } from '../../lib/uxTiming';
@@ -47,29 +47,40 @@ function waitForVisibleState() {
   });
 }
 
-export function useScheduleEventRsvp({ availabilityNote }: { availabilityNote: string }) {
-  const { auth, event, updateEvents } = useScheduleEventDetailContext();
+export function useScheduleEventRsvp({ availabilityNote, applyToAllChildren = false }: { availabilityNote: string; applyToAllChildren?: boolean }) {
+  const { auth, event, childEvents, updateEvents } = useScheduleEventDetailContext();
   const [submitting, setSubmitting] = useState<RsvpResponse | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const { error, run } = useAsyncOperation();
 
-  const canSubmit = canSubmitScheduleEventRsvp(event);
+  const matchingChildEvents = childEvents.filter((childEvent) => (
+    childEvent.teamId === event.teamId && childEvent.id === event.id && Boolean(childEvent.childId) && childEvent.isLinkedParentChild === true
+  ));
+  const targetEvents = applyToAllChildren && event.isLinkedParentChild === true ? matchingChildEvents : [event];
+  const canSubmit = targetEvents.length > 0 && targetEvents.every(canSubmitScheduleEventRsvp);
 
   const submit = async (response: Exclude<RsvpResponse, 'not_responded'>) => {
     const currentUser = auth.user;
     if (!currentUser || !canSubmit) return;
 
     const interaction = startInteractionTimer(UX_TIMING.rsvpTap, { response });
-    const previousRsvp = normalizeRsvpResponse(event.myRsvp);
-    const previousNote = String(event.myRsvpNote || '').trim();
+    const previousStateByChildId = new Map(targetEvents.map((targetEvent) => [targetEvent.childId, {
+      rsvp: normalizeRsvpResponse(targetEvent.myRsvp),
+      note: String(targetEvent.myRsvpNote || '').trim(),
+      summary: targetEvent.rsvpSummary
+    }]));
     const note = String(availabilityNote || '').trim();
-    const optimisticSummary = buildOptimisticRsvpSummary(event.rsvpSummary, previousRsvp, response);
+    const targetChildIds = new Set(targetEvents.map((targetEvent) => targetEvent.childId));
+    const optimisticSummary = targetEvents.reduce(
+      (summary, targetEvent) => buildOptimisticRsvpSummary(summary, normalizeRsvpResponse(targetEvent.myRsvp), response),
+      event.rsvpSummary
+    );
 
     setSubmitting(response);
     setMessage(null);
     updateEvents((current) => current.map((currentEvent) => {
       if (currentEvent.teamId !== event.teamId || currentEvent.id !== event.id) return currentEvent;
-      const sameChild = currentEvent.childId === event.childId;
+      const sameChild = targetChildIds.has(currentEvent.childId);
       return {
         ...currentEvent,
         myRsvp: sameChild ? response : currentEvent.myRsvp,
@@ -79,11 +90,13 @@ export function useScheduleEventRsvp({ availabilityNote }: { availabilityNote: s
     }));
 
     const result = await run(async () => {
-      const summary = await submitParentScheduleRsvp(event, currentUser, response, note);
+      const summary = applyToAllChildren && targetEvents.length > 1
+        ? await submitParentScheduleRsvpForChildren(targetEvents, currentUser, response, note)
+        : await submitParentScheduleRsvp(event, currentUser, response, note);
 
       updateEvents((current) => current.map((currentEvent) => {
         if (currentEvent.teamId !== event.teamId || currentEvent.id !== event.id) return currentEvent;
-        const sameChild = currentEvent.childId === event.childId;
+        const sameChild = targetChildIds.has(currentEvent.childId);
         return {
           ...currentEvent,
           myRsvp: sameChild ? response : currentEvent.myRsvp,
@@ -92,26 +105,32 @@ export function useScheduleEventRsvp({ availabilityNote }: { availabilityNote: s
         };
       }));
 
-      const noteOnlySave = previousRsvp === response && previousNote !== note;
-      setMessage(noteOnlySave
-        ? `${event.childName} availability note saved.`
-        : `${event.childName} marked ${response.replace('_', ' ')}.`);
+      const noteOnlySave = targetEvents.every((targetEvent) => normalizeRsvpResponse(targetEvent.myRsvp) === response)
+        && targetEvents.some((targetEvent) => String(targetEvent.myRsvpNote || '').trim() !== note);
+      setMessage(applyToAllChildren && targetEvents.length > 1
+        ? noteOnlySave
+          ? 'Family availability note saved.'
+          : `${targetEvents.length} children marked ${response.replace('_', ' ')}.`
+        : noteOnlySave
+          ? `${event.childName} availability note saved.`
+          : `${event.childName} marked ${response.replace('_', ' ')}.`);
       return { ok: true as const };
     }, {
       getErrorMessage: getRsvpErrorMessage,
       onError: () => {
         updateEvents((current) => current.map((currentEvent) => {
           if (currentEvent.teamId !== event.teamId || currentEvent.id !== event.id) return currentEvent;
-          const sameChild = currentEvent.childId === event.childId;
+          const sameChild = targetChildIds.has(currentEvent.childId);
+          const previousState = previousStateByChildId.get(currentEvent.childId);
           const matchesFailedOptimisticState = sameChild
             && normalizeRsvpResponse(currentEvent.myRsvp) === response
             && String(currentEvent.myRsvpNote || '').trim() === note;
-          if (!matchesFailedOptimisticState) return currentEvent;
+          if (!matchesFailedOptimisticState || !previousState) return currentEvent;
           return {
             ...currentEvent,
-            myRsvp: previousRsvp,
-            myRsvpNote: previousNote,
-            rsvpSummary: event.rsvpSummary || currentEvent.rsvpSummary
+            myRsvp: previousState.rsvp,
+            myRsvpNote: previousState.note,
+            rsvpSummary: previousState.summary || currentEvent.rsvpSummary
           };
         }));
       },

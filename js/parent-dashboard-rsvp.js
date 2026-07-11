@@ -40,6 +40,12 @@ function extractEventPlayerIds(event) {
     ]);
 }
 
+function isPlayerSpecificOverride(rsvp, playerId) {
+    const responderUserId = String(rsvp?.userId || '').trim();
+    const documentId = String(rsvp?.id || '').trim();
+    return Boolean(responderUserId && documentId === `${responderUserId}__${playerId}`);
+}
+
 function getScopedRsvpPlayerIds(allScheduleEvents, teamId, gameId) {
     const events = Array.isArray(allScheduleEvents) ? allScheduleEvents : [];
     return uniqNonEmpty(
@@ -115,10 +121,14 @@ export function resolveMyRsvpByChildForGame(allScheduleEvents, teamId, gameId, r
         playerIdsForHydration.forEach((playerId) => {
             if (!scopedSet.has(playerId)) return;
             const existing = byChild.get(playerId);
-            if (!existing || respondedAtMillis >= existing.respondedAtMillis) {
+            const playerSpecific = isPlayerSpecificOverride(rsvp, playerId);
+            if (!existing
+                || (playerSpecific && !existing.playerSpecific)
+                || (playerSpecific === existing.playerSpecific && respondedAtMillis >= existing.respondedAtMillis)) {
                 byChild.set(playerId, {
                     response,
-                    respondedAtMillis
+                    respondedAtMillis,
+                    playerSpecific
                 });
             }
         });

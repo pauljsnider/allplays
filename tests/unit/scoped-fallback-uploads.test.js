@@ -67,7 +67,7 @@ describe('scoped fallback uploads', () => {
     });
 
     it('falls back to a team-scoped stat sheet path when image storage rejects the upload', async () => {
-        const { uploadStatSheetPhoto } = await import('../../js/db.js?v=84-scoped-fallback-uploads');
+        const { uploadStatSheetPhoto } = await import('../../js/db.js?v=91-scoped-fallback-uploads');
 
         const url = await uploadStatSheetPhoto('team/alpha', {
             name: 'box score (1).png',
@@ -81,7 +81,7 @@ describe('scoped fallback uploads', () => {
     });
 
     it('falls back to a team-scoped drill path when image storage rejects the upload', async () => {
-        const { uploadDrillDiagram } = await import('../../js/db.js?v=84-scoped-fallback-uploads');
+        const { uploadDrillDiagram } = await import('../../js/db.js?v=91-scoped-fallback-uploads');
 
         const url = await uploadDrillDiagram('team/alpha', 'drill 7', {
             name: 'diagram #1.png',

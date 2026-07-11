@@ -48,6 +48,7 @@ const scheduleServiceMocks = vi.hoisted(() => ({
   sendStaffRsvpReminder: vi.fn(),
   setParentScheduleRideOfferStatus: vi.fn(),
   submitParentScheduleRsvp: vi.fn(),
+  submitParentScheduleRsvpForChildren: vi.fn(),
   submitStaffScheduleRsvpOverride: vi.fn(),
   summarizeParentScheduleRideOffers: vi.fn(() => ({ offerCount: 0, seatsLeft: 0, requests: 0, pending: 0, confirmed: 0, isFull: false })),
   loadHomeScoringPlayers: vi.fn(),
@@ -277,6 +278,7 @@ function buildEvent(overrides: Record<string, unknown> = {}) {
     opponent: 'Wolves',
     childId: 'player-1',
     childName: 'Avery Smith',
+    isLinkedParentChild: true,
     isDbGame: true,
     isCancelled: false,
     status: 'scheduled',
@@ -860,6 +862,85 @@ describe('ScheduleEventDetail route state', () => {
     expect(liveGameChatServiceMocks.subscribeToLiveGameChat).not.toHaveBeenCalled();
   });
 
+});
+
+describe('ScheduleEventDetail family RSVP path', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    Object.defineProperty(window, 'scrollTo', {
+      value: vi.fn(),
+      writable: true
+    });
+    scheduleServiceMocks.loadParentScheduleRideOffers.mockResolvedValue([]);
+    scheduleServiceMocks.loadParentScheduleAssignments.mockResolvedValue([]);
+  });
+
+  afterEach(() => {
+    cleanup();
+  });
+
+  it('shows the family response first and defers child-specific controls', async () => {
+    scheduleServiceMocks.loadParentScheduleEventDetail.mockResolvedValue({
+      events: [
+        buildEvent({ childId: 'player-1', childName: 'Avery Smith' }),
+        buildEvent({
+          eventKey: 'team-1::game-1::player-2::2026-06-04T18:00:00.000Z::game',
+          childId: 'player-2',
+          childName: 'Sam Lee'
+        })
+      ],
+      children: []
+    });
+
+    renderScheduleEventDetail();
+
+    expect(await screen.findByText('Family response')).toBeTruthy();
+    expect(screen.getByText('One choice updates Avery Smith and Sam Lee.')).toBeTruthy();
+    expect(screen.getByText('Are Avery Smith and Sam Lee going?')).toBeTruthy();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Set individually' }));
+
+    expect(screen.getByText('Responding for Avery Smith')).toBeTruthy();
+    expect(screen.getByText('Is Avery Smith going?')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Respond together' })).toBeTruthy();
+
+    fireEvent.click(within(screen.getByTestId('event-player-switcher')).getByRole('button', { name: 'Sam Lee' }));
+    await waitFor(() => expect(screen.getByText('Is Sam Lee going?')).toBeTruthy());
+  });
+
+  it('keeps the existing child-specific path for a single child', async () => {
+    scheduleServiceMocks.loadParentScheduleEventDetail.mockResolvedValue({
+      events: [buildEvent({ childId: 'player-1', childName: 'Avery Smith' })],
+      children: []
+    });
+
+    renderScheduleEventDetail();
+
+    expect(await screen.findByText('Is Avery Smith going?')).toBeTruthy();
+    expect(screen.queryByTestId('family-rsvp-controls')).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Set individually' })).toBeNull();
+  });
+
+  it('does not offer family response controls for staff-expanded roster rows', async () => {
+    scheduleServiceMocks.loadParentScheduleEventDetail.mockResolvedValue({
+      events: [
+        buildEvent({ childId: 'player-1', childName: 'Avery Smith' }),
+        buildEvent({
+          eventKey: 'team-1::game-1::player-2::2026-06-04T18:00:00.000Z::game',
+          childId: 'player-2',
+          childName: 'Roster Player',
+          isLinkedParentChild: false
+        })
+      ],
+      children: []
+    });
+
+    renderScheduleEventDetail();
+
+    expect(await screen.findByText('Is Avery Smith going?')).toBeTruthy();
+    expect(screen.queryByTestId('family-rsvp-controls')).toBeNull();
+    expect(screen.queryByText('Family response')).toBeNull();
+  });
 });
 
 describe('ScheduleEventDetail availability attention', () => {

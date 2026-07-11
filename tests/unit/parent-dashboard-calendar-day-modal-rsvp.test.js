@@ -114,7 +114,7 @@ const Blob = deps.Blob;
             'const { resolvePracticePacketSessionIdForEvent: resolvePracticePacketSessionIdForEventBase, resolvePracticePacketContextForEvent: resolvePracticePacketContextForEventBase, getScopedPracticePacketRow: getScopedPracticePacketRowBase, buildPracticePacketCompletionPayload: buildPracticePacketCompletionPayloadBase } = deps.parentDashboardPackets;'
         )
         .replace("import { filterVisiblePracticeSessions } from './js/parent-dashboard-practice-sessions.js?v=1';", 'const { filterVisiblePracticeSessions } = deps.parentDashboardPracticeSessions;')
-        .replace("import { resolveRsvpPlayerIdsForSubmission, resolveMyRsvpByChildForGame } from './js/parent-dashboard-rsvp.js?v=5';", 'const { resolveRsvpPlayerIdsForSubmission, resolveMyRsvpByChildForGame } = deps.parentDashboardRsvp;')
+        .replace("import { resolveRsvpPlayerIdsForSubmission, resolveMyRsvpByChildForGame } from './js/parent-dashboard-rsvp.js?v=6';", 'const { resolveRsvpPlayerIdsForSubmission, resolveMyRsvpByChildForGame } = deps.parentDashboardRsvp;')
         .replace("import { createParentDashboardRsvpController } from './js/parent-dashboard-rsvp-controls.js?v=1';", 'const { createParentDashboardRsvpController } = deps.parentDashboardRsvpControls;')
         .replace("import { getEventRideshareSummary, getOfferSeatInfo } from './js/rideshare-helpers.js?v=1';", 'const { getEventRideshareSummary, getOfferSeatInfo } = deps.rideshareHelpers;')
         .replace("import { mergeAssignmentsWithClaims } from './js/snack-helpers.js?v=1';", 'const { mergeAssignmentsWithClaims } = deps.snackHelpers;')

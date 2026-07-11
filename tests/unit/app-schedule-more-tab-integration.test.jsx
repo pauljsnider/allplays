@@ -175,6 +175,7 @@ function event(overrides = {}) {
         title: overrides.title || null,
         childId: overrides.childId || 'player-1',
         childName: overrides.childName || 'Pat',
+        isLinkedParentChild: overrides.isLinkedParentChild !== false,
         isDbGame: overrides.isDbGame !== false,
         isCancelled: overrides.isCancelled === true,
         myRsvp: overrides.myRsvp || 'not_responded',
@@ -593,6 +594,10 @@ describe('React app ScheduleEventDetail More tab integration', () => {
         });
 
         const { container } = await renderDetail('/schedule/team-1/game-1?childId=missing-player&section=availability');
+        await waitForText(container, 'Are Pat and Sam going?');
+        expect(container.textContent).toContain('One choice updates Pat and Sam.');
+
+        await clickButton(container, 'Set individually');
         await waitForText(container, 'Is Pat going?');
 
         const switcher = container.querySelector('[data-testid="event-player-switcher"]');

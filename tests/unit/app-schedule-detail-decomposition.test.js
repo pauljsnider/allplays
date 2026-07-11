@@ -32,7 +32,7 @@ describe('ScheduleEventDetail decomposition', () => {
         expect(source).toContain("from '../hooks/schedule/useScheduleEventRsvp'");
         expect(source).toContain("from '../hooks/schedule/useStaffRsvpBreakdown'");
         expect(source).toContain('<ScheduleEventDetailProvider value={{');
-        expect(source).toContain('useScheduleEventRsvp({ availabilityNote })');
+        expect(source).toContain('useScheduleEventRsvp({ availabilityNote, applyToAllChildren: useFamilyRsvp })');
         expect(source).toContain('useStaffRsvpBreakdown(staffRsvpLoader)');
         expect(source).toContain('<DeferredGameReportSections event={event} />');
         expect(source).toContain('<PlayerSwitcher events={events} selectedChildId={selectedEvent.childId} onSelect={selectChild} compact />');

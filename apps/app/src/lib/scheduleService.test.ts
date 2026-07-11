@@ -82,6 +82,7 @@ vi.mock('./adapters/legacyScheduleDb', () => ({
   closeRideOffer: vi.fn(),
   cancelRideRequest: vi.fn(),
   releaseAssignmentClaim: vi.fn(),
+  submitRsvp: vi.fn(),
   submitRsvpForPlayer: vi.fn(),
   broadcastLiveEvent: vi.fn(),
   updateGame: vi.fn(),
@@ -122,7 +123,32 @@ vi.mock('./adapters/legacyScheduleHelpers', () => ({
       return acc;
     }, {})
   )),
-  buildGameDayRsvpBreakdown: vi.fn(),
+  buildGameDayRsvpBreakdown: vi.fn(({ players, rsvps, fallbackByUser }: any) => {
+    const byPlayer = new Map<string, any>();
+    (Array.isArray(rsvps) ? rsvps : []).forEach((rsvp: any, sequence: number) => {
+      const directIds = [...(Array.isArray(rsvp?.playerIds) ? rsvp.playerIds : []), rsvp?.playerId, rsvp?.childId]
+        .map((value) => String(value || '').trim())
+        .filter(Boolean);
+      const playerIds = directIds.length ? [...new Set(directIds)] : (fallbackByUser.get(String(rsvp?.userId || '')) || []);
+      playerIds.forEach((playerId: string) => {
+        const userId = String(rsvp?.userId || '').trim();
+        const playerSpecific = String(rsvp?.id || '') === `${userId}__${playerId}`;
+        const respondedAtMillis = new Date(rsvp?.respondedAt || 0).getTime() || 0;
+        const existing = byPlayer.get(playerId);
+        if (existing?.userId === userId && existing.playerSpecific !== playerSpecific && existing.playerSpecific) return;
+        if (existing?.userId === userId && existing.playerSpecific !== playerSpecific && playerSpecific
+          || !existing
+          || respondedAtMillis > existing.respondedAtMillis
+          || respondedAtMillis === existing.respondedAtMillis && sequence >= existing.sequence) {
+          byPlayer.set(playerId, { response: rsvp?.response, userId, playerSpecific, respondedAtMillis, sequence });
+        }
+      });
+    });
+    const going = (Array.isArray(players) ? players : [])
+      .filter((player: any) => byPlayer.get(player.id)?.response === 'going')
+      .map((player: any) => ({ playerId: player.id }));
+    return { grouped: { going, maybe: [], not_going: [], not_responded: [] }, counts: {} };
+  }),
   getPeriodsForFormation: vi.fn(() => []),
   getEventRideshareSummary: vi.fn(),
   mergeAssignmentsWithClaims: vi.fn(),
@@ -185,14 +211,14 @@ vi.mock('./appDataCache', () => ({
   getParentScheduleSummaryCacheKey: (userId: string) => `app-schedule-summary:${userId}`
 }));
 
-import { addGame, addPractice, broadcastLiveEvent, buildSingleLegacyTournamentGameDocument, buildLegacyTournamentGameDocument, buildLegacyTournamentGameDocuments, claimOpenOfficiatingSlot, clearOccurrenceOverride, releaseAssignmentClaim, respondToOfficiatingAssignment, updateEvent, updateGame, updateOccurrence, getAssignmentClaims, getGame, getGames, getPlayers, getPracticeSession, getPracticeSessions, getRsvpBreakdownByPlayer, getRsvpSummaries, getRsvps, getTeam, getTeams, listRideOffersForEvent, submitRsvpForPlayer, updatePracticeAttendance, getDoc, getDocs } from './adapters/legacyScheduleDb';
+import { addGame, addPractice, broadcastLiveEvent, buildSingleLegacyTournamentGameDocument, buildLegacyTournamentGameDocument, buildLegacyTournamentGameDocuments, claimOpenOfficiatingSlot, clearOccurrenceOverride, releaseAssignmentClaim, respondToOfficiatingAssignment, updateEvent, updateGame, updateOccurrence, getAssignmentClaims, getGame, getGames, getPlayers, getPracticeSession, getPracticeSessions, getRsvpBreakdownByPlayer, getRsvpSummaries, getRsvps, getTeam, getTeams, listRideOffersForEvent, submitRsvp, submitRsvpForPlayer, updatePracticeAttendance, getDoc, getDocs } from './adapters/legacyScheduleDb';
 import { getNativeAuthIdToken } from './authService';
 import { expandRecurrence, fetchAndParseCalendar, isTeamActive, mergeAssignmentsWithClaims } from './adapters/legacyScheduleHelpers';
 import { getCachedAppData, loadCachedAppData } from './appDataCache';
 import { mapScheduleEventRecord } from './firestore/mappers';
 import { loadProfileDocument } from './profileService';
 import { getScheduleTournamentInfo } from './scheduleLogic';
-import { adjustGameScore, buildPlayerScoringLiveEvent, buildSingleGameTournamentLegacySchedulePayload, claimOfficialAssignmentItem, createScheduledGameForApp, createScheduledPracticeForApp, createScheduledTournamentBlockForApp, createStaffRsvpAvailabilityLoader, flushPendingLivePublishOperations, hydrateParentScheduleDetails, loadOfficialAssignments, loadParentSchedule, loadParentScheduleChildren, loadParentScheduleEventDetail, loadScheduledPracticeSeriesForEdit, loadStaffPracticeAttendance, loadStaffScheduleRsvpBreakdown, publishLiveScoreUpdateEvent, recordPlayerGameStat, recordPlayerScoringStat, releaseParentScheduleAssignmentClaim, resolveCachedParentScheduleEvents, resolveLiveGameClockSnapshot, resolveParentGameRoute, respondToOfficialAssignmentItem, revertScheduledPracticeOccurrenceForApp, saveScheduledGameLineupDraftForApp, saveStaffPracticeAttendance, submitStaffScheduleRsvpOverride, TournamentBlockPartialSaveError, undoRecordedPlayerGameStat, updateLiveGameClockState, updateScheduledPracticeForApp } from './scheduleService';
+import { adjustGameScore, buildPlayerScoringLiveEvent, buildSingleGameTournamentLegacySchedulePayload, claimOfficialAssignmentItem, createScheduledGameForApp, createScheduledPracticeForApp, createScheduledTournamentBlockForApp, createStaffRsvpAvailabilityLoader, flushPendingLivePublishOperations, hydrateParentScheduleDetails, loadOfficialAssignments, loadParentSchedule, loadParentScheduleChildren, loadParentScheduleEventDetail, loadScheduledPracticeSeriesForEdit, loadStaffPracticeAttendance, loadStaffScheduleRsvpBreakdown, publishLiveScoreUpdateEvent, recordPlayerGameStat, recordPlayerScoringStat, releaseParentScheduleAssignmentClaim, resolveCachedParentScheduleEvents, resolveLiveGameClockSnapshot, resolveParentGameRoute, respondToOfficialAssignmentItem, revertScheduledPracticeOccurrenceForApp, saveScheduledGameLineupDraftForApp, saveStaffPracticeAttendance, submitParentScheduleRsvpForChildren, submitStaffScheduleRsvpOverride, TournamentBlockPartialSaveError, undoRecordedPlayerGameStat, updateLiveGameClockState, updateScheduledPracticeForApp } from './scheduleService';
 
 function playerSnapshot(id: string, data: Record<string, unknown> | null) {
   return {
@@ -247,7 +273,7 @@ describe('parent schedule child scope', () => {
     const children = await loadParentScheduleChildren(parentUser);
 
     expect(children).toEqual([
-      { teamId: 'team-1', teamName: 'Bears', playerId: 'player-1', playerName: 'Avery Lee' }
+      { teamId: 'team-1', teamName: 'Bears', playerId: 'player-1', playerName: 'Avery Lee', isLinkedParentChild: true }
     ]);
     expect(getTeam).toHaveBeenCalledWith('team-1');
     expect(getDoc).toHaveBeenCalledWith(expect.objectContaining({ path: 'teams/team-1/players/player-1' }));
@@ -267,7 +293,7 @@ describe('parent schedule child scope', () => {
 
     try {
       await expect(loadParentScheduleChildren(parentUser)).resolves.toEqual([
-        { teamId: 'team-1', teamName: 'Bears', playerId: 'player-1', playerName: 'Avery Lee' }
+        { teamId: 'team-1', teamName: 'Bears', playerId: 'player-1', playerName: 'Avery Lee', isLinkedParentChild: true }
       ]);
     } finally {
       if (previousWindow === undefined) {
@@ -303,7 +329,7 @@ describe('parent schedule child scope', () => {
     const children = await loadParentScheduleChildren(parentUser);
 
     expect(children).toEqual([
-      { teamId: 'team-active', teamName: 'Active Team', playerId: 'player-active', playerName: 'Active Player' }
+      { teamId: 'team-active', teamName: 'Active Team', playerId: 'player-active', playerName: 'Active Player', isLinkedParentChild: true }
     ]);
     expect(getPlayers).not.toHaveBeenCalled();
   });
@@ -346,7 +372,7 @@ describe('parent schedule child scope', () => {
 
     expect(loadProfileDocument).toHaveBeenCalledWith('parent-1');
     expect(schedule.children).toEqual([
-      { teamId: 'team-1', teamName: 'Bears', playerId: 'player-1', playerName: 'Avery Lee' }
+      { teamId: 'team-1', teamName: 'Bears', playerId: 'player-1', playerName: 'Avery Lee', isLinkedParentChild: true }
     ]);
   });
 });
@@ -1200,6 +1226,53 @@ describe('parent schedule detail hydration', () => {
       total: 1
     });
     expect(futureEvent.myRsvp).toBe('not_responded');
+  });
+
+  it('hydrates a surviving child RSVP and note ahead of a newer-clock family document', async () => {
+    vi.mocked(getRsvps).mockResolvedValue([
+      {
+        id: 'parent-1',
+        userId: 'parent-1',
+        playerIds: ['player-1', 'player-2'],
+        playerId: null,
+        response: 'going',
+        respondedAt: '2026-03-01T10:05:00Z'
+      },
+      {
+        id: 'parent-1__player-1',
+        userId: 'parent-1',
+        playerIds: ['player-1'],
+        playerId: 'player-1',
+        response: 'not_going',
+        respondedAt: '2026-03-01T10:00:00Z'
+      }
+    ] as any);
+    vi.mocked(getDoc).mockImplementation(async (ref: any) => {
+      const path = String(ref?.path || '');
+      if (path.endsWith('/rsvpNotes/parent-1')) {
+        return playerSnapshot('parent-1', {
+          userId: 'parent-1',
+          playerIds: ['player-1', 'player-2'],
+          note: 'Family note',
+          respondedAt: '2026-03-01T10:05:00Z'
+        }) as any;
+      }
+      if (path.endsWith('/rsvpNotes/parent-1__player-1')) {
+        return playerSnapshot('parent-1__player-1', {
+          userId: 'parent-1',
+          playerIds: ['player-1'],
+          note: 'Child correction',
+          respondedAt: '2026-03-01T10:00:00Z'
+        }) as any;
+      }
+      return playerSnapshot('', null) as any;
+    });
+    const nearEvent = buildHydrationEvent('near-game', new Date(Date.now() + 24 * 60 * 60 * 1000));
+
+    await hydrateParentScheduleDetails({ children: [], events: [nearEvent] }, user);
+
+    expect(nearEvent.myRsvp).toBe('not_going');
+    expect(nearEvent.myRsvpNote).toBe('Child correction');
   });
 
   it('refreshes cached open assignment counts after assignment claim hydration', async () => {
@@ -2122,6 +2195,23 @@ describe('mobile lineup draft creation', () => {
     });
   });
 
+  it('excludes a surviving child correction from Going lineup players despite its older client timestamp', async () => {
+    vi.mocked(getPlayers).mockResolvedValue([
+      { id: 'p1', name: 'Avery', number: '1', parentUserId: 'parent-1' },
+      { id: 'p2', name: 'Blake', number: '2', parentUserId: 'parent-1' }
+    ] as any);
+    vi.mocked(getRsvps).mockResolvedValue([
+      { id: 'parent-1', userId: 'parent-1', playerIds: ['p1', 'p2'], response: 'going', respondedAt: '2026-03-01T10:05:00Z' },
+      { id: 'parent-1__p1', userId: 'parent-1', playerIds: ['p1'], response: 'not_going', respondedAt: '2026-03-01T10:00:00Z' }
+    ] as any);
+
+    const result = await saveScheduledGameLineupDraftForApp(event, user, 'basketball-5v5');
+
+    expect(result.gamePlan?.lineups).toEqual({
+      'Q1-pg': 'p2'
+    });
+  });
+
   it('persists manual multi-period lineup edits through the shared draft path', async () => {
     const result = await saveScheduledGameLineupDraftForApp(event, user, 'basketball-5v5', {
       lineups: {
@@ -2191,6 +2281,150 @@ describe('mobile lineup draft creation', () => {
 
     vi.mocked(getRsvps).mockResolvedValue([{ playerId: 'p1', response: 'maybe' }] as any);
     await expect(saveScheduledGameLineupDraftForApp(event, user, 'basketball-5v5')).rejects.toThrow('No Going players');
+  });
+});
+
+describe('parent family RSVP submission', () => {
+  const user = { uid: 'parent-1', displayName: 'Parent One', email: 'parent@example.com', roles: [] };
+  const baseEvent = {
+    id: 'game-1',
+    teamId: 'team-1',
+    childId: 'player-1',
+    isLinkedParentChild: true,
+    isDbGame: true,
+    isCancelled: false,
+    availabilityLocked: false,
+    availabilityNoteVisibility: 'admins'
+  } as any;
+  let previousWindow: typeof globalThis.window | undefined;
+  let previousFetch: typeof globalThis.fetch | undefined;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    previousWindow = (globalThis as any).window;
+    previousFetch = globalThis.fetch;
+    (globalThis as any).window = {
+      location: { protocol: 'http:' },
+      setTimeout,
+      clearTimeout
+    } as any;
+  });
+
+  afterEach(() => {
+    if (previousWindow === undefined) {
+      delete (globalThis as any).window;
+    } else {
+      (globalThis as any).window = previousWindow;
+    }
+    if (previousFetch === undefined) {
+      delete (globalThis as any).fetch;
+    } else {
+      (globalThis as any).fetch = previousFetch;
+    }
+  });
+
+  it('submits both child ids in one grouped RSVP write', async () => {
+    const summary = { going: 2, maybe: 0, notGoing: 0, notResponded: 0, total: 2 };
+    vi.mocked(submitRsvp).mockResolvedValue(summary as any);
+
+    await expect(submitParentScheduleRsvpForChildren([
+      baseEvent,
+      { ...baseEvent, childId: 'player-2' }
+    ], user as any, 'going', 'Both need a ride')).resolves.toEqual(summary);
+
+    expect(submitRsvp).toHaveBeenCalledWith('team-1', 'game-1', 'parent-1', {
+      displayName: 'Parent One',
+      playerIds: ['player-1', 'player-2'],
+      response: 'going',
+      note: 'Both need a ride'
+    });
+    expect(mocks.runTransactionMock).not.toHaveBeenCalled();
+    expect(submitRsvpForPlayer).not.toHaveBeenCalled();
+  });
+
+  it('propagates a failed atomic legacy family commit without running separate cleanup', async () => {
+    const commitError = new Error('atomic family commit failed');
+    vi.mocked(submitRsvp).mockRejectedValueOnce(commitError);
+
+    await expect(submitParentScheduleRsvpForChildren([
+      baseEvent,
+      { ...baseEvent, childId: 'player-2' }
+    ], user as any, 'maybe')).rejects.toBe(commitError);
+
+    expect(submitRsvp).toHaveBeenCalledTimes(1);
+    expect(mocks.runTransactionMock).not.toHaveBeenCalled();
+  });
+
+  it('uses one native Firestore commit for grouped writes and both override collections', async () => {
+    (globalThis as any).window = {
+      location: { protocol: 'capacitor:' },
+      setTimeout,
+      clearTimeout
+    } as any;
+    (globalThis as any).fetch = vi.fn().mockResolvedValue({ ok: true, json: async () => ({}) } as any);
+    vi.mocked(getNativeAuthIdToken).mockResolvedValue('native-token' as any);
+    vi.mocked(submitRsvp).mockRejectedValueOnce(new Error('native fallback'));
+
+    await expect(submitParentScheduleRsvpForChildren([
+      baseEvent,
+      { ...baseEvent, childId: 'player-2' }
+    ], user as any, 'going', 'Both need a ride')).resolves.toBeNull();
+
+    expect(globalThis.fetch).toHaveBeenCalledTimes(1);
+    const [requestUrl, requestInit] = vi.mocked(globalThis.fetch).mock.calls[0] as [string, RequestInit];
+    const payload = JSON.parse(String(requestInit.body || '{}'));
+    expect(requestUrl).toContain(':commit');
+    expect(requestInit.method).toBe('POST');
+    expect(payload.writes).toHaveLength(6);
+    expect(payload.writes[0].update.name).toBe('projects/allplays-test/databases/(default)/documents/teams/team-1/games/game-1/rsvps/parent-1');
+    expect(payload.writes[1].update.name).toBe('projects/allplays-test/databases/(default)/documents/teams/team-1/games/game-1/rsvpNotes/parent-1');
+    expect(payload.writes.slice(2)).toEqual([
+      { delete: 'projects/allplays-test/databases/(default)/documents/teams/team-1/games/game-1/rsvps/parent-1__player-1' },
+      { delete: 'projects/allplays-test/databases/(default)/documents/teams/team-1/games/game-1/rsvpNotes/parent-1__player-1' },
+      { delete: 'projects/allplays-test/databases/(default)/documents/teams/team-1/games/game-1/rsvps/parent-1__player-2' },
+      { delete: 'projects/allplays-test/databases/(default)/documents/teams/team-1/games/game-1/rsvpNotes/parent-1__player-2' }
+    ]);
+  });
+
+  it('reports a failed native family commit without issuing partial REST writes', async () => {
+    (globalThis as any).window = {
+      location: { protocol: 'capacitor:' },
+      setTimeout,
+      clearTimeout
+    } as any;
+    (globalThis as any).fetch = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 503,
+      json: async () => ({ error: { message: 'commit unavailable' } })
+    } as any);
+    vi.mocked(getNativeAuthIdToken).mockResolvedValue('native-token' as any);
+    vi.mocked(submitRsvp).mockRejectedValueOnce(new Error('native fallback'));
+
+    await expect(submitParentScheduleRsvpForChildren([
+      baseEvent,
+      { ...baseEvent, childId: 'player-2' }
+    ], user as any, 'not_going')).rejects.toThrow('commit unavailable');
+
+    expect(globalThis.fetch).toHaveBeenCalledTimes(1);
+    expect(String(vi.mocked(globalThis.fetch).mock.calls[0][0])).toContain(':commit');
+  });
+
+  it('rejects mixed event scopes before writing a family response', async () => {
+    await expect(submitParentScheduleRsvpForChildren([
+      baseEvent,
+      { ...baseEvent, id: 'game-2', childId: 'player-2' }
+    ], user as any, 'maybe')).rejects.toThrow('same event');
+
+    expect(submitRsvp).not.toHaveBeenCalled();
+  });
+
+  it('rejects staff-expanded roster rows before writing a family response', async () => {
+    await expect(submitParentScheduleRsvpForChildren([
+      baseEvent,
+      { ...baseEvent, childId: 'player-2', isLinkedParentChild: false }
+    ], user as any, 'going')).rejects.toThrow('linked to your account');
+
+    expect(submitRsvp).not.toHaveBeenCalled();
   });
 });
 

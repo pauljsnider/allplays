@@ -187,7 +187,7 @@ const DeferredGameReportSections = lazy(() => (
   loadGameReportSectionsModule().then((module) => ({ default: module.GameReportSections }))
 ));
 import type { AuthState } from '../lib/types';
-import { ScheduleEventDetailProvider } from './schedule/ScheduleEventDetailContext';
+import { ScheduleEventDetailProvider, useScheduleEventDetailContext } from './schedule/ScheduleEventDetailContext';
 import { useScheduleEventRsvp } from '../hooks/schedule/useScheduleEventRsvp';
 import { useStaffRsvpBreakdown } from '../hooks/schedule/useStaffRsvpBreakdown';
 
@@ -1023,10 +1023,31 @@ function AvailabilitySection({ event, rsvp, availabilityNote, onAvailabilityNote
   attentionItems: AttentionItem[];
   onSelectSection: (sectionId: EventDetailSectionId) => void;
 }) {
-  const rsvpWorkflow = useScheduleEventRsvp({ availabilityNote });
+  const { childEvents } = useScheduleEventDetailContext();
+  const [individualMode, setIndividualMode] = useState(false);
+  useEffect(() => {
+    setIndividualMode(false);
+  }, [event.id, event.teamId]);
+  const matchingChildEvents = childEvents.filter((childEvent) => (
+    childEvent.teamId === event.teamId && childEvent.id === event.id && Boolean(childEvent.childId) && childEvent.isLinkedParentChild === true
+  ));
+  const familyRsvpAvailable = event.isLinkedParentChild === true && matchingChildEvents.length > 1 && matchingChildEvents.every((childEvent) => (
+    childEvent.isDbGame && !childEvent.isCancelled && !childEvent.availabilityLocked
+  ));
+  const useFamilyRsvp = familyRsvpAvailable && !individualMode;
+  const familyResponses = new Set(matchingChildEvents.map((childEvent) => normalizeRsvpResponse(childEvent.myRsvp)));
+  const visibleRsvp = useFamilyRsvp && familyResponses.size === 1
+    ? normalizeRsvpResponse(matchingChildEvents[0]?.myRsvp)
+    : useFamilyRsvp
+      ? 'not_responded'
+      : rsvp;
+  const familyNames = matchingChildEvents.map((childEvent) => childEvent.childName).filter(Boolean);
+  const familyQuestion = familyNames.length === 2
+    ? `Are ${familyNames[0]} and ${familyNames[1]} going?`
+    : `Are all ${familyNames.length} children going?`;
+  const rsvpWorkflow = useScheduleEventRsvp({ availabilityNote, applyToAllChildren: useFamilyRsvp });
   const staffRsvpLoader = useMemo(() => createStaffRsvpAvailabilityLoader(), [event.teamId, event.id]);
   const staffRsvp = useStaffRsvpBreakdown(staffRsvpLoader);
-  const responseLabel = !rsvpWorkflow.canSubmit && rsvp === 'not_responded' ? 'No response' : rsvpLabels[rsvp];
   const showTeamRsvpTools = event.isDbGame && Boolean(event.isTeamAdmin || event.isTeamRsvpReminderManager);
 
   return (
@@ -1036,27 +1057,45 @@ function AvailabilitySection({ event, rsvp, availabilityNote, onAvailabilityNote
           <h2 className="app-section-title">Availability</h2>
           <div className="mt-0.5 text-xs font-semibold text-gray-500">{formatRsvpSummary(event.rsvpSummary)}</div>
         </div>
-        <span className={`mt-0.5 inline-flex min-h-6 flex-none items-center rounded-full border px-2 text-[11px] font-extrabold uppercase tracking-[0.04em] ${rsvpBadgeClasses[rsvp]}`}>
-          {responseLabel}
+        <span className={`mt-0.5 inline-flex min-h-6 flex-none items-center rounded-full border px-2 text-[11px] font-extrabold uppercase tracking-[0.04em] ${rsvpBadgeClasses[visibleRsvp]}`}>
+          {rsvpLabels[visibleRsvp]}
         </span>
       </div>
+      {familyRsvpAvailable ? (
+        <div data-testid="family-rsvp-controls" className="flex flex-wrap items-center justify-between gap-2 border-b border-primary-100 bg-primary-50 px-3 py-2.5 sm:px-4">
+          <div className="min-w-0">
+            <div className="text-xs font-black text-primary-900">{useFamilyRsvp ? 'Family response' : `Responding for ${event.childName}`}</div>
+            <div className="mt-0.5 text-xs font-semibold text-primary-700">
+              {useFamilyRsvp ? `One choice updates ${familyNames.join(' and ')}.` : 'Use the player switcher above to choose a child.'}
+            </div>
+          </div>
+          <button
+            type="button"
+            className="min-h-8 rounded-full border border-primary-200 bg-white px-3 text-xs font-black text-primary-700 transition hover:border-primary-300 hover:bg-primary-100"
+            onClick={() => setIndividualMode((current) => !current)}
+          >
+            {useFamilyRsvp ? 'Set individually' : 'Respond together'}
+          </button>
+        </div>
+      ) : null}
       {rsvpWorkflow.canSubmit ? (
         <QuickAvailabilityPanel
           event={event}
-          rsvp={rsvp}
+          rsvp={visibleRsvp}
           canSubmitRsvp
           submitting={rsvpWorkflow.submitting}
           availabilityNote={availabilityNote}
           onAvailabilityNoteChange={onAvailabilityNoteChange}
           onSubmit={rsvpWorkflow.submit}
+          question={useFamilyRsvp ? familyQuestion : undefined}
         />
       ) : (
-        <ReadOnlyAvailabilityPanel event={event} rsvp={rsvp} />
+        <ReadOnlyAvailabilityPanel event={event} rsvp={visibleRsvp} />
       )}
       <div className="px-3 pb-3 sm:px-4">
         {rsvpWorkflow.message ? <Status tone="success" message={rsvpWorkflow.message} /> : null}
         {rsvpWorkflow.error ? <div className="mt-2"><Status tone="error" message={rsvpWorkflow.error} /></div> : null}
-        {attentionItems.length > 0 || rsvp !== 'not_responded' ? (
+        {attentionItems.length > 0 || visibleRsvp !== 'not_responded' ? (
           <AttentionPanel items={attentionItems} onSelectSection={onSelectSection} />
         ) : null}
         {showTeamRsvpTools ? (

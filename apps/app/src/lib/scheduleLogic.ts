@@ -155,6 +155,7 @@ export type ParentScheduleEvent = {
   title?: string | null;
   childId: string;
   childName: string;
+  isLinkedParentChild?: boolean;
   isDbGame: boolean;
   isCancelled: boolean;
   status?: string | null;

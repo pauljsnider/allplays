@@ -2,14 +2,15 @@
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { useState } from 'react';
-import { submitParentScheduleRsvp } from '../../lib/scheduleService';
+import { submitParentScheduleRsvp, submitParentScheduleRsvpForChildren } from '../../lib/scheduleService';
 import { UX_TIMING } from '../../lib/uxTiming';
 import { useScheduleEventRsvp } from './useScheduleEventRsvp';
 import { ScheduleEventDetailProvider, useScheduleEventDetailContext } from '../../pages/schedule/ScheduleEventDetailContext';
 import type { AuthState } from '../../lib/types';
 
 vi.mock('../../lib/scheduleService', () => ({
-    submitParentScheduleRsvp: vi.fn()
+    submitParentScheduleRsvp: vi.fn(),
+    submitParentScheduleRsvpForChildren: vi.fn()
 }));
 
 const rsvpInteractionEnd = vi.fn();
@@ -47,6 +48,7 @@ function buildEvent(overrides: Record<string, unknown> = {}) {
         teamId: 'team-1',
         childId: 'player-1',
         childName: 'Avery Smith',
+        isLinkedParentChild: true,
         isDbGame: true,
         isCancelled: false,
         availabilityLocked: false,
@@ -57,9 +59,9 @@ function buildEvent(overrides: Record<string, unknown> = {}) {
     } as any;
 }
 
-function RsvpProbe({ availabilityNote }: { availabilityNote: string }) {
-    const workflow = useScheduleEventRsvp({ availabilityNote });
-    const { event } = useScheduleEventDetailContext();
+function RsvpProbe({ availabilityNote, applyToAllChildren = false }: { availabilityNote: string; applyToAllChildren?: boolean }) {
+    const workflow = useScheduleEventRsvp({ availabilityNote, applyToAllChildren });
+    const { event, childEvents } = useScheduleEventDetailContext();
 
     return (
         <div>
@@ -67,6 +69,12 @@ function RsvpProbe({ availabilityNote }: { availabilityNote: string }) {
             <div data-testid="current-rsvp">{String(event.myRsvp)}</div>
             <div data-testid="current-note">{String(event.myRsvpNote || '')}</div>
             <div data-testid="submitting">{String(workflow.submitting || '')}</div>
+            <div data-testid="all-rsvps">{JSON.stringify(childEvents.map((childEvent) => ({
+                childId: childEvent.childId,
+                myRsvp: childEvent.myRsvp,
+                myRsvpNote: childEvent.myRsvpNote,
+                rsvpSummary: childEvent.rsvpSummary
+            })))}</div>
             <div>{workflow.message || ''}</div>
             <div>{workflow.error || ''}</div>
             <button type="button" onClick={() => workflow.submit('going')}>Submit going</button>
@@ -75,9 +83,9 @@ function RsvpProbe({ availabilityNote }: { availabilityNote: string }) {
     );
 }
 
-function renderProbe(availabilityNote = 'Running late') {
+function renderProbe(availabilityNote = 'Running late', options: { events?: any[]; applyToAllChildren?: boolean } = {}) {
     function Harness() {
-        const [events, setEvents] = useState([buildEvent()]);
+        const [events, setEvents] = useState(options.events || [buildEvent()]);
 
         return (
             <ScheduleEventDetailProvider
@@ -89,7 +97,7 @@ function renderProbe(availabilityNote = 'Running late') {
                     updateEvents: (updater) => setEvents((current) => updater(current))
                 }}
             >
-                <RsvpProbe availabilityNote={availabilityNote} />
+                <RsvpProbe availabilityNote={availabilityNote} applyToAllChildren={options.applyToAllChildren} />
             </ScheduleEventDetailProvider>
         );
     }
@@ -159,6 +167,60 @@ describe('useScheduleEventRsvp', () => {
             expect(rsvpInteractionEnd).toHaveBeenCalledWith();
         });
         expect(screen.getByTestId('submitting').textContent).toBe('');
+    });
+
+    it('submits one family response for every matching child and updates their local state', async () => {
+        const summary = { going: 2, maybe: 0, notGoing: 0, notResponded: 0, total: 2 };
+        vi.mocked(submitParentScheduleRsvpForChildren).mockResolvedValue(summary as any);
+        const events = [
+            buildEvent({ rsvpSummary: { going: 0, maybe: 0, notGoing: 0, notResponded: 2, total: 2 } }),
+            buildEvent({
+                eventKey: 'team-1::game-1::player-2',
+                childId: 'player-2',
+                childName: 'Sam Lee',
+                rsvpSummary: { going: 0, maybe: 0, notGoing: 0, notResponded: 2, total: 2 }
+            })
+        ];
+
+        renderProbe('Both need a ride', { events, applyToAllChildren: true });
+        fireEvent.click(screen.getByRole('button', { name: 'Submit going' }));
+
+        await waitFor(() => expect(submitParentScheduleRsvpForChildren).toHaveBeenCalledTimes(1));
+        const submittedEvents = vi.mocked(submitParentScheduleRsvpForChildren).mock.calls[0][0];
+        expect(submittedEvents.map((submittedEvent) => submittedEvent.childId)).toEqual(['player-1', 'player-2']);
+        expect(submitParentScheduleRsvpForChildren).toHaveBeenCalledWith(
+            submittedEvents,
+            auth.user,
+            'going',
+            'Both need a ride'
+        );
+        expect(submitParentScheduleRsvp).not.toHaveBeenCalled();
+
+        await waitFor(() => expect(screen.getByText('2 children marked going.')).toBeTruthy());
+        const localEvents = JSON.parse(screen.getByTestId('all-rsvps').textContent || '[]');
+        expect(localEvents).toEqual([
+            expect.objectContaining({ childId: 'player-1', myRsvp: 'going', myRsvpNote: 'Both need a ride', rsvpSummary: summary }),
+            expect.objectContaining({ childId: 'player-2', myRsvp: 'going', myRsvpNote: 'Both need a ride', rsvpSummary: summary })
+        ]);
+    });
+
+    it('excludes staff-expanded roster rows from family RSVP writes', async () => {
+        const events = [
+            buildEvent(),
+            buildEvent({
+                eventKey: 'team-1::game-1::player-2',
+                childId: 'player-2',
+                childName: 'Roster Player',
+                isLinkedParentChild: false
+            })
+        ];
+
+        renderProbe('Family only', { events, applyToAllChildren: true });
+        fireEvent.click(screen.getByRole('button', { name: 'Submit going' }));
+
+        await waitFor(() => expect(submitParentScheduleRsvp).toHaveBeenCalledTimes(1));
+        expect(submitParentScheduleRsvp).toHaveBeenCalledWith(expect.objectContaining({ childId: 'player-1' }), auth.user, 'going', 'Family only');
+        expect(submitParentScheduleRsvpForChildren).not.toHaveBeenCalled();
     });
 
     it('treats a null RSVP summary as a successful submission', async () => {

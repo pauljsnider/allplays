@@ -26,6 +26,7 @@ import {
   closeRideOffer,
   cancelRideRequest,
   releaseAssignmentClaim,
+  submitRsvp,
   submitRsvpForPlayer,
   broadcastLiveEvent,
   getLiveEvents,
@@ -179,6 +180,7 @@ export type ParentScheduleChild = {
   teamName: string;
   playerId: string;
   playerName: string;
+  isLinkedParentChild?: boolean;
 };
 
 type ParentScopeLink = ParentScheduleChild & {
@@ -475,7 +477,6 @@ export type LineupDraftPreviewResult = {
 };
 
 function getGoingPlayerIdsFromRsvps(players: any[], rsvps: any[]) {
-  const ids = new Set<string>();
   const playerIdsByParentUserId = new Map<string, string[]>();
   (Array.isArray(players) ? players : [])
     .filter(isActiveRosterPlayer)
@@ -487,13 +488,14 @@ function getGoingPlayerIdsFromRsvps(players: any[], rsvps: any[]) {
       });
     });
 
-  (Array.isArray(rsvps) ? rsvps : []).forEach((rsvp) => {
-    if (normalizeRsvpResponse(rsvp?.response) !== 'going') return;
-    const explicitPlayerIds = getRsvpPlayerIds(rsvp);
-    const fallbackPlayerIds = explicitPlayerIds.length ? [] : (playerIdsByParentUserId.get(compactString(rsvp?.userId)) || []);
-    [...explicitPlayerIds, ...fallbackPlayerIds].forEach((playerId) => ids.add(playerId));
+  const breakdown = buildGameDayRsvpBreakdown({
+    players,
+    rsvps,
+    fallbackByUser: playerIdsByParentUserId
   });
-  return ids;
+  return new Set<string>((breakdown.grouped.going || [])
+    .map((row) => compactString(row?.playerId))
+    .filter(Boolean));
 }
 
 function getGoingLineupPlayers(players: any[], rsvps: any[]): AutoFilledLineupPlayer[] {
@@ -1092,6 +1094,18 @@ async function nativeDeleteDocument(path: string) {
   await nativeFirestoreRequest(`/${path}`, {
     method: 'DELETE'
   });
+}
+
+async function nativeDeleteDocumentIfExists(path: string) {
+  try {
+    await nativeDeleteDocument(path);
+  } catch (error: any) {
+    const message = String(error?.message || '').toLowerCase();
+    if (error?.status === 404 || message.includes('not_found') || message.includes('not found')) {
+      return;
+    }
+    throw error;
+  }
 }
 
 type NativeDocumentSnapshot = {
@@ -2505,7 +2519,8 @@ async function resolveParentScheduleChildren(user: AuthUser, profile: Record<str
           teamId: link.teamId,
           teamName: teamName || link.teamName,
           playerId: link.playerId,
-          playerName: player ? normalizePlayerName(player) : link.playerName || 'Player'
+          playerName: player ? normalizePlayerName(player) : link.playerName || 'Player',
+          isLinkedParentChild: true
         };
       })
       .filter(Boolean) as ParentScheduleChild[];
@@ -3001,6 +3016,7 @@ function createScheduleEvent(input: {
     title: input.title || null,
     childId: input.child.playerId,
     childName: input.child.playerName,
+    isLinkedParentChild: input.child.isLinkedParentChild === true,
     isDbGame: input.isDbGame,
     isCancelled: input.isCancelled === true,
     status: input.status || null,
@@ -3499,13 +3515,19 @@ function rsvpTimestampMillis(rsvp: any) {
   return date?.getTime() || 0;
 }
 
+function isPlayerSpecificRsvpOverride(rsvp: any, playerId: string) {
+  const responderUserId = compactString(rsvp?.userId);
+  const documentId = compactString(rsvp?.id);
+  return Boolean(responderUserId && documentId === `${responderUserId}__${playerId}`);
+}
+
 function resolveMyRsvpNotesByChildForGame(allScheduleEvents: ParentScheduleEvent[], teamId: string, gameId: string, rsvps: any[], userId: string) {
   const scopedPlayerIds = [...new Set((Array.isArray(allScheduleEvents) ? allScheduleEvents : [])
     .filter((event) => event.teamId === teamId && event.id === gameId)
     .map((event) => event.childId)
     .filter(Boolean))];
   const scopedSet = new Set(scopedPlayerIds);
-  const byChild = new Map<string, { note: string; respondedAtMillis: number }>();
+  const byChild = new Map<string, { note: string; respondedAtMillis: number; playerSpecific: boolean }>();
 
   (Array.isArray(rsvps) ? rsvps : []).forEach((rsvp) => {
     if (String(rsvp?.userId || '') !== userId) return;
@@ -3517,8 +3539,11 @@ function resolveMyRsvpNotesByChildForGame(allScheduleEvents: ParentScheduleEvent
     scopedPlayerIdsForRsvp.forEach((playerId) => {
       if (!scopedSet.has(playerId)) return;
       const existing = byChild.get(playerId);
-      if (!existing || respondedAtMillis >= existing.respondedAtMillis) {
-        byChild.set(playerId, { note, respondedAtMillis });
+      const playerSpecific = isPlayerSpecificRsvpOverride(rsvp, playerId);
+      if (!existing
+        || (playerSpecific && !existing.playerSpecific)
+        || (playerSpecific === existing.playerSpecific && respondedAtMillis >= existing.respondedAtMillis)) {
+        byChild.set(playerId, { note, respondedAtMillis, playerSpecific });
       }
     });
   });
@@ -3630,7 +3655,8 @@ async function buildParentScheduleTeamChildren(user: AuthUser, profile: Record<s
           teamId,
           teamName,
           playerId: `staff-team-${teamId}`,
-          playerName: 'Team schedule'
+          playerName: 'Team schedule',
+          isLinkedParentChild: false
         }]);
       }
       return;
@@ -3642,7 +3668,8 @@ async function buildParentScheduleTeamChildren(user: AuthUser, profile: Record<s
         teamId,
         teamName,
         playerId: compactString(player.id),
-        playerName: compactString(player.name) || compactString(player.displayName) || 'Player'
+        playerName: compactString(player.name) || compactString(player.displayName) || 'Player',
+        isLinkedParentChild: false
       }));
     if (staffChildren.length) {
       byTeam.set(teamId, [...(byTeam.get(teamId) || []), ...staffChildren]);
@@ -3960,6 +3987,47 @@ async function nativeSubmitRsvpForPlayer(teamId: string, gameId: string, user: A
   return null;
 }
 
+async function nativeSubmitRsvpForChildren(teamId: string, gameId: string, user: AuthUser, childIds: string[], response: RsvpResponse, note = '', visibility: 'admins' | 'team' = 'admins') {
+  const respondedAt = new Date();
+  const gamePath = `teams/${teamId}/games/${gameId}`;
+  const rsvpPayload = {
+    userId: user.uid,
+    displayName: user.displayName || user.email || null,
+    playerIds: childIds,
+    playerId: null,
+    childId: null,
+    response,
+    respondedAt
+  };
+  await nativeCommitWrites([
+    {
+      update: {
+        name: getFirestoreDocumentName(`${gamePath}/rsvps/${user.uid}`),
+        fields: buildFirestoreFields(rsvpPayload)
+      }
+    },
+    {
+      update: {
+        name: getFirestoreDocumentName(`${gamePath}/rsvpNotes/${user.uid}`),
+        fields: buildFirestoreFields({
+          ...rsvpPayload,
+          note: compactString(note) || null,
+          visibility,
+          updatedAt: respondedAt
+        })
+      }
+    },
+    ...childIds.flatMap((childId) => {
+      const overrideId = `${user.uid}__${childId}`;
+      return [
+        { delete: getFirestoreDocumentName(`${gamePath}/rsvps/${overrideId}`) },
+        { delete: getFirestoreDocumentName(`${gamePath}/rsvpNotes/${overrideId}`) }
+      ];
+    })
+  ]);
+  return null;
+}
+
 function assertStaffRsvpManagementEvent(event: ParentScheduleEvent, user: AuthUser | null) {
   if (!event.isDbGame) {
     throw new Error('Availability opens after this event is tracked in the schedule.');
@@ -4091,6 +4159,50 @@ export async function submitParentScheduleRsvp(event: ParentScheduleEvent, user:
     }
     logScheduleWarning('Falling back to REST RSVP submit.', 'parent-rsvp-submit', error, { fallback: 'rest', teamId: event.teamId, gameId: event.id, childId: event.childId });
     return nativeSubmitRsvpForPlayer(event.teamId, event.id, user, event.childId, response, note, event.availabilityNoteVisibility === 'team' ? 'team' : 'admins');
+  }
+}
+
+export async function submitParentScheduleRsvpForChildren(events: ParentScheduleEvent[], user: AuthUser, response: Exclude<RsvpResponse, 'not_responded'>, note = '') {
+  const firstEvent = events[0];
+  if (!firstEvent) {
+    throw new Error('Select at least one child before submitting RSVP.');
+  }
+
+  const childIds = uniqueNonEmptyStrings(events.map((event) => (
+    event.teamId === firstEvent.teamId && event.id === firstEvent.id ? event.childId : ''
+  )));
+  if (childIds.length !== events.length) {
+    throw new Error('Family availability can only update children on the same event.');
+  }
+  if (events.some((event) => !event.isDbGame)) {
+    throw new Error('Availability opens after this event is tracked in the schedule.');
+  }
+  if (events.some((event) => event.isCancelled)) {
+    throw new Error('Cancelled events cannot be updated.');
+  }
+  if (events.some((event) => event.availabilityLocked)) {
+    throw new Error('Availability is locked for this event.');
+  }
+  if (events.some((event) => event.isLinkedParentChild !== true)) {
+    throw new Error('Family availability can only update children linked to your account.');
+  }
+  if (childIds.length === 1) {
+    return submitParentScheduleRsvp(firstEvent, user, response, note);
+  }
+
+  try {
+    return await withTimeout(Promise.resolve(submitRsvp(firstEvent.teamId, firstEvent.id, user.uid, {
+      displayName: user.displayName || user.email,
+      playerIds: childIds,
+      response,
+      note: compactString(note) || null
+    })), 'Family RSVP submit');
+  } catch (error) {
+    if (!isNativeRuntime()) {
+      throw error;
+    }
+    logScheduleWarning('Falling back to REST family RSVP submit.', 'parent-family-rsvp-submit', error, { fallback: 'rest', teamId: firstEvent.teamId, gameId: firstEvent.id, childIds });
+    return nativeSubmitRsvpForChildren(firstEvent.teamId, firstEvent.id, user, childIds, response, note, firstEvent.availabilityNoteVisibility === 'team' ? 'team' : 'admins');
   }
 }
 
