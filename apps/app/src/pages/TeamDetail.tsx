@@ -767,10 +767,12 @@ function RosterTab({
   const [status, setStatus] = useState<{ success: boolean; message: string } | null>(null);
   const [activePlayerLimit, setActivePlayerLimit] = useState<number>(rosterRenderLimits.activePlayers);
   const [inactivePlayerLimit, setInactivePlayerLimit] = useState<number>(rosterRenderLimits.inactivePlayers);
-  const activePlayerWindow = calculateRosterRenderWindow(model.players.length, activePlayerLimit, rosterRenderLimits.activePlayers);
-  const inactivePlayerWindow = calculateRosterRenderWindow(model.inactivePlayers.length, inactivePlayerLimit, rosterRenderLimits.inactivePlayers);
-  const visibleActivePlayers = model.players.slice(0, activePlayerWindow.visibleCount);
-  const visibleInactivePlayers = model.inactivePlayers.slice(0, inactivePlayerWindow.visibleCount);
+  const activePlayers = Array.isArray(model.players) ? model.players : [];
+  const inactivePlayers = Array.isArray(model.inactivePlayers) ? model.inactivePlayers : [];
+  const activePlayerWindow = calculateRosterRenderWindow(activePlayers.length, activePlayerLimit, rosterRenderLimits.activePlayers);
+  const inactivePlayerWindow = calculateRosterRenderWindow(inactivePlayers.length, inactivePlayerLimit, rosterRenderLimits.inactivePlayers);
+  const visibleActivePlayers = activePlayers.slice(0, activePlayerWindow.visibleCount);
+  const visibleInactivePlayers = inactivePlayers.slice(0, inactivePlayerWindow.visibleCount);
 
   async function togglePlayerActiveState(player: TeamDetailPlayer) {
     const action = player.active ? 'deactivate' : 'reactivate';
@@ -803,7 +805,7 @@ function RosterTab({
           <div className="text-sm font-black text-gray-950">Roster</div>
           <div className="mt-0.5 text-xs font-semibold text-gray-500">Player photos, numbers, linked-player shortcuts, and profile drill-in.</div>
         </div>
-        <span className="rounded-full bg-gray-100 px-2.5 py-1 text-xs font-black text-gray-700">{model.players.length} active</span>
+        <span className="rounded-full bg-gray-100 px-2.5 py-1 text-xs font-black text-gray-700">{activePlayers.length} active</span>
       </div>
       {status ? (
         <div className={`mt-3 rounded-xl border p-3 text-xs font-semibold ${status.success ? 'border-emerald-200 bg-emerald-50 text-emerald-700' : 'border-rose-200 bg-rose-50 text-rose-700'}`}>
@@ -813,9 +815,9 @@ function RosterTab({
       {model.canManageTeam && rosterInviteLoading ? <div className="mt-3 text-xs font-semibold text-gray-500">Loading parent invite status…</div> : null}
       {model.canManageTeam && rosterInviteError ? <div className="mt-3 text-xs font-black text-rose-700">{rosterInviteError}</div> : null}
       {model.canManageTeam ? <AddPlayerCard teamId={model.team.id} authUser={authUser} onCreated={onRefresh} /> : null}
-      {model.canManageTeam ? <RosterAiImportCard teamId={model.team.id} teamName={model.team.name} authUser={authUser} currentPlayers={[...model.players, ...model.inactivePlayers]} onImported={onRefresh} /> : null}
+      {model.canManageTeam ? <RosterAiImportCard teamId={model.team.id} teamName={model.team.name} authUser={authUser} currentPlayers={[...activePlayers, ...inactivePlayers]} onImported={onRefresh} /> : null}
       <div className="mt-3 grid gap-2 sm:grid-cols-2">
-        {model.players.length ? visibleActivePlayers.map((player) => <PlayerRow key={player.id} teamId={model.team.id} teamName={model.team.name} authUser={authUser} player={player} canManageTeam={model.canManageTeam} pending={pendingPlayerId === player.id} onToggleActive={togglePlayerActiveState} inviteSummary={rosterInviteSummaries[player.id]} onInviteCreated={onInviteCreated} />) : (
+        {activePlayers.length ? visibleActivePlayers.map((player) => <PlayerRow key={player.id} teamId={model.team.id} teamName={model.team.name} authUser={authUser} player={player} canManageTeam={model.canManageTeam} pending={pendingPlayerId === player.id} onToggleActive={togglePlayerActiveState} inviteSummary={rosterInviteSummaries[player.id]} onInviteCreated={onInviteCreated} />) : (
           <div className="rounded-xl border border-gray-200 bg-gray-50 p-4 text-sm font-semibold text-gray-500">No players have been added yet.</div>
         )}
       </div>
@@ -824,15 +826,15 @@ function RosterTab({
           Show {Math.min(rosterRenderLimits.activePlayers, activePlayerWindow.hiddenCount)} more active players
         </button>
       ) : null}
-      {model.canManageTeam ? <TrackingAdminCard teamId={model.team.id} authUser={authUser} players={model.players} trackingLoading={trackingLoading} trackingError={trackingError} trackingItems={trackingItems} onTrackingChanged={onTrackingChanged} /> : null}
-      {model.canManageTeam && model.inactivePlayers.length ? (
+      {model.canManageTeam ? <TrackingAdminCard teamId={model.team.id} authUser={authUser} players={activePlayers} trackingLoading={trackingLoading} trackingError={trackingError} trackingItems={trackingItems} onTrackingChanged={onTrackingChanged} /> : null}
+      {model.canManageTeam && inactivePlayers.length ? (
         <div className="mt-4 border-t border-gray-200 pt-4">
           <div className="flex items-center justify-between gap-3">
             <div>
               <div className="text-sm font-black text-gray-950">Inactive roster</div>
               <div className="mt-0.5 text-xs font-semibold text-gray-500">Inactive players stay attached to history and can be restored anytime.</div>
             </div>
-            <span className="rounded-full bg-gray-100 px-2.5 py-1 text-xs font-black text-gray-700">{model.inactivePlayers.length} inactive</span>
+            <span className="rounded-full bg-gray-100 px-2.5 py-1 text-xs font-black text-gray-700">{inactivePlayers.length} inactive</span>
           </div>
           <div className="mt-3 grid gap-2 sm:grid-cols-2">
             {visibleInactivePlayers.map((player) => <PlayerRow key={player.id} teamId={model.team.id} teamName={model.team.name} authUser={authUser} player={player} canManageTeam pending={pendingPlayerId === player.id} onToggleActive={togglePlayerActiveState} inviteSummary={rosterInviteSummaries[player.id]} onInviteCreated={onInviteCreated} />)}
@@ -2882,7 +2884,7 @@ function PlayerRow({
   }
 
   return (
-    <div data-testid={player.active ? 'roster-player-row' : 'inactive-roster-player-row'} className="rounded-xl border border-gray-200 bg-gray-50 p-3">
+    <div data-testid={player.active === false ? 'inactive-roster-player-row' : 'roster-player-row'} className="rounded-xl border border-gray-200 bg-gray-50 p-3">
       <div className="flex min-w-0 items-center gap-3">
         <Link to={`/players/${encodeURIComponent(teamId)}/${encodeURIComponent(player.id)}`} className="flex min-w-0 flex-1 items-center gap-3 transition hover:text-primary-700">
           <PlayerPhoto name={player.name} photoUrl={player.photoUrl} />
