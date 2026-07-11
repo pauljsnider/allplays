@@ -1684,6 +1684,38 @@ describe('ScheduleEventDetail assignments', () => {
     expect(scheduleServiceMocks.loadGameDayLiveEventsForApp).toHaveBeenNthCalledWith(2, 'team-1', 'game-2');
   });
 
+  it('preserves dirty game schedule edits when same-event score updates refresh the event object', async () => {
+    scheduleServiceMocks.loadParentScheduleEventDetail.mockResolvedValue({
+      events: [buildEvent({
+        isTeamAdmin: true,
+        canUpdateScore: true,
+        homeScore: 0,
+        awayScore: 0,
+        liveStatus: 'live'
+      })],
+      children: []
+    });
+    scheduleServiceMocks.loadHomeScoringPlayers.mockResolvedValue([]);
+    scheduleServiceMocks.loadGameDayLiveEventsForApp.mockResolvedValue([]);
+    scheduleServiceMocks.loadAutoFilledLineupDraftPreviewForApp.mockResolvedValue({ availablePlayers: [], goingPlayers: [], gamePlan: null });
+    scheduleServiceMocks.updateGameScore.mockResolvedValueOnce({ homeScore: 1, awayScore: 0 });
+    scheduleHubMocks.buildGameHubDestinations.mockReturnValue([]);
+
+    renderScheduleEventDetailWithRouteControls();
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Edit game' }));
+    fireEvent.change(screen.getByLabelText('Location'), { target: { value: 'Aux Gym' } });
+
+    const liveScoreEditor = await screen.findByTestId('live-score-editor');
+    fireEvent.click(within(liveScoreEditor).getByRole('button', { name: 'Home score up' }));
+    fireEvent.click(within(liveScoreEditor).getByRole('button', { name: 'Save score' }));
+
+    await waitFor(() => {
+      expect(scheduleServiceMocks.updateGameScore).toHaveBeenCalledWith('team-1', 'game-1', { homeScore: 1, awayScore: 0 }, auth.user);
+    });
+    expect((screen.getByLabelText('Location') as HTMLInputElement).value).toBe('Aux Gym');
+  });
+
   it('links staff scorekeepers from the app game hub to the standard tracker route', async () => {
     scheduleServiceMocks.loadParentScheduleEventDetail.mockResolvedValue({
       events: [buildEvent({

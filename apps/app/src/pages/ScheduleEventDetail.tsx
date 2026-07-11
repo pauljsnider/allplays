@@ -776,6 +776,32 @@ function buildGameFormFromEvent(event: ParentScheduleEvent): ScheduleGameFormInp
   };
 }
 
+function toScheduleEditDateKey(value: Date | string | number | null | undefined) {
+  if (value === null || value === undefined || value === '') return '';
+  const date = value instanceof Date ? value : new Date(value);
+  return Number.isNaN(date.getTime()) ? String(value) : date.toISOString();
+}
+
+function buildGameFormResetKey(event: ParentScheduleEvent) {
+  return [
+    event.eventKey,
+    event.opponent || '',
+    event.title || '',
+    toScheduleEditDateKey(event.date),
+    toScheduleEditDateKey(event.endDate),
+    event.location || '',
+    toScheduleEditDateKey(event.arrivalTime),
+    event.isHome === false ? 'away' : event.isHome === true ? 'home' : 'neutral',
+    event.notes || '',
+    event.statTrackerConfigId || '',
+    event.competitionType || 'league',
+    event.countsTowardSeasonRecord !== false ? 'counts' : 'exhibition',
+    event.opponentTeamId || '',
+    event.opponentTeamName || '',
+    event.opponentTeamPhoto || ''
+  ].join('\u001f');
+}
+
 function GameScheduleEditPanel({ auth, event }: { auth: AuthState; event: ParentScheduleEvent }) {
   const [open, setOpen] = useState(false);
   const [form, setForm] = useState<ScheduleGameFormInput>(() => buildGameFormFromEvent(event));
@@ -783,11 +809,12 @@ function GameScheduleEditPanel({ auth, event }: { auth: AuthState; event: Parent
   const [saving, setSaving] = useState(false);
   const [status, setStatus] = useState<{ tone: 'success' | 'error'; message: string } | null>(null);
   const [configError, setConfigError] = useState<string | null>(null);
+  const formResetKey = buildGameFormResetKey(event);
 
   useEffect(() => {
     setForm(buildGameFormFromEvent(event));
     setStatus(null);
-  }, [event, event.eventKey]);
+  }, [formResetKey]);
 
   useEffect(() => {
     if (!open || !auth.user) return;

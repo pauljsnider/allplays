@@ -6,7 +6,8 @@ describe('React app schedule event detail hook dependencies', () => {
     it('keeps event-driven editors and score autosave wired to current props', () => {
         const source = readFileSync(resolve('apps/app/src/pages/ScheduleEventDetail.tsx'), 'utf8');
 
-        expect(source).toContain('}, [event, event.eventKey]);');
+        expect(source).toContain('const formResetKey = buildGameFormResetKey(event);');
+        expect(source).toContain('}, [formResetKey]);');
         expect(source).toContain('}, [columns, event.id, event.teamId, roster])');
         expect(source).toContain('const saveScore = useCallback(async');
         expect(source).toContain('}, [auth.user, awayScore, event.id, event.teamId, homeScore, onScoreUpdated, savedAwayScore, savedHomeScore]);');
