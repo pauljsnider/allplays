@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import '@testing-library/jest-dom/vitest';
 import * as React from 'react';
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ensureStaffChatConversation, type ChatConversation, type ChatMessage } from '../../../lib/chatService';
@@ -646,7 +646,7 @@ describe('ChatWindow virtualization', () => {
       </MemoryRouter>
     );
 
-    fireEvent.click(screen.getByRole('button', { name: /Team chat/i }));
+    fireEvent.click(screen.getByRole('button', { name: /^Team chat$/ }));
     expect(screen.getByRole('dialog', { name: 'Conversations' })).toBeVisible();
 
     fireEvent.click(screen.getByRole('button', { name: 'Open photos and videos' }));
@@ -765,6 +765,65 @@ describe('ChatWindow deferred conversation hydration', () => {
 });
 
 describe('ChatWindow conversation switching', () => {
+  it('quick-switches an existing mobile conversation without opening the selector sheet', () => {
+    mockChatTeamState.conversations = [
+      { id: 'team', type: 'team', name: 'Team chat', participantIds: [], participantRoles: ['team'] },
+      { id: 'staff-conversation', type: 'group', name: 'Staff only', participantIds: ['coach-1'], participantRoles: ['staff'] },
+      { id: 'direct-parent', type: 'direct', name: 'Pat Parent', participantIds: ['parent-1'], participantRoles: ['parent'] },
+      { id: 'travel-group', type: 'group', name: 'Tournament travel', participantIds: ['coach-1', 'parent-1'], participantRoles: ['staff', 'parent'] }
+    ];
+
+    render(
+      <MemoryRouter>
+        <ChatWindow auth={auth} teamId="team-1" />
+      </MemoryRouter>
+    );
+
+    const quickSwitcher = screen.getByTestId('mobile-conversation-chips');
+    expect(quickSwitcher.classList.contains('overflow-x-auto')).toBe(true);
+    expect(within(quickSwitcher).getAllByRole('button')).toHaveLength(4);
+    expect(within(quickSwitcher).getByRole('button', { name: 'Switch to Team chat' })).toHaveAttribute('aria-pressed', 'true');
+    expect(within(quickSwitcher).getByRole('button', { name: 'Switch to Staff only' })).toHaveAttribute('aria-pressed', 'false');
+    expect(screen.queryByRole('dialog', { name: 'Conversations' })).toBeNull();
+
+    fireEvent.click(within(quickSwitcher).getByRole('button', { name: 'Switch to Staff only' }));
+
+    expect(mockChatTeamState.switchConversation).toHaveBeenCalledWith('staff-conversation');
+    expect(ensureStaffChatConversation).not.toHaveBeenCalled();
+    expect(mockChatSheetsState.openConversationSheet).not.toHaveBeenCalled();
+  });
+
+  it('creates and switches to Staff only from the mobile quick-switcher', async () => {
+    mockChatTeamState.conversations = [
+      { id: 'team', type: 'team', name: 'Team chat', participantIds: [], participantRoles: ['team'] }
+    ];
+    vi.mocked(ensureStaffChatConversation).mockResolvedValue({
+      id: 'staff-conversation',
+      type: 'group',
+      name: 'Staff only',
+      participantIds: [],
+      participantRoles: ['staff']
+    } as ChatConversation);
+
+    render(
+      <MemoryRouter>
+        <ChatWindow auth={auth} teamId="team-1" />
+      </MemoryRouter>
+    );
+
+    const quickSwitcher = screen.getByTestId('mobile-conversation-chips');
+    expect(screen.queryByRole('dialog', { name: 'Conversations' })).toBeNull();
+    fireEvent.click(within(quickSwitcher).getByRole('button', { name: 'Switch to Staff only' }));
+
+    await waitFor(() => {
+      expect(ensureStaffChatConversation).toHaveBeenCalledWith('team-1', auth.user, [
+        { id: 'team', type: 'team', name: 'Team chat', participantIds: [], participantRoles: ['team'] }
+      ]);
+    });
+    expect(mockChatTeamState.switchConversation).toHaveBeenCalledWith('staff-conversation');
+    expect(mockChatSheetsState.openConversationSheet).not.toHaveBeenCalled();
+  });
+
   it('keeps staff chat reachable from the conversation selector without audience-sheet staff routing', () => {
     mockChatSheetsState.showConversationSheet = true;
     mockChatTeamState.conversations = [

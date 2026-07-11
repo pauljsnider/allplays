@@ -1439,6 +1439,35 @@ export function ChatWindow({
             })}
           </div>
         ) : null}
+
+        {!isDesktopWeb && conversationSheetConversations.length > 1 ? (
+          <div
+            className="chat-mobile-conversation-chips mt-3 flex w-full max-w-full gap-2 overflow-x-auto pb-1"
+            aria-label="Quick conversation switcher"
+            data-testid="mobile-conversation-chips"
+          >
+            {conversationSheetConversations.map((conversation) => {
+              const active = conversation.id === effectiveConversationId;
+              const label = getConversationDisplayName(conversation, team || {});
+              return (
+                <button
+                  key={conversation.id}
+                  type="button"
+                  className={`shrink-0 rounded-full border px-3 py-1.5 text-xs font-black transition ${
+                    active
+                      ? 'border-primary-600 bg-primary-600 text-white shadow-sm'
+                      : 'border-gray-200 bg-white text-gray-700 hover:border-primary-200 hover:bg-primary-50 hover:text-primary-700'
+                  }`}
+                  onClick={() => handleConversationSelect(conversation.id)}
+                  aria-label={`Switch to ${label}`}
+                  aria-pressed={active}
+                >
+                  {label}
+                </button>
+              );
+            })}
+          </div>
+        ) : null}
       </section>
 
       {status ? <StatusBanner status={status} onClose={() => setStatus(null)} /> : null}
