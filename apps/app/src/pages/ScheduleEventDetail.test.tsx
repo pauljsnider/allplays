@@ -3048,6 +3048,33 @@ describe('ScheduleEventDetail staff RSVP overrides', () => {
     expect(screen.getByRole('button', { name: 'Hide responded players' }).getAttribute('aria-expanded')).toBe('true');
   });
 
+  it('uses the staff RSVP breakdown for both availability header and team tools summaries', async () => {
+    scheduleServiceMocks.loadParentScheduleEventDetail.mockResolvedValue({
+      events: [buildEvent({
+        isTeamAdmin: true,
+        isTeamRsvpReminderManager: true,
+        rsvpSummary: { going: 0, maybe: 0, notGoing: 0, notResponded: 1, total: 1 }
+      })],
+      children: []
+    });
+    scheduleServiceMocks.loadStaffScheduleRsvpBreakdown.mockResolvedValue({
+      grouped: {
+        going: [{ playerId: 'p1', playerName: 'Avery Smith', playerNumber: '1', response: 'going' }],
+        maybe: [],
+        not_going: [],
+        not_responded: [{ playerId: 'p4', playerName: 'Devon Lee', playerNumber: '4', response: 'not_responded' }]
+      },
+      counts: { going: 1, maybe: 0, notGoing: 0, notResponded: 1, total: 2 }
+    });
+
+    renderScheduleEventDetail();
+
+    await waitFor(() => {
+      expect(screen.getAllByText('1 going · 0 maybe · 0 out · 1 missing').length).toBeGreaterThanOrEqual(2);
+    });
+    expect(screen.queryByText('0 going · 0 maybe · 0 out · 1 missing')).toBeNull();
+  });
+
   it('lets staff override a responded player after expanding and refreshes the counts', async () => {
     scheduleServiceMocks.loadParentScheduleEventDetail.mockResolvedValue({
       events: [buildEvent({ isTeamAdmin: true, isTeamRsvpReminderManager: true })],

@@ -1049,13 +1049,14 @@ function AvailabilitySection({ event, rsvp, availabilityNote, onAvailabilityNote
   const staffRsvpLoader = useMemo(() => createStaffRsvpAvailabilityLoader(), [event.teamId, event.id]);
   const staffRsvp = useStaffRsvpBreakdown(staffRsvpLoader);
   const showTeamRsvpTools = event.isDbGame && Boolean(event.isTeamAdmin || event.isTeamRsvpReminderManager);
+  const availabilitySummary = showTeamRsvpTools ? (staffRsvp.breakdown?.counts || event.rsvpSummary) : event.rsvpSummary;
 
   return (
     <section className="app-card overflow-hidden p-0">
       <div className="flex items-start justify-between gap-3 border-b border-gray-100 px-3 py-2.5 sm:px-4">
         <div className="min-w-0">
           <h2 className="app-section-title">Availability</h2>
-          <div className="mt-0.5 text-xs font-semibold text-gray-500">{formatRsvpSummary(event.rsvpSummary)}</div>
+          <div className="mt-0.5 text-xs font-semibold text-gray-500">{formatRsvpSummary(availabilitySummary)}</div>
         </div>
         <span className={`mt-0.5 inline-flex min-h-6 flex-none items-center rounded-full border px-2 text-[11px] font-extrabold uppercase tracking-[0.04em] ${rsvpBadgeClasses[visibleRsvp]}`}>
           {rsvpLabels[visibleRsvp]}
@@ -1099,7 +1100,7 @@ function AvailabilitySection({ event, rsvp, availabilityNote, onAvailabilityNote
           <AttentionPanel items={attentionItems} onSelectSection={onSelectSection} />
         ) : null}
         {showTeamRsvpTools ? (
-          <TeamRsvpToolsDisclosure key={event.eventKey} summary={staffRsvp.breakdown?.counts || event.rsvpSummary}>
+          <TeamRsvpToolsDisclosure key={event.eventKey} summary={availabilitySummary}>
             <StaffRsvpBreakdownPanel
               breakdown={staffRsvp.breakdown}
               loading={staffRsvp.loading}
