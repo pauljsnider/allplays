@@ -113,9 +113,13 @@ const AUTH_STUB = `
 export function checkAuth(callback) {
     callback({ uid: 'user-1', email: 'coach@example.com', isAdmin: false });
 }
-export async function sendInviteEmail(email, code, type, context) {
-    globalThis.__rosterCsvEmails = globalThis.__rosterCsvEmails || [];
-    globalThis.__rosterCsvEmails.push({ email, code, type, context });
+`;
+
+const INVITE_EMAIL_STUB = `
+export async function queueInviteEmail(code) {
+    globalThis.__rosterCsvInviteEmails = globalThis.__rosterCsvInviteEmails || [];
+    globalThis.__rosterCsvInviteEmails.push({ code });
+    return { queued: true };
 }
 `;
 
@@ -223,6 +227,7 @@ async function mockEditRosterDependencies(page) {
     await page.route(/\/js\/db\.js(?:\?v=\d+)?$/, (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: DB_STUB }));
     await page.route(/\/js\/utils\.js(?:\?v=\d+)?$/, (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: UTILS_STUB }));
     await page.route(/\/js\/auth\.js(?:\?v=\d+)?$/, (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: AUTH_STUB }));
+    await page.route(/\/js\/invite-email\.js(?:\?v=\d+)?$/, (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: INVITE_EMAIL_STUB }));
     await page.route(/\/js\/team-access\.js(?:\?v=\d+)?$/, (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: TEAM_ACCESS_STUB }));
     await page.route(/\/js\/team-admin-banner\.js(?:\?v=\d+)?$/, (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: TEAM_ADMIN_BANNER_STUB }));
     await page.route(/\/js\/vendor\/firebase-app\.js(?:\?v=\d+)?$/, (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: FIREBASE_APP_STUB }));
@@ -334,7 +339,7 @@ test('CSV roster review saves family contacts and sends imported invitations', a
     expect(await page.evaluate(() => globalThis.__rosterCsvInvites || [])).toEqual([
         expect.objectContaining({ playerId: 'player-imported-1', email: 'pat@example.com', relation: 'Mother' })
     ]);
-    expect(await page.evaluate(() => globalThis.__rosterCsvEmails || [])).toEqual([
-        expect.objectContaining({ email: 'pat@example.com', code: 'INVITE123', type: 'parent' })
+    expect(await page.evaluate(() => globalThis.__rosterCsvInviteEmails || [])).toEqual([
+        { code: 'INVITE123' }
     ]);
 });
