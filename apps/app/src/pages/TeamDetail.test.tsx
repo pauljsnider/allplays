@@ -1077,7 +1077,7 @@ describe('TeamDetail', () => {
     expect(screen.getByText('1/1 done')).toBeTruthy();
     await waitFor(() => expect(teamDetailServiceMocks.loadTeamTrackingAdmin).toHaveBeenCalledWith('team-1', auth.user));
 
-    fireEvent.click(screen.getAllByRole('button', { name: 'Show players (1)' })[0]);
+    fireEvent.click(screen.getByRole('button', { name: 'Show players (1) for Waiver' }));
     fireEvent.click(screen.getByRole('button', { name: 'Open' }));
     await waitFor(() => expect(teamDetailServiceMocks.setPlayerTrackingStatusForApp).toHaveBeenCalledWith('team-1', auth.user, 'item-1', expect.objectContaining({ id: 'player-1', number: '9' }), true));
     expect(await screen.findByText('Pat Star marked done for Waiver.')).toBeTruthy();
@@ -1131,22 +1131,25 @@ describe('TeamDetail', () => {
         complete: playerIndex < itemIndex
       }))
     }));
-    teamDetailServiceMocks.loadParentTeamDetail.mockResolvedValue({
+    teamDetailServiceMocks.loadParentTeamDetail.mockImplementation(async (teamId: string) => ({
       ...model,
+      team: {
+        ...model.team,
+        id: teamId,
+        name: teamId === 'team-2' ? 'Tigers' : model.team.name
+      },
       canManageTeam: true,
       players: largePlayers,
       inactivePlayers,
       linkedPlayers: [largePlayers[0]]
-    });
+    }));
     teamDetailServiceMocks.loadTeamTrackingAdmin.mockResolvedValue(trackingItems);
 
-    render(
-      <MemoryRouter initialEntries={['/teams/team-1?tab=roster']}>
-        <Routes>
-          <Route path="/teams/:teamId" element={<TeamDetail auth={auth} />} />
-        </Routes>
-      </MemoryRouter>
+    const router = createMemoryRouter(
+      [{ path: '/teams/:teamId', element: <TeamDetail auth={auth} /> }],
+      { initialEntries: ['/teams/team-1?tab=roster'] }
     );
+    render(<RouterProvider router={router} />);
 
     expect(await screen.findByText('120 active')).toBeTruthy();
     expect(await screen.findByText('Checklist 8')).toBeTruthy();
@@ -1168,11 +1171,21 @@ describe('TeamDetail', () => {
     expect(screen.getAllByTestId('roster-player-row')).toHaveLength(64);
     expect(screen.getAllByTestId('inactive-roster-player-row')).toHaveLength(12);
 
-    fireEvent.click(screen.getAllByRole('button', { name: 'Show players (120)' })[0]);
+    expect(screen.getByRole('button', { name: 'Show players (120) for Checklist 8' })).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Show players (120) for Checklist 1' }));
 
     expect(await screen.findAllByTestId('tracking-status-row')).toHaveLength(rosterRenderLimits.trackingStatuses);
     expect(screen.getAllByRole('button', { name: 'Open' })).toHaveLength(rosterRenderLimits.trackingStatuses);
-    expect(screen.getByRole('button', { name: 'Show 24 more statuses' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Show 24 more statuses for Checklist 1' })).toBeTruthy();
+
+    await act(async () => {
+      await router.navigate('/teams/team-2?tab=roster');
+    });
+
+    expect(await screen.findByRole('heading', { name: 'Tigers' })).toBeTruthy();
+    expect(screen.getAllByTestId('roster-player-row')).toHaveLength(rosterRenderLimits.activePlayers);
+    expect(screen.getAllByTestId('inactive-roster-player-row')).toHaveLength(rosterRenderLimits.inactivePlayers);
+    expect(screen.queryAllByTestId('tracking-status-row')).toHaveLength(0);
   });
 
   it('links staff to the native awards studio from the team more tab', async () => {
