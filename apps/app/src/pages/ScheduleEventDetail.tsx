@@ -2334,6 +2334,7 @@ function GameWrapupPanel({ auth, event, onScoreUpdated, onWrapupCompleted }: {
     setStatus(null);
     let finalSummary = String(event.summary || '');
     let finalPracticeFeedItems = Array.isArray(event.practiceFeedItems) ? event.practiceFeedItems as PracticeFeedItem[] : [];
+    let liveBroadcastFailure = false;
 
     try {
       const scorePayload = await updateGameScore(event.teamId, event.id, { homeScore, awayScore }, auth.user);
@@ -2347,6 +2348,7 @@ function GameWrapupPanel({ auth, event, onScoreUpdated, onWrapupCompleted }: {
           const { publishLiveScoreUpdateEvent } = await loadScheduleGameDayService();
           await publishLiveScoreUpdateEvent(event.teamId, event.id, { homeScore: nextHomeScore, awayScore: nextAwayScore }, auth.user, previousScore);
         } catch (publishError) {
+          liveBroadcastFailure = true;
           console.warn('[schedule-event-detail] Wrap-up score saved but live play-by-play posting failed:', publishError);
         }
       }
@@ -2408,9 +2410,13 @@ function GameWrapupPanel({ auth, event, onScoreUpdated, onWrapupCompleted }: {
       }
 
       setStatus({
-        tone: aiFailure ? 'warning' : 'success',
-        message: aiFailure
-          ? 'Wrap-up saved. AI analysis failed, so you can retry by running wrap-up again.'
+        tone: aiFailure || liveBroadcastFailure ? 'warning' : 'success',
+        message: aiFailure && liveBroadcastFailure
+          ? 'Wrap-up saved, but the live score post and AI analysis failed. You can retry by running wrap-up again.'
+          : liveBroadcastFailure
+            ? 'Wrap-up saved, but the live score post failed. You can retry by running wrap-up again.'
+            : aiFailure
+              ? 'Wrap-up saved. AI analysis failed, so you can retry by running wrap-up again.'
           : shouldGenerateSummary
             ? `Wrap-up saved with ${finalPracticeFeedItems.length} practice focus ${finalPracticeFeedItems.length === 1 ? 'item' : 'items'}.`
             : shouldSendEmail

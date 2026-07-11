@@ -3889,6 +3889,35 @@ describe('ScheduleEventDetail wrap-up', () => {
     });
   });
 
+  it('warns when wrap-up saves but the live score post fails', async () => {
+    scheduleServiceMocks.loadParentScheduleEventDetail.mockResolvedValue({
+      events: [buildEvent({ isTeamStaff: true, canUpdateScore: true, homeScore: 51, awayScore: 47 })],
+      children: []
+    });
+    scheduleServiceMocks.updateGameScore.mockResolvedValue({ homeScore: 52, awayScore: 47 });
+    scheduleServiceMocks.publishLiveScoreUpdateEvent.mockRejectedValue(new Error('Live feed unavailable'));
+    scheduleServiceMocks.completeGameWrapupForApp.mockResolvedValue({ status: 'completed', liveStatus: 'completed' });
+    gameWrapupServiceMocks.generateGameWrapupArtifactsForApp.mockResolvedValue({
+      summary: 'Bears finished strong.',
+      practiceFeedItems: []
+    });
+
+    renderScheduleEventDetail();
+
+    await waitFor(() => {
+      expect(screen.getAllByRole('button', { name: 'Game' }).length).toBeGreaterThan(0);
+    });
+    fireEvent.click(screen.getAllByRole('button', { name: 'Game' })[0]);
+    fireEvent.click(screen.getByRole('button', { name: 'Post-game wrap-up' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Final home score up' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Complete wrap-up' }));
+
+    await waitFor(() => {
+      expect(screen.getByText('Wrap-up saved, but the live score post failed. You can retry by running wrap-up again.')).toBeTruthy();
+    });
+    expect(scheduleServiceMocks.completeGameWrapupForApp).toHaveBeenCalled();
+  });
+
   it('allows wrap-up to skip AI generation and still complete', async () => {
     scheduleServiceMocks.loadParentScheduleEventDetail.mockResolvedValue({
       events: [buildEvent({ isTeamStaff: true, canUpdateScore: true, homeScore: 51, awayScore: 47 })],
