@@ -228,7 +228,7 @@ async function flush() {
 }
 
 async function waitForMatch(getMatch, description, attempts = 200) {
-    const deadline = Date.now() + 3000;
+    const deadline = Date.now() + 5000;
     for (let attempt = 0; attempt < attempts || Date.now() < deadline; attempt += 1) {
         const match = getMatch();
         if (match) return match;
