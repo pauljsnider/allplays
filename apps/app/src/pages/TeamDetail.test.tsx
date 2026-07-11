@@ -2,7 +2,7 @@
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { createMemoryRouter, MemoryRouter, Route, RouterProvider, Routes } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { TeamDetail } from './TeamDetail';
+import { calculateRosterRenderWindow, rosterRenderLimits, TeamDetail } from './TeamDetail';
 import type { AuthState } from '../lib/types';
 
 const teamDetailServiceMocks = vi.hoisted(() => ({
@@ -172,6 +172,50 @@ function createDeferred<T>() {
   });
   return { promise, resolve };
 }
+
+describe('calculateRosterRenderWindow', () => {
+  it('bounds the first active roster page and advances by page size', () => {
+    expect(calculateRosterRenderWindow(120, rosterRenderLimits.activePlayers, rosterRenderLimits.activePlayers)).toEqual({
+      visibleCount: 32,
+      hiddenCount: 88,
+      hasMore: true,
+      nextLimit: 64
+    });
+  });
+
+  it('caps show-more state at the total row count', () => {
+    expect(calculateRosterRenderWindow(120, 96, rosterRenderLimits.activePlayers)).toEqual({
+      visibleCount: 96,
+      hiddenCount: 24,
+      hasMore: true,
+      nextLimit: 120
+    });
+  });
+
+  it('uses the smaller inactive roster page size', () => {
+    expect(calculateRosterRenderWindow(11, rosterRenderLimits.inactivePlayers, rosterRenderLimits.inactivePlayers)).toEqual({
+      visibleCount: 8,
+      hiddenCount: 3,
+      hasMore: true,
+      nextLimit: 11
+    });
+  });
+
+  it('keeps collapsed tracking item statuses at zero rows until expanded', () => {
+    expect(calculateRosterRenderWindow(120, 0, rosterRenderLimits.trackingStatuses)).toEqual({
+      visibleCount: 0,
+      hiddenCount: 120,
+      hasMore: true,
+      nextLimit: 24
+    });
+    expect(calculateRosterRenderWindow(120, 0, 0)).toEqual({
+      visibleCount: 0,
+      hiddenCount: 120,
+      hasMore: true,
+      nextLimit: 0
+    });
+  });
+});
 
 describe('TeamDetail', () => {
   beforeEach(() => {
@@ -1033,6 +1077,7 @@ describe('TeamDetail', () => {
     expect(screen.getByText('1/1 done')).toBeTruthy();
     await waitFor(() => expect(teamDetailServiceMocks.loadTeamTrackingAdmin).toHaveBeenCalledWith('team-1', auth.user));
 
+    fireEvent.click(screen.getAllByRole('button', { name: 'Show players (1)' })[0]);
     fireEvent.click(screen.getByRole('button', { name: 'Open' }));
     await waitFor(() => expect(teamDetailServiceMocks.setPlayerTrackingStatusForApp).toHaveBeenCalledWith('team-1', auth.user, 'item-1', expect.objectContaining({ id: 'player-1', number: '9' }), true));
     expect(await screen.findByText('Pat Star marked done for Waiver.')).toBeTruthy();
@@ -1048,6 +1093,86 @@ describe('TeamDetail', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Archive' }));
     await waitFor(() => expect(teamDetailServiceMocks.archiveTeamTrackingItemForApp).toHaveBeenCalledWith('team-1', auth.user, 'item-1'));
+  });
+
+  it('bounds initial large roster and tracking matrix rows while keeping summaries visible', async () => {
+    const largePlayers = Array.from({ length: 120 }, (_, index) => ({
+      id: `player-${index + 1}`,
+      name: `Player ${index + 1}`,
+      number: String(index + 1),
+      photoUrl: null,
+      position: 'Player',
+      isLinked: index === 0,
+      active: true
+    }));
+    const inactivePlayers = Array.from({ length: 12 }, (_, index) => ({
+      id: `inactive-${index + 1}`,
+      name: `Inactive ${index + 1}`,
+      number: String(index + 1),
+      photoUrl: null,
+      position: 'Player',
+      isLinked: false,
+      active: false
+    }));
+    const trackingItems = Array.from({ length: 8 }, (_, itemIndex) => ({
+      id: `item-${itemIndex + 1}`,
+      name: `Checklist ${itemIndex + 1}`,
+      description: '',
+      visibility: 'public' as const,
+      status: 'active' as const,
+      active: true,
+      archived: false,
+      completionSummary: { total: 120, complete: itemIndex, incomplete: 120 - itemIndex },
+      playerStatuses: largePlayers.map((player, playerIndex) => ({
+        playerId: player.id,
+        playerName: player.name,
+        playerNumber: player.number,
+        photoUrl: null,
+        complete: playerIndex < itemIndex
+      }))
+    }));
+    teamDetailServiceMocks.loadParentTeamDetail.mockResolvedValue({
+      ...model,
+      canManageTeam: true,
+      players: largePlayers,
+      inactivePlayers,
+      linkedPlayers: [largePlayers[0]]
+    });
+    teamDetailServiceMocks.loadTeamTrackingAdmin.mockResolvedValue(trackingItems);
+
+    render(
+      <MemoryRouter initialEntries={['/teams/team-1?tab=roster']}>
+        <Routes>
+          <Route path="/teams/:teamId" element={<TeamDetail auth={auth} />} />
+        </Routes>
+      </MemoryRouter>
+    );
+
+    expect(await screen.findByText('120 active')).toBeTruthy();
+    expect(await screen.findByText('Checklist 8')).toBeTruthy();
+    expect(screen.getAllByTestId('roster-player-row')).toHaveLength(rosterRenderLimits.activePlayers);
+    expect(screen.getAllByTestId('inactive-roster-player-row')).toHaveLength(rosterRenderLimits.inactivePlayers);
+    expect(screen.queryAllByTestId('tracking-status-row')).toHaveLength(0);
+    expect(screen.getAllByText(/\/120 done$/)).toHaveLength(8);
+    expect(
+      screen.getAllByTestId('roster-player-row').length
+      + screen.getAllByTestId('inactive-roster-player-row').length
+      + screen.queryAllByTestId('tracking-status-row').length
+    ).toBeLessThan(80);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Show 32 more active players' }));
+    expect(screen.getAllByTestId('roster-player-row')).toHaveLength(64);
+    expect(screen.getAllByTestId('inactive-roster-player-row')).toHaveLength(rosterRenderLimits.inactivePlayers);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Show 4 more inactive players' }));
+    expect(screen.getAllByTestId('roster-player-row')).toHaveLength(64);
+    expect(screen.getAllByTestId('inactive-roster-player-row')).toHaveLength(12);
+
+    fireEvent.click(screen.getAllByRole('button', { name: 'Show players (120)' })[0]);
+
+    expect(await screen.findAllByTestId('tracking-status-row')).toHaveLength(rosterRenderLimits.trackingStatuses);
+    expect(screen.getAllByRole('button', { name: 'Open' })).toHaveLength(rosterRenderLimits.trackingStatuses);
+    expect(screen.getByRole('button', { name: 'Show 24 more statuses' })).toBeTruthy();
   });
 
   it('links staff to the native awards studio from the team more tab', async () => {

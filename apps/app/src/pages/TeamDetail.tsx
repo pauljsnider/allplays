@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type FormEvent } from 'react';
+import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
 import { Link, Navigate, useLocation, useNavigate, useParams } from 'react-router-dom';
 import type { LucideIcon } from 'lucide-react';
 import {
@@ -47,6 +47,24 @@ type RosterAiImportPreviewRow = import('../lib/rosterAiImport').RosterAiImportPr
 
 let rosterAiImportModulePromise: Promise<RosterAiImportModule> | null = null;
 const initialStandingsRowLimit = 5;
+export const rosterRenderLimits = {
+  activePlayers: 32,
+  inactivePlayers: 8,
+  trackingStatuses: 24
+} as const;
+
+export function calculateRosterRenderWindow(totalCount: number, requestedLimit: number, pageSize: number) {
+  const safeTotal = Math.max(0, totalCount);
+  const safePageSize = Math.max(0, pageSize);
+  const safeRequestedLimit = Math.max(0, requestedLimit);
+  const visibleCount = Math.min(safeTotal, safeRequestedLimit);
+  return {
+    visibleCount,
+    hiddenCount: Math.max(0, safeTotal - visibleCount),
+    hasMore: safeTotal > visibleCount,
+    nextLimit: Math.min(safeTotal, visibleCount + safePageSize)
+  };
+}
 
 const tabs: Array<{ id: TeamTab; label: string; icon: LucideIcon }> = [
   { id: 'overview', label: 'Overview', icon: Trophy },
@@ -101,6 +119,24 @@ export function TeamDetail({ auth }: { auth: AuthState }) {
   const [detailCollectionsLoading, setDetailCollectionsLoading] = useState(false);
   const [detailCollectionsError, setDetailCollectionsError] = useState('');
   const [detailCollectionsReloadVersion, setDetailCollectionsReloadVersion] = useState(0);
+  const authUserRef = useRef(auth.user);
+  const activeTabRef = useRef(activeTab);
+  const detailCollectionsLoadingRef = useRef(detailCollectionsLoading);
+  const staffPermissionsLoadingRef = useRef(staffPermissionsLoading);
+  const insightsLoadingRef = useRef(insightsLoading);
+  const sponsorsLoadingRef = useRef(sponsorsLoading);
+  const hasTeamModel = Boolean(model);
+  const canManageTeam = Boolean(model?.canManageTeam);
+  const hasStaffPermissions = Boolean(model?.staffPermissions);
+
+  useEffect(() => {
+    authUserRef.current = auth.user;
+    activeTabRef.current = activeTab;
+    detailCollectionsLoadingRef.current = detailCollectionsLoading;
+    staffPermissionsLoadingRef.current = staffPermissionsLoading;
+    insightsLoadingRef.current = insightsLoading;
+    sponsorsLoadingRef.current = sponsorsLoading;
+  });
 
   function navigateToTab(nextTab: TeamTab) {
     if (nextTab === activeTab) return;
@@ -126,10 +162,10 @@ export function TeamDetail({ auth }: { auth: AuthState }) {
       setLoading(true);
       setError(null);
       try {
-        const shouldHydrateOverviewCollections = activeTab === 'overview';
+        const shouldHydrateOverviewCollections = activeTabRef.current === 'overview';
         const nextModel = shouldHydrateOverviewCollections
-          ? await loadParentTeamDetail(teamId, auth.user, { includeDeferredData: false })
-          : await loadParentTeamDetailBootstrap(teamId, auth.user);
+          ? await loadParentTeamDetail(teamId, authUserRef.current, { includeDeferredData: false })
+          : await loadParentTeamDetailBootstrap(teamId, authUserRef.current);
         if (!cancelled) {
           setModel(nextModel);
           setDetailCollectionsLoaded(shouldHydrateOverviewCollections);
@@ -191,11 +227,11 @@ export function TeamDetail({ auth }: { auth: AuthState }) {
   useEffect(() => {
     let cancelled = false;
     async function loadDeferredTeamCollections() {
-      if (!teamId || !model || detailCollectionsLoaded || detailCollectionsLoading || detailCollectionsError || (activeTab !== 'schedule' && activeTab !== 'more')) return;
+      if (!teamId || !hasTeamModel || detailCollectionsLoaded || detailCollectionsLoadingRef.current || detailCollectionsError || (activeTab !== 'schedule' && activeTab !== 'more')) return;
       setDetailCollectionsLoading(true);
       setDetailCollectionsError('');
       try {
-        const nextModel = await loadParentTeamDetail(teamId, auth.user, { includeDeferredData: false });
+        const nextModel = await loadParentTeamDetail(teamId, authUserRef.current, { includeDeferredData: false });
         if (!cancelled) {
           setModel((currentModel) => currentModel ? {
             ...nextModel,
@@ -219,16 +255,16 @@ export function TeamDetail({ auth }: { auth: AuthState }) {
     return () => {
       cancelled = true;
     };
-  }, [activeTab, authUserId, detailCollectionsError, detailCollectionsLoaded, detailCollectionsReloadVersion, Boolean(model), teamId]);
+  }, [activeTab, authUserId, detailCollectionsError, detailCollectionsLoaded, detailCollectionsReloadVersion, hasTeamModel, teamId]);
 
   useEffect(() => {
     let cancelled = false;
     async function loadStaffPermissionsForMoreTab() {
-      if (!teamId || activeTab !== 'more' || !model?.canManageTeam || model.staffPermissions || staffPermissionsLoading) return;
+      if (!teamId || activeTab !== 'more' || !canManageTeam || hasStaffPermissions || staffPermissionsLoadingRef.current) return;
       setStaffPermissionsLoading(true);
       setStaffPermissionsError('');
       try {
-        const staffPermissions = await loadTeamStaffPermissions(teamId, auth.user);
+        const staffPermissions = await loadTeamStaffPermissions(teamId, authUserRef.current);
         if (!cancelled) {
           setModel((currentModel) => currentModel ? { ...currentModel, staffPermissions } : currentModel);
         }
@@ -243,16 +279,16 @@ export function TeamDetail({ auth }: { auth: AuthState }) {
     return () => {
       cancelled = true;
     };
-  }, [activeTab, authUserId, model?.canManageTeam, model?.staffPermissions, teamId]);
+  }, [activeTab, authUserId, canManageTeam, hasStaffPermissions, teamId]);
 
   useEffect(() => {
     let cancelled = false;
     async function loadInsightsForTab() {
-      if (!teamId || activeTab !== 'insights' || !model || insightsLoaded || insightsLoading) return;
+      if (!teamId || activeTab !== 'insights' || !hasTeamModel || insightsLoaded || insightsLoadingRef.current) return;
       setInsightsLoading(true);
       setInsightsError('');
       try {
-        const insights = await loadTeamDetailInsights(teamId, auth.user);
+        const insights = await loadTeamDetailInsights(teamId, authUserRef.current);
         if (!cancelled) {
           setModel((currentModel) => currentModel ? { ...currentModel, ...insights } : currentModel);
           setInsightsLoaded(true);
@@ -268,12 +304,12 @@ export function TeamDetail({ auth }: { auth: AuthState }) {
     return () => {
       cancelled = true;
     };
-  }, [activeTab, authUserId, insightsLoaded, Boolean(model), teamId]);
+  }, [activeTab, authUserId, hasTeamModel, insightsLoaded, teamId]);
 
   useEffect(() => {
     let cancelled = false;
     async function loadSponsorsForMoreTab() {
-      if (!teamId || activeTab !== 'more' || !model || sponsorsLoaded || sponsorsLoading) return;
+      if (!teamId || activeTab !== 'more' || !hasTeamModel || sponsorsLoaded || sponsorsLoadingRef.current) return;
       setSponsorsLoading(true);
       setSponsorsError('');
       try {
@@ -293,7 +329,7 @@ export function TeamDetail({ auth }: { auth: AuthState }) {
     return () => {
       cancelled = true;
     };
-  }, [activeTab, Boolean(model), sponsorsLoaded, teamId]);
+  }, [activeTab, hasTeamModel, sponsorsLoaded, teamId]);
 
   useEffect(() => {
     let cancelled = false;
@@ -701,7 +737,7 @@ function StandingsSection({ model }: { model: TeamDetailModel }) {
 
 function ScheduleTab({ model, auth, onOpenStatTrackerConfigs }: { model: TeamDetailModel; auth: AuthState; onOpenStatTrackerConfigs: () => void }) {
   const events = [...model.upcomingEvents.slice(0, 8), ...model.recentResults.slice(0, 3)];
-  const reminderPreviewLoader = useMemo(() => createStaffRsvpReminderPreviewLoader(), [model.team.id]);
+  const reminderPreviewLoader = useMemo(() => createStaffRsvpReminderPreviewLoader(), []);
   return (
     <section className="app-card p-4">
       <div className="flex items-center justify-between gap-3">
@@ -747,6 +783,14 @@ function RosterTab({
 }) {
   const [pendingPlayerId, setPendingPlayerId] = useState('');
   const [status, setStatus] = useState<{ success: boolean; message: string } | null>(null);
+  const [activePlayerLimit, setActivePlayerLimit] = useState<number>(rosterRenderLimits.activePlayers);
+  const [inactivePlayerLimit, setInactivePlayerLimit] = useState<number>(rosterRenderLimits.inactivePlayers);
+  const activePlayers = Array.isArray(model.players) ? model.players : [];
+  const inactivePlayers = Array.isArray(model.inactivePlayers) ? model.inactivePlayers : [];
+  const activePlayerWindow = calculateRosterRenderWindow(activePlayers.length, activePlayerLimit, rosterRenderLimits.activePlayers);
+  const inactivePlayerWindow = calculateRosterRenderWindow(inactivePlayers.length, inactivePlayerLimit, rosterRenderLimits.inactivePlayers);
+  const visibleActivePlayers = activePlayers.slice(0, activePlayerWindow.visibleCount);
+  const visibleInactivePlayers = inactivePlayers.slice(0, inactivePlayerWindow.visibleCount);
 
   async function togglePlayerActiveState(player: TeamDetailPlayer) {
     const action = player.active ? 'deactivate' : 'reactivate';
@@ -779,7 +823,7 @@ function RosterTab({
           <div className="text-sm font-black text-gray-950">Roster</div>
           <div className="mt-0.5 text-xs font-semibold text-gray-500">Player photos, numbers, linked-player shortcuts, and profile drill-in.</div>
         </div>
-        <span className="rounded-full bg-gray-100 px-2.5 py-1 text-xs font-black text-gray-700">{model.players.length} active</span>
+        <span className="rounded-full bg-gray-100 px-2.5 py-1 text-xs font-black text-gray-700">{activePlayers.length} active</span>
       </div>
       {status ? (
         <div className={`mt-3 rounded-xl border p-3 text-xs font-semibold ${status.success ? 'border-emerald-200 bg-emerald-50 text-emerald-700' : 'border-rose-200 bg-rose-50 text-rose-700'}`}>
@@ -789,25 +833,35 @@ function RosterTab({
       {model.canManageTeam && rosterInviteLoading ? <div className="mt-3 text-xs font-semibold text-gray-500">Loading parent invite status…</div> : null}
       {model.canManageTeam && rosterInviteError ? <div className="mt-3 text-xs font-black text-rose-700">{rosterInviteError}</div> : null}
       {model.canManageTeam ? <AddPlayerCard teamId={model.team.id} authUser={authUser} onCreated={onRefresh} /> : null}
-      {model.canManageTeam ? <RosterAiImportCard teamId={model.team.id} teamName={model.team.name} authUser={authUser} currentPlayers={[...model.players, ...model.inactivePlayers]} onImported={onRefresh} /> : null}
+      {model.canManageTeam ? <RosterAiImportCard teamId={model.team.id} teamName={model.team.name} authUser={authUser} currentPlayers={[...activePlayers, ...inactivePlayers]} onImported={onRefresh} /> : null}
       <div className="mt-3 grid gap-2 sm:grid-cols-2">
-        {model.players.length ? model.players.map((player) => <PlayerRow key={player.id} teamId={model.team.id} teamName={model.team.name} authUser={authUser} player={player} canManageTeam={model.canManageTeam} pending={pendingPlayerId === player.id} onToggleActive={togglePlayerActiveState} inviteSummary={rosterInviteSummaries[player.id]} onInviteCreated={onInviteCreated} />) : (
+        {activePlayers.length ? visibleActivePlayers.map((player) => <PlayerRow key={player.id} teamId={model.team.id} teamName={model.team.name} authUser={authUser} player={player} canManageTeam={model.canManageTeam} pending={pendingPlayerId === player.id} onToggleActive={togglePlayerActiveState} inviteSummary={rosterInviteSummaries[player.id]} onInviteCreated={onInviteCreated} />) : (
           <div className="rounded-xl border border-gray-200 bg-gray-50 p-4 text-sm font-semibold text-gray-500">No players have been added yet.</div>
         )}
       </div>
-      {model.canManageTeam ? <TrackingAdminCard teamId={model.team.id} authUser={authUser} players={model.players} trackingLoading={trackingLoading} trackingError={trackingError} trackingItems={trackingItems} onTrackingChanged={onTrackingChanged} /> : null}
-      {model.canManageTeam && model.inactivePlayers.length ? (
+      {activePlayerWindow.hasMore ? (
+        <button type="button" className="secondary-button mt-3 !min-h-9 text-xs" onClick={() => setActivePlayerLimit(activePlayerWindow.nextLimit)}>
+          Show {Math.min(rosterRenderLimits.activePlayers, activePlayerWindow.hiddenCount)} more active players
+        </button>
+      ) : null}
+      {model.canManageTeam ? <TrackingAdminCard teamId={model.team.id} authUser={authUser} players={activePlayers} trackingLoading={trackingLoading} trackingError={trackingError} trackingItems={trackingItems} onTrackingChanged={onTrackingChanged} /> : null}
+      {model.canManageTeam && inactivePlayers.length ? (
         <div className="mt-4 border-t border-gray-200 pt-4">
           <div className="flex items-center justify-between gap-3">
             <div>
               <div className="text-sm font-black text-gray-950">Inactive roster</div>
               <div className="mt-0.5 text-xs font-semibold text-gray-500">Inactive players stay attached to history and can be restored anytime.</div>
             </div>
-            <span className="rounded-full bg-gray-100 px-2.5 py-1 text-xs font-black text-gray-700">{model.inactivePlayers.length} inactive</span>
+            <span className="rounded-full bg-gray-100 px-2.5 py-1 text-xs font-black text-gray-700">{inactivePlayers.length} inactive</span>
           </div>
           <div className="mt-3 grid gap-2 sm:grid-cols-2">
-            {model.inactivePlayers.map((player) => <PlayerRow key={player.id} teamId={model.team.id} teamName={model.team.name} authUser={authUser} player={player} canManageTeam pending={pendingPlayerId === player.id} onToggleActive={togglePlayerActiveState} inviteSummary={rosterInviteSummaries[player.id]} onInviteCreated={onInviteCreated} />)}
+            {visibleInactivePlayers.map((player) => <PlayerRow key={player.id} teamId={model.team.id} teamName={model.team.name} authUser={authUser} player={player} canManageTeam pending={pendingPlayerId === player.id} onToggleActive={togglePlayerActiveState} inviteSummary={rosterInviteSummaries[player.id]} onInviteCreated={onInviteCreated} />)}
           </div>
+          {inactivePlayerWindow.hasMore ? (
+            <button type="button" className="secondary-button mt-3 !min-h-9 text-xs" onClick={() => setInactivePlayerLimit(inactivePlayerWindow.nextLimit)}>
+              Show {Math.min(rosterRenderLimits.inactivePlayers, inactivePlayerWindow.hiddenCount)} more inactive players
+            </button>
+          ) : null}
         </div>
       ) : null}
     </section>
@@ -1247,6 +1301,8 @@ function TrackingAdminCard({
   const [submitting, setSubmitting] = useState(false);
   const [busyKey, setBusyKey] = useState('');
   const [statusMessage, setStatusMessage] = useState<{ success: boolean; message: string } | null>(null);
+  const [expandedStatusItemIds, setExpandedStatusItemIds] = useState<Set<string>>(() => new Set());
+  const [statusLimits, setStatusLimits] = useState<Record<string, number>>({});
 
   const visibleItems = trackingItems.filter((item) => showArchived || item.status !== 'archived');
 
@@ -1317,6 +1373,19 @@ function TrackingAdminCard({
     }
   }
 
+  function toggleStatusRows(itemId: string) {
+    setExpandedStatusItemIds((current) => {
+      const next = new Set(current);
+      if (next.has(itemId)) {
+        next.delete(itemId);
+      } else {
+        next.add(itemId);
+      }
+      return next;
+    });
+    setStatusLimits((current) => current[itemId] ? current : { ...current, [itemId]: rosterRenderLimits.trackingStatuses });
+  }
+
   return (
     <div className="mt-4 rounded-xl border border-primary-100 bg-primary-50 p-3">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
@@ -1367,7 +1436,11 @@ function TrackingAdminCard({
       {trackingLoading ? <div className="mt-3 text-xs font-semibold text-gray-500">Loading tracking items…</div> : null}
       {trackingError ? <div className="mt-3 text-xs font-black text-rose-700">{trackingError}</div> : null}
       <div className="mt-3 space-y-3">
-        {visibleItems.length ? visibleItems.map((item) => (
+        {visibleItems.length ? visibleItems.map((item) => {
+          const statusRowsExpanded = expandedStatusItemIds.has(item.id);
+          const statusWindow = calculateRosterRenderWindow(item.playerStatuses.length, statusRowsExpanded ? (statusLimits[item.id] ?? rosterRenderLimits.trackingStatuses) : 0, rosterRenderLimits.trackingStatuses);
+          const visibleStatuses = item.playerStatuses.slice(0, statusWindow.visibleCount);
+          return (
           <div key={item.id} className="rounded-xl border border-white/80 bg-white p-3">
             <div className="flex flex-wrap items-start justify-between gap-2">
               <div>
@@ -1380,13 +1453,17 @@ function TrackingAdminCard({
                 </div>
               </div>
               <div className="flex flex-wrap gap-2">
+                <button type="button" className="secondary-button !min-h-8 text-xs" onClick={() => toggleStatusRows(item.id)} aria-expanded={statusRowsExpanded} aria-controls={`tracking-statuses-${item.id}`}>
+                  {statusRowsExpanded ? 'Hide players' : `Show players (${item.playerStatuses.length})`}
+                </button>
                 <button type="button" className="secondary-button !min-h-8 text-xs" onClick={() => beginEdit(item)} disabled={submitting || Boolean(busyKey)}>Edit</button>
                 {item.status === 'active' ? <button type="button" className="secondary-button !min-h-8 text-xs !border-rose-200 !bg-rose-50 !text-rose-700" onClick={() => void archiveItem(item)} disabled={submitting || Boolean(busyKey)}>{busyKey === `archive:${item.id}` ? 'Archiving…' : 'Archive'}</button> : null}
               </div>
             </div>
-            <div className="mt-3 grid gap-2 sm:grid-cols-2">
-              {item.playerStatuses.length ? item.playerStatuses.map((playerStatus) => (
-                <div key={`${item.id}:${playerStatus.playerId}`} className="flex items-center justify-between gap-3 rounded-lg border border-gray-200 bg-gray-50 px-3 py-2">
+            {statusRowsExpanded ? (
+              <div id={`tracking-statuses-${item.id}`} className="mt-3 grid gap-2 sm:grid-cols-2">
+              {item.playerStatuses.length ? visibleStatuses.map((playerStatus) => (
+                <div key={`${item.id}:${playerStatus.playerId}`} data-testid="tracking-status-row" className="flex items-center justify-between gap-3 rounded-lg border border-gray-200 bg-gray-50 px-3 py-2">
                   <div className="min-w-0 flex items-center gap-3">
                     <PlayerPhoto name={playerStatus.playerName} photoUrl={playerStatus.photoUrl} small />
                     <div className="min-w-0">
@@ -1399,9 +1476,16 @@ function TrackingAdminCard({
                   </button>
                 </div>
               )) : <div className="rounded-xl border border-dashed border-gray-300 bg-gray-50 p-3 text-xs font-semibold text-gray-500">Add active roster players to manage statuses here.</div>}
+              {statusWindow.hasMore ? (
+                <button type="button" className="secondary-button !min-h-9 text-xs sm:col-span-2" onClick={() => setStatusLimits((current) => ({ ...current, [item.id]: statusWindow.nextLimit }))}>
+                  Show {Math.min(rosterRenderLimits.trackingStatuses, statusWindow.hiddenCount)} more statuses
+                </button>
+              ) : null}
             </div>
+            ) : null}
           </div>
-        )) : !trackingLoading ? <div className="rounded-xl border border-gray-200 bg-gray-50 p-4 text-sm font-semibold text-gray-500">No tracking items found.</div> : null}
+        );
+        }) : !trackingLoading ? <div className="rounded-xl border border-gray-200 bg-gray-50 p-4 text-sm font-semibold text-gray-500">No tracking items found.</div> : null}
       </div>
     </div>
   );
@@ -2818,7 +2902,7 @@ function PlayerRow({
   }
 
   return (
-    <div className="rounded-xl border border-gray-200 bg-gray-50 p-3">
+    <div data-testid={player.active === false ? 'inactive-roster-player-row' : 'roster-player-row'} className="rounded-xl border border-gray-200 bg-gray-50 p-3">
       <div className="flex min-w-0 items-center gap-3">
         <Link to={`/players/${encodeURIComponent(teamId)}/${encodeURIComponent(player.id)}`} className="flex min-w-0 flex-1 items-center gap-3 transition hover:text-primary-700">
           <PlayerPhoto name={player.name} photoUrl={player.photoUrl} />
