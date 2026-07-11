@@ -201,8 +201,8 @@ export function canAccessNativeCameraCapture({ user, team, game, rsvp = null }) 
     const adminEmails = normalizeStringSet(team.adminEmails);
     if (userEmail && adminEmails.has(userEmail)) return true;
     const publicReadableGame = canReadPublicGameDocument(team, game);
+    if (hasStreamTeamAccess(user, team, game, rsvp)) return true;
     if (publicReadableGame && hasSelectedVideographerGrant(user, team)) return true;
-    if (publicReadableGame && hasStreamTeamAccess(user, team, game, rsvp)) return true;
 
     const approvedUidFields = [
         team.mediaContributorUids,
@@ -238,8 +238,9 @@ export function canSaveBroadcastSetupSession({ user, team, game, rsvp = null }) 
     const userEmail = typeof user.email === 'string' ? user.email.trim().toLowerCase() : '';
     if (userEmail && normalizeStringSet(team.adminEmails).has(userEmail)) return true;
 
-    return canReadPublicGameDocument(team, game) &&
-        (hasSelectedVideographerGrant(user, team) || hasStreamTeamAccess(user, team, game, rsvp));
+    if (hasStreamTeamAccess(user, team, game, rsvp)) return true;
+
+    return canReadPublicGameDocument(team, game) && hasSelectedVideographerGrant(user, team);
 }
 
 export function resolveBroadcastStreamControlState({

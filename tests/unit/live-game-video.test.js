@@ -613,6 +613,29 @@ describe('native camera capture authorization', () => {
         })).toBe(false);
     });
 
+    it('allows selected streaming helpers to set up private scheduled game broadcasts', () => {
+        const selectedStreamingTeam = {
+            ownerId: 'owner-1',
+            adminEmails: [],
+            teamPermissions: {
+                streaming: { mode: 'selected', memberIds: ['stream-score-1'] }
+            }
+        };
+        const privateScheduledGame = { status: 'scheduled', visibility: 'private' };
+        const selectedUser = { uid: 'stream-score-1', email: 'helper@example.com' };
+
+        expect(canAccessNativeCameraCapture({
+            user: selectedUser,
+            team: selectedStreamingTeam,
+            game: privateScheduledGame
+        })).toBe(true);
+        expect(canSaveBroadcastSetupSession({
+            user: selectedUser,
+            team: selectedStreamingTeam,
+            game: privateScheduledGame
+        })).toBe(true);
+    });
+
     it('mirrors Firestore broadcast-session write roles for setup saves', () => {
         const selectedVideoTeam = {
             ownerId: 'owner-1',
