@@ -1199,6 +1199,32 @@ describe('React app chat recipient service', () => {
         }));
     });
 
+    it('normalizes a canonical staff conversation with legacy participant roles', async () => {
+        dbMocks.upsertChatConversation.mockResolvedValue({
+            id: 'group_role%3Astaff',
+            type: 'group',
+            participantIds: [],
+            participantRoles: ['staff']
+        });
+
+        const { ensureStaffChatConversation } = await import('../../apps/app/src/lib/chatService.ts');
+        await ensureStaffChatConversation('team-1', {
+            uid: 'coach-1',
+            email: 'coach@example.com',
+            displayName: 'Coach Jamie'
+        }, [{
+            id: 'group_role%3Astaff',
+            type: 'group',
+            participantIds: ['coach-1'],
+            participantRoles: ['staff', 'coach']
+        }]);
+
+        expect(dbMocks.upsertChatConversation).toHaveBeenCalledWith('team-1', expect.objectContaining({
+            participantIds: [],
+            participantRoles: ['staff']
+        }));
+    });
+
     it('routes staff-only messages into a non-default conversation before posting', async () => {
         dbMocks.upsertChatConversation.mockResolvedValue({
             id: 'staff-conversation',

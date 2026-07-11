@@ -3,7 +3,7 @@ import '@testing-library/jest-dom/vitest';
 import { useCallback } from 'react';
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { useChatMessages } from '../useChatMessages';
+import { getChatMessagesErrorMessage, useChatMessages } from '../useChatMessages';
 import { loadOlderTeamChatMessages, subscribeToTeamChatMessages } from '../../../../lib/chatService';
 import type { AuthState } from '../../../../lib/types';
 import type { ChatMessage } from '../../../../lib/chatService';
@@ -38,10 +38,12 @@ const probeTeam = { id: 'team-1', name: 'Bears' };
 
 function MessagesProbe({
     conversationId = 'team',
+    enabled = true,
     onMessagesReset,
     onLoadOlderError
 }: {
     conversationId?: string;
+    enabled?: boolean;
     onMessagesReset?: () => void;
     onLoadOlderError?: (error: unknown) => void;
 }) {
@@ -51,6 +53,7 @@ function MessagesProbe({
         team: probeTeam,
         user,
         selectedConversationId: conversationId,
+        enabled,
         onBeforeLiveUpdate: handleBeforeLiveUpdate,
         onMessagesReset
     });
@@ -106,6 +109,22 @@ describe('useChatMessages', () => {
         await waitFor(() => expect(screen.getByTestId('loading').textContent).toBe('false'));
         expect(screen.getByTestId('message-ids').textContent).toBe('older,newer');
         expect(screen.getByTestId('has-more').textContent).toBe('false');
+    });
+
+    it('waits for conversation preparation before subscribing', async () => {
+        const { rerender } = render(<MessagesProbe conversationId="group_role%3Astaff" enabled={false} />);
+
+        expect(subscribeToTeamChatMessages).not.toHaveBeenCalled();
+
+        rerender(<MessagesProbe conversationId="group_role%3Astaff" enabled />);
+
+        await waitFor(() => expect(subscribeToTeamChatMessages).toHaveBeenCalledTimes(1));
+        expect(subscribeToTeamChatMessages).toHaveBeenCalledWith(
+            'team-1',
+            'group_role%3Astaff',
+            expect.any(Function),
+            expect.any(Function)
+        );
     });
 
     it('resubscribes and clears messages when the selected conversation changes', async () => {
@@ -202,6 +221,22 @@ describe('useChatMessages', () => {
 
         await waitFor(() => expect(screen.getByTestId('loading').textContent).toBe('false'));
         expect(screen.getByTestId('message-ids').textContent).toBe('recovered');
+    });
+
+    it('replaces Firestore permission details with actionable, user-safe copy', async () => {
+        const permissionError = Object.assign(new Error('Missing or insufficient permissions.'), {
+            code: 'permission-denied'
+        });
+        render(<MessagesProbe conversationId="staff" />);
+
+        act(() => {
+            errorCallback?.(permissionError);
+        });
+
+        await waitFor(() => expect(screen.getByTestId('loading').textContent).toBe('false'));
+        expect(screen.getByTestId('error').textContent).toBe("We couldn't open this conversation. Your team access may have changed.");
+        expect(screen.getByTestId('error').textContent).not.toContain('permissions');
+        expect(getChatMessagesErrorMessage({ code: 'permission-denied' })).toBe("We couldn't open this conversation. Your team access may have changed.");
     });
 
     it('resets the loading state when loading older messages fails and still rejects to the caller', async () => {

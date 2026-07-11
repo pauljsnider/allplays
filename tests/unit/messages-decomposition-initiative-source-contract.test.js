@@ -20,7 +20,7 @@ const emailReducerTestSource = readSource('apps/app/src/pages/messages/state/__t
 describe('Messages decomposition initiative source contract', () => {
     it('keeps live message subscription and pagination state in useChatMessages', () => {
         expect(messagesSource).toContain("import { ChatWindow, TeamAvatar } from './messages/components/ChatWindow';");
-        expect(chatWindowSource).toContain("import { useChatMessages } from '../hooks/useChatMessages';");
+        expect(chatWindowSource).toContain("import { getChatMessagesErrorMessage, useChatMessages } from '../hooks/useChatMessages';");
         expect(chatWindowSource).toContain('} = useChatMessages({');
         expect(chatWindowSource).not.toMatch(/const\s+\[liveMessages\b/);
         expect(chatWindowSource).not.toMatch(/const\s+\[olderMessages\b/);

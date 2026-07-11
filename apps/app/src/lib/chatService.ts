@@ -1049,8 +1049,13 @@ export async function loadChatConversations(
 }
 
 function canReuseStaffChatConversation(conversation: ChatConversation | null | undefined) {
-  if (!isStaffConversation(conversation)) return false;
-  return !Array.isArray(conversation?.participantIds) || conversation.participantIds.length === 0;
+  const participantRoles = Array.isArray(conversation?.participantRoles)
+    ? conversation.participantRoles.map(compactString).filter(Boolean)
+    : [];
+  return conversation?.id === 'group_role%3Astaff'
+    && participantRoles.length === 1
+    && participantRoles[0].toLowerCase() === 'staff'
+    && (!Array.isArray(conversation.participantIds) || conversation.participantIds.length === 0);
 }
 
 export async function ensureStaffChatConversation(teamId: string, user: AuthUser, conversations: ChatConversation[] = []): Promise<ChatConversation> {
@@ -1061,7 +1066,6 @@ export async function ensureStaffChatConversation(teamId: string, user: AuthUser
     type: 'group',
     participantIds: [],
     participantRoles: ['staff'],
-    mutedBy: [],
     name: 'Staff only'
   })), 'Staff chat conversation create') as ChatConversation;
 }

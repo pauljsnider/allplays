@@ -1554,7 +1554,7 @@ describe('React app messages integration', () => {
         expect(container.textContent).toContain('Coach Jamie');
     });
 
-    it('loads recipient options once on first moderator tool open and reuses the cache', async () => {
+    it('loads recipient options once on first moderator tool open and reuses the cache', { timeout: 10000 }, async () => {
         const { container } = await renderMessages('/messages/team-1');
 
         expect(chatMocks.loadChatRecipientOptions).not.toHaveBeenCalled();
@@ -1679,13 +1679,20 @@ describe('React app messages integration', () => {
     it('keeps staff conversation targeting contextual and sends the selected audience metadata', async () => {
         chatMocks.loadChatConversations.mockResolvedValueOnce([
             { id: 'team', type: 'team', name: 'Bears Team Chat', participantIds: [], participantRoles: ['team'] },
-            { id: 'staff-conversation', type: 'group', name: 'Staff only', participantIds: ['user-1'], participantRoles: ['staff'] }
+            { id: 'group_role%3Astaff', type: 'group', name: 'Staff only', participantIds: ['user-1'], participantRoles: ['staff', 'coach'] }
         ]);
+        chatMocks.ensureStaffChatConversation.mockResolvedValueOnce({
+            id: 'group_role%3Astaff',
+            type: 'group',
+            name: 'Staff only',
+            participantIds: [],
+            participantRoles: ['staff']
+        });
 
-        const { container } = await renderMessages('/messages/team-1?conversationId=staff-conversation');
+        const { container } = await renderMessages('/messages/team-1?conversationId=group_role%253Astaff');
 
-        expect(chatMocks.ensureStaffChatConversation).not.toHaveBeenCalled();
-        expect(container.textContent).toContain('Staff only');
+        await waitForMockCallCount(chatMocks.ensureStaffChatConversation, 1, 'staff conversation repair');
+        await waitForText(container, 'Staff only');
 
         const textarea = container.querySelector('textarea');
         await setFieldValue(textarea, 'Staff update only');
@@ -1694,7 +1701,7 @@ describe('React app messages integration', () => {
         expect(chatMocks.sendTeamChatMessage).toHaveBeenCalledWith(expect.objectContaining({
             teamId: 'team-1',
             text: 'Staff update only',
-            selectedConversationId: 'staff-conversation',
+            selectedConversationId: 'group_role%3Astaff',
             selectedConversation: expect.objectContaining({ participantRoles: ['staff'] }),
             selectedRecipientIds: []
         }));

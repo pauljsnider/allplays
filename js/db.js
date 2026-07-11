@@ -6542,27 +6542,57 @@ export async function upsertChatConversation(teamId, conversation = {}) {
     const existing = await getDoc(conversationRef);
     const normalizedMutedBy = Array.from(new Set(Array.isArray(mutedBy) ? mutedBy : []));
     const hasMutedByUpdate = Object.prototype.hasOwnProperty.call(conversation, 'mutedBy');
+    const isCanonicalStaffConversation = normalizedType === 'group' &&
+        normalizedParticipantIds.length === 0 &&
+        normalizedParticipantRoles.length === 1 &&
+        normalizedParticipantRoles[0] === 'staff';
 
     if (existing.exists()) {
         const existingData = existing.data() || {};
         const shouldBackfillName = Boolean(name && !existingData.name);
-        if (hasMutedByUpdate || shouldBackfillName) {
+        const shouldRepairCanonicalStaffConversation = isCanonicalStaffConversation && (
+            existingData.type !== normalizedType ||
+            !Array.isArray(existingData.participantIds) ||
+            existingData.participantIds.length !== 0 ||
+            !Array.isArray(existingData.participantRoles) ||
+            existingData.participantRoles.length !== 1 ||
+            existingData.participantRoles[0] !== 'staff'
+        );
+        const existingUpdate = {
+            ...(shouldRepairCanonicalStaffConversation ? {
+                type: normalizedType,
+                participantIds: normalizedParticipantIds,
+                participantRoles: normalizedParticipantRoles
+            } : {}),
+            ...(hasMutedByUpdate ? { mutedBy: normalizedMutedBy } : {}),
+            ...(shouldBackfillName ? { name } : {})
+        };
+        if (Object.keys(existingUpdate).length > 0) {
             await setDoc(conversationRef, {
-                ...(hasMutedByUpdate ? { mutedBy: normalizedMutedBy } : {}),
-                ...(shouldBackfillName ? { name } : {}),
+                ...existingUpdate,
                 updatedAt: now
             }, { merge: true });
         }
         return {
             id: conversationId,
             ...existingData,
+            ...(shouldRepairCanonicalStaffConversation ? {
+                type: normalizedType,
+                participantIds: normalizedParticipantIds,
+                participantRoles: normalizedParticipantRoles,
+                updatedAt: now
+            } : {}),
             ...(hasMutedByUpdate ? {
                 mutedBy: normalizedMutedBy,
                 updatedAt: now
             } : {}),
             ...(shouldBackfillName ? { name, updatedAt: now } : {}),
-            participantIds: existingData.participantIds || normalizedParticipantIds,
-            participantRoles: existingData.participantRoles || normalizedParticipantRoles,
+            participantIds: shouldRepairCanonicalStaffConversation
+                ? normalizedParticipantIds
+                : (existingData.participantIds || normalizedParticipantIds),
+            participantRoles: shouldRepairCanonicalStaffConversation
+                ? normalizedParticipantRoles
+                : (existingData.participantRoles || normalizedParticipantRoles),
             name: existingData.name || name || null
         };
     }

@@ -87,7 +87,7 @@ import { startInteractionTimer, UX_TIMING } from '../../../lib/uxTiming';
 import type { sendAllPlaysChatAnswer } from '../../../lib/chatAiService';
 import { useChatSheets } from '../hooks/useChatSheets';
 import { useChatTeam } from '../hooks/useChatTeam';
-import { useChatMessages } from '../hooks/useChatMessages';
+import { getChatMessagesErrorMessage, useChatMessages } from '../hooks/useChatMessages';
 import { Composer } from './ChatComposer';
 
 const LazyTeamEmailSheet = lazy(() => import('./TeamEmailSheet'));
@@ -155,6 +155,19 @@ const allTargetOptions: Array<{ value: ChatTargetType; label: string; descriptio
   { value: 'individuals', label: 'Selected members', description: 'Starts a direct or group conversation.' }
 ];
 const STAFF_CONVERSATION_PLACEHOLDER_ID = '__staff_conversation__';
+const CANONICAL_STAFF_CONVERSATION_ID = 'group_role%3Astaff';
+
+function isStaffOnlyConversation(conversation?: ChatConversation | null) {
+  return conversation?.id === CANONICAL_STAFF_CONVERSATION_ID && isStaffConversation(conversation);
+}
+
+function getStaffConversationErrorMessage(error: unknown) {
+  const safeMessage = getChatMessagesErrorMessage(error);
+  const rawMessage = error instanceof Error ? error.message.trim() : '';
+  return rawMessage && safeMessage === rawMessage
+    ? 'Unable to open staff chat. Please try again.'
+    : safeMessage;
+}
 
 export async function sendLazyAllPlaysChatAnswer(input: Parameters<typeof sendAllPlaysChatAnswer>[0]) {
   const chatAiService = await import('../../../lib/chatAiService');
@@ -307,6 +320,11 @@ export function ChatWindow({
   const [composerCursorPosition, setComposerCursorPosition] = useState<number | undefined>(undefined);
   const [messageViewportState, setMessageViewportState] = useState({ scrollTop: 0, viewportHeight: 0 });
   const [measuredMessageHeights, setMeasuredMessageHeights] = useState<Record<string, number>>({});
+  const [staffRepairState, setStaffRepairState] = useState<{
+    key: string;
+    status: 'idle' | 'repairing' | 'ready' | 'error';
+    error: string | null;
+  }>({ key: '', status: 'idle', error: null });
   const messagesRef = useRef<HTMLDivElement | null>(null);
   const messagesContentRef = useRef<HTMLDivElement | null>(null);
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
@@ -337,6 +355,7 @@ export function ChatWindow({
 
   const resetChatSelectionState = useCallback(() => {
     setStatus(null);
+    setStaffRepairState({ key: '', status: 'idle', error: null });
     recipientOptionsPromiseRef.current = null;
     recipientOptionsRequestIdRef.current += 1;
     setRecipientOptions([]);
@@ -368,6 +387,63 @@ export function ChatWindow({
     onTeamReset: resetChatSelectionState
   });
   const effectiveConversationId = normalizeConversationId(selectedConversationId);
+  const activeConversationForRepair = conversations.find((conversation) => conversation.id === effectiveConversationId) || null;
+  const activeConversationIsStaff = effectiveConversationId === CANONICAL_STAFF_CONVERSATION_ID
+    || isStaffOnlyConversation(activeConversationForRepair);
+  const activeStaffRepairKey = `${teamId}:${effectiveConversationId}`;
+  const activeStaffRepairError = activeConversationIsStaff
+    && staffRepairState.key === activeStaffRepairKey
+    && staffRepairState.status === 'error'
+    ? staffRepairState.error
+    : null;
+  const staffConversationReady = !activeConversationIsStaff || (
+    staffRepairState.key === activeStaffRepairKey && staffRepairState.status === 'ready'
+  );
+
+  const repairStaffConversation = useCallback(async (requestedConversationId = CANONICAL_STAFF_CONVERSATION_ID) => {
+    if (!auth.user || !team) return null;
+    const requestedKey = `${teamId}:${requestedConversationId}`;
+    setStatus(null);
+    setStaffRepairState({ key: requestedKey, status: 'repairing', error: null });
+    try {
+      const staffConversation = await ensureStaffChatConversation(teamId, auth.user, conversations);
+      setConversations((current) => {
+        const withoutLegacyStaffConversations = current.filter((conversation) => (
+          !isStaffOnlyConversation(conversation) || conversation.id === staffConversation.id
+        ));
+        return withoutLegacyStaffConversations.some((conversation) => conversation.id === staffConversation.id)
+          ? withoutLegacyStaffConversations.map((conversation) => conversation.id === staffConversation.id ? staffConversation : conversation)
+          : [...withoutLegacyStaffConversations, staffConversation];
+      });
+      setStaffRepairState({
+        key: `${teamId}:${staffConversation.id}`,
+        status: 'ready',
+        error: null
+      });
+      return staffConversation;
+    } catch (error) {
+      const errorMessage = getStaffConversationErrorMessage(error);
+      setStaffRepairState({
+        key: requestedKey,
+        status: 'error',
+        error: errorMessage
+      });
+      setStatus({ tone: 'error', message: errorMessage });
+      return null;
+    }
+  }, [auth.user, conversations, setConversations, team, teamId]);
+
+  useEffect(() => {
+    if (!activeConversationIsStaff || loadingContext || !auth.user || !team) return;
+    if (staffRepairState.key === activeStaffRepairKey && (
+      staffRepairState.status === 'repairing' || staffRepairState.status === 'ready' || staffRepairState.status === 'error'
+    )) return;
+    void repairStaffConversation(effectiveConversationId).then((staffConversation) => {
+      if (staffConversation && staffConversation.id !== effectiveConversationId) {
+        switchChatConversation(staffConversation.id);
+      }
+    });
+  }, [activeConversationIsStaff, activeStaffRepairKey, auth.user, effectiveConversationId, loadingContext, repairStaffConversation, staffRepairState.key, staffRepairState.status, switchChatConversation, team]);
 
   const handleBeforeLiveUpdate = useCallback(() => isNearBottom(messagesRef.current), []);
   const handleLiveUpdateState = useCallback(({ isInitialSnapshot, wasNearBottom }: { isInitialSnapshot: boolean; wasNearBottom: boolean }) => {
@@ -404,6 +480,7 @@ export function ChatWindow({
     team,
     user: auth.user,
     selectedConversationId: effectiveConversationId,
+    enabled: !loadingContext && staffConversationReady,
     onBeforeLiveUpdate: handleBeforeLiveUpdate,
     onLiveUpdateState: handleLiveUpdateState,
     onMessagesReset: handleMessagesReset,
@@ -441,8 +518,8 @@ export function ChatWindow({
     viewportHeight: messageViewportState.viewportHeight,
     preferTopWindow: olderMessages.length > 0 && messageViewportState.scrollTop <= 0
   }), [messageLayout, messageViewportState.scrollTop, messageViewportState.viewportHeight, olderMessages.length, visibleMessages]);
-  const error = teamError || messagesError;
-  const canRetryMessagesError = Boolean(messagesError && !teamError);
+  const error = teamError || activeStaffRepairError || messagesError;
+  const canRetryMessagesError = Boolean((activeStaffRepairError || messagesError) && !teamError);
 
   const handleMessageRowHeightChange = useCallback((messageId: string, height: number) => {
     if (!messageId || !Number.isFinite(height) || height <= 0) return;
@@ -469,7 +546,7 @@ export function ChatWindow({
     conversations.find((conversation) => conversation.id === effectiveConversationId) || conversations[0] || null
   ), [conversations, effectiveConversationId]);
   const conversationSheetConversations = useMemo<ChatConversation[]>(() => {
-    if (!canModerate || conversations.some((conversation) => isStaffConversation(conversation))) {
+    if (!canModerate || conversations.some((conversation) => isStaffOnlyConversation(conversation))) {
       return conversations;
     }
     const staffPlaceholderConversation = {
@@ -825,7 +902,7 @@ export function ChatWindow({
       document.removeEventListener('visibilitychange', handleReturn);
       window.removeEventListener('focus', handleReturn);
     };
-  }, [auth.user, effectiveConversationId, messages.length, teamId]);
+  }, [auth.user, effectiveConversationId, initialSnapshotLoadedRef, messages.length, teamId]);
 
   useEffect(() => {
     mountedRef.current = true;
@@ -858,28 +935,45 @@ export function ChatWindow({
 
   const ensureAndSwitchStaffConversation = async () => {
     if (!auth.user || !team) return;
-    try {
-      const staffConversation = await ensureStaffChatConversation(teamId, auth.user, conversations);
-      setConversations((current) => (
-        current.some((conversation) => conversation.id === staffConversation.id)
-          ? current
-          : [...current, staffConversation]
-      ));
-      if (selectedConversationId !== staffConversation.id) {
-        switchConversation(staffConversation.id);
-      }
-      closeConversationSheet();
-    } catch (staffError: any) {
-      setStatus({ tone: 'error', message: staffError?.message || 'Unable to open staff chat.' });
+    const staffConversation = await repairStaffConversation(
+      activeConversationIsStaff ? effectiveConversationId : CANONICAL_STAFF_CONVERSATION_ID
+    );
+    if (!staffConversation) return;
+    if (selectedConversationId !== staffConversation.id) {
+      switchConversation(staffConversation.id);
     }
+    closeConversationSheet();
   };
 
   const handleConversationSelect = (conversationId: string) => {
-    if (conversationId === STAFF_CONVERSATION_PLACEHOLDER_ID) {
+    const conversation = conversations.find((item) => item.id === conversationId);
+    if (conversationId === STAFF_CONVERSATION_PLACEHOLDER_ID || isStaffOnlyConversation(conversation)) {
       void ensureAndSwitchStaffConversation();
       return;
     }
     switchConversation(conversationId);
+  };
+
+  const handleBackFromError = () => {
+    if (messagesError && !teamError && !isDefaultTeamConversation(effectiveConversationId)) {
+      switchConversation(DEFAULT_TEAM_CONVERSATION_ID);
+      return;
+    }
+    navigate('/messages');
+  };
+
+  const handleRetryMessages = async () => {
+    if (!activeConversationIsStaff) {
+      retryMessages();
+      return;
+    }
+    const staffConversation = await repairStaffConversation(effectiveConversationId);
+    if (!staffConversation) return;
+    if (staffConversation.id !== effectiveConversationId) {
+      switchConversation(staffConversation.id);
+      return;
+    }
+    retryMessages();
   };
 
   const handleAudienceTargetChange = async (target: ChatTargetType) => {
@@ -1367,12 +1461,12 @@ export function ChatWindow({
         <div className="text-base font-black text-rose-700">{error}</div>
         <div className="mt-4 flex flex-wrap gap-2">
           {canRetryMessagesError ? (
-            <button type="button" className="primary-button" onClick={retryMessages}>
+            <button type="button" className="primary-button" onClick={() => { void handleRetryMessages(); }}>
               <RefreshCw className="h-4 w-4" aria-hidden="true" />
               Retry
             </button>
           ) : null}
-          <button type="button" className="secondary-button" onClick={() => navigate('/messages')}>Back to messages</button>
+          <button type="button" className="secondary-button" onClick={handleBackFromError}>Back to messages</button>
         </div>
       </section>
     );
@@ -1431,7 +1525,7 @@ export function ChatWindow({
                   className={`shrink-0 rounded-full px-3 py-1.5 text-xs font-black transition ${
                     active ? 'bg-primary-600 text-white' : 'bg-gray-100 text-gray-700 hover:bg-primary-50 hover:text-primary-700'
                   }`}
-                  onClick={() => switchConversation(conversation.id)}
+                  onClick={() => handleConversationSelect(conversation.id)}
                 >
                   {getConversationDisplayName(conversation, team || {})}
                 </button>
