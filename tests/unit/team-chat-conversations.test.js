@@ -68,7 +68,8 @@ describe('team chat conversations', () => {
         const rules = readRepoFile('firestore.rules');
         const db = readRepoFile('js/db.js');
 
-        expect(rules).toContain('allow get: if canAccessChatConversation(teamId, conversationId, resource.data);');
+        expect(rules).toContain('allow get: if canAccessChatConversation(teamId, conversationId, resource.data) ||');
+        expect(rules).toContain('canReadCanonicalStaffChatConversationForRepair(teamId, conversationId, resource.data);');
         expect(rules).toContain('allow list: if canListChatConversation(teamId, conversationId, resource.data);');
         expect(rules).toContain('canAccessChatConversation(teamId, conversationId, request.resource.data) &&');
         expect(rules).toContain("allow read: if canAccessChatConversation(teamId, conversationId, get(/databases/$(database)/documents/teams/$(teamId)/chatConversations/$(conversationId)).data);");
@@ -77,5 +78,10 @@ describe('team chat conversations', () => {
         expect(db).toContain("where('participantIds', 'array-contains', `email:${normalizedEmail}`)");
         expect(db).not.toContain("where('participantRoles', 'array-contains', 'team')");
         expect(rules).not.toContain("'team' in participantRoles");
+        const nestedMessageRules = rules.slice(
+            rules.indexOf('match /chatMessages/{messageId} {', rules.indexOf('match /chatConversations/{conversationId} {')),
+            rules.indexOf('// Server-only dedup log')
+        );
+        expect(nestedMessageRules).not.toContain('canReadCanonicalStaffChatConversationForRepair');
     });
 });
