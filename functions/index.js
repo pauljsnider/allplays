@@ -2647,16 +2647,35 @@ exports.revokeHouseholdMemberAccess = functions.https.onCall(async (data, contex
       ? normalizeFirestoreId(invitedUserIdValue, 'invitedUserId')
       : '';
     const userRef = invitedUserId ? firestore.doc(`users/${invitedUserId}`) : null;
+    const playerRef = invitedUserId && teamId && playerId
+      ? firestore.doc(`teams/${teamId}/players/${playerId}`)
+      : null;
     const privateProfileRef = invitedUserId && teamId && playerId
       ? firestore.doc(`teams/${teamId}/players/${playerId}/private/profile`)
       : null;
+    const acceptedGrantQuery = invitedUserId
+      ? firestore.collection('accessCodes')
+        .where('usedBy', '==', invitedUserId)
+        .where('teamId', '==', teamId)
+        .where('playerId', '==', playerId)
+      : null;
 
-    const [userSnap, privateProfileSnap] = await Promise.all([
+    const [userSnap, playerSnap, privateProfileSnap, acceptedGrantSnap] = await Promise.all([
       userRef ? transaction.get(userRef) : Promise.resolve(null),
-      privateProfileRef ? transaction.get(privateProfileRef) : Promise.resolve(null)
+      playerRef ? transaction.get(playerRef) : Promise.resolve(null),
+      privateProfileRef ? transaction.get(privateProfileRef) : Promise.resolve(null),
+      acceptedGrantQuery ? transaction.get(acceptedGrantQuery) : Promise.resolve(null)
     ]);
     const userData = userSnap?.exists ? userSnap.data() || {} : {};
+    const player = playerSnap?.exists ? playerSnap.data() || {} : {};
     const privateProfile = privateProfileSnap?.exists ? privateProfileSnap.data() || {} : {};
+    const acceptedGrantCodes = acceptedGrantSnap?.docs?.map((codeSnap) => ({
+      id: codeSnap.id,
+      ...(codeSnap.data() || {})
+    })) || [];
+    const allAccessCodes = [...new Map(
+      [...accessCodes, ...acceptedGrantCodes].map((codeData) => [codeData.id, codeData])
+    ).values()];
     const now = admin.firestore.Timestamp.now();
     let plan;
     try {
@@ -2664,8 +2683,9 @@ exports.revokeHouseholdMemberAccess = functions.https.onCall(async (data, contex
         organizerUserId,
         membershipId,
         membership,
-        accessCodes,
+        accessCodes: allAccessCodes,
         userData,
+        player,
         privateProfile,
         timestamp: now
       });
@@ -2705,7 +2725,8 @@ exports.revokeHouseholdMemberAccess = functions.https.onCall(async (data, contex
       membershipId,
       teamId: plan.teamId,
       playerId: plan.playerId,
-      revokedUserId: plan.invitedUserId || null
+      revokedUserId: plan.invitedUserId || null,
+      preservedPlayerAccess: plan.preservedPlayerAccess
     };
   });
 
@@ -2714,7 +2735,8 @@ exports.revokeHouseholdMemberAccess = functions.https.onCall(async (data, contex
     membershipId,
     teamId: responsePayload?.teamId,
     playerId: responsePayload?.playerId,
-    revokedUserId: responsePayload?.revokedUserId
+    revokedUserId: responsePayload?.revokedUserId,
+    preservedPlayerAccess: responsePayload?.preservedPlayerAccess
   });
   return responsePayload;
 });

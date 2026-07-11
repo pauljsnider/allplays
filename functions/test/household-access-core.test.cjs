@@ -86,6 +86,134 @@ test('revoking the last parent link removes only the parent role', () => {
   });
 });
 
+test('revocation preserves same-player access backed by another accepted access code', () => {
+  const plan = buildHouseholdAccessRevocationPlan({
+    organizerUserId: 'organizer-1',
+    membershipId: 'membership-1',
+    membership: {
+      organizerUserId: 'organizer-1',
+      status: 'active',
+      userId: 'contact-1',
+      teamId: 'team-1',
+      playerId: 'player-1'
+    },
+    accessCodes: [
+      {
+        id: 'household-code',
+        type: 'household_invite',
+        organizerUserId: 'organizer-1',
+        familyMembershipId: 'membership-1',
+        teamId: 'team-1',
+        playerId: 'player-1',
+        used: true,
+        usedBy: 'contact-1',
+        status: 'accepted'
+      },
+      {
+        id: 'independent-parent-code',
+        type: 'parent_invite',
+        teamId: 'team-1',
+        playerId: 'player-1',
+        used: true,
+        usedBy: 'contact-1',
+        status: 'accepted'
+      }
+    ],
+    userData: {
+      roles: ['parent'],
+      parentOf: [{ teamId: 'team-1', playerId: 'player-1' }]
+    },
+    privateProfile: { parents: [{ userId: 'contact-1' }] },
+    timestamp: 'now'
+  });
+
+  assert.equal(plan.preservedPlayerAccess, true);
+  assert.equal(plan.userUpdate, undefined);
+  assert.equal(plan.privateProfileUpdate, undefined);
+  assert.deepEqual(plan.accessCodeUpdates.map((entry) => entry.id), ['household-code']);
+});
+
+test('revocation preserves same-player access backed by the canonical player parent list', () => {
+  const plan = buildHouseholdAccessRevocationPlan({
+    organizerUserId: 'organizer-1',
+    membershipId: 'membership-1',
+    membership: {
+      organizerUserId: 'organizer-1',
+      status: 'active',
+      userId: 'contact-1',
+      teamId: 'team-1',
+      playerId: 'player-1'
+    },
+    accessCodes: [{
+      id: 'household-code',
+      type: 'household_invite',
+      organizerUserId: 'organizer-1',
+      familyMembershipId: 'membership-1',
+      teamId: 'team-1',
+      playerId: 'player-1',
+      used: true,
+      usedBy: 'contact-1'
+    }],
+    player: { parents: [{ userId: 'contact-1', status: 'active' }] },
+    userData: {
+      roles: ['parent'],
+      parentOf: [{ teamId: 'team-1', playerId: 'player-1' }]
+    },
+    privateProfile: { parents: [{ userId: 'contact-1' }] },
+    timestamp: 'now'
+  });
+
+  assert.equal(plan.preservedPlayerAccess, true);
+  assert.equal(plan.userUpdate, undefined);
+  assert.equal(plan.privateProfileUpdate, undefined);
+});
+
+test('revoked same-player references do not prevent household access cleanup', () => {
+  const plan = buildHouseholdAccessRevocationPlan({
+    organizerUserId: 'organizer-1',
+    membershipId: 'membership-1',
+    membership: {
+      organizerUserId: 'organizer-1',
+      status: 'active',
+      userId: 'contact-1',
+      teamId: 'team-1',
+      playerId: 'player-1'
+    },
+    accessCodes: [
+      {
+        id: 'household-code',
+        type: 'household_invite',
+        organizerUserId: 'organizer-1',
+        familyMembershipId: 'membership-1',
+        teamId: 'team-1',
+        playerId: 'player-1',
+        used: true,
+        usedBy: 'contact-1'
+      },
+      {
+        id: 'revoked-code',
+        type: 'parent_invite',
+        teamId: 'team-1',
+        playerId: 'player-1',
+        used: true,
+        usedBy: 'contact-1',
+        revoked: true
+      }
+    ],
+    player: { parents: [{ userId: 'contact-1', status: 'revoked' }] },
+    userData: {
+      roles: ['parent'],
+      parentOf: [{ teamId: 'team-1', playerId: 'player-1' }]
+    },
+    privateProfile: { parents: [{ userId: 'contact-1' }] },
+    timestamp: 'now'
+  });
+
+  assert.equal(plan.preservedPlayerAccess, false);
+  assert.deepEqual(plan.userUpdate.parentOf, []);
+  assert.deepEqual(plan.privateProfileUpdate.parents, []);
+});
+
 test('pending and previously shell-revoked memberships remain safely cleanable', () => {
   const pendingPlan = buildHouseholdAccessRevocationPlan({
     organizerUserId: 'organizer-1',
