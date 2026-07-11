@@ -242,6 +242,13 @@ async function waitForMockCallCount(mockFn, expectedCount, description) {
     expect(mockFn).toHaveBeenCalledTimes(expectedCount);
 }
 
+async function waitForText(container, text) {
+    return waitForMatch(
+        () => container.textContent.includes(text),
+        `${text} text`
+    );
+}
+
 async function waitForRecipientCheckbox(container, name) {
     return waitForMatch(
         () => Array.from(container.querySelectorAll('label'))
@@ -1625,6 +1632,7 @@ describe('React app messages integration', () => {
             ]);
 
         const { container } = await renderMessages('/messages');
+        await waitForText(container, 'Bears Team Chat');
 
         await click(container, 'Team Email');
         expect(chatMocks.loadChatRecipientOptions).toHaveBeenCalledTimes(1);
@@ -1635,6 +1643,7 @@ describe('React app messages integration', () => {
             thunderLink.dispatchEvent(new MouseEvent('click', { bubbles: true, button: 0 }));
         });
         await flush();
+        await waitForText(container, 'Thunder Team Chat');
 
         await act(async () => {
             deferredRecipients.resolve([
@@ -1685,6 +1694,7 @@ describe('React app messages integration', () => {
 
     it('sends selected member messages with names shown in the audience pill', async () => {
         const { container } = await renderMessages('/messages/team-1');
+        await waitForText(container, 'Bears Team Chat');
 
         await click(container, 'Audience: Full team');
         await click(container, 'Selected members');
