@@ -158,7 +158,7 @@ const STAFF_CONVERSATION_PLACEHOLDER_ID = '__staff_conversation__';
 const CANONICAL_STAFF_CONVERSATION_ID = 'group_role%3Astaff';
 
 function isStaffOnlyConversation(conversation?: ChatConversation | null) {
-  return conversation?.id === CANONICAL_STAFF_CONVERSATION_ID || isStaffConversation(conversation);
+  return conversation?.id === CANONICAL_STAFF_CONVERSATION_ID && isStaffConversation(conversation);
 }
 
 function getStaffConversationErrorMessage(error: unknown) {

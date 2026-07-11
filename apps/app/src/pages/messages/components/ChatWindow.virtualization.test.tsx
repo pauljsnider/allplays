@@ -814,7 +814,7 @@ describe('ChatWindow conversation switching', () => {
   it('repairs an existing staff conversation before quick-switching to it', async () => {
     mockChatTeamState.conversations = [
       { id: 'team', type: 'team', name: 'Team chat', participantIds: [], participantRoles: ['team'] },
-      { id: 'staff-conversation', type: 'group', name: 'Staff only', participantIds: ['coach-1'], participantRoles: ['staff', 'coach'] },
+      { id: 'group_role%3Astaff', type: 'group', name: 'Staff only', participantIds: ['coach-1'], participantRoles: ['staff', 'coach'] },
       { id: 'direct-parent', type: 'direct', name: 'Pat Parent', participantIds: ['parent-1'], participantRoles: ['parent'] },
       { id: 'travel-group', type: 'group', name: 'Tournament travel', participantIds: ['coach-1', 'parent-1'], participantRoles: ['staff', 'parent'] }
     ];
@@ -843,6 +843,10 @@ describe('ChatWindow conversation switching', () => {
 
     await waitFor(() => expect(ensureStaffChatConversation).toHaveBeenCalledWith('team-1', auth.user, mockChatTeamState.conversations));
     expect(mockChatTeamState.switchConversation).toHaveBeenCalledWith('group_role%3Astaff');
+    const updateConversations = mockChatTeamState.setConversations.mock.calls[0][0];
+    expect(updateConversations(mockChatTeamState.conversations)).toContainEqual(
+      expect.objectContaining({ id: 'travel-group', participantRoles: ['staff', 'parent'] })
+    );
     expect(mockChatSheetsState.openConversationSheet).not.toHaveBeenCalled();
   });
 
@@ -913,7 +917,7 @@ describe('ChatWindow conversation switching', () => {
       { id: 'team', type: 'team', name: 'Team chat', participantIds: [], participantRoles: ['team'] }
     ];
     vi.mocked(ensureStaffChatConversation).mockResolvedValue({
-      id: 'staff-conversation',
+      id: 'group_role%3Astaff',
       type: 'group',
       name: 'Staff only',
       participantIds: [],
@@ -935,7 +939,7 @@ describe('ChatWindow conversation switching', () => {
         { id: 'team', type: 'team', name: 'Team chat', participantIds: [], participantRoles: ['team'] }
       ]);
     });
-    expect(mockChatTeamState.switchConversation).toHaveBeenCalledWith('staff-conversation');
+    expect(mockChatTeamState.switchConversation).toHaveBeenCalledWith('group_role%3Astaff');
     expect(mockChatSheetsState.openConversationSheet).not.toHaveBeenCalled();
   });
 
@@ -943,7 +947,7 @@ describe('ChatWindow conversation switching', () => {
     mockChatSheetsState.showConversationSheet = true;
     mockChatTeamState.conversations = [
       { id: 'team', type: 'team', name: 'Team chat', participantIds: [], participantRoles: ['team'] },
-      { id: 'staff-conversation', type: 'group', name: 'Staff only', participantIds: ['coach-1'], participantRoles: ['staff'] }
+      { id: 'group_role%3Astaff', type: 'group', name: 'Staff only', participantIds: ['coach-1'], participantRoles: ['staff'] }
     ];
     vi.mocked(ensureStaffChatConversation).mockResolvedValue({
       id: 'group_role%3Astaff',
@@ -971,7 +975,7 @@ describe('ChatWindow conversation switching', () => {
       { id: 'team', type: 'team', name: 'Team chat', participantIds: [], participantRoles: ['team'] }
     ];
     vi.mocked(ensureStaffChatConversation).mockResolvedValue({
-      id: 'staff-conversation',
+      id: 'group_role%3Astaff',
       type: 'group',
       name: 'Staff only',
       participantIds: [],
@@ -992,7 +996,7 @@ describe('ChatWindow conversation switching', () => {
         { id: 'team', type: 'team', name: 'Team chat', participantIds: [], participantRoles: ['team'] }
       ]);
     });
-    expect(mockChatTeamState.switchConversation).toHaveBeenCalledWith('staff-conversation');
+    expect(mockChatTeamState.switchConversation).toHaveBeenCalledWith('group_role%3Astaff');
   });
 });
 

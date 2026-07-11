@@ -1679,7 +1679,7 @@ describe('React app messages integration', () => {
     it('keeps staff conversation targeting contextual and sends the selected audience metadata', async () => {
         chatMocks.loadChatConversations.mockResolvedValueOnce([
             { id: 'team', type: 'team', name: 'Bears Team Chat', participantIds: [], participantRoles: ['team'] },
-            { id: 'staff-conversation', type: 'group', name: 'Staff only', participantIds: ['user-1'], participantRoles: ['staff', 'coach'] }
+            { id: 'group_role%3Astaff', type: 'group', name: 'Staff only', participantIds: ['user-1'], participantRoles: ['staff', 'coach'] }
         ]);
         chatMocks.ensureStaffChatConversation.mockResolvedValueOnce({
             id: 'group_role%3Astaff',
@@ -1689,7 +1689,7 @@ describe('React app messages integration', () => {
             participantRoles: ['staff']
         });
 
-        const { container } = await renderMessages('/messages/team-1?conversationId=staff-conversation');
+        const { container } = await renderMessages('/messages/team-1?conversationId=group_role%253Astaff');
 
         await waitForMockCallCount(chatMocks.ensureStaffChatConversation, 1, 'staff conversation repair');
         await waitForText(container, 'Staff only');
