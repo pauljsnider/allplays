@@ -97,6 +97,25 @@ function resetTeamTabScrollPosition() {
   }
 }
 
+function scheduleTeamTabScrollPositionReset() {
+  if (typeof window.requestAnimationFrame !== 'function') {
+    resetTeamTabScrollPosition();
+    return () => {};
+  }
+
+  let resetFrame: number | null = null;
+  const restorationFrame = window.requestAnimationFrame(() => {
+    resetFrame = window.requestAnimationFrame(resetTeamTabScrollPosition);
+  });
+
+  return () => {
+    window.cancelAnimationFrame(restorationFrame);
+    if (resetFrame !== null) {
+      window.cancelAnimationFrame(resetFrame);
+    }
+  };
+}
+
 export function TeamDetail({ auth }: { auth: AuthState }) {
   const { teamId = '' } = useParams();
   const location = useLocation();
@@ -402,8 +421,9 @@ export function TeamDetail({ auth }: { auth: AuthState }) {
 
   useEffect(() => {
     // Also cover back/forward navigation and direct route changes that do not
-    // pass through the tab controls.
-    resetTeamTabScrollPosition();
+    // pass through the tab controls. ScrollRestoration restores POP entries in
+    // requestAnimationFrame, so this runs one frame later to win that race.
+    return scheduleTeamTabScrollPositionReset();
   }, [teamId, activeTab]);
 
   async function refreshTeamDetail() {
