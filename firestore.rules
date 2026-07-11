@@ -370,6 +370,25 @@ service cloud.firestore {
              request.auth.uid in teamPermission(teamId, 'videography').get('memberIds', []);
     }
 
+    function canStreamGame(teamId, gameId) {
+      let teamData = get(/databases/$(database)/documents/teams/$(teamId)).data;
+      let mode = teamPermission(teamId, 'streaming').get('mode', '');
+      let legacyMode = teamData.get('streamAccessMode', 'admins');
+      return isSignedIn() &&
+             isSafeDocumentId(teamId) &&
+             isSafeDocumentId(gameId) &&
+             !isTeamOwnerOrAdmin(teamId) &&
+             scorekeeperVisibleGameExists(teamId, gameId) &&
+             (
+               (mode == 'all_confirmed' && hasConfirmedGameRsvp(teamId, gameId)) ||
+               (mode == 'selected' && request.auth.uid in teamPermission(teamId, 'streaming').get('memberIds', [])) ||
+               (legacyMode in ['confirmed_members', 'all_confirmed'] && hasConfirmedGameRsvp(teamId, gameId)) ||
+               (legacyMode in ['selected_volunteers', 'selected'] &&
+                request.auth.token.email is string &&
+                request.auth.token.email.lower() in teamData.get('streamVolunteerEmails', []))
+             );
+    }
+
     function keepsScorekeeperGameLifecycleVisible() {
       return request.resource.data.get('status', resource.data.get('status', 'scheduled')) != 'cancelled' &&
              request.resource.data.get('liveStatus', resource.data.get('liveStatus', '')) != 'deleted';
@@ -399,6 +418,14 @@ service cloud.firestore {
                'scoreUpdatedAt', 'scoreUpdatedBy', 'scoreStreamSessionId'
              ]) &&
              isScoreMetadataAttributionValid();
+    }
+
+    function isStreamingGameUpdate(teamId, gameId) {
+      return canStreamGame(teamId, gameId) &&
+             request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+               'broadcastSession', 'updatedAt'
+             ]) &&
+             keepsScorekeeperGameLifecycleVisible();
     }
 
     // Check if user is a parent for a specific player.
@@ -2539,6 +2566,7 @@ service cloud.firestore {
         allow update: if isTeamOwnerOrAdmin(teamId) ||
                         (isOfficialForGame() && isOfficialGameUpdate()) ||
                         isScorekeepingGameUpdate(teamId, gameId) ||
+                        isStreamingGameUpdate(teamId, gameId) ||
                         isVideographyGameUpdate(teamId, gameId);
 
         // Events subcollection

@@ -564,6 +564,55 @@ describe('native camera capture authorization', () => {
         })).toBe(false);
     });
 
+    it('allows Game Day streaming helpers with selected or confirmed access', () => {
+        const selectedStreamingTeam = {
+            ownerId: 'owner-1',
+            adminEmails: [],
+            teamPermissions: {
+                streaming: { mode: 'selected', memberIds: ['stream-score-1'] }
+            }
+        };
+        const selectedUser = { uid: 'stream-score-1', email: 'helper@example.com' };
+
+        expect(canAccessNativeCameraCapture({
+            user: selectedUser,
+            team: selectedStreamingTeam,
+            game: scheduledGame
+        })).toBe(true);
+        expect(canSaveBroadcastSetupSession({
+            user: selectedUser,
+            team: selectedStreamingTeam,
+            game: scheduledGame
+        })).toBe(true);
+
+        const confirmedStreamingTeam = {
+            ownerId: 'owner-1',
+            adminEmails: [],
+            teamPermissions: {
+                streaming: { mode: 'all_confirmed', memberIds: [] }
+            }
+        };
+        const confirmedUser = { uid: 'confirmed-streamer', email: 'confirmed@example.com' };
+        expect(canAccessNativeCameraCapture({
+            user: confirmedUser,
+            team: confirmedStreamingTeam,
+            game: scheduledGame,
+            rsvp: { response: 'going' }
+        })).toBe(true);
+        expect(canSaveBroadcastSetupSession({
+            user: confirmedUser,
+            team: confirmedStreamingTeam,
+            game: scheduledGame,
+            rsvp: { response: 'going' }
+        })).toBe(true);
+        expect(canSaveBroadcastSetupSession({
+            user: confirmedUser,
+            team: confirmedStreamingTeam,
+            game: scheduledGame,
+            rsvp: null
+        })).toBe(false);
+    });
+
     it('mirrors Firestore broadcast-session write roles for setup saves', () => {
         const selectedVideoTeam = {
             ownerId: 'owner-1',

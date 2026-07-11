@@ -8,6 +8,7 @@ describe('stream and score Firestore rules', () => {
         expect(rules).toContain("'broadcastSession', 'updatedAt',");
         expect(rules).toContain("'scoreUpdatedAt', 'scoreUpdatedBy', 'scoreStreamSessionId'");
         expect(rules).toContain('isScorekeepingGameUpdate(teamId, gameId)');
+        expect(rules).toContain('isStreamingGameUpdate(teamId, gameId)');
         expect(rules).toContain('isVideographyGameUpdate(teamId, gameId)');
     });
 
@@ -19,5 +20,13 @@ describe('stream and score Firestore rules', () => {
         expect(rules).toContain('function isScoreMetadataAttributionValid()');
         expect(rules).toContain('request.resource.data.scoreUpdatedBy == request.auth.uid');
         expect(rules).toContain('isScoreMetadataAttributionValid() &&');
+    });
+
+    it('limits streaming helpers to broadcast-session metadata for eligible games', () => {
+        expect(rules).toContain('function canStreamGame(teamId, gameId)');
+        expect(rules).toContain("teamPermission(teamId, 'streaming').get('memberIds', [])");
+        expect(rules).toContain("mode == 'all_confirmed' && hasConfirmedGameRsvp(teamId, gameId)");
+        expect(rules).toContain("'broadcastSession', 'updatedAt'");
+        expect(rules).toContain('keepsScorekeeperGameLifecycleVisible();');
     });
 });

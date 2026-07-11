@@ -1,5 +1,6 @@
 import { normalizeYouTubeEmbedUrl } from './live-stream-utils.js';
 import { getChatMediaDownloadName, isSafeChatMediaUrl } from './team-chat-media.js';
+import { hasStreamTeamAccess } from './team-access.js';
 
 export const MAX_HIGHLIGHT_CLIP_MS = 60_000;
 export const BROADCAST_SETUP_STATUSES = Object.freeze({
@@ -158,7 +159,7 @@ function isGameCameraEligible(game) {
     return !['cancelled', 'canceled', 'completed', 'final'].includes(status);
 }
 
-export function canAccessNativeCameraCapture({ user, team, game }) {
+export function canAccessNativeCameraCapture({ user, team, game, rsvp = null }) {
     if (!user || !team || !isGameCameraEligible(game)) return false;
 
     if (user.isAdmin) return true;
@@ -168,6 +169,7 @@ export function canAccessNativeCameraCapture({ user, team, game }) {
     const adminEmails = normalizeStringSet(team.adminEmails);
     if (userEmail && adminEmails.has(userEmail)) return true;
     if (hasSelectedVideographerGrant(user, team)) return true;
+    if (hasStreamTeamAccess(user, team, game, rsvp)) return true;
 
     const approvedUidFields = [
         team.mediaContributorUids,
@@ -194,7 +196,7 @@ export function canAccessNativeCameraCapture({ user, team, game }) {
     return Boolean(userEmail && approvedEmailFields.some(values => normalizeStringSet(values).has(userEmail)));
 }
 
-export function canSaveBroadcastSetupSession({ user, team, game }) {
+export function canSaveBroadcastSetupSession({ user, team, game, rsvp = null }) {
     if (!user || !team || !isGameCameraEligible(game)) return false;
 
     if (user.isAdmin) return true;
@@ -203,7 +205,7 @@ export function canSaveBroadcastSetupSession({ user, team, game }) {
     const userEmail = typeof user.email === 'string' ? user.email.trim().toLowerCase() : '';
     if (userEmail && normalizeStringSet(team.adminEmails).has(userEmail)) return true;
 
-    return hasSelectedVideographerGrant(user, team);
+    return hasSelectedVideographerGrant(user, team) || hasStreamTeamAccess(user, team, game, rsvp);
 }
 
 export function resolveBroadcastStreamControlState({
