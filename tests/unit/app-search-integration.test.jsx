@@ -258,6 +258,9 @@ describe('React app shell search', () => {
 
     it('opens mobile search results from the shell trigger', async () => {
         const { container } = await renderShell();
+        const initialHydrationCalls = homeMocks.loadParentHomeSummary.mock.calls.length;
+        const initialFirestoreCalls = firebaseMocks.getDocs.mock.calls.length;
+        const initialPublicSearchCalls = dbMocks.discoverPublicTeams.mock.calls.length;
 
         await clickButton(container, 'Search');
         await waitForText(container, 'Browse Teams');
@@ -265,9 +268,15 @@ describe('React app shell search', () => {
         expect(container.textContent).not.toContain('Bears');
         expect(container.textContent).not.toContain('PrivateSoccer');
         expect(container.textContent).toContain('Type at least 2 characters to search players');
+        expect(homeMocks.loadParentHomeSummary).toHaveBeenCalledTimes(initialHydrationCalls);
+        expect(firebaseMocks.getDocs).toHaveBeenCalledTimes(initialFirestoreCalls);
+        expect(dbMocks.discoverPublicTeams).toHaveBeenCalledTimes(initialPublicSearchCalls);
 
         await fillSearch(container, 'bea');
         expect(container.textContent).toContain('Bears');
+        expect(homeMocks.loadParentHomeSummary.mock.calls.length).toBeGreaterThan(initialHydrationCalls);
+        expect(firebaseMocks.getDocs.mock.calls.length).toBeGreaterThan(initialFirestoreCalls);
+        expect(dbMocks.discoverPublicTeams.mock.calls.length).toBeGreaterThan(initialPublicSearchCalls);
 
         await fillSearch(container, 'pat');
         expect(firebaseMocks.getDocs).toHaveBeenCalled();

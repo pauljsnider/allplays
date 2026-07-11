@@ -429,10 +429,12 @@ test.describe('app global search', () => {
         await expect(page.getByText('Rockets')).toBeVisible();
         await expect(page.getByText('Bears')).toBeHidden();
         await expect(page.getByText('Type at least 2 characters to search players')).toBeVisible();
+        await expect.poll(() => page.evaluate(() => window.__loadAppSearchTeamsCalls)).toBe(0);
 
         await page.getByLabel('Search teams, players, actions, help').fill('bea');
         await expect(page.getByRole('button', { name: /Bears Basketball/ })).toBeVisible();
         await expect.poll(() => page.evaluate(() => window.__teamSearchQueries)).toEqual(['bea']);
+        await expect.poll(() => page.evaluate(() => window.__loadAppSearchTeamsCalls)).toBe(1);
 
         await page.getByRole('button', { name: 'Clear search query' }).click();
         await expect(page.getByLabel('Search teams, players, actions, help')).toHaveValue('');
@@ -444,6 +446,7 @@ test.describe('app global search', () => {
         await page.getByLabel('Search teams, players, actions, help').fill('pat');
         await expect(page.getByText('#9 Pat Star')).toBeVisible();
         await expect.poll(() => page.evaluate(() => window.__playerSearchQueries)).toEqual(['bea', 'pat']);
+        await expect.poll(() => page.evaluate(() => window.__loadAppSearchTeamsCalls)).toBe(1);
         await page.getByRole('button', { name: /#9 Pat Star/ }).click();
         await expect(page).toHaveURL(/#\/players\/team-1\/player-1$/);
         await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1)).toBe(true);
