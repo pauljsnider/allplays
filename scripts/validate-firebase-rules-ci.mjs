@@ -44,7 +44,7 @@ export function validatePreviewDeployCommand(deployPreview) {
     if (/hosting:channel:deploy[^\n]*--site/.test(deployPreview)) {
         throw new Error('Preview deploy must not pass --site to hosting:channel:deploy; firebase-tools 15 rejects that option.');
     }
-    assertMatches(deployPreview, /npx --yes firebase-tools@15\.22\.1 hosting:channel:deploy "\$CURRENT_CHANNEL" --project game-flow-c6311 --config "\$FIREBASE_PREVIEW_CONFIG"/, 'Preview deploy pinned Firebase CLI project/config arguments');
+    assertMatches(deployPreview, /\.\/node_modules\/\.bin\/firebase hosting:channel:deploy "\$CURRENT_CHANNEL" --project game-flow-c6311 --config "\$FIREBASE_PREVIEW_CONFIG"/, 'Preview deploy installed Firebase CLI project/config arguments');
 }
 
 export function validateFirebaseRulesCi() {
