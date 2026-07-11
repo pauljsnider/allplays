@@ -33,6 +33,11 @@ const { createInMemoryRateLimiter, getRequestIp } = require('./rate-limit.cjs');
 const { buildPublicGamesIcs, canExposeEmptyPublicFeed, isPublicFanGame } = require('./public-calendar-core.cjs');
 const { buildCalendarFeedGamesQuery } = require('./calendar-feed-window-core.cjs');
 const {
+  buildPublicRsvpSummaryDelta,
+  refreshPublicRsvpSummary,
+  schedulePublicRsvpSummaryRefresh
+} = require('./public-rsvp-summary-core.cjs');
+const {
   buildTeamCalendarIcs,
   normalizeCalendarRequest
 } = require('./team-calendar-feed-core.cjs');
@@ -10666,6 +10671,76 @@ async function buildPublicRsvpSummary(teamId, gameId) {
   return summary;
 }
 
+async function loadPreviousPublicRsvpPlayerResponse(teamId, gameId, playerId) {
+  const rsvpsRef = firestore.collection(`teams/${teamId}/games/${gameId}/rsvps`);
+  try {
+    const snapshots = await Promise.all([
+      rsvpsRef.where('playerIds', 'array-contains', playerId).get(),
+      rsvpsRef.where('playerId', '==', playerId).get(),
+      rsvpsRef.where('childId', '==', playerId).get()
+    ]);
+    const documents = new Map();
+    snapshots.forEach((snapshot) => snapshot.forEach((docSnap) => {
+      documents.set(docSnap.ref?.path || docSnap.id, docSnap);
+    }));
+
+    let latest = null;
+    let ambiguous = false;
+    documents.forEach((docSnap) => {
+      const rsvp = docSnap.data() || {};
+      if (!getPublicRsvpPlayerIds(rsvp).includes(playerId)) return;
+      const response = normalizePublicRsvpResponse(rsvp.response);
+      if (!response) return;
+      const respondedAtMs = getPublicRsvpResponseSortMs(rsvp, docSnap);
+      if (!latest || respondedAtMs > latest.respondedAtMs) {
+        latest = { response, respondedAtMs };
+        ambiguous = false;
+      } else if (respondedAtMs === latest.respondedAtMs && response !== latest.response) {
+        ambiguous = true;
+      }
+    });
+    return { previousResponse: latest?.response || '', ambiguous };
+  } catch (error) {
+    console.warn('Unable to load bounded public RSVP player state; using full summary fallback:', error);
+    return { previousResponse: '', ambiguous: true };
+  }
+}
+
+async function tryApplyPublicRsvpSummaryDelta({ teamId, gameId, playerId, previousResponse, nextResponse, ambiguous }) {
+  if (ambiguous) return false;
+  const gameRef = firestore.doc(`teams/${teamId}/games/${gameId}`);
+  try {
+    return await firestore.runTransaction(async (transaction) => {
+      const gameSnap = await transaction.get(gameRef);
+      if (!gameSnap.exists) return false;
+      const summary = buildPublicRsvpSummaryDelta({
+        summary: gameSnap.data()?.rsvpSummary,
+        playerId,
+        previousResponse,
+        nextResponse
+      });
+      if (!summary) return false;
+      transaction.set(gameRef, { rsvpSummary: summary }, { merge: true });
+      return true;
+    });
+  } catch (error) {
+    console.warn('Unable to apply bounded public RSVP summary delta; using full summary fallback:', error);
+    return false;
+  }
+}
+
+function refreshPublicRsvpSummaryInBackground(input) {
+  const gameRef = firestore.doc(`teams/${input.teamId}/games/${input.gameId}`);
+  schedulePublicRsvpSummaryRefresh(
+    () => refreshPublicRsvpSummary({
+      tryApplyDelta: () => tryApplyPublicRsvpSummaryDelta(input),
+      recomputeSummary: () => buildPublicRsvpSummary(input.teamId, input.gameId),
+      persistSummary: (summary) => gameRef.set({ rsvpSummary: summary }, { merge: true })
+    }),
+    (error) => console.error('Failed to refresh public RSVP summary:', error)
+  );
+}
+
 async function getPublicRsvpTokenData(token) {
   const tokenHash = publicRsvpHashToken(token);
   const tokenRef = firestore.doc(`publicRsvpTokens/${tokenHash}`);
@@ -10965,6 +11040,11 @@ exports.submitPublicRsvp = functions.https.onRequest(async (req, res) => {
     }
     const { tokenHash, tokenData } = await getPublicRsvpTokenData(token);
     const records = await assertUsablePublicRsvpToken(tokenData);
+    const previousPlayerState = await loadPreviousPublicRsvpPlayerResponse(
+      tokenData.teamId,
+      tokenData.gameId,
+      tokenData.playerId
+    );
     const docId = `public_${tokenHash.slice(0, 24)}`;
     await firestore.doc(`teams/${tokenData.teamId}/games/${tokenData.gameId}/rsvps/${docId}`).set({
       userId: docId,
@@ -10976,12 +11056,24 @@ exports.submitPublicRsvp = functions.https.onRequest(async (req, res) => {
       parentEmail: tokenData.parentEmail || null,
       respondedAt: admin.firestore.FieldValue.serverTimestamp()
     }, { merge: true });
-    const summary = await buildPublicRsvpSummary(tokenData.teamId, tokenData.gameId);
-    await firestore.doc(`teams/${tokenData.teamId}/games/${tokenData.gameId}`).set({ rsvpSummary: summary }, { merge: true });
     await firestore.doc(`publicRsvpTokens/${tokenHash}`).set({
       lastSubmittedAt: admin.firestore.FieldValue.serverTimestamp(),
       lastResponse: response
     }, { merge: true });
+    const summary = previousPlayerState.ambiguous ? null : buildPublicRsvpSummaryDelta({
+      summary: records.event.rsvpSummary,
+      playerId: tokenData.playerId,
+      previousResponse: previousPlayerState.previousResponse,
+      nextResponse: response
+    });
+    refreshPublicRsvpSummaryInBackground({
+      teamId: tokenData.teamId,
+      gameId: tokenData.gameId,
+      playerId: tokenData.playerId,
+      previousResponse: previousPlayerState.previousResponse,
+      nextResponse: response,
+      ambiguous: previousPlayerState.ambiguous
+    });
     res.status(200).json({ ok: true, context: buildPublicRsvpContext(records), summary });
   } catch (error) {
     publicRsvpJsonError(res, 403, error?.message || 'Unable to submit RSVP.');
