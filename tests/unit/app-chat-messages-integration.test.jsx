@@ -1660,7 +1660,7 @@ describe('React app messages integration', () => {
         });
         await flush();
 
-        expect(container.querySelector('[role="dialog"][aria-label="Team Email"]')).toBeFalsy();
+        await click(container, 'Close Team Email');
         await click(container, 'Team Email');
 
         await waitForMockCallCount(chatMocks.loadChatRecipientOptions, 2, 'second team recipient option load');

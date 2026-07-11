@@ -27,7 +27,6 @@ function HookProbe() {
             <button type="button" onClick={sheets.closeLinkSheet}>Close link</button>
             <button type="button" onClick={sheets.openEmailSheet}>Open email</button>
             <button type="button" onClick={sheets.closeEmailSheet}>Close email</button>
-            <button type="button" onClick={sheets.resetSheets}>Reset sheets</button>
         </div>
     );
 }
@@ -124,21 +123,5 @@ describe('useChatSheets', () => {
         expectSheetState('attach', false);
         expectSheetState('email', false);
         expectSheetState('link', true);
-    });
-
-    it('resets the active sheet for team context changes', () => {
-        render(<HookProbe />);
-
-        fireEvent.click(screen.getByRole('button', { name: 'Open email' }));
-        expectSheetState('email', true);
-
-        fireEvent.click(screen.getByRole('button', { name: 'Reset sheets' }));
-
-        expectSheetState('conversation', false);
-        expectSheetState('audience', false);
-        expectSheetState('media', false);
-        expectSheetState('attach', false);
-        expectSheetState('link', false);
-        expectSheetState('email', false);
     });
 });

@@ -48,8 +48,7 @@ const mockChatSheetsState = {
   openLinkSheet: vi.fn(),
   closeLinkSheet: vi.fn(),
   openEmailSheet: vi.fn(),
-  closeEmailSheet: vi.fn(),
-  resetSheets: vi.fn()
+  closeEmailSheet: vi.fn()
 };
 const mockChatTeamState: {
   team: { id: string; name: string };
@@ -229,8 +228,7 @@ vi.mock('../hooks/useChatSheets', async () => {
         openLinkSheet: () => setActiveSheet('link'),
         closeLinkSheet: () => closeIfActive(setActiveSheet, 'link'),
         openEmailSheet: () => setActiveSheet('email'),
-        closeEmailSheet: () => closeIfActive(setActiveSheet, 'email'),
-        resetSheets: () => setActiveSheet(null)
+        closeEmailSheet: () => closeIfActive(setActiveSheet, 'email')
       };
     }
   };

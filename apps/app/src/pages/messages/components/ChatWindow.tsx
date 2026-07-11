@@ -295,8 +295,7 @@ export function ChatWindow({
     openLinkSheet,
     closeLinkSheet,
     openEmailSheet: openTeamEmailSheet,
-    closeEmailSheet: closeTeamEmailSheet,
-    resetSheets
+    closeEmailSheet: closeTeamEmailSheet
   } = useChatSheets();
   const [linkDraft, setLinkDraft] = useState('');
   const [reactionMessageId, setReactionMessageId] = useState('');
@@ -344,12 +343,10 @@ export function ChatWindow({
     setRecipientOptionsLoading(false);
     setRecipientOptionsLoaded(false);
     setRecipientOptionsError(null);
-    setTeamEmailSheetRequested(false);
-    resetSheets();
     pendingScrollRef.current = true;
     stickToLatestRef.current = true;
     setShowJumpToLatest(false);
-  }, [resetSheets]);
+  }, []);
 
   const {
     team,
@@ -828,7 +825,7 @@ export function ChatWindow({
       document.removeEventListener('visibilitychange', handleReturn);
       window.removeEventListener('focus', handleReturn);
     };
-  }, [auth.user, effectiveConversationId, initialSnapshotLoadedRef, messages.length, teamId]);
+  }, [auth.user, effectiveConversationId, messages.length, teamId]);
 
   useEffect(() => {
     mountedRef.current = true;
