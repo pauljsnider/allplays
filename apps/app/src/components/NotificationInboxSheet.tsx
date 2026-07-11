@@ -1,6 +1,7 @@
 import { AlertCircle, Bell, CheckCheck, Loader2, RotateCcw, X } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import type { NotificationInboxItem } from '../lib/notificationInboxService';
+import { formatNotificationRecency, normalizeNotificationTimestamp } from '../lib/notificationRecency';
 
 interface NotificationInboxSheetProps {
     items: NotificationInboxItem[];
@@ -108,6 +109,8 @@ export function NotificationInboxSheet({ items, inboxState, uid, onClose, onRetr
                 <ul role="list" className="divide-y divide-gray-100">
                     {items.map((item) => {
                         const isUnread = !item.readAt;
+                        const createdAt = normalizeNotificationTimestamp(item.createdAt);
+                        const recencyLabel = formatNotificationRecency(createdAt);
                         return (
                             <li key={item.id}>
                                 <button
@@ -124,9 +127,22 @@ export function NotificationInboxSheet({ items, inboxState, uid, onClose, onRetr
                                         <span className={`block text-sm leading-snug ${isUnread ? 'font-bold text-gray-950' : 'font-semibold text-gray-700'}`}>
                                             {item.text}
                                         </span>
-                                        {item.type ? (
-                                            <span className="mt-0.5 block text-xs font-medium text-gray-400 capitalize">
-                                                {item.type.replace(/_/g, ' ')}
+                                        {item.type || recencyLabel ? (
+                                            <span className="mt-0.5 flex min-w-0 items-center gap-2 text-xs font-medium text-gray-400">
+                                                {item.type ? (
+                                                    <span className="min-w-0 flex-1 truncate capitalize">
+                                                        {item.type.replace(/_/g, ' ')}
+                                                    </span>
+                                                ) : null}
+                                                {recencyLabel && createdAt ? (
+                                                    <time
+                                                        className="flex-none"
+                                                        dateTime={createdAt.toISOString()}
+                                                        title={createdAt.toLocaleString()}
+                                                    >
+                                                        {recencyLabel}
+                                                    </time>
+                                                ) : null}
                                             </span>
                                         ) : null}
                                     </span>
