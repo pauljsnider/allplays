@@ -95,6 +95,7 @@ vi.mock('./logger', () => ({
 }));
 
 import {
+  sendPasswordResetEmail,
   signInWithPopup,
   signInWithRedirect
 } from './firebaseAuthRuntime';
@@ -105,6 +106,7 @@ import {
   hydrateFirebaseUser,
   isValidAuthEmail,
   observeFirebaseUser,
+  sendResetEmail,
   signInWithEmail,
   signInWithGoogleAccount,
   signOut,
@@ -122,6 +124,42 @@ describe('auth email validation', () => {
       code: 'auth/invalid-email',
       message: 'Firebase: Error (auth/invalid-email).'
     })).toBe('Enter a valid email address.');
+  });
+
+  it('does not disclose whether a sign-in email belongs to an account', () => {
+    expect(describeAuthError({ code: 'auth/user-not-found' })).toBe('Email or password is incorrect.');
+  });
+});
+
+describe('sendResetEmail', () => {
+  const sendPasswordResetEmailMock = vi.mocked(sendPasswordResetEmail);
+
+  beforeEach(() => {
+    sendPasswordResetEmailMock.mockReset();
+  });
+
+  it('normalizes the email and configures the app reset destination', async () => {
+    sendPasswordResetEmailMock.mockResolvedValue(undefined);
+
+    await sendResetEmail(' Player@Example.COM ');
+
+    expect(sendPasswordResetEmailMock).toHaveBeenCalledWith(authState, 'player@example.com', {
+      url: 'https://allplays.ai/reset-password.html',
+      handleCodeInApp: true
+    });
+  });
+
+  it('treats a missing account like a successful reset request', async () => {
+    sendPasswordResetEmailMock.mockRejectedValue({ code: 'auth/user-not-found' });
+
+    await expect(sendResetEmail('missing@example.com')).resolves.toBeUndefined();
+  });
+
+  it('preserves actionable reset failures', async () => {
+    const error = { code: 'auth/too-many-requests' };
+    sendPasswordResetEmailMock.mockRejectedValue(error);
+
+    await expect(sendResetEmail('player@example.com')).rejects.toBe(error);
   });
 });
 

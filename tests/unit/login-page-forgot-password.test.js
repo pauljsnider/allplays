@@ -1,5 +1,9 @@
 import { describe, it, expect, vi } from 'vitest';
-import { createForgotPasswordHandler, getPasswordResetErrorMessage } from '../../js/login-page.js';
+import {
+    createForgotPasswordHandler,
+    getPasswordResetErrorMessage,
+    PASSWORD_RESET_CONFIRMATION_MESSAGE
+} from '../../js/login-page.js';
 
 function createClassList(initialClasses = []) {
     const classes = new Set(initialClasses);
@@ -31,7 +35,7 @@ describe('createForgotPasswordHandler', () => {
 
         expect(resetPassword).toHaveBeenCalledWith('player@example.com');
         expect(emailInput.value).toBe('');
-        expect(errorDiv.textContent).toBe('Password reset email sent! Please check your inbox and spam folder.');
+        expect(errorDiv.textContent).toBe(PASSWORD_RESET_CONFIRMATION_MESSAGE);
         expect(errorDiv.classList.contains('text-green-600')).toBe(true);
         expect(errorDiv.classList.contains('text-red-500')).toBe(false);
     });
@@ -40,7 +44,6 @@ describe('createForgotPasswordHandler', () => {
         const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
         const scenarios = [
             ['auth/invalid-email', 'Invalid email address format.'],
-            ['auth/user-not-found', 'No account found with this email address.'],
             ['auth/too-many-requests', 'Too many requests. Please try again later.']
         ];
 
@@ -56,6 +59,18 @@ describe('createForgotPasswordHandler', () => {
         }
 
         consoleErrorSpy.mockRestore();
+    });
+
+    it('shows the same neutral success state when Firebase reports a missing account', async () => {
+        const resetPassword = vi.fn().mockRejectedValue({ code: 'auth/user-not-found' });
+        const { emailInput, errorDiv } = createElements({ email: 'missing@example.com' });
+
+        await createForgotPasswordHandler({ emailInput, errorDiv, resetPassword })();
+
+        expect(emailInput.value).toBe('');
+        expect(errorDiv.textContent).toBe(PASSWORD_RESET_CONFIRMATION_MESSAGE);
+        expect(errorDiv.classList.contains('text-green-600')).toBe(true);
+        expect(errorDiv.classList.contains('text-red-500')).toBe(false);
     });
 
     it('resets validation styling after a prior success state', async () => {

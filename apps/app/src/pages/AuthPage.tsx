@@ -10,6 +10,7 @@ import {
   hydrateFirebaseUser,
   isValidAuthEmail,
   normalizeAuthEmail,
+  passwordResetConfirmationMessage,
   rememberPendingInvite,
   sendResetEmail,
   signInWithEmail,
@@ -180,7 +181,7 @@ export function AuthPage({ auth }: { auth: AuthState }) {
         throw new Error('Enter a valid email address.');
       }
       await sendResetEmail(normalizedEmail);
-      setMessage('Password reset email sent. Check your inbox and spam folder.');
+      setMessage(passwordResetConfirmationMessage);
       setShowReset(false);
     } catch (resetError: any) {
       setError(describeAuthError(resetError));
@@ -295,8 +296,8 @@ export function AuthPage({ auth }: { auth: AuthState }) {
 
       {showReset ? (
         <form className="mt-3 rounded-xl border border-gray-200 bg-gray-50 p-3" onSubmit={handleReset}>
-          <label className="text-xs font-extrabold uppercase tracking-[0.04em] text-gray-500">Password reset email</label>
-          <input className="auth-input mt-2" type="email" value={resetEmail} onChange={(event) => setResetEmail(event.target.value)} placeholder={email || 'you@example.com'} />
+          <label htmlFor="password-reset-email" className="text-xs font-extrabold uppercase tracking-[0.04em] text-gray-500">Password reset email</label>
+          <input id="password-reset-email" className="auth-input mt-2" type="email" value={resetEmail} onChange={(event) => setResetEmail(event.target.value)} placeholder={email || 'you@example.com'} />
           <button type="submit" className="secondary-button mt-3 w-full" disabled={busy}>
             Send reset email
           </button>

@@ -32,6 +32,7 @@ import { clearAppDataCache } from './appDataCache';
 import type { AuthUser, UserRole } from './types';
 
 export const firebaseAuth = auth;
+export const passwordResetConfirmationMessage = "If an account exists for that email, we've sent a reset link.";
 
 const pendingActivationCodeKey = 'pendingActivationCode';
 const pendingInviteCodeKey = 'allplays-app-pending-invite-code';
@@ -219,16 +220,12 @@ export function describeAuthError(error: any) {
     return `Firebase is blocking this local origin (${origin}). Add it to the Firebase web API key restrictions.`;
   }
 
-  if (code === 'auth/invalid-credential' || code === 'auth/wrong-password') {
+  if (code === 'auth/invalid-credential' || code === 'auth/wrong-password' || code === 'auth/user-not-found') {
     return 'Email or password is incorrect.';
   }
 
   if (code === 'auth/invalid-email' || message.includes('auth/invalid-email') || message.includes('INVALID_EMAIL')) {
     return 'Enter a valid email address.';
-  }
-
-  if (code === 'auth/user-not-found') {
-    return 'No ALL PLAYS account was found for that email.';
   }
 
   if (code === 'auth/too-many-requests') {
@@ -1192,10 +1189,20 @@ export async function completeGoogleRedirect() {
 }
 
 export async function sendResetEmail(email: string) {
-  await sendPasswordResetEmail(auth, requireValidAuthEmail(email), {
-    url: 'https://allplays.ai/reset-password.html',
-    handleCodeInApp: true
-  });
+  try {
+    await sendPasswordResetEmail(auth, requireValidAuthEmail(email), {
+      url: 'https://allplays.ai/reset-password.html',
+      handleCodeInApp: true
+    });
+  } catch (error: unknown) {
+    // Older Firebase configurations can still return this error even though newer
+    // projects suppress it. Treat it as success so password reset cannot be used
+    // to discover whether an email address belongs to an account.
+    if ((error as { code?: string } | null)?.code === 'auth/user-not-found') {
+      return;
+    }
+    throw error;
+  }
 }
 
 export async function resendVerificationEmail() {
