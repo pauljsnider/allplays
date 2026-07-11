@@ -617,7 +617,15 @@ describe('broadcast setup session helpers', () => {
             status: BROADCAST_STREAM_STATUSES.READY,
             cameraReady: true,
             microphoneReady: false
-        })).toMatchObject({ mediaReady: false, showBegin: false, beginDisabled: true });
+        })).toMatchObject({
+            status: BROADCAST_STREAM_STATUSES.FAILED,
+            label: 'Start failed',
+            mediaReady: false,
+            showBegin: false,
+            beginDisabled: true,
+            showRetry: true,
+            isLive: false
+        });
 
         expect(resolveBroadcastStreamControlState({
             status: BROADCAST_STREAM_STATUSES.READY,
@@ -646,6 +654,38 @@ describe('broadcast setup session helpers', () => {
         expect(resolveBroadcastStreamControlState({
             status: BROADCAST_STREAM_STATUSES.FAILED
         })).toMatchObject({ label: 'Start failed', showBegin: false, showRetry: true, isLive: false });
+    });
+
+    it('clears ready, starting, and live state when a camera or microphone track ends', () => {
+        for (const status of [
+            BROADCAST_STREAM_STATUSES.READY,
+            BROADCAST_STREAM_STATUSES.STARTING,
+            BROADCAST_STREAM_STATUSES.LIVE
+        ]) {
+            expect(resolveBroadcastStreamControlState({
+                status,
+                cameraReady: false,
+                microphoneReady: true
+            })).toMatchObject({
+                status: BROADCAST_STREAM_STATUSES.FAILED,
+                label: 'Start failed',
+                mediaReady: false,
+                showBegin: false,
+                beginDisabled: true,
+                showRetry: true,
+                isLive: false
+            });
+
+            expect(resolveBroadcastStreamControlState({
+                status,
+                cameraReady: true,
+                microphoneReady: false
+            })).toMatchObject({
+                status: BROADCAST_STREAM_STATUSES.FAILED,
+                showRetry: true,
+                isLive: false
+            });
+        }
     });
 
     it('builds a reusable ready session after camera and microphone verification', () => {

@@ -215,6 +215,14 @@ export function resolveBroadcastStreamControlState({
         ? status
         : BROADCAST_STREAM_STATUSES.SETUP_REQUIRED;
     const mediaReady = cameraReady === true && microphoneReady === true;
+    const requiresReadyMedia = [
+        BROADCAST_STREAM_STATUSES.READY,
+        BROADCAST_STREAM_STATUSES.STARTING,
+        BROADCAST_STREAM_STATUSES.LIVE
+    ].includes(safeStatus);
+    const resolvedStatus = requiresReadyMedia && !mediaReady
+        ? BROADCAST_STREAM_STATUSES.FAILED
+        : safeStatus;
     const labels = {
         [BROADCAST_STREAM_STATUSES.SETUP_REQUIRED]: 'Setup required',
         [BROADCAST_STREAM_STATUSES.READY]: 'Ready to stream',
@@ -224,13 +232,13 @@ export function resolveBroadcastStreamControlState({
     };
 
     return {
-        status: safeStatus,
-        label: labels[safeStatus],
+        status: resolvedStatus,
+        label: labels[resolvedStatus],
         mediaReady,
-        showBegin: mediaReady && safeStatus === BROADCAST_STREAM_STATUSES.READY,
-        beginDisabled: !mediaReady || safeStatus !== BROADCAST_STREAM_STATUSES.READY,
-        showRetry: safeStatus === BROADCAST_STREAM_STATUSES.FAILED,
-        isLive: safeStatus === BROADCAST_STREAM_STATUSES.LIVE
+        showBegin: mediaReady && resolvedStatus === BROADCAST_STREAM_STATUSES.READY,
+        beginDisabled: !mediaReady || resolvedStatus !== BROADCAST_STREAM_STATUSES.READY,
+        showRetry: resolvedStatus === BROADCAST_STREAM_STATUSES.FAILED,
+        isLive: resolvedStatus === BROADCAST_STREAM_STATUSES.LIVE
     };
 }
 

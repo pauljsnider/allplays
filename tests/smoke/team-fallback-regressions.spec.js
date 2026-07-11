@@ -825,14 +825,15 @@ export function resolveBroadcastStreamControlState({ status = 'setup_required', 
         failed: 'Start failed'
     };
     const mediaReady = cameraReady && microphoneReady;
+    const resolvedStatus = !mediaReady && ['ready', 'starting', 'live'].includes(status) ? 'failed' : status;
     return {
-        status,
-        label: labels[status] || labels.setup_required,
+        status: resolvedStatus,
+        label: labels[resolvedStatus] || labels.setup_required,
         mediaReady,
-        showBegin: mediaReady && status === 'ready',
-        beginDisabled: !mediaReady || status !== 'ready',
-        showRetry: status === 'failed',
-        isLive: status === 'live'
+        showBegin: mediaReady && resolvedStatus === 'ready',
+        beginDisabled: !mediaReady || resolvedStatus !== 'ready',
+        showRetry: resolvedStatus === 'failed',
+        isLive: resolvedStatus === 'live'
     };
 }
 export function resolveReplayVideoOptions() {
@@ -1234,7 +1235,7 @@ test('live game archived replay Team Pass gate locks replay when config is enabl
     expect(pageErrors).toEqual([]);
 });
 
-test('live game begins the ready preview stream and retries an inline start failure', async ({ page, baseURL }) => {
+test('live game begins the ready preview stream and recovers from start and track failures', async ({ page, baseURL }) => {
     const pageErrors = await collectPageErrors(page);
     await page.addInitScript(() => {
         window.__LIVE_GAME_REPLAY__ = false;
@@ -1245,15 +1246,33 @@ test('live game begins the ready preview stream and retries an inline start fail
         window.__LIVE_GAME_PLAY_CALLS__ = 0;
         window.__LIVE_GAME_GET_USER_MEDIA_CALLS__ = 0;
 
-        const videoTrack = { kind: 'video', enabled: true, readyState: 'live', stop() { this.readyState = 'ended'; } };
-        const audioTrack = { kind: 'audio', enabled: true, readyState: 'live', stop() { this.readyState = 'ended'; } };
-        const stream = { getTracks: () => [videoTrack, audioTrack] };
+        const createTrack = (kind) => {
+            const endedListeners = [];
+            return {
+                kind,
+                enabled: true,
+                readyState: 'live',
+                addEventListener(type, listener) {
+                    if (type === 'ended') endedListeners.push(listener);
+                },
+                end() {
+                    if (this.readyState === 'ended') return;
+                    this.readyState = 'ended';
+                    endedListeners.splice(0).forEach((listener) => listener());
+                },
+                stop() { this.end(); }
+            };
+        };
         Object.defineProperty(navigator, 'mediaDevices', {
             configurable: true,
             value: {
                 getUserMedia: async () => {
                     window.__LIVE_GAME_GET_USER_MEDIA_CALLS__ += 1;
-                    return stream;
+                    const videoTrack = createTrack('video');
+                    const audioTrack = createTrack('audio');
+                    window.__LIVE_GAME_VIDEO_TRACK__ = videoTrack;
+                    window.__LIVE_GAME_AUDIO_TRACK__ = audioTrack;
+                    return { getTracks: () => [videoTrack, audioTrack] };
                 }
             }
         });
@@ -1292,7 +1311,19 @@ test('live game begins the ready preview stream and retries an inline start fail
     await expect(page.locator('#native-camera-status')).toContainText('No backend ingest or cloud recording is active.');
     await expect(page.locator('#native-broadcast-error')).toBeHidden();
     await expect.poll(() => page.evaluate(() => window.__LIVE_GAME_GET_USER_MEDIA_CALLS__)).toBe(1);
+    await page.evaluate(() => window.__LIVE_GAME_AUDIO_TRACK__.end());
+    await expect(page.locator('#native-broadcast-state')).toHaveAttribute('data-state', 'failed');
+    await expect(page.locator('#native-broadcast-state')).toContainText('Start failed');
+    await expect(page.locator('#native-broadcast-retry-btn')).toBeVisible();
+    await expect(page.locator('#native-camera-stop-btn')).toContainText('Stop Preview');
+
+    await page.locator('#native-broadcast-retry-btn').click();
+    await expect(page.locator('#native-broadcast-state')).toHaveAttribute('data-state', 'live');
+    await expect(page.locator('#native-broadcast-error')).toBeHidden();
+    await expect.poll(() => page.evaluate(() => window.__LIVE_GAME_GET_USER_MEDIA_CALLS__)).toBe(2);
     await expect.poll(() => page.evaluate(() => window.__LIVE_GAME_UPDATE_CALLS__.map((updates) => updates.broadcastSession?.status))).toEqual([
+        'checking_permissions',
+        'ready_for_managed_stream',
         'checking_permissions',
         'ready_for_managed_stream'
     ]);

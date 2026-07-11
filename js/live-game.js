@@ -32,7 +32,7 @@ import {
   getReplayTimestampMs,
   rebaseReplayStartTimeMs
 } from './live-game-replay.js?v=3';
-import { BROADCAST_SETUP_STATUSES, BROADCAST_STREAM_STATUSES, MAX_HIGHLIGHT_CLIP_MS, buildBroadcastSetupSession, buildHighlightShareUrl, buildStreamScoreContext, canAccessNativeCameraCapture, canSaveBroadcastSetupSession, createHighlightClipDraft, resolveBroadcastProviderMetadata, resolveBroadcastStreamControlState, resolveReplayVideoOptions, shouldReloadVideoPlayback } from './live-game-video.js?v=9';
+import { BROADCAST_SETUP_STATUSES, BROADCAST_STREAM_STATUSES, MAX_HIGHLIGHT_CLIP_MS, buildBroadcastSetupSession, buildHighlightShareUrl, buildStreamScoreContext, canAccessNativeCameraCapture, canSaveBroadcastSetupSession, createHighlightClipDraft, resolveBroadcastProviderMetadata, resolveBroadcastStreamControlState, resolveReplayVideoOptions, shouldReloadVideoPlayback } from './live-game-video.js?v=10';
 import { TEAM_PASS_FEATURES, canAccessPremiumFanFeature, getTeamEntitlementStatus, isRecordedReplayTeamPassGateEnabled, resolveTeamEntitlementSeasonId } from './team-entitlements.js?v=2';
 import { getAI, getGenerativeModel, GoogleAIBackend } from './vendor/firebase-ai.js';
 import { getApp } from './vendor/firebase-app.js';
@@ -431,6 +431,19 @@ function setNativeBroadcastStatus(status, errorMessage = '') {
   renderNativeBroadcastControls();
 }
 
+function bindNativeCameraTrackRecovery(stream) {
+  stream?.getTracks?.().forEach(track => {
+    track.addEventListener?.('ended', () => {
+      if (state.nativeCameraStream !== stream) return;
+      const readiness = getNativeCameraReadiness();
+      if (readiness.cameraReady && readiness.microphoneReady) return;
+      const message = 'Camera or microphone access ended. Retry to restore setup and start again.';
+      setNativeBroadcastStatus(BROADCAST_STREAM_STATUSES.FAILED, message);
+      setNativeCameraStatus(message, 'error');
+    }, { once: true });
+  });
+}
+
 function getDefaultBroadcastSessionName() {
   const teamName = state.team?.name || 'Team';
   const opponent = resolveOpponentDisplayName(state.game);
@@ -478,8 +491,9 @@ async function saveBroadcastSetupSession(status, options = {}) {
 
 function stopNativeCameraPreview() {
   if (state.nativeCameraStream) {
-    state.nativeCameraStream.getTracks().forEach(track => track.stop());
+    const stream = state.nativeCameraStream;
     state.nativeCameraStream = null;
+    stream.getTracks().forEach(track => track.stop());
   }
   if (els.nativeCameraPreview) {
     els.nativeCameraPreview.pause();
@@ -549,6 +563,7 @@ async function startNativeCameraPreview() {
       audio: true
     });
     state.nativeCameraStream = stream;
+    bindNativeCameraTrackRecovery(stream);
     if (els.nativeCameraPreview) {
       els.nativeCameraPreview.srcObject = stream;
       els.nativeCameraPreview.classList.remove('hidden');
