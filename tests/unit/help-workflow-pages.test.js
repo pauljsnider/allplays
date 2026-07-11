@@ -158,23 +158,16 @@ describe('help and workflow page inventory', () => {
         expect(extractAppHelpIndexEntry(appHelpIndex, 'track-game')).toContain('"scorekeeper"');
     });
 
-    it('keeps Game Day broadcast workflow copy aligned with setup-only support', () => {
+    it('keeps Game Day broadcast workflow copy aligned with the local Begin Streaming path', () => {
         const html = readRepoFile('workflow-game-day.html');
         const appHelpIndex = readRepoFile('apps/app/src/lib/helpKnowledgeIndex.ts');
         const gameDayHelpEntry = extractAppHelpIndexEntry(appHelpIndex, 'game-day');
 
         expect(html).toContain('Open broadcast setup');
-        expect(html).toContain('Current streaming support uses external provider/setup tools');
-        expect(html).toContain('it does not yet start a native managed broadcast or server-side stream pipeline');
+        expect(html).toContain('<strong>Begin Streaming</strong>');
+        expect(html).toContain('local device preview stream');
+        expect(html).toContain('does not create external ingest, cloud recording, or a server-side broadcast pipeline');
         expect(gameDayHelpEntry).toContain('Open broadcast setup');
-        expect(gameDayHelpEntry).toContain('Current streaming support uses external provider/setup tools');
-        expect(gameDayHelpEntry).toContain('it does not yet start a native managed broadcast or server-side stream pipeline');
-        expect(html).not.toContain('Begin Streaming button');
-        expect(html).not.toContain('native camera capture');
-        expect(html).not.toContain('Confirm camera/microphone permission is granted');
-        expect(gameDayHelpEntry).not.toContain('Begin Streaming button');
-        expect(gameDayHelpEntry).not.toContain('native camera capture');
-        expect(gameDayHelpEntry).not.toContain('Confirm camera/microphone permission is granted');
     });
 
     it('keeps communication workflow mention guidance aligned with Watch and Chat help', () => {

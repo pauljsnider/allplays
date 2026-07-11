@@ -1,5 +1,6 @@
 import { normalizeYouTubeEmbedUrl } from './live-stream-utils.js';
 import { getChatMediaDownloadName, isSafeChatMediaUrl } from './team-chat-media.js';
+import { hasStreamTeamAccess } from './team-access.js';
 
 export const MAX_HIGHLIGHT_CLIP_MS = 60_000;
 export const BROADCAST_SETUP_STATUSES = Object.freeze({
@@ -154,11 +155,43 @@ function hasSelectedVideographerGrant(user, team) {
 
 function isGameCameraEligible(game) {
     if (!game || typeof game !== 'object') return false;
-    const status = String(game.status || game.liveStatus || '').toLowerCase();
-    return !['cancelled', 'canceled', 'completed', 'final'].includes(status);
+    const endedStatuses = new Set(['cancelled', 'canceled', 'completed', 'final', 'deleted']);
+    return ![game.status, game.liveStatus]
+        .map(value => String(value || '').trim().toLowerCase())
+        .filter(Boolean)
+        .some(status => endedStatuses.has(status));
 }
 
-export function canAccessNativeCameraCapture({ user, team, game }) {
+function isPublicGameReadTeam(team) {
+    return team?.isPublic === true && team?.active !== false;
+}
+
+function isShareableGameDocument(game) {
+    const visibility = toCleanString(game?.visibility).toLowerCase();
+    return visibility !== 'private' &&
+        game?.isPrivate !== true &&
+        game?.private !== true &&
+        (
+            visibility === 'public' ||
+            game?.isPublic === true ||
+            game?.public === true ||
+            game?.shareable === true ||
+            game?.isShareable === true ||
+            game?.publicCalendar === true
+        );
+}
+
+function canReadPublicGameDocument(team, game) {
+    return (game?.type || 'game') === 'game' &&
+        toCleanString(game?.visibility).toLowerCase() !== 'private' &&
+        game?.isPrivate !== true &&
+        game?.private !== true &&
+        toCleanString(game?.status).toLowerCase() !== 'deleted' &&
+        toCleanString(game?.liveStatus).toLowerCase() !== 'deleted' &&
+        (isPublicGameReadTeam(team) || isShareableGameDocument(game));
+}
+
+export function canAccessNativeCameraCapture({ user, team, game, rsvp = null }) {
     if (!user || !team || !isGameCameraEligible(game)) return false;
 
     if (user.isAdmin) return true;
@@ -167,7 +200,9 @@ export function canAccessNativeCameraCapture({ user, team, game }) {
     const userEmail = typeof user.email === 'string' ? user.email.trim().toLowerCase() : '';
     const adminEmails = normalizeStringSet(team.adminEmails);
     if (userEmail && adminEmails.has(userEmail)) return true;
-    if (hasSelectedVideographerGrant(user, team)) return true;
+    const publicReadableGame = canReadPublicGameDocument(team, game);
+    if (hasStreamTeamAccess(user, team, game, rsvp)) return true;
+    if (publicReadableGame && hasSelectedVideographerGrant(user, team)) return true;
 
     const approvedUidFields = [
         team.mediaContributorUids,
@@ -194,7 +229,7 @@ export function canAccessNativeCameraCapture({ user, team, game }) {
     return Boolean(userEmail && approvedEmailFields.some(values => normalizeStringSet(values).has(userEmail)));
 }
 
-export function canSaveBroadcastSetupSession({ user, team, game }) {
+export function canSaveBroadcastSetupSession({ user, team, game, rsvp = null }) {
     if (!user || !team || !isGameCameraEligible(game)) return false;
 
     if (user.isAdmin) return true;
@@ -203,7 +238,9 @@ export function canSaveBroadcastSetupSession({ user, team, game }) {
     const userEmail = typeof user.email === 'string' ? user.email.trim().toLowerCase() : '';
     if (userEmail && normalizeStringSet(team.adminEmails).has(userEmail)) return true;
 
-    return hasSelectedVideographerGrant(user, team);
+    if (hasStreamTeamAccess(user, team, game, rsvp)) return true;
+
+    return canReadPublicGameDocument(team, game) && hasSelectedVideographerGrant(user, team);
 }
 
 export function resolveBroadcastStreamControlState({
@@ -273,13 +310,9 @@ export function buildBroadcastSetupSession({ existingSession = {}, sessionName =
     const safeStatus = Object.values(BROADCAST_SETUP_STATUSES).includes(status) ? status : BROADCAST_SETUP_STATUSES.CHECKING;
     const providerMetadata = provider && typeof provider === 'object' ? provider : existingSession?.provider;
     const session = {
-        ...(existingSession && typeof existingSession === 'object' ? existingSession : {}),
         id: toCleanString(existingSession?.id) || `broadcast-${Date.parse(timestamp) || Date.now()}`,
         name: safeName.slice(0, 80),
         status: safeStatus,
-        streamStatus: safeStatus,
-        setupOnly: true,
-        managedStreamReady: safeStatus === BROADCAST_SETUP_STATUSES.READY,
         provider: compactObject({
             type: toCleanString(providerMetadata?.type) || BROADCAST_PROVIDER_TYPES.MANAGED_SETUP,
             name: toCleanString(providerMetadata?.name) || 'ALL PLAYS managed setup',
@@ -287,25 +320,15 @@ export function buildBroadcastSetupSession({ existingSession = {}, sessionName =
             embedUrl: toCleanString(providerMetadata?.embedUrl),
             videoId: toCleanString(providerMetadata?.videoId)
         }),
-        setupMetadata: {
-            setupOnly: true,
-            managedStreamReady: safeStatus === BROADCAST_SETUP_STATUSES.READY,
-            cameraVerified: permissions.camera === true,
-            microphoneVerified: permissions.microphone === true
-        },
         permissions: {
             camera: permissions.camera === true,
             microphone: permissions.microphone === true
         },
         updatedAt: timestamp,
-        updatedBy: user?.uid || existingSession?.updatedBy || null,
-        updatedByEmail: toCleanString(user?.email || existingSession?.updatedByEmail) || null
+        updatedBy: user?.uid || existingSession?.updatedBy || null
     };
 
-    if (!session.createdAt) session.createdAt = timestamp;
-    if (safeStatus === BROADCAST_SETUP_STATUSES.CHECKING && !session.startedAt) session.startedAt = timestamp;
-    if (safeStatus === BROADCAST_SETUP_STATUSES.READY) session.readyAt = timestamp;
-    if (safeStatus === BROADCAST_SETUP_STATUSES.FAILED) session.failedAt = timestamp;
+    session.createdAt = existingSession?.createdAt || timestamp;
     if (errorMessage) {
         session.errorMessage = String(errorMessage).slice(0, 180);
     } else {

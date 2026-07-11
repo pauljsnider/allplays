@@ -224,8 +224,8 @@ function createEnvironment() {
 function buildModuleSource() {
     return readFileSync(new URL('../../js/live-game.js', import.meta.url), 'utf8')
         .replace(
-            "import {\n  getTeam,\n  getGame,\n  getPlayers,\n  subscribeLiveEvents,\n  subscribeLiveChat,\n  postLiveChatMessage,\n  subscribeReactions,\n  sendReaction,\n  trackViewerPresence,\n  getLiveEvents,\n  getLiveChatHistory,\n  getLiveReactions,\n  getConfigs,\n  subscribeGame,\n  updateGame,\n  uploadGameClip\n} from './db.js?v=91';",
-            'const { getTeam, getGame, getPlayers, subscribeLiveEvents, subscribeLiveChat, postLiveChatMessage, subscribeReactions, sendReaction, trackViewerPresence, getLiveEvents, getLiveChatHistory, getLiveReactions, getConfigs, subscribeGame, updateGame, uploadGameClip } = deps.db;'
+            "import {\n  getTeam,\n  getGame,\n  getPlayers,\n  subscribeLiveEvents,\n  subscribeLiveChat,\n  postLiveChatMessage,\n  subscribeReactions,\n  sendReaction,\n  trackViewerPresence,\n  getLiveEvents,\n  getLiveChatHistory,\n  getLiveReactions,\n  getConfigs,\n  getMyRsvp,\n  subscribeGame,\n  updateGame,\n  uploadGameClip\n} from './db.js?v=91';",
+            'const { getTeam, getGame, getPlayers, subscribeLiveEvents, subscribeLiveChat, postLiveChatMessage, subscribeReactions, sendReaction, trackViewerPresence, getLiveEvents, getLiveChatHistory, getLiveReactions, getConfigs, getMyRsvp, subscribeGame, updateGame, uploadGameClip } = deps.db;'
         )
         .replace(
             "import { getUrlParams, escapeHtml, renderHeader, renderFooter, formatShortDate, formatTime, shareOrCopy } from './utils.js?v=15';",
@@ -286,6 +286,10 @@ function buildModuleSource() {
         .replace(
             /import\s+\{\s*getDefaultLivePeriod\s*\}\s+from\s+'\.\/live-sport-config\.js\?v=\d+';/,
             'const { getDefaultLivePeriod } = deps.liveSportConfig;'
+        )
+        .replace(
+            /import\s+\{\s*BROADCAST_STREAM_HEARTBEAT_MS,\s*buildBroadcastRuntimeSession\s*\}\s+from\s+'\.\/game-day-broadcast\.js\?v=\d+';/,
+            'const { BROADCAST_STREAM_HEARTBEAT_MS, buildBroadcastRuntimeSession } = deps.gameDayBroadcast;'
         )
         .replace(
             "init().catch(error => {\n  console.error('Live game init failed:', error);\n  const feed = document.querySelector('#plays-feed');\n  if (feed) feed.innerHTML = '<div class=\"text-sand/60 text-center py-6\">Something went wrong loading the game. Try refreshing the page.</div>';\n});",
@@ -538,6 +542,13 @@ async function bootReplayPage({ replayEvents }) {
         },
         liveSportConfig: {
             getDefaultLivePeriod: () => 'Final'
+        },
+        gameDayBroadcast: {
+            BROADCAST_STREAM_HEARTBEAT_MS: 15000,
+            buildBroadcastRuntimeSession: ({ existingSession = {}, status = 'ready' } = {}) => ({
+                ...existingSession,
+                localStreamStatus: status
+            })
         }
     };
 

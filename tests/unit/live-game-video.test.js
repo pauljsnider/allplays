@@ -508,7 +508,7 @@ describe('live game replay video helpers', () => {
 
 
 describe('native camera capture authorization', () => {
-    const scheduledGame = { status: 'scheduled' };
+    const scheduledGame = { status: 'scheduled', visibility: 'public' };
 
     it('allows team owners and admins on scheduled games', () => {
         expect(canAccessNativeCameraCapture({
@@ -564,6 +564,78 @@ describe('native camera capture authorization', () => {
         })).toBe(false);
     });
 
+    it('allows Game Day streaming helpers with selected or confirmed access', () => {
+        const selectedStreamingTeam = {
+            ownerId: 'owner-1',
+            adminEmails: [],
+            teamPermissions: {
+                streaming: { mode: 'selected', memberIds: ['stream-score-1'] }
+            }
+        };
+        const selectedUser = { uid: 'stream-score-1', email: 'helper@example.com' };
+
+        expect(canAccessNativeCameraCapture({
+            user: selectedUser,
+            team: selectedStreamingTeam,
+            game: scheduledGame
+        })).toBe(true);
+        expect(canSaveBroadcastSetupSession({
+            user: selectedUser,
+            team: selectedStreamingTeam,
+            game: scheduledGame
+        })).toBe(true);
+
+        const confirmedStreamingTeam = {
+            ownerId: 'owner-1',
+            adminEmails: [],
+            teamPermissions: {
+                streaming: { mode: 'all_confirmed', memberIds: [] }
+            }
+        };
+        const confirmedUser = { uid: 'confirmed-streamer', email: 'confirmed@example.com' };
+        expect(canAccessNativeCameraCapture({
+            user: confirmedUser,
+            team: confirmedStreamingTeam,
+            game: scheduledGame,
+            rsvp: { response: 'going' }
+        })).toBe(true);
+        expect(canSaveBroadcastSetupSession({
+            user: confirmedUser,
+            team: confirmedStreamingTeam,
+            game: scheduledGame,
+            rsvp: { response: 'going' }
+        })).toBe(true);
+        expect(canSaveBroadcastSetupSession({
+            user: confirmedUser,
+            team: confirmedStreamingTeam,
+            game: scheduledGame,
+            rsvp: null
+        })).toBe(false);
+    });
+
+    it('allows selected streaming helpers to set up private scheduled game broadcasts', () => {
+        const selectedStreamingTeam = {
+            ownerId: 'owner-1',
+            adminEmails: [],
+            teamPermissions: {
+                streaming: { mode: 'selected', memberIds: ['stream-score-1'] }
+            }
+        };
+        const privateScheduledGame = { status: 'scheduled', visibility: 'private' };
+        const selectedUser = { uid: 'stream-score-1', email: 'helper@example.com' };
+
+        expect(canAccessNativeCameraCapture({
+            user: selectedUser,
+            team: selectedStreamingTeam,
+            game: privateScheduledGame
+        })).toBe(true);
+        expect(canSaveBroadcastSetupSession({
+            user: selectedUser,
+            team: selectedStreamingTeam,
+            game: privateScheduledGame
+        })).toBe(true);
+    });
+
     it('mirrors Firestore broadcast-session write roles for setup saves', () => {
         const selectedVideoTeam = {
             ownerId: 'owner-1',
@@ -593,6 +665,29 @@ describe('native camera capture authorization', () => {
             user: { uid: 'streamer-1', email: 'streamer@example.com' },
             team: selectedVideoTeam,
             game: scheduledGame
+        })).toBe(false);
+    });
+
+    it('blocks selected videographer broadcast setup on private non-shareable games', () => {
+        const selectedVideoTeam = {
+            ownerId: 'owner-1',
+            adminEmails: [],
+            teamPermissions: {
+                videography: { mode: 'selected', memberIds: ['video-1'] }
+            }
+        };
+        const privateGame = { status: 'scheduled', visibility: 'private' };
+        const selectedUser = { uid: 'video-1', email: 'video@example.com' };
+
+        expect(canAccessNativeCameraCapture({
+            user: selectedUser,
+            team: selectedVideoTeam,
+            game: privateGame
+        })).toBe(false);
+        expect(canSaveBroadcastSetupSession({
+            user: selectedUser,
+            team: selectedVideoTeam,
+            game: privateGame
         })).toBe(false);
     });
 
@@ -701,19 +796,9 @@ describe('broadcast setup session helpers', () => {
             id: 'broadcast-1778398200000',
             name: 'Varsity vs Central',
             status: 'ready_for_managed_stream',
-            setupOnly: true,
-            managedStreamReady: true,
-            streamStatus: 'ready_for_managed_stream',
             provider: { type: 'managed_setup', name: 'ALL PLAYS managed setup' },
-            setupMetadata: {
-                setupOnly: true,
-                managedStreamReady: true,
-                cameraVerified: true,
-                microphoneVerified: true
-            },
             permissions: { camera: true, microphone: true },
             updatedBy: 'coach-1',
-            updatedByEmail: 'coach@example.com',
             createdAt: '2026-05-10T07:30:00.000Z',
             updatedAt: '2026-05-10T07:30:00.000Z'
         });
@@ -734,13 +819,10 @@ describe('broadcast setup session helpers', () => {
             id: 'broadcast-existing',
             name: 'Existing session',
             status: 'permission_failed',
-            managedStreamReady: false,
-            streamStatus: 'permission_failed',
             permissions: { camera: false, microphone: false },
             errorMessage: 'Permission denied. Allow access and retry.',
             createdAt: '2026-05-01T00:00:00.000Z',
-            updatedAt: '2026-05-10T08:00:00.000Z',
-            failedAt: '2026-05-10T08:00:00.000Z'
+            updatedAt: '2026-05-10T08:00:00.000Z'
         });
     });
 

@@ -13,6 +13,9 @@ describe('scorekeeping access wiring', () => {
         expect(source).toContain('renderLimitedScorekeepingAccess(accessInfo)');
         expect(source).toContain("accessInfo.accessLevel === 'videographer'");
         expect(source).toContain('renderLimitedVideographerAccess(accessInfo)');
+        expect(source).toContain("if (accessInfo.accessLevel !== 'full')");
+        expect(source).toContain('subscribeToGameUpdates({ fullAccess: true })');
+        expect(source).toContain('if (!fullAccess)');
         expect(source).toContain('Roster management, schedule editing, team settings, and other coach/admin controls remain restricted.');
 
         const workflow = readFileSync(resolve(process.cwd(), 'workflow-track-game.html'), 'utf8');
@@ -34,7 +37,8 @@ describe('scorekeeping access wiring', () => {
         const rules = readFileSync(resolve(process.cwd(), 'firestore.rules'), 'utf8');
 
         expect(rules).toContain('function canScorekeepGame(teamId, gameId)');
-        expect(rules).toMatch(/allow update: if isTeamOwnerOrAdmin\(teamId\) \|\|\s+\(isOfficialForGame\(\) && isOfficialGameUpdate\(\)\) \|\|\s+isScorekeepingGameUpdate\(teamId, gameId\) \|\|\s+isVideographyGameUpdate\(teamId, gameId\);/);
+        expect(rules).toMatch(/allow update: if !isBroadcastSessionOnlyUpdate\(\) &&\s+\(isTeamOwnerOrAdmin\(teamId\) \|\|\s+\(isOfficialForGame\(\) && isOfficialGameUpdate\(\)\) \|\|\s+isScorekeepingGameUpdate\(teamId, gameId\) \|\|\s+isVideographyGameUpdate\(teamId, gameId\)\);/);
+        expect(rules).toContain('allow update: if isStreamingGameUpdate(teamId, gameId);');
         expect(rules).toContain('allow create, update: if isTeamOwnerOrAdmin(teamId) || canScorekeepGame(teamId, gameId);');
         const privatePlayerStatsRule = rules.match(/match \/privatePlayerStats\/\{statId\} \{[\s\S]*?\n        \}/)?.[0] || '';
         expect(privatePlayerStatsRule).toContain('allow read, create, update: if isTeamOwnerOrAdmin(teamId) || canScorekeepGame(teamId, gameId);');

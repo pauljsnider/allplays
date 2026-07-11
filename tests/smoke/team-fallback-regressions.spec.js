@@ -603,7 +603,11 @@ const LIVE_GAME_UTILS_STUB = `
 export function renderHeader() {}
 export function renderFooter() {}
 export function getUrlParams() {
-    return { teamId: 'team-1', gameId: 'game-1', replay: window.__LIVE_GAME_REPLAY__ === false ? 'false' : 'true' };
+    const params = {};
+    for (const [key, value] of new URLSearchParams(window.location.search)) params[key] = value;
+    for (const [key, value] of new URLSearchParams(window.location.hash.slice(1))) params[key] = value;
+    window.__LIVE_GAME_PARSED_PARAMS__ = params;
+    return params;
 }
 export function escapeHtml(value) {
     if (value === null || value === undefined) return '';
@@ -677,6 +681,9 @@ export async function getLiveReactions() {
 export async function getConfigs() {
     return [];
 }
+export async function getMyRsvp() {
+    return window.__LIVE_GAME_RSVP__ || null;
+}
 export function subscribeGame() {
     return () => {};
 }
@@ -689,11 +696,28 @@ export async function uploadGameClip() {
 `;
 
 const LIVE_GAME_STREAM_UTILS_STUB = `
-export function computePanelVisibility() {
+export function normalizeYouTubeEmbedUrl(url) {
+    return url || null;
+}
+export function computePanelVisibility({ isMobile, activeTab, hasVideoStream, shouldDefaultToVideo = false }) {
+    if (!isMobile) {
+        return {
+            activeTab,
+            videoHidden: !hasVideoStream,
+            playsHidden: false,
+            statsHidden: false,
+            chatHidden: false
+        };
+    }
+    const safeActiveTab = activeTab === 'video' && !hasVideoStream
+        ? 'plays'
+        : shouldDefaultToVideo && hasVideoStream ? 'video' : activeTab;
     return {
-        showVideoPanel: true,
-        showVideoTab: true,
-        showExternalLink: false
+        activeTab: safeActiveTab,
+        videoHidden: safeActiveTab !== 'video' || !hasVideoStream,
+        playsHidden: safeActiveTab !== 'plays',
+        statsHidden: safeActiveTab !== 'stats',
+        chatHidden: safeActiveTab !== 'chat'
     };
 }
 `;
@@ -1235,16 +1259,26 @@ test('live game archived replay Team Pass gate locks replay when config is enabl
     expect(pageErrors).toEqual([]);
 });
 
-test('live game begins the ready preview stream and recovers from start and track failures', async ({ page, baseURL }) => {
+test('selected streaming helper follows the broadcast setup deep link and recovers from start and track failures', async ({ page, baseURL }) => {
     const pageErrors = await collectPageErrors(page);
+    await page.setViewportSize({ width: 390, height: 844 });
     await page.addInitScript(() => {
         window.__LIVE_GAME_REPLAY__ = false;
-        window.__LIVE_GAME_CAMERA_ALLOWED__ = true;
-        window.__LIVE_GAME_TEAM__ = { ownerId: 'user-1' };
+        window.__LIVE_GAME_TEAM__ = {
+            ownerId: 'owner-other',
+            adminEmails: [],
+            teamPermissions: {
+                streaming: { mode: 'selected', memberIds: ['user-1'] }
+            }
+        };
         window.__LIVE_GAME_GAME__ = { status: 'scheduled', liveStatus: 'scheduled' };
         window.__LIVE_GAME_UPDATE_CALLS__ = [];
         window.__LIVE_GAME_PLAY_CALLS__ = 0;
         window.__LIVE_GAME_GET_USER_MEDIA_CALLS__ = 0;
+        window.__LIVE_GAME_SCROLL_TARGETS__ = [];
+        Element.prototype.scrollIntoView = function scrollIntoView() {
+            window.__LIVE_GAME_SCROLL_TARGETS__.push(this.id || this.tagName);
+        };
 
         const createTrack = (kind) => {
             const endedListeners = [];
@@ -1291,10 +1325,21 @@ test('live game begins the ready preview stream and recovers from start and trac
         };
     });
     await routeLiveGameStubs(page);
+    await page.unroute(/\/js\/team-access\.js(?:\?v=\d+)?$/);
+    await page.unroute(/\/js\/live-game-video\.js(?:\?v=\d+)?$/);
 
-    await page.goto(`${baseURL}/live-game.html?teamId=team-1&gameId=game-1`, { waitUntil: 'domcontentloaded' });
+    await page.goto(`${baseURL}/live-game.html#teamId=team-1&gameId=game-1&broadcast=setup`, { waitUntil: 'domcontentloaded' });
 
+    await expect(page).toHaveURL(/#teamId=team-1&gameId=game-1&broadcast=setup$/);
+    expect(pageErrors).toEqual([]);
+    await expect.poll(() => page.evaluate(() => window.__LIVE_GAME_PARSED_PARAMS__)).toMatchObject({
+        teamId: 'team-1',
+        gameId: 'game-1',
+        broadcast: 'setup'
+    });
     await expect(page.locator('#native-camera-panel')).toBeVisible();
+    await expect(page.locator('#video-panel')).toBeVisible();
+    await expect(page.locator('#plays-panel')).toBeHidden();
     await expect(page.locator('#native-camera-begin-stream-btn')).toBeHidden();
     await page.locator('#native-camera-start-btn').click();
     await expect(page.locator('#native-camera-begin-stream-btn')).toBeVisible();
@@ -1321,11 +1366,22 @@ test('live game begins the ready preview stream and recovers from start and trac
     await expect(page.locator('#native-broadcast-state')).toHaveAttribute('data-state', 'live');
     await expect(page.locator('#native-broadcast-error')).toBeHidden();
     await expect.poll(() => page.evaluate(() => window.__LIVE_GAME_GET_USER_MEDIA_CALLS__)).toBe(2);
-    await expect.poll(() => page.evaluate(() => window.__LIVE_GAME_UPDATE_CALLS__.map((updates) => updates.broadcastSession?.status))).toEqual([
-        'checking_permissions',
-        'ready_for_managed_stream',
-        'checking_permissions',
-        'ready_for_managed_stream'
-    ]);
+    await expect.poll(() => page.evaluate(() => {
+        const sessions = window.__LIVE_GAME_UPDATE_CALLS__.map((updates) => updates.broadcastSession).filter(Boolean);
+        return {
+            checkingCount: sessions.filter((session) => session.status === 'checking_permissions').length,
+            localStatuses: sessions.map((session) => session.localStreamStatus).filter(Boolean),
+            finalSession: sessions.at(-1)
+        };
+    })).toMatchObject({
+        checkingCount: 2,
+        localStatuses: expect.arrayContaining(['ready', 'failed', 'live']),
+        finalSession: {
+            status: 'ready_for_managed_stream',
+            localStreamStatus: 'live',
+            localStreamActive: true,
+            updatedBy: 'user-1'
+        }
+    });
     expect(pageErrors).toEqual([]);
 });
