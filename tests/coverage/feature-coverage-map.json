@@ -204,6 +204,8 @@
                 "notifyInviteRedeemed",
                 "notifyParentMembershipRequestCreated",
                 "notifyParentMembershipRequestUpdated",
+                "queueInviteEmail",
+                "queueParentInviteEmail",
                 "syncApprovedParentMembershipRequestUserLink",
                 "syncPublicUserProfileProjection"
             ],

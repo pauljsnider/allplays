@@ -57,6 +57,10 @@ vi.mock('../../js/auth.js', () => ({
     sendInviteEmail: vi.fn()
 }));
 
+vi.mock('../../js/invite-email.js', () => ({
+    queueInviteEmail: vi.fn()
+}));
+
 vi.mock('../../js/stat-leaderboards.js', async () => {
     const actual = await vi.importActual('../../js/stat-leaderboards.js');
     return {
@@ -83,6 +87,7 @@ import { __resetTeamDetailBaseSnapshotCacheForTests, addRosterPlayerForApp, buil
 import { collection, doc, getDoc, getDocs, query, where } from '../../js/firebase.js';
 import { addPlayer, getAggregatedStatsForGames, getAdSpaceSponsors, getAllUsers, getConfigs, getEvents, getGames, getLocalAttractionSponsors, getPlayerTrackingStatuses, getPlayers, getPublicTrackingItems, getRosterFieldDefinitions, getTeam, grantScorekeeperAccess, grantVideographerAccess, inviteAdmin, inviteParent, addTeamAdminEmail, revokeScorekeeperAccess, revokeVideographerAccess, deactivatePlayer, reactivatePlayer, setPlayerPrivateRosterProfileFields, updateEvent, updateGame, updateTeam, uploadPlayerPhoto, uploadTeamPhoto } from '../../js/db.js';
 import { sendInviteEmail } from '../../js/auth.js';
+import { queueInviteEmail } from '../../js/invite-email.js';
 import { buildPlayerLeaderboardSnapshot } from '../../js/stat-leaderboards.js';
 import { getVisiblePlayerTrackingSummary } from '../../js/player-tracking-summary.js';
 
@@ -234,8 +239,30 @@ describe('React app team detail model', () => {
         expect(result).toMatchObject({
             code: 'ABCD1234',
             inviteUrl: 'http://localhost:3000/app#/accept-invite?code=ABCD1234&type=parent',
-            status: 'pending'
+            status: 'pending',
+            email: null,
+            emailSent: false
         });
+    });
+
+    it('emails a coach-created parent invite with the selected relation', async () => {
+        getTeam.mockResolvedValue({ id: 'team-1', ownerId: 'owner-1', adminEmails: ['coach@example.com'] });
+        getPlayers.mockResolvedValue([]);
+        getGames.mockResolvedValue([]);
+        getConfigs.mockResolvedValue([]);
+        inviteParent.mockResolvedValue({ code: 'ABCD1234', autoLinked: false, existingUser: false, teamName: 'Bears', playerName: 'Pat Star' });
+        queueInviteEmail.mockResolvedValue({ queued: true });
+
+        const result = await createRosterParentInviteForApp(
+            'team-1',
+            { uid: 'coach-1', email: 'coach@example.com', roles: ['coach'] },
+            { id: 'player-1', number: '9' },
+            { email: ' Parent@Example.com ', relation: 'Guardian' }
+        );
+
+        expect(inviteParent).toHaveBeenCalledWith('team-1', 'player-1', '9', 'parent@example.com', 'Guardian');
+        expect(queueInviteEmail).toHaveBeenCalledWith('ABCD1234');
+        expect(result).toMatchObject({ email: 'parent@example.com', emailSent: true });
     });
 
     it('loads normalized roster field definitions only for full team staff', async () => {

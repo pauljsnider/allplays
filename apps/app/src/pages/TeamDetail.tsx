@@ -2875,6 +2875,8 @@ function PlayerRow({
   const [creatingInvite, setCreatingInvite] = useState(false);
   const [inviteResult, setInviteResult] = useState<CreateRosterParentInviteForAppResult | null>(null);
   const [inviteStatus, setInviteStatus] = useState<{ success: boolean; message: string } | null>(null);
+  const [parentEmail, setParentEmail] = useState('');
+  const [parentRelation, setParentRelation] = useState('Parent');
 
   const effectiveStatus = inviteResult?.status || inviteSummary?.status || 'none';
   const statusLabel = effectiveStatus === 'accepted' ? 'Accepted' : effectiveStatus === 'pending' ? 'Pending invite' : 'No parent linked';
@@ -2889,9 +2891,19 @@ function PlayerRow({
     setCreatingInvite(true);
     setInviteStatus(null);
     try {
-      const result = await createRosterParentInviteForApp(teamId, authUser || null, player);
+      const normalizedEmail = parentEmail.trim();
+      const result = normalizedEmail
+        ? await createRosterParentInviteForApp(teamId, authUser || null, player, { email: normalizedEmail, relation: parentRelation })
+        : await createRosterParentInviteForApp(teamId, authUser || null, player);
       setInviteResult(result);
-      setInviteStatus({ success: true, message: result.autoLinked ? 'Existing parent linked automatically.' : 'Parent invite is ready to copy or share.' });
+      setInviteStatus({
+        success: true,
+        message: result.autoLinked
+          ? `Existing parent linked automatically${result.emailSent && result.email ? ` and notified at ${result.email}` : ''}.`
+          : result.emailSent && result.email
+            ? `Invite emailed to ${result.email} with the code and signup link.`
+            : 'Parent invite is ready to copy or share.'
+      });
       await onInviteCreated();
     } catch (error: any) {
       setInviteStatus({ success: false, message: error?.message || 'Unable to create a parent invite.' });
@@ -2963,6 +2975,35 @@ function PlayerRow({
               </button>
             ) : null}
           </div>
+          {player.active ? (
+            <div className="mt-3 grid gap-2 sm:grid-cols-[minmax(0,1fr)_10rem]">
+              <label className="text-xs font-black text-gray-700">
+                Parent email
+                <input
+                  className="auth-input mt-1"
+                  type="email"
+                  inputMode="email"
+                  autoComplete="email"
+                  aria-label={`Parent email for ${player.name}`}
+                  placeholder="parent@example.com"
+                  value={parentEmail}
+                  onChange={(event) => setParentEmail(event.target.value)}
+                  disabled={creatingInvite}
+                />
+              </label>
+              <label className="text-xs font-black text-gray-700">
+                Relation
+                <select className="auth-input mt-1" aria-label={`Parent relation for ${player.name}`} value={parentRelation} onChange={(event) => setParentRelation(event.target.value)} disabled={creatingInvite}>
+                  <option value="Parent">Parent</option>
+                  <option value="Mother">Mother</option>
+                  <option value="Father">Father</option>
+                  <option value="Guardian">Guardian</option>
+                  <option value="Other">Other</option>
+                </select>
+              </label>
+              <div className="text-[11px] font-semibold text-gray-500 sm:col-span-2">Enter an email to send the code and signup link, or leave it blank for a shareable code.</div>
+            </div>
+          ) : null}
           {inviteSummary?.status === 'accepted' && inviteSummary.acceptedParentCount > 0 ? <div className="mt-2 text-xs font-semibold text-emerald-700">{inviteSummary.acceptedParentCount} linked parent{inviteSummary.acceptedParentCount === 1 ? '' : 's'}.</div> : null}
           {inviteSummary?.status === 'pending' && inviteSummary.pendingInviteCount > 0 && !inviteResult ? <div className="mt-2 text-xs font-semibold text-amber-700">{inviteSummary.pendingInviteCount} pending invite{inviteSummary.pendingInviteCount === 1 ? '' : 's'}.</div> : null}
           {!player.active ? <div className="mt-2 text-xs font-semibold text-gray-500">Reactivate the player to send a parent invite.</div> : null}

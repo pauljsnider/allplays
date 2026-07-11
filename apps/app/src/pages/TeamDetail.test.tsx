@@ -1402,7 +1402,7 @@ describe('TeamDetail', () => {
     await waitFor(() => expect(teamDetailServiceMocks.loadTeamRosterParentInvites).toHaveBeenCalledTimes(1));
   });
 
-  it('passes the signed-in user to parent invite creation and refreshes summaries after success', async () => {
+  it('sends the parent email and relation when creating an invite and refreshes summaries after success', async () => {
     const managedModel = {
       ...model,
       canManageTeam: true
@@ -1411,6 +1411,17 @@ describe('TeamDetail', () => {
     teamDetailServiceMocks.loadTeamRosterParentInvites
       .mockResolvedValueOnce([])
       .mockResolvedValueOnce([{ playerId: 'player-1', status: 'pending', acceptedParentCount: 0, pendingInviteCount: 1, latestPendingCode: 'ABCD1234' }]);
+    teamDetailServiceMocks.createRosterParentInviteForApp.mockResolvedValueOnce({
+      code: 'ABCD1234',
+      inviteUrl: 'https://allplays.ai/app#/accept-invite?code=ABCD1234&type=parent',
+      status: 'pending',
+      email: 'parent@example.com',
+      emailSent: true,
+      existingUser: false,
+      autoLinked: false,
+      teamName: 'Bears',
+      playerName: 'Pat Star'
+    });
 
     render(
       <MemoryRouter initialEntries={['/teams/team-1']}>
@@ -1424,11 +1435,18 @@ describe('TeamDetail', () => {
     fireEvent.click(screen.getByRole('button', { name: /roster/i }));
     expect(await screen.findByRole('button', { name: 'Invite parent' })).toBeTruthy();
 
+    fireEvent.change(screen.getByLabelText('Parent email for Pat Star'), { target: { value: 'parent@example.com' } });
+    fireEvent.change(screen.getByLabelText('Parent relation for Pat Star'), { target: { value: 'Guardian' } });
     fireEvent.click(screen.getByRole('button', { name: 'Invite parent' }));
 
-    await waitFor(() => expect(teamDetailServiceMocks.createRosterParentInviteForApp).toHaveBeenCalledWith('team-1', auth.user, expect.objectContaining({ id: 'player-1', number: '9' })));
+    await waitFor(() => expect(teamDetailServiceMocks.createRosterParentInviteForApp).toHaveBeenCalledWith(
+      'team-1',
+      auth.user,
+      expect.objectContaining({ id: 'player-1', number: '9' }),
+      { email: 'parent@example.com', relation: 'Guardian' }
+    ));
     await waitFor(() => expect(teamDetailServiceMocks.loadTeamRosterParentInvites).toHaveBeenCalledTimes(2));
-    expect(await screen.findByText('Parent invite is ready to copy or share.')).toBeTruthy();
+    expect(await screen.findByText('Invite emailed to parent@example.com with the code and signup link.')).toBeTruthy();
   });
 
   it('removes legacy staff link-out and supports native admin invite sharing and removal', async () => {

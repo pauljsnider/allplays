@@ -239,7 +239,7 @@ beforeEach(() => {
         linkedPlayers: [{ teamId: 'team-1', teamName: 'Bears', playerId: 'player-1', playerName: 'Pat Star', playerNumber: '9' }],
         members: [{ id: 'member-1', email: 'grandma@example.com', displayName: 'Grandma', relation: 'Grandparent', status: 'pending', teamName: 'Bears', playerName: 'Pat Star', playerNumber: '9', accessCode: 'HOME1234', inviteUrl: 'https://allplays.ai/accept-invite.html?code=HOME1234' }]
     });
-    serviceMocks.createParentHouseholdMemberInvite.mockResolvedValue({ code: 'HOME5678', inviteUrl: 'https://allplays.ai/accept-invite.html?code=HOME5678' });
+    serviceMocks.createParentHouseholdMemberInvite.mockResolvedValue({ code: 'HOME5678', inviteUrl: 'https://allplays.ai/accept-invite.html?code=HOME5678', email: 'aunt@example.com', emailSent: true });
     serviceMocks.loadParentFeesForApp.mockResolvedValue([{
         id: 'fee-1',
         title: 'Team dues',
@@ -325,13 +325,13 @@ describe('React app parent tools integration', () => {
         expect(accessServiceMocks.submitParentAccessRequest).toHaveBeenCalledWith('team-1', 'player-1', 'Parent');
 
         await clickButton(container, 'Household');
-        await waitForText(container, 'Household member invite');
+        await waitForText(container, 'Invite another parent or caregiver');
         expect(container.textContent).toContain('Grandma');
         const householdEmail = container.querySelector('input[placeholder="Household contact email"]');
         const householdRelation = container.querySelector('input[placeholder^="Relation"]');
         await changeValue(householdEmail, 'aunt@example.com');
         await changeValue(householdRelation, 'Aunt');
-        await submitForm(container, 'Create household invite');
+        await submitForm(container, 'Email parent invite');
         expect(serviceMocks.createParentHouseholdMemberInvite).toHaveBeenCalledWith(auth.user, {
             playerKey: 'team-1::player-1',
             displayName: '',
@@ -339,6 +339,7 @@ describe('React app parent tools integration', () => {
             relation: 'Aunt'
         });
         expect(container.textContent).toContain('HOME5678');
+        expect(container.textContent).toContain('Invite emailed to aunt@example.com with the code and signup link.');
 
         await clickButton(container, 'Fees');
         await waitForText(container, 'Team dues');
