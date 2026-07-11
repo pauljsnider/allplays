@@ -2775,6 +2775,7 @@ function GameHubLineupBuilderPanel({ auth, event, onGamePlanSaved }: { auth: Aut
   const dirtyRef = useRef(false);
   const latestDraftRef = useRef<Record<string, string>>({});
   const latestPreviewRef = useRef<LineupDraftPreviewResult | null>(null);
+  const previousEventKeyRef = useRef(event.eventKey);
 
   const formation = gameDayService?.LINEUP_FORMATIONS[formationId] || null;
   const lineupPeriods = useMemo(() => (
@@ -2810,6 +2811,9 @@ function GameHubLineupBuilderPanel({ auth, event, onGamePlanSaved }: { auth: Aut
   }, []);
 
   useEffect(() => {
+    const eventChanged = previousEventKeyRef.current !== event.eventKey;
+    previousEventKeyRef.current = event.eventKey;
+    if (!eventChanged && eventFormationId === formationId) return;
     resetLineupBuilderState(eventFormationId);
   }, [event.eventKey, eventFormationId, resetLineupBuilderState]);
 
