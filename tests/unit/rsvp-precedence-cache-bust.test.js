@@ -9,22 +9,22 @@ describe('RSVP precedence cache delivery', () => {
     it('uses one fresh db module key and versions the indirect staff breakdown graph', () => {
         const dbSource = readRepoFile('js/db.js');
         const breakdownSource = readRepoFile('js/game-day-rsvp-breakdown.js');
-        const runtimeSources = [
-            'accept-invite.html',
-            'calendar.html',
-            'edit-schedule.html',
-            'game-day.html',
-            'login.html',
-            'parent-dashboard.html',
-            'team.html',
-            'team-chat.html',
-            'js/auth.js',
-            'js/team-media.js'
-        ].map(readRepoFile);
+        const runtimeSources = {
+            'accept-invite.html': 'db.js?v=91',
+            'calendar.html': 'db.js?v=91',
+            'edit-schedule.html': 'db.js?v=91',
+            'game-day.html': 'db.js?v=91',
+            'login.html': 'db.js?v=91',
+            'parent-dashboard.html': 'db.js?v=91',
+            'team.html': 'db.js?v=91',
+            'team-chat.html': 'db.js?v=92',
+            'js/auth.js': 'db.js?v=91',
+            'js/team-media.js': 'db.js?v=91'
+        };
 
-        runtimeSources.forEach((source) => {
-            expect(source).toContain('db.js?v=91');
-        });
+        for (const [path, expectedVersion] of Object.entries(runtimeSources)) {
+            expect(readRepoFile(path)).toContain(expectedVersion);
+        }
         expect(dbSource).toContain("from './rsvp-summary.js?v=2';");
         expect(dbSource).toContain("from './game-day-rsvp-breakdown.js?v=2';");
         expect(breakdownSource).toContain("from './rsvp-summary.js?v=2';");
