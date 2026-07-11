@@ -28,6 +28,7 @@ type AppSearchDialogProps = {
 const backdropCloseGuardMs = 750;
 const hydrationSearchFallbackMs = 250;
 const keyboardInsetActivationThresholdPx = 80;
+const remotePlayerSearchCoalesceMs = 180;
 
 export function AppSearchDialog({ auth, open, onClose }: AppSearchDialogProps) {
   const [query, setQuery] = useState('');
@@ -40,6 +41,7 @@ export function AppSearchDialog({ auth, open, onClose }: AppSearchDialogProps) {
   const [activeIndex, setActiveIndex] = useState(0);
   const [keyboardInset, setKeyboardInset] = useState(0);
   const searchRequestId = useRef(0);
+  const playerSearchTimeoutRef = useRef<number | null>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
   const openedAtRef = useRef(Date.now());
   const preloadedRoutesRef = useRef(new Set<string>());
@@ -55,6 +57,12 @@ export function AppSearchDialog({ auth, open, onClose }: AppSearchDialogProps) {
   const helpResults = results.help ?? [];
   const flatResults = results.flat ?? [...results.actions, ...results.teams, ...helpResults, ...results.players];
 
+  const clearScheduledPlayerSearch = () => {
+    if (playerSearchTimeoutRef.current === null) return;
+    window.clearTimeout(playerSearchTimeoutRef.current);
+    playerSearchTimeoutRef.current = null;
+  };
+
   useEffect(() => {
     if (!open) return;
     openedAtRef.current = Date.now();
@@ -64,6 +72,7 @@ export function AppSearchDialog({ auth, open, onClose }: AppSearchDialogProps) {
     setPlayers([]);
     setPlayersError('');
     setPlayersLoading(false);
+    clearScheduledPlayerSearch();
     const knownTeams = getKnownAppSearchTeams(auth.user);
     baseTeamsRef.current = knownTeams;
     setTeams(knownTeams);
@@ -77,6 +86,7 @@ export function AppSearchDialog({ auth, open, onClose }: AppSearchDialogProps) {
     let disposed = false;
     const trimmedQuery = query.trim();
     const requestId = ++searchRequestId.current;
+    clearScheduledPlayerSearch();
 
     if (trimmedQuery.length < 2) {
       setTeams(baseTeamsRef.current);
@@ -87,6 +97,7 @@ export function AppSearchDialog({ auth, open, onClose }: AppSearchDialogProps) {
       setPlayersError('');
       return () => {
         disposed = true;
+        clearScheduledPlayerSearch();
       };
     }
 
@@ -103,42 +114,50 @@ export function AppSearchDialog({ auth, open, onClose }: AppSearchDialogProps) {
     setPlayersLoading(true);
     setPlayersError('');
     const timeoutId = window.setTimeout(() => {
-      const applyPlayerResults = (playersResult: PromiseSettledResult<AppSearchPlayer[]>) => {
+      const schedulePlayerSearch = (accessibleTeams: AppSearchTeam[]) => {
+        clearScheduledPlayerSearch();
+        playerSearchTimeoutRef.current = window.setTimeout(async () => {
+          playerSearchTimeoutRef.current = null;
+          if (disposed || requestId !== searchRequestId.current) return;
+          const accessibleTeamsById = new Map(accessibleTeams.map((team) => [team.id, team]));
+          const [playersResult] = await Promise.allSettled([
+            searchAppPlayers(trimmedQuery, accessibleTeamsById, auth.user)
+          ]) as [PromiseSettledResult<AppSearchPlayer[]>];
+
+          if (disposed || requestId !== searchRequestId.current) return;
+          if (playersResult.status === 'fulfilled') {
+            setPlayers(playersResult.value);
+            setPlayersError('');
+          } else {
+            setPlayers([]);
+            setPlayersError(getPlayerSearchError(playersResult.reason));
+          }
+          setPlayersLoading(false);
+        }, remotePlayerSearchCoalesceMs);
+      };
+
+      const applyTeamResults = (teamsResult: PromiseSettledResult<AppSearchTeam[]>) => {
         if (disposed || requestId !== searchRequestId.current) return;
-        if (playersResult.status === 'fulfilled') {
-          setPlayers(playersResult.value);
-          setPlayersError('');
+        if (teamsResult.status === 'fulfilled') {
+          setTeams(teamsResult.value);
+          setTeamsError('');
           return;
         }
-        setPlayers([]);
-        setPlayersError(getPlayerSearchError(playersResult.reason));
+        setTeams([]);
+        setTeamsError(teamsResult.reason?.message || 'Team search unavailable.');
       };
 
       const runSearch = async (accessibleTeams: AppSearchTeam[]) => {
         if (disposed || requestId !== searchRequestId.current) return;
-        const accessibleTeamsById = new Map(accessibleTeams.map((team) => [team.id, team]));
         setImmediateTeamResults(accessibleTeams);
+        schedulePlayerSearch(accessibleTeams);
 
-        const [teamsResult, playersResult] = await Promise.allSettled([
-          searchAppTeams(trimmedQuery, accessibleTeams, auth.user),
-          searchAppPlayers(trimmedQuery, accessibleTeamsById, auth.user)
-        ]) as [PromiseSettledResult<AppSearchTeam[]>, PromiseSettledResult<AppSearchPlayer[]>];
-
-        if (disposed || requestId !== searchRequestId.current) return;
-
-        if (teamsResult.status === 'fulfilled') {
-          setTeams(teamsResult.value);
-          setTeamsError('');
-        } else {
-          setTeams([]);
-          setTeamsError(teamsResult.reason?.message || 'Team search unavailable.');
-        }
-
-        applyPlayerResults(playersResult);
-
+        const [teamsResult] = await Promise.allSettled([
+          searchAppTeams(trimmedQuery, accessibleTeams, auth.user)
+        ]) as [PromiseSettledResult<AppSearchTeam[]>];
+        applyTeamResults(teamsResult);
         if (!disposed && requestId === searchRequestId.current) {
           setTeamsLoading(false);
-          setPlayersLoading(false);
         }
       };
 
@@ -187,6 +206,7 @@ export function AppSearchDialog({ auth, open, onClose }: AppSearchDialogProps) {
           if (!disposed && requestId === searchRequestId.current) {
             setTeamsLoading(false);
             setPlayersLoading(false);
+            clearScheduledPlayerSearch();
           }
         });
     }, 180);
@@ -194,6 +214,7 @@ export function AppSearchDialog({ auth, open, onClose }: AppSearchDialogProps) {
     return () => {
       disposed = true;
       window.clearTimeout(timeoutId);
+      clearScheduledPlayerSearch();
     };
   }, [auth.user, open, query]);
 
@@ -289,6 +310,7 @@ export function AppSearchDialog({ auth, open, onClose }: AppSearchDialogProps) {
 
   const clearQuery = () => {
     searchRequestId.current += 1;
+    clearScheduledPlayerSearch();
     setQuery('');
     searchInputRef.current?.focus();
   };
