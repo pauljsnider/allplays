@@ -2,6 +2,15 @@ import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
 
 const source = readFileSync(new URL('../../functions/index.js', import.meta.url), 'utf8');
+const rules = readFileSync(new URL('../../firestore.rules', import.meta.url), 'utf8');
+
+function getSourceSection(startMarker, endMarker) {
+    const start = source.indexOf(startMarker);
+    expect(start).toBeGreaterThanOrEqual(0);
+    const end = source.indexOf(endMarker, start);
+    expect(end).toBeGreaterThan(start);
+    return source.slice(start, end);
+}
 
 describe('public RSVP function safeguards', () => {
     it('does not ship hardcoded Twilio credentials', () => {
@@ -21,9 +30,56 @@ describe('public RSVP function safeguards', () => {
             .toBeLessThan(source.indexOf("const respondedAt = coercePublicRsvpDate(rsvp?.respondedAt || rsvp?.updatedAt || rsvp?.createdAt);"));
         expect(source).toContain('responsesByPlayerId.set(playerId, { response, respondedAtMs });');
         expect(source).toContain('summary.notResponded = Math.max(activePlayerIds.size - responsesByPlayerId.size, 0);');
+        expect(source).toContain('summary.notRespondedPlayerIds = Array.from(activePlayerIds)');
         expect(source).not.toContain('summary.going += increment');
         expect(source).not.toContain('summary.maybe += increment');
         expect(source).not.toContain('summary.notGoing += increment');
+    });
+
+    it('submits public RSVPs with an atomically enqueued durable summary refresh', () => {
+        const submitSource = getSourceSection(
+            'exports.submitPublicRsvp = functions.https.onRequest',
+            'exports.collectTelemetry'
+        );
+
+        expect(submitSource).toContain('await assertUsablePublicRsvpToken(tokenData)');
+        expect(submitSource).toContain("firestore.collection('publicRsvpSummaryRefreshJobs').doc()");
+        expect(submitSource).toContain('batch.set(playerStateRef, {');
+        expect(submitSource).toContain('batch.set(summaryStateRef, {');
+        expect(submitSource).toContain('latestQueuedJobId: jobRef.id');
+        expect(submitSource).toContain('batch.set(jobRef, {');
+        expect(submitSource).toContain('await batch.commit()');
+        expect(submitSource).not.toContain('await buildPublicRsvpSummary');
+        expect(submitSource).not.toContain("firestore.collection(`teams/${tokenData.teamId}/players`).get()");
+        expect(submitSource).not.toContain("firestore.collection(`teams/${tokenData.teamId}/games/${tokenData.gameId}/rsvps`).get()");
+        expect(submitSource.indexOf('await batch.commit()'))
+            .toBeLessThan(submitSource.indexOf('res.status(200).json'));
+    });
+
+    it('awaits the durable worker lifecycle and verifies per-player job ordering', () => {
+        const workerSource = getSourceSection(
+            'async function tryApplyPublicRsvpSummaryDelta',
+            'async function getPublicRsvpTokenData'
+        );
+
+        expect(workerSource).toContain('buildPublicRsvpSummaryJobPlan({');
+        expect(workerSource).toContain('getPublicRsvpSummaryStateRef(teamId, gameId)');
+        expect(workerSource).toContain('notRespondedPlayerIds: summaryState.notRespondedPlayerIds');
+        expect(workerSource).toContain('shouldPersistRecomputedPublicRsvpSummary({');
+        expect(workerSource).toContain('baselineStateUpdateMillis: input.summaryStateUpdateMillis');
+        expect(workerSource).toContain('currentStateUpdateMillis: getPublicRsvpSnapshotUpdateMillis(summaryStateSnap)');
+        expect(workerSource).toContain('const summaryStateSnap = await summaryStateRef.get();');
+        expect(workerSource).toContain('rsvpSummary: buildPublicRsvpSummaryProjection(plan.summary)');
+        expect(workerSource).toContain('notRespondedPlayerIds: plan.summary.notRespondedPlayerIds');
+        expect(workerSource).toContain('rsvpSummary: buildPublicRsvpSummaryProjection(summary)');
+        expect(workerSource).toContain('notRespondedPlayerIds: summary.notRespondedPlayerIds');
+        expect(workerSource).toContain("{ mergeFields: ['rsvpSummary'] }");
+        expect(rules).not.toContain('match /publicRsvpSummaryStates');
+        expect(workerSource).toContain("if (plan.mode === 'obsolete' || plan.mode === 'already_applied') return true;");
+        expect(workerSource).toContain(".document('publicRsvpSummaryRefreshJobs/{jobId}')");
+        expect(workerSource).toContain('await processPublicRsvpSummaryRefresh(input)');
+        expect(workerSource).toContain('await jobSnap.ref.delete()');
+        expect(workerSource).not.toContain('schedulePublicRsvpSummaryRefresh');
     });
 
     it('chunks public RSVP email writes before hitting the Firestore batch limit', () => {

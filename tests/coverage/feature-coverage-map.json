@@ -273,6 +273,7 @@
                 "notifyGameUpdated",
                 "notifyScheduleImportBatchCompleted",
                 "postSharedGameCancellationNotification",
+                "processPublicRsvpSummaryRefreshJob",
                 "publicTeamGamesIcs",
                 "publishOrganizationScheduleDraft",
                 "redeemScopedRsvpToken",

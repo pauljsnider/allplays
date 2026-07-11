@@ -33,6 +33,12 @@ const { createInMemoryRateLimiter, getRequestIp } = require('./rate-limit.cjs');
 const { buildPublicGamesIcs, canExposeEmptyPublicFeed, isPublicFanGame } = require('./public-calendar-core.cjs');
 const { buildCalendarFeedGamesQuery } = require('./calendar-feed-window-core.cjs');
 const {
+  buildPublicRsvpSummaryProjection,
+  buildPublicRsvpSummaryJobPlan,
+  shouldPersistRecomputedPublicRsvpSummary,
+  refreshPublicRsvpSummary
+} = require('./public-rsvp-summary-core.cjs');
+const {
   buildTeamCalendarIcs,
   normalizeCalendarRequest
 } = require('./team-calendar-feed-core.cjs');
@@ -10663,8 +10669,137 @@ async function buildPublicRsvpSummary(teamId, gameId) {
     if (response === 'not_going') summary.notGoing += 1;
   });
   summary.notResponded = Math.max(activePlayerIds.size - responsesByPlayerId.size, 0);
+  summary.total = activePlayerIds.size;
+  summary.notRespondedPlayerIds = Array.from(activePlayerIds)
+    .filter((playerId) => !responsesByPlayerId.has(playerId));
   return summary;
 }
+
+function getPublicRsvpSummaryPlayerStateRef(teamId, gameId, playerId) {
+  return firestore.doc(`teams/${teamId}/games/${gameId}/rsvpSummaryPlayers/${playerId}`);
+}
+
+function getPublicRsvpSummaryStateRef(teamId, gameId) {
+  return firestore.doc(`publicRsvpSummaryStates/${teamId}__${gameId}`);
+}
+
+function getPublicRsvpSnapshotUpdateMillis(docSnap) {
+  if (!docSnap?.exists) return null;
+  if (typeof docSnap.updateTime?.toMillis === 'function') return docSnap.updateTime.toMillis();
+  return null;
+}
+
+async function tryApplyPublicRsvpSummaryDelta({ jobId, teamId, gameId, playerId, response }) {
+  const gameRef = firestore.doc(`teams/${teamId}/games/${gameId}`);
+  const playerStateRef = getPublicRsvpSummaryPlayerStateRef(teamId, gameId, playerId);
+  const summaryStateRef = getPublicRsvpSummaryStateRef(teamId, gameId);
+  return firestore.runTransaction(async (transaction) => {
+    const [gameSnap, playerStateSnap, summaryStateSnap] = await Promise.all([
+      transaction.get(gameRef),
+      transaction.get(playerStateRef),
+      transaction.get(summaryStateRef)
+    ]);
+    const playerState = playerStateSnap.exists ? (playerStateSnap.data() || {}) : {};
+    const summaryState = summaryStateSnap.exists ? (summaryStateSnap.data() || {}) : {};
+    const plan = buildPublicRsvpSummaryJobPlan({
+      jobId,
+      response,
+      playerState,
+      summary: {
+        ...(gameSnap.data()?.rsvpSummary || {}),
+        notRespondedPlayerIds: summaryState.notRespondedPlayerIds
+      },
+      playerId
+    });
+    if (plan.mode === 'obsolete' || plan.mode === 'already_applied') return true;
+    if (!gameSnap.exists) return false;
+    if (plan.mode !== 'delta') return false;
+    transaction.set(gameRef, {
+      rsvpSummary: buildPublicRsvpSummaryProjection(plan.summary)
+    }, { mergeFields: ['rsvpSummary'] });
+    transaction.set(summaryStateRef, {
+      notRespondedPlayerIds: plan.summary.notRespondedPlayerIds,
+      updatedAt: admin.firestore.FieldValue.serverTimestamp()
+    }, { merge: true });
+    transaction.set(playerStateRef, {
+      appliedJobId: jobId,
+      appliedResponse: response,
+      appliedAt: admin.firestore.FieldValue.serverTimestamp()
+    }, { merge: true });
+    return true;
+  });
+}
+
+async function persistRecomputedPublicRsvpSummary(input, summary) {
+  const gameRef = firestore.doc(`teams/${input.teamId}/games/${input.gameId}`);
+  const playerStateRef = getPublicRsvpSummaryPlayerStateRef(input.teamId, input.gameId, input.playerId);
+  const summaryStateRef = getPublicRsvpSummaryStateRef(input.teamId, input.gameId);
+  return firestore.runTransaction(async (transaction) => {
+    const [playerStateSnap, summaryStateSnap] = await Promise.all([
+      transaction.get(playerStateRef),
+      transaction.get(summaryStateRef)
+    ]);
+    const playerState = playerStateSnap.exists ? (playerStateSnap.data() || {}) : {};
+    if (!shouldPersistRecomputedPublicRsvpSummary({
+      jobId: input.jobId,
+      playerState,
+      baselineStateUpdateMillis: input.summaryStateUpdateMillis,
+      currentStateUpdateMillis: getPublicRsvpSnapshotUpdateMillis(summaryStateSnap)
+    })) return false;
+    transaction.set(gameRef, {
+      rsvpSummary: buildPublicRsvpSummaryProjection(summary)
+    }, { mergeFields: ['rsvpSummary'] });
+    transaction.set(summaryStateRef, {
+      notRespondedPlayerIds: summary.notRespondedPlayerIds,
+      updatedAt: admin.firestore.FieldValue.serverTimestamp()
+    }, { merge: true });
+    transaction.set(playerStateRef, {
+      appliedJobId: input.jobId,
+      appliedResponse: input.response,
+      appliedAt: admin.firestore.FieldValue.serverTimestamp()
+    }, { merge: true });
+    return true;
+  });
+}
+
+async function processPublicRsvpSummaryRefresh(input) {
+  const summaryStateRef = getPublicRsvpSummaryStateRef(input.teamId, input.gameId);
+  return refreshPublicRsvpSummary({
+    tryApplyDelta: () => tryApplyPublicRsvpSummaryDelta(input),
+    recomputeSummary: async () => {
+      const summaryStateSnap = await summaryStateRef.get();
+      return {
+        summaryStateUpdateMillis: getPublicRsvpSnapshotUpdateMillis(summaryStateSnap),
+        summary: await buildPublicRsvpSummary(input.teamId, input.gameId)
+      };
+    },
+    persistSummary: ({ summaryStateUpdateMillis, summary }) => persistRecomputedPublicRsvpSummary({
+      ...input,
+      summaryStateUpdateMillis
+    }, summary)
+  });
+}
+
+exports.processPublicRsvpSummaryRefreshJob = functions.firestore
+  .document('publicRsvpSummaryRefreshJobs/{jobId}')
+  .onCreate(async (jobSnap, context) => {
+    const data = jobSnap.data() || {};
+    const input = {
+      jobId: context.params.jobId,
+      teamId: normalizePublicRsvpText(data.teamId),
+      gameId: normalizePublicRsvpText(data.gameId),
+      playerId: normalizePublicRsvpText(data.playerId),
+      response: normalizePublicRsvpResponse(data.response)
+    };
+    if (!input.teamId || !input.gameId || !input.playerId || !input.response) {
+      console.error('Discarding invalid public RSVP summary refresh job:', context.params.jobId);
+      await jobSnap.ref.delete();
+      return null;
+    }
+    await processPublicRsvpSummaryRefresh(input);
+    await jobSnap.ref.delete();
+    return null;
+  });
 
 async function getPublicRsvpTokenData(token) {
   const tokenHash = publicRsvpHashToken(token);
@@ -10966,7 +11101,11 @@ exports.submitPublicRsvp = functions.https.onRequest(async (req, res) => {
     const { tokenHash, tokenData } = await getPublicRsvpTokenData(token);
     const records = await assertUsablePublicRsvpToken(tokenData);
     const docId = `public_${tokenHash.slice(0, 24)}`;
-    await firestore.doc(`teams/${tokenData.teamId}/games/${tokenData.gameId}/rsvps/${docId}`).set({
+    const jobRef = firestore.collection('publicRsvpSummaryRefreshJobs').doc();
+    const playerStateRef = getPublicRsvpSummaryPlayerStateRef(tokenData.teamId, tokenData.gameId, tokenData.playerId);
+    const summaryStateRef = getPublicRsvpSummaryStateRef(tokenData.teamId, tokenData.gameId);
+    const batch = firestore.batch();
+    batch.set(firestore.doc(`teams/${tokenData.teamId}/games/${tokenData.gameId}/rsvps/${docId}`), {
       userId: docId,
       displayName: tokenData.parentName || tokenData.parentEmail || 'Parent RSVP',
       playerIds: [tokenData.playerId],
@@ -10976,13 +11115,29 @@ exports.submitPublicRsvp = functions.https.onRequest(async (req, res) => {
       parentEmail: tokenData.parentEmail || null,
       respondedAt: admin.firestore.FieldValue.serverTimestamp()
     }, { merge: true });
-    const summary = await buildPublicRsvpSummary(tokenData.teamId, tokenData.gameId);
-    await firestore.doc(`teams/${tokenData.teamId}/games/${tokenData.gameId}`).set({ rsvpSummary: summary }, { merge: true });
-    await firestore.doc(`publicRsvpTokens/${tokenHash}`).set({
+    batch.set(firestore.doc(`publicRsvpTokens/${tokenHash}`), {
       lastSubmittedAt: admin.firestore.FieldValue.serverTimestamp(),
       lastResponse: response
     }, { merge: true });
-    res.status(200).json({ ok: true, context: buildPublicRsvpContext(records), summary });
+    batch.set(playerStateRef, {
+      latestJobId: jobRef.id,
+      latestResponse: response,
+      queuedAt: admin.firestore.FieldValue.serverTimestamp()
+    }, { merge: true });
+    batch.set(summaryStateRef, {
+      latestQueuedJobId: jobRef.id,
+      latestQueuedPlayerId: tokenData.playerId,
+      queuedAt: admin.firestore.FieldValue.serverTimestamp()
+    }, { merge: true });
+    batch.set(jobRef, {
+      teamId: tokenData.teamId,
+      gameId: tokenData.gameId,
+      playerId: tokenData.playerId,
+      response,
+      createdAt: admin.firestore.FieldValue.serverTimestamp()
+    });
+    await batch.commit();
+    res.status(200).json({ ok: true, context: buildPublicRsvpContext(records), summary: null });
   } catch (error) {
     publicRsvpJsonError(res, 403, error?.message || 'Unable to submit RSVP.');
   }
