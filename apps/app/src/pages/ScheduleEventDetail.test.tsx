@@ -3131,6 +3131,64 @@ describe('ScheduleEventDetail staff RSVP overrides', () => {
     expect(screen.queryByText('0 going · 0 maybe · 0 out · 1 missing')).toBeNull();
   });
 
+  it('recreates the shared staff RSVP loader when route reuse switches events', async () => {
+    scheduleServiceMocks.loadParentScheduleEventDetail.mockImplementation(async (_user, { eventId }) => ({
+      events: [buildEvent({
+        eventKey: `team-1::${eventId}::player-1::2026-06-04T18:00:00.000Z::game`,
+        id: eventId,
+        isTeamAdmin: true,
+        isTeamRsvpReminderManager: true
+      })],
+      children: []
+    }));
+    scheduleServiceMocks.loadStaffScheduleRsvpBreakdown.mockResolvedValue({
+      grouped: {
+        going: [{ playerId: 'p1', playerName: 'Avery Smith', playerNumber: '1', response: 'going' }],
+        maybe: [],
+        not_going: [],
+        not_responded: []
+      },
+      counts: { going: 1, maybe: 0, notGoing: 0, notResponded: 0, total: 1 }
+    });
+
+    function StaffRsvpRouteHarness() {
+      const navigate = useNavigate();
+      return (
+        <>
+          <button type="button" onClick={() => navigate('/schedule/team-1/game-2?childId=player-1')}>Switch RSVP game</button>
+          <ScheduleEventDetail auth={auth} />
+        </>
+      );
+    }
+
+    render(
+      <MemoryRouter initialEntries={['/schedule/team-1/game-1?childId=player-1']}>
+        <Routes>
+          <Route path="/schedule/:teamId/:eventId" element={<StaffRsvpRouteHarness />} />
+          <Route path="/schedule" element={<div>Schedule</div>} />
+        </Routes>
+      </MemoryRouter>
+    );
+
+    await waitFor(() => {
+      expect(scheduleServiceMocks.createStaffRsvpAvailabilityLoader).toHaveBeenCalledTimes(1);
+      expect(scheduleServiceMocks.loadStaffScheduleRsvpBreakdown).toHaveBeenCalledWith(
+        expect.objectContaining({ teamId: 'team-1', id: 'game-1' }),
+        auth.user
+      );
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Switch RSVP game' }));
+
+    await waitFor(() => {
+      expect(scheduleServiceMocks.createStaffRsvpAvailabilityLoader).toHaveBeenCalledTimes(2);
+      expect(scheduleServiceMocks.loadStaffScheduleRsvpBreakdown).toHaveBeenCalledWith(
+        expect.objectContaining({ teamId: 'team-1', id: 'game-2' }),
+        auth.user
+      );
+    });
+  });
+
   it('lets staff override a responded player after expanding and refreshes the counts', async () => {
     scheduleServiceMocks.loadParentScheduleEventDetail.mockResolvedValue({
       events: [buildEvent({ isTeamAdmin: true, isTeamRsvpReminderManager: true })],
