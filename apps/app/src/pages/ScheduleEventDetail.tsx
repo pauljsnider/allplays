@@ -810,9 +810,11 @@ function GameScheduleEditPanel({ auth, event }: { auth: AuthState; event: Parent
   const [status, setStatus] = useState<{ tone: 'success' | 'error'; message: string } | null>(null);
   const [configError, setConfigError] = useState<string | null>(null);
   const formResetKey = buildGameFormResetKey(event);
+  const eventRef = useRef(event);
+  eventRef.current = event;
 
   useEffect(() => {
-    setForm(buildGameFormFromEvent(event));
+    setForm(buildGameFormFromEvent(eventRef.current));
     setStatus(null);
   }, [formResetKey]);
 

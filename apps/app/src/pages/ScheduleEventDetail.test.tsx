@@ -1714,6 +1714,17 @@ describe('ScheduleEventDetail assignments', () => {
       expect(scheduleServiceMocks.updateGameScore).toHaveBeenCalledWith('team-1', 'game-1', { homeScore: 1, awayScore: 0 }, auth.user);
     });
     expect((screen.getByLabelText('Location') as HTMLInputElement).value).toBe('Aux Gym');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Save game' }));
+
+    await waitFor(() => {
+      expect(scheduleServiceMocks.updateScheduledGameForApp).toHaveBeenCalledWith(
+        'team-1',
+        'game-1',
+        expect.objectContaining({ location: 'Aux Gym' }),
+        auth.user
+      );
+    });
   });
 
   it('links staff scorekeepers from the app game hub to the standard tracker route', async () => {
