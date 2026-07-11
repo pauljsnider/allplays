@@ -4120,8 +4120,13 @@ export async function getSeriesMaster(teamId, seriesId) {
 }
 
 // Configs
-export async function getConfigs(teamId) {
-    const q = query(collection(db, `teams/${teamId}/statTrackerConfigs`), orderBy("name"));
+export async function getConfigs(teamId, options = {}) {
+    const constraints = [orderBy("name")];
+    const requestedLimit = Number(options?.limit);
+    if (Number.isFinite(requestedLimit)) {
+        constraints.push(limitQuery(Math.min(Math.max(Math.floor(requestedLimit), 1), 100)));
+    }
+    const q = query(collection(db, `teams/${teamId}/statTrackerConfigs`), ...constraints);
     const snapshot = await getDocs(q);
     return snapshot.docs.map(doc => normalizeStatTrackerConfig({ id: doc.id, ...doc.data() }));
 }
