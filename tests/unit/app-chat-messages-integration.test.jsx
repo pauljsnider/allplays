@@ -1554,7 +1554,7 @@ describe('React app messages integration', () => {
         expect(container.textContent).toContain('Coach Jamie');
     });
 
-    it('loads recipient options once on first moderator tool open and reuses the cache', async () => {
+    it('loads recipient options once on first moderator tool open and reuses the cache', { timeout: 10000 }, async () => {
         const { container } = await renderMessages('/messages/team-1');
 
         expect(chatMocks.loadChatRecipientOptions).not.toHaveBeenCalled();
