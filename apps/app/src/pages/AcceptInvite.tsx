@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { FormEvent } from 'react';
 import { Link, useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import { CheckCircle2, KeyRound, LogIn, ShieldCheck, UserPlus, XCircle } from 'lucide-react';
@@ -57,7 +57,7 @@ export function AcceptInvite({ auth }: { auth: AuthState }) {
     };
   }, []);
 
-  function scheduleRedirect(path: string) {
+  const scheduleRedirect = useCallback((path: string) => {
     if (!path) return;
 
     if (redirectTimerRef.current !== null) {
@@ -71,9 +71,9 @@ export function AcceptInvite({ auth }: { auth: AuthState }) {
       }
       navigate(path, { replace: true });
     }, 700);
-  }
+  }, [navigate]);
 
-  async function redeem(codeToRedeem: string) {
+  const redeem = useCallback(async (codeToRedeem: string) => {
     const normalizedCode = normalizeInviteCode(codeToRedeem);
     if (!auth.user) {
       rememberPendingInvite(normalizedCode, inviteType);
@@ -105,7 +105,7 @@ export function AcceptInvite({ auth }: { auth: AuthState }) {
       setState('error');
       setMessage(error?.message || 'Unable to accept this invite.');
     }
-  }
+  }, [auth.refresh, auth.user, inviteType, navigate, scheduleRedirect]);
 
   useEffect(() => {
     if (isEmailLink(window.location.href) && !auth.user) {
@@ -116,7 +116,7 @@ export function AcceptInvite({ auth }: { auth: AuthState }) {
     if (!auth.loading && auth.user && code) {
       redeem(code);
     }
-  }, [auth.loading, auth.user, code]);
+  }, [auth.loading, auth.user, code, redeem]);
 
   const handleManualSubmit = async (event: FormEvent) => {
     event.preventDefault();
@@ -168,8 +168,9 @@ export function AcceptInvite({ auth }: { auth: AuthState }) {
 
       {code && !auth.user && state !== 'email-link' ? (
         <div className="mt-4 rounded-xl border border-primary-100 bg-primary-50 p-3">
-          <div className="text-xs font-extrabold uppercase tracking-[0.04em] text-primary-700">Invite found</div>
+          <div className="text-xs font-extrabold uppercase tracking-[0.04em] text-primary-700">Invite code entered</div>
           <div className="mt-1 font-mono text-lg font-black tracking-widest text-primary-900">{code}</div>
+          <p className="mt-1 text-sm font-semibold text-primary-800">We’ll verify this code after you sign in or create your account.</p>
           <div className="mt-3 grid gap-2">
             <Link to={`${authUrl}&mode=login`} className="primary-button justify-center">
               <LogIn className="h-4 w-4" aria-hidden="true" />

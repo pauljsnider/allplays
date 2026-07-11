@@ -99,6 +99,7 @@ describe('AcceptInvite', () => {
             email: 'parent@example.com',
             refresh: auth.refresh
         });
+        expect(inviteRedemptionMocks.redeemSignedInInvite).toHaveBeenCalledTimes(1);
     });
 
     it('does not apply the delayed success redirect after leaving the invite route', async () => {

@@ -203,8 +203,9 @@ export function AuthPage({ auth }: { auth: AuthState }) {
       </div>
 
       {inviteCode ? (
-        <div className="mt-4 rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-sm font-semibold text-emerald-800">
-          Invite code applied: <span className="font-mono font-black tracking-widest">{inviteCode}</span>
+        <div className="mt-4 rounded-xl border border-primary-100 bg-primary-50 p-3 text-sm font-semibold text-primary-800">
+          <div>Invite code entered: <span className="font-mono font-black tracking-widest">{inviteCode}</span></div>
+          <div className="mt-1">We’ll verify it after you sign in or create your account.</div>
         </div>
       ) : null}
 

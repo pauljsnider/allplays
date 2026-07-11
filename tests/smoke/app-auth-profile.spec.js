@@ -580,7 +580,8 @@ test('app auth screen exposes sign in, sign up, Google, activation code, invite,
     await page.goto(appUrl(baseURL, '/auth?code=AB12CD34&type=parent'), { waitUntil: 'domcontentloaded' });
 
     await expect(page.getByRole('heading', { name: 'Create your account' })).toBeVisible();
-    await expect(page.getByText('Invite code applied:')).toBeVisible();
+    await expect(page.getByText('Invite code entered:')).toBeVisible();
+    await expect(page.getByText('We’ll verify it after you sign in or create your account.')).toBeVisible();
     await expect(page.getByLabel('Activation or invite code')).toHaveValue('AB12CD34');
     await expect(page.getByRole('button', { name: 'Continue with Google' })).toBeVisible();
     await expect(page.getByRole('link', { name: 'Enter invite code' })).toBeVisible();
@@ -715,7 +716,8 @@ test('profile exposes account, notification, invite, verification, password, upl
     await mockAppModules(recipientPage);
     await recipientPage.goto(sharedInviteUrl, { waitUntil: 'domcontentloaded' });
     await expect(recipientPage.getByRole('heading', { name: 'Accept invite' })).toBeVisible();
-    await expect(recipientPage.getByText('Invite found')).toBeVisible();
+    await expect(recipientPage.getByText('Invite code entered')).toBeVisible();
+    await expect(recipientPage.getByText('We’ll verify this code after you sign in or create your account.')).toBeVisible();
     await expect(recipientPage.getByText('NEWMVP42')).toBeVisible();
     await expect(recipientPage.getByRole('link', { name: 'Sign in to accept' })).toBeVisible();
     await expect(recipientPage.getByRole('link', { name: 'Create account with code' })).toBeVisible();
