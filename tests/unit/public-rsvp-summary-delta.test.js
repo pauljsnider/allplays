@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 
 const require = createRequire(import.meta.url);
 const {
+    buildPublicRsvpSummaryProjection,
     buildPublicRsvpSummaryDelta,
     buildPublicRsvpSummaryJobPlan
 } = require('../../functions/public-rsvp-summary-core.cjs');
@@ -16,6 +17,20 @@ describe('public RSVP summary delta', () => {
         total: 4,
         notRespondedPlayerIds: ['player-3', 'player-4']
     };
+
+    it('projects only aggregate counts onto the public game document', () => {
+        const publicSummary = buildPublicRsvpSummaryProjection(baseSummary);
+
+        expect(publicSummary).toEqual({
+            going: 1,
+            maybe: 1,
+            notGoing: 0,
+            notResponded: 2,
+            total: 4
+        });
+        expect(publicSummary).not.toHaveProperty('notRespondedPlayerIds');
+        expect(JSON.stringify(publicSummary)).not.toContain('player-');
+    });
 
     it('moves a first response out of not responded', () => {
         expect(buildPublicRsvpSummaryDelta({

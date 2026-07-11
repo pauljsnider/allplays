@@ -1,8 +1,28 @@
 const assert = require('node:assert/strict');
 const test = require('node:test');
 const {
+  buildPublicRsvpSummaryProjection,
   refreshPublicRsvpSummary
 } = require('../public-rsvp-summary-core.cjs');
+
+test('public RSVP summary projection strips the private player ledger', () => {
+  const summary = {
+    going: 1,
+    maybe: 0,
+    notGoing: 1,
+    notResponded: 2,
+    total: 4,
+    notRespondedPlayerIds: ['player-private-1', 'player-private-2']
+  };
+
+  assert.deepEqual(buildPublicRsvpSummaryProjection(summary), {
+    going: 1,
+    maybe: 0,
+    notGoing: 1,
+    notResponded: 2,
+    total: 4
+  });
+});
 
 test('public RSVP summary refresh uses a bounded delta without recomputing', async () => {
   let recomputeCount = 0;

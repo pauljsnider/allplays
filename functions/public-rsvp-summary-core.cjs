@@ -4,6 +4,13 @@ const RESPONSE_SUMMARY_KEYS = {
   not_going: 'notGoing'
 };
 const SUMMARY_COUNT_KEYS = ['going', 'maybe', 'notGoing', 'notResponded'];
+const PUBLIC_SUMMARY_KEYS = [...SUMMARY_COUNT_KEYS, 'total'];
+
+function buildPublicRsvpSummaryProjection(summary = {}) {
+  return Object.fromEntries(PUBLIC_SUMMARY_KEYS
+    .filter((key) => Number.isInteger(summary[key]) && summary[key] >= 0)
+    .map((key) => [key, summary[key]]));
+}
 
 function buildPublicRsvpSummaryDelta({ summary, playerId, previousResponse, previousResponseVerified = false, nextResponse } = {}) {
   const nextKey = RESPONSE_SUMMARY_KEYS[nextResponse];
@@ -67,6 +74,7 @@ async function refreshPublicRsvpSummary({ tryApplyDelta, recomputeSummary, persi
 }
 
 module.exports = {
+  buildPublicRsvpSummaryProjection,
   buildPublicRsvpSummaryDelta,
   buildPublicRsvpSummaryJobPlan,
   refreshPublicRsvpSummary

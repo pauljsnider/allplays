@@ -33,6 +33,7 @@ const { createInMemoryRateLimiter, getRequestIp } = require('./rate-limit.cjs');
 const { buildPublicGamesIcs, canExposeEmptyPublicFeed, isPublicFanGame } = require('./public-calendar-core.cjs');
 const { buildCalendarFeedGamesQuery } = require('./calendar-feed-window-core.cjs');
 const {
+  buildPublicRsvpSummaryProjection,
   buildPublicRsvpSummaryJobPlan,
   refreshPublicRsvpSummary
 } = require('./public-rsvp-summary-core.cjs');
@@ -10677,26 +10678,42 @@ function getPublicRsvpSummaryPlayerStateRef(teamId, gameId, playerId) {
   return firestore.doc(`teams/${teamId}/games/${gameId}/rsvpSummaryPlayers/${playerId}`);
 }
 
+function getPublicRsvpSummaryStateRef(teamId, gameId) {
+  return firestore.doc(`publicRsvpSummaryStates/${teamId}__${gameId}`);
+}
+
 async function tryApplyPublicRsvpSummaryDelta({ jobId, teamId, gameId, playerId, response }) {
   const gameRef = firestore.doc(`teams/${teamId}/games/${gameId}`);
   const playerStateRef = getPublicRsvpSummaryPlayerStateRef(teamId, gameId, playerId);
+  const summaryStateRef = getPublicRsvpSummaryStateRef(teamId, gameId);
   return firestore.runTransaction(async (transaction) => {
-    const [gameSnap, playerStateSnap] = await Promise.all([
+    const [gameSnap, playerStateSnap, summaryStateSnap] = await Promise.all([
       transaction.get(gameRef),
-      transaction.get(playerStateRef)
+      transaction.get(playerStateRef),
+      transaction.get(summaryStateRef)
     ]);
     const playerState = playerStateSnap.exists ? (playerStateSnap.data() || {}) : {};
+    const summaryState = summaryStateSnap.exists ? (summaryStateSnap.data() || {}) : {};
     const plan = buildPublicRsvpSummaryJobPlan({
       jobId,
       response,
       playerState,
-      summary: gameSnap.data()?.rsvpSummary,
+      summary: {
+        ...(gameSnap.data()?.rsvpSummary || {}),
+        notRespondedPlayerIds: summaryState.notRespondedPlayerIds
+      },
       playerId
     });
     if (plan.mode === 'obsolete' || plan.mode === 'already_applied') return true;
     if (!gameSnap.exists) return false;
     if (plan.mode !== 'delta') return false;
-    transaction.set(gameRef, { rsvpSummary: plan.summary }, { merge: true });
+    transaction.set(gameRef, {
+      rsvpSummary: buildPublicRsvpSummaryProjection(plan.summary)
+    }, { mergeFields: ['rsvpSummary'] });
+    transaction.set(summaryStateRef, {
+      notRespondedPlayerIds: plan.summary.notRespondedPlayerIds,
+      updatedAt: admin.firestore.FieldValue.serverTimestamp()
+    }, { merge: true });
     transaction.set(playerStateRef, {
       appliedJobId: jobId,
       appliedResponse: response,
@@ -10709,11 +10726,18 @@ async function tryApplyPublicRsvpSummaryDelta({ jobId, teamId, gameId, playerId,
 async function persistRecomputedPublicRsvpSummary(input, summary) {
   const gameRef = firestore.doc(`teams/${input.teamId}/games/${input.gameId}`);
   const playerStateRef = getPublicRsvpSummaryPlayerStateRef(input.teamId, input.gameId, input.playerId);
+  const summaryStateRef = getPublicRsvpSummaryStateRef(input.teamId, input.gameId);
   return firestore.runTransaction(async (transaction) => {
     const playerStateSnap = await transaction.get(playerStateRef);
     const playerState = playerStateSnap.exists ? (playerStateSnap.data() || {}) : {};
     if (playerState.latestJobId !== input.jobId) return false;
-    transaction.set(gameRef, { rsvpSummary: summary }, { merge: true });
+    transaction.set(gameRef, {
+      rsvpSummary: buildPublicRsvpSummaryProjection(summary)
+    }, { mergeFields: ['rsvpSummary'] });
+    transaction.set(summaryStateRef, {
+      notRespondedPlayerIds: summary.notRespondedPlayerIds,
+      updatedAt: admin.firestore.FieldValue.serverTimestamp()
+    }, { merge: true });
     transaction.set(playerStateRef, {
       appliedJobId: input.jobId,
       appliedResponse: input.response,

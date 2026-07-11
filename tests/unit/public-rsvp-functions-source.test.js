@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
 
 const source = readFileSync(new URL('../../functions/index.js', import.meta.url), 'utf8');
+const rules = readFileSync(new URL('../../firestore.rules', import.meta.url), 'utf8');
 
 function getSourceSection(startMarker, endMarker) {
     const start = source.indexOf(startMarker);
@@ -60,6 +61,14 @@ describe('public RSVP function safeguards', () => {
         );
 
         expect(workerSource).toContain('buildPublicRsvpSummaryJobPlan({');
+        expect(workerSource).toContain('getPublicRsvpSummaryStateRef(teamId, gameId)');
+        expect(workerSource).toContain('notRespondedPlayerIds: summaryState.notRespondedPlayerIds');
+        expect(workerSource).toContain('rsvpSummary: buildPublicRsvpSummaryProjection(plan.summary)');
+        expect(workerSource).toContain('notRespondedPlayerIds: plan.summary.notRespondedPlayerIds');
+        expect(workerSource).toContain('rsvpSummary: buildPublicRsvpSummaryProjection(summary)');
+        expect(workerSource).toContain('notRespondedPlayerIds: summary.notRespondedPlayerIds');
+        expect(workerSource).toContain("{ mergeFields: ['rsvpSummary'] }");
+        expect(rules).not.toContain('match /publicRsvpSummaryStates');
         expect(workerSource).toContain("if (plan.mode === 'obsolete' || plan.mode === 'already_applied') return true;");
         expect(workerSource).toContain(".document('publicRsvpSummaryRefreshJobs/{jobId}')");
         expect(workerSource).toContain('await processPublicRsvpSummaryRefresh(input)');
