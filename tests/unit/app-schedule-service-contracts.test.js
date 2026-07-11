@@ -1159,6 +1159,7 @@ describe('React app schedule service contract integration', () => {
                 statDefinitions: []
             }
         ]);
+        expect(dbMocks.getConfigs).toHaveBeenCalledWith('team-1');
         expect(dbMocks.getTeam).not.toHaveBeenCalled();
     });
 

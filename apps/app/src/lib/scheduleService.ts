@@ -1774,14 +1774,20 @@ export type UpdateScheduledPracticeOptions = {
   instanceDate?: string | null;
 };
 
-async function readScheduleStatTrackerConfigOptions(normalizedTeamId: string): Promise<ScheduleStatTrackerConfigOption[]> {
+async function readScheduleStatTrackerConfigOptions(
+  normalizedTeamId: string,
+  options: { limit?: number } = {}
+): Promise<ScheduleStatTrackerConfigOption[]> {
+  const boundedOptions = options.limit ? { limit: options.limit } : undefined;
   const configs = await readWithNativeFallback(
     `schedule stat tracker configs ${normalizedTeamId}`,
-    () => Promise.resolve(getConfigs(normalizedTeamId, { limit: MAX_SCHEDULE_TRACKER_CONFIG_OPTIONS })),
-    () => nativeListCollection(`teams/${encodeURIComponent(normalizedTeamId)}/statTrackerConfigs`, {
-      pageSize: MAX_SCHEDULE_TRACKER_CONFIG_OPTIONS,
-      orderBy: 'name'
-    })
+    () => Promise.resolve(boundedOptions
+      ? getConfigs(normalizedTeamId, boundedOptions)
+      : getConfigs(normalizedTeamId)),
+    () => nativeListCollection(
+      `teams/${encodeURIComponent(normalizedTeamId)}/statTrackerConfigs`,
+      options.limit ? { pageSize: options.limit, orderBy: 'name' } : {}
+    )
   ).catch(() => []);
   return (Array.isArray(configs) ? configs : [])
     .map((config: any) => ({
@@ -1810,7 +1816,7 @@ export async function loadScheduleStatTrackerConfigsForApp(teamId: string, user:
   const normalizedTeamId = compactString(teamId);
   if (!normalizedTeamId) throw new Error('Team is required.');
   await requireScheduleImportStaff(normalizedTeamId, user);
-  return readScheduleStatTrackerConfigOptions(normalizedTeamId);
+  return readScheduleStatTrackerConfigOptions(normalizedTeamId, { limit: MAX_SCHEDULE_TRACKER_CONFIG_OPTIONS });
 }
 
 export async function loadScorekeeperStatTrackerConfigsForApp(
@@ -1832,6 +1838,8 @@ export async function loadScorekeeperStatTrackerConfigsForApp(
   if (!canLoadForScorekeeping) {
     throw new Error('You do not have permission to load tracker setup for this game.');
   }
+  // Scorekeeping must retain access to the event's assigned config even when it
+  // sorts beyond the bounded set used by schedule form dropdowns.
   return readScheduleStatTrackerConfigOptions(normalizedTeamId);
 }
 
