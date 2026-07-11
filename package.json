@@ -35,13 +35,13 @@
     "@capacitor/cli": "^8.4.1",
     "@firebase/rules-unit-testing": "^5.0.1",
     "@playwright/test": "^1.61.1",
-    "@sentry/browser": "^10.63.0",
+    "@sentry/browser": "^10.65.0",
     "@testing-library/react": "^16.3.2",
-    "firebase-tools": "^15.22.4",
+    "firebase-tools": "^15.23.0",
     "react": "^19.2.7",
     "react-dom": "^19.2.7",
     "react-router-dom": "^7.18.1",
-    "vitest": "^4.1.9"
+    "vitest": "^4.1.10"
   },
   "dependencies": {
     "@capacitor-firebase/authentication": "^8.3.0",
@@ -58,7 +58,7 @@
     "@capacitor/share": "^8.0.1",
     "@capacitor/splash-screen": "^8.0.1",
     "@capacitor/status-bar": "^8.0.2",
-    "@capgo/capacitor-speech-recognition": "^8.1.9",
+    "@capgo/capacitor-speech-recognition": "^8.1.10",
     "firebase": "12.16.0",
     "html-to-image": "^1.11.13",
     "jsdom": "^29.1.1",
