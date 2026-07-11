@@ -4,6 +4,16 @@ import { readFileSync } from 'node:fs';
 const rules = readFileSync(new URL('../../firestore.rules', import.meta.url), 'utf8');
 const privilegedTeamMediaGrantFields = ['teamMediaUploadTeamIds', 'mediaUploadTeamIds'];
 
+function teamMediaUploadCreateRule() {
+    const start = rules.indexOf('function isTeamMediaUploadCreate(teamId, data) {');
+    const end = rules.indexOf('function isTeamMediaUploadCounterUpdate(teamId) {', start);
+
+    expect(start).toBeGreaterThanOrEqual(0);
+    expect(end).toBeGreaterThan(start);
+
+    return rules.slice(start, end);
+}
+
 function ownerProfileCreateWouldBeAllowed(data) {
     return data.isAdmin !== true &&
         !['parentOf', 'parentTeamIds', 'parentPlayerKeys', 'playerKeys'].some((field) => Object.hasOwn(data, field)) &&
@@ -61,6 +71,7 @@ describe('team media Firestore rules', () => {
         const mediaRulesStart = rules.indexOf('match /mediaFolders/{folderId}');
         const mediaRulesEnd = rules.indexOf('// Chat messages subcollection', mediaRulesStart);
         const mediaRules = rules.slice(mediaRulesStart, mediaRulesEnd);
+        const uploadCreateRule = teamMediaUploadCreateRule();
 
         expect(mediaRules).toContain('allow read: if canReadTeamMediaFolder(teamId, resource.data);');
         expect(mediaRules).toContain('allow create, delete: if isTeamOwnerOrAdmin(teamId);');
@@ -73,10 +84,21 @@ describe('team media Firestore rules', () => {
         expect(rules).toContain('function isTeamMediaUploadCounterUpdate(teamId) {');
         expect(rules).toContain("request.resource.data.diff(resource.data).affectedKeys().hasOnly(['nextMediaOrder', 'updatedAt'])");
         expect(rules).toContain("request.resource.data.get('nextMediaOrder', 0) == resource.data.get('nextMediaOrder', 0) + 1");
-        expect(rules).toContain('return hasTeamMediaUploadGrant(teamId) &&');
-        expect(rules).toContain('canUploadTeamMediaFolder(teamId, data.folderId)');
-        expect(rules).toContain("data.type in ['photo', 'file']");
-        expect(rules).toContain('isAllowedTeamMediaUploadType(data.mimeType)');
+        expect(uploadCreateRule).toContain('return hasTeamMediaUploadGrant(teamId) &&');
+        expect(uploadCreateRule).toContain('canUploadTeamMediaFolder(teamId, data.folderId)');
+        expect(uploadCreateRule).toContain("data.type in ['photo', 'file']");
+        expect(uploadCreateRule).toContain('isAllowedTeamMediaUploadType(data.mimeType)');
         expect(mediaRules).toContain('allow delete: if isTeamOwnerOrAdmin(teamId);');
+    });
+
+    it('allows delegated storage-backed uploads without persisted download URLs', () => {
+        const uploadCreateRule = teamMediaUploadCreateRule();
+
+        expect(uploadCreateRule).toContain("'folderId', 'title', 'type', 'storagePath', 'uploadedBy'");
+        expect(uploadCreateRule).toContain("'folderId', 'title', 'fileName', 'type', 'storagePath', 'uploadedBy'");
+        expect(uploadCreateRule).toContain("data.storagePath.matches('team-media/' + teamId + '/' + data.folderId + '/' + request.auth.uid + '/.*')");
+        expect(uploadCreateRule).not.toContain("'folderId', 'title', 'type', 'url', 'storagePath', 'uploadedBy'");
+        expect(uploadCreateRule).not.toContain("'folderId', 'title', 'fileName', 'type', 'url', 'storagePath', 'uploadedBy'");
+        expect(uploadCreateRule).not.toContain('data.url is string');
     });
 });

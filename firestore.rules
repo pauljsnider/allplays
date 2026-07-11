@@ -1442,16 +1442,15 @@ service cloud.firestore {
     function isTeamMediaUploadCreate(teamId, data) {
       return hasTeamMediaUploadGrant(teamId) &&
              data.keys().hasAll([
-               'folderId', 'title', 'type', 'url', 'storagePath', 'uploadedBy',
+               'folderId', 'title', 'type', 'storagePath', 'uploadedBy',
                'size', 'mimeType', 'deleted', 'createdAt', 'updatedAt'
              ]) &&
              data.keys().hasOnly([
-               'folderId', 'title', 'fileName', 'type', 'url', 'storagePath', 'uploadedBy',
+               'folderId', 'title', 'fileName', 'type', 'storagePath', 'uploadedBy',
                'size', 'mimeType', 'order', 'deleted', 'createdAt', 'updatedAt'
              ]) &&
              canUploadTeamMediaFolder(teamId, data.folderId) &&
              data.type in ['photo', 'file'] &&
-             data.url is string &&
              data.storagePath is string &&
              data.storagePath.matches('team-media/' + teamId + '/' + data.folderId + '/' + request.auth.uid + '/.*') &&
              data.uploadedBy == request.auth.uid &&
