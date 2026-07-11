@@ -31,6 +31,7 @@ const {
 } = require('./team-fees-core.cjs');
 const { createInMemoryRateLimiter, getRequestIp } = require('./rate-limit.cjs');
 const { buildPublicGamesIcs, canExposeEmptyPublicFeed, isPublicFanGame } = require('./public-calendar-core.cjs');
+const { buildCalendarFeedGamesQuery } = require('./calendar-feed-window-core.cjs');
 const {
   buildTeamCalendarIcs,
   normalizeCalendarRequest
@@ -4540,6 +4541,10 @@ const calendarIcsCache = createCalendarIcsCache({
   ttlMs: process.env.CALENDAR_ICS_CACHE_TTL_MS
 });
 
+function getCalendarFeedGamesQuery(teamId) {
+  return buildCalendarFeedGamesQuery(firestore.collection(`teams/${teamId}/games`));
+}
+
 exports.publicTeamGamesIcs = functions
   .runWith(fetchCalendarRuntime)
   .https
@@ -4563,7 +4568,7 @@ exports.publicTeamGamesIcs = functions
       }
 
       const team = { id: teamId, ...(teamSnap.data() || {}) };
-      const gamesSnap = await firestore.collection(`teams/${teamId}/games`).get();
+      const gamesSnap = await getCalendarFeedGamesQuery(teamId).get();
       const games = [];
       gamesSnap.forEach((docSnap) => games.push({ id: docSnap.id, ...(docSnap.data() || {}) }));
       const publicGames = games.filter((game) => isPublicFanGame(team, game));
@@ -4656,7 +4661,7 @@ exports.teamCalendarFeed = functions.https.onRequest(async (req, res) => {
       return;
     }
 
-    const eventsSnap = await firestore.collection(`teams/${teamId}/games`).orderBy('date').get();
+    const eventsSnap = await getCalendarFeedGamesQuery(teamId).get();
     const events = eventsSnap.docs.map((docSnap) => {
       const game = { id: docSnap.id, ...(docSnap.data() || {}) };
       game.officiating = Array.isArray(game.officiating) ? game.officiating : (Array.isArray(game.officials) ? game.officials : []);
