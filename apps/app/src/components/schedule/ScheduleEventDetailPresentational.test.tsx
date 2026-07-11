@@ -123,14 +123,20 @@ describe('ScheduleEventDetail presentational components', () => {
     expect(screen.getByText('Avery Smith · Tigers')).toBeTruthy();
   });
 
-  it('renders schedule status messages for success and error tones', () => {
+  it('renders distinct schedule status treatments for success, warning, and error tones', () => {
     const { rerender } = render(<Status tone="success" message="Game schedule was updated." />);
 
-    expect(screen.getByText('Game schedule was updated.')).toBeTruthy();
+    expect(screen.getByText('Game schedule was updated.').className).toContain('border-emerald-200');
+
+    rerender(<Status tone="warning" message="Game saved, but notification failed." />);
+
+    const warning = screen.getByText('Game saved, but notification failed.');
+    expect(warning.className).toContain('border-amber-200');
+    expect(warning.querySelector('.lucide-triangle-alert')).toBeTruthy();
 
     rerender(<Status tone="error" message="Unable to update game." />);
 
-    expect(screen.getByText('Unable to update game.')).toBeTruthy();
+    expect(screen.getByText('Unable to update game.').className).toContain('border-rose-200');
   });
 
   it('keeps score controls disabled at zero and routes stepper clicks', () => {
