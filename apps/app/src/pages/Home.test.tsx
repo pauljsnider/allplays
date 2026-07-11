@@ -460,6 +460,32 @@ describe('Home', () => {
     expect(screen.queryByRole('link', { name: /Request player access/i })).toBeNull();
   });
 
+  it('does not show clear or empty Today claims while linked-parent details are still loading', async () => {
+    const hydratedHome = buildLargeHomeModel();
+    let resolveSecondary!: (value: typeof hydratedHome) => void;
+    homeServiceMocks.loadParentHomeWithSecondaryData.mockImplementationOnce(() => new Promise((resolve) => {
+      resolveSecondary = resolve;
+    }));
+
+    renderHome(signedInAuth);
+
+    await waitFor(() => {
+      expect(homeServiceMocks.loadParentHomeWithSecondaryData).toHaveBeenCalledTimes(1);
+    });
+    expect(screen.getByRole('heading', { name: 'Checking today’s actions…' })).toBeTruthy();
+    expect(screen.getByText('Checking responses…')).toBeTruthy();
+    expect(screen.getByText('Checking upcoming events…')).toBeTruthy();
+    expect(screen.queryByText('All caught up')).toBeNull();
+    expect(screen.queryByText('Responses done')).toBeNull();
+    expect(screen.queryByText('No upcoming events')).toBeNull();
+
+    resolveSecondary(hydratedHome);
+
+    expect(await screen.findByRole('heading', { name: 'Player 1 needs availability' })).toBeTruthy();
+    expect(screen.getAllByText(/Bears Game/).length).toBeGreaterThan(0);
+    expect(screen.queryByRole('heading', { name: 'Checking today’s actions…' })).toBeNull();
+  });
+
   it('makes officials access primary for first-run users with no linked players or teams', async () => {
     homeServiceMocks.loadParentHomeSummaryBootstrap.mockResolvedValueOnce({ home: emptyHome, schedule: [] });
     homeServiceMocks.loadParentHomeWithSecondaryData.mockResolvedValueOnce(emptyHome);
