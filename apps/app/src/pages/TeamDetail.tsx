@@ -625,7 +625,7 @@ function OverviewTab({ model }: { model: TeamDetailModel }) {
   return (
     <div className="space-y-4">
       <section className="grid gap-3 sm:grid-cols-2">
-        <InfoCard icon={Trophy} title={`Season record (${model.record.label})`} value={formatRecord(model.record)} detail={model.record.gamesPlayed ? `${model.record.gamesPlayed} completed games${model.record.winPercentage !== null ? ` · ${model.record.winPercentage}%` : ''}` : 'No completed games yet'} />
+        <InfoCard icon={Trophy} title={`Season record (${model.record.label})`} value={formatRecord(model.record)} detail={model.record.gamesPlayed ? `${model.record.gamesPlayed} completed ${model.record.gamesPlayed === 1 ? 'game' : 'games'}${model.record.winPercentage !== null ? ` · ${model.record.winPercentage}%` : ''}` : 'No completed games yet'} />
         <InfoCard icon={CalendarDays} title="Next event" value={model.nextEvent ? formatEventDate(model.nextEvent.date) : 'No upcoming'} detail={model.nextEvent ? `${model.nextEvent.title} · ${model.nextEvent.location}` : 'Schedule is clear for now'} to={`/schedule?teamId=${encodeURIComponent(model.team.id)}`} />
         <InfoCard icon={Users} title="Roster size" value={`${model.players.length}`} detail={`${model.linkedPlayers.length || 0} linked to your account`} />
         <InfoCard icon={BarChart3} title="Standings" value={getStandingValue(model)} detail={getStandingDetail(model)} href={model.team.leagueUrl || undefined} />
@@ -1154,7 +1154,7 @@ function AddPlayerCard({ teamId, authUser, onCreated }: {
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <div className="text-sm font-black text-gray-950">Add player</div>
-          <div className="mt-1 text-xs font-semibold text-gray-600">Create a roster player in the same public team doc shape the legacy roster editor uses.</div>
+          <div className="mt-1 text-xs font-semibold text-gray-600">Add a player to this team&apos;s roster.</div>
         </div>
         {!open ? (
           <button type="button" className="primary-button !min-h-10 text-xs" onClick={openForm}>

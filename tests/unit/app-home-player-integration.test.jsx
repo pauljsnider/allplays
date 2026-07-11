@@ -594,7 +594,7 @@ describe('React app Home and player drill-in integration', () => {
         expect(socialMocks.respondToFriendRequest).toHaveBeenCalledWith('friendship-3', 'accepted');
 
         await clickButton(container, 'Players');
-        await waitForText(container, 'Player Drill-In');
+        await waitForText(container, 'My players');
         const playerLink = Array.from(container.querySelectorAll('a')).find((link) => link.getAttribute('href') === '/players/team-1/player-1');
         expect(playerLink?.getAttribute('href')).toBe('/players/team-1/player-1');
 

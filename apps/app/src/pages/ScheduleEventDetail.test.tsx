@@ -1788,6 +1788,9 @@ describe('ScheduleEventDetail assignments', () => {
     await waitFor(() => {
       expect(screen.getByTestId('live-game-clock-panel')).toBeTruthy();
     });
+    expect(screen.getByText('Start or pause the clock, then advance the period as the game progresses.')).toBeTruthy();
+    expect(screen.getByText('The clock stays accurate if you leave the app and come back.')).toBeTruthy();
+    expect(screen.queryByText(/legacy tracker|persisted timestamp/i)).toBeNull();
 
     fireEvent.click(screen.getByRole('button', { name: 'Start clock' }));
 

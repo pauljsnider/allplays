@@ -427,6 +427,24 @@ describe('TeamDetail', () => {
     expect(teamDetailServiceMocks.loadParentTeamDetail).toHaveBeenCalledTimes(1);
   });
 
+  it('uses singular wording when the team has one completed game', async () => {
+    teamDetailServiceMocks.loadParentTeamDetail.mockResolvedValue({
+      ...model,
+      record: { label: '1-0', wins: 1, losses: 0, ties: 0, gamesPlayed: 1, winPercentage: 100 }
+    });
+
+    render(
+      <MemoryRouter initialEntries={['/teams/team-1']}>
+        <Routes>
+          <Route path="/teams/:teamId" element={<TeamDetail auth={auth} />} />
+        </Routes>
+      </MemoryRouter>
+    );
+
+    expect(await screen.findByText('1 completed game · 100%')).toBeTruthy();
+    expect(screen.queryByText('1 completed games · 100%')).toBeNull();
+  });
+
   it('surfaces deferred team collection failures on the schedule tab and lets users retry', async () => {
     teamDetailServiceMocks.loadParentTeamDetailBootstrap.mockResolvedValue({
       ...model,
@@ -846,6 +864,8 @@ describe('TeamDetail', () => {
     expect(await screen.findByRole('heading', { name: 'Bears' })).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: /roster/i }));
     fireEvent.click(await screen.findByRole('button', { name: 'Add player' }));
+    expect(screen.getByText("Add a player to this team's roster.")).toBeTruthy();
+    expect(screen.queryByText(/legacy roster editor/i)).toBeNull();
 
     await waitFor(() => expect(teamDetailServiceMocks.loadRosterFieldDefinitionsForApp).toHaveBeenCalledWith('team-1', auth.user));
     fireEvent.change(screen.getByPlaceholderText('Player name'), { target: { value: 'Alex New' } });
