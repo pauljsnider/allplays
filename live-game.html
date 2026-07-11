@@ -317,9 +317,9 @@
           <div class="flex items-start justify-between gap-3">
             <div>
               <p class="text-[11px] uppercase tracking-[0.25em] text-teal/70">Camera/Mic Setup</p>
-              <p class="text-sm text-sand/75">Verify camera and microphone access, name this setup session, and preview the device feed. This does not start streaming.</p>
+              <p class="text-sm text-sand/75">Verify camera and microphone access, name this setup session, then begin the live device stream from the existing preview. No external ingest or cloud recording is started.</p>
             </div>
-            <span class="rounded-full border border-teal/30 px-2 py-1 text-[11px] text-teal whitespace-nowrap">Preview only</span>
+            <span class="rounded-full border border-teal/30 px-2 py-1 text-[11px] text-teal whitespace-nowrap">Local stream only</span>
           </div>
           <label class="mt-3 block text-xs text-sand/70">
             Broadcast session name
@@ -333,8 +333,14 @@
           </div>
           <div class="mt-3 flex flex-wrap items-center gap-2">
             <button id="native-camera-start-btn" type="button" class="rounded-lg bg-teal px-4 py-2 text-sm font-medium text-ink">Start Camera/Mic Setup</button>
+            <button id="native-camera-begin-stream-btn" type="button" class="hidden rounded-lg bg-coral px-4 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-60" disabled>Begin Streaming</button>
             <button id="native-camera-stop-btn" type="button" class="hidden rounded-lg border border-teal/25 px-4 py-2 text-sm font-medium text-sand hover:bg-slate/70">Stop Preview</button>
+            <span id="native-broadcast-state" class="rounded-full border border-sand/20 px-2 py-1 text-[11px] text-sand/60" role="status" aria-live="polite" data-state="setup_required">Setup required</span>
             <span id="native-camera-status" class="text-xs text-sand/55">Camera and microphone permission required before setup can be saved.</span>
+          </div>
+          <div id="native-broadcast-error" class="hidden mt-3 rounded-lg border border-coral/35 bg-coral/10 px-3 py-2 text-sm text-coral" role="alert">
+            <span id="native-broadcast-error-message">The device stream could not start.</span>
+            <button id="native-broadcast-retry-btn" type="button" class="ml-2 font-semibold underline underline-offset-2">Retry</button>
           </div>
         </div>
         <div id="recorded-replay-tools" class="hidden mt-3 rounded-xl border border-teal/20 bg-slate/45 p-3">
@@ -584,6 +590,6 @@
 
   <div id="footer-container"></div>
 
-  <script type="module" src="js/live-game.js?v=9"></script>
+  <script type="module" src="js/live-game.js?v=11"></script>
 </body>
 </html>

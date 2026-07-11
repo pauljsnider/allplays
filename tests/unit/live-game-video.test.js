@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
     BROADCAST_SETUP_STATUSES,
+    BROADCAST_STREAM_STATUSES,
     BROADCAST_PROVIDER_TYPES,
     MAX_HIGHLIGHT_CLIP_MS,
     buildBroadcastSetupSession,
@@ -13,6 +14,7 @@ import {
     canAccessNativeCameraCapture,
     canSaveBroadcastSetupSession,
     resolveBroadcastProviderMetadata,
+    resolveBroadcastStreamControlState,
     resolveGameMediaHub,
     resolveReplayVideoOptions,
     shouldReloadVideoPlayback
@@ -610,6 +612,82 @@ describe('native camera capture authorization', () => {
 });
 
 describe('broadcast setup session helpers', () => {
+    it('enables Begin Streaming only after camera and microphone readiness', () => {
+        expect(resolveBroadcastStreamControlState({
+            status: BROADCAST_STREAM_STATUSES.READY,
+            cameraReady: true,
+            microphoneReady: false
+        })).toMatchObject({
+            status: BROADCAST_STREAM_STATUSES.FAILED,
+            label: 'Start failed',
+            mediaReady: false,
+            showBegin: false,
+            beginDisabled: true,
+            showRetry: true,
+            isLive: false
+        });
+
+        expect(resolveBroadcastStreamControlState({
+            status: BROADCAST_STREAM_STATUSES.READY,
+            cameraReady: true,
+            microphoneReady: true
+        })).toMatchObject({
+            status: BROADCAST_STREAM_STATUSES.READY,
+            label: 'Ready to stream',
+            mediaReady: true,
+            showBegin: true,
+            beginDisabled: false
+        });
+    });
+
+    it('exposes explicit starting, live, and retryable failed states', () => {
+        expect(resolveBroadcastStreamControlState({
+            status: BROADCAST_STREAM_STATUSES.STARTING,
+            cameraReady: true,
+            microphoneReady: true
+        })).toMatchObject({ label: 'Starting...', showBegin: false, isLive: false });
+        expect(resolveBroadcastStreamControlState({
+            status: BROADCAST_STREAM_STATUSES.LIVE,
+            cameraReady: true,
+            microphoneReady: true
+        })).toMatchObject({ label: 'Live', showBegin: false, isLive: true });
+        expect(resolveBroadcastStreamControlState({
+            status: BROADCAST_STREAM_STATUSES.FAILED
+        })).toMatchObject({ label: 'Start failed', showBegin: false, showRetry: true, isLive: false });
+    });
+
+    it('clears ready, starting, and live state when a camera or microphone track ends', () => {
+        for (const status of [
+            BROADCAST_STREAM_STATUSES.READY,
+            BROADCAST_STREAM_STATUSES.STARTING,
+            BROADCAST_STREAM_STATUSES.LIVE
+        ]) {
+            expect(resolveBroadcastStreamControlState({
+                status,
+                cameraReady: false,
+                microphoneReady: true
+            })).toMatchObject({
+                status: BROADCAST_STREAM_STATUSES.FAILED,
+                label: 'Start failed',
+                mediaReady: false,
+                showBegin: false,
+                beginDisabled: true,
+                showRetry: true,
+                isLive: false
+            });
+
+            expect(resolveBroadcastStreamControlState({
+                status,
+                cameraReady: true,
+                microphoneReady: false
+            })).toMatchObject({
+                status: BROADCAST_STREAM_STATUSES.FAILED,
+                showRetry: true,
+                isLive: false
+            });
+        }
+    });
+
     it('builds a reusable ready session after camera and microphone verification', () => {
         const session = buildBroadcastSetupSession({
             sessionName: ' Varsity vs Central ',
