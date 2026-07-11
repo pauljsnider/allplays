@@ -512,7 +512,7 @@ export function Profile({ auth }: { auth: AuthState }) {
     return () => {
       cancelled = true;
     };
-  }, [activeProfileSection, initialUrlTeamId, notificationTeamsLoaded, user]);
+  }, [activeProfileSection, initialUrlTeamId, loadNotificationPreferencesOnce, notificationTeamsLoaded, user]);
 
   useEffect(() => {
     let cancelled = false;
@@ -564,7 +564,6 @@ export function Profile({ auth }: { auth: AuthState }) {
     return () => {
       cancelled = true;
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeProfileSection, loadNotificationPreferencesOnce, notificationPreferencesByTeamId, notificationTeamsLoaded, selectedTeamId, user, notificationPreferencesReloadNonce]);
 
   useEffect(() => {
