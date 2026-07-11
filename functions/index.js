@@ -40,7 +40,8 @@ const {
   resolveFamilyShareChildrenFromOwnerProfile
 } = require('./family-share-core.cjs');
 const {
-  buildHouseholdAccessRevocationPlan
+  buildHouseholdAccessRevocationPlan,
+  isAcceptedHouseholdAccessCode
 } = require('./household-access-core.cjs');
 const {
   hashRsvpToken,
@@ -2633,16 +2634,19 @@ exports.revokeHouseholdMemberAccess = functions.https.onCall(async (data, contex
       id: codeSnap.id,
       ...(codeSnap.data() || {})
     }));
-    const matchingCode = accessCodes.find((codeData) => (
+    const membershipUserId = String(membership.userId || '').trim();
+    const acceptedMatchingCode = accessCodes.find((codeData) => (
       codeData.type === 'household_invite' &&
       String(codeData.organizerUserId || '').trim() === organizerUserId &&
-      String(codeData.familyMembershipId || '').trim() === membershipId
+      String(codeData.familyMembershipId || '').trim() === membershipId &&
+      isAcceptedHouseholdAccessCode(codeData) &&
+      (!membershipUserId || String(codeData.usedBy || '').trim() === membershipUserId)
     ));
     const membershipTeamId = String(membership.teamId || '').trim();
     const membershipPlayerId = String(membership.playerId || '').trim();
     const teamId = membershipTeamId ? normalizeFirestoreId(membershipTeamId, 'teamId') : '';
     const playerId = membershipPlayerId ? normalizeFirestoreId(membershipPlayerId, 'playerId') : '';
-    const invitedUserIdValue = membership.userId || matchingCode?.usedBy || '';
+    const invitedUserIdValue = acceptedMatchingCode?.usedBy || '';
     const invitedUserId = invitedUserIdValue
       ? normalizeFirestoreId(invitedUserIdValue, 'invitedUserId')
       : '';

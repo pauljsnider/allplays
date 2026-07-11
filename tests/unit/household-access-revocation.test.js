@@ -18,6 +18,10 @@ describe('authoritative household access revocation', () => {
         expect(handler).toContain('firestore.runTransaction(async (transaction) =>');
         expect(handler).toContain('transaction.get(membershipRef)');
         expect(handler).toContain(".where('familyMembershipId', '==', membershipId)");
+        expect(handler).toContain('const acceptedMatchingCode = accessCodes.find');
+        expect(handler).toContain('isAcceptedHouseholdAccessCode(codeData)');
+        expect(handler).toContain("const invitedUserIdValue = acceptedMatchingCode?.usedBy || '';");
+        expect(handler).not.toContain('const invitedUserIdValue = membership.userId');
         expect(handler).toContain('buildHouseholdAccessRevocationPlan');
         expect(handler).toContain("const membershipTeamId = String(membership.teamId || '').trim();");
         expect(handler).toContain("const teamId = membershipTeamId ? normalizeFirestoreId(membershipTeamId, 'teamId') : '';");

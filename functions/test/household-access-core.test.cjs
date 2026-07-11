@@ -19,7 +19,7 @@ test('accepted household revocation removes only the delegated player and preser
       playerId: 'player-1'
     },
     accessCodes: [
-      { id: 'code-1', type: 'household_invite', organizerUserId: 'organizer-1', familyMembershipId: 'membership-1', usedBy: 'contact-1' },
+      { id: 'code-1', type: 'household_invite', organizerUserId: 'organizer-1', familyMembershipId: 'membership-1', used: true, usedBy: 'contact-1', status: 'accepted' },
       { id: 'other-code', type: 'household_invite', organizerUserId: 'organizer-1', familyMembershipId: 'other-membership', usedBy: 'contact-1' }
     ],
     userData: {
@@ -152,7 +152,8 @@ test('revocation preserves same-player access backed by the canonical player par
       teamId: 'team-1',
       playerId: 'player-1',
       used: true,
-      usedBy: 'contact-1'
+      usedBy: 'contact-1',
+      status: 'accepted'
     }],
     player: { parents: [{ userId: 'contact-1', status: 'active' }] },
     userData: {
@@ -188,7 +189,8 @@ test('revoked same-player references do not prevent household access cleanup', (
         teamId: 'team-1',
         playerId: 'player-1',
         used: true,
-        usedBy: 'contact-1'
+        usedBy: 'contact-1',
+        status: 'accepted'
       },
       {
         id: 'revoked-code',
@@ -226,7 +228,7 @@ test('pending and previously shell-revoked memberships remain safely cleanable',
   assert.equal(pendingPlan.userUpdate, undefined);
   assert.equal(pendingPlan.accessCodeUpdates[0].update.revoked, true);
 
-  const legacyRemovedPlan = buildHouseholdAccessRevocationPlan({
+  const forgedRemovedPlan = buildHouseholdAccessRevocationPlan({
     organizerUserId: 'organizer-1',
     membershipId: 'membership-1',
     membership: { organizerUserId: 'organizer-1', status: 'removed', userId: 'contact-1', teamId: 'team-1', playerId: 'player-1' },
@@ -234,8 +236,46 @@ test('pending and previously shell-revoked memberships remain safely cleanable',
     privateProfile: { parents: [{ userId: 'contact-1' }] },
     timestamp: 'now'
   });
-  assert.deepEqual(legacyRemovedPlan.userUpdate.parentOf, []);
-  assert.deepEqual(legacyRemovedPlan.privateProfileUpdate.parents, []);
+  assert.equal(forgedRemovedPlan.invitedUserId, '');
+  assert.equal(forgedRemovedPlan.userUpdate, undefined);
+  assert.equal(forgedRemovedPlan.privateProfileUpdate, undefined);
+});
+
+test('forged membership shells cannot trigger victim parent grant cleanup without an accepted household code', () => {
+  const plan = buildHouseholdAccessRevocationPlan({
+    organizerUserId: 'attacker',
+    membershipId: 'forged-membership',
+    membership: {
+      organizerUserId: 'attacker',
+      status: 'active',
+      userId: 'victim-user',
+      teamId: 'team-1',
+      playerId: 'player-1'
+    },
+    accessCodes: [{
+      id: 'unaccepted-code',
+      type: 'household_invite',
+      organizerUserId: 'attacker',
+      familyMembershipId: 'forged-membership',
+      teamId: 'team-1',
+      playerId: 'player-1',
+      usedBy: 'victim-user'
+    }],
+    userData: {
+      roles: ['parent'],
+      parentOf: [{ teamId: 'team-1', playerId: 'player-1' }],
+      parentTeamIds: ['team-1'],
+      parentPlayerKeys: ['team-1::player-1']
+    },
+    privateProfile: { parents: [{ userId: 'victim-user' }] },
+    timestamp: 'now'
+  });
+
+  assert.equal(plan.invitedUserId, '');
+  assert.equal(plan.preservedPlayerAccess, false);
+  assert.equal(plan.userUpdate, undefined);
+  assert.equal(plan.privateProfileUpdate, undefined);
+  assert.deepEqual(plan.accessCodeUpdates.map((entry) => entry.id), ['unaccepted-code']);
 });
 
 test('shell-only pending household memberships can be revoked without delegated player cleanup', () => {
@@ -275,7 +315,16 @@ test('accepted household memberships still require a delegated player link for c
       organizerUserId: 'organizer-1',
       status: 'active',
       userId: 'contact-1'
-    }
+    },
+    accessCodes: [{
+      id: 'code-1',
+      type: 'household_invite',
+      organizerUserId: 'organizer-1',
+      familyMembershipId: 'membership-1',
+      used: true,
+      usedBy: 'contact-1',
+      status: 'accepted'
+    }]
   }), /missing its delegated player link/);
 });
 

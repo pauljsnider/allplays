@@ -51,6 +51,14 @@ function isMatchingHouseholdAccessCode(code = {}, organizerUserId, membershipId)
     compactString(code.familyMembershipId) === membershipId;
 }
 
+function isAcceptedHouseholdAccessCode(code = {}) {
+  const status = compactString(code.status).toLowerCase();
+  return code.used === true &&
+    code.revoked !== true &&
+    compactString(code.usedBy) &&
+    !['removed', 'revoked'].includes(status);
+}
+
 function hasIndependentPlayerAccessReference({
   accessCodes = [],
   revokedCodeIds = [],
@@ -111,8 +119,12 @@ function buildHouseholdAccessRevocationPlan({
 
   const matchingCodes = (Array.isArray(accessCodes) ? accessCodes : [])
     .filter((code) => isMatchingHouseholdAccessCode(code, organizerId, memberId));
-  const invitedUserId = compactString(membership.userId) ||
-    compactString(matchingCodes.find((code) => compactString(code.usedBy))?.usedBy);
+  const membershipUserId = compactString(membership.userId);
+  const acceptedMatchingCode = matchingCodes.find((code) => {
+    const usedBy = compactString(code.usedBy);
+    return isAcceptedHouseholdAccessCode(code) && (!membershipUserId || usedBy === membershipUserId);
+  });
+  const invitedUserId = compactString(acceptedMatchingCode?.usedBy);
   const teamId = compactString(membership.teamId);
   const playerId = compactString(membership.playerId);
   if ((!teamId || !playerId) && invitedUserId) {
@@ -169,5 +181,6 @@ module.exports = {
   buildRevokedParentAccess,
   buildRevokedPrivatePlayerAccess,
   hasIndependentPlayerAccessReference,
+  isAcceptedHouseholdAccessCode,
   isMatchingHouseholdAccessCode
 };
