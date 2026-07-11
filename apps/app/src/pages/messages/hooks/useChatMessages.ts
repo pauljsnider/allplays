@@ -12,6 +12,7 @@ type UseChatMessagesParams = {
   team: Record<string, any> | null;
   user: AuthState['user'];
   selectedConversationId: string;
+  enabled?: boolean;
   onBeforeLiveUpdate?: () => boolean;
   onLiveUpdateState?: (state: { isInitialSnapshot: boolean; wasNearBottom: boolean }) => void;
   onMessagesReset?: () => void;
@@ -36,6 +37,7 @@ export function useChatMessages({
   team,
   user,
   selectedConversationId,
+  enabled = true,
   onBeforeLiveUpdate,
   onLiveUpdateState,
   onMessagesReset,
@@ -51,7 +53,7 @@ export function useChatMessages({
   const [retryVersion, setRetryVersion] = useState(0);
   const initialSnapshotLoadedRef = useRef(false);
   const conversationId = normalizeConversationId(selectedConversationId);
-  const canSubscribe = Boolean(team && user);
+  const canSubscribe = Boolean(enabled && team && user);
 
   const messages = useMemo(() => mergeChatMessageLists(olderMessages, liveMessages), [liveMessages, olderMessages]);
 

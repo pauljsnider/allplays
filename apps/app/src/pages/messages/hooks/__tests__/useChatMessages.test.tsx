@@ -38,10 +38,12 @@ const probeTeam = { id: 'team-1', name: 'Bears' };
 
 function MessagesProbe({
     conversationId = 'team',
+    enabled = true,
     onMessagesReset,
     onLoadOlderError
 }: {
     conversationId?: string;
+    enabled?: boolean;
     onMessagesReset?: () => void;
     onLoadOlderError?: (error: unknown) => void;
 }) {
@@ -51,6 +53,7 @@ function MessagesProbe({
         team: probeTeam,
         user,
         selectedConversationId: conversationId,
+        enabled,
         onBeforeLiveUpdate: handleBeforeLiveUpdate,
         onMessagesReset
     });
@@ -106,6 +109,22 @@ describe('useChatMessages', () => {
         await waitFor(() => expect(screen.getByTestId('loading').textContent).toBe('false'));
         expect(screen.getByTestId('message-ids').textContent).toBe('older,newer');
         expect(screen.getByTestId('has-more').textContent).toBe('false');
+    });
+
+    it('waits for conversation preparation before subscribing', async () => {
+        const { rerender } = render(<MessagesProbe conversationId="group_role%3Astaff" enabled={false} />);
+
+        expect(subscribeToTeamChatMessages).not.toHaveBeenCalled();
+
+        rerender(<MessagesProbe conversationId="group_role%3Astaff" enabled />);
+
+        await waitFor(() => expect(subscribeToTeamChatMessages).toHaveBeenCalledTimes(1));
+        expect(subscribeToTeamChatMessages).toHaveBeenCalledWith(
+            'team-1',
+            'group_role%3Astaff',
+            expect.any(Function),
+            expect.any(Function)
+        );
     });
 
     it('resubscribes and clears messages when the selected conversation changes', async () => {

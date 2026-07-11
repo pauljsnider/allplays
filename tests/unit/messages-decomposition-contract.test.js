@@ -15,7 +15,7 @@ describe('Messages decomposition contract', () => {
         expect(messages).toContain("import { ChatWindow, TeamAvatar } from './messages/components/ChatWindow';");
         expect(chatWindow).toContain("import { useChatSheets } from '../hooks/useChatSheets';");
         expect(chatWindow).toContain("import { useChatTeam } from '../hooks/useChatTeam';");
-        expect(chatWindow).toContain("import { useChatMessages } from '../hooks/useChatMessages';");
+        expect(chatWindow).toContain("import { getChatMessagesErrorMessage, useChatMessages } from '../hooks/useChatMessages';");
         expect(chatWindow).toContain('} = useChatSheets();');
         expect(chatWindow).toContain('} = useChatTeam({');
         expect(chatWindow).toContain('} = useChatMessages({');
