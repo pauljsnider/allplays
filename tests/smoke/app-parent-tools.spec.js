@@ -289,12 +289,21 @@ async function mockParentToolsModules(page) {
                         requests: [{ id: 'request-1', teamId: 'team-1', teamName: 'Bears', playerId: 'player-1', playerName: 'Pat Star', relation: 'Parent', status: 'pending' }]
                     };
                 }
-                export async function loadParentAccessTeams() {
+                export async function discoverParentAccessTeams(options = {}) {
                     window.__publicTeamLoads += 1;
-                    return [{ id: 'team-1', name: 'Bears', sport: 'Basketball', zip: '66210' }];
+                    if (options.cursor === 'cursor-2') {
+                        return { teams: [{ id: 'team-2', name: 'Comets', sport: 'Soccer', city: 'Austin', state: 'TX' }], nextCursor: null };
+                    }
+                    return { teams: [{ id: 'team-1', name: 'Bears', sport: 'Basketball', zip: '66210' }], nextCursor: 'cursor-2' };
+                }
+                export async function loadParentAccessTeam(teamId) {
+                    return { id: String(teamId), name: 'Bears', sport: 'Basketball', zip: '66210' };
                 }
                 export async function loadParentAccessPlayers(teamId) {
                     window.__playerLoads.push(String(teamId));
+                    if (String(teamId) === 'team-2') {
+                        return [{ id: 'player-2', name: 'Cam Comet', number: '22', photoUrl: null }];
+                    }
                     return [{ id: 'player-1', name: 'Pat Star', number: '9', photoUrl: null }];
                 }
                 export async function submitParentAccessRequest(teamId, playerId, relation) {
@@ -363,12 +372,21 @@ async function mockParentToolsModules(page) {
                         requests: [{ id: 'request-1', teamId: 'team-1', teamName: 'Bears', playerId: 'player-1', playerName: 'Pat Star', relation: 'Parent', status: 'pending' }]
                     };
                 }
-                export async function loadParentAccessTeams() {
+                export async function discoverParentAccessTeams(options = {}) {
                     window.__publicTeamLoads += 1;
-                    return [{ id: 'team-1', name: 'Bears', sport: 'Basketball', zip: '66210' }];
+                    if (options.cursor === 'cursor-2') {
+                        return { teams: [{ id: 'team-2', name: 'Comets', sport: 'Soccer', city: 'Austin', state: 'TX' }], nextCursor: null };
+                    }
+                    return { teams: [{ id: 'team-1', name: 'Bears', sport: 'Basketball', zip: '66210' }], nextCursor: 'cursor-2' };
+                }
+                export async function loadParentAccessTeam(teamId) {
+                    return { id: String(teamId), name: 'Bears', sport: 'Basketball', zip: '66210' };
                 }
                 export async function loadParentAccessPlayers(teamId) {
                     window.__playerLoads.push(String(teamId));
+                    if (String(teamId) === 'team-2') {
+                        return [{ id: 'player-2', name: 'Cam Comet', number: '22', photoUrl: null }];
+                    }
                     return [{ id: 'player-1', name: 'Pat Star', number: '9', photoUrl: null }];
                 }
                 export async function submitParentAccessRequest(teamId, playerId, relation) {
@@ -526,13 +544,17 @@ test('parent tools hub completes access, fees, calendars, share, registration, a
     await expect.poll(() => page.evaluate(() => window.__playerLoads.length)).toBe(0);
     await expect(page.getByText('Pat Star')).toBeVisible();
     await page.getByRole('button', { name: 'Request access without a code' }).click();
+    await expect.poll(() => page.evaluate(() => window.__publicTeamLoads)).toBe(0);
+    await page.getByRole('button', { name: 'Browse' }).click();
     await expect.poll(() => page.evaluate(() => window.__publicTeamLoads)).toBe(1);
-    await expect(page.getByLabel('Team')).toBeVisible();
-    await page.getByLabel('Team').selectOption('team-1');
-    await expect.poll(() => page.evaluate(() => window.__playerLoads)).toEqual(['team-1']);
-    await page.getByLabel('Player').selectOption('player-1');
+    await expect(page.getByLabel('Team', { exact: true })).toBeVisible();
+    await page.getByRole('button', { name: 'Load more teams' }).click();
+    await expect.poll(() => page.evaluate(() => window.__publicTeamLoads)).toBe(2);
+    await page.getByLabel('Team', { exact: true }).selectOption('team-2');
+    await expect.poll(() => page.evaluate(() => window.__playerLoads)).toEqual(['team-2']);
+    await page.getByLabel('Player').selectOption('player-2');
     await page.getByRole('button', { name: /Send request/ }).click();
-    await expect.poll(() => page.evaluate(() => window.__accessRequests.at(-1))).toEqual({ teamId: 'team-1', playerId: 'player-1', relation: 'Parent' });
+    await expect.poll(() => page.evaluate(() => window.__accessRequests.at(-1))).toEqual({ teamId: 'team-2', playerId: 'player-2', relation: 'Parent' });
 
     await page.getByRole('button', { name: 'Fees' }).click();
     await expect(page.getByText('Team dues')).toBeVisible();

@@ -75,7 +75,14 @@ export type ParentAccessTeam = {
   id: string;
   name: string;
   sport?: string;
+  city?: string;
+  state?: string;
   zip?: string;
+};
+
+export type ParentAccessTeamsPage = {
+  teams: ParentAccessTeam[];
+  nextCursor: unknown | null;
 };
 
 export type ParentAccessPlayer = {
@@ -361,9 +368,20 @@ export async function loadParentAccessModel(user: AuthUser | null) {
   };
 }
 
-export async function loadParentAccessTeams(): Promise<ParentAccessTeam[]> {
-  const result = await Promise.resolve(discoverPublicTeams({ pageSize: 100 }));
-  return normalizeAccessTeams(result?.teams);
+export async function discoverParentAccessTeams({
+  searchText = '',
+  cursor = null,
+  pageSize = 20
+}: { searchText?: string; cursor?: unknown | null; pageSize?: number } = {}): Promise<ParentAccessTeamsPage> {
+  const result = await Promise.resolve(discoverPublicTeams({
+    searchText: String(searchText || '').trim(),
+    cursor,
+    pageSize
+  }));
+  return {
+    teams: normalizeAccessTeams(result?.teams),
+    nextCursor: result?.nextCursor || null
+  };
 }
 
 export async function loadParentAccessPlayers(teamId: string): Promise<ParentAccessPlayer[]> {
@@ -920,6 +938,8 @@ function normalizeAccessTeams(teams: any[]): ParentAccessTeam[] {
       id: compactString(team.id || team.teamId),
       name: compactString(team.name || team.teamName) || 'Team',
       sport: compactString(team.sport),
+      city: compactString(team.city),
+      state: compactString(team.state),
       zip: compactString(team.zip)
     }))
     .filter((team) => team.id)

@@ -9,16 +9,23 @@ type ParentToolAsyncOptions<T> = {
     onError?: (error: AppServiceError) => void | Promise<void>;
     onFinally?: () => void | Promise<void>;
     clearError?: boolean;
+    ignoreStale?: boolean;
 };
 
 export function useParentToolAsyncOperation() {
-    const { loading, clearError: clearOperationError, run: runOperation } = useAsyncOperation();
+    const { loading, clearError: clearOperationError, invalidate: invalidateOperation, run: runOperation } = useAsyncOperation();
     const [error, setError] = useState<AppServiceError | null>(null);
 
     const clearError = useCallback(() => {
         setError(null);
         clearOperationError();
     }, [clearOperationError]);
+
+    const invalidate = useCallback(() => {
+        setError(null);
+        clearOperationError();
+        invalidateOperation();
+    }, [clearOperationError, invalidateOperation]);
 
     const run = useCallback(async function runParentToolAsyncOperation<T>(
         task: () => Promise<T>,
@@ -32,6 +39,7 @@ export function useParentToolAsyncOperation() {
 
         return runOperation(task, {
             rethrow: false,
+            ignoreStale: options.ignoreStale,
             getErrorMessage: (taskError) => getParentToolErrorMessage(toAppServiceError(taskError, fallbackMessage), fallbackMessage),
             onSuccess: async (value) => {
                 setError(null);
@@ -53,6 +61,7 @@ export function useParentToolAsyncOperation() {
         error,
         setError,
         clearError,
+        invalidate,
         run
     };
 }
