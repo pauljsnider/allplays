@@ -817,7 +817,9 @@ describe('React app team detail model', () => {
                 { id: 'game-1', opponent: 'Falcons', date: new Date('2100-06-01T18:00:00Z'), status: 'scheduled', statTrackerConfigId: 'cfg-basketball' },
                 { id: 'game-2', opponent: 'Tigers', date: new Date('2100-06-02T18:00:00Z'), status: 'scheduled', statTrackerConfigId: 'cfg-legacy' },
                 { id: 'game-3', opponent: 'Orphans', date: new Date('2100-06-03T18:00:00Z'), status: 'scheduled', statTrackerConfigId: 'cfg-missing' },
-                { id: 'live-game', opponent: 'Long Match', date: new Date(now - 4 * 60 * 60 * 1000), status: 'scheduled', liveStatus: 'live', statTrackerConfigId: 'cfg-legacy' },
+                { id: 'live-game', opponent: 'Long Match', date: new Date(now - 2 * 60 * 60 * 1000), status: 'scheduled', liveStatus: 'live', statTrackerConfigId: 'cfg-legacy' },
+                { id: 'stale-active-game', opponent: 'Old Active', date: new Date('2026-01-11T18:00:00Z'), status: 'active', statTrackerConfigId: 'cfg-legacy' },
+                { id: 'stale-live-game', opponent: 'Old Live', date: new Date('2026-01-20T18:00:00Z'), status: 'scheduled', liveStatus: 'live', statTrackerConfigId: 'cfg-legacy' },
                 { id: 'stale-game', opponent: 'Past Tigers', date: new Date('2020-06-02T18:00:00Z'), status: 'scheduled', statTrackerConfigId: 'cfg-legacy' }
             ],
             configs: [
@@ -876,6 +878,10 @@ describe('React app team detail model', () => {
                 expect.objectContaining({ gameId: 'live-game', title: 'vs. Long Match' }),
                 expect.objectContaining({ gameId: 'game-2', title: 'vs. Tigers' })
             ]);
+        const assignedLegacyGameIds = model.statTrackerConfigs.find((config) => config.id === 'cfg-legacy').assignedUpcomingGames.map((game) => game.gameId);
+        expect(assignedLegacyGameIds).not.toContain('stale-active-game');
+        expect(assignedLegacyGameIds).not.toContain('stale-live-game');
+        expect(assignedLegacyGameIds).not.toContain('stale-game');
         expect(model.upcomingEvents.find((event) => event.id === 'game-1')).toMatchObject({
             statTrackerConfigId: 'cfg-basketball',
             statTrackerConfigLabel: 'Varsity Basketball',
