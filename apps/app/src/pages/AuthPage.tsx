@@ -247,10 +247,30 @@ export function AuthPage({ auth }: { auth: AuthState }) {
         {mode === 'signup' ? (
           <>
             <Field icon={KeyRound} label="Confirm password">
-              <input className="auth-input" type="password" value={confirmPassword} onChange={(event) => setConfirmPassword(event.target.value)} required minLength={6} autoComplete="new-password" />
+              <input
+                className="auth-input"
+                type="password"
+                value={confirmPassword}
+                onChange={(event) => {
+                  setConfirmPassword(event.target.value);
+                  clearStatus();
+                }}
+                required
+                minLength={6}
+                autoComplete="new-password"
+              />
             </Field>
             <Field icon={Eye} label="Activation or invite code">
-              <input className="auth-input font-mono uppercase tracking-widest" value={activationCode} onChange={(event) => setActivationCode(event.target.value.toUpperCase())} required maxLength={12} />
+              <input
+                className="auth-input font-mono uppercase tracking-widest"
+                value={activationCode}
+                onChange={(event) => {
+                  setActivationCode(event.target.value.toUpperCase());
+                  clearStatus();
+                }}
+                required
+                maxLength={12}
+              />
             </Field>
           </>
         ) : null}
