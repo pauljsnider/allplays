@@ -314,6 +314,50 @@ describe('PublicTeamSearch', () => {
         expect(screen.getAllByRole('heading', { level: 3 }).length).toBe(2);
     });
 
+    it('shows the roster-backed count without treating the empty linked-player array as zero', async () => {
+        (getPublicTeamsPage as import('vitest').Mock).mockResolvedValueOnce({
+            teams: [{
+                ...mockTeams[0],
+                teamId: 'team-roster-1',
+                teamName: 'AI Score Reader',
+                publicRosterCount: 10,
+                publicRosterCountCapped: false,
+                players: [],
+            }],
+            nextCursor: null
+        });
+        renderSearch();
+
+        fireEvent.click(screen.getByRole('button', { name: /Browse all public teams/i }));
+
+        await waitFor(() => expect(screen.getByText('AI Score Reader')).toBeTruthy());
+        const teamCard = screen.getByText('AI Score Reader').closest('article');
+        expect(teamCard).toBeTruthy();
+        expect(within(teamCard as HTMLElement).getByText('10 players')).toBeTruthy();
+        expect(within(teamCard as HTMLElement).queryByText('0 players')).toBeNull();
+    });
+
+    it('does not claim a team has zero players when its public roster count is unavailable', async () => {
+        (getPublicTeamsPage as import('vitest').Mock).mockResolvedValueOnce({
+            teams: [{
+                ...mockTeams[0],
+                teamId: 'team-count-unavailable',
+                publicRosterCount: null,
+                players: [],
+            }],
+            nextCursor: null
+        });
+        renderSearch();
+
+        fireEvent.click(screen.getByRole('button', { name: /Browse all public teams/i }));
+
+        await waitFor(() => expect(screen.getByText('Atlanta United')).toBeTruthy());
+        const teamCard = screen.getByText('Atlanta United').closest('article');
+        expect(teamCard).toBeTruthy();
+        expect(within(teamCard as HTMLElement).getByText('Roster count unavailable')).toBeTruthy();
+        expect(within(teamCard as HTMLElement).queryByText('0 players')).toBeNull();
+    });
+
     it('routes to the native team page when app access is available', async () => {
         renderSearch();
 

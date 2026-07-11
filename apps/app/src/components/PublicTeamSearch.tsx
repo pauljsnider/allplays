@@ -289,6 +289,10 @@ export function PublicTeamSearch({ autoBrowseOnMount = false, showBackLink = fal
 function PublicTeamCard({ team, onOpenTeam }: { team: ParentHomeTeam; onOpenTeam: (team: ParentHomeTeam) => void | Promise<void> }) {
   const isActionable = Boolean(team.appAccess || team.webAccess);
   const actionLabel = team.appAccess ? 'View team' : 'Open website team page';
+  const hasRosterCount = typeof team.publicRosterCount === 'number';
+  const rosterCountLabel = hasRosterCount
+    ? `${team.publicRosterCount}${team.publicRosterCountCapped ? '+' : ''} player${team.publicRosterCount === 1 && !team.publicRosterCountCapped ? '' : 's'}`
+    : 'Roster count unavailable';
 
   return (
     <article className={`min-w-0 rounded-2xl border bg-white p-3 shadow-sm ${isActionable ? 'border-gray-200' : 'border-gray-200/80 bg-gray-50'}`}>
@@ -298,7 +302,7 @@ function PublicTeamCard({ team, onOpenTeam }: { team: ParentHomeTeam; onOpenTeam
           <span className="truncate text-sm font-black text-gray-950">{team.teamName}</span>
           <span className="mt-0.5 block truncate text-xs font-semibold text-gray-500">{team.location || 'Location Unknown'}</span>
           <span className="mt-1 flex min-w-0 flex-wrap gap-1.5">
-            <TeamLauncherChip label={`${team.players.length} player${team.players.length === 1 ? '' : 's'}`} />
+            <TeamLauncherChip label={rosterCountLabel} />
           </span>
         </span>
       </div>

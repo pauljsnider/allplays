@@ -1,5 +1,7 @@
-import { discoverPublicTeams } from './adapters/legacyPublicTeamsDb';
+import { discoverPublicTeams, getPublicTeamRosterCount, type PublicTeamRosterCount } from './adapters/legacyPublicTeamsDb';
 import { type ParentHomeTeam } from './homeLogic';
+
+const PUBLIC_ROSTER_COUNT_CONCURRENCY = 6;
 
 export type PublicTeamsPage = {
     teams: ParentHomeTeam[];
@@ -16,7 +18,20 @@ function teamLocation(team: { city?: string | null; state?: string | null; zip?:
     return null;
 }
 
-function mapPublicTeam(team: { id: string; name: string; sport?: string | null; photoUrl?: string | null; city?: string; state?: string; zip?: string; appAccess?: boolean; webAccess?: boolean; isPublic?: boolean }): ParentHomeTeam {
+type PublicTeamSearchResult = {
+    id: string;
+    name: string;
+    sport?: string | null;
+    photoUrl?: string | null;
+    city?: string | null;
+    state?: string | null;
+    zip?: string | null;
+    appAccess?: boolean;
+    webAccess?: boolean;
+    isPublic?: boolean;
+};
+
+function mapPublicTeam(team: PublicTeamSearchResult, rosterCount: PublicTeamRosterCount | null): ParentHomeTeam {
     return {
         teamId: team.id,
         teamName: team.name,
@@ -30,12 +45,36 @@ function mapPublicTeam(team: { id: string; name: string; sport?: string | null; 
         appAccess: team.appAccess ?? false,
         webAccess: team.webAccess ?? true,
         isPublic: true,
+        publicRosterCount: rosterCount?.count ?? null,
+        publicRosterCountCapped: rosterCount?.isCapped ?? false,
         players: [],
         nextEvent: null,
         eventCount: 0,
         unreadCount: 0,
         openActions: 0,
     };
+}
+
+async function mapPublicTeamsWithRosterCounts(teams: PublicTeamSearchResult[]): Promise<ParentHomeTeam[]> {
+    const mappedTeams: ParentHomeTeam[] = [];
+
+    for (let index = 0; index < teams.length; index += PUBLIC_ROSTER_COUNT_CONCURRENCY) {
+        const teamBatch = teams.slice(index, index + PUBLIC_ROSTER_COUNT_CONCURRENCY);
+        const mappedBatch = await Promise.all(teamBatch.map(async (team) => {
+            try {
+                const rosterCount = await getPublicTeamRosterCount(team.id);
+                return mapPublicTeam(team, rosterCount);
+            } catch {
+                // A legacy roster can contain a document that is not publicly
+                // readable. Preserve that boundary and omit the count instead
+                // of falling back to fetching roster records or showing zero.
+                return mapPublicTeam(team, null);
+            }
+        }));
+        mappedTeams.push(...mappedBatch);
+    }
+
+    return mappedTeams;
 }
 
 function matchesPublicTeamSearch(team: { name?: string | null; city?: string | null; state?: string | null; zip?: string | null }, searchText: string): boolean {
@@ -75,9 +114,9 @@ export async function getPublicTeamsPage({ searchText, locationFilter, cursor = 
         cursor,
         pageSize
     });
-    const teams = result.teams
-        .filter((team: { name?: string | null; city?: string | null; state?: string | null; zip?: string | null }) => matchesPublicTeamSearch(team, normalizedSearchText))
-        .map(mapPublicTeam);
+    const matchingTeams = result.teams
+        .filter((team: { name?: string | null; city?: string | null; state?: string | null; zip?: string | null }) => matchesPublicTeamSearch(team, normalizedSearchText));
+    const teams = await mapPublicTeamsWithRosterCounts(matchingTeams);
 
     return {
         teams,

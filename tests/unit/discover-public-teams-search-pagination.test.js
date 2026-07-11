@@ -8,6 +8,7 @@ const firebaseMocks = vi.hoisted(() => ({
     limit: vi.fn((value) => ({ type: 'limit', value })),
     startAfter: vi.fn((value) => ({ type: 'startAfter', value })),
     getDocs: vi.fn(),
+    getCountFromServer: vi.fn(),
 }));
 
 vi.mock('../../js/firebase.js?v=20', () => ({
@@ -32,7 +33,7 @@ vi.mock('../../js/firebase.js?v=20', () => ({
     deleteField: vi.fn(),
     limit: firebaseMocks.limit,
     startAfter: firebaseMocks.startAfter,
-    getCountFromServer: vi.fn(),
+    getCountFromServer: firebaseMocks.getCountFromServer,
     onSnapshot: vi.fn(),
     serverTimestamp: vi.fn(),
     collectionGroup: vi.fn(),
@@ -170,6 +171,40 @@ describe('discoverPublicTeams search pagination', () => {
         });
         expect(firebaseMocks.getDocs).not.toHaveBeenCalled();
         expect(firebaseMocks.startAfter).not.toHaveBeenCalled();
+    });
+});
+
+describe('public team roster count', () => {
+    beforeEach(() => {
+        vi.clearAllMocks();
+    });
+
+    it('uses a capped aggregation without loading roster documents', async () => {
+        firebaseMocks.getCountFromServer.mockResolvedValue({
+            data: () => ({ count: 10 })
+        });
+        const { getPublicTeamRosterCount } = await import('../../js/db.js?v=91');
+
+        await expect(getPublicTeamRosterCount('team-roster-1')).resolves.toEqual({
+            count: 10,
+            isCapped: false
+        });
+        expect(firebaseMocks.collection).toHaveBeenCalledWith(expect.anything(), 'teams/team-roster-1/players');
+        expect(firebaseMocks.limit).toHaveBeenCalledWith(201);
+        expect(firebaseMocks.getCountFromServer).toHaveBeenCalledTimes(1);
+        expect(firebaseMocks.getDocs).not.toHaveBeenCalled();
+    });
+
+    it('reports a lower-bound count when the public roster exceeds the cap', async () => {
+        firebaseMocks.getCountFromServer.mockResolvedValue({
+            data: () => ({ count: 201 })
+        });
+        const { getPublicTeamRosterCount } = await import('../../js/db.js?v=91');
+
+        await expect(getPublicTeamRosterCount('team-large-roster')).resolves.toEqual({
+            count: 200,
+            isCapped: true
+        });
     });
 });
 
