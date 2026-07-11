@@ -65,6 +65,7 @@ const {
 } = require('./team-email-core.cjs');
 const {
   buildParentInviteEmailMessage,
+  isValidInviteRecipientEmail,
   normalizeInviteEmailType
 } = require('./invite-email-core.cjs');
 const {
@@ -1910,7 +1911,7 @@ async function queueInviteEmailForCode(codeId, codeData = {}) {
   const type = String(codeData.type || '').trim().toLowerCase();
   const email = normalizeParentInviteEmail(codeData.email);
   const code = String(codeData.code || '').trim().toUpperCase();
-  if (!INVITE_EMAIL_TYPES.has(type) || !normalizeInviteEmailType(type) || !email || !code) {
+  if (!INVITE_EMAIL_TYPES.has(type) || !normalizeInviteEmailType(type) || !isValidInviteRecipientEmail(email) || !code) {
     return { queued: false, reason: 'not_email_eligible' };
   }
 
@@ -1976,8 +1977,8 @@ exports.queueInviteEmail = functions.https.onCall(async (data, context) => {
   if (!invite) {
     throw new functions.https.HttpsError('not-found', 'Invite could not be found.');
   }
-  if (!normalizeParentInviteEmail(invite.data.email)) {
-    throw new functions.https.HttpsError('failed-precondition', 'Invite does not have a recipient email.');
+  if (!isValidInviteRecipientEmail(invite.data.email)) {
+    throw new functions.https.HttpsError('failed-precondition', 'Invite does not have a valid recipient email.');
   }
 
   const result = await queueInviteEmailForCode(invite.id, invite.data);
@@ -1992,7 +1993,7 @@ exports.queueParentInviteEmail = functions.firestore
   .onCreate(async (snap, context) => {
     const codeData = snap.data() || {};
     if (!INVITE_EMAIL_TYPES.has(String(codeData.type || '').trim().toLowerCase()) ||
-        !normalizeParentInviteEmail(codeData.email)) {
+        !isValidInviteRecipientEmail(codeData.email)) {
       return null;
     }
     await queueInviteEmailForCode(context.params.codeId, codeData);

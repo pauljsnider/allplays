@@ -2902,7 +2902,9 @@ function PlayerRow({
           ? `Existing parent linked automatically${result.emailSent && result.email ? ` and notified at ${result.email}` : ''}.`
           : result.emailSent && result.email
             ? `Invite emailed to ${result.email} with the code and signup link.`
-            : 'Parent invite is ready to copy or share.'
+            : result.email
+              ? `Invite created, but the email to ${result.email} could not be sent. Copy or share the code or link.`
+              : 'Parent invite is ready to copy or share.'
       });
       await onInviteCreated();
     } catch (error: any) {

@@ -9,6 +9,11 @@ function normalizeInviteEmailType(value) {
   return '';
 }
 
+function isValidInviteRecipientEmail(value) {
+  const email = String(value || '').trim().toLowerCase();
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
+}
+
 function escapeHtml(value) {
   return String(value ?? '')
     .replace(/&/g, '&amp;')
@@ -76,5 +81,6 @@ module.exports = {
   ALLPLAYS_ORIGIN,
   buildInviteSignupUrl,
   buildParentInviteEmailMessage,
+  isValidInviteRecipientEmail,
   normalizeInviteEmailType
 };

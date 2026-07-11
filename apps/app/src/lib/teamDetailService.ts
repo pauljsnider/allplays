@@ -1044,8 +1044,14 @@ export async function createRosterParentInviteForApp(
   const inviteResult = await inviteParent(normalizedTeamId, normalizedPlayerId, cleanString(player?.number), normalizedEmail, relation);
   const code = cleanString(inviteResult?.code).toUpperCase();
   if (!code) throw new Error('Invite code was not created.');
+  let emailSent = false;
   if (normalizedEmail) {
-    await queueInviteEmail(code);
+    try {
+      await queueInviteEmail(code);
+      emailSent = true;
+    } catch (error) {
+      console.warn('Parent invite was created, but its email could not be queued:', error);
+    }
   }
   invalidateTeamDetailBaseSnapshotCache(normalizedTeamId);
 
@@ -1054,7 +1060,7 @@ export async function createRosterParentInviteForApp(
     inviteUrl: buildAppAcceptInviteUrl(code, 'parent'),
     status: inviteResult?.autoLinked ? 'accepted' : 'pending',
     email: normalizedEmail || null,
-    emailSent: Boolean(normalizedEmail),
+    emailSent,
     existingUser: inviteResult?.existingUser === true,
     autoLinked: inviteResult?.autoLinked === true,
     teamName: inviteResult?.teamName || null,

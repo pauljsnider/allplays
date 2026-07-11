@@ -5,6 +5,7 @@ const assert = require('node:assert/strict');
 const {
   buildInviteSignupUrl,
   buildParentInviteEmailMessage,
+  isValidInviteRecipientEmail,
   normalizeInviteEmailType
 } = require('../invite-email-core.cjs');
 
@@ -12,6 +13,13 @@ test('normalizes supported parent invite types', () => {
   assert.equal(normalizeInviteEmailType('parent_invite'), 'parent');
   assert.equal(normalizeInviteEmailType('household_invite'), 'household');
   assert.equal(normalizeInviteEmailType('admin_invite'), '');
+});
+
+test('accepts normalized recipient emails and rejects malformed addresses', () => {
+  assert.equal(isValidInviteRecipientEmail(' Parent@Example.com '), true);
+  assert.equal(isValidInviteRecipientEmail('not-an-email'), false);
+  assert.equal(isValidInviteRecipientEmail('missing-domain@'), false);
+  assert.equal(isValidInviteRecipientEmail(''), false);
 });
 
 test('builds a parent signup link with the code and normalized invite type', () => {

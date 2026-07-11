@@ -265,6 +265,33 @@ describe('React app team detail model', () => {
         expect(result).toMatchObject({ email: 'parent@example.com', emailSent: true });
     });
 
+    it('returns the created parent invite when email queuing fails', async () => {
+        getTeam.mockResolvedValue({ id: 'team-1', ownerId: 'owner-1', adminEmails: ['coach@example.com'] });
+        getPlayers.mockResolvedValue([]);
+        getGames.mockResolvedValue([]);
+        getConfigs.mockResolvedValue([]);
+        inviteParent.mockResolvedValue({ code: 'ABCD1234', autoLinked: false, existingUser: false, teamName: 'Bears', playerName: 'Pat Star' });
+        queueInviteEmail.mockRejectedValue(new Error('mail unavailable'));
+        const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+        const result = await createRosterParentInviteForApp(
+            'team-1',
+            { uid: 'coach-1', email: 'coach@example.com', roles: ['coach'] },
+            { id: 'player-1', number: '9' },
+            { email: 'parent@example.com', relation: 'Guardian' }
+        );
+
+        expect(queueInviteEmail).toHaveBeenCalledWith('ABCD1234');
+        expect(result).toMatchObject({
+            code: 'ABCD1234',
+            email: 'parent@example.com',
+            emailSent: false,
+            status: 'pending'
+        });
+        expect(warnSpy).toHaveBeenCalled();
+        warnSpy.mockRestore();
+    });
+
     it('loads normalized roster field definitions only for full team staff', async () => {
         getTeam.mockResolvedValue({ id: 'team-1', ownerId: 'owner-1', adminEmails: ['coach@example.com'] });
         getPlayers.mockResolvedValue([]);
