@@ -3557,7 +3557,7 @@ describe('ScheduleEventDetail practice timeline', () => {
       expect(screen.getByText('Assign practice packet')).toBeTruthy();
     });
 
-    expect(screen.getByLabelText('Due date')).toHaveValue('2026-05-24');
+    expect((screen.getByLabelText('Due date') as HTMLInputElement).value).toBe('2026-05-24');
   });
 
   it('shows the practice packet first and hides the timeline for non-admin practice viewers', async () => {
