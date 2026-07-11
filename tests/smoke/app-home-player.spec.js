@@ -1204,7 +1204,7 @@ test('home dashboard drills into player detail with section submenus', async ({ 
     await expect(page.getByText('Jamie Friend')).toBeVisible();
 
     await page.getByRole('button', { name: 'Players' }).click();
-    await expect(page.getByRole('heading', { name: 'Player Drill-In' })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'My players' })).toBeVisible();
     await page.locator('a[href="#/players/team-1/player-1"]').click();
 
     await expect(page.getByRole('heading', { name: 'Pat Star' })).toBeVisible();
@@ -1260,7 +1260,7 @@ test('parent core player drill-in sends workflow timer to telemetry storage payl
     await mockHomePlayerModules(page);
     await page.goto(appUrl(baseURL, '/home?section=players'), { waitUntil: 'domcontentloaded' });
 
-    await waitForHomeRoute(page, page.getByRole('heading', { name: 'Player Drill-In' }));
+    await waitForHomeRoute(page, page.getByRole('heading', { name: 'My players' }));
     await page.locator('a[href="#/players/team-1/player-1"]').click();
 
     await expect(page.getByRole('heading', { name: 'Pat Star' })).toBeVisible();
@@ -1350,7 +1350,7 @@ test('parent core workflows emit baseline timers from Home drill-ins', async ({ 
             startHash: '/home?section=players',
             expectedTargetPage: 'player',
             expectedTargetRoute: '/players/team-1/player-1',
-            readyHome: (testPage) => testPage.getByRole('heading', { name: 'Player Drill-In' }),
+            readyHome: (testPage) => testPage.getByRole('heading', { name: 'My players' }),
             action: async (testPage) => {
                 await testPage.locator('a[href="#/players/team-1/player-1"]').click();
             },
@@ -1488,7 +1488,7 @@ test('requested app workflows emit DB-ready view load baseline timers', async ({
             route: '/home?section=players',
             startHash: '/home?section=players',
             ready: async (testPage) => {
-                await waitForHomeRoute(testPage, testPage.getByRole('heading', { name: 'Player Drill-In' }));
+                await waitForHomeRoute(testPage, testPage.getByRole('heading', { name: 'My players' }));
             }
         },
         {

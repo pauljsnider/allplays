@@ -850,8 +850,8 @@ function PlayersSection({ players }: { players: ParentHomePlayer[] }) {
     <section className="home-section-content app-card p-4">
       <div className="flex items-center justify-between gap-3">
         <div>
-          <div className="app-label">My players</div>
-          <h2 className="mt-1 app-section-title">Player Drill-In</h2>
+          <div className="app-label">Players</div>
+          <h2 className="mt-1 app-section-title">My players</h2>
         </div>
         <UserRound className="h-5 w-5 text-primary-600" aria-hidden="true" />
       </div>

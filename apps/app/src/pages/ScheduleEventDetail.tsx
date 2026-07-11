@@ -3226,7 +3226,7 @@ function LiveGameClockPanel({ auth, event, onLiveClockUpdated }: { auth: AuthSta
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0">
           <div className="text-xs font-black uppercase tracking-[0.04em] text-rose-700">Live game clock</div>
-          <div className="mt-1 text-sm font-semibold text-gray-950">Start, pause, and advance periods with the same persisted live clock fields the legacy tracker restores.</div>
+          <div className="mt-1 text-sm font-semibold text-gray-950">Start or pause the clock, then advance the period as the game progresses.</div>
         </div>
         <span className="rounded-full bg-white px-3 py-1 text-xs font-black text-rose-700 shadow-sm">{liveClockView?.label || activePeriod}</span>
       </div>
@@ -3254,7 +3254,7 @@ function LiveGameClockPanel({ auth, event, onLiveClockUpdated }: { auth: AuthSta
         </button>
       </div>
 
-      <div className="mt-2 text-xs font-semibold text-gray-500">Clock state is anchored with a persisted timestamp so app backgrounding restores correctly.</div>
+      <div className="mt-2 text-xs font-semibold text-gray-500">The clock stays accurate if you leave the app and come back.</div>
       {status ? <div className={`mt-2 text-xs font-bold ${status.tone === 'error' ? 'text-rose-700' : 'text-emerald-700'}`}>{status.message}</div> : null}
     </div>
   );
