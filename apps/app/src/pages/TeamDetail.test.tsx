@@ -1,8 +1,9 @@
 // @vitest-environment jsdom
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
-import { createMemoryRouter, MemoryRouter, Route, RouterProvider, Routes } from 'react-router-dom';
+import { createMemoryRouter, MemoryRouter, Outlet, Route, RouterProvider, Routes } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { calculateRosterRenderWindow, rosterRenderLimits, TeamDetail } from './TeamDetail';
+import { clearScrollRestorationForTests, ScrollRestoration } from '../components/ScrollRestoration';
 import type { AuthState } from '../lib/types';
 
 const teamDetailServiceMocks = vi.hoisted(() => ({
@@ -220,6 +221,7 @@ describe('calculateRosterRenderWindow', () => {
 describe('TeamDetail', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    clearScrollRestorationForTests();
     Object.defineProperty(window, 'scrollTo', {
       value: vi.fn(),
       writable: true
@@ -270,6 +272,9 @@ describe('TeamDetail', () => {
 
   afterEach(() => {
     cleanup();
+    vi.restoreAllMocks();
+    Object.defineProperty(window, 'scrollY', { configurable: true, value: 0, writable: true });
+    Object.defineProperty(window, 'pageYOffset', { configurable: true, value: 0, writable: true });
   });
 
   it('shows the shared team skeleton while team detail is loading', () => {
@@ -657,78 +662,67 @@ describe('TeamDetail', () => {
     expect(await screen.findByText('Teams list')).toBeTruthy();
   });
 
-  it('defers route-driven tab scroll reset until after POP scroll restoration frames', async () => {
-    const originalRequestAnimationFrame = window.requestAnimationFrame;
-    const originalCancelAnimationFrame = window.cancelAnimationFrame;
+  it('wins the final scroll position after ScrollRestoration restores a POP entry', async () => {
+    let scrollYValue = 0;
     const frames = new Map<number, FrameRequestCallback>();
     let nextFrameId = 1;
-    Object.defineProperty(window, 'requestAnimationFrame', {
-      configurable: true,
-      value: vi.fn((callback: FrameRequestCallback) => {
-        const frameId = nextFrameId;
-        nextFrameId += 1;
-        frames.set(frameId, callback);
-        return frameId;
-      })
+    const scrollTo = vi.fn((optionsOrX: ScrollToOptions | number, y?: number) => {
+      scrollYValue = typeof optionsOrX === 'number' ? Number(y || 0) : Number(optionsOrX.top || 0);
     });
-    Object.defineProperty(window, 'cancelAnimationFrame', {
-      configurable: true,
-      value: vi.fn((frameId: number) => {
-        frames.delete(frameId);
-      })
+    Object.defineProperty(window, 'scrollY', { configurable: true, get: () => scrollYValue });
+    Object.defineProperty(window, 'pageYOffset', { configurable: true, get: () => scrollYValue });
+    Object.defineProperty(window, 'scrollTo', { configurable: true, value: scrollTo });
+    vi.spyOn(window, 'requestAnimationFrame').mockImplementation((callback) => {
+      const frameId = nextFrameId++;
+      frames.set(frameId, callback);
+      return frameId;
     });
-
-    function flushNextFrame() {
-      const queuedFrames = Array.from(frames.values());
+    vi.spyOn(window, 'cancelAnimationFrame').mockImplementation((frameId) => {
+      frames.delete(frameId);
+    });
+    const flushFrames = async () => {
+      const pendingFrames = Array.from(frames.values());
       frames.clear();
-      queuedFrames.forEach((callback) => callback(performance.now()));
-    }
+      pendingFrames.forEach((callback) => callback(performance.now()));
+      await Promise.resolve();
+    };
+    const router = createMemoryRouter([
+      {
+        path: '/',
+        element: <><ScrollRestoration /><Outlet /></>,
+        children: [
+          { path: 'teams/:teamId', element: <TeamDetail auth={auth} /> },
+          { path: 'players/:teamId/:playerId', element: <div>Player profile</div> }
+        ]
+      }
+    ], { initialEntries: ['/teams/team-1?tab=roster'] });
 
-    try {
-      const router = createMemoryRouter(
-        [
-          {
-            path: '/teams',
-            element: <div>Teams list</div>
-          },
-          {
-            path: '/teams/:teamId',
-            element: <TeamDetail auth={auth} />
-          }
-        ],
-        { initialEntries: ['/teams/team-1', '/teams/team-1?tab=roster'], initialIndex: 1 }
-      );
+    render(<RouterProvider router={router} />);
+    expect(await screen.findByRole('heading', { name: 'Bears' })).toBeTruthy();
+    await act(flushFrames);
+    await act(flushFrames);
 
-      render(<RouterProvider router={router} />);
+    window.scrollTo({ top: 1600, behavior: 'auto' });
+    await act(async () => {
+      await router.navigate('/players/team-1/player-1');
+    });
+    expect(await screen.findByText('Player profile')).toBeTruthy();
+    await act(flushFrames);
+    expect(scrollYValue).toBe(0);
 
-      expect(await screen.findByRole('heading', { name: 'Bears' })).toBeTruthy();
-      frames.clear();
-      vi.mocked(window.scrollTo).mockClear();
+    const callsBeforePop = scrollTo.mock.calls.length;
+    await act(async () => {
+      await router.navigate(-1);
+    });
+    expect(await screen.findByRole('heading', { name: 'Bears' })).toBeTruthy();
+    await act(flushFrames);
+    await act(flushFrames);
 
-      await act(async () => {
-        await router.navigate(-1);
-      });
-
-      await waitFor(() => expect(router.state.location.search).toBe(''));
-      expect(screen.getByRole('button', { name: /overview/i }).getAttribute('aria-pressed')).toBe('true');
-      expect(window.scrollTo).not.toHaveBeenCalled();
-
-      flushNextFrame();
-      window.scrollTo({ top: 420, left: 0, behavior: 'auto' });
-      expect(window.scrollTo).toHaveBeenLastCalledWith({ top: 420, left: 0, behavior: 'auto' });
-
-      flushNextFrame();
-      expect(window.scrollTo).toHaveBeenLastCalledWith({ top: 0, behavior: 'auto' });
-    } finally {
-      Object.defineProperty(window, 'requestAnimationFrame', {
-        configurable: true,
-        value: originalRequestAnimationFrame
-      });
-      Object.defineProperty(window, 'cancelAnimationFrame', {
-        configurable: true,
-        value: originalCancelAnimationFrame
-      });
-    }
+    expect(scrollTo.mock.calls.slice(callsBeforePop)).toEqual([
+      [{ top: 1600, left: 0, behavior: 'auto' }],
+      [{ top: 0, behavior: 'auto' }]
+    ]);
+    expect(scrollYValue).toBe(0);
   });
 
   it('renders native standings rows with the current team highlight and expandable overflow', async () => {
