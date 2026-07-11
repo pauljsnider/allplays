@@ -149,7 +149,9 @@ describe('team calendar subscription feed', () => {
         const feedEnd = functionsSource.indexOf('exports.resolveFamilyShareTokenChildren', feedStart);
         const teamCalendarFeedSource = functionsSource.slice(feedStart, feedEnd);
 
-        expect(teamCalendarFeedSource).toContain("firestore.collection(`teams/${teamId}/games`).orderBy('date').get()");
+        expect(teamCalendarFeedSource).toContain('getCalendarFeedGamesQuery(teamId).get()');
+        expect(teamCalendarFeedSource).not.toContain("firestore.collection(`teams/${teamId}/games`).get()");
+        expect(teamCalendarFeedSource).not.toContain("firestore.collection(`teams/${teamId}/games`).orderBy('date').get()");
         expect(teamCalendarFeedSource).toContain('const game = { id: docSnap.id, ...(docSnap.data() || {}) }');
         expect(teamCalendarFeedSource).toContain('buildTeamCalendarIcs({ teamId, team, events })');
         expect(teamCalendarFeedSource).not.toContain('loadMissingTeamCalendarRsvpSummaries');
