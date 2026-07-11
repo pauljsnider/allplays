@@ -14,6 +14,7 @@ import {
 import type { ChatConversation } from './chatService';
 import {
   buildChatAudienceMetadata,
+  isDefaultTeamConversation,
   type ChatTargetType
 } from './chatLogic';
 import type { AuthUser } from './types';
@@ -232,18 +233,19 @@ export async function sendAllPlaysChatAnswer({
     selectedRecipientTarget,
     selectedRecipientIds
   });
+  const isTargetedConversation = !isDefaultTeamConversation(selectedConversationId);
   await postChatMessage(teamId, {
-    text: responseText,
+    text: isTargetedConversation ? `ALL PLAYS\n\n${responseText}` : responseText,
     senderId: user.uid,
-    senderName: null,
-    senderEmail: null,
-    senderPhotoUrl: null,
-    ai: true,
-    aiName: 'ALL PLAYS',
-    aiQuestion: question,
+    senderName: isTargetedConversation ? (user.displayName || user.email || null) : null,
+    senderEmail: isTargetedConversation ? (user.email || null) : null,
+    senderPhotoUrl: isTargetedConversation ? (user.photoUrl || null) : null,
+    ai: !isTargetedConversation,
+    aiName: isTargetedConversation ? null : 'ALL PLAYS',
+    aiQuestion: isTargetedConversation ? null : question,
     conversationId: selectedConversationId,
     ...targetMetadata,
-    aiMeta: {
+    aiMeta: isTargetedConversation ? null : {
       statsGameLimit: aiStatsGamesLimit,
       gamesContextLimit: aiGamesContextLimit,
       statsRequested: fetchStats,

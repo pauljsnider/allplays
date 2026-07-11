@@ -159,7 +159,7 @@ describe('targeted team chat Firestore rules', () => {
         expect(rules).toContain('match /chatConversations/{conversationId} {');
         expect(rules).toContain('match /chatMessages/{messageId} {');
         expect(rules).toContain('allow create: if canAccessChatConversation(teamId, conversationId, get(/databases/$(database)/documents/teams/$(teamId)/chatConversations/$(conversationId)).data) &&');
-        expect(rules).toContain("request.resource.data.senderId == request.auth.uid;");
+        expect(rules).toContain('isNestedChatMessageCreateValid(');
     });
 
     it('restricts staff/group messages to sender and team staff/admin roles', () => {
@@ -189,7 +189,7 @@ describe('targeted team chat Firestore rules', () => {
     });
 
     it('rejects unauthorized senders by requiring senderId to match auth uid', () => {
-        expect(rules).toContain('request.resource.data.senderId == request.auth.uid &&');
+        expect(rules).toContain('data.senderId == request.auth.uid &&');
     });
 
     it('locks membership and naming changes to team staff while letting participants update benign metadata', () => {

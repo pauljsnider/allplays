@@ -375,6 +375,45 @@ async function nativeCreateDocument(path: string, data: Record<string, unknown>,
   }) as NativeFirestoreDocument);
 }
 
+function getNativeDocumentResourceName(path: string) {
+  const decodedPath = path
+    .split('/')
+    .map((segment) => decodeURIComponent(segment))
+    .join('/');
+  return `projects/${getProjectId()}/databases/(default)/documents/${decodedPath}`;
+}
+
+async function nativeCommitDocument(
+  path: string,
+  data: Record<string, unknown>,
+  { serverTimestampFields = [] }: { serverTimestampFields?: string[] } = {}
+) {
+  const transformFields = new Set(serverTimestampFields);
+  const storedFieldNames = Object.keys(data).filter((key) => !transformFields.has(key));
+  const fields = storedFieldNames.reduce<Record<string, Record<string, unknown>>>((acc, key) => {
+    acc[key] = encodeFirestoreValue(data[key]);
+    return acc;
+  }, {});
+  await nativeFirestoreRequest(':commit', {
+    method: 'POST',
+    body: JSON.stringify({
+      writes: [{
+        update: {
+          name: getNativeDocumentResourceName(path),
+          fields
+        },
+        updateMask: {
+          fieldPaths: storedFieldNames
+        },
+        updateTransforms: serverTimestampFields.map((fieldPath) => ({
+          fieldPath,
+          setToServerValue: 'REQUEST_TIME'
+        }))
+      }]
+    })
+  });
+}
+
 async function nativeRunQuery(structuredQuery: Record<string, unknown>) {
   const payload = await nativeFirestoreRequest(':runQuery', {
     method: 'POST',
@@ -1186,11 +1225,15 @@ async function nativeUploadChatMedia(teamId: string, file: File, conversationId 
     throw new Error('Image upload Firebase config is missing.');
   }
   const session = await getImageUploadSession(imageConfig.apiKey);
+  const userId = firebaseAuth.currentUser?.uid;
+  if (!userId) {
+    throw new Error('Sign in before uploading team chat media.');
+  }
   const safeName = String(file.name || 'media').replace(/[^\w.-]+/g, '_');
   const isVideo = String(file.type || '').toLowerCase().startsWith('video/');
   const mediaFolder = isVideo ? 'team-videos' : 'team-photos';
   const safeConversationId = String(conversationId || DEFAULT_TEAM_CONVERSATION_ID).replace(/[^\w.-]+/g, '_') || DEFAULT_TEAM_CONVERSATION_ID;
-  const path = `${mediaFolder}/${Date.now()}_chat_${teamId}_${safeConversationId}_${safeName}`;
+  const path = `${mediaFolder}/${Date.now()}_chat_${teamId}_${safeConversationId}_${userId}_${safeName}`;
   const response = await withTimeout(fetch(`https://firebasestorage.googleapis.com/v0/b/${encodeURIComponent(bucket)}/o?uploadType=media&name=${encodeURIComponent(path)}`, {
     method: 'POST',
     headers: {
@@ -1299,23 +1342,28 @@ async function nativePostChatMessage(teamId: string, input: {
   aiMeta?: Record<string, unknown> | null;
   conversationId?: string;
 } & ChatAudienceMetadata) {
-  const createdAt = new Date();
+  const attachmentUploadedAt = new Date();
   const attachments = input.attachments || [];
   const firstImage = attachments.find((attachment) => attachment.type === 'image') || null;
-  return nativeCreateDocument(getMessageCollectionPath(teamId, input.conversationId), {
+  const isLegacyTeamConversation = isDefaultTeamConversation(input.conversationId);
+  const documentId = input.clientMessageId || `native_${input.senderId}_${Date.now()}_${Math.random().toString(36).slice(2)}`
+    .replace(/[^A-Za-z0-9_-]/g, '_')
+    .slice(0, 120);
+  const collectionPath = getMessageCollectionPath(teamId, input.conversationId);
+  return nativeCommitDocument(`${collectionPath}/${encodeURIComponent(documentId)}`, {
     clientMessageId: input.clientMessageId || null,
     text: input.text || '',
     senderId: input.senderId,
     senderName: input.senderName || null,
     senderEmail: input.senderEmail || null,
     senderPhotoUrl: input.senderPhotoUrl || null,
-    attachments: attachments.map((attachment) => ({ ...attachment, uploadedAt: createdAt })),
-    imageUrl: firstImage?.url || null,
-    imagePath: firstImage?.path || null,
-    imageName: firstImage?.name || null,
-    imageType: firstImage?.mimeType || null,
-    imageSize: firstImage?.size ?? null,
-    createdAt,
+    attachments: attachments.map((attachment) => ({ ...attachment, uploadedAt: attachmentUploadedAt })),
+    imageUrl: isLegacyTeamConversation ? (firstImage?.url || null) : null,
+    imagePath: isLegacyTeamConversation ? (firstImage?.path || null) : null,
+    imageName: isLegacyTeamConversation ? (firstImage?.name || null) : null,
+    imageType: isLegacyTeamConversation ? (firstImage?.mimeType || null) : null,
+    imageSize: isLegacyTeamConversation ? (firstImage?.size ?? null) : null,
+    createdAt: null,
     editedAt: null,
     deleted: false,
     ai: input.ai === true,
@@ -1326,7 +1374,7 @@ async function nativePostChatMessage(teamId: string, input: {
     recipientIds: input.targetType === 'individuals' ? input.recipientIds : [],
     targetRole: input.targetType === 'staff' ? (input.targetRole || 'staff') : null,
     conversationId: isDefaultTeamConversation(input.conversationId) ? null : input.conversationId
-  }, { documentId: input.clientMessageId || null });
+  }, { serverTimestampFields: ['createdAt'] });
 }
 
 export async function sendTeamChatMessage({
@@ -1375,7 +1423,7 @@ export async function sendTeamChatMessage({
   }
   const uploadedAttachments: Array<ChatAttachment | undefined> = [];
   try {
-    const targetMetadata = buildChatAudienceMetadata({
+    let targetMetadata = buildChatAudienceMetadata({
       selectedConversation,
       selectedConversationId,
       selectedRecipientTarget,
@@ -1397,6 +1445,13 @@ export async function sendTeamChatMessage({
         name: targetMetadata.targetType === 'staff' ? 'Staff only' : null
       })), 'Chat conversation create') as ChatConversation;
       conversationId = createdConversation.id;
+      if (targetMetadata.targetType === 'individuals') {
+        targetMetadata = {
+          targetType: 'individuals',
+          recipientIds: Array.isArray(createdConversation.participantIds) ? createdConversation.participantIds : participantIds,
+          targetRole: null
+        };
+      }
     }
 
     const orderedUploadedAttachments = await uploadTeamChatAttachments({
@@ -1602,10 +1657,10 @@ export async function editTeamChatMessage(teamId: string, messageId: string, tex
   } catch (error) {
     if (!isNativeRuntime()) throw error;
     logger.warn('Falling back to REST chat message edit.', { error });
-    return nativePatchDocument(getMessageDocumentPath(teamId, messageId, conversationId), {
+    return nativeCommitDocument(getMessageDocumentPath(teamId, messageId, conversationId), {
       text,
-      editedAt: new Date()
-    });
+      editedAt: null
+    }, { serverTimestampFields: ['editedAt'] });
   }
 }
 

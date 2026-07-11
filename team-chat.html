@@ -344,7 +344,7 @@
     <script type="module">
         import { renderHeader, renderFooter, escapeHtml } from './js/utils.js?v=15';
         import { checkAuth } from './js/auth.js?v=46';
-        import { getTeam, getUserProfile, getPlayers, getGames, getGameEvents, getAggregatedStatsForGames, getChatConversations, upsertChatConversation, getChatMessages, postChatMessage, editChatMessage, deleteChatMessage, getTeamEmailDrafts, saveTeamEmailDraft, getTeamEmailTemplates, saveTeamEmailTemplate, deleteTeamEmailTemplate, canAccessTeamChat, canModerateChat, updateChatLastRead, subscribeToChatMessages, sendTeamEmail, getSentTeamEmails, uploadChatImage, deleteUploadedChatAttachments, toggleChatReaction } from './js/db.js?v=91';
+        import { getTeam, getUserProfile, getPlayers, getGames, getGameEvents, getAggregatedStatsForGames, getChatConversations, upsertChatConversation, getChatMessages, postChatMessage, editChatMessage, deleteChatMessage, getTeamEmailDrafts, saveTeamEmailDraft, getTeamEmailTemplates, saveTeamEmailTemplate, deleteTeamEmailTemplate, canAccessTeamChat, canModerateChat, updateChatLastRead, subscribeToChatMessages, sendTeamEmail, getSentTeamEmails, uploadChatImage, deleteUploadedChatAttachments, toggleChatReaction } from './js/db.js?v=92';
         import { DEFAULT_TEAM_CONVERSATION_ID, buildDefaultTeamConversation, getConversationDisplayName, isDefaultTeamConversation } from './js/team-chat-conversations.js?v=2';
         import { shouldUpdateChatLastRead, shouldRetryChatLastReadOnViewReturn } from './js/team-chat-last-read.js?v=3';
         import {
@@ -2603,18 +2603,19 @@
             try {
                 const needs = await inferDataNeeds(question);
                 const responseText = await askAllPlays(question, needs);
+                const isTargetedConversation = !isDefaultTeamConversation(selectedConversationId);
                 await postChatMessage(teamId, {
-                    text: responseText,
+                    text: isTargetedConversation ? `ALL PLAYS\n\n${responseText}` : responseText,
                     senderId: currentUser.uid,
-                    senderName: null,
-                    senderEmail: null,
-                    senderPhotoUrl: null,
-                    ai: true,
-                    aiName: 'ALL PLAYS',
-                    aiQuestion: question,
+                    senderName: isTargetedConversation ? (currentUserProfile?.fullName || currentUser.displayName || currentUser.email || null) : null,
+                    senderEmail: isTargetedConversation ? (currentUser.email || null) : null,
+                    senderPhotoUrl: isTargetedConversation ? (currentUserProfile?.photoUrl || currentUser.photoURL || null) : null,
+                    ai: !isTargetedConversation,
+                    aiName: isTargetedConversation ? null : 'ALL PLAYS',
+                    aiQuestion: isTargetedConversation ? null : question,
                     conversationId: selectedConversationId,
                     ...buildRecipientTargetMetadata(),
-                    aiMeta: {
+                    aiMeta: isTargetedConversation ? null : {
                         statsGameLimit: AI_STATS_GAMES_LIMIT,
                         gamesContextLimit: AI_GAMES_CONTEXT_LIMIT,
                         statsRequested: needs.fetchStats,
@@ -2944,7 +2945,7 @@
 
             let mediaPayloads = [];
             try {
-                const targetMetadata = buildRecipientTargetMetadata();
+                let targetMetadata = buildRecipientTargetMetadata();
                 let conversationId = selectedConversationId;
                 if (isDefaultTeamConversation(conversationId) && targetMetadata.targetType !== 'full_team') {
                     const participantIds = targetMetadata.targetType === 'staff'
@@ -2959,6 +2960,13 @@
                         name: getTargetedConversationName(targetMetadata)
                     });
                     conversationId = conversation.id;
+                    if (targetMetadata.targetType === 'individuals') {
+                        targetMetadata = {
+                            targetType: 'individuals',
+                            recipientIds: Array.isArray(conversation.participantIds) ? conversation.participantIds : participantIds,
+                            targetRole: null
+                        };
+                    }
                     selectedConversationId = conversationId;
                     await loadConversations();
                 }

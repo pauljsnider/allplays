@@ -496,9 +496,11 @@ export async function uploadChatImage(teamId, file, { conversationId = DEFAULT_T
     const ts = Date.now();
     const userId = getRequiredSignedInUserId();
     const safeName = String(file.name || 'media').replace(/[^\w.\-]+/g, '_');
+    const safeConversationId = String(conversationId || DEFAULT_TEAM_CONVERSATION_ID)
+        .replace(/[^\w.\-]+/g, '_') || DEFAULT_TEAM_CONVERSATION_ID;
     const isVideo = String(file.type || '').toLowerCase().startsWith('video/');
     const mediaFolder = isVideo ? 'team-videos' : 'team-photos';
-    const imagePath = `${mediaFolder}/${ts}_chat_${teamId}_${safeName}`;
+    const imagePath = `${mediaFolder}/${ts}_chat_${teamId}_${safeConversationId}_${userId}_${safeName}`;
 
     try {
         const storageRef = ref(imageStorage, imagePath);
@@ -6659,7 +6661,8 @@ export async function postChatMessage(teamId, {
     conversationId = DEFAULT_TEAM_CONVERSATION_ID
 }) {
     const messagesRef = getTeamChatMessagesRef(teamId, conversationId);
-    const createdAt = Timestamp.now();
+    const attachmentUploadedAt = Timestamp.now();
+    const createdAt = serverTimestamp();
     const normalizedMedia = normalizeChatAttachments(
         attachments.length > 0
             ? attachments
@@ -6673,7 +6676,7 @@ export async function postChatMessage(teamId, {
     );
     const storedAttachments = normalizedMedia.attachments.map((attachment) => ({
         ...attachment,
-        uploadedAt: createdAt
+        uploadedAt: attachmentUploadedAt
     }));
     const allowedTargetTypes = new Set(['full_team', 'staff', 'individuals']);
     const normalizedTargetType = allowedTargetTypes.has(targetType) ? targetType : 'full_team';
@@ -6689,6 +6692,7 @@ export async function postChatMessage(teamId, {
     if (isDefaultTeamConversation(conversationId) && effectiveTargetType !== 'full_team') {
         throw new Error('Targeted team chat messages must use a non-default conversation.');
     }
+    const isLegacyTeamConversation = isDefaultTeamConversation(conversationId);
     const normalizedClientMessageId = normalizeChatClientMessageId(clientMessageId);
     const messageData = {
         clientMessageId: normalizedClientMessageId,
@@ -6698,13 +6702,15 @@ export async function postChatMessage(teamId, {
         senderEmail: senderEmail || null,
         senderPhotoUrl: senderPhotoUrl || null,
         attachments: storedAttachments,
-        imageUrl: normalizedMedia.legacyImage.imageUrl || imageUrl || null,
-        imagePath: normalizedMedia.legacyImage.imagePath || imagePath || null,
-        imageName: normalizedMedia.legacyImage.imageName || imageName || null,
-        imageType: normalizedMedia.legacyImage.imageType || imageType || null,
-        imageSize: Number.isFinite(normalizedMedia.legacyImage.imageSize)
-            ? normalizedMedia.legacyImage.imageSize
-            : (Number.isFinite(imageSize) ? imageSize : null),
+        imageUrl: isLegacyTeamConversation ? (normalizedMedia.legacyImage.imageUrl || imageUrl || null) : null,
+        imagePath: isLegacyTeamConversation ? (normalizedMedia.legacyImage.imagePath || imagePath || null) : null,
+        imageName: isLegacyTeamConversation ? (normalizedMedia.legacyImage.imageName || imageName || null) : null,
+        imageType: isLegacyTeamConversation ? (normalizedMedia.legacyImage.imageType || imageType || null) : null,
+        imageSize: isLegacyTeamConversation
+            ? (Number.isFinite(normalizedMedia.legacyImage.imageSize)
+                ? normalizedMedia.legacyImage.imageSize
+                : (Number.isFinite(imageSize) ? imageSize : null))
+            : null,
         createdAt,
         editedAt: null,
         deleted: false,
@@ -6745,7 +6751,7 @@ export async function editChatMessage(teamId, messageId, newText, { conversation
         : doc(db, 'teams', teamId, 'chatConversations', conversationId, 'chatMessages', messageId);
     return await updateDoc(messageRef, {
         text: newText,
-        editedAt: Timestamp.now()
+        editedAt: serverTimestamp()
     });
 }
 

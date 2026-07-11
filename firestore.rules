@@ -1385,6 +1385,25 @@ service cloud.firestore {
              hasValidChatRecipientIds(teamId, data);
     }
 
+    function hasValidNestedChatRecipientIds(conversationData, data) {
+      return data.recipientIds is list &&
+             data.recipientIds.size() > 0 &&
+             data.recipientIds.size() <= 50 &&
+             conversationData.get('participantIds', []) is list &&
+             data.recipientIds == conversationData.get('participantIds', []);
+    }
+
+    function hasValidLegacyNestedChatRecipientIds(conversationData, data) {
+      let participantIds = conversationData.get('participantIds', []);
+      return data.recipientIds is list &&
+             data.recipientIds.size() > 0 &&
+             data.recipientIds.size() <= 50 &&
+             participantIds is list &&
+             data.recipientIds.hasOnly(participantIds) &&
+             data.senderId in participantIds &&
+             !(data.senderId in data.recipientIds);
+    }
+
     function isValidChatMessageTarget(teamId, data) {
       return isFullTeamChatMessage(data) ||
              isStaffChatMessage(data) ||
@@ -1476,6 +1495,219 @@ service cloud.firestore {
              data.get('participantIds', []) is list &&
              data.get('participantRoles', []) is list &&
              data.get('mutedBy', []) is list;
+    }
+
+    function isNullableBoundedChatString(value, maxSize) {
+      return value == null ||
+             (value is string && value.size() <= maxSize);
+    }
+
+    function isAllowedNestedChatMediaUrl(value) {
+      return value is string &&
+             value.size() > 0 &&
+             value.size() <= 2048 &&
+             (value.matches('https://firebasestorage[.]googleapis[.]com/.*') ||
+              value.matches('https://storage[.]googleapis[.]com/.*'));
+    }
+
+    function isSafeNestedChatRegexSegment(value) {
+      return value is string &&
+             value.size() > 0 &&
+             value.size() <= 256 &&
+             value.matches('[A-Za-z0-9_%:-]+');
+    }
+
+    function isScopedNestedChatFallbackMediaPath(teamId, conversationId, value) {
+      let pathSegments = value.split('/');
+      return pathSegments.size() == 6 &&
+             pathSegments[0] == 'stat-sheets' &&
+             pathSegments[1] == 'team-chat' &&
+             pathSegments[2] == teamId &&
+             pathSegments[3] == conversationId &&
+             pathSegments[4] == request.auth.uid &&
+             pathSegments[5].size() > 0;
+    }
+
+    function isScopedNestedChatMediaPath(teamId, conversationId, value) {
+      return value is string &&
+             value.size() > 0 &&
+             value.size() <= 1024 &&
+             (isScopedNestedChatFallbackMediaPath(teamId, conversationId, value) ||
+              (isSafeNestedChatRegexSegment(teamId) &&
+               isSafeNestedChatRegexSegment(request.auth.uid) &&
+               value.matches('team-(photos|videos)/[0-9]+_chat_' + teamId + '_[^/]+_' + request.auth.uid + '_[^/]+')));
+    }
+
+    function isValidNestedChatAttachment(teamId, conversationId, attachment) {
+      return attachment is map &&
+             attachment.keys().hasOnly([
+               'type', 'url', 'path', 'thumbnailUrl', 'name', 'mimeType', 'size', 'uploadedAt'
+             ]) &&
+             attachment.type in ['image', 'video'] &&
+             isAllowedNestedChatMediaUrl(attachment.url) &&
+             isScopedNestedChatMediaPath(teamId, conversationId, attachment.path) &&
+             (attachment.thumbnailUrl == null || isAllowedNestedChatMediaUrl(attachment.thumbnailUrl)) &&
+             isNullableBoundedChatString(attachment.name, 255) &&
+             attachment.mimeType is string &&
+             attachment.mimeType.size() <= 120 &&
+             ((attachment.type == 'image' && attachment.mimeType.matches('image/.*')) ||
+              (attachment.type == 'video' && attachment.mimeType.matches('video/.*'))) &&
+             attachment.size is int &&
+             attachment.size > 0 &&
+             attachment.size <= 5 * 1024 * 1024 &&
+             attachment.uploadedAt is timestamp;
+    }
+
+    function hasValidNestedChatAttachments(teamId, conversationId, data) {
+      return data.attachments is list &&
+             data.attachments.size() <= 10 &&
+             (
+               data.attachments.size() == 0 ||
+               (data.attachments.size() == 1 &&
+                isValidNestedChatAttachment(teamId, conversationId, data.attachments[0])) ||
+               (data.attachments.size() == 2 &&
+                isValidNestedChatAttachment(teamId, conversationId, data.attachments[0]) &&
+                isValidNestedChatAttachment(teamId, conversationId, data.attachments[1])) ||
+               (data.attachments.size() == 3 &&
+                isValidNestedChatAttachment(teamId, conversationId, data.attachments[0]) &&
+                isValidNestedChatAttachment(teamId, conversationId, data.attachments[1]) &&
+                isValidNestedChatAttachment(teamId, conversationId, data.attachments[2])) ||
+               (data.attachments.size() == 4 &&
+                isValidNestedChatAttachment(teamId, conversationId, data.attachments[0]) &&
+                isValidNestedChatAttachment(teamId, conversationId, data.attachments[1]) &&
+                isValidNestedChatAttachment(teamId, conversationId, data.attachments[2]) &&
+                isValidNestedChatAttachment(teamId, conversationId, data.attachments[3])) ||
+               (data.attachments.size() == 5 &&
+                isValidNestedChatAttachment(teamId, conversationId, data.attachments[0]) &&
+                isValidNestedChatAttachment(teamId, conversationId, data.attachments[1]) &&
+                isValidNestedChatAttachment(teamId, conversationId, data.attachments[2]) &&
+                isValidNestedChatAttachment(teamId, conversationId, data.attachments[3]) &&
+                isValidNestedChatAttachment(teamId, conversationId, data.attachments[4])) ||
+               (data.attachments.size() == 6 &&
+                isValidNestedChatAttachment(teamId, conversationId, data.attachments[0]) &&
+                isValidNestedChatAttachment(teamId, conversationId, data.attachments[1]) &&
+                isValidNestedChatAttachment(teamId, conversationId, data.attachments[2]) &&
+                isValidNestedChatAttachment(teamId, conversationId, data.attachments[3]) &&
+                isValidNestedChatAttachment(teamId, conversationId, data.attachments[4]) &&
+                isValidNestedChatAttachment(teamId, conversationId, data.attachments[5])) ||
+               (data.attachments.size() == 7 &&
+                isValidNestedChatAttachment(teamId, conversationId, data.attachments[0]) &&
+                isValidNestedChatAttachment(teamId, conversationId, data.attachments[1]) &&
+                isValidNestedChatAttachment(teamId, conversationId, data.attachments[2]) &&
+                isValidNestedChatAttachment(teamId, conversationId, data.attachments[3]) &&
+                isValidNestedChatAttachment(teamId, conversationId, data.attachments[4]) &&
+                isValidNestedChatAttachment(teamId, conversationId, data.attachments[5]) &&
+                isValidNestedChatAttachment(teamId, conversationId, data.attachments[6])) ||
+               (data.attachments.size() == 8 &&
+                isValidNestedChatAttachment(teamId, conversationId, data.attachments[0]) &&
+                isValidNestedChatAttachment(teamId, conversationId, data.attachments[1]) &&
+                isValidNestedChatAttachment(teamId, conversationId, data.attachments[2]) &&
+                isValidNestedChatAttachment(teamId, conversationId, data.attachments[3]) &&
+                isValidNestedChatAttachment(teamId, conversationId, data.attachments[4]) &&
+                isValidNestedChatAttachment(teamId, conversationId, data.attachments[5]) &&
+                isValidNestedChatAttachment(teamId, conversationId, data.attachments[6]) &&
+                isValidNestedChatAttachment(teamId, conversationId, data.attachments[7])) ||
+               (data.attachments.size() == 9 &&
+                isValidNestedChatAttachment(teamId, conversationId, data.attachments[0]) &&
+                isValidNestedChatAttachment(teamId, conversationId, data.attachments[1]) &&
+                isValidNestedChatAttachment(teamId, conversationId, data.attachments[2]) &&
+                isValidNestedChatAttachment(teamId, conversationId, data.attachments[3]) &&
+                isValidNestedChatAttachment(teamId, conversationId, data.attachments[4]) &&
+                isValidNestedChatAttachment(teamId, conversationId, data.attachments[5]) &&
+                isValidNestedChatAttachment(teamId, conversationId, data.attachments[6]) &&
+                isValidNestedChatAttachment(teamId, conversationId, data.attachments[7]) &&
+                isValidNestedChatAttachment(teamId, conversationId, data.attachments[8])) ||
+               (data.attachments.size() == 10 &&
+                isValidNestedChatAttachment(teamId, conversationId, data.attachments[0]) &&
+                isValidNestedChatAttachment(teamId, conversationId, data.attachments[1]) &&
+                isValidNestedChatAttachment(teamId, conversationId, data.attachments[2]) &&
+                isValidNestedChatAttachment(teamId, conversationId, data.attachments[3]) &&
+                isValidNestedChatAttachment(teamId, conversationId, data.attachments[4]) &&
+                isValidNestedChatAttachment(teamId, conversationId, data.attachments[5]) &&
+                isValidNestedChatAttachment(teamId, conversationId, data.attachments[6]) &&
+                isValidNestedChatAttachment(teamId, conversationId, data.attachments[7]) &&
+                isValidNestedChatAttachment(teamId, conversationId, data.attachments[8]) &&
+                isValidNestedChatAttachment(teamId, conversationId, data.attachments[9]))
+             );
+    }
+
+    function isNestedChatMessageTargetValid(teamId, conversationId, conversationData, data) {
+      return data.conversationId == conversationId &&
+             (
+               (
+                 isCanonicalStaffChatConversationPayload(conversationId, conversationData) &&
+                 isStaffChatMessage(data)
+               ) ||
+               (
+                 !isCanonicalStaffChatConversation(conversationId) &&
+                 !isStaffRoleChatConversation(conversationData) &&
+                 conversationData.get('type', '') in ['direct', 'group'] &&
+                 data.get('targetType', 'full_team') == 'individuals' &&
+                 hasValidNestedChatRecipientIds(conversationData, data) &&
+                 data.get('targetRole', null) == null &&
+                 data.recipientIds == conversationData.get('participantIds', [])
+               )
+             );
+    }
+
+    function isNestedChatMessageEditTargetValid(teamId, conversationId, conversationData, data) {
+      return isNestedChatMessageTargetValid(teamId, conversationId, conversationData, data) ||
+             (
+               data.conversationId == conversationId &&
+               !isCanonicalStaffChatConversation(conversationId) &&
+               !isStaffRoleChatConversation(conversationData) &&
+               conversationData.get('type', '') in ['direct', 'group'] &&
+               data.get('targetType', 'full_team') == 'individuals' &&
+               hasValidLegacyNestedChatRecipientIds(conversationData, data) &&
+               data.get('targetRole', null) == null
+             );
+    }
+
+    function isNestedChatMessageCreateValid(teamId, conversationId, conversationData, data) {
+      return data.keys().hasAll([
+               'text', 'senderId', 'attachments', 'createdAt', 'targetType',
+               'recipientIds', 'conversationId'
+             ]) &&
+             data.keys().hasOnly([
+               'clientMessageId', 'text', 'senderId', 'senderName', 'senderEmail', 'senderPhotoUrl',
+               'attachments', 'imageUrl', 'imagePath', 'imageName', 'imageType', 'imageSize',
+               'createdAt', 'editedAt', 'deleted', 'ai', 'aiName', 'aiQuestion', 'aiMeta',
+               'targetType', 'recipientIds', 'targetRole', 'conversationId'
+             ]) &&
+             isNullableBoundedChatString(data.get('clientMessageId', null), 120) &&
+             data.text is string &&
+             data.text.size() <= 10000 &&
+             hasValidNestedChatAttachments(teamId, conversationId, data) &&
+             (data.text.size() > 0 || data.attachments.size() > 0) &&
+             data.senderId == request.auth.uid &&
+             isNullableBoundedChatString(data.get('senderName', null), 120) &&
+             (data.get('senderEmail', null) == null ||
+              (request.auth.token.email is string &&
+               data.senderEmail is string &&
+               data.senderEmail.size() <= 320 &&
+               data.senderEmail.lower() == request.auth.token.email.lower())) &&
+             isNullableBoundedChatString(data.get('senderPhotoUrl', null), 2048) &&
+             (data.get('senderPhotoUrl', null) == null || data.senderPhotoUrl.matches('https://.*')) &&
+             data.get('imageUrl', null) == null &&
+             data.get('imagePath', null) == null &&
+             data.get('imageName', null) == null &&
+             data.get('imageType', null) == null &&
+             data.get('imageSize', null) == null &&
+             data.createdAt == request.time &&
+             data.get('editedAt', null) == null &&
+             data.get('deleted', false) == false &&
+             data.get('ai', false) == false &&
+             data.get('aiName', null) == null &&
+             data.get('aiQuestion', null) == null &&
+             data.get('aiMeta', null) == null &&
+             isNestedChatMessageTargetValid(teamId, conversationId, conversationData, data);
+    }
+
+    function isNestedChatMessageEditValid(data) {
+      return data.text is string &&
+             data.text.size() <= 10000 &&
+             (data.text.size() > 0 || data.attachments.size() > 0) &&
+             data.editedAt == request.time;
     }
 
     function isChatConversationParticipantMetadataUpdate() {
@@ -2853,11 +3085,25 @@ service cloud.firestore {
         match /chatMessages/{messageId} {
           allow read: if canAccessChatConversation(teamId, conversationId, get(/databases/$(database)/documents/teams/$(teamId)/chatConversations/$(conversationId)).data);
           allow create: if canAccessChatConversation(teamId, conversationId, get(/databases/$(database)/documents/teams/$(teamId)/chatConversations/$(conversationId)).data) &&
-                           request.resource.data.senderId == request.auth.uid;
+                           isNestedChatMessageCreateValid(
+                             teamId,
+                             conversationId,
+                             get(/databases/$(database)/documents/teams/$(teamId)/chatConversations/$(conversationId)).data,
+                             request.resource.data
+                           );
           allow update: if canAccessChatConversation(teamId, conversationId, get(/databases/$(database)/documents/teams/$(teamId)/chatConversations/$(conversationId)).data) &&
                            resource.data.senderId == request.auth.uid &&
                            request.resource.data.diff(resource.data).affectedKeys()
-                               .hasOnly(['text', 'editedAt']);
+                               .hasAll(['text', 'editedAt']) &&
+                           request.resource.data.diff(resource.data).affectedKeys()
+                               .hasOnly(['text', 'editedAt']) &&
+                           isNestedChatMessageEditTargetValid(
+                             teamId,
+                             conversationId,
+                             get(/databases/$(database)/documents/teams/$(teamId)/chatConversations/$(conversationId)).data,
+                             request.resource.data
+                           ) &&
+                           isNestedChatMessageEditValid(request.resource.data);
           allow update: if canAccessChatConversation(teamId, conversationId, get(/databases/$(database)/documents/teams/$(teamId)/chatConversations/$(conversationId)).data) &&
                            request.resource.data.diff(resource.data).affectedKeys()
                                .hasOnly(['deleted']) &&
