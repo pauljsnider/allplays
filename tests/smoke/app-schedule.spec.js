@@ -172,6 +172,7 @@ async function mockScheduleModules(page, options = {}) {
                         title: overrides.title || null,
                         childId: overrides.childId,
                         childName: overrides.childName,
+                        isLinkedParentChild: overrides.isLinkedParentChild !== false,
                         isDbGame: overrides.isDbGame !== false,
                         isCancelled: false,
                         canUpdateScore: overrides.canUpdateScore !== false,
