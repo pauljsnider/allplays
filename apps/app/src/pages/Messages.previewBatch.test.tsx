@@ -11,10 +11,11 @@ const chatServiceMocks = vi.hoisted(() => ({
   getChatInboxPreview: vi.fn((message: any) => message ? `${message.senderName}: ${message.text}` : 'No messages yet'),
   loadChatInbox: vi.fn()
 }));
+const layoutMocks = vi.hoisted(() => ({ isDesktopWeb: false }));
 
 vi.mock('../lib/chatService', () => chatServiceMocks);
 vi.mock('../lib/useShellLayout', () => ({
-  useShellLayout: () => ({ isDesktopWeb: false })
+  useShellLayout: () => ({ isDesktopWeb: layoutMocks.isDesktopWeb })
 }));
 vi.mock('../lib/useRefreshOnResume', () => ({
   useRefreshOnResume: vi.fn()
@@ -32,7 +33,7 @@ vi.mock('../components/PullToRefresh', () => ({
   PullToRefresh: ({ children }: { children: ReactNode }) => <div>{children}</div>
 }));
 vi.mock('./messages/components/ChatWindow', () => ({
-  ChatWindow: () => <div>Chat window</div>,
+  ChatWindow: ({ teamId }: { teamId: string }) => <div data-testid="chat-window-team">Chat window {teamId}</div>,
   TeamAvatar: ({ team }: { team: ChatTeam }) => <div aria-hidden="true">{team.name.slice(0, 1)}</div>,
   MessageAvatar: () => null,
   StatusBanner: () => null,
@@ -106,6 +107,7 @@ function renderMessages() {
 describe('Messages deferred inbox preview batching', () => {
   beforeEach(() => {
     vi.useRealTimers();
+    layoutMocks.isDesktopWeb = false;
     chatServiceMocks.loadChatInbox.mockReset();
     chatServiceMocks.getChatInboxPreview.mockClear();
     window.requestAnimationFrame = (callback: FrameRequestCallback) => window.setTimeout(() => callback(performance.now()), 16);
@@ -168,5 +170,65 @@ describe('Messages deferred inbox preview batching', () => {
 
     expect(screen.getByRole('link', { name: /Bears/ })).toHaveTextContent('Coach Jamie: Current request preview.');
     expect(screen.getByRole('link', { name: /Bears/ })).not.toHaveTextContent('Stale older request preview.');
+  });
+});
+
+describe('Messages inbox windowing', () => {
+  beforeEach(() => {
+    vi.useRealTimers();
+    layoutMocks.isDesktopWeb = false;
+    chatServiceMocks.loadChatInbox.mockReset();
+    chatServiceMocks.getChatInboxPreview.mockClear();
+    window.requestAnimationFrame = (callback: FrameRequestCallback) => window.setTimeout(() => callback(performance.now()), 0);
+    window.cancelAnimationFrame = (handle: number) => window.clearTimeout(handle);
+  });
+
+  afterEach(() => {
+    cleanup();
+  });
+
+  function largeInbox() {
+    return Array.from({ length: 250 }, (_, index) => {
+      const number = String(index + 1).padStart(3, '0');
+      return team({ id: `team-${number}`, name: `Team ${number}` });
+    });
+  }
+
+  it('bounds a 250-team DOM while preserving offscreen search links and empty states', async () => {
+    chatServiceMocks.loadChatInbox.mockResolvedValue({ teams: largeInbox() });
+    renderMessages();
+
+    expect(await screen.findByRole('link', { name: /Team 001/ })).toHaveAttribute('href', '/messages/team-001');
+    expect(document.querySelectorAll('.message-row').length).toBeLessThan(60);
+    expect(screen.getByText(/250 teams/)).toBeInTheDocument();
+
+    fireEvent.change(screen.getByPlaceholderText('Search team chats'), { target: { value: 'Team 250' } });
+    const offscreenTeam = await screen.findByRole('link', { name: /Team 250/ });
+    expect(offscreenTeam).toHaveAttribute('href', '/messages/team-250');
+    expect(document.querySelectorAll('.message-row')).toHaveLength(1);
+
+    fireEvent.change(screen.getByPlaceholderText('Search team chats'), { target: { value: 'not a real team' } });
+    expect(await screen.findByText('No team chats match “not a real team”')).toBeInTheDocument();
+    expect(screen.getByText(/250 teams/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Clear search' }));
+    await waitFor(() => expect(document.querySelectorAll('.message-row').length).toBeGreaterThan(0));
+    expect(document.querySelectorAll('.message-row').length).toBeLessThan(60);
+  });
+
+  it('keeps desktop two-pane selection working for a team found outside the initial window', async () => {
+    layoutMocks.isDesktopWeb = true;
+    chatServiceMocks.loadChatInbox.mockResolvedValue({ teams: largeInbox() });
+    renderMessages();
+
+    expect(await screen.findByTestId('chat-window-team')).toHaveTextContent('team-001');
+    expect(document.querySelectorAll('.message-row').length).toBeLessThan(60);
+
+    fireEvent.change(screen.getByPlaceholderText('Search team chats'), { target: { value: 'Team 250' } });
+    const offscreenTeam = await screen.findByRole('link', { name: /Team 250/ });
+    expect(offscreenTeam).toHaveAttribute('href', '/messages/team-250');
+    fireEvent.click(offscreenTeam);
+
+    await waitFor(() => expect(screen.getByTestId('chat-window-team')).toHaveTextContent('team-250'));
+    expect(document.querySelectorAll('.message-row')).toHaveLength(1);
   });
 });

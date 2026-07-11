@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { getDirectThreadMountKey, getMessagesInboxLoadRouteKey, isSelectedConversation, mergeInboxTeams, mergeVisibleChatMessages, normalizeConversationId, shouldRecordDirectThreadMount } from './Messages';
+import { getDirectThreadMountKey, getInboxRowWindow, getMessagesInboxLoadRouteKey, isSelectedConversation, mergeInboxTeams, mergeVisibleChatMessages, normalizeConversationId, shouldRecordDirectThreadMount } from './Messages';
 import type { ChatInboxPreviewUpdate, ChatTeam } from '../lib/chatService';
 
 function resolveAppSourcePath(relativePath: string) {
@@ -223,5 +223,37 @@ describe('direct thread mount telemetry', () => {
     expect(source).not.toContain("emailDispatch({ type: 'setTemplates'");
     expect(source).not.toContain("emailDispatch({ type: 'setDrafts'");
     expect(source).not.toContain("emailDispatch({ type: 'clearComposer'");
+  });
+});
+
+describe('Messages inbox row windowing', () => {
+  it('calculates top, middle, and bottom windows with bounded overscan', () => {
+    expect(getInboxRowWindow({ itemCount: 250, scrollOffset: 0, viewportSize: 640 })).toEqual({
+      startIndex: 0,
+      endIndex: 12,
+    });
+    expect(getInboxRowWindow({ itemCount: 250, scrollOffset: 8000, viewportSize: 640 })).toEqual({
+      startIndex: 96,
+      endIndex: 112,
+    });
+    expect(getInboxRowWindow({ itemCount: 250, scrollOffset: 20000, viewportSize: 640 })).toEqual({
+      startIndex: 238,
+      endIndex: 250,
+    });
+  });
+
+  it('accounts for document list offsets and renders every filtered result below the threshold', () => {
+    expect(getInboxRowWindow({
+      itemCount: 250,
+      scrollOffset: 1800,
+      viewportSize: 400,
+      listOffset: 1000,
+      rowHeight: 80,
+      overscan: 2,
+    })).toEqual({ startIndex: 8, endIndex: 17 });
+    expect(getInboxRowWindow({ itemCount: 3, scrollOffset: 5000, viewportSize: 640 })).toEqual({
+      startIndex: 0,
+      endIndex: 3,
+    });
   });
 });
