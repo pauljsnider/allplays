@@ -14,8 +14,12 @@ describe('app push notification wiring', () => {
         const source = readFileSync(new URL('../../apps/app/src/App.tsx', import.meta.url), 'utf8');
         expect(source).toContain("import { clearPendingPushRoute, readPendingPushRoute } from './lib/pushNotificationRouting';");
         expect(source).toContain("const { addPushNotificationOpenListener, ensureAndroidNotificationChannels } = await import('./lib/pushService');");
-        expect(source).toContain('await ensureAndroidNotificationChannels();');
-        expect(source).toContain('const remove = await addPushNotificationOpenListener');
+        const listenerRegistrationIndex = source.indexOf('const listenerRemoval = addPushNotificationOpenListener');
+        const channelSetupIndex = source.indexOf('void ensureAndroidNotificationChannels();');
+        expect(listenerRegistrationIndex).toBeGreaterThan(-1);
+        expect(channelSetupIndex).toBeGreaterThan(listenerRegistrationIndex);
+        expect(source).toContain('const remove = await listenerRemoval;');
+        expect(source).not.toContain('await ensureAndroidNotificationChannels();');
         expect(source).toContain('removeListener = remove;');
         expect(source).toContain('const pendingRoute = readPendingPushRoute();');
         expect(source).toContain('clearPendingPushRoute();');
