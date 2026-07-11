@@ -434,6 +434,13 @@ test.describe('app global search', () => {
         await expect(page.getByRole('button', { name: /Bears Basketball/ })).toBeVisible();
         await expect.poll(() => page.evaluate(() => window.__teamSearchQueries)).toEqual(['bea']);
 
+        await page.getByRole('button', { name: 'Clear search query' }).click();
+        await expect(page.getByLabel('Search teams, players, actions, help')).toHaveValue('');
+        await expect(page.getByLabel('Search teams, players, actions, help')).toBeFocused();
+        await expect(page.getByRole('dialog', { name: 'Search teams, players, actions, and help' })).toBeVisible();
+        await expect(page.getByText('Type at least 2 characters to search players')).toBeVisible();
+        await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1)).toBe(true);
+
         await page.getByLabel('Search teams, players, actions, help').fill('pat');
         await expect(page.getByText('#9 Pat Star')).toBeVisible();
         await expect.poll(() => page.evaluate(() => window.__playerSearchQueries)).toEqual(['bea', 'pat']);
@@ -456,6 +463,10 @@ test.describe('app global search', () => {
         await expect(page.getByText('No matching players')).toBeVisible();
         await expect(page.getByText('No results')).toBeVisible();
         await expect.poll(() => page.evaluate(() => window.__playerSearchQueries)).toEqual(['zzzz']);
+
+        await page.getByRole('button', { name: 'Clear search query' }).click();
+        await expect(page.getByLabel('Search teams, players, actions, help')).toHaveValue('');
+        await expect(page.getByText('No results')).toBeHidden();
 
         await page.getByLabel('Search teams, players, actions, help').fill('error');
         await expect(page.getByText('Player search unavailable for this account.')).toBeVisible();

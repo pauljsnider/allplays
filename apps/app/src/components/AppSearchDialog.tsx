@@ -41,6 +41,7 @@ export function AppSearchDialog({ auth, open, onClose }: AppSearchDialogProps) {
   const [activeIndex, setActiveIndex] = useState(0);
   const [keyboardInset, setKeyboardInset] = useState(0);
   const searchRequestId = useRef(0);
+  const searchInputRef = useRef<HTMLInputElement>(null);
   const openedAtRef = useRef(Date.now());
   const preloadedRoutesRef = useRef(new Set<string>());
   const baseTeamsRef = useRef<AppSearchTeam[]>([]);
@@ -298,6 +299,12 @@ export function AppSearchDialog({ auth, open, onClose }: AppSearchDialogProps) {
     });
   };
 
+  const clearQuery = () => {
+    searchRequestId.current += 1;
+    setQuery('');
+    searchInputRef.current?.focus();
+  };
+
   const onKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
     if (event.key === 'Escape') {
       event.preventDefault();
@@ -368,14 +375,35 @@ export function AppSearchDialog({ auth, open, onClose }: AppSearchDialogProps) {
               <Search className="h-5 w-5" aria-hidden="true" />
             </span>
             <div className="min-w-0 flex-1">
-              <input
-                autoFocus
-                value={query}
-                onChange={(event) => setQuery(event.target.value)}
-                className="min-h-11 w-full rounded-xl border border-gray-200 px-3 text-base font-semibold outline-none focus:border-primary-400 focus:ring-2 focus:ring-primary-100"
-                placeholder="Search teams, players, actions, help..."
-                aria-label="Search teams, players, actions, help"
-              />
+              <div className="relative">
+                <input
+                  ref={searchInputRef}
+                  autoFocus
+                  type="search"
+                  enterKeyHint="search"
+                  autoComplete="off"
+                  value={query}
+                  onChange={(event) => setQuery(event.target.value)}
+                  className="min-h-11 w-full rounded-xl border border-gray-200 px-3 pr-11 text-base font-semibold outline-none focus:border-primary-400 focus:ring-2 focus:ring-primary-100"
+                  placeholder="Search teams, players, actions, help..."
+                  aria-label="Search teams, players, actions, help"
+                />
+                {query ? (
+                  <button
+                    type="button"
+                    className="absolute right-1.5 top-1/2 inline-flex h-8 w-8 -translate-y-1/2 items-center justify-center rounded-lg text-gray-500 transition hover:bg-gray-100 hover:text-gray-800 focus:outline-none focus:ring-2 focus:ring-primary-200"
+                    onClick={clearQuery}
+                    onKeyDown={(event) => {
+                      if (event.key === 'Enter') {
+                        event.stopPropagation();
+                      }
+                    }}
+                    aria-label="Clear search query"
+                  >
+                    <X className="h-4 w-4" aria-hidden="true" />
+                  </button>
+                ) : null}
+              </div>
               <div className="mt-2 hidden text-xs font-semibold text-gray-500 sm:block">
                 Use arrow keys to move, Enter to open, Esc to close.
               </div>

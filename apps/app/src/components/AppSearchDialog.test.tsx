@@ -140,6 +140,59 @@ describe('AppSearchDialog', () => {
     preloadSearchRouteMock.mockImplementation(async () => true);
   });
 
+  it('uses mobile search hints and clears the query without closing or losing focus', async () => {
+    const onClose = vi.fn();
+    searchAppPlayersMock.mockRejectedValueOnce(new Error('Player search unavailable for this account.'));
+
+    render(
+      <MemoryRouter>
+        <AppSearchDialog auth={auth} open={true} onClose={onClose} />
+      </MemoryRouter>
+    );
+
+    const input = screen.getByLabelText('Search teams, players, actions, help');
+    expect(input).toHaveAttribute('type', 'search');
+    expect(input).toHaveAttribute('enterkeyhint', 'search');
+    expect(input).toHaveAttribute('autocomplete', 'off');
+
+    fireEvent.change(input, { target: { value: 'error' } });
+    expect(await screen.findByText('Player search unavailable for this account.')).toBeTruthy();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Clear search query' }));
+
+    await waitFor(() => expect(input).toHaveValue(''));
+    expect(screen.getByRole('dialog', { name: 'Search teams, players, actions, and help' })).toBeTruthy();
+    expect(screen.getByText('Type at least 2 characters to search players')).toBeTruthy();
+    expect(screen.queryByText('Player search unavailable for this account.')).toBeNull();
+    expect(input).toHaveFocus();
+    expect(onClose).not.toHaveBeenCalled();
+  });
+
+  it('lets Enter on the clear button stay scoped to clearing instead of opening the highlighted result', async () => {
+    const onClose = vi.fn();
+
+    render(
+      <MemoryRouter>
+        <AppSearchDialog auth={auth} open={true} onClose={onClose} />
+      </MemoryRouter>
+    );
+
+    const input = screen.getByLabelText('Search teams, players, actions, help');
+    fireEvent.change(input, { target: { value: 'ro' } });
+
+    const clearButton = screen.getByRole('button', { name: 'Clear search query' });
+    clearButton.focus();
+    fireEvent.keyDown(clearButton, { key: 'Enter' });
+
+    expect(navigateMock).not.toHaveBeenCalled();
+    expect(onClose).not.toHaveBeenCalled();
+
+    fireEvent.click(clearButton);
+
+    await waitFor(() => expect(input).toHaveValue(''));
+    expect(input).toHaveFocus();
+  });
+
   it('shows player guidance while keeping player results hidden until search has a real query', async () => {
     const onClose = vi.fn();
 
