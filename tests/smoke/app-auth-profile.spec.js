@@ -105,6 +105,8 @@ async function mockAppModules(page, { user = null, emailLink = false } = {}) {
             status: 200,
             contentType: 'application/javascript',
             body: `
+                export const passwordResetConfirmationMessage = "If an account exists for that email, we've sent a reset link.";
+
                 function mockUser() {
                     return window.__mockAuthState?.user || {
                         uid: 'user-1',
@@ -588,7 +590,7 @@ test('app auth screen exposes sign in, sign up, Google, activation code, invite,
     await page.getByRole('button', { name: 'Forgot password?' }).click();
     await page.locator('form').filter({ hasText: 'Password reset email' }).locator('input[type="email"]').fill('parent@example.com');
     await page.getByRole('button', { name: 'Send reset email' }).click();
-    await expect(page.getByText('Password reset email sent. Check your inbox and spam folder.')).toBeVisible();
+    await expect(page.getByText("If an account exists for that email, we've sent a reset link.")).toBeVisible();
     expect(await page.evaluate(() => window.__appAuthCalls.sendResetEmail)).toEqual(['parent@example.com']);
 
     await page.getByRole('button', { name: 'Sign up' }).first().click();
