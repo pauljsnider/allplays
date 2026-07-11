@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent } from 'react';
 import { Link, useLocation, useParams } from 'react-router-dom';
 import {
   BellOff,
@@ -385,6 +385,7 @@ function InboxList({
     startIndex: 0,
     endIndex: Math.min(teams.length, INBOX_WINDOWING_THRESHOLD)
   }));
+  const [keyboardFocusIndex, setKeyboardFocusIndex] = useState<number | null>(null);
 
   const updateRowWindow = useCallback(() => {
     if (!shouldWindow || !listRef.current) {
@@ -446,6 +447,7 @@ function InboxList({
 
   useEffect(() => {
     if (!shouldWindow || !compact || activeTeamIndex < 0 || !listRef.current) return;
+    if (keyboardFocusIndex !== null) return;
     const scrollContainer = listRef.current.parentElement;
     if (!scrollContainer) return;
     const viewportHeight = scrollContainer.clientHeight || DEFAULT_INBOX_VIEWPORT_HEIGHT;
@@ -455,7 +457,58 @@ function InboxList({
       scrollContainer.scrollTop = Math.max(0, rowTop - Math.floor((viewportHeight - INBOX_ROW_HEIGHT) / 2));
       updateRowWindow();
     }
-  }, [activeTeamIndex, compact, shouldWindow, updateRowWindow]);
+  }, [activeTeamIndex, compact, keyboardFocusIndex, shouldWindow, updateRowWindow]);
+
+  const focusWindowedTeam = useCallback((teamIndex: number) => {
+    if (!shouldWindow || !compact || !listRef.current) return;
+    const nextIndex = Math.min(teams.length - 1, Math.max(0, teamIndex));
+    setKeyboardFocusIndex(nextIndex);
+    const scrollContainer = compactScrollContainerRef.current || listRef.current.parentElement;
+    const viewportHeight = scrollContainer?.clientHeight || DEFAULT_INBOX_VIEWPORT_HEIGHT;
+    const rowTop = nextIndex * INBOX_ROW_HEIGHT;
+    const rowBottom = rowTop + INBOX_ROW_HEIGHT;
+    let scrollOffset = scrollContainer?.scrollTop || 0;
+
+    if (rowTop < scrollOffset || rowBottom > scrollOffset + viewportHeight) {
+      scrollOffset = Math.max(0, rowTop - Math.floor((viewportHeight - INBOX_ROW_HEIGHT) / 2));
+      if (scrollContainer) scrollContainer.scrollTop = scrollOffset;
+    }
+
+    setRowWindow(getInboxRowWindow({
+      itemCount: teams.length,
+      scrollOffset,
+      viewportSize: viewportHeight
+    }));
+    window.requestAnimationFrame(() => {
+      listRef.current
+        ?.querySelector<HTMLElement>(`[data-inbox-index="${nextIndex}"]`)
+        ?.focus();
+    });
+  }, [compact, shouldWindow, teams.length]);
+
+  const handleWindowedListKeyDown = useCallback((event: KeyboardEvent<HTMLElement>) => {
+    if (!shouldWindow || !compact) return;
+    const focusedRow = (event.target as HTMLElement).closest<HTMLElement>('[data-inbox-index]');
+    const focusedIndex = focusedRow ? Number(focusedRow.dataset.inboxIndex) : activeTeamIndex;
+    let nextIndex: number | null = null;
+
+    if (event.key === 'ArrowDown') nextIndex = Math.min(teams.length - 1, Math.max(0, focusedIndex + 1));
+    if (event.key === 'ArrowUp') nextIndex = Math.max(0, focusedIndex < 0 ? 0 : focusedIndex - 1);
+    if (event.key === 'Home') nextIndex = 0;
+    if (event.key === 'End') nextIndex = teams.length - 1;
+    if (nextIndex === null) return;
+
+    event.preventDefault();
+    focusWindowedTeam(nextIndex);
+  }, [activeTeamIndex, compact, focusWindowedTeam, shouldWindow, teams.length]);
+
+  const displayedRowWindow = keyboardFocusIndex === null
+    ? rowWindow
+    : getInboxRowWindow({
+      itemCount: teams.length,
+      scrollOffset: keyboardFocusIndex * INBOX_ROW_HEIGHT,
+      viewportSize: compactScrollContainerRef.current?.clientHeight || DEFAULT_INBOX_VIEWPORT_HEIGHT
+    });
 
   if (loading && !teams.length) {
     return <MessagesPageSkeleton />;
@@ -502,16 +555,22 @@ function InboxList({
     );
   }
 
-  const visibleTeams = teams.slice(rowWindow.startIndex, rowWindow.endIndex);
+  const visibleTeams = teams.slice(displayedRowWindow.startIndex, displayedRowWindow.endIndex);
   return (
     <section
       ref={listRef}
       className="relative"
       style={{ height: teams.length * INBOX_ROW_HEIGHT }}
       data-testid="messages-inbox-window"
+      tabIndex={compact ? 0 : undefined}
+      aria-label={compact ? 'Team chats. Use the Up and Down Arrow, Home, and End keys to move through all teams.' : undefined}
+      onKeyDown={handleWindowedListKeyDown}
+      onBlur={(event) => {
+        if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setKeyboardFocusIndex(null);
+      }}
     >
       {visibleTeams.map((team, visibleIndex) => {
-        const teamIndex = rowWindow.startIndex + visibleIndex;
+        const teamIndex = displayedRowWindow.startIndex + visibleIndex;
         return (
           <InboxRow
             key={team.id}
@@ -519,6 +578,8 @@ function InboxList({
             active={activeTeamId === team.id}
             compact={compact}
             onSelect={onSelect}
+            inboxIndex={teamIndex}
+            managedKeyboard={compact}
             style={{
               position: 'absolute',
               top: teamIndex * INBOX_ROW_HEIGHT,
@@ -531,7 +592,7 @@ function InboxList({
   );
 }
 
-function InboxRow({ team, active, compact, onSelect, style }: { team: ChatTeam; active: boolean; compact: boolean; onSelect?: (teamId: string) => void; style?: CSSProperties }) {
+function InboxRow({ team, active, compact, onSelect, inboxIndex, managedKeyboard = false, style }: { team: ChatTeam; active: boolean; compact: boolean; onSelect?: (teamId: string) => void; inboxIndex?: number; managedKeyboard?: boolean; style?: CSSProperties }) {
   const preview = getChatInboxPreview(team.lastMessage);
   const timeLabel = formatInboxTime(team.lastMessage?.createdAt);
   const route = buildMessagesRoute(team.id, team.preferredConversationId);
@@ -541,6 +602,8 @@ function InboxRow({ team, active, compact, onSelect, style }: { team: ChatTeam; 
       to={route}
       onClick={onSelect ? () => onSelect(team.id) : undefined}
       style={style}
+      data-inbox-index={inboxIndex}
+      tabIndex={managedKeyboard ? -1 : undefined}
       className={`message-row app-card flex items-center gap-3 p-3 transition hover:border-primary-200 hover:shadow-app-lg ${
         active ? '!border-primary-200 bg-primary-50/50' : ''
       }`}

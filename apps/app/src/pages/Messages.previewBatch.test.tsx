@@ -232,6 +232,30 @@ describe('Messages inbox windowing', () => {
     expect(document.querySelectorAll('.message-row')).toHaveLength(1);
   });
 
+  it('provides keyboard navigation to desktop teams outside the rendered window', async () => {
+    layoutMocks.isDesktopWeb = true;
+    chatServiceMocks.loadChatInbox.mockResolvedValue({ teams: largeInbox() });
+    renderMessages();
+
+    const inboxWindow = await screen.findByTestId('messages-inbox-window');
+    expect(inboxWindow).toHaveAttribute('tabindex', '0');
+    expect(inboxWindow).toHaveAccessibleName(/Use the Up and Down Arrow, Home, and End keys/i);
+    inboxWindow.focus();
+
+    expect(fireEvent.keyDown(inboxWindow, { key: 'End' })).toBe(false);
+    const lastTeam = await screen.findByRole('link', { name: /Team 250/ });
+    await waitFor(() => expect(lastTeam).toHaveFocus());
+    expect(lastTeam).toHaveAttribute('href', '/messages/team-250');
+
+    fireEvent.keyDown(lastTeam, { key: 'ArrowUp' });
+    const previousTeam = await screen.findByRole('link', { name: /Team 249/ });
+    await waitFor(() => expect(previousTeam).toHaveFocus());
+
+    fireEvent.keyDown(previousTeam, { key: 'Home' });
+    const firstTeam = await screen.findByRole('link', { name: /Team 001/ });
+    await waitFor(() => expect(firstTeam).toHaveFocus());
+  });
+
   it('removes the compact scroll listener from the mounted container during unmount cleanup', async () => {
     layoutMocks.isDesktopWeb = true;
     chatServiceMocks.loadChatInbox.mockResolvedValue({ teams: largeInbox() });
