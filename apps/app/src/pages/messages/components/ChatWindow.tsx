@@ -403,6 +403,7 @@ export function ChatWindow({
   const repairStaffConversation = useCallback(async (requestedConversationId = CANONICAL_STAFF_CONVERSATION_ID) => {
     if (!auth.user || !team) return null;
     const requestedKey = `${teamId}:${requestedConversationId}`;
+    setStatus(null);
     setStaffRepairState({ key: requestedKey, status: 'repairing', error: null });
     try {
       const staffConversation = await ensureStaffChatConversation(teamId, auth.user, conversations);
@@ -421,11 +422,13 @@ export function ChatWindow({
       });
       return staffConversation;
     } catch (error) {
+      const errorMessage = getStaffConversationErrorMessage(error);
       setStaffRepairState({
         key: requestedKey,
         status: 'error',
-        error: getStaffConversationErrorMessage(error)
+        error: errorMessage
       });
+      setStatus({ tone: 'error', message: errorMessage });
       return null;
     }
   }, [auth.user, conversations, setConversations, team, teamId]);

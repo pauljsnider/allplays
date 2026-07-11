@@ -912,6 +912,25 @@ describe('ChatWindow conversation switching', () => {
     expect(screen.getByRole('button', { name: 'Retry' })).toBeVisible();
   });
 
+  it('surfaces a safe error when staff repair fails before leaving the team thread', async () => {
+    mockChatTeamState.conversations = [
+      { id: 'team', type: 'team', name: 'Team chat', participantIds: [], participantRoles: ['team'] }
+    ];
+    vi.mocked(ensureStaffChatConversation).mockRejectedValue(new Error('internal document payload leaked'));
+
+    render(
+      <MemoryRouter>
+        <ChatWindow auth={auth} teamId="team-1" />
+      </MemoryRouter>
+    );
+
+    fireEvent.click(within(screen.getByTestId('mobile-conversation-chips')).getByRole('button', { name: 'Switch to Staff only' }));
+
+    expect(await screen.findByText('Unable to open staff chat. Please try again.')).toBeVisible();
+    expect(screen.queryByText('internal document payload leaked')).toBeNull();
+    expect(mockChatTeamState.switchConversation).not.toHaveBeenCalled();
+  });
+
   it('creates and switches to Staff only from the mobile quick-switcher', async () => {
     mockChatTeamState.conversations = [
       { id: 'team', type: 'team', name: 'Team chat', participantIds: [], participantRoles: ['team'] }
