@@ -57,17 +57,17 @@ describe('app CSS cascade layers', () => {
         expect(utilitiesLayerCss).toMatch(mobileFormControlRule);
     });
 
-    it('scopes compact team-row icon sizing to the quick-link class', () => {
-        // A bare `a[aria-label]` selector also matches the row's main content
+    it('does not retain compact icon rules after launcher quick links are removed', () => {
+        // A bare `a[aria-label]` selector also matches the row's single main
         // link, squashing it to 36px and spilling the chips out of the card.
         expect(indexCss).not.toContain('.team-launcher-row-compact a[aria-label]');
-        expect(indexCss).toContain('.team-launcher-row-compact .team-quick-link');
+        expect(indexCss).not.toContain('.team-launcher-row-compact .team-quick-link');
 
         const teamsPage = readFileSync(
             path.join(process.cwd(), 'apps/app/src/pages/Teams.tsx'),
             'utf8'
         );
-        expect(teamsPage.match(/team-quick-link/g)?.length).toBeGreaterThanOrEqual(2);
+        expect(teamsPage).not.toContain('team-quick-link');
     });
 
     it('does not duplicate the preflight form-control font reset', () => {
