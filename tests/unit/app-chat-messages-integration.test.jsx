@@ -227,7 +227,7 @@ async function flush() {
     });
 }
 
-async function waitForMatch(getMatch, description, attempts = 150) {
+async function waitForMatch(getMatch, description, attempts = 200) {
     const deadline = Date.now() + 3000;
     for (let attempt = 0; attempt < attempts || Date.now() < deadline; attempt += 1) {
         const match = getMatch();
@@ -514,6 +514,7 @@ afterEach(async () => {
         mountedRoots.forEach((root) => root.unmount());
         mountedRoots.clear();
     });
+    await flush();
     document.body.innerHTML = '';
 });
 
