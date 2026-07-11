@@ -5,6 +5,7 @@ import { MemoryRouter, Route, Routes, useNavigate } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ParentTools, type ParentToolId } from './ParentTools';
 import type { AuthState } from '../lib/types';
+import { getNativeBackTarget } from '../lib/nativeBackButton';
 import { openPublicUrl, sharePublicUrl } from '../lib/publicActions';
 
 const parentToolsServiceMocks = vi.hoisted(() => ({
@@ -1475,6 +1476,33 @@ describe('ParentTools access', () => {
 
         expect(await screen.findByText('Spring Skills')).toBeTruthy();
         expect(parentToolsServiceMocks.loadParentRegistrations).toHaveBeenCalledTimes(2);
+    });
+
+    it('restores the registrations tab and list after native back from registration detail', async () => {
+        parentToolsServiceMocks.loadParentRegistrations.mockResolvedValueOnce([
+            {
+                id: 'form-1',
+                teamId: 'team-1',
+                teamName: 'Bears',
+                programName: 'Summer Camp',
+                description: 'Skills week',
+                season: 'Summer',
+                feeLabel: '$75.00',
+                paymentNotice: '',
+                onlineCheckout: true,
+                options: [],
+                url: 'https://allplays.ai/registration.html?teamId=team-1&formId=form-1'
+            }
+        ]);
+        const nativeBackTarget = getNativeBackTarget('/parent-tools/registrations/team-1/form-1');
+
+        expect(nativeBackTarget).toBe('/parent-tools/registrations');
+        renderParentTools([nativeBackTarget!], false, linkedAuth);
+
+        expect(await screen.findByText('Summer Camp')).toBeTruthy();
+        expect(screen.getByRole('button', { name: 'Register' })).toHaveAttribute('aria-pressed', 'true');
+        expect(screen.getByRole('button', { name: 'Access' })).toHaveAttribute('aria-pressed', 'false');
+        expect(parentToolsServiceMocks.loadParentRegistrations).toHaveBeenCalledWith(linkedAuth.user);
     });
 
     it('defers public team and player loading until manual access starts', async () => {
