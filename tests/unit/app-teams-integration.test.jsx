@@ -233,7 +233,8 @@ describe('React app Teams page', () => {
         expect(hrefs).toContain('/teams/team-staff/fees');
         expect(hrefs).not.toContain('https://allplays.ai/team-fees.html#teamId=team-staff');
         expect(container.textContent).not.toContain('Team drills');
-        expect(linkByAriaLabel(container, 'Select Staff Wolves').getAttribute('aria-current')).toBe('page');
+        expect(linkByAriaLabel(container, 'Open Staff Wolves').getAttribute('aria-describedby')).toBe('selected-team-team-staff');
+        expect(container.textContent).toContain('Currently selected team');
 
         await clickLink(container, 'Website team page');
         expect(publicActionMocks.openPublicUrl).toHaveBeenCalledWith('https://allplays.ai/team.html#teamId=team-staff');
@@ -243,8 +244,8 @@ describe('React app Teams page', () => {
         hrefs = getHrefs(container);
         expect(hrefs).toContain('/teams/team-staff/drills');
         expect(hrefs).toContain('https://allplays.ai/game-day.html?teamId=team-staff');
-        expect(linkByAriaLabel(container, 'Select Bears').getAttribute('href')).toBe('/teams?selectedTeamId=team-1');
-        expect(linkByAriaLabel(container, 'Select Staff Wolves').getAttribute('href')).toBe('/teams?selectedTeamId=team-staff');
+        expect(linkByAriaLabel(container, 'Open Bears').getAttribute('href')).toBe('/teams/team-1');
+        expect(linkByAriaLabel(container, 'Open Staff Wolves').getAttribute('href')).toBe('/teams/team-staff');
     });
 
     it('filters the mobile launcher by team and player text before opening a result', async () => {
@@ -255,19 +256,19 @@ describe('React app Teams page', () => {
         expect(filterInput).toBeTruthy();
 
         await typeIntoInput(container, 'Search teams or players', 'Pat');
-        expect(Array.from(container.querySelectorAll('a')).some((link) => link.getAttribute('aria-label') === 'Select Bears')).toBe(true);
-        expect(Array.from(container.querySelectorAll('a')).some((link) => link.getAttribute('aria-label') === 'Select Staff Wolves')).toBe(false);
+        expect(Array.from(container.querySelectorAll('a')).some((link) => link.getAttribute('aria-label') === 'Open Bears')).toBe(true);
+        expect(Array.from(container.querySelectorAll('a')).some((link) => link.getAttribute('aria-label') === 'Open Staff Wolves')).toBe(false);
 
         await typeIntoInput(container, 'Search teams or players', 'Wolves');
-        expect(Array.from(container.querySelectorAll('a')).some((link) => link.getAttribute('aria-label') === 'Select Staff Wolves')).toBe(true);
-        expect(Array.from(container.querySelectorAll('a')).some((link) => link.getAttribute('aria-label') === 'Select Bears')).toBe(false);
+        expect(Array.from(container.querySelectorAll('a')).some((link) => link.getAttribute('aria-label') === 'Open Staff Wolves')).toBe(true);
+        expect(Array.from(container.querySelectorAll('a')).some((link) => link.getAttribute('aria-label') === 'Open Bears')).toBe(false);
 
         await typeIntoInput(container, 'Search teams or players', 'zzz');
         expect(container.textContent).toContain('No teams match that search.');
 
         await typeIntoInput(container, 'Search teams or players', 'Bears');
 
-        expect(linkByAriaLabel(container, 'Select Bears').getAttribute('href')).toBe('/teams?selectedTeamId=team-1');
+        expect(linkByAriaLabel(container, 'Open Bears').getAttribute('href')).toBe('/teams/team-1');
         expect(container.textContent.indexOf('Choose a team')).toBeLessThan(container.textContent.indexOf('Team navigation'));
         const hrefs = getHrefs(container);
         expect(hrefs.filter((href) => href === '/teams/team-1')).toHaveLength(1);
@@ -550,6 +551,6 @@ describe('React app Teams page', () => {
         await waitForText(container, '2 teams ready');
         expect(container.textContent).toContain('Choose a team');
         expect(container.querySelector('[data-testid="team-hub"]')).toBeNull();
-        expect(linkByAriaLabel(container, 'Select Staff Wolves').getAttribute('aria-current')).toBe('page');
+        expect(linkByAriaLabel(container, 'Open Staff Wolves').getAttribute('aria-describedby')).toBe('selected-team-team-staff');
     });
 });

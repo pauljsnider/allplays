@@ -353,7 +353,7 @@ function TeamLauncher({ teams, selectedTeamId, variant = 'grid' }: {
       <div className="flex items-center justify-between gap-3 px-1">
         <div className="min-w-0">
           <div className="text-sm font-black text-gray-950">{isRail ? 'Teams' : 'Choose a team'}</div>
-          <div className="mt-0.5 text-xs font-semibold text-gray-500">Select a team to open its hub and tools.</div>
+          <div className="mt-0.5 text-xs font-semibold text-gray-500">Open a team hub to use its tools.</div>
         </div>
         <span className="inline-flex h-7 flex-none items-center rounded-full bg-gray-100 px-2.5 text-[11px] font-black text-gray-700">
           {teams.length} team{teams.length === 1 ? '' : 's'}
@@ -384,12 +384,23 @@ function TeamLauncherRow({ team, selected, compact = false }: { team: ParentHome
 
   return (
     <article className={`team-launcher-row flex min-w-0 items-center gap-2 rounded-2xl border bg-white p-2 shadow-sm transition ${compact ? 'team-launcher-row-compact' : ''} ${selected ? 'border-primary-300 bg-primary-50/50 ring-2 ring-primary-100' : 'border-gray-200 hover:border-primary-200 hover:bg-primary-50/25'}`}>
-      <Link to={`/teams?selectedTeamId=${encodeURIComponent(team.teamId)}`} className="flex min-w-0 flex-1 items-center gap-3 rounded-xl p-1 text-left" aria-current={selected ? 'page' : undefined} aria-label={`Select ${team.teamName}`}>
+      <Link
+        to={`/teams/${encodeURIComponent(team.teamId)}`}
+        className="group flex min-w-0 flex-1 items-center gap-3 rounded-xl p-1 text-left"
+        aria-describedby={selected ? `selected-team-${team.teamId}` : undefined}
+        aria-label={`Open ${team.teamName}`}
+        title={`Open ${team.teamName}`}
+      >
         <TeamAvatar name={team.teamName} photoUrl={team.photoUrl} />
         <span className="min-w-0 flex-1">
           <span className="flex min-w-0 items-center gap-2">
             <span className="truncate text-sm font-black text-gray-950">{team.teamName}</span>
-            {selected ? <span className="hidden rounded-full bg-primary-600 px-2 py-0.5 text-[10px] font-black uppercase tracking-[0.04em] text-white sm:inline-flex">Selected</span> : null}
+            {selected ? (
+              <>
+                <span id={`selected-team-${team.teamId}`} className="sr-only">Currently selected team</span>
+                <span aria-hidden="true" className="hidden rounded-full bg-primary-600 px-2 py-0.5 text-[10px] font-black uppercase tracking-[0.04em] text-white sm:inline-flex">Selected</span>
+              </>
+            ) : null}
           </span>
           <span className="mt-0.5 block truncate text-xs font-semibold text-gray-500">{getTeamLauncherDetail(team)}</span>
           <span className="mt-1 flex min-w-0 flex-wrap gap-1.5">
@@ -400,14 +411,9 @@ function TeamLauncherRow({ team, selected, compact = false }: { team: ParentHome
           </span>
           {nextEventSummary && !compact ? <span className="mt-1 block truncate text-[11px] font-bold text-gray-500">{nextEventSummary}</span> : null}
         </span>
-      </Link>
-      <Link
-        to={`/teams/${encodeURIComponent(team.teamId)}`}
-        className="inline-flex h-10 w-10 flex-none items-center justify-center rounded-xl border border-gray-200 bg-gray-50 text-gray-700 transition hover:border-primary-200 hover:bg-primary-50 hover:text-primary-700"
-        aria-label={`Open ${team.teamName}`}
-        title={`Open ${team.teamName}`}
-      >
-        <ChevronRight className="h-4 w-4" aria-hidden="true" />
+        <span className="inline-flex h-10 w-10 flex-none items-center justify-center rounded-xl border border-gray-200 bg-gray-50 text-gray-700 transition group-hover:border-primary-200 group-hover:bg-primary-50 group-hover:text-primary-700">
+          <ChevronRight className="h-4 w-4" aria-hidden="true" />
+        </span>
       </Link>
     </article>
   );

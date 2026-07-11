@@ -209,7 +209,7 @@ describe('Teams empty state', () => {
     expect(await screen.findByRole('heading', { name: '1 team ready' })).toBeInTheDocument();
     expect(screen.getByText('Choose a team')).toBeInTheDocument();
     expect(screen.getByText('Unable to refresh teams. Showing the last loaded teams. Try again.')).toBeInTheDocument();
-    expect(screen.getByRole('link', { name: 'Select Fast Falcons' })).toHaveAttribute('href', '/teams?selectedTeamId=team-fast');
+    expect(screen.getByRole('link', { name: 'Open Fast Falcons' })).toHaveAttribute('href', '/teams/team-fast');
     expect(screen.queryByText('Teams could not load')).toBeNull();
     expect(screen.queryByText('No teams available')).toBeNull();
   });
@@ -332,25 +332,25 @@ describe('Teams launcher navigation', () => {
     cleanup();
   });
 
-  it('keeps launcher rows focused on team selection while selected-team tools remain available', async () => {
+  it('keeps one team-hub action per launcher row while selected-team tools remain available', async () => {
     renderTeamsWithNav();
 
     const fastFalcons = await screen.findByRole('link', { name: 'Open Fast Falcons' });
     const slowSharks = screen.getByRole('link', { name: 'Open Slow Sharks' });
-    const selectFastFalcons = screen.getByRole('link', { name: 'Select Fast Falcons' });
-    const selectSlowSharks = screen.getByRole('link', { name: 'Select Slow Sharks' });
     expect(fastFalcons).toHaveAttribute('href', '/teams/team-fast');
     expect(slowSharks).toHaveAttribute('href', '/teams/team-slow');
     expect(fastFalcons).toHaveAttribute('title', 'Open Fast Falcons');
     expect(slowSharks).toHaveAttribute('title', 'Open Slow Sharks');
-    expect(screen.getByText('Select a team to open its hub and tools.')).toBeInTheDocument();
+    expect(fastFalcons).toHaveAttribute('aria-describedby', 'selected-team-team-fast');
+    expect(slowSharks).not.toHaveAttribute('aria-describedby');
+    expect(screen.getByText('Open a team hub to use its tools.')).toBeInTheDocument();
 
     const fastFalconsRow = fastFalcons.closest<HTMLElement>('.team-launcher-row');
     const slowSharksRow = slowSharks.closest<HTMLElement>('.team-launcher-row');
     expect(fastFalconsRow).not.toBeNull();
     expect(slowSharksRow).not.toBeNull();
-    expect(within(fastFalconsRow!).getAllByRole('link')).toEqual([selectFastFalcons, fastFalcons]);
-    expect(within(slowSharksRow!).getAllByRole('link')).toEqual([selectSlowSharks, slowSharks]);
+    expect(within(fastFalconsRow!).getAllByRole('link')).toEqual([fastFalcons]);
+    expect(within(slowSharksRow!).getAllByRole('link')).toEqual([slowSharks]);
     expect(screen.queryByRole('link', { name: 'Fast Falcons messages' })).toBeNull();
     expect(screen.queryByRole('link', { name: 'Fast Falcons schedule' })).toBeNull();
     expect(screen.queryByRole('link', { name: 'Fast Falcons team hub' })).toBeNull();
