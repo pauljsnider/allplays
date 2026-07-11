@@ -401,6 +401,14 @@ function TeamLauncherRow({ team, selected, compact = false }: { team: ParentHome
           {nextEventSummary && !compact ? <span className="mt-1 block truncate text-[11px] font-bold text-gray-500">{nextEventSummary}</span> : null}
         </span>
       </Link>
+      <Link
+        to={`/teams/${encodeURIComponent(team.teamId)}`}
+        className="inline-flex h-10 w-10 flex-none items-center justify-center rounded-xl border border-gray-200 bg-gray-50 text-gray-700 transition hover:border-primary-200 hover:bg-primary-50 hover:text-primary-700"
+        aria-label={`Open ${team.teamName}`}
+        title={`Open ${team.teamName}`}
+      >
+        <ChevronRight className="h-4 w-4" aria-hidden="true" />
+      </Link>
     </article>
   );
 }
