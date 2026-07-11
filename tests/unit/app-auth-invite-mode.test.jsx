@@ -122,7 +122,9 @@ describe('AuthPage invite mode defaults', () => {
         expect(container.querySelector('h1')?.textContent).toBe('Sign in');
         expect(findButton(container, 'Sign in')?.className).toContain('bg-white');
         expect(findInputByLabel(container, 'Activation or invite code')).toBeUndefined();
-        expect(container.textContent).toContain('Invite code applied:');
+        expect(container.textContent).toContain('Invite code entered:');
+        expect(container.textContent).toContain('We’ll verify it after you sign in or create your account.');
+        expect(container.textContent).not.toContain('Invite code applied:');
         expect(container.textContent).toContain('ABCDEFGH');
     });
 
@@ -139,6 +141,9 @@ describe('AcceptInvite auth handoff', () => {
     it('preserves invite code and login intent for existing-account redemption', async () => {
         const { container } = await renderAcceptInvite('/accept-invite?code=ABCDEFGH&type=parent');
 
+        expect(container.textContent).toContain('Invite code entered');
+        expect(container.textContent).toContain('We’ll verify this code after you sign in or create your account.');
+        expect(container.textContent).not.toContain('Invite found');
         expect(findLink(container, /sign in to accept/i)?.getAttribute('href')).toBe('/auth?code=ABCDEFGH&type=parent&mode=login');
         expect(findLink(container, /create account with code/i)?.getAttribute('href')).toBe('/auth?code=ABCDEFGH&type=parent&mode=signup');
     });

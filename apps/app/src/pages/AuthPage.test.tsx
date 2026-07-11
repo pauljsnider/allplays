@@ -131,6 +131,14 @@ describe('AuthPage signup validation', () => {
     cleanup();
   });
 
+  it('describes an unverified invite code without claiming it was applied', () => {
+    renderAuthPage('/auth?mode=login&code=QQQQQQQQ&type=parent');
+
+    expect(screen.getByText(/Invite code entered:/).textContent).toContain('QQQQQQQQ');
+    expect(screen.getByText('We’ll verify it after you sign in or create your account.')).toBeTruthy();
+    expect(screen.queryByText(/Invite code applied:/)).toBeNull();
+  });
+
   it('stops signup before Firebase when the email is invalid for Firebase Auth', async () => {
     renderAuthPage('/auth?mode=signup&code=6WSSSW9V&type=parent');
 

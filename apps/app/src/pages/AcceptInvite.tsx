@@ -168,8 +168,9 @@ export function AcceptInvite({ auth }: { auth: AuthState }) {
 
       {code && !auth.user && state !== 'email-link' ? (
         <div className="mt-4 rounded-xl border border-primary-100 bg-primary-50 p-3">
-          <div className="text-xs font-extrabold uppercase tracking-[0.04em] text-primary-700">Invite found</div>
+          <div className="text-xs font-extrabold uppercase tracking-[0.04em] text-primary-700">Invite code entered</div>
           <div className="mt-1 font-mono text-lg font-black tracking-widest text-primary-900">{code}</div>
+          <p className="mt-1 text-sm font-semibold text-primary-800">We’ll verify this code after you sign in or create your account.</p>
           <div className="mt-3 grid gap-2">
             <Link to={`${authUrl}&mode=login`} className="primary-button justify-center">
               <LogIn className="h-4 w-4" aria-hidden="true" />
