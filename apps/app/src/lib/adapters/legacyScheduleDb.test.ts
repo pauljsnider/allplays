@@ -95,17 +95,35 @@ beforeEach(() => {
 });
 
 describe('legacyScheduleDb tournament mapping', () => {
-    it('maps the supported single-game tournament adapter entry point to one legacy-compatible game document', () => {
-        const basePayload = buildValidLegacyGamePayload();
-        const tournament = validTournamentMetadata;
-
-        const document = buildSingleLegacyTournamentGameDocument([basePayload], tournament);
-
-        expect(document).toEqual(expect.objectContaining({
+    it('deterministically maps one validated completed row to the exact legacy document without save side effects', () => {
+        const basePayload = buildValidLegacyGamePayload({
+            title: null,
+            opponentTeamId: null,
+            opponentTeamName: null,
+            opponentTeamPhoto: null
+        });
+        const tournament = { ...validTournamentMetadata };
+        const expectedDocument = {
             ...basePayload,
             competitionType: 'tournament',
-            tournament
+            tournament: { ...tournament }
+        };
+
+        const firstDocument = buildSingleLegacyTournamentGameDocument([basePayload], tournament);
+        const secondDocument = buildSingleLegacyTournamentGameDocument([basePayload], tournament);
+
+        expect(firstDocument).toStrictEqual(expectedDocument);
+        expect(secondDocument).toStrictEqual(expectedDocument);
+        expect(secondDocument).not.toBe(firstDocument);
+        expect(secondDocument.tournament).not.toBe(firstDocument.tournament);
+        expect(basePayload).toStrictEqual(buildValidLegacyGamePayload({
+            title: null,
+            opponentTeamId: null,
+            opponentTeamName: null,
+            opponentTeamPhoto: null
         }));
+        expect(tournament).toStrictEqual(validTournamentMetadata);
+        expect(legacyAddGame).not.toHaveBeenCalled();
     });
 
     it('rejects unsupported tournament row counts at the adapter entry point', () => {
