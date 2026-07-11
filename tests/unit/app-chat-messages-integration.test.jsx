@@ -123,6 +123,7 @@ const animationFrameState = vi.hoisted(() => ({
     nextId: 1,
     callbacks: new Map()
 }));
+const mountedRoots = new Set();
 
 vi.mock('@capacitor/core', () => ({
     Capacitor: {
@@ -185,6 +186,7 @@ async function renderMessages(initialEntry, authState = auth) {
     const container = document.createElement('div');
     document.body.appendChild(container);
     const root = createRoot(container);
+    mountedRoots.add(root);
 
     const renderWithAuth = async (nextAuthState) => {
         await act(async () => {
@@ -507,7 +509,11 @@ beforeEach(() => {
     chatMocks.unmuteTeamChat.mockResolvedValue(undefined);
 });
 
-afterEach(() => {
+afterEach(async () => {
+    await act(async () => {
+        mountedRoots.forEach((root) => root.unmount());
+        mountedRoots.clear();
+    });
     document.body.innerHTML = '';
 });
 
@@ -2147,7 +2153,7 @@ describe('React app messages integration', () => {
 
         await setFieldValue(textarea, '@ALL PLAYS who has not RSVP’d?');
         await click(container, 'Send message');
-        await flush();
+        await waitForMockCallCount(chatMocks.sendAllPlaysChatAnswer, 1, 'ALL PLAYS assistant send');
 
         expect(chatMocks.sendAllPlaysChatAnswer).toHaveBeenCalledWith(expect.objectContaining({
             teamId: 'team-1',
