@@ -2619,7 +2619,7 @@ function GameDaySubstitutionPanel({ auth, event }: { auth: AuthState; event: Par
         if (!cancelled) setLoading(false);
       });
     return () => { cancelled = true; };
-  }, [auth.user, event, event.teamId, event.id, event.gamePlan, event.isCancelled, formationId]);
+  }, [auth.user, event.teamId, event.id, event.eventKey, event.gamePlan, event.isCancelled, event.isDbGame, event.isTeamStaff, event.type, formationId]);
 
   useEffect(() => {
     if (period && periods.includes(period)) return;
@@ -2866,7 +2866,7 @@ function GameHubLineupBuilderPanel({ auth, event, onGamePlanSaved }: { auth: Aut
       });
 
     return () => { cancelled = true; };
-  }, [auth.user, event, event.teamId, event.id, event.gamePlan, event.isCancelled, formationId]);
+  }, [auth.user, event.teamId, event.id, event.eventKey, event.gamePlan, event.isCancelled, event.isDbGame, event.isTeamStaff, event.type, formationId]);
 
   useEffect(() => {
     latestDraftRef.current = draftLineups;
