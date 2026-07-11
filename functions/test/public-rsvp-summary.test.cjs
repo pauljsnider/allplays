@@ -1,8 +1,7 @@
 const assert = require('node:assert/strict');
 const test = require('node:test');
 const {
-  refreshPublicRsvpSummary,
-  schedulePublicRsvpSummaryRefresh
+  refreshPublicRsvpSummary
 } = require('../public-rsvp-summary-core.cjs');
 
 test('public RSVP summary refresh uses a bounded delta without recomputing', async () => {
@@ -41,22 +40,27 @@ test('public RSVP summary refresh falls back to recompute when the delta is unsa
   assert.equal(persistedSummary, summary);
 });
 
-test('public RSVP summary scheduling returns before background work settles', async () => {
+test('public RSVP summary refresh remains pending until durable fallback work settles', async () => {
   let release;
-  let settled = false;
+  let persisted = false;
   const blocked = new Promise((resolve) => {
     release = resolve;
   });
 
-  const result = schedulePublicRsvpSummaryRefresh(async () => {
-    await blocked;
-    settled = true;
+  const lifecycle = refreshPublicRsvpSummary({
+    tryApplyDelta: async () => false,
+    recomputeSummary: async () => {
+      await blocked;
+      return { going: 1 };
+    },
+    persistSummary: async () => {
+      persisted = true;
+    }
   });
 
-  assert.equal(result, undefined);
-  assert.equal(settled, false);
-  release();
-  await blocked;
   await new Promise((resolve) => setImmediate(resolve));
-  assert.equal(settled, true);
+  assert.equal(persisted, false);
+  release();
+  assert.equal(await lifecycle, 'recompute');
+  assert.equal(persisted, true);
 });
