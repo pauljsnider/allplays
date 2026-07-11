@@ -10,6 +10,15 @@ import type { AuthState } from './lib/types';
 const suspendedHomePromise = new Promise<never>(() => {});
 let homeRenderMode: 'suspend' | 'throw' | 'render' = 'suspend';
 let consoleErrorSpy: ReturnType<typeof vi.spyOn> | null = null;
+
+function createDeferred() {
+  let resolve!: () => void;
+  const promise = new Promise<void>((resolvePromise) => {
+    resolve = resolvePromise;
+  });
+  return { promise, resolve };
+}
+
 const authMock = vi.hoisted(() => {
   const signedInAuth: AuthState = {
     user: { uid: 'user-1', email: 'parent@example.com', displayName: 'Pat Parent', roles: ['parent'] },
@@ -395,6 +404,48 @@ describe('App protected route loading', () => {
     expect(await screen.findByText('Officials assignments page')).toBeTruthy();
     await waitFor(() => expect(pushServiceMock.ensureAndroidNotificationChannels).toHaveBeenCalledTimes(1));
     expect(pushServiceMock.addPushNotificationOpenListener).toHaveBeenCalledTimes(1);
+  });
+
+  it('registers native push-open routing before deferred Android channel setup completes', async () => {
+    const channelSetup = createDeferred();
+    pushServiceMock.ensureAndroidNotificationChannels.mockImplementationOnce(() => channelSetup.promise);
+
+    render(
+      <MemoryRouter initialEntries={['/officials']}>
+        <App />
+      </MemoryRouter>
+    );
+
+    await waitFor(() => expect(pushServiceMock.addPushNotificationOpenListener).toHaveBeenCalledTimes(1));
+    expect(pushServiceMock.ensureAndroidNotificationChannels).toHaveBeenCalledTimes(1);
+    expect(pushServiceMock.addPushNotificationOpenListener.mock.invocationCallOrder[0]).toBeLessThan(
+      pushServiceMock.ensureAndroidNotificationChannels.mock.invocationCallOrder[0]
+    );
+
+    await act(async () => channelSetup.resolve());
+
+    expect(pushServiceMock.addPushNotificationOpenListener).toHaveBeenCalledTimes(1);
+    expect(pushServiceMock.ensureAndroidNotificationChannels).toHaveBeenCalledTimes(1);
+  });
+
+  it('removes the native push-open listener once when unmounted during deferred channel setup', async () => {
+    const channelSetup = createDeferred();
+    pushServiceMock.ensureAndroidNotificationChannels.mockImplementationOnce(() => channelSetup.promise);
+
+    const { unmount } = render(
+      <MemoryRouter initialEntries={['/officials']}>
+        <App />
+      </MemoryRouter>
+    );
+
+    await waitFor(() => expect(pushServiceMock.removers).toHaveLength(1));
+    const remove = pushServiceMock.removers[0];
+
+    unmount();
+    expect(remove).toHaveBeenCalledTimes(1);
+
+    await act(async () => channelSetup.resolve());
+    expect(remove).toHaveBeenCalledTimes(1);
   });
 
   it('does not repeat native push setup when auth refresh replaces the same uid object', async () => {

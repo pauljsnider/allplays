@@ -169,12 +169,15 @@ export default function App() {
       // Dynamically import the push stack (Firebase messaging) so it stays out of
       // the boot critical path; registration only needs to run after first paint.
       const { addPushNotificationOpenListener, ensureAndroidNotificationChannels } = await import('./lib/pushService');
-      await ensureAndroidNotificationChannels();
-      const remove = await addPushNotificationOpenListener((route) => {
+      const listenerRemoval = addPushNotificationOpenListener((route) => {
         if (authUserRef.current) {
           navigate(route, { replace: true });
         }
       });
+      // Channel provisioning is best-effort inside pushService and must not delay
+      // notification tap routing during native boot.
+      void ensureAndroidNotificationChannels();
+      const remove = await listenerRemoval;
       if (!active) {
         remove();
         return;
