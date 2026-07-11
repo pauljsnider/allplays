@@ -231,6 +231,7 @@ export { collection, getDocs, deleteDoc, query };
 const limitQuery = limit;
 const startAfterQuery = startAfter;
 const DEFAULT_PUBLIC_TEAM_DISCOVERY_PAGE_SIZE = 24;
+const MAX_PUBLIC_TEAM_ROSTER_COUNT = 200;
 export const DEFAULT_CHAT_CONVERSATION_PAGE_SIZE = 25;
 const CHAT_REACTIONS = [
     { key: 'thumbs_up', emoji: '👍' },
@@ -892,6 +893,27 @@ export async function discoverPublicTeams(options = {}) {
         nextCursor: hasMorePages
             ? buildPublicTeamSearchPageCursor(searchText, strategyCursors, bufferedTeams)
             : null
+    };
+}
+
+export async function getPublicTeamRosterCount(teamId) {
+    const normalizedTeamId = String(teamId || '').trim();
+    if (!normalizedTeamId) {
+        throw new Error('Team is required to count the public roster.');
+    }
+
+    // Aggregations return only a count, not public roster documents. Keep the
+    // query capped as well so browse pages cannot introduce an unbounded scan.
+    const rosterQuery = query(
+        collection(db, `teams/${normalizedTeamId}/players`),
+        limitQuery(MAX_PUBLIC_TEAM_ROSTER_COUNT + 1)
+    );
+    const snapshot = await getCountFromServer(rosterQuery);
+    const count = Math.max(0, Number(snapshot.data().count) || 0);
+
+    return {
+        count: Math.min(count, MAX_PUBLIC_TEAM_ROSTER_COUNT),
+        isCapped: count > MAX_PUBLIC_TEAM_ROSTER_COUNT
     };
 }
 

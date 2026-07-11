@@ -1,7 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const dbMocks = vi.hoisted(() => ({
-    discoverPublicTeams: vi.fn()
+    discoverPublicTeams: vi.fn(),
+    getPublicTeamRosterCount: vi.fn()
 }));
 
 vi.mock('./adapters/legacyPublicTeamsDb', () => dbMocks);
@@ -11,6 +12,43 @@ import { getPublicTeamsByLocation, getPublicTeamsPage } from './publicTeamsServi
 describe('publicTeamsService', () => {
     beforeEach(() => {
         vi.clearAllMocks();
+        dbMocks.getPublicTeamRosterCount.mockResolvedValue({ count: 0, isCapped: false });
+    });
+
+    it('hydrates public cards from bounded roster counts instead of the empty linked-player array', async () => {
+        dbMocks.discoverPublicTeams.mockResolvedValue({
+            teams: [{ id: 'team-roster-1', name: 'AI Score Reader', zip: '64131' }],
+            nextCursor: null
+        });
+        dbMocks.getPublicTeamRosterCount.mockResolvedValue({ count: 10, isCapped: false });
+
+        await expect(getPublicTeamsPage()).resolves.toEqual({
+            teams: [expect.objectContaining({
+                teamId: 'team-roster-1',
+                players: [],
+                publicRosterCount: 10,
+                publicRosterCountCapped: false
+            })],
+            nextCursor: null
+        });
+        expect(dbMocks.getPublicTeamRosterCount).toHaveBeenCalledWith('team-roster-1');
+    });
+
+    it('omits a roster count when public aggregation access is denied', async () => {
+        dbMocks.discoverPublicTeams.mockResolvedValue({
+            teams: [{ id: 'team-legacy-private-fields', name: 'Legacy Team', zip: '64131' }],
+            nextCursor: null
+        });
+        dbMocks.getPublicTeamRosterCount.mockRejectedValue({ code: 'permission-denied' });
+
+        await expect(getPublicTeamsPage()).resolves.toEqual({
+            teams: [expect.objectContaining({
+                teamId: 'team-legacy-private-fields',
+                publicRosterCount: null,
+                publicRosterCountCapped: false
+            })],
+            nextCursor: null
+        });
     });
 
     it('defaults public teams without access flags to website access', async () => {
