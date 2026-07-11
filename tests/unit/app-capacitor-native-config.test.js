@@ -74,6 +74,21 @@ describe('Capacitor native config', () => {
         expect(appPnpmLock).toContain(`'@vitejs/plugin-react@${pluginReactVersion}(vite@8.1.4`);
     });
 
+    it('keeps Vitest and coverage peer versions aligned in app lockfiles', () => {
+        const appPackage = JSON.parse(readProjectFile('apps/app/package.json'));
+        const appPackageLock = JSON.parse(readProjectFile('apps/app/package-lock.json'));
+        const appPnpmLock = readProjectFile('apps/app/pnpm-lock.yaml');
+        const vitestVersion = appPackage.devDependencies.vitest.replace(/^\^/, '');
+
+        expect(appPackage.devDependencies['@vitest/coverage-v8']).toBe(`^${vitestVersion}`);
+        expect(appPackageLock.packages[''].devDependencies.vitest).toBe(`^${vitestVersion}`);
+        expect(appPackageLock.packages['node_modules/vitest'].version).toBe(vitestVersion);
+        expect(appPackageLock.packages['node_modules/@vitest/coverage-v8'].peerDependencies.vitest).toBe(vitestVersion);
+        expect(appPnpmLock).toContain(`version: ${vitestVersion}(vitest@${vitestVersion})`);
+        expect(appPnpmLock).toContain(`'@vitest/coverage-v8@${vitestVersion}(vitest@${vitestVersion})':`);
+        expect(appPnpmLock).not.toContain(`'@vitest/coverage-v8@${vitestVersion}(vitest@4.1.9)'`);
+    });
+
     it('keeps shared Camera and Firebase maintenance versions aligned across manifests and lockfiles', () => {
         const rootPackage = JSON.parse(readProjectFile('package.json'));
         const appPackage = JSON.parse(readProjectFile('apps/app/package.json'));
