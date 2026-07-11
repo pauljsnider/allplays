@@ -49,7 +49,7 @@ const {
     if (normalizedQuery.length < 2) return teams;
     return teams.filter((team) => team.name.toLowerCase().includes(normalizedQuery));
   }),
-  getKnownAppSearchTeamsMock: vi.fn((): AppSearchTeam[] => []),
+  getKnownAppSearchTeamsMock: vi.fn((_user: AuthState['user']): AppSearchTeam[] => []),
   loadAppSearchTeamsMock: vi.fn(async (): Promise<AppSearchTeam[]> => [{ id: 'team-2', name: 'Rockets', sport: 'Soccer', zip: '64114' }]),
   searchAppTeamsMock: vi.fn<(query: string, teams: AppSearchTeam[], user: AuthState['user']) => Promise<AppSearchTeam[]>>(),
   searchAppPlayersMock: vi.fn<(query: string, teamsById: Map<string, AppSearchTeam>, user: AuthState['user']) => Promise<any[]>>(),
@@ -505,7 +505,7 @@ describe('AppSearchDialog', () => {
     expect(preloadSearchRouteMock.mock.invocationCallOrder[0]).toBeLessThan(navigateMock.mock.invocationCallOrder[0]);
   });
 
-  it('starts loading accessible teams on open and reuses that warm load for the first query', async () => {
+  it('defers accessible-team hydration until the first meaningful query and reuses it', async () => {
     const onClose = vi.fn();
 
     render(
@@ -515,10 +515,15 @@ describe('AppSearchDialog', () => {
     );
 
     expect(await screen.findAllByRole('button', { name: /Browse Teams/ })).not.toHaveLength(0);
-    await waitFor(() => expect(loadAppSearchTeamsMock).toHaveBeenCalledTimes(1));
+    expect(loadAppSearchTeamsMock).not.toHaveBeenCalled();
     expect(searchAppTeamsMock).not.toHaveBeenCalled();
+    expect(searchAppPlayersMock).not.toHaveBeenCalled();
+
+    fireEvent.change(screen.getByLabelText('Search teams, players, actions, help'), { target: { value: 'r' } });
+    expect(loadAppSearchTeamsMock).not.toHaveBeenCalled();
 
     fireEvent.change(screen.getByLabelText('Search teams, players, actions, help'), { target: { value: 'ro' } });
+    await waitFor(() => expect(loadAppSearchTeamsMock).toHaveBeenCalledTimes(1));
     await waitFor(() => expect(searchAppTeamsMock).toHaveBeenCalledWith('ro', expect.arrayContaining([
       expect.objectContaining({ id: 'team-2', name: 'Rockets' })
     ]), null));
@@ -562,7 +567,7 @@ describe('AppSearchDialog', () => {
     expect(searchAppPlayersMock).toHaveBeenNthCalledWith(1, 'be', expect.any(Map), null);
   });
 
-  it('ignores stale hydrated teams after the dialog closes before warm loading finishes', async () => {
+  it('ignores stale hydrated teams after the dialog closes before query-time loading finishes', async () => {
     const onClose = vi.fn();
     const userA = { uid: 'user-a', email: 'a@example.com' } as NonNullable<AuthState['user']>;
     let releaseHydration!: (teams: AppSearchTeam[] | PromiseLike<AppSearchTeam[]>) => void;
@@ -578,6 +583,8 @@ describe('AppSearchDialog', () => {
     );
 
     await waitFor(() => expect(getKnownAppSearchTeamsMock).toHaveBeenCalledWith(userA));
+    fireEvent.change(screen.getByLabelText('Search teams, players, actions, help'), { target: { value: 'ro' } });
+    await waitFor(() => expect(loadAppSearchTeamsMock).toHaveBeenCalledTimes(1));
 
     rerender(
       <MemoryRouter>
@@ -586,8 +593,46 @@ describe('AppSearchDialog', () => {
     );
 
     releaseHydration([{ id: 'team-2', name: 'Rockets', sport: 'Soccer', zip: '64114' }]);
-    await waitFor(() => expect(loadAppSearchTeamsMock).toHaveBeenCalledTimes(1));
+    await Promise.resolve();
     expect(screen.queryByRole('button', { name: /Rockets/ })).toBeNull();
+    expect(searchAppTeamsMock).not.toHaveBeenCalled();
+    expect(searchAppPlayersMock).not.toHaveBeenCalled();
+  });
+
+  it('ignores stale hydrated teams after the signed-in user changes', async () => {
+    const onClose = vi.fn();
+    const userA = { uid: 'user-a', email: 'a@example.com' } as NonNullable<AuthState['user']>;
+    const userB = { uid: 'user-b', email: 'b@example.com' } as NonNullable<AuthState['user']>;
+    let releaseHydration!: (teams: AppSearchTeam[] | PromiseLike<AppSearchTeam[]>) => void;
+    getKnownAppSearchTeamsMock.mockImplementation((user) => user?.uid === userA.uid
+      ? [{ id: 'team-a', name: 'Bears', sport: 'Basketball', zip: '66210' }]
+      : [{ id: 'team-b', name: 'Tigers', sport: 'Soccer', zip: '64114' }]);
+    loadAppSearchTeamsMock.mockImplementationOnce(() => new Promise((resolve) => {
+      releaseHydration = resolve;
+    }));
+
+    const { rerender } = render(
+      <MemoryRouter>
+        <AppSearchDialog auth={{ ...auth, user: userA }} open={true} onClose={onClose} />
+      </MemoryRouter>
+    );
+
+    fireEvent.change(screen.getByLabelText('Search teams, players, actions, help'), { target: { value: 'ro' } });
+    await waitFor(() => expect(loadAppSearchTeamsMock).toHaveBeenCalledTimes(1));
+
+    rerender(
+      <MemoryRouter>
+        <AppSearchDialog auth={{ ...auth, user: userB }} open={true} onClose={onClose} />
+      </MemoryRouter>
+    );
+
+    expect(await screen.findByRole('button', { name: /Tigers/ })).toBeTruthy();
+    releaseHydration([{ id: 'team-stale', name: 'Rockets', sport: 'Soccer', zip: '64114' }]);
+    await Promise.resolve();
+
+    expect(screen.queryByRole('button', { name: /Rockets/ })).toBeNull();
+    expect(searchAppTeamsMock).not.toHaveBeenCalled();
+    expect(searchAppPlayersMock).not.toHaveBeenCalled();
   });
 
   it('does not rerun hydrated searches when accessible teams stay the same', async () => {
@@ -607,6 +652,55 @@ describe('AppSearchDialog', () => {
 
     await waitFor(() => expect(searchAppTeamsMock).toHaveBeenCalledTimes(1));
     await waitFor(() => expect(searchAppPlayersMock).toHaveBeenCalledTimes(1));
+  });
+
+  it('repeats a provisional search when hydration enriches the same team IDs', async () => {
+    vi.useFakeTimers();
+    const onClose = vi.fn();
+    const initialTeams: AppSearchTeam[] = [{ id: 'team-1', name: 'Bears' }];
+    const hydratedTeams: AppSearchTeam[] = [{ id: 'team-1', name: 'Bears', sport: 'Soccer', zip: '64114' }];
+    let releaseHydration!: (teams: AppSearchTeam[] | PromiseLike<AppSearchTeam[]>) => void;
+
+    getKnownAppSearchTeamsMock.mockReturnValue(initialTeams);
+    loadAppSearchTeamsMock.mockImplementationOnce(() => new Promise((resolve) => {
+      releaseHydration = resolve;
+    }));
+    searchAppTeamsMock.mockImplementation(async (query, searchTeams) => {
+      const normalizedQuery = query.trim().toLowerCase();
+      return searchTeams.filter((team) => [team.name, team.sport, team.zip]
+        .filter(Boolean)
+        .join(' ')
+        .toLowerCase()
+        .includes(normalizedQuery));
+    });
+
+    render(
+      <MemoryRouter>
+        <AppSearchDialog auth={auth} open={true} onClose={onClose} />
+      </MemoryRouter>
+    );
+
+    fireEvent.change(screen.getByLabelText('Search teams, players, actions, help'), { target: { value: 'soccer' } });
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(430);
+      await Promise.resolve();
+    });
+    expect(searchAppTeamsMock).toHaveBeenCalledTimes(1);
+    expect(searchAppTeamsMock).toHaveBeenNthCalledWith(1, 'soccer', initialTeams, null);
+    expect(screen.queryByRole('button', { name: /Bears/i })).toBeNull();
+
+    await act(async () => {
+      releaseHydration(hydratedTeams);
+      await vi.advanceTimersByTimeAsync(50);
+      await Promise.resolve();
+      await vi.advanceTimersByTimeAsync(0);
+    });
+
+    expect(searchAppTeamsMock).toHaveBeenCalledTimes(2);
+    expect(searchAppTeamsMock).toHaveBeenNthCalledWith(2, 'soccer', hydratedTeams, null);
+    expect(screen.getByRole('button', { name: /Bears/i })).not.toBeNull();
+    expect(screen.getByText('Soccer • 64114')).not.toBeNull();
   });
 
   it('shows provisional local team matches while hydration is pending, then runs a provisional search before hydrating again', async () => {

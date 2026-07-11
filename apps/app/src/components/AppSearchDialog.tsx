@@ -31,7 +31,6 @@ const keyboardInsetActivationThresholdPx = 80;
 
 export function AppSearchDialog({ auth, open, onClose }: AppSearchDialogProps) {
   const [query, setQuery] = useState('');
-  const [baseTeams, setBaseTeams] = useState<AppSearchTeam[]>([]);
   const [teams, setTeams] = useState<AppSearchTeam[]>([]);
   const [teamsLoading, setTeamsLoading] = useState(false);
   const [teamsError, setTeamsError] = useState('');
@@ -58,7 +57,6 @@ export function AppSearchDialog({ auth, open, onClose }: AppSearchDialogProps) {
 
   useEffect(() => {
     if (!open) return;
-    let cancelled = false;
     openedAtRef.current = Date.now();
     preloadedRoutesRef.current = new Set<string>();
     hydratedTeamsPromiseRef.current = null;
@@ -68,28 +66,10 @@ export function AppSearchDialog({ auth, open, onClose }: AppSearchDialogProps) {
     setPlayersLoading(false);
     const knownTeams = getKnownAppSearchTeams(auth.user);
     baseTeamsRef.current = knownTeams;
-    setBaseTeams(knownTeams);
     setTeams(knownTeams);
     setActiveIndex(0);
     setTeamsLoading(false);
     setTeamsError('');
-
-    const hydratedTeamsPromise = loadAppSearchTeams(auth.user)
-      .then((loadedTeams) => mergeSearchTeams(knownTeams, loadedTeams))
-      .then((loadedTeams) => {
-        if (cancelled) return knownTeams;
-        baseTeamsRef.current = loadedTeams;
-        setBaseTeams(loadedTeams);
-        setTeams((currentTeams) => mergeSearchTeams(currentTeams, loadedTeams));
-        return loadedTeams;
-      })
-      .catch(() => knownTeams);
-
-    hydratedTeamsPromiseRef.current = hydratedTeamsPromise;
-
-    return () => {
-      cancelled = true;
-    };
   }, [auth.user, open]);
 
   useEffect(() => {
@@ -99,7 +79,7 @@ export function AppSearchDialog({ auth, open, onClose }: AppSearchDialogProps) {
     const requestId = ++searchRequestId.current;
 
     if (trimmedQuery.length < 2) {
-      setTeams(baseTeams);
+      setTeams(baseTeamsRef.current);
       setTeamsLoading(false);
       setTeamsError('');
       setPlayers([]);
@@ -135,6 +115,7 @@ export function AppSearchDialog({ auth, open, onClose }: AppSearchDialogProps) {
       };
 
       const runSearch = async (accessibleTeams: AppSearchTeam[]) => {
+        if (disposed || requestId !== searchRequestId.current) return;
         const accessibleTeamsById = new Map(accessibleTeams.map((team) => [team.id, team]));
         setImmediateTeamResults(accessibleTeams);
 
@@ -161,8 +142,12 @@ export function AppSearchDialog({ auth, open, onClose }: AppSearchDialogProps) {
         }
       };
 
-      const hydrationPromise = hydratedTeamsPromiseRef.current || loadAppSearchTeams(auth.user)
-        .then((loadedTeams) => mergeSearchTeams(initialAccessibleTeams, loadedTeams));
+      let hydrationPromise = hydratedTeamsPromiseRef.current;
+      if (!hydrationPromise) {
+        hydrationPromise = loadAppSearchTeams(auth.user)
+          .then((loadedTeams) => mergeSearchTeams(initialAccessibleTeams, loadedTeams));
+        hydratedTeamsPromiseRef.current = hydrationPromise;
+      }
 
       const resolveAccessibleTeams = async () => {
         // Keep search bounded when Firestore hydration is slow, then retry once the
@@ -179,7 +164,9 @@ export function AppSearchDialog({ auth, open, onClose }: AppSearchDialogProps) {
 
       void resolveAccessibleTeams()
         .then(async ({ teams: accessibleTeams, resolved }) => {
+          if (disposed || requestId !== searchRequestId.current) return;
           if (resolved) {
+            baseTeamsRef.current = accessibleTeams;
             await runSearch(accessibleTeams);
             return;
           }
@@ -189,7 +176,8 @@ export function AppSearchDialog({ auth, open, onClose }: AppSearchDialogProps) {
           try {
             const hydratedTeams = await hydrationPromise;
             if (disposed || requestId !== searchRequestId.current) return;
-            if (haveSameSearchTeamScope(accessibleTeams, hydratedTeams)) return;
+            baseTeamsRef.current = hydratedTeams;
+            if (haveSameSearchTeamSearchData(accessibleTeams, hydratedTeams)) return;
             await runSearch(hydratedTeams);
           } catch {
             if (disposed || requestId !== searchRequestId.current) return;
@@ -584,11 +572,25 @@ function mergeSearchTeams(...teamLists: AppSearchTeam[][]) {
   return Array.from(teamsById.values());
 }
 
-function haveSameSearchTeamScope(left: AppSearchTeam[], right: AppSearchTeam[]) {
+function haveSameSearchTeamSearchData(left: AppSearchTeam[], right: AppSearchTeam[]) {
   const leftIds = left.map((team) => team.id).filter(Boolean).sort();
   const rightIds = right.map((team) => team.id).filter(Boolean).sort();
   if (leftIds.length !== rightIds.length) return false;
-  return leftIds.every((teamId, index) => teamId === rightIds[index]);
+  if (!leftIds.every((teamId, index) => teamId === rightIds[index])) return false;
+
+  const rightTeamsById = new Map(right.map((team) => [team.id, team]));
+  return left.every((team) => {
+    const hydratedTeam = rightTeamsById.get(team.id);
+    if (!hydratedTeam) return false;
+    return [
+      'name',
+      'sport',
+      'zip',
+      'city',
+      'state',
+      'location'
+    ].every((field) => String(team[field as keyof AppSearchTeam] || '') === String(hydratedTeam[field as keyof AppSearchTeam] || ''));
+  });
 }
 
 function getPlayerSearchError(error: any) {
