@@ -166,6 +166,7 @@ export function AppSearchDialog({ auth, open, onClose }: AppSearchDialogProps) {
         .then(async ({ teams: accessibleTeams, resolved }) => {
           if (disposed || requestId !== searchRequestId.current) return;
           if (resolved) {
+            baseTeamsRef.current = accessibleTeams;
             await runSearch(accessibleTeams);
             return;
           }
@@ -175,7 +176,8 @@ export function AppSearchDialog({ auth, open, onClose }: AppSearchDialogProps) {
           try {
             const hydratedTeams = await hydrationPromise;
             if (disposed || requestId !== searchRequestId.current) return;
-            if (haveSameSearchTeamScope(accessibleTeams, hydratedTeams)) return;
+            baseTeamsRef.current = hydratedTeams;
+            if (haveSameSearchTeamSearchData(accessibleTeams, hydratedTeams)) return;
             await runSearch(hydratedTeams);
           } catch {
             if (disposed || requestId !== searchRequestId.current) return;
@@ -570,11 +572,25 @@ function mergeSearchTeams(...teamLists: AppSearchTeam[][]) {
   return Array.from(teamsById.values());
 }
 
-function haveSameSearchTeamScope(left: AppSearchTeam[], right: AppSearchTeam[]) {
+function haveSameSearchTeamSearchData(left: AppSearchTeam[], right: AppSearchTeam[]) {
   const leftIds = left.map((team) => team.id).filter(Boolean).sort();
   const rightIds = right.map((team) => team.id).filter(Boolean).sort();
   if (leftIds.length !== rightIds.length) return false;
-  return leftIds.every((teamId, index) => teamId === rightIds[index]);
+  if (!leftIds.every((teamId, index) => teamId === rightIds[index])) return false;
+
+  const rightTeamsById = new Map(right.map((team) => [team.id, team]));
+  return left.every((team) => {
+    const hydratedTeam = rightTeamsById.get(team.id);
+    if (!hydratedTeam) return false;
+    return [
+      'name',
+      'sport',
+      'zip',
+      'city',
+      'state',
+      'location'
+    ].every((field) => String(team[field as keyof AppSearchTeam] || '') === String(hydratedTeam[field as keyof AppSearchTeam] || ''));
+  });
 }
 
 function getPlayerSearchError(error: any) {

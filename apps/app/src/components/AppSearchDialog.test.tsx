@@ -654,6 +654,55 @@ describe('AppSearchDialog', () => {
     await waitFor(() => expect(searchAppPlayersMock).toHaveBeenCalledTimes(1));
   });
 
+  it('repeats a provisional search when hydration enriches the same team IDs', async () => {
+    vi.useFakeTimers();
+    const onClose = vi.fn();
+    const initialTeams: AppSearchTeam[] = [{ id: 'team-1', name: 'Bears' }];
+    const hydratedTeams: AppSearchTeam[] = [{ id: 'team-1', name: 'Bears', sport: 'Soccer', zip: '64114' }];
+    let releaseHydration!: (teams: AppSearchTeam[] | PromiseLike<AppSearchTeam[]>) => void;
+
+    getKnownAppSearchTeamsMock.mockReturnValue(initialTeams);
+    loadAppSearchTeamsMock.mockImplementationOnce(() => new Promise((resolve) => {
+      releaseHydration = resolve;
+    }));
+    searchAppTeamsMock.mockImplementation(async (query, searchTeams) => {
+      const normalizedQuery = query.trim().toLowerCase();
+      return searchTeams.filter((team) => [team.name, team.sport, team.zip]
+        .filter(Boolean)
+        .join(' ')
+        .toLowerCase()
+        .includes(normalizedQuery));
+    });
+
+    render(
+      <MemoryRouter>
+        <AppSearchDialog auth={auth} open={true} onClose={onClose} />
+      </MemoryRouter>
+    );
+
+    fireEvent.change(screen.getByLabelText('Search teams, players, actions, help'), { target: { value: 'soccer' } });
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(430);
+      await Promise.resolve();
+    });
+    expect(searchAppTeamsMock).toHaveBeenCalledTimes(1);
+    expect(searchAppTeamsMock).toHaveBeenNthCalledWith(1, 'soccer', initialTeams, null);
+    expect(screen.queryByRole('button', { name: /Bears/i })).toBeNull();
+
+    await act(async () => {
+      releaseHydration(hydratedTeams);
+      await vi.advanceTimersByTimeAsync(50);
+      await Promise.resolve();
+      await vi.advanceTimersByTimeAsync(0);
+    });
+
+    expect(searchAppTeamsMock).toHaveBeenCalledTimes(2);
+    expect(searchAppTeamsMock).toHaveBeenNthCalledWith(2, 'soccer', hydratedTeams, null);
+    expect(screen.getByRole('button', { name: /Bears/i })).not.toBeNull();
+    expect(screen.getByText('Soccer • 64114')).not.toBeNull();
+  });
+
   it('shows provisional local team matches while hydration is pending, then runs a provisional search before hydrating again', async () => {
     vi.useFakeTimers();
     const onClose = vi.fn();
