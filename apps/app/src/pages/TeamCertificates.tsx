@@ -377,6 +377,16 @@ export function TeamCertificates({ auth }: { auth: AuthState }) {
               />
             </label>
             <label className="block md:col-span-2">
+              <span className="text-xs font-black uppercase tracking-[0.04em] text-gray-500">Frame purchase link</span>
+              <input
+                type="url"
+                value={shared.framePurchaseLink}
+                onChange={(event) => setShared((current) => current ? { ...current, framePurchaseLink: event.target.value } : current)}
+                className="mt-1 w-full rounded-xl border border-gray-200 px-3 py-2 text-sm font-semibold text-gray-900"
+                placeholder="https://frames.example.com/team-store"
+              />
+            </label>
+            <label className="block md:col-span-2">
               <span className="text-xs font-black uppercase tracking-[0.04em] text-gray-500">Narrative tone</span>
               <input
                 value={shared.descriptionTone}

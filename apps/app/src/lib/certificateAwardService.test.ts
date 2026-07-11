@@ -43,6 +43,7 @@ describe('certificateAwardService', () => {
     awardTitle: 'Most Improved',
     seasonLabel: 'Spring 2026',
     footerUrl: 'www.allplays.ai',
+    framePurchaseLink: 'https://frames.example.test/team-store',
     descriptionTone: 'celebratory and specific',
     colorMode: 'team',
     customColors: {
@@ -232,13 +233,20 @@ describe('certificateAwardService', () => {
         awardTitle: 'Most Improved',
         description: 'Pat brought energy, confidence, and smart decisions to every match.',
         descriptionSource: 'manual',
+        framePurchaseLink: 'https://frames.example.test/team-store',
         status: 'published'
       }),
       { action: 'published' }
     );
     expect(legacyDraftMocks.updateCertificateBatch).toHaveBeenCalledWith('team-1', 'batch-1', expect.objectContaining({
       generatedCertificateIds: ['cert-1'],
+      shared: expect.objectContaining({
+        framePurchaseLink: 'https://frames.example.test/team-store'
+      }),
       status: 'published'
+    }));
+    expect(legacyDraftMocks.setCertificateDefaults).toHaveBeenCalledWith('team-1', expect.objectContaining({
+      framePurchaseLink: 'https://frames.example.test/team-store'
     }));
     expect(result).toEqual({
       publishedCertificateIds: ['cert-1'],
@@ -313,6 +321,7 @@ describe('certificateAwardService', () => {
     expect(payload.description.length).toBeLessThanOrEqual(350);
     expect(payload).toMatchObject({
       playerId: 'player-1',
+      framePurchaseLink: 'https://frames.example.test/team-store',
       signers: shared.signers,
       status: 'published'
     });

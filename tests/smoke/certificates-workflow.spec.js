@@ -38,6 +38,8 @@ test('certificates demo workflow creates, edits, exports, and prints', async ({ 
     await expect(page.locator('#cert-advanced-customization')).not.toHaveAttribute('open', '');
     await expect(page.locator('#cert-font-recipient')).not.toBeVisible();
     await expect(page.locator('#cert-preview .cert-canvas')).toHaveAttribute('data-template-id', 'banner');
+    await expect(page.locator('#cert-frame-purchase-link')).toBeVisible();
+    await page.locator('#cert-frame-purchase-link').fill('https://frames.example.test/junior-current');
 
     await page.getByText('Customize certificate design').click();
     await expect(page.locator('#cert-advanced-customization')).toHaveAttribute('open', '');
@@ -111,6 +113,8 @@ test('certificates demo workflow creates, edits, exports, and prints', async ({ 
     await expect(page.locator('#cert-description-progress')).toContainText(/Generating descriptions|Descriptions ready/);
     await expect(page.locator('#cert-save-drafts-btn')).toHaveText('Save progress');
     await expect(page.locator('#cert-publish-btn')).toHaveText('Publish certificates');
+    await expect(page.locator('#cert-review-frame-purchase-link')).toHaveValue('https://frames.example.test/junior-current');
+    await page.locator('#cert-review-frame-purchase-link').fill('https://frames.example.test/junior-current/reviewed');
     await expect(page.locator('#cert-review-preview .cert-canvas')).toContainText('Fall 2025');
     await expect(page.locator('[data-draft-field="description"]').first()).toHaveJSProperty('maxLength', 350);
     await expect.poll(() => page.locator('[data-draft-field="description"]').first().inputValue().then((value) => value.length)).toBeLessThanOrEqual(350);
@@ -118,6 +122,7 @@ test('certificates demo workflow creates, edits, exports, and prints', async ({ 
     const firstName = page.locator('[data-draft-field="recipientName"]').first();
     await firstName.fill('Vivian Karpuk Jr.');
     await expect(page.locator('#cert-review-preview .cert-recipient-name')).toContainText('Vivian Karpuk Jr.');
+    await expect(page.locator('#cert-review-frame-purchase-link')).toHaveValue('https://frames.example.test/junior-current/reviewed');
     await expect(page.locator('#cert-review-preview .cert-recipient-name')).toHaveCSS('text-transform', 'uppercase');
 
     await page.locator('#cert-regenerate-selected-btn').click();
@@ -149,6 +154,7 @@ test('certificates demo workflow creates, edits, exports, and prints', async ({ 
     await expect(page.locator('#cert-alert')).toContainText('Saved certificate opened for editing');
     await expect(page.locator('#cert-review-grid tbody tr')).toHaveCount(1);
     await expect(page.locator('#cert-review-preview .cert-recipient-name')).toContainText('Vivian Karpuk Jr.');
+    await expect(page.locator('#cert-review-frame-purchase-link')).toHaveValue('https://frames.example.test/junior-current/reviewed');
 
     await page.locator('[data-open-batch]').first().click();
     await expect(page.locator('#cert-alert')).toContainText('Saved run opened for editing');

@@ -85,6 +85,24 @@ function escapeAttr(value) {
         .replace(/>/g, '&gt;');
 }
 
+function getSafeFramePurchaseUrl(value) {
+    const candidate = String(value || '').trim();
+    if (!candidate) return '';
+
+    try {
+        const parsed = new URL(candidate);
+        return parsed.protocol === 'http:' || parsed.protocol === 'https:' ? parsed.href : '';
+    } catch {
+        return '';
+    }
+}
+
+function renderFramePurchaseAction(value) {
+    const framePurchaseUrl = getSafeFramePurchaseUrl(value);
+    if (!framePurchaseUrl) return '';
+    return `<a id="cert-parent-frame-link" href="${escapeAttr(framePurchaseUrl)}" target="_blank" rel="noopener noreferrer" class="rounded-lg border border-emerald-300 bg-emerald-50 px-3 py-2 text-sm font-semibold text-emerald-700">Buy a frame</a>`;
+}
+
 function getParams() {
     const params = new URLSearchParams(window.location.search);
     const hashParams = new URLSearchParams(window.location.hash.replace(/^#/, ''));
@@ -253,6 +271,7 @@ async function buildSharedDefaults({ team, defaults, currentUser }) {
         awardTitle: defaults?.awardTitle || '',
         seasonLabel: defaults?.seasonLabel || '',
         footerUrl: defaults?.footerUrl || '',
+        framePurchaseLink: defaults?.framePurchaseLink || '',
         colorMode: defaults?.colorMode || (team?.colors ? 'team' : 'template'),
         customColors: {
             ...getDefaultCustomColors(team),
@@ -641,6 +660,12 @@ function renderSetup() {
                     <label for="cert-award-title">Award title</label>
                     <input id="cert-award-title" class="cert-input" data-shared-field="awardTitle" value="${escapeAttr(state.shared.awardTitle)}" placeholder="Optional">
                 </div>
+            </div>
+
+            <div class="cert-field">
+                <label for="cert-frame-purchase-link">Frame Purchase Link <span class="font-normal text-gray-500">(optional)</span></label>
+                <input id="cert-frame-purchase-link" type="url" class="cert-input" data-shared-field="framePurchaseLink" value="${escapeAttr(state.shared.framePurchaseLink)}" placeholder="https://frames.example.com/team-store">
+                <p class="mt-1 text-xs text-gray-500">Linked parents see a Buy a frame action after the certificate is published.</p>
             </div>
 
             <details id="cert-advanced-customization" class="rounded-xl border border-gray-200 bg-gray-50/70" ${state.advancedCustomizationOpen ? 'open' : ''}>
@@ -1043,6 +1068,7 @@ function buildCertificatePayload(draft, status = draft.status || 'draft') {
         statsWindow: draft.statsWindow || state.shared.statsWindow,
         seasonLabel: state.shared.seasonLabel || '',
         footerUrl: state.shared.footerUrl || '',
+        framePurchaseLink: String(state.shared.framePurchaseLink || '').trim(),
         fonts: state.shared.fonts || null,
         signers: normalizeSigners(state.shared.signers),
         foregroundImageRef: state.shared.foregroundImageRef || null,
@@ -1410,6 +1436,7 @@ function buildSharedFromSavedSource(defaults = {}, certificate = {}) {
         awardTitle: pickSavedValue('awardTitle', current.awardTitle || '', defaults, certificate),
         seasonLabel: pickSavedValue('seasonLabel', current.seasonLabel || '', defaults, certificate),
         footerUrl: pickSavedValue('footerUrl', current.footerUrl || '', defaults, certificate),
+        framePurchaseLink: pickSavedValue('framePurchaseLink', current.framePurchaseLink || '', defaults, certificate),
         colorMode: pickSavedValue('colorMode', current.colorMode || (state.team?.colors ? 'team' : 'template'), defaults, certificate),
         customColors: {
             ...getDefaultCustomColors(state.team),
@@ -1726,6 +1753,11 @@ function renderReviewGrid() {
                     <button id="cert-png-btn" type="button" class="rounded-lg border border-gray-300 px-3 py-2 text-xs font-semibold text-gray-700">PNG selected</button>
                     <button id="cert-zip-btn" type="button" class="rounded-lg border border-gray-300 px-3 py-2 text-xs font-semibold text-gray-700">ZIP</button>
                 </div>
+                <div class="cert-field mt-3 max-w-xl">
+                    <label for="cert-review-frame-purchase-link">Frame Purchase Link <span class="font-normal text-gray-500">(optional)</span></label>
+                    <input id="cert-review-frame-purchase-link" type="url" class="cert-input" value="${escapeAttr(state.shared.framePurchaseLink)}" placeholder="https://frames.example.com/team-store">
+                    <p class="mt-1 text-xs text-gray-500">Publishing saves this link and shows Buy a frame to linked parents.</p>
+                </div>
                 <div class="mt-2 text-xs text-gray-500">
                     Looking for frames? <a href="https://a.co/d/0ggfYYG5" target="_blank" rel="noopener noreferrer" class="font-semibold text-primary-700 hover:underline">Buy certificate frames on Amazon</a>
                 </div>
@@ -1752,6 +1784,10 @@ function renderReviewGrid() {
 }
 
 function bindReviewEvents() {
+    document.getElementById('cert-review-frame-purchase-link')?.addEventListener('input', (event) => {
+        state.shared.framePurchaseLink = event.target.value;
+    });
+
     document.querySelectorAll('[data-draft-row]').forEach((row) => {
         row.addEventListener('click', (event) => {
             if (event.target.closest('input, textarea, button')) return;
@@ -2142,6 +2178,7 @@ function renderParentCertificateDetail(certificate) {
     state.drafts = [draft];
     state.selectedDraftId = draft.id;
     state.mode = 'parent-detail';
+    const framePurchaseAction = renderFramePurchaseAction(certificate.framePurchaseLink);
 
     container.innerHTML = `
         <div class="cert-panel">
@@ -2155,6 +2192,7 @@ function renderParentCertificateDetail(certificate) {
                         <a href="certificates.html#teamId=${escapeAttr(state.teamId)}" class="rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm font-semibold text-gray-700">Back to saved</a>
                         <button id="cert-parent-png-btn" type="button" class="rounded-lg border border-primary-200 bg-primary-50 px-3 py-2 text-sm font-semibold text-primary-700">PNG</button>
                         <button id="cert-parent-print-btn" type="button" class="rounded-lg bg-primary-600 px-3 py-2 text-sm font-semibold text-white">Print</button>
+                        ${framePurchaseAction}
                     </div>
                 </div>
             </div>

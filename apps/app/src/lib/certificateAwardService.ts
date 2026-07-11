@@ -252,6 +252,7 @@ export function buildCertificateAwardPayloadForApp({
     descriptionTone: shared.descriptionTone,
     seasonLabel: shared.seasonLabel || '',
     footerUrl: shared.footerUrl || '',
+    framePurchaseLink: String(shared.framePurchaseLink || '').trim(),
     fonts: shared.fonts || null,
     signers: normalizeSigners(shared.signers),
     foregroundImageRef: shared.foregroundImageRef || null,
