@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type FormEvent } from 'react';
+import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
 import { Link, Navigate, useLocation, useNavigate, useParams } from 'react-router-dom';
 import type { LucideIcon } from 'lucide-react';
 import {
@@ -119,6 +119,24 @@ export function TeamDetail({ auth }: { auth: AuthState }) {
   const [detailCollectionsLoading, setDetailCollectionsLoading] = useState(false);
   const [detailCollectionsError, setDetailCollectionsError] = useState('');
   const [detailCollectionsReloadVersion, setDetailCollectionsReloadVersion] = useState(0);
+  const authUserRef = useRef(auth.user);
+  const activeTabRef = useRef(activeTab);
+  const detailCollectionsLoadingRef = useRef(detailCollectionsLoading);
+  const staffPermissionsLoadingRef = useRef(staffPermissionsLoading);
+  const insightsLoadingRef = useRef(insightsLoading);
+  const sponsorsLoadingRef = useRef(sponsorsLoading);
+  const hasTeamModel = Boolean(model);
+  const canManageTeam = Boolean(model?.canManageTeam);
+  const hasStaffPermissions = Boolean(model?.staffPermissions);
+
+  useEffect(() => {
+    authUserRef.current = auth.user;
+    activeTabRef.current = activeTab;
+    detailCollectionsLoadingRef.current = detailCollectionsLoading;
+    staffPermissionsLoadingRef.current = staffPermissionsLoading;
+    insightsLoadingRef.current = insightsLoading;
+    sponsorsLoadingRef.current = sponsorsLoading;
+  });
 
   function navigateToTab(nextTab: TeamTab) {
     if (nextTab === activeTab) return;
@@ -144,10 +162,10 @@ export function TeamDetail({ auth }: { auth: AuthState }) {
       setLoading(true);
       setError(null);
       try {
-        const shouldHydrateOverviewCollections = activeTab === 'overview';
+        const shouldHydrateOverviewCollections = activeTabRef.current === 'overview';
         const nextModel = shouldHydrateOverviewCollections
-          ? await loadParentTeamDetail(teamId, auth.user, { includeDeferredData: false })
-          : await loadParentTeamDetailBootstrap(teamId, auth.user);
+          ? await loadParentTeamDetail(teamId, authUserRef.current, { includeDeferredData: false })
+          : await loadParentTeamDetailBootstrap(teamId, authUserRef.current);
         if (!cancelled) {
           setModel(nextModel);
           setDetailCollectionsLoaded(shouldHydrateOverviewCollections);
@@ -209,11 +227,11 @@ export function TeamDetail({ auth }: { auth: AuthState }) {
   useEffect(() => {
     let cancelled = false;
     async function loadDeferredTeamCollections() {
-      if (!teamId || !model || detailCollectionsLoaded || detailCollectionsLoading || detailCollectionsError || (activeTab !== 'schedule' && activeTab !== 'more')) return;
+      if (!teamId || !hasTeamModel || detailCollectionsLoaded || detailCollectionsLoadingRef.current || detailCollectionsError || (activeTab !== 'schedule' && activeTab !== 'more')) return;
       setDetailCollectionsLoading(true);
       setDetailCollectionsError('');
       try {
-        const nextModel = await loadParentTeamDetail(teamId, auth.user, { includeDeferredData: false });
+        const nextModel = await loadParentTeamDetail(teamId, authUserRef.current, { includeDeferredData: false });
         if (!cancelled) {
           setModel((currentModel) => currentModel ? {
             ...nextModel,
@@ -237,16 +255,16 @@ export function TeamDetail({ auth }: { auth: AuthState }) {
     return () => {
       cancelled = true;
     };
-  }, [activeTab, authUserId, detailCollectionsError, detailCollectionsLoaded, detailCollectionsReloadVersion, Boolean(model), teamId]);
+  }, [activeTab, authUserId, detailCollectionsError, detailCollectionsLoaded, detailCollectionsReloadVersion, hasTeamModel, teamId]);
 
   useEffect(() => {
     let cancelled = false;
     async function loadStaffPermissionsForMoreTab() {
-      if (!teamId || activeTab !== 'more' || !model?.canManageTeam || model.staffPermissions || staffPermissionsLoading) return;
+      if (!teamId || activeTab !== 'more' || !canManageTeam || hasStaffPermissions || staffPermissionsLoadingRef.current) return;
       setStaffPermissionsLoading(true);
       setStaffPermissionsError('');
       try {
-        const staffPermissions = await loadTeamStaffPermissions(teamId, auth.user);
+        const staffPermissions = await loadTeamStaffPermissions(teamId, authUserRef.current);
         if (!cancelled) {
           setModel((currentModel) => currentModel ? { ...currentModel, staffPermissions } : currentModel);
         }
@@ -261,16 +279,16 @@ export function TeamDetail({ auth }: { auth: AuthState }) {
     return () => {
       cancelled = true;
     };
-  }, [activeTab, authUserId, model?.canManageTeam, model?.staffPermissions, teamId]);
+  }, [activeTab, authUserId, canManageTeam, hasStaffPermissions, teamId]);
 
   useEffect(() => {
     let cancelled = false;
     async function loadInsightsForTab() {
-      if (!teamId || activeTab !== 'insights' || !model || insightsLoaded || insightsLoading) return;
+      if (!teamId || activeTab !== 'insights' || !hasTeamModel || insightsLoaded || insightsLoadingRef.current) return;
       setInsightsLoading(true);
       setInsightsError('');
       try {
-        const insights = await loadTeamDetailInsights(teamId, auth.user);
+        const insights = await loadTeamDetailInsights(teamId, authUserRef.current);
         if (!cancelled) {
           setModel((currentModel) => currentModel ? { ...currentModel, ...insights } : currentModel);
           setInsightsLoaded(true);
@@ -286,12 +304,12 @@ export function TeamDetail({ auth }: { auth: AuthState }) {
     return () => {
       cancelled = true;
     };
-  }, [activeTab, authUserId, insightsLoaded, Boolean(model), teamId]);
+  }, [activeTab, authUserId, hasTeamModel, insightsLoaded, teamId]);
 
   useEffect(() => {
     let cancelled = false;
     async function loadSponsorsForMoreTab() {
-      if (!teamId || activeTab !== 'more' || !model || sponsorsLoaded || sponsorsLoading) return;
+      if (!teamId || activeTab !== 'more' || !hasTeamModel || sponsorsLoaded || sponsorsLoadingRef.current) return;
       setSponsorsLoading(true);
       setSponsorsError('');
       try {
@@ -311,7 +329,7 @@ export function TeamDetail({ auth }: { auth: AuthState }) {
     return () => {
       cancelled = true;
     };
-  }, [activeTab, Boolean(model), sponsorsLoaded, teamId]);
+  }, [activeTab, hasTeamModel, sponsorsLoaded, teamId]);
 
   useEffect(() => {
     let cancelled = false;
@@ -719,7 +737,7 @@ function StandingsSection({ model }: { model: TeamDetailModel }) {
 
 function ScheduleTab({ model, auth, onOpenStatTrackerConfigs }: { model: TeamDetailModel; auth: AuthState; onOpenStatTrackerConfigs: () => void }) {
   const events = [...model.upcomingEvents.slice(0, 8), ...model.recentResults.slice(0, 3)];
-  const reminderPreviewLoader = useMemo(() => createStaffRsvpReminderPreviewLoader(), [model.team.id]);
+  const reminderPreviewLoader = useMemo(() => createStaffRsvpReminderPreviewLoader(), []);
   return (
     <section className="app-card p-4">
       <div className="flex items-center justify-between gap-3">
