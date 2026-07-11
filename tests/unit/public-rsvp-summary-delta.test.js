@@ -5,7 +5,8 @@ const require = createRequire(import.meta.url);
 const {
     buildPublicRsvpSummaryProjection,
     buildPublicRsvpSummaryDelta,
-    buildPublicRsvpSummaryJobPlan
+    buildPublicRsvpSummaryJobPlan,
+    shouldPersistRecomputedPublicRsvpSummary
 } = require('../../functions/public-rsvp-summary-core.cjs');
 
 describe('public RSVP summary delta', () => {
@@ -174,5 +175,28 @@ describe('public RSVP summary delta', () => {
             },
             summary: latestPlan.summary
         })).toEqual({ mode: 'already_applied', summary: null });
+    });
+
+    it('rejects stale cross-player recompute persistence after shared state advances', () => {
+        expect(shouldPersistRecomputedPublicRsvpSummary({
+            jobId: 'player-a-job',
+            playerState: { latestJobId: 'player-a-job' },
+            baselineStateUpdateMillis: 1000,
+            currentStateUpdateMillis: 1000
+        })).toBe(true);
+
+        expect(shouldPersistRecomputedPublicRsvpSummary({
+            jobId: 'player-a-job',
+            playerState: { latestJobId: 'player-a-job' },
+            baselineStateUpdateMillis: 1000,
+            currentStateUpdateMillis: 2000
+        })).toBe(false);
+
+        expect(shouldPersistRecomputedPublicRsvpSummary({
+            jobId: 'player-a-job',
+            playerState: { latestJobId: 'newer-player-a-job' },
+            baselineStateUpdateMillis: 1000,
+            currentStateUpdateMillis: 1000
+        })).toBe(false);
     });
 });

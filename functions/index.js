@@ -35,6 +35,7 @@ const { buildCalendarFeedGamesQuery } = require('./calendar-feed-window-core.cjs
 const {
   buildPublicRsvpSummaryProjection,
   buildPublicRsvpSummaryJobPlan,
+  shouldPersistRecomputedPublicRsvpSummary,
   refreshPublicRsvpSummary
 } = require('./public-rsvp-summary-core.cjs');
 const {
@@ -10682,6 +10683,12 @@ function getPublicRsvpSummaryStateRef(teamId, gameId) {
   return firestore.doc(`publicRsvpSummaryStates/${teamId}__${gameId}`);
 }
 
+function getPublicRsvpSnapshotUpdateMillis(docSnap) {
+  if (!docSnap?.exists) return null;
+  if (typeof docSnap.updateTime?.toMillis === 'function') return docSnap.updateTime.toMillis();
+  return null;
+}
+
 async function tryApplyPublicRsvpSummaryDelta({ jobId, teamId, gameId, playerId, response }) {
   const gameRef = firestore.doc(`teams/${teamId}/games/${gameId}`);
   const playerStateRef = getPublicRsvpSummaryPlayerStateRef(teamId, gameId, playerId);
@@ -10728,9 +10735,17 @@ async function persistRecomputedPublicRsvpSummary(input, summary) {
   const playerStateRef = getPublicRsvpSummaryPlayerStateRef(input.teamId, input.gameId, input.playerId);
   const summaryStateRef = getPublicRsvpSummaryStateRef(input.teamId, input.gameId);
   return firestore.runTransaction(async (transaction) => {
-    const playerStateSnap = await transaction.get(playerStateRef);
+    const [playerStateSnap, summaryStateSnap] = await Promise.all([
+      transaction.get(playerStateRef),
+      transaction.get(summaryStateRef)
+    ]);
     const playerState = playerStateSnap.exists ? (playerStateSnap.data() || {}) : {};
-    if (playerState.latestJobId !== input.jobId) return false;
+    if (!shouldPersistRecomputedPublicRsvpSummary({
+      jobId: input.jobId,
+      playerState,
+      baselineStateUpdateMillis: input.summaryStateUpdateMillis,
+      currentStateUpdateMillis: getPublicRsvpSnapshotUpdateMillis(summaryStateSnap)
+    })) return false;
     transaction.set(gameRef, {
       rsvpSummary: buildPublicRsvpSummaryProjection(summary)
     }, { mergeFields: ['rsvpSummary'] });
@@ -10748,10 +10763,20 @@ async function persistRecomputedPublicRsvpSummary(input, summary) {
 }
 
 async function processPublicRsvpSummaryRefresh(input) {
+  const summaryStateRef = getPublicRsvpSummaryStateRef(input.teamId, input.gameId);
   return refreshPublicRsvpSummary({
     tryApplyDelta: () => tryApplyPublicRsvpSummaryDelta(input),
-    recomputeSummary: () => buildPublicRsvpSummary(input.teamId, input.gameId),
-    persistSummary: (summary) => persistRecomputedPublicRsvpSummary(input, summary)
+    recomputeSummary: async () => {
+      const summaryStateSnap = await summaryStateRef.get();
+      return {
+        summaryStateUpdateMillis: getPublicRsvpSnapshotUpdateMillis(summaryStateSnap),
+        summary: await buildPublicRsvpSummary(input.teamId, input.gameId)
+      };
+    },
+    persistSummary: ({ summaryStateUpdateMillis, summary }) => persistRecomputedPublicRsvpSummary({
+      ...input,
+      summaryStateUpdateMillis
+    }, summary)
   });
 }
 
@@ -11078,6 +11103,7 @@ exports.submitPublicRsvp = functions.https.onRequest(async (req, res) => {
     const docId = `public_${tokenHash.slice(0, 24)}`;
     const jobRef = firestore.collection('publicRsvpSummaryRefreshJobs').doc();
     const playerStateRef = getPublicRsvpSummaryPlayerStateRef(tokenData.teamId, tokenData.gameId, tokenData.playerId);
+    const summaryStateRef = getPublicRsvpSummaryStateRef(tokenData.teamId, tokenData.gameId);
     const batch = firestore.batch();
     batch.set(firestore.doc(`teams/${tokenData.teamId}/games/${tokenData.gameId}/rsvps/${docId}`), {
       userId: docId,
@@ -11096,6 +11122,11 @@ exports.submitPublicRsvp = functions.https.onRequest(async (req, res) => {
     batch.set(playerStateRef, {
       latestJobId: jobRef.id,
       latestResponse: response,
+      queuedAt: admin.firestore.FieldValue.serverTimestamp()
+    }, { merge: true });
+    batch.set(summaryStateRef, {
+      latestQueuedJobId: jobRef.id,
+      latestQueuedPlayerId: tokenData.playerId,
       queuedAt: admin.firestore.FieldValue.serverTimestamp()
     }, { merge: true });
     batch.set(jobRef, {

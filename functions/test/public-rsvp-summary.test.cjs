@@ -60,6 +60,16 @@ test('public RSVP summary refresh falls back to recompute when the delta is unsa
   assert.equal(persistedSummary, summary);
 });
 
+test('public RSVP summary refresh skips stale recompute persistence', async () => {
+  const mode = await refreshPublicRsvpSummary({
+    tryApplyDelta: async () => false,
+    recomputeSummary: async () => ({ going: 1 }),
+    persistSummary: async () => false
+  });
+
+  assert.equal(mode, 'stale_recompute');
+});
+
 test('public RSVP summary refresh remains pending until durable fallback work settles', async () => {
   let release;
   let persisted = false;

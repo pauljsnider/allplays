@@ -66,16 +66,22 @@ function buildPublicRsvpSummaryJobPlan({ jobId, playerId, response, playerState 
     : { mode: 'recompute', summary: null };
 }
 
+function shouldPersistRecomputedPublicRsvpSummary({ jobId, playerState = {}, baselineStateUpdateMillis = null, currentStateUpdateMillis = null } = {}) {
+  if (!jobId || playerState.latestJobId !== jobId) return false;
+  return baselineStateUpdateMillis === currentStateUpdateMillis;
+}
+
 async function refreshPublicRsvpSummary({ tryApplyDelta, recomputeSummary, persistSummary }) {
   if (await tryApplyDelta()) return 'delta';
   const summary = await recomputeSummary();
-  await persistSummary(summary);
-  return 'recompute';
+  const persisted = await persistSummary(summary);
+  return persisted === false ? 'stale_recompute' : 'recompute';
 }
 
 module.exports = {
   buildPublicRsvpSummaryProjection,
   buildPublicRsvpSummaryDelta,
   buildPublicRsvpSummaryJobPlan,
+  shouldPersistRecomputedPublicRsvpSummary,
   refreshPublicRsvpSummary
 };

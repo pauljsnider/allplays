@@ -45,6 +45,8 @@ describe('public RSVP function safeguards', () => {
         expect(submitSource).toContain('await assertUsablePublicRsvpToken(tokenData)');
         expect(submitSource).toContain("firestore.collection('publicRsvpSummaryRefreshJobs').doc()");
         expect(submitSource).toContain('batch.set(playerStateRef, {');
+        expect(submitSource).toContain('batch.set(summaryStateRef, {');
+        expect(submitSource).toContain('latestQueuedJobId: jobRef.id');
         expect(submitSource).toContain('batch.set(jobRef, {');
         expect(submitSource).toContain('await batch.commit()');
         expect(submitSource).not.toContain('await buildPublicRsvpSummary');
@@ -63,6 +65,10 @@ describe('public RSVP function safeguards', () => {
         expect(workerSource).toContain('buildPublicRsvpSummaryJobPlan({');
         expect(workerSource).toContain('getPublicRsvpSummaryStateRef(teamId, gameId)');
         expect(workerSource).toContain('notRespondedPlayerIds: summaryState.notRespondedPlayerIds');
+        expect(workerSource).toContain('shouldPersistRecomputedPublicRsvpSummary({');
+        expect(workerSource).toContain('baselineStateUpdateMillis: input.summaryStateUpdateMillis');
+        expect(workerSource).toContain('currentStateUpdateMillis: getPublicRsvpSnapshotUpdateMillis(summaryStateSnap)');
+        expect(workerSource).toContain('const summaryStateSnap = await summaryStateRef.get();');
         expect(workerSource).toContain('rsvpSummary: buildPublicRsvpSummaryProjection(plan.summary)');
         expect(workerSource).toContain('notRespondedPlayerIds: plan.summary.notRespondedPlayerIds');
         expect(workerSource).toContain('rsvpSummary: buildPublicRsvpSummaryProjection(summary)');
