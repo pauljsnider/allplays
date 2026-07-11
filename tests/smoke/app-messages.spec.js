@@ -317,12 +317,12 @@ async function mockMessagesModules(page, options = {}) {
                     }
                     return [
                         { id: 'team', type: 'team', name: 'Bears Team Chat', participantIds: [], participantRoles: ['team'] },
-                        { id: 'staff-conversation', type: 'group', name: 'Staff only', participantIds: ['user-1'], participantRoles: ['staff'] }
+                        { id: 'group_role%3Astaff', type: 'group', name: 'Staff only', participantIds: ['user-1'], participantRoles: ['staff'] }
                     ];
                 }
 
                 export async function ensureStaffChatConversation() {
-                    return { id: 'staff-conversation', type: 'group', name: 'Staff only', participantIds: ['user-1'], participantRoles: ['staff'] };
+                    return { id: 'group_role%3Astaff', type: 'group', name: 'Staff only', participantIds: ['user-1'], participantRoles: ['staff'] };
                 }
 
                 export async function loadChatRecipientOptions() {
@@ -599,7 +599,7 @@ test('messages inbox and team chat exercise real migrated chat UX', async ({ pag
         },
         {
             text: '@ALL PLAYS who needs RSVP help?',
-            selectedConversationId: 'staff-conversation',
+            selectedConversationId: 'group_role%3Astaff',
             selectedConversationRoles: ['staff'],
             selectedRecipientTarget: 'full_team',
             selectedRecipientIds: [],
