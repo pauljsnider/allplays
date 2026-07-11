@@ -1,10 +1,8 @@
+export const PASSWORD_RESET_CONFIRMATION_MESSAGE = "If an account exists for that email, we've sent a reset link.";
+
 export function getPasswordResetErrorMessage(error) {
     if (error?.code === 'auth/invalid-email') {
         return 'Invalid email address format.';
-    }
-
-    if (error?.code === 'auth/user-not-found') {
-        return 'No account found with this email address.';
     }
 
     if (error?.code === 'auth/too-many-requests') {
@@ -37,10 +35,15 @@ export function createForgotPasswordHandler({ emailInput, errorDiv, resetPasswor
             emailInput.value = '';
             showPasswordResetMessage(
                 errorDiv,
-                'Password reset email sent! Please check your inbox and spam folder.',
+                PASSWORD_RESET_CONFIRMATION_MESSAGE,
                 true
             );
         } catch (error) {
+            if (error?.code === 'auth/user-not-found') {
+                emailInput.value = '';
+                showPasswordResetMessage(errorDiv, PASSWORD_RESET_CONFIRMATION_MESSAGE, true);
+                return;
+            }
             showPasswordResetMessage(errorDiv, getPasswordResetErrorMessage(error), false);
             console.error('Password reset error:', error);
         }
