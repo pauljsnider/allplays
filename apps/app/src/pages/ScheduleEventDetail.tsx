@@ -1075,7 +1075,8 @@ function AvailabilitySection({ event, rsvp, availabilityNote, onAvailabilityNote
     ? `Are ${familyNames[0]} and ${familyNames[1]} going?`
     : `Are all ${familyNames.length} children going?`;
   const rsvpWorkflow = useScheduleEventRsvp({ availabilityNote, applyToAllChildren: useFamilyRsvp });
-  const staffRsvpLoader = useMemo(() => createStaffRsvpAvailabilityLoader(), [event.teamId, event.id]);
+  const staffRsvpEventScopeKey = `${event.teamId}:${event.id}`;
+  const staffRsvpLoader = useMemo(() => createStaffRsvpAvailabilityLoader(staffRsvpEventScopeKey), [staffRsvpEventScopeKey]);
   const staffRsvp = useStaffRsvpBreakdown(staffRsvpLoader);
   const showTeamRsvpTools = event.isDbGame && Boolean(event.isTeamAdmin || event.isTeamRsvpReminderManager);
   const availabilitySummary = showTeamRsvpTools ? (staffRsvp.breakdown?.counts || event.rsvpSummary) : event.rsvpSummary;
