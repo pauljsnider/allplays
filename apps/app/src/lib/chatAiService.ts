@@ -14,7 +14,6 @@ import {
 import type { ChatConversation } from './chatService';
 import {
   buildChatAudienceMetadata,
-  isDefaultTeamConversation,
   type ChatTargetType
 } from './chatLogic';
 import type { AuthUser } from './types';
@@ -233,26 +232,17 @@ export async function sendAllPlaysChatAnswer({
     selectedRecipientTarget,
     selectedRecipientIds
   });
-  const isTargetedConversation = !isDefaultTeamConversation(selectedConversationId);
   await postChatMessage(teamId, {
-    text: isTargetedConversation ? `ALL PLAYS\n\n${responseText}` : responseText,
+    text: `ALL PLAYS\n\n${responseText}`,
     senderId: user.uid,
-    senderName: isTargetedConversation ? (user.displayName || user.email || null) : null,
-    senderEmail: isTargetedConversation ? (user.email || null) : null,
-    senderPhotoUrl: isTargetedConversation ? (user.photoUrl || null) : null,
-    ai: !isTargetedConversation,
-    aiName: isTargetedConversation ? null : 'ALL PLAYS',
-    aiQuestion: isTargetedConversation ? null : question,
+    senderName: user.displayName || user.email || null,
+    senderEmail: user.email || null,
+    senderPhotoUrl: user.photoUrl || null,
+    ai: false,
+    aiName: null,
+    aiQuestion: null,
     conversationId: selectedConversationId,
     ...targetMetadata,
-    aiMeta: isTargetedConversation ? null : {
-      statsGameLimit: aiStatsGamesLimit,
-      gamesContextLimit: aiGamesContextLimit,
-      statsRequested: fetchStats,
-      eventsGameLimit: aiEventsGamesLimit,
-      eventsPerGameLimit: aiEventsPerGameLimit,
-      eventsRequested: fetchEvents,
-      statsRequestSource: 'heuristic'
-    }
+    aiMeta: null
   });
 }

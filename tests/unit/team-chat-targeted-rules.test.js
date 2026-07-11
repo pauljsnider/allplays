@@ -89,7 +89,7 @@ describe('targeted team chat Firestore rules', () => {
         expect(legacyChatBlock).not.toContain('allow read: if isFullTeamChatMessage(resource.data) &&');
         expect(legacyChatBlock).not.toContain('allow list: if canAccessTeamChat(teamId);');
         expect(rules).toContain('allow create: if canAccessTeamChat(teamId) &&');
-        expect(rules).toContain('isFullTeamChatMessage(request.resource.data);');
+        expect(rules).toContain('isLegacyFullTeamChatMessageCreateValid(teamId, request.resource.data);');
         expect(rules).not.toContain('allow read: if canReadChatMessage(teamId, resource.data);');
     });
 

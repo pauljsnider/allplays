@@ -100,8 +100,8 @@ function createDeferred<T>(): Deferred<T> {
 function createUploadedAttachment(file: File, urlName = file.name) {
   return {
     type: file.type.startsWith('video/') ? 'video' : 'image',
-    url: `https://cdn.example.test/${urlName}`,
-    path: `team-photos/${urlName}`,
+    url: `https://firebasestorage.googleapis.com/v0/b/allplays-images/o/${encodeURIComponent(urlName)}?alt=media`,
+    path: `team-photos/1700000000000_chat_team-1_team_user-1_${urlName}`,
     name: file.name,
     mimeType: file.type,
     size: file.size,

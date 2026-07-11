@@ -6736,7 +6736,6 @@ export async function postChatMessage(teamId, {
     if (isDefaultTeamConversation(conversationId) && effectiveTargetType !== 'full_team') {
         throw new Error('Targeted team chat messages must use a non-default conversation.');
     }
-    const isLegacyTeamConversation = isDefaultTeamConversation(conversationId);
     const normalizedClientMessageId = normalizeChatClientMessageId(clientMessageId);
     const messageData = {
         clientMessageId: normalizedClientMessageId,
@@ -6746,22 +6745,18 @@ export async function postChatMessage(teamId, {
         senderEmail: senderEmail || null,
         senderPhotoUrl: senderPhotoUrl || null,
         attachments: storedAttachments,
-        imageUrl: isLegacyTeamConversation ? (normalizedMedia.legacyImage.imageUrl || imageUrl || null) : null,
-        imagePath: isLegacyTeamConversation ? (normalizedMedia.legacyImage.imagePath || imagePath || null) : null,
-        imageName: isLegacyTeamConversation ? (normalizedMedia.legacyImage.imageName || imageName || null) : null,
-        imageType: isLegacyTeamConversation ? (normalizedMedia.legacyImage.imageType || imageType || null) : null,
-        imageSize: isLegacyTeamConversation
-            ? (Number.isFinite(normalizedMedia.legacyImage.imageSize)
-                ? normalizedMedia.legacyImage.imageSize
-                : (Number.isFinite(imageSize) ? imageSize : null))
-            : null,
+        imageUrl: null,
+        imagePath: null,
+        imageName: null,
+        imageType: null,
+        imageSize: null,
         createdAt,
         editedAt: null,
         deleted: false,
-        ai: ai === true,
-        aiName: aiName || null,
-        aiQuestion: aiQuestion || null,
-        aiMeta: aiMeta || null,
+        ai: false,
+        aiName: null,
+        aiQuestion: null,
+        aiMeta: null,
         targetType: effectiveTargetType,
         recipientIds: normalizedRecipientIds,
         targetRole: effectiveTargetType === 'staff' ? (targetRole || 'staff') : null,

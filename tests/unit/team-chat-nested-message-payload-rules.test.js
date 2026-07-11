@@ -96,20 +96,35 @@ describe('nested team chat message payload contracts', () => {
         expect(nestedMessageRules).toContain('isNestedChatMessageEditTargetValid(');
     });
 
-    it('keeps the legacy full-team message rules independent from the nested validator', () => {
+    it('hardens legacy full-team creates without coupling them to conversation documents', () => {
         const legacyStart = rules.indexOf('match /chatMessages/{messageId} {');
         const conversationStart = rules.indexOf('match /chatConversations/{conversationId} {');
         const legacyBlock = rules.slice(legacyStart, conversationStart);
+        const legacyValidator = rules.slice(
+            rules.indexOf('function isLegacyFullTeamChatMessageCreateValid'),
+            rules.indexOf('function isNestedChatMessageTargetValid')
+        );
 
-        expect(legacyBlock).toContain('isFullTeamChatMessage(request.resource.data);');
+        expect(legacyBlock).toContain('isLegacyFullTeamChatMessageCreateValid(teamId, request.resource.data);');
         expect(legacyBlock).not.toContain('isNestedChatMessageCreateValid');
+        expect(legacyValidator).toContain("hasValidNestedChatAttachments(teamId, 'team', data)");
+        expect(legacyValidator).toContain('hasValidLegacyChatImageMetadata(data)');
+        expect(legacyValidator).toContain('data.createdAt == request.time');
+        expect(legacyValidator).toContain("data.get('ai', false) == false");
+        expect(legacyValidator).toContain("data.get('aiMeta', null) == null");
+        expect(legacyValidator).toContain("data.get('conversationId', null) == null");
+        expect(legacyValidator).toContain('isFullTeamChatMessage(data)');
+        expect(legacyValidator).not.toContain('conversationData');
     });
 
     it('writes server-authored timestamps and canonical conversation participants from every client path', () => {
         expect(dbSource).toContain('const createdAt = serverTimestamp();');
+        expect(dbSource).toContain('const attachmentUploadedAt = Timestamp.now();');
+        expect(dbSource).toContain('uploadedAt: attachmentUploadedAt');
         expect(dbSource).toContain('editedAt: serverTimestamp()');
-        expect(dbSource).toContain('const isLegacyTeamConversation = isDefaultTeamConversation(conversationId);');
-        expect(dbSource).toContain('imageUrl: isLegacyTeamConversation ?');
+        expect(dbSource).toContain('imageUrl: null,\n        imagePath: null,');
+        expect(appChatSource).toContain('const attachmentUploadedAt = new Date();');
+        expect(appChatSource).toContain('attachments: attachments.map((attachment) => ({ ...attachment, uploadedAt: attachmentUploadedAt }))');
         expect(appChatSource).toContain("serverTimestampFields: ['createdAt']");
         expect(appChatSource).toContain("serverTimestampFields: ['editedAt']");
         expect(appChatSource).toContain("setToServerValue: 'REQUEST_TIME'");
@@ -117,13 +132,17 @@ describe('nested team chat message payload contracts', () => {
         expect(chatPageSource).toContain('recipientIds: Array.isArray(conversation.participantIds) ? conversation.participantIds : participantIds');
     });
 
-    it('does not persist privileged AI identity fields from a targeted client conversation', () => {
-        expect(appAiSource).toContain('const isTargetedConversation = !isDefaultTeamConversation(selectedConversationId);');
-        expect(appAiSource).toContain('ai: !isTargetedConversation');
-        expect(appAiSource).toContain("aiName: isTargetedConversation ? null : 'ALL PLAYS'");
-        expect(appAiSource).toContain('aiMeta: isTargetedConversation ? null : {');
-        expect(chatPageSource).toContain('ai: !isTargetedConversation');
-        expect(chatPageSource).toContain("aiName: isTargetedConversation ? null : 'ALL PLAYS'");
+    it('does not persist privileged AI identity fields from client conversations', () => {
+        expect(dbSource).toContain('ai: false,\n        aiName: null,\n        aiQuestion: null,\n        aiMeta: null,');
+        expect(appChatSource).toContain('ai: false,\n    aiName: null,\n    aiQuestion: null,\n    aiMeta: null,');
+        expect(appAiSource).toContain('text: `ALL PLAYS\\n\\n${responseText}`');
+        expect(appAiSource).toContain('ai: false');
+        expect(appAiSource).toContain('aiName: null');
+        expect(appAiSource).toContain('aiMeta: null');
+        expect(chatPageSource).toContain('text: `ALL PLAYS\\n\\n${responseText}`');
+        expect(chatPageSource).toContain('ai: false');
+        expect(chatPageSource).toContain('aiName: null');
+        expect(chatPageSource).toContain('aiMeta: null');
     });
 });
 
@@ -184,6 +203,69 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('nested team chat message 
         return doc(firestore, `teams/team-1/chatConversations/${conversationId}/chatMessages/${messageId}`);
     }
 
+    function legacyMessageRef(firestore, messageId) {
+        return doc(firestore, `teams/team-1/chatMessages/${messageId}`);
+    }
+
+    function legacyPayload(overrides = {}) {
+        return {
+            clientMessageId: null,
+            text: 'Full team update',
+            senderId: 'parent-1',
+            senderName: 'Pat Parent',
+            senderEmail: 'parent@example.com',
+            senderPhotoUrl: null,
+            attachments: [],
+            imageUrl: null,
+            imagePath: null,
+            imageName: null,
+            imageType: null,
+            imageSize: null,
+            createdAt: serverTimestamp(),
+            editedAt: null,
+            deleted: false,
+            ai: false,
+            aiName: null,
+            aiQuestion: null,
+            aiMeta: null,
+            targetType: 'full_team',
+            recipientIds: [],
+            targetRole: null,
+            conversationId: null,
+            ...overrides
+        };
+    }
+
+    function firebaseMediaUrl(path, bucket = 'game-flow-img.firebasestorage.app') {
+        const encodedPath = encodeURIComponent(path);
+        return `https://firebasestorage.googleapis.com/v0/b/${bucket}/o/${encodedPath}?alt=media`;
+    }
+
+    function legacyAttachment(overrides = {}) {
+        const path = overrides.path || 'team-photos/1700000000000_chat_team-1_team_parent-1_photo.jpg';
+        return {
+            type: 'image',
+            url: firebaseMediaUrl(path),
+            path,
+            thumbnailUrl: null,
+            name: 'photo.jpg',
+            mimeType: 'image/jpeg',
+            size: 1024,
+            uploadedAt: Timestamp.now(),
+            ...overrides,
+            path
+        };
+    }
+
+    function fallbackAttachment(conversationId = staffConversationId, overrides = {}) {
+        const path = overrides.path || `stat-sheets/team-chat/team-1/${conversationId}/coach-1/photo.jpg`;
+        return legacyAttachment({
+            path,
+            url: firebaseMediaUrl(path, 'game-flow-c6311.firebasestorage.app'),
+            ...overrides
+        });
+    }
+
     function directPayload(overrides = {}) {
         return {
             clientMessageId: null,
@@ -237,6 +319,57 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('nested team chat message 
         await assertSucceeds(setDoc(messageRef(parentDb, directConversationId, 'valid-direct'), directPayload()));
         await assertSucceeds(setDoc(messageRef(parentDb, directConversationId, 'valid-direct-no-email'), directWithoutStoredEmail));
         await assertSucceeds(setDoc(messageRef(coachDb, staffConversationId, 'valid-staff'), staffPayload()));
+    });
+
+    it('allows legacy full-team text and exact scoped Firebase Storage uploads', async () => {
+        const parentDb = authedFirestore('parent-1', 'parent@example.com');
+        const attachment = legacyAttachment();
+
+        await assertSucceeds(setDoc(legacyMessageRef(parentDb, 'valid-text'), legacyPayload()));
+        await assertSucceeds(setDoc(legacyMessageRef(parentDb, 'valid-media'), legacyPayload({
+            text: '',
+            attachments: [attachment]
+        })));
+    });
+
+    it('allows canonical double-encoded percent segments without legacy duplicate URL fields', async () => {
+        const coachDb = authedFirestore('coach-1', 'coach@example.com');
+        const attachment = fallbackAttachment();
+
+        expect(attachment.url).toContain('group_role%253Astaff');
+        await assertSucceeds(setDoc(messageRef(coachDb, staffConversationId, 'valid-percent-path'), staffPayload({
+            text: '',
+            attachments: [attachment]
+        })));
+    });
+
+    it('denies forged legacy origins, paths, metadata, senders, AI fields, and timestamps', async () => {
+        const parentDb = authedFirestore('parent-1', 'parent@example.com');
+        const validAttachment = legacyAttachment();
+        const invalidPayloads = [
+            legacyPayload({ attachments: [legacyAttachment({ url: 'https://attacker.example/photo.jpg' })] }),
+            legacyPayload({
+                attachments: [validAttachment],
+                imageUrl: validAttachment.url,
+                imagePath: validAttachment.path,
+                imageName: validAttachment.name,
+                imageType: validAttachment.mimeType,
+                imageSize: validAttachment.size
+            }),
+            legacyPayload({ attachments: [legacyAttachment({ path: 'team-photos/unscoped-photo.jpg' })] }),
+            legacyPayload({ attachments: [legacyAttachment({ size: 5 * 1024 * 1024 + 1 })] }),
+            legacyPayload({ unexpectedField: true }),
+            legacyPayload({ senderId: 'user-2' }),
+            legacyPayload({ ai: true, aiName: 'ALL PLAYS' }),
+            legacyPayload({ aiMeta: { forged: true } }),
+            legacyPayload({ createdAt: Timestamp.fromMillis(1700000000000) }),
+            legacyPayload({ targetType: 'individuals', recipientIds: ['user-2'] }),
+            legacyPayload({ conversationId: 'team' })
+        ];
+
+        for (const [index, payload] of invalidPayloads.entries()) {
+            await assertFails(setDoc(legacyMessageRef(parentDb, `invalid-legacy-${index}`), payload));
+        }
     });
 
     it('allows bounded, scoped Firebase Storage attachment metadata', async () => {

@@ -1344,8 +1344,6 @@ async function nativePostChatMessage(teamId: string, input: {
 } & ChatAudienceMetadata) {
   const attachmentUploadedAt = new Date();
   const attachments = input.attachments || [];
-  const firstImage = attachments.find((attachment) => attachment.type === 'image') || null;
-  const isLegacyTeamConversation = isDefaultTeamConversation(input.conversationId);
   const documentId = input.clientMessageId || `native_${input.senderId}_${Date.now()}_${Math.random().toString(36).slice(2)}`
     .replace(/[^A-Za-z0-9_-]/g, '_')
     .slice(0, 120);
@@ -1358,18 +1356,18 @@ async function nativePostChatMessage(teamId: string, input: {
     senderEmail: input.senderEmail || null,
     senderPhotoUrl: input.senderPhotoUrl || null,
     attachments: attachments.map((attachment) => ({ ...attachment, uploadedAt: attachmentUploadedAt })),
-    imageUrl: isLegacyTeamConversation ? (firstImage?.url || null) : null,
-    imagePath: isLegacyTeamConversation ? (firstImage?.path || null) : null,
-    imageName: isLegacyTeamConversation ? (firstImage?.name || null) : null,
-    imageType: isLegacyTeamConversation ? (firstImage?.mimeType || null) : null,
-    imageSize: isLegacyTeamConversation ? (firstImage?.size ?? null) : null,
+    imageUrl: null,
+    imagePath: null,
+    imageName: null,
+    imageType: null,
+    imageSize: null,
     createdAt: null,
     editedAt: null,
     deleted: false,
-    ai: input.ai === true,
-    aiName: input.aiName || null,
-    aiQuestion: input.aiQuestion || null,
-    aiMeta: input.aiMeta || null,
+    ai: false,
+    aiName: null,
+    aiQuestion: null,
+    aiMeta: null,
     targetType: input.targetType,
     recipientIds: input.targetType === 'individuals' ? input.recipientIds : [],
     targetRole: input.targetType === 'staff' ? (input.targetRole || 'staff') : null,
@@ -1390,7 +1388,6 @@ export async function sendTeamChatMessage({
   selectedRecipientTarget,
   selectedRecipientIds,
   onProgress,
-  aiMeta,
   skipInteractionTiming = false
 }: {
   teamId: string;
@@ -1474,7 +1471,7 @@ export async function sendTeamChatMessage({
       senderPhotoUrl: profile.photoUrl || user.photoUrl || null,
       attachments,
       conversationId,
-      aiMeta: aiMeta || null,
+      aiMeta: null,
       ...targetMetadata
     };
 
