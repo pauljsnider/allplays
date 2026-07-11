@@ -601,8 +601,9 @@ async function startNativeCameraPreview() {
 
 async function beginNativeBroadcastStream() {
   if (!userCanUseNativeCamera()) return;
+  const stream = state.nativeCameraStream;
   const readiness = getNativeCameraReadiness();
-  if (!readiness.cameraReady || !readiness.microphoneReady || !state.nativeCameraStream) {
+  if (!readiness.cameraReady || !readiness.microphoneReady || !stream) {
     const message = 'Camera and microphone are no longer ready. Retry to restore setup and start again.';
     setNativeBroadcastStatus(BROADCAST_STREAM_STATUSES.FAILED, message);
     setNativeCameraStatus(message, 'error');
@@ -613,10 +614,18 @@ async function beginNativeBroadcastStream() {
   setNativeCameraStatus('Starting the live device stream...');
   try {
     if (!els.nativeCameraPreview) throw new Error('Camera preview is unavailable.');
-    if (els.nativeCameraPreview.srcObject !== state.nativeCameraStream) {
-      els.nativeCameraPreview.srcObject = state.nativeCameraStream;
+    if (els.nativeCameraPreview.srcObject !== stream) {
+      els.nativeCameraPreview.srcObject = stream;
     }
     await els.nativeCameraPreview.play();
+    if (state.nativeCameraStream !== stream || els.nativeCameraPreview.srcObject !== stream) return;
+    const postPlayReadiness = getNativeCameraReadiness();
+    if (!postPlayReadiness.cameraReady || !postPlayReadiness.microphoneReady) {
+      const message = 'Camera and microphone are no longer ready. Retry to restore setup and start again.';
+      setNativeBroadcastStatus(BROADCAST_STREAM_STATUSES.FAILED, message);
+      setNativeCameraStatus(message, 'error');
+      return;
+    }
     setNativeBroadcastStatus(BROADCAST_STREAM_STATUSES.LIVE);
     setNativeCameraStatus('Live device stream is running from this preview. No backend ingest or cloud recording is active.', 'success');
   } catch (error) {

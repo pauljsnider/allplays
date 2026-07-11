@@ -33,4 +33,19 @@ describe('live game camera setup and stream controls', () => {
         expect(copySurface).toContain('No backend ingest or cloud recording is active.');
         expect(copySurface).not.toContain('MediaRecorder');
     });
+
+    it('re-checks the active preview stream before marking a pending play live', () => {
+        const beginStart = liveGameJs.indexOf('async function beginNativeBroadcastStream()');
+        const beginEnd = liveGameJs.indexOf('async function retryNativeBroadcastStream()', beginStart);
+        const beginSource = liveGameJs.slice(beginStart, beginEnd);
+        const afterPlaySource = beginSource.slice(beginSource.indexOf('await els.nativeCameraPreview.play()'));
+
+        expect(beginSource).toContain('const stream = state.nativeCameraStream;');
+        expect(beginSource).toContain('els.nativeCameraPreview.srcObject = stream;');
+        expect(afterPlaySource).toContain('state.nativeCameraStream !== stream');
+        expect(afterPlaySource).toContain('els.nativeCameraPreview.srcObject !== stream');
+        expect(afterPlaySource).toContain('const postPlayReadiness = getNativeCameraReadiness();');
+        expect(afterPlaySource).toContain('!postPlayReadiness.cameraReady || !postPlayReadiness.microphoneReady');
+        expect(afterPlaySource.indexOf('state.nativeCameraStream !== stream')).toBeLessThan(afterPlaySource.indexOf('setNativeBroadcastStatus(BROADCAST_STREAM_STATUSES.LIVE)'));
+    });
 });
