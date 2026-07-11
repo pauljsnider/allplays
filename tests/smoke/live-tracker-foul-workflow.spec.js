@@ -469,6 +469,18 @@ test('adds a home foul through the live tracker and removes it from the log with
         const store = await readStore(page);
         return store.aggregatedStats?.p1?.stats?.fouls;
     }).toBe(4);
+
+    await expect.poll(async () => {
+        return page.evaluate((stateKey) => {
+            const persisted = JSON.parse(localStorage.getItem(stateKey) || 'null');
+            return persisted?.state?.stats?.p1?.fouls;
+        }, LOCAL_STATE_KEY);
+    }).toBe(4);
+
+    await page.reload({ waitUntil: 'domcontentloaded' });
+    await expect(page.locator('#live-players')).toContainText(/FLS 4.*⚠️/);
+    await expect(page.locator('#live-players')).not.toContainText('FOULED OUT!');
+    await expect(page.locator('#log-mobile > div').filter({ hasText: '#3 FOULS +1' })).toHaveCount(1);
 });
 
 test('persists offline live scoring events and drains restored queue after reconnect', async ({ page, baseURL }) => {

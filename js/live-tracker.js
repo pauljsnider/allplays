@@ -1143,6 +1143,7 @@ function renderLog() {
 
         // Remove the log entry
         state.log.splice(index, 1);
+        persistLocalTrackerState();
 
         // Re-render everything to reflect the changes
         renderAll();
