@@ -611,6 +611,37 @@ describe('AppSearchDialog', () => {
     expect(searchAppPlayersMock).toHaveBeenCalledWith('alex', expect.any(Map), null);
   });
 
+  it('waits for the shortened player coalesce window before running remote player search', async () => {
+    vi.useFakeTimers();
+    const onClose = vi.fn();
+    const knownTeams: AppSearchTeam[] = [{ id: 'team-1', name: 'Alexandria', sport: 'Soccer', zip: '64114' }];
+    getKnownAppSearchTeamsMock.mockReturnValue(knownTeams);
+    loadAppSearchTeamsMock.mockResolvedValue(knownTeams);
+
+    render(
+      <MemoryRouter>
+        <AppSearchDialog auth={auth} open={true} onClose={onClose} />
+      </MemoryRouter>
+    );
+
+    fireEvent.change(screen.getByLabelText('Search teams, players, actions, help'), { target: { value: 'alex' } });
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(299);
+      await Promise.resolve();
+    });
+    expect(searchAppTeamsMock).toHaveBeenCalledWith('alex', knownTeams, null);
+    expect(searchAppPlayersMock).not.toHaveBeenCalled();
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1);
+      await Promise.resolve();
+    });
+
+    expect(searchAppPlayersMock).toHaveBeenCalledTimes(1);
+    expect(searchAppPlayersMock).toHaveBeenCalledWith('alex', expect.any(Map), null);
+  });
+
   it('cancels a scheduled remote player search when the query is cleared', async () => {
     vi.useFakeTimers();
     const onClose = vi.fn();
