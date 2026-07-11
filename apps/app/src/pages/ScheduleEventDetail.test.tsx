@@ -2836,9 +2836,14 @@ describe('ScheduleEventDetail staff RSVP overrides', () => {
     cleanup();
   });
 
-  it('shows only missing-player overrides by default and expands responded sections on demand', async () => {
+  it('hides admin tools by default, then shows missing-player overrides and expands responded sections on demand', async () => {
     scheduleServiceMocks.loadParentScheduleEventDetail.mockResolvedValue({
-      events: [buildEvent({ isTeamAdmin: true, isTeamRsvpReminderManager: true })],
+      events: [buildEvent({
+        isTeamAdmin: true,
+        isTeamRsvpReminderManager: true,
+        availabilityNotesVisible: true,
+        availabilityNotes: [{ displayName: 'Sam Lee', response: 'maybe', note: 'Arriving after warmups' }]
+      })],
       children: []
     });
     scheduleServiceMocks.loadStaffScheduleRsvpBreakdown.mockResolvedValue({
@@ -2859,8 +2864,21 @@ describe('ScheduleEventDetail staff RSVP overrides', () => {
     renderScheduleEventDetail();
 
     await waitFor(() => {
+      expect(screen.getByRole('button', { name: /Team RSVP tools.*1 going.*1 missing/ })).toBeTruthy();
+    });
+    expect(screen.queryByText('Staff RSVP overrides')).toBeNull();
+    expect(screen.queryByText('Staff RSVP reminder')).toBeNull();
+    expect(screen.queryByText('Arriving after warmups')).toBeNull();
+    expect(screen.queryByTestId('staff-rsvp-row-p4')).toBeNull();
+
+    const teamToolsDisclosure = screen.getByRole('button', { name: /Team RSVP tools.*1 going.*1 missing/ });
+    expect(teamToolsDisclosure.getAttribute('aria-expanded')).toBe('false');
+    fireEvent.click(teamToolsDisclosure);
+
+    await waitFor(() => {
       expect(screen.getByText('Staff RSVP overrides')).toBeTruthy();
     });
+    expect(screen.getByText('Arriving after warmups')).toBeTruthy();
     expect(screen.getByTestId('staff-rsvp-row-p4')).toBeTruthy();
     expect(screen.queryByTestId('staff-rsvp-row-p1')).toBeNull();
     expect(screen.queryByTestId('staff-rsvp-row-p2')).toBeNull();
@@ -2922,6 +2940,11 @@ describe('ScheduleEventDetail staff RSVP overrides', () => {
     renderScheduleEventDetail();
 
     await waitFor(() => {
+      expect(screen.getByRole('button', { name: /Team RSVP tools.*1 going.*1 missing/ })).toBeTruthy();
+    });
+    fireEvent.click(screen.getByRole('button', { name: /Team RSVP tools.*1 going.*1 missing/ }));
+
+    await waitFor(() => {
       expect(screen.getByText('Staff RSVP overrides')).toBeTruthy();
     });
 
@@ -2959,7 +2982,57 @@ describe('ScheduleEventDetail staff RSVP overrides', () => {
     });
 
     expect(screen.queryByText('Staff RSVP overrides')).toBeNull();
+    expect(screen.queryByRole('button', { name: /Team RSVP tools/ })).toBeNull();
     expect(scheduleServiceMocks.loadStaffScheduleRsvpBreakdown).not.toHaveBeenCalled();
+  });
+
+  it('defers reminder-manager tools and reminder loading until the disclosure opens', async () => {
+    scheduleServiceMocks.loadParentScheduleEventDetail.mockResolvedValue({
+      events: [buildEvent({ isTeamAdmin: false, isTeamRsvpReminderManager: true })],
+      children: []
+    });
+    scheduleServiceMocks.loadStaffRsvpReminderPreview.mockResolvedValue({
+      missingPlayerCount: 1,
+      eligibleEmailCount: 1,
+      players: [{ playerId: 'p4', playerName: 'Devon Lee', parentEmails: ['devon@example.com'] }]
+    });
+
+    renderScheduleEventDetail();
+
+    const disclosure = await screen.findByRole('button', { name: /Team RSVP tools.*1 going.*1 missing/ });
+    expect(disclosure.getAttribute('aria-expanded')).toBe('false');
+    expect(screen.queryByText('Staff RSVP reminder')).toBeNull();
+    expect(scheduleServiceMocks.loadStaffRsvpReminderPreview).not.toHaveBeenCalled();
+
+    fireEvent.click(disclosure);
+
+    await waitFor(() => {
+      expect(screen.getByText('Staff RSVP reminder')).toBeTruthy();
+    });
+    expect(scheduleServiceMocks.loadStaffRsvpReminderPreview).toHaveBeenCalledTimes(1);
+    expect(scheduleServiceMocks.loadStaffScheduleRsvpBreakdown).not.toHaveBeenCalled();
+  });
+
+  it('keeps the quick RSVP and shared notes unchanged for a normal parent without staff tools', async () => {
+    scheduleServiceMocks.loadParentScheduleEventDetail.mockResolvedValue({
+      events: [buildEvent({
+        isTeamStaff: false,
+        availabilityNotesVisible: true,
+        availabilityNotes: [{ displayName: 'Sam Lee', response: 'maybe', note: 'Arriving late' }]
+      })],
+      children: []
+    });
+
+    renderScheduleEventDetail();
+
+    await waitFor(() => {
+      expect(screen.getByText('Is Avery Smith going?')).toBeTruthy();
+    });
+
+    expect(screen.getByText('Arriving late')).toBeTruthy();
+    expect(screen.queryByRole('button', { name: /Team RSVP tools/ })).toBeNull();
+    expect(scheduleServiceMocks.loadStaffScheduleRsvpBreakdown).not.toHaveBeenCalled();
+    expect(scheduleServiceMocks.loadStaffRsvpReminderPreview).not.toHaveBeenCalled();
   });
 });
 
