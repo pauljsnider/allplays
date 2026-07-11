@@ -18,14 +18,17 @@ export type SocialPostType =
   | 'practice_packet'
   | 'upcoming_game'
   | 'achievement'
-  | 'manual_post';
+  | 'manual_post'
+  | 'player_seeking_team'
+  | 'team_seeking_players';
 
 export type SocialVisibility =
   | 'household'
   | 'team'
   | 'friends'
   | 'friends_and_team'
-  | 'public_profile';
+  | 'public_profile'
+  | 'community';
 
 export type SocialFeedFilter = 'all' | 'friends' | 'teams' | 'players' | 'highlights' | 'opportunities';
 
@@ -239,11 +242,14 @@ export function getSocialTypeLabel(type: SocialPostType) {
     practice_packet: 'Practice packet',
     upcoming_game: 'Upcoming game',
     achievement: 'Achievement',
-    manual_post: 'Post'
+    manual_post: 'Post',
+    player_seeking_team: 'Player looking for team',
+    team_seeking_players: 'Team looking for players'
   }[type] || 'Post';
 }
 
 export function getSocialVisibilityLabel(visibility: SocialVisibility) {
+  if (visibility === 'community') return 'Community';
   return socialVisibilityOptions.find((option) => option.id === visibility)?.label || 'Team';
 }
 

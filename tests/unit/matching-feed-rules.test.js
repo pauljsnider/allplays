@@ -1,0 +1,110 @@
+import { readFileSync } from 'node:fs';
+import { describe, expect, it } from 'vitest';
+
+function rulesSource() {
+    return readFileSync(new URL('../../firestore.rules', import.meta.url), 'utf8');
+}
+
+const matchingDetailFields = [
+    'kind',
+    'sport',
+    'ageGroup',
+    'city',
+    'state',
+    'zip',
+    'positions',
+    'level',
+    'timeframe',
+    'openSpots',
+    'playerFirstName',
+    'signupUrl'
+];
+
+const matchingResponseFields = [
+    'responderId',
+    'responderName',
+    'responderPhotoUrl',
+    'teamId',
+    'teamName',
+    'message',
+    'createdAt',
+    'updatedAt'
+];
+
+describe('Player/team matching feed Firestore rules', () => {
+    it('restricts community visibility to the two matching post types with a strict payload', () => {
+        const source = rulesSource();
+
+        expect(source).toContain('function isMatchingSocialPostType(value)');
+        expect(source).toContain("return value in ['player_seeking_team', 'team_seeking_players'];");
+        expect(source).toContain('function isCommunityMatchingPostCreateValid(data)');
+        expect(source).toContain("data.get('visibility', '') == 'community' &&");
+        expect(source).toContain("data.get('status', '') == 'open' &&");
+        expect(source).toContain("data.get('expiresAt', null) is timestamp &&");
+        expect(source).toContain("data.get('media', []).size() == 0 &&");
+        expect(source).toContain("data.get('playerIds', []).size() == 0 &&");
+        expect(source).toContain("!data.keys().hasAny(['authorEmail', 'email', 'phone'])");
+        expect(source).toContain('isCommunityMatchingPostCreateValid(request.resource.data)');
+
+        // Community visibility is NOT added to the generic social visibility list.
+        expect(source).toContain("return value in ['household', 'team', 'friends', 'friends_and_team', 'public_profile'];");
+    });
+
+    it('keeps the matching detail map on a field allowlist', () => {
+        const source = rulesSource();
+        expect(source).toContain('function matchingDetailFields()');
+        for (const field of matchingDetailFields) {
+            expect(source).toContain(`'${field}'`);
+        }
+        expect(source).toContain('data.get(\'matching\', {}).keys().hasOnly(matchingDetailFields())');
+    });
+
+    it('requires team admin rights for team_seeking_players posts', () => {
+        const source = rulesSource();
+        expect(source).toContain("data.get('type', '') == 'team_seeking_players' &&");
+        expect(source).toContain("isTeamOwnerOrAdmin(data.get('teamId', ''))");
+        expect(source).toContain("data.get('type', '') == 'player_seeking_team' &&");
+        expect(source).toContain("data.get('teamId', null) == null");
+    });
+
+    it('lets signed-in users read community posts and authors manage lifecycle', () => {
+        const source = rulesSource();
+        expect(source).toContain("data.get('visibility', '') == 'community' ||");
+        expect(source).toContain('function isMatchingPostAuthorLifecycleUpdateValid()');
+        expect(source).toContain("request.resource.data.get('status', '') in ['open', 'filled', 'closed'] &&");
+        expect(source).toContain('isMatchingPostAuthorLifecycleUpdateValid()');
+    });
+
+    it('blocks comments and reactions on community posts', () => {
+        const source = rulesSource();
+        const commentGuard = source.match(/match \/comments\/\{commentId\} \{[\s\S]*?\}/);
+        const reactionGuard = source.match(/match \/reactions\/\{userId\} \{[\s\S]*?\}/);
+        expect(commentGuard?.[0]).toContain("data.get('visibility', '') != 'community'");
+        expect(reactionGuard?.[0]).toContain("data.get('visibility', '') != 'community'");
+    });
+
+    it('scopes matching responses to the responder, post author, and admins', () => {
+        const source = rulesSource();
+        expect(source).toContain('match /responses/{userId}');
+        expect(source).toContain('function isMatchingResponseTargetPost(postId)');
+        expect(source).toContain("post.get('authorId', '') != request.auth.uid");
+        expect(source).toContain('function isMatchingPostAuthor(postId)');
+        expect(source).toContain('function isMatchingResponsePayloadValid(data)');
+        for (const field of matchingResponseFields) {
+            expect(source).toContain(`'${field}'`);
+        }
+        expect(source).toContain("data.get('message', '').size() <= 600");
+    });
+
+    it('allows only narrowly-validated matching response notifications in the inbox', () => {
+        const source = rulesSource();
+        expect(source).toContain('function isMatchingResponseNotificationCreateValid(recipientId, data)');
+        expect(source).toContain("data.get('category', '') == 'matching_response' &&");
+        expect(source).toContain("data.get('fromUserId', '') == request.auth.uid &&");
+        expect(source).toContain("data.get('appRoute', '') == '/opportunities?view=mine' &&");
+        expect(source).toContain('allow create: if isMatchingResponseNotificationCreateValid(userId, request.resource.data);');
+
+        const inboxBlock = source.match(/match \/notificationInbox\/\{itemId\} \{[\s\S]*?\}/);
+        expect(inboxBlock?.[0]).toContain('allow update, delete: if false;');
+    });
+});

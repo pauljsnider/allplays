@@ -10,6 +10,7 @@ const firebaseMocks = vi.hoisted(() => ({
     setDoc: vi.fn(),
     addDoc: vi.fn(),
     updateDoc: vi.fn(),
+    deleteDoc: vi.fn(),
     query: vi.fn((collectionRef, ...clauses) => ({ collectionRef, clauses })),
     where: vi.fn((field, op, value) => ({ field, op, value })),
     limit: vi.fn((count) => ({ count })),

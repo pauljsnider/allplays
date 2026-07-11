@@ -69,11 +69,13 @@ describe('feature coverage map', () => {
 
         expect(report.tierGaps).toEqual([
             { feature: 'registration.provider-sync-checkout', tier: 'workflow' },
-            { feature: 'officials.org-tournaments-drills', tier: 'workflow' }
+            { feature: 'officials.org-tournaments-drills', tier: 'workflow' },
+            { feature: 'community.player-team-matching', tier: 'workflow' }
         ]);
         expect(formatted).toContain('Known follow-up gaps:');
         expect(formatted).toContain('registration.provider-sync-checkout [workflow]');
         expect(formatted).toContain('officials.org-tournaments-drills [workflow]');
+        expect(formatted).toContain('community.player-team-matching [workflow]');
         expect(formatted).not.toContain('fees.payments-team-pass [workflow]');
     });
 });

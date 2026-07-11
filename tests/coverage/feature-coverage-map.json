@@ -781,6 +781,37 @@
                     "description": "Native deep-link and push-notification routes remain unit-covered only until emulator/device workflow tests are added."
                 }
             ]
+        },
+        {
+            "id": "community.player-team-matching",
+            "label": "Community opportunities feed: players looking for teams and teams looking for players",
+            "priority": "medium",
+            "plannedPr": "player-team-matching-feed",
+            "targetTiers": [
+                "unit",
+                "integration",
+                "workflow"
+            ],
+            "legacyPages": [],
+            "appPages": [
+                "apps/app/src/pages/Opportunities.tsx"
+            ],
+            "cloudFunctions": [],
+            "unitTests": [
+                "apps/app/src/lib/matchingLogic.test.ts",
+                "apps/app/src/lib/matchingService.test.ts",
+                "tests/unit/matching-feed-rules.test.js"
+            ],
+            "integrationTests": [
+                "apps/app/src/pages/Opportunities.test.tsx"
+            ],
+            "workflowTests": [],
+            "knownGaps": [
+                {
+                    "tier": "workflow",
+                    "description": "Opportunities browse/respond flow needs a Playwright smoke spec once the route ships to preview."
+                }
+            ]
         }
     ]
 }

@@ -7,6 +7,7 @@ import {
   setDoc as legacySetDoc,
   addDoc as legacyAddDoc,
   updateDoc as legacyUpdateDoc,
+  deleteDoc as legacyDeleteDoc,
   query as legacyQuery,
   where as legacyWhere,
   limit as legacyLimit,
@@ -26,6 +27,7 @@ export const getDoc = legacyGetDoc as (...args: any[]) => Promise<any>;
 export const setDoc = legacySetDoc as (...args: any[]) => Promise<any>;
 export const addDoc = legacyAddDoc as (...args: any[]) => Promise<any>;
 export const updateDoc = legacyUpdateDoc as (...args: any[]) => Promise<any>;
+export const deleteDoc = legacyDeleteDoc as (...args: any[]) => Promise<any>;
 export const query = legacyQuery as (...args: any[]) => any;
 export const where = legacyWhere as (...args: any[]) => any;
 export const limit = legacyLimit as (...args: any[]) => any;

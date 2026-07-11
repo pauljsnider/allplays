@@ -14,6 +14,7 @@ import {
   where
 } from './adapters/legacySocialDb';
 import { loadParentHome } from './homeService';
+import { loadRelevantMatchingFeedItems } from './matchingService';
 import { createLogger } from './logger';
 import type { ParentHomeModel } from './homeLogic';
 import { uploadTeamChatAttachment } from './chatService';
@@ -152,11 +153,12 @@ export async function loadSocialHome(user: AuthUser | null, homeOverride?: Paren
   const home = homeOverride || await loadParentHome(user);
   const authorName = getUserDisplayName(user);
   const derivedFeed = buildDerivedSocialFeedItems(home, user.uid, authorName);
-  const [posts, friendships, suggestions] = await Promise.all([
+  const [posts, matchingFeed, friendships, suggestions] = await Promise.all([
     loadVisibleSocialPosts(user, home).catch((error) => {
       logger.warn('Unable to load social posts.', { error });
       return [];
     }),
+    loadRelevantMatchingFeedItems(user, home),
     loadFriendships(user).catch((error) => {
       logger.warn('Unable to load friendships.', { error });
       return [];
@@ -168,7 +170,7 @@ export async function loadSocialHome(user: AuthUser | null, homeOverride?: Paren
   ]);
 
   return buildSocialHomeModel({
-    feedItems: mergeSocialFeedItems(posts, derivedFeed),
+    feedItems: mergeSocialFeedItems(posts, matchingFeed, derivedFeed),
     friendshipFriends: friendships,
     suggestions,
     currentUserId: user.uid

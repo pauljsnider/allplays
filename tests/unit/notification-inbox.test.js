@@ -84,14 +84,15 @@ describe('notification inbox pipeline', () => {
         expect(appNotificationInboxServiceSource).not.toContain('console.');
     });
 
-    it('keeps notification inbox records owner-readable and server-writable only', () => {
+    it('keeps notification inbox records owner-readable with only validated matching-response creates', () => {
         const inboxRules = rulesSource.slice(
             rulesSource.indexOf('match /notificationInbox/{itemId}'),
             rulesSource.indexOf('match /privateAiMessages/{messageId}')
         );
 
         expect(inboxRules).toContain('allow read: if isOwner(userId);');
-        expect(inboxRules).toContain('allow create, update, delete: if false;');
+        expect(inboxRules).toContain('allow create: if isMatchingResponseNotificationCreateValid(userId, request.resource.data);');
+        expect(inboxRules).toContain('allow update, delete: if false;');
         expect(inboxRules).not.toContain('isGlobalAdmin()');
         expect(inboxRules).not.toContain('allow write');
     });

@@ -1231,6 +1231,149 @@ service cloud.firestore {
       ];
     }
 
+    function isMatchingSocialPostType(value) {
+      return value in ['player_seeking_team', 'team_seeking_players'];
+    }
+
+    // Community matching posts (player/team matching feed). Only the two
+    // matching types may use community visibility, and their payload is a
+    // strict allowlist so no contact details or roster references can leak.
+    function matchingDetailFields() {
+      return [
+        'kind',
+        'sport',
+        'ageGroup',
+        'city',
+        'state',
+        'zip',
+        'positions',
+        'level',
+        'timeframe',
+        'openSpots',
+        'playerFirstName',
+        'signupUrl'
+      ];
+    }
+
+    function isCommunityMatchingPostCreateValid(data) {
+      return isSignedIn() &&
+             data.get('authorId', '') == request.auth.uid &&
+             isMatchingSocialPostType(data.get('type', '')) &&
+             data.get('visibility', '') == 'community' &&
+             data.get('status', '') == 'open' &&
+             data.get('expiresAt', null) is timestamp &&
+             data.get('title', '') is string &&
+             data.get('title', '').size() > 0 &&
+             data.get('title', '').size() <= 160 &&
+             data.get('detail', '') is string &&
+             data.get('caption', '') is string &&
+             data.get('caption', '').size() <= 600 &&
+             data.get('media', []) is list &&
+             data.get('media', []).size() == 0 &&
+             data.get('playerIds', []) is list &&
+             data.get('playerIds', []).size() == 0 &&
+             data.get('hidden', false) == false &&
+             !data.keys().hasAny(['authorEmail', 'email', 'phone']) &&
+             data.get('matching', {}) is map &&
+             data.get('matching', {}).keys().hasOnly(matchingDetailFields()) &&
+             data.get('matching', {}).get('sport', '') is string &&
+             data.get('matching', {}).get('sport', '') != '' &&
+             data.get('matching', {}).get('ageGroup', '') is string &&
+             data.get('matching', {}).get('ageGroup', '') != '' &&
+             (
+               (
+                 data.get('type', '') == 'player_seeking_team' &&
+                 data.get('teamId', null) == null
+               ) ||
+               (
+                 data.get('type', '') == 'team_seeking_players' &&
+                 data.get('teamId', '') is string &&
+                 data.get('teamId', '') != '' &&
+                 isTeamOwnerOrAdmin(data.get('teamId', ''))
+               )
+             );
+    }
+
+    function isMatchingPostAuthorLifecycleUpdateValid() {
+      return resource.data.get('authorId', '') == request.auth.uid &&
+             resource.data.get('visibility', '') == 'community' &&
+             isMatchingSocialPostType(resource.data.get('type', '')) &&
+             isSocialPostScopeImmutable() &&
+             request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+               'status',
+               'expiresAt',
+               'title',
+               'detail',
+               'caption',
+               'matching',
+               'updatedAt'
+             ]) &&
+             request.resource.data.get('status', '') in ['open', 'filled', 'closed'] &&
+             request.resource.data.get('title', '') is string &&
+             request.resource.data.get('title', '').size() > 0 &&
+             request.resource.data.get('caption', '') is string &&
+             request.resource.data.get('caption', '').size() <= 600 &&
+             request.resource.data.get('matching', {}) is map &&
+             request.resource.data.get('matching', {}).keys().hasOnly(matchingDetailFields());
+    }
+
+    function isMatchingResponseTargetPost(postId) {
+      let post = get(/databases/$(database)/documents/socialPosts/$(postId)).data;
+      return isMatchingSocialPostType(post.get('type', '')) &&
+             post.get('visibility', '') == 'community' &&
+             post.get('status', '') == 'open' &&
+             post.get('hidden', false) != true &&
+             post.get('authorId', '') != request.auth.uid;
+    }
+
+    function isMatchingPostAuthor(postId) {
+      return get(/databases/$(database)/documents/socialPosts/$(postId)).data.get('authorId', '') == request.auth.uid;
+    }
+
+    function isMatchingResponsePayloadValid(data) {
+      return data.keys().hasOnly([
+               'responderId',
+               'responderName',
+               'responderPhotoUrl',
+               'teamId',
+               'teamName',
+               'message',
+               'createdAt',
+               'updatedAt'
+             ]) &&
+             data.get('responderId', '') == request.auth.uid &&
+             data.get('responderName', '') is string &&
+             data.get('responderName', '').size() > 0 &&
+             data.get('message', '') is string &&
+             data.get('message', '').size() > 0 &&
+             data.get('message', '').size() <= 600;
+    }
+
+    function isMatchingResponseNotificationCreateValid(recipientId, data) {
+      return isSignedIn() &&
+             request.auth.uid != recipientId &&
+             data.keys().hasOnly([
+               'category',
+               'title',
+               'body',
+               'appRoute',
+               'postId',
+               'fromUserId',
+               'createdAt',
+               'readAt'
+             ]) &&
+             data.get('category', '') == 'matching_response' &&
+             data.get('fromUserId', '') == request.auth.uid &&
+             data.get('title', '') is string &&
+             data.get('title', '').size() > 0 &&
+             data.get('title', '').size() <= 160 &&
+             data.get('body', '') is string &&
+             data.get('body', '').size() <= 300 &&
+             data.get('appRoute', '') == '/opportunities?view=mine' &&
+             data.get('postId', '') is string &&
+             data.get('readAt', null) == null;
+    }
+
     function canReadSocialTeamPost(data) {
       return data.get('teamId', '') is string &&
              data.get('teamId', '') != '' &&
@@ -1252,6 +1395,9 @@ service cloud.firestore {
              (
                data.get('authorId', '') == request.auth.uid ||
                request.auth.uid in data.get('visibleUserIds', []) ||
+               // Community visibility is restricted to matching post types at
+               // create time, so any community post is readable by signed-in users.
+               data.get('visibility', '') == 'community' ||
                canReadSocialTeamPost(data) ||
                isGlobalAdmin()
              );
@@ -2082,19 +2228,23 @@ service cloud.firestore {
 
     match /socialPosts/{postId} {
       allow read: if canReadSocialPost(resource.data);
-      allow create: if isSocialPostCreatePayloadValid(request.resource.data);
+      allow create: if isSocialPostCreatePayloadValid(request.resource.data) ||
+                    isCommunityMatchingPostCreateValid(request.resource.data);
       allow update: if isSignedIn() &&
                     (
                       isSocialPostAuthorContentUpdateValid() ||
                       isSocialPostAuthorHideUpdateValid() ||
-                      isSocialPostModeratorUpdateValid()
+                      isSocialPostModeratorUpdateValid() ||
+                      isMatchingPostAuthorLifecycleUpdateValid()
                     );
       allow delete: if isSignedIn() &&
                     (resource.data.get('authorId', '') == request.auth.uid || canModerateSocialPost(resource.data));
 
+      // Community matching posts are respond-only: no comments or reactions.
       match /comments/{commentId} {
         allow read: if canReadSocialPost(get(/databases/$(database)/documents/socialPosts/$(postId)).data);
         allow create: if canReadSocialPost(get(/databases/$(database)/documents/socialPosts/$(postId)).data) &&
+                      get(/databases/$(database)/documents/socialPosts/$(postId)).data.get('visibility', '') != 'community' &&
                       request.resource.data.get('authorId', '') == request.auth.uid &&
                       request.resource.data.get('text', '') is string &&
                       request.resource.data.get('text', '').size() > 0 &&
@@ -2107,9 +2257,22 @@ service cloud.firestore {
         allow read: if canReadSocialPost(get(/databases/$(database)/documents/socialPosts/$(postId)).data);
         allow create, update: if isOwner(userId) &&
                               canReadSocialPost(get(/databases/$(database)/documents/socialPosts/$(postId)).data) &&
+                              get(/databases/$(database)/documents/socialPosts/$(postId)).data.get('visibility', '') != 'community' &&
                               request.resource.data.get('userId', userId) == request.auth.uid;
         allow delete: if isOwner(userId) &&
                       canReadSocialPost(get(/databases/$(database)/documents/socialPosts/$(postId)).data);
+      }
+
+      // Matching-post responses: private to the responder, the post author,
+      // and global admins. One doc per responder (doc id == responder uid).
+      match /responses/{userId} {
+        allow read: if isSignedIn() &&
+                    (isOwner(userId) || isMatchingPostAuthor(postId) || isGlobalAdmin());
+        allow create, update: if isOwner(userId) &&
+                              isMatchingResponseTargetPost(postId) &&
+                              isMatchingResponsePayloadValid(request.resource.data);
+        allow delete: if isSignedIn() &&
+                      (isOwner(userId) || isMatchingPostAuthor(postId) || isGlobalAdmin());
       }
     }
 
@@ -2213,7 +2376,10 @@ service cloud.firestore {
 
       match /notificationInbox/{itemId} {
         allow read: if isOwner(userId);
-        allow create, update, delete: if false;
+        // Matching-post responses may deliver a narrowly-validated inbox item;
+        // everything else stays server-only.
+        allow create: if isMatchingResponseNotificationCreateValid(userId, request.resource.data);
+        allow update, delete: if false;
       }
 
       match /privateAiMessages/{messageId} {

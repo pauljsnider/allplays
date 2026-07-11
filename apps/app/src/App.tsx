@@ -30,6 +30,7 @@ const HelpPortal = lazy(() => import('./pages/HelpPortal').then((module) => ({ d
 const Home = lazy(() => import('./pages/Home').then((module) => ({ default: module.Home })));
 const Messages = lazy(() => import('./pages/Messages').then((module) => ({ default: module.Messages })));
 const Officials = lazy(() => import('./pages/Officials').then((module) => ({ default: module.Officials })));
+const Opportunities = lazy(() => import('./pages/Opportunities').then((module) => ({ default: module.Opportunities })));
 const ParentTools = lazy(() => import('./pages/ParentTools').then((module) => ({ default: module.ParentTools })));
 const RegistrationDetail = lazy(() => import('./pages/RegistrationDetail').then((module) => ({ default: module.RegistrationDetail })));
 const TeamRegistrationReview = lazy(() => import('./pages/TeamRegistrationReview').then((module) => ({ default: module.TeamRegistrationReview })));
@@ -243,6 +244,7 @@ export default function App() {
         <Route path="/teams/browse" element={<PublicPage auth={auth}><PublicTeamsBrowse /></PublicPage>} />
         <Route path="/teams/:teamId/public" element={<PublicPage auth={auth}><PublicTeamDetail /></PublicPage>} />
         <Route path="/teams/:teamId" element={auth.user || auth.loading ? <Protected auth={auth}><TeamDetail auth={auth} /></Protected> : <PublicPage auth={auth}><PublicTeamDetail /></PublicPage>} />
+        <Route path="/opportunities" element={<Protected auth={auth}><Opportunities auth={auth} /></Protected>} />
         <Route path="/teams/:teamId/edit" element={<Protected auth={auth}><TeamSettings auth={auth} /></Protected>} />
         <Route path="/teams/:teamId/certificates" element={<Protected auth={auth}><TeamCertificates auth={auth} /></Protected>} />
         <Route path="/teams/:teamId/drills" element={<Protected auth={auth}><TeamDrills auth={auth} /></Protected>} />
