@@ -65,6 +65,48 @@ describe('HelpArticle', () => {
         await act(async () => root.unmount());
     });
 
+    it('renders structured account help with app routes instead of legacy filenames', async () => {
+        helpMocks.getHelpKnowledgeDocs.mockReturnValue([{
+            id: 'help-account',
+            title: 'Account and Access',
+            file: 'help-account.html',
+            url: 'https://allplays.ai/help-account.html',
+            roles: ['parent', 'coach', 'admin', 'member'],
+            summary: 'Who does what for authentication, onboarding, and account state workflows.',
+            text: [
+                'Account and Access',
+                'Who does what for authentication, onboarding, and account state workflows.',
+                'Help - Account and Access',
+                '← Back to Help Portal',
+                'Login and Session',
+                '- Member/Parent/Coach/Admin: Log in from #/auth.',
+                '- Member/Parent/Coach/Admin: Log out from shared header controls.',
+                'Forgot Password and Recovery',
+                '- Member/Parent/Coach/Admin: Start reset from #/auth / #/reset-password.',
+                'Profile and Identity',
+                '- Member/Parent/Coach/Admin: Update profile data in #/profile.',
+                '- Admin: Verify admin-only areas via admin tools and admin status checks.'
+            ].join('\n')
+        }]);
+
+        const { container, root } = await renderHelpArticle('/help/help-account');
+        const headings = Array.from(container.querySelectorAll('h2')).map((heading) => heading.textContent);
+        const items = Array.from(container.querySelectorAll('li')).map((item) => item.textContent);
+
+        expect(headings).toEqual([
+            'Login and Session',
+            'Forgot Password and Recovery',
+            'Profile and Identity'
+        ]);
+        expect(items).toContain('Member/Parent/Coach/Admin: Log in from #/auth.');
+        expect(items).toContain('Member/Parent/Coach/Admin: Start reset from #/auth / #/reset-password.');
+        expect(items).toContain('Member/Parent/Coach/Admin: Update profile data in #/profile.');
+        expect(items).toContain('Admin: Verify admin-only areas via admin tools and admin status checks.');
+        expect(container.textContent).not.toMatch(/\b(?:login|reset-password|profile|admin)\.html\b/);
+
+        await act(async () => root.unmount());
+    });
+
     it('is registered as protected help portal routes', () => {
         const appSource = readFileSync('apps/app/src/App.tsx', 'utf8');
 

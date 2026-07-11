@@ -45,7 +45,7 @@ export function HelpArticle() {
     );
   }
 
-  const paragraphs = buildArticleParagraphs(helpDoc.text, helpDoc.title, helpDoc.summary);
+  const articleBlocks = buildArticleBlocks(helpDoc.text, helpDoc.title, helpDoc.summary);
 
   return (
     <div className="space-y-4">
@@ -67,9 +67,9 @@ export function HelpArticle() {
           ) : null}
         </header>
 
-        <div className="space-y-4 p-5 text-sm font-semibold leading-7 text-gray-700">
-          {paragraphs.map((paragraph, index) => (
-            <p key={`${paragraph.slice(0, 24)}-${index}`}>{paragraph}</p>
+        <div className="space-y-5 p-5 text-sm font-semibold leading-7 text-gray-700">
+          {articleBlocks.map((block, index) => (
+            <ArticleBlock key={`${getBlockKeyText(block).slice(0, 24)}-${index}`} block={block} />
           ))}
         </div>
       </article>
@@ -106,27 +106,107 @@ function normalizeHelpPortalState(state: unknown) {
   };
 }
 
-function buildArticleParagraphs(text: string, title: string, summary: string) {
+type ArticleContentBlock =
+  | { type: 'heading'; text: string }
+  | { type: 'paragraph'; text: string }
+  | { type: 'list'; items: string[] };
+
+function ArticleBlock({ block }: { block: ArticleContentBlock }) {
+  if (block.type === 'heading') {
+    return <h2 className="text-base font-black text-gray-950">{block.text}</h2>;
+  }
+
+  if (block.type === 'list') {
+    return (
+      <ul className="ml-5 list-disc space-y-2">
+        {block.items.map((item, index) => (
+          <li key={`${item.slice(0, 24)}-${index}`}>{item}</li>
+        ))}
+      </ul>
+    );
+  }
+
+  return <p>{block.text}</p>;
+}
+
+function getBlockKeyText(block: ArticleContentBlock) {
+  return block.type === 'list' ? block.items.join(' ') : block.text;
+}
+
+function buildArticleBlocks(text: string, title: string, summary: string): ArticleContentBlock[] {
   const titlePattern = escapeRegExp(title);
   const summaryPattern = escapeRegExp(summary);
   const cleaned = String(text || '')
     .replace(new RegExp(`^${titlePattern}\\s+${summaryPattern}\\s*`, 'i'), '')
-    .replace(/Help\s+-\s+[^←]+←\s+Back to Help Portal\s*/i, '')
+    .replace(/Help\s+-\s+[^←\n]+(?:\s|[\n])+←\s+Back to Help Portal\s*/i, '')
     .replace(new RegExp(`^${titlePattern}\\s+${summaryPattern}\\s*`, 'i'), '')
-    .replace(/\s+/g, ' ')
+    .split(/\n+/)
+    .map((line) => line.replace(/\s+/g, ' ').trim())
+    .filter(Boolean)
+    .join('\n')
     .trim();
 
-  const chunks = cleaned
+  const lines = cleaned.split(/\n+/).map((line) => line.trim()).filter(Boolean);
+  if (!lines.length) return [{ type: 'paragraph', text: summary }];
+
+  const blocks: ArticleContentBlock[] = [];
+  let listItems: string[] = [];
+
+  const flushList = () => {
+    if (!listItems.length) return;
+    blocks.push({ type: 'list', items: listItems });
+    listItems = [];
+  };
+
+  lines.forEach((line) => {
+    if (line === title || line === summary || /^Help\s+-\s+/i.test(line) || /^←\s+Back to Help Portal/i.test(line)) {
+      return;
+    }
+
+    if (line.startsWith('- ')) {
+      listItems.push(line.slice(2).trim());
+      return;
+    }
+
+    flushList();
+    blocks.push({
+      type: isLikelyArticleHeading(line) ? 'heading' : 'paragraph',
+      text: line
+    });
+  });
+
+  flushList();
+
+  if (blocks.length > 1) {
+    return blocks.slice(0, 36);
+  }
+
+  return splitRunOnParagraphs(blocks[0] ? getBlockKeyText(blocks[0]) : summary).map((paragraph) => ({
+    type: 'paragraph',
+    text: paragraph
+  }));
+}
+
+function isLikelyArticleHeading(line: string) {
+  return line.length <= 80
+    && !/[.!?:]$/.test(line)
+    && /\b[A-Z][a-z]+\b/.test(line)
+    && line.split(/\s+/).length <= 8;
+}
+
+function splitRunOnParagraphs(text: string) {
+  const chunks = text
     .split(/(?<=[.!?])\s+/)
     .map((chunk) => chunk.trim())
     .filter(Boolean);
 
-  if (!chunks.length) return [summary];
+  if (!chunks.length) return [text];
 
   const paragraphs: string[] = [];
   for (let index = 0; index < chunks.length; index += 2) {
     paragraphs.push(chunks.slice(index, index + 2).join(' '));
   }
+
   return paragraphs.slice(0, 24);
 }
 
