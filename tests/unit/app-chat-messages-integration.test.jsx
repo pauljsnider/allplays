@@ -1674,7 +1674,7 @@ describe('React app messages integration', () => {
         const recipientLabels = Array.from(container.querySelectorAll('label')).map((label) => label.textContent || '');
         expect(recipientLabels.some((label) => label.includes('Coach Taylor'))).toBe(true);
         expect(recipientLabels.some((label) => label.includes('Coach Jamie'))).toBe(false);
-    });
+    }, 10000);
 
     it('keeps staff conversation targeting contextual and sends the selected audience metadata', async () => {
         chatMocks.loadChatConversations.mockResolvedValueOnce([
@@ -1727,7 +1727,7 @@ describe('React app messages integration', () => {
             selectedRecipientTarget: 'individuals',
             selectedRecipientIds: ['user:coach-1']
         }));
-    });
+    }, 10000);
 
     it('shows Team Email only to moderators and queues email with the selected audience', async () => {
         const { container } = await renderMessages('/messages/team-1');

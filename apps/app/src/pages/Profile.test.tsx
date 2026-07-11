@@ -144,6 +144,8 @@ describe('Profile', () => {
     vi.clearAllMocks();
     profileServiceMocks.loadNotificationPreferences.mockResolvedValue({ liveChat: true, liveScore: false, schedule: true });
     profileServiceMocks.loadNotificationTeams.mockResolvedValue([{ id: 'team-1', name: 'Blue Team' }]);
+    profileServiceMocks.loadParentTeams.mockResolvedValue([{ id: 'team-1', name: 'Blue Team' }]);
+    profileServiceMocks.requestAccountMerge.mockResolvedValue(undefined);
     pushServiceMocks.getPushNotificationPermissionStatus.mockResolvedValue({
       state: 'prompt',
       isNative: false,
@@ -212,6 +214,52 @@ describe('Profile', () => {
     expect(sectionGrid?.className).toContain('grid-cols-2');
     expect(sectionGrid?.className).toContain('sm:grid-cols-4');
     expect(sectionGrid?.className).not.toContain('min-w-max');
+  });
+
+  it('disables account merge while parent team eligibility is loading', async () => {
+    const parentTeamsRequest = createDeferredPromise<Array<{ id: string; name: string }>>();
+    profileServiceMocks.loadParentTeams.mockImplementation(() => parentTeamsRequest.promise);
+
+    renderProfile();
+
+    const loadingButton = await screen.findByRole('button', { name: 'Checking availability' });
+    expect((loadingButton as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.getByRole('button', { name: 'Save profile' })).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Merge another account' })).toBeNull();
+
+    parentTeamsRequest.resolve([{ id: 'team-1', name: 'Blue Team' }]);
+
+    expect(await screen.findByRole('button', { name: 'Merge another account' })).toBeTruthy();
+  });
+
+  it('shows an unavailable state instead of an enabled merge CTA when the parent has no teams', async () => {
+    profileServiceMocks.loadParentTeams.mockResolvedValue([]);
+
+    renderProfile();
+
+    expect(await screen.findByText('No parent-linked teams are available for account merge.')).toBeTruthy();
+    expect(profileServiceMocks.loadParentTeams).toHaveBeenCalledWith('user-1');
+    expect(screen.queryByRole('button', { name: 'Merge another account' })).toBeNull();
+    expect(screen.getByRole('button', { name: 'Save profile' })).toBeTruthy();
+  });
+
+  it('preserves the account merge request flow after parent team eligibility is confirmed', async () => {
+    renderProfile();
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Merge another account' }));
+    fireEvent.change(screen.getByLabelText('Secondary account email'), {
+      target: { value: 'secondary@example.com' }
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Request merge' }));
+
+    await waitFor(() => {
+      expect(profileServiceMocks.requestAccountMerge).toHaveBeenCalledWith(
+        'user-1',
+        'parent@example.com',
+        'secondary@example.com'
+      );
+    });
+    expect(await screen.findByText(/Merge request pending verification/)).toBeTruthy();
   });
 
   it('loads the Invites section to a normal empty state when invite history is empty', async () => {

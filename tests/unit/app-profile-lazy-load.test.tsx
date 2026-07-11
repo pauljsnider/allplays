@@ -12,8 +12,13 @@ describe('Profile lazy-load guards', () => {
         expect(profileSource).toContain("if (!user || activeProfileSection !== 'invites' || accessCodesLoaded) {");
     });
 
-    it('loads parent-linked merge options only when the panel is expanded and only once', () => {
-        expect(profileSource).toContain("if (!user || !accountMergeExpanded || parentLinkedTeamsLoaded) {");
+    it('loads parent-linked merge eligibility from Account for parents and only once', () => {
+        expect(profileSource).toContain("if (!user || !auth.isParent || activeProfileSection !== 'account' || parentLinkedTeamsLoaded) {");
+    });
+
+    it('keeps the account merge form lazy until eligibility is confirmed and the panel is expanded', () => {
+        expect(profileSource).toContain(') : accountMergeExpanded ? (');
+        expect(profileSource).toContain('onSubmit={submitAccountMerge}');
     });
 
     it('resets lazy-loaded section state when the signed-in user changes', () => {
