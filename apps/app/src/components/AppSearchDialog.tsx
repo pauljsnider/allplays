@@ -41,6 +41,7 @@ export function AppSearchDialog({ auth, open, onClose }: AppSearchDialogProps) {
   const [activeIndex, setActiveIndex] = useState(0);
   const [keyboardInset, setKeyboardInset] = useState(0);
   const searchRequestId = useRef(0);
+  const playerSearchGenerationRef = useRef(0);
   const playerSearchTimeoutRef = useRef<number | null>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
   const openedAtRef = useRef(Date.now());
@@ -116,15 +117,16 @@ export function AppSearchDialog({ auth, open, onClose }: AppSearchDialogProps) {
     const timeoutId = window.setTimeout(() => {
       const schedulePlayerSearch = (accessibleTeams: AppSearchTeam[]) => {
         clearScheduledPlayerSearch();
+        const generation = ++playerSearchGenerationRef.current;
         playerSearchTimeoutRef.current = window.setTimeout(async () => {
           playerSearchTimeoutRef.current = null;
-          if (disposed || requestId !== searchRequestId.current) return;
+          if (disposed || requestId !== searchRequestId.current || generation !== playerSearchGenerationRef.current) return;
           const accessibleTeamsById = new Map(accessibleTeams.map((team) => [team.id, team]));
           const [playersResult] = await Promise.allSettled([
             searchAppPlayers(trimmedQuery, accessibleTeamsById, auth.user)
           ]) as [PromiseSettledResult<AppSearchPlayer[]>];
 
-          if (disposed || requestId !== searchRequestId.current) return;
+          if (disposed || requestId !== searchRequestId.current || generation !== playerSearchGenerationRef.current) return;
           if (playersResult.status === 'fulfilled') {
             setPlayers(playersResult.value);
             setPlayersError('');

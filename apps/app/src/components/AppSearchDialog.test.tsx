@@ -783,6 +783,88 @@ describe('AppSearchDialog', () => {
     expect(screen.queryByRole('button', { name: /Al Older/i })).toBeNull();
   });
 
+  it('keeps stale initial-scope player results from replacing hydrated-scope results for the same query', async () => {
+    vi.useFakeTimers();
+    const onClose = vi.fn();
+    const initialTeams: AppSearchTeam[] = [{ id: 'team-1', name: 'Bears', sport: 'Basketball', zip: '66210' }];
+    const hydratedTeams: AppSearchTeam[] = [
+      ...initialTeams,
+      { id: 'team-2', name: 'Beacons', sport: 'Soccer', zip: '64114' }
+    ];
+    let releaseHydration!: (teams: AppSearchTeam[]) => void;
+    let releaseInitialPlayers!: (players: AppSearchPlayer[]) => void;
+    let releaseHydratedPlayers!: (players: AppSearchPlayer[]) => void;
+
+    getKnownAppSearchTeamsMock.mockReturnValue(initialTeams);
+    loadAppSearchTeamsMock.mockImplementationOnce(() => new Promise((resolve) => {
+      releaseHydration = resolve;
+    }));
+    searchAppPlayersMock
+      .mockImplementationOnce(() => new Promise((resolve) => {
+        releaseInitialPlayers = resolve;
+      }))
+      .mockImplementationOnce(() => new Promise((resolve) => {
+        releaseHydratedPlayers = resolve;
+      }));
+
+    render(
+      <MemoryRouter>
+        <AppSearchDialog auth={auth} open={true} onClose={onClose} />
+      </MemoryRouter>
+    );
+
+    fireEvent.change(screen.getByLabelText('Search teams, players, actions, help'), { target: { value: 'be' } });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(550);
+      await Promise.resolve();
+    });
+    expect(searchAppPlayersMock).toHaveBeenCalledTimes(1);
+    expect(Array.from(searchAppPlayersMock.mock.calls[0][1].keys())).toEqual(['team-1']);
+
+    await act(async () => {
+      releaseHydration(hydratedTeams);
+      await Promise.resolve();
+      await vi.advanceTimersByTimeAsync(120);
+      await Promise.resolve();
+    });
+    expect(searchAppPlayersMock).toHaveBeenCalledTimes(2);
+    expect(Array.from(searchAppPlayersMock.mock.calls[1][1].keys())).toEqual(['team-1', 'team-2']);
+
+    const hydratedPlayer: AppSearchPlayer = {
+      id: 'player:team-2:latest',
+      kind: 'player',
+      title: 'Beacon Latest',
+      subtitle: 'Beacons',
+      route: '/players/team-2/latest',
+      teamId: 'team-2',
+      playerId: 'latest',
+    };
+    const stalePlayer: AppSearchPlayer = {
+      id: 'player:team-1:stale',
+      kind: 'player',
+      title: 'Bear Stale',
+      subtitle: 'Bears',
+      route: '/players/team-1/stale',
+      teamId: 'team-1',
+      playerId: 'stale',
+    };
+
+    await act(async () => {
+      releaseHydratedPlayers([hydratedPlayer]);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(screen.getByRole('button', { name: /Beacon Latest/i })).not.toBeNull();
+
+    await act(async () => {
+      releaseInitialPlayers([stalePlayer]);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(screen.getByRole('button', { name: /Beacon Latest/i })).not.toBeNull();
+    expect(screen.queryByRole('button', { name: /Bear Stale/i })).toBeNull();
+  });
+
   it('ignores stale hydrated teams after the dialog closes before query-time loading finishes', async () => {
     const onClose = vi.fn();
     const userA = { uid: 'user-a', email: 'a@example.com' } as NonNullable<AuthState['user']>;
