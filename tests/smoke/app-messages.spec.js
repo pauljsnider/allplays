@@ -31,6 +31,42 @@ async function openTeamThread(page, teamName) {
     }).toPass({ timeout: 30000 });
 }
 
+function escapeRegExp(value) {
+    return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function staffActionsButton(page) {
+    return page.getByRole('button', { name: 'Open staff actions' });
+}
+
+function audienceMenuItem(page, summary) {
+    return page
+        .getByRole('menu', { name: 'Staff actions' })
+        .getByRole('menuitem', { name: new RegExp(`Message audience.*Current:\\s*${escapeRegExp(summary)}`, 'i') });
+}
+
+async function openStaffActions(page) {
+    const trigger = staffActionsButton(page);
+
+    await expect(trigger).toBeVisible();
+    if ((await trigger.getAttribute('aria-expanded')) !== 'true') {
+        await trigger.click();
+    }
+    await expect(page.getByRole('menu', { name: 'Staff actions' })).toBeVisible();
+}
+
+async function expectAudienceSummary(page, summary) {
+    await openStaffActions(page);
+    await expect(audienceMenuItem(page, summary)).toBeVisible();
+    await staffActionsButton(page).click();
+}
+
+async function openAudienceSheet(page, summary) {
+    await openStaffActions(page);
+    await audienceMenuItem(page, summary).click();
+    await expect(page.getByRole('dialog', { name: 'Message audience' })).toBeVisible();
+}
+
 function buildDefaultThreadMessagesScript() {
     return `
         const filler = Array.from({ length: 28 }, (_, index) => msg({
@@ -485,7 +521,7 @@ test('messages inbox and team chat exercise real migrated chat UX', async ({ pag
     await page.getByRole('button', { name: 'Close notifications' }).click();
     await expect(page.getByRole('dialog', { name: 'Notifications' })).toBeHidden();
     await expect(page).toHaveURL(/#\/messages\/team-1$/);
-    await expect(page.getByRole('button', { name: /Audience: Full team/ })).toBeVisible();
+    await expectAudienceSummary(page, 'Full team');
     const quickSwitcher = page.getByTestId('mobile-conversation-chips');
     await expect(quickSwitcher).toBeVisible();
     await expect(quickSwitcher.getByRole('button', { name: /Switch to .*Team Chat/i })).toBeVisible();
@@ -529,10 +565,10 @@ test('messages inbox and team chat exercise real migrated chat UX', async ({ pag
     await expect(page.getByPlaceholder('Message Bears')).toHaveValue('https://www.allplays.ai/game.html');
     await page.getByPlaceholder('Message Bears').fill('');
 
-    await page.getByRole('button', { name: /Audience: Full team/ }).click();
+    await openAudienceSheet(page, 'Full team');
     const audienceDialog = page.getByRole('dialog', { name: 'Message audience' });
-    await expect(audienceDialog.getByRole('button', { name: 'Staff only' })).toHaveCount(0);
-    await audienceDialog.getByRole('button', { name: 'Close Message audience' }).click();
+    await expect(audienceDialog.getByRole('button', { name: 'Staff only' })).toBeHidden();
+    await page.getByRole('button', { name: 'Close Message audience' }).click();
 
     await page.getByPlaceholder('Message Bears').fill('See you at practice');
     await page.getByRole('button', { name: 'Send message' }).click();
@@ -656,14 +692,14 @@ test('messages selected-member, dictation, and validation flows stay usable on m
     await page.goto(appUrl(baseURL, '/messages/team-1'), { waitUntil: 'domcontentloaded' });
 
     const thread = page.locator('.chat-messages-scroll');
-    await waitForMessagesRoute(page, page.getByRole('button', { name: /Audience: Full team/ }));
-    await expect(page.getByRole('button', { name: /Audience: Full team/ })).toBeVisible();
+    await waitForMessagesRoute(page, staffActionsButton(page));
+    await expectAudienceSummary(page, 'Full team');
     await expect(thread).toContainText('Latest ride update.');
-    await page.getByRole('button', { name: /Audience: Full team/ }).click();
+    await openAudienceSheet(page, 'Full team');
     await page.getByRole('button', { name: /Selected members/ }).click();
     await page.locator('label').filter({ hasText: 'Coach Jamie' }).click();
     await page.getByRole('button', { name: 'Done' }).click();
-    await expect(page.getByRole('button', { name: /Audience: Coach Jamie/ })).toBeVisible();
+    await expectAudienceSummary(page, 'Coach Jamie');
 
     await page.getByRole('button', { name: 'Voice to text' }).click();
     await expect(page.getByText('Listening...')).toBeVisible();
@@ -713,12 +749,11 @@ test('messages native back closes an open sheet without leaving the thread or cl
     await mockMessagesModules(page);
     await page.goto(appUrl(baseURL, '/messages/team-1'), { waitUntil: 'domcontentloaded' });
 
-    await waitForMessagesRoute(page, page.getByRole('button', { name: /Audience: Full team/ }));
+    await waitForMessagesRoute(page, staffActionsButton(page));
     const composer = page.getByPlaceholder('Message Bears');
     await composer.fill('Hold this draft while I pick recipients');
 
-    await page.getByRole('button', { name: /Audience: Full team/ }).click();
-    await expect(page.getByRole('dialog', { name: 'Message audience' })).toBeVisible();
+    await openAudienceSheet(page, 'Full team');
 
     await expect.poll(() => page.evaluate(() => {
         const event = new Event('allplays:native-back-dismiss', { cancelable: true });
@@ -754,7 +789,7 @@ test('messages defer offscreen media requests until scroll or video interaction'
     await page.goto(appUrl(baseURL, '/messages/team-1'), { waitUntil: 'domcontentloaded' });
 
     const thread = page.locator('.chat-messages-scroll');
-    await waitForMessagesRoute(page, page.getByRole('button', { name: /Audience: Full team/ }));
+    await waitForMessagesRoute(page, staffActionsButton(page));
     await expect(thread).toContainText('Latest ride update.');
     await expect.poll(async () => {
         const sampleRequestCount = async () => {

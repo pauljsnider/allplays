@@ -1536,36 +1536,43 @@
   color: #be123c;
 }
 
-.chat-audience-pill {
-  display: inline-flex;
-  flex: 1 1 0;
-  min-width: 0;
-  height: 34px;
-  align-items: center;
-  gap: 6px;
-  border: 1px solid #c7d2fe;
-  border-radius: 999px;
+.chat-tool-button[aria-expanded="true"] {
+  border-color: #c7d2fe;
   background: #eef2ff;
-  padding: 0 10px;
   color: #4338ca;
-  font-size: 0.75rem;
+}
+
+.chat-staff-actions-menu {
+  display: grid;
+  gap: 4px;
+  margin-top: 7px;
+  border: 1px solid #e5e7eb;
+  border-radius: 12px;
+  background: #f9fafb;
+  padding: 7px;
+}
+
+.chat-staff-actions-heading {
+  padding: 1px 5px 3px;
+  color: #667085;
+  font-size: 0.7rem;
   font-weight: 900;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
 }
 
-.chat-audience-pill span {
+.chat-staff-action-button {
+  display: flex;
+  width: 100%;
   min-width: 0;
-}
-
-.chat-audience-pill[aria-label="Open Team Email"] {
-  flex: 0 1 auto;
-  max-width: 48%;
-}
-
-@media (min-width: 640px) {
-  .chat-audience-pill {
-    flex: 0 1 auto;
-    max-width: 48%;
-  }
+  min-height: 42px;
+  align-items: center;
+  gap: 9px;
+  border: 1px solid #e5e7eb;
+  border-radius: 10px;
+  background: #ffffff;
+  padding: 7px 9px;
+  color: #475467;
 }
 
 .chat-composer-notice {

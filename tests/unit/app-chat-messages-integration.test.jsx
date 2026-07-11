@@ -225,6 +225,32 @@ async function flush() {
     });
 }
 
+async function waitForMatch(getMatch, description, attempts = 50) {
+    for (let attempt = 0; attempt < attempts; attempt += 1) {
+        const match = getMatch();
+        if (match) return match;
+        await flush();
+    }
+    throw new Error(`Timed out waiting for ${description}.`);
+}
+
+async function waitForMockCallCount(mockFn, expectedCount, description) {
+    await waitForMatch(
+        () => mockFn.mock.calls.length >= expectedCount,
+        description
+    );
+    expect(mockFn).toHaveBeenCalledTimes(expectedCount);
+}
+
+async function waitForRecipientCheckbox(container, name) {
+    return waitForMatch(
+        () => Array.from(container.querySelectorAll('label'))
+            .find((label) => label.textContent.includes(name))
+            ?.querySelector('input[type="checkbox"]'),
+        `${name} recipient checkbox`
+    );
+}
+
 function createDeferred() {
     let resolve;
     let reject;
@@ -235,7 +261,23 @@ function createDeferred() {
     return { promise, resolve, reject };
 }
 
+function staffActionButtonByText(container, text) {
+    if (text === 'Team Email') {
+        return Array.from(container.querySelectorAll('button[role="menuitem"]')).find((candidate) => candidate.textContent.trim() === 'Team Email');
+    }
+    if (text.startsWith('Audience: ')) {
+        const currentAudience = text.replace(/^Audience:\s*/, 'Current: ');
+        return Array.from(container.querySelectorAll('button[role="menuitem"]')).find((candidate) => {
+            const label = candidate.textContent.trim();
+            return label.includes('Message audience') && label.includes(currentAudience);
+        });
+    }
+    return null;
+}
+
 function buttonByText(container, text) {
+    const staffActionButton = staffActionButtonByText(container, text);
+    if (staffActionButton) return staffActionButton;
     const button = Array.from(container.querySelectorAll('button')).find((candidate) => candidate.textContent.trim() === text || candidate.getAttribute('aria-label') === text);
     if (!button) {
         const partial = Array.from(container.querySelectorAll('button')).find((candidate) => candidate.textContent.trim().includes(text) || String(candidate.getAttribute('aria-label') || '').includes(text));
@@ -249,10 +291,32 @@ function buttonByText(container, text) {
 }
 
 async function click(container, text) {
+    let button = null;
+    try {
+        button = buttonByText(container, text);
+    } catch (error) {
+        const staffActionsButton = buttonByText(container, 'Open staff actions');
+        if (!(text === 'Team Email' || text.startsWith('Audience: ')) || !staffActionsButton) {
+            throw error;
+        }
+        await act(async () => {
+            staffActionsButton.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+        });
+        button = await waitForMatch(
+            () => staffActionButtonByText(container, text),
+            `${text} staff action`
+        );
+    }
     await act(async () => {
-        buttonByText(container, text).dispatchEvent(new MouseEvent('click', { bubbles: true }));
+        button.dispatchEvent(new MouseEvent('click', { bubbles: true }));
     });
     await flush();
+    if (text === 'Team Email') {
+        await waitForMatch(
+            () => container.querySelector('[role="dialog"][aria-label="Team Email"]'),
+            'Team Email dialog'
+        );
+    }
 }
 
 async function setFieldValue(field, value) {
@@ -266,15 +330,13 @@ async function setFieldValue(field, value) {
 }
 
 async function waitForTeamEmailDialog(container) {
-    for (let attempt = 0; attempt < 10; attempt += 1) {
-        await flush();
-        const dialog = container.querySelector('[role="dialog"][aria-label="Team Email"]');
-        if (dialog?.querySelector('input[placeholder="Team update"]')) {
-            return dialog;
-        }
-    }
-
-    throw new Error('Team Email dialog did not finish loading.');
+    return waitForMatch(
+        () => {
+            const dialog = container.querySelector('[role="dialog"][aria-label="Team Email"]');
+            return dialog?.querySelector('input[placeholder="Team update"]') ? dialog : null;
+        },
+        'loaded Team Email dialog'
+    );
 }
 
 beforeEach(() => {
@@ -1447,7 +1509,7 @@ describe('React app messages integration', () => {
         expect(scroller.scrollTop).toBe(0);
     });
 
-    it('renders the moderator thread before lazy Team Email resources finish loading', async () => {
+    it('keeps the moderator thread visible while Team Email recipients load', async () => {
         const deferredRecipients = createDeferred();
         chatMocks.loadChatRecipientOptions.mockImplementationOnce(() => deferredRecipients.promise);
 
@@ -1459,9 +1521,7 @@ describe('React app messages integration', () => {
         await click(container, 'Team Email');
 
         expect(chatMocks.loadChatRecipientOptions).toHaveBeenCalledTimes(1);
-        await flush();
-        await flush();
-        expect(container.textContent).toContain('Loading Team Email...');
+        expect(container.querySelector('[role="dialog"][aria-label="Team Email"]')).toBeTruthy();
         expect(container.textContent).toContain('Bring both jerseys.');
 
         await act(async () => {
@@ -1494,7 +1554,7 @@ describe('React app messages integration', () => {
         expect(chatMocks.loadChatRecipientOptions).toHaveBeenCalledTimes(1);
         expect(container.textContent).toContain('Coach Jamie');
 
-        await click(container, 'Done');
+        await click(container, 'Full team');
         await click(container, 'Team Email');
         expect(chatMocks.loadChatRecipientOptions).toHaveBeenCalledTimes(1);
     });
@@ -1586,7 +1646,7 @@ describe('React app messages integration', () => {
         await click(container, 'Close Team Email');
         await click(container, 'Team Email');
 
-        expect(chatMocks.loadChatRecipientOptions).toHaveBeenCalledTimes(2);
+        await waitForMockCallCount(chatMocks.loadChatRecipientOptions, 2, 'second team recipient option load');
         expect(chatMocks.loadChatRecipientOptions).toHaveBeenLastCalledWith('team-2');
         expect(container.textContent).toContain('Thunder Team Chat');
 
@@ -1628,14 +1688,15 @@ describe('React app messages integration', () => {
 
         await click(container, 'Audience: Full team');
         await click(container, 'Selected members');
-        const coachCheckbox = Array.from(container.querySelectorAll('label')).find((label) => label.textContent.includes('Coach Jamie'))?.querySelector('input[type="checkbox"]');
-        expect(coachCheckbox).toBeTruthy();
+        const coachCheckbox = await waitForRecipientCheckbox(container, 'Coach Jamie');
         await act(async () => {
             coachCheckbox.dispatchEvent(new MouseEvent('click', { bubbles: true }));
         });
         await flush();
         await click(container, 'Done');
-        expect(container.textContent).toContain('Audience: Coach Jamie (Staff)');
+        await click(container, 'Open staff actions');
+        expect(container.textContent).toContain('Current: Coach Jamie (Staff)');
+        await click(container, 'Open staff actions');
 
         const textarea = container.querySelector('textarea');
         await setFieldValue(textarea, 'Could you confirm arrival time?');
@@ -1655,7 +1716,7 @@ describe('React app messages integration', () => {
 
         await click(container, 'Audience: Full team');
         await click(container, 'Selected members');
-        const coachCheckbox = Array.from(container.querySelectorAll('label')).find((label) => label.textContent.includes('Coach Jamie'))?.querySelector('input[type="checkbox"]');
+        const coachCheckbox = await waitForRecipientCheckbox(container, 'Coach Jamie');
         await act(async () => {
             coachCheckbox.dispatchEvent(new MouseEvent('click', { bubbles: true }));
         });
@@ -2381,7 +2442,7 @@ describe('React app messages integration', () => {
         const { container } = await renderMessages('/messages/team-1');
 
         expect(container.querySelector('button[aria-label="Voice to text"]')).toBeTruthy();
-        expect(buttonByText(container, 'Audience: Full team')).toBeTruthy();
+        expect(buttonByText(container, 'Open staff actions')).toBeTruthy();
 
         await click(container, 'Voice to text');
         expect(recognitionInstance.lang).toBe('es-MX');

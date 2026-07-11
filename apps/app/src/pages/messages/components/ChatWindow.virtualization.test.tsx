@@ -285,16 +285,27 @@ vi.mock('../hooks/useChatMessages', async () => {
   };
 });
 
-vi.mock('./ChatComposer', () => ({
-  Composer: ({ canSendTeamEmail, onTeamEmail }: { canSendTeamEmail: boolean; onTeamEmail: () => void }) => (
-    <div className="chat-composer">
-      Composer
-      {canSendTeamEmail ? (
-        <button type="button" onClick={onTeamEmail} aria-label="Open Team Email">Team Email</button>
-      ) : null}
-    </div>
-  )
-}));
+vi.mock('./ChatComposer', async () => {
+  const React = await import('react');
+  return {
+    Composer: ({ canSendTeamEmail, onTeamEmail }: { canSendTeamEmail: boolean; onTeamEmail: () => void }) => {
+      const [showStaffActions, setShowStaffActions] = React.useState(false);
+      return (
+        <div className="chat-composer">
+          Composer
+          {canSendTeamEmail ? (
+            <>
+              <button type="button" onClick={() => setShowStaffActions((current) => !current)} aria-label="Open staff actions">Staff actions</button>
+              {showStaffActions ? (
+                <button type="button" onClick={onTeamEmail} aria-label="Open Team Email">Team Email</button>
+              ) : null}
+            </>
+          ) : null}
+        </div>
+      );
+    }
+  };
+});
 
 const auth: AuthState = {
   user: {
@@ -397,6 +408,7 @@ describe('ChatWindow lazy Team Email loading', () => {
       </MemoryRouter>
     );
 
+    expect(screen.queryByRole('button', { name: 'Open staff actions' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Open Team Email' })).not.toBeInTheDocument();
     expect(teamEmailSheetMocks.importModule).not.toHaveBeenCalled();
     expect(teamEmailSheetMocks.render).not.toHaveBeenCalled();
@@ -412,10 +424,12 @@ describe('ChatWindow lazy Team Email loading', () => {
       </MemoryRouter>
     );
 
-    expect(screen.getByRole('button', { name: 'Open Team Email' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Open staff actions' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Open Team Email' })).not.toBeInTheDocument();
     expect(teamEmailSheetMocks.importModule).not.toHaveBeenCalled();
     expect(teamEmailSheetMocks.render).not.toHaveBeenCalled();
 
+    fireEvent.click(screen.getByRole('button', { name: 'Open staff actions' }));
     fireEvent.click(screen.getByRole('button', { name: 'Open Team Email' }));
 
     await waitFor(() => expect(teamEmailSheetMocks.importModule).toHaveBeenCalledTimes(1));
