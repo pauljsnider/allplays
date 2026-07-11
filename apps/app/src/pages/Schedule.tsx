@@ -18,6 +18,7 @@ import { useShellLayout } from '../lib/useShellLayout';
 import {
   buildScheduleIcs,
   buildScheduleAgendaText,
+  canSubmitScheduleEventRsvp,
   filterParentScheduleEvents,
   formatEventDateLabel,
   formatEventTimeLabel,
@@ -3033,7 +3034,7 @@ function getEventCardActionPills(event: ParentScheduleEvent | CalendarScheduleEn
 }
 
 function isScheduleAvailabilityNeeded(event: ParentScheduleEvent | CalendarScheduleEntry) {
-  return normalizeRsvpResponse(event.myRsvp) === 'not_responded' && event.isDbGame && !event.isCancelled;
+  return normalizeRsvpResponse(event.myRsvp) === 'not_responded' && canSubmitScheduleEventRsvp(event);
 }
 
 function getEventMetadataPills(event: ParentScheduleEvent | CalendarScheduleEntry) {
