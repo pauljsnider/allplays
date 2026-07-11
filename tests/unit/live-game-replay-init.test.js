@@ -288,8 +288,8 @@ function buildModuleSource() {
             'const { getDefaultLivePeriod } = deps.liveSportConfig;'
         )
         .replace(
-            /import\s+\{\s*buildBroadcastRuntimeSession\s*\}\s+from\s+'\.\/game-day-broadcast\.js\?v=\d+';/,
-            'const { buildBroadcastRuntimeSession } = deps.gameDayBroadcast;'
+            /import\s+\{\s*BROADCAST_STREAM_HEARTBEAT_MS,\s*buildBroadcastRuntimeSession\s*\}\s+from\s+'\.\/game-day-broadcast\.js\?v=\d+';/,
+            'const { BROADCAST_STREAM_HEARTBEAT_MS, buildBroadcastRuntimeSession } = deps.gameDayBroadcast;'
         )
         .replace(
             "init().catch(error => {\n  console.error('Live game init failed:', error);\n  const feed = document.querySelector('#plays-feed');\n  if (feed) feed.innerHTML = '<div class=\"text-sand/60 text-center py-6\">Something went wrong loading the game. Try refreshing the page.</div>';\n});",
@@ -544,6 +544,7 @@ async function bootReplayPage({ replayEvents }) {
             getDefaultLivePeriod: () => 'Final'
         },
         gameDayBroadcast: {
+            BROADCAST_STREAM_HEARTBEAT_MS: 15000,
             buildBroadcastRuntimeSession: ({ existingSession = {}, status = 'ready' } = {}) => ({
                 ...existingSession,
                 localStreamStatus: status

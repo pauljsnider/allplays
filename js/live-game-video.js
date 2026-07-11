@@ -155,8 +155,11 @@ function hasSelectedVideographerGrant(user, team) {
 
 function isGameCameraEligible(game) {
     if (!game || typeof game !== 'object') return false;
-    const status = String(game.status || game.liveStatus || '').toLowerCase();
-    return !['cancelled', 'canceled', 'completed', 'final'].includes(status);
+    const endedStatuses = new Set(['cancelled', 'canceled', 'completed', 'final', 'deleted']);
+    return ![game.status, game.liveStatus]
+        .map(value => String(value || '').trim().toLowerCase())
+        .filter(Boolean)
+        .some(status => endedStatuses.has(status));
 }
 
 export function canAccessNativeCameraCapture({ user, team, game, rsvp = null }) {
@@ -275,13 +278,9 @@ export function buildBroadcastSetupSession({ existingSession = {}, sessionName =
     const safeStatus = Object.values(BROADCAST_SETUP_STATUSES).includes(status) ? status : BROADCAST_SETUP_STATUSES.CHECKING;
     const providerMetadata = provider && typeof provider === 'object' ? provider : existingSession?.provider;
     const session = {
-        ...(existingSession && typeof existingSession === 'object' ? existingSession : {}),
         id: toCleanString(existingSession?.id) || `broadcast-${Date.parse(timestamp) || Date.now()}`,
         name: safeName.slice(0, 80),
         status: safeStatus,
-        streamStatus: safeStatus,
-        setupOnly: true,
-        managedStreamReady: safeStatus === BROADCAST_SETUP_STATUSES.READY,
         provider: compactObject({
             type: toCleanString(providerMetadata?.type) || BROADCAST_PROVIDER_TYPES.MANAGED_SETUP,
             name: toCleanString(providerMetadata?.name) || 'ALL PLAYS managed setup',
@@ -289,25 +288,15 @@ export function buildBroadcastSetupSession({ existingSession = {}, sessionName =
             embedUrl: toCleanString(providerMetadata?.embedUrl),
             videoId: toCleanString(providerMetadata?.videoId)
         }),
-        setupMetadata: {
-            setupOnly: true,
-            managedStreamReady: safeStatus === BROADCAST_SETUP_STATUSES.READY,
-            cameraVerified: permissions.camera === true,
-            microphoneVerified: permissions.microphone === true
-        },
         permissions: {
             camera: permissions.camera === true,
             microphone: permissions.microphone === true
         },
         updatedAt: timestamp,
-        updatedBy: user?.uid || existingSession?.updatedBy || null,
-        updatedByEmail: toCleanString(user?.email || existingSession?.updatedByEmail) || null
+        updatedBy: user?.uid || existingSession?.updatedBy || null
     };
 
-    if (!session.createdAt) session.createdAt = timestamp;
-    if (safeStatus === BROADCAST_SETUP_STATUSES.CHECKING && !session.startedAt) session.startedAt = timestamp;
-    if (safeStatus === BROADCAST_SETUP_STATUSES.READY) session.readyAt = timestamp;
-    if (safeStatus === BROADCAST_SETUP_STATUSES.FAILED) session.failedAt = timestamp;
+    session.createdAt = existingSession?.createdAt || timestamp;
     if (errorMessage) {
         session.errorMessage = String(errorMessage).slice(0, 180);
     } else {

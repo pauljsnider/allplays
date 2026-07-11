@@ -24,9 +24,14 @@ describe('stream and score Firestore rules', () => {
 
     it('limits streaming helpers to broadcast-session metadata for eligible games', () => {
         expect(rules).toContain('function canStreamGame(teamId, gameId)');
-        expect(rules).toContain("teamPermission(teamId, 'streaming').get('memberIds', [])");
+        expect(rules).toContain("request.auth.uid in permission.get('memberIds', [])");
         expect(rules).toContain("mode == 'all_confirmed' && hasConfirmedGameRsvp(teamId, gameId)");
         expect(rules).toContain("'broadcastSession', 'updatedAt'");
-        expect(rules).toContain('keepsScorekeeperGameLifecycleVisible();');
+        expect(rules).toContain('canReadPublicGameDocument(teamData, gameData)');
+        expect(rules).toContain('function isValidStreamingBroadcastSession(data)');
+        expect(rules).toContain('data.updatedBy == request.auth.uid');
+        expect(rules).toContain('preservesProtectedBroadcastSessionFields(nextSession, existingSession)');
+        expect(rules).toContain("['cancelled', 'canceled', 'completed', 'final', 'deleted']");
+        expect(rules).toContain("data.localStreamLeaseExpiresAt <= request.time + duration.value(1, 'm')");
     });
 });

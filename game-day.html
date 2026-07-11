@@ -520,7 +520,7 @@
             buildGameSummaryPrompt
         } from './js/game-day-wrapup.js?v=2';
         import { pickBestGameId, normalizeGameDayUrl } from './js/game-day-entry.js?v=1';
-        import { buildGameDayBroadcastSetupUrl, resolveGameDayBroadcastStatus } from './js/game-day-broadcast.js?v=1';
+        import { buildGameDayBroadcastSetupUrl, resolveGameDayBroadcastStatus } from './js/game-day-broadcast.js?v=2';
         import { createGameDayRsvpController } from './js/game-day-rsvp-controls.js?v=1';
         import {
             buildOnFieldMap as buildLiveOnFieldMap,
@@ -681,6 +681,7 @@
             lastStatEvent: null,
             // AI model
             aiModel: null,
+            broadcastStatusTimer: null,
             // Unsubs
             unsubscribers: []
         };
@@ -1025,6 +1026,7 @@
                     return;
                 }
                 state.game = game;
+                startBroadcastStatusTimer();
 
                 const needsRsvpForScopedAccess = ['confirmed_members', 'all_confirmed'].includes(String(team.streamAccessMode || '').toLowerCase())
                     || String(team.teamPermissions?.scorekeeping?.mode || '').toLowerCase() === 'all_confirmed'
@@ -1243,14 +1245,21 @@
 
             document.querySelectorAll('[data-game-day-broadcast-card]').forEach((card) => {
                 card.dataset.broadcastState = status.state;
-                const statusElement = card.querySelector('[data-game-day-broadcast-status]');
-                if (statusElement) statusElement.textContent = status.label;
                 const link = card.querySelector('[data-game-day-broadcast-link]');
                 if (!link) return;
                 link.classList.toggle('hidden', !setupUrl);
                 if (setupUrl) link.href = setupUrl;
                 else link.removeAttribute('href');
             });
+            document.querySelectorAll('[data-game-day-broadcast-status]').forEach((statusElement) => {
+                statusElement.textContent = status.label;
+                statusElement.dataset.broadcastState = status.state;
+            });
+        }
+
+        function startBroadcastStatusTimer() {
+            if (state.broadcastStatusTimer !== null) return;
+            state.broadcastStatusTimer = window.setInterval(renderGameDayBroadcastEntryPoints, 10_000);
         }
 
         // ==================== PRE-GAME ====================
@@ -2708,7 +2717,7 @@ Respond ONLY with valid JSON.`;
                         <h1 class="text-2xl font-bold text-gray-900 mt-1">${gameTitle}</h1>
                         <p class="text-sm text-gray-600 mt-2">You have limited streaming access for this scheduled event. Roster, schedule, admin, stats configuration, and team settings remain restricted to coaches/admins.</p>
                     </div>
-                    <p class="text-sm text-indigo-900">${broadcastStatus.label}</p>
+                    <p data-game-day-broadcast-status class="text-sm text-indigo-900">${broadcastStatus.label}</p>
                     <div class="flex flex-col sm:flex-row gap-3">
                         ${broadcastSetupUrl ? `<a href="${broadcastSetupUrl}" class="inline-flex items-center justify-center rounded-lg bg-gray-900 px-4 py-2 text-sm font-semibold text-white hover:bg-gray-800">Open broadcast setup</a>` : ''}
                         ${streamButton}
@@ -2742,7 +2751,7 @@ Respond ONLY with valid JSON.`;
                         <h1 class="text-2xl font-bold text-gray-900 mt-1">${gameTitle}</h1>
                         <p class="text-sm text-gray-600 mt-2">You have videographer access for this scheduled event. Roster, schedule, admin, stats, and team settings remain restricted to coaches/admins.</p>
                     </div>
-                    <p class="text-sm text-violet-900">${broadcastStatus.label}</p>
+                    <p data-game-day-broadcast-status class="text-sm text-violet-900">${broadcastStatus.label}</p>
                     <div class="flex flex-col sm:flex-row gap-3">
                         ${broadcastSetupUrl ? `<a href="${broadcastSetupUrl}" class="inline-flex items-center justify-center rounded-lg bg-gray-900 px-4 py-2 text-sm font-semibold text-white hover:bg-gray-800">Open broadcast setup</a>` : ''}
                     </div>
@@ -2789,7 +2798,7 @@ Respond ONLY with valid JSON.`;
                         </div>
                         <div class="rounded-xl border border-indigo-200 bg-indigo-50 p-4">
                             <div class="text-xs font-semibold uppercase tracking-wide text-indigo-700">Stream setup/status</div>
-                            <p class="mt-2 text-sm text-indigo-900">${streamStatus.label}</p>
+                            <p data-game-day-broadcast-status class="mt-2 text-sm text-indigo-900">${streamStatus.label}</p>
                             <div class="mt-3 flex flex-col gap-2">
                                 ${broadcastSetupUrl ? `<a href="${broadcastSetupUrl}" class="inline-flex items-center justify-center rounded-lg bg-gray-900 px-4 py-2 text-sm font-semibold text-white hover:bg-gray-800">Open broadcast setup</a>` : ''}
                                 ${streamProviderAction}
@@ -2797,7 +2806,7 @@ Respond ONLY with valid JSON.`;
                         </div>
                     </div>
                     <div class="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
-                        Current streaming support uses external provider/setup tools. ALL PLAYS can capture setup/status metadata here, but this is not yet a native managed broadcast or server-side stream pipeline.
+                        Begin Streaming starts a leased local device preview only. External ingest, recording, and server-side broadcast authorization remain separate provider responsibilities.
                     </div>
                 </section>`;
             document.getElementById('footer-container')?.before(main);
@@ -2816,6 +2825,7 @@ Respond ONLY with valid JSON.`;
 
         // Cleanup on page unload
         window.addEventListener('beforeunload', () => {
+            if (state.broadcastStatusTimer !== null) window.clearInterval(state.broadcastStatusTimer);
             state.unsubscribers.forEach(fn => { try { fn(); } catch (e) {} });
         });
     </script>

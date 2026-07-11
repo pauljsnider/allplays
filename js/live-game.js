@@ -39,7 +39,7 @@ import { getAI, getGenerativeModel, GoogleAIBackend } from './vendor/firebase-ai
 import { getApp } from './vendor/firebase-app.js';
 import { resolveOpponentDisplayName, normalizeLiveStatColumns, resolveLiveStatColumns, renderViewerLineupSections, renderOpponentStatsCards, applyResetEventState, applyViewerEventToState, shouldResetViewerFromGameDoc, collectVisibleLiveEventsSequentially } from './live-game-state.js?v=6';
 import { getDefaultLivePeriod } from './live-sport-config.js?v=2';
-import { buildBroadcastRuntimeSession } from './game-day-broadcast.js?v=1';
+import { BROADCAST_STREAM_HEARTBEAT_MS, buildBroadcastRuntimeSession } from './game-day-broadcast.js?v=2';
 
 const state = {
   teamId: null,
@@ -106,7 +106,8 @@ const state = {
   selectedClipEvent: null,
   savingBroadcastSession: false,
   broadcastRsvp: null,
-  broadcastSetupRequested: false
+  broadcastSetupRequested: false,
+  broadcastHeartbeatTimer: null
 };
 
 const playAnnouncer = createPlayAnnouncer();
@@ -444,6 +445,7 @@ function bindNativeCameraTrackRecovery(stream) {
       const readiness = getNativeCameraReadiness();
       if (readiness.cameraReady && readiness.microphoneReady) return;
       const message = 'Camera or microphone access ended. Retry to restore setup and start again.';
+      stopBroadcastHeartbeat();
       setNativeBroadcastStatus(BROADCAST_STREAM_STATUSES.FAILED, message);
       setNativeCameraStatus(message, 'error');
       void saveBroadcastRuntimeStatus(BROADCAST_STREAM_STATUSES.FAILED).catch((error) => {
@@ -477,12 +479,12 @@ async function saveBroadcastSetupSession(status, options = {}) {
     sessionName: getBroadcastSessionName(),
     user: state.user,
     status,
-    provider: resolveBroadcastProviderMetadata(state.team),
+    provider: state.game?.broadcastSession?.provider || resolveBroadcastProviderMetadata(state.team),
     permissions: options.permissions || {},
     errorMessage: options.errorMessage || ''
   });
   const session = status === BROADCAST_SETUP_STATUSES.READY
-    ? buildBroadcastRuntimeSession({ existingSession: setupSession, status: BROADCAST_STREAM_STATUSES.READY })
+    ? buildBroadcastRuntimeSession({ existingSession: setupSession, status: BROADCAST_STREAM_STATUSES.READY, user: state.user })
     : setupSession;
   state.savingBroadcastSession = true;
   try {
@@ -507,7 +509,8 @@ async function saveBroadcastRuntimeStatus(status) {
   }
   const session = buildBroadcastRuntimeSession({
     existingSession: state.game?.broadcastSession,
-    status
+    status,
+    user: state.user
   });
   if (!session) throw new Error('Complete broadcast setup before updating stream status.');
   await updateGame(state.teamId, state.gameId, {
@@ -522,7 +525,28 @@ async function saveBroadcastRuntimeStatus(status) {
   return session;
 }
 
+function stopBroadcastHeartbeat() {
+  if (state.broadcastHeartbeatTimer !== null) {
+    window.clearInterval(state.broadcastHeartbeatTimer);
+    state.broadcastHeartbeatTimer = null;
+  }
+}
+
+function startBroadcastHeartbeat() {
+  stopBroadcastHeartbeat();
+  state.broadcastHeartbeatTimer = window.setInterval(() => {
+    if (state.nativeBroadcastStatus !== BROADCAST_STREAM_STATUSES.LIVE) {
+      stopBroadcastHeartbeat();
+      return;
+    }
+    void saveBroadcastRuntimeStatus(BROADCAST_STREAM_STATUSES.LIVE).catch((error) => {
+      console.warn('Failed to renew device stream lease:', error);
+    });
+  }, BROADCAST_STREAM_HEARTBEAT_MS);
+}
+
 function stopNativeCameraPreview() {
+  stopBroadcastHeartbeat();
   if (state.nativeCameraStream) {
     const stream = state.nativeCameraStream;
     state.nativeCameraStream = null;
@@ -660,9 +684,11 @@ async function beginNativeBroadcastStream() {
       return;
     }
     await saveBroadcastRuntimeStatus(BROADCAST_STREAM_STATUSES.LIVE);
+    startBroadcastHeartbeat();
     setNativeBroadcastStatus(BROADCAST_STREAM_STATUSES.LIVE);
     setNativeCameraStatus('Live device stream is running from this preview. No backend ingest or cloud recording is active.', 'success');
   } catch (error) {
+    stopBroadcastHeartbeat();
     console.warn('Failed to begin live device stream:', error);
     const message = 'The live device stream could not start. Check the preview and retry without refreshing the page.';
     setNativeBroadcastStatus(BROADCAST_STREAM_STATUSES.FAILED, message);
@@ -715,6 +741,8 @@ function initNativeCameraControls() {
   window.addEventListener('pagehide', () => {
     const wasLive = state.nativeBroadcastStatus === BROADCAST_STREAM_STATUSES.LIVE;
     stopNativeCameraPreview();
+    // This is best-effort cleanup only. The bounded live lease expires even if
+    // the browser discards this write while navigating away or losing power.
     if (wasLive) {
       void saveBroadcastRuntimeStatus(BROADCAST_STREAM_STATUSES.READY).catch(() => {});
     }

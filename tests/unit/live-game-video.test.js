@@ -750,19 +750,9 @@ describe('broadcast setup session helpers', () => {
             id: 'broadcast-1778398200000',
             name: 'Varsity vs Central',
             status: 'ready_for_managed_stream',
-            setupOnly: true,
-            managedStreamReady: true,
-            streamStatus: 'ready_for_managed_stream',
             provider: { type: 'managed_setup', name: 'ALL PLAYS managed setup' },
-            setupMetadata: {
-                setupOnly: true,
-                managedStreamReady: true,
-                cameraVerified: true,
-                microphoneVerified: true
-            },
             permissions: { camera: true, microphone: true },
             updatedBy: 'coach-1',
-            updatedByEmail: 'coach@example.com',
             createdAt: '2026-05-10T07:30:00.000Z',
             updatedAt: '2026-05-10T07:30:00.000Z'
         });
@@ -783,13 +773,10 @@ describe('broadcast setup session helpers', () => {
             id: 'broadcast-existing',
             name: 'Existing session',
             status: 'permission_failed',
-            managedStreamReady: false,
-            streamStatus: 'permission_failed',
             permissions: { camera: false, microphone: false },
             errorMessage: 'Permission denied. Allow access and retry.',
             createdAt: '2026-05-01T00:00:00.000Z',
-            updatedAt: '2026-05-10T08:00:00.000Z',
-            failedAt: '2026-05-10T08:00:00.000Z'
+            updatedAt: '2026-05-10T08:00:00.000Z'
         });
     });
 

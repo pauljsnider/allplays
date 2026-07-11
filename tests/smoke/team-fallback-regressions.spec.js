@@ -603,7 +603,11 @@ const LIVE_GAME_UTILS_STUB = `
 export function renderHeader() {}
 export function renderFooter() {}
 export function getUrlParams() {
-    return { teamId: 'team-1', gameId: 'game-1', replay: window.__LIVE_GAME_REPLAY__ === false ? 'false' : 'true' };
+    const params = {};
+    for (const [key, value] of new URLSearchParams(window.location.search)) params[key] = value;
+    for (const [key, value] of new URLSearchParams(window.location.hash.slice(1))) params[key] = value;
+    window.__LIVE_GAME_PARSED_PARAMS__ = params;
+    return params;
 }
 export function escapeHtml(value) {
     if (value === null || value === undefined) return '';
@@ -678,7 +682,7 @@ export async function getConfigs() {
     return [];
 }
 export async function getMyRsvp() {
-    return null;
+    return window.__LIVE_GAME_RSVP__ || null;
 }
 export function subscribeGame() {
     return () => {};
@@ -692,6 +696,9 @@ export async function uploadGameClip() {
 `;
 
 const LIVE_GAME_STREAM_UTILS_STUB = `
+export function normalizeYouTubeEmbedUrl(url) {
+    return url || null;
+}
 export function computePanelVisibility({ isMobile, activeTab, hasVideoStream, shouldDefaultToVideo = false }) {
     if (!isMobile) {
         return {
@@ -1252,17 +1259,26 @@ test('live game archived replay Team Pass gate locks replay when config is enabl
     expect(pageErrors).toEqual([]);
 });
 
-test('live game begins the ready preview stream and recovers from start and track failures', async ({ page, baseURL }) => {
+test('selected streaming helper follows the broadcast setup deep link and recovers from start and track failures', async ({ page, baseURL }) => {
     const pageErrors = await collectPageErrors(page);
     await page.setViewportSize({ width: 390, height: 844 });
     await page.addInitScript(() => {
         window.__LIVE_GAME_REPLAY__ = false;
-        window.__LIVE_GAME_CAMERA_ALLOWED__ = true;
-        window.__LIVE_GAME_TEAM__ = { ownerId: 'user-1' };
+        window.__LIVE_GAME_TEAM__ = {
+            ownerId: 'owner-other',
+            adminEmails: [],
+            teamPermissions: {
+                streaming: { mode: 'selected', memberIds: ['user-1'] }
+            }
+        };
         window.__LIVE_GAME_GAME__ = { status: 'scheduled', liveStatus: 'scheduled' };
         window.__LIVE_GAME_UPDATE_CALLS__ = [];
         window.__LIVE_GAME_PLAY_CALLS__ = 0;
         window.__LIVE_GAME_GET_USER_MEDIA_CALLS__ = 0;
+        window.__LIVE_GAME_SCROLL_TARGETS__ = [];
+        Element.prototype.scrollIntoView = function scrollIntoView() {
+            window.__LIVE_GAME_SCROLL_TARGETS__.push(this.id || this.tagName);
+        };
 
         const createTrack = (kind) => {
             const endedListeners = [];
@@ -1309,9 +1325,18 @@ test('live game begins the ready preview stream and recovers from start and trac
         };
     });
     await routeLiveGameStubs(page);
+    await page.unroute(/\/js\/team-access\.js(?:\?v=\d+)?$/);
+    await page.unroute(/\/js\/live-game-video\.js(?:\?v=\d+)?$/);
 
     await page.goto(`${baseURL}/live-game.html#teamId=team-1&gameId=game-1&broadcast=setup`, { waitUntil: 'domcontentloaded' });
 
+    await expect(page).toHaveURL(/#teamId=team-1&gameId=game-1&broadcast=setup$/);
+    expect(pageErrors).toEqual([]);
+    await expect.poll(() => page.evaluate(() => window.__LIVE_GAME_PARSED_PARAMS__)).toMatchObject({
+        teamId: 'team-1',
+        gameId: 'game-1',
+        broadcast: 'setup'
+    });
     await expect(page.locator('#native-camera-panel')).toBeVisible();
     await expect(page.locator('#video-panel')).toBeVisible();
     await expect(page.locator('#plays-panel')).toBeHidden();
@@ -1354,7 +1379,8 @@ test('live game begins the ready preview stream and recovers from start and trac
         finalSession: {
             status: 'ready_for_managed_stream',
             localStreamStatus: 'live',
-            localStreamActive: true
+            localStreamActive: true,
+            updatedBy: 'user-1'
         }
     });
     expect(pageErrors).toEqual([]);
