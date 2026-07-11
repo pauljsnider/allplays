@@ -2538,6 +2538,7 @@ function formatSubstitutionPlayer(player: { name?: string; number?: string | nul
 
 function GameDaySubstitutionPanel({ auth, event }: { auth: AuthState; event: ParentScheduleEvent }) {
   const formationId = event.gamePlan?.publishedFormationId || event.gamePlan?.formationId || '';
+  const eventRef = useRef(event);
   const [lineupBuilderModule, setLineupBuilderModule] = useState<GameDayLineupBuilderModule | null>(null);
   const [legacyHelpersModule, setLegacyHelpersModule] = useState<LegacyScheduleHelpersModule | null>(null);
   const [players, setPlayers] = useState<Array<{ id: string; name: string; number?: string | null }>>([]);
@@ -2566,6 +2567,10 @@ function GameDaySubstitutionPanel({ auth, event }: { auth: AuthState; event: Par
   const logEntries = useMemo(() => buildGameDayLogEntries(coachingNotes, liveEvents), [coachingNotes, liveEvents]);
 
   useEffect(() => {
+    eventRef.current = event;
+  }, [event]);
+
+  useEffect(() => {
     void loadGameDayLineupBuilderModule().then(setLineupBuilderModule);
     void loadLegacyScheduleHelpersModule().then((module) => {
       setLegacyHelpersModule(module);
@@ -2586,7 +2591,8 @@ function GameDaySubstitutionPanel({ auth, event }: { auth: AuthState; event: Par
   }, [legacyHelpersModule, event.eventKey, event.gamePlan, event.rotationPlan, event.rotationActual, event.coachingNotes, event.liveEvents]);
 
   useEffect(() => {
-    if (!auth.user || !formationId || event.isCancelled) {
+    const currentEvent = eventRef.current;
+    if (!auth.user || !formationId || currentEvent.isCancelled) {
       setPlayers([]);
       setLoading(false);
       return undefined;
@@ -2599,8 +2605,8 @@ function GameDaySubstitutionPanel({ auth, event }: { auth: AuthState; event: Par
     ])
       .then(async ([gameDayService, builder]) => {
         const [preview, loadedLiveEvents] = await Promise.all([
-          gameDayService.loadAutoFilledLineupDraftPreviewForApp(event, auth.user, formationId),
-          gameDayService.loadGameDayLiveEventsForApp(event.teamId, event.id)
+          gameDayService.loadAutoFilledLineupDraftPreviewForApp(currentEvent, auth.user, formationId),
+          gameDayService.loadGameDayLiveEventsForApp(currentEvent.teamId, currentEvent.id)
         ]);
         return { preview, loadedLiveEvents, builder };
       })
@@ -2759,6 +2765,7 @@ function GameDaySubstitutionPanel({ auth, event }: { auth: AuthState; event: Par
 }
 
 function GameHubLineupBuilderPanel({ auth, event, onGamePlanSaved }: { auth: AuthState; event: ParentScheduleEvent; onGamePlanSaved: (gamePlan: Record<string, any>) => void }) {
+  const eventRef = useRef(event);
   const [gameDayService, setGameDayService] = useState<ScheduleGameDayServiceModule | null>(null);
   const [lineupBuilderModule, setLineupBuilderModule] = useState<GameDayLineupBuilderModule | null>(null);
   const eventFormationId = event.gamePlan?.formationId || '';
@@ -2789,6 +2796,10 @@ function GameHubLineupBuilderPanel({ auth, event, onGamePlanSaved }: { auth: Aut
   const hasSavedDraft = gameDayService?.hasLineupDraft(preview?.gamePlan ?? event.gamePlan) || false;
   const hasDraft = Object.keys(draftLineups).length > 0 || (!dirtyRef.current && hasSavedDraft);
   const statusCopy = gameDayService?.getLineupPublishStatus(event.gamePlan) || null;
+
+  useEffect(() => {
+    eventRef.current = event;
+  }, [event]);
 
   useEffect(() => {
     void Promise.all([
@@ -2830,7 +2841,8 @@ function GameHubLineupBuilderPanel({ auth, event, onGamePlanSaved }: { auth: Aut
 
   useEffect(() => {
     let cancelled = false;
-    if (!auth.user || !formationId || event.isCancelled) {
+    const currentEvent = eventRef.current;
+    if (!auth.user || !formationId || currentEvent.isCancelled) {
       setPreview(null);
       setDraftLineups({});
       return undefined;
@@ -2842,7 +2854,7 @@ function GameHubLineupBuilderPanel({ auth, event, onGamePlanSaved }: { auth: Aut
       loadGameDayLineupBuilderModule()
     ])
       .then(async ([service, builder]) => {
-        const result = await service.loadAutoFilledLineupDraftPreviewForApp(event, auth.user, formationId);
+        const result = await service.loadAutoFilledLineupDraftPreviewForApp(currentEvent, auth.user, formationId);
         return { result, builder, service };
       })
       .then(({ result, builder, service }) => {
@@ -2850,10 +2862,10 @@ function GameHubLineupBuilderPanel({ auth, event, onGamePlanSaved }: { auth: Aut
         setGameDayService(service);
         setPreview(result);
         latestPreviewRef.current = result;
-        const seeded = builder.buildLineupEditorAssignments(formationId, result.gamePlan || event.gamePlan || null);
+        const seeded = builder.buildLineupEditorAssignments(formationId, result.gamePlan || currentEvent.gamePlan || null);
         setDraftLineups(seeded);
         latestDraftRef.current = seeded;
-        dirtyRef.current = shouldAutosaveGeneratedLineupDraft(event.gamePlan, result.gamePlan);
+        dirtyRef.current = shouldAutosaveGeneratedLineupDraft(currentEvent.gamePlan, result.gamePlan);
       })
       .catch((error: any) => {
         if (cancelled) return;

@@ -420,6 +420,19 @@ describe('ScheduleEventDetail deferred game hub loaders', () => {
     });
   });
 
+  it('keeps game-day panel reload scope bounded to event fields that change lineup data', () => {
+    let source = '';
+    try {
+      source = readFileSync('src/pages/ScheduleEventDetail.tsx', 'utf8');
+    } catch {
+      source = readFileSync('apps/app/src/pages/ScheduleEventDetail.tsx', 'utf8');
+    }
+
+    expect(source).toMatch(/eventRef\.current = event;/);
+    expect(source).toMatch(/loadAutoFilledLineupDraftPreviewForApp\(currentEvent, auth\.user, formationId\)/);
+    expect(source).toMatch(/\[auth\.user, event\.teamId, event\.id, event\.eventKey, event\.gamePlan, event\.isCancelled, event\.isDbGame, event\.isTeamStaff, event\.type, formationId\]/);
+  });
+
   it('caches deferred game hub module loaders and resolves expected modules', async () => {
     const loaders = [
       { load: loadGameDayLineupBuilderModule, exportName: 'buildLineupEditorPlayers' },
