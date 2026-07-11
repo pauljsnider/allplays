@@ -2797,8 +2797,8 @@ function GameHubLineupBuilderPanel({ auth, event, onGamePlanSaved }: { auth: Aut
     });
   }, []);
 
-  useEffect(() => {
-    setFormationId(event.gamePlan?.formationId || '');
+  const resetLineupBuilderState = useCallback((nextFormationId: string) => {
+    setFormationId(nextFormationId);
     setPreview(null);
     setDraftLineups({});
     setSelectedPlayerId('');
@@ -2806,7 +2806,18 @@ function GameHubLineupBuilderPanel({ auth, event, onGamePlanSaved }: { auth: Aut
     dirtyRef.current = false;
     latestDraftRef.current = {};
     latestPreviewRef.current = null;
-  }, [event.eventKey, event.gamePlan?.formationId]);
+  }, []);
+
+  useEffect(() => {
+    resetLineupBuilderState(event.gamePlan?.formationId || '');
+  }, [event.eventKey, resetLineupBuilderState]);
+
+  useEffect(() => {
+    const nextFormationId = event.gamePlan?.formationId || '';
+    if (nextFormationId && nextFormationId !== formationId && !dirtyRef.current) {
+      resetLineupBuilderState(nextFormationId);
+    }
+  }, [event.gamePlan?.formationId, formationId, resetLineupBuilderState]);
 
   useEffect(() => {
     let cancelled = false;
