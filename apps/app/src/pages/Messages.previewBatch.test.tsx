@@ -231,4 +231,48 @@ describe('Messages inbox windowing', () => {
     await waitFor(() => expect(screen.getByTestId('chat-window-team')).toHaveTextContent('team-250'));
     expect(document.querySelectorAll('.message-row')).toHaveLength(1);
   });
+
+  it('removes the compact scroll listener from the mounted container during unmount cleanup', async () => {
+    layoutMocks.isDesktopWeb = true;
+    chatServiceMocks.loadChatInbox.mockResolvedValue({ teams: largeInbox() });
+    const originalAddEventListener = HTMLElement.prototype.addEventListener;
+    const originalRemoveEventListener = HTMLElement.prototype.removeEventListener;
+    const addedScrollTargets: HTMLElement[] = [];
+    const removedScrollTargets: HTMLElement[] = [];
+    const addSpy = vi.spyOn(HTMLElement.prototype, 'addEventListener').mockImplementation(function (
+      this: HTMLElement,
+      type: string,
+      listener: EventListenerOrEventListenerObject,
+      options?: boolean | AddEventListenerOptions
+    ) {
+      if (type === 'scroll' && this.classList.contains('messages-list-scroll')) {
+        addedScrollTargets.push(this);
+      }
+      return originalAddEventListener.call(this, type, listener, options);
+    });
+    const removeSpy = vi.spyOn(HTMLElement.prototype, 'removeEventListener').mockImplementation(function (
+      this: HTMLElement,
+      type: string,
+      listener: EventListenerOrEventListenerObject,
+      options?: boolean | EventListenerOptions
+    ) {
+      if (type === 'scroll' && this.classList.contains('messages-list-scroll')) {
+        removedScrollTargets.push(this);
+      }
+      return originalRemoveEventListener.call(this, type, listener, options);
+    });
+
+    try {
+      const { unmount } = renderMessages();
+      expect(await screen.findByTestId('messages-inbox-window')).toBeInTheDocument();
+      expect(addedScrollTargets).toHaveLength(1);
+
+      unmount();
+
+      expect(removedScrollTargets).toContain(addedScrollTargets[0]);
+    } finally {
+      addSpy.mockRestore();
+      removeSpy.mockRestore();
+    }
+  });
 });

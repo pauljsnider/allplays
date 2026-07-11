@@ -375,6 +375,7 @@ function InboxList({
 }) {
   const trimmedQuery = searchQuery.trim();
   const listRef = useRef<HTMLElement | null>(null);
+  const compactScrollContainerRef = useRef<HTMLElement | null>(null);
   const shouldWindow = teams.length > INBOX_WINDOWING_THRESHOLD;
   const activeTeamIndex = useMemo(
     () => activeTeamId ? teams.findIndex((team) => team.id === activeTeamId) : -1,
@@ -392,7 +393,7 @@ function InboxList({
     }
 
     if (compact) {
-      const scrollContainer = listRef.current.parentElement;
+      const scrollContainer = compactScrollContainerRef.current || listRef.current.parentElement;
       setRowWindow(getInboxRowWindow({
         itemCount: teams.length,
         scrollOffset: scrollContainer?.scrollTop || 0,
@@ -417,6 +418,9 @@ function InboxList({
     }
 
     const scrollTarget = compact ? listRef.current?.parentElement : window;
+    if (compact) {
+      compactScrollContainerRef.current = scrollTarget instanceof HTMLElement ? scrollTarget : null;
+    }
     let animationFrame = 0;
     const scheduleUpdate = () => {
       if (animationFrame) return;
@@ -427,10 +431,14 @@ function InboxList({
     };
 
     updateRowWindow();
-    scrollTarget?.addEventListener('scroll', scheduleUpdate, { passive: true });
+    if (scrollTarget) {
+      scrollTarget.addEventListener('scroll', scheduleUpdate, { passive: true });
+    }
     window.addEventListener('resize', scheduleUpdate);
     return () => {
-      scrollTarget?.removeEventListener('scroll', scheduleUpdate);
+      if (scrollTarget) {
+        scrollTarget.removeEventListener('scroll', scheduleUpdate);
+      }
       window.removeEventListener('resize', scheduleUpdate);
       if (animationFrame) window.cancelAnimationFrame(animationFrame);
     };
