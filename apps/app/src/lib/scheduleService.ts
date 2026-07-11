@@ -139,6 +139,7 @@ import type { AuthUser } from './types';
 const buildPracticePacketCompletionPayloadBase = buildPracticePacketCompletionPayload;
 
 const primaryDataTimeoutMs = 5000;
+const MAX_SCHEDULE_TRACKER_CONFIG_OPTIONS = 100;
 // Per-team schedule builds are network-bound (team + games + practiceSessions
 // reads each); 3 workers made a 5-team account load in two serialized waves
 // (~18 sequential-ish Firestore round trips measured via the parent schedule
@@ -843,8 +844,16 @@ async function nativeGetDocument(path: string) {
   }
 }
 
-async function nativeListCollection(path: string) {
-  const payload = await nativeFirestoreRequest(`/${path}`);
+async function nativeListCollection(path: string, options: { pageSize?: number; orderBy?: string } = {}) {
+  const requestedPageSize = Number(options.pageSize);
+  const pageSize = Number.isFinite(requestedPageSize)
+    ? Math.min(Math.max(Math.floor(requestedPageSize), 1), 100)
+    : null;
+  const params = new URLSearchParams();
+  if (pageSize) params.set('pageSize', String(pageSize));
+  if (options.orderBy) params.set('orderBy', options.orderBy);
+  const queryString = params.size ? `?${params.toString()}` : '';
+  const payload = await nativeFirestoreRequest(`/${path}${queryString}`);
   return ((payload.documents || []) as NativeFirestoreDocument[])
     .map((document) => mapFirestoreDocument(document))
     .filter(Boolean) as FirestoreDocument[];
@@ -1765,11 +1774,20 @@ export type UpdateScheduledPracticeOptions = {
   instanceDate?: string | null;
 };
 
-async function readScheduleStatTrackerConfigOptions(normalizedTeamId: string): Promise<ScheduleStatTrackerConfigOption[]> {
+async function readScheduleStatTrackerConfigOptions(
+  normalizedTeamId: string,
+  options: { limit?: number } = {}
+): Promise<ScheduleStatTrackerConfigOption[]> {
+  const boundedOptions = options.limit ? { limit: options.limit } : undefined;
   const configs = await readWithNativeFallback(
     `schedule stat tracker configs ${normalizedTeamId}`,
-    () => Promise.resolve(getConfigs(normalizedTeamId)),
-    () => nativeListCollection(`teams/${encodeURIComponent(normalizedTeamId)}/statTrackerConfigs`)
+    () => Promise.resolve(boundedOptions
+      ? getConfigs(normalizedTeamId, boundedOptions)
+      : getConfigs(normalizedTeamId)),
+    () => nativeListCollection(
+      `teams/${encodeURIComponent(normalizedTeamId)}/statTrackerConfigs`,
+      options.limit ? { pageSize: options.limit, orderBy: 'name' } : {}
+    )
   ).catch(() => []);
   return (Array.isArray(configs) ? configs : [])
     .map((config: any) => ({
@@ -1798,7 +1816,7 @@ export async function loadScheduleStatTrackerConfigsForApp(teamId: string, user:
   const normalizedTeamId = compactString(teamId);
   if (!normalizedTeamId) throw new Error('Team is required.');
   await requireScheduleImportStaff(normalizedTeamId, user);
-  return readScheduleStatTrackerConfigOptions(normalizedTeamId);
+  return readScheduleStatTrackerConfigOptions(normalizedTeamId, { limit: MAX_SCHEDULE_TRACKER_CONFIG_OPTIONS });
 }
 
 export async function loadScorekeeperStatTrackerConfigsForApp(
@@ -1820,6 +1838,8 @@ export async function loadScorekeeperStatTrackerConfigsForApp(
   if (!canLoadForScorekeeping) {
     throw new Error('You do not have permission to load tracker setup for this game.');
   }
+  // Scorekeeping must retain access to the event's assigned config even when it
+  // sorts beyond the bounded set used by schedule form dropdowns.
   return readScheduleStatTrackerConfigOptions(normalizedTeamId);
 }
 

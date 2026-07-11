@@ -96,8 +96,8 @@ export async function getGames(teamId: string, options: GamesQueryOptions = {}) 
     return await Promise.resolve(legacyGetGames(teamId, options));
 }
 
-export async function getConfigs(teamId: string) {
-    return await Promise.resolve(legacyGetConfigs(teamId));
+export async function getConfigs(teamId: string, options?: { limit?: number }) {
+    return await Promise.resolve(options === undefined ? legacyGetConfigs(teamId) : legacyGetConfigs(teamId, options));
 }
 
 export async function getPracticePacketCompletions(teamId: string, sessionId: string) {

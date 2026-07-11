@@ -1303,12 +1303,13 @@ describe('Schedule', () => {
     expect(screen.getByRole('heading', { name: 'Add external calendar' })).toBeTruthy();
   });
 
-  it('defers desktop tracker config loading until staff starts using game creation', async () => {
+  it('loads desktop tracker configs when Manage schedule exposes inline game creation', async () => {
     shellLayoutMocks.isDesktopWeb = true;
     scheduleServiceMocks.loadParentSchedule.mockResolvedValueOnce(buildStaffScheduleResult());
-    scheduleServiceMocks.loadScheduleStatTrackerConfigsForApp.mockResolvedValueOnce([
-      { id: 'config-1', name: 'Varsity Tracker' }
-    ]);
+    let resolveConfigLoad: ((configs: Array<{ id: string; name: string }>) => void) | null = null;
+    scheduleServiceMocks.loadScheduleStatTrackerConfigsForApp.mockImplementationOnce(() => new Promise((resolve) => {
+      resolveConfigLoad = resolve;
+    }));
 
     renderSchedule();
 
@@ -1318,14 +1319,22 @@ describe('Schedule', () => {
     fireEvent.click(screen.getByRole('button', { name: /manage schedule/i }));
 
     expect(await screen.findByRole('heading', { name: 'Add game for Bears' })).toBeTruthy();
-    expect(scheduleServiceMocks.loadScheduleStatTrackerConfigsForApp).not.toHaveBeenCalled();
-
-    fireEvent.focus(screen.getAllByLabelText('Opponent')[0]);
 
     await waitFor(() => {
       expect(scheduleServiceMocks.loadScheduleStatTrackerConfigsForApp).toHaveBeenCalledTimes(1);
       expect(scheduleServiceMocks.loadScheduleStatTrackerConfigsForApp).toHaveBeenCalledWith('team-1', auth.user);
     });
-    expect((await screen.findAllByRole('option', { name: 'Varsity Tracker' })).length).toBeGreaterThan(0);
+    expect(screen.getByLabelText('Tracker config')).toBeDisabled();
+    expect(screen.getByRole('option', { name: 'Loading tracker configs' })).toBeTruthy();
+
+    if (!resolveConfigLoad) {
+      throw new Error('Expected the tracker config request to start when Manage schedule opened.');
+    }
+    (resolveConfigLoad as (configs: Array<{ id: string; name: string }>) => void)([
+      { id: 'config-1', name: 'Basketball Standard' }
+    ]);
+
+    expect((await screen.findAllByRole('option', { name: 'Basketball Standard' })).length).toBeGreaterThan(0);
+    expect(screen.getByLabelText('Tracker config')).not.toBeDisabled();
   });
 });

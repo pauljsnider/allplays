@@ -1097,6 +1097,44 @@ describe('React app schedule service contract integration', () => {
                 { id: 'cfg-b', name: 'Basketball', baseType: 'Basketball', isBasketball: true, columns: [], statDefinitions: [] },
                 { id: 'cfg-z', name: 'Zone Tracker', baseType: 'Soccer', isBasketball: false, columns: [], statDefinitions: [] }
             ]);
+        expect(dbMocks.getConfigs).toHaveBeenCalledWith('team-1', { limit: 100 });
+    });
+
+    it('keeps native schedule tracker config fallback reads bounded', async () => {
+        installWindow('capacitor:');
+        dbMocks.getTeam.mockResolvedValue({
+            id: 'team-1',
+            name: 'Bears',
+            ownerId: 'coach-1',
+            adminEmails: []
+        });
+        dbMocks.getConfigs.mockRejectedValueOnce(new Error('web config read unavailable'));
+        authMocks.getNativeAuthIdToken.mockResolvedValue('native-token');
+        const fetchMock = vi.fn().mockResolvedValue({
+            ok: true,
+            json: vi.fn().mockResolvedValue({
+                documents: [{
+                    name: 'projects/demo-allplays/databases/(default)/documents/teams/team-1/statTrackerConfigs/config-1',
+                    fields: {
+                        name: { stringValue: 'Basketball Standard' },
+                        baseType: { stringValue: 'Basketball' }
+                    }
+                }]
+            })
+        });
+        vi.stubGlobal('fetch', fetchMock);
+
+        await expect(loadScheduleStatTrackerConfigsForApp('team-1', { uid: 'coach-1', email: 'coach@example.com' }))
+            .resolves.toEqual([
+                expect.objectContaining({ id: 'config-1', name: 'Basketball Standard' })
+            ]);
+
+        expect(fetchMock).toHaveBeenCalledWith(
+            'https://firestore.googleapis.com/v1/projects/demo-allplays/databases/(default)/documents/teams/team-1/statTrackerConfigs?pageSize=100&orderBy=name',
+            expect.objectContaining({
+                headers: expect.objectContaining({ Authorization: 'Bearer native-token' })
+            })
+        );
     });
 
     it('loads tracker configs for delegated scorekeeping without requiring schedule staff access', async () => {
@@ -1121,6 +1159,7 @@ describe('React app schedule service contract integration', () => {
                 statDefinitions: []
             }
         ]);
+        expect(dbMocks.getConfigs).toHaveBeenCalledWith('team-1');
         expect(dbMocks.getTeam).not.toHaveBeenCalled();
     });
 

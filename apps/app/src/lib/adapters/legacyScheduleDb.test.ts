@@ -62,8 +62,8 @@ vi.mock('@legacy/firebase.js', () => ({
     where: vi.fn()
 }));
 
-import { addGame as legacyAddGame } from '@legacy/db.js';
-import { addGame, buildLegacyTournamentGameDocument, buildLegacyTournamentGameDocuments, buildSingleLegacyTournamentGameDocument, LegacyTournamentGameAdapterValidationError } from './legacyScheduleDb';
+import { addGame as legacyAddGame, getConfigs as legacyGetConfigs } from '@legacy/db.js';
+import { addGame, buildLegacyTournamentGameDocument, buildLegacyTournamentGameDocuments, buildSingleLegacyTournamentGameDocument, getConfigs, LegacyTournamentGameAdapterValidationError } from './legacyScheduleDb';
 
 const buildValidLegacyGamePayload = (overrides: Record<string, unknown> = {}) => ({
     type: 'game',
@@ -221,5 +221,17 @@ describe('legacyScheduleDb game persistence', () => {
 
         expect(legacyAddGame).toHaveBeenCalledTimes(1);
         expect(legacyAddGame).toHaveBeenCalledWith('team-1', leagueDocument);
+    });
+});
+
+describe('legacyScheduleDb tracker config reads', () => {
+    it('forwards the schedule option limit to the legacy query boundary', async () => {
+        vi.mocked(legacyGetConfigs).mockResolvedValueOnce([{ id: 'config-1', name: 'Basketball Standard' }]);
+
+        await expect(getConfigs('team-1', { limit: 100 })).resolves.toEqual([
+            { id: 'config-1', name: 'Basketball Standard' }
+        ]);
+
+        expect(legacyGetConfigs).toHaveBeenCalledWith('team-1', { limit: 100 });
     });
 });

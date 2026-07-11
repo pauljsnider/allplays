@@ -219,6 +219,7 @@ export function Schedule({ auth }: { auth: AuthState }) {
   const [savingGame, setSavingGame] = useState(false);
   const [gameFormError, setGameFormError] = useState<string | null>(null);
   const [gameTrackerConfigs, setGameTrackerConfigs] = useState<ScheduleStatTrackerConfigOption[]>([]);
+  const [gameTrackerConfigsLoading, setGameTrackerConfigsLoading] = useState(false);
   const [gameTrackerConfigError, setGameTrackerConfigError] = useState<string | null>(null);
   const [tournamentForm, setTournamentForm] = useState<ScheduleTournamentCreateFormInput>(() => getDefaultScheduleTournamentForm());
   const [savingTournament, setSavingTournament] = useState(false);
@@ -677,11 +678,13 @@ export function Schedule({ auth }: { auth: AuthState }) {
   useEffect(() => {
     if (!selectedCalendarTeam) {
       setGameTrackerConfigs([]);
+      setGameTrackerConfigsLoading(false);
       setGameTrackerConfigError(null);
       return;
     }
     const cachedConfigs = trackerConfigCacheRef.current[selectedCalendarTeam.teamId];
     setGameTrackerConfigs(cachedConfigs || []);
+    setGameTrackerConfigsLoading(false);
     setGameTrackerConfigError(null);
   }, [selectedCalendarTeam]);
 
@@ -689,18 +692,21 @@ export function Schedule({ auth }: { auth: AuthState }) {
   useEffect(() => {
     let cancelled = false;
     if (!selectedCalendarTeam || !auth.user) return;
-    const shouldLoadTrackerConfigs = mobileStaffToolsOpen
+    const shouldLoadTrackerConfigs = desktopStaffToolsOpen
+      || mobileStaffToolsOpen
       || trackerConfigRequestedTeamIds[selectedCalendarTeam.teamId];
     if (!shouldLoadTrackerConfigs) return;
 
     const cachedConfigs = trackerConfigCacheRef.current[selectedCalendarTeam.teamId];
     if (cachedConfigs) {
       setGameTrackerConfigs(cachedConfigs);
+      setGameTrackerConfigsLoading(false);
       setGameTrackerConfigError(null);
       return;
     }
 
     setGameTrackerConfigs([]);
+    setGameTrackerConfigsLoading(true);
     setGameTrackerConfigError(null);
 
     const cachedPromise = trackerConfigRequestPromiseRef.current[selectedCalendarTeam.teamId]
@@ -713,17 +719,21 @@ export function Schedule({ auth }: { auth: AuthState }) {
         delete trackerConfigRequestPromiseRef.current[selectedCalendarTeam.teamId];
         if (!cancelled) {
           setGameTrackerConfigs(configs);
+          setGameTrackerConfigsLoading(false);
           setGameTrackerConfigError(null);
         }
       })
       .catch((configError: any) => {
         delete trackerConfigRequestPromiseRef.current[selectedCalendarTeam.teamId];
-        if (!cancelled) setGameTrackerConfigError(configError?.message || 'Unable to load tracker configs.');
+        if (!cancelled) {
+          setGameTrackerConfigsLoading(false);
+          setGameTrackerConfigError(configError?.message || 'Unable to load tracker configs.');
+        }
       });
     return () => {
       cancelled = true;
     };
-  }, [auth.user, mobileStaffToolsOpen, selectedCalendarTeam, trackerConfigRequestedTeamIds]);
+  }, [auth.user, desktopStaffToolsOpen, mobileStaffToolsOpen, selectedCalendarTeam, trackerConfigRequestedTeamIds]);
 
   const renderScheduleStaffToolsContent = () => {
     if (shouldShowManageScheduleTeamPicker) {
@@ -755,6 +765,7 @@ export function Schedule({ auth }: { auth: AuthState }) {
           teamName={selectedCalendarTeam.teamName}
           form={gameForm}
           configs={gameTrackerConfigs}
+          configsLoading={gameTrackerConfigsLoading}
           saving={savingGame}
           error={gameFormError}
           configError={gameTrackerConfigError}
@@ -1732,7 +1743,7 @@ function getDefaultSchedulePracticeForm(): SchedulePracticeFormInput {
   };
 }
 
-function ScheduleGameCreatePanel({ teamName, form, configs, saving, error, configError, onStartUsing, onChange, onSubmit }: { teamName: string; form: ScheduleGameFormInput; configs: ScheduleStatTrackerConfigOption[]; saving: boolean; error: string | null; configError: string | null; onStartUsing?: () => void; onChange: (form: ScheduleGameFormInput) => void; onSubmit: (event: FormEvent<HTMLFormElement>) => void }) {
+function ScheduleGameCreatePanel({ teamName, form, configs, configsLoading, saving, error, configError, onStartUsing, onChange, onSubmit }: { teamName: string; form: ScheduleGameFormInput; configs: ScheduleStatTrackerConfigOption[]; configsLoading: boolean; saving: boolean; error: string | null; configError: string | null; onStartUsing?: () => void; onChange: (form: ScheduleGameFormInput) => void; onSubmit: (event: FormEvent<HTMLFormElement>) => void }) {
   const updateField = (field: keyof ScheduleGameFormInput, value: string | Date | boolean | null) => onChange({ ...form, [field]: value });
   return (
     <section className="app-card p-3 sm:p-4" aria-label="Create game" onFocusCapture={onStartUsing}>
@@ -1746,7 +1757,7 @@ function ScheduleGameCreatePanel({ teamName, form, configs, saving, error, confi
           <label className="text-xs font-bold uppercase tracking-wide text-gray-600">Ends<input type="datetime-local" className="auth-input mt-1" value={toDatetimeLocalInputValue(form.endDate)} onChange={(event) => updateField('endDate', event.target.value ? new Date(event.target.value) : null)} /></label>
           <label className="text-xs font-bold uppercase tracking-wide text-gray-600">Arrival<input type="datetime-local" className="auth-input mt-1" value={toDatetimeLocalInputValue(form.arrivalTime)} onChange={(event) => updateField('arrivalTime', event.target.value ? new Date(event.target.value) : null)} /></label>
           <label className="text-xs font-bold uppercase tracking-wide text-gray-600">Home / away<select className="auth-input mt-1" value={form.isHome === false ? 'away' : form.isHome === true ? 'home' : 'neutral'} onChange={(event) => updateField('isHome', event.target.value === 'neutral' ? null : event.target.value === 'home')}><option value="home">Home</option><option value="away">Away</option><option value="neutral">Neutral</option></select></label>
-          <label className="text-xs font-bold uppercase tracking-wide text-gray-600">Tracker config<select className="auth-input mt-1" value={form.statTrackerConfigId || ''} onChange={(event) => updateField('statTrackerConfigId', event.target.value)}><option value="">No tracker config</option>{configs.map((config) => <option key={config.id} value={config.id}>{config.name}</option>)}</select></label>
+          <label className="text-xs font-bold uppercase tracking-wide text-gray-600">Tracker config<select className="auth-input mt-1" value={form.statTrackerConfigId || ''} disabled={configsLoading} onChange={(event) => updateField('statTrackerConfigId', event.target.value)}><option value="">{configsLoading ? 'Loading tracker configs' : 'No tracker config'}</option>{configs.map((config) => <option key={config.id} value={config.id}>{config.name}</option>)}</select></label>
           <label className="text-xs font-bold uppercase tracking-wide text-gray-600">Competition<select className="auth-input mt-1" value={form.competitionType || 'league'} onChange={(event) => updateField('competitionType', event.target.value)}><option value="league">League</option><option value="tournament">Tournament</option><option value="scrimmage">Scrimmage</option><option value="friendly">Friendly</option></select></label>
         </div>
         <label className="flex items-center gap-2 text-sm font-black text-gray-800"><input type="checkbox" checked={form.countsTowardSeasonRecord !== false} onChange={(event) => updateField('countsTowardSeasonRecord', event.target.checked)} /> Counts toward season record</label>

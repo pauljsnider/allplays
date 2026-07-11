@@ -208,6 +208,24 @@ describe('public team roster count', () => {
     });
 });
 
+describe('bounded stat tracker config reads', () => {
+    beforeEach(() => {
+        vi.clearAllMocks();
+    });
+
+    it('caps schedule-facing config queries without changing unbounded legacy callers', async () => {
+        firebaseMocks.getDocs.mockResolvedValue({
+            docs: [createTeamDoc('config-1', { name: 'Basketball Standard', baseType: 'Basketball' })]
+        });
+        const { getConfigs } = await import('../../js/db.js?v=91');
+
+        await expect(getConfigs('team-1', { limit: 100 })).resolves.toEqual([
+            expect.objectContaining({ id: 'config-1', name: 'Basketball Standard' })
+        ]);
+        expect(firebaseMocks.limit).toHaveBeenCalledWith(100);
+    });
+});
+
 describe('complete legacy collection helpers', () => {
     beforeEach(() => {
         vi.clearAllMocks();
