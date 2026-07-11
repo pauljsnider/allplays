@@ -278,6 +278,7 @@ function buildEvent(overrides: Record<string, unknown> = {}) {
     opponent: 'Wolves',
     childId: 'player-1',
     childName: 'Avery Smith',
+    isLinkedParentChild: true,
     isDbGame: true,
     isCancelled: false,
     status: 'scheduled',
@@ -918,6 +919,27 @@ describe('ScheduleEventDetail family RSVP path', () => {
     expect(await screen.findByText('Is Avery Smith going?')).toBeTruthy();
     expect(screen.queryByTestId('family-rsvp-controls')).toBeNull();
     expect(screen.queryByRole('button', { name: 'Set individually' })).toBeNull();
+  });
+
+  it('does not offer family response controls for staff-expanded roster rows', async () => {
+    scheduleServiceMocks.loadParentScheduleEventDetail.mockResolvedValue({
+      events: [
+        buildEvent({ childId: 'player-1', childName: 'Avery Smith' }),
+        buildEvent({
+          eventKey: 'team-1::game-1::player-2::2026-06-04T18:00:00.000Z::game',
+          childId: 'player-2',
+          childName: 'Roster Player',
+          isLinkedParentChild: false
+        })
+      ],
+      children: []
+    });
+
+    renderScheduleEventDetail();
+
+    expect(await screen.findByText('Is Avery Smith going?')).toBeTruthy();
+    expect(screen.queryByTestId('family-rsvp-controls')).toBeNull();
+    expect(screen.queryByText('Family response')).toBeNull();
   });
 });
 

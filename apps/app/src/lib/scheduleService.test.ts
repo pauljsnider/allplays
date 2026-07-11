@@ -273,7 +273,7 @@ describe('parent schedule child scope', () => {
     const children = await loadParentScheduleChildren(parentUser);
 
     expect(children).toEqual([
-      { teamId: 'team-1', teamName: 'Bears', playerId: 'player-1', playerName: 'Avery Lee' }
+      { teamId: 'team-1', teamName: 'Bears', playerId: 'player-1', playerName: 'Avery Lee', isLinkedParentChild: true }
     ]);
     expect(getTeam).toHaveBeenCalledWith('team-1');
     expect(getDoc).toHaveBeenCalledWith(expect.objectContaining({ path: 'teams/team-1/players/player-1' }));
@@ -293,7 +293,7 @@ describe('parent schedule child scope', () => {
 
     try {
       await expect(loadParentScheduleChildren(parentUser)).resolves.toEqual([
-        { teamId: 'team-1', teamName: 'Bears', playerId: 'player-1', playerName: 'Avery Lee' }
+        { teamId: 'team-1', teamName: 'Bears', playerId: 'player-1', playerName: 'Avery Lee', isLinkedParentChild: true }
       ]);
     } finally {
       if (previousWindow === undefined) {
@@ -329,7 +329,7 @@ describe('parent schedule child scope', () => {
     const children = await loadParentScheduleChildren(parentUser);
 
     expect(children).toEqual([
-      { teamId: 'team-active', teamName: 'Active Team', playerId: 'player-active', playerName: 'Active Player' }
+      { teamId: 'team-active', teamName: 'Active Team', playerId: 'player-active', playerName: 'Active Player', isLinkedParentChild: true }
     ]);
     expect(getPlayers).not.toHaveBeenCalled();
   });
@@ -372,7 +372,7 @@ describe('parent schedule child scope', () => {
 
     expect(loadProfileDocument).toHaveBeenCalledWith('parent-1');
     expect(schedule.children).toEqual([
-      { teamId: 'team-1', teamName: 'Bears', playerId: 'player-1', playerName: 'Avery Lee' }
+      { teamId: 'team-1', teamName: 'Bears', playerId: 'player-1', playerName: 'Avery Lee', isLinkedParentChild: true }
     ]);
   });
 });
@@ -2290,6 +2290,7 @@ describe('parent family RSVP submission', () => {
     id: 'game-1',
     teamId: 'team-1',
     childId: 'player-1',
+    isLinkedParentChild: true,
     isDbGame: true,
     isCancelled: false,
     availabilityLocked: false,
@@ -2413,6 +2414,15 @@ describe('parent family RSVP submission', () => {
       baseEvent,
       { ...baseEvent, id: 'game-2', childId: 'player-2' }
     ], user as any, 'maybe')).rejects.toThrow('same event');
+
+    expect(submitRsvp).not.toHaveBeenCalled();
+  });
+
+  it('rejects staff-expanded roster rows before writing a family response', async () => {
+    await expect(submitParentScheduleRsvpForChildren([
+      baseEvent,
+      { ...baseEvent, childId: 'player-2', isLinkedParentChild: false }
+    ], user as any, 'going')).rejects.toThrow('linked to your account');
 
     expect(submitRsvp).not.toHaveBeenCalled();
   });

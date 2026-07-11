@@ -48,6 +48,7 @@ function buildEvent(overrides: Record<string, unknown> = {}) {
         teamId: 'team-1',
         childId: 'player-1',
         childName: 'Avery Smith',
+        isLinkedParentChild: true,
         isDbGame: true,
         isCancelled: false,
         availabilityLocked: false,
@@ -201,6 +202,25 @@ describe('useScheduleEventRsvp', () => {
             expect.objectContaining({ childId: 'player-1', myRsvp: 'going', myRsvpNote: 'Both need a ride', rsvpSummary: summary }),
             expect.objectContaining({ childId: 'player-2', myRsvp: 'going', myRsvpNote: 'Both need a ride', rsvpSummary: summary })
         ]);
+    });
+
+    it('excludes staff-expanded roster rows from family RSVP writes', async () => {
+        const events = [
+            buildEvent(),
+            buildEvent({
+                eventKey: 'team-1::game-1::player-2',
+                childId: 'player-2',
+                childName: 'Roster Player',
+                isLinkedParentChild: false
+            })
+        ];
+
+        renderProbe('Family only', { events, applyToAllChildren: true });
+        fireEvent.click(screen.getByRole('button', { name: 'Submit going' }));
+
+        await waitFor(() => expect(submitParentScheduleRsvp).toHaveBeenCalledTimes(1));
+        expect(submitParentScheduleRsvp).toHaveBeenCalledWith(expect.objectContaining({ childId: 'player-1' }), auth.user, 'going', 'Family only');
+        expect(submitParentScheduleRsvpForChildren).not.toHaveBeenCalled();
     });
 
     it('treats a null RSVP summary as a successful submission', async () => {

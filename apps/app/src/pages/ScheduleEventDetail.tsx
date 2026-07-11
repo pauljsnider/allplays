@@ -1029,9 +1029,9 @@ function AvailabilitySection({ event, rsvp, availabilityNote, onAvailabilityNote
     setIndividualMode(false);
   }, [event.id, event.teamId]);
   const matchingChildEvents = childEvents.filter((childEvent) => (
-    childEvent.teamId === event.teamId && childEvent.id === event.id && Boolean(childEvent.childId)
+    childEvent.teamId === event.teamId && childEvent.id === event.id && Boolean(childEvent.childId) && childEvent.isLinkedParentChild === true
   ));
-  const familyRsvpAvailable = matchingChildEvents.length > 1 && matchingChildEvents.every((childEvent) => (
+  const familyRsvpAvailable = event.isLinkedParentChild === true && matchingChildEvents.length > 1 && matchingChildEvents.every((childEvent) => (
     childEvent.isDbGame && !childEvent.isCancelled && !childEvent.availabilityLocked
   ));
   const useFamilyRsvp = familyRsvpAvailable && !individualMode;

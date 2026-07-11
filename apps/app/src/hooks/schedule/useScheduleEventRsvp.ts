@@ -54,9 +54,9 @@ export function useScheduleEventRsvp({ availabilityNote, applyToAllChildren = fa
   const { error, run } = useAsyncOperation();
 
   const matchingChildEvents = childEvents.filter((childEvent) => (
-    childEvent.teamId === event.teamId && childEvent.id === event.id && Boolean(childEvent.childId)
+    childEvent.teamId === event.teamId && childEvent.id === event.id && Boolean(childEvent.childId) && childEvent.isLinkedParentChild === true
   ));
-  const targetEvents = applyToAllChildren ? matchingChildEvents : [event];
+  const targetEvents = applyToAllChildren && event.isLinkedParentChild === true ? matchingChildEvents : [event];
   const canSubmit = targetEvents.length > 0 && targetEvents.every(canSubmitScheduleEventRsvp);
 
   const submit = async (response: Exclude<RsvpResponse, 'not_responded'>) => {

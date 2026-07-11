@@ -180,6 +180,7 @@ export type ParentScheduleChild = {
   teamName: string;
   playerId: string;
   playerName: string;
+  isLinkedParentChild?: boolean;
 };
 
 type ParentScopeLink = ParentScheduleChild & {
@@ -2518,7 +2519,8 @@ async function resolveParentScheduleChildren(user: AuthUser, profile: Record<str
           teamId: link.teamId,
           teamName: teamName || link.teamName,
           playerId: link.playerId,
-          playerName: player ? normalizePlayerName(player) : link.playerName || 'Player'
+          playerName: player ? normalizePlayerName(player) : link.playerName || 'Player',
+          isLinkedParentChild: true
         };
       })
       .filter(Boolean) as ParentScheduleChild[];
@@ -3014,6 +3016,7 @@ function createScheduleEvent(input: {
     title: input.title || null,
     childId: input.child.playerId,
     childName: input.child.playerName,
+    isLinkedParentChild: input.child.isLinkedParentChild === true,
     isDbGame: input.isDbGame,
     isCancelled: input.isCancelled === true,
     status: input.status || null,
@@ -3652,7 +3655,8 @@ async function buildParentScheduleTeamChildren(user: AuthUser, profile: Record<s
           teamId,
           teamName,
           playerId: `staff-team-${teamId}`,
-          playerName: 'Team schedule'
+          playerName: 'Team schedule',
+          isLinkedParentChild: false
         }]);
       }
       return;
@@ -3664,7 +3668,8 @@ async function buildParentScheduleTeamChildren(user: AuthUser, profile: Record<s
         teamId,
         teamName,
         playerId: compactString(player.id),
-        playerName: compactString(player.name) || compactString(player.displayName) || 'Player'
+        playerName: compactString(player.name) || compactString(player.displayName) || 'Player',
+        isLinkedParentChild: false
       }));
     if (staffChildren.length) {
       byTeam.set(teamId, [...(byTeam.get(teamId) || []), ...staffChildren]);
@@ -4177,6 +4182,9 @@ export async function submitParentScheduleRsvpForChildren(events: ParentSchedule
   }
   if (events.some((event) => event.availabilityLocked)) {
     throw new Error('Availability is locked for this event.');
+  }
+  if (events.some((event) => event.isLinkedParentChild !== true)) {
+    throw new Error('Family availability can only update children linked to your account.');
   }
   if (childIds.length === 1) {
     return submitParentScheduleRsvp(firstEvent, user, response, note);
