@@ -14,15 +14,15 @@ const helpFiles = fs.readdirSync(repoRoot)
 const docs = helpFiles.map((file) => {
   const html = fs.readFileSync(path.join(repoRoot, file), 'utf8');
   const manifestItem = manifestByFile.get(file);
-  const textFromHtml = extractHtmlText(html);
+  const textFromHtml = rewriteAppHelpReferences(extractHtmlText(html), file);
   const title = manifestItem?.title || extractTitle(html, file);
   const summary = compactText(manifestItem?.summary || extractDescription(html) || firstUsefulSentence(textFromHtml));
-  const text = compactText([
+  const text = compactStructuredText([
     title,
     summary,
-    manifestItem?.searchText || '',
+    rewriteAppHelpReferences(manifestItem?.searchText || '', file),
     textFromHtml
-  ].join(' ')).slice(0, 12000);
+  ].filter(Boolean).join('\n')).slice(0, 12000);
 
   return {
     id: manifestItem?.id || file.replace(/\.html$/i, ''),
@@ -49,17 +49,21 @@ fs.writeFileSync(outputPath, source);
 console.log(`Wrote ${docs.length} help docs to ${path.relative(repoRoot, outputPath)}`);
 
 function extractHtmlText(html) {
-  return compactText(html
+  return compactStructuredText(html
     .replace(/<script[\s\S]*?<\/script>/gi, ' ')
     .replace(/<style[\s\S]*?<\/style>/gi, ' ')
     .replace(/<nav[\s\S]*?<\/nav>/gi, ' ')
     .replace(/<footer[\s\S]*?<\/footer>/gi, ' ')
     .replace(/<svg[\s\S]*?<\/svg>/gi, ' ')
+    .replace(/<h[1-3][^>]*>([\s\S]*?)<\/h[1-3]>/gi, '\n$1\n')
+    .replace(/<li[^>]*>([\s\S]*?)<\/li>/gi, '\n- $1\n')
+    .replace(/<p[^>]*>([\s\S]*?)<\/p>/gi, '\n$1\n')
+    .replace(/<br\s*\/?>/gi, '\n')
     .replace(/<[^>]+>/g, ' ')
     .replace(/&nbsp;/g, ' ')
     .replace(/&amp;/g, '&')
     .replace(/&mdash;/g, '-')
-    .replace(/&rarr;/g, '->')
+    .replace(/&rarr;|-&gt;/g, '->')
     .replace(/&#39;/g, "'")
     .replace(/&quot;/g, '"'));
 }
@@ -106,4 +110,24 @@ function normalizeRoles(roles) {
 
 function compactText(value) {
   return String(value || '').replace(/\s+/g, ' ').trim();
+}
+
+function compactStructuredText(value) {
+  return String(value || '')
+    .split(/\n+/)
+    .map((line) => compactText(line))
+    .filter(Boolean)
+    .join('\n');
+}
+
+function rewriteAppHelpReferences(value, file) {
+  if (file === 'help-page-reference.html') return String(value || '');
+
+  return String(value || '')
+    .replace(/(?<![-\w])login\.html\b/g, '#/auth')
+    .replace(/(?<![-\w])reset-password\.html\b/g, '#/reset-password')
+    .replace(/(?<![-\w])accept-invite\.html\b/g, '#/accept-invite')
+    .replace(/(?<![-\w])verify-pending\.html\b/g, '#/verify-pending')
+    .replace(/(?<![-\w])profile\.html\b/g, '#/profile')
+    .replace(/(?<![-\w])admin\.html\b/g, 'admin tools');
 }

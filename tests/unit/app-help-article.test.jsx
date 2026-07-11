@@ -10,6 +10,11 @@ const helpMocks = vi.hoisted(() => ({
 }));
 
 vi.mock('../../apps/app/src/lib/helpKnowledgeService.ts', () => helpMocks);
+vi.mock('lucide-react', () => ({
+    ArrowLeft: () => null,
+    Home: () => null,
+    Search: () => null
+}));
 
 import { HelpArticle } from '../../apps/app/src/pages/HelpArticle.tsx';
 
@@ -61,6 +66,92 @@ describe('HelpArticle', () => {
         expect(container.textContent).toContain('coach');
         expect(container.textContent).toContain('Use password reset when a parent cannot sign in.');
         expect(container.querySelector('a[href="https://allplays.ai/help-account.html"]')).toBeNull();
+
+        await act(async () => root.unmount());
+    });
+
+    it('renders structured account help with app routes instead of legacy filenames', async () => {
+        helpMocks.getHelpKnowledgeDocs.mockReturnValue([{
+            id: 'help-account',
+            title: 'Account and Access',
+            file: 'help-account.html',
+            url: 'https://allplays.ai/help-account.html',
+            roles: ['parent', 'coach', 'admin', 'member'],
+            summary: 'Who does what for authentication, onboarding, and account state workflows.',
+            text: [
+                'Account and Access',
+                'Who does what for authentication, onboarding, and account state workflows.',
+                'Help - Account and Access',
+                '← Back to Help Portal',
+                'Login and Session',
+                '- Member/Parent/Coach/Admin: Log in from #/auth.',
+                '- Member/Parent/Coach/Admin: Log out from shared header controls.',
+                'Forgot Password and Recovery',
+                '- Member/Parent/Coach/Admin: Start reset from #/auth / #/reset-password.',
+                'Profile and Identity',
+                '- Member/Parent/Coach/Admin: Update profile data in #/profile.',
+                '- Admin: Verify admin-only areas via admin tools and admin status checks.'
+            ].join('\n')
+        }]);
+
+        const { container, root } = await renderHelpArticle('/help/help-account');
+        const headings = Array.from(container.querySelectorAll('h2')).map((heading) => heading.textContent);
+        const items = Array.from(container.querySelectorAll('li')).map((item) => item.textContent);
+
+        expect(headings).toEqual([
+            'Login and Session',
+            'Forgot Password and Recovery',
+            'Profile and Identity'
+        ]);
+        expect(items).toContain('Member/Parent/Coach/Admin: Log in from #/auth.');
+        expect(items).toContain('Member/Parent/Coach/Admin: Start reset from #/auth / #/reset-password.');
+        expect(items).toContain('Member/Parent/Coach/Admin: Update profile data in #/profile.');
+        expect(items).toContain('Admin: Verify admin-only areas via admin tools and admin status checks.');
+        expect(container.textContent).not.toMatch(/\b(?:login|reset-password|profile|admin)\.html\b/);
+
+        await act(async () => root.unmount());
+    });
+
+    it('does not render flattened workflow search text before structured article content', async () => {
+        helpMocks.getHelpKnowledgeDocs.mockReturnValue([{
+            id: 'admin-ops',
+            title: 'Operate Platform Admin Controls',
+            file: 'workflow-admin-ops.html',
+            url: 'https://allplays.ai/workflow-admin-ops.html',
+            roles: ['admin'],
+            summary: 'Use this workflow to run platform admin operations in ALL PLAYS.',
+            text: [
+                'Operate Platform Admin Controls',
+                'Use this workflow to run platform admin operations in ALL PLAYS.',
+                'Operate Platform Admin Controls - ALL PLAYS Help ← Back to Help Center Workflow Guide Operate Platform Admin Controls Use this workflow to run platform admin operations in ALL PLAYS. 4 min read Updated from live product pages On this page Who can use this Admin Overview Use this workflow to run platform admin operations in ALL PLAYS. In This Article Confirm admin entitlement before sensitive actions. Review teams, users, games, and recent activity in the admin dashboard. Find active and inactive teams.',
+                '-',
+                'Operate Platform Admin Controls - ALL PLAYS Help',
+                '← Back to Help Center',
+                'Workflow Guide',
+                'Operate Platform Admin Controls',
+                'Use this workflow to run platform admin operations in ALL PLAYS.',
+                '4 min read',
+                'Updated from live product pages',
+                'On this page',
+                'Who can use this',
+                'Admin',
+                'Overview',
+                'Use this workflow to run platform admin operations in ALL PLAYS.',
+                'In This Article',
+                'Confirm admin entitlement before sensitive actions.',
+                '- Review teams, users, games, and recent activity in the admin dashboard.',
+                '- Find active and inactive teams.'
+            ].join('\n')
+        }]);
+
+        const { container, root } = await renderHelpArticle('/help/admin-ops');
+        const paragraphs = Array.from(container.querySelectorAll('p')).map((paragraph) => paragraph.textContent);
+        const items = Array.from(container.querySelectorAll('li')).map((item) => item.textContent);
+
+        expect(paragraphs.some((paragraph) => paragraph.includes('Review teams, users, games, and recent activity in the admin dashboard. Find active and inactive teams.'))).toBe(false);
+        expect(container.textContent).not.toContain('Back to Help Center Workflow Guide Operate Platform Admin Controls');
+        expect(items).toContain('Review teams, users, games, and recent activity in the admin dashboard.');
+        expect(items).toContain('Find active and inactive teams.');
 
         await act(async () => root.unmount());
     });
