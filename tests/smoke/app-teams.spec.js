@@ -36,13 +36,14 @@ async function waitForTeamDetailRoute(page, teamName) {
     }).toPass({ timeout: 45000 });
 }
 
-async function mockTeamsModules(page, { scenario = '', managedTeam = false } = {}) {
-    await page.addInitScript(({ scenarioName, shouldManageTeam }) => {
+async function mockTeamsModules(page, { scenario = '', managedTeam = false, rosterPlayerCount = 2 } = {}) {
+    await page.addInitScript(({ scenarioName, shouldManageTeam, teamRosterPlayerCount }) => {
         window.__openedPublicUrls = [];
         window.__homeLoads = 0;
         window.__teamsScenario = scenarioName;
         window.__managedTeam = shouldManageTeam;
-    }, { scenarioName: scenario, shouldManageTeam: managedTeam });
+        window.__teamRosterPlayerCount = teamRosterPlayerCount;
+    }, { scenarioName: scenario, shouldManageTeam: managedTeam, teamRosterPlayerCount: rosterPlayerCount });
 
     await page.route(/\/src\/lib\/useAuth\.ts(\?.*)?$/, async (route) => {
         await route.fulfill({
@@ -422,10 +423,11 @@ async function mockTeamsModules(page, { scenario = '', managedTeam = false } = {
                                 summary: 'Team default reminder window: 24 hours before event start.'
                             }
                         },
-                        players: [
-                            { id: 'player-1', name: 'Pat Star', number: '9', photoUrl: 'https://img.example.test/player.png', position: 'Guard', isLinked: true, active: true },
-                            { id: 'player-2', name: 'Sam Wing', number: '12', photoUrl: null, position: 'Forward', isLinked: false, active: true }
-                        ],
+                        players: Array.from({ length: window.__teamRosterPlayerCount }, (_, index) => index === 0
+                            ? { id: 'player-1', name: 'Pat Star', number: '9', photoUrl: 'https://img.example.test/player.png', position: 'Guard', isLinked: true, active: true }
+                            : index === 1
+                                ? { id: 'player-2', name: 'Sam Wing', number: '12', photoUrl: null, position: 'Forward', isLinked: false, active: true }
+                                : { id: 'player-' + (index + 1), name: 'Roster Player ' + (index + 1), number: String(index + 1), photoUrl: null, position: 'Guard', isLinked: false, active: true }),
                         inactivePlayers: [],
                         linkedPlayers: [
                             { id: 'player-1', name: 'Pat Star', number: '9', photoUrl: 'https://img.example.test/player.png', position: 'Guard', isLinked: true, active: true }
@@ -692,6 +694,37 @@ test.describe('mobile My Teams', () => {
         await expect(page).toHaveURL(/#\/teams\/team-1$/);
         await expect(tabNav.getByRole('button', { name: /Overview/ })).toHaveAttribute('aria-pressed', 'true');
         await expect(page.getByText('Parent actions')).toBeAttached();
+    });
+
+    test('shrinks the page after switching from a long roster to a shorter team tab', async ({ page, baseURL }) => {
+        await mockTeamsModules(page, { rosterPlayerCount: 12 });
+        await page.goto(appUrl(baseURL, '/teams/team-1?tab=roster'), { waitUntil: 'domcontentloaded' });
+
+        await waitForTeamDetailRoute(page, 'Bears');
+        const tabNav = page.getByTestId('team-detail-tab-nav');
+        await expect(page.getByText('Roster Player 12')).toBeVisible();
+        const rosterHeights = await page.evaluate(() => ({
+            documentHeight: document.documentElement.scrollHeight,
+            bodyHeight: document.body.scrollHeight,
+            rootHeight: document.querySelector('#root')?.scrollHeight || 0
+        }));
+        await page.evaluate(() => window.scrollTo({ top: document.documentElement.scrollHeight, behavior: 'instant' }));
+
+        await tabNav.getByRole('button', { name: /Insights/ }).click();
+        expect(await page.evaluate(() => window.scrollY)).toBe(0);
+        await expect(page).toHaveURL(/#\/teams\/team-1\?tab=insights$/);
+        await expect(page.getByText('Player checklist')).toBeVisible();
+
+        const shorterTabMetrics = await page.evaluate(() => ({
+            documentHeight: document.documentElement.scrollHeight,
+            bodyHeight: document.body.scrollHeight,
+            rootHeight: document.querySelector('#root')?.scrollHeight || 0,
+            teamPageBottom: Math.ceil((document.querySelector('.team-detail-page')?.getBoundingClientRect().bottom || 0) + window.scrollY)
+        }));
+        expect(shorterTabMetrics.documentHeight).toBeLessThan(rosterHeights.documentHeight);
+        expect(shorterTabMetrics.bodyHeight).toBeLessThan(rosterHeights.bodyHeight);
+        expect(shorterTabMetrics.rootHeight).toBeLessThan(rosterHeights.rootHeight);
+        expect(shorterTabMetrics.documentHeight - shorterTabMetrics.teamPageBottom).toBeLessThanOrEqual(200);
     });
 
     test('team detail tabs expose parent-facing team page features', async ({ page, baseURL }) => {

@@ -89,6 +89,33 @@ function getTeamTabFromSearch(search: string): TeamTab {
   return 'overview';
 }
 
+function resetTeamTabScrollPosition() {
+  try {
+    window.scrollTo({ top: 0, behavior: 'auto' });
+  } catch {
+    // jsdom does not implement scrollTo; real browsers and WebViews do.
+  }
+}
+
+function scheduleTeamTabScrollPositionReset() {
+  if (typeof window.requestAnimationFrame !== 'function') {
+    resetTeamTabScrollPosition();
+    return () => {};
+  }
+
+  let resetFrame: number | null = null;
+  const restorationFrame = window.requestAnimationFrame(() => {
+    resetFrame = window.requestAnimationFrame(resetTeamTabScrollPosition);
+  });
+
+  return () => {
+    window.cancelAnimationFrame(restorationFrame);
+    if (resetFrame !== null) {
+      window.cancelAnimationFrame(resetFrame);
+    }
+  };
+}
+
 export function TeamDetail({ auth }: { auth: AuthState }) {
   const { teamId = '' } = useParams();
   const location = useLocation();
@@ -140,6 +167,11 @@ export function TeamDetail({ auth }: { auth: AuthState }) {
 
   function navigateToTab(nextTab: TeamTab) {
     if (nextTab === activeTab) return;
+
+    // Reset while the current (possibly tall) tab still owns the document
+    // height. WebKit can otherwise preserve the old scroll range when a
+    // smooth reset races the shorter tab's render.
+    resetTeamTabScrollPosition();
 
     const nextParams = new URLSearchParams(location.search);
     if (nextTab === 'overview') {
@@ -388,18 +420,10 @@ export function TeamDetail({ auth }: { auth: AuthState }) {
   }, [activeTab, authUserId, auth.user, model?.canManageTeam, teamId, trackingAttempted]);
 
   useEffect(() => {
-    const scroll = () => {
-      try {
-        window.scrollTo({ top: 0, behavior: 'smooth' });
-      } catch {
-        // jsdom does not implement scrollTo; real browsers and WebViews do.
-      }
-    };
-    if (typeof window.requestAnimationFrame === 'function') {
-      window.requestAnimationFrame(scroll);
-    } else {
-      scroll();
-    }
+    // Also cover back/forward navigation and direct route changes that do not
+    // pass through the tab controls. ScrollRestoration restores POP entries in
+    // requestAnimationFrame, so this runs one frame later to win that race.
+    return scheduleTeamTabScrollPositionReset();
   }, [teamId, activeTab]);
 
   async function refreshTeamDetail() {
