@@ -566,7 +566,8 @@ test('messages inbox and team chat exercise real migrated chat UX', async ({ pag
     await page.getByPlaceholder('Message Bears').fill('');
 
     await openAudienceSheet(page, 'Full team');
-    await expect(page.getByRole('button', { name: 'Staff only' })).toBeHidden();
+    const audienceDialog = page.getByRole('dialog', { name: 'Message audience' });
+    await expect(audienceDialog.getByRole('button', { name: 'Staff only' })).toBeHidden();
     await page.getByRole('button', { name: 'Close Message audience' }).click();
 
     await page.getByPlaceholder('Message Bears').fill('See you at practice');
