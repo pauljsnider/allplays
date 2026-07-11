@@ -10,6 +10,11 @@ const helpMocks = vi.hoisted(() => ({
 }));
 
 vi.mock('../../apps/app/src/lib/helpKnowledgeService.ts', () => helpMocks);
+vi.mock('lucide-react', () => ({
+    ArrowLeft: () => null,
+    Home: () => null,
+    Search: () => null
+}));
 
 import { HelpArticle } from '../../apps/app/src/pages/HelpArticle.tsx';
 
@@ -103,6 +108,50 @@ describe('HelpArticle', () => {
         expect(items).toContain('Member/Parent/Coach/Admin: Update profile data in #/profile.');
         expect(items).toContain('Admin: Verify admin-only areas via admin tools and admin status checks.');
         expect(container.textContent).not.toMatch(/\b(?:login|reset-password|profile|admin)\.html\b/);
+
+        await act(async () => root.unmount());
+    });
+
+    it('does not render flattened workflow search text before structured article content', async () => {
+        helpMocks.getHelpKnowledgeDocs.mockReturnValue([{
+            id: 'admin-ops',
+            title: 'Operate Platform Admin Controls',
+            file: 'workflow-admin-ops.html',
+            url: 'https://allplays.ai/workflow-admin-ops.html',
+            roles: ['admin'],
+            summary: 'Use this workflow to run platform admin operations in ALL PLAYS.',
+            text: [
+                'Operate Platform Admin Controls',
+                'Use this workflow to run platform admin operations in ALL PLAYS.',
+                'Operate Platform Admin Controls - ALL PLAYS Help ← Back to Help Center Workflow Guide Operate Platform Admin Controls Use this workflow to run platform admin operations in ALL PLAYS. 4 min read Updated from live product pages On this page Who can use this Admin Overview Use this workflow to run platform admin operations in ALL PLAYS. In This Article Confirm admin entitlement before sensitive actions. Review teams, users, games, and recent activity in the admin dashboard. Find active and inactive teams.',
+                '-',
+                'Operate Platform Admin Controls - ALL PLAYS Help',
+                '← Back to Help Center',
+                'Workflow Guide',
+                'Operate Platform Admin Controls',
+                'Use this workflow to run platform admin operations in ALL PLAYS.',
+                '4 min read',
+                'Updated from live product pages',
+                'On this page',
+                'Who can use this',
+                'Admin',
+                'Overview',
+                'Use this workflow to run platform admin operations in ALL PLAYS.',
+                'In This Article',
+                'Confirm admin entitlement before sensitive actions.',
+                '- Review teams, users, games, and recent activity in the admin dashboard.',
+                '- Find active and inactive teams.'
+            ].join('\n')
+        }]);
+
+        const { container, root } = await renderHelpArticle('/help/admin-ops');
+        const paragraphs = Array.from(container.querySelectorAll('p')).map((paragraph) => paragraph.textContent);
+        const items = Array.from(container.querySelectorAll('li')).map((item) => item.textContent);
+
+        expect(paragraphs.some((paragraph) => paragraph.includes('Review teams, users, games, and recent activity in the admin dashboard. Find active and inactive teams.'))).toBe(false);
+        expect(container.textContent).not.toContain('Back to Help Center Workflow Guide Operate Platform Admin Controls');
+        expect(items).toContain('Review teams, users, games, and recent activity in the admin dashboard.');
+        expect(items).toContain('Find active and inactive teams.');
 
         await act(async () => root.unmount());
     });

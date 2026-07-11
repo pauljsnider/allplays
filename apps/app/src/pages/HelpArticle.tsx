@@ -146,7 +146,7 @@ function buildArticleBlocks(text: string, title: string, summary: string): Artic
     .join('\n')
     .trim();
 
-  const lines = cleaned.split(/\n+/).map((line) => line.trim()).filter(Boolean);
+  const lines = discardGeneratedSearchPreamble(cleaned.split(/\n+/).map((line) => line.trim()).filter(Boolean));
   if (!lines.length) return [{ type: 'paragraph', text: summary }];
 
   const blocks: ArticleContentBlock[] = [];
@@ -159,7 +159,15 @@ function buildArticleBlocks(text: string, title: string, summary: string): Artic
   };
 
   lines.forEach((line) => {
-    if (line === title || line === summary || /^Help\s+-\s+/i.test(line) || /^←\s+Back to Help Portal/i.test(line)) {
+    if (
+      line === title
+      || line === summary
+      || /^Help\s+-\s+/i.test(line)
+      || /^←\s+Back to Help (?:Portal|Center)/i.test(line)
+      || line === 'Workflow Guide'
+      || line === 'On this page'
+      || /^Updated from /i.test(line)
+    ) {
       return;
     }
 
@@ -185,6 +193,14 @@ function buildArticleBlocks(text: string, title: string, summary: string): Artic
     type: 'paragraph',
     text: paragraph
   }));
+}
+
+function discardGeneratedSearchPreamble(lines: string[]) {
+  const workflowGuideIndex = lines.findIndex((line) => line === 'Workflow Guide');
+  if (workflowGuideIndex === -1) return lines;
+
+  const articleStartIndex = workflowGuideIndex + 1;
+  return articleStartIndex < lines.length ? lines.slice(articleStartIndex) : lines;
 }
 
 function isLikelyArticleHeading(line: string) {
