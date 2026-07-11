@@ -162,6 +162,35 @@ function isGameCameraEligible(game) {
         .some(status => endedStatuses.has(status));
 }
 
+function isPublicGameReadTeam(team) {
+    return team?.isPublic === true && team?.active !== false;
+}
+
+function isShareableGameDocument(game) {
+    const visibility = toCleanString(game?.visibility).toLowerCase();
+    return visibility !== 'private' &&
+        game?.isPrivate !== true &&
+        game?.private !== true &&
+        (
+            visibility === 'public' ||
+            game?.isPublic === true ||
+            game?.public === true ||
+            game?.shareable === true ||
+            game?.isShareable === true ||
+            game?.publicCalendar === true
+        );
+}
+
+function canReadPublicGameDocument(team, game) {
+    return (game?.type || 'game') === 'game' &&
+        toCleanString(game?.visibility).toLowerCase() !== 'private' &&
+        game?.isPrivate !== true &&
+        game?.private !== true &&
+        toCleanString(game?.status).toLowerCase() !== 'deleted' &&
+        toCleanString(game?.liveStatus).toLowerCase() !== 'deleted' &&
+        (isPublicGameReadTeam(team) || isShareableGameDocument(game));
+}
+
 export function canAccessNativeCameraCapture({ user, team, game, rsvp = null }) {
     if (!user || !team || !isGameCameraEligible(game)) return false;
 
@@ -171,8 +200,9 @@ export function canAccessNativeCameraCapture({ user, team, game, rsvp = null }) 
     const userEmail = typeof user.email === 'string' ? user.email.trim().toLowerCase() : '';
     const adminEmails = normalizeStringSet(team.adminEmails);
     if (userEmail && adminEmails.has(userEmail)) return true;
-    if (hasSelectedVideographerGrant(user, team)) return true;
-    if (hasStreamTeamAccess(user, team, game, rsvp)) return true;
+    const publicReadableGame = canReadPublicGameDocument(team, game);
+    if (publicReadableGame && hasSelectedVideographerGrant(user, team)) return true;
+    if (publicReadableGame && hasStreamTeamAccess(user, team, game, rsvp)) return true;
 
     const approvedUidFields = [
         team.mediaContributorUids,
@@ -208,7 +238,8 @@ export function canSaveBroadcastSetupSession({ user, team, game, rsvp = null }) 
     const userEmail = typeof user.email === 'string' ? user.email.trim().toLowerCase() : '';
     if (userEmail && normalizeStringSet(team.adminEmails).has(userEmail)) return true;
 
-    return hasSelectedVideographerGrant(user, team) || hasStreamTeamAccess(user, team, game, rsvp);
+    return canReadPublicGameDocument(team, game) &&
+        (hasSelectedVideographerGrant(user, team) || hasStreamTeamAccess(user, team, game, rsvp));
 }
 
 export function resolveBroadcastStreamControlState({

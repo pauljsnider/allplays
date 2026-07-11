@@ -508,7 +508,7 @@ describe('live game replay video helpers', () => {
 
 
 describe('native camera capture authorization', () => {
-    const scheduledGame = { status: 'scheduled' };
+    const scheduledGame = { status: 'scheduled', visibility: 'public' };
 
     it('allows team owners and admins on scheduled games', () => {
         expect(canAccessNativeCameraCapture({
@@ -642,6 +642,29 @@ describe('native camera capture authorization', () => {
             user: { uid: 'streamer-1', email: 'streamer@example.com' },
             team: selectedVideoTeam,
             game: scheduledGame
+        })).toBe(false);
+    });
+
+    it('blocks selected videographer broadcast setup on private non-shareable games', () => {
+        const selectedVideoTeam = {
+            ownerId: 'owner-1',
+            adminEmails: [],
+            teamPermissions: {
+                videography: { mode: 'selected', memberIds: ['video-1'] }
+            }
+        };
+        const privateGame = { status: 'scheduled', visibility: 'private' };
+        const selectedUser = { uid: 'video-1', email: 'video@example.com' };
+
+        expect(canAccessNativeCameraCapture({
+            user: selectedUser,
+            team: selectedVideoTeam,
+            game: privateGame
+        })).toBe(false);
+        expect(canSaveBroadcastSetupSession({
+            user: selectedUser,
+            team: selectedVideoTeam,
+            game: privateGame
         })).toBe(false);
     });
 
