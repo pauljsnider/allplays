@@ -1563,7 +1563,7 @@ function GameHubSection({ auth, event, childEvents, requestedPanel, onPanelChang
 }) {
   const { isDesktopWeb } = useShellLayout();
   const [shareStatus, setShareStatus] = useState<string | null>(null);
-  const [cancelStatus, setCancelStatus] = useState<{ tone: 'success' | 'error'; message: string } | null>(null);
+  const [cancelStatus, setCancelStatus] = useState<{ tone: 'success' | 'warning' | 'error'; message: string } | null>(null);
   const [cancelling, setCancelling] = useState(false);
   const [openPanels, setOpenPanels] = useState<Record<string, boolean>>({});
   const [homeScoringPlayers, setHomeScoringPlayers] = useState<ScheduleHomeScoringPlayer[]>([]);
@@ -1671,7 +1671,7 @@ function GameHubSection({ auth, event, childEvents, requestedPanel, onPanelChang
       const result = await cancelScheduledGameForApp(event, auth.user);
       onGameCancelled();
       setCancelStatus(result.notificationError
-        ? { tone: 'error', message: `Game cancelled, but team chat notification failed: ${result.notificationError}` }
+        ? { tone: 'warning', message: `Game cancelled, but team chat notification failed: ${result.notificationError}` }
         : { tone: 'success', message: notifiesCounterpartTeam ? 'Game cancelled and both team chats notified.' : 'Game cancelled and team chat notified.' });
     } catch (error: any) {
       setCancelStatus({ tone: 'error', message: error?.message || 'Unable to cancel game.' });
@@ -2255,7 +2255,7 @@ function GameWrapupPanel({ auth, event, onScoreUpdated, onWrapupCompleted }: {
   const [shouldSendEmail, setShouldSendEmail] = useState(false);
   const [saving, setSaving] = useState(false);
   const [sharingFinalScore, setSharingFinalScore] = useState(false);
-  const [status, setStatus] = useState<{ tone: 'success' | 'error'; message: string } | null>(null);
+  const [status, setStatus] = useState<{ tone: 'success' | 'warning' | 'error'; message: string } | null>(null);
 
   useEffect(() => {
     setHomeScore(savedHomeScore);
@@ -2316,7 +2316,7 @@ function GameWrapupPanel({ auth, event, onScoreUpdated, onWrapupCompleted }: {
     } catch (error: any) {
       const message = error?.message || 'Unable to post final score to team chat. Try again.';
       setStatus({
-        tone: 'error',
+        tone: scoreSaved ? 'warning' : 'error',
         message: scoreSaved
           ? `Final score saved, but team chat share failed: ${message}`
           : message
@@ -2408,7 +2408,7 @@ function GameWrapupPanel({ auth, event, onScoreUpdated, onWrapupCompleted }: {
       }
 
       setStatus({
-        tone: 'success',
+        tone: aiFailure ? 'warning' : 'success',
         message: aiFailure
           ? 'Wrap-up saved. AI analysis failed, so you can retry by running wrap-up again.'
           : shouldGenerateSummary
@@ -2482,7 +2482,7 @@ function GameWrapupPanel({ auth, event, onScoreUpdated, onWrapupCompleted }: {
         <span className="text-xs font-semibold text-gray-500">AI failures do not block completion. Uncheck AI summary to skip it, or run wrap-up again to regenerate.</span>
       </div>
 
-      {status ? <div className={`mt-3 text-sm font-semibold ${status.tone === 'error' ? 'text-rose-700' : 'text-emerald-700'}`}>{status.message}</div> : null}
+      {status ? <div className="mt-3"><Status tone={status.tone} message={status.message} /></div> : null}
 
       {practiceFeedItems.length ? (
         <div className="mt-3 rounded-2xl border border-gray-200 bg-white p-3">
@@ -2807,7 +2807,7 @@ function GameHubLineupBuilderPanel({ auth, event, onGamePlanSaved }: { auth: Aut
   const [saving, setSaving] = useState(false);
   const [publishing, setPublishing] = useState(false);
   const [aiLoading, setAiLoading] = useState(false);
-  const [status, setStatus] = useState<{ tone: 'success' | 'error'; message: string } | null>(null);
+  const [status, setStatus] = useState<{ tone: 'success' | 'warning' | 'error'; message: string } | null>(null);
   const saveTimeoutRef = useRef<number | null>(null);
   const dirtyRef = useRef(false);
   const latestDraftRef = useRef<Record<string, string>>({});
@@ -2978,7 +2978,7 @@ function GameHubLineupBuilderPanel({ auth, event, onGamePlanSaved }: { auth: Aut
       setStatus({ tone: 'success', message: 'AI lineup suggestion applied. You can still edit every slot.' });
     } catch {
       updateDraft(lineupBuilderModule.buildRoundRobinLineup(lineupPeriods, formation.positions, preview?.goingPlayers || []));
-      setStatus({ tone: 'success', message: 'AI was unavailable, so a balanced local lineup was applied instead.' });
+      setStatus({ tone: 'warning', message: 'AI was unavailable, so a balanced local lineup was applied instead.' });
     } finally {
       setAiLoading(false);
     }
@@ -2995,7 +2995,7 @@ function GameHubLineupBuilderPanel({ auth, event, onGamePlanSaved }: { auth: Aut
       onGamePlanSaved(result.gamePlan);
       const version = Number.parseInt(String(result.gamePlan?.publishedVersion || ''), 10) || 0;
       setStatus(result.notificationError
-        ? { tone: 'error', message: `Lineup saved${version ? ` as v${version}` : ''}, but team chat notification failed: ${result.notificationError}` }
+        ? { tone: 'warning', message: `Lineup saved${version ? ` as v${version}` : ''}, but team chat notification failed: ${result.notificationError}` }
         : { tone: 'success', message: `Lineup published${version ? ` as v${version}` : ''}. Team chat notified.` });
     } catch (error: any) {
       setStatus({ tone: 'error', message: error?.message || 'Unable to publish lineup.' });
@@ -3138,7 +3138,7 @@ function GameHubLineupBuilderPanel({ auth, event, onGamePlanSaved }: { auth: Aut
           {!preview.goingPlayers.length ? <div className="mt-3 text-sm font-semibold text-amber-800">No Going players are available to auto-fill this lineup. Manual roster edits still work.</div> : null}
         </>
       ) : null}
-      {status ? <div className={`mt-3 text-sm font-semibold ${status.tone === 'success' ? 'text-emerald-700' : 'text-amber-800'}`}>{status.message}</div> : null}
+      {status ? <div className="mt-3"><Status tone={status.tone} message={status.message} /></div> : null}
     </div>
   );
 }
@@ -3311,7 +3311,7 @@ function LiveScoreEditor({ auth, event, homePlayers, loadingHomePlayers, showSti
   const [playerScoringId, setPlayerScoringId] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [autosaveScheduled, setAutosaveScheduled] = useState(false);
-  const [status, setStatus] = useState<{ tone: 'success' | 'error'; message: string } | null>(null);
+  const [status, setStatus] = useState<{ tone: 'success' | 'warning' | 'error'; message: string } | null>(null);
   const lastSavedScoreRef = useRef({ eventKey: event.eventKey, homeScore: savedHomeScore, awayScore: savedAwayScore });
   const pendingLocalSaveRef = useRef<ScoreSnapshot | null>(null);
   const autosaveTimeoutRef = useRef<number | null>(null);
@@ -3397,7 +3397,7 @@ function LiveScoreEditor({ auth, event, homePlayers, loadingHomePlayers, showSti
         setStatus({ tone: 'success', message: mode === 'autosave' ? 'Score autosaved and posted to live play-by-play.' : 'Score saved and posted to live play-by-play.' });
       } catch (publishError) {
         console.warn('[schedule-event-detail] Score saved but live play-by-play posting failed:', publishError);
-        setStatus({ tone: 'success', message: mode === 'autosave' ? 'Score autosaved. Live play-by-play post failed.' : 'Score saved. Live play-by-play post failed.' });
+        setStatus({ tone: 'warning', message: mode === 'autosave' ? 'Score autosaved. Live play-by-play post failed.' : 'Score saved. Live play-by-play post failed.' });
       }
     } catch (error: any) {
       if (mode === 'autosave') {
@@ -3543,7 +3543,7 @@ function LiveScoreEditor({ auth, event, homePlayers, loadingHomePlayers, showSti
               </button>
             ) : null}
           </div>
-          {status ? <span className={`text-xs font-bold ${status.tone === 'error' ? 'text-rose-700' : 'text-emerald-700'}`}>{status.message}</span> : null}
+          {status ? <span className={`text-xs font-bold ${status.tone === 'error' ? 'text-rose-700' : status.tone === 'warning' ? 'text-amber-700' : 'text-emerald-700'}`}>{status.message}</span> : null}
         </div>
       </div>
       {showStickyControls ? <div className="mobile-live-score-tray" data-testid="mobile-live-score-tray" role="region" aria-label="Mobile live score controls">
@@ -3557,7 +3557,7 @@ function LiveScoreEditor({ auth, event, homePlayers, loadingHomePlayers, showSti
             <ScoreStepper compact label="Away" controlLabel="Sticky away" value={awayScore} onDecrease={() => adjust('away', -1)} onIncrease={() => adjust('away', 1)} disabled={saving || Boolean(playerScoringId)} />
           </div>
           <div className="mt-2 flex min-h-11 items-center justify-between gap-2 px-1">
-            <span className={`min-w-0 text-xs font-bold ${status?.tone === 'error' ? 'text-rose-700' : dirty ? 'text-amber-700' : 'text-emerald-700'}`} aria-live="polite">
+            <span className={`min-w-0 text-xs font-bold ${status?.tone === 'error' ? 'text-rose-700' : status?.tone === 'warning' || dirty ? 'text-amber-700' : 'text-emerald-700'}`} aria-live="polite">
               {stickyStatusMessage}
             </span>
             <button

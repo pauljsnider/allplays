@@ -1378,6 +1378,28 @@ describe('ScheduleEventDetail assignments', () => {
     });
   });
 
+  it('warns when a score autosaves but the live play-by-play post fails', async () => {
+    scheduleServiceMocks.loadParentScheduleEventDetail.mockResolvedValue({
+      events: [buildEvent({ liveStatus: 'live', status: 'live', canUpdateScore: true, homeScore: 41, awayScore: 38 })],
+      children: []
+    });
+    scheduleServiceMocks.updateGameScore.mockResolvedValue({ homeScore: 42, awayScore: 38 });
+    scheduleServiceMocks.publishLiveScoreUpdateEvent.mockRejectedValue(new Error('Live post unavailable'));
+
+    renderScheduleEventDetailWithRouteControls();
+
+    const tray = await screen.findByRole('region', { name: 'Mobile live score controls' });
+    fireEvent.click(within(tray).getByRole('button', { name: 'Sticky home score up' }));
+
+    await waitFor(() => {
+      expect(scheduleServiceMocks.updateGameScore).toHaveBeenCalledWith('team-1', 'game-1', { homeScore: 42, awayScore: 38 }, auth.user);
+      expect(scheduleServiceMocks.publishLiveScoreUpdateEvent).toHaveBeenCalled();
+    }, { timeout: 2000 });
+    const warning = await within(tray).findByText('Score autosaved. Live play-by-play post failed.');
+    expect(warning.className).toContain('text-amber-700');
+    expect(warning.className).not.toContain('text-rose-700');
+  });
+
   it('surfaces sticky autosave failures and retries through the existing manual save path', async () => {
     scheduleServiceMocks.loadParentScheduleEventDetail.mockResolvedValue({
       events: [buildEvent({ liveStatus: 'live', status: 'live', canUpdateScore: true, homeScore: 12, awayScore: 9 })],
