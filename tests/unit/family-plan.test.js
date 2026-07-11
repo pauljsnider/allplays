@@ -239,65 +239,45 @@ describe('family plan helpers', () => {
 
         expect(markup).toContain('Family Plan');
         expect(markup).toContain('Household player access');
+        expect(markup).toContain('data-family-plan-remove="pending@example.com"');
+        expect(markup).toContain('aria-label="Revoke household access for pending@example.com"');
+        expect(markup).toContain('Revoke access');
     });
 
-    it('marks a family member as removed instead of deleting the record', async () => {
-        const updateDoc = vi.fn().mockResolvedValue();
+    it('routes family member revocation through the authoritative callable', async () => {
+        const callable = vi.fn().mockResolvedValue({ data: {
+            success: true,
+            membershipId: 'member-1',
+            revokedUserId: 'contact-1'
+        } });
         const firebase = {
-            db: {},
-            doc: vi.fn((_db, ...parts) => ({ path: parts.join('/') })),
-            updateDoc,
-            serverTimestamp: () => 'server-now'
+            functions: {},
+            httpsCallable: vi.fn(() => callable)
         };
 
-        await removeFamilyMember('user-1', 'member-1', { deps: { firebase } });
+        await expect(removeFamilyMember('organizer', 'member-1', { deps: { firebase } })).resolves.toMatchObject({
+            success: true,
+            membershipId: 'member-1',
+            revokedUserId: 'contact-1'
+        });
 
-        expect(firebase.doc).toHaveBeenCalledWith({}, 'users', 'user-1', 'familyMemberships', 'member-1');
-        expect(updateDoc).toHaveBeenCalledWith({ path: 'users/user-1/familyMemberships/member-1' }, expect.objectContaining({
-            status: 'removed',
-            accessStatus: 'revoked',
-            removedAt: 'server-now'
-        }));
+        expect(firebase.httpsCallable).toHaveBeenCalledWith(firebase.functions, 'revokeHouseholdMemberAccess');
+        expect(callable).toHaveBeenCalledWith({ membershipId: 'member-1' });
     });
 
-    it('revokes invite tokens before marking a member removed without unprivileged profile or player writes', async () => {
-        const updateDoc = vi.fn().mockResolvedValue();
-        const docs = new Map([
-            ['users/organizer/familyMemberships/member-1', {
-                email: 'household@example.com',
-                userId: 'contact-1',
-                accessCodeId: 'code-1',
-                status: 'active',
-                organizerUserId: 'organizer',
-                playerAccess: [{ teamId: 'team-1', playerId: 'player-1', teamName: 'Team', playerName: 'Player' }]
-            }]
-        ]);
+    it('surfaces callable revocation failures without mutating Firestore in the browser', async () => {
+        const callable = vi.fn().mockRejectedValue(new Error('permission denied'));
         const firebase = {
-            db: {},
-            doc: vi.fn((_db, ...parts) => ({ path: parts.join('/') })),
-            getDoc: vi.fn(async (ref) => ({
-                exists: () => docs.has(ref.path),
-                data: () => docs.get(ref.path) || {}
-            })),
-            updateDoc,
-            serverTimestamp: () => 'server-now'
+            functions: {},
+            httpsCallable: vi.fn(() => callable),
+            updateDoc: vi.fn(),
+            setDoc: vi.fn()
         };
 
-        await removeFamilyMember('organizer', 'member-1', { deps: { firebase } });
+        await expect(removeFamilyMember('organizer', 'member-1', { deps: { firebase } })).rejects.toThrow('permission denied');
 
-        expect(updateDoc).toHaveBeenNthCalledWith(1, { path: 'accessCodes/code-1' }, expect.objectContaining({
-            revoked: true,
-            used: true,
-            revokedAt: 'server-now'
-        }));
-        expect(updateDoc).toHaveBeenNthCalledWith(2, { path: 'users/organizer/familyMemberships/member-1' }, expect.objectContaining({
-            status: 'removed',
-            accessStatus: 'revoked',
-            removedAt: 'server-now'
-        }));
-        const updatedPaths = updateDoc.mock.calls.map(([ref]) => ref.path);
-        expect(updatedPaths).not.toContain('users/contact-1');
-        expect(updatedPaths).not.toContain('teams/team-1/players/player-1');
+        expect(firebase.updateDoc).not.toHaveBeenCalled();
+        expect(firebase.setDoc).not.toHaveBeenCalled();
     });
 
     it('marks a pending household invite revoked and invalidates its access code', async () => {
@@ -390,16 +370,15 @@ describe('family plan helpers', () => {
         });
     });
 
-    it('grants parents read/create/update access to their family membership shell records', () => {
+    it('requires family membership revocation to use the backend while preserving invite setup and acceptance writes', () => {
         const rules = readFileSync(new URL('../../firestore.rules', import.meta.url), 'utf8');
         expect(rules).toContain('match /familyMemberships/{memberId}');
         expect(rules).toContain('allow read: if isOwner(userId) || isGlobalAdmin();');
         expect(rules).toContain('allow create: if isOwner(userId) && isFamilyMembershipPayloadValid');
-        expect(rules).toContain('allow update: if isOwner(userId) &&');
-        expect(rules).toContain("affectedKeys().hasOnly(['status', 'accessStatus', 'updatedAt', 'removedAt'])");
-        expect(rules).toContain("data.accessStatus == 'revoked'");
         expect(rules).toContain('isFamilyMembershipInviteMetadataUpdate');
         expect(rules).toContain('isFamilyMembershipAcceptance');
+        expect(rules).not.toContain('function isFamilyMembershipRemoval');
+        expect(rules).not.toContain("affectedKeys().hasOnly(['status', 'accessStatus', 'updatedAt', 'removedAt'])");
         expect(rules).toContain('allow delete: if false;');
     });
 

@@ -141,7 +141,7 @@ export function buildFamilyPlanMarkup({ members = [], entitlementState = 'locked
                 : '';
             const removeButton = member.status === 'removed'
                 ? ''
-                : `<button type="button" data-family-plan-remove="${escapeHtml(member.id)}" class="text-xs font-semibold text-red-600 hover:text-red-700">Remove</button>`;
+                : `<button type="button" data-family-plan-remove="${escapeHtml(member.id)}" aria-label="Revoke household access for ${escapeHtml(label)}" class="text-xs font-semibold text-red-600 hover:text-red-700">Revoke access</button>`;
             return `
                 <div class="flex items-start justify-between gap-3 rounded-xl border border-gray-200 bg-white p-3">
                     <div>
@@ -436,20 +436,17 @@ async function revokeAccessCode(firebase, member, timestamp) {
 
 export async function removeFamilyMember(userId, memberId, { deps = {} } = {}) {
     if (!userId || !memberId) throw new Error('Missing family member to remove.');
-    const firebase = await loadFirebase(deps);
-    const { db, doc, getDoc, updateDoc, serverTimestamp } = firebase;
-    const timestamp = typeof serverTimestamp === 'function' ? serverTimestamp() : new Date().toISOString();
-    const memberRef = doc(db, 'users', userId, 'familyMemberships', memberId);
-    const memberSnap = getDoc ? await getDoc(memberRef) : null;
-    const member = normalizeFamilyMembers([{ id: memberId, ...dataFromSnapshot(memberSnap) }])[0] || { id: memberId };
-
-    await revokeAccessCode(firebase, member, timestamp);
-    await updateDoc(memberRef, {
-        status: 'removed',
-        accessStatus: 'revoked',
-        updatedAt: timestamp,
-        removedAt: timestamp,
-    });
+    const { functions, httpsCallable } = await loadFirebase(deps);
+    if (!functions || typeof httpsCallable !== 'function') {
+        throw new Error('Household access revocation is unavailable.');
+    }
+    const revokeAccess = httpsCallable(functions, 'revokeHouseholdMemberAccess');
+    const result = await revokeAccess({ membershipId: memberId });
+    const payload = result?.data || result || {};
+    if (payload.success !== true) {
+        throw new Error('Unable to revoke household access.');
+    }
+    return payload;
 }
 
 export async function revokeHouseholdInvite(userId, inviteId, { deps = {} } = {}) {
@@ -506,17 +503,17 @@ export async function renderFamilyPlanSection(container, user, options = {}) {
         container.querySelectorAll('[data-family-plan-remove]').forEach((button) => {
             button.addEventListener('click', async () => {
                 const memberId = button.getAttribute('data-family-plan-remove');
-                button.textContent = 'Removing...';
+                button.textContent = 'Revoking...';
                 button.disabled = true;
                 try {
                     await removeFamilyMember(user.uid, memberId, { deps });
                     await renderFamilyPlanSection(container, user, options);
                 } catch (error) {
                     if (validationEl) {
-                        validationEl.textContent = error.message || 'Unable to remove family member.';
+                        validationEl.textContent = error.message || 'Unable to revoke household access.';
                         validationEl.className = 'text-xs rounded-lg px-3 py-2 bg-red-50 text-red-700 border border-red-200';
                     }
-                    button.textContent = 'Remove';
+                    button.textContent = 'Revoke access';
                     button.disabled = false;
                 }
             });
