@@ -45,6 +45,8 @@ async function mockScheduleModules(page, options = {}) {
     const gameLiveStatus = options.gameLiveStatus || null;
     const gameHomeScore = options.gameHomeScore ?? null;
     const gameAwayScore = options.gameAwayScore ?? null;
+    const gameCompetitionType = options.gameCompetitionType || 'league';
+    const gameTournament = options.gameTournament || null;
     const gameMyRsvp = options.gameMyRsvp || 'not_responded';
     const gameMyRsvpNote = options.gameMyRsvpNote || '';
     const extraUpcomingEvents = Array.from({ length: options.extraUpcomingEvents || 0 }, (_, index) => {
@@ -187,6 +189,7 @@ async function mockScheduleModules(page, options = {}) {
                         notes: overrides.notes || null,
                         seasonLabel: overrides.seasonLabel || 'Spring 2026',
                         competitionType: overrides.competitionType || 'league',
+                        tournament: overrides.tournament || null,
                         countsTowardSeasonRecord: true,
                         sourceType: overrides.sourceType || 'db',
                         sourceLabel: overrides.sourceLabel || 'ALL PLAYS schedule',
@@ -484,8 +487,8 @@ async function mockScheduleModules(page, options = {}) {
                             { teamId: 'team-1', teamName: 'Bears', playerId: 'player-2', playerName: 'Sam' }
                         ],
                         events: [
-                            baseEvent({ eventKey: 'game-1-player-1', id: 'game-1', childId: 'player-1', childName: 'Pat', date: new Date(${JSON.stringify(gameDate)}), rideshareSummary, status: ${JSON.stringify(gameStatus)}, liveStatus: ${JSON.stringify(gameLiveStatus)}, homeScore: ${JSON.stringify(gameHomeScore)}, awayScore: ${JSON.stringify(gameAwayScore)}, isTeamStaff: ${JSON.stringify(staffManageable)} }),
-                            baseEvent({ eventKey: 'game-1-player-2', id: 'game-1', childId: 'player-2', childName: 'Sam', date: new Date(${JSON.stringify(gameDate)}), myRsvp: 'maybe', rideshareSummary, status: ${JSON.stringify(gameStatus)}, liveStatus: ${JSON.stringify(gameLiveStatus)}, homeScore: ${JSON.stringify(gameHomeScore)}, awayScore: ${JSON.stringify(gameAwayScore)}, isTeamStaff: ${JSON.stringify(staffManageable)} }),
+                            baseEvent({ eventKey: 'game-1-player-1', id: 'game-1', childId: 'player-1', childName: 'Pat', date: new Date(${JSON.stringify(gameDate)}), rideshareSummary, status: ${JSON.stringify(gameStatus)}, liveStatus: ${JSON.stringify(gameLiveStatus)}, homeScore: ${JSON.stringify(gameHomeScore)}, awayScore: ${JSON.stringify(gameAwayScore)}, competitionType: ${JSON.stringify(gameCompetitionType)}, tournament: ${JSON.stringify(gameTournament)}, isTeamStaff: ${JSON.stringify(staffManageable)} }),
+                            baseEvent({ eventKey: 'game-1-player-2', id: 'game-1', childId: 'player-2', childName: 'Sam', date: new Date(${JSON.stringify(gameDate)}), myRsvp: 'maybe', rideshareSummary, status: ${JSON.stringify(gameStatus)}, liveStatus: ${JSON.stringify(gameLiveStatus)}, homeScore: ${JSON.stringify(gameHomeScore)}, awayScore: ${JSON.stringify(gameAwayScore)}, competitionType: ${JSON.stringify(gameCompetitionType)}, tournament: ${JSON.stringify(gameTournament)}, isTeamStaff: ${JSON.stringify(staffManageable)} }),
                             baseEvent({
                                 eventKey: 'practice-1-player-1',
                                 id: 'practice-1',
@@ -1211,6 +1214,72 @@ test('app standard tracker records linked opponent stat entry', async ({ page, b
             isOpponent: true
         }
     });
+});
+
+test('tournament game keeps RSVP, tracking, finalization, and reports on the shared game lifecycle', async ({ page, baseURL }) => {
+    await page.setViewportSize({ width: 1280, height: 900 });
+    await mockScheduleModules(page, {
+        isCoach: true,
+        staffManageable: true,
+        gameStatus: 'live',
+        gameLiveStatus: 'live',
+        gameHomeScore: 4,
+        gameAwayScore: 2,
+        gameCompetitionType: 'tournament',
+        gameTournament: {
+            divisionName: '10U Gold',
+            bracketName: 'Gold Bracket',
+            roundName: 'Championship',
+            poolName: 'Pool A'
+        }
+    });
+    await page.goto(appUrl(baseURL, '/schedule/team-1/game-1?childId=player-1&section=availability'), { waitUntil: 'domcontentloaded' });
+
+    const eventSummaryCard = page.locator('.event-summary-card');
+    await waitForScheduleRoute(page, eventSummaryCard.getByRole('heading', { name: 'vs. Falcons' }));
+    await expect(page.getByText('10U Gold / Gold Bracket / Championship').first()).toBeVisible();
+    await expect(page.getByText(/Pool: Pool A/).first()).toBeVisible();
+
+    const availabilitySection = page.locator('section').filter({ has: page.getByRole('heading', { name: 'Availability' }) });
+    await availabilitySection.getByRole('button', { name: 'Going' }).click();
+    await expect(page.getByText('2 children marked going.')).toBeVisible();
+    expect(await page.evaluate(() => window.__scheduleCalls.rsvps)).toEqual([
+        { eventKey: 'game-1-player-1', childId: 'player-1', userId: 'user-1', response: 'going', note: '' },
+        { eventKey: 'game-1-player-2', childId: 'player-2', userId: 'user-1', response: 'going', note: '' }
+    ]);
+
+    await page.getByRole('button', { name: 'Game', exact: true }).click();
+    await page.getByTestId('standard-tracker-launch').click();
+    await waitForScheduleRoute(page, page.getByTestId('standard-tracker-grid'));
+    await page.getByRole('button', { name: '#7 Pat GOALS add one' }).click();
+    await expect(page.getByText('#7 Pat GOALS +1 recorded.')).toBeVisible();
+    await expect.poll(() => page.evaluate(() => window.__trackerCalls.recordEvents[0])).toMatchObject({
+        teamId: 'team-1',
+        gameId: 'game-1',
+        input: {
+            text: '#7 Pat GOALS +1',
+            undoData: { playerId: 'player-1', statKey: 'goals', value: 1, isOpponent: false }
+        }
+    });
+
+    await page.getByRole('link', { name: 'Game hub' }).click();
+    await waitForScheduleRoute(page, page.getByRole('heading', { name: 'Game hub' }));
+    await page.getByRole('button', { name: 'Post-game wrap-up', exact: true }).click();
+    await page.getByLabel('Generate AI summary').uncheck();
+    await page.getByRole('button', { name: 'Complete wrap-up' }).click();
+    await expect(page.getByText('Wrap-up saved without AI summary.')).toBeVisible();
+    await expect.poll(() => page.evaluate(() => window.__scheduleCalls.wrapup?.[0])).toMatchObject({
+        teamId: 'team-1',
+        gameId: 'game-1',
+        userId: 'user-1',
+        payload: { homeScore: 4, awayScore: 2, status: 'completed', liveStatus: 'completed' }
+    });
+
+    await page.getByRole('button', { name: 'Report sections', exact: true }).click();
+    const reportSections = page.locator('#game-hub-report-panel');
+    await expect(reportSections.getByText('Pat helped set the tone early and the team finished strong.')).toBeVisible();
+    await expect(reportSections.locator('strong').filter({ hasText: 'Strong start' })).toBeVisible();
+    expect(await page.evaluate(() => window.__scheduleCalls.gameReport)).toEqual({ teamId: 'team-1', gameId: 'game-1' });
 });
 
 test('calendar day selection opens a visible event picker for multiple events', async ({ page, baseURL }) => {
