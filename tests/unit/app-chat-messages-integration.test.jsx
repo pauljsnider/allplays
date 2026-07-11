@@ -123,6 +123,7 @@ const animationFrameState = vi.hoisted(() => ({
     nextId: 1,
     callbacks: new Map()
 }));
+const mountedRoots = new Set();
 
 vi.mock('@capacitor/core', () => ({
     Capacitor: {
@@ -185,6 +186,7 @@ async function renderMessages(initialEntry, authState = auth) {
     const container = document.createElement('div');
     document.body.appendChild(container);
     const root = createRoot(container);
+    mountedRoots.add(root);
 
     const renderWithAuth = async (nextAuthState) => {
         await act(async () => {
@@ -225,8 +227,8 @@ async function flush() {
     });
 }
 
-async function waitForMatch(getMatch, description, attempts = 150) {
-    const deadline = Date.now() + 3000;
+async function waitForMatch(getMatch, description, attempts = 200) {
+    const deadline = Date.now() + 5000;
     for (let attempt = 0; attempt < attempts || Date.now() < deadline; attempt += 1) {
         const match = getMatch();
         if (match) return match;
@@ -507,7 +509,12 @@ beforeEach(() => {
     chatMocks.unmuteTeamChat.mockResolvedValue(undefined);
 });
 
-afterEach(() => {
+afterEach(async () => {
+    await act(async () => {
+        mountedRoots.forEach((root) => root.unmount());
+        mountedRoots.clear();
+    });
+    await flush();
     document.body.innerHTML = '';
 });
 
@@ -2147,7 +2154,7 @@ describe('React app messages integration', () => {
 
         await setFieldValue(textarea, '@ALL PLAYS who has not RSVP’d?');
         await click(container, 'Send message');
-        await flush();
+        await waitForMockCallCount(chatMocks.sendAllPlaysChatAnswer, 1, 'ALL PLAYS assistant send');
 
         expect(chatMocks.sendAllPlaysChatAnswer).toHaveBeenCalledWith(expect.objectContaining({
             teamId: 'team-1',

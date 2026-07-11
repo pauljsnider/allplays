@@ -5443,11 +5443,18 @@ function getStaffRsvpEventDataCacheKey(event: ParentScheduleEvent) {
   return `${compactString(event.teamId)}:${compactString(event.id)}`;
 }
 
-export function createStaffRsvpAvailabilityLoader() {
+export function createStaffRsvpAvailabilityLoader(scopeKey = '') {
   const eventDataByEventKey = new Map<string, Promise<StaffRsvpEventData>>();
+  const normalizedScopeKey = compactString(scopeKey);
+
+  const getEventKey = (event: ParentScheduleEvent) => (
+    normalizedScopeKey
+      ? `${normalizedScopeKey}:${getStaffRsvpEventDataCacheKey(event)}`
+      : getStaffRsvpEventDataCacheKey(event)
+  );
 
   const getEventData = (event: ParentScheduleEvent) => {
-    const eventKey = getStaffRsvpEventDataCacheKey(event);
+    const eventKey = getEventKey(event);
     const existing = eventDataByEventKey.get(eventKey);
     if (existing) return existing;
     const nextLoad = loadStaffRsvpEventData(event).catch((error) => {
@@ -5468,7 +5475,7 @@ export function createStaffRsvpAvailabilityLoader() {
       return (await getEventData(event)).reminderPreview;
     },
     invalidateEvent(event: ParentScheduleEvent) {
-      eventDataByEventKey.delete(getStaffRsvpEventDataCacheKey(event));
+      eventDataByEventKey.delete(getEventKey(event));
     }
   };
 }

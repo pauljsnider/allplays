@@ -776,6 +776,32 @@ function buildGameFormFromEvent(event: ParentScheduleEvent): ScheduleGameFormInp
   };
 }
 
+function toScheduleEditDateKey(value: Date | string | number | null | undefined) {
+  if (value === null || value === undefined || value === '') return '';
+  const date = value instanceof Date ? value : new Date(value);
+  return Number.isNaN(date.getTime()) ? String(value) : date.toISOString();
+}
+
+function buildGameFormResetKey(event: ParentScheduleEvent) {
+  return [
+    event.eventKey,
+    event.opponent || '',
+    event.title || '',
+    toScheduleEditDateKey(event.date),
+    toScheduleEditDateKey(event.endDate),
+    event.location || '',
+    toScheduleEditDateKey(event.arrivalTime),
+    event.isHome === false ? 'away' : event.isHome === true ? 'home' : 'neutral',
+    event.notes || '',
+    event.statTrackerConfigId || '',
+    event.competitionType || 'league',
+    event.countsTowardSeasonRecord !== false ? 'counts' : 'exhibition',
+    event.opponentTeamId || '',
+    event.opponentTeamName || '',
+    event.opponentTeamPhoto || ''
+  ].join('\u001f');
+}
+
 function GameScheduleEditPanel({ auth, event }: { auth: AuthState; event: ParentScheduleEvent }) {
   const [open, setOpen] = useState(false);
   const [form, setForm] = useState<ScheduleGameFormInput>(() => buildGameFormFromEvent(event));
@@ -783,11 +809,14 @@ function GameScheduleEditPanel({ auth, event }: { auth: AuthState; event: Parent
   const [saving, setSaving] = useState(false);
   const [status, setStatus] = useState<{ tone: 'success' | 'error'; message: string } | null>(null);
   const [configError, setConfigError] = useState<string | null>(null);
+  const formResetKey = buildGameFormResetKey(event);
+  const eventRef = useRef(event);
+  eventRef.current = event;
 
   useEffect(() => {
-    setForm(buildGameFormFromEvent(event));
+    setForm(buildGameFormFromEvent(eventRef.current));
     setStatus(null);
-  }, [event.eventKey]);
+  }, [formResetKey]);
 
   useEffect(() => {
     if (!open || !auth.user) return;
@@ -872,7 +901,7 @@ function PracticeScheduleEditPanel({ auth, event }: { auth: AuthState; event: Pa
     setSeriesId(null);
     setSeriesEventId(null);
     setStatus(null);
-  }, [event.eventKey]);
+  }, [event, event.eventKey]);
 
   const updateField = (field: keyof SchedulePracticeFormInput, value: string | Date | PracticeRecurrenceFormInput) => {
     setForm((current) => ({ ...current, [field]: value }));
@@ -1046,16 +1075,18 @@ function AvailabilitySection({ event, rsvp, availabilityNote, onAvailabilityNote
     ? `Are ${familyNames[0]} and ${familyNames[1]} going?`
     : `Are all ${familyNames.length} children going?`;
   const rsvpWorkflow = useScheduleEventRsvp({ availabilityNote, applyToAllChildren: useFamilyRsvp });
-  const staffRsvpLoader = useMemo(() => createStaffRsvpAvailabilityLoader(), [event.teamId, event.id]);
+  const staffRsvpEventScopeKey = `${event.teamId}:${event.id}`;
+  const staffRsvpLoader = useMemo(() => createStaffRsvpAvailabilityLoader(staffRsvpEventScopeKey), [staffRsvpEventScopeKey]);
   const staffRsvp = useStaffRsvpBreakdown(staffRsvpLoader);
   const showTeamRsvpTools = event.isDbGame && Boolean(event.isTeamAdmin || event.isTeamRsvpReminderManager);
+  const availabilitySummary = showTeamRsvpTools ? (staffRsvp.breakdown?.counts || event.rsvpSummary) : event.rsvpSummary;
 
   return (
     <section className="app-card overflow-hidden p-0">
       <div className="flex items-start justify-between gap-3 border-b border-gray-100 px-3 py-2.5 sm:px-4">
         <div className="min-w-0">
           <h2 className="app-section-title">Availability</h2>
-          <div className="mt-0.5 text-xs font-semibold text-gray-500">{formatRsvpSummary(event.rsvpSummary)}</div>
+          <div className="mt-0.5 text-xs font-semibold text-gray-500">{formatRsvpSummary(availabilitySummary)}</div>
         </div>
         <span className={`mt-0.5 inline-flex min-h-6 flex-none items-center rounded-full border px-2 text-[11px] font-extrabold uppercase tracking-[0.04em] ${rsvpBadgeClasses[visibleRsvp]}`}>
           {rsvpLabels[visibleRsvp]}
@@ -1099,7 +1130,7 @@ function AvailabilitySection({ event, rsvp, availabilityNote, onAvailabilityNote
           <AttentionPanel items={attentionItems} onSelectSection={onSelectSection} />
         ) : null}
         {showTeamRsvpTools ? (
-          <TeamRsvpToolsDisclosure key={event.eventKey} summary={staffRsvp.breakdown?.counts || event.rsvpSummary}>
+          <TeamRsvpToolsDisclosure key={event.eventKey} summary={availabilitySummary}>
             <StaffRsvpBreakdownPanel
               breakdown={staffRsvp.breakdown}
               loading={staffRsvp.loading}
@@ -1957,7 +1988,7 @@ function StatsheetImportPanel({ event, onImported }: { event: ParentScheduleEven
     } finally {
       setLoadingContext(false)
     }
-  }, [columns.length, event.id, event.teamId, roster])
+  }, [columns, event.id, event.teamId, roster])
 
   const setPreviewFile = useCallback((nextFile: File | null) => {
     if (previewUrlRef.current) {
@@ -2537,6 +2568,7 @@ function formatSubstitutionPlayer(player: { name?: string; number?: string | nul
 
 function GameDaySubstitutionPanel({ auth, event }: { auth: AuthState; event: ParentScheduleEvent }) {
   const formationId = event.gamePlan?.publishedFormationId || event.gamePlan?.formationId || '';
+  const eventRef = useRef(event);
   const [lineupBuilderModule, setLineupBuilderModule] = useState<GameDayLineupBuilderModule | null>(null);
   const [legacyHelpersModule, setLegacyHelpersModule] = useState<LegacyScheduleHelpersModule | null>(null);
   const [players, setPlayers] = useState<Array<{ id: string; name: string; number?: string | null }>>([]);
@@ -2565,6 +2597,10 @@ function GameDaySubstitutionPanel({ auth, event }: { auth: AuthState; event: Par
   const logEntries = useMemo(() => buildGameDayLogEntries(coachingNotes, liveEvents), [coachingNotes, liveEvents]);
 
   useEffect(() => {
+    eventRef.current = event;
+  }, [event]);
+
+  useEffect(() => {
     void loadGameDayLineupBuilderModule().then(setLineupBuilderModule);
     void loadLegacyScheduleHelpersModule().then((module) => {
       setLegacyHelpersModule(module);
@@ -2585,7 +2621,8 @@ function GameDaySubstitutionPanel({ auth, event }: { auth: AuthState; event: Par
   }, [legacyHelpersModule, event.eventKey, event.gamePlan, event.rotationPlan, event.rotationActual, event.coachingNotes, event.liveEvents]);
 
   useEffect(() => {
-    if (!auth.user || !formationId || event.isCancelled) {
+    const currentEvent = eventRef.current;
+    if (!auth.user || !formationId || currentEvent.isCancelled) {
       setPlayers([]);
       setLoading(false);
       return undefined;
@@ -2598,8 +2635,8 @@ function GameDaySubstitutionPanel({ auth, event }: { auth: AuthState; event: Par
     ])
       .then(async ([gameDayService, builder]) => {
         const [preview, loadedLiveEvents] = await Promise.all([
-          gameDayService.loadAutoFilledLineupDraftPreviewForApp(event, auth.user, formationId),
-          gameDayService.loadGameDayLiveEventsForApp(event.teamId, event.id)
+          gameDayService.loadAutoFilledLineupDraftPreviewForApp(currentEvent, auth.user, formationId),
+          gameDayService.loadGameDayLiveEventsForApp(currentEvent.teamId, currentEvent.id)
         ]);
         return { preview, loadedLiveEvents, builder };
       })
@@ -2618,7 +2655,7 @@ function GameDaySubstitutionPanel({ auth, event }: { auth: AuthState; event: Par
         if (!cancelled) setLoading(false);
       });
     return () => { cancelled = true; };
-  }, [auth.user, event.teamId, event.id, event.gamePlan, event.isCancelled, formationId]);
+  }, [auth.user, event.teamId, event.id, event.eventKey, event.gamePlan, event.isCancelled, event.isDbGame, event.isTeamStaff, event.type, formationId]);
 
   useEffect(() => {
     if (period && periods.includes(period)) return;
@@ -2758,9 +2795,11 @@ function GameDaySubstitutionPanel({ auth, event }: { auth: AuthState; event: Par
 }
 
 function GameHubLineupBuilderPanel({ auth, event, onGamePlanSaved }: { auth: AuthState; event: ParentScheduleEvent; onGamePlanSaved: (gamePlan: Record<string, any>) => void }) {
+  const eventRef = useRef(event);
   const [gameDayService, setGameDayService] = useState<ScheduleGameDayServiceModule | null>(null);
   const [lineupBuilderModule, setLineupBuilderModule] = useState<GameDayLineupBuilderModule | null>(null);
-  const [formationId, setFormationId] = useState(event.gamePlan?.formationId || '');
+  const eventFormationId = event.gamePlan?.formationId || '';
+  const [formationId, setFormationId] = useState(eventFormationId);
   const [preview, setPreview] = useState<LineupDraftPreviewResult | null>(null);
   const [draftLineups, setDraftLineups] = useState<Record<string, string>>({});
   const [selectedPlayerId, setSelectedPlayerId] = useState('');
@@ -2773,6 +2812,8 @@ function GameHubLineupBuilderPanel({ auth, event, onGamePlanSaved }: { auth: Aut
   const dirtyRef = useRef(false);
   const latestDraftRef = useRef<Record<string, string>>({});
   const latestPreviewRef = useRef<LineupDraftPreviewResult | null>(null);
+  const latestFormationIdRef = useRef(formationId);
+  const previousEventKeyRef = useRef(event.eventKey);
 
   const formation = gameDayService?.LINEUP_FORMATIONS[formationId] || null;
   const lineupPeriods = useMemo(() => (
@@ -2787,6 +2828,10 @@ function GameHubLineupBuilderPanel({ auth, event, onGamePlanSaved }: { auth: Aut
   const statusCopy = gameDayService?.getLineupPublishStatus(event.gamePlan) || null;
 
   useEffect(() => {
+    eventRef.current = event;
+  }, [event]);
+
+  useEffect(() => {
     void Promise.all([
       loadScheduleGameDayService(),
       loadGameDayLineupBuilderModule()
@@ -2796,8 +2841,8 @@ function GameHubLineupBuilderPanel({ auth, event, onGamePlanSaved }: { auth: Aut
     });
   }, []);
 
-  useEffect(() => {
-    setFormationId(event.gamePlan?.formationId || '');
+  const resetLineupBuilderState = useCallback((nextFormationId: string) => {
+    setFormationId(nextFormationId);
     setPreview(null);
     setDraftLineups({});
     setSelectedPlayerId('');
@@ -2805,11 +2850,29 @@ function GameHubLineupBuilderPanel({ auth, event, onGamePlanSaved }: { auth: Aut
     dirtyRef.current = false;
     latestDraftRef.current = {};
     latestPreviewRef.current = null;
-  }, [event.eventKey]);
+  }, []);
+
+  useEffect(() => {
+    latestFormationIdRef.current = formationId;
+  }, [formationId]);
+
+  useEffect(() => {
+    const eventChanged = previousEventKeyRef.current !== event.eventKey;
+    previousEventKeyRef.current = event.eventKey;
+    if (!eventChanged && eventFormationId === latestFormationIdRef.current) return;
+    resetLineupBuilderState(eventFormationId);
+  }, [event.eventKey, eventFormationId, resetLineupBuilderState]);
+
+  useEffect(() => {
+    if (eventFormationId && eventFormationId !== formationId && !dirtyRef.current) {
+      resetLineupBuilderState(eventFormationId);
+    }
+  }, [eventFormationId, formationId, resetLineupBuilderState]);
 
   useEffect(() => {
     let cancelled = false;
-    if (!auth.user || !formationId || event.isCancelled) {
+    const currentEvent = eventRef.current;
+    if (!auth.user || !formationId || currentEvent.isCancelled) {
       setPreview(null);
       setDraftLineups({});
       return undefined;
@@ -2821,7 +2884,7 @@ function GameHubLineupBuilderPanel({ auth, event, onGamePlanSaved }: { auth: Aut
       loadGameDayLineupBuilderModule()
     ])
       .then(async ([service, builder]) => {
-        const result = await service.loadAutoFilledLineupDraftPreviewForApp(event, auth.user, formationId);
+        const result = await service.loadAutoFilledLineupDraftPreviewForApp(currentEvent, auth.user, formationId);
         return { result, builder, service };
       })
       .then(({ result, builder, service }) => {
@@ -2829,10 +2892,10 @@ function GameHubLineupBuilderPanel({ auth, event, onGamePlanSaved }: { auth: Aut
         setGameDayService(service);
         setPreview(result);
         latestPreviewRef.current = result;
-        const seeded = builder.buildLineupEditorAssignments(formationId, result.gamePlan || event.gamePlan || null);
+        const seeded = builder.buildLineupEditorAssignments(formationId, result.gamePlan || currentEvent.gamePlan || null);
         setDraftLineups(seeded);
         latestDraftRef.current = seeded;
-        dirtyRef.current = shouldAutosaveGeneratedLineupDraft(event.gamePlan, result.gamePlan);
+        dirtyRef.current = shouldAutosaveGeneratedLineupDraft(currentEvent.gamePlan, result.gamePlan);
       })
       .catch((error: any) => {
         if (cancelled) return;
@@ -2845,7 +2908,7 @@ function GameHubLineupBuilderPanel({ auth, event, onGamePlanSaved }: { auth: Aut
       });
 
     return () => { cancelled = true; };
-  }, [auth.user, event.teamId, event.id, event.gamePlan, event.isCancelled, formationId]);
+  }, [auth.user, event.teamId, event.id, event.eventKey, event.gamePlan, event.isCancelled, event.isDbGame, event.isTeamStaff, event.type, formationId]);
 
   useEffect(() => {
     latestDraftRef.current = draftLineups;
@@ -3304,7 +3367,7 @@ function LiveScoreEditor({ auth, event, homePlayers, loadingHomePlayers, showSti
     });
   };
 
-  const saveScore = async (mode: 'manual' | 'autosave' = 'manual', scoreOverride?: ScoreSnapshot) => {
+  const saveScore = useCallback(async (mode: 'manual' | 'autosave' = 'manual', scoreOverride?: ScoreSnapshot) => {
     if (!auth.user) return;
     const nextScore = scoreOverride || { homeScore, awayScore };
     if (nextScore.homeScore === savedHomeScore && nextScore.awayScore === savedAwayScore) return;
@@ -3344,7 +3407,7 @@ function LiveScoreEditor({ auth, event, homePlayers, loadingHomePlayers, showSti
     } finally {
       setSaving(false);
     }
-  };
+  }, [auth.user, awayScore, event.id, event.teamId, homeScore, onScoreUpdated, savedAwayScore, savedHomeScore]);
 
   useEffect(() => {
     if (!auth.user || !dirty || saving || playerScoringId) return undefined;
@@ -3367,7 +3430,7 @@ function LiveScoreEditor({ auth, event, homePlayers, loadingHomePlayers, showSti
       }
       setAutosaveScheduled(false);
     };
-  }, [auth.user, awayScore, dirty, homeScore, playerScoringId, saving]);
+  }, [auth.user, awayScore, dirty, homeScore, playerScoringId, saveScore, saving]);
 
   const manualScoreSaveLabel = status?.tone === 'error' && dirty ? 'Retry save' : (saving ? 'Saving score' : 'Save score');
   const helperText = autosaveScheduled
@@ -4017,7 +4080,7 @@ function StaffPracticePacketEditor({ auth, event, childEvents }: { auth: AuthSta
     return () => {
       cancelled = true;
     };
-  }, [auth.user, childEvents, event.eventKey]);
+  }, [auth.user, childEvents, event, event.eventKey]);
 
   const updateBlock = (index: number, patch: Partial<StaffPracticePacketBlock>) => {
     setBlocks((current) => current.map((block, blockIndex) => blockIndex === index ? { ...block, ...patch } : block));
@@ -4130,7 +4193,7 @@ function PracticePacketSection({ auth, event, childEvents }: { auth: AuthState; 
     } finally {
       if (showLoading) setLoadingPacket(false);
     }
-  }, [childEvents, event.id, event.practiceHomePacketSummary, event.practiceSessionId, event.teamId]);
+  }, [childEvents, event]);
 
   useEffect(() => {
     setPacketStatus(null);

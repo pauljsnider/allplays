@@ -420,6 +420,19 @@ describe('ScheduleEventDetail deferred game hub loaders', () => {
     });
   });
 
+  it('keeps game-day panel reload scope bounded to event fields that change lineup data', () => {
+    let source = '';
+    try {
+      source = readFileSync('src/pages/ScheduleEventDetail.tsx', 'utf8');
+    } catch {
+      source = readFileSync('apps/app/src/pages/ScheduleEventDetail.tsx', 'utf8');
+    }
+
+    expect(source).toMatch(/eventRef\.current = event;/);
+    expect(source).toMatch(/loadAutoFilledLineupDraftPreviewForApp\(currentEvent, auth\.user, formationId\)/);
+    expect(source).toMatch(/\[auth\.user, event\.teamId, event\.id, event\.eventKey, event\.gamePlan, event\.isCancelled, event\.isDbGame, event\.isTeamStaff, event\.type, formationId\]/);
+  });
+
   it('caches deferred game hub module loaders and resolves expected modules', async () => {
     const loaders = [
       { load: loadGameDayLineupBuilderModule, exportName: 'buildLineupEditorPlayers' },
@@ -1669,6 +1682,49 @@ describe('ScheduleEventDetail assignments', () => {
     expect(scheduleServiceMocks.loadGameDayLiveEventsForApp).toHaveBeenCalledTimes(2);
     expect(scheduleServiceMocks.loadGameDayLiveEventsForApp).toHaveBeenNthCalledWith(1, 'team-1', 'game-1');
     expect(scheduleServiceMocks.loadGameDayLiveEventsForApp).toHaveBeenNthCalledWith(2, 'team-1', 'game-2');
+  });
+
+  it('preserves dirty game schedule edits when same-event score updates refresh the event object', async () => {
+    scheduleServiceMocks.loadParentScheduleEventDetail.mockResolvedValue({
+      events: [buildEvent({
+        isTeamAdmin: true,
+        canUpdateScore: true,
+        homeScore: 0,
+        awayScore: 0,
+        liveStatus: 'live'
+      })],
+      children: []
+    });
+    scheduleServiceMocks.loadHomeScoringPlayers.mockResolvedValue([]);
+    scheduleServiceMocks.loadGameDayLiveEventsForApp.mockResolvedValue([]);
+    scheduleServiceMocks.loadAutoFilledLineupDraftPreviewForApp.mockResolvedValue({ availablePlayers: [], goingPlayers: [], gamePlan: null });
+    scheduleServiceMocks.updateGameScore.mockResolvedValueOnce({ homeScore: 1, awayScore: 0 });
+    scheduleHubMocks.buildGameHubDestinations.mockReturnValue([]);
+
+    renderScheduleEventDetailWithRouteControls();
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Edit game' }));
+    fireEvent.change(screen.getByLabelText('Location'), { target: { value: 'Aux Gym' } });
+
+    const liveScoreEditor = await screen.findByTestId('live-score-editor');
+    fireEvent.click(within(liveScoreEditor).getByRole('button', { name: 'Home score up' }));
+    fireEvent.click(within(liveScoreEditor).getByRole('button', { name: 'Save score' }));
+
+    await waitFor(() => {
+      expect(scheduleServiceMocks.updateGameScore).toHaveBeenCalledWith('team-1', 'game-1', { homeScore: 1, awayScore: 0 }, auth.user);
+    });
+    expect((screen.getByLabelText('Location') as HTMLInputElement).value).toBe('Aux Gym');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Save game' }));
+
+    await waitFor(() => {
+      expect(scheduleServiceMocks.updateScheduledGameForApp).toHaveBeenCalledWith(
+        'team-1',
+        'game-1',
+        expect.objectContaining({ location: 'Aux Gym' }),
+        auth.user
+      );
+    });
   });
 
   it('links staff scorekeepers from the app game hub to the standard tracker route', async () => {
@@ -3048,6 +3104,91 @@ describe('ScheduleEventDetail staff RSVP overrides', () => {
     expect(screen.getByRole('button', { name: 'Hide responded players' }).getAttribute('aria-expanded')).toBe('true');
   });
 
+  it('uses the staff RSVP breakdown for both availability header and team tools summaries', async () => {
+    scheduleServiceMocks.loadParentScheduleEventDetail.mockResolvedValue({
+      events: [buildEvent({
+        isTeamAdmin: true,
+        isTeamRsvpReminderManager: true,
+        rsvpSummary: { going: 0, maybe: 0, notGoing: 0, notResponded: 1, total: 1 }
+      })],
+      children: []
+    });
+    scheduleServiceMocks.loadStaffScheduleRsvpBreakdown.mockResolvedValue({
+      grouped: {
+        going: [{ playerId: 'p1', playerName: 'Avery Smith', playerNumber: '1', response: 'going' }],
+        maybe: [],
+        not_going: [],
+        not_responded: [{ playerId: 'p4', playerName: 'Devon Lee', playerNumber: '4', response: 'not_responded' }]
+      },
+      counts: { going: 1, maybe: 0, notGoing: 0, notResponded: 1, total: 2 }
+    });
+
+    renderScheduleEventDetail();
+
+    await waitFor(() => {
+      expect(screen.getAllByText('1 going · 0 maybe · 0 out · 1 missing').length).toBeGreaterThanOrEqual(2);
+    });
+    expect(screen.queryByText('0 going · 0 maybe · 0 out · 1 missing')).toBeNull();
+  });
+
+  it('recreates the shared staff RSVP loader when route reuse switches events', async () => {
+    scheduleServiceMocks.loadParentScheduleEventDetail.mockImplementation(async (_user, { eventId }) => ({
+      events: [buildEvent({
+        eventKey: `team-1::${eventId}::player-1::2026-06-04T18:00:00.000Z::game`,
+        id: eventId,
+        isTeamAdmin: true,
+        isTeamRsvpReminderManager: true
+      })],
+      children: []
+    }));
+    scheduleServiceMocks.loadStaffScheduleRsvpBreakdown.mockResolvedValue({
+      grouped: {
+        going: [{ playerId: 'p1', playerName: 'Avery Smith', playerNumber: '1', response: 'going' }],
+        maybe: [],
+        not_going: [],
+        not_responded: []
+      },
+      counts: { going: 1, maybe: 0, notGoing: 0, notResponded: 0, total: 1 }
+    });
+
+    function StaffRsvpRouteHarness() {
+      const navigate = useNavigate();
+      return (
+        <>
+          <button type="button" onClick={() => navigate('/schedule/team-1/game-2?childId=player-1')}>Switch RSVP game</button>
+          <ScheduleEventDetail auth={auth} />
+        </>
+      );
+    }
+
+    render(
+      <MemoryRouter initialEntries={['/schedule/team-1/game-1?childId=player-1']}>
+        <Routes>
+          <Route path="/schedule/:teamId/:eventId" element={<StaffRsvpRouteHarness />} />
+          <Route path="/schedule" element={<div>Schedule</div>} />
+        </Routes>
+      </MemoryRouter>
+    );
+
+    await waitFor(() => {
+      expect(scheduleServiceMocks.createStaffRsvpAvailabilityLoader).toHaveBeenCalledTimes(1);
+      expect(scheduleServiceMocks.loadStaffScheduleRsvpBreakdown).toHaveBeenCalledWith(
+        expect.objectContaining({ teamId: 'team-1', id: 'game-1' }),
+        auth.user
+      );
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Switch RSVP game' }));
+
+    await waitFor(() => {
+      expect(scheduleServiceMocks.createStaffRsvpAvailabilityLoader).toHaveBeenCalledTimes(2);
+      expect(scheduleServiceMocks.loadStaffScheduleRsvpBreakdown).toHaveBeenCalledWith(
+        expect.objectContaining({ teamId: 'team-1', id: 'game-2' }),
+        auth.user
+      );
+    });
+  });
+
   it('lets staff override a responded player after expanding and refreshes the counts', async () => {
     scheduleServiceMocks.loadParentScheduleEventDetail.mockResolvedValue({
       events: [buildEvent({ isTeamAdmin: true, isTeamRsvpReminderManager: true })],
@@ -3530,7 +3671,7 @@ describe('ScheduleEventDetail practice timeline', () => {
       expect(screen.getByText('Assign practice packet')).toBeTruthy();
     });
 
-    expect(screen.getByLabelText('Due date')).toHaveValue('2026-05-24');
+    expect((screen.getByLabelText('Due date') as HTMLInputElement).value).toBe('2026-05-24');
   });
 
   it('shows the practice packet first and hides the timeline for non-admin practice viewers', async () => {
@@ -3974,6 +4115,162 @@ describe('ScheduleEventDetail lineup builder', () => {
 
     await waitFor(() => {
       expect(screen.getByText('Lineup draft autosaved.')).toBeTruthy();
+    });
+  });
+
+  it('keeps the lineup autosave confirmation when the saved game plan refreshes the same event', async () => {
+    scheduleServiceMocks.loadParentScheduleEventDetail.mockResolvedValue({
+      events: [buildEvent({
+        isTeamStaff: true,
+        gamePlan: {
+          formationId: 'basketball-5v5',
+          lineups: { 'Q1-pg': 'p1' },
+          publishedLineups: {},
+          publishedVersion: 0
+        }
+      })],
+      children: []
+    });
+    scheduleServiceMocks.loadAutoFilledLineupDraftPreviewForApp.mockResolvedValue({
+      formationId: 'basketball-5v5',
+      formationName: 'Basketball 5v5',
+      numPeriods: 4,
+      positions: [],
+      availablePlayers: [
+        { id: 'p1', name: 'Avery Smith', number: '1' },
+        { id: 'p2', name: 'Blake Jones', number: '2' }
+      ],
+      goingPlayers: [
+        { id: 'p1', name: 'Avery Smith', number: '1' },
+        { id: 'p2', name: 'Blake Jones', number: '2' }
+      ],
+      gamePlan: {
+        formationId: 'basketball-5v5',
+        lineups: { 'Q1-pg': 'p1' },
+        publishedLineups: {},
+        publishedVersion: 0
+      }
+    });
+    scheduleServiceMocks.saveScheduledGameLineupDraftForApp.mockImplementation(async (_event, _user, _formationId, options) => ({
+      formationId: 'basketball-5v5',
+      formationName: 'Basketball 5v5',
+      numPeriods: 4,
+      positions: [],
+      availablePlayers: [
+        { id: 'p1', name: 'Avery Smith', number: '1' },
+        { id: 'p2', name: 'Blake Jones', number: '2' }
+      ],
+      goingPlayers: [
+        { id: 'p1', name: 'Avery Smith', number: '1' },
+        { id: 'p2', name: 'Blake Jones', number: '2' }
+      ],
+      gamePlan: {
+        formationId: 'basketball-5v5',
+        lineups: options?.lineups || {},
+        publishedLineups: {},
+        publishedVersion: 0
+      }
+    }));
+
+    renderScheduleEventDetail();
+
+    await waitFor(() => {
+      expect(screen.getAllByRole('button', { name: 'Game' }).length).toBeGreaterThan(0);
+    });
+
+    fireEvent.click(screen.getAllByRole('button', { name: 'Game' })[0]);
+    fireEvent.click(screen.getByRole('button', { name: 'Lineup builder' }));
+
+    await waitFor(() => {
+      expect(screen.getByTestId('lineup-slot-Q1-sg')).toBeTruthy();
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: /#2 Blake Jones/i }));
+    fireEvent.click(screen.getByTestId('lineup-slot-Q1-sg'));
+
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 900));
+    });
+
+    await waitFor(() => {
+      expect(scheduleServiceMocks.saveScheduledGameLineupDraftForApp).toHaveBeenCalled();
+      expect(scheduleServiceMocks.loadAutoFilledLineupDraftPreviewForApp).toHaveBeenCalledWith(
+        expect.objectContaining({
+          gamePlan: expect.objectContaining({
+            lineups: expect.objectContaining({
+              'Q1-pg': 'p1',
+              'Q1-sg': 'p2'
+            })
+          })
+        }),
+        auth.user,
+        'basketball-5v5'
+      );
+      expect(screen.getByText('Lineup draft autosaved.')).toBeTruthy();
+      expect((screen.getByLabelText('Formation') as HTMLSelectElement).value).toBe('basketball-5v5');
+    });
+  });
+
+  it('does not reload lineup preview when live clock updates the same event', async () => {
+    const gamePlan = {
+      formationId: 'basketball-5v5',
+      lineups: { 'Q1-pg': 'p1' },
+      publishedLineups: {},
+      publishedVersion: 0
+    };
+    scheduleServiceMocks.loadParentScheduleEventDetail.mockResolvedValue({
+      events: [buildEvent({
+        liveStatus: 'live',
+        status: 'live',
+        canUpdateScore: true,
+        isTeamStaff: true,
+        gamePlan
+      })],
+      children: []
+    });
+    scheduleServiceMocks.loadAutoFilledLineupDraftPreviewForApp.mockResolvedValue({
+      formationId: 'basketball-5v5',
+      formationName: 'Basketball 5v5',
+      numPeriods: 4,
+      positions: [],
+      availablePlayers: [{ id: 'p1', name: 'Avery Smith', number: '1' }],
+      goingPlayers: [{ id: 'p1', name: 'Avery Smith', number: '1' }],
+      gamePlan
+    });
+    scheduleServiceMocks.updateLiveGameClockState.mockResolvedValue({
+      liveClockMs: 0,
+      liveClockRunning: true,
+      liveClockPeriod: 'Q1',
+      liveClockUpdatedAt: '2026-06-04T18:00:00.000Z'
+    });
+
+    renderScheduleEventDetail();
+
+    await waitFor(() => {
+      expect(screen.getAllByRole('button', { name: 'Game' }).length).toBeGreaterThan(0);
+    });
+
+    fireEvent.click(screen.getAllByRole('button', { name: 'Game' })[0]);
+    fireEvent.click(screen.getByRole('button', { name: 'Lineup builder' }));
+
+    await waitFor(() => {
+      expect(scheduleServiceMocks.loadAutoFilledLineupDraftPreviewForApp).toHaveBeenCalledTimes(1);
+      expect(screen.getByTestId('lineup-slot-Q1-pg')).toBeTruthy();
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Start clock' }));
+
+    await waitFor(() => {
+      expect(scheduleServiceMocks.updateLiveGameClockState).toHaveBeenCalledWith(
+        'team-1',
+        'game-1',
+        expect.objectContaining({ liveClockRunning: true }),
+        auth.user
+      );
+    });
+    await waitFor(() => {
+      expect(scheduleServiceMocks.loadAutoFilledLineupDraftPreviewForApp).toHaveBeenCalledTimes(1);
+      expect(screen.getByTestId('lineup-slot-Q1-pg')).toBeTruthy();
     });
   });
 

@@ -203,7 +203,8 @@ describe('ScheduleEventDetail decomposition initiative source contract', () => {
 
     it('keeps staff RSVP admin workflow behind extracted panel and hook modules', () => {
         expect(detailSource).toContain("import { useStaffRsvpBreakdown } from '../hooks/schedule/useStaffRsvpBreakdown';");
-        expect(detailSource).toContain('const staffRsvpLoader = useMemo(() => createStaffRsvpAvailabilityLoader(), [event.teamId, event.id]);');
+        expect(detailSource).toContain("const staffRsvpEventScopeKey = `${event.teamId}:${event.id}`;");
+        expect(detailSource).toContain('const staffRsvpLoader = useMemo(() => createStaffRsvpAvailabilityLoader(staffRsvpEventScopeKey), [staffRsvpEventScopeKey]);');
         expect(detailSource).toContain('const staffRsvp = useStaffRsvpBreakdown(staffRsvpLoader);');
         expect(detailSource).toContain('<StaffRsvpBreakdownPanel');
         expect(detailSource).toContain('<StaffRsvpReminderPanel refreshToken={staffRsvp.refreshToken} staffRsvpLoader={staffRsvpLoader} />');

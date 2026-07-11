@@ -533,6 +533,53 @@ describe('Schedule', () => {
     expect(await screen.findByText('1 event · 0 RSVP · 0 packets')).toBeTruthy();
   });
 
+  it('counts staff team schedule availability in the RSVP summary when the card needs action', async () => {
+    scheduleServiceMocks.loadParentSchedule.mockResolvedValueOnce({
+      children: [
+        { playerId: 'player-1', playerName: 'Pat', teamId: 'team-1', teamName: 'Bears' }
+      ],
+      events: [
+        buildScheduleEvent(1, {
+          eventKey: 'team-1::event-1::staff-team-team-1::2100-06-01T18:00:00.000Z::game',
+          childId: 'staff-team-team-1',
+          childName: 'Team schedule',
+          isLinkedParentChild: false,
+          isTeamStaff: true,
+          myRsvp: 'not_responded'
+        })
+      ]
+    });
+
+    renderSchedule();
+
+    expect(await screen.findByText('1 event · 1 RSVP · 0 packets')).toBeTruthy();
+    expect(screen.getAllByText('Availability needed').length).toBeGreaterThan(0);
+  });
+
+  it('excludes locked staff team schedule availability from the RSVP summary', async () => {
+    scheduleServiceMocks.loadParentSchedule.mockResolvedValueOnce({
+      children: [
+        { playerId: 'player-1', playerName: 'Pat', teamId: 'team-1', teamName: 'Bears' }
+      ],
+      events: [
+        buildScheduleEvent(1, {
+          eventKey: 'team-1::event-1::staff-team-team-1::2100-06-01T18:00:00.000Z::game',
+          childId: 'staff-team-team-1',
+          childName: 'Team schedule',
+          isLinkedParentChild: false,
+          isTeamStaff: true,
+          myRsvp: 'not_responded',
+          availabilityLocked: true
+        })
+      ]
+    });
+
+    renderSchedule();
+
+    expect(await screen.findByText('1 event · 0 RSVP · 0 packets')).toBeTruthy();
+    expect(screen.queryByText('Availability needed')).toBeNull();
+  });
+
   it('reuses cached open assignment counts across schedule summaries and view changes', async () => {
     shellLayoutMocks.isDesktopWeb = true;
     const assignments = [

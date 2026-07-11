@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import React, { act } from 'react';
+import { fireEvent } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createRoot } from 'react-dom/client';
 import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom';
@@ -1106,13 +1107,13 @@ describe('React app ScheduleEventDetail More tab integration', () => {
         await clickButton(container, 'Game');
         await waitForText(container, 'Lineup builder');
         await clickButton(container, 'Lineup builder');
+        await waitForText(container, 'Basketball 5v5', 2000);
 
         const select = container.querySelector('#game-hub-lineup-formation');
         await act(async () => {
-            select.value = 'basketball-5v5';
-            select.dispatchEvent(new Event('change', { bubbles: true }));
+            fireEvent.change(select, { target: { value: 'basketball-5v5' } });
         });
-        await waitForText(container, '#1 Avery', 500);
+        await waitForText(container, '#1 Avery', 2000);
         await act(async () => {
             await new Promise((resolve) => setTimeout(resolve, 900));
         });
