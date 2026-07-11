@@ -1160,6 +1160,14 @@ describe('TeamDetail', () => {
       + screen.queryAllByTestId('tracking-status-row').length
     ).toBeLessThan(80);
 
+    fireEvent.click(screen.getByRole('button', { name: 'Show 32 more active players' }));
+    expect(screen.getAllByTestId('roster-player-row')).toHaveLength(64);
+    expect(screen.getAllByTestId('inactive-roster-player-row')).toHaveLength(rosterRenderLimits.inactivePlayers);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Show 4 more inactive players' }));
+    expect(screen.getAllByTestId('roster-player-row')).toHaveLength(64);
+    expect(screen.getAllByTestId('inactive-roster-player-row')).toHaveLength(12);
+
     fireEvent.click(screen.getAllByRole('button', { name: 'Show players (120)' })[0]);
 
     expect(await screen.findAllByTestId('tracking-status-row')).toHaveLength(rosterRenderLimits.trackingStatuses);
