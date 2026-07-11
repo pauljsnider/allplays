@@ -603,7 +603,7 @@ const LIVE_GAME_UTILS_STUB = `
 export function renderHeader() {}
 export function renderFooter() {}
 export function getUrlParams() {
-    return { teamId: 'team-1', gameId: 'game-1', replay: 'true' };
+    return { teamId: 'team-1', gameId: 'game-1', replay: window.__LIVE_GAME_REPLAY__ === false ? 'false' : 'true' };
 }
 export function escapeHtml(value) {
     if (value === null || value === undefined) return '';
@@ -634,12 +634,13 @@ export async function getTeam(teamId) {
         sport: 'basketball'
     };
 }
-export async function getGame(gameId) {
+export async function getGame(_teamId, gameId) {
     return {
+        ...(window.__LIVE_GAME_GAME__ || {}),
         id: gameId,
-        date: '2026-05-09T19:00:00Z',
-        liveStatus: 'completed',
-        status: 'completed',
+        date: window.__LIVE_GAME_GAME__?.date || '2026-05-09T19:00:00Z',
+        liveStatus: window.__LIVE_GAME_GAME__?.liveStatus || 'completed',
+        status: window.__LIVE_GAME_GAME__?.status || 'completed',
         homeScore: 42,
         awayScore: 38,
         period: 'Final',
@@ -679,7 +680,9 @@ export async function getConfigs() {
 export function subscribeGame() {
     return () => {};
 }
-export async function updateGame() {}
+export async function updateGame(_teamId, _gameId, updates) {
+    window.__LIVE_GAME_UPDATE_CALLS__ = [...(window.__LIVE_GAME_UPDATE_CALLS__ || []), updates];
+}
 export async function uploadGameClip() {
     return { url: '' };
 }
@@ -777,9 +780,23 @@ export const BROADCAST_SETUP_STATUSES = {
     READY: 'ready_for_managed_stream',
     FAILED: 'permission_failed'
 };
+export const BROADCAST_STREAM_STATUSES = {
+    SETUP_REQUIRED: 'setup_required',
+    READY: 'ready',
+    STARTING: 'starting',
+    LIVE: 'live',
+    FAILED: 'failed'
+};
 export const MAX_HIGHLIGHT_CLIP_MS = 60000;
-export function buildBroadcastSetupSession() {
-    return {};
+export function buildBroadcastSetupSession({ existingSession = {}, sessionName = '', status, permissions = {} } = {}) {
+    return {
+        ...existingSession,
+        id: existingSession.id || 'broadcast-smoke',
+        name: sessionName || 'Smoke broadcast',
+        status,
+        streamStatus: status,
+        permissions
+    };
 }
 export function buildHighlightShareUrl() {
     return '';
@@ -788,16 +805,35 @@ export function buildStreamScoreContext() {
     return null;
 }
 export function canAccessNativeCameraCapture() {
-    return false;
+    return window.__LIVE_GAME_CAMERA_ALLOWED__ === true;
 }
 export function canSaveBroadcastSetupSession() {
-    return false;
+    return window.__LIVE_GAME_CAMERA_ALLOWED__ === true;
 }
 export function createHighlightClipDraft() {
     return { startMs: 0, endMs: 0, title: '' };
 }
 export function resolveBroadcastProviderMetadata() {
     return { providerName: '' };
+}
+export function resolveBroadcastStreamControlState({ status = 'setup_required', cameraReady = false, microphoneReady = false } = {}) {
+    const labels = {
+        setup_required: 'Setup required',
+        ready: 'Ready to stream',
+        starting: 'Starting...',
+        live: 'Live',
+        failed: 'Start failed'
+    };
+    const mediaReady = cameraReady && microphoneReady;
+    return {
+        status,
+        label: labels[status] || labels.setup_required,
+        mediaReady,
+        showBegin: mediaReady && status === 'ready',
+        beginDisabled: !mediaReady || status !== 'ready',
+        showRetry: status === 'failed',
+        isLive: status === 'live'
+    };
 }
 export function resolveReplayVideoOptions() {
     return {
@@ -1195,5 +1231,70 @@ test('live game archived replay Team Pass gate locks replay when config is enabl
     // If needed, we could add a check for the absence of the 'Team Pass required' text elsewhere.
     // For minimal change, just remove the assertion if the element is hidden.
     await expect.poll(() => page.evaluate(() => window.__TEAM_PASS_ENTITLEMENT_READS__ || 0)).toBe(1);
+    expect(pageErrors).toEqual([]);
+});
+
+test('live game begins the ready preview stream and retries an inline start failure', async ({ page, baseURL }) => {
+    const pageErrors = await collectPageErrors(page);
+    await page.addInitScript(() => {
+        window.__LIVE_GAME_REPLAY__ = false;
+        window.__LIVE_GAME_CAMERA_ALLOWED__ = true;
+        window.__LIVE_GAME_TEAM__ = { ownerId: 'user-1' };
+        window.__LIVE_GAME_GAME__ = { status: 'scheduled', liveStatus: 'scheduled' };
+        window.__LIVE_GAME_UPDATE_CALLS__ = [];
+        window.__LIVE_GAME_PLAY_CALLS__ = 0;
+        window.__LIVE_GAME_GET_USER_MEDIA_CALLS__ = 0;
+
+        const videoTrack = { kind: 'video', enabled: true, readyState: 'live', stop() { this.readyState = 'ended'; } };
+        const audioTrack = { kind: 'audio', enabled: true, readyState: 'live', stop() { this.readyState = 'ended'; } };
+        const stream = { getTracks: () => [videoTrack, audioTrack] };
+        Object.defineProperty(navigator, 'mediaDevices', {
+            configurable: true,
+            value: {
+                getUserMedia: async () => {
+                    window.__LIVE_GAME_GET_USER_MEDIA_CALLS__ += 1;
+                    return stream;
+                }
+            }
+        });
+        Object.defineProperty(HTMLMediaElement.prototype, 'srcObject', {
+            configurable: true,
+            get() { return this.__smokeSrcObject || null; },
+            set(value) { this.__smokeSrcObject = value; }
+        });
+        HTMLMediaElement.prototype.pause = () => {};
+        HTMLMediaElement.prototype.play = function play() {
+            window.__LIVE_GAME_PLAY_CALLS__ += 1;
+            if (window.__LIVE_GAME_PLAY_CALLS__ === 2) {
+                return Promise.reject(new Error('Simulated local start failure'));
+            }
+            return Promise.resolve();
+        };
+    });
+    await routeLiveGameStubs(page);
+
+    await page.goto(`${baseURL}/live-game.html?teamId=team-1&gameId=game-1`, { waitUntil: 'domcontentloaded' });
+
+    await expect(page.locator('#native-camera-panel')).toBeVisible();
+    await expect(page.locator('#native-camera-begin-stream-btn')).toBeHidden();
+    await page.locator('#native-camera-start-btn').click();
+    await expect(page.locator('#native-camera-begin-stream-btn')).toBeVisible();
+    await expect(page.locator('#native-camera-begin-stream-btn')).toBeEnabled();
+    await expect(page.locator('#native-broadcast-state')).toHaveAttribute('data-state', 'ready');
+
+    await page.locator('#native-camera-begin-stream-btn').click();
+    await expect(page.locator('#native-broadcast-state')).toHaveAttribute('data-state', 'failed');
+    await expect(page.locator('#native-broadcast-error')).toBeVisible();
+    await expect(page.locator('#native-broadcast-error')).toContainText('retry without refreshing');
+
+    await page.locator('#native-broadcast-retry-btn').click();
+    await expect(page.locator('#native-broadcast-state')).toHaveAttribute('data-state', 'live');
+    await expect(page.locator('#native-camera-status')).toContainText('No backend ingest or cloud recording is active.');
+    await expect(page.locator('#native-broadcast-error')).toBeHidden();
+    await expect.poll(() => page.evaluate(() => window.__LIVE_GAME_GET_USER_MEDIA_CALLS__)).toBe(1);
+    await expect.poll(() => page.evaluate(() => window.__LIVE_GAME_UPDATE_CALLS__.map((updates) => updates.broadcastSession?.status))).toEqual([
+        'checking_permissions',
+        'ready_for_managed_stream'
+    ]);
     expect(pageErrors).toEqual([]);
 });

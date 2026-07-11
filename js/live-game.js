@@ -32,7 +32,7 @@ import {
   getReplayTimestampMs,
   rebaseReplayStartTimeMs
 } from './live-game-replay.js?v=3';
-import { BROADCAST_SETUP_STATUSES, MAX_HIGHLIGHT_CLIP_MS, buildBroadcastSetupSession, buildHighlightShareUrl, buildStreamScoreContext, canAccessNativeCameraCapture, canSaveBroadcastSetupSession, createHighlightClipDraft, resolveBroadcastProviderMetadata, resolveReplayVideoOptions, shouldReloadVideoPlayback } from './live-game-video.js?v=8';
+import { BROADCAST_SETUP_STATUSES, BROADCAST_STREAM_STATUSES, MAX_HIGHLIGHT_CLIP_MS, buildBroadcastSetupSession, buildHighlightShareUrl, buildStreamScoreContext, canAccessNativeCameraCapture, canSaveBroadcastSetupSession, createHighlightClipDraft, resolveBroadcastProviderMetadata, resolveBroadcastStreamControlState, resolveReplayVideoOptions, shouldReloadVideoPlayback } from './live-game-video.js?v=9';
 import { TEAM_PASS_FEATURES, canAccessPremiumFanFeature, getTeamEntitlementStatus, isRecordedReplayTeamPassGateEnabled, resolveTeamEntitlementSeasonId } from './team-entitlements.js?v=2';
 import { getAI, getGenerativeModel, GoogleAIBackend } from './vendor/firebase-ai.js';
 import { getApp } from './vendor/firebase-app.js';
@@ -95,6 +95,8 @@ const state = {
   hasVideoStream: false,
   teamEntitlement: { active: false, reason: 'not-loaded' },
   nativeCameraStream: null,
+  nativeBroadcastStatus: BROADCAST_STREAM_STATUSES.SETUP_REQUIRED,
+  nativeBroadcastError: '',
   lastResetAt: 0,
   videoPlayback: null,
   clipStartMs: null,
@@ -190,8 +192,13 @@ const els = {
   nativeCameraPlaceholder: q('#native-camera-placeholder'),
   broadcastSessionName: q('#broadcast-session-name'),
   nativeCameraStartBtn: q('#native-camera-start-btn'),
+  nativeCameraBeginStreamBtn: q('#native-camera-begin-stream-btn'),
   nativeCameraStopBtn: q('#native-camera-stop-btn'),
   nativeCameraStatus: q('#native-camera-status'),
+  nativeBroadcastState: q('#native-broadcast-state'),
+  nativeBroadcastError: q('#native-broadcast-error'),
+  nativeBroadcastErrorMessage: q('#native-broadcast-error-message'),
+  nativeBroadcastRetryBtn: q('#native-broadcast-retry-btn'),
   gameMediaHub: q('#game-media-hub'),
   gameMediaHubContent: q('#game-media-hub-content'),
   attachClipModal: q('#attach-clip-modal'),
@@ -380,6 +387,50 @@ function setNativeCameraStatus(message, tone = 'muted') {
   els.nativeCameraStatus.classList.toggle('text-sand/55', tone === 'muted');
 }
 
+function getNativeCameraReadiness() {
+  const tracks = state.nativeCameraStream?.getTracks?.() || [];
+  const isReadyTrack = (track, kind) => track?.kind === kind && track.enabled !== false && track.readyState !== 'ended';
+  return {
+    cameraReady: tracks.some(track => isReadyTrack(track, 'video')),
+    microphoneReady: tracks.some(track => isReadyTrack(track, 'audio'))
+  };
+}
+
+function renderNativeBroadcastControls() {
+  const controls = resolveBroadcastStreamControlState({
+    status: state.nativeBroadcastStatus,
+    ...getNativeCameraReadiness()
+  });
+  if (els.nativeCameraBeginStreamBtn) {
+    els.nativeCameraBeginStreamBtn.classList.toggle('hidden', !controls.showBegin);
+    els.nativeCameraBeginStreamBtn.disabled = controls.beginDisabled;
+    els.nativeCameraBeginStreamBtn.textContent = controls.status === BROADCAST_STREAM_STATUSES.STARTING
+      ? 'Starting...'
+      : 'Begin Streaming';
+  }
+  if (els.nativeBroadcastState) {
+    els.nativeBroadcastState.textContent = controls.label;
+    els.nativeBroadcastState.dataset.state = controls.status;
+    els.nativeBroadcastState.classList.toggle('text-coral', controls.status === BROADCAST_STREAM_STATUSES.FAILED);
+    els.nativeBroadcastState.classList.toggle('text-teal', controls.status === BROADCAST_STREAM_STATUSES.READY);
+    els.nativeBroadcastState.classList.toggle('text-red-400', controls.isLive);
+  }
+  els.nativeBroadcastError?.classList.toggle('hidden', controls.status !== BROADCAST_STREAM_STATUSES.FAILED);
+  els.nativeBroadcastRetryBtn?.classList.toggle('hidden', !controls.showRetry);
+  if (els.nativeCameraStopBtn) {
+    els.nativeCameraStopBtn.textContent = controls.isLive ? 'Stop Device Stream' : 'Stop Preview';
+  }
+  if (els.nativeBroadcastErrorMessage && state.nativeBroadcastError) {
+    els.nativeBroadcastErrorMessage.textContent = state.nativeBroadcastError;
+  }
+}
+
+function setNativeBroadcastStatus(status, errorMessage = '') {
+  state.nativeBroadcastStatus = status;
+  state.nativeBroadcastError = errorMessage;
+  renderNativeBroadcastControls();
+}
+
 function getDefaultBroadcastSessionName() {
   const teamName = state.team?.name || 'Team';
   const opponent = resolveOpponentDisplayName(state.game);
@@ -438,6 +489,7 @@ function stopNativeCameraPreview() {
   els.nativeCameraPlaceholder?.classList.remove('hidden');
   els.nativeCameraStopBtn?.classList.add('hidden');
   els.nativeCameraStartBtn?.removeAttribute('disabled');
+  setNativeBroadcastStatus(BROADCAST_STREAM_STATUSES.SETUP_REQUIRED);
 }
 
 function updateNativeCameraPanel() {
@@ -448,10 +500,11 @@ function updateNativeCameraPanel() {
     return;
   }
   renderBroadcastSessionName();
+  renderNativeBroadcastControls();
   if (!state.nativeCameraStream) {
     const session = state.game?.broadcastSession;
     if (session?.status === BROADCAST_SETUP_STATUSES.READY) {
-      setNativeCameraStatus(`${session.name || 'Broadcast setup'} has saved camera and microphone setup. No live stream has started.`, 'success');
+      setNativeCameraStatus(`${session.name || 'Broadcast setup'} has saved camera and microphone setup. Start Camera/Mic Setup to restore the preview before beginning the device stream.`, 'success');
     } else if (session?.status === BROADCAST_SETUP_STATUSES.FAILED) {
       setNativeCameraStatus('Previous setup could not verify camera or microphone access. Retry when permissions are fixed.', 'error');
     } else {
@@ -508,9 +561,11 @@ async function startNativeCameraPreview() {
       await saveBroadcastSetupSession(BROADCAST_SETUP_STATUSES.READY, {
         permissions: { camera: true, microphone: true }
       });
-      setNativeCameraStatus('Camera and microphone verified. Setup is saved for future broadcast tooling; no live ingest, recording, or stream starts yet.', 'success');
+      setNativeBroadcastStatus(BROADCAST_STREAM_STATUSES.READY);
+      setNativeCameraStatus('Camera and microphone verified. Select Begin Streaming to start the live device preview; no external ingest or recording will start.', 'success');
     } catch (saveError) {
       console.warn('Failed to save broadcast setup ready state:', saveError);
+      setNativeBroadcastStatus(BROADCAST_STREAM_STATUSES.SETUP_REQUIRED);
       setNativeCameraStatus('Camera and microphone verified, but the broadcast session status could not be saved. Retry setup before game time.', 'error');
     }
   } catch (error) {
@@ -529,6 +584,46 @@ async function startNativeCameraPreview() {
   }
 }
 
+async function beginNativeBroadcastStream() {
+  if (!userCanUseNativeCamera()) return;
+  const readiness = getNativeCameraReadiness();
+  if (!readiness.cameraReady || !readiness.microphoneReady || !state.nativeCameraStream) {
+    const message = 'Camera and microphone are no longer ready. Retry to restore setup and start again.';
+    setNativeBroadcastStatus(BROADCAST_STREAM_STATUSES.FAILED, message);
+    setNativeCameraStatus(message, 'error');
+    return;
+  }
+
+  setNativeBroadcastStatus(BROADCAST_STREAM_STATUSES.STARTING);
+  setNativeCameraStatus('Starting the live device stream...');
+  try {
+    if (!els.nativeCameraPreview) throw new Error('Camera preview is unavailable.');
+    if (els.nativeCameraPreview.srcObject !== state.nativeCameraStream) {
+      els.nativeCameraPreview.srcObject = state.nativeCameraStream;
+    }
+    await els.nativeCameraPreview.play();
+    setNativeBroadcastStatus(BROADCAST_STREAM_STATUSES.LIVE);
+    setNativeCameraStatus('Live device stream is running from this preview. No backend ingest or cloud recording is active.', 'success');
+  } catch (error) {
+    console.warn('Failed to begin live device stream:', error);
+    const message = 'The live device stream could not start. Check the preview and retry without refreshing the page.';
+    setNativeBroadcastStatus(BROADCAST_STREAM_STATUSES.FAILED, message);
+    setNativeCameraStatus(message, 'error');
+  }
+}
+
+async function retryNativeBroadcastStream() {
+  const readiness = getNativeCameraReadiness();
+  if (readiness.cameraReady && readiness.microphoneReady) {
+    await beginNativeBroadcastStream();
+    return;
+  }
+  await startNativeCameraPreview();
+  if (state.nativeBroadcastStatus === BROADCAST_STREAM_STATUSES.READY) {
+    await beginNativeBroadcastStream();
+  }
+}
+
 function initNativeCameraControls() {
   if (els.nativeCameraStartBtn && !els.nativeCameraStartBtn.dataset.bound) {
     els.nativeCameraStartBtn.dataset.bound = 'true';
@@ -541,6 +636,15 @@ function initNativeCameraControls() {
       setNativeCameraStatus('Native camera preview stopped.');
     });
   }
+  if (els.nativeCameraBeginStreamBtn && !els.nativeCameraBeginStreamBtn.dataset.bound) {
+    els.nativeCameraBeginStreamBtn.dataset.bound = 'true';
+    els.nativeCameraBeginStreamBtn.addEventListener('click', beginNativeBroadcastStream);
+  }
+  if (els.nativeBroadcastRetryBtn && !els.nativeBroadcastRetryBtn.dataset.bound) {
+    els.nativeBroadcastRetryBtn.dataset.bound = 'true';
+    els.nativeBroadcastRetryBtn.addEventListener('click', retryNativeBroadcastStream);
+  }
+  renderNativeBroadcastControls();
   window.addEventListener('pagehide', stopNativeCameraPreview, { once: true });
 }
 

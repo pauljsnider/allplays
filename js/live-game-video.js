@@ -8,6 +8,14 @@ export const BROADCAST_SETUP_STATUSES = Object.freeze({
     FAILED: 'permission_failed'
 });
 
+export const BROADCAST_STREAM_STATUSES = Object.freeze({
+    SETUP_REQUIRED: 'setup_required',
+    READY: 'ready',
+    STARTING: 'starting',
+    LIVE: 'live',
+    FAILED: 'failed'
+});
+
 export const BROADCAST_PROVIDER_TYPES = Object.freeze({
     TWITCH: 'twitch',
     YOUTUBE: 'youtube',
@@ -196,6 +204,34 @@ export function canSaveBroadcastSetupSession({ user, team, game }) {
     if (userEmail && normalizeStringSet(team.adminEmails).has(userEmail)) return true;
 
     return hasSelectedVideographerGrant(user, team);
+}
+
+export function resolveBroadcastStreamControlState({
+    status = BROADCAST_STREAM_STATUSES.SETUP_REQUIRED,
+    cameraReady = false,
+    microphoneReady = false
+} = {}) {
+    const safeStatus = Object.values(BROADCAST_STREAM_STATUSES).includes(status)
+        ? status
+        : BROADCAST_STREAM_STATUSES.SETUP_REQUIRED;
+    const mediaReady = cameraReady === true && microphoneReady === true;
+    const labels = {
+        [BROADCAST_STREAM_STATUSES.SETUP_REQUIRED]: 'Setup required',
+        [BROADCAST_STREAM_STATUSES.READY]: 'Ready to stream',
+        [BROADCAST_STREAM_STATUSES.STARTING]: 'Starting...',
+        [BROADCAST_STREAM_STATUSES.LIVE]: 'Live',
+        [BROADCAST_STREAM_STATUSES.FAILED]: 'Start failed'
+    };
+
+    return {
+        status: safeStatus,
+        label: labels[safeStatus],
+        mediaReady,
+        showBegin: mediaReady && safeStatus === BROADCAST_STREAM_STATUSES.READY,
+        beginDisabled: !mediaReady || safeStatus !== BROADCAST_STREAM_STATUSES.READY,
+        showRetry: safeStatus === BROADCAST_STREAM_STATUSES.FAILED,
+        isLive: safeStatus === BROADCAST_STREAM_STATUSES.LIVE
+    };
 }
 
 export function resolveBroadcastProviderMetadata(team = {}) {

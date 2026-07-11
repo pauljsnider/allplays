@@ -260,8 +260,8 @@ function buildModuleSource() {
             'const { buildReplaySessionState, collectReplayEventWindow, collectReplayStreamWindow, getReplayElapsedMs, getReplayStartTimeAfterSpeedChange, getReplayTimestampMs, rebaseReplayStartTimeMs } = deps.liveGameReplay;'
         )
         .replace(
-            /import\s+\{\s*BROADCAST_SETUP_STATUSES,\s*MAX_HIGHLIGHT_CLIP_MS,\s*buildBroadcastSetupSession,\s*buildHighlightShareUrl,\s*buildStreamScoreContext,\s*canAccessNativeCameraCapture,\s*canSaveBroadcastSetupSession,\s*createHighlightClipDraft,\s*resolveBroadcastProviderMetadata,\s*resolveReplayVideoOptions,\s*shouldReloadVideoPlayback\s*\}\s+from\s+'\.\/live-game-video\.js\?v=\d+';/,
-            'const { BROADCAST_SETUP_STATUSES, MAX_HIGHLIGHT_CLIP_MS, buildBroadcastSetupSession, buildHighlightShareUrl, buildStreamScoreContext, canAccessNativeCameraCapture, canSaveBroadcastSetupSession, createHighlightClipDraft, resolveBroadcastProviderMetadata, resolveReplayVideoOptions, shouldReloadVideoPlayback } = deps.liveGameVideo;'
+            /import\s+\{\s*BROADCAST_SETUP_STATUSES,\s*BROADCAST_STREAM_STATUSES,\s*MAX_HIGHLIGHT_CLIP_MS,\s*buildBroadcastSetupSession,\s*buildHighlightShareUrl,\s*buildStreamScoreContext,\s*canAccessNativeCameraCapture,\s*canSaveBroadcastSetupSession,\s*createHighlightClipDraft,\s*resolveBroadcastProviderMetadata,\s*resolveBroadcastStreamControlState,\s*resolveReplayVideoOptions,\s*shouldReloadVideoPlayback\s*\}\s+from\s+'\.\/live-game-video\.js\?v=\d+';/,
+            'const { BROADCAST_SETUP_STATUSES, BROADCAST_STREAM_STATUSES, MAX_HIGHLIGHT_CLIP_MS, buildBroadcastSetupSession, buildHighlightShareUrl, buildStreamScoreContext, canAccessNativeCameraCapture, canSaveBroadcastSetupSession, createHighlightClipDraft, resolveBroadcastProviderMetadata, resolveBroadcastStreamControlState, resolveReplayVideoOptions, shouldReloadVideoPlayback } = deps.liveGameVideo;'
         )
         .replace(
             /import \{ TEAM_PASS_FEATURES, canAccessPremiumFanFeature, getTeamEntitlementStatus, isRecordedReplayTeamPassGateEnabled, resolveTeamEntitlementSeasonId \} from '\.\/team-entitlements\.js\?v=\d+';/,
@@ -473,6 +473,13 @@ async function bootReplayPage({ replayEvents }) {
                 READY: 'ready_for_managed_stream',
                 FAILED: 'permission_failed'
             },
+            BROADCAST_STREAM_STATUSES: {
+                SETUP_REQUIRED: 'setup_required',
+                READY: 'ready',
+                STARTING: 'starting',
+                LIVE: 'live',
+                FAILED: 'failed'
+            },
             MAX_HIGHLIGHT_CLIP_MS: 60000,
             buildBroadcastSetupSession: () => ({}),
             buildHighlightShareUrl: () => '',
@@ -480,6 +487,15 @@ async function bootReplayPage({ replayEvents }) {
             canAccessNativeCameraCapture: () => false,
             canSaveBroadcastSetupSession: () => false,
             createHighlightClipDraft: () => ({ startMs: 0, endMs: 0, title: '' }),
+            resolveBroadcastStreamControlState: ({ status = 'setup_required', cameraReady = false, microphoneReady = false } = {}) => ({
+                status,
+                label: status,
+                mediaReady: cameraReady && microphoneReady,
+                showBegin: cameraReady && microphoneReady && status === 'ready',
+                beginDisabled: !(cameraReady && microphoneReady && status === 'ready'),
+                showRetry: status === 'failed',
+                isLive: status === 'live'
+            }),
             resolveReplayVideoOptions: () => null,
             shouldReloadVideoPlayback: () => false
         },
