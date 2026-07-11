@@ -593,6 +593,50 @@ describe('AppShell', () => {
     expect(publicActionMocks.openPublicUrl).not.toHaveBeenCalled();
   });
 
+  it.each([
+    ['desktop web', true],
+    ['mobile', false],
+  ])('routes Find team to native public-team browse on %s', async (_layout, isDesktopWeb) => {
+    useShellLayoutMock.mockReturnValue({ isDesktopWeb });
+    render(
+      <MemoryRouter initialEntries={['/home']}>
+        <Routes>
+          <Route path="/home" element={<AppShell auth={signedInAuth}><div>Home</div></AppShell>} />
+          <Route path="/teams/browse" element={<AppShell auth={signedInAuth}><div>Native public team browse</div></AppShell>} />
+        </Routes>
+      </MemoryRouter>
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'Add' }));
+    const findTeam = screen.getByRole('button', { name: /Find team.*Browse and search public teams.*App/i });
+    expect(findTeam).toBeTruthy();
+    fireEvent.click(findTeam);
+
+    await waitFor(() => {
+      expect(screen.getByText('Native public team browse')).toBeTruthy();
+    });
+    expect(publicActionMocks.openPublicUrl).not.toHaveBeenCalled();
+  });
+
+  it('keeps Find team public for signed-out home preview users', async () => {
+    render(
+      <MemoryRouter initialEntries={['/home']}>
+        <Routes>
+          <Route path="/home" element={<AppShell auth={auth}><div>Home</div></AppShell>} />
+          <Route path="/teams/browse" element={<AppShell auth={auth}><div>Native public team browse</div></AppShell>} />
+        </Routes>
+      </MemoryRouter>
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'Add' }));
+    fireEvent.click(screen.getByRole('button', { name: /Find team.*Browse and search public teams.*App/i }));
+
+    await waitFor(() => {
+      expect(publicActionMocks.openPublicUrl).toHaveBeenCalledWith('https://allplays.ai/teams.html');
+    });
+    expect(screen.queryByText('Native public team browse')).toBeNull();
+  });
+
   it('dismisses the search dialog when native back asks overlays to close', async () => {
     render(
       <MemoryRouter initialEntries={['/home']}>
