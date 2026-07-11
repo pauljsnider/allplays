@@ -234,6 +234,23 @@ async function waitForMatch(getMatch, description, attempts = 50) {
     throw new Error(`Timed out waiting for ${description}.`);
 }
 
+async function waitForMockCallCount(mockFn, expectedCount, description) {
+    await waitForMatch(
+        () => mockFn.mock.calls.length >= expectedCount,
+        description
+    );
+    expect(mockFn).toHaveBeenCalledTimes(expectedCount);
+}
+
+async function waitForRecipientCheckbox(container, name) {
+    return waitForMatch(
+        () => Array.from(container.querySelectorAll('label'))
+            .find((label) => label.textContent.includes(name))
+            ?.querySelector('input[type="checkbox"]'),
+        `${name} recipient checkbox`
+    );
+}
+
 function createDeferred() {
     let resolve;
     let reject;
@@ -313,15 +330,13 @@ async function setFieldValue(field, value) {
 }
 
 async function waitForTeamEmailDialog(container) {
-    for (let attempt = 0; attempt < 10; attempt += 1) {
-        await flush();
-        const dialog = container.querySelector('[role="dialog"][aria-label="Team Email"]');
-        if (dialog?.querySelector('input[placeholder="Team update"]')) {
-            return dialog;
-        }
-    }
-
-    throw new Error('Team Email dialog did not finish loading.');
+    return waitForMatch(
+        () => {
+            const dialog = container.querySelector('[role="dialog"][aria-label="Team Email"]');
+            return dialog?.querySelector('input[placeholder="Team update"]') ? dialog : null;
+        },
+        'loaded Team Email dialog'
+    );
 }
 
 beforeEach(() => {
@@ -1631,7 +1646,7 @@ describe('React app messages integration', () => {
         await click(container, 'Close Team Email');
         await click(container, 'Team Email');
 
-        expect(chatMocks.loadChatRecipientOptions).toHaveBeenCalledTimes(2);
+        await waitForMockCallCount(chatMocks.loadChatRecipientOptions, 2, 'second team recipient option load');
         expect(chatMocks.loadChatRecipientOptions).toHaveBeenLastCalledWith('team-2');
         expect(container.textContent).toContain('Thunder Team Chat');
 
@@ -1673,8 +1688,7 @@ describe('React app messages integration', () => {
 
         await click(container, 'Audience: Full team');
         await click(container, 'Selected members');
-        const coachCheckbox = Array.from(container.querySelectorAll('label')).find((label) => label.textContent.includes('Coach Jamie'))?.querySelector('input[type="checkbox"]');
-        expect(coachCheckbox).toBeTruthy();
+        const coachCheckbox = await waitForRecipientCheckbox(container, 'Coach Jamie');
         await act(async () => {
             coachCheckbox.dispatchEvent(new MouseEvent('click', { bubbles: true }));
         });
@@ -1702,7 +1716,7 @@ describe('React app messages integration', () => {
 
         await click(container, 'Audience: Full team');
         await click(container, 'Selected members');
-        const coachCheckbox = Array.from(container.querySelectorAll('label')).find((label) => label.textContent.includes('Coach Jamie'))?.querySelector('input[type="checkbox"]');
+        const coachCheckbox = await waitForRecipientCheckbox(container, 'Coach Jamie');
         await act(async () => {
             coachCheckbox.dispatchEvent(new MouseEvent('click', { bubbles: true }));
         });
