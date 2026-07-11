@@ -125,9 +125,10 @@ const auth: AuthState = {
 
 describe('AppSearchDialog', () => {
   afterEach(() => {
+    cleanup();
+    vi.clearAllTimers();
     vi.useRealTimers();
     vi.restoreAllMocks();
-    cleanup();
   });
 
   beforeEach(() => {
@@ -567,6 +568,303 @@ describe('AppSearchDialog', () => {
     expect(searchAppPlayersMock).toHaveBeenNthCalledWith(1, 'be', expect.any(Map), null);
   });
 
+  it('coalesces superseded remote player searches while local teams and help keep updating', async () => {
+    vi.useFakeTimers();
+    const onClose = vi.fn();
+    const knownTeams: AppSearchTeam[] = [
+      { id: 'team-1', name: 'Alphas', sport: 'Basketball', zip: '66210' },
+      { id: 'team-2', name: 'Alexandria', sport: 'Soccer', zip: '64114' }
+    ];
+    getKnownAppSearchTeamsMock.mockReturnValue(knownTeams);
+    loadAppSearchTeamsMock.mockResolvedValue(knownTeams);
+
+    render(
+      <MemoryRouter>
+        <AppSearchDialog auth={auth} open={true} onClose={onClose} />
+      </MemoryRouter>
+    );
+
+    const input = screen.getByLabelText('Search teams, players, actions, help');
+    fireEvent.change(input, { target: { value: 'al' } });
+    expect(screen.getByRole('button', { name: /Alphas/i })).not.toBeNull();
+    expect(screen.getByRole('button', { name: /Alexandria/i })).not.toBeNull();
+    expect(screen.getByRole('button', { name: /Parent fee guide/i })).not.toBeNull();
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(180);
+      await Promise.resolve();
+    });
+    expect(searchAppTeamsMock).toHaveBeenCalledWith('al', knownTeams, null);
+    expect(searchAppPlayersMock).not.toHaveBeenCalled();
+
+    fireEvent.change(input, { target: { value: 'alex' } });
+    expect(screen.queryByRole('button', { name: /Alphas/i })).toBeNull();
+    expect(screen.getByRole('button', { name: /Alexandria/i })).not.toBeNull();
+    expect(screen.getByRole('button', { name: /Parent fee guide/i })).not.toBeNull();
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(360);
+      await Promise.resolve();
+    });
+
+    expect(searchAppPlayersMock).toHaveBeenCalledTimes(1);
+    expect(searchAppPlayersMock).toHaveBeenCalledWith('alex', expect.any(Map), null);
+  });
+
+  it('waits for the shortened player coalesce window before running remote player search', async () => {
+    vi.useFakeTimers();
+    const onClose = vi.fn();
+    const knownTeams: AppSearchTeam[] = [{ id: 'team-1', name: 'Alexandria', sport: 'Soccer', zip: '64114' }];
+    getKnownAppSearchTeamsMock.mockReturnValue(knownTeams);
+    loadAppSearchTeamsMock.mockResolvedValue(knownTeams);
+
+    render(
+      <MemoryRouter>
+        <AppSearchDialog auth={auth} open={true} onClose={onClose} />
+      </MemoryRouter>
+    );
+
+    fireEvent.change(screen.getByLabelText('Search teams, players, actions, help'), { target: { value: 'alex' } });
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(299);
+      await Promise.resolve();
+    });
+    expect(searchAppTeamsMock).toHaveBeenCalledWith('alex', knownTeams, null);
+    expect(searchAppPlayersMock).not.toHaveBeenCalled();
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1);
+      await Promise.resolve();
+    });
+
+    expect(searchAppPlayersMock).toHaveBeenCalledTimes(1);
+    expect(searchAppPlayersMock).toHaveBeenCalledWith('alex', expect.any(Map), null);
+  });
+
+  it('cancels a scheduled remote player search when the query is cleared', async () => {
+    vi.useFakeTimers();
+    const onClose = vi.fn();
+    const knownTeams: AppSearchTeam[] = [{ id: 'team-1', name: 'Alexandria', sport: 'Soccer', zip: '64114' }];
+    getKnownAppSearchTeamsMock.mockReturnValue(knownTeams);
+    loadAppSearchTeamsMock.mockResolvedValue(knownTeams);
+
+    render(
+      <MemoryRouter>
+        <AppSearchDialog auth={auth} open={true} onClose={onClose} />
+      </MemoryRouter>
+    );
+
+    const input = screen.getByLabelText('Search teams, players, actions, help');
+    fireEvent.change(input, { target: { value: 'alex' } });
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(180);
+      await Promise.resolve();
+    });
+    expect(searchAppPlayersMock).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Clear search query' }));
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1000);
+      await Promise.resolve();
+    });
+
+    expect(input).toHaveValue('');
+    expect(screen.getByText('Type at least 2 characters to search players')).toBeTruthy();
+    expect(searchAppPlayersMock).not.toHaveBeenCalled();
+  });
+
+  it('cancels a scheduled remote player search when the dialog closes', async () => {
+    vi.useFakeTimers();
+    const onClose = vi.fn();
+    const knownTeams: AppSearchTeam[] = [{ id: 'team-1', name: 'Alexandria', sport: 'Soccer', zip: '64114' }];
+    getKnownAppSearchTeamsMock.mockReturnValue(knownTeams);
+    loadAppSearchTeamsMock.mockResolvedValue(knownTeams);
+
+    const { rerender } = render(
+      <MemoryRouter>
+        <AppSearchDialog auth={auth} open={true} onClose={onClose} />
+      </MemoryRouter>
+    );
+
+    fireEvent.change(screen.getByLabelText('Search teams, players, actions, help'), { target: { value: 'alex' } });
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(180);
+      await Promise.resolve();
+    });
+    expect(searchAppPlayersMock).not.toHaveBeenCalled();
+
+    rerender(
+      <MemoryRouter>
+        <AppSearchDialog auth={auth} open={false} onClose={onClose} />
+      </MemoryRouter>
+    );
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1000);
+      await Promise.resolve();
+    });
+
+    expect(searchAppPlayersMock).not.toHaveBeenCalled();
+  });
+
+  it('keeps stale player promises from replacing the latest player results', async () => {
+    vi.useFakeTimers();
+    const onClose = vi.fn();
+    const knownTeams: AppSearchTeam[] = [{ id: 'team-1', name: 'Alexandria', sport: 'Soccer', zip: '64114' }];
+    let releaseAl!: (players: AppSearchPlayer[]) => void;
+    let releaseAlex!: (players: AppSearchPlayer[]) => void;
+    const stalePlayer: AppSearchPlayer = {
+      id: 'player:team-1:al',
+      kind: 'player',
+      title: 'Al Older',
+      subtitle: 'Alexandria',
+      route: '/players/team-1/al',
+      teamId: 'team-1',
+      playerId: 'al',
+    };
+    const latestPlayer: AppSearchPlayer = {
+      id: 'player:team-1:alex',
+      kind: 'player',
+      title: 'Alex Latest',
+      subtitle: 'Alexandria',
+      route: '/players/team-1/alex',
+      teamId: 'team-1',
+      playerId: 'alex',
+    };
+
+    getKnownAppSearchTeamsMock.mockReturnValue(knownTeams);
+    loadAppSearchTeamsMock.mockResolvedValue(knownTeams);
+    searchAppPlayersMock
+      .mockImplementationOnce(() => new Promise((resolve) => {
+        releaseAl = resolve;
+      }))
+      .mockImplementationOnce(() => new Promise((resolve) => {
+        releaseAlex = resolve;
+      }));
+
+    render(
+      <MemoryRouter>
+        <AppSearchDialog auth={auth} open={true} onClose={onClose} />
+      </MemoryRouter>
+    );
+
+    const input = screen.getByLabelText('Search teams, players, actions, help');
+    fireEvent.change(input, { target: { value: 'al' } });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(360);
+      await Promise.resolve();
+    });
+    expect(searchAppPlayersMock).toHaveBeenCalledWith('al', expect.any(Map), null);
+
+    fireEvent.change(input, { target: { value: 'alex' } });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(360);
+      await Promise.resolve();
+    });
+    expect(searchAppPlayersMock).toHaveBeenCalledWith('alex', expect.any(Map), null);
+
+    await act(async () => {
+      releaseAlex([latestPlayer]);
+      await Promise.resolve();
+      await Promise.resolve();
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    expect(screen.getByRole('button', { name: /Alex Latest/i })).not.toBeNull();
+
+    await act(async () => {
+      releaseAl([stalePlayer]);
+      await Promise.resolve();
+      await Promise.resolve();
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    expect(screen.getByRole('button', { name: /Alex Latest/i })).not.toBeNull();
+    expect(screen.queryByRole('button', { name: /Al Older/i })).toBeNull();
+  });
+
+  it('keeps stale initial-scope player results from replacing hydrated-scope results for the same query', async () => {
+    vi.useFakeTimers();
+    const onClose = vi.fn();
+    const initialTeams: AppSearchTeam[] = [{ id: 'team-1', name: 'Bears', sport: 'Basketball', zip: '66210' }];
+    const hydratedTeams: AppSearchTeam[] = [
+      ...initialTeams,
+      { id: 'team-2', name: 'Beacons', sport: 'Soccer', zip: '64114' }
+    ];
+    let releaseHydration!: (teams: AppSearchTeam[]) => void;
+    let releaseInitialPlayers!: (players: AppSearchPlayer[]) => void;
+    let releaseHydratedPlayers!: (players: AppSearchPlayer[]) => void;
+
+    getKnownAppSearchTeamsMock.mockReturnValue(initialTeams);
+    loadAppSearchTeamsMock.mockImplementationOnce(() => new Promise((resolve) => {
+      releaseHydration = resolve;
+    }));
+    searchAppPlayersMock
+      .mockImplementationOnce(() => new Promise((resolve) => {
+        releaseInitialPlayers = resolve;
+      }))
+      .mockImplementationOnce(() => new Promise((resolve) => {
+        releaseHydratedPlayers = resolve;
+      }));
+
+    render(
+      <MemoryRouter>
+        <AppSearchDialog auth={auth} open={true} onClose={onClose} />
+      </MemoryRouter>
+    );
+
+    fireEvent.change(screen.getByLabelText('Search teams, players, actions, help'), { target: { value: 'be' } });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(550);
+      await Promise.resolve();
+    });
+    expect(searchAppPlayersMock).toHaveBeenCalledTimes(1);
+    expect(Array.from(searchAppPlayersMock.mock.calls[0][1].keys())).toEqual(['team-1']);
+
+    await act(async () => {
+      releaseHydration(hydratedTeams);
+      await Promise.resolve();
+      await vi.advanceTimersByTimeAsync(120);
+      await Promise.resolve();
+    });
+    expect(searchAppPlayersMock).toHaveBeenCalledTimes(2);
+    expect(Array.from(searchAppPlayersMock.mock.calls[1][1].keys())).toEqual(['team-1', 'team-2']);
+
+    const hydratedPlayer: AppSearchPlayer = {
+      id: 'player:team-2:latest',
+      kind: 'player',
+      title: 'Beacon Latest',
+      subtitle: 'Beacons',
+      route: '/players/team-2/latest',
+      teamId: 'team-2',
+      playerId: 'latest',
+    };
+    const stalePlayer: AppSearchPlayer = {
+      id: 'player:team-1:stale',
+      kind: 'player',
+      title: 'Bear Stale',
+      subtitle: 'Bears',
+      route: '/players/team-1/stale',
+      teamId: 'team-1',
+      playerId: 'stale',
+    };
+
+    await act(async () => {
+      releaseHydratedPlayers([hydratedPlayer]);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(screen.getByRole('button', { name: /Beacon Latest/i })).not.toBeNull();
+
+    await act(async () => {
+      releaseInitialPlayers([stalePlayer]);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(screen.getByRole('button', { name: /Beacon Latest/i })).not.toBeNull();
+    expect(screen.queryByRole('button', { name: /Bear Stale/i })).toBeNull();
+  });
+
   it('ignores stale hydrated teams after the dialog closes before query-time loading finishes', async () => {
     const onClose = vi.fn();
     const userA = { uid: 'user-a', email: 'a@example.com' } as NonNullable<AuthState['user']>;
@@ -740,23 +1038,40 @@ describe('AppSearchDialog', () => {
     fireEvent.change(screen.getByLabelText('Search teams, players, actions, help'), { target: { value: 'be' } });
 
     expect(screen.getByRole('button', { name: /Bears/i })).not.toBeNull();
-    await vi.advanceTimersByTimeAsync(430);
-    await Promise.resolve();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(430);
+      await Promise.resolve();
+    });
     expect(searchAppTeamsMock).toHaveBeenCalledTimes(1);
-    expect(searchAppPlayersMock).toHaveBeenCalledTimes(1);
     expect(searchAppTeamsMock).toHaveBeenNthCalledWith(1, 'be', initialTeams, null);
+    expect(searchAppPlayersMock).not.toHaveBeenCalled();
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(180);
+      await Promise.resolve();
+    });
+    expect(searchAppPlayersMock).toHaveBeenCalledTimes(1);
     expect(searchAppPlayersMock).toHaveBeenNthCalledWith(1, 'be', expect.any(Map), null);
     expect(Array.from(searchAppPlayersMock.mock.calls[0][1].values())).toEqual(initialTeams);
     expect(screen.queryByRole('button', { name: /Beacons/i })).toBeNull();
 
-    releaseHydration(hydratedTeams);
-    await vi.advanceTimersByTimeAsync(50);
-    await Promise.resolve();
-    await vi.advanceTimersByTimeAsync(0);
+    await act(async () => {
+      releaseHydration(hydratedTeams);
+      await vi.advanceTimersByTimeAsync(50);
+      await Promise.resolve();
+      await vi.advanceTimersByTimeAsync(0);
+    });
 
     expect(searchAppTeamsMock).toHaveBeenCalledTimes(2);
-    expect(searchAppPlayersMock).toHaveBeenCalledTimes(2);
     expect(searchAppTeamsMock).toHaveBeenNthCalledWith(2, 'be', hydratedTeams, null);
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(180);
+      await Promise.resolve();
+      await vi.advanceTimersByTimeAsync(0);
+      await Promise.resolve();
+    });
+    expect(searchAppPlayersMock).toHaveBeenCalledTimes(2);
     expect(searchAppPlayersMock).toHaveBeenNthCalledWith(2, 'be', expect.any(Map), null);
     expect(Array.from(searchAppPlayersMock.mock.calls[1][1].values())).toEqual(hydratedTeams);
     expect(screen.getAllByRole('button', { name: /Beacons/i })).toHaveLength(2);
