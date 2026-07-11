@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
-import { savePracticeForm } from '../../js/edit-schedule-practice-submit.js';
+import { savePracticeForm, validatePracticeDateRange } from '../../js/edit-schedule-practice-submit.js';
 
 function readEditSchedule() {
     return readFileSync(new URL('../../edit-schedule.html', import.meta.url), 'utf8');
@@ -11,6 +11,102 @@ function createLocalDate(year, monthIndex, day, hours, minutes) {
 }
 
 describe('edit schedule practice save flow', () => {
+    it('requires a valid end time after the practice start time', () => {
+        const startDate = createLocalDate(2026, 7, 10, 20, 0);
+        const overnightStartDate = createLocalDate(2026, 7, 10, 23, 0);
+        const sameDateOvernightEnd = createLocalDate(2026, 7, 10, 1, 0);
+        const explicitNextDateEnd = createLocalDate(2026, 7, 11, 1, 0);
+
+        expect(() => validatePracticeDateRange(startDate, createLocalDate(2026, 7, 10, 20, 0)))
+            .toThrow('End time must be after the start time');
+        expect(() => validatePracticeDateRange(startDate, createLocalDate(2026, 7, 10, 19, 0)))
+            .toThrow('End time must be after the start time');
+        expect(() => validatePracticeDateRange(startDate, createLocalDate(2026, 7, 9, 23, 0)))
+            .toThrow('End time must be after the start time');
+        expect(() => validatePracticeDateRange(startDate, new Date('not-a-date')))
+            .toThrow('Practice start and end times must be valid dates');
+        expect(() => validatePracticeDateRange(overnightStartDate, sameDateOvernightEnd))
+            .toThrow('End time must be after the start time');
+        expect(() => validatePracticeDateRange(overnightStartDate, explicitNextDateEnd))
+            .not.toThrow();
+        expect(validatePracticeDateRange(overnightStartDate, explicitNextDateEnd).endDate)
+            .toBe(explicitNextDateEnd);
+    });
+
+    it.each([false, true])('rejects an invalid duration before persisting when recurring is %s', async (isRecurring) => {
+        const addPractice = vi.fn();
+        const updateEvent = vi.fn();
+        const startDate = createLocalDate(2026, 7, 10, 23, 0);
+        const endDate = createLocalDate(2026, 7, 10, 1, 0);
+
+        await expect(savePracticeForm({
+            teamId: 'team-1',
+            formState: {
+                title: 'Invalid Practice',
+                startDate,
+                endDate,
+                location: 'Main Gym',
+                notes: '',
+                scheduleNotifications: { enabled: false }
+            },
+            recurrenceState: { isRecurring },
+            Timestamp: { fromDate: (value) => value },
+            deleteField: () => Symbol('deleteField'),
+            generateSeriesId: () => 'series-generated',
+            addPractice,
+            updateEvent
+        })).rejects.toThrow('End time must be after the start time');
+
+        expect(addPractice).not.toHaveBeenCalled();
+        expect(updateEvent).not.toHaveBeenCalled();
+    });
+
+    it('persists an overnight practice only when the next end date is explicit', async () => {
+        const addPractice = vi.fn().mockResolvedValue('practice-overnight');
+        const updateEvent = vi.fn();
+        const startDate = createLocalDate(2026, 7, 10, 23, 0);
+        const endDate = createLocalDate(2026, 7, 11, 1, 0);
+        const Timestamp = {
+            fromDate: (value) => ({
+                iso: value.toISOString()
+            })
+        };
+
+        await savePracticeForm({
+            teamId: 'team-1',
+            formState: {
+                title: 'Late Practice',
+                startDate,
+                endDate,
+                location: 'Main Gym',
+                notes: '',
+                scheduleNotifications: { enabled: false }
+            },
+            recurrenceState: {
+                isRecurring: true,
+                freq: 'weekly',
+                interval: 1,
+                byDays: ['FR'],
+                endType: 'count',
+                countValue: '4'
+            },
+            Timestamp,
+            deleteField: () => Symbol('deleteField'),
+            generateSeriesId: () => 'series-overnight',
+            addPractice,
+            updateEvent
+        });
+
+        expect(updateEvent).not.toHaveBeenCalled();
+        expect(addPractice).toHaveBeenCalledWith('team-1', expect.objectContaining({
+            date: { iso: startDate.toISOString() },
+            end: { iso: endDate.toISOString() },
+            startTime: '23:00',
+            endTime: '01:00',
+            endDayOffset: 1
+        }));
+    });
+
     it('persists recurring practice creation through addPractice with a series payload', async () => {
         const addPractice = vi.fn().mockResolvedValue('practice-new');
         const updateEvent = vi.fn();
@@ -158,7 +254,7 @@ describe('edit schedule practice save flow', () => {
     it('wires the practice submit flow through the shared save helper', () => {
         const source = readEditSchedule();
 
-        expect(source).toContain("import { savePracticeForm } from './js/edit-schedule-practice-submit.js?v=1';");
+        expect(source).toContain("import { savePracticeForm } from './js/edit-schedule-practice-submit.js?v=2';");
         expect(source).toContain('const { savedPracticeId } = await savePracticeForm({');
         expect(source).toContain('applyPracticeRecurrenceFields');
     });

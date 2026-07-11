@@ -221,6 +221,7 @@ jobs:
               echo "$reason"
             } >> "$GITHUB_STEP_SUMMARY"
             echo "preview_url=" >> "$GITHUB_OUTPUT"
+            echo "preview_skip_reason=$reason" >> "$GITHUB_OUTPUT"
             exit 0
           }
 
@@ -303,6 +304,7 @@ jobs:
             exit 1
           fi
           echo "preview_url=$preview_url" >> "$GITHUB_OUTPUT"
+          echo "preview_skip_reason=" >> "$GITHUB_OUTPUT"
 
       - name: Report preview URL on pull request
         if: success()
@@ -310,6 +312,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PREVIEW_URL: ${{ steps.deploy_preview.outputs.preview_url }}
+          PREVIEW_SKIP_REASON: ${{ steps.deploy_preview.outputs.preview_skip_reason }}
           JQ_FILTER: '.[] | select(.user.login == "github-actions[bot]") | select(.body | contains("<!-- allplays-preview-url -->")) | .id'
         run: |
           set -euo pipefail
@@ -317,7 +320,7 @@ jobs:
           if [ -n "$PREVIEW_URL" ]; then
             body="$(printf '%s\n\nPreview URL: %s' "$marker" "$PREVIEW_URL")"
           else
-            body="$(printf '%s\n\nFirebase preview skipped for this run. See the deploy workflow summary for the skip reason.' "$marker")"
+            body="$(printf '%s\n\nFirebase preview skipped: %s' "$marker" "${PREVIEW_SKIP_REASON:-Firebase Hosting preview was unavailable for this run.}")"
           fi
           comment_id="$(gh api --paginate repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/comments --jq "$JQ_FILTER" | head -n1)"
           if [ -n "$comment_id" ]; then

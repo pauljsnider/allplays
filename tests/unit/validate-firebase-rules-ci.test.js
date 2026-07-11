@@ -1,6 +1,9 @@
-import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import { extractMatchBlock, validateFirebaseRulesCi, validatePreviewDeployCommand } from '../../scripts/validate-firebase-rules-ci.mjs';
+import {
+    assertPreviewDeploySkipHandling,
+    extractMatchBlock,
+    validatePreviewDeployCommand
+} from '../../scripts/validate-firebase-rules-ci.mjs';
 
 describe('validate Firebase rules CI helpers', () => {
     it('scopes legacy game clip assertions to the flat path block', () => {
@@ -57,16 +60,30 @@ service firebase.storage {
 `)).toThrow('Preview deploy installed Firebase CLI project/config arguments');
     });
 
-    it('guards Firebase preview release target skip handling', () => {
-        const validatorSource = readFileSync(
-            new URL('../../scripts/validate-firebase-rules-ci.mjs', import.meta.url),
-            'utf8'
-        );
+    it('requires preview deploy release-target outage handling', () => {
+        const deployPreview = `
+          preview_deploy_hit_release_target_error()
+          grep -Eiq "HTTP Error: 400, Can't release to .*resource doesn't exist or isn't a valid release target" "$log_file"
+          preview_skip_reason="skip_preview_for_release_target"
+          env:
+            PREVIEW_SKIP_REASON: \${{ steps.deploy_preview.outputs.preview_skip_reason }}
+        `;
 
-        expect(validatorSource).toContain("assertIncludes(deployPreview, 'preview_deploy_hit_release_target_error()'");
-        expect(validatorSource).toContain("assertIncludes(deployPreview, \"HTTP Error: 400, Can't release to .*resource doesn't exist or isn't a valid release target\"");
-        expect(validatorSource).toContain("assertIncludes(deployPreview, 'skip_preview_for_release_target'");
-        expect(validatorSource).toContain("assertIncludes(deployPreview, 'Firebase preview skipped for this run. See the deploy workflow summary for the skip reason.'");
-        expect(() => validateFirebaseRulesCi()).not.toThrow();
+        expect(() => assertPreviewDeploySkipHandling(deployPreview)).not.toThrow();
+        expect(() => assertPreviewDeploySkipHandling(deployPreview.replace('preview_deploy_hit_release_target_error()', ''))).toThrow(
+            'Preview deploy release target error handling is missing'
+        );
+        expect(() => assertPreviewDeploySkipHandling(deployPreview.replace("HTTP Error: 400, Can't release to .*resource doesn't exist or isn't a valid release target", ''))).toThrow(
+            'Preview deploy release target error classifier is missing'
+        );
+        expect(() => assertPreviewDeploySkipHandling(deployPreview.replace('preview_skip_reason=', ''))).toThrow(
+            'Preview deploy skipped reason output is missing'
+        );
+        expect(() => assertPreviewDeploySkipHandling(deployPreview.replace('skip_preview_for_release_target', ''))).toThrow(
+            'Preview deploy release target skip is missing'
+        );
+        expect(() => assertPreviewDeploySkipHandling(deployPreview.replace('PREVIEW_SKIP_REASON: ${{ steps.deploy_preview.outputs.preview_skip_reason }}', ''))).toThrow(
+            'Preview deploy skipped reason PR comment is missing'
+        );
     });
 });

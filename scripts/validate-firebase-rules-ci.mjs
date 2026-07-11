@@ -29,6 +29,14 @@ function canDeleteOwnScopedStorageUpload({ authUid, pathUserId, isTeamAdmin = fa
             (authUid === pathUserId && hasCurrentScopeAccess));
 }
 
+export function assertPreviewDeploySkipHandling(deployPreview) {
+    assertIncludes(deployPreview, 'preview_deploy_hit_release_target_error()', 'Preview deploy release target error handling');
+    assertIncludes(deployPreview, "HTTP Error: 400, Can't release to .*resource doesn't exist or isn't a valid release target", 'Preview deploy release target error classifier');
+    assertIncludes(deployPreview, 'preview_skip_reason=', 'Preview deploy skipped reason output');
+    assertIncludes(deployPreview, 'skip_preview_for_release_target', 'Preview deploy release target skip');
+    assertIncludes(deployPreview, 'PREVIEW_SKIP_REASON: ${{ steps.deploy_preview.outputs.preview_skip_reason }}', 'Preview deploy skipped reason PR comment');
+}
+
 export function extractMatchBlock(text, startMarker) {
     const start = text.indexOf(startMarker);
     if (start === -1) {
@@ -128,10 +136,7 @@ export function validateFirebaseRulesCi() {
 
     assertMatches(deployPreview, /needs:\s*\[\s*unit-tests\s*,\s*regression-guards\s*\]/, 'Preview deploy gate');
     validatePreviewDeployCommand(deployPreview);
-    assertIncludes(deployPreview, 'preview_deploy_hit_release_target_error()', 'Preview deploy release target error handling');
-    assertIncludes(deployPreview, "HTTP Error: 400, Can't release to .*resource doesn't exist or isn't a valid release target", 'Preview deploy release target error classifier');
-    assertIncludes(deployPreview, 'skip_preview_for_release_target', 'Preview deploy release target skip');
-    assertIncludes(deployPreview, 'Firebase preview skipped for this run. See the deploy workflow summary for the skip reason.', 'Preview deploy generic skip comment');
+    assertPreviewDeploySkipHandling(deployPreview);
 
     assertIncludes(storageRules, 'match /game-clips/{teamId}/{gameId}/{userId}/{fileName}', 'Scoped Storage game clip rules');
     assertIncludes(storageRules, 'allow get: if canAccessTeamMedia(teamId);', 'Scoped Storage game clip read rules');

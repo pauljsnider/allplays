@@ -324,7 +324,7 @@ async function mockEditScheduleDependencies(page) {
     await page.route('**/js/live-game-state.js?v=3', (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: LIVE_GAME_STATE_STUB }));
     await page.route('**/js/edit-schedule-cancel-game.js?v=3', (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: CANCEL_GAME_STUB }));
     await page.route('**/js/edit-schedule-practice-payload.js?v=1', (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: PRACTICE_PAYLOAD_STUB }));
-    await page.route('**/js/edit-schedule-practice-submit.js?v=1', (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: PRACTICE_SUBMIT_STUB }));
+    await page.route('**/js/edit-schedule-practice-submit.js?v=2', (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: PRACTICE_SUBMIT_STUB }));
     await page.route('**/js/firebase.js?v=*', (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: FIREBASE_STUB }));
     await page.route('**/js/vendor/firebase-app.js', (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: FIREBASE_APP_STUB }));
     await page.route('**/js/vendor/firebase-ai.js', (route) => route.fulfill({ status: 200, contentType: 'application/javascript', body: FIREBASE_AI_STUB }));
