@@ -176,7 +176,7 @@ export function Profile({ auth }: { auth: AuthState }) {
   const signupLink = generatedCode ? buildSignupLink(generatedCode) : '';
   const visibleAccessCodes = inviteHistoryExpanded ? accessCodes : accessCodes.slice(0, collapsedInviteCount);
   const hiddenAccessCodeCount = Math.max(0, accessCodes.length - visibleAccessCodes.length);
-  const canRequestAccountMerge = auth.isParent && (accountMergeExpanded || !parentLinkedTeamsLoaded || parentLinkedTeams.length > 0);
+  const canRequestAccountMerge = auth.isParent && parentLinkedTeamsLoaded && parentLinkedTeams.length > 0;
   const selectedNotificationTeam = notificationTeams.find((team) => team.id === selectedTeamId) || null;
   const alertsLoading = activeProfileSection === 'alerts' && !notificationTeamsLoaded;
   const alertsUnavailable = activeProfileSection === 'alerts' && notificationTeamsLoaded && Boolean(notificationTeamsError);
@@ -640,23 +640,24 @@ export function Profile({ auth }: { auth: AuthState }) {
     let cancelled = false;
 
     async function loadParentLinkedTeams() {
-      if (!user || !accountMergeExpanded || parentLinkedTeamsLoaded) {
+      if (!user || !auth.isParent || activeProfileSection !== 'account' || parentLinkedTeamsLoaded) {
         return;
       }
 
       try {
-        const teams = await loadParentTeams(user.uid).catch((error) => {
-          logger.warn('Unable to load parent-linked teams.', { error });
-          setAccountMergeStatus({ message: 'Unable to load account merge options right now.', tone: 'error' });
-          return [];
-        });
+        const teams = await loadParentTeams(user.uid);
 
         if (!cancelled) {
           setParentLinkedTeams(teams);
           setParentLinkedTeamsLoaded(true);
         }
-      } catch {
-        // no-op: handled inline above
+      } catch (error) {
+        logger.warn('Unable to load parent-linked teams.', { error });
+        if (!cancelled) {
+          setParentLinkedTeams([]);
+          setParentLinkedTeamsLoaded(true);
+          setAccountMergeStatus({ message: 'Unable to load account merge options right now.', tone: 'error' });
+        }
       }
     }
 
@@ -664,7 +665,7 @@ export function Profile({ auth }: { auth: AuthState }) {
     return () => {
       cancelled = true;
     };
-  }, [accountMergeExpanded, parentLinkedTeamsLoaded, user]);
+  }, [activeProfileSection, auth.isParent, parentLinkedTeamsLoaded, user]);
 
   const applySelectedPhoto = (file: File) => {
     if (!file) {
@@ -1318,14 +1319,19 @@ export function Profile({ auth }: { auth: AuthState }) {
           </div>
         </form>
 
-        {canRequestAccountMerge ? (
+        {auth.isParent ? (
           <div className="mt-6 border-t border-gray-200 pt-6">
-            <div className="flex items-start justify-between gap-4">
+            <div className="flex flex-col items-start gap-4 sm:flex-row sm:justify-between">
               <div>
                 <h3 className="text-base font-black text-gray-900">Merge another account</h3>
                 <p className="mt-1 text-sm font-semibold leading-6 text-gray-600">Request a merge for another ALL PLAYS account you own. We will verify that email before any account data moves.</p>
               </div>
-              {!accountMergeExpanded ? (
+              {!parentLinkedTeamsLoaded ? (
+                <button type="button" className="secondary-button shrink-0" disabled>
+                  <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
+                  Checking availability
+                </button>
+              ) : canRequestAccountMerge && !accountMergeExpanded ? (
                 <button
                   type="button"
                   className="secondary-button shrink-0"
@@ -1339,32 +1345,30 @@ export function Profile({ auth }: { auth: AuthState }) {
               ) : null}
             </div>
 
-            {accountMergeExpanded ? (
-              parentLinkedTeamsLoaded && parentLinkedTeams.length === 0 ? (
-                <StatusMessage status={accountMergeStatus || { message: 'No parent-linked teams are available for account merge.', tone: 'neutral' }} className="mt-4 block" />
-              ) : (
-                <form className="mt-4 space-y-3 rounded-2xl border border-gray-200 bg-gray-50 p-4" onSubmit={submitAccountMerge} noValidate>
-                  <label className="block">
-                    <span className="mb-1.5 block text-xs font-extrabold uppercase tracking-[0.04em] text-gray-500">Secondary account email</span>
-                    <input
-                      className="auth-input"
-                      type="email"
-                      aria-label="Secondary account email"
-                      value={accountMergeEmail}
-                      onChange={(event) => setAccountMergeEmail(event.target.value)}
-                      placeholder="other-email@example.com"
-                      autoComplete="email"
-                    />
-                  </label>
-                  <div className="flex flex-wrap items-center gap-2">
-                    <button type="submit" className="primary-button" disabled={busy === 'account-merge' || !parentLinkedTeamsLoaded}>
-                      {busy === 'account-merge' ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <Link2 className="h-4 w-4" aria-hidden="true" />}
-                      Request merge
-                    </button>
-                    {!parentLinkedTeamsLoaded ? <StatusMessage status={{ message: 'Loading merge options...', tone: 'neutral' }} /> : <StatusMessage status={accountMergeStatus} />}
-                  </div>
-                </form>
-              )
+            {parentLinkedTeamsLoaded && parentLinkedTeams.length === 0 ? (
+              <StatusMessage status={accountMergeStatus || { message: 'No parent-linked teams are available for account merge.', tone: 'neutral' }} className="mt-4 block" />
+            ) : accountMergeExpanded ? (
+              <form className="mt-4 space-y-3 rounded-2xl border border-gray-200 bg-gray-50 p-4" onSubmit={submitAccountMerge} noValidate>
+                <label className="block">
+                  <span className="mb-1.5 block text-xs font-extrabold uppercase tracking-[0.04em] text-gray-500">Secondary account email</span>
+                  <input
+                    className="auth-input"
+                    type="email"
+                    aria-label="Secondary account email"
+                    value={accountMergeEmail}
+                    onChange={(event) => setAccountMergeEmail(event.target.value)}
+                    placeholder="other-email@example.com"
+                    autoComplete="email"
+                  />
+                </label>
+                <div className="flex flex-wrap items-center gap-2">
+                  <button type="submit" className="primary-button" disabled={busy === 'account-merge'}>
+                    {busy === 'account-merge' ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> : <Link2 className="h-4 w-4" aria-hidden="true" />}
+                    Request merge
+                  </button>
+                  <StatusMessage status={accountMergeStatus} />
+                </div>
+              </form>
             ) : null}
           </div>
         ) : null}
