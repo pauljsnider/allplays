@@ -334,6 +334,8 @@ describe('React app parent tools integration', () => {
 
         await clickButton(container, 'Fees');
         await waitForText(container, 'Team dues');
+        expect(container.textContent).not.toContain('Line items');
+        await clickButton(container, 'View details');
         expect(container.textContent).toContain('Line items');
         await clickButton(container, 'Pay fee');
         expect(publicActionMocks.openPublicUrl).toHaveBeenCalledWith('https://pay.example.test/fee');
@@ -611,10 +613,13 @@ describe('React app parent tools integration', () => {
         const { container } = await renderParentTools('/parent-tools/fees');
         await waitForText(container, 'Tournament fee');
 
-        expect(container.textContent).toContain('Notes');
-        expect(container.textContent).toContain('Uniform deposit is included.');
         expect(container.textContent).toContain('Offline payment');
         expect(container.textContent).toContain('Bring a check payable to Bears Booster Club.');
+        expect(container.textContent).not.toContain('Uniform deposit is included.');
+
+        await clickButton(container, 'View details');
+        expect(container.textContent).toContain('Notes');
+        expect(container.textContent).toContain('Uniform deposit is included.');
 
         await clickButton(container, 'Pay fee');
         expect(publicActionMocks.openPublicUrl).toHaveBeenCalledWith('https://pay.example.test/tournament');

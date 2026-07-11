@@ -861,6 +861,86 @@ describe('ParentTools access', () => {
         expect(parentToolsServiceMocks.initiateParentTeamFeeCheckout).not.toHaveBeenCalled();
     });
 
+    it('keeps online fee payment primary and reveals invoice details on demand', async () => {
+        parentToolsServiceMocks.loadParentFeesForApp.mockResolvedValue([
+            {
+                id: 'fee-detailed',
+                title: 'Tournament dues',
+                teamId: 'team-1',
+                teamName: 'Bears',
+                playerName: 'Sam Player',
+                status: 'open',
+                amountLabel: '$125',
+                dueLabel: 'August 1',
+                statusLabel: 'Open',
+                balanceDueCents: 10000,
+                checkoutUrl: 'https://pay.example.test/detailed',
+                canPay: true,
+                checkoutInitiatable: false,
+                paymentAction: 'checkoutUrl',
+                lineItems: [{ title: 'Tournament entry', amountCents: 7500 }],
+                installments: [{ label: 'Final installment', amountCents: 5000 }],
+                ledgerEntries: [{ description: 'Deposit received', paidAmountCents: 2500 }],
+                notes: 'Uniform fitting is included.'
+            }
+        ]);
+
+        renderParentTools(['/parent-tools/fees'], false, linkedAuth);
+
+        await screen.findByText('Tournament dues');
+        expect(screen.getByRole('button', { name: 'Pay fee' })).toBeVisible();
+        expect(screen.queryByText('Line items')).toBeNull();
+        expect(screen.queryByText('Installments')).toBeNull();
+        expect(screen.queryByText('Payments and adjustments')).toBeNull();
+        expect(screen.queryByText('Uniform fitting is included.')).toBeNull();
+
+        const disclosure = screen.getByRole('button', { name: 'View details' });
+        expect(disclosure).toHaveAttribute('aria-expanded', 'false');
+        fireEvent.click(disclosure);
+
+        expect(screen.getByRole('button', { name: 'Hide details' })).toHaveAttribute('aria-expanded', 'true');
+        expect(screen.getByText('Line items')).toBeVisible();
+        expect(screen.getByText('Installments')).toBeVisible();
+        expect(screen.getByText('Payments and adjustments')).toBeVisible();
+        expect(screen.getByText('Notes')).toBeVisible();
+        expect(screen.getByText('Uniform fitting is included.')).toBeVisible();
+    });
+
+    it('keeps offline payment instructions visible while invoice details stay collapsed', async () => {
+        parentToolsServiceMocks.loadParentFeesForApp.mockResolvedValue([
+            {
+                id: 'fee-offline',
+                title: 'Cash fundraiser fee',
+                teamId: 'team-1',
+                teamName: 'Bears',
+                playerName: 'Sam Player',
+                status: 'open',
+                amountLabel: '$40',
+                dueLabel: 'Friday',
+                statusLabel: 'Open',
+                balanceDueCents: 4000,
+                canPay: false,
+                checkoutInitiatable: false,
+                paymentAction: '',
+                offlinePaymentInstructions: 'Bring cash or a check to practice.',
+                lineItems: [{ title: 'Fundraiser contribution', amountCents: 4000 }],
+                installments: [],
+                ledgerEntries: [],
+                notes: 'Ask the team manager for a receipt.'
+            }
+        ]);
+
+        renderParentTools(['/parent-tools/fees'], false, linkedAuth);
+
+        await screen.findByText('Cash fundraiser fee');
+        expect(screen.getByText('Offline payment')).toBeVisible();
+        expect(screen.getByText('Bring cash or a check to practice.')).toBeVisible();
+        expect(screen.queryByRole('button', { name: 'Pay fee' })).toBeNull();
+        expect(screen.queryByText('Line items')).toBeNull();
+        expect(screen.queryByText('Ask the team manager for a receipt.')).toBeNull();
+        expect(screen.getByRole('button', { name: 'View details' })).toHaveAttribute('aria-expanded', 'false');
+    });
+
     it('shows safe Fees copy instead of raw Firestore index errors', async () => {
         parentToolsServiceMocks.loadParentFeesForApp.mockRejectedValue(new Error('The query requires an index. You can create it here: https://console.firebase.google.com/v1/r/project/game-flow-c6311/firestore/indexes?create_composite=test'));
 

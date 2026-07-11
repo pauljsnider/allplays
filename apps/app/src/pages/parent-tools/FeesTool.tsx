@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
 import { DollarSign, ExternalLink, Loader2, RefreshCw } from 'lucide-react';
 import { useSearchParams } from 'react-router-dom';
 import { openPublicUrl } from '../../lib/publicActions';
@@ -154,8 +154,11 @@ function FeeMessageBlock({ title, message }: { title: string; message: string })
 }
 
 function FeeCard({ fee, onPay, paying, payBlocked, error }: { fee: ParentFeeAppRecord; onPay: (fee: ParentFeeAppRecord) => void | Promise<void>; paying: boolean; payBlocked: boolean; error: string }) {
+    const [detailsOpen, setDetailsOpen] = useState(false);
+    const detailsId = useId();
     const notes = getFeeMessage(fee.notes, fee.feeNotes);
     const offlinePaymentInstructions = getFeeMessage(fee.offlinePaymentInstructions, fee.paymentInstructions);
+    const hasDetails = Boolean(fee.lineItems.length || fee.installments.length || fee.ledgerEntries.length || notes);
 
     return (
         <section className="app-card p-4">
@@ -171,10 +174,6 @@ function FeeCard({ fee, onPay, paying, payBlocked, error }: { fee: ParentFeeAppR
                 <MetricCard label="Due" value={fee.dueLabel} />
                 <MetricCard label="Balance" value={formatMoney(Number(fee.balanceDueCents ?? 0))} urgent={Number(fee.balanceDueCents ?? 0) > 0} />
             </div>
-            {fee.lineItems.length ? <FeeDetailList title="Line items" rows={fee.lineItems} /> : null}
-            {fee.installments.length ? <FeeDetailList title="Installments" rows={fee.installments} /> : null}
-            {fee.ledgerEntries.length ? <FeeDetailList title="Payments and adjustments" rows={fee.ledgerEntries} /> : null}
-            {notes ? <FeeMessageBlock title="Notes" message={notes} /> : null}
             {offlinePaymentInstructions ? <FeeMessageBlock title="Offline payment" message={offlinePaymentInstructions} /> : null}
             {fee.canPay ? (
                 <button type="button" className="primary-button mt-3 w-full" onClick={() => onPay(fee)} disabled={payBlocked}>
@@ -183,6 +182,27 @@ function FeeCard({ fee, onPay, paying, payBlocked, error }: { fee: ParentFeeAppR
                 </button>
             ) : null}
             {error ? <div className="mt-2 rounded-xl border border-rose-100 bg-rose-50 p-3 text-xs font-semibold text-rose-700">{error}</div> : null}
+            {hasDetails ? (
+                <div className="mt-3">
+                    <button
+                        type="button"
+                        className="secondary-button w-full justify-center"
+                        aria-expanded={detailsOpen}
+                        aria-controls={detailsId}
+                        onClick={() => setDetailsOpen((current) => !current)}
+                    >
+                        {detailsOpen ? 'Hide details' : 'View details'}
+                    </button>
+                    {detailsOpen ? (
+                        <div id={detailsId}>
+                            {fee.lineItems.length ? <FeeDetailList title="Line items" rows={fee.lineItems} /> : null}
+                            {fee.installments.length ? <FeeDetailList title="Installments" rows={fee.installments} /> : null}
+                            {fee.ledgerEntries.length ? <FeeDetailList title="Payments and adjustments" rows={fee.ledgerEntries} /> : null}
+                            {notes ? <FeeMessageBlock title="Notes" message={notes} /> : null}
+                        </div>
+                    ) : null}
+                </div>
+            ) : null}
         </section>
     );
 }
