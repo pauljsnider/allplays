@@ -125,9 +125,10 @@ const auth: AuthState = {
 
 describe('AppSearchDialog', () => {
   afterEach(() => {
+    cleanup();
+    vi.clearAllTimers();
     vi.useRealTimers();
     vi.restoreAllMocks();
-    cleanup();
   });
 
   beforeEach(() => {
