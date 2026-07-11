@@ -4097,6 +4097,69 @@ describe('ScheduleEventDetail lineup builder', () => {
     });
   });
 
+  it('does not reload lineup preview when live clock updates the same event', async () => {
+    const gamePlan = {
+      formationId: 'basketball-5v5',
+      lineups: { 'Q1-pg': 'p1' },
+      publishedLineups: {},
+      publishedVersion: 0
+    };
+    scheduleServiceMocks.loadParentScheduleEventDetail.mockResolvedValue({
+      events: [buildEvent({
+        liveStatus: 'live',
+        status: 'live',
+        canUpdateScore: true,
+        isTeamStaff: true,
+        gamePlan
+      })],
+      children: []
+    });
+    scheduleServiceMocks.loadAutoFilledLineupDraftPreviewForApp.mockResolvedValue({
+      formationId: 'basketball-5v5',
+      formationName: 'Basketball 5v5',
+      numPeriods: 4,
+      positions: [],
+      availablePlayers: [{ id: 'p1', name: 'Avery Smith', number: '1' }],
+      goingPlayers: [{ id: 'p1', name: 'Avery Smith', number: '1' }],
+      gamePlan
+    });
+    scheduleServiceMocks.updateLiveGameClockState.mockResolvedValue({
+      liveClockMs: 0,
+      liveClockRunning: true,
+      liveClockPeriod: 'Q1',
+      liveClockUpdatedAt: '2026-06-04T18:00:00.000Z'
+    });
+
+    renderScheduleEventDetail();
+
+    await waitFor(() => {
+      expect(screen.getAllByRole('button', { name: 'Game' }).length).toBeGreaterThan(0);
+    });
+
+    fireEvent.click(screen.getAllByRole('button', { name: 'Game' })[0]);
+    fireEvent.click(screen.getByRole('button', { name: 'Lineup builder' }));
+
+    await waitFor(() => {
+      expect(scheduleServiceMocks.loadAutoFilledLineupDraftPreviewForApp).toHaveBeenCalledTimes(1);
+      expect(screen.getByTestId('lineup-slot-Q1-pg')).toBeTruthy();
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Start clock' }));
+
+    await waitFor(() => {
+      expect(scheduleServiceMocks.updateLiveGameClockState).toHaveBeenCalledWith(
+        'team-1',
+        'game-1',
+        expect.objectContaining({ liveClockRunning: true }),
+        auth.user
+      );
+    });
+    await waitFor(() => {
+      expect(scheduleServiceMocks.loadAutoFilledLineupDraftPreviewForApp).toHaveBeenCalledTimes(1);
+      expect(screen.getByTestId('lineup-slot-Q1-pg')).toBeTruthy();
+    });
+  });
+
   it('disables publish immediately after the last populated lineup slot is cleared', async () => {
     scheduleServiceMocks.loadParentScheduleEventDetail.mockResolvedValue({
       events: [buildEvent({
