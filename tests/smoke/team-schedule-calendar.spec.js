@@ -436,7 +436,7 @@ async function mockTeamPageModules(page, scenario) {
         contentType: 'application/javascript',
         body: TEAM_ADMIN_BANNER_STUB
     }));
-    await page.route('**/js/tournament-standings.js?v=3', (route) => route.fulfill({
+    await page.route('**/js/tournament-standings.js?v=4', (route) => route.fulfill({
         status: 200,
         contentType: 'application/javascript',
         body: TOURNAMENT_STANDINGS_STUB

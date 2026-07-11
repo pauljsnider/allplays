@@ -1,5 +1,10 @@
 import { readFileSync } from 'node:fs';
+import { dirname, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+
+const testDir = dirname(fileURLToPath(import.meta.url));
+const readAppSource = (relativePath: string) => readFileSync(resolve(testDir, '..', relativePath), 'utf8');
 
 const mocks = vi.hoisted(() => {
   const transactionSet = vi.fn();
@@ -186,6 +191,7 @@ import { expandRecurrence, fetchAndParseCalendar, isTeamActive, mergeAssignments
 import { getCachedAppData, loadCachedAppData } from './appDataCache';
 import { mapScheduleEventRecord } from './firestore/mappers';
 import { loadProfileDocument } from './profileService';
+import { getScheduleTournamentInfo } from './scheduleLogic';
 import { adjustGameScore, buildPlayerScoringLiveEvent, buildSingleGameTournamentLegacySchedulePayload, claimOfficialAssignmentItem, createScheduledGameForApp, createScheduledPracticeForApp, createScheduledTournamentBlockForApp, createStaffRsvpAvailabilityLoader, flushPendingLivePublishOperations, hydrateParentScheduleDetails, loadOfficialAssignments, loadParentSchedule, loadParentScheduleChildren, loadParentScheduleEventDetail, loadScheduledPracticeSeriesForEdit, loadStaffPracticeAttendance, loadStaffScheduleRsvpBreakdown, publishLiveScoreUpdateEvent, recordPlayerGameStat, recordPlayerScoringStat, releaseParentScheduleAssignmentClaim, resolveCachedParentScheduleEvents, resolveLiveGameClockSnapshot, resolveParentGameRoute, respondToOfficialAssignmentItem, revertScheduledPracticeOccurrenceForApp, saveScheduledGameLineupDraftForApp, saveStaffPracticeAttendance, submitStaffScheduleRsvpOverride, TournamentBlockPartialSaveError, undoRecordedPlayerGameStat, updateLiveGameClockState, updateScheduledPracticeForApp } from './scheduleService';
 
 function playerSnapshot(id: string, data: Record<string, unknown> | null) {
@@ -197,8 +203,8 @@ function playerSnapshot(id: string, data: Record<string, unknown> | null) {
 }
 
 it('keeps schedule workflows behind typed legacy adapters', () => {
-  const scheduleServiceSource = readFileSync('src/lib/scheduleService.ts', 'utf8');
-  const scheduleEventDetailSource = readFileSync('src/pages/ScheduleEventDetail.tsx', 'utf8');
+  const scheduleServiceSource = readAppSource('lib/scheduleService.ts');
+  const scheduleEventDetailSource = readAppSource('pages/ScheduleEventDetail.tsx');
 
   expect(scheduleServiceSource).not.toContain("../../../../js/");
   expect(scheduleServiceSource).toContain("./adapters/legacyScheduleDb");
@@ -475,7 +481,7 @@ describe('scheduled tournament writes', () => {
   });
 
   it('routes a single-game tournament block through the scheduled game save flow with one legacy document', async () => {
-    const scheduleServiceSource = readFileSync('src/lib/scheduleService.ts', 'utf8');
+    const scheduleServiceSource = readAppSource('lib/scheduleService.ts');
     vi.mocked(addGame).mockResolvedValueOnce('game-1' as any);
 
     const createdIds = await createScheduledTournamentBlockForApp('team-1', {
@@ -2781,6 +2787,312 @@ describe('partial parent schedule team failures (#3021)', () => {
     });
   });
 
+});
+
+describe('web-created tournament standings hydration (#1967)', () => {
+  const parentUser = {
+    uid: 'parent-1',
+    email: 'parent@example.com',
+    parentOf: [{ teamId: 'team-1', playerId: 'p1', playerName: 'Kid One' }]
+  } as any;
+  const tournamentGames = [
+    {
+      id: 'pool-a-1',
+      type: 'game',
+      date: new Date('2026-06-20T18:00:00.000Z'),
+      competitionType: 'tournament',
+      status: 'completed',
+      homeScore: 3,
+      awayScore: 1,
+      tournament: {
+        poolName: 'Pool A',
+        slotAssignments: {
+          home: { sourceType: 'team', teamName: 'Tigers' },
+          away: { sourceType: 'team', teamName: 'Lions' }
+        }
+      }
+    },
+    {
+      id: 'pool-a-2',
+      type: 'game',
+      // Keep this game outside the old +/-14-day detail window. Pool identity,
+      // rather than an arbitrary date cutoff, must define the standings input.
+      date: new Date('2026-07-21T18:00:00.000Z'),
+      competitionType: 'tournament',
+      status: 'completed',
+      homeScore: 2,
+      awayScore: 0,
+      tournament: {
+        poolName: 'Pool A',
+        slotAssignments: {
+          home: { sourceType: 'team', teamName: 'Bears' },
+          away: { sourceType: 'team', teamName: 'Tigers' }
+        }
+      }
+    }
+  ];
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    (globalThis as any).window = { location: { protocol: 'https:' }, setTimeout, clearTimeout } as any;
+    vi.mocked(loadProfileDocument).mockResolvedValue({ parentOf: parentUser.parentOf } as any);
+    vi.mocked(getTeam).mockResolvedValue({
+      id: 'team-1',
+      name: 'Tigers',
+      standingsConfig: { rankingMode: 'points', points: { win: 3, tie: 1, loss: 0 } }
+    } as any);
+    vi.mocked(getTeams).mockResolvedValue([] as any);
+    vi.mocked(getGames).mockImplementation(async (_teamId, options: any = {}) => (
+      options.tournamentGroups?.length ? tournamentGames : [tournamentGames[0]]
+    ) as any);
+    vi.mocked(getPracticeSessions).mockResolvedValue([] as any);
+    vi.mocked(getDoc).mockResolvedValue(playerSnapshot('p1', { id: 'p1', name: 'Kid One', active: true }) as any);
+  });
+
+  it('computes windowed schedule standings from the complete bounded tournament pool', async () => {
+    const result = await loadParentSchedule(parentUser, { hydrateDetails: false, expandStaffPlayers: false });
+
+    expect(getGames).toHaveBeenCalledTimes(2);
+    expect(vi.mocked(getGames).mock.calls[0][1]).toMatchObject({ startDate: expect.any(Date) });
+    expect(vi.mocked(getGames).mock.calls[1][1]).toEqual({
+      tournamentGroups: [{ poolName: 'Pool A', divisionName: '' }]
+    });
+    expect(result.events).toHaveLength(1);
+    expect(getScheduleTournamentInfo(result.events[0] as any).standings).toMatchObject({
+      groupName: 'Pool A',
+      rows: [
+        { rank: '1', teamName: 'Bears', record: '1-0', points: 3 },
+        { rank: '2', teamName: 'Tigers', record: '1-1', points: 3 },
+        { rank: '3', teamName: 'Lions', record: '0-1', points: 0 }
+      ]
+    });
+  });
+
+  it('hydrates a direct tournament detail route from the bounded tournament pool', async () => {
+    vi.mocked(getGame).mockResolvedValue(tournamentGames[0] as any);
+
+    const result = await loadParentScheduleEventDetail(parentUser, {
+      teamId: 'team-1',
+      eventId: 'pool-a-1',
+      hydrateDetails: false,
+      expandStaffPlayers: false
+    });
+
+    expect(getGame).toHaveBeenCalledWith('team-1', 'pool-a-1');
+    expect(getGames).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(getGames).mock.calls[0][1]).toEqual({
+      tournamentGroups: [{ poolName: 'Pool A', divisionName: '' }]
+    });
+    expect(getScheduleTournamentInfo(result.events[0] as any).standings?.rows).toEqual([
+      { rank: '1', teamName: 'Bears', record: '1-0', points: 3 },
+      { rank: '2', teamName: 'Tigers', record: '1-1', points: 3 },
+      { rank: '3', teamName: 'Lions', record: '0-1', points: 0 }
+    ]);
+  });
+
+  it('omits derived list standings when the complete group read fails', async () => {
+    vi.mocked(getGames)
+      .mockResolvedValueOnce([tournamentGames[0]] as any)
+      .mockRejectedValueOnce(new Error('pool query unavailable'));
+
+    const result = await loadParentSchedule(parentUser, { hydrateDetails: false, expandStaffPlayers: false });
+
+    expect(getGames).toHaveBeenCalledTimes(2);
+    expect(getScheduleTournamentInfo(result.events[0] as any).standings).toBeNull();
+    expect((result.events[0].tournament as Record<string, unknown>)?.computedStandings).toBeUndefined();
+  });
+
+  it('preserves inline detail standings when the complete group read fails', async () => {
+    const inlineStandings = {
+      poolName: 'Published Pool A',
+      rows: [{ rank: 1, teamName: 'Published Tigers', wins: 4, losses: 0, points: 12 }],
+      isOverridden: true
+    };
+    vi.mocked(getGame).mockResolvedValue({
+      ...tournamentGames[0],
+      tournament: { ...tournamentGames[0].tournament, standings: inlineStandings }
+    } as any);
+    vi.mocked(getGames).mockRejectedValueOnce(new Error('pool query unavailable'));
+
+    const result = await loadParentScheduleEventDetail(parentUser, {
+      teamId: 'team-1',
+      eventId: 'pool-a-1',
+      hydrateDetails: false,
+      expandStaffPlayers: false
+    });
+
+    expect(getGames).toHaveBeenCalledTimes(1);
+    expect((result.events[0].tournament as Record<string, unknown>)?.computedStandings).toBeUndefined();
+    expect(getScheduleTournamentInfo(result.events[0] as any).standings).toMatchObject({
+      groupName: 'Published Pool A',
+      rows: [{ rank: '1', teamName: 'Published Tigers', record: '4-0', points: 12 }]
+    });
+  });
+
+  it('loads every visible tournament group through one de-duplicated standings call', async () => {
+    const poolBGame = {
+      ...tournamentGames[0],
+      id: 'pool-b-1',
+      tournament: { ...tournamentGames[0].tournament, poolName: 'Pool B' }
+    };
+    vi.mocked(getGames).mockImplementation(async (_teamId, options: any = {}) => (
+      options.tournamentGroups?.length ? [tournamentGames[0], poolBGame] : [tournamentGames[0], poolBGame]
+    ) as any);
+
+    await loadParentSchedule(parentUser, { hydrateDetails: false, expandStaffPlayers: false });
+
+    expect(getGames).toHaveBeenCalledTimes(2);
+    expect(vi.mocked(getGames).mock.calls[1][1]).toEqual({
+      tournamentGroups: [
+        { poolName: 'Pool A', divisionName: '' },
+        { poolName: 'Pool B', divisionName: '' }
+      ]
+    });
+  });
+
+  it('uses bounded native queries and includes shared tournament games in standings', async () => {
+    (globalThis as any).window = { location: { protocol: 'capacitor:' }, setTimeout, clearTimeout } as any;
+    vi.mocked(getGame).mockResolvedValue(tournamentGames[0] as any);
+    vi.mocked(getGames).mockRejectedValueOnce(new Error('legacy SDK unavailable'));
+    vi.mocked(getNativeAuthIdToken).mockResolvedValue('native-token' as any);
+    vi.mocked(globalThis.fetch).mockImplementation(async (_url, init) => {
+      const body = JSON.parse(String(init?.body));
+      const from = body.structuredQuery.from[0];
+      const fieldPath = body.structuredQuery.where.fieldFilter.field.fieldPath;
+      if (from.collectionId === 'sharedGames' && fieldPath === 'teamIds') {
+        throw new Error('teamIds membership query is not authorized');
+      }
+      const sharedGameDocument = {
+        name: 'projects/allplays-test/databases/(default)/documents/tournaments/t-1/sharedGames/shared-1',
+        fields: {
+          type: { stringValue: 'game' },
+          date: { timestampValue: '2026-07-21T18:00:00.000Z' },
+          competitionType: { stringValue: 'tournament' },
+          status: { stringValue: 'completed' },
+          homeScore: { integerValue: '2' },
+          awayScore: { integerValue: '0' },
+          homeTeamId: { stringValue: 'team-1' },
+          awayTeamId: { stringValue: 'team-2' },
+          tournament: {
+            mapValue: {
+              fields: {
+                poolName: { stringValue: 'Pool A' },
+                slotAssignments: {
+                  mapValue: {
+                    fields: {
+                      home: { mapValue: { fields: { sourceType: { stringValue: 'team' }, teamName: { stringValue: 'Bears' } } } },
+                      away: { mapValue: { fields: { sourceType: { stringValue: 'team' }, teamName: { stringValue: 'Tigers' } } } }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      };
+      return {
+        ok: true,
+        json: async () => from.collectionId === 'sharedGames' && fieldPath === 'homeTeamId'
+          ? [{ document: sharedGameDocument }]
+          : []
+      } as any;
+    });
+
+    const result = await loadParentScheduleEventDetail(parentUser, {
+      teamId: 'team-1',
+      eventId: 'pool-a-1',
+      hydrateDetails: false,
+      expandStaffPlayers: false
+    });
+
+    expect(globalThis.fetch).toHaveBeenCalledTimes(3);
+    const gameQueryCall = vi.mocked(globalThis.fetch).mock.calls.find(([, init]) => {
+      const body = JSON.parse(String(init?.body));
+      return body.structuredQuery.from[0].collectionId === 'games';
+    }) as [string, RequestInit];
+    const [requestUrl, requestInit] = gameQueryCall;
+    expect(requestUrl).toContain('/documents/teams/team-1:runQuery');
+    expect(requestUrl).not.toContain('/documents/teams/team-1/games');
+    const body = JSON.parse(String(requestInit.body));
+    expect(body.structuredQuery).toEqual({
+      from: [{ collectionId: 'games' }],
+      where: {
+        fieldFilter: {
+          field: { fieldPath: 'tournament.poolName' },
+          op: 'EQUAL',
+          value: { stringValue: 'Pool A' }
+        }
+      }
+    });
+    const sharedQueryBodies = vi.mocked(globalThis.fetch).mock.calls
+      .map(([, init]) => JSON.parse(String(init?.body)))
+      .filter((body) => body.structuredQuery.from[0].collectionId === 'sharedGames');
+    expect(sharedQueryBodies).toHaveLength(2);
+    expect(sharedQueryBodies.map((body) => body.structuredQuery.where.fieldFilter.field.fieldPath).sort()).toEqual([
+      'awayTeamId', 'homeTeamId'
+    ]);
+    expect(sharedQueryBodies.every((body) => body.structuredQuery.from[0].allDescendants === true)).toBe(true);
+    expect(getScheduleTournamentInfo(result.events[0] as any).standings?.rows).toEqual([
+      { rank: '1', teamName: 'Bears', record: '1-0', points: 3 },
+      { rank: '2', teamName: 'Tigers', record: '1-1', points: 3 },
+      { rank: '3', teamName: 'Lions', record: '0-1', points: 0 }
+    ]);
+  });
+
+  it('loads the complete pool with default standings rules when the team has no custom config', async () => {
+    vi.mocked(getTeam).mockResolvedValue({
+      id: 'team-1',
+      name: 'Tigers'
+    } as any);
+    vi.mocked(getGame).mockResolvedValue(tournamentGames[0] as any);
+
+    const result = await loadParentScheduleEventDetail(parentUser, {
+      teamId: 'team-1',
+      eventId: 'pool-a-1',
+      hydrateDetails: false,
+      expandStaffPlayers: false
+    });
+
+    expect(getGame).toHaveBeenCalledWith('team-1', 'pool-a-1');
+    expect(getGames).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(getGames).mock.calls[0][1]).toEqual({
+      tournamentGroups: [{ poolName: 'Pool A', divisionName: '' }]
+    });
+    expect(getScheduleTournamentInfo(result.events[0] as any).standings?.rows).toEqual([
+      { rank: '1', teamName: 'Bears', record: '1-0', points: 3 },
+      { rank: '2', teamName: 'Tigers', record: '1-1', points: 3 },
+      { rank: '3', teamName: 'Lions', record: '0-1', points: 0 }
+    ]);
+  });
+
+  it('loads complete legacy division-only standings groups', async () => {
+    const divisionGames = tournamentGames.map((game) => ({
+      ...game,
+      tournament: {
+        division: '10U Gold',
+        slotAssignments: game.tournament.slotAssignments
+      }
+    }));
+    vi.mocked(getTeam).mockResolvedValue({ id: 'team-1', name: 'Tigers' } as any);
+    vi.mocked(getGame).mockResolvedValue(divisionGames[0] as any);
+    vi.mocked(getGames).mockResolvedValue(divisionGames as any);
+
+    const result = await loadParentScheduleEventDetail(parentUser, {
+      teamId: 'team-1',
+      eventId: 'pool-a-1',
+      hydrateDetails: false,
+      expandStaffPlayers: false
+    });
+
+    expect(vi.mocked(getGames).mock.calls[0][1]).toEqual({
+      tournamentGroups: [{ poolName: '', divisionName: '10U Gold' }]
+    });
+    expect(getScheduleTournamentInfo(result.events[0] as any).standings?.rows).toEqual([
+      { rank: '1', teamName: 'Bears', record: '1-0', points: 3 },
+      { rank: '2', teamName: 'Tigers', record: '1-1', points: 3 },
+      { rank: '3', teamName: 'Lions', record: '0-1', points: 0 }
+    ]);
+  });
 });
 
 describe('team schedule game windowing (#2034)', () => {

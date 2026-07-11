@@ -201,7 +201,7 @@ import {
     assertVolunteerScreeningCleared,
     loadVolunteerScreeningTargetRegistrations
 } from './volunteer-screening-access.js?v=2';
-import { buildTournamentPoolOverrideKey } from './tournament-standings.js?v=1';
+import { buildTournamentGroupOverrideKey, buildTournamentPoolOverrideKey, matchesTournamentStandingsGroup } from './tournament-standings.js?v=4';
 import { buildBulkDeleteUpdates, buildMoveUpdates, buildReorderUpdates, isSafeTeamMediaUrl, isSupportedTeamMediaDocument, isSupportedTeamMediaImage, normalizeTeamMediaFolderDraft, normalizeTeamMediaVideoDraft, normalizeAlbumVisibility, sortByMediaOrder } from './team-media-utils.js?v=4';
 import { getApp } from './vendor/firebase-app.js';
 import {
@@ -305,15 +305,18 @@ function normalizeSharedGameSnapshot(docSnap) {
     };
 }
 
-async function getSharedGamesForTeam(teamId) {
+async function getSharedGamesForTeam(teamId, { requireComplete = false } = {}) {
     const sharedGamesRef = collectionGroup(db, 'sharedGames');
     const queries = [
         query(sharedGamesRef, where('homeTeamId', '==', teamId)),
-        query(sharedGamesRef, where('awayTeamId', '==', teamId)),
-        query(sharedGamesRef, where('teamIds', 'array-contains', teamId))
+        query(sharedGamesRef, where('awayTeamId', '==', teamId))
     ];
 
     const snapshots = await Promise.allSettled(queries.map((q) => getDocs(q)));
+    if (requireComplete) {
+        const failedQuery = snapshots.find((result) => result.status === 'rejected');
+        if (failedQuery) throw failedQuery.reason;
+    }
     const sharedGamesByPath = new Map();
 
     snapshots.forEach((result) => {
@@ -2321,13 +2324,19 @@ function normalizeTournamentPoolOverrideName(poolName) {
     return String(poolName || '').trim();
 }
 
-function collectTournamentPoolOverrideKeys(poolOverrides = {}, poolName) {
+function collectTournamentPoolOverrideKeys(poolOverrides = {}, poolName, groupKey = null) {
     const normalizedPoolName = normalizeTournamentPoolOverrideName(poolName);
     if (!normalizedPoolName) return [];
 
-    const keys = new Set([buildTournamentPoolOverrideKey(normalizedPoolName)]);
+    const structuredKey = buildTournamentGroupOverrideKey(groupKey);
+    const keys = new Set(structuredKey ? [structuredKey] : [buildTournamentPoolOverrideKey(normalizedPoolName)]);
     Object.entries(poolOverrides || {}).forEach(([key, override]) => {
-        if (normalizeTournamentPoolOverrideName(override?.poolName) === normalizedPoolName) {
+        const matchesLegacyPool = !override?.groupKey
+            && normalizeTournamentPoolOverrideName(override?.poolName) === normalizedPoolName;
+        const matchesGroup = groupKey
+            ? normalizeTournamentPoolOverrideName(override?.groupKey) === groupKey || matchesLegacyPool
+            : matchesLegacyPool;
+        if (matchesGroup) {
             keys.add(key);
         }
     });
@@ -2336,6 +2345,7 @@ function collectTournamentPoolOverrideKeys(poolOverrides = {}, poolName) {
 
 export async function saveTournamentPoolOverride(teamId, override = {}) {
     const poolName = normalizeTournamentPoolOverrideName(override?.poolName);
+    const groupKey = normalizeTournamentPoolOverrideName(override?.groupKey);
     if (!teamId || !poolName) {
         throw new Error('Missing teamId or poolName for tournament pool override');
     }
@@ -2347,10 +2357,11 @@ export async function saveTournamentPoolOverride(teamId, override = {}) {
     const teamRef = doc(db, "teams", teamId);
     const teamSnapshot = await getDoc(teamRef);
     const existingOverrides = teamSnapshot.exists() ? (teamSnapshot.data()?.tournamentPoolOverrides || {}) : {};
-    const key = buildTournamentPoolOverrideKey(poolName);
+    const key = buildTournamentGroupOverrideKey(groupKey) || buildTournamentPoolOverrideKey(poolName);
     const updatePayload = {
         [`tournamentPoolOverrides.${key}`]: {
             poolName,
+            ...(groupKey ? { groupKey } : {}),
             teamOrder,
             finalizedAt: override?.finalizedAt || Timestamp.now(),
             finalizedBy: {
@@ -2361,7 +2372,7 @@ export async function saveTournamentPoolOverride(teamId, override = {}) {
         }
     };
 
-    collectTournamentPoolOverrideKeys(existingOverrides, poolName)
+    collectTournamentPoolOverrideKeys(existingOverrides, poolName, groupKey)
         .filter((existingKey) => existingKey !== key)
         .forEach((existingKey) => {
             updatePayload[`tournamentPoolOverrides.${existingKey}`] = deleteField();
@@ -2370,8 +2381,9 @@ export async function saveTournamentPoolOverride(teamId, override = {}) {
     await updateTeam(teamId, updatePayload);
 }
 
-export async function clearTournamentPoolOverride(teamId, poolName) {
+export async function clearTournamentPoolOverride(teamId, poolName, groupKey = null) {
     const normalizedPoolName = normalizeTournamentPoolOverrideName(poolName);
+    const normalizedGroupKey = normalizeTournamentPoolOverrideName(groupKey);
     if (!teamId || !normalizedPoolName) {
         throw new Error('Missing teamId or poolName for tournament pool override clear');
     }
@@ -2379,7 +2391,7 @@ export async function clearTournamentPoolOverride(teamId, poolName) {
     const teamRef = doc(db, "teams", teamId);
     const teamSnapshot = await getDoc(teamRef);
     const existingOverrides = teamSnapshot.exists() ? (teamSnapshot.data()?.tournamentPoolOverrides || {}) : {};
-    const keysToDelete = collectTournamentPoolOverrideKeys(existingOverrides, normalizedPoolName);
+    const keysToDelete = collectTournamentPoolOverrideKeys(existingOverrides, normalizedPoolName, normalizedGroupKey);
     if (!keysToDelete.length) return;
 
     const updatePayload = {};
@@ -3397,22 +3409,59 @@ async function getRecurringPracticeMastersForDateRange(gamesRef, startDate, endD
         .filter(game => recurringPracticeMasterMayOverlapDateRange(game, startDate, endDate));
 }
 
-// Pass { startDate, endDate } (Date objects) to window the query and avoid loading
-// a team's entire multi-season history when only a recent range is needed (#2034).
-// Called with no options it preserves the original full-collection behavior.
+// Pass { startDate, endDate } (Date objects) to window ordinary schedule reads.
+// Direct tournament details pass { tournamentGroup } so standings load every
+// matching pool/division game through equality queries without scanning a
+// team's entire multi-season history (#2034).
+// Called with no options this preserves the original full-collection behavior.
 export async function getGames(teamId, options = {}) {
     const startDate = options?.startDate ?? null;
     const endDate = options?.endDate ?? null;
+    const rawTournamentGroups = Array.isArray(options?.tournamentGroups)
+        ? options.tournamentGroups
+        : options?.tournamentGroup ? [options.tournamentGroup] : [];
+    const tournamentGroupsByKey = new Map();
+    rawTournamentGroups.forEach((group) => {
+        if (!group || typeof group !== 'object') return;
+        const normalized = {
+            poolName: String(group.poolName || '').trim(),
+            divisionName: String(group.divisionName || group.division || '').trim()
+        };
+        if (!normalized.poolName && !normalized.divisionName) return;
+        tournamentGroupsByKey.set(JSON.stringify([normalized.divisionName, normalized.poolName]), normalized);
+    });
+    const tournamentGroups = Array.from(tournamentGroupsByKey.values());
+    const hasTournamentGroup = tournamentGroups.length > 0;
     const gamesRef = getTeamGameCollectionRef(teamId);
     let teamGames = [];
     const rangeConstraints = [];
     if (startDate instanceof Date) rangeConstraints.push(where("date", ">=", Timestamp.fromDate(startDate)));
     if (endDate instanceof Date) rangeConstraints.push(where("date", "<=", Timestamp.fromDate(endDate)));
     try {
-        const q = query(gamesRef, ...rangeConstraints, orderBy("date"));
-        const snapshot = await getDocs(q);
-        teamGames = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+        if (hasTournamentGroup) {
+            const groupGames = await Promise.all(tournamentGroups.map(async (tournamentGroup) => {
+                if (tournamentGroup.poolName) {
+                    const snapshot = await getDocs(query(gamesRef, where("tournament.poolName", "==", tournamentGroup.poolName)));
+                    return snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+                }
+                const snapshots = await Promise.all([
+                    getDocs(query(gamesRef, where("tournament.divisionName", "==", tournamentGroup.divisionName))),
+                    getDocs(query(gamesRef, where("tournament.division", "==", tournamentGroup.divisionName)))
+                ]);
+                return mergeGamesById(
+                    snapshots[0].docs.map(doc => ({ id: doc.id, ...doc.data() })),
+                    snapshots[1].docs.map(doc => ({ id: doc.id, ...doc.data() }))
+                );
+            }));
+            teamGames = groupGames.reduce((merged, games) => mergeGamesById(merged, games), []);
+        } else {
+            const snapshot = await getDocs(query(gamesRef, ...rangeConstraints, orderBy("date")));
+            teamGames = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+        }
     } catch (error) {
+        // Tournament group equality queries use single fields and need no
+        // composite index. Never replace them with an unbounded history read.
+        if (hasTournamentGroup) throw error;
         // Fallback when indexes are still building or unavailable: read the
         // collection and apply the range client-side so results stay correct.
         const snapshot = await getDocs(gamesRef);
@@ -3420,7 +3469,7 @@ export async function getGames(teamId, options = {}) {
             .map(doc => ({ id: doc.id, ...doc.data() }))
             .filter(game => isGameWithinDateRange(game, startDate, endDate));
     }
-    if (startDate || endDate) {
+    if (!hasTournamentGroup && (startDate || endDate)) {
         try {
             const recurringMasters = await getRecurringPracticeMastersForDateRange(gamesRef, startDate, endDate);
             teamGames = mergeGamesById(teamGames, recurringMasters);
@@ -3431,12 +3480,16 @@ export async function getGames(teamId, options = {}) {
 
     let sharedGames = [];
     try {
-        sharedGames = await getSharedGamesForTeam(teamId);
+        sharedGames = await getSharedGamesForTeam(teamId, { requireComplete: hasTournamentGroup });
     } catch (error) {
+        if (hasTournamentGroup) throw error;
         console.warn('[getGames] Failed to load shared games for team', teamId, error);
     }
 
     const merged = mergeGamesForTeam(teamGames, sharedGames, teamId);
+    if (hasTournamentGroup) {
+        return merged.filter(game => tournamentGroups.some((group) => matchesTournamentStandingsGroup(game, group)));
+    }
     return (startDate || endDate)
         ? merged.filter(game => isGameWithinDateRange(game, startDate, endDate))
         : merged;

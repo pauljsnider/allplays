@@ -948,7 +948,7 @@
     </div>
 
     <script type="module">
-        import { getTeam, getTeams, getGames, getEvents, addGame, updateGame, updateTeam, deleteGame, addPractice, updateEvent, deleteEvent, getConfigs, addCalendarToTeam, removeCalendarFromTeam, getTrackedCalendarEventUids, cancelOccurrence, updateOccurrence, restoreOccurrence, clearOccurrenceOverride, updateSeries, deleteSeries, getUnreadChatCount, getPracticeSessions, cancelGame, getLatestGameAssignments, postChatMessage, getRsvpBreakdownByPlayer, getPlayers, getRsvps, applyTournamentAdvancementPatches, saveTournamentPoolOverride, clearTournamentPoolOverride, getOfficials, addOfficial, updateOfficial, deleteOfficial, createOfficiatingAssignmentNotificationRecords } from './js/db.js?v=84';
+        import { getTeam, getTeams, getGames, getEvents, addGame, updateGame, updateTeam, deleteGame, addPractice, updateEvent, deleteEvent, getConfigs, addCalendarToTeam, removeCalendarFromTeam, getTrackedCalendarEventUids, cancelOccurrence, updateOccurrence, restoreOccurrence, clearOccurrenceOverride, updateSeries, deleteSeries, getUnreadChatCount, getPracticeSessions, cancelGame, getLatestGameAssignments, postChatMessage, getRsvpBreakdownByPlayer, getPlayers, getRsvps, applyTournamentAdvancementPatches, saveTournamentPoolOverride, clearTournamentPoolOverride, getOfficials, addOfficial, updateOfficial, deleteOfficial, createOfficiatingAssignmentNotificationRecords } from './js/db.js?v=85';
         import { renderHeader, renderFooter, getUrlParams, formatDate, formatShortDate, formatTime, formatTimeRange, getDefaultEndTime, fetchAndParseCalendar, extractOpponent, isPracticeEvent, getCalendarEventStatus, getCalendarEventTrackingId, isTrackedCalendarEvent, generateSeriesId, expandRecurrence, formatRecurrence, shareOrCopy, escapeHtml } from './js/utils.js?v=14';
         import { mergeCalendarImportEvents, validateCalendarImportUrl } from './js/edit-schedule-calendar-import.js?v=2';
         import { checkAuth } from './js/auth.js?v=42';
@@ -968,7 +968,7 @@
         import { getAI, getGenerativeModel, GoogleAIBackend, Schema } from './js/vendor/firebase-ai.js';
         import { buildPoolStandingsIndex, collectTournamentAdvancementPatches, collectTournamentPoolSeeds, describeTournamentSource, planTournamentPoolAdvancement } from './js/tournament-brackets.js?v=2';
         import { normalizeScheduleNotificationSettings, describeScheduleReminderWindow, buildScheduleNotificationMetadata, buildScheduleChangeMessage, buildScheduleNotificationTargets, postScheduleNotificationTargets, buildRsvpReminderMessage, sendPublicRsvpReminderEmails, buildAvailabilityReminderRecipients, buildAvailabilityReminderEmailPreview } from './js/schedule-notifications.js?v=5';
-        import { buildTournamentPoolStandings, buildTournamentPoolOverrideKey } from './js/tournament-standings.js?v=3';
+        import { buildTournamentGroupOverrideKey, buildTournamentPoolStandings, buildTournamentPoolOverrideKey } from './js/tournament-standings.js?v=4';
         import { SCHEDULE_CSV_IMPORT_FIELDS, buildScheduleImportPreview, inferScheduleCsvMapping, normalizeScheduleImportDraft, parseCsvText } from './js/schedule-csv-import.js?v=2';
         import { buildRegistrationScheduleImportPreview, formatRegistrationImportResults, getRegistrationScheduleEvents, isExternallyLinkedRegistrationTeam, planRegistrationScheduleImport } from './js/edit-schedule-registration-import.js?v=4';
 
@@ -1251,7 +1251,7 @@
         }
 
         function getTournamentPoolStandingByKey(poolKey) {
-            return Object.values(currentTournamentPoolStandings || {}).find((pool) => buildTournamentPoolOverrideKey(pool?.poolName) === poolKey) || null;
+            return Object.values(currentTournamentPoolStandings || {}).find((pool) => pool?.groupKey === poolKey) || null;
         }
 
         function toDateValue(value) {
@@ -1389,8 +1389,8 @@
             tournamentStandingsDraft = [];
         }
 
-        function updateCurrentTeamPoolOverride(poolName, override) {
-            const key = buildTournamentPoolOverrideKey(poolName);
+        function updateCurrentTeamPoolOverride(pool, override) {
+            const key = buildTournamentGroupOverrideKey(pool?.groupKey) || buildTournamentPoolOverrideKey(pool?.poolName);
             currentTeam = {
                 ...currentTeam,
                 tournamentPoolOverrides: {
@@ -1400,8 +1400,8 @@
             };
         }
 
-        function removeCurrentTeamPoolOverride(poolName) {
-            const key = buildTournamentPoolOverrideKey(poolName);
+        function removeCurrentTeamPoolOverride(pool) {
+            const key = buildTournamentGroupOverrideKey(pool?.groupKey) || buildTournamentPoolOverrideKey(pool?.poolName);
             const nextOverrides = { ...(currentTeam?.tournamentPoolOverrides || {}) };
             delete nextOverrides[key];
             currentTeam = {
@@ -1480,6 +1480,7 @@
 
             const override = {
                 poolName: pool.poolName,
+                groupKey: pool.groupKey,
                 teamOrder: tournamentStandingsDraft,
                 finalizedAt: Timestamp.now(),
                 finalizedBy: {
@@ -1490,7 +1491,7 @@
             };
 
             await saveTournamentPoolOverride(currentTeamId, override);
-            updateCurrentTeamPoolOverride(pool.poolName, override);
+            updateCurrentTeamPoolOverride(pool, override);
             closeTournamentStandingsModal();
             await loadSchedule();
         }
@@ -1500,8 +1501,8 @@
             if (!pool || !pool.override) return;
             if (!confirm(`Clear the final ranking override for ${pool.poolName}?`)) return;
 
-            await clearTournamentPoolOverride(currentTeamId, pool.poolName);
-            removeCurrentTeamPoolOverride(pool.poolName);
+            await clearTournamentPoolOverride(currentTeamId, pool.poolName, pool.groupKey);
+            removeCurrentTeamPoolOverride(pool);
             closeTournamentStandingsModal();
             await loadSchedule();
         }
@@ -1554,7 +1555,7 @@
                     </div>
                     <div class="grid gap-4 lg:grid-cols-2">
                         ${pools.map((pool) => {
-                            const poolKey = buildTournamentPoolOverrideKey(pool.poolName);
+                            const poolKey = pool.groupKey;
                             const advancementPlan = buildFinalizedTournamentAdvancementPlan(pool);
                             return `
                                 <div class="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">

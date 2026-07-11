@@ -81,7 +81,15 @@ import {
   isTeamActive
 } from './adapters/legacyScheduleHelpers';
 import { buildAvailabilityNoteRows, canViewAvailabilityNotes, formatAvailabilityCutoff, isAvailabilityLocked, normalizeAvailabilityPreferences } from './adapters/legacyAvailability';
+import { projectSharedGameForTeam } from './adapters/legacySharedGames';
 import { buildTrackerEventDocument } from './statTrackingEvent';
+import {
+  enrichTournamentScheduleStandings,
+  getTournamentScheduleGroupQuery,
+  hasTournamentScheduleGames,
+  matchesTournamentScheduleGroup,
+  type TournamentScheduleGroupQuery
+} from './tournamentScheduleStandings';
 import { loadProfileDocument, saveProfileDocument } from './profileService';
 import { firebaseAuth, getNativeAuthIdToken } from './authService';
 import { startUxTimer } from './uxTiming';
@@ -920,6 +928,99 @@ async function nativeQueryScheduleEventDocuments(teamId: string, range: Schedule
   return Array.isArray(payload)
     ? mapScheduleEventDocuments(payload.map((entry) => entry?.document).filter(Boolean) as NativeFirestoreDocument[])
     : [];
+}
+
+async function nativeQuerySharedTournamentScheduleDocuments(
+  teamId: string,
+  groups: TournamentScheduleGroupQuery[]
+): Promise<ScheduleEventFirestoreRecord[]> {
+  const membershipQueries = [
+    { fieldPath: 'homeTeamId', op: 'EQUAL' },
+    { fieldPath: 'awayTeamId', op: 'EQUAL' }
+  ] as const;
+  const payloads = await Promise.all(membershipQueries.map(({ fieldPath, op }) => (
+    nativeFirestoreRequest(':runQuery', {
+      method: 'POST',
+      body: JSON.stringify({
+        structuredQuery: {
+          from: [{ collectionId: 'sharedGames', allDescendants: true }],
+          where: {
+            fieldFilter: {
+              field: { fieldPath },
+              op,
+              value: encodeFirestoreValue(teamId)
+            }
+          }
+        }
+      })
+    })
+  )));
+
+  const gamesById = new Map<string, ScheduleEventFirestoreRecord>();
+  payloads.forEach((payload) => {
+    (Array.isArray(payload) ? payload : []).forEach((entry) => {
+      const document = entry?.document as NativeFirestoreDocument | undefined;
+      const decoded = mapFirestoreDocument(document);
+      const documentPath = compactString(document?.name).split('/documents/')[1] || '';
+      const projected = decoded
+        ? projectSharedGameForTeam({ ...decoded, _sharedGamePath: documentPath }, teamId)
+        : null;
+      const game = projected ? mapScheduleEventRecord(projected, compactString(projected.id)) : null;
+      if (!game || !groups.some((group) => matchesTournamentScheduleGroup(game, group))) return;
+      const gameId = compactString(game.id || game.gameId);
+      if (gameId && !gamesById.has(gameId)) gamesById.set(gameId, game);
+    });
+  });
+  return Array.from(gamesById.values());
+}
+
+async function nativeQueryTournamentScheduleGroupDocuments(
+  teamId: string,
+  groups: TournamentScheduleGroupQuery[]
+): Promise<ScheduleEventFirestoreRecord[]> {
+  const fieldQueries = groups.flatMap((group) => group.poolName
+    ? [{ fieldPath: 'tournament.poolName', value: group.poolName }]
+    : [
+        { fieldPath: 'tournament.divisionName', value: group.divisionName },
+        { fieldPath: 'tournament.division', value: group.divisionName }
+      ]);
+  const [teamPayloads, sharedGames] = await Promise.all([
+    Promise.all(fieldQueries.map(({ fieldPath, value }) => (
+      nativeFirestoreRequest(`/teams/${encodeURIComponent(teamId)}:runQuery`, {
+        method: 'POST',
+        body: JSON.stringify({
+          structuredQuery: {
+            from: [{ collectionId: 'games' }],
+            where: {
+              fieldFilter: {
+                field: { fieldPath },
+                op: 'EQUAL',
+                value: encodeFirestoreValue(value)
+              }
+            }
+          }
+        })
+      })
+    ))),
+    nativeQuerySharedTournamentScheduleDocuments(teamId, groups)
+  ]);
+
+  const gamesById = new Map<string, ScheduleEventFirestoreRecord>();
+  teamPayloads.forEach((payload) => {
+    const games = Array.isArray(payload)
+      ? mapScheduleEventDocuments(payload.map((entry) => entry?.document).filter(Boolean) as NativeFirestoreDocument[])
+      : [];
+    games.forEach((game) => {
+      if (!groups.some((group) => matchesTournamentScheduleGroup(game, group))) return;
+      const gameId = compactString(game.id || game.gameId);
+      if (gameId && !gamesById.has(gameId)) gamesById.set(gameId, game);
+    });
+  });
+  sharedGames.forEach((game) => {
+    const gameId = compactString(game.id || game.gameId);
+    if (gameId && !gamesById.has(gameId)) gamesById.set(gameId, game);
+  });
+  return Array.from(gamesById.values());
 }
 
 const nativeDeleteFieldSentinel = { __deleteField: true };
@@ -2490,6 +2591,48 @@ function getTrackedCalendarEventUidsFromLoadedGames(games: any[] = []) {
     .filter(Boolean);
 }
 
+function mergeLoadedGameWithStandingsPool(loadedGame: ScheduleEventFirestoreRecord, standingsGames: ScheduleEventFirestoreRecord[]) {
+  const loadedGameId = compactString(loadedGame.id || loadedGame.gameId);
+  return [
+    loadedGame,
+    ...(Array.isArray(standingsGames) ? standingsGames : []).filter((game) => {
+      const gameId = compactString(game?.id || game?.gameId);
+      return !loadedGameId || gameId !== loadedGameId;
+    })
+  ];
+}
+
+function mergeScheduleStandingsGames(
+  scheduleGames: ScheduleEventFirestoreRecord[],
+  standingsGroups: ScheduleEventFirestoreRecord[][]
+) {
+  const merged = [...scheduleGames];
+  const seenIds = new Set(scheduleGames.map((game) => compactString(game.id || game.gameId)).filter(Boolean));
+  standingsGroups.flat().forEach((game) => {
+    const gameId = compactString(game?.id || game?.gameId);
+    if (gameId && seenIds.has(gameId)) return;
+    if (gameId) seenIds.add(gameId);
+    merged.push(game);
+  });
+  return merged;
+}
+
+async function loadTournamentScheduleStandingsGames(
+  teamId: string,
+  scheduleGames: ScheduleEventFirestoreRecord[]
+) {
+  const groups = new Map<string, TournamentScheduleGroupQuery>();
+  scheduleGames.forEach((game) => {
+    const group = getTournamentScheduleGroupQuery(game);
+    if (!group || compactString(game.competitionType).toLowerCase() !== 'tournament') return;
+    groups.set(JSON.stringify([group.divisionName, group.poolName]), group);
+  });
+  if (!groups.size) return scheduleGames;
+
+  const standingsGames = await loadGames(teamId, { tournamentGroups: [...groups.values()] });
+  return mergeScheduleStandingsGames(scheduleGames, [standingsGames]);
+}
+
 async function loadRawTeam(teamId: string) {
   return readWithNativeFallback(
     `team ${teamId}`,
@@ -2504,6 +2647,10 @@ async function loadTeam(teamId: string) {
 }
 
 type ScheduleDateRange = { startDate?: Date | null; endDate?: Date | null };
+type ScheduleGamesQuery = ScheduleDateRange & {
+  tournamentGroup?: TournamentScheduleGroupQuery | null;
+  tournamentGroups?: TournamentScheduleGroupQuery[] | null;
+};
 type ScheduleDateRangeByTeam = Record<string, ScheduleDateRange | undefined>;
 
 function isEventWithinRange(game: any, range: ScheduleDateRange) {
@@ -2515,17 +2662,24 @@ function isEventWithinRange(game: any, range: ScheduleDateRange) {
   return true;
 }
 
-async function loadGames(teamId: string, range: ScheduleDateRange = {}): Promise<ScheduleEventFirestoreRecord[]> {
+async function loadGames(teamId: string, range: ScheduleGamesQuery = {}): Promise<ScheduleEventFirestoreRecord[]> {
   return readWithNativeFallback(
     `games ${teamId}`,
     async () => mapScheduleEventRecords(await getGames(teamId, range)),
     async () => {
-      const docs = (range.startDate || range.endDate)
-        ? await nativeQueryScheduleEventDocuments(teamId, range)
-        : await nativeListScheduleEventDocuments(`teams/${encodeURIComponent(teamId)}/games`);
-      const windowed = (range.startDate || range.endDate)
-        ? docs.filter((doc) => isEventWithinRange(doc, range))
-        : docs;
+      const tournamentGroups = range.tournamentGroups?.length
+        ? range.tournamentGroups
+        : range.tournamentGroup ? [range.tournamentGroup] : [];
+      const docs = tournamentGroups.length
+        ? await nativeQueryTournamentScheduleGroupDocuments(teamId, tournamentGroups)
+        : (range.startDate || range.endDate)
+          ? await nativeQueryScheduleEventDocuments(teamId, range)
+          : await nativeListScheduleEventDocuments(`teams/${encodeURIComponent(teamId)}/games`);
+      const windowed = tournamentGroups.length
+        ? docs.filter((doc) => tournamentGroups.some((group) => matchesTournamentScheduleGroup(doc, group)))
+        : (range.startDate || range.endDate)
+          ? docs.filter((doc) => isEventWithinRange(doc, range))
+          : docs;
       return windowed.sort((a, b) => toEventDate(a.date).getTime() - toEventDate(b.date).getTime());
     }
   );
@@ -2916,7 +3070,19 @@ async function buildTeamSchedule(teamId: string, teamChildren: ParentScheduleChi
     loadPracticeSessions(teamId, gamesRange)
   ]);
   if (!team) return events;
-  const trackedUids = getTrackedCalendarEventUidsFromLoadedGames(dbGames || []);
+  const loadedScheduleGames = dbGames || [];
+  let scheduleGames = loadedScheduleGames;
+  if ((gamesRange.startDate || gamesRange.endDate) && hasTournamentScheduleGames(loadedScheduleGames)) {
+    try {
+      const standingsGames = await loadTournamentScheduleStandingsGames(teamId, loadedScheduleGames);
+      scheduleGames = enrichTournamentScheduleStandings(loadedScheduleGames, team, standingsGames);
+    } catch (error) {
+      logScheduleWarning('Unable to load complete tournament standings.', 'tournament-standings-load', error, { teamId });
+    }
+  } else {
+    scheduleGames = enrichTournamentScheduleStandings(loadedScheduleGames, team, loadedScheduleGames);
+  }
+  const trackedUids = getTrackedCalendarEventUidsFromLoadedGames(scheduleGames);
 
   const teamName = compactString(team.name) || teamId;
   const teamWithId = { ...team, id: team.id || teamId };
@@ -2927,7 +3093,7 @@ async function buildTeamSchedule(teamId: string, teamChildren: ParentScheduleChi
     child.teamName = child.teamName || teamName;
   });
   const availabilityPreferences = normalizeAvailabilityPreferences(team.availabilityPreferences);
-  const visibleSessions = filterVisiblePracticeSessions(practiceSessions || [], dbGames || []);
+  const visibleSessions = filterVisiblePracticeSessions(practiceSessions || [], scheduleGames);
   const sessionsByEventId = new Map<string, any>();
   const sessions: any[] = [];
   const matchedSessionIds = new Set<string>();
@@ -2937,7 +3103,7 @@ async function buildTeamSchedule(teamId: string, teamChildren: ParentScheduleChi
     sessions.push({ ...session, _parsedDate: normalizeScheduleDate(session.date) });
   });
 
-  for (const game of Array.isArray(dbGames) ? dbGames : []) {
+  for (const game of scheduleGames) {
     const isPractice = game.type === 'practice';
     const type = isPractice ? 'practice' : 'game';
     const isCancelled = game.status === 'cancelled';
@@ -3078,7 +3244,7 @@ async function buildTeamSchedule(teamId: string, teamChildren: ParentScheduleChi
       if (isTrackedCalendarEvent(calendarEvent, trackedUids)) return;
       const date = normalizeScheduleDate(calendarEvent.dtstart);
       if (!date) return;
-      const hasConflict = (dbGames || []).some((dbGame: any) => Math.abs(toEventDate(dbGame.date).getTime() - date.getTime()) < 60000);
+      const hasConflict = scheduleGames.some((dbGame: any) => Math.abs(toEventDate(dbGame.date).getTime() - date.getTime()) < 60000);
       if (hasConflict) return;
       const isPractice = isPracticeEvent(calendarEvent.summary);
       const type = isPractice ? 'practice' : 'game';
@@ -3161,10 +3327,26 @@ async function buildTargetedTeamScheduleEvent(teamId: string, eventId: string, t
   ]);
   if (!team) return [];
 
-  const game = initialGame || (occurrenceMatch?.[1]
+  const loadedGame = initialGame || (occurrenceMatch?.[1]
     ? await loadGameById(teamId, occurrenceMatch[1]).catch(() => null)
     : null);
-  if (!game) return [];
+  if (!loadedGame) return [];
+
+  const tournamentGroup = hasTournamentScheduleGames([loadedGame])
+    ? getTournamentScheduleGroupQuery(loadedGame)
+    : null;
+  let game = loadedGame;
+  if (tournamentGroup) {
+    try {
+      const standingsGames = mergeLoadedGameWithStandingsPool(
+        loadedGame,
+        await loadGames(teamId, { tournamentGroups: [tournamentGroup] })
+      );
+      game = enrichTournamentScheduleStandings([loadedGame], team, standingsGames)[0];
+    } catch (error) {
+      logScheduleWarning('Unable to load complete tournament standings.', 'tournament-standings-load', error, { teamId });
+    }
+  }
 
   const teamName = compactString(team.name) || teamId;
   const teamWithId = { ...team, id: team.id || teamId };

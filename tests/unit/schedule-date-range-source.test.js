@@ -23,4 +23,33 @@ describe('schedule date range source contracts', () => {
         expect(appLoadGamesSource).toContain('mapScheduleEventRecords(await getGames(teamId, range))');
         expect(appLoadGamesSource).not.toContain('loadRecurringPracticeMasters');
     });
+
+    it('keeps direct tournament standings reads bounded by pool identity rather than dates', () => {
+        const getGamesSource = extractSource(dbSource, 'export async function getGames', 'export async function getAggregatedStatsForGames');
+        const targetedSource = extractSource(appSource, 'async function buildTargetedTeamScheduleEvent', 'function resolveMyRsvpNotesByChildForGame');
+
+        expect(getGamesSource).toContain('where("tournament.poolName", "==", tournamentGroup.poolName)');
+        expect(getGamesSource).toContain('where("tournament.divisionName", "==", tournamentGroup.divisionName)');
+        expect(getGamesSource).toContain('where("tournament.division", "==", tournamentGroup.divisionName)');
+        expect(getGamesSource).toContain('if (hasTournamentGroup) throw error;');
+        expect(targetedSource).toContain('getTournamentScheduleGroupQuery(loadedGame)');
+        expect(targetedSource).toContain('loadGames(teamId, { tournamentGroups: [tournamentGroup] })');
+        expect(targetedSource).not.toContain('getTournamentDetailStandingsRange');
+        expect(targetedSource).not.toContain('hasTournamentTeamStandingsConfig');
+    });
+
+    it('loads all visible tournament groups together and fetches shared history once', () => {
+        const getGamesSource = extractSource(dbSource, 'export async function getGames', 'export async function getAggregatedStatsForGames');
+        const sharedGamesSource = extractSource(dbSource, 'async function getSharedGamesForTeam', 'async function hasSharedGameUsingConfig');
+        const groupedLoadSource = extractSource(appSource, 'async function loadTournamentScheduleStandingsGames', 'async function loadRawTeam');
+
+        expect(groupedLoadSource).toContain('loadGames(teamId, { tournamentGroups: [...groups.values()] })');
+        expect(groupedLoadSource).not.toContain('.map((tournamentGroup) => loadGames');
+        expect(sharedGamesSource).toContain("where('homeTeamId', '==', teamId)");
+        expect(sharedGamesSource).toContain("where('awayTeamId', '==', teamId)");
+        expect(sharedGamesSource).not.toContain("where('teamIds', 'array-contains', teamId)");
+        expect((getGamesSource.match(/getSharedGamesForTeam\(teamId/g) || [])).toHaveLength(1);
+        expect(getGamesSource).toContain('getSharedGamesForTeam(teamId, { requireComplete: hasTournamentGroup })');
+        expect(getGamesSource).toContain('if (hasTournamentGroup) throw error;');
+    });
 });
