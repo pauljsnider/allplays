@@ -4093,6 +4093,7 @@ describe('ScheduleEventDetail lineup builder', () => {
         'basketball-5v5'
       );
       expect(screen.getByText('Lineup draft autosaved.')).toBeTruthy();
+      expect((screen.getByLabelText('Formation') as HTMLSelectElement).value).toBe('basketball-5v5');
     });
   });
 
