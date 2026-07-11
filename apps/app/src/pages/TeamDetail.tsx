@@ -47,6 +47,24 @@ type RosterAiImportPreviewRow = import('../lib/rosterAiImport').RosterAiImportPr
 
 let rosterAiImportModulePromise: Promise<RosterAiImportModule> | null = null;
 const initialStandingsRowLimit = 5;
+export const rosterRenderLimits = {
+  activePlayers: 32,
+  inactivePlayers: 8,
+  trackingStatuses: 24
+} as const;
+
+export function calculateRosterRenderWindow(totalCount: number, requestedLimit: number, pageSize: number) {
+  const safeTotal = Math.max(0, totalCount);
+  const safePageSize = Math.max(0, pageSize);
+  const safeRequestedLimit = Math.max(0, requestedLimit);
+  const visibleCount = Math.min(safeTotal, safeRequestedLimit);
+  return {
+    visibleCount,
+    hiddenCount: Math.max(0, safeTotal - visibleCount),
+    hasMore: safeTotal > visibleCount,
+    nextLimit: Math.min(safeTotal, visibleCount + safePageSize)
+  };
+}
 
 const tabs: Array<{ id: TeamTab; label: string; icon: LucideIcon }> = [
   { id: 'overview', label: 'Overview', icon: Trophy },
@@ -747,6 +765,12 @@ function RosterTab({
 }) {
   const [pendingPlayerId, setPendingPlayerId] = useState('');
   const [status, setStatus] = useState<{ success: boolean; message: string } | null>(null);
+  const [activePlayerLimit, setActivePlayerLimit] = useState<number>(rosterRenderLimits.activePlayers);
+  const [inactivePlayerLimit, setInactivePlayerLimit] = useState<number>(rosterRenderLimits.inactivePlayers);
+  const activePlayerWindow = calculateRosterRenderWindow(model.players.length, activePlayerLimit, rosterRenderLimits.activePlayers);
+  const inactivePlayerWindow = calculateRosterRenderWindow(model.inactivePlayers.length, inactivePlayerLimit, rosterRenderLimits.inactivePlayers);
+  const visibleActivePlayers = model.players.slice(0, activePlayerWindow.visibleCount);
+  const visibleInactivePlayers = model.inactivePlayers.slice(0, inactivePlayerWindow.visibleCount);
 
   async function togglePlayerActiveState(player: TeamDetailPlayer) {
     const action = player.active ? 'deactivate' : 'reactivate';
@@ -791,10 +815,15 @@ function RosterTab({
       {model.canManageTeam ? <AddPlayerCard teamId={model.team.id} authUser={authUser} onCreated={onRefresh} /> : null}
       {model.canManageTeam ? <RosterAiImportCard teamId={model.team.id} teamName={model.team.name} authUser={authUser} currentPlayers={[...model.players, ...model.inactivePlayers]} onImported={onRefresh} /> : null}
       <div className="mt-3 grid gap-2 sm:grid-cols-2">
-        {model.players.length ? model.players.map((player) => <PlayerRow key={player.id} teamId={model.team.id} teamName={model.team.name} authUser={authUser} player={player} canManageTeam={model.canManageTeam} pending={pendingPlayerId === player.id} onToggleActive={togglePlayerActiveState} inviteSummary={rosterInviteSummaries[player.id]} onInviteCreated={onInviteCreated} />) : (
+        {model.players.length ? visibleActivePlayers.map((player) => <PlayerRow key={player.id} teamId={model.team.id} teamName={model.team.name} authUser={authUser} player={player} canManageTeam={model.canManageTeam} pending={pendingPlayerId === player.id} onToggleActive={togglePlayerActiveState} inviteSummary={rosterInviteSummaries[player.id]} onInviteCreated={onInviteCreated} />) : (
           <div className="rounded-xl border border-gray-200 bg-gray-50 p-4 text-sm font-semibold text-gray-500">No players have been added yet.</div>
         )}
       </div>
+      {activePlayerWindow.hasMore ? (
+        <button type="button" className="secondary-button mt-3 !min-h-9 text-xs" onClick={() => setActivePlayerLimit(activePlayerWindow.nextLimit)}>
+          Show {Math.min(rosterRenderLimits.activePlayers, activePlayerWindow.hiddenCount)} more active players
+        </button>
+      ) : null}
       {model.canManageTeam ? <TrackingAdminCard teamId={model.team.id} authUser={authUser} players={model.players} trackingLoading={trackingLoading} trackingError={trackingError} trackingItems={trackingItems} onTrackingChanged={onTrackingChanged} /> : null}
       {model.canManageTeam && model.inactivePlayers.length ? (
         <div className="mt-4 border-t border-gray-200 pt-4">
@@ -806,8 +835,13 @@ function RosterTab({
             <span className="rounded-full bg-gray-100 px-2.5 py-1 text-xs font-black text-gray-700">{model.inactivePlayers.length} inactive</span>
           </div>
           <div className="mt-3 grid gap-2 sm:grid-cols-2">
-            {model.inactivePlayers.map((player) => <PlayerRow key={player.id} teamId={model.team.id} teamName={model.team.name} authUser={authUser} player={player} canManageTeam pending={pendingPlayerId === player.id} onToggleActive={togglePlayerActiveState} inviteSummary={rosterInviteSummaries[player.id]} onInviteCreated={onInviteCreated} />)}
+            {visibleInactivePlayers.map((player) => <PlayerRow key={player.id} teamId={model.team.id} teamName={model.team.name} authUser={authUser} player={player} canManageTeam pending={pendingPlayerId === player.id} onToggleActive={togglePlayerActiveState} inviteSummary={rosterInviteSummaries[player.id]} onInviteCreated={onInviteCreated} />)}
           </div>
+          {inactivePlayerWindow.hasMore ? (
+            <button type="button" className="secondary-button mt-3 !min-h-9 text-xs" onClick={() => setInactivePlayerLimit(inactivePlayerWindow.nextLimit)}>
+              Show {Math.min(rosterRenderLimits.inactivePlayers, inactivePlayerWindow.hiddenCount)} more inactive players
+            </button>
+          ) : null}
         </div>
       ) : null}
     </section>
@@ -1247,6 +1281,8 @@ function TrackingAdminCard({
   const [submitting, setSubmitting] = useState(false);
   const [busyKey, setBusyKey] = useState('');
   const [statusMessage, setStatusMessage] = useState<{ success: boolean; message: string } | null>(null);
+  const [expandedStatusItemIds, setExpandedStatusItemIds] = useState<Set<string>>(() => new Set());
+  const [statusLimits, setStatusLimits] = useState<Record<string, number>>({});
 
   const visibleItems = trackingItems.filter((item) => showArchived || item.status !== 'archived');
 
@@ -1317,6 +1353,19 @@ function TrackingAdminCard({
     }
   }
 
+  function toggleStatusRows(itemId: string) {
+    setExpandedStatusItemIds((current) => {
+      const next = new Set(current);
+      if (next.has(itemId)) {
+        next.delete(itemId);
+      } else {
+        next.add(itemId);
+      }
+      return next;
+    });
+    setStatusLimits((current) => current[itemId] ? current : { ...current, [itemId]: rosterRenderLimits.trackingStatuses });
+  }
+
   return (
     <div className="mt-4 rounded-xl border border-primary-100 bg-primary-50 p-3">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
@@ -1367,7 +1416,11 @@ function TrackingAdminCard({
       {trackingLoading ? <div className="mt-3 text-xs font-semibold text-gray-500">Loading tracking items…</div> : null}
       {trackingError ? <div className="mt-3 text-xs font-black text-rose-700">{trackingError}</div> : null}
       <div className="mt-3 space-y-3">
-        {visibleItems.length ? visibleItems.map((item) => (
+        {visibleItems.length ? visibleItems.map((item) => {
+          const statusRowsExpanded = expandedStatusItemIds.has(item.id);
+          const statusWindow = calculateRosterRenderWindow(item.playerStatuses.length, statusRowsExpanded ? (statusLimits[item.id] ?? rosterRenderLimits.trackingStatuses) : 0, rosterRenderLimits.trackingStatuses);
+          const visibleStatuses = item.playerStatuses.slice(0, statusWindow.visibleCount);
+          return (
           <div key={item.id} className="rounded-xl border border-white/80 bg-white p-3">
             <div className="flex flex-wrap items-start justify-between gap-2">
               <div>
@@ -1380,13 +1433,17 @@ function TrackingAdminCard({
                 </div>
               </div>
               <div className="flex flex-wrap gap-2">
+                <button type="button" className="secondary-button !min-h-8 text-xs" onClick={() => toggleStatusRows(item.id)} aria-expanded={statusRowsExpanded} aria-controls={`tracking-statuses-${item.id}`}>
+                  {statusRowsExpanded ? 'Hide players' : `Show players (${item.playerStatuses.length})`}
+                </button>
                 <button type="button" className="secondary-button !min-h-8 text-xs" onClick={() => beginEdit(item)} disabled={submitting || Boolean(busyKey)}>Edit</button>
                 {item.status === 'active' ? <button type="button" className="secondary-button !min-h-8 text-xs !border-rose-200 !bg-rose-50 !text-rose-700" onClick={() => void archiveItem(item)} disabled={submitting || Boolean(busyKey)}>{busyKey === `archive:${item.id}` ? 'Archiving…' : 'Archive'}</button> : null}
               </div>
             </div>
-            <div className="mt-3 grid gap-2 sm:grid-cols-2">
-              {item.playerStatuses.length ? item.playerStatuses.map((playerStatus) => (
-                <div key={`${item.id}:${playerStatus.playerId}`} className="flex items-center justify-between gap-3 rounded-lg border border-gray-200 bg-gray-50 px-3 py-2">
+            {statusRowsExpanded ? (
+              <div id={`tracking-statuses-${item.id}`} className="mt-3 grid gap-2 sm:grid-cols-2">
+              {item.playerStatuses.length ? visibleStatuses.map((playerStatus) => (
+                <div key={`${item.id}:${playerStatus.playerId}`} data-testid="tracking-status-row" className="flex items-center justify-between gap-3 rounded-lg border border-gray-200 bg-gray-50 px-3 py-2">
                   <div className="min-w-0 flex items-center gap-3">
                     <PlayerPhoto name={playerStatus.playerName} photoUrl={playerStatus.photoUrl} small />
                     <div className="min-w-0">
@@ -1399,9 +1456,16 @@ function TrackingAdminCard({
                   </button>
                 </div>
               )) : <div className="rounded-xl border border-dashed border-gray-300 bg-gray-50 p-3 text-xs font-semibold text-gray-500">Add active roster players to manage statuses here.</div>}
+              {statusWindow.hasMore ? (
+                <button type="button" className="secondary-button !min-h-9 text-xs sm:col-span-2" onClick={() => setStatusLimits((current) => ({ ...current, [item.id]: statusWindow.nextLimit }))}>
+                  Show {Math.min(rosterRenderLimits.trackingStatuses, statusWindow.hiddenCount)} more statuses
+                </button>
+              ) : null}
             </div>
+            ) : null}
           </div>
-        )) : !trackingLoading ? <div className="rounded-xl border border-gray-200 bg-gray-50 p-4 text-sm font-semibold text-gray-500">No tracking items found.</div> : null}
+        );
+        }) : !trackingLoading ? <div className="rounded-xl border border-gray-200 bg-gray-50 p-4 text-sm font-semibold text-gray-500">No tracking items found.</div> : null}
       </div>
     </div>
   );
@@ -2818,7 +2882,7 @@ function PlayerRow({
   }
 
   return (
-    <div className="rounded-xl border border-gray-200 bg-gray-50 p-3">
+    <div data-testid={player.active ? 'roster-player-row' : 'inactive-roster-player-row'} className="rounded-xl border border-gray-200 bg-gray-50 p-3">
       <div className="flex min-w-0 items-center gap-3">
         <Link to={`/players/${encodeURIComponent(teamId)}/${encodeURIComponent(player.id)}`} className="flex min-w-0 flex-1 items-center gap-3 transition hover:text-primary-700">
           <PlayerPhoto name={player.name} photoUrl={player.photoUrl} />
