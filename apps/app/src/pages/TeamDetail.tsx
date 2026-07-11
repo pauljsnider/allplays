@@ -571,7 +571,7 @@ export function TeamDetail({ auth }: { auth: AuthState }) {
           setDetailCollectionsReloadVersion((current) => current + 1);
         }} /> : <ScheduleTab model={model} auth={auth} onOpenStatTrackerConfigs={() => navigateToTab('more')} />
       ) : null}
-      {activeTab === 'roster' ? <RosterTab model={model} authUser={auth.user} onRefresh={refreshTeamDetail} rosterInviteLoading={rosterInviteLoading} rosterInviteError={rosterInviteError} rosterInviteSummaries={rosterInviteSummaries} onInviteCreated={refreshRosterInvites} trackingLoading={trackingLoading} trackingError={trackingError} trackingItems={trackingItems} onTrackingChanged={refreshTrackingItems} /> : null}
+      {activeTab === 'roster' ? <RosterTab key={model.team.id} model={model} authUser={auth.user} onRefresh={refreshTeamDetail} rosterInviteLoading={rosterInviteLoading} rosterInviteError={rosterInviteError} rosterInviteSummaries={rosterInviteSummaries} onInviteCreated={refreshRosterInvites} trackingLoading={trackingLoading} trackingError={trackingError} trackingItems={trackingItems} onTrackingChanged={refreshTrackingItems} /> : null}
       {activeTab === 'insights' ? <InsightsTab model={model} loading={insightsLoading} error={insightsError} /> : null}
       {activeTab === 'more' ? (
         detailCollectionsLoading ? <InlineDeferredLoading copy="Loading team settings…" /> : detailCollectionsError ? <DeferredCollectionsErrorState message={detailCollectionsError} onRetry={() => {
@@ -1437,6 +1437,7 @@ function TrackingAdminCard({
       {trackingError ? <div className="mt-3 text-xs font-black text-rose-700">{trackingError}</div> : null}
       <div className="mt-3 space-y-3">
         {visibleItems.length ? visibleItems.map((item) => {
+          const itemName = item.name || 'Untitled item';
           const statusRowsExpanded = expandedStatusItemIds.has(item.id);
           const statusWindow = calculateRosterRenderWindow(item.playerStatuses.length, statusRowsExpanded ? (statusLimits[item.id] ?? rosterRenderLimits.trackingStatuses) : 0, rosterRenderLimits.trackingStatuses);
           const visibleStatuses = item.playerStatuses.slice(0, statusWindow.visibleCount);
@@ -1444,7 +1445,7 @@ function TrackingAdminCard({
           <div key={item.id} className="rounded-xl border border-white/80 bg-white p-3">
             <div className="flex flex-wrap items-start justify-between gap-2">
               <div>
-                <div className="text-sm font-black text-gray-950">{item.name || 'Untitled item'}</div>
+                <div className="text-sm font-black text-gray-950">{itemName}</div>
                 {item.description ? <div className="mt-1 text-xs font-semibold text-gray-500">{item.description}</div> : null}
                 <div className="mt-2 flex flex-wrap gap-2">
                   <span className="rounded-full bg-primary-50 px-2 py-0.5 text-[10px] font-black uppercase tracking-[0.04em] text-primary-700">{item.visibility}</span>
@@ -1453,7 +1454,7 @@ function TrackingAdminCard({
                 </div>
               </div>
               <div className="flex flex-wrap gap-2">
-                <button type="button" className="secondary-button !min-h-8 text-xs" onClick={() => toggleStatusRows(item.id)} aria-expanded={statusRowsExpanded} aria-controls={`tracking-statuses-${item.id}`}>
+                <button type="button" className="secondary-button !min-h-8 text-xs" onClick={() => toggleStatusRows(item.id)} aria-expanded={statusRowsExpanded} aria-controls={`tracking-statuses-${item.id}`} aria-label={`${statusRowsExpanded ? 'Hide players' : `Show players (${item.playerStatuses.length})`} for ${itemName}`}>
                   {statusRowsExpanded ? 'Hide players' : `Show players (${item.playerStatuses.length})`}
                 </button>
                 <button type="button" className="secondary-button !min-h-8 text-xs" onClick={() => beginEdit(item)} disabled={submitting || Boolean(busyKey)}>Edit</button>
@@ -1477,7 +1478,7 @@ function TrackingAdminCard({
                 </div>
               )) : <div className="rounded-xl border border-dashed border-gray-300 bg-gray-50 p-3 text-xs font-semibold text-gray-500">Add active roster players to manage statuses here.</div>}
               {statusWindow.hasMore ? (
-                <button type="button" className="secondary-button !min-h-9 text-xs sm:col-span-2" onClick={() => setStatusLimits((current) => ({ ...current, [item.id]: statusWindow.nextLimit }))}>
+                <button type="button" className="secondary-button !min-h-9 text-xs sm:col-span-2" onClick={() => setStatusLimits((current) => ({ ...current, [item.id]: statusWindow.nextLimit }))} aria-label={`Show ${Math.min(rosterRenderLimits.trackingStatuses, statusWindow.hiddenCount)} more statuses for ${itemName}`}>
                   Show {Math.min(rosterRenderLimits.trackingStatuses, statusWindow.hiddenCount)} more statuses
                 </button>
               ) : null}
