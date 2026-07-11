@@ -828,7 +828,7 @@ export function ChatWindow({
       document.removeEventListener('visibilitychange', handleReturn);
       window.removeEventListener('focus', handleReturn);
     };
-  }, [auth.user, effectiveConversationId, messages.length, teamId]);
+  }, [auth.user, effectiveConversationId, initialSnapshotLoadedRef, messages.length, teamId]);
 
   useEffect(() => {
     mountedRef.current = true;

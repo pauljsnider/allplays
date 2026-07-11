@@ -128,6 +128,17 @@ describe('Messages ALL PLAYS lazy loading', () => {
 });
 
 describe('Chat composer audience lifecycle', () => {
+  it('keeps the view-return last-read retry effect subscribed to the snapshot-loaded ref', () => {
+    const sourcePath = resolveAppSourcePath('src/pages/messages/components/ChatWindow.tsx');
+    const source = readFileSync(sourcePath, 'utf8');
+    const retryEffectStart = source.indexOf('const handleReturn = () => {');
+    const retryEffectEnd = source.indexOf('useEffect(() => {', retryEffectStart + 1);
+    const retryEffectSource = source.slice(retryEffectStart, retryEffectEnd);
+
+    expect(retryEffectSource).toContain('hasLoadedSnapshot: initialSnapshotLoadedRef.current');
+    expect(retryEffectSource).toContain('[auth.user, effectiveConversationId, initialSnapshotLoadedRef, messages.length, teamId]');
+  });
+
   it('keeps full team as the default and resets the audience before enqueueing each send', () => {
     const sourcePath = resolveAppSourcePath('src/pages/messages/components/ChatWindow.tsx');
     const source = readFileSync(sourcePath, 'utf8');
