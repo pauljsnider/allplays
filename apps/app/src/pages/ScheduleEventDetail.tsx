@@ -787,7 +787,7 @@ function GameScheduleEditPanel({ auth, event }: { auth: AuthState; event: Parent
   useEffect(() => {
     setForm(buildGameFormFromEvent(event));
     setStatus(null);
-  }, [event.eventKey]);
+  }, [event, event.eventKey]);
 
   useEffect(() => {
     if (!open || !auth.user) return;
@@ -872,7 +872,7 @@ function PracticeScheduleEditPanel({ auth, event }: { auth: AuthState; event: Pa
     setSeriesId(null);
     setSeriesEventId(null);
     setStatus(null);
-  }, [event.eventKey]);
+  }, [event, event.eventKey]);
 
   const updateField = (field: keyof SchedulePracticeFormInput, value: string | Date | PracticeRecurrenceFormInput) => {
     setForm((current) => ({ ...current, [field]: value }));
@@ -1046,7 +1046,7 @@ function AvailabilitySection({ event, rsvp, availabilityNote, onAvailabilityNote
     ? `Are ${familyNames[0]} and ${familyNames[1]} going?`
     : `Are all ${familyNames.length} children going?`;
   const rsvpWorkflow = useScheduleEventRsvp({ availabilityNote, applyToAllChildren: useFamilyRsvp });
-  const staffRsvpLoader = useMemo(() => createStaffRsvpAvailabilityLoader(), [event.teamId, event.id]);
+  const staffRsvpLoader = useMemo(() => createStaffRsvpAvailabilityLoader(), []);
   const staffRsvp = useStaffRsvpBreakdown(staffRsvpLoader);
   const showTeamRsvpTools = event.isDbGame && Boolean(event.isTeamAdmin || event.isTeamRsvpReminderManager);
   const availabilitySummary = showTeamRsvpTools ? (staffRsvp.breakdown?.counts || event.rsvpSummary) : event.rsvpSummary;
@@ -1958,7 +1958,7 @@ function StatsheetImportPanel({ event, onImported }: { event: ParentScheduleEven
     } finally {
       setLoadingContext(false)
     }
-  }, [columns.length, event.id, event.teamId, roster])
+  }, [columns, event.id, event.teamId, roster])
 
   const setPreviewFile = useCallback((nextFile: File | null) => {
     if (previewUrlRef.current) {
@@ -2619,7 +2619,7 @@ function GameDaySubstitutionPanel({ auth, event }: { auth: AuthState; event: Par
         if (!cancelled) setLoading(false);
       });
     return () => { cancelled = true; };
-  }, [auth.user, event.teamId, event.id, event.gamePlan, event.isCancelled, formationId]);
+  }, [auth.user, event, event.teamId, event.id, event.gamePlan, event.isCancelled, formationId]);
 
   useEffect(() => {
     if (period && periods.includes(period)) return;
@@ -2806,7 +2806,7 @@ function GameHubLineupBuilderPanel({ auth, event, onGamePlanSaved }: { auth: Aut
     dirtyRef.current = false;
     latestDraftRef.current = {};
     latestPreviewRef.current = null;
-  }, [event.eventKey]);
+  }, [event.eventKey, event.gamePlan?.formationId]);
 
   useEffect(() => {
     let cancelled = false;
@@ -2846,7 +2846,7 @@ function GameHubLineupBuilderPanel({ auth, event, onGamePlanSaved }: { auth: Aut
       });
 
     return () => { cancelled = true; };
-  }, [auth.user, event.teamId, event.id, event.gamePlan, event.isCancelled, formationId]);
+  }, [auth.user, event, event.teamId, event.id, event.gamePlan, event.isCancelled, formationId]);
 
   useEffect(() => {
     latestDraftRef.current = draftLineups;
@@ -3305,7 +3305,7 @@ function LiveScoreEditor({ auth, event, homePlayers, loadingHomePlayers, showSti
     });
   };
 
-  const saveScore = async (mode: 'manual' | 'autosave' = 'manual', scoreOverride?: ScoreSnapshot) => {
+  const saveScore = useCallback(async (mode: 'manual' | 'autosave' = 'manual', scoreOverride?: ScoreSnapshot) => {
     if (!auth.user) return;
     const nextScore = scoreOverride || { homeScore, awayScore };
     if (nextScore.homeScore === savedHomeScore && nextScore.awayScore === savedAwayScore) return;
@@ -3345,7 +3345,7 @@ function LiveScoreEditor({ auth, event, homePlayers, loadingHomePlayers, showSti
     } finally {
       setSaving(false);
     }
-  };
+  }, [auth.user, awayScore, event.id, event.teamId, homeScore, onScoreUpdated, savedAwayScore, savedHomeScore]);
 
   useEffect(() => {
     if (!auth.user || !dirty || saving || playerScoringId) return undefined;
@@ -3368,7 +3368,7 @@ function LiveScoreEditor({ auth, event, homePlayers, loadingHomePlayers, showSti
       }
       setAutosaveScheduled(false);
     };
-  }, [auth.user, awayScore, dirty, homeScore, playerScoringId, saving]);
+  }, [auth.user, awayScore, dirty, homeScore, playerScoringId, saveScore, saving]);
 
   const manualScoreSaveLabel = status?.tone === 'error' && dirty ? 'Retry save' : (saving ? 'Saving score' : 'Save score');
   const helperText = autosaveScheduled
@@ -4018,7 +4018,7 @@ function StaffPracticePacketEditor({ auth, event, childEvents }: { auth: AuthSta
     return () => {
       cancelled = true;
     };
-  }, [auth.user, childEvents, event.eventKey]);
+  }, [auth.user, childEvents, event, event.eventKey]);
 
   const updateBlock = (index: number, patch: Partial<StaffPracticePacketBlock>) => {
     setBlocks((current) => current.map((block, blockIndex) => blockIndex === index ? { ...block, ...patch } : block));
@@ -4131,7 +4131,7 @@ function PracticePacketSection({ auth, event, childEvents }: { auth: AuthState; 
     } finally {
       if (showLoading) setLoadingPacket(false);
     }
-  }, [childEvents, event.id, event.practiceHomePacketSummary, event.practiceSessionId, event.teamId]);
+  }, [childEvents, event]);
 
   useEffect(() => {
     setPacketStatus(null);
