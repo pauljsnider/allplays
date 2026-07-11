@@ -573,8 +573,9 @@ function calculatePublicRegistrationFeeSnapshot(form = {}, options = {}) {
   const subtotalAmountCents = originalFeeAmountCents * quantity;
   let finalAmountDueCents = subtotalAmountCents;
   const appliedDiscounts = [];
+  const discountRules = normalizePublicRegistrationDiscountRules(form.discountRules || []);
 
-  normalizePublicRegistrationDiscountRules(form.discountRules || []).forEach((rule) => {
+  discountRules.forEach((rule) => {
     if (!rule.active || !isPublicRegistrationDiscountEligible(rule, { quantity, now: submittedAt })) return;
     const discountAmountCents = rule.amountType === 'percent'
       ? Math.round(finalAmountDueCents * (rule.amountValue / 100))
@@ -588,6 +589,8 @@ function calculatePublicRegistrationFeeSnapshot(form = {}, options = {}) {
       label: rule.label,
       amountType: rule.amountType,
       amountValue: rule.amountValue,
+      earlyBirdDeadline: rule.earlyBirdDeadline,
+      minimumQuantity: rule.minimumQuantity,
       amountCents: appliedAmountCents
     });
   });
@@ -597,6 +600,7 @@ function calculatePublicRegistrationFeeSnapshot(form = {}, options = {}) {
     quantity,
     originalFeeAmountCents,
     subtotalAmountCents,
+    discountRules,
     appliedDiscounts,
     finalAmountDueCents
   };
@@ -891,7 +895,8 @@ function computeRegistrationFeeAmountCentsFromForm(form, now = new Date(), optio
   const originalFeeAmountCents = Math.max(0, Math.round(Number(form.feeAmountCents || 0)));
   const quantity = Math.max(1, Math.floor(Number(options.quantity || 1)));
   let remainingAmountCents = originalFeeAmountCents * quantity;
-  normalizeServerRegistrationDiscountRules(form.discountRules || []).forEach((rule) => {
+  const discountRulesSource = Array.isArray(options.discountRules) ? options.discountRules : form.discountRules || [];
+  normalizeServerRegistrationDiscountRules(discountRulesSource).forEach((rule) => {
     if (!rule.active || !isServerDiscountRuleEligible(rule, { quantity, now })) return;
     let discountAmountCents;
     if (rule.amountType === 'percent') {
@@ -933,6 +938,31 @@ function getRegistrationPaymentPlanPaidInstallmentCount(registration = {}) {
 
 function shouldKeepRegistrationCapacityReserved(registration = {}) {
   return registration.paymentPlan?.id === 'installments' && getRegistrationPaymentPlanPaidInstallmentCount(registration) > 0;
+}
+
+function getRegistrationSubmittedAtDate(registration = {}, fallback = new Date()) {
+  const submittedAt = registration.submittedAt;
+  let resolved = null;
+  if (submittedAt instanceof Date) {
+    resolved = submittedAt;
+  } else if (submittedAt && typeof submittedAt.toDate === 'function') {
+    resolved = submittedAt.toDate();
+  } else if (submittedAt && typeof submittedAt.toMillis === 'function') {
+    resolved = new Date(submittedAt.toMillis());
+  } else if (submittedAt !== null && submittedAt !== undefined && submittedAt !== '') {
+    resolved = new Date(submittedAt);
+  }
+  return resolved instanceof Date && Number.isFinite(resolved.getTime()) ? resolved : fallback;
+}
+
+function getRegistrationCapturedDiscountRules(registration = {}) {
+  if (Array.isArray(registration.feeSnapshot?.discountRules)) {
+    return registration.feeSnapshot.discountRules;
+  }
+  // Legacy snapshots did not capture the authoritative rule scope. Keep that
+  // state distinct from a captured empty list so callers can fail closed
+  // instead of applying rules that may have been added after submission.
+  return null;
 }
 
 function buildRegistrationInstallmentPaymentState(registration = {}, form = null, nextPaidInstallmentCount = getRegistrationPaymentPlanPaidInstallmentCount(registration)) {
@@ -982,10 +1012,16 @@ function getRegistrationCheckoutAmountCents(registration = {}, form = null) {
     return Math.max(0, Math.round(Number(installmentState.currentInstallment?.amountCents || 0) || 0));
   }
   if (form) {
+    const capturedDiscountRules = getRegistrationCapturedDiscountRules(registration);
     // Recompute from the authoritative form pricing rules using the quantity
-    // captured on the server-created registration snapshot for this submission.
-    return computeRegistrationFeeAmountCentsFromForm(form, new Date(), {
-      quantity: registration.feeSnapshot?.quantity || 1
+    // plus the discount rules and submission time captured by the
+    // server-created registration. Using the captured rule scope preserves
+    // retry discounts without granting rules added after submission. Legacy
+    // snapshots without a captured rule scope receive no retry discount;
+    // stored appliedDiscounts remain non-authoritative for billing.
+    return computeRegistrationFeeAmountCentsFromForm(form, getRegistrationSubmittedAtDate(registration), {
+      quantity: registration.feeSnapshot?.quantity || 1,
+      discountRules: capturedDiscountRules === null ? [] : capturedDiscountRules
     });
   }
   if (registration.paymentPlan?.id === 'installments') {
@@ -3528,8 +3564,9 @@ exports.createStripeRegistrationCheckout = functions.https.onCall(async (data) =
     throw new functions.https.HttpsError('failed-precondition', 'This registration has already been paid.');
   }
 
-  // Always recompute the expected amount from the authoritative form document.
-  // This prevents a tampered feeSnapshot on the stored registration from lowering the charge.
+  // Recompute from the authoritative form at the server-captured submission
+  // time. This prevents a tampered feeSnapshot from lowering the charge while
+  // preserving time-sensitive discounts when checkout is retried later.
   const expectedAmountCents = getRegistrationCheckoutAmountCents(registration, form);
   const amountCents = expectedAmountCents;
   if (!Number.isFinite(amountCents) || amountCents <= 0) {

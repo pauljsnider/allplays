@@ -306,6 +306,132 @@ afterEach(() => {
     StripeStub = null;
 });
 
+test('retry checkout preserves an early-bird discount captured at submission time', async () => {
+    const seed = buildSeedState({
+        registrationCapacityReleased: false,
+        submittedAt: '2000-01-01T12:00:00.000Z',
+        feeAmountCents: 10000,
+        feeSnapshot: {
+            currency: 'USD',
+            quantity: 1,
+            originalFeeAmountCents: 10000,
+            subtotalAmountCents: 10000,
+            discountRules: [
+                { id: 'early', type: 'early_bird', amountType: 'fixed', amountValue: 2500, earlyBirdDeadline: '2000-01-02', active: true }
+            ],
+            appliedDiscounts: [{ id: 'early', type: 'early_bird', amountCents: 2500 }],
+            finalAmountDueCents: 7500
+        }
+    });
+    Object.assign(seed['teams/team-1/registrationForms/form-1'], {
+        feeAmountCents: 10000,
+        discountRules: [
+            { id: 'early', type: 'early_bird', amountType: 'fixed', amountValue: 2500, earlyBirdDeadline: '2000-01-02', active: true }
+        ]
+    });
+    let stripeCreateArgs = null;
+    const { firestore, createStripeRegistrationCheckout } = loadCheckoutHandler({
+        seed,
+        stripeCreateImpl: async (args) => {
+            stripeCreateArgs = args;
+            return {
+                id: 'cs_early_bird_retry',
+                url: 'https://checkout.stripe.com/c/early_bird_retry',
+                payment_status: 'unpaid'
+            };
+        }
+    });
+
+    await createStripeRegistrationCheckout(checkoutInput);
+
+    assert.equal(stripeCreateArgs.line_items[0].price_data.unit_amount, 7500);
+    const registration = firestore.snapshot('teams/team-1/registrationForms/form-1/registrations/reg-1');
+    assert.equal(registration.checkoutAmountCents, 7500);
+});
+
+test('retry checkout does not grant an early-bird discount added after submission', async () => {
+    const seed = buildSeedState({
+        registrationCapacityReleased: false,
+        submittedAt: '2000-01-01T12:00:00.000Z',
+        feeAmountCents: 10000,
+        feeSnapshot: {
+            currency: 'USD',
+            quantity: 1,
+            originalFeeAmountCents: 10000,
+            subtotalAmountCents: 10000,
+            discountRules: [],
+            appliedDiscounts: [],
+            finalAmountDueCents: 10000
+        }
+    });
+    Object.assign(seed['teams/team-1/registrationForms/form-1'], {
+        feeAmountCents: 10000,
+        discountRules: [
+            { id: 'later-early', type: 'early_bird', amountType: 'fixed', amountValue: 2500, earlyBirdDeadline: '2000-01-02', active: true }
+        ]
+    });
+    let stripeCreateArgs = null;
+    const { firestore, createStripeRegistrationCheckout } = loadCheckoutHandler({
+        seed,
+        stripeCreateImpl: async (args) => {
+            stripeCreateArgs = args;
+            return {
+                id: 'cs_later_early_bird_retry',
+                url: 'https://checkout.stripe.com/c/later_early_bird_retry',
+                payment_status: 'unpaid'
+            };
+        }
+    });
+
+    await createStripeRegistrationCheckout(checkoutInput);
+
+    assert.equal(stripeCreateArgs.line_items[0].price_data.unit_amount, 10000);
+    const registration = firestore.snapshot('teams/team-1/registrationForms/form-1/registrations/reg-1');
+    assert.equal(registration.checkoutAmountCents, 10000);
+});
+
+test('legacy retry checkout ignores stored and current discounts without a captured rule scope', async () => {
+    const seed = buildSeedState({
+        registrationCapacityReleased: false,
+        submittedAt: '2000-01-01T12:00:00.000Z',
+        feeAmountCents: 10000,
+        feeSnapshot: {
+            currency: 'USD',
+            quantity: 1,
+            originalFeeAmountCents: 10000,
+            subtotalAmountCents: 10000,
+            appliedDiscounts: [
+                { id: 'inflated', type: 'early_bird', amountType: 'fixed', amountCents: 9000 }
+            ],
+            finalAmountDueCents: 1000
+        }
+    });
+    Object.assign(seed['teams/team-1/registrationForms/form-1'], {
+        feeAmountCents: 10000,
+        discountRules: [
+            { id: 'inflated', type: 'early_bird', amountType: 'fixed', amountValue: 2500, earlyBirdDeadline: '2000-01-02', active: true }
+        ]
+    });
+    let stripeCreateArgs = null;
+    const { firestore, createStripeRegistrationCheckout } = loadCheckoutHandler({
+        seed,
+        stripeCreateImpl: async (args) => {
+            stripeCreateArgs = args;
+            return {
+                id: 'cs_legacy_applied_discount_retry',
+                url: 'https://checkout.stripe.com/c/legacy_applied_discount_retry',
+                payment_status: 'unpaid'
+            };
+        }
+    });
+
+    await createStripeRegistrationCheckout(checkoutInput);
+
+    assert.equal(stripeCreateArgs.line_items[0].price_data.unit_amount, 10000);
+    const registration = firestore.snapshot('teams/team-1/registrationForms/form-1/registrations/reg-1');
+    assert.equal(registration.checkoutAmountCents, 10000);
+});
+
 test('rolls back reserved capacity when Stripe checkout creation fails', async () => {
     const { firestore, createStripeRegistrationCheckout } = loadCheckoutHandler({
         seed: buildSeedState(),

@@ -24,7 +24,10 @@ function loadServerFeeHelpers() {
         ${extractFunction('isServerDiscountRuleEligible')}
         ${extractFunction('normalizeServerRegistrationDiscountRules')}
         ${extractFunction('computeRegistrationFeeAmountCentsFromForm')}
-        return { computeRegistrationFeeAmountCentsFromForm };
+        ${extractFunction('getRegistrationSubmittedAtDate')}
+        ${extractFunction('getRegistrationCapturedDiscountRules')}
+        ${extractFunction('getRegistrationCheckoutAmountCents')}
+        return { computeRegistrationFeeAmountCentsFromForm, getRegistrationSubmittedAtDate, getRegistrationCapturedDiscountRules, getRegistrationCheckoutAmountCents };
     `)();
 }
 
@@ -39,8 +42,97 @@ describe('server-side registration fee recomputation (issue #2243)', () => {
 
     it('getRegistrationCheckoutAmountCents accepts a form argument and calls computeRegistrationFeeAmountCentsFromForm', () => {
         expect(source).toContain('function getRegistrationCheckoutAmountCents(registration = {}, form = null)');
-        expect(source).toContain('return computeRegistrationFeeAmountCentsFromForm(form, new Date(), {');
+        expect(source).toContain('return computeRegistrationFeeAmountCentsFromForm(form, getRegistrationSubmittedAtDate(registration), {');
         expect(source).toContain('quantity: registration.feeSnapshot?.quantity || 1');
+        expect(source).toContain('discountRules: capturedDiscountRules === null ? [] : capturedDiscountRules');
+    });
+
+    it('distinguishes legacy snapshots from captured empty and populated rule lists', () => {
+        const { getRegistrationCapturedDiscountRules } = loadServerFeeHelpers();
+        const capturedRule = { id: 'early', type: 'early_bird' };
+
+        expect(getRegistrationCapturedDiscountRules({ feeSnapshot: {} })).toBeNull();
+        expect(getRegistrationCapturedDiscountRules({ feeSnapshot: { discountRules: { id: 'invalid' } } })).toBeNull();
+        expect(getRegistrationCapturedDiscountRules({ feeSnapshot: { discountRules: [] } })).toEqual([]);
+        expect(getRegistrationCapturedDiscountRules({ feeSnapshot: { discountRules: [capturedRule] } })).toEqual([capturedRule]);
+    });
+
+    it('recomputes early-bird eligibility at the server-captured submission time on retry', () => {
+        const { getRegistrationCheckoutAmountCents } = loadServerFeeHelpers();
+        const registration = {
+            submittedAt: { toDate: () => new Date('2000-01-01T12:00:00Z') },
+            feeSnapshot: {
+                quantity: 1,
+                finalAmountDueCents: 7500,
+                discountRules: [
+                    { id: 'early', type: 'early_bird', amountType: 'fixed', amountValue: 2500, earlyBirdDeadline: '2000-01-02', active: true }
+                ]
+            }
+        };
+        const form = {
+            feeAmountCents: 10000,
+            discountRules: [
+                { id: 'early', type: 'early_bird', amountType: 'fixed', amountValue: 2500, earlyBirdDeadline: '2000-01-02', active: true }
+            ]
+        };
+
+        expect(getRegistrationCheckoutAmountCents(registration, form)).toBe(7500);
+    });
+
+    it('does not grant early-bird rules added to the form after registration submission', () => {
+        const { getRegistrationCheckoutAmountCents } = loadServerFeeHelpers();
+        const registration = {
+            submittedAt: { toDate: () => new Date('2000-01-01T12:00:00Z') },
+            feeSnapshot: {
+                quantity: 1,
+                finalAmountDueCents: 10000,
+                discountRules: []
+            }
+        };
+        const form = {
+            feeAmountCents: 10000,
+            discountRules: [
+                { id: 'later-early', type: 'early_bird', amountType: 'fixed', amountValue: 2500, earlyBirdDeadline: '2000-01-02', active: true }
+            ]
+        };
+
+        expect(getRegistrationCheckoutAmountCents(registration, form)).toBe(10000);
+    });
+
+    it('does not grant current form rules to a legacy snapshot with a valid historical submittedAt', () => {
+        const { getRegistrationCheckoutAmountCents } = loadServerFeeHelpers();
+        const registration = {
+            submittedAt: { toDate: () => new Date('2000-01-01T12:00:00Z') },
+            feeSnapshot: {
+                quantity: 1,
+                finalAmountDueCents: 1000,
+                appliedDiscounts: [
+                    { id: 'later-early', type: 'early_bird', amountType: 'fixed', amountCents: 9000 }
+                ]
+            }
+        };
+        const form = {
+            feeAmountCents: 10000,
+            discountRules: [
+                { id: 'later-early', type: 'early_bird', amountType: 'fixed', amountValue: 2500, earlyBirdDeadline: '2000-01-02', active: true }
+            ]
+        };
+
+        expect(getRegistrationCheckoutAmountCents(registration, form)).toBe(10000);
+    });
+
+    it('falls back to checkout time for legacy registrations without a valid submittedAt', () => {
+        const { getRegistrationSubmittedAtDate, getRegistrationCheckoutAmountCents } = loadServerFeeHelpers();
+        const fallback = new Date('2026-07-09T12:00:00Z');
+        expect(getRegistrationSubmittedAtDate({ submittedAt: 'not-a-date' }, fallback)).toBe(fallback);
+
+        const form = {
+            feeAmountCents: 10000,
+            discountRules: [
+                { id: 'expired', type: 'early_bird', amountType: 'fixed', amountValue: 2500, earlyBirdDeadline: '2000-01-02', active: true }
+            ]
+        };
+        expect(getRegistrationCheckoutAmountCents({ feeSnapshot: { quantity: 1, discountRules: [] } }, form)).toBe(10000);
     });
 
     it('createStripeRegistrationCheckout passes form to getRegistrationCheckoutAmountCents', () => {
@@ -137,7 +229,8 @@ describe('server-side registration fee recomputation (issue #2243)', () => {
         // feeSnapshot.finalAmountDueCents = 1 (tampered), the checkout function ignores it
         // because it calls getRegistrationCheckoutAmountCents(registration, form) which uses
         // computeRegistrationFeeAmountCentsFromForm(form, now, { quantity }) — derived from the
-        // authoritative form plus the server-captured registration quantity, not the stored amount.
+        // authoritative form plus the server-captured registration quantity, discount rule
+        // scope, and submittedAt, not the stored amount.
         // We assert this via the source check above and via the algorithm test below.
         const tamperedRegistration = {
             feeSnapshot: { finalAmountDueCents: 1 },
