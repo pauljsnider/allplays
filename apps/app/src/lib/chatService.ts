@@ -1061,7 +1061,6 @@ export async function ensureStaffChatConversation(teamId: string, user: AuthUser
     type: 'group',
     participantIds: [],
     participantRoles: ['staff'],
-    mutedBy: [],
     name: 'Staff only'
   })), 'Staff chat conversation create') as ChatConversation;
 }

@@ -3,7 +3,7 @@ import '@testing-library/jest-dom/vitest';
 import { useCallback } from 'react';
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { useChatMessages } from '../useChatMessages';
+import { getChatMessagesErrorMessage, useChatMessages } from '../useChatMessages';
 import { loadOlderTeamChatMessages, subscribeToTeamChatMessages } from '../../../../lib/chatService';
 import type { AuthState } from '../../../../lib/types';
 import type { ChatMessage } from '../../../../lib/chatService';
@@ -202,6 +202,22 @@ describe('useChatMessages', () => {
 
         await waitFor(() => expect(screen.getByTestId('loading').textContent).toBe('false'));
         expect(screen.getByTestId('message-ids').textContent).toBe('recovered');
+    });
+
+    it('replaces Firestore permission details with actionable, user-safe copy', async () => {
+        const permissionError = Object.assign(new Error('Missing or insufficient permissions.'), {
+            code: 'permission-denied'
+        });
+        render(<MessagesProbe conversationId="staff" />);
+
+        act(() => {
+            errorCallback?.(permissionError);
+        });
+
+        await waitFor(() => expect(screen.getByTestId('loading').textContent).toBe('false'));
+        expect(screen.getByTestId('error').textContent).toBe("We couldn't open this conversation. Your team access may have changed.");
+        expect(screen.getByTestId('error').textContent).not.toContain('permissions');
+        expect(getChatMessagesErrorMessage({ code: 'permission-denied' })).toBe("We couldn't open this conversation. Your team access may have changed.");
     });
 
     it('resets the loading state when loading older messages fails and still rejects to the caller', async () => {

@@ -22,6 +22,15 @@ function normalizeConversationId(conversationId: string) {
   return String(conversationId || '').trim() || DEFAULT_TEAM_CONVERSATION_ID;
 }
 
+export function getChatMessagesErrorMessage(error: unknown) {
+  const code = String((error as { code?: unknown } | null)?.code || '').trim().toLowerCase();
+  const message = error instanceof Error ? error.message.trim() : '';
+  if (code === 'permission-denied' || /missing or insufficient permissions/i.test(message)) {
+    return "We couldn't open this conversation. Your team access may have changed.";
+  }
+  return message || 'Unable to load chat messages.';
+}
+
 export function useChatMessages({
   teamId,
   team,
@@ -73,7 +82,7 @@ export function useChatMessages({
         onMarkRead?.();
       },
       (subscribeError) => {
-        setError(subscribeError.message || 'Unable to load chat messages.');
+        setError(getChatMessagesErrorMessage(subscribeError));
         setLoadingMessages(false);
       }
     );

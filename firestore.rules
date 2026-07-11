@@ -1472,6 +1472,25 @@ service cloud.firestore {
              data.get('participantIds', []) == [];
     }
 
+    // Legacy clients stored coach ids on the canonical staff conversation. Team
+    // staff may read that conversation record only so a current client can
+    // normalize it; nested messages remain inaccessible until the record has the
+    // canonical empty participant list.
+    function canReadCanonicalStaffChatConversationForRepair(teamId, conversationId, data) {
+      return isTeamOwnerOrAdmin(teamId) &&
+             isCanonicalStaffChatConversation(conversationId) &&
+             data.get('type', '') == 'group' &&
+             isStaffRoleChatConversation(data);
+    }
+
+    function isCanonicalStaffChatConversationRepair(teamId, conversationId) {
+      return canReadCanonicalStaffChatConversationForRepair(teamId, conversationId, resource.data) &&
+             isCanonicalStaffChatConversationPayload(conversationId, request.resource.data) &&
+             request.resource.data.get('participantRoles', []) == ['staff'] &&
+             request.resource.data.diff(resource.data).affectedKeys()
+               .hasOnly(['type', 'name', 'participantIds', 'participantRoles', 'mutedBy', 'updatedAt']);
+    }
+
     function canAccessChatConversation(teamId, conversationId, conversationData) {
       let participantIds = conversationData.get('participantIds', []);
       return canAccessTeamChat(teamId) &&
@@ -3114,16 +3133,18 @@ service cloud.firestore {
       // remains teams/{teamId}/chatMessages for compatibility; targeted threads
       // store messages under their conversation record.
       match /chatConversations/{conversationId} {
-        allow get: if canAccessChatConversation(teamId, conversationId, resource.data);
+        allow get: if canAccessChatConversation(teamId, conversationId, resource.data) ||
+                      canReadCanonicalStaffChatConversationForRepair(teamId, conversationId, resource.data);
         allow list: if canListChatConversation(teamId, conversationId, resource.data);
         allow create: if canAccessTeamChat(teamId) &&
                          isChatConversationPayloadValid(request.resource.data) &&
                          canAccessChatConversation(teamId, conversationId, request.resource.data);
-        allow update: if canAccessChatConversation(teamId, conversationId, resource.data) &&
-                         canAccessChatConversation(teamId, conversationId, request.resource.data) &&
-                         isChatConversationPayloadValid(request.resource.data) &&
-                         (isTeamStaffChatConversationUpdate(teamId) ||
-                          isChatConversationParticipantMetadataUpdate());
+        allow update: if isChatConversationPayloadValid(request.resource.data) &&
+                         ((canAccessChatConversation(teamId, conversationId, resource.data) &&
+                           canAccessChatConversation(teamId, conversationId, request.resource.data) &&
+                           (isTeamStaffChatConversationUpdate(teamId) ||
+                            isChatConversationParticipantMetadataUpdate())) ||
+                          isCanonicalStaffChatConversationRepair(teamId, conversationId));
         allow delete: if isTeamOwnerOrAdmin(teamId);
 
         match /chatMessages/{messageId} {

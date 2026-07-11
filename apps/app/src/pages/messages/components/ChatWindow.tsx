@@ -156,6 +156,13 @@ const allTargetOptions: Array<{ value: ChatTargetType; label: string; descriptio
 ];
 const STAFF_CONVERSATION_PLACEHOLDER_ID = '__staff_conversation__';
 
+function isStaffOnlyConversation(conversation?: ChatConversation | null) {
+  const participantRoles = Array.isArray(conversation?.participantRoles)
+    ? conversation.participantRoles.map((role) => String(role || '').trim().toLowerCase()).filter(Boolean)
+    : [];
+  return participantRoles.length === 1 && participantRoles[0] === 'staff';
+}
+
 export async function sendLazyAllPlaysChatAnswer(input: Parameters<typeof sendAllPlaysChatAnswer>[0]) {
   const chatAiService = await import('../../../lib/chatAiService');
   return chatAiService.sendAllPlaysChatAnswer(input);
@@ -469,7 +476,7 @@ export function ChatWindow({
     conversations.find((conversation) => conversation.id === effectiveConversationId) || conversations[0] || null
   ), [conversations, effectiveConversationId]);
   const conversationSheetConversations = useMemo<ChatConversation[]>(() => {
-    if (!canModerate || conversations.some((conversation) => isStaffConversation(conversation))) {
+    if (!canModerate || conversations.some((conversation) => isStaffOnlyConversation(conversation))) {
       return conversations;
     }
     const staffPlaceholderConversation = {
@@ -825,7 +832,7 @@ export function ChatWindow({
       document.removeEventListener('visibilitychange', handleReturn);
       window.removeEventListener('focus', handleReturn);
     };
-  }, [auth.user, effectiveConversationId, messages.length, teamId]);
+  }, [auth.user, effectiveConversationId, initialSnapshotLoadedRef, messages.length, teamId]);
 
   useEffect(() => {
     mountedRef.current = true;
@@ -862,7 +869,7 @@ export function ChatWindow({
       const staffConversation = await ensureStaffChatConversation(teamId, auth.user, conversations);
       setConversations((current) => (
         current.some((conversation) => conversation.id === staffConversation.id)
-          ? current
+          ? current.map((conversation) => conversation.id === staffConversation.id ? staffConversation : conversation)
           : [...current, staffConversation]
       ));
       if (selectedConversationId !== staffConversation.id) {
@@ -875,11 +882,20 @@ export function ChatWindow({
   };
 
   const handleConversationSelect = (conversationId: string) => {
-    if (conversationId === STAFF_CONVERSATION_PLACEHOLDER_ID) {
+    const conversation = conversations.find((item) => item.id === conversationId);
+    if (conversationId === STAFF_CONVERSATION_PLACEHOLDER_ID || isStaffOnlyConversation(conversation)) {
       void ensureAndSwitchStaffConversation();
       return;
     }
     switchConversation(conversationId);
+  };
+
+  const handleBackFromError = () => {
+    if (messagesError && !teamError && !isDefaultTeamConversation(effectiveConversationId)) {
+      switchConversation(DEFAULT_TEAM_CONVERSATION_ID);
+      return;
+    }
+    navigate('/messages');
   };
 
   const handleAudienceTargetChange = async (target: ChatTargetType) => {
@@ -1372,7 +1388,7 @@ export function ChatWindow({
               Retry
             </button>
           ) : null}
-          <button type="button" className="secondary-button" onClick={() => navigate('/messages')}>Back to messages</button>
+          <button type="button" className="secondary-button" onClick={handleBackFromError}>Back to messages</button>
         </div>
       </section>
     );
@@ -1431,7 +1447,7 @@ export function ChatWindow({
                   className={`shrink-0 rounded-full px-3 py-1.5 text-xs font-black transition ${
                     active ? 'bg-primary-600 text-white' : 'bg-gray-100 text-gray-700 hover:bg-primary-50 hover:text-primary-700'
                   }`}
-                  onClick={() => switchConversation(conversation.id)}
+                  onClick={() => handleConversationSelect(conversation.id)}
                 >
                   {getConversationDisplayName(conversation, team || {})}
                 </button>

@@ -201,7 +201,7 @@ describe('targeted team chat Firestore rules', () => {
         expect(rules).toContain('function isTeamStaffChatConversationUpdate(teamId)');
         expect(rules).toContain('return isTeamOwnerOrAdmin(teamId) &&');
         expect(rules).toContain('(isTeamStaffChatConversationUpdate(teamId) ||');
-        expect(rules).toContain('isChatConversationParticipantMetadataUpdate());');
+        expect(rules).toContain('isChatConversationParticipantMetadataUpdate())) ||');
     });
 
     it('requires team staff/admin access and server-derived members for the canonical staff conversation', () => {
@@ -214,6 +214,19 @@ describe('targeted team chat Firestore rules', () => {
         expect(rules).toContain('isCanonicalStaffChatConversation(conversationId) &&');
         expect(rules).toContain('isTeamOwnerOrAdmin(teamId) &&');
         expect(rules).toContain('isCanonicalStaffChatConversationPayload(conversationId, conversationData)');
+    });
+
+    it('allows only team staff to repair legacy canonical staff metadata without exposing nested messages', () => {
+        expect(rules).toContain('function canReadCanonicalStaffChatConversationForRepair(teamId, conversationId, data)');
+        expect(rules).toContain('function isCanonicalStaffChatConversationRepair(teamId, conversationId)');
+        expect(rules).toContain("request.resource.data.get('participantRoles', []) == ['staff']");
+        expect(rules).toContain(".hasOnly(['type', 'name', 'participantIds', 'participantRoles', 'mutedBy', 'updatedAt'])");
+
+        const nestedMessageStart = rules.indexOf('match /chatMessages/{messageId} {', rules.indexOf('match /chatConversations/{conversationId} {'));
+        const nestedMessageEnd = rules.indexOf('// Server-only dedup log', nestedMessageStart);
+        const nestedMessageRules = rules.slice(nestedMessageStart, nestedMessageEnd);
+        expect(nestedMessageRules).not.toContain('canReadCanonicalStaffChatConversationForRepair');
+        expect(nestedMessageRules).not.toContain('isCanonicalStaffChatConversationRepair');
     });
 
     it('does not authorize staff-role conversations through caller-controlled participantIds', () => {
@@ -232,7 +245,7 @@ describe('targeted team chat Firestore rules', () => {
     });
 
     it('keeps conversation list authorization compatible with existing participant and moderator queries', () => {
-        expect(rules).toContain('allow get: if canAccessChatConversation(teamId, conversationId, resource.data);');
+        expect(rules).toContain('allow get: if canAccessChatConversation(teamId, conversationId, resource.data) ||');
         expect(rules).toContain('allow list: if canListChatConversation(teamId, conversationId, resource.data);');
         expect(rules).toContain('function canListChatConversation(teamId, conversationId, conversationData)');
 

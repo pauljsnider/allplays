@@ -652,6 +652,25 @@ describe('ChatWindow virtualization', () => {
     expect(mockRouter.navigate).toHaveBeenCalledTimes(1);
   });
 
+  it('returns an errored staff conversation to the team thread in place', () => {
+    mockThreadLoadScenario = 'retrySuccess';
+    mockChatTeamState.selectedConversationId = 'group_role%3Astaff';
+    mockChatTeamState.conversations = [
+      { id: 'team', type: 'team', name: 'Team chat', participantIds: [], participantRoles: ['team'] },
+      { id: 'group_role%3Astaff', type: 'group', name: 'Staff only', participantIds: [], participantRoles: ['staff'] }
+    ];
+    render(
+      <MemoryRouter initialEntries={['/messages/team-1']}>
+        <ChatWindow auth={auth} teamId="team-1" />
+      </MemoryRouter>
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'Back to messages' }));
+
+    expect(mockChatTeamState.switchConversation).toHaveBeenCalledWith('team');
+    expect(mockRouter.navigate).not.toHaveBeenCalled();
+  });
+
   it('replaces an open conversation sheet when the media gallery opens', async () => {
     useStatefulChatSheets = true;
     render(
@@ -779,13 +798,20 @@ describe('ChatWindow deferred conversation hydration', () => {
 });
 
 describe('ChatWindow conversation switching', () => {
-  it('quick-switches an existing mobile conversation without opening the selector sheet', () => {
+  it('repairs an existing staff conversation before quick-switching to it', async () => {
     mockChatTeamState.conversations = [
       { id: 'team', type: 'team', name: 'Team chat', participantIds: [], participantRoles: ['team'] },
       { id: 'staff-conversation', type: 'group', name: 'Staff only', participantIds: ['coach-1'], participantRoles: ['staff'] },
       { id: 'direct-parent', type: 'direct', name: 'Pat Parent', participantIds: ['parent-1'], participantRoles: ['parent'] },
       { id: 'travel-group', type: 'group', name: 'Tournament travel', participantIds: ['coach-1', 'parent-1'], participantRoles: ['staff', 'parent'] }
     ];
+    vi.mocked(ensureStaffChatConversation).mockResolvedValue({
+      id: 'group_role%3Astaff',
+      type: 'group',
+      name: 'Staff only',
+      participantIds: [],
+      participantRoles: ['staff']
+    } as ChatConversation);
 
     render(
       <MemoryRouter>
@@ -802,8 +828,8 @@ describe('ChatWindow conversation switching', () => {
 
     fireEvent.click(within(quickSwitcher).getByRole('button', { name: 'Switch to Staff only' }));
 
-    expect(mockChatTeamState.switchConversation).toHaveBeenCalledWith('staff-conversation');
-    expect(ensureStaffChatConversation).not.toHaveBeenCalled();
+    await waitFor(() => expect(ensureStaffChatConversation).toHaveBeenCalledWith('team-1', auth.user, mockChatTeamState.conversations));
+    expect(mockChatTeamState.switchConversation).toHaveBeenCalledWith('group_role%3Astaff');
     expect(mockChatSheetsState.openConversationSheet).not.toHaveBeenCalled();
   });
 
@@ -838,12 +864,19 @@ describe('ChatWindow conversation switching', () => {
     expect(mockChatSheetsState.openConversationSheet).not.toHaveBeenCalled();
   });
 
-  it('keeps staff chat reachable from the conversation selector without audience-sheet staff routing', () => {
+  it('repairs staff chat selected from the conversation selector', async () => {
     mockChatSheetsState.showConversationSheet = true;
     mockChatTeamState.conversations = [
       { id: 'team', type: 'team', name: 'Team chat', participantIds: [], participantRoles: ['team'] },
       { id: 'staff-conversation', type: 'group', name: 'Staff only', participantIds: ['coach-1'], participantRoles: ['staff'] }
     ];
+    vi.mocked(ensureStaffChatConversation).mockResolvedValue({
+      id: 'group_role%3Astaff',
+      type: 'group',
+      name: 'Staff only',
+      participantIds: [],
+      participantRoles: ['staff']
+    } as ChatConversation);
 
     render(
       <MemoryRouter>
@@ -853,8 +886,8 @@ describe('ChatWindow conversation switching', () => {
 
     fireEvent.click(screen.getAllByRole('button', { name: /Staff only/i })[0]);
 
-    expect(mockChatTeamState.switchConversation).toHaveBeenCalledWith('staff-conversation');
-    expect(ensureStaffChatConversation).not.toHaveBeenCalled();
+    await waitFor(() => expect(ensureStaffChatConversation).toHaveBeenCalledWith('team-1', auth.user, mockChatTeamState.conversations));
+    expect(mockChatTeamState.switchConversation).toHaveBeenCalledWith('group_role%3Astaff');
   });
 
   it('creates the staff conversation from the selector when a team has never opened it', async () => {

@@ -5,7 +5,7 @@ import {
     assertSucceeds,
     initializeTestEnvironment
 } from '@firebase/rules-unit-testing';
-import { doc, serverTimestamp, setDoc, Timestamp, updateDoc } from 'firebase/firestore';
+import { doc, getDoc, serverTimestamp, setDoc, Timestamp, updateDoc } from 'firebase/firestore';
 
 const rules = readFileSync(new URL('../../firestore.rules', import.meta.url), 'utf8');
 const dbSource = readFileSync(new URL('../../js/db.js', import.meta.url), 'utf8');
@@ -319,6 +319,45 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('nested team chat message 
         await assertSucceeds(setDoc(messageRef(parentDb, directConversationId, 'valid-direct'), directPayload()));
         await assertSucceeds(setDoc(messageRef(parentDb, directConversationId, 'valid-direct-no-email'), directWithoutStoredEmail));
         await assertSucceeds(setDoc(messageRef(coachDb, staffConversationId, 'valid-staff'), staffPayload()));
+    });
+
+    it('lets only team staff repair legacy canonical metadata before reading staff messages', async () => {
+        const legacyCreatedAt = Timestamp.fromMillis(1700000000000);
+        await testEnv.withSecurityRulesDisabled(async (context) => {
+            const firestore = context.firestore();
+            await setDoc(doc(firestore, `teams/team-1/chatConversations/${staffConversationId}`), {
+                type: 'group',
+                name: 'Staff only',
+                participantIds: ['coach-1'],
+                participantRoles: ['staff'],
+                mutedBy: [],
+                createdAt: legacyCreatedAt,
+                updatedAt: Timestamp.now()
+            });
+            await setDoc(messageRef(firestore, staffConversationId, 'legacy-staff-message'), {
+                text: 'Staff update'
+            });
+        });
+
+        const coachDb = authedFirestore('coach-1', 'coach@example.com');
+        const parentDb = authedFirestore('parent-1', 'parent@example.com');
+        const coachConversationRef = doc(coachDb, `teams/team-1/chatConversations/${staffConversationId}`);
+        const parentConversationRef = doc(parentDb, `teams/team-1/chatConversations/${staffConversationId}`);
+
+        await assertSucceeds(getDoc(coachConversationRef));
+        await assertFails(getDoc(parentConversationRef));
+        await assertFails(getDoc(messageRef(coachDb, staffConversationId, 'legacy-staff-message')));
+        await assertSucceeds(setDoc(coachConversationRef, {
+            type: 'group',
+            name: 'Staff only',
+            participantIds: [],
+            participantRoles: ['staff'],
+            mutedBy: [],
+            createdAt: legacyCreatedAt,
+            updatedAt: serverTimestamp()
+        }));
+        await assertSucceeds(getDoc(messageRef(coachDb, staffConversationId, 'legacy-staff-message')));
+        await assertFails(getDoc(messageRef(parentDb, staffConversationId, 'legacy-staff-message')));
     });
 
     it('allows legacy full-team text and exact scoped Firebase Storage uploads', async () => {

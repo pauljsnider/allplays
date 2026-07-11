@@ -241,4 +241,53 @@ describe('upsertChatConversation', () => {
             createdAt: now
         });
     });
+
+    it('repairs legacy participant-scoped data on the canonical staff conversation', async () => {
+        const now = { seconds: 789 };
+        const conversationRef = { path: 'teams/team-1/chatConversations/group_role%3Astaff' };
+        const getDoc = vi.fn().mockResolvedValue(makeSnapshot({
+            type: 'group',
+            participantIds: ['coach-1'],
+            participantRoles: ['staff', 'coach'],
+            mutedBy: ['coach-2'],
+            name: 'Staff only',
+            createdAt: { seconds: 1 },
+            updatedAt: { seconds: 2 }
+        }));
+        const setDoc = vi.fn().mockResolvedValue(undefined);
+        const upsertChatConversation = buildUpsertChatConversation({
+            normalizeConversationType: vi.fn((value) => value),
+            normalizeConversationParticipantIds: vi.fn(() => []),
+            buildConversationId: vi.fn(() => 'group_role%3Astaff'),
+            Timestamp: { now: vi.fn(() => now) },
+            doc: vi.fn(() => conversationRef),
+            db: {},
+            getDoc,
+            setDoc
+        });
+
+        const result = await upsertChatConversation('team-1', {
+            type: 'group',
+            participantIds: [],
+            participantRoles: ['staff'],
+            name: 'Staff only'
+        });
+
+        expect(setDoc).toHaveBeenCalledWith(conversationRef, {
+            type: 'group',
+            participantIds: [],
+            participantRoles: ['staff'],
+            updatedAt: now
+        }, { merge: true });
+        expect(result).toEqual({
+            id: 'group_role%3Astaff',
+            type: 'group',
+            participantIds: [],
+            participantRoles: ['staff'],
+            mutedBy: ['coach-2'],
+            name: 'Staff only',
+            createdAt: { seconds: 1 },
+            updatedAt: now
+        });
+    });
 });
