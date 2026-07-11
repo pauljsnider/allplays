@@ -28,7 +28,7 @@ type AppSearchDialogProps = {
 const backdropCloseGuardMs = 750;
 const hydrationSearchFallbackMs = 250;
 const keyboardInsetActivationThresholdPx = 80;
-const remotePlayerSearchCoalesceMs = 180;
+const remotePlayerSearchCoalesceMs = 120;
 
 export function AppSearchDialog({ auth, open, onClose }: AppSearchDialogProps) {
   const [query, setQuery] = useState('');
