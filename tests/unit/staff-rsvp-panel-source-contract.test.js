@@ -34,6 +34,8 @@ describe('staff RSVP panel decomposition contract', () => {
         expect(reminderPanelSource).toContain('const canLoad = Boolean(auth.user && event.isTeamRsvpReminderManager && event.isDbGame && !event.isCancelled);');
         expect(reminderPanelSource).toContain('staffRsvpLoader.loadReminderPreview(event, auth.user)');
         expect(reminderPanelSource).toContain('const result: StaffRsvpReminderSendResult = await sendStaffRsvpReminder(event, auth.user, auth.profile || {});');
-        expect(reminderPanelSource).toContain('setStatus(`RSVP reminder sent to team chat and ${result.emailSentCount} parent/guardian ${result.emailSentCount === 1 ? \'email\' : \'emails\'}.`);');
+        expect(reminderPanelSource).toContain('setStatus(result.emailSentCount > 0');
+        expect(reminderPanelSource).toContain('`RSVP reminder sent to team chat and ${result.emailSentCount} parent/guardian ${result.emailSentCount === 1 ? \'email\' : \'emails\'}.`');
+        expect(reminderPanelSource).toContain("'RSVP reminder sent to team chat. No parent/guardian emails were sent.'");
     });
 });

@@ -32,8 +32,8 @@ const preview = {
     missingPlayerCount: 2,
     eligibleEmailCount: 3,
     players: [
-        { playerId: 'player-1', playerName: 'Avery Smith', parentEmails: ['one@example.com'] },
-        { playerId: 'player-2', playerName: 'Blake Jones', parentEmails: ['two@example.com'] }
+        { playerId: 'player-1', playerName: 'Avery Smith', parentEmails: ['one@example.com'], hasEligibleParentEmail: true },
+        { playerId: 'player-2', playerName: 'Blake Jones', parentEmails: ['two@example.com'], hasEligibleParentEmail: true }
     ]
 } as any;
 
@@ -101,6 +101,7 @@ describe('StaffRsvpReminderPanel', () => {
         });
         expect(staffRsvpLoader.loadReminderPreview).toHaveBeenCalledWith(expect.objectContaining({ id: 'game-1' }), auth.user);
         expect(screen.getByText('2 no-response players · 3 eligible parent/guardian emails.')).toBeTruthy();
+        expect(screen.queryByRole('button', { name: 'Review players without email' })).toBeNull();
 
         fireEvent.click(screen.getByRole('button', { name: 'Send reminder' }));
 
@@ -111,6 +112,65 @@ describe('StaffRsvpReminderPanel', () => {
         expect(screen.getByText('Sent')).toBeTruthy();
         expect(screen.queryByRole('button', { name: 'Send reminder' })).toBeNull();
         expect(screen.getByRole('button', { name: 'Send again' })).toBeTruthy();
+    });
+
+    it('warns about partial email coverage and reveals uncovered players without blocking send', async () => {
+        const partialPreview = {
+            ...preview,
+            eligibleEmailCount: 1,
+            players: [
+                { playerId: 'player-1', playerName: 'Avery Smith', parentEmails: ['one@example.com'], hasEligibleParentEmail: true },
+                { playerId: 'player-2', playerName: 'Blake Jones', parentEmails: [], hasEligibleParentEmail: false }
+            ]
+        };
+        const staffRsvpLoader = createStaffRsvpLoader();
+        staffRsvpLoader.loadReminderPreview.mockResolvedValue(partialPreview);
+        const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(false);
+
+        renderPanel({}, staffRsvpLoader);
+
+        expect(await screen.findByText('1 no-response player has no eligible parent/guardian email. Reminder still posts to team chat; emails only reach eligible guardians.')).toBeVisible();
+        expect(screen.queryByText('Blake Jones')).toBeNull();
+        const disclosure = screen.getByRole('button', { name: 'Review players without email' });
+        expect(disclosure).toHaveAttribute('aria-expanded', 'false');
+        fireEvent.click(disclosure);
+        expect(screen.getByText('Blake Jones')).toBeVisible();
+        expect(screen.queryByText('Avery Smith')).toBeNull();
+
+        fireEvent.click(screen.getByRole('button', { name: 'Send reminder' }));
+
+        expect(confirmSpy).toHaveBeenCalledWith('Send an RSVP reminder to 2 no-response players? 1 eligible parent/guardian email will be targeted. 1 no-response player has no eligible parent/guardian email. The reminder will also post to team chat.');
+        expect(sendStaffRsvpReminder).not.toHaveBeenCalled();
+    });
+
+    it('uses team-chat-only copy and the existing send path when no email is eligible', async () => {
+        const zeroEmailPreview = {
+            ...preview,
+            eligibleEmailCount: 0,
+            players: [
+                { playerId: 'player-1', playerName: 'Avery Smith', parentEmails: [], hasEligibleParentEmail: false },
+                { playerId: 'player-2', playerName: 'Blake Jones', parentEmails: [], hasEligibleParentEmail: false }
+            ]
+        };
+        const staffRsvpLoader = createStaffRsvpLoader();
+        staffRsvpLoader.loadReminderPreview.mockResolvedValue(zeroEmailPreview);
+        vi.mocked(sendStaffRsvpReminder).mockResolvedValue({
+            ...zeroEmailPreview,
+            emailSentCount: 0
+        });
+        const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true);
+
+        renderPanel({}, staffRsvpLoader);
+
+        expect(await screen.findByText('No eligible parent/guardian emails for 2 no-response players. Reminder will post to team chat only.')).toBeVisible();
+        expect(screen.getByRole('button', { name: 'Send reminder' })).toBeVisible();
+        fireEvent.click(screen.getByRole('button', { name: 'Send reminder' }));
+
+        expect(confirmSpy).toHaveBeenCalledWith('Send an RSVP reminder to 2 no-response players? No parent/guardian emails will be sent. The reminder will post to team chat only.');
+        await waitFor(() => {
+            expect(sendStaffRsvpReminder).toHaveBeenCalledWith(expect.objectContaining({ id: 'game-1' }), auth.user, auth.profile);
+        });
+        expect(screen.getByText('RSVP reminder sent to team chat. No parent/guardian emails were sent.')).toBeVisible();
     });
 
     it('keeps repeat reminders secondary and confirmed after a successful send', async () => {
