@@ -102,9 +102,10 @@ describe('React app auth/profile capability parity', () => {
             'activationCode',
             'Forgot password?',
             'Continue with Google',
-            'Enter invite code',
-            'Account action'
+            'Enter invite code'
         ]);
+        expect(authPage).not.toContain('Account action');
+        expect(authPage).not.toContain('<Link to="/reset-password"');
         expectContains(authService, [
             'signInWithNativeRestSession',
             'signInWithNativeGoogleCredential',
