@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent } from 'react';
 import { Link, useLocation, useParams } from 'react-router-dom';
 import {
   BellOff,
@@ -374,6 +374,141 @@ function InboxList({
   compact?: boolean;
 }) {
   const trimmedQuery = searchQuery.trim();
+  const listRef = useRef<HTMLElement | null>(null);
+  const compactScrollContainerRef = useRef<HTMLElement | null>(null);
+  const shouldWindow = teams.length > INBOX_WINDOWING_THRESHOLD;
+  const activeTeamIndex = useMemo(
+    () => activeTeamId ? teams.findIndex((team) => team.id === activeTeamId) : -1,
+    [activeTeamId, teams]
+  );
+  const [rowWindow, setRowWindow] = useState<InboxRowWindow>(() => ({
+    startIndex: 0,
+    endIndex: Math.min(teams.length, INBOX_WINDOWING_THRESHOLD)
+  }));
+  const [keyboardFocusIndex, setKeyboardFocusIndex] = useState<number | null>(null);
+
+  const updateRowWindow = useCallback(() => {
+    if (!shouldWindow || !listRef.current) {
+      setRowWindow({ startIndex: 0, endIndex: teams.length });
+      return;
+    }
+
+    if (compact) {
+      const scrollContainer = compactScrollContainerRef.current || listRef.current.parentElement;
+      setRowWindow(getInboxRowWindow({
+        itemCount: teams.length,
+        scrollOffset: scrollContainer?.scrollTop || 0,
+        viewportSize: scrollContainer?.clientHeight || DEFAULT_INBOX_VIEWPORT_HEIGHT
+      }));
+      return;
+    }
+
+    const listOffset = listRef.current.getBoundingClientRect().top + window.scrollY;
+    setRowWindow(getInboxRowWindow({
+      itemCount: teams.length,
+      scrollOffset: window.scrollY,
+      viewportSize: window.innerHeight || DEFAULT_INBOX_VIEWPORT_HEIGHT,
+      listOffset
+    }));
+  }, [compact, shouldWindow, teams.length]);
+
+  useEffect(() => {
+    if (!shouldWindow) {
+      setRowWindow({ startIndex: 0, endIndex: teams.length });
+      return;
+    }
+
+    const scrollTarget = compact ? listRef.current?.parentElement : window;
+    if (compact) {
+      compactScrollContainerRef.current = scrollTarget instanceof HTMLElement ? scrollTarget : null;
+    }
+    let animationFrame = 0;
+    const scheduleUpdate = () => {
+      if (animationFrame) return;
+      animationFrame = window.requestAnimationFrame(() => {
+        animationFrame = 0;
+        updateRowWindow();
+      });
+    };
+
+    updateRowWindow();
+    if (scrollTarget) {
+      scrollTarget.addEventListener('scroll', scheduleUpdate, { passive: true });
+    }
+    window.addEventListener('resize', scheduleUpdate);
+    return () => {
+      if (scrollTarget) {
+        scrollTarget.removeEventListener('scroll', scheduleUpdate);
+      }
+      window.removeEventListener('resize', scheduleUpdate);
+      if (animationFrame) window.cancelAnimationFrame(animationFrame);
+    };
+  }, [compact, shouldWindow, teams.length, updateRowWindow]);
+
+  useEffect(() => {
+    if (!shouldWindow || !compact || activeTeamIndex < 0 || !listRef.current) return;
+    if (keyboardFocusIndex !== null) return;
+    const scrollContainer = listRef.current.parentElement;
+    if (!scrollContainer) return;
+    const viewportHeight = scrollContainer.clientHeight || DEFAULT_INBOX_VIEWPORT_HEIGHT;
+    const rowTop = activeTeamIndex * INBOX_ROW_HEIGHT;
+    const rowBottom = rowTop + INBOX_ROW_HEIGHT;
+    if (rowTop < scrollContainer.scrollTop || rowBottom > scrollContainer.scrollTop + viewportHeight) {
+      scrollContainer.scrollTop = Math.max(0, rowTop - Math.floor((viewportHeight - INBOX_ROW_HEIGHT) / 2));
+      updateRowWindow();
+    }
+  }, [activeTeamIndex, compact, keyboardFocusIndex, shouldWindow, updateRowWindow]);
+
+  const focusWindowedTeam = useCallback((teamIndex: number) => {
+    if (!shouldWindow || !compact || !listRef.current) return;
+    const nextIndex = Math.min(teams.length - 1, Math.max(0, teamIndex));
+    setKeyboardFocusIndex(nextIndex);
+    const scrollContainer = compactScrollContainerRef.current || listRef.current.parentElement;
+    const viewportHeight = scrollContainer?.clientHeight || DEFAULT_INBOX_VIEWPORT_HEIGHT;
+    const rowTop = nextIndex * INBOX_ROW_HEIGHT;
+    const rowBottom = rowTop + INBOX_ROW_HEIGHT;
+    let scrollOffset = scrollContainer?.scrollTop || 0;
+
+    if (rowTop < scrollOffset || rowBottom > scrollOffset + viewportHeight) {
+      scrollOffset = Math.max(0, rowTop - Math.floor((viewportHeight - INBOX_ROW_HEIGHT) / 2));
+      if (scrollContainer) scrollContainer.scrollTop = scrollOffset;
+    }
+
+    setRowWindow(getInboxRowWindow({
+      itemCount: teams.length,
+      scrollOffset,
+      viewportSize: viewportHeight
+    }));
+    window.requestAnimationFrame(() => {
+      listRef.current
+        ?.querySelector<HTMLElement>(`[data-inbox-index="${nextIndex}"]`)
+        ?.focus();
+    });
+  }, [compact, shouldWindow, teams.length]);
+
+  const handleWindowedListKeyDown = useCallback((event: KeyboardEvent<HTMLElement>) => {
+    if (!shouldWindow || !compact) return;
+    const focusedRow = (event.target as HTMLElement).closest<HTMLElement>('[data-inbox-index]');
+    const focusedIndex = focusedRow ? Number(focusedRow.dataset.inboxIndex) : activeTeamIndex;
+    let nextIndex: number | null = null;
+
+    if (event.key === 'ArrowDown') nextIndex = Math.min(teams.length - 1, Math.max(0, focusedIndex + 1));
+    if (event.key === 'ArrowUp') nextIndex = Math.max(0, focusedIndex < 0 ? 0 : focusedIndex - 1);
+    if (event.key === 'Home') nextIndex = 0;
+    if (event.key === 'End') nextIndex = teams.length - 1;
+    if (nextIndex === null) return;
+
+    event.preventDefault();
+    focusWindowedTeam(nextIndex);
+  }, [activeTeamIndex, compact, focusWindowedTeam, shouldWindow, teams.length]);
+
+  const displayedRowWindow = keyboardFocusIndex === null
+    ? rowWindow
+    : getInboxRowWindow({
+      itemCount: teams.length,
+      scrollOffset: keyboardFocusIndex * INBOX_ROW_HEIGHT,
+      viewportSize: compactScrollContainerRef.current?.clientHeight || DEFAULT_INBOX_VIEWPORT_HEIGHT
+    });
 
   if (loading && !teams.length) {
     return <MessagesPageSkeleton />;
@@ -410,16 +545,54 @@ function InboxList({
     );
   }
 
+  if (!shouldWindow) {
+    return (
+      <section className={compact ? 'space-y-2' : 'space-y-3'}>
+        {teams.map((team) => (
+          <InboxRow key={team.id} team={team} active={activeTeamId === team.id} compact={compact} onSelect={onSelect} />
+        ))}
+      </section>
+    );
+  }
+
+  const visibleTeams = teams.slice(displayedRowWindow.startIndex, displayedRowWindow.endIndex);
   return (
-    <section className={compact ? 'space-y-2' : 'space-y-3'}>
-      {teams.map((team) => (
-        <InboxRow key={team.id} team={team} active={activeTeamId === team.id} compact={compact} onSelect={onSelect} />
-      ))}
+    <section
+      ref={listRef}
+      className="relative"
+      style={{ height: teams.length * INBOX_ROW_HEIGHT }}
+      data-testid="messages-inbox-window"
+      tabIndex={compact ? 0 : undefined}
+      aria-label={compact ? 'Team chats. Use the Up and Down Arrow, Home, and End keys to move through all teams.' : undefined}
+      onKeyDown={handleWindowedListKeyDown}
+      onBlur={(event) => {
+        if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setKeyboardFocusIndex(null);
+      }}
+    >
+      {visibleTeams.map((team, visibleIndex) => {
+        const teamIndex = displayedRowWindow.startIndex + visibleIndex;
+        return (
+          <InboxRow
+            key={team.id}
+            team={team}
+            active={activeTeamId === team.id}
+            compact={compact}
+            onSelect={onSelect}
+            inboxIndex={teamIndex}
+            managedKeyboard={compact}
+            style={{
+              position: 'absolute',
+              top: teamIndex * INBOX_ROW_HEIGHT,
+              height: INBOX_ROW_HEIGHT - INBOX_ROW_GAP
+            }}
+          />
+        );
+      })}
     </section>
   );
 }
 
-function InboxRow({ team, active, compact, onSelect }: { team: ChatTeam; active: boolean; compact: boolean; onSelect?: (teamId: string) => void }) {
+function InboxRow({ team, active, compact, onSelect, inboxIndex, managedKeyboard = false, style }: { team: ChatTeam; active: boolean; compact: boolean; onSelect?: (teamId: string) => void; inboxIndex?: number; managedKeyboard?: boolean; style?: CSSProperties }) {
   const preview = getChatInboxPreview(team.lastMessage);
   const timeLabel = formatInboxTime(team.lastMessage?.createdAt);
   const route = buildMessagesRoute(team.id, team.preferredConversationId);
@@ -428,6 +601,9 @@ function InboxRow({ team, active, compact, onSelect }: { team: ChatTeam; active:
     <Link
       to={route}
       onClick={onSelect ? () => onSelect(team.id) : undefined}
+      style={style}
+      data-inbox-index={inboxIndex}
+      tabIndex={managedKeyboard ? -1 : undefined}
       className={`message-row app-card flex items-center gap-3 p-3 transition hover:border-primary-200 hover:shadow-app-lg ${
         active ? '!border-primary-200 bg-primary-50/50' : ''
       }`}
@@ -458,6 +634,46 @@ function InboxRow({ team, active, compact, onSelect }: { team: ChatTeam; active:
       )}
     </Link>
   );
+}
+
+export const INBOX_ROW_HEIGHT = 80;
+export const INBOX_ROW_GAP = 8;
+export const INBOX_WINDOW_OVERSCAN = 4;
+export const INBOX_WINDOWING_THRESHOLD = 40;
+export const DEFAULT_INBOX_VIEWPORT_HEIGHT = 640;
+
+export type InboxRowWindow = {
+  startIndex: number;
+  endIndex: number;
+};
+
+export function getInboxRowWindow({
+  itemCount,
+  scrollOffset,
+  viewportSize,
+  listOffset = 0,
+  rowHeight = INBOX_ROW_HEIGHT,
+  overscan = INBOX_WINDOW_OVERSCAN
+}: {
+  itemCount: number;
+  scrollOffset: number;
+  viewportSize: number;
+  listOffset?: number;
+  rowHeight?: number;
+  overscan?: number;
+}): InboxRowWindow {
+  const safeItemCount = Math.max(0, Math.floor(itemCount));
+  if (safeItemCount === 0) return { startIndex: 0, endIndex: 0 };
+  const safeRowHeight = Math.max(1, rowHeight);
+  const safeOverscan = Math.max(0, Math.floor(overscan));
+  const safeViewportSize = Math.max(0, viewportSize);
+  const maxScrollOffset = Math.max(0, safeItemCount * safeRowHeight - safeViewportSize);
+  const relativeOffset = Math.min(maxScrollOffset, Math.max(0, scrollOffset - listOffset));
+  const firstVisibleIndex = Math.min(safeItemCount - 1, Math.floor(relativeOffset / safeRowHeight));
+  const visibleRowCount = Math.max(1, Math.ceil(safeViewportSize / safeRowHeight));
+  const startIndex = Math.max(0, firstVisibleIndex - safeOverscan);
+  const endIndex = Math.min(safeItemCount, firstVisibleIndex + visibleRowCount + safeOverscan);
+  return { startIndex, endIndex };
 }
 
 function EmptyChatSelection() {
