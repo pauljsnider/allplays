@@ -12,5 +12,6 @@ describe('React app schedule event detail hook dependencies', () => {
         expect(source).toContain('}, [auth.user, awayScore, event.id, event.teamId, homeScore, onScoreUpdated, savedAwayScore, savedHomeScore]);');
         expect(source).toContain('}, [auth.user, awayScore, dirty, homeScore, playerScoringId, saveScore, saving]);');
         expect(source).toContain('}, [childEvents, event]);');
+        expect(source).toContain('}, [event.eventKey, eventFormationId, resetLineupBuilderState]);');
     });
 });

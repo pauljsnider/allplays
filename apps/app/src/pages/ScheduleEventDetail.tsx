@@ -2761,7 +2761,8 @@ function GameDaySubstitutionPanel({ auth, event }: { auth: AuthState; event: Par
 function GameHubLineupBuilderPanel({ auth, event, onGamePlanSaved }: { auth: AuthState; event: ParentScheduleEvent; onGamePlanSaved: (gamePlan: Record<string, any>) => void }) {
   const [gameDayService, setGameDayService] = useState<ScheduleGameDayServiceModule | null>(null);
   const [lineupBuilderModule, setLineupBuilderModule] = useState<GameDayLineupBuilderModule | null>(null);
-  const [formationId, setFormationId] = useState(event.gamePlan?.formationId || '');
+  const eventFormationId = event.gamePlan?.formationId || '';
+  const [formationId, setFormationId] = useState(eventFormationId);
   const [preview, setPreview] = useState<LineupDraftPreviewResult | null>(null);
   const [draftLineups, setDraftLineups] = useState<Record<string, string>>({});
   const [selectedPlayerId, setSelectedPlayerId] = useState('');
@@ -2809,15 +2810,14 @@ function GameHubLineupBuilderPanel({ auth, event, onGamePlanSaved }: { auth: Aut
   }, []);
 
   useEffect(() => {
-    resetLineupBuilderState(event.gamePlan?.formationId || '');
-  }, [event.eventKey, resetLineupBuilderState]);
+    resetLineupBuilderState(eventFormationId);
+  }, [event.eventKey, eventFormationId, resetLineupBuilderState]);
 
   useEffect(() => {
-    const nextFormationId = event.gamePlan?.formationId || '';
-    if (nextFormationId && nextFormationId !== formationId && !dirtyRef.current) {
-      resetLineupBuilderState(nextFormationId);
+    if (eventFormationId && eventFormationId !== formationId && !dirtyRef.current) {
+      resetLineupBuilderState(eventFormationId);
     }
-  }, [event.gamePlan?.formationId, formationId, resetLineupBuilderState]);
+  }, [eventFormationId, formationId, resetLineupBuilderState]);
 
   useEffect(() => {
     let cancelled = false;
