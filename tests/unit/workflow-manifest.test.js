@@ -9,6 +9,10 @@ function repoFileExists(relativePath) {
     return existsSync(new URL(`../../${relativePath}`, import.meta.url));
 }
 
+function compactText(value) {
+    return String(value || '').replace(/\\n/g, ' ').replace(/\s+/g, ' ').trim();
+}
+
 describe('workflow manifest', () => {
     it('loads as valid JSON with workflow entries', () => {
         const manifest = JSON.parse(readRepoFile('workflow-manifest.json'));
@@ -128,6 +132,7 @@ describe('workflow manifest', () => {
         const helpHtml = readRepoFile('help.html');
         const rosterWorkflow = readRepoFile('workflow-roster.html');
         const appHelpIndex = readRepoFile('apps/app/src/lib/helpKnowledgeIndex.ts');
+        const compactAppHelpIndex = compactText(appHelpIndex);
 
         expect(workflow.roles).toEqual(['Coach', 'Admin']);
         expect(helpHtml).toContain('<h2 class="text-xl font-extrabold tracking-tight text-slate-900">Build and Maintain Team Roster</h2>');
@@ -135,9 +140,9 @@ describe('workflow manifest', () => {
         expect(helpHtml).not.toContain('<h2 class="text-xl font-extrabold tracking-tight text-slate-900">Build and Maintain Team Roster</h2>\n            <p class="mt-3 text-sm leading-6 text-slate-600">Use this workflow to keep your team roster accurate, import linked registration rosters, and keep parent access connected.</p>\n            <div class="mt-4 flex flex-wrap gap-2"><span class="wf-role-chip">Parent</span> <span class="wf-role-chip">Coach</span> <span class="wf-role-chip">Admin</span></div>');
         expect(rosterWorkflow).toContain('<div class="wf-roles"><span class="wf-role-chip">Coach</span> <span class="wf-role-chip">Admin</span></div>');
         expect(appHelpIndex).toContain('Who can use this Coach Admin Overview');
-        expect(appHelpIndex).toContain('Review, Edit, and Share Postgame Results Use this workflow after a game ends to verify results, clean up postgame details, and share links. Parent Coach Admin Member Open workflow ->');
-        expect(appHelpIndex).toContain('Build and Maintain Team Roster Use this workflow to keep your team roster accurate and parent access connected. Coach Admin Open workflow ->');
-        expect(appHelpIndex).not.toContain('Build and Maintain Team Roster Use this workflow to keep your team roster accurate and parent access connected. Parent Coach Admin Open workflow ->');
+        expect(compactAppHelpIndex).toContain('Review, Edit, and Share Postgame Results Use this workflow after a game ends to verify results, clean up postgame details, and share links. Parent Coach Admin Member Open workflow ->');
+        expect(compactAppHelpIndex).toContain('Build and Maintain Team Roster Use this workflow to keep your team roster accurate and parent access connected. Coach Admin Open workflow ->');
+        expect(compactAppHelpIndex).not.toContain('Build and Maintain Team Roster Use this workflow to keep your team roster accurate and parent access connected. Parent Coach Admin Open workflow ->');
         expect(appHelpIndex).not.toContain('Build and Maintain Team Roster - ALL PLAYS Help ← Back to Help Center Workflow Guide Build and Maintain Team Roster Use this workflow to keep your team roster accurate, review staff access, and keep parent access connected. 10 min read Updated from live product pages On this page Who can use this Parent Coach Admin Overview');
     });
 });
