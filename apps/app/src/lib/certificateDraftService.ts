@@ -36,6 +36,7 @@ export type CertificateDraftSharedState = {
   awardTitle: string;
   seasonLabel: string;
   footerUrl: string;
+  framePurchaseLink: string;
   descriptionTone: string;
   colorMode: 'team' | 'template' | 'custom';
   customColors: {
@@ -226,6 +227,7 @@ export function buildCertificatePayloadForApp({
     descriptionTone: shared.descriptionTone,
     seasonLabel: shared.seasonLabel || '',
     footerUrl: shared.footerUrl || '',
+    framePurchaseLink: String(shared.framePurchaseLink || '').trim(),
     fonts: shared.fonts || null,
     signers: normalizeSigners(shared.signers),
     foregroundImageRef: shared.foregroundImageRef || null,
@@ -255,6 +257,7 @@ function buildInitialSharedState(team: Record<string, any>, defaults: Record<str
     awardTitle: defaults?.awardTitle || '',
     seasonLabel: defaults?.seasonLabel || '',
     footerUrl: defaults?.footerUrl || '',
+    framePurchaseLink: defaults?.framePurchaseLink || '',
     descriptionTone: defaults?.descriptionTone || 'celebratory and specific',
     colorMode: defaults?.colorMode || (team?.colors ? 'team' : 'template'),
     customColors: {
@@ -279,6 +282,7 @@ function normalizeSharedState(shared: Partial<CertificateDraftSharedState>, team
     awardTitle: String(shared?.awardTitle || '').trim(),
     seasonLabel: String(shared?.seasonLabel || '').trim(),
     footerUrl: String(shared?.footerUrl || '').trim(),
+    framePurchaseLink: String(shared?.framePurchaseLink || '').trim(),
     descriptionTone: String(shared?.descriptionTone || 'celebratory and specific').trim() || 'celebratory and specific',
     colorMode: shared?.colorMode === 'custom' || shared?.colorMode === 'template' ? shared.colorMode : 'team',
     customColors: {

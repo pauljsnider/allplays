@@ -130,6 +130,7 @@ const composerModel = {
     awardTitle: 'Most Improved Player',
     seasonLabel: 'Spring 2026',
     footerUrl: 'www.allplays.ai',
+    framePurchaseLink: 'https://frames.example.test/team-store',
     descriptionTone: 'celebratory and specific',
     colorMode: 'team',
     customColors: {
@@ -237,15 +238,25 @@ describe('TeamCertificates', () => {
 
     expect(await screen.findByRole('heading', { name: 'Awards studio' })).toBeTruthy();
 
+    const framePurchaseLink = screen.getByLabelText('Frame purchase link');
+    expect(framePurchaseLink).toHaveValue('https://frames.example.test/team-store');
+    fireEvent.change(framePurchaseLink, { target: { value: 'https://vendor.example.test/team-frame' } });
+
     fireEvent.click(screen.getByRole('button', { name: /create drafts/i }));
 
     expect(await screen.findByDisplayValue('AI narrative for Pat Player')).toBeTruthy();
     expect(certificateDraftServiceMocks.saveCertificateDraftsForApp).toHaveBeenCalledWith(expect.objectContaining({
       teamId: 'team-1',
+      shared: expect.objectContaining({
+        framePurchaseLink: 'https://vendor.example.test/team-frame'
+      }),
       selectedPlayers: [expect.objectContaining({ id: 'player-1' })]
     }));
     expect(certificateAwardServiceMocks.generateCertificateAwardNarrativesForApp).toHaveBeenCalledWith(expect.objectContaining({
       teamId: 'team-1',
+      shared: expect.objectContaining({
+        framePurchaseLink: 'https://vendor.example.test/team-frame'
+      }),
       drafts: [expect.objectContaining({ certificateId: 'cert-1' })]
     }));
     expect(publicActionMocks.openPublicUrl).not.toHaveBeenCalled();
@@ -279,6 +290,9 @@ describe('TeamCertificates', () => {
     await waitFor(() => {
       expect(certificateAwardServiceMocks.publishCertificateAwardsForApp).toHaveBeenCalledWith(expect.objectContaining({
         teamId: 'team-1',
+        shared: expect.objectContaining({
+          framePurchaseLink: 'https://frames.example.test/team-store'
+        }),
         reviewConfirmed: true,
         drafts: [expect.objectContaining({
           certificateId: 'cert-1',

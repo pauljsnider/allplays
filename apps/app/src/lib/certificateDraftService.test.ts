@@ -72,6 +72,7 @@ describe('certificateDraftService', () => {
     awardTitle: 'Most Improved',
     seasonLabel: 'Spring 2026',
     footerUrl: 'www.allplays.ai',
+    framePurchaseLink: 'https://frames.example.test/team-store',
     descriptionTone: 'celebratory and specific',
     colorMode: 'team',
     customColors: {
@@ -146,6 +147,16 @@ describe('certificateDraftService', () => {
     expect(model.shared.foregroundImageRef).toBeNull();
   });
 
+  it('hydrates the app frame purchase link from saved certificate defaults', async () => {
+    dbMocks.getCertificateDefaults.mockResolvedValue({
+      framePurchaseLink: ' https://frames.example.test/team-store '
+    });
+
+    const model = await loadCertificateDraftComposer('team-1', user);
+
+    expect(model.shared.framePurchaseLink).toBe('https://frames.example.test/team-store');
+  });
+
   it('creates one draft certificate per selected player and returns a web studio batch URL', async () => {
     const result = await saveCertificateDraftsForApp({
       teamId: 'team-1',
@@ -192,7 +203,8 @@ describe('certificateDraftService', () => {
     }));
     expect(dbMocks.setCertificateDefaults).toHaveBeenCalledWith('team-1', expect.objectContaining({
       templateId: 'banner',
-      awardTitle: 'Most Improved'
+      awardTitle: 'Most Improved',
+      framePurchaseLink: 'https://frames.example.test/team-store'
     }));
     expect(result).toEqual({
       batchId: 'batch-1',
@@ -240,6 +252,7 @@ describe('certificateDraftService', () => {
       descriptionSource: 'manual',
       seasonLabel: 'Spring 2026',
       footerUrl: 'www.allplays.ai',
+      framePurchaseLink: 'https://frames.example.test/team-store',
       descriptionTone: 'celebratory and specific',
       status: 'draft'
     });
