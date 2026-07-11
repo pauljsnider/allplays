@@ -295,7 +295,8 @@ export function ChatWindow({
     openLinkSheet,
     closeLinkSheet,
     openEmailSheet: openTeamEmailSheet,
-    closeEmailSheet: closeTeamEmailSheet
+    closeEmailSheet: closeTeamEmailSheet,
+    resetSheets
   } = useChatSheets();
   const [linkDraft, setLinkDraft] = useState('');
   const [reactionMessageId, setReactionMessageId] = useState('');
@@ -343,10 +344,12 @@ export function ChatWindow({
     setRecipientOptionsLoading(false);
     setRecipientOptionsLoaded(false);
     setRecipientOptionsError(null);
+    setTeamEmailSheetRequested(false);
+    resetSheets();
     pendingScrollRef.current = true;
     stickToLatestRef.current = true;
     setShowJumpToLatest(false);
-  }, []);
+  }, [resetSheets]);
 
   const {
     team,

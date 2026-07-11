@@ -79,6 +79,10 @@ export function useChatSheets() {
         setSheets((current) => ({ ...current, showEmailSheet: false }));
     }, []);
 
+    const resetSheets = useCallback(() => {
+        setSheets(initialState);
+    }, []);
+
     return {
         ...sheets,
         openConversationSheet,
@@ -92,6 +96,7 @@ export function useChatSheets() {
         openLinkSheet,
         closeLinkSheet,
         openEmailSheet,
-        closeEmailSheet
+        closeEmailSheet,
+        resetSheets
     };
 }
