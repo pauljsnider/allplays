@@ -157,4 +157,75 @@ describe('AuthPage signup validation', () => {
     await waitFor(() => expect(authServiceMocks.signUpWithEmail).toHaveBeenCalledWith('coach@example.com', 'secret1', '6WSSSW9V'));
     expect(auth.refresh).toHaveBeenCalledTimes(1);
   });
+
+  it('clears signup validation errors when the related field is edited', async () => {
+    renderAuthPage('/auth?mode=signup&code=6WSSSW9V&type=parent');
+
+    const emailInput = screen.getByLabelText('Email');
+    const passwordInput = screen.getByLabelText('Password');
+    const confirmPasswordInput = screen.getByLabelText('Confirm password');
+
+    fireEvent.change(emailInput, { target: { value: 'coach@example.com' } });
+    fireEvent.change(passwordInput, { target: { value: 'secret1' } });
+    fireEvent.change(confirmPasswordInput, { target: { value: 'secret2' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Create account' }));
+
+    expect(await screen.findByText('Passwords do not match.')).toBeTruthy();
+
+    fireEvent.change(confirmPasswordInput, { target: { value: 'secret1' } });
+    expect(screen.queryByText('Passwords do not match.')).toBeNull();
+  });
+
+  it('clears activation code errors when the invite code is edited', async () => {
+    renderAuthPage('/auth?mode=signup');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Sign up' }));
+    fireEvent.change(screen.getByLabelText('Email'), { target: { value: 'coach@example.com' } });
+    fireEvent.change(screen.getByLabelText('Password'), { target: { value: 'secret1' } });
+    fireEvent.change(screen.getByLabelText('Confirm password'), { target: { value: 'secret1' } });
+    fireEvent.change(screen.getByLabelText('Activation or invite code'), { target: { value: '   ' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Create account' }));
+
+    expect(await screen.findByText('Activation code is required.')).toBeTruthy();
+
+    fireEvent.change(screen.getByLabelText('Activation or invite code'), { target: { value: 'abc123' } });
+    expect(screen.queryByText('Activation code is required.')).toBeNull();
+  });
+});
+
+describe('AuthPage sign-in error state', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    auth.refresh = vi.fn();
+    auth.signOut = vi.fn();
+    authServiceMocks.signInWithEmail.mockReset();
+    authServiceMocks.signInWithEmail.mockRejectedValue(new Error('Email or password is incorrect.'));
+  });
+
+  afterEach(() => {
+    cleanup();
+  });
+
+  it('clears a failed sign-in error when either credential is edited', async () => {
+    renderAuthPage();
+
+    const emailInput = screen.getByLabelText('Email');
+    const passwordInput = screen.getByLabelText('Password');
+    const submitButton = screen.getAllByRole('button', { name: 'Sign in' })[1];
+
+    fireEvent.change(emailInput, { target: { value: 'coach@example.com' } });
+    fireEvent.change(passwordInput, { target: { value: 'wrong-password' } });
+    fireEvent.click(submitButton);
+
+    expect(await screen.findByText('Email or password is incorrect.')).toBeTruthy();
+
+    fireEvent.change(passwordInput, { target: { value: 'correct-password' } });
+    expect(screen.queryByText('Email or password is incorrect.')).toBeNull();
+
+    fireEvent.click(submitButton);
+    expect(await screen.findByText('Email or password is incorrect.')).toBeTruthy();
+
+    fireEvent.change(emailInput, { target: { value: 'coach-updated@example.com' } });
+    expect(screen.queryByText('Email or password is incorrect.')).toBeNull();
+  });
 });
