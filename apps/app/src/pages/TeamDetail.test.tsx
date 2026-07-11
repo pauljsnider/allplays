@@ -605,20 +605,20 @@ describe('TeamDetail', () => {
     fireEvent.click(tabControls.getByRole('button', { name: /schedule/i }));
     await waitFor(() => expect(router.state.location.search).toBe('?tab=schedule'));
     expect(tabControls.getByRole('button', { name: /schedule/i }).getAttribute('aria-pressed')).toBe('true');
-    await waitFor(() => expect(window.scrollTo).toHaveBeenCalledWith({ top: 0, behavior: 'smooth' }));
+    await waitFor(() => expect(window.scrollTo).toHaveBeenCalledWith({ top: 0, behavior: 'auto' }));
     vi.mocked(window.scrollTo).mockClear();
 
     fireEvent.click(tabControls.getByRole('button', { name: /more/i }));
     await waitFor(() => expect(router.state.location.search).toBe('?tab=more'));
     expect(tabControls.getByRole('button', { name: /more/i }).getAttribute('aria-pressed')).toBe('true');
     expect(await screen.findByText('Stat tracker configs')).toBeTruthy();
-    await waitFor(() => expect(window.scrollTo).toHaveBeenCalledWith({ top: 0, behavior: 'smooth' }));
+    await waitFor(() => expect(window.scrollTo).toHaveBeenCalledWith({ top: 0, behavior: 'auto' }));
     vi.mocked(window.scrollTo).mockClear();
 
     fireEvent.click(tabControls.getByRole('button', { name: /overview/i }));
     await waitFor(() => expect(router.state.location.search).toBe(''));
     expect(tabControls.getByRole('button', { name: /overview/i }).getAttribute('aria-pressed')).toBe('true');
-    await waitFor(() => expect(window.scrollTo).toHaveBeenCalledWith({ top: 0, behavior: 'smooth' }));
+    await waitFor(() => expect(window.scrollTo).toHaveBeenCalledWith({ top: 0, behavior: 'auto' }));
   });
 
   it('steps back to team overview before leaving the team hub', async () => {
