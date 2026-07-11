@@ -108,6 +108,8 @@ async function installModuleMocks(page) {
         }
 
         export function subscribeGame(_teamId, _gameId, callback) {
+            window.__GAME_DAY_SUBSCRIBE_COUNT__ = (window.__GAME_DAY_SUBSCRIBE_COUNT__ || 0) + 1;
+            window.__EMIT_GAME_DAY_GAME__ = (game) => callback(clone(game));
             callback(clone(loadStore().game));
             return () => {};
         }
@@ -306,4 +308,80 @@ test('delegated non-basketball scorekeeper opens standard tracker', async ({ pag
 
     await page.getByRole('link', { name: 'Open scorekeeper' }).click();
     await expect(page).toHaveURL(/\/track\.html#teamId=team-1&gameId=game-1$/);
+});
+
+test('limited streaming access receives successive broadcast lease snapshots', async ({ page, baseURL }) => {
+    const base = createScenario();
+    await seedScenario(page, baseURL, createScenario({
+        team: {
+            ...base.team,
+            teamPermissions: {
+                streaming: {
+                    mode: 'selected',
+                    memberIds: ['streamer-1']
+                }
+            }
+        },
+        user: {
+            uid: 'streamer-1',
+            email: 'streamer@example.com'
+        }
+    }));
+    await page.goto(buildUrl(baseURL, '/game-day.html#teamId=team-1&gameId=game-1'), {
+        waitUntil: 'domcontentloaded'
+    });
+
+    await expect(page.getByText('Streaming access', { exact: true })).toBeVisible();
+    const broadcastStatus = page.getByRole('main').locator('[data-game-day-broadcast-status]');
+    await expect(broadcastStatus).toHaveText(
+        'Broadcast setup is required before streaming can begin.'
+    );
+    expect(await page.evaluate(() => window.__GAME_DAY_SUBSCRIBE_COUNT__)).toBe(1);
+
+    await page.evaluate(() => {
+        window.__EMIT_GAME_DAY_GAME__({
+            id: 'game-1',
+            opponent: 'Rockets',
+            status: 'scheduled',
+            liveStatus: 'scheduled',
+            broadcastSession: {
+                status: 'ready_for_managed_stream'
+            }
+        });
+    });
+    await expect(broadcastStatus).toHaveText(
+        'Broadcast setup is ready. Open it to Begin Streaming.'
+    );
+
+    await page.evaluate(() => {
+        window.__EMIT_GAME_DAY_GAME__({
+            id: 'game-1',
+            opponent: 'Rockets',
+            status: 'scheduled',
+            liveStatus: 'scheduled',
+            broadcastSession: {
+                localStreamStatus: 'live',
+                localStreamLeaseExpiresAt: new Date(Date.now() - 1_000).toISOString()
+            }
+        });
+    });
+    await expect(broadcastStatus).toHaveText(
+        'The last live device signal expired. Open setup to resume streaming.'
+    );
+
+    await page.evaluate(() => {
+        window.__EMIT_GAME_DAY_GAME__({
+            id: 'game-1',
+            opponent: 'Rockets',
+            status: 'scheduled',
+            liveStatus: 'scheduled',
+            broadcastSession: {
+                localStreamStatus: 'live',
+                localStreamLeaseExpiresAt: new Date(Date.now() + 45_000).toISOString()
+            }
+        });
+    });
+    await expect(broadcastStatus).toHaveText(
+        'Live device streaming is active.'
+    );
 });

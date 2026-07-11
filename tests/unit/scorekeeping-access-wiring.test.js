@@ -13,6 +13,9 @@ describe('scorekeeping access wiring', () => {
         expect(source).toContain('renderLimitedScorekeepingAccess(accessInfo)');
         expect(source).toContain("accessInfo.accessLevel === 'videographer'");
         expect(source).toContain('renderLimitedVideographerAccess(accessInfo)');
+        expect(source).toContain("if (accessInfo.accessLevel !== 'full')");
+        expect(source).toContain('subscribeToGameUpdates({ fullAccess: true })');
+        expect(source).toContain('if (!fullAccess)');
         expect(source).toContain('Roster management, schedule editing, team settings, and other coach/admin controls remain restricted.');
 
         const workflow = readFileSync(resolve(process.cwd(), 'workflow-track-game.html'), 'utf8');

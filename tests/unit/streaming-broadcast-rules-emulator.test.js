@@ -28,7 +28,8 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('streaming broadcast rules
                 ['selected-1', 'selected@example.com'],
                 ['confirmed-1', 'confirmed@example.com'],
                 ['unrelated-1', 'unrelated@example.com'],
-                ['legacy-1', 'legacy@example.com']
+                ['legacy-1', 'legacy@example.com'],
+                ['videographer-1', 'videographer@example.com']
             ];
             for (const [uid, email] of users) {
                 await setDoc(doc(firestore, `users/${uid}`), { email, isAdmin: false, parentTeamIds: [] });
@@ -48,6 +49,15 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('streaming broadcast rules
             });
             await seedTeamAndGame(firestore, 'private-team', 'private-game', {
                 isPublic: false
+            }, {
+                visibility: 'private'
+            });
+            await seedTeamAndGame(firestore, 'videographer-team', 'videographer-game', {
+                teamPermissions: { videography: { mode: 'selected', memberIds: ['videographer-1'] } }
+            });
+            await seedTeamAndGame(firestore, 'private-videographer-team', 'private-videographer-game', {
+                isPublic: false,
+                teamPermissions: { videography: { mode: 'selected', memberIds: ['videographer-1'] } }
             }, {
                 visibility: 'private'
             });
@@ -166,6 +176,13 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('streaming broadcast rules
             updatedAt: nowTimestamp()
         }));
         await assertFails(updateDoc(gameRef(selectedDb, 'selected-team', 'selected-game'), {
+            broadcastSession: liveSession('selected-1', 'selected@example.com', {
+                status: 'permission_failed',
+                permissions: { camera: false, microphone: false }
+            }),
+            updatedAt: nowTimestamp()
+        }));
+        await assertFails(updateDoc(gameRef(selectedDb, 'selected-team', 'selected-game'), {
             broadcastSession: null,
             updatedAt: nowTimestamp()
         }));
@@ -220,5 +237,33 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('streaming broadcast rules
 
         await assertSucceeds(getDoc(gameRef(selectedDb, 'shareable-team', 'shareable-game')));
         await assertSucceeds(writeLive(selectedDb, 'shareable-team', 'shareable-game', 'selected-1', 'selected@example.com'));
+    });
+
+    it('lets a private-game videographer read without permitting broadcast metadata writes', async () => {
+        const videographerDb = authedDb('videographer-1', 'videographer@example.com');
+        await assertSucceeds(getDoc(gameRef(videographerDb, 'private-videographer-team', 'private-videographer-game')));
+        await assertFails(writeLive(
+            videographerDb,
+            'private-videographer-team',
+            'private-videographer-game',
+            'videographer-1',
+            'videographer@example.com'
+        ));
+    });
+
+    it('denies videographer mixed clip and broadcast-session bypass attempts', async () => {
+        const videographerDb = authedDb('videographer-1', 'videographer@example.com');
+        const ref = gameRef(videographerDb, 'videographer-team', 'videographer-game');
+        for (const broadcastSession of [
+            null,
+            liveSession('videographer-1', 'videographer@example.com', { localStreamActive: 'yes' }),
+            liveSession('attacker-1', 'videographer@example.com')
+        ]) {
+            await assertFails(updateDoc(ref, {
+                videoClips: [{ id: 'clip-1' }],
+                broadcastSession,
+                updatedAt: nowTimestamp()
+            }));
+        }
     });
 });

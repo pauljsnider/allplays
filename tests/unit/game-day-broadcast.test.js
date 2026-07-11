@@ -60,6 +60,10 @@ describe('Game Day broadcast entry', () => {
             status: 'scheduled',
             broadcastSession: { managedStreamReady: true, localStreamStatus: 'failed' }
         })).toEqual({ state: 'failed', label: 'Device streaming needs attention. Open setup to retry.' });
+        expect(resolveGameDayBroadcastStatus({
+            status: 'scheduled',
+            broadcastSession: { status: 'permission_failed' }
+        })).toEqual({ state: 'failed', label: 'Device streaming needs attention. Open setup to retry.' });
         expect(resolveGameDayBroadcastStatus({ status: 'completed' })).toMatchObject({ state: 'unavailable' });
     });
 
@@ -114,7 +118,7 @@ describe('Game Day broadcast wiring', () => {
     it('uses the shared deep link for coaches, videographers, and Stream & Score helpers', () => {
         const gameDaySource = readFileSync(resolve(process.cwd(), 'game-day.html'), 'utf8');
 
-        expect(gameDaySource).toContain("from './js/game-day-broadcast.js?v=2'");
+        expect(gameDaySource).toContain("from './js/game-day-broadcast.js?v=3'");
         expect(gameDaySource.match(/data-game-day-broadcast-card/g)?.length).toBeGreaterThanOrEqual(2);
         expect(gameDaySource).toContain('renderLimitedVideographerAccess(accessInfo)');
         expect(gameDaySource).toContain('renderLimitedStreamAndScoreAccess(accessInfo)');

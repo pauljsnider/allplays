@@ -461,6 +461,11 @@ service cloud.firestore {
              isValidBroadcastPermissions(data.permissions) &&
              (data.status != 'ready_for_managed_stream' ||
                (data.permissions.camera == true && data.permissions.microphone == true)) &&
+             (!data.keys().hasAny(['localStreamStatus']) ||
+               !(data.localStreamStatus in ['ready', 'live']) ||
+               (data.status == 'ready_for_managed_stream' &&
+                data.permissions.camera == true &&
+                data.permissions.microphone == true)) &&
              isBroadcastSessionTime(data.createdAt) &&
              isBroadcastSessionTime(data.updatedAt) &&
              data.updatedBy == request.auth.uid &&
@@ -502,7 +507,7 @@ service cloud.firestore {
       return canVideographGame(teamId, gameId) &&
              request.resource.data.diff(resource.data).affectedKeys().hasOnly([
                'highlightClips', 'clipRecords', 'gameClips', 'videoClips', 'mediaClips',
-               'replayVideo', 'recordedVideo', 'videoReplay', 'broadcastSession', 'updatedAt',
+               'replayVideo', 'recordedVideo', 'videoReplay', 'updatedAt',
                'scoreUpdatedAt', 'scoreUpdatedBy', 'scoreStreamSessionId'
              ]) &&
              isScoreMetadataAttributionValid();
@@ -511,7 +516,12 @@ service cloud.firestore {
     function isStreamingGameUpdate(teamId, gameId) {
       let nextSession = request.resource.data.get('broadcastSession', null);
       let existingSession = resource.data.get('broadcastSession', null);
-      return (canStreamGame(teamId, gameId) || canVideographGame(teamId, gameId)) &&
+      return (canStreamGame(teamId, gameId) ||
+              (canVideographGame(teamId, gameId) &&
+               canReadPublicGameDocument(
+                 get(/databases/$(database)/documents/teams/$(teamId)).data,
+                 get(/databases/$(database)/documents/teams/$(teamId)/games/$(gameId)).data
+               ))) &&
              isBroadcastSessionOnlyUpdate() &&
              request.resource.data.updatedAt is timestamp &&
              isBroadcastLifecycleEligible(request.resource.data) &&

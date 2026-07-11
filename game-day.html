@@ -520,7 +520,7 @@
             buildGameSummaryPrompt
         } from './js/game-day-wrapup.js?v=2';
         import { pickBestGameId, normalizeGameDayUrl } from './js/game-day-entry.js?v=1';
-        import { buildGameDayBroadcastSetupUrl, resolveGameDayBroadcastStatus } from './js/game-day-broadcast.js?v=2';
+        import { buildGameDayBroadcastSetupUrl, resolveGameDayBroadcastStatus } from './js/game-day-broadcast.js?v=3';
         import { createGameDayRsvpController } from './js/game-day-rsvp-controls.js?v=1';
         import {
             buildOnFieldMap as buildLiveOnFieldMap,
@@ -1039,6 +1039,9 @@
                     window.location.href = `team.html#teamId=${teamId}&message=Game+Day+is+for+coaches,+admins,+approved+scorekeepers,+streaming+volunteers,+and+approved+videographers+only`;
                     return;
                 }
+                if (accessInfo.accessLevel !== 'full') {
+                    subscribeToGameUpdates();
+                }
                 if (accessInfo.accessLevel === 'stream-score') {
                     renderLimitedStreamAndScoreAccess(accessInfo);
                     return;
@@ -1103,48 +1106,7 @@
                 // Load async data
                 loadRsvps();
                 loadLastGame();
-
-                // Set up real-time subscriptions
-                const unsubGame = subscribeGame(teamId, state.gameId, (updatedGame) => {
-                    const prevLiveStatus = state.game?.liveStatus;
-                    state.game = updatedGame;
-                    renderGameDayBroadcastEntryPoints();
-                    const liveStateUpdate = syncGameDayLiveState({
-                        currentState: state,
-                        updatedGame
-                    });
-                    state.gamePlan = liveStateUpdate.gamePlan;
-                    state.rotationPlan = liveStateUpdate.rotationPlan;
-                    state.rotationActual = liveStateUpdate.rotationActual;
-                    state.formationId = liveStateUpdate.formationId;
-                    state.score = { home: updatedGame.homeScore || 0, away: updatedGame.awayScore || 0 };
-                    const remoteChat = extractChatStateFromGameDoc(updatedGame);
-                    if (remoteChat && !state.chatPersistInFlight && !state.chatPersistTimer) {
-                        const changed = applyChatState(remoteChat);
-                        if (changed) {
-                            state.lastPersistedChatSignature = getChatStateSignature(remoteChat.chatMode, remoteChat.chatHistory);
-                            persistLocalChatState();
-                            renderChatHistory();
-                            setChatMode(state.chatMode);
-                        }
-                    }
-                    markAiChatContextDirty();
-                    updateScoreDisplay();
-                    if (liveStateUpdate.hasLineupChange) {
-                        renderCurrentMode();
-                    }
-                    // Detect transitions
-                    if (updatedGame.liveStatus === 'live' && prevLiveStatus !== 'live' && state.mode !== 'gameday') {
-                        if (confirm('The game is now live! Switch to Game Day mode?')) setMode('gameday');
-                    } else if (shouldPromptWrapupOnCompletion({
-                        prevLiveStatus,
-                        nextLiveStatus: updatedGame.liveStatus,
-                        mode: state.mode
-                    })) {
-                        if (confirm('Game marked as completed. Open Wrap-Up?')) setMode('wrapup');
-                    }
-                }, (err) => console.error('subscribeGame error', err));
-                state.unsubscribers.push(unsubGame);
+                subscribeToGameUpdates({ fullAccess: true });
 
                 if (state.mode === 'gameday' || state.mode === 'wrapup') {
                     subscribeGameDayData();
@@ -1161,6 +1123,54 @@
                 console.error('initPage error', err);
                 showError('Failed to load game data: ' + err.message);
             }
+        }
+
+        function subscribeToGameUpdates({ fullAccess = false } = {}) {
+            const unsubGame = subscribeGame(state.teamId, state.gameId, (updatedGame) => {
+                if (!fullAccess) {
+                    state.game = updatedGame;
+                    renderGameDayBroadcastEntryPoints();
+                    return;
+                }
+                const prevLiveStatus = state.game?.liveStatus;
+                state.game = updatedGame;
+                renderGameDayBroadcastEntryPoints();
+                const liveStateUpdate = syncGameDayLiveState({
+                    currentState: state,
+                    updatedGame
+                });
+                state.gamePlan = liveStateUpdate.gamePlan;
+                state.rotationPlan = liveStateUpdate.rotationPlan;
+                state.rotationActual = liveStateUpdate.rotationActual;
+                state.formationId = liveStateUpdate.formationId;
+                state.score = { home: updatedGame.homeScore || 0, away: updatedGame.awayScore || 0 };
+                const remoteChat = extractChatStateFromGameDoc(updatedGame);
+                if (remoteChat && !state.chatPersistInFlight && !state.chatPersistTimer) {
+                    const changed = applyChatState(remoteChat);
+                    if (changed) {
+                        state.lastPersistedChatSignature = getChatStateSignature(remoteChat.chatMode, remoteChat.chatHistory);
+                        persistLocalChatState();
+                        renderChatHistory();
+                        setChatMode(state.chatMode);
+                    }
+                }
+                markAiChatContextDirty();
+                updateScoreDisplay();
+                if (liveStateUpdate.hasLineupChange) {
+                    renderCurrentMode();
+                }
+                // Detect transitions
+                if (updatedGame.liveStatus === 'live' && prevLiveStatus !== 'live' && state.mode !== 'gameday') {
+                    if (confirm('The game is now live! Switch to Game Day mode?')) setMode('gameday');
+                } else if (shouldPromptWrapupOnCompletion({
+                    prevLiveStatus,
+                    nextLiveStatus: updatedGame.liveStatus,
+                    mode: state.mode
+                })) {
+                    if (confirm('Game marked as completed. Open Wrap-Up?')) setMode('wrapup');
+                }
+            }, (err) => console.error('subscribeGame error', err));
+            state.unsubscribers.push(unsubGame);
         }
 
         function subscribeGameDayData() {

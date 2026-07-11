@@ -1,7 +1,7 @@
 const endedGameStatuses = new Set(['cancelled', 'canceled', 'completed', 'final', 'deleted']);
 const liveBroadcastStatuses = new Set(['live', 'streaming']);
 const readyBroadcastStatuses = new Set(['ready', 'ready_for_managed_stream']);
-const failedBroadcastStatuses = new Set(['failed', 'error']);
+const failedBroadcastStatuses = new Set(['failed', 'error', 'permission_failed']);
 const runtimeBroadcastStatuses = new Set(['ready', 'live', 'failed']);
 export const BROADCAST_STREAM_HEARTBEAT_MS = 15_000;
 export const BROADCAST_STREAM_LEASE_MS = 45_000;
