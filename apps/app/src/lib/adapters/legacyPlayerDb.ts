@@ -11,6 +11,8 @@ import {
     inviteCoParentToAthlete as legacyInviteCoParentToAthlete,
     listAthleteProfilesForParent as legacyListAthleteProfilesForParent,
     listCertificatesForPlayer as legacyListCertificatesForPlayer,
+    releaseAthleteProfileMediaReservation as legacyReleaseAthleteProfileMediaReservation,
+    reserveAthleteProfileMediaOwnership as legacyReserveAthleteProfileMediaOwnership,
     saveAthleteProfile as legacySaveAthleteProfile,
     setPlayerPrivateRosterProfileFields as legacySetPlayerPrivateRosterProfileFields,
     updatePlayer as legacyUpdatePlayer,
@@ -125,6 +127,14 @@ export async function inviteCoParentToAthlete(userId: string, teamId: string, pl
 
 export async function saveAthleteProfile(userId: string, draft: Record<string, unknown>, options: { profileId: string }) {
     return await Promise.resolve(legacySaveAthleteProfile(userId, draft, options));
+}
+
+export async function reserveAthleteProfileMediaOwnership(userId: string, profileId: string) {
+    return await Promise.resolve(legacyReserveAthleteProfileMediaOwnership(userId, profileId));
+}
+
+export async function releaseAthleteProfileMediaReservation(userId: string, profileId: string) {
+    return await Promise.resolve(legacyReleaseAthleteProfileMediaReservation(userId, profileId));
 }
 
 export async function uploadAthleteProfileMedia(userId: string, profileId: string, file: File, options: { kind: 'profile-photo' | 'clip' }) {

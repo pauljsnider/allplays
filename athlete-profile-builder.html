@@ -154,8 +154,10 @@
             saveAthleteProfile,
             listAthleteProfilesForParent,
             uploadAthleteProfileMedia,
-            deleteAthleteProfileMediaByPath
-        } from './js/db.js?v=84';
+            deleteAthleteProfileMediaByPath,
+            releaseAthleteProfileMediaReservation,
+            reserveAthleteProfileMediaOwnership
+        } from './js/db.js?v=85';
         import { buildAthleteProfileShareUrl } from './js/athlete-profile-utils.js?v=2';
 
         const params = getUrlParams();
@@ -714,7 +716,12 @@
             setStatus('Saving...');
 
             let newlyUploadedPaths = [];
+            let createdMediaReservation = false;
             try {
+                if (pendingProfilePhotoFile || pendingClipFiles.size > 0) {
+                    const reservation = await reserveAthleteProfileMediaOwnership(currentUser.uid, workingProfileId);
+                    createdMediaReservation = reservation.created === true;
+                }
                 const prepared = await uploadPendingMedia((path) => newlyUploadedPaths.push(path));
                 currentProfile = await saveAthleteProfile(currentUser.uid, prepared.draft, {
                     profileId: currentProfile?.id || params.profileId || workingProfileId
@@ -731,6 +738,9 @@
                 setStatus('Athlete profile saved.');
             } catch (error) {
                 await Promise.allSettled(newlyUploadedPaths.map((path) => deleteAthleteProfileMediaByPath(path)));
+                if (createdMediaReservation) {
+                    await releaseAthleteProfileMediaReservation(currentUser.uid, workingProfileId).catch(() => undefined);
+                }
                 console.error('Failed to save athlete profile', error);
                 setStatus(error?.message || 'Unable to save athlete profile.', true);
             }

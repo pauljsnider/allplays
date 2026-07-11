@@ -14,6 +14,8 @@ const legacyPlayerDbMocks = vi.hoisted(() => ({
   inviteCoParentToAthlete: vi.fn(),
   listAthleteProfilesForParent: vi.fn(),
   listCertificatesForPlayer: vi.fn(),
+  releaseAthleteProfileMediaReservation: vi.fn(),
+  reserveAthleteProfileMediaOwnership: vi.fn(),
   saveAthleteProfile: vi.fn(),
   setPlayerPrivateRosterProfileFields: vi.fn(),
   updatePlayer: vi.fn(),
@@ -94,6 +96,8 @@ describe('saveParentAthleteProfileDraft', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     legacyPlayerDbMocks.saveAthleteProfile.mockResolvedValue({ id: 'profile-1' });
+    legacyPlayerDbMocks.reserveAthleteProfileMediaOwnership.mockImplementation(async (_userId, profileId) => ({ id: profileId, created: false }));
+    legacyPlayerDbMocks.releaseAthleteProfileMediaReservation.mockResolvedValue(true);
   });
 
   it('passes caller-provided selectedSeasonKeys to saveAthleteProfile', async () => {
