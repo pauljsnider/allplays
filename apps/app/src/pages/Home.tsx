@@ -331,6 +331,7 @@ export function Home({ auth }: { auth: AuthState }) {
   const homeSectionRoute = getHomeSectionRoute(activeSection);
   const homeSectionReady = isHomeSectionReady(activeSection, { loading, socialLoading, hasLoadedHomeDetails, showBlockingErrorState });
   const canRenderFirstRunHome = !authUserId || hasLoadedHomeDetails;
+  const homeDetailsPending = Boolean(authUserId) && !hasLoadedHomeDetails;
   const resolvedOfficialsAccess = authUserId ? officialsAccess : { hasAccess: false, teamCount: 0 };
 
   useViewLoadTimer({
@@ -428,8 +429,8 @@ export function Home({ auth }: { auth: AuthState }) {
           <div className="min-w-0 flex-1">
             <div className="flex min-w-0 items-center gap-2">
               <span className="app-label">Home</span>
-              <span className={`rounded-full px-2 py-0.5 text-[10px] font-black uppercase tracking-[0.04em] ${openCount ? 'bg-amber-100 text-amber-800' : 'bg-emerald-100 text-emerald-800'}`}>
-                {openCount ? `${openCount} open` : 'Clear'}
+              <span className={`rounded-full px-2 py-0.5 text-[10px] font-black uppercase tracking-[0.04em] ${homeDetailsPending ? 'bg-gray-100 text-gray-600' : openCount ? 'bg-amber-100 text-amber-800' : 'bg-emerald-100 text-emerald-800'}`}>
+                {homeDetailsPending ? 'Loading' : openCount ? `${openCount} open` : 'Clear'}
               </span>
             </div>
             <h1 className="mt-0.5 truncate text-xl font-black leading-tight text-gray-950">Today for your players</h1>
@@ -441,7 +442,12 @@ export function Home({ auth }: { auth: AuthState }) {
           </button>
         </div>
         <div className="hidden gap-1.5 overflow-x-auto border-t border-gray-100 px-3 py-2 sm:flex sm:px-4">
-          {topAction ? <TopAction action={topAction} /> : (
+          {topAction ? <TopAction action={topAction} /> : homeDetailsPending ? (
+            <div className="flex min-h-8 flex-none items-center gap-1.5 rounded-full border border-gray-200 bg-gray-50 px-2.5 text-xs font-black text-gray-600" role="status">
+              <Loader2 className="h-3.5 w-3.5 flex-none animate-spin" aria-hidden="true" />
+              Checking actions
+            </div>
+          ) : (
             <div className="flex min-h-8 flex-none items-center gap-1.5 rounded-full border border-emerald-200 bg-emerald-50 px-2.5 text-xs font-black text-emerald-800">
               <CheckCircle2 className="h-3.5 w-3.5 flex-none" aria-hidden="true" />
               Clear
@@ -577,30 +583,30 @@ function TodaySection({
 
   return (
     <div className="home-section-content space-y-3">
-      <TodayPriorityCard action={topAction} nextEvent={nextEvent} />
+      <TodayPriorityCard action={topAction} nextEvent={nextEvent} loading={!hasLoadedHomeDetails} />
 
       <section className="home-signal-grid grid gap-2 sm:grid-cols-3">
         <SignalCard
           icon={ClipboardCheck}
           label="Availability"
-          value={String(home.metrics.rsvpNeeded)}
-          detail={home.metrics.rsvpNeeded ? 'Needs a response' : 'Responses done'}
+          value={!hasLoadedHomeDetails && !home.metrics.rsvpNeeded ? '…' : String(home.metrics.rsvpNeeded)}
+          detail={home.metrics.rsvpNeeded ? 'Needs a response' : hasLoadedHomeDetails ? 'Responses done' : 'Checking responses…'}
           to={rsvpAction?.to || '/schedule'}
           urgent={home.metrics.rsvpNeeded > 0}
         />
         <SignalCard
           icon={MessageCircle}
           label="Team chats"
-          value={String(home.metrics.unreadMessages)}
-          detail={firstUnreadTeam ? `${home.metrics.unreadMessages} unread message${home.metrics.unreadMessages === 1 ? '' : 's'} · ${unreadTeams.slice(0, 2).map((team) => team.teamName).join(' · ')}` : 'Caught up'}
+          value={!hasLoadedHomeDetails && !home.metrics.unreadMessages ? '…' : String(home.metrics.unreadMessages)}
+          detail={firstUnreadTeam ? `${home.metrics.unreadMessages} unread message${home.metrics.unreadMessages === 1 ? '' : 's'} · ${unreadTeams.slice(0, 2).map((team) => team.teamName).join(' · ')}` : hasLoadedHomeDetails ? 'Caught up' : 'Checking team chats…'}
           to={firstUnreadTeam ? `/messages/${encodeURIComponent(firstUnreadTeam.teamId)}` : '/messages'}
           urgent={home.metrics.unreadMessages > 0}
         />
         <SignalCard
           icon={ClipboardCheck}
           label="Practice packets"
-          value={String(home.metrics.packetsReady)}
-          detail={home.metrics.packetsReady ? 'Ready to review' : 'None open'}
+          value={!hasLoadedHomeDetails && !home.metrics.packetsReady ? '…' : String(home.metrics.packetsReady)}
+          detail={home.metrics.packetsReady ? 'Ready to review' : hasLoadedHomeDetails ? 'None open' : 'Checking packets…'}
           to={packetAction?.to || '/schedule'}
           urgent={home.metrics.packetsReady > 0}
         />
@@ -623,7 +629,9 @@ function TodaySection({
         </div>
         {home.upcomingEvents.length ? nextEvents.map((event) => (
           <HomeEventCard key={`${event.teamId}-${event.id}-${event.date.toISOString()}`} event={event} />
-        )) : (
+        )) : !hasLoadedHomeDetails ? (
+          <HomeDetailsLoadingState message="Checking upcoming events…" />
+        ) : (
           <EmptyCard icon={CalendarDays} title="No upcoming events" detail="Your schedule is clear for the current filters." />
         )}
       </section>
@@ -639,7 +647,9 @@ function TodaySection({
         <div className="mt-3 space-y-2">
           {remainingActions.length ? remainingActions.map((action) => (
             <ActionRow key={action.id} action={action} />
-          )) : (
+          )) : !hasLoadedHomeDetails ? (
+            <HomeDetailsLoadingState message="Checking for parent actions…" />
+          ) : (
             <div className="flex items-start gap-3 rounded-xl border border-emerald-200 bg-emerald-50 p-3">
               <CheckCircle2 className="mt-0.5 h-5 w-5 flex-none text-emerald-700" aria-hidden="true" />
               <div>
@@ -685,8 +695,34 @@ function TodaySection({
   );
 }
 
-function TodayPriorityCard({ action, nextEvent }: { action: ParentHomeAction | null; nextEvent: ParentScheduleEvent | null }) {
+function HomeDetailsLoadingState({ message }: { message: string }) {
+  return (
+    <div className="flex items-center gap-3 rounded-xl border border-gray-200 bg-gray-50 p-3 text-sm font-bold text-gray-600" role="status">
+      <Loader2 className="h-5 w-5 flex-none animate-spin text-primary-600" aria-hidden="true" />
+      {message}
+    </div>
+  );
+}
+
+function TodayPriorityCard({ action, nextEvent, loading }: { action: ParentHomeAction | null; nextEvent: ParentScheduleEvent | null; loading: boolean }) {
   if (!action) {
+    if (loading) {
+      return (
+        <section className="home-priority-card app-card overflow-hidden" aria-busy="true">
+          <div className="flex items-start gap-3 p-4">
+            <div className="flex h-11 w-11 flex-none items-center justify-center rounded-xl bg-gray-50 text-primary-600 ring-1 ring-gray-200">
+              <Loader2 className="h-5 w-5 animate-spin" aria-hidden="true" />
+            </div>
+            <div className="min-w-0 flex-1">
+              <div className="app-label">Do first</div>
+              <h2 className="mt-1 text-lg font-black leading-tight text-gray-950">Checking today’s actions…</h2>
+              <p className="mt-1 text-sm font-semibold leading-5 text-gray-600">Loading availability, packets, assignments, fees, and team chats.</p>
+            </div>
+          </div>
+          <PriorityFooter action={null} nextEvent={nextEvent} loading />
+        </section>
+      );
+    }
     return (
       <section className="home-priority-card app-card overflow-hidden border-emerald-200">
         <div className="flex items-start gap-3 p-4">
@@ -699,7 +735,7 @@ function TodayPriorityCard({ action, nextEvent }: { action: ParentHomeAction | n
             <p className="mt-1 text-sm font-semibold leading-5 text-gray-600">Availability, packets, assignments, fees, and unread chats are clear.</p>
           </div>
         </div>
-        <PriorityFooter action={null} nextEvent={nextEvent} />
+        <PriorityFooter action={null} nextEvent={nextEvent} loading={false} />
       </section>
     );
   }
@@ -717,12 +753,12 @@ function TodayPriorityCard({ action, nextEvent }: { action: ParentHomeAction | n
           <p className="mt-1 line-clamp-2 text-sm font-semibold leading-5 text-gray-600">{action.detail}</p>
         </div>
       </div>
-      <PriorityFooter action={action} nextEvent={nextEvent} />
+      <PriorityFooter action={action} nextEvent={nextEvent} loading={loading} />
     </section>
   );
 }
 
-function PriorityFooter({ action, nextEvent }: { action: ParentHomeAction | null; nextEvent: ParentScheduleEvent | null }) {
+function PriorityFooter({ action, nextEvent, loading }: { action: ParentHomeAction | null; nextEvent: ParentScheduleEvent | null; loading: boolean }) {
   return (
     <div className="grid gap-2 border-t border-gray-100 bg-gray-50 p-2 sm:grid-cols-2">
       {action ? (
@@ -738,6 +774,11 @@ function PriorityFooter({ action, nextEvent }: { action: ParentHomeAction | null
           Open action
           <ChevronRight className="h-4 w-4 flex-none transition group-hover:text-amber-600" aria-hidden="true" />
         </Link>
+      ) : loading ? (
+        <div className="flex min-h-10 items-center gap-2 rounded-lg bg-white px-3 text-xs font-black uppercase tracking-[0.04em] text-gray-500 ring-1 ring-gray-200">
+          <Loader2 className="h-4 w-4 flex-none animate-spin" aria-hidden="true" />
+          Checking actions
+        </div>
       ) : (
         <div className="flex min-h-10 items-center gap-2 rounded-lg bg-emerald-50 px-3 text-xs font-black uppercase tracking-[0.04em] text-emerald-800 ring-1 ring-emerald-100">
           <CheckCircle2 className="h-4 w-4 flex-none" aria-hidden="true" />
@@ -763,6 +804,11 @@ function PriorityFooter({ action, nextEvent }: { action: ParentHomeAction | null
           </span>
           <ChevronRight className="h-4 w-4 flex-none text-gray-400 transition group-hover:text-primary-600" aria-hidden="true" />
         </Link>
+      ) : loading ? (
+        <div className="flex min-h-10 items-center gap-2 rounded-lg bg-white px-3 text-xs font-black text-gray-500 ring-1 ring-gray-200">
+          <Loader2 className="h-4 w-4 flex-none animate-spin" aria-hidden="true" />
+          Checking schedule
+        </div>
       ) : (
         <div className="flex min-h-10 items-center gap-2 rounded-lg bg-white px-3 text-xs font-black text-gray-500 ring-1 ring-gray-200">
           <CalendarDays className="h-4 w-4 flex-none" aria-hidden="true" />
