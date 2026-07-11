@@ -1344,8 +1344,6 @@ async function nativePostChatMessage(teamId: string, input: {
 } & ChatAudienceMetadata) {
   const attachmentUploadedAt = new Date();
   const attachments = input.attachments || [];
-  const firstImage = attachments.find((attachment) => attachment.type === 'image') || null;
-  const isLegacyTeamConversation = isDefaultTeamConversation(input.conversationId);
   const documentId = input.clientMessageId || `native_${input.senderId}_${Date.now()}_${Math.random().toString(36).slice(2)}`
     .replace(/[^A-Za-z0-9_-]/g, '_')
     .slice(0, 120);
@@ -1358,11 +1356,11 @@ async function nativePostChatMessage(teamId: string, input: {
     senderEmail: input.senderEmail || null,
     senderPhotoUrl: input.senderPhotoUrl || null,
     attachments: attachments.map((attachment) => ({ ...attachment, uploadedAt: attachmentUploadedAt })),
-    imageUrl: isLegacyTeamConversation ? (firstImage?.url || null) : null,
-    imagePath: isLegacyTeamConversation ? (firstImage?.path || null) : null,
-    imageName: isLegacyTeamConversation ? (firstImage?.name || null) : null,
-    imageType: isLegacyTeamConversation ? (firstImage?.mimeType || null) : null,
-    imageSize: isLegacyTeamConversation ? (firstImage?.size ?? null) : null,
+    imageUrl: null,
+    imagePath: null,
+    imageName: null,
+    imageType: null,
+    imageSize: null,
     createdAt: null,
     editedAt: null,
     deleted: false,

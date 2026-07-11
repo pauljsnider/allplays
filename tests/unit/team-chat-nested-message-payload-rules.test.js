@@ -108,14 +108,13 @@ describe('nested team chat message payload contracts', () => {
         expect(legacyBlock).toContain('isLegacyFullTeamChatMessageCreateValid(teamId, request.resource.data);');
         expect(legacyBlock).not.toContain('isNestedChatMessageCreateValid');
         expect(legacyValidator).toContain("hasValidNestedChatAttachments(teamId, 'team', data)");
-        expect(legacyValidator).toContain('hasValidLegacyChatImageMetadata(teamId, data)');
+        expect(legacyValidator).toContain('hasValidLegacyChatImageMetadata(data)');
         expect(legacyValidator).toContain('data.createdAt == request.time');
         expect(legacyValidator).toContain("data.get('ai', false) == false");
         expect(legacyValidator).toContain("data.get('aiMeta', null) == null");
         expect(legacyValidator).toContain("data.get('conversationId', null) == null");
         expect(legacyValidator).toContain('isFullTeamChatMessage(data)');
         expect(legacyValidator).not.toContain('conversationData');
-        expect(rules).toContain("isAllowedNestedChatMediaUrlForPath(data.get('imageUrl', null), data.get('imagePath', null))");
     });
 
     it('writes server-authored timestamps and canonical conversation participants from every client path', () => {
@@ -123,8 +122,7 @@ describe('nested team chat message payload contracts', () => {
         expect(dbSource).toContain('const attachmentUploadedAt = Timestamp.now();');
         expect(dbSource).toContain('uploadedAt: attachmentUploadedAt');
         expect(dbSource).toContain('editedAt: serverTimestamp()');
-        expect(dbSource).toContain('const isLegacyTeamConversation = isDefaultTeamConversation(conversationId);');
-        expect(dbSource).toContain('imageUrl: isLegacyTeamConversation ?');
+        expect(dbSource).toContain('imageUrl: null,\n        imagePath: null,');
         expect(appChatSource).toContain('const attachmentUploadedAt = new Date();');
         expect(appChatSource).toContain('attachments: attachments.map((attachment) => ({ ...attachment, uploadedAt: attachmentUploadedAt }))');
         expect(appChatSource).toContain("serverTimestampFields: ['createdAt']");
@@ -238,19 +236,34 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('nested team chat message 
         };
     }
 
+    function firebaseMediaUrl(path, bucket = 'game-flow-img.firebasestorage.app') {
+        const encodedPath = encodeURIComponent(path);
+        return `https://firebasestorage.googleapis.com/v0/b/${bucket}/o/${encodedPath}?alt=media`;
+    }
+
     function legacyAttachment(overrides = {}) {
-        const path = 'team-photos/1700000000000_chat_team-1_team_parent-1_photo.jpg';
+        const path = overrides.path || 'team-photos/1700000000000_chat_team-1_team_parent-1_photo.jpg';
         return {
             type: 'image',
-            url: `https://firebasestorage.googleapis.com/v0/b/allplays-images/o/${encodeURIComponent(path)}?alt=media`,
+            url: firebaseMediaUrl(path),
             path,
             thumbnailUrl: null,
             name: 'photo.jpg',
             mimeType: 'image/jpeg',
             size: 1024,
             uploadedAt: Timestamp.now(),
-            ...overrides
+            ...overrides,
+            path
         };
+    }
+
+    function fallbackAttachment(conversationId = staffConversationId, overrides = {}) {
+        const path = overrides.path || `stat-sheets/team-chat/team-1/${conversationId}/coach-1/photo.jpg`;
+        return legacyAttachment({
+            path,
+            url: firebaseMediaUrl(path, 'game-flow-c6311.firebasestorage.app'),
+            ...overrides
+        });
     }
 
     function directPayload(overrides = {}) {
@@ -308,19 +321,25 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('nested team chat message 
         await assertSucceeds(setDoc(messageRef(coachDb, staffConversationId, 'valid-staff'), staffPayload()));
     });
 
-    it('allows legacy full-team text and scoped Firebase Storage uploads', async () => {
+    it('allows legacy full-team text and exact scoped Firebase Storage uploads', async () => {
         const parentDb = authedFirestore('parent-1', 'parent@example.com');
         const attachment = legacyAttachment();
 
         await assertSucceeds(setDoc(legacyMessageRef(parentDb, 'valid-text'), legacyPayload()));
         await assertSucceeds(setDoc(legacyMessageRef(parentDb, 'valid-media'), legacyPayload({
             text: '',
-            attachments: [attachment],
-            imageUrl: attachment.url,
-            imagePath: attachment.path,
-            imageName: attachment.name,
-            imageType: attachment.mimeType,
-            imageSize: attachment.size
+            attachments: [attachment]
+        })));
+    });
+
+    it('allows canonical double-encoded percent segments without legacy duplicate URL fields', async () => {
+        const coachDb = authedFirestore('coach-1', 'coach@example.com');
+        const attachment = fallbackAttachment();
+
+        expect(attachment.url).toContain('group_role%253Astaff');
+        await assertSucceeds(setDoc(messageRef(coachDb, staffConversationId, 'valid-percent-path'), staffPayload({
+            text: '',
+            attachments: [attachment]
         })));
     });
 
@@ -331,15 +350,7 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('nested team chat message 
             legacyPayload({ attachments: [legacyAttachment({ url: 'https://attacker.example/photo.jpg' })] }),
             legacyPayload({
                 attachments: [validAttachment],
-                imageUrl: 'https://attacker.example/photo.jpg',
-                imagePath: validAttachment.path,
-                imageName: validAttachment.name,
-                imageType: validAttachment.mimeType,
-                imageSize: validAttachment.size
-            }),
-            legacyPayload({
-                attachments: [validAttachment],
-                imageUrl: 'https://firebasestorage.googleapis.com/v0/b/allplays-images/o/team-photos%2F1700000000000_chat_team-1_team_parent-1_other.jpg?alt=media',
+                imageUrl: validAttachment.url,
                 imagePath: validAttachment.path,
                 imageName: validAttachment.name,
                 imageType: validAttachment.mimeType,
