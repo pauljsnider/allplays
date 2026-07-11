@@ -251,6 +251,10 @@ async function installModuleMocks(page) {
             saveStore(store);
         }
 
+        export async function deleteTeam() {
+            return null;
+        }
+
         export async function getUnreadChatCounts() {
             return {};
         }
@@ -535,6 +539,20 @@ async function installModuleMocks(page) {
         }
     `;
 
+    const liveGameVideoModule = `
+        export function buildHighlightShareUrl() {
+            return '';
+        }
+
+        export function normalizeGameRecapHighlightClips() {
+            return [];
+        }
+
+        export function resolveReplayVideoOptions() {
+            return { hasVideo: false, replayState: { status: 'unavailable', title: 'Replay unavailable' } };
+        }
+    `;
+
     const rosterProfileFieldsModule = `
         export function collectRosterProfileValues() { return {}; }
         export function getRosterProfileValues() { return {}; }
@@ -545,6 +563,7 @@ async function installModuleMocks(page) {
 
     const teamAccessModule = `
         export function hasFullTeamAccess() { return true; }
+        export function hasStreamTeamAccess() { return false; }
     `;
 
     const rosterFieldPrivacyModule = `
@@ -595,6 +614,10 @@ async function installModuleMocks(page) {
 
     await page.route(/\/js\/live-game-state\.js\?v=\d+$/, async (route) => {
         await route.fulfill({ status: 200, contentType: 'application/javascript', body: liveGameStateModule });
+    });
+
+    await page.route(/\/js\/live-game-video\.js\?v=\d+$/, async (route) => {
+        await route.fulfill({ status: 200, contentType: 'application/javascript', body: liveGameVideoModule });
     });
 
     await page.route(/\/js\/roster-profile-fields\.js\?v=\d+$/, async (route) => {
