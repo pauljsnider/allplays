@@ -336,27 +336,6 @@ async function getSharedGamesForTeam(teamId, options = {}) {
         const failedQuery = snapshots.find((result) => result.status === 'rejected');
         if (failedQuery) throw failedQuery.reason;
     }
-    if (dateConstraints.length > 0 && snapshots.some((result) => result.status === 'rejected')) {
-        try {
-            // The date-only collection-group query uses the single-field index and
-            // keeps the fallback bounded while compound indexes finish deploying.
-            const fallbackSnapshots = await Promise.all([
-                getDocs(query(sharedGamesRef, ...orderedDateConstraints)),
-                getDocs(query(sharedGamesRef, where('date', '==', null)))
-            ]);
-            return fallbackSnapshots.flatMap((snapshot) => snapshot.docs)
-                .filter((docSnap) => {
-                    const game = docSnap.data();
-                    return game.homeTeamId === teamId
-                        || game.awayTeamId === teamId
-                        || (Array.isArray(game.teamIds) && game.teamIds.includes(teamId));
-                })
-                .map(normalizeSharedGameSnapshot)
-                .filter((game) => isGameWithinDateRange(game, startDate, endDate));
-        } catch (error) {
-            console.warn('[getSharedGamesForTeam] Date-bounded fallback failed for team', teamId, error);
-        }
-    }
     const sharedGamesByPath = new Map();
 
     snapshots.forEach((result) => {
