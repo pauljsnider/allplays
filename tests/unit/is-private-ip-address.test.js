@@ -37,6 +37,15 @@ describe('isPrivateIpAddress', () => {
     expect(isPrivateIpAddress('169.254.1.1')).toBe(true);
   });
 
+  it('should block RFC 6598 shared address space (100.64.0.0/10) without crossing its boundaries', () => {
+    expect(isPrivateIpAddress('100.63.255.255')).toBe(false);
+    expect(isPrivateIpAddress('100.64.0.0')).toBe(true);
+    expect(isPrivateIpAddress('100.64.0.1')).toBe(true);
+    expect(isPrivateIpAddress('100.127.255.254')).toBe(true);
+    expect(isPrivateIpAddress('100.127.255.255')).toBe(true);
+    expect(isPrivateIpAddress('100.128.0.1')).toBe(false);
+  });
+
   // Public IPv6 addresses
   it('should return false for public IPv6 addresses', () => {
     expect(isPrivateIpAddress('2001:0db8::1')).toBe(false);
@@ -76,6 +85,9 @@ describe('isPrivateIpAddress', () => {
     expect(isPrivateIpAddress('::ffff:10.0.0.1')).toBe(true);
     expect(isPrivateIpAddress('::ffff:192.168.1.1')).toBe(true);
     expect(isPrivateIpAddress('::ffff:169.254.169.254')).toBe(true);
+    expect(isPrivateIpAddress('::ffff:100.64.0.1')).toBe(true);
+    expect(isPrivateIpAddress('0000:0000:0000:0000:0000:ffff:6440:0001')).toBe(true);
+    expect(isPrivateIpAddress('::ffff:100.128.0.1')).toBe(false);
     expect(isPrivateIpAddress('::ffff:7f00:1')).toBe(true);
     expect(isPrivateIpAddress('0:0:0:0:0:ffff:7f00:1')).toBe(true);
     expect(isPrivateIpAddress('0000:0000:0000:0000:0000:ffff:7f00:0001')).toBe(true);
