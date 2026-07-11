@@ -1520,6 +1520,27 @@ service cloud.firestore {
               value.matches('https://storage[.]googleapis[.]com/.*'));
     }
 
+    function isAllowedNestedChatMediaUrlForPath(value, path) {
+      let pathSegments = path.split('/');
+      return isAllowedNestedChatMediaUrl(value) &&
+             (
+               (
+                 pathSegments.size() == 2 &&
+                 (
+                   value.matches('https://firebasestorage[.]googleapis[.]com/.*/o/' + pathSegments[0] + '%2F' + pathSegments[1] + '([?].*)?') ||
+                   value.matches('https://storage[.]googleapis[.]com/.*/' + pathSegments[0] + '/' + pathSegments[1] + '([?].*)?')
+                 )
+               ) ||
+               (
+                 pathSegments.size() == 6 &&
+                 (
+                   value.matches('https://firebasestorage[.]googleapis[.]com/.*/o/' + pathSegments[0] + '%2F' + pathSegments[1] + '%2F' + pathSegments[2] + '%2F' + pathSegments[3] + '%2F' + pathSegments[4] + '%2F' + pathSegments[5] + '([?].*)?') ||
+                   value.matches('https://storage[.]googleapis[.]com/.*/' + pathSegments[0] + '/' + pathSegments[1] + '/' + pathSegments[2] + '/' + pathSegments[3] + '/' + pathSegments[4] + '/' + pathSegments[5] + '([?].*)?')
+                 )
+               )
+             );
+    }
+
     function isSafeNestedChatRegexSegment(value) {
       return value is string &&
              value.size() > 0 &&
@@ -1650,8 +1671,8 @@ service cloud.firestore {
                data.get('imageSize', null) == null
              ) ||
              (
-               isAllowedNestedChatMediaUrl(data.get('imageUrl', null)) &&
                isScopedNestedChatMediaPath(teamId, 'team', data.get('imagePath', null)) &&
+               isAllowedNestedChatMediaUrlForPath(data.get('imageUrl', null), data.get('imagePath', null)) &&
                isNullableBoundedChatString(data.get('imageName', null), 255) &&
                data.get('imageType', null) is string &&
                data.imageType.size() <= 120 &&

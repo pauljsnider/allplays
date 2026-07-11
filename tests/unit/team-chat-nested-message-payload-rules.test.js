@@ -115,6 +115,7 @@ describe('nested team chat message payload contracts', () => {
         expect(legacyValidator).toContain("data.get('conversationId', null) == null");
         expect(legacyValidator).toContain('isFullTeamChatMessage(data)');
         expect(legacyValidator).not.toContain('conversationData');
+        expect(rules).toContain("isAllowedNestedChatMediaUrlForPath(data.get('imageUrl', null), data.get('imagePath', null))");
     });
 
     it('writes server-authored timestamps and canonical conversation participants from every client path', () => {
@@ -238,10 +239,11 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('nested team chat message 
     }
 
     function legacyAttachment(overrides = {}) {
+        const path = 'team-photos/1700000000000_chat_team-1_team_parent-1_photo.jpg';
         return {
             type: 'image',
-            url: 'https://firebasestorage.googleapis.com/v0/b/allplays-images/o/team-photo.jpg?alt=media',
-            path: 'team-photos/1700000000000_chat_team-1_team_parent-1_photo.jpg',
+            url: `https://firebasestorage.googleapis.com/v0/b/allplays-images/o/${encodeURIComponent(path)}?alt=media`,
+            path,
             thumbnailUrl: null,
             name: 'photo.jpg',
             mimeType: 'image/jpeg',
@@ -330,6 +332,14 @@ describe.skipIf(!process.env.FIRESTORE_EMULATOR_HOST)('nested team chat message 
             legacyPayload({
                 attachments: [validAttachment],
                 imageUrl: 'https://attacker.example/photo.jpg',
+                imagePath: validAttachment.path,
+                imageName: validAttachment.name,
+                imageType: validAttachment.mimeType,
+                imageSize: validAttachment.size
+            }),
+            legacyPayload({
+                attachments: [validAttachment],
+                imageUrl: 'https://firebasestorage.googleapis.com/v0/b/allplays-images/o/team-photos%2F1700000000000_chat_team-1_team_parent-1_other.jpg?alt=media',
                 imagePath: validAttachment.path,
                 imageName: validAttachment.name,
                 imageType: validAttachment.mimeType,
